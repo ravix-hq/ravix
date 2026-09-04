@@ -1,0 +1,175 @@
+/**
+ * The scrollback.
+ *
+ * Two sources, joined on `turn_id`, and the join is the whole of this file's
+ * structure. Fountain keeps *turns* — what somebody asked for — separately
+ * from the *event log*, which is the bytes the machine produced answering. A
+ * transcript built from the events alone renders an agent talking to itself;
+ * one built from the turns alone renders questions with no answers.
+ *
+ * `blocksForTurn` — shared with the rest of this suite, and a port of the
+ * server's own ACP parser — turns one turn's events into text, thinking and
+ * tool chips. What this file adds is everything about *reading* them, and one
+ * editorial decision that is switchyard's own.
+ *
+ * The decision: turns switchyard sent itself are rendered differently from
+ * turns a person sent. Opening a track, closing one, surveying the machine —
+ * these are real turns on a real machine and hiding them would make the
+ * transcript a lie about what the box has been doing. But they are also not
+ * things anybody said, and dressed as a user message they read as if the app
+ * had been typing in your name. So they are a dashed one-line note, and the
+ * agent's reply to them is shown normally, because that part *is* the machine
+ * doing your work and it is the most reassuring thing on the screen while a
+ * worktree is being cut.
+ */
+import { useEffect, useMemo, useRef, useState } from "react";
+import { blocksForTurn, type Block } from "@managoat/fountain-app/acp";
+import type { TurnRecord } from "../../shared/api";
+import type { LogEvent } from "../../shared/fountain-types";
+import { Chevron } from "../lib/icons";
+
+export interface TranscriptProps {
+  turns: TurnRecord[];
+  events: LogEvent[];
+  runtime: string;
+  /** True while a turn is in flight, so the trailing indicator is honest. */
+  running: boolean;
+  /** Rendered above the first turn — the ribbon, the starters, an empty state. */
+  head?: React.ReactNode;
+}
+
+export function Transcript({ turns, events, runtime, running, head }: TranscriptProps) {
+  const scroller = useRef<HTMLDivElement | null>(null);
+  const pinned = useRef(true);
+
+  const grouped = useMemo(() => group(turns, events), [turns, events]);
+
+  // Follow the bottom, but only while the reader is already there. Yanking
+  // somebody back down mid-scroll is the single most irritating thing a live
+  // transcript can do, and it happens on every chunk.
+  useEffect(() => {
+    const el = scroller.current;
+    if (el && pinned.current) el.scrollTop = el.scrollHeight;
+  }, [grouped, running]);
+
+  return (
+    <div
+      className="scroll"
+      ref={scroller}
+      onScroll={(e) => {
+        const el = e.currentTarget;
+        pinned.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+      }}
+    >
+      {head}
+      <div className="transcript">
+        {grouped.map((turn) => (
+          <Turn key={turn.id} turn={turn} runtime={runtime} />
+        ))}
+        {running ? (
+          <div className="thinking-now">
+            <span className="dots">
+              <i />
+              <i />
+              <i />
+            </span>
+            Working
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+interface GroupedTurn {
+  id: string;
+  prompt: string | null;
+  events: LogEvent[];
+}
+
+/**
+ * Turns and events into one ordered list.
+ *
+ * Turn order comes from the turns list, because that is the order they were
+ * asked in and it survives an event log that arrives out of order or with a
+ * gap in it. Events whose `turn_id` matches no turn — which happens for the
+ * first few frames of a turn Fountain has not finished recording — are kept in
+ * a trailing group rather than dropped, so the very first thing a new track
+ * shows is not an empty panel.
+ */
+function group(turns: TurnRecord[], events: LogEvent[]): GroupedTurn[] {
+  const byTurn = new Map<string, GroupedTurn>();
+  const order: string[] = [];
+  for (const t of turns) {
+    byTurn.set(t.id, { id: t.id, prompt: t.prompt, events: [] });
+    order.push(t.id);
+  }
+  for (const ev of events) {
+    const id = ev.turn_id ?? "";
+    let turn = byTurn.get(id);
+    if (!turn) {
+      turn = { id: id || "pending", prompt: null, events: [] };
+      byTurn.set(turn.id, turn);
+      order.push(turn.id);
+    }
+    turn.events.push(ev);
+  }
+  return order.map((id) => byTurn.get(id)!).filter((t) => t.prompt !== null || t.events.length > 0);
+}
+
+function Turn({ turn, runtime }: { turn: GroupedTurn; runtime: string }) {
+  const blocks = useMemo(() => blocksForTurn(turn.events, runtime), [turn.events, runtime]);
+  const app = turn.prompt ? appTurnLabel(turn.prompt) : null;
+  return (
+    <div className="turn">
+      {app ? <div className="turn-app">{app}</div> : turn.prompt ? <div className="turn-you">{turn.prompt}</div> : null}
+      {blocks.map((block, i) => (
+        <BlockView key={i} block={block} />
+      ))}
+    </div>
+  );
+}
+
+/**
+ * A turn switchyard sent itself, as one line.
+ *
+ * Matched on the marker the prompt contract puts at the front of every one of
+ * them (`shared/spec.ts`), so there is exactly one place that decides what an
+ * app turn looks like and it is the same place that writes them.
+ */
+function appTurnLabel(prompt: string): string | null {
+  if (!prompt.startsWith("[switchyard]")) return null;
+  const first = prompt.slice("[switchyard]".length).split("\n")[0]!.trim();
+  return first || "Switchyard sent this machine an instruction.";
+}
+
+function BlockView({ block }: { block: Block }) {
+  const [open, setOpen] = useState(false);
+  switch (block.kind) {
+    case "text":
+      return <div className="block-text">{block.body}</div>;
+    case "thinking":
+      return <div className="block-thinking">{block.body}</div>;
+    case "tool":
+      return (
+        <div className="tool">
+          <button type="button" className="tool-head" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
+            <Chevron size={13} open={open} />
+            <strong>{block.name}</strong>
+            <span className="truncate">{block.summary}</span>
+            <span className="spacer" />
+            <ToolStatus status={block.status} />
+          </button>
+          {open && block.output ? <pre className="tool-out">{block.output}</pre> : null}
+        </div>
+      );
+    case "raw":
+      return <div className="block-text dim">{block.body}</div>;
+  }
+}
+
+function ToolStatus({ status }: { status: "running" | "done" | "error" }) {
+  if (status === "error") return <span className="chip bad">failed</span>;
+  if (status === "running") return <span className="dot running" />;
+  return <span className="dot ready" />;
+}

@@ -1,0 +1,5 @@
+# The throwaway GitHub App key the mock generates on first start. It is a real
+# RSA key — nothing here verifies the signature, but `appJwt()` really signs
+# with it — and a private key in the history is a private key in the history,
+# throwaway or not.
+dev-key.pem

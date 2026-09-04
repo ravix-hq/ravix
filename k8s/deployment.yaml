@@ -1,0 +1,78 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: switchyard
+  namespace: switchyard
+  labels:
+    app: switchyard
+spec:
+  # One replica: the state is a SQLite file on a ReadWriteOnce volume, and the
+  # per-project SSE fan-out lives in the process. Two would disagree.
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: switchyard
+  template:
+    metadata:
+      labels:
+        app: switchyard
+    spec:
+      containers:
+        - name: web
+          # Pinned to an immutable sha tag by .github/workflows/build.yml.
+          image: ghcr.io/managoat/switchyard:latest
+          ports:
+            - containerPort: 8080
+          env:
+            - name: FOUNTAIN_URL
+              value: https://managoat.com
+            - name: DATA_DIR
+              value: /data
+            - name: STATIC_DIR
+              value: /app/dist
+            # Where GitHub sends a browser back to, and what the App's callback
+            # and setup URLs are registered as. Load-bearing: a mismatch here
+            # is the one failure that looks like "sign-in is broken".
+            - name: PUBLIC_URL
+              value: https://switchyard.demo.managoat.com
+          envFrom:
+            # The whole of what this app is trusted with, and every one of them
+            # is genuinely required for a different part of the surface:
+            #
+            #   FOUNTAIN_API_KEY     the account every machine here runs on.
+            #                        Without it there are no projects at all.
+            #   SWITCHYARD_SECRET    encrypts stored tokens; sessions are hashes.
+            #   GITHUB_APP_ID        \
+            #   GITHUB_APP_SLUG      |  the App: sign-in, repository access,
+            #   GITHUB_CLIENT_ID     |  pull requests, issues, checks, and the
+            #   GITHUB_CLIENT_SECRET |  installation token that clones a private
+            #   GITHUB_PRIVATE_KEY   /  repository onto the machine.
+            #   GITHUB_WEBHOOK_SECRET   verifies installation events.
+            #   SPRITES_TOKEN        optional. With it the terminal and the run
+            #                        panel are live; without it they say so.
+            - secretRef:
+                name: switchyard-secrets
+                # Optional so a cluster whose Infisical sync has not landed yet
+                # still serves the app, which then says on screen exactly which
+                # variable it is missing. A pod that refuses to start hides that.
+                optional: true
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          readinessProbe:
+            httpGet: { path: /healthz, port: 8080 }
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /healthz, port: 8080 }
+            initialDelaySeconds: 5
+            periodSeconds: 20
+          resources:
+            requests: { cpu: 20m, memory: 96Mi }
+            limits: { memory: 384Mi }
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: switchyard-data

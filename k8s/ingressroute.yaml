@@ -1,0 +1,38 @@
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: switchyard
+  namespace: switchyard
+  labels:
+    app: switchyard
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: "Host(`switchyard.demo.managoat.com`)"
+      kind: Rule
+      services:
+        - name: switchyard
+          port: 80
+  tls:
+    secretName: switchyard-tls
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: switchyard-http
+  namespace: switchyard
+  labels:
+    app: switchyard
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: "Host(`switchyard.demo.managoat.com`)"
+      kind: Rule
+      middlewares:
+        - name: redirect-https
+          namespace: default
+      services:
+        - name: switchyard
+          port: 80
