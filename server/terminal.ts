@@ -25,7 +25,7 @@ import type { ExecResult } from "../shared/api";
 import type { AppContext } from "./context";
 import { authenticate, requireFountain, requireSprites, trackOf } from "./context";
 import { resolveCwd, SpritesError } from "./sprites";
-import { machineOf } from "./tracks";
+import { machineOf, spriteFor } from "./tracks";
 import { HttpError, json, readJson, str } from "./http";
 
 /** The ceiling on one command, in seconds. A build is fine; a server is not. */
@@ -45,7 +45,8 @@ export async function exec(ctx: AppContext, req: Request, trackId: string): Prom
 
   const machine = await machineOf(fountain, project);
   if (!machine) throw new HttpError(409, "no_machine", "This project has no machine yet. Open a track first.");
-  if (!machine.spriteName) {
+  const spriteName = await spriteFor(fountain, machine.sandboxId);
+  if (!spriteName) {
     // A real and reportable state rather than a 500: Fountain may be running
     // this sandbox on a provider that is not Sprites, in which case exec is
     // not "broken", it does not apply.
@@ -57,7 +58,7 @@ export async function exec(ctx: AppContext, req: Request, trackId: string): Prom
 
   const startedAt = Date.now();
   try {
-    const r = await sprites.shell(machine.spriteName, command, cwd, timeoutSec);
+    const r = await sprites.shell(spriteName, command, cwd, timeoutSec);
     const out: ExecResult = {
       stdout: r.stdout,
       stderr: r.stderr,
@@ -92,9 +93,10 @@ export async function execStatus(ctx: AppContext, req: Request, trackId: string)
   const fountain = requireFountain(ctx);
   const machine = await machineOf(fountain, project).catch(() => null);
   if (!machine) return json({ data: { available: false, why: "no_machine", cwd: track.workdir } });
-  if (!machine.spriteName) return json({ data: { available: false, why: "no_sprite", cwd: track.workdir } });
+  const spriteName = await spriteFor(fountain, machine.sandboxId);
+  if (!spriteName) return json({ data: { available: false, why: "no_sprite", cwd: track.workdir } });
 
-  const reachable = await ctx.sprites.reachable(machine.spriteName);
+  const reachable = await ctx.sprites.reachable(spriteName);
   return json({
     data: { available: reachable, why: reachable ? null : "unreachable", cwd: track.workdir },
   });

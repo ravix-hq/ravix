@@ -461,7 +461,10 @@ async function machinesFor(ctx: AppContext, rows: ProjectRow[]): Promise<Map<str
         ? {
             sandboxId: newest.sandbox_id!,
             status: ["pending", "idle", "running"].includes(newest.status) ? "ready" : "suspended",
-            spriteName: (newest.sandbox as { sprite_name?: string } | undefined)?.sprite_name ?? null,
+            // Deliberately null: the conversation list serves `"sandbox": null`,
+            // so the only honest answer here is "not read". The terminal asks
+            // `spriteFor` when it actually needs one.
+            spriteName: null,
           }
         : none(),
     );

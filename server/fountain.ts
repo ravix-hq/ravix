@@ -13,7 +13,7 @@
  * events.
  */
 import { HttpError } from "./http";
-import type { Agent, Catalog, Conversation, Environment, LogEvent, Repository, SandboxDiff, SandboxFile, SandboxListing, Vault } from "../shared/fountain-types";
+import type { Agent, Catalog, Conversation, Environment, LogEvent, Repository, Sandbox, SandboxDiff, SandboxFile, SandboxListing, Vault } from "../shared/fountain-types";
 
 export class FountainHttpError extends Error {
   constructor(
@@ -240,6 +240,19 @@ export class Fountain {
   }
 
   // ── reading the machine, for free ────────────────────────────────────
+
+  /**
+   * One sandbox, in full.
+   *
+   * The only place `sprite_name` actually appears. `GET /api/conversations`
+   * carries a `sandbox_id` but serves `"sandbox": null` — the embedded object
+   * is a detail-endpoint field — so a terminal that read the list would
+   * conclude, wrongly and permanently, that this machine is not on Sprites.
+   */
+  sandbox(id: string): Promise<Sandbox> {
+    return this.data("GET", `/api/sandboxes/${encodeURIComponent(id)}`);
+  }
+
 
   listing(sandboxId: string, path: string): Promise<SandboxListing> {
     return this.data("GET", `/api/sandboxes/${encodeURIComponent(sandboxId)}/files?${new URLSearchParams({ path })}`);

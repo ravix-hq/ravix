@@ -437,11 +437,17 @@ export function summarizeDiff(diff: string): { path: string; added: number; remo
 
 // ── the pieces the routes above share ──────────────────────────────────
 
-/** The project's machine, read live from its conversations. Nothing is stored. */
-export async function machineOf(
-  fountain: Fountain,
-  project: ProjectRow,
-): Promise<{ sandboxId: string; spriteName: string | null } | null> {
+/**
+ * The project's machine, read live from its conversations. Nothing is stored.
+ *
+ * The list is enough for everything except the terminal: it carries
+ * `sandbox_id`, which is all the file, diff and listing routes need. It does
+ * *not* carry the sandbox object — `GET /api/conversations` serves
+ * `"sandbox": null` — so anything wanting `sprite_name` has to ask
+ * `spriteFor` and pay for the extra call, rather than reading a field that is
+ * reliably absent.
+ */
+export async function machineOf(fountain: Fountain, project: ProjectRow): Promise<{ sandboxId: string } | null> {
   let all: ConversationSummary[];
   try {
     all = await fountain.listConversations(project.agentId);
@@ -451,11 +457,23 @@ export async function machineOf(
   const newest = all
     .filter((c) => c.sandbox_id && ["pending", "idle", "running"].includes(c.status))
     .sort((a, b) => b.inserted_at.localeCompare(a.inserted_at))[0];
-  if (!newest) return null;
-  return {
-    sandboxId: newest.sandbox_id!,
-    spriteName: (newest.sandbox as { sprite_name?: string } | undefined)?.sprite_name ?? null,
-  };
+  return newest ? { sandboxId: newest.sandbox_id! } : null;
+}
+
+/**
+ * The sprite behind a sandbox, or null if it is not on Sprites at all.
+ *
+ * One call, made only by the two panels that need a shell. A sandbox on
+ * another provider is a real answer rather than a failure — the terminal says
+ * so — which is why this returns null instead of throwing.
+ */
+export async function spriteFor(fountain: Fountain, sandboxId: string): Promise<string | null> {
+  try {
+    const sandbox = await fountain.sandbox(sandboxId);
+    return sandbox.sprite_name ?? null;
+  } catch {
+    return null;
+  }
 }
 
 async function conversationsOf(ctx: AppContext, project: ProjectRow): Promise<Map<string, ConversationSummary>> {
