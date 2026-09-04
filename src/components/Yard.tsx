@@ -12,6 +12,7 @@
  */
 import type { Project, Track } from "../../shared/api";
 import { Home, Plus, Search, Settings } from "../lib/icons";
+import { ThemePicker } from "./ThemePicker";
 
 export interface YardProps {
   viewer: { login: string; name: string | null; avatarUrl: string | null } | null;
@@ -156,11 +157,14 @@ export function Yard(props: YardProps) {
       </div>
 
       <div className="yard-foot">
-        <span className="badge-free">switchyard</span>
-        <span className="spacer" />
-        <a className="dimmer" style={{ fontSize: 11 }} href="/api/auth/install">
-          repo access
-        </a>
+        <ThemePicker />
+        <div className="yard-foot-row">
+          <span className="badge-free">switchyard</span>
+          <span className="spacer" />
+          <a className="dimmer" style={{ fontSize: 11 }} href="/api/auth/install">
+            repo access
+          </a>
+        </div>
       </div>
     </nav>
   );

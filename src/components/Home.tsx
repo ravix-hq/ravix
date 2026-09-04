@@ -17,10 +17,17 @@
 import type { Project, SessionInfo } from "../../shared/api";
 import { Folder, FolderPlus, GitHub, Globe, Machine, Sparkle } from "../lib/icons";
 import { Wordmark } from "./Wordmark";
+import { ThemePicker } from "./ThemePicker";
 
 export function SignIn({ session }: { session: SessionInfo }) {
   return (
     <div className="centred">
+      {/* The rail is not on this screen, so the picker would be unreachable
+          until you had signed in — which is the wrong order for the one screen
+          somebody looks at for a while before deciding to. */}
+      <div className="corner-theme">
+        <ThemePicker />
+      </div>
       <div className="signin-card">
         <div style={{ color: "var(--ink)", marginBottom: 20 }}>
           <Wordmark unit={5} />

@@ -1,9 +1,32 @@
 /* Switchyard's shell is a desktop editor: yard on the left, the track you are
    working in the middle, the inspector on the right, and a dock underneath it.
-   Every colour is a token, so the whole app re-themes from the block at the
-   top and nothing hard-codes a hex value below line 90. */
+   Every colour is a token, so the whole app re-themes from the blocks at the
+   top and nothing hard-codes a hex value below the palettes. */
 
+/* Type and metrics, which no palette changes. */
 :root {
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  --sans: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --rail: 248px;
+  --radius: 8px;
+}
+
+/* ── the palettes ──────────────────────────────────────────────────────────
+   Sixteen blocks, one token list, and two rules about their selectors.
+
+   They are attribute selectors rather than `:root[data-theme]` so that *any*
+   element carrying the attribute gets the palette for its subtree — which is
+   what lets the picker draw a live swatch per theme with no swatch classes.
+
+   The default shares its selector with `:root` rather than being repeated, so
+   an unthemed page and one explicitly set to `switchyard` are the same
+   declarations. Specificity ties with the blocks below, so it must stay first:
+   later blocks win on `<html>` by source order.
+
+   `src/lib/theme.ts` is the list these ids come from and `theme.test.ts`
+   fails the build if a theme there has no complete block here. */
+
+:root, [data-theme="switchyard"] {
   /* Near-black rather than blue-black: the transcript is the brightest thing
      on screen and a tinted ground makes long reading sessions tiring. */
   --bg: #0c0d0f;
@@ -33,14 +56,11 @@
   --danger-bg: #271a1c;
   --danger-line: #5a3036;
   --shadow: rgba(0, 0, 0, 0.5);
-  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
-  --sans: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  --rail: 248px;
-  --radius: 8px;
+  --scrim: rgba(0, 0, 0, 0.55);
   color-scheme: dark;
 }
 
-:root[data-theme="slate"] {
+[data-theme="slate"] {
   --bg: #101318; --panel: #161a21; --sidebar: #12151b; --surface: #1d222b;
   --surface-hover: #242a35; --surface-active: #2b323f; --input: #131720; --code-bg: #0c0f14;
   --line: #262c37; --line-strong: #39414f; --ink: #e3e8f0; --dim: #8d95a4;
@@ -48,9 +68,109 @@
   --accent-line: #2c5361; --notice: #17282f; --ok: #7cc79b; --ok-soft: #172f21;
   --warn: #e0bb78; --warn-soft: #332a17; --bad: #e08b8b; --bad-soft: #331e1e;
   --danger-bg: #281b1d; --danger-line: #5b3238; --shadow: rgba(0, 0, 0, 0.5);
+  --scrim: rgba(0, 0, 0, 0.55); color-scheme: dark;
 }
 
-:root[data-theme="daylight"] {
+[data-theme="one-dark"] {
+  --bg: #282c34; --panel: #2f343e; --sidebar: #21252b; --surface: #333842;
+  --surface-hover: #3a404c; --surface-active: #434a58; --input: #21252b; --code-bg: #1e222a;
+  --line: #3a3f4b; --line-strong: #4b5263; --ink: #d7dae0; --dim: #9299a6;
+  --dimmer: #6a7280; --accent: #61afef; --accent-ink: #d5e8fb; --accent-soft: #1e3348;
+  --accent-line: #35597d; --notice: #21323f; --ok: #98c379; --ok-soft: #26331f;
+  --warn: #e5c07b; --warn-soft: #3a3120; --bad: #e06c75; --bad-soft: #3a2126;
+  --danger-bg: #37222a; --danger-line: #6a3944; --shadow: rgba(0, 0, 0, 0.5);
+  --scrim: rgba(0, 0, 0, 0.55); color-scheme: dark;
+}
+
+[data-theme="dracula"] {
+  --bg: #282a36; --panel: #2d2f3d; --sidebar: #21222c; --surface: #343746;
+  --surface-hover: #3c3f51; --surface-active: #44475a; --input: #21222c; --code-bg: #1e1f29;
+  --line: #3b3e4d; --line-strong: #565973; --ink: #f8f8f2; --dim: #9aa0bd;
+  --dimmer: #6272a4; --accent: #bd93f9; --accent-ink: #e9defd; --accent-soft: #35294d;
+  --accent-line: #5a4288; --notice: #2c2846; --ok: #50fa7b; --ok-soft: #1f3a27;
+  --warn: #ffb86c; --warn-soft: #3c2e1c; --bad: #ff5555; --bad-soft: #3d1f22;
+  --danger-bg: #3a2129; --danger-line: #6e3540; --shadow: rgba(0, 0, 0, 0.5);
+  --scrim: rgba(0, 0, 0, 0.55); color-scheme: dark;
+}
+
+[data-theme="nord"] {
+  --bg: #2e3440; --panel: #333b48; --sidebar: #2b323d; --surface: #3b4252;
+  --surface-hover: #434c5e; --surface-active: #4c566a; --input: #2b323d; --code-bg: #272d38;
+  --line: #3f4756; --line-strong: #56607a; --ink: #eceff4; --dim: #a7b0c0;
+  --dimmer: #7b869c; --accent: #88c0d0; --accent-ink: #dff0f5; --accent-soft: #24404b;
+  --accent-line: #5e81ac; --notice: #2b3a45; --ok: #a3be8c; --ok-soft: #2c3a2b;
+  --warn: #ebcb8b; --warn-soft: #3d3826; --bad: #bf616a; --bad-soft: #3b262a;
+  --danger-bg: #3a262b; --danger-line: #6b3d45; --shadow: rgba(0, 0, 0, 0.5);
+  --scrim: rgba(0, 0, 0, 0.55); color-scheme: dark;
+}
+
+[data-theme="tokyo-night"] {
+  --bg: #1a1b26; --panel: #1f2030; --sidebar: #16161e; --surface: #24283b;
+  --surface-hover: #2a2f45; --surface-active: #333a55; --input: #16161e; --code-bg: #13131c;
+  --line: #2a2e42; --line-strong: #414868; --ink: #c0caf5; --dim: #8b93b8;
+  --dimmer: #565f89; --accent: #7aa2f7; --accent-ink: #d7e2fd; --accent-soft: #1d2a4a;
+  --accent-line: #33487c; --notice: #1c2740; --ok: #9ece6a; --ok-soft: #21311c;
+  --warn: #e0af68; --warn-soft: #352b18; --bad: #f7768e; --bad-soft: #3a1e28;
+  --danger-bg: #351d27; --danger-line: #6a3448; --shadow: rgba(0, 0, 0, 0.55);
+  --scrim: rgba(0, 0, 0, 0.55); color-scheme: dark;
+}
+
+[data-theme="catppuccin-mocha"] {
+  --bg: #1e1e2e; --panel: #232336; --sidebar: #181825; --surface: #313244;
+  --surface-hover: #3a3c51; --surface-active: #45475a; --input: #181825; --code-bg: #11111b;
+  --line: #313244; --line-strong: #585b70; --ink: #cdd6f4; --dim: #a6adc8;
+  --dimmer: #7f849c; --accent: #89b4fa; --accent-ink: #dbe6fd; --accent-soft: #24304d;
+  --accent-line: #3c548a; --notice: #22304a; --ok: #a6e3a1; --ok-soft: #223425;
+  --warn: #f9e2af; --warn-soft: #3a3423; --bad: #f38ba8; --bad-soft: #3b2230;
+  --danger-bg: #38212e; --danger-line: #6b3a50; --shadow: rgba(0, 0, 0, 0.5);
+  --scrim: rgba(0, 0, 0, 0.55); color-scheme: dark;
+}
+
+[data-theme="night-owl"] {
+  --bg: #011627; --panel: #0b2333; --sidebar: #01111d; --surface: #0e293f;
+  --surface-hover: #143352; --surface-active: #1d3b53; --input: #01111d; --code-bg: #010e1a;
+  --line: #12293e; --line-strong: #2b4a66; --ink: #d6deeb; --dim: #a2b6c9;
+  --dimmer: #637777; --accent: #82aaff; --accent-ink: #dbe6ff; --accent-soft: #13294e;
+  --accent-line: #2c4a86; --notice: #10273f; --ok: #addb67; --ok-soft: #1c3320;
+  --warn: #ecc48d; --warn-soft: #33291c; --bad: #ef5350; --bad-soft: #35201f;
+  --danger-bg: #33201f; --danger-line: #6b3634; --shadow: rgba(0, 0, 0, 0.55);
+  --scrim: rgba(0, 0, 0, 0.55); color-scheme: dark;
+}
+
+[data-theme="monokai"] {
+  --bg: #272822; --panel: #2e2f28; --sidebar: #22231d; --surface: #34352d;
+  --surface-hover: #3d3e33; --surface-active: #49483e; --input: #22231d; --code-bg: #1d1e19;
+  --line: #3a3b32; --line-strong: #55564a; --ink: #f8f8f2; --dim: #a39e86;
+  --dimmer: #75715e; --accent: #66d9ef; --accent-ink: #d5f6fc; --accent-soft: #1d3a40;
+  --accent-line: #35646e; --notice: #223a3e; --ok: #a6e22e; --ok-soft: #2b3618;
+  --warn: #e6db74; --warn-soft: #3a3620; --bad: #f92672; --bad-soft: #3d1c2a;
+  --danger-bg: #3a1d29; --danger-line: #6d3049; --shadow: rgba(0, 0, 0, 0.5);
+  --scrim: rgba(0, 0, 0, 0.55); color-scheme: dark;
+}
+
+[data-theme="gruvbox-dark"] {
+  --bg: #282828; --panel: #32302f; --sidebar: #1d2021; --surface: #3c3836;
+  --surface-hover: #454140; --surface-active: #504945; --input: #1d2021; --code-bg: #1b1b1b;
+  --line: #3c3836; --line-strong: #665c54; --ink: #ebdbb2; --dim: #a89984;
+  --dimmer: #928374; --accent: #83a598; --accent-ink: #d8ece6; --accent-soft: #263433;
+  --accent-line: #45635e; --notice: #2b3735; --ok: #b8bb26; --ok-soft: #333518;
+  --warn: #fabd2f; --warn-soft: #3d3216; --bad: #fb4934; --bad-soft: #3f1f1a;
+  --danger-bg: #3c1e1a; --danger-line: #703a2c; --shadow: rgba(0, 0, 0, 0.5);
+  --scrim: rgba(0, 0, 0, 0.55); color-scheme: dark;
+}
+
+[data-theme="solarized-dark"] {
+  --bg: #002b36; --panel: #04303c; --sidebar: #00252e; --surface: #073642;
+  --surface-hover: #0b414e; --surface-active: #114c5a; --input: #00252e; --code-bg: #00212b;
+  --line: #0d3b47; --line-strong: #1f4d59; --ink: #93a1a1; --dim: #839496;
+  --dimmer: #586e75; --accent: #268bd2; --accent-ink: #cfe6f7; --accent-soft: #063a54;
+  --accent-line: #16597f; --notice: #06384a; --ok: #859900; --ok-soft: #12362a;
+  --warn: #b58900; --warn-soft: #2f3319; --bad: #dc322f; --bad-soft: #3a2226;
+  --danger-bg: #372126; --danger-line: #71383a; --shadow: rgba(0, 0, 0, 0.5);
+  --scrim: rgba(0, 0, 0, 0.55); color-scheme: dark;
+}
+
+[data-theme="daylight"] {
   --bg: #f7f8fa; --panel: #ffffff; --sidebar: #f1f3f6; --surface: #eceff3;
   --surface-hover: #e3e7ed; --surface-active: #d8dee6; --input: #ffffff; --code-bg: #f2f4f7;
   --line: #dfe3ea; --line-strong: #c2c9d4; --ink: #1c2027; --dim: #5c6470;
@@ -58,7 +178,51 @@
   --accent-line: #a9c3ef; --notice: #eaf1fd; --ok: #2f7d4d; --ok-soft: #e2f2e8;
   --warn: #96631a; --warn-soft: #faeed8; --bad: #b8352f; --bad-soft: #fbe6e4;
   --danger-bg: #fbe9e7; --danger-line: #e8b4ae; --shadow: rgba(30, 40, 60, 0.14);
-  color-scheme: light;
+  --scrim: rgba(28, 32, 39, 0.32); color-scheme: light;
+}
+
+[data-theme="github-light"] {
+  --bg: #ffffff; --panel: #f6f8fa; --sidebar: #f6f8fa; --surface: #f0f3f6;
+  --surface-hover: #e8edf2; --surface-active: #dee3e9; --input: #ffffff; --code-bg: #f6f8fa;
+  --line: #d8dee4; --line-strong: #afb8c1; --ink: #1f2328; --dim: #656d76;
+  --dimmer: #8c959f; --accent: #0969da; --accent-ink: #0a3069; --accent-soft: #ddf4ff;
+  --accent-line: #b6e3ff; --notice: #ddf4ff; --ok: #1a7f37; --ok-soft: #dafbe1;
+  --warn: #9a6700; --warn-soft: #fff8c5; --bad: #d1242f; --bad-soft: #ffebe9;
+  --danger-bg: #ffebe9; --danger-line: #ffcecb; --shadow: rgba(31, 35, 40, 0.14);
+  --scrim: rgba(31, 35, 40, 0.32); color-scheme: light;
+}
+
+[data-theme="one-light"] {
+  --bg: #fafafa; --panel: #ffffff; --sidebar: #f2f2f2; --surface: #eaeaeb;
+  --surface-hover: #e2e2e3; --surface-active: #d7d7d9; --input: #ffffff; --code-bg: #f2f2f2;
+  --line: #e1e1e2; --line-strong: #c3c3c5; --ink: #383a42; --dim: #696c77;
+  --dimmer: #9d9d9f; --accent: #4078f2; --accent-ink: #1b3f95; --accent-soft: #e3ebfe;
+  --accent-line: #b6ccfb; --notice: #eaf0fe; --ok: #50a14f; --ok-soft: #e6f2e6;
+  --warn: #986801; --warn-soft: #f8eed6; --bad: #d1382c; --bad-soft: #fbe6e3;
+  --danger-bg: #fbe6e3; --danger-line: #f0bcb5; --shadow: rgba(56, 58, 66, 0.14);
+  --scrim: rgba(56, 58, 66, 0.32); color-scheme: light;
+}
+
+[data-theme="solarized-light"] {
+  --bg: #fdf6e3; --panel: #fdf6e3; --sidebar: #f5eeda; --surface: #eee8d5;
+  --surface-hover: #e7e0ca; --surface-active: #ddd6bf; --input: #fdf6e3; --code-bg: #f4edda;
+  --line: #e3dcc6; --line-strong: #c9c2ab; --ink: #073642; --dim: #586e75;
+  --dimmer: #93a1a1; --accent: #268bd2; --accent-ink: #0a4f7d; --accent-soft: #dcecf7;
+  --accent-line: #a8cfe9; --notice: #e4eff7; --ok: #6f7d00; --ok-soft: #eaecc9;
+  --warn: #b58900; --warn-soft: #f6ecc9; --bad: #dc322f; --bad-soft: #f9dedc;
+  --danger-bg: #f9dedc; --danger-line: #eeb5b1; --shadow: rgba(7, 54, 66, 0.14);
+  --scrim: rgba(7, 54, 66, 0.3); color-scheme: light;
+}
+
+[data-theme="catppuccin-latte"] {
+  --bg: #eff1f5; --panel: #ffffff; --sidebar: #e6e9ef; --surface: #e6e9ef;
+  --surface-hover: #dce0e8; --surface-active: #ccd0da; --input: #ffffff; --code-bg: #e6e9ef;
+  --line: #dce0e8; --line-strong: #bcc0cc; --ink: #4c4f69; --dim: #6c6f85;
+  --dimmer: #8c8fa1; --accent: #1e66f5; --accent-ink: #103d97; --accent-soft: #dfe7fe;
+  --accent-line: #adc0fb; --notice: #e7edfe; --ok: #40a02b; --ok-soft: #e2f2de;
+  --warn: #df8e1d; --warn-soft: #fbeed8; --bad: #d20f39; --bad-soft: #fbe0e5;
+  --danger-bg: #fbe0e5; --danger-line: #f0b3c0; --shadow: rgba(76, 79, 105, 0.15);
+  --scrim: rgba(76, 79, 105, 0.32); color-scheme: light;
 }
 
 * { box-sizing: border-box; }
@@ -234,11 +398,61 @@ h4 { font-size: 11px; color: var(--dim); text-transform: uppercase; letter-spaci
 @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.32; } }
 @media (prefers-reduced-motion: reduce) { .dot.running, .dot.opening { animation: none; } }
 
-.yard-foot { padding: 8px; border-top: 1px solid var(--line); display: flex; align-items: center; gap: 6px; }
+.yard-foot { padding: 8px; border-top: 1px solid var(--line); display: flex; flex-direction: column; gap: 5px; }
+.yard-foot-row { display: flex; align-items: center; gap: 6px; padding: 0 2px; }
 .badge-free {
   font-size: 10px; letter-spacing: 0.08em; color: var(--dimmer);
   border: 1px dashed var(--line-strong); border-radius: 4px; padding: 1px 6px;
 }
+
+/* ── the theme picker ──────────────────────────────────────────────────────
+   In the foot of the yard because it is settled once and then never again,
+   and because the rail is the only chrome on screen at every route.
+
+   The swatch is the trick worth pointing at: the span carries `data-theme`,
+   so `var(--bg)`, `var(--accent)` and the rest resolve to *that* theme rather
+   than the one that is on. Sixteen live previews, no per-theme CSS. */
+
+.theme-picker { position: relative; }
+.theme-trigger {
+  display: flex; align-items: center; gap: 9px; width: 100%; padding: 5px 7px;
+  color: var(--dim); background: transparent; border: 1px solid transparent;
+  border-radius: 6px; text-align: left;
+}
+.theme-trigger:hover:not(:disabled) { background: var(--surface-hover); border-color: transparent; }
+.theme-trigger .col { min-width: 0; flex: 1; display: flex; flex-direction: column; line-height: 1.25; }
+.theme-trigger .col small { color: var(--dimmer); font-size: 9.5px; font-weight: 650; letter-spacing: 0.09em; text-transform: uppercase; }
+.theme-trigger .col span { color: var(--ink); font-size: 12px; }
+.theme-trigger .caret { flex: none; color: var(--dimmer); }
+
+.theme-menu {
+  position: absolute; z-index: 50; left: 0; right: 0; bottom: calc(100% + 6px);
+  max-height: min(58vh, 400px); overflow-y: auto; padding: 5px;
+  background: var(--panel); border: 1px solid var(--line-strong); border-radius: 9px;
+  box-shadow: 0 16px 40px var(--shadow);
+}
+.theme-group {
+  padding: 8px 8px 5px; color: var(--dimmer);
+  font-size: 10px; font-weight: 650; letter-spacing: 0.09em; text-transform: uppercase;
+}
+.theme-group:first-child { padding-top: 4px; }
+.theme-option {
+  display: flex; align-items: center; gap: 9px; width: 100%; padding: 5px 7px;
+  color: var(--dim); background: transparent; border: none; border-radius: 6px;
+  text-align: left; font-size: 12.5px;
+}
+.theme-option:hover, .theme-option:focus-visible { background: var(--surface-hover); color: var(--ink); }
+.theme-option.on { background: var(--surface-active); color: var(--ink); }
+.theme-option .check { flex: none; color: var(--accent); }
+
+.theme-swatch {
+  flex: none; width: 26px; height: 18px; border-radius: 5px;
+  border: 1px solid var(--line-strong);
+  background: linear-gradient(120deg, var(--bg) 0 44%, var(--accent) 44% 62%, var(--ok) 62% 80%, var(--warn) 80%);
+}
+
+/* The same picker on the sign-in screen, which has no rail to sit in. */
+.corner-theme { position: fixed; left: 14px; bottom: 14px; width: 190px; }
 
 /* ── the track's own header ────────────────────────────────────────────── */
 
@@ -467,7 +681,7 @@ h4 { font-size: 11px; color: var(--dim); text-transform: uppercase; letter-spaci
 /* ── dialogs ───────────────────────────────────────────────────────────── */
 
 .scrim {
-  position: fixed; inset: 0; z-index: 40; background: rgba(0, 0, 0, 0.55);
+  position: fixed; inset: 0; z-index: 40; background: var(--scrim);
   display: grid; place-items: center; padding: 24px;
   animation: fade 120ms ease;
 }
@@ -527,6 +741,9 @@ h4 { font-size: 11px; color: var(--dim); text-transform: uppercase; letter-spaci
   .app { grid-template-columns: 1fr; }
   .yard { display: none; }
   .yard.forced { display: flex; position: fixed; inset: 0 auto 0 0; width: var(--rail); z-index: 30; }
+  /* The rail goes, and with it the picker; a floating one would sit on top of
+     the sign-in card rather than beside it. Same breakpoint on purpose. */
+  .corner-theme { display: none; }
 }
 
 /* ── who said it, on a track more than one person types into ──────────── */

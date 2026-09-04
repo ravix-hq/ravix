@@ -13,6 +13,16 @@
       href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🚦</text></svg>"
     />
     <title>Switchyard</title>
+    <script>
+      // The saved palette, applied before the stylesheet paints — a module
+      // import runs after first paint, which on a light theme is a full frame
+      // of near-black. `src/lib/theme.ts` owns this key and `theme.test.ts`
+      // asserts the two still agree; `main.tsx` validates the value.
+      try {
+        var saved = localStorage.getItem("switchyard.theme");
+        if (saved) document.documentElement.setAttribute("data-theme", saved);
+      } catch {}
+    </script>
   </head>
   <body>
     <div id="root"></div>

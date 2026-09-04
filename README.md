@@ -263,6 +263,29 @@ discovered:
 - **It is one request in, one response out.** `ls`, `git log` and `npm test` are
   exactly right. `vim` and `top` are not.
 
+## Sixteen palettes, in the foot of the rail
+
+The theme picker carries the editor canon — One Dark, Dracula, Nord, Tokyo
+Night, Catppuccin, Night Owl, Monokai, Gruvbox, Solarized both ways, GitHub and
+One in their light versions — alongside this app's own Switchyard and Daylight.
+It is not decoration. What fills this screen is a transcript full of diffs, and
+somebody who has read diffs in Gruvbox for six years reads them faster in
+Gruvbox.
+
+The whole mechanism is one attribute on `<html>`: every colour in `styles.css`
+is a custom property declared under `[data-theme="…"]`, and nothing below the
+palettes hard-codes a hex. Two details follow from that and are worth knowing
+before adding a theme, both explained in `src/lib/theme.ts` — the selectors are
+not anchored to `:root`, so the picker's sixteen swatches are live palettes
+rather than sixteen hand-written gradients; and the choice is applied by an
+inline script in `index.html` before the stylesheet paints, because a module
+import runs one full frame too late and that frame is near-black.
+
+`src/lib/theme.test.ts` fails the build if a theme in the list has no complete
+block in the CSS. A missing token there does not break anything loudly — it
+falls back to the default palette's value, so a Dracula shell with one
+near-black panel in it looks like a design choice.
+
 ## What is not here, and why
 
 | Conductor has | Switchyard | Because |
