@@ -171,6 +171,18 @@ export function People({ track, viewerLogin, onClose, onChanged, onLeft }: Peopl
     };
   }, [track.id]);
 
+  // And again whenever the shell re-reads the track, which it now does on the
+  // stream's `people` event. Without this the dialog is a photograph: somebody
+  // joining by the link you are looking at does not appear in it, which is the
+  // one moment this list is most worth being right.
+  //
+  // The server's list wins over local state rather than merging with it —
+  // every mutation here already replaces `people` wholesale with what the
+  // server returned, so there is nothing local to lose.
+  useEffect(() => {
+    setPeople(track.people);
+  }, [track.people]);
+
   // Whether a link is out. Owner-only because the route is: a member asking
   // gets a 403, and an error banner about a control they cannot see would be
   // the dialog reporting its own bad question.

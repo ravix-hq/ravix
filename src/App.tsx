@@ -115,31 +115,6 @@ export function App() {
     void reloadTracks(route.projectId);
   }, [route.projectId, reloadTracks]);
 
-  useEffect(() => {
-    const projectId = route.projectId;
-    if (!projectId) return;
-    return subscribe(`/api/projects/${projectId}/stream`, {
-      tracks: () => void reloadTracks(projectId),
-      turn: () => void reloadTracks(projectId),
-      settings: () => void reloadProjects(),
-      machine: () => void reloadProjects(),
-    });
-  }, [route.projectId, reloadTracks, reloadProjects]);
-
-  // Which track's answer we are still willing to accept. Selection can change
-  // faster than the server answers, and a reply for the track you just left
-  // must not land on top of the one you just opened.
-  const wanted = useRef<string | null>(route.trackId);
-
-  /**
-   * The open track's detail, which carries the ribbon and the starters. Kept
-   * separate from the list because the list is a summary and re-fetching it on
-   * every stream frame must not re-render the transcript's parent.
-   *
-   * A function rather than only an effect because two things ask for it: the
-   * selection changing, and a panel that just changed something about the
-   * track it is showing.
-   */
   // ── navigation ──────────────────────────────────────────────────────
 
   const go = useCallback((next: Route) => {
@@ -171,6 +146,40 @@ export function App() {
     },
     [notify, go, reloadProjects],
   );
+
+  useEffect(() => {
+    const projectId = route.projectId;
+    if (!projectId) return;
+    return subscribe(`/api/projects/${projectId}/stream`, {
+      tracks: () => void reloadTracks(projectId),
+      turn: () => void reloadTracks(projectId),
+      settings: () => void reloadProjects(),
+      machine: () => void reloadProjects(),
+      // Somebody joined by link, or was invited or removed from another
+      // window. In an app whose premise is other people doing things, a
+      // membership that only refreshes when you reload is the one kind of
+      // staleness that undermines the feature itself.
+      people: (data) => {
+        const trackId = (data as { trackId?: string } | null)?.trackId;
+        if (trackId && wanted.current === trackId) void loadDetail(trackId);
+      },
+    });
+  }, [route.projectId, reloadTracks, reloadProjects, loadDetail]);
+
+  // Which track's answer we are still willing to accept. Selection can change
+  // faster than the server answers, and a reply for the track you just left
+  // must not land on top of the one you just opened.
+  const wanted = useRef<string | null>(route.trackId);
+
+  /**
+   * The open track's detail, which carries the ribbon and the starters. Kept
+   * separate from the list because the list is a summary and re-fetching it on
+   * every stream frame must not re-render the transcript's parent.
+   *
+   * A function rather than only an effect because two things ask for it: the
+   * selection changing, and a panel that just changed something about the
+   * track it is showing.
+   */
 
   useEffect(() => {
     const trackId = route.trackId;
