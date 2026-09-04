@@ -49,7 +49,17 @@ import { publish } from "./hub";
 export const CLONE_SECRET_KEY = "GITHUB_TOKEN";
 
 const DEFAULT_RUNTIME = "claude";
-const DEFAULT_MODEL = "claude-opus-5";
+/**
+ * Provider-prefixed, because Fountain's are.
+ *
+ * `POST /api/agents` validates `model` against `^[a-z0-9_-]+/[a-z0-9._-]+$`,
+ * and the catalog lists `anthropic/claude-opus-5`. A bare `claude-opus-5`
+ * survived here for a while only because `pickRuntime` falls through to
+ * "whatever in the catalog has opus in the name" — so the wrong constant was
+ * invisible until the catalog call failed, at which point every project
+ * creation would have 422'd on a field nobody was looking at.
+ */
+const DEFAULT_MODEL = "anthropic/claude-opus-5";
 
 /** `GET /api/projects` */
 export async function list(ctx: AppContext, req: Request): Promise<Response> {
@@ -488,7 +498,7 @@ export function toProject(row: ProjectRow, machine: MachineState, user: UserRow)
  * project panel says what was picked and lets it be changed afterwards, which
  * is where the decision belongs.
  */
-function pickRuntime(catalog: { runtimes?: string[]; models?: Record<string, string[]> } | null): { runtime: string; model: string } {
+export function pickRuntime(catalog: { runtimes?: string[]; models?: Record<string, string[]> } | null): { runtime: string; model: string } {
   const runtimes = catalog?.runtimes ?? [];
   const runtime = runtimes.includes(DEFAULT_RUNTIME) ? DEFAULT_RUNTIME : (runtimes[0] ?? DEFAULT_RUNTIME);
   const models = catalog?.models?.[runtime] ?? [];
