@@ -96,7 +96,14 @@ export function PeopleStack({ people, onOpen, max = 3 }: PeopleStackProps) {
       type="button"
       className="ghost people-stack"
       onClick={onOpen}
-      aria-label={`${people.length} people on this track`}
+      aria-label={
+        // Same distinction the footer draws: somebody invited is not somebody
+        // who can reach it, and a label that said otherwise would be the one
+        // part of this dialog a screen reader got wrong.
+        people.filter((p) => !p.pending).length === people.length
+          ? `${people.length} people on this track`
+          : `${people.filter((p) => !p.pending).length} people on this track, ${people.filter((p) => p.pending).length} invited`
+      }
       title={people.map((p) => `@${p.login}`).join(", ")}
     >
       {shown.map((p) => (
@@ -384,6 +391,9 @@ export function People({ track, viewerLogin, onClose, onChanged, onLeft }: Peopl
     }
   }
 
+  const here = people.filter((p) => !p.pending).length;
+  const waiting = people.length - here;
+
   return (
     <Dialog
       title="People on this track"
@@ -415,7 +425,12 @@ export function People({ track, viewerLogin, onClose, onChanged, onLeft }: Peopl
         ) : (
           <>
             <span className="dimmer">
-              {people.length === 1 ? "Only you" : `${people.length} people can reach this track`}
+              {/* Pending people are counted separately, because they cannot
+                  reach it — that is the whole difference between the two kinds
+                  of row, and a footer that added them together would contradict
+                  the "has not signed in here yet" line six inches above it. */}
+              {here === 1 ? "Only you" : `${here} people can reach this track`}
+              {waiting > 0 ? `, ${waiting} invited` : ""}
             </span>
             <span className="spacer" />
             <button type="button" onClick={onClose}>
