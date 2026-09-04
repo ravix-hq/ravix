@@ -209,6 +209,31 @@ transcript can say who asked and the agent knows who it is working for.
 only when a track actually has more than one person in it — a solo track
 labelled with your own name reads as the app talking to itself.
 
+### Who is here, and who is typing
+
+Two clocks with opposite requirements, which is the whole of `server/presence.ts`.
+
+**Watching** lasts 45 seconds and is refreshed by a heartbeat. It is generous
+on purpose: it has to outlive a slow tab and a closed laptop lid, and a name
+that lingers briefly is a much smaller lie than a name that vanishes while its
+owner is still reading. Closing a track says so explicitly rather than waiting
+for the lease, because leaving is the one moment we actually know.
+
+**Typing** lasts 3 seconds and is refreshed by keystrokes. It is ungenerous for
+the opposite reason: "@ana is typing…" left up over an empty chair is worse
+than no indicator, because it is the signal people wait on before sending
+something themselves. It is a *pulse*, not a state — the browser says "still
+typing" and the server gives that three seconds, so a tab that dies mid-word
+stops claiming without having to apologise for it.
+
+Neither is persisted. Presence that survived a restart would be a list of
+people who are not there.
+
+Presence is per **track**, and the `here` event carries an audience: the owner
+and that track's members, nobody else on the project's channel. An event naming
+a track is an event that says the track exists, and a member who cannot see it
+should not learn otherwise from a heartbeat.
+
 ### What sharing a track actually costs
 
 The worktrees are separate directories on **one machine**, and the separation

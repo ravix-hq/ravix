@@ -33,6 +33,7 @@ import { prepareMachine } from "./projects";
 import { HttpError, json, readJson, str } from "./http";
 import { peopleOf } from "./people";
 import { publish } from "./hub";
+import { beat, leave } from "./presence";
 
 /** `GET /api/projects/:id/tracks` */
 export async function list(ctx: AppContext, req: Request, projectId: string): Promise<Response> {
@@ -305,6 +306,47 @@ function readImages(raw: unknown): { data: string; media_type: string }[] {
     out.push({ data, media_type });
   }
   return out;
+}
+
+/**
+ * `POST /api/tracks/:id/presence` — I am here, and possibly typing.
+ *
+ * One route for both because they are one heartbeat: the browser is already
+ * saying "still watching" on a timer, and `typing` rides along rather than
+ * opening a second channel that could disagree with the first about whether
+ * somebody is still in the room.
+ *
+ * `leaving` is the polite half. A lease would expire on its own in
+ * forty-five seconds, but somebody closing a track is the one moment we
+ * actually know, and a ghost in the corner of a colleague's screen for most of
+ * a minute is exactly the small wrongness that makes presence feel broken.
+ */
+export async function presence(ctx: AppContext, req: Request, trackId: string): Promise<Response> {
+  const user = await authenticate(ctx, req);
+  const { track, project } = trackOf(ctx, user, trackId);
+  const body = await readJson(req);
+
+  // Who may be told. The owner always, plus this track's members — and nobody
+  // else on the project's channel, because an event naming a track is an event
+  // that says the track exists.
+  const audience = new Set<string>([project.userId, ...ctx.db.membersOf(track.id).map((m) => m.id)]);
+
+  if (body.leaving === true) {
+    leave(track.id, user.id, project.id, audience);
+    return json({ data: [] });
+  }
+
+  const here = beat({
+    trackId: track.id,
+    projectId: project.id,
+    userId: user.id,
+    login: user.login,
+    name: user.name,
+    avatarUrl: user.avatarUrl,
+    typing: body.typing === true,
+    audience,
+  });
+  return json({ data: here });
 }
 
 /** `POST /api/tracks/:id/interrupt` */

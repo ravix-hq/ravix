@@ -29,6 +29,7 @@
  *   POST   /api/tracks/:id/prompt
  *   POST   /api/tracks/:id/interrupt
  *   POST   /api/tracks/:id/read             this person has seen it up to now
+ *   POST   /api/tracks/:id/presence         heartbeat; {typing} or {leaving}
  *   POST   /api/tracks/:id/retry            send the opening turn again
  *   GET    /api/tracks/:id/events           the transcript so far
  *   GET    /api/tracks/:id/stream           the transcript, live
@@ -114,7 +115,7 @@ export function buildRouter(ctx: AppContext): (req: Request) => Promise<Response
     if (project.userId !== user.id && !ctx.db.memberTracks(user.id).some((t) => t.projectId === project.id)) {
       throw new HttpError(404, "not_found", "No such project.");
     }
-    return projectStream(project.id, req.signal);
+    return projectStream(project.id, user.id, req.signal);
   });
 
   on("GET", "/api/tracks/:id", (req, p) => tracks.show(ctx, req, p.id!));
@@ -123,6 +124,7 @@ export function buildRouter(ctx: AppContext): (req: Request) => Promise<Response
   on("POST", "/api/tracks/:id/prompt", (req, p) => tracks.prompt(ctx, req, p.id!));
   on("POST", "/api/tracks/:id/interrupt", (req, p) => tracks.interrupt(ctx, req, p.id!));
   on("POST", "/api/tracks/:id/read", (req, p) => tracks.markRead(ctx, req, p.id!));
+  on("POST", "/api/tracks/:id/presence", (req, p) => tracks.presence(ctx, req, p.id!));
   on("POST", "/api/tracks/:id/retry", (req, p) => tracks.retry(ctx, req, p.id!));
   on("GET", "/api/tracks/:id/events", (req, p) => tracks.events(ctx, req, p.id!));
   on("GET", "/api/tracks/:id/stream", (req, p) => tracks.stream(ctx, req, p.id!));

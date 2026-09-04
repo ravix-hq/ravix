@@ -28,6 +28,15 @@ export interface ComposerProps {
   /** Sends now. Rejects if the machine refuses; the caller surfaces that. */
   onSend: (text: string, images: OutgoingImage[]) => Promise<void>;
   onInterrupt: () => void;
+  /**
+   * Keys are being pressed with something in the box.
+   *
+   * Called on every keystroke and throttled by the caller, because the rate
+   * that matters is the server's typing lease rather than anything this
+   * component knows about. There is no matching "stopped": the claim expires
+   * on its own, so a box left half-written simply goes quiet.
+   */
+  onTyping?: () => void;
   running: boolean;
   /** The model the project's agent runs, shown but not chosen here. */
   model: string;
@@ -49,7 +58,7 @@ interface Pending {
   items: Attachment[];
 }
 
-export function Composer({ onSend, onInterrupt, running, model, disabled, placeholder }: ComposerProps) {
+export function Composer({ onSend, onInterrupt, onTyping, running, model, disabled, placeholder }: ComposerProps) {
   const [text, setText] = useState("");
   const [items, setItems] = useState<Attachment[]>([]);
   const [note, setNote] = useState<string | null>(null);
@@ -250,7 +259,13 @@ export function Composer({ onSend, onInterrupt, running, model, disabled, placeh
           value={text}
           disabled={disabled}
           placeholder={placeholder ?? "Ask for a change, or a question about this branch"}
-          onChange={(e) => setText(e.target.value)}
+          onChange={(e) => {
+            setText(e.target.value);
+            // Only while there is something in the box. Emptying it is not
+            // typing, and neither is clearing it to start again — the claim
+            // that was already made lapses three seconds later on its own.
+            if (e.target.value.trim()) onTyping?.();
+          }}
           onPaste={(e) => {
             // Only when the clipboard actually carried files. Pasting text
             // that happens to come from an image editor must still paste.

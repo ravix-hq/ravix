@@ -17,6 +17,7 @@ import type {
   FileListing,
   IssueRef,
   Person,
+  Presence,
   Project,
   ProjectSettings,
   PullRef,
@@ -108,6 +109,15 @@ export const api = {
     post<{ ok: true }>(`/api/tracks/${id}/prompt`, { prompt: text, ...(images.length ? { images } : {}) }),
   /** This person has seen the track up to now. Clears its unread dot. */
   markRead: (id: string) => post<{ ok: true }>(`/api/tracks/${id}/read`),
+  /**
+   * Still here, and possibly mid-sentence.
+   *
+   * `typing` is a pulse the server gives three seconds, not a state to turn
+   * off — so the composer pings while keys are being pressed and simply stops,
+   * and a browser that dies mid-word does not leave a claim behind.
+   */
+  presence: (id: string, opts: { typing?: boolean; leaving?: boolean } = {}) =>
+    post<Presence[]>(`/api/tracks/${id}/presence`, opts),
   interrupt: (id: string) => post<{ ok: true }>(`/api/tracks/${id}/interrupt`),
   retry: (id: string) => post<{ ok: true }>(`/api/tracks/${id}/retry`),
   events: (id: string) => call<TranscriptPage>(`/api/tracks/${id}/events`),

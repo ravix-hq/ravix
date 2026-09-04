@@ -31,6 +31,21 @@ export interface Person {
   pending?: boolean;
 }
 
+/**
+ * Somebody with a track open right now.
+ *
+ * Not the same list as `Track.people`: that is who *may* reach it, this is who
+ * is looking. Somebody can be on one and not the other in both directions —
+ * invited and away, or the owner who is always allowed and currently absent.
+ */
+export interface Presence {
+  login: string;
+  name: string | null;
+  avatarUrl: string | null;
+  /** Mid-sentence in the composer, as of the last three seconds. */
+  typing: boolean;
+}
+
 /** The one live invite link a track may have. */
 export interface TrackLink {
   /** Absolute, and only ever returned to the owner at the moment it is minted. */
@@ -372,7 +387,15 @@ export type ProjectEvent =
   | { event: "turn"; data: { trackId: string; status: Track["status"] } }
   | { event: "settings"; data: { rev: number } }
   /** The membership of a track changed: somebody was invited, or left. */
-  | { event: "people"; data: { trackId: string } };
+  | { event: "people"; data: { trackId: string } }
+  /**
+   * Who has a track open, and who is typing in it.
+   *
+   * Carries the whole set rather than a delta. The set is small, the events
+   * are frequent, and a client that missed one delta would be wrong until the
+   * next person moved — which on a quiet track is a long time.
+   */
+  | { event: "here"; data: { trackId: string; present: Presence[] } };
 
 // ── errors ─────────────────────────────────────────────────────────────
 

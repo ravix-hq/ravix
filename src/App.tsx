@@ -18,7 +18,7 @@
  *     tree would be a worse outcome than the failure.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { Capabilities, Project, SessionInfo, Track, TrackHeader } from "../shared/api";
+import type { Capabilities, Presence, Project, SessionInfo, Track, TrackHeader } from "../shared/api";
 import { api, ApiError, subscribe } from "./lib/api";
 import { Info, Machine, Plus, X } from "./lib/icons";
 import { Empty } from "./components/Empty";
@@ -62,6 +62,19 @@ export function App() {
   const [detail, setDetail] = useState<{ track: Track; header: TrackHeader; starters: { label: string; prompt: string }[] } | null>(null);
   const [toasts, setToasts] = useState<{ id: number; text: string; bad: boolean }[]>([]);
   const toastId = useRef(0);
+
+  /**
+   * Who is on the open track, and who is on all the others.
+   *
+   * Split deliberately. Only one track's presence is on screen, and the stream
+   * carries `here` for every track this person can reach — so putting the lot
+   * in state would re-render the transcript every time somebody typed a
+   * character in a track nobody here is looking at. The ledger keeps them
+   * anyway, because it costs a map write and it means switching to a track
+   * shows who is in it immediately rather than after the next sweep.
+   */
+  const [present, setPresent] = useState<Presence[]>([]);
+  const presence = useRef<Record<string, Presence[]>>({});
 
   const notify = useCallback((text: string, bad = true) => {
     const id = ++toastId.current;
@@ -191,6 +204,16 @@ export function App() {
         const trackId = (data as { trackId?: string } | null)?.trackId;
         if (trackId && wanted.current === trackId) void loadDetail(trackId);
       },
+      // The whole set every time rather than a delta, which is what makes this
+      // a plain assignment: there is nothing to merge and nothing to get out
+      // of step with, and a frame missed while the socket reconnected is
+      // corrected by the next one rather than lived with.
+      here: (data) => {
+        const frame = data as { trackId?: string; present?: Presence[] } | null;
+        if (!frame?.trackId || !Array.isArray(frame.present)) return;
+        presence.current[frame.trackId] = frame.present;
+        if (wanted.current === frame.trackId) setPresent(frame.present);
+      },
     });
   }, [route.projectId, reloadTracks, reloadProjects, loadDetail]);
 
@@ -214,8 +237,12 @@ export function App() {
     if (!trackId) {
       wanted.current = null;
       setDetail(null);
+      setPresent([]);
       return;
     }
+    // Whatever the ledger last heard about this track, until the heartbeat the
+    // track view is about to start brings back a set that includes us.
+    setPresent(presence.current[trackId] ?? []);
     void loadDetail(trackId);
   }, [route.trackId, loadDetail]);
 
@@ -354,7 +381,7 @@ export function App() {
               ) : project.repo ? (
                 <span className="chip mono">{project.repo}</span>
               ) : null}
-              {detail ? <PeopleStack people={detail.track.people} onOpen={() => setDialog("people")} /> : null}
+              {detail ? <PeopleStack people={detail.track.people} present={present} onOpen={() => setDialog("people")} /> : null}
               <span className="spacer" />
               {/* A member has neither of these on the server, so they do not
                   get them here — an owner-only button that answers 403 teaches
@@ -397,6 +424,8 @@ export function App() {
                     header={detail.header}
                     starters={detail.starters}
                     capabilities={capabilities}
+                    present={present}
+                    viewerLogin={session.viewer.login}
                     onError={notify}
                     onOpenSettings={() => setDialog("settings")}
                     // A turn ending is the other moment this person has seen

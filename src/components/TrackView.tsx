@@ -14,10 +14,11 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { LogEvent } from "../../shared/fountain-types";
-import type { Capabilities, Project, Track, TrackHeader, TurnRecord } from "../../shared/api";
+import type { Capabilities, Presence, Project, Track, TrackHeader, TurnRecord } from "../../shared/api";
 import { api, ApiError, subscribe } from "../lib/api";
 import { Branch, Clock, External, Folder, Info, Issue, Pull, Wrench } from "../lib/icons";
 import type { OutgoingImage } from "../lib/images";
+import { others, subject, useHeartbeat } from "../lib/presence";
 import { Composer } from "./Composer";
 import { Transcript } from "./Transcript";
 
@@ -27,6 +28,10 @@ export interface TrackViewProps {
   header: TrackHeader;
   starters: { label: string; prompt: string }[];
   capabilities: Capabilities;
+  /** Who has this track open, this viewer included. */
+  present: Presence[];
+  /** So the typing line can leave the reader out of it. */
+  viewerLogin: string;
   onError: (message: string) => void;
   onOpenSettings: () => void;
   /** Called when a turn starts or ends, so the rail's dot agrees with the view. */
@@ -52,6 +57,20 @@ export function TrackView(props: TrackViewProps) {
    */
   const showing = useRef(track.id);
   showing.current = track.id;
+
+  // This component is mounted for exactly the track that is open and keyed on
+  // its id, which is what makes it the right place for the heartbeat: a beat
+  // sent from anywhere with a longer life than the view would keep announcing
+  // a track this person has already walked away from.
+  const pulse = useHeartbeat(track.id);
+
+  // Never the reader. "You are typing" is information nobody has ever wanted,
+  // and their own name in the line is how a viewer concludes the whole feature
+  // is reporting the wrong thing.
+  const typing = useMemo(
+    () => others(props.present, props.viewerLogin).filter((p) => p.typing).map((p) => p.login),
+    [props.present, props.viewerLogin],
+  );
 
   // The transcript so far, then the live stream. Both feed one list,
   // de-duplicated by event id — the stream replays what the fetch already
@@ -192,9 +211,18 @@ export function TrackView(props: TrackViewProps) {
         </div>
       ) : null}
 
+      {/* Always rendered, empty or not. The line appears and disappears on a
+          three second lease while somebody is reading what is above it, and a
+          composer that hopped up and down each time would be a worse thing to
+          have than no indicator at all. */}
+      <div className="typing" role="status" aria-live="polite">
+        {typing.length ? `${subject(typing)} typing…` : ""}
+      </div>
+
       <Composer
         onSend={send}
         onInterrupt={interrupt}
+        onTyping={pulse}
         running={running}
         model={project.model}
         placeholder={

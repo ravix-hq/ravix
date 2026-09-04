@@ -948,3 +948,20 @@ input.crumb-name { width: 30ch; }
 
 /* ── renaming a track, in the crumb it is read in ──────────────────────── */
 
+
+/* ── who is here, and who is mid-sentence ──────────────────────────────── */
+
+/* The stack already rings each face in the panel colour so the discs read as
+   discs; being here replaces that ring with the accent rather than adding a
+   second one outside it, so an arrival changes a colour and never a width —
+   faces that shuffled sideways as people came and went would be the loudest
+   thing in a header that is meant to be read past. */
+.face.here { box-shadow: 0 0 0 2px var(--accent); }
+
+/* Reserved whether or not anybody is typing. Three seconds is short enough
+   that a line which took its space when it appeared would move the box under
+   somebody's hands several times a sentence. */
+.typing {
+  flex: none; height: 15px; padding: 0 32px; font-size: 11.5px; line-height: 15px;
+  color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}

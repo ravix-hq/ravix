@@ -17,22 +17,45 @@ import type { ProjectEvent } from "../shared/api";
 
 type Listener = (e: ProjectEvent) => void;
 
-const listeners = new Map<string, Set<Listener>>();
+/**
+ * A browser on this channel, and who is behind it.
+ *
+ * The userId is not decoration. A project's stream is subscribed by its owner
+ * *and* by everyone invited to any one of its tracks, and some of what goes
+ * down it names a track — who is watching it, who was just invited to it. A
+ * member who cannot see that track should not learn it exists from an event
+ * about it, so an event may carry an audience and the fan-out honours it.
+ */
+interface Subscriber {
+  userId: string;
+  fn: Listener;
+}
 
-export function subscribe(projectId: string, fn: Listener): () => void {
-  const set = listeners.get(projectId) ?? new Set<Listener>();
-  set.add(fn);
+const listeners = new Map<string, Set<Subscriber>>();
+
+export function subscribe(projectId: string, userId: string, fn: Listener): () => void {
+  const sub: Subscriber = { userId, fn };
+  const set = listeners.get(projectId) ?? new Set<Subscriber>();
+  set.add(sub);
   listeners.set(projectId, set);
   return () => {
-    set.delete(fn);
+    set.delete(sub);
     if (set.size === 0) listeners.delete(projectId);
   };
 }
 
-export function publish(projectId: string, event: ProjectEvent): void {
-  for (const fn of listeners.get(projectId) ?? []) {
+/**
+ * Fan one event out.
+ *
+ * `audience`, when given, is the set of user ids the event is for; anybody
+ * else on the channel is skipped. Omitted means everybody, which is right for
+ * the events that describe the project rather than one track.
+ */
+export function publish(projectId: string, event: ProjectEvent, audience?: ReadonlySet<string>): void {
+  for (const sub of listeners.get(projectId) ?? []) {
+    if (audience && !audience.has(sub.userId)) continue;
     try {
-      fn(event);
+      sub.fn(event);
     } catch {
       // A browser that went away mid-write. The next flush drops it; a throw
       // here would take the publisher's request down with it.
@@ -54,7 +77,7 @@ export function resetHub(): void {
  * bug to notice. A `:` line is a comment in the SSE grammar — it keeps the
  * socket warm and is ignored by `EventSource`.
  */
-export function projectStream(projectId: string, signal: AbortSignal): Response {
+export function projectStream(projectId: string, userId: string, signal: AbortSignal): Response {
   const encoder = new TextEncoder();
   let unsubscribe = () => {};
   let keepalive: ReturnType<typeof setInterval> | undefined;
@@ -69,7 +92,7 @@ export function projectStream(projectId: string, signal: AbortSignal): Response 
         }
       };
       send(": open\n\n");
-      unsubscribe = subscribe(projectId, (e) => send(`event: ${e.event}\ndata: ${JSON.stringify(e.data)}\n\n`));
+      unsubscribe = subscribe(projectId, userId, (e) => send(`event: ${e.event}\ndata: ${JSON.stringify(e.data)}\n\n`));
       keepalive = setInterval(() => send(": ping\n\n"), 20_000);
       signal.addEventListener("abort", () => {
         unsubscribe();

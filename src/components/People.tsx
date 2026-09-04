@@ -22,8 +22,9 @@
  * a rule of its own rather than beside the invite box as an equal option.
  */
 import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
-import type { Person, Track, TrackLink } from "../../shared/api";
+import type { Person, Presence, Track, TrackLink } from "../../shared/api";
 import { api } from "../lib/api";
+import { subject } from "../lib/presence";
 import { AddPerson, Search, X } from "../lib/icons";
 import { Dialog, ago } from "./Dialog";
 
@@ -51,11 +52,19 @@ function until(iso: string): string | null {
 
 const ahead = (n: number, unit: string) => `in ${n} ${unit}${n === 1 ? "" : "s"}`;
 
-/** A round avatar, or the first letter of the login when GitHub has no image. */
-function Face({ person }: { person: Person }) {
-  if (person.avatarUrl) return <img className="face" src={person.avatarUrl} alt="" />;
+/**
+ * A round avatar, or the first letter of the login when GitHub has no image.
+ *
+ * `here` rings it. The ring is never the only thing saying so — the button it
+ * sits in carries the names in its label and its tooltip — because a coloured
+ * outline on a small disc is precisely the signal a reader who cannot separate
+ * the accent from the panel colour will miss.
+ */
+function Face({ person, here = false }: { person: Person; here?: boolean }) {
+  const className = `face${here ? " here" : ""}`;
+  if (person.avatarUrl) return <img className={className} src={person.avatarUrl} alt="" />;
   return (
-    <span className="face" aria-hidden="true">
+    <span className={className} aria-hidden="true">
       {person.login.slice(0, 1).toUpperCase()}
     </span>
   );
@@ -64,6 +73,8 @@ function Face({ person }: { person: Person }) {
 export interface PeopleStackProps {
   people: Person[];
   onOpen: () => void;
+  /** Who has this track open right now. A subset of `people`, and often empty. */
+  present?: Presence[];
   /** Faces drawn before the rest collapse into a `+N`. */
   max?: number;
 }
@@ -76,7 +87,7 @@ export interface PeopleStackProps {
  * ornament that never told anybody anything — the stack is only worth the room
  * it takes once it is reporting a fact you did not already know.
  */
-export function PeopleStack({ people, onOpen, max = 3 }: PeopleStackProps) {
+export function PeopleStack({ people, onOpen, present = [], max = 3 }: PeopleStackProps) {
   // A track nobody has been invited to still needs a way in, and this is the
   // only one there is — a stack of one face is not a control anybody would
   // think to press, so a solo track gets a word instead. Hiding it until a
@@ -91,23 +102,27 @@ export function PeopleStack({ people, onOpen, max = 3 }: PeopleStackProps) {
   }
   const shown = people.slice(0, max);
   const rest = people.length - shown.length;
+  const here = new Set(present.map((p) => p.login.toLowerCase()));
+  // Named from the membership rather than from the presence list, so the order
+  // is the order of the faces beside it and does not shuffle as people arrive.
+  const hereNow = here.size ? `${subject(people.filter((p) => here.has(p.login.toLowerCase())).map((p) => p.login))} here now` : "";
+  const membership =
+    // Same distinction the footer draws: somebody invited is not somebody
+    // who can reach it, and a label that said otherwise would be the one
+    // part of this dialog a screen reader got wrong.
+    people.filter((p) => !p.pending).length === people.length
+      ? `${people.length} people on this track`
+      : `${people.filter((p) => !p.pending).length} people on this track, ${people.filter((p) => p.pending).length} invited`;
   return (
     <button
       type="button"
       className="ghost people-stack"
       onClick={onOpen}
-      aria-label={
-        // Same distinction the footer draws: somebody invited is not somebody
-        // who can reach it, and a label that said otherwise would be the one
-        // part of this dialog a screen reader got wrong.
-        people.filter((p) => !p.pending).length === people.length
-          ? `${people.length} people on this track`
-          : `${people.filter((p) => !p.pending).length} people on this track, ${people.filter((p) => p.pending).length} invited`
-      }
-      title={people.map((p) => `@${p.login}`).join(", ")}
+      aria-label={hereNow ? `${membership}, ${hereNow}` : membership}
+      title={[people.map((p) => `@${p.login}`).join(", "), hereNow].filter(Boolean).join("\n")}
     >
       {shown.map((p) => (
-        <Face key={p.login} person={p} />
+        <Face key={p.login} person={p} here={here.has(p.login.toLowerCase())} />
       ))}
       {rest > 0 ? <span className="face more">+{rest}</span> : null}
     </button>
