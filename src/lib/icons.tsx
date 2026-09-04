@@ -171,6 +171,19 @@ export const Chevron = (p: P & { open?: boolean }) => (
   </Svg>
 );
 
+/**
+ * Three quarters of a ring, drawn open at the top so that it reads as turning
+ * once something turns it. A circle that is *missing a piece* is legible as
+ * activity even standing still, which is what a reader with reduced motion on
+ * gets — so this is the one glyph in the set whose meaning does not depend on
+ * the animation that usually carries it.
+ */
+export const Spinner = (p: P) => (
+  <Svg {...p}>
+    <path d="M12 3.5a8.5 8.5 0 1 1-8.5 8.5" />
+  </Svg>
+);
+
 export const ArrowUp = (p: P) => (
   <Svg {...p}>
     <path d="M12 19V5M6 11l6-6 6 6" />

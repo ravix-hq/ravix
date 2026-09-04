@@ -388,7 +388,18 @@ h4 { font-size: 11px; color: var(--dim); text-transform: uppercase; letter-spaci
   content: ""; position: absolute; left: 17px; top: 0; bottom: 0; width: 1px; background: var(--line);
 }
 .track-row:last-child::before { bottom: 50%; }
-.track-num { flex: none; min-width: 13px; color: var(--dimmer); font-size: 11px; font-variant-numeric: tabular-nums; }
+.track-num {
+  flex: none; min-width: 13px; display: inline-flex; align-items: center; justify-content: center;
+  color: var(--dimmer); font-size: 11px; font-variant-numeric: tabular-nums;
+}
+
+/* The right end of a track row, sized once for both marks it can hold: a dot
+   that sits still and an arc that turns. Same box either way, so a turn
+   starting does not slide the title sideways under the pointer. */
+.track-mark { flex: none; width: 12px; height: 12px; display: inline-flex; align-items: center; justify-content: center; }
+.track-mark.spin { color: var(--accent); animation: spin 0.9s linear infinite; }
+.track-mark.spin.opening { color: var(--warn); }
+@keyframes spin { to { transform: rotate(360deg); } }
 
 .dot { flex: none; width: 6px; height: 6px; border-radius: 999px; background: var(--dimmer); }
 .dot.ready { background: var(--ok); }
@@ -396,7 +407,11 @@ h4 { font-size: 11px; color: var(--dim); text-transform: uppercase; letter-spaci
 .dot.opening { background: var(--warn); animation: pulse 1.4s ease-in-out infinite; }
 .dot.failed { background: var(--bad); }
 @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.32; } }
-@media (prefers-reduced-motion: reduce) { .dot.running, .dot.opening { animation: none; } }
+/* The arc is drawn open at the top, so it still reads as *doing something*
+   once it stops turning. That is the whole reason it is an arc. */
+@media (prefers-reduced-motion: reduce) {
+  .dot.running, .dot.opening, .track-mark.spin { animation: none; }
+}
 
 .yard-foot { padding: 8px; border-top: 1px solid var(--line); display: flex; flex-direction: column; gap: 5px; }
 .yard-foot-row { display: flex; align-items: center; gap: 6px; padding: 0 2px; }
@@ -817,16 +832,23 @@ input.crumb-name { width: 30ch; }
 .scroll.log > * { margin-top: auto; }
 
 /* ── a track nobody has read yet ───────────────────────────────────────────
-   Said twice on purpose, and neither half is a second dot. The row already
-   ends in one for the machine's status, so unread rings *that* dot rather than
-   adding a pip beside it — two coloured circles per row, meaning different
-   things, is how a rail stops being readable at a glance. The weight and the
-   ink in the title are the half that carries: they survive a theme with a
-   quiet accent, a reader who cannot separate the ring from the dot, and the
-   grey status of a track that is simply sitting there. */
+   Said twice, in the two places a mail client says it: weight in the title,
+   and a pip in the left gutter. It used to be a ring around the status dot at
+   the *right* end of the row, which failed on the case people actually scan
+   for — a track that is running and unread at once, where the ring and the
+   pulsing accent dot it was drawn around are the same colour, in the same six
+   pixels, meaning two different things.
+   So the two facts now sit at opposite ends. The pip takes the slot the
+   ordinal was in rather than claiming width beside it: the number is an index
+   into a list nothing else refers to, and it is the cheapest thing on the row
+   to spend. The weight in the title is the half that carries when the accent
+   is quiet, the reader is colour-blind, or the row is read aloud. */
 .track-row.unread { color: var(--ink); }
 .track-row.unread .truncate { color: var(--ink); font-weight: 600; }
-.track-row.unread .dot { box-shadow: 0 0 0 2px var(--accent-soft), 0 0 0 3px var(--accent); }
+.track-num .pip {
+  width: 6px; height: 6px; border-radius: 999px;
+  background: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft);
+}
 
 /* ── images on a prompt ────────────────────────────────────────────────── */
 
