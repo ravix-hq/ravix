@@ -368,15 +368,22 @@ export async function close(ctx: AppContext, req: Request, trackId: string): Pro
   const fountain = requireFountain(ctx);
   const force = new URL(req.url).searchParams.get("force") === "1";
 
-  if (track.conversationId && project.repoFullName) {
+  if (track.conversationId) {
+    // A project with no repository still has a directory per track — the
+    // opening turn made one with `mkdir -p` — so the close turn is sent either
+    // way and `closeTrackPrompt` decides between `git worktree remove` and
+    // `rm -rf`. Skipping it here would leak the directory of every track on
+    // every bare machine.
+    //
     // Best effort, and on purpose. A machine that is asleep, at capacity or
     // gone must not stop somebody closing a track — the row is switchyard's
     // and the worktree is tidied on the next survey if this turn never lands.
+    const repoPath = project.repoFullName ? mountPathFor(project.repoFullName) : null;
     await fountain
-      .prompt(track.conversationId, closeTrackPrompt({ slug: track.slug, repoPath: mountPathFor(project.repoFullName), force }))
+      .prompt(track.conversationId, closeTrackPrompt({ slug: track.slug, repoPath, force }))
       .catch(() => undefined);
+    await fountain.terminate(track.conversationId).catch(() => undefined);
   }
-  if (track.conversationId) await fountain.terminate(track.conversationId).catch(() => undefined);
 
   ctx.db.closeTrack(track.id);
   publish(project.id, { event: "tracks", data: { projectId: project.id } });

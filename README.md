@@ -119,6 +119,15 @@ the same name is refused for a reason nobody can see. The branch is left alone.
 It may be pushed, it may be an open pull request, and "close this tab" is not a
 gesture that should delete work.
 
+**Close track**, in the header above the transcript, is where that happens, and
+it is a dialog rather than an `x` on the rail because the two halves of it pull
+opposite ways: the directory goes and the branch stays, and somebody who has
+those the wrong way round loses either their uncommitted work or their nerve.
+So the dialog reads the worktree's diff before it draws its button. A clean
+worktree gets **Close track**; a dirty one gets **Discard 3 files and close**,
+because `git worktree remove` refuses a dirty worktree and a close with changes
+in it is a discard whether or not the person was told.
+
 ## Working on a track with somebody else
 
 Invite them by GitHub username. The box autocompletes over everyone who has

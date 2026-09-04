@@ -376,11 +376,19 @@ async function act(prompt: string, emit: Emit, say: Say): Promise<void> {
 
   if (prompt.startsWith("[switchyard] Close this track") && dir) {
     const removed = removeTree(dir);
-    emit({ kind: "output", stream: "acp", data: tool("t1", `git worktree remove ${dir}`) });
+    // A track on a bare machine is a plain directory rather than a worktree,
+    // and the prompt asks for `rm -rf` accordingly. Echoing `git worktree
+    // remove` at it would put a command in the transcript that was never sent.
+    const worktree = prompt.includes("git worktree remove");
+    emit({ kind: "output", stream: "acp", data: tool("t1", worktree ? `git worktree remove ${dir}` : `rm -rf ${dir}`) });
     await sleep(300);
     emit({ kind: "output", stream: "acp", data: toolDone("t1", "") });
     state.worktrees.delete(dir);
-    await say(`Removed ${dir} (${removed} files) and pruned the worktree record. The branch is untouched.`);
+    await say(
+      worktree
+        ? `Removed ${dir} (${removed} files) and pruned the worktree record. The branch is untouched.`
+        : `Removed ${dir} (${removed} files).`,
+    );
     return;
   }
 

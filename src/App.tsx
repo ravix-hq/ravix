@@ -29,11 +29,12 @@ import { Inspector } from "./components/Inspector";
 import { Dock } from "./components/Dock";
 import { NewProject } from "./components/NewProject";
 import { CreateFrom } from "./components/CreateFrom";
+import { CloseTrack } from "./components/CloseTrack";
 import { ProjectSettings } from "./components/ProjectSettings";
 import { Search as SearchDialog } from "./components/Search";
 import { People, PeopleStack } from "./components/People";
 
-type Dialog = "new-project" | "create-from" | "settings" | "search" | "people" | null;
+type Dialog = "new-project" | "create-from" | "settings" | "search" | "people" | "close-track" | null;
 
 interface Route {
   projectId: string | null;
@@ -317,6 +318,16 @@ export function App() {
                   </button>
                 </>
               ) : null}
+              {/* Closing ends the track for everybody in it and takes the
+                  worktree away, which is the owner's call — a member's way out
+                  is Leave, in the people dialog. Gated on the track's role
+                  rather than the project's because that is what the server
+                  checks. */}
+              {detail && detail.track.role === "owner" ? (
+                <button type="button" className="ghost" onClick={() => setDialog("close-track")} title="Close this track">
+                  <X size={13} /> Close track
+                </button>
+              ) : null}
             </div>
 
             {detail ? (
@@ -385,6 +396,22 @@ export function App() {
             void reloadProjects();
           }}
           onNotify={notify}
+        />
+      ) : null}
+
+      {dialog === "close-track" && detail && project ? (
+        <CloseTrack
+          track={detail.track}
+          onClose={() => setDialog(null)}
+          onClosed={(message) => {
+            // The row is gone, so the URL that pointed at it now answers 404.
+            // Land on the project rather than home: the other tracks on this
+            // machine are the thing they are most likely to want next.
+            setDialog(null);
+            go({ projectId: project.id, trackId: null });
+            void reloadTracks(project.id);
+            notify(message, false);
+          }}
         />
       ) : null}
 
