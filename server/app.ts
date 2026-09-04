@@ -47,6 +47,7 @@
  *   DELETE /api/tracks/:id/people/:login    owner removes, or a member leaves
  *   GET    /api/tracks/:id/exec             whether a terminal will work
  *   POST   /api/tracks/:id/exec             run one command on the machine
+ *   GET    /api/tracks/:id/vitals           cpu, memory and disk on the box
  *
  * The shape of this list is the permission model, and it is a much shorter
  * list than paddock's for one reason: **there is no Fountain proxy here at
@@ -65,6 +66,7 @@ import * as projects from "./projects";
 import * as repos from "./repos";
 import * as terminal from "./terminal";
 import * as tracks from "./tracks";
+import * as vitals from "./vitals";
 import { projectStream } from "./hub";
 import { errorResponse, HttpError, json } from "./http";
 
@@ -142,6 +144,7 @@ export function buildRouter(ctx: AppContext): (req: Request) => Promise<Response
   on("DELETE", "/api/tracks/:id/people/:login", (req, p) => people.remove(ctx, req, p.id!, p.login!));
   on("GET", "/api/tracks/:id/exec", (req, p) => terminal.execStatus(ctx, req, p.id!));
   on("POST", "/api/tracks/:id/exec", (req, p) => terminal.exec(ctx, req, p.id!));
+  on("GET", "/api/tracks/:id/vitals", (req, p) => vitals.vitals(ctx, req, p.id!));
 
   return async (req: Request): Promise<Response> => {
     const url = new URL(req.url);

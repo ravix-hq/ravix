@@ -353,6 +353,56 @@ export interface ExecResult {
   durationMs: number;
 }
 
+// ── what the machine has left ──────────────────────────────────────────
+
+/**
+ * Why a machine cannot be reached over Sprites, when it cannot.
+ *
+ * Shared by the terminal's status and the vitals readout because they fail for
+ * the same four reasons in the same order, and a second copy of this union is
+ * a second place for the panels to disagree about what "unavailable" means.
+ */
+export type MachineUnreachable = "no_token" | "no_machine" | "no_sprite" | "unreachable";
+
+/**
+ * CPU, memory and disk on the machine a track's worktree is on.
+ *
+ * Every field is nullable and independently so, because these come from files
+ * that a given kernel, container runtime or image may simply not have —
+ * `cpu.max` is cgroup v2, `MemAvailable` is Linux 3.14 and later, and a
+ * read-only overlay can refuse `df`. A missing number is rendered as absent
+ * rather than as zero: "0% CPU" and "we could not tell" are very different
+ * claims and only one of them is ever true here.
+ *
+ * These are the *machine's* figures, not the track's. Four tracks on one
+ * project share a box, so all four show the same numbers — which is the point,
+ * since what makes a track slow is usually the other three.
+ */
+export interface MachineVitals {
+  /**
+   * Cores this machine may use: its cgroup quota, or every core it can see
+   * when there is no quota. Fractional when the quota is, which containers'
+   * often are.
+   */
+  cpuCores: number | null;
+  /** 0–1 of that allowance busy, sampled over a fraction of a second. */
+  cpuBusy: number | null;
+  memUsedBytes: number | null;
+  memTotalBytes: number | null;
+  diskUsedBytes: number | null;
+  diskTotalBytes: number | null;
+  /** The mount point the disk figures are for — the filesystem the worktree is on. */
+  diskMount: string | null;
+}
+
+/** `GET /api/tracks/:id/vitals` — the same four answers the terminal gives. */
+export interface VitalsReport {
+  available: boolean;
+  why: MachineUnreachable | null;
+  /** Null whenever `available` is false, and also when nothing parsed. */
+  vitals: MachineVitals | null;
+}
+
 // ── the transcript ─────────────────────────────────────────────────────
 
 /**

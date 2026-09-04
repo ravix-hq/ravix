@@ -28,6 +28,7 @@ import type {
   TrackLink,
   TrackOriginInfo,
   TranscriptPage,
+  VitalsReport,
 } from "../../shared/api";
 
 export class ApiError extends Error {
@@ -136,6 +137,8 @@ export const api = {
       `/api/tracks/${id}/exec`,
     ),
   exec: (id: string, command: string, cwd?: string) => post<ExecResult>(`/api/tracks/${id}/exec`, { command, cwd }),
+  /** CPU, memory and disk on the box, for the readout in the dock's strip. */
+  vitals: (id: string) => call<VitalsReport>(`/api/tracks/${id}/vitals`),
 
   // ── working on a track with somebody else ──────────────────────────
   /** Autocomplete over everyone who has signed in here. One character is enough. */

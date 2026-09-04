@@ -43,7 +43,7 @@ Against the real thing, the server takes:
 | `SWITCHYARD_SECRET` | encrypts stored GitHub tokens; generated into `DATA_DIR/secret` if unset |
 | `PUBLIC_URL` | this server as GitHub reaches it; must match the App's callback |
 | `GITHUB_APP_ID` `GITHUB_APP_SLUG` `GITHUB_CLIENT_ID` `GITHUB_CLIENT_SECRET` `GITHUB_PRIVATE_KEY` | all of them, or none of them |
-| `SPRITES_TOKEN` | optional — with it the terminal and the run panel are live |
+| `SPRITES_TOKEN` | optional — with it the terminal, the run panel and the vitals readout are live |
 | `DATA_DIR` `STATIC_DIR` `PORT` | as everywhere else in the suite |
 
 Nothing needs registering on Fountain: the browser never talks to it, so there
@@ -336,6 +336,31 @@ discovered:
   times to follow.
 - **It is one request in, one response out.** `ls`, `git log` and `npm test` are
   exactly right. `vim` and `top` are not.
+
+## CPU, memory and disk, at the quiet end of the strip
+
+The same exec buys one more thing, and it is deliberately the smallest thing on
+the screen: `cpu 34% · ram 1.4/4G · disk 12/98G`, grey, at the right-hand end of
+the dock's tab strip. Nobody opens switchyard to watch a gauge. But four tracks
+on one project share one CPU allowance, one memory limit and one disk, and when
+the fourth `bun install` of the afternoon starts swapping, "is it me or is it
+the box?" has no other way to be answered from in here.
+
+Two decisions in `server/vitals.ts` are worth knowing:
+
+- **Every figure is independently optional.** They come from `cpu.max`,
+  `cpu.stat`, `memory.current`, `/proc/meminfo` and `df` — a set no single
+  kernel, runtime or image is guaranteed to have all of. The probe reads what is
+  there and the parser reports the rest as *absent*, never as zero. "0% CPU" and
+  "we could not tell" are different claims and only one of them is ever true.
+- **The pairs are not mixed.** The cgroup's `current` against its `max`
+  describes the container; `/proc/meminfo`'s total against available describes
+  the box. One number from each would describe neither, so the parser takes
+  whichever pair is whole.
+
+The readout renders nothing at all when there is nothing to say — no token, a
+machine asleep, a kernel keeping its counters somewhere else. A row of dashes
+would read as a fault on a machine that is working perfectly well.
 
 ## Sixteen palettes, in the foot of the rail
 
