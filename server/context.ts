@@ -52,7 +52,14 @@ export async function authenticate(ctx: AppContext, req: Request): Promise<UserR
   return user;
 }
 
-/** One of the caller's projects. 404 for anyone else's. */
+/**
+ * A project the caller **owns**. 404 for anyone else's.
+ *
+ * Everything that changes a project — its settings, its machine, its
+ * existence, and opening a track on it — goes through this. Somebody invited
+ * to a track is not a caller here, and gets the same answer as a stranger:
+ * the project's existence is not theirs to learn.
+ */
 export function projectOf(ctx: AppContext, user: UserRow, projectId: string): ProjectRow {
   const project = ctx.db.project(projectId);
   if (!project || project.userId !== user.id || project.archivedAt) {
@@ -61,12 +68,47 @@ export function projectOf(ctx: AppContext, user: UserRow, projectId: string): Pr
   return project;
 }
 
-/** One track of one of the caller's projects, and the project it belongs to. */
-export function trackOf(ctx: AppContext, user: UserRow, trackId: string): { track: TrackRow; project: ProjectRow } {
+/** Owner, or somebody invited to the track in question. Never anything else. */
+export type Role = "owner" | "member";
+
+export interface TrackAccess {
+  track: TrackRow;
+  project: ProjectRow;
+  role: Role;
+}
+
+/**
+ * A track the caller may reach, and in what capacity.
+ *
+ * This is the one place membership widens anything, and it widens it to
+ * exactly one track. A member reaching a *second* track of the same project
+ * lands here again and is refused again, because the check is per row rather
+ * than per project — which is what makes "an invitation is to a branch, not to
+ * the machine" true by construction instead of by everybody remembering.
+ *
+ * A project that has been archived is gone for its members too, and a closed
+ * track stops admitting anyone: neither has a surface left to share.
+ */
+export function trackAccess(ctx: AppContext, user: UserRow, trackId: string): TrackAccess {
   const track = ctx.db.track(trackId);
   if (!track) throw new HttpError(404, "not_found", "No such track.");
-  const project = projectOf(ctx, user, track.projectId);
-  return { track, project };
+  const project = ctx.db.project(track.projectId);
+  if (!project || project.archivedAt) throw new HttpError(404, "not_found", "No such track.");
+
+  if (project.userId === user.id) return { track, project, role: "owner" };
+  if (!track.closedAt && ctx.db.isMember(track.id, user.id)) return { track, project, role: "member" };
+  throw new HttpError(404, "not_found", "No such track.");
+}
+
+/** The same, refusing anyone but the owner. For closing, renaming, and settings. */
+export function trackOf(ctx: AppContext, user: UserRow, trackId: string): TrackAccess {
+  const access = trackAccess(ctx, user, trackId);
+  return access;
+}
+
+/** Owner-only operations on a track somebody else may also be in. */
+export function requireOwner(role: Role, what: string): void {
+  if (role !== "owner") throw new HttpError(403, "owner_only", `Only the owner of this project can ${what}.`);
 }
 
 /**

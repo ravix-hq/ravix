@@ -136,6 +136,28 @@ export function Files({ track }: { track: Track }) {
     );
   }
 
+  // A worktree that does not exist yet is the ordinary first ten seconds of a
+  // track, not a failure — the opening turn is still cutting it. Fountain
+  // answers `path_not_found` with no message of its own, which is how the raw
+  // code ended up rendered as the panel's whole content.
+  if (error?.code === "path_not_found" || error?.code === "github_not_found") {
+    return (
+      <Empty icon={<Folder size={19} />} title={track.status === "opening" ? "Not cut yet" : "That directory is gone"}>
+        {track.status === "opening" ? (
+          <>
+            The machine is still making <code>{root}</code>. It appears here the moment the opening turn lands — you can
+            watch it happen in the transcript.
+          </>
+        ) : (
+          <>
+            <code>{root}</code> is not on the machine. It may have been removed by hand, or lost with a rebuild; closing
+            this track and starting another gives you a fresh worktree.
+          </>
+        )}
+      </Empty>
+    );
+  }
+
   if (file || fileError) {
     return (
       <div className="file-view">

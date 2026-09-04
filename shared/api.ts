@@ -15,6 +15,13 @@
 
 // ── who is here ────────────────────────────────────────────────────────
 
+/** Somebody who can be invited, or who is already in. */
+export interface Person {
+  login: string;
+  name: string | null;
+  avatarUrl: string | null;
+}
+
 export interface Viewer {
   /** GitHub numeric id, as a string. */
   id: string;
@@ -145,6 +152,15 @@ export interface Project {
   createdAt: string;
   /** The GitHub login of whoever made it. */
   ownerLogin: string;
+  /**
+   * What the caller is here.
+   *
+   * `member` means they were invited to one or more *tracks* on this project,
+   * not to the project. They see those tracks and nothing else of it: no
+   * settings, no rebuild, no other tracks, no track of their own. The UI reads
+   * this rather than comparing logins, so there is one place that decides.
+   */
+  role: "owner" | "member";
 }
 
 export interface MachineState {
@@ -197,6 +213,10 @@ export interface Track {
   turnCount: number;
   createdAt: string;
   createdByLogin: string;
+  /** Everyone who can reach this track, the owner first. One entry until shared. */
+  people: Person[];
+  /** What the caller may do here. */
+  role: "owner" | "member";
 }
 
 export interface TrackOriginInfo {
@@ -317,7 +337,9 @@ export type ProjectEvent =
   | { event: "tracks"; data: { projectId: string } }
   | { event: "machine"; data: MachineState }
   | { event: "turn"; data: { trackId: string; status: Track["status"] } }
-  | { event: "settings"; data: { rev: number } };
+  | { event: "settings"; data: { rev: number } }
+  /** The membership of a track changed: somebody was invited, or left. */
+  | { event: "people"; data: { trackId: string } };
 
 // ── errors ─────────────────────────────────────────────────────────────
 

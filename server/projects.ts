@@ -64,17 +64,47 @@ const DEFAULT_MODEL = "anthropic/claude-opus-5";
 /** `GET /api/projects` */
 export async function list(ctx: AppContext, req: Request): Promise<Response> {
   const user = await authenticate(ctx, req);
-  const rows = ctx.db.projectsOf(user.id);
+  const mine = ctx.db.projectsOf(user.id);
+
+  // A project somebody invited you into shows in the rail beside your own,
+  // because the alternative is a track with no home in the sidebar. It is
+  // marked `member`, and the routes it hangs off refuse everything a member
+  // may not do — this is a place in the list, not a share of the project.
+  const owned = new Set(mine.map((p) => p.id));
+  const guest: ProjectRow[] = [];
+  for (const track of ctx.db.memberTracks(user.id)) {
+    if (owned.has(track.projectId) || guest.some((p) => p.id === track.projectId)) continue;
+    const project = ctx.db.project(track.projectId);
+    if (project && !project.archivedAt) guest.push(project);
+  }
+
+  const rows = [...mine, ...guest];
   const machines = await machinesFor(ctx, rows);
-  return json({ data: rows.map((r) => toProject(r, machines.get(r.id) ?? none(), user)) });
+  return json({
+    data: rows.map((r) => {
+      const owner = r.userId === user.id ? user : (ctx.db.user(r.userId) ?? user);
+      return toProject(r, machines.get(r.id) ?? none(), owner, r.userId === user.id ? "owner" : "member");
+    }),
+  });
 }
 
 /** `GET /api/projects/:id` */
 export async function show(ctx: AppContext, req: Request, id: string): Promise<Response> {
   const user = await authenticate(ctx, req);
-  const row = projectOf(ctx, user, id);
+  const row = ctx.db.project(id);
+  if (!row || row.archivedAt) throw new HttpError(404, "not_found", "No such project.");
+
+  // A member needs the project's name, repository and model to render the
+  // header and the composer above their track. They are given exactly that —
+  // the same shape everyone gets, marked `member` — and every route that
+  // would *change* any of it goes through `projectOf` and refuses them.
+  const owner = row.userId === user.id;
+  if (!owner && !ctx.db.memberTracks(user.id).some((t) => t.projectId === row.id)) {
+    throw new HttpError(404, "not_found", "No such project.");
+  }
+  const ownerRow = owner ? user : (ctx.db.user(row.userId) ?? user);
   const machines = await machinesFor(ctx, [row]);
-  return json({ data: toProject(row, machines.get(row.id) ?? none(), user) });
+  return json({ data: toProject(row, machines.get(row.id) ?? none(), ownerRow, owner ? "owner" : "member") });
 }
 
 /**
@@ -476,7 +506,7 @@ const none = (): MachineState => ({ sandboxId: null, status: "none", spriteName:
 
 // ── shapes and small decisions ─────────────────────────────────────────
 
-export function toProject(row: ProjectRow, machine: MachineState, user: UserRow): Project {
+export function toProject(row: ProjectRow, machine: MachineState, owner: UserRow, role: "owner" | "member" = "owner"): Project {
   return {
     id: row.id,
     name: row.name,
@@ -489,7 +519,8 @@ export function toProject(row: ProjectRow, machine: MachineState, user: UserRow)
     rev: row.rev,
     machine,
     createdAt: row.createdAt,
-    ownerLogin: user.login,
+    ownerLogin: owner.login,
+    role,
   };
 }
 

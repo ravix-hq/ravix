@@ -24,7 +24,8 @@
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { blocksForTurn, type Block } from "@managoat/fountain-app/acp";
-import type { TurnRecord } from "../../shared/api";
+import { splitAuthor } from "../../shared/author";
+import type { Person, TurnRecord } from "../../shared/api";
 import type { LogEvent } from "../../shared/fountain-types";
 import { Chevron } from "../lib/icons";
 
@@ -32,13 +33,15 @@ export interface TranscriptProps {
   turns: TurnRecord[];
   events: LogEvent[];
   runtime: string;
+  /** Everyone on the track, so an attributed turn can show a face. */
+  people?: Person[];
   /** True while a turn is in flight, so the trailing indicator is honest. */
   running: boolean;
   /** Rendered above the first turn — the ribbon, the starters, an empty state. */
   head?: React.ReactNode;
 }
 
-export function Transcript({ turns, events, runtime, running, head }: TranscriptProps) {
+export function Transcript({ turns, events, runtime, running, head, people = [] }: TranscriptProps) {
   const scroller = useRef<HTMLDivElement | null>(null);
   const pinned = useRef(true);
 
@@ -64,7 +67,7 @@ export function Transcript({ turns, events, runtime, running, head }: Transcript
       {head}
       <div className="transcript">
         {grouped.map((turn) => (
-          <Turn key={turn.id} turn={turn} runtime={runtime} />
+          <Turn key={turn.id} turn={turn} runtime={runtime} people={people} />
         ))}
         {running ? (
           <div className="thinking-now">
@@ -117,12 +120,30 @@ function group(turns: TurnRecord[], events: LogEvent[]): GroupedTurn[] {
   return order.map((id) => byTurn.get(id)!).filter((t) => t.prompt !== null || t.events.length > 0);
 }
 
-function Turn({ turn, runtime }: { turn: GroupedTurn; runtime: string }) {
+function Turn({ turn, runtime, people }: { turn: GroupedTurn; runtime: string; people: Person[] }) {
   const blocks = useMemo(() => blocksForTurn(turn.events, runtime), [turn.events, runtime]);
   const app = turn.prompt ? appTurnLabel(turn.prompt) : null;
+  // A shared track prefixes each prompt with who sent it (`shared/author.ts`).
+  // The label comes back off here rather than being rendered as part of what
+  // somebody wrote — it was never their words, it was the app naming them.
+  const { login, text } = turn.prompt && !app ? splitAuthor(turn.prompt) : { login: null, text: turn.prompt ?? "" };
+  const who = login ? (people.find((p) => p.login === login) ?? { login, name: null, avatarUrl: null }) : null;
+
   return (
     <div className="turn">
-      {app ? <div className="turn-app">{app}</div> : turn.prompt ? <div className="turn-you">{turn.prompt}</div> : null}
+      {app ? (
+        <div className="turn-app">{app}</div>
+      ) : turn.prompt ? (
+        <div className="said">
+          {who ? (
+            <span className="said-who" title={who.name ? `${who.name} (@${who.login})` : `@${who.login}`}>
+              {who.avatarUrl ? <img src={who.avatarUrl} alt="" /> : <span className="mono">{who.login.slice(0, 1).toUpperCase()}</span>}
+              @{who.login}
+            </span>
+          ) : null}
+          <div className="turn-you">{text}</div>
+        </div>
+      ) : null}
       {blocks.map((block, i) => (
         <BlockView key={i} block={block} />
       ))}

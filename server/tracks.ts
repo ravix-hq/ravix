@@ -18,33 +18,47 @@
  * a prompt behind the turn already running.
  */
 import { randomUUID } from "node:crypto";
-import type { Track, TrackHeader, TrackOriginInfo, TranscriptPage } from "../shared/api";
+import type { Person, Track, TrackHeader, TrackOriginInfo, TranscriptPage } from "../shared/api";
 import { branchFor, mountPathFor, slugify, trackChannel, workdirFor } from "../shared/ids";
+import { withAuthor } from "../shared/author";
 import { nameTrack } from "../shared/names";
 import { closeTrackPrompt, openTrackPrompt, starters, type TrackOrigin } from "../shared/spec";
 import type { AppContext } from "./context";
-import { authenticate, projectOf, requireFountain, trackOf } from "./context";
+import { authenticate, projectOf, requireFountain, requireOwner, trackOf } from "./context";
 import type { ProjectRow, TrackRow } from "./db";
 import { originOf } from "./db";
 import type { ConversationSummary, Fountain } from "./fountain";
 import { asHttpError } from "./fountain";
 import { prepareMachine } from "./projects";
 import { HttpError, json, readJson, str } from "./http";
+import { peopleOf } from "./people";
 import { publish } from "./hub";
 
 /** `GET /api/projects/:id/tracks` */
 export async function list(ctx: AppContext, req: Request, projectId: string): Promise<Response> {
   const user = await authenticate(ctx, req);
-  const project = projectOf(ctx, user, projectId);
-  const rows = ctx.db.tracksOf(project.id);
+  const project = ctx.db.project(projectId);
+  if (!project || project.archivedAt) throw new HttpError(404, "not_found", "No such project.");
+
+  // The owner sees the project's tracks; anybody else sees the ones they were
+  // invited to and is not told there are others. Same list endpoint, because
+  // the sidebar asks the same question either way.
+  const owner = project.userId === user.id;
+  const rows = owner ? ctx.db.tracksOf(project.id) : ctx.db.memberTracks(user.id).filter((t) => t.projectId === project.id);
+  if (!owner && !rows.length) throw new HttpError(404, "not_found", "No such project.");
+
   const live = await conversationsOf(ctx, project);
-  return json({ data: rows.map((r) => toTrack(r, project, live.get(r.conversationId ?? "") ?? null)) });
+  return json({
+    data: rows.map((r) =>
+      toTrack(r, project, live.get(r.conversationId ?? "") ?? null, peopleOf(ctx, r.id, project.userId), owner ? "owner" : "member"),
+    ),
+  });
 }
 
 /** `GET /api/tracks/:id` — the track, plus the ribbon that sits above it. */
 export async function show(ctx: AppContext, req: Request, trackId: string): Promise<Response> {
   const user = await authenticate(ctx, req);
-  const { track, project } = trackOf(ctx, user, trackId);
+  const { track, project, role } = trackOf(ctx, user, trackId);
   const fountain = requireFountain(ctx);
   // The environment is read for one boolean, and it is worth the call: the
   // "add a setup script" line in the ribbon is an offer, and an offer that
@@ -65,7 +79,7 @@ export async function show(ctx: AppContext, req: Request, trackId: string): Prom
   };
   return json({
     data: {
-      track: toTrack(track, project, live.get(track.conversationId ?? "") ?? null),
+      track: toTrack(track, project, live.get(track.conversationId ?? "") ?? null, peopleOf(ctx, track.id, project.userId), role),
       header,
       starters: starters({ hasRepo: !!project.repoFullName }),
     },
@@ -221,9 +235,16 @@ export async function prompt(ctx: AppContext, req: Request, trackId: string): Pr
   if (!text.trim()) throw new HttpError(422, "empty_prompt", "Say something.");
   if (!track.conversationId) throw new HttpError(409, "not_open", "This track has no conversation yet.");
 
+  // Name the sender only once there is somebody to distinguish them from. A
+  // solo track prefixed with your own login reads as the app talking to
+  // itself, and it would put a label in every transcript in the fleet to serve
+  // the few that are shared.
+  const shared = ctx.db.membersOf(track.id).length > 0;
+  const outgoing = shared ? withAuthor(user.login, text) : text;
+
   await prepareMachine(ctx, project, fountain);
   try {
-    await fountain.prompt(track.conversationId, text);
+    await fountain.prompt(track.conversationId, outgoing);
   } catch (err) {
     throw asHttpError(err, "send that");
   }
@@ -313,7 +334,10 @@ export async function stream(ctx: AppContext, req: Request, trackId: string): Pr
 /** `PATCH /api/tracks/:id` — rename. */
 export async function rename(ctx: AppContext, req: Request, trackId: string): Promise<Response> {
   const user = await authenticate(ctx, req);
-  const { track, project } = trackOf(ctx, user, trackId);
+  const { track, project, role } = trackOf(ctx, user, trackId);
+  // A track's name is its slug is its branch is its directory. Somebody
+  // invited to help is not somebody who gets to move all four.
+  requireOwner(role, "rename a track");
   const body = await readJson(req);
   const title = str(body.title, 200).trim();
   if (!title) throw new HttpError(422, "no_title", "A track needs a name.");
@@ -337,7 +361,10 @@ export async function rename(ctx: AppContext, req: Request, trackId: string): Pr
  */
 export async function close(ctx: AppContext, req: Request, trackId: string): Promise<Response> {
   const user = await authenticate(ctx, req);
-  const { track, project } = trackOf(ctx, user, trackId);
+  const { track, project, role } = trackOf(ctx, user, trackId);
+  // Closing ends the track for everybody in it and takes the worktree away.
+  // That is the owner's call, and it is why a member's way out is to leave.
+  requireOwner(role, "close a track");
   const fountain = requireFountain(ctx);
   const force = new URL(req.url).searchParams.get("force") === "1";
 
@@ -562,7 +589,13 @@ function freeSlug(ctx: AppContext, projectId: string, from: string): string {
   return `${base}-${Date.now().toString(36)}`;
 }
 
-export function toTrack(row: TrackRow, project: ProjectRow, live: ConversationSummary | null): Track {
+export function toTrack(
+  row: TrackRow,
+  project: ProjectRow,
+  live: ConversationSummary | null,
+  people: Person[] = [],
+  role: "owner" | "member" = "owner",
+): Track {
   const origin: TrackOriginInfo = originOf(row);
   return {
     id: row.id,
@@ -582,6 +615,8 @@ export function toTrack(row: TrackRow, project: ProjectRow, live: ConversationSu
     turnCount: live?.turn_count ?? 0,
     createdAt: row.createdAt,
     createdByLogin: row.createdByLogin,
+    people,
+    role,
   };
 }
 

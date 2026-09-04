@@ -31,8 +31,9 @@ import { NewProject } from "./components/NewProject";
 import { CreateFrom } from "./components/CreateFrom";
 import { ProjectSettings } from "./components/ProjectSettings";
 import { Search as SearchDialog } from "./components/Search";
+import { People, PeopleStack } from "./components/People";
 
-type Dialog = "new-project" | "create-from" | "settings" | "search" | null;
+type Dialog = "new-project" | "create-from" | "settings" | "search" | "people" | null;
 
 interface Route {
   projectId: string | null;
@@ -125,28 +126,44 @@ export function App() {
     });
   }, [route.projectId, reloadTracks, reloadProjects]);
 
-  // The open track's detail, which carries the ribbon and the starters. Kept
-  // separate from the list because the list is a summary and re-fetching it on
-  // every stream frame must not re-render the transcript's parent.
+  // Which track's answer we are still willing to accept. Selection can change
+  // faster than the server answers, and a reply for the track you just left
+  // must not land on top of the one you just opened.
+  const wanted = useRef<string | null>(route.trackId);
+
+  /**
+   * The open track's detail, which carries the ribbon and the starters. Kept
+   * separate from the list because the list is a summary and re-fetching it on
+   * every stream frame must not re-render the transcript's parent.
+   *
+   * A function rather than only an effect because two things ask for it: the
+   * selection changing, and a panel that just changed something about the
+   * track it is showing.
+   */
+  const loadDetail = useCallback(
+    async (trackId: string) => {
+      wanted.current = trackId;
+      try {
+        const fresh = await api.track(trackId);
+        if (wanted.current === trackId) setDetail(fresh);
+      } catch (err) {
+        if (wanted.current !== trackId) return;
+        setDetail(null);
+        if (err instanceof ApiError) notify(err.message);
+      }
+    },
+    [notify],
+  );
+
   useEffect(() => {
     const trackId = route.trackId;
     if (!trackId) {
+      wanted.current = null;
       setDetail(null);
       return;
     }
-    let alive = true;
-    void api
-      .track(trackId)
-      .then((d) => alive && setDetail(d))
-      .catch((err: unknown) => {
-        if (!alive) return;
-        setDetail(null);
-        if (err instanceof ApiError) notify(err.message);
-      });
-    return () => {
-      alive = false;
-    };
-  }, [route.trackId, notify]);
+    void loadDetail(trackId);
+  }, [route.trackId, loadDetail]);
 
   // ── navigation ──────────────────────────────────────────────────────
 
@@ -189,14 +206,16 @@ export function App() {
         e.preventDefault();
         setDialog("search");
       }
-      if (meta && e.key.toLowerCase() === "n" && route.projectId) {
+      // Same gate as the button: only the owner of a project can cut a track
+      // on it, so the shortcut is not a back door into a dialog that fails.
+      if (meta && e.key.toLowerCase() === "n" && project?.role === "owner") {
         e.preventDefault();
         setDialog("create-from");
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [route.projectId]);
+  }, [project]);
 
   // ── render ──────────────────────────────────────────────────────────
 
@@ -264,13 +283,21 @@ export function App() {
               ) : project.repo ? (
                 <span className="chip mono">{project.repo}</span>
               ) : null}
+              {detail ? <PeopleStack people={detail.track.people} onOpen={() => setDialog("people")} /> : null}
               <span className="spacer" />
-              <button type="button" className="ghost" onClick={() => setDialog("create-from")}>
-                <Plus size={13} /> New track
-              </button>
-              <button type="button" className="ghost" onClick={() => setDialog("settings")}>
-                Settings
-              </button>
+              {/* A member has neither of these on the server, so they do not
+                  get them here — an owner-only button that answers 403 teaches
+                  people to distrust every other button beside it. */}
+              {project.role === "owner" ? (
+                <>
+                  <button type="button" className="ghost" onClick={() => setDialog("create-from")}>
+                    <Plus size={13} /> New track
+                  </button>
+                  <button type="button" className="ghost" onClick={() => setDialog("settings")}>
+                    Settings
+                  </button>
+                </>
+              ) : null}
             </div>
 
             {detail ? (
@@ -297,12 +324,14 @@ export function App() {
                 <div className="centre">
                   <Empty
                     icon={<Machine size={19} />}
-                    title={tracks.length ? "Pick a track" : "No tracks yet"}
-                    action={{ label: "New track", onClick: () => setDialog("create-from") }}
+                    title={tracks.length ? "Pick a track" : project.role === "owner" ? "No tracks yet" : "Nothing shared with you here"}
+                    action={project.role === "owner" ? { label: "New track", onClick: () => setDialog("create-from") } : null}
                   >
                     {tracks.length
                       ? "Each track is its own worktree on this project's machine, with its own branch and its own conversation."
-                      : "A track is a piece of work: its own git worktree on this machine, its own branch, its own conversation. Start one from a branch, a pull request, an issue, or from nothing."}
+                      : project.role === "owner"
+                        ? "A track is a piece of work: its own git worktree on this machine, its own branch, its own conversation. Start one from a branch, a pull request, an issue, or from nothing."
+                        : "You were invited to tracks on this project rather than to the project itself, and none of them are open any more. Only its owner can start a new one."}
                   </Empty>
                 </div>
               </div>
@@ -337,6 +366,15 @@ export function App() {
             void reloadProjects();
           }}
           onNotify={notify}
+        />
+      ) : null}
+
+      {dialog === "people" && detail ? (
+        <People
+          track={detail.track}
+          viewerLogin={session.viewer.login}
+          onClose={() => setDialog(null)}
+          onChanged={() => void loadDetail(detail.track.id)}
         />
       ) : null}
 

@@ -154,6 +154,22 @@ export class Db {
       CREATE INDEX IF NOT EXISTS tracks_project ON tracks(project_id, closed_at);
       CREATE INDEX IF NOT EXISTS tracks_conversation ON tracks(conversation_id);
 
+      -- Who else is in a track.
+      --
+      -- Membership is per *track*, not per project, and that is the whole
+      -- permission model: somebody invited to one worktree gets that worktree.
+      -- They do not see the project's other tracks, cannot open one, and
+      -- cannot change what is installed on the machine — the same line paddock
+      -- draws around a terminal, drawn around a branch instead.
+      CREATE TABLE IF NOT EXISTS track_members (
+        track_id    TEXT NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
+        user_id     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        invited_by  TEXT NOT NULL,
+        created_at  TEXT NOT NULL,
+        PRIMARY KEY (track_id, user_id)
+      );
+      CREATE INDEX IF NOT EXISTS track_members_user ON track_members(user_id);
+
       -- Short-lived signed state for the two GitHub round trips. Rows are
       -- deleted on use and swept on age, so a replayed callback finds nothing.
       CREATE TABLE IF NOT EXISTS oauth_states (
@@ -397,6 +413,78 @@ export class Db {
 
   closeTrack(trackId: string): void {
     this.db.run("UPDATE tracks SET closed_at = ? WHERE id = ?", [new Date().toISOString(), trackId]);
+  }
+
+  // ── who else is in a track ───────────────────────────────────────────
+
+  addMember(trackId: string, userId: string, invitedBy: string): void {
+    this.db.run(
+      "INSERT OR IGNORE INTO track_members (track_id, user_id, invited_by, created_at) VALUES (?, ?, ?, ?)",
+      [trackId, userId, invitedBy, new Date().toISOString()],
+    );
+  }
+
+  removeMember(trackId: string, userId: string): void {
+    this.db.run("DELETE FROM track_members WHERE track_id = ? AND user_id = ?", [trackId, userId]);
+  }
+
+  isMember(trackId: string, userId: string): boolean {
+    return !!this.db
+      .query<{ n: number }, [string, string]>("SELECT COUNT(*) AS n FROM track_members WHERE track_id = ? AND user_id = ?")
+      .get(trackId, userId)?.n;
+  }
+
+  /** Everyone invited to a track, oldest invitation first. Excludes the owner. */
+  membersOf(trackId: string): UserRow[] {
+    return this.db
+      .query<RawUser, [string]>(
+        `SELECT u.* FROM track_members m JOIN users u ON u.id = m.user_id
+         WHERE m.track_id = ? ORDER BY m.created_at`,
+      )
+      .all(trackId)
+      .map(toUser);
+  }
+
+  /** The tracks this person was invited to, across every project. */
+  memberTracks(userId: string): TrackRow[] {
+    return this.db
+      .query<RawTrack, [string]>(
+        `SELECT t.* FROM track_members m JOIN tracks t ON t.id = m.track_id
+         WHERE m.user_id = ? AND t.closed_at IS NULL ORDER BY t.created_at`,
+      )
+      .all(userId)
+      .map(toTrack);
+  }
+
+  /**
+   * Anyone whose login starts with or contains this, for the invite box.
+   *
+   * Deliberately the whole userbase rather than some notion of "people you
+   * have worked with": the app has no such notion, and inventing one would
+   * make the box quietly useless for the first invitation anybody sends. It
+   * does mean the box will tell you who has signed in here, which is a trade
+   * this deployment has accepted — see the note on the route.
+   *
+   * Ordered so a prefix match beats a contains match, because somebody typing
+   * `ana` means `ana` before `joana`.
+   */
+  searchUsers(q: string, excludeUserId: string, limit = 8): UserRow[] {
+    const like = `%${q}%`;
+    const prefix = `${q}%`;
+    return this.db
+      .query<RawUser, [string, string, string, string, number]>(
+        `SELECT * FROM users
+         WHERE id != ? AND (login LIKE ? COLLATE NOCASE OR name LIKE ? COLLATE NOCASE)
+         ORDER BY CASE WHEN login LIKE ? COLLATE NOCASE THEN 0 ELSE 1 END, login
+         LIMIT ?`,
+      )
+      .all(excludeUserId, like, like, prefix, limit)
+      .map(toUser);
+  }
+
+  userByLogin(login: string): UserRow | null {
+    const r = this.db.query<RawUser, [string]>("SELECT * FROM users WHERE login = ? COLLATE NOCASE").get(login);
+    return r ? toUser(r) : null;
   }
 
   close(): void {

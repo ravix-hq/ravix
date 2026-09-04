@@ -9,6 +9,7 @@
  *   POST   /api/auth/signout
  *   GET    /api/github/installations
  *   GET    /api/github/repos                the repository picker
+ *   GET    /api/users?q=                    who else has signed in here
  *
  *   GET    /api/projects                    the sidebar
  *   POST   /api/projects                    a repository becomes a machine
@@ -35,6 +36,9 @@
  *   GET    /api/tracks/:id/diff
  *   GET    /api/tracks/:id/checks           GitHub's view of the branch
  *   POST   /api/tracks/:id/pull             open a pull request
+ *   GET    /api/tracks/:id/people           who can reach this track
+ *   POST   /api/tracks/:id/people           owner: invite by GitHub login
+ *   DELETE /api/tracks/:id/people/:login    owner removes, or a member leaves
  *   GET    /api/tracks/:id/exec             whether a terminal will work
  *   POST   /api/tracks/:id/exec             run one command on the machine
  *
@@ -48,8 +52,9 @@
  * than by a check that could be forgotten.
  */
 import type { AppContext } from "./context";
-import { authenticate, projectOf } from "./context";
+import { authenticate } from "./context";
 import * as auth from "./auth";
+import * as people from "./people";
 import * as projects from "./projects";
 import * as repos from "./repos";
 import * as terminal from "./terminal";
@@ -79,6 +84,7 @@ export function buildRouter(ctx: AppContext): (req: Request) => Promise<Response
   on("POST", "/api/auth/signout", (req) => auth.signOut(ctx, req));
   on("GET", "/api/github/installations", (req) => auth.installations(ctx, req));
   on("GET", "/api/github/repos", (req) => repos.repos(ctx, req));
+  on("GET", "/api/users", (req) => people.search(ctx, req));
 
   on("GET", "/api/projects", (req) => projects.list(ctx, req));
   on("POST", "/api/projects", (req) => projects.create(ctx, req));
@@ -95,7 +101,14 @@ export function buildRouter(ctx: AppContext): (req: Request) => Promise<Response
     // throws in `start` becomes a connection that closes with no status a
     // browser can read, and `EventSource` retries it forever.
     const user = await authenticate(ctx, req);
-    const project = projectOf(ctx, user, p.id!);
+    // Members watch the same channel: it carries "a track changed" and "who is
+    // on it", both of which they need for the one track they can see. It
+    // carries nothing naming a track they cannot.
+    const project = ctx.db.project(p.id!);
+    if (!project || project.archivedAt) throw new HttpError(404, "not_found", "No such project.");
+    if (project.userId !== user.id && !ctx.db.memberTracks(user.id).some((t) => t.projectId === project.id)) {
+      throw new HttpError(404, "not_found", "No such project.");
+    }
     return projectStream(project.id, req.signal);
   });
 
@@ -112,6 +125,9 @@ export function buildRouter(ctx: AppContext): (req: Request) => Promise<Response
   on("GET", "/api/tracks/:id/diff", (req, p) => tracks.diff(ctx, req, p.id!));
   on("GET", "/api/tracks/:id/checks", (req, p) => repos.checks(ctx, req, p.id!));
   on("POST", "/api/tracks/:id/pull", (req, p) => repos.openPull(ctx, req, p.id!));
+  on("GET", "/api/tracks/:id/people", (req, p) => people.list(ctx, req, p.id!));
+  on("POST", "/api/tracks/:id/people", (req, p) => people.add(ctx, req, p.id!));
+  on("DELETE", "/api/tracks/:id/people/:login", (req, p) => people.remove(ctx, req, p.id!, p.login!));
   on("GET", "/api/tracks/:id/exec", (req, p) => terminal.execStatus(ctx, req, p.id!));
   on("POST", "/api/tracks/:id/exec", (req, p) => terminal.exec(ctx, req, p.id!));
 

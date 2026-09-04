@@ -87,6 +87,11 @@ export function Yard(props: YardProps) {
         {projects.map((project) => {
           const tracks = tracksByProject[project.id] ?? [];
           const active = selected.projectId === project.id;
+          // A project you were invited *into* — by way of one of its tracks —
+          // shows the tracks you can reach and nothing else. Cutting a track
+          // and opening the settings are both refused by the server for a
+          // member, so neither appears rather than appearing and failing.
+          const owner = project.role === "owner";
           return (
             <div key={project.id} style={{ marginBottom: 6 }}>
               <div className="row" style={{ gap: 0 }}>
@@ -102,16 +107,18 @@ export function Yard(props: YardProps) {
                   <span className="spacer" />
                   <MachineDot project={project} />
                 </button>
-                <button
-                  type="button"
-                  className="x"
-                  style={{ padding: "0 4px" }}
-                  onClick={() => props.onNewTrack(project.id)}
-                  aria-label={`New track in ${project.name}`}
-                  title="New track"
-                >
-                  <Plus size={13} />
-                </button>
+                {owner ? (
+                  <button
+                    type="button"
+                    className="x"
+                    style={{ padding: "0 4px" }}
+                    onClick={() => props.onNewTrack(project.id)}
+                    aria-label={`New track in ${project.name}`}
+                    title="New track"
+                  >
+                    <Plus size={13} />
+                  </button>
+                ) : null}
               </div>
 
               {tracks.map((track, i) => (
@@ -134,7 +141,7 @@ export function Yard(props: YardProps) {
                 </button>
               ))}
 
-              {active ? (
+              {active && owner ? (
                 <button type="button" className="track-row" onClick={() => props.onProjectSettings(project.id)}>
                   <span className="track-num" />
                   <span className="ico">

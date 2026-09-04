@@ -16,6 +16,7 @@ import type {
   FileContent,
   FileListing,
   IssueRef,
+  Person,
   Project,
   ProjectSettings,
   PullRef,
@@ -115,6 +116,15 @@ export const api = {
       `/api/tracks/${id}/exec`,
     ),
   exec: (id: string, command: string, cwd?: string) => post<ExecResult>(`/api/tracks/${id}/exec`, { command, cwd }),
+
+  // ── working on a track with somebody else ──────────────────────────
+  /** Autocomplete over everyone who has signed in here. One character is enough. */
+  findPeople: (q: string) => call<Person[]>(`/api/users?q=${encodeURIComponent(q)}`),
+  people: (trackId: string) => call<Person[]>(`/api/tracks/${trackId}/people`),
+  invite: (trackId: string, login: string) => post<Person[]>(`/api/tracks/${trackId}/people`, { login }),
+  /** The owner removing somebody, or a member removing themselves. */
+  uninvite: (trackId: string, login: string) =>
+    call<Person[] | undefined>(`/api/tracks/${trackId}/people/${encodeURIComponent(login)}`, { method: "DELETE" }),
 };
 
 /**

@@ -16,7 +16,7 @@
  *                          is precisely the boundary the App exists to draw.
  */
 import type { AppContext } from "./context";
-import { authenticate, projectOf, requireGitHub, userToken } from "./context";
+import { authenticate, projectOf, requireGitHub, trackAccess, userToken } from "./context";
 import { asHttpError } from "./github";
 import { HttpError, json, readJson, str } from "./http";
 
@@ -76,9 +76,9 @@ export async function refs(ctx: AppContext, req: Request, projectId: string): Pr
 export async function checks(ctx: AppContext, req: Request, trackId: string): Promise<Response> {
   const gh = requireGitHub(ctx);
   const user = await authenticate(ctx, req);
-  const track = ctx.db.track(trackId);
-  if (!track) throw new HttpError(404, "not_found", "No such track.");
-  const project = projectOf(ctx, user, track.projectId);
+  // A member's own branch and its checks are the point of inviting them, so
+  // this is track access rather than project ownership.
+  const { track, project } = trackAccess(ctx, user, trackId);
   if (!project.repoFullName || !project.installationId) {
     throw new HttpError(409, "no_repo", "This project has no repository.");
   }
@@ -100,9 +100,12 @@ export async function checks(ctx: AppContext, req: Request, trackId: string): Pr
 export async function openPull(ctx: AppContext, req: Request, trackId: string): Promise<Response> {
   const gh = requireGitHub(ctx);
   const user = await authenticate(ctx, req);
-  const track = ctx.db.track(trackId);
-  if (!track) throw new HttpError(404, "not_found", "No such track.");
-  const project = projectOf(ctx, user, track.projectId);
+  // Open to members, and that is a decision rather than an oversight: a member
+  // can already prompt the agent, the machine already holds a credential that
+  // can push, and the agent will open a pull request if asked. A button that
+  // refused what the prompt box allows would be theatre. The invite dialog
+  // says so where the decision is made.
+  const { track, project } = trackAccess(ctx, user, trackId);
   if (!project.repoFullName || !project.installationId) throw new HttpError(409, "no_repo", "This project has no repository.");
 
   const body = await readJson(req);

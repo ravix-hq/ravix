@@ -119,6 +119,51 @@ the same name is refused for a reason nobody can see. The branch is left alone.
 It may be pushed, it may be an open pull request, and "close this tab" is not a
 gesture that should delete work.
 
+## Working on a track with somebody else
+
+Invite them by GitHub username. The box autocompletes over everyone who has
+signed in to this deployment, which does mean it will confirm whether a given
+login has an account here — a trade this deployment has accepted, because the
+alternative only suggests people you have already shared with and is therefore
+useless for the first invitation anybody sends. It returns what GitHub already
+publishes: login, display name, avatar. Never an email.
+
+**The unit of sharing is a track, not a project.** A project is a machine with
+a disk, a settings panel and a bill. A track is one branch in one directory.
+Inviting somebody to a branch is a thing people do every day; inviting them to
+your machine is not, and an app that offered only the second would be offering
+the wrong thing under the right name. So a member gets that track's transcript,
+files, diff, terminal and prompt box — and does not see the project's other
+tracks, cannot open one, cannot change the machine, and cannot close the track
+they are in. `trackAccess` decides that per row, which is what makes the rule
+true by construction rather than by everyone remembering it.
+
+Once a track is shared, each prompt is prefixed `[from @login]` so the
+transcript can say who asked and the agent knows who it is working for.
+`shared/author.ts` writes it and the transcript reads it back off. It is added
+only when a track actually has more than one person in it — a solo track
+labelled with your own name reads as the app talking to itself.
+
+### What sharing a track actually costs
+
+The worktrees are separate directories on **one machine**, and the separation
+between them is the rule in the system prompt rather than a boundary the kernel
+enforces. So somebody you invite can ask the agent for things outside the
+branch you invited them to, including the environment's secrets. The invite
+dialog says this where the decision is being made rather than only here.
+
+The one real mitigation is the same distinction the project panel already
+draws: an **environment** secret is an env var inside the box and anything on
+the box can read it; a **vault** secret never reaches the machine, because
+Fountain's egress broker substitutes it in flight. The clone token is a vault
+secret for exactly this reason — a member cannot print it, because the machine
+does not have it.
+
+Opening a pull request is deliberately open to members, and that is a decision
+rather than an oversight: a member can already prompt the agent, the machine
+already holds a credential that can push, and the agent will open one if asked.
+A button that refused what the prompt box allows would be theatre.
+
 ### Keeping tracks apart is a prompt, and that is a real limitation
 
 There is no chroot here and no per-track permission. Two worktrees on one disk

@@ -137,6 +137,7 @@ export function TrackView(props: TrackViewProps) {
       <Transcript
         turns={turns}
         events={events}
+        people={track.people}
         runtime={project.runtime}
         running={running}
         head={
