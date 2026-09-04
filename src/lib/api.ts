@@ -97,8 +97,17 @@ export const api = {
   openTrack: (projectId: string, body: { title?: string; slug?: string; origin?: Partial<TrackOriginInfo> }) =>
     post<Track>(`/api/projects/${projectId}/tracks`, body),
   renameTrack: (id: string, title: string) => call<{ ok: true }>(`/api/tracks/${id}`, { method: "PATCH", body: JSON.stringify({ title }) }),
-  closeTrack: (id: string, force = false) => call<{ ok: true }>(`/api/tracks/${id}${force ? "?force=1" : ""}`, { method: "DELETE" }),
-  prompt: (id: string, text: string) => post<{ ok: true }>(`/api/tracks/${id}/prompt`, { prompt: text }),
+  closeTrack: (id: string, opts: { force?: boolean; deleteBranch?: boolean } = {}) => {
+    const qs = new URLSearchParams();
+    if (opts.force) qs.set("force", "1");
+    if (opts.deleteBranch) qs.set("branch", "1");
+    const q = qs.toString();
+    return call<{ ok: true }>(`/api/tracks/${id}${q ? `?${q}` : ""}`, { method: "DELETE" });
+  },
+  prompt: (id: string, text: string, images: { data: string; media_type: string }[] = []) =>
+    post<{ ok: true }>(`/api/tracks/${id}/prompt`, { prompt: text, ...(images.length ? { images } : {}) }),
+  /** This person has seen the track up to now. Clears its unread dot. */
+  markRead: (id: string) => post<{ ok: true }>(`/api/tracks/${id}/read`),
   interrupt: (id: string) => post<{ ok: true }>(`/api/tracks/${id}/interrupt`),
   retry: (id: string) => post<{ ok: true }>(`/api/tracks/${id}/retry`),
   events: (id: string) => call<TranscriptPage>(`/api/tracks/${id}/events`),

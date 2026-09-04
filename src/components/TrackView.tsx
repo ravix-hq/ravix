@@ -17,6 +17,7 @@ import type { LogEvent } from "../../shared/fountain-types";
 import type { Capabilities, Project, Track, TrackHeader, TurnRecord } from "../../shared/api";
 import { api, ApiError, subscribe } from "../lib/api";
 import { Branch, Clock, External, Folder, Info, Issue, Pull, Wrench } from "../lib/icons";
+import type { OutgoingImage } from "../lib/images";
 import { Composer } from "./Composer";
 import { Transcript } from "./Transcript";
 
@@ -132,10 +133,10 @@ export function TrackView(props: TrackViewProps) {
   }, [track.id]);
 
   const send = useCallback(
-    async (text: string) => {
+    async (text: string, images: OutgoingImage[] = []) => {
       setRunning(true);
       try {
-        await api.prompt(track.id, text);
+        await api.prompt(track.id, text, images);
         props.onActivity();
       } catch (err) {
         setRunning(false);

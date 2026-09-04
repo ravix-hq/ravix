@@ -117,6 +117,32 @@ export function App() {
     void reloadTracks(route.projectId);
   }, [route.projectId, reloadTracks]);
 
+  /**
+   * This person has seen the open track.
+   *
+   * The mark is a deliberate post rather than something the server infers from
+   * the `GET` — its comment on `POST /read` says why, and it comes down to
+   * opening a track to read the branch name not being the same as reading
+   * three turns of output. So the browser is the one that has to say it, and
+   * the rail is re-read afterwards because the mark is per person and only the
+   * server knows what it cleared.
+   *
+   * A failed mark costs one dot that stays lit until the next turn, which is
+   * not worth a toast on top of whatever else just went wrong; the rail is
+   * reloaded either way so this stays a drop-in for a bare `reloadTracks`.
+   */
+  const markRead = useCallback(
+    async (trackId: string, projectId: string) => {
+      try {
+        await api.markRead(trackId);
+      } catch {
+        /* the dot stays lit */
+      }
+      void reloadTracks(projectId);
+    },
+    [reloadTracks],
+  );
+
   // ── navigation ──────────────────────────────────────────────────────
 
   const go = useCallback((next: Route) => {
@@ -192,6 +218,19 @@ export function App() {
     }
     void loadDetail(trackId);
   }, [route.trackId, loadDetail]);
+
+  // Settled, not merely fetched: a track still cutting its worktree or with a
+  // turn running into it is about to say something else, and a mark taken now
+  // would be older than the output by the time the dot cleared. Those two land
+  // on `onActivity` below instead, when the turn is actually over. The deps are
+  // the id and the status rather than `detail` itself so that a re-read of the
+  // detail — somebody joining the track, say — does not re-post the mark.
+  useEffect(() => {
+    const open = detail?.track;
+    if (!open || open.status === "opening" || open.status === "running") return;
+    void markRead(open.id, open.projectId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [detail?.track.id, detail?.track.projectId, detail?.track.status, markRead]);
 
   const project = useMemo(() => projects.find((p) => p.id === route.projectId) ?? null, [projects, route.projectId]);
 
@@ -302,6 +341,7 @@ export function App() {
                       branch beside it is not: it was cut on the machine when
                       the track opened, so it stays a chip you can read. */}
                   <TrackName
+                    key={detail.track.id}
                     track={detail.track}
                     onRenamed={() => {
                       void loadDetail(detail.track.id);
@@ -359,16 +399,28 @@ export function App() {
                     capabilities={capabilities}
                     onError={notify}
                     onOpenSettings={() => setDialog("settings")}
-                    onActivity={() => void reloadTracks(project.id)}
+                    // A turn ending is the other moment this person has seen
+                    // the track: they are looking at the reply as it lands. It
+                    // also fires when they send one, which is as clear a read
+                    // as there is.
+                    onActivity={() => void markRead(detail.track.id, project.id)}
                   />
                   <div className="inspector">
                     {/* Keyed for the same reason as the transcript: an open
                         directory, a loaded diff and a terminal's scrollback all
                         belong to one track, and a remount is a cheaper
                         guarantee of that than every panel remembering to scrub
-                        itself. */}
-                    <Inspector key={detail.track.id} track={detail.track} project={project} capabilities={capabilities} />
-                    <Dock key={detail.track.id} track={detail.track} project={project} capabilities={capabilities} />
+                        itself.
+                        
+                        The prefixes are not decoration. These are siblings, and
+                        two siblings carrying the *same* key is a reconciliation
+                        error rather than a duplicate-looking one: React cannot
+                        tell which of them a keyed slot refers to, and leaves the
+                        previous track's panels mounted beside the new ones. The
+                        symptom is a file tree per track you have visited,
+                        stacked down the side. */}
+                    <Inspector key={`inspector:${detail.track.id}`} track={detail.track} project={project} capabilities={capabilities} />
+                    <Dock key={`dock:${detail.track.id}`} track={detail.track} project={project} capabilities={capabilities} />
                   </div>
                 </div>
               </>

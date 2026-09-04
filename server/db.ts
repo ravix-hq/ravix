@@ -204,6 +204,19 @@ export class Db {
         expires_at  TEXT NOT NULL
       );
 
+      -- When each person last looked at each track.
+      --
+      -- Per (track, person) rather than per track, because a shared track is
+      -- read by more than one pair of eyes and Fountain's own unread flag
+      -- belongs to the one account every machine here runs on — it would mark
+      -- a track read for everybody the moment anybody opened it.
+      CREATE TABLE IF NOT EXISTS track_reads (
+        track_id  TEXT NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
+        user_id   TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        seen_at   TEXT NOT NULL,
+        PRIMARY KEY (track_id, user_id)
+      );
+
       -- Short-lived signed state for the two GitHub round trips. Rows are
       -- deleted on use and swept on age, so a replayed callback finds nothing.
       CREATE TABLE IF NOT EXISTS oauth_states (
@@ -614,6 +627,35 @@ export class Db {
     if (Date.parse(r.expires_at) <= Date.now()) return null;
     const track = this.track(r.track_id);
     return track && !track.closedAt ? track : null;
+  }
+
+  // ── what you have not read ───────────────────────────────────────────
+
+  markRead(trackId: string, userId: string, at = new Date().toISOString()): void {
+    this.db.run(
+      `INSERT INTO track_reads (track_id, user_id, seen_at) VALUES (?, ?, ?)
+       ON CONFLICT(track_id, user_id) DO UPDATE SET seen_at = excluded.seen_at`,
+      [trackId, userId, at],
+    );
+  }
+
+  /** When this person last looked at each of a project's tracks. */
+  readsOf(userId: string, projectId: string): Map<string, string> {
+    const rows = this.db
+      .query<{ track_id: string; seen_at: string }, [string, string]>(
+        `SELECT r.track_id, r.seen_at FROM track_reads r JOIN tracks t ON t.id = r.track_id
+         WHERE r.user_id = ? AND t.project_id = ?`,
+      )
+      .all(userId, projectId);
+    return new Map(rows.map((r) => [r.track_id, r.seen_at]));
+  }
+
+  lastReadOf(trackId: string, userId: string): string | null {
+    return (
+      this.db
+        .query<{ seen_at: string }, [string, string]>("SELECT seen_at FROM track_reads WHERE track_id = ? AND user_id = ?")
+        .get(trackId, userId)?.seen_at ?? null
+    );
   }
 
   close(): void {

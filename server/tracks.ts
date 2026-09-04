@@ -48,9 +48,17 @@ export async function list(ctx: AppContext, req: Request, projectId: string): Pr
   if (!owner && !rows.length) throw new HttpError(404, "not_found", "No such project.");
 
   const live = await conversationsOf(ctx, project);
+  const reads = ctx.db.readsOf(user.id, project.id);
   return json({
     data: rows.map((r) =>
-      toTrack(r, project, live.get(r.conversationId ?? "") ?? null, peopleOf(ctx, r.id, project.userId), owner ? "owner" : "member"),
+      toTrack(
+        r,
+        project,
+        live.get(r.conversationId ?? "") ?? null,
+        peopleOf(ctx, r.id, project.userId),
+        owner ? "owner" : "member",
+        reads.get(r.id) ?? null,
+      ),
     ),
   });
 }
@@ -79,7 +87,14 @@ export async function show(ctx: AppContext, req: Request, trackId: string): Prom
   };
   return json({
     data: {
-      track: toTrack(track, project, live.get(track.conversationId ?? "") ?? null, peopleOf(ctx, track.id, project.userId), role),
+      track: toTrack(
+        track,
+        project,
+        live.get(track.conversationId ?? "") ?? null,
+        peopleOf(ctx, track.id, project.userId),
+        role,
+        ctx.db.lastReadOf(track.id, user.id),
+      ),
       header,
       starters: starters({ hasRepo: !!project.repoFullName }),
     },
@@ -232,7 +247,8 @@ export async function prompt(ctx: AppContext, req: Request, trackId: string): Pr
   const fountain = requireFountain(ctx);
   const body = await readJson(req);
   const text = str(body.prompt, 100_000);
-  if (!text.trim()) throw new HttpError(422, "empty_prompt", "Say something.");
+  const images = readImages(body.images);
+  if (!text.trim() && !images.length) throw new HttpError(422, "empty_prompt", "Say something.");
   if (!track.conversationId) throw new HttpError(409, "not_open", "This track has no conversation yet.");
 
   // Name the sender only once there is somebody to distinguish them from. A
@@ -244,12 +260,51 @@ export async function prompt(ctx: AppContext, req: Request, trackId: string): Pr
 
   await prepareMachine(ctx, project, fountain);
   try {
-    await fountain.prompt(track.conversationId, outgoing);
+    await fountain.prompt(track.conversationId, outgoing, images);
   } catch (err) {
     throw asHttpError(err, "send that");
   }
   publish(project.id, { event: "turn", data: { trackId: track.id, status: "running" } });
   return json({ data: { ok: true } });
+}
+
+/**
+ * `POST /api/tracks/:id/read` — this person has seen it up to now.
+ *
+ * Sent by the browser when a track is open and settled, rather than inferred
+ * from the `GET`: opening a track to glance at the branch name is not reading
+ * three turns of output, and a read mark set by the fetch would clear the dot
+ * before anybody looked.
+ */
+export async function markRead(ctx: AppContext, req: Request, trackId: string): Promise<Response> {
+  const user = await authenticate(ctx, req);
+  const { track, project } = trackOf(ctx, user, trackId);
+  ctx.db.markRead(track.id, user.id);
+  publish(project.id, { event: "tracks", data: { projectId: project.id } });
+  return json({ data: { ok: true } });
+}
+
+/**
+ * What the browser may attach to a prompt.
+ *
+ * Fountain takes `{data, media_type}` with the data base64. The cap is on the
+ * decoded size and on the count, because the browser is not the only thing
+ * that can post here and an unbounded list of megabyte data URLs is a way to
+ * fill the machine's memory rather than a feature.
+ */
+function readImages(raw: unknown): { data: string; media_type: string }[] {
+  if (!Array.isArray(raw)) return [];
+  const ok = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
+  const out: { data: string; media_type: string }[] = [];
+  for (const item of raw.slice(0, 6)) {
+    if (!item || typeof item !== "object") continue;
+    const { data, media_type } = item as { data?: unknown; media_type?: unknown };
+    if (typeof data !== "string" || typeof media_type !== "string" || !ok.has(media_type)) continue;
+    // base64 is four characters per three bytes.
+    if (data.length > (8 * 1024 * 1024 * 4) / 3) throw new HttpError(413, "image_too_large", "That image is larger than 8 MB.");
+    out.push({ data, media_type });
+  }
+  return out;
 }
 
 /** `POST /api/tracks/:id/interrupt` */
@@ -611,6 +666,7 @@ export function toTrack(
   live: ConversationSummary | null,
   people: Person[] = [],
   role: "owner" | "member" = "owner",
+  lastRead: string | null = null,
 ): Track {
   const origin: TrackOriginInfo = originOf(row);
   return {
@@ -633,7 +689,18 @@ export function toTrack(
     createdByLogin: row.createdByLogin,
     people,
     role,
+    // A track nobody has opened is unread the moment the machine says
+    // anything; one whose last activity predates your last look is not. The
+    // comparison is against `last_active_at` rather than a turn count so a
+    // streamed reply marks it unread as it arrives.
+    unread: unreadOf(live?.last_active_at ?? null, lastRead),
   };
+}
+
+function unreadOf(lastActiveAt: string | null, lastRead: string | null): boolean {
+  if (!lastActiveAt) return false;
+  if (!lastRead) return true;
+  return Date.parse(lastActiveAt) > Date.parse(lastRead);
 }
 
 function statusOf(row: TrackRow, live: ConversationSummary | null): Track["status"] {

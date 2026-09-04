@@ -94,7 +94,12 @@ export function Transcript({ trackId, turns, events, runtime, running, head, peo
 
   return (
     <div
-      className="scroll"
+      // `log` bottom-anchors the content. A transcript shorter than its
+      // viewport otherwise sits at the top under the ribbon with a field of
+      // empty space between the last thing said and the box you reply in,
+      // which reads as the scroll having failed rather than as there being
+      // little to show.
+      className="scroll log"
       ref={scroller}
       onScroll={(e) => {
         const el = e.currentTarget;

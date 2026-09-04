@@ -216,11 +216,16 @@ export function openTrackPrompt(input: {
  * `git worktree remove` rather than `rm -rf`, because the shared clone keeps
  * an administrative record of every worktree it cut and a directory deleted
  * from underneath it leaves that record behind — after which the *next* track
- * with the same name is refused. The branch is deliberately left alone: it may
- * be pushed, it may be someone's open pull request, and deleting work is not
- * something a "close this tab" gesture should do.
+ * with the same name is refused.
+ *
+ * The branch is left alone unless somebody ticks the box. That default is the
+ * important half: closing a track is a tab shut, and a gesture that quietly
+ * deleted a branch — pushed, reviewed, possibly someone else's open pull
+ * request — would be the most expensive undo in the app. When the box *is*
+ * ticked it goes properly, locally and on the remote, because a branch deleted
+ * in one place and left in the other is the worst of both.
  */
-export function closeTrackPrompt(input: { slug: string; repoPath: string | null; force: boolean }): string {
+export function closeTrackPrompt(input: { slug: string; repoPath: string | null; force: boolean; deleteBranch?: string | null }): string {
   const dir = workdirFor(input.slug);
   if (!input.repoPath) {
     return [
@@ -238,7 +243,9 @@ export function closeTrackPrompt(input: { slug: string; repoPath: string | null;
     `  git worktree remove ${input.force ? "--force " : ""}${dir}`,
     "  git worktree prune",
     "",
-    "Leave the branch alone — it may be pushed, and it is not this turn's business.",
+    input.deleteBranch
+      ? `Then delete the branch \`${input.deleteBranch}\` — this close was asked for with the branch, so:\n\n  git branch -D ${input.deleteBranch}\n  git push origin --delete ${input.deleteBranch} 2>/dev/null || true\n\nThe push may fail because the branch was never pushed; that is fine and not worth reporting as an error.`
+      : "Leave the branch alone — it may be pushed, and it is not this turn's business.",
     input.force
       ? "This is a forced close: uncommitted changes in that worktree are being discarded on purpose."
       : "If the worktree has uncommitted changes, stop and say so instead of forcing it.",

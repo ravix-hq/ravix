@@ -122,25 +122,39 @@ export function Yard(props: YardProps) {
                 ) : null}
               </div>
 
-              {tracks.map((track, i) => (
-                <button
-                  key={track.id}
-                  type="button"
-                  className={`track-row${selected.trackId === track.id ? " on" : ""}`}
-                  onClick={() => props.onPickTrack(project.id, track.id)}
-                  title={`${track.title} — ${track.branch}`}
-                >
-                  <span className="track-num">{i + 1}</span>
-                  <span className="truncate">{track.title}</span>
-                  <span className="spacer" />
-                  {track.stale ? (
-                    <span className="chip" title="This track opened before the project's settings changed">
-                      older
-                    </span>
-                  ) : null}
-                  <span className={`dot ${track.status}`} aria-label={track.status} />
-                </button>
-              ))}
+              {tracks.map((track, i) => {
+                // The track you are looking at is never unread, whatever the
+                // list says: the read mark is a round trip behind the click,
+                // and a row that lights up the moment you open it teaches
+                // people that the dot means nothing.
+                const unread = track.unread && selected.trackId !== track.id;
+                return (
+                  <button
+                    key={track.id}
+                    type="button"
+                    className={`track-row${selected.trackId === track.id ? " on" : ""}${unread ? " unread" : ""}`}
+                    onClick={() => props.onPickTrack(project.id, track.id)}
+                    title={unread ? `${track.title} — ${track.branch} — unread` : `${track.title} — ${track.branch}`}
+                  >
+                    <span className="track-num">{i + 1}</span>
+                    <span className="truncate">{track.title}</span>
+                    <span className="spacer" />
+                    {track.stale ? (
+                      <span className="chip" title="This track opened before the project's settings changed">
+                        older
+                      </span>
+                    ) : null}
+                    {/* One dot, two facts. The row already ends in a dot for
+                        the machine's status, and a second pip beside it would
+                        make the rail two columns of coloured circles that mean
+                        different things — so unread rings the dot that is
+                        already there and puts the weight in the title, which
+                        is the cue that survives a theme, a colour-blind reader
+                        and a screen read aloud. */}
+                    <span className={`dot ${track.status}`} aria-label={unread ? `${track.status}, unread` : track.status} />
+                  </button>
+                );
+              })}
 
               {active && owner ? (
                 <button type="button" className="track-row" onClick={() => props.onProjectSettings(project.id)}>

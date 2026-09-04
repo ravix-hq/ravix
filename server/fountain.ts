@@ -199,8 +199,11 @@ export class Fountain {
     });
   }
 
-  prompt(conversationId: string, text: string): Promise<unknown> {
-    return this.data("POST", `/api/conversations/${encodeURIComponent(conversationId)}/prompts`, { prompt: text });
+  prompt(conversationId: string, text: string, images: { data: string; media_type: string }[] = []): Promise<unknown> {
+    return this.data("POST", `/api/conversations/${encodeURIComponent(conversationId)}/prompts`, {
+      prompt: text,
+      ...(images.length ? { images } : {}),
+    });
   }
 
   interrupt(conversationId: string): Promise<unknown> {

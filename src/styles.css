@@ -808,3 +808,49 @@ input.crumb-name { width: 30ch; }
    rather than sitting flush with the invite box as an equal choice. */
 .link-box { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line); }
 .link-box input[readonly] { font-size: 11.5px; color: var(--dim); }
+
+/* A transcript shorter than its viewport belongs against the composer, not
+   stranded at the top of it. `margin-top: auto` on the single content wrapper
+   does that, and costs nothing once the content is tall enough to scroll —
+   there is no free space left for the margin to take. */
+.scroll.log { display: flex; flex-direction: column; }
+.scroll.log > * { margin-top: auto; }
+
+/* ── a track nobody has read yet ───────────────────────────────────────────
+   Said twice on purpose, and neither half is a second dot. The row already
+   ends in one for the machine's status, so unread rings *that* dot rather than
+   adding a pip beside it — two coloured circles per row, meaning different
+   things, is how a rail stops being readable at a glance. The weight and the
+   ink in the title are the half that carries: they survive a theme with a
+   quiet accent, a reader who cannot separate the ring from the dot, and the
+   grey status of a track that is simply sitting there. */
+.track-row.unread { color: var(--ink); }
+.track-row.unread .truncate { color: var(--ink); font-weight: 600; }
+.track-row.unread .dot { box-shadow: 0 0 0 2px var(--accent-soft), 0 0 0 3px var(--accent); }
+
+/* ── images on a prompt ────────────────────────────────────────────────── */
+
+.offscreen { display: none; }
+.composer-box.dragging { border-color: var(--accent-line); background: var(--accent-soft); }
+.composer-note { color: var(--bad); font-size: 11.5px; padding: 4px 12px 0; }
+.attachments { display: flex; flex-wrap: wrap; gap: 6px; padding: 10px 12px 0; }
+.attachment {
+  position: relative; width: 54px; height: 54px; border: 1px solid var(--line);
+  border-radius: 7px; overflow: hidden; background: var(--surface);
+}
+.attachment img { width: 100%; height: 100%; object-fit: cover; display: block; }
+/* Over the corner of the thumbnail, on a plate of its own: the image behind it
+   is arbitrary, and a bare glyph disappears into half of them. */
+.attachment button.x { position: absolute; top: 1px; right: 1px; padding: 2px; border-radius: 5px; background: var(--panel); }
+.attachment button.x:hover { background: var(--panel); }
+.attach { width: 26px; height: 26px; padding: 0; display: grid; place-items: center; border-radius: 7px; background: transparent; border-color: transparent; color: var(--dimmer); }
+.attach:hover:not(:disabled) { color: var(--ink); background: var(--surface-hover); border-color: transparent; }
+
+/* ── renaming a track, in the crumb it is read in ──────────────────────── */
+
+.crumb-title { display: inline-flex; align-items: center; gap: 5px; min-width: 0; max-width: 34ch; padding: 2px 6px; background: transparent; border-color: transparent; }
+.crumb-title > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.crumb-title .pencil { flex: none; color: var(--dimmer); opacity: 0; }
+.crumb-title:hover .pencil, .crumb-title:focus-visible .pencil { opacity: 1; }
+.crumb-rename { width: 24ch; padding: 3px 6px; font-size: 12.5px; }
+.crumb-rename[aria-busy="true"] { opacity: 0.6; }

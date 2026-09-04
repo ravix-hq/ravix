@@ -135,6 +135,13 @@ function Report({ track, project }: { track: Track; project: Project }) {
 /**
  * The pull request, or the offer to open one.
  *
+ * The row shows the pull request's state rather than only its existence, and
+ * that is the whole point of it: a merged pull request is where a finished
+ * track's work went, and reporting "no pull request for this branch" because
+ * there is no *open* one told people their branch had gone nowhere. So the
+ * offer to open one appears only when GitHub has none at all — a branch whose
+ * pull request merged last week is not waiting for a second one.
+ *
  * The button is only worth showing once the branch is on GitHub — offering to
  * open a pull request for a branch that has never been pushed is offering an
  * error message. The pull it opens is authored by the App rather than by the
@@ -174,16 +181,18 @@ function PullHeader({
   }
 
   if (shown) {
-    const url = opened?.url ?? (project.repo ? `https://github.com/${project.repo}/pull/${shown.number}` : null);
+    // Newer responses carry the real URL, which is the one GitHub would give
+    // you; composing it from the repository name is the fallback for a report
+    // that predates the field, and it needs a repository to compose from.
+    const url = shown.url ?? (project.repo ? `https://github.com/${project.repo}/pull/${shown.number}` : null);
     return (
       <div className="check-row">
-        <span className="chip accent">
-          <Pull size={12} /> #{shown.number}
+        <span className={`chip ${pullTone(shown)}`}>
+          <Pull size={12} /> {pullLabel(shown)}
         </span>
-        <span className="name truncate" title={shown.title}>
-          {shown.title}
+        <span className="name truncate" title={`#${shown.number} ${shown.title}`}>
+          <span className="dimmer">#{shown.number}</span> {shown.title}
         </span>
-        {shown.draft ? <span className="chip">Draft</span> : null}
         {url ? (
           <a href={url} target="_blank" rel="noreferrer" title="Open on GitHub" style={{ marginLeft: "auto" }}>
             <External size={13} />
@@ -210,6 +219,37 @@ function PullHeader({
       ) : null}
     </>
   );
+}
+
+/**
+ * State first, draft second.
+ *
+ * A pull request that was closed as a draft is closed — the draft flag is
+ * about how an *open* one is asking to be treated, and letting it win would
+ * label a dead branch as work in progress. An older report with no state at
+ * all is one the server answered before the field existed, and back then the
+ * only pull it could return was an open one.
+ */
+function pullLabel(pull: PullRef): string {
+  switch (pull.state ?? "open") {
+    case "merged":
+      return "Merged";
+    case "closed":
+      return "Closed";
+    default:
+      return pull.draft ? "Draft" : "Open";
+  }
+}
+
+function pullTone(pull: PullRef): string {
+  switch (pull.state ?? "open") {
+    case "merged":
+      return "accent";
+    case "closed":
+      return "bad";
+    default:
+      return pull.draft ? "" : "ok";
+  }
 }
 
 // ── how a run reads ────────────────────────────────────────────────────

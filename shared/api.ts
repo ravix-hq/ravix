@@ -110,6 +110,15 @@ export interface PullRef {
   baseRef: string;
   draft: boolean;
   updatedAt: string;
+  /**
+   * Where it got to.
+   *
+   * A merged pull request is the most interesting thing a finished branch has,
+   * so the Checks panel shows it rather than reporting that there is no *open*
+   * one — which is true, and reads as "nobody ever opened one".
+   */
+  state?: "open" | "closed" | "merged";
+  url?: string | null;
 }
 
 export interface IssueRef {
@@ -234,6 +243,13 @@ export interface Track {
   people: Person[];
   /** What the caller may do here. */
   role: "owner" | "member";
+  /**
+   * The machine has said something since this person last looked.
+   *
+   * Per person, not per track: a shared track read by one of three people is
+   * still unread for the other two.
+   */
+  unread: boolean;
 }
 
 export interface TrackOriginInfo {

@@ -143,6 +143,21 @@ export const Dot = (p: P) => (
   </Svg>
 );
 
+export const Picture = (p: P) => (
+  <Svg {...p}>
+    <rect x="3" y="4.5" width="18" height="15" rx="2" />
+    <circle cx="8.5" cy="10" r="1.5" />
+    <path d="m3.5 17.5 4.5-4.5 3.5 3.5 3-2.5 6 5" />
+  </Svg>
+);
+
+export const Pencil = (p: P) => (
+  <Svg {...p}>
+    <path d="M4.5 19.5h4L19.5 8.5a2.1 2.1 0 0 0-3-3L5.5 16.5z" />
+    <path d="m14.5 6.5 3 3" />
+  </Svg>
+);
+
 export const Clock = (p: P) => (
   <Svg {...p}>
     <circle cx="12" cy="12" r="8.5" />
@@ -177,12 +192,6 @@ export const Settings = (p: P) => (
   </Svg>
 );
 
-export const Pencil = (p: P) => (
-  <Svg {...p}>
-    <path d="M4 20h4L19 9a2.8 2.8 0 0 0-4-4L4 16z" />
-    <path d="m14 6 4 4" />
-  </Svg>
-);
 
 export const Sparkle = (p: P) => (
   <Svg {...p}>

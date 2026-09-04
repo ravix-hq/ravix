@@ -29,6 +29,9 @@ export interface CloseTrackProps {
 export function CloseTrack({ track, onClose, onClosed }: CloseTrackProps) {
   const diff = useDiff(track.id);
   const [busy, setBusy] = useState(false);
+  // Off by default and deliberately so: closing a track is a tab shut, and a
+  // branch is work. The box has to be reached for.
+  const [deleteBranch, setDeleteBranch] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const changed = diff.report?.files ?? [];
@@ -43,17 +46,34 @@ export function CloseTrack({ track, onClose, onClosed }: CloseTrackProps) {
       // clean worktree is harmless, but sending it always would make the
       // sentence in the transcript — "changes are being discarded on purpose"
       // — a lie in the ordinary case.
-      await api.closeTrack(track.id, dirty > 0);
+      await api.closeTrack(track.id, { force: dirty > 0, deleteBranch });
       onClosed(
-        dirty > 0
-          ? `Closed ${track.title}. The worktree and its uncommitted changes are gone; ${track.branch} is not.`
-          : `Closed ${track.title}. The worktree is being removed; ${track.branch} is untouched.`,
+        deleteBranch
+          ? `Closed ${track.title}. The worktree and ${track.branch} are both being removed.`
+          : dirty > 0
+            ? `Closed ${track.title}. The worktree and its uncommitted changes are gone; ${track.branch} is not.`
+            : `Closed ${track.title}. The worktree is being removed; ${track.branch} is untouched.`,
       );
     } catch (err) {
       setBusy(false);
       setError(err instanceof ApiError ? err.message : "Could not close this track.");
     }
   }
+
+  const branchLine = (
+    <label className="row" style={{ gap: 8, alignItems: "flex-start", marginTop: 12, cursor: "pointer" }}>
+      <input
+        type="checkbox"
+        checked={deleteBranch}
+        disabled={busy}
+        onChange={(e) => setDeleteBranch(e.currentTarget.checked)}
+        style={{ width: "auto", marginTop: 2 }}
+      />
+      <span className="fine" style={{ margin: 0 }}>
+        Delete <code>{track.branch}</code> too, here and on GitHub.
+      </span>
+    </label>
+  );
 
   return (
     <Dialog
@@ -62,7 +82,11 @@ export function CloseTrack({ track, onClose, onClosed }: CloseTrackProps) {
       footer={
         <>
           <span className="fine">
-            {dirty > 0 ? "That work exists in this worktree and nowhere else." : "The branch survives this; the directory does not."}
+            {deleteBranch
+              ? "Both go."
+              : dirty > 0
+                ? "That work exists in this worktree and nowhere else."
+                : "The branch survives this; the directory does not."}
           </span>
           <span className="spacer" />
           <button type="button" disabled={busy} onClick={onClose}>
@@ -73,9 +97,11 @@ export function CloseTrack({ track, onClose, onClosed }: CloseTrackProps) {
           <button type="button" className="danger" disabled={busy || diff.loading} onClick={() => void close()}>
             {busy
               ? "Closing…"
-              : dirty > 0
-                ? `Discard ${dirty} file${dirty === 1 ? "" : "s"} and close`
-                : "Close track"}
+              : deleteBranch
+                ? "Close and delete branch"
+                : dirty > 0
+                  ? `Discard ${dirty} file${dirty === 1 ? "" : "s"} and close`
+                  : "Close track"}
           </button>
         </>
       }
@@ -88,9 +114,19 @@ export function CloseTrack({ track, onClose, onClosed }: CloseTrackProps) {
           conversation ends. It ends for everybody in it, not only for you.
         </p>
         <p className="fine">
-          The branch <code>{track.branch}</code> is left alone. Every commit on it survives, pushed or not, and nothing
-          on GitHub is touched — a closed track is a tab shut, not work thrown away.
+          {deleteBranch ? (
+            <>
+              The branch <code>{track.branch}</code> goes with it, locally and on GitHub. An open pull request for it
+              closes.
+            </>
+          ) : (
+            <>
+              The branch <code>{track.branch}</code> is left alone — a closed track is a tab shut, not work thrown away.
+            </>
+          )}
         </p>
+
+        {branchLine}
 
         {diff.loading ? <p className="fine">Checking the worktree for uncommitted changes…</p> : null}
 

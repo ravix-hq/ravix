@@ -310,10 +310,23 @@ export class GitHub {
       this.request<{ check_runs: RawCheckRun[] }>("GET", `/repos/${fullName}/commits/${sha}/check-runs?per_page=50`, {
         auth: `Bearer ${token}`,
       }).catch(() => ({ check_runs: [] as RawCheckRun[] })),
-      this.request<RawPull[]>("GET", `/repos/${fullName}/pulls?state=open&head=${encodeURIComponent(fullName.split("/")[0] + ":" + ref)}`, {
-        auth: `Bearer ${token}`,
-      }).catch(() => [] as RawPull[]),
+      // `state=all`, not `state=open`. A branch whose pull request has been
+      // merged is the *most* interesting case — it is the one where the work
+      // landed — and asking only for open ones answered "no pull request for
+      // this branch" beside two green checks that plainly came from one.
+      this.request<RawPull[]>(
+        "GET",
+        `/repos/${fullName}/pulls?state=all&per_page=20&head=${encodeURIComponent(fullName.split("/")[0] + ":" + ref)}`,
+        { auth: `Bearer ${token}` },
+      ).catch(() => [] as RawPull[]),
     ]);
+
+    // An open one if there is one, else the most recently updated — which for
+    // a finished branch is the pull request that merged it.
+    const ranked = [...pulls].sort(
+      (a, b) => Number(!!a.merged_at || a.state === "closed") - Number(!!b.merged_at || b.state === "closed") ||
+        b.updated_at.localeCompare(a.updated_at),
+    );
 
     return {
       ref,
@@ -329,7 +342,7 @@ export class GitHub {
           completedAt: r.completed_at ?? null,
         }),
       ),
-      pull: pulls[0] ? toPullRef(pulls[0]) : null,
+      pull: ranked[0] ? toPullRef(ranked[0]) : null,
     };
   }
 
@@ -417,6 +430,9 @@ interface RawPull {
   base: { ref: string };
   draft?: boolean;
   updated_at: string;
+  state?: string;
+  merged_at?: string | null;
+  html_url?: string;
 }
 
 interface RawIssue {
@@ -460,6 +476,8 @@ function toPullRef(p: RawPull): PullRef {
     baseRef: p.base.ref,
     draft: !!p.draft,
     updatedAt: p.updated_at,
+    state: p.merged_at ? "merged" : p.state === "closed" ? "closed" : "open",
+    url: p.html_url ?? null,
   };
 }
 

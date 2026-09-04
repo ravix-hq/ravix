@@ -25,9 +25,10 @@
  *
  *   GET    /api/tracks/:id                  the track and its ribbon
  *   PATCH  /api/tracks/:id                  rename the label, not the worktree
- *   DELETE /api/tracks/:id                  close, and remove the worktree
+ *   DELETE /api/tracks/:id ?branch=1        close; optionally delete the branch
  *   POST   /api/tracks/:id/prompt
  *   POST   /api/tracks/:id/interrupt
+ *   POST   /api/tracks/:id/read             this person has seen it up to now
  *   POST   /api/tracks/:id/retry            send the opening turn again
  *   GET    /api/tracks/:id/events           the transcript so far
  *   GET    /api/tracks/:id/stream           the transcript, live
@@ -121,6 +122,7 @@ export function buildRouter(ctx: AppContext): (req: Request) => Promise<Response
   on("DELETE", "/api/tracks/:id", (req, p) => tracks.close(ctx, req, p.id!));
   on("POST", "/api/tracks/:id/prompt", (req, p) => tracks.prompt(ctx, req, p.id!));
   on("POST", "/api/tracks/:id/interrupt", (req, p) => tracks.interrupt(ctx, req, p.id!));
+  on("POST", "/api/tracks/:id/read", (req, p) => tracks.markRead(ctx, req, p.id!));
   on("POST", "/api/tracks/:id/retry", (req, p) => tracks.retry(ctx, req, p.id!));
   on("GET", "/api/tracks/:id/events", (req, p) => tracks.events(ctx, req, p.id!));
   on("GET", "/api/tracks/:id/stream", (req, p) => tracks.stream(ctx, req, p.id!));
