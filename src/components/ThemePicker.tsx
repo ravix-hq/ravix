@@ -1,22 +1,29 @@
 /**
- * Sixteen palettes, behind one row in the foot of the yard.
+ * Twenty-two palettes, behind one row in the foot of the yard.
  *
  * A menu rather than a light/dark toggle, because the list is the editor canon
  * and the whole value of it is that somebody who has read diffs in Gruvbox for
  * six years gets to read this app's diffs in Gruvbox too. Names matter for the
  * same reason, so they are spelled out rather than cycled through.
  *
+ * The `fun` ones get a group of their own at the bottom rather than a place in
+ * Dark. They are the same shape and cost the picker nothing, but sorting them
+ * by `mode` would file Vaporwave next to Nord, and the canon's whole promise is
+ * that everything in it is somebody's daily driver.
+ *
  * Hovering a row paints the app in that theme immediately and leaving the menu
  * puts back the one that is actually on. That is worth the small amount of
- * bookkeeping below: sixteen swatches tell you the background and the accent,
- * and nothing else, and the thing you are choosing is how a transcript reads.
+ * bookkeeping below: a swatch tells you the background and the accent, and
+ * nothing else, and the thing you are choosing is how a transcript reads.
  */
 import { useEffect, useRef, useState } from "react";
 import { THEMES, applyTheme, previewTheme, storedTheme, type ThemeId } from "../lib/theme";
 import { Check, Chevron } from "../lib/icons";
 
-const DARK = THEMES.filter((t) => t.mode === "dark");
-const LIGHT = THEMES.filter((t) => t.mode === "light");
+const isFun = (t: (typeof THEMES)[number]) => "fun" in t && t.fun;
+const DARK = THEMES.filter((t) => t.mode === "dark" && !isFun(t));
+const LIGHT = THEMES.filter((t) => t.mode === "light" && !isFun(t));
+const FUN = THEMES.filter(isFun);
 
 export function ThemePicker() {
   const [theme, setTheme] = useState<ThemeId>(storedTheme);
@@ -99,6 +106,8 @@ export function ThemePicker() {
           {DARK.map(option)}
           <div className="theme-group">Light</div>
           {LIGHT.map(option)}
+          <div className="theme-group">Fun</div>
+          {FUN.map(option)}
         </div>
       ) : null}
     </div>

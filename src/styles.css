@@ -12,7 +12,7 @@
 }
 
 /* ── the palettes ──────────────────────────────────────────────────────────
-   Sixteen blocks, one token list, and two rules about their selectors.
+   Twenty-two blocks, one token list, and two rules about their selectors.
 
    They are attribute selectors rather than `:root[data-theme]` so that *any*
    element carrying the attribute gets the palette for its subtree — which is
@@ -225,6 +225,81 @@
   --scrim: rgba(76, 79, 105, 0.32); color-scheme: light;
 }
 
+/* The six below are not editor palettes and are not pretending to be. They
+   still fill the same token list, so the shell does not know the difference —
+   which is the only reason a joke theme is safe to ship: nothing downstream
+   gets to special-case one. Ink against ground stays legible in every one of
+   them, `hot-dog-stand` included, because a theme you cannot read a stack
+   trace in is a bug wearing a costume. */
+
+[data-theme="mario"] {
+  --bg: #0b0b1a; --panel: #14142b; --sidebar: #080814; --surface: #1c1c3a;
+  --surface-hover: #242449; --surface-active: #2d2d5c; --input: #08081a; --code-bg: #060612;
+  --line: #23234a; --line-strong: #3b3b76; --ink: #fdf6e8; --dim: #b3aacb;
+  --dimmer: #7d75a0; --accent: #ff5147; --accent-ink: #ffdad5; --accent-soft: #3d1113;
+  --accent-line: #7a2320; --notice: #131c3f; --ok: #5fcf5c; --ok-soft: #12331a;
+  --warn: #fbd000; --warn-soft: #3a3005; --bad: #ff6f61; --bad-soft: #3d1a16;
+  --danger-bg: #33161a; --danger-line: #6f2f2c; --shadow: rgba(0, 0, 0, 0.55);
+  --scrim: rgba(0, 0, 0, 0.6); color-scheme: dark;
+}
+
+[data-theme="neon-noir"] {
+  --bg: #08060f; --panel: #100c1c; --sidebar: #060410; --surface: #191227;
+  --surface-hover: #221833; --surface-active: #2d2042; --input: #0b0814; --code-bg: #05040b;
+  --line: #241a38; --line-strong: #3d2c5c; --ink: #ece4ff; --dim: #a794c4;
+  --dimmer: #776a94; --accent: #ff4ecd; --accent-ink: #ffd6f4; --accent-soft: #3a0f30;
+  --accent-line: #7a2263; --notice: #291134; --ok: #3ef2c0; --ok-soft: #0d3830;
+  --warn: #ffc857; --warn-soft: #3a2d10; --bad: #ff5470; --bad-soft: #3c1424;
+  --danger-bg: #340f1f; --danger-line: #722840; --shadow: rgba(0, 0, 0, 0.65);
+  --scrim: rgba(0, 0, 0, 0.6); color-scheme: dark;
+}
+
+[data-theme="vaporwave"] {
+  --bg: #1b0f2e; --panel: #241540; --sidebar: #150b24; --surface: #2e1b4f;
+  --surface-hover: #38215e; --surface-active: #45296f; --input: #150b26; --code-bg: #120a20;
+  --line: #382159; --line-strong: #57377f; --ink: #f6e7ff; --dim: #c3a7dd;
+  --dimmer: #937bab; --accent: #4fd6ff; --accent-ink: #d5f5ff; --accent-soft: #123a4a;
+  --accent-line: #2a6b84; --notice: #21274f; --ok: #7bf1a8; --ok-soft: #163a2a;
+  --warn: #ffd166; --warn-soft: #3c3016; --bad: #ff6ea9; --bad-soft: #431c33;
+  --danger-bg: #3c1930; --danger-line: #7b3057; --shadow: rgba(0, 0, 0, 0.6);
+  --scrim: rgba(12, 4, 24, 0.6); color-scheme: dark;
+}
+
+[data-theme="matrix"] {
+  --bg: #000600; --panel: #04140a; --sidebar: #000400; --surface: #06210f;
+  --surface-hover: #0a2d15; --surface-active: #0f3a1c; --input: #020e06; --code-bg: #000400;
+  --line: #0c2a14; --line-strong: #1c5028; --ink: #b8ffc4; --dim: #62c47a;
+  --dimmer: #3f8a53; --accent: #33ff77; --accent-ink: #ccffdd; --accent-soft: #06331a;
+  --accent-line: #14622f; --notice: #052a16; --ok: #6dff9a; --ok-soft: #06331b;
+  --warn: #d7ff5c; --warn-soft: #263310; --bad: #ff6b6b; --bad-soft: #3a1414;
+  --danger-bg: #2e1210; --danger-line: #6b2b26; --shadow: rgba(0, 0, 0, 0.7);
+  --scrim: rgba(0, 6, 0, 0.65); color-scheme: dark;
+}
+
+[data-theme="hot-dog-stand"] {
+  /* Windows 3.1's worst scheme, kept honest: every ground is a red dark enough
+     that yellow ink clears contrast on it, and nothing is left on white. */
+  --bg: #c00000; --panel: #d80000; --sidebar: #a30000; --surface: #e01010;
+  --surface-hover: #f02020; --surface-active: #ff3b3b; --input: #a30000; --code-bg: #8f0000;
+  --line: #ff2a2a; --line-strong: #ffee00; --ink: #ffff00; --dim: #ffd9a0;
+  --dimmer: #ffb8b8; --accent: #ffff00; --accent-ink: #ffff00; --accent-soft: #7a0000;
+  --accent-line: #ffee00; --notice: #8f0000; --ok: #c6ff00; --ok-soft: #7a0000;
+  --warn: #ffcc00; --warn-soft: #7a0000; --bad: #ffffff; --bad-soft: #7a0000;
+  --danger-bg: #7a0000; --danger-line: #ffff00; --shadow: rgba(60, 0, 0, 0.45);
+  --scrim: rgba(90, 0, 0, 0.5); color-scheme: dark;
+}
+
+[data-theme="bubblegum"] {
+  --bg: #fff0f6; --panel: #ffffff; --sidebar: #ffe3ef; --surface: #ffe0ee;
+  --surface-hover: #ffd0e4; --surface-active: #ffbcd8; --input: #ffffff; --code-bg: #fff4f8;
+  --line: #ffd0e2; --line-strong: #f5a8c8; --ink: #4a1030; --dim: #8d3f63;
+  --dimmer: #b06a8a; --accent: #d6187b; --accent-ink: #6d0339; --accent-soft: #ffd9ea;
+  --accent-line: #f5a1c8; --notice: #ffe6f2; --ok: #1f8a5b; --ok-soft: #d9f5e7;
+  --warn: #a06a00; --warn-soft: #fdf0cf; --bad: #c62828; --bad-soft: #fde3e1;
+  --danger-bg: #fde3e1; --danger-line: #f3b6b2; --shadow: rgba(120, 20, 70, 0.16);
+  --scrim: rgba(74, 16, 48, 0.3); color-scheme: light;
+}
+
 * { box-sizing: border-box; }
 
 body {
@@ -426,7 +501,7 @@ h4 { font-size: 11px; color: var(--dim); text-transform: uppercase; letter-spaci
 
    The swatch is the trick worth pointing at: the span carries `data-theme`,
    so `var(--bg)`, `var(--accent)` and the rest resolve to *that* theme rather
-   than the one that is on. Sixteen live previews, no per-theme CSS. */
+   than the one that is on. Twenty-two live previews, no per-theme CSS. */
 
 .theme-picker { position: relative; }
 .theme-trigger {

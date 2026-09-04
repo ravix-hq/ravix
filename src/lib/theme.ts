@@ -11,8 +11,8 @@
  *   - The attribute is not special to `<html>`. The selectors are plain
  *     attribute selectors rather than `:root[data-theme]`, so a `<span>` that
  *     carries `data-theme="nord"` resolves `var(--bg)` to Nord's background.
- *     That is how the picker draws sixteen live swatches without sixteen
- *     swatch classes, and it means a swatch cannot drift from its palette.
+ *     That is how the picker draws a live swatch per theme without a swatch
+ *     class per theme, and it means a swatch cannot drift from its palette.
  *   - `switchyard` is the default, and its block shares a selector list with
  *     `:root` rather than repeating it. So an unthemed page and an explicitly
  *     `switchyard`-themed one are the same declarations, not two copies that
@@ -20,14 +20,22 @@
  *
  * The list is the IDE canon plus this app's own two, because a person who has
  * spent a decade in one editor's colours reads a diff faster in them, and the
- * transcript here is mostly diffs.
+ * transcript here is mostly diffs — then a handful that are the opposite of
+ * that argument, and are marked `fun` so the menu can keep them apart. A
+ * palette nobody would pick to read a stack trace in is still one somebody
+ * wants on the machine on a Friday, and mixing the two lists would cost the
+ * canon its "these are the colours you already know" reading.
  */
 
-/** A named palette. `mode` is the `color-scheme` its CSS block must declare. */
+/**
+ * A named palette. `mode` is the `color-scheme` its CSS block must declare;
+ * `fun` moves it out of the Dark/Light groups into its own.
+ */
 export interface ThemeDef {
   id: string;
   name: string;
   mode: "dark" | "light";
+  fun?: boolean;
 }
 
 export const THEMES = [
@@ -47,6 +55,12 @@ export const THEMES = [
   { id: "one-light", name: "One Light", mode: "light" },
   { id: "solarized-light", name: "Solarized Light", mode: "light" },
   { id: "catppuccin-latte", name: "Catppuccin Latte", mode: "light" },
+  { id: "mario", name: "Mario", mode: "dark", fun: true },
+  { id: "neon-noir", name: "Neon Noir", mode: "dark", fun: true },
+  { id: "vaporwave", name: "Vaporwave", mode: "dark", fun: true },
+  { id: "matrix", name: "Matrix", mode: "dark", fun: true },
+  { id: "hot-dog-stand", name: "Hot Dog Stand", mode: "dark", fun: true },
+  { id: "bubblegum", name: "Bubblegum", mode: "light", fun: true },
 ] as const satisfies readonly ThemeDef[];
 
 export type ThemeId = (typeof THEMES)[number]["id"];
