@@ -34,9 +34,12 @@
  */
 import type { Person } from "../shared/api";
 import type { AppContext } from "./context";
-import { authenticate, requireOwner, trackAccess } from "./context";
+import { authenticate, requireGitHub, requireOwner, trackAccess } from "./context";
+import { asHttpError as asGitHubError } from "./github";
 import type { UserRow } from "./db";
-import { HttpError, json, readJson, str } from "./http";
+import { HttpError, SESSION_COOKIE, cookieValue, json, readJson, str } from "./http";
+import { randomToken, sha256 } from "./crypto";
+import { callbackUrl } from "./auth";
 import { publish } from "./hub";
 
 /**
@@ -87,15 +90,39 @@ export async function add(ctx: AppContext, req: Request, trackId: string): Promi
   const login = str(body.login, 80).trim().replace(/^@/, "");
   if (!login) throw new HttpError(422, "no_login", "Give a GitHub username.");
 
-  const invitee = ctx.db.userByLogin(login);
-  if (!invitee) {
-    throw new HttpError(404, "no_such_user", `@${login} has not signed in to switchyard, so there is nobody here to invite.`);
+  // Somebody who has signed in here joins immediately.
+  const existing = ctx.db.userByLogin(login);
+  if (existing) {
+    if (existing.id === project.userId) {
+      throw new HttpError(422, "already_owner", "That is the owner of this project — they are already in every track of it.");
+    }
+    ctx.db.addMember(track.id, existing.id, user.id);
+    publish(project.id, { event: "people", data: { trackId: track.id } });
+    return json({ data: peopleOf(ctx, track.id, project.userId) }, 201);
   }
-  if (invitee.id === project.userId) {
+
+  // Anybody else is invited on GitHub's account rather than on ours. The
+  // invitation waits for them to sign in, and is stored against the numeric
+  // id rather than the name they had today.
+  const gh = requireGitHub(ctx);
+  let account;
+  try {
+    account = await gh.userByLogin(login);
+  } catch (err) {
+    throw asGitHubError(err, "look up that username");
+  }
+  if (!account) throw new HttpError(404, "no_such_user", `There is no GitHub user called @${login}.`);
+  if (String(account.id) === ctx.db.user(project.userId)?.githubId) {
     throw new HttpError(422, "already_owner", "That is the owner of this project — they are already in every track of it.");
   }
 
-  ctx.db.addMember(track.id, invitee.id, user.id);
+  ctx.db.addInvite({
+    trackId: track.id,
+    githubId: String(account.id),
+    login: account.login,
+    avatarUrl: account.avatar_url,
+    invitedBy: user.id,
+  });
   publish(project.id, { event: "people", data: { trackId: track.id } });
   return json({ data: peopleOf(ctx, track.id, project.userId) }, 201);
 }
@@ -112,7 +139,17 @@ export async function remove(ctx: AppContext, req: Request, trackId: string, log
   const user = await authenticate(ctx, req);
   const { track, project, role } = trackAccess(ctx, user, trackId);
 
-  const target = ctx.db.userByLogin(login.replace(/^@/, ""));
+  const wanted = login.replace(/^@/, "");
+
+  // An invitation that has not been taken up yet is cancelled rather than
+  // removed — there is no membership to delete, only a promise to withdraw.
+  // Owner-only, because a pending person has no session to ask with.
+  if (role === "owner" && ctx.db.removeInviteByLogin(track.id, wanted)) {
+    publish(project.id, { event: "people", data: { trackId: track.id } });
+    return json({ data: peopleOf(ctx, track.id, project.userId) });
+  }
+
+  const target = ctx.db.userByLogin(wanted);
   if (!target) throw new HttpError(404, "not_found", "No such person on this track.");
   if (role !== "owner" && target.id !== user.id) {
     throw new HttpError(403, "owner_only", "Only the owner of this project can remove somebody else.");
@@ -138,7 +175,112 @@ export async function remove(ctx: AppContext, req: Request, trackId: string, log
 export function peopleOf(ctx: AppContext, trackId: string, ownerId: string): Person[] {
   const owner = ctx.db.user(ownerId);
   const members = ctx.db.membersOf(trackId);
-  return [...(owner ? [owner] : []), ...members].map(toPerson);
+  // Pending last, because they cannot read anything yet and the list is
+  // mostly read to answer "who can see this".
+  const pending = ctx.db.invitesOf(trackId).map((i) => ({ login: i.login, name: null, avatarUrl: i.avatarUrl, pending: true }));
+  return [...(owner ? [owner] : []), ...members.map(toPerson), ...pending];
+}
+
+// ── the other way in: a link ───────────────────────────────────────────
+
+/**
+ * How long a link lasts.
+ *
+ * A week, because the thing it is for is "have a look at this with me", not
+ * "here is standing access". A link that never expires is a credential
+ * somebody pasted into a chat two years ago and forgot, and this one grants a
+ * shell on a machine.
+ */
+const LINK_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+/** `GET /api/tracks/:id/link` — whether a link is out, never the link itself. */
+export async function showLink(ctx: AppContext, req: Request, trackId: string): Promise<Response> {
+  const user = await authenticate(ctx, req);
+  const { track, role } = trackAccess(ctx, user, trackId);
+  requireOwner(role, "see this track's invite link");
+  const link = ctx.db.linkOf(track.id);
+  // The URL is deliberately absent. Only the hash is stored, so it genuinely
+  // cannot be shown again — which is worth being honest about rather than
+  // implying it was lost.
+  return json({ data: link ? { url: null, createdAt: link.createdAt, expiresAt: link.expiresAt } : null });
+}
+
+/**
+ * `POST /api/tracks/:id/link` — mint one, replacing whatever was out.
+ *
+ * Minting is also the revoke: there is one row per track, so a new link
+ * silently kills the old one. That is the behaviour people expect from a
+ * "regenerate" button and the one they do not expect from a "create" button,
+ * so the UI says which it is doing.
+ */
+export async function mintLink(ctx: AppContext, req: Request, trackId: string): Promise<Response> {
+  const user = await authenticate(ctx, req);
+  const { track, role } = trackAccess(ctx, user, trackId);
+  requireOwner(role, "make an invite link for a track");
+
+  const token = randomToken();
+  ctx.db.putLink(track.id, await sha256(token), user.id, LINK_TTL_MS);
+  const link = ctx.db.linkOf(track.id)!;
+  return json({
+    data: { url: `${ctx.config.publicUrl}/j/${token}`, createdAt: link.createdAt, expiresAt: link.expiresAt },
+  }, 201);
+}
+
+/** `DELETE /api/tracks/:id/link` — nobody new gets in on it. */
+export async function dropLink(ctx: AppContext, req: Request, trackId: string): Promise<Response> {
+  const user = await authenticate(ctx, req);
+  const { track, role } = trackAccess(ctx, user, trackId);
+  requireOwner(role, "revoke this track's invite link");
+  ctx.db.dropLink(track.id);
+  // Deliberately not a removal: people who already came in on this link stay,
+  // and the owner takes them out by name if that is what they meant. A revoke
+  // that silently evicted half a track would be the more surprising of the two.
+  return json({ data: null });
+}
+
+/**
+ * `GET /j/:token` — somebody opening the link.
+ *
+ * Signed in, they join and land on the track. Signed out, the token is parked
+ * in the one-use OAuth state and claimed on the way back from GitHub, because
+ * an invitation that admitted anonymous browsers would be an invitation with
+ * nobody's name on it — and the whole point of a shared track is that the
+ * transcript says who asked.
+ */
+export async function join(ctx: AppContext, req: Request, token: string): Promise<Response> {
+  const hash = await sha256(token);
+  const track = ctx.db.trackForLink(hash);
+  if (!track) return seeOther("/?error=bad_invite");
+
+  const session = cookieValue(req, SESSION_COOKIE);
+  const user = session ? ctx.db.sessionUser(await sha256(session)) : null;
+  if (!user) {
+    const gh = requireGitHub(ctx);
+    const state = randomToken(18);
+    ctx.db.putState(state, "join", token);
+    return seeOther(gh.authorizeUrl(callbackUrl(ctx), state));
+  }
+
+  const project = ctx.db.project(track.projectId);
+  if (!project || project.archivedAt) return seeOther("/?error=bad_invite");
+  if (project.userId !== user.id) ctx.db.addMember(track.id, user.id, "link");
+  publish(project.id, { event: "people", data: { trackId: track.id } });
+  return seeOther(`/p/${project.id}/t/${track.id}`);
+}
+
+/** Claim a link token on the sign-in it triggered. Returns where to land. */
+export async function claimLink(ctx: AppContext, userId: string, token: string): Promise<string | null> {
+  const track = ctx.db.trackForLink(await sha256(token));
+  if (!track) return null;
+  const project = ctx.db.project(track.projectId);
+  if (!project || project.archivedAt) return null;
+  if (project.userId !== userId) ctx.db.addMember(track.id, userId, "link");
+  publish(project.id, { event: "people", data: { trackId: track.id } });
+  return `/p/${project.id}/t/${track.id}`;
+}
+
+function seeOther(location: string): Response {
+  return new Response(null, { status: 303, headers: { location } });
 }
 
 function toPerson(u: UserRow): Person {

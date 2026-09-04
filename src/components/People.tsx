@@ -13,14 +13,43 @@
  * Owners and members see different dialogs from the same component, because
  * the server enforces the same split and rendering a control that answers 403
  * is a worse experience than not offering it.
+ *
+ * There are two doors, and they are drawn as two because they cost different
+ * things. Naming somebody grants one named person access, and the row appears
+ * whether or not they have ever been here. A link grants access to whoever
+ * holds it — still not anonymously, since opening it requires signing in with
+ * GitHub — and that is a weaker, wider thing, so it sits below the list under
+ * a rule of its own rather than beside the invite box as an equal option.
  */
 import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
-import type { Person, Track } from "../../shared/api";
+import type { Person, Track, TrackLink } from "../../shared/api";
 import { api } from "../lib/api";
 import { AddPerson, Search, X } from "../lib/icons";
-import { Dialog } from "./Dialog";
+import { Dialog, ago } from "./Dialog";
 
 const same = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
+
+/**
+ * The forward half of `ago`, which lives in `Dialog.tsx` beside the pickers.
+ *
+ * Not a flag on that function, because the two disagree about the past rather
+ * than mirroring it: an expiry that has already passed is not "in -1 days", it
+ * is over, and the sentence the caller wants is a different sentence. Null is
+ * how that is said here. A week is the longest a link lasts, so days is the
+ * largest unit worth having.
+ */
+function until(iso: string): string | null {
+  const then = Date.parse(iso);
+  if (Number.isNaN(then)) return null;
+  const minutes = Math.round((then - Date.now()) / 60_000);
+  if (minutes < 1) return null;
+  if (minutes < 60) return ahead(minutes, "minute");
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return ahead(hours, "hour");
+  return ahead(Math.round(hours / 24), "day");
+}
+
+const ahead = (n: number, unit: string) => `in ${n} ${unit}${n === 1 ? "" : "s"}`;
 
 /** A round avatar, or the first letter of the login when GitHub has no image. */
 function Face({ person }: { person: Person }) {
@@ -104,9 +133,20 @@ export function People({ track, viewerLogin, onClose, onChanged, onLeft }: Peopl
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [leaving, setLeaving] = useState(false);
+  const [link, setLink] = useState<TrackLink | null>(null);
+  // Distinct from `link === null`, which is the answer "no link is out". Until
+  // the read lands there is no answer at all, and drawing "no link is out" for
+  // a track that has one would be a lie the next frame corrects.
+  const [linkKnown, setLinkKnown] = useState(false);
+  const [minted, setMinted] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+  const [linkBusy, setLinkBusy] = useState(false);
+  const [linkError, setLinkError] = useState<string | null>(null);
+  const mintedField = useRef<HTMLInputElement>(null);
   const listId = useId();
 
   const owner = track.role === "owner";
+  const expires = link ? until(link.expiresAt) : null;
 
   // The track came with its membership attached, so the list is drawn before
   // this lands. Re-reading is for the case where somebody was added from
@@ -123,6 +163,40 @@ export function People({ track, viewerLogin, onClose, onChanged, onLeft }: Peopl
       live = false;
     };
   }, [track.id]);
+
+  // Whether a link is out. Owner-only because the route is: a member asking
+  // gets a 403, and an error banner about a control they cannot see would be
+  // the dialog reporting its own bad question.
+  useEffect(() => {
+    if (!owner) return;
+    let live = true;
+    void api.link(track.id).then(
+      (row) => {
+        if (!live) return;
+        setLink(row);
+        setLinkKnown(true);
+      },
+      (err) => {
+        if (!live) return;
+        // Still `known`: the section renders with the failure in it rather
+        // than vanishing, because a missing section reads as "this deployment
+        // has no links" and the truth is that one read did not come back.
+        setLinkKnown(true);
+        setLinkError(err instanceof Error ? err.message : "Could not read this track's invite link.");
+      },
+    );
+    return () => {
+      live = false;
+    };
+  }, [track.id, owner]);
+
+  // "Copied" is a claim with a shelf life: left up, it stops meaning the last
+  // press and starts meaning the button's name.
+  useEffect(() => {
+    if (!copied) return;
+    const timer = setTimeout(() => setCopied(false), 2000);
+    return () => clearTimeout(timer);
+  }, [copied]);
 
   // The autocomplete. The timer is the debounce and the `live` flag is the
   // ordering guarantee: every keystroke tears down the previous effect, so a
@@ -191,8 +265,10 @@ export function People({ track, viewerLogin, onClose, onChanged, onLeft }: Peopl
       setFound([]);
       setListOpen(false);
     } catch (err) {
-      // Including the 404 for a login nobody here has: the server's sentence
-      // says why better than a guess made before the call would have.
+      // Including the 404, which now means the account does not exist on
+      // GitHub at all rather than merely not here. The server checked with
+      // GitHub to say that, and its sentence is better than a guess made on
+      // this side before the call.
       setError(err instanceof Error ? err.message : "Could not invite that person.");
     } finally {
       setBusy(false);
@@ -226,6 +302,66 @@ export function People({ track, viewerLogin, onClose, onChanged, onLeft }: Peopl
     } catch (err) {
       setBusy(false);
       setError(err instanceof Error ? err.message : "Could not leave this track.");
+    }
+  }
+
+  /**
+   * Mint a link, replacing whatever was out.
+   *
+   * The URL goes into `minted` and deliberately not into `link`: `link` is
+   * this component's copy of what the *server* holds, which is a hash and two
+   * timestamps. Keeping them apart is what makes "shown once" true rather than
+   * merely worded that way — nothing later in this dialog can read the URL
+   * back out of the state that survives a re-read.
+   */
+  async function makeLink(): Promise<void> {
+    if (linkBusy) return;
+    setLinkBusy(true);
+    setLinkError(null);
+    try {
+      const made = await api.mintLink(track.id);
+      setLink({ url: null, createdAt: made.createdAt, expiresAt: made.expiresAt });
+      setMinted(made.url);
+      setCopied(false);
+    } catch (err) {
+      setLinkError(err instanceof Error ? err.message : "Could not make an invite link.");
+    } finally {
+      setLinkBusy(false);
+    }
+  }
+
+  async function revokeLink(): Promise<void> {
+    if (linkBusy) return;
+    setLinkBusy(true);
+    setLinkError(null);
+    try {
+      await api.revokeLink(track.id);
+      setLink(null);
+      // The URL on screen is dead the moment the server drops the row, and
+      // leaving it visible would invite somebody to send a link that no longer
+      // admits anyone.
+      setMinted(null);
+    } catch (err) {
+      setLinkError(err instanceof Error ? err.message : "Could not revoke this track's invite link.");
+    } finally {
+      setLinkBusy(false);
+    }
+  }
+
+  async function copyLink(): Promise<void> {
+    const url = minted;
+    if (!url) return;
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopied(true);
+    } catch {
+      // No clipboard over plain HTTP, and a rejection when the document is not
+      // focused. Both end the same way: the URL is still on screen, so
+      // selecting it leaves one keystroke between here and having it.
+      const field = mintedField.current;
+      if (!field) return;
+      field.focus();
+      field.select();
     }
   }
 
@@ -293,23 +429,40 @@ export function People({ track, viewerLogin, onClose, onChanged, onLeft }: Peopl
         {error ? <p className="fine error">{error}</p> : null}
 
         <div className="people-list">
+          {/* A pending row is a promise rather than a person: the invitation is
+              held against their GitHub account and nothing is readable until
+              they sign in. So it is dimmed and chipped instead of being hidden
+              — the owner needs to see that the name they typed took, and needs
+              to be able to take it back — but it must not read as somebody who
+              is already in the room. The second line says what that means in
+              words, since dimming alone is a convention, not a sentence. */}
           {people.map((person, i) => (
-            <div key={person.login} className="person-row">
+            <div key={person.login} className={person.pending ? "person-row pending" : "person-row"}>
               <Face person={person} />
               <span className="who truncate">
-                <strong className="truncate">{person.name ?? person.login}</strong>
-                <small className="truncate">@{person.login}</small>
+                {/* A pending entry has no display name — GitHub's is not worth
+                    holding for somebody who may never arrive — so the handle
+                    moves up into the strong line and takes the `@` with it,
+                    rather than leaving a bare login where a name goes. */}
+                <strong className="truncate">{person.pending ? `@${person.login}` : (person.name ?? person.login)}</strong>
+                <small className="truncate">{person.pending ? "has not signed in here yet" : `@${person.login}`}</small>
               </span>
               <span className="spacer" />
               {i === 0 ? <span className="chip">owner</span> : null}
+              {person.pending ? <span className="chip">invited</span> : null}
               {same(person.login, viewerLogin) ? <span className="chip">you</span> : null}
               {owner && i > 0 ? (
+                // One button and one call for both kinds of row. The server
+                // decides which it is — cancelling an invitation that was
+                // never taken up, or removing a member — and it is the same
+                // withdrawal either way, so the only difference here is the
+                // word a screen reader hears.
                 <button
                   type="button"
                   className="x"
                   disabled={busy}
-                  aria-label={`Remove @${person.login}`}
-                  title={`Remove @${person.login}`}
+                  aria-label={person.pending ? `Cancel the invitation to @${person.login}` : `Remove @${person.login}`}
+                  title={person.pending ? `Cancel the invitation to @${person.login}` : `Remove @${person.login}`}
                   onClick={() => void drop(person.login)}
                 >
                   <X size={14} />
@@ -321,7 +474,7 @@ export function People({ track, viewerLogin, onClose, onChanged, onLeft }: Peopl
 
         {owner ? (
           <div className="field" style={{ marginTop: 14 }}>
-            <label htmlFor={`${listId}-input`}>Invite somebody by GitHub username</label>
+            <label htmlFor={`${listId}-input`}>Invite anybody by their GitHub username</label>
             <div className="row" onKeyDown={onKeyDown}>
               <Search size={14} />
               <input
@@ -331,7 +484,7 @@ export function People({ track, viewerLogin, onClose, onChanged, onLeft }: Peopl
                   setQ(e.target.value);
                   setListOpen(true);
                 }}
-                placeholder="username"
+                placeholder="any GitHub username"
                 autoComplete="off"
                 spellCheck={false}
                 disabled={busy}
@@ -366,11 +519,87 @@ export function People({ track, viewerLogin, onClose, onChanged, onLeft }: Peopl
                 : null}
             </div>
 
+            {/* The suggestions are people who have signed in here, and that is
+                now a much smaller set than the people who can be invited — so
+                an empty list is not a refusal, and the hint has to stop the
+                owner reading it as one. */}
             {q.trim() && !showList ? (
               <p className="hint">
-                Nobody here matches “{q.trim().replace(/^@/, "")}”. Press <kbd>⏎</kbd> to send it anyway — switchyard can
-                only invite people who have signed in, and it will say so if they have not.
+                Nobody who has signed in here matches “{q.trim().replace(/^@/, "")}”, which does not stop you. Press{" "}
+                <kbd>⏎</kbd> to invite that GitHub username anyway: the invitation waits until they sign in. If no such
+                account exists on GitHub, switchyard says so instead.
               </p>
+            ) : null}
+          </div>
+        ) : null}
+
+        {/* The other door. Gated on the read having landed rather than on
+            having found something, so the controls never contradict the
+            server for a frame. */}
+        {owner && linkKnown ? (
+          <div className="field link-box">
+            <h4>Invite link</h4>
+            <p className="fine">
+              Anybody who opens the link and signs in with GitHub joins this track. It is not an anonymous door: signing
+              in is the price of walking through it, so the transcript still says who asked for what.
+            </p>
+
+            {linkError ? <p className="fine error">{linkError}</p> : null}
+
+            {minted ? (
+              <>
+                <div className="row">
+                  <input
+                    ref={mintedField}
+                    className="mono"
+                    readOnly
+                    value={minted}
+                    aria-label="The invite link for this track"
+                    // Focusing it selects it, so Tab-then-copy works without
+                    // the button, and so does the clipboard fallback below.
+                    onFocus={(e) => e.currentTarget.select()}
+                  />
+                  <button type="button" onClick={() => void copyLink()}>
+                    {copied ? "Copied" : "Copy"}
+                  </button>
+                </div>
+                <span className="hint">
+                  This is the only time the link is shown. Switchyard keeps a hash of it and nothing else, so if you
+                  leave without copying it the only way back is a new link.
+                  {expires ? ` It expires ${expires}.` : ""}
+                </span>
+              </>
+            ) : link ? (
+              <span className="hint">
+                A link is out — made {ago(link.createdAt)}
+                {expires ? `, and it expires ${expires}` : ", and it has expired"}. It cannot be shown again: only its
+                hash is stored here, so switchyard does not have the link to show you.
+              </span>
+            ) : (
+              // Not "everybody here was invited by name": a link that was
+              // revoked leaves the people it let in, so the honest claim is
+              // about the way in that is open now, not about how the list got
+              // to be what it is.
+              <span className="hint">No link is out. The only way onto this track right now is being invited by name.</span>
+            )}
+
+            <div className="row">
+              <button type="button" disabled={linkBusy} onClick={() => void makeLink()}>
+                {link ? "Make a new link" : "Make a link"}
+              </button>
+              {link ? (
+                <button type="button" className="danger" disabled={linkBusy} onClick={() => void revokeLink()}>
+                  Revoke
+                </button>
+              ) : null}
+            </div>
+
+            {link ? (
+              <span className="hint">
+                There is one link per track, so making a new one replaces this one and therefore revokes it. Revoking
+                stops anybody new getting in on it. It does not remove the people who already joined that way — they
+                are in the list above, and you take them out by name.
+              </span>
             ) : null}
           </div>
         ) : null}

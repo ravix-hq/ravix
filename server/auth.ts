@@ -17,6 +17,7 @@ import { randomToken, sha256 } from "./crypto";
 import type { AppContext } from "./context";
 import { authenticate, requireGitHub, userToken } from "./context";
 import { GitHubError, asHttpError } from "./github";
+import { claimLink } from "./people";
 import type { Capabilities, SessionInfo, Viewer } from "../shared/api";
 import { SESSION_COOKIE, clearedSessionCookie, cookieValue, json, sessionCookie } from "./http";
 
@@ -110,8 +111,11 @@ export async function callback(ctx: AppContext, req: Request): Promise<Response>
   }
 
   // The state is one-use. A replayed callback finds nothing and is refused,
-  // which is the entire defence against a login CSRF here.
-  if (!state || !ctx.db.takeState(state)) {
+  // which is the entire defence against a login CSRF here. It also carries
+  // the invite token, when this sign-in was started by somebody opening a
+  // link — see `people.join`.
+  const parked = state ? ctx.db.takeState(state) : null;
+  if (!parked) {
     return redirect("/?error=stale_signin");
   }
 
@@ -135,9 +139,24 @@ export async function callback(ctx: AppContext, req: Request): Promise<Response>
 
   const sessionToken = randomToken();
   ctx.db.createSession(user.id, await sha256(sessionToken), ctx.config.sessionMaxAgeMs);
-  return redirect(installationId ? "/?installed=1" : "/", {
-    "set-cookie": sessionCookie(sessionToken, req, Math.floor(ctx.config.sessionMaxAgeMs / 1000)),
-  });
+  const cookie = { "set-cookie": sessionCookie(sessionToken, req, Math.floor(ctx.config.sessionMaxAgeMs / 1000)) };
+
+  // Anything that was waiting for this person becomes real on the sign-in that
+  // proves who they are, and not before. Two sources: invitations sent to
+  // their GitHub account before they had one here, and the link that sent them
+  // to GitHub in the first place.
+  const joined = ctx.db.claimInvites(user.id, String(profile.id));
+  if (parked.kind === "join" && parked.redirect) {
+    const landing = await claimLink(ctx, user.id, parked.redirect);
+    if (landing) return redirect(landing, cookie);
+    return redirect("/?error=bad_invite", cookie);
+  }
+
+  // One invitation is worth landing on; several is a decision, so the rail is
+  // the better place to make it.
+  const only = joined.length === 1 ? joined[0]! : null;
+  if (only) return redirect(`/p/${only.projectId}/t/${only.id}`, cookie);
+  return redirect(installationId ? "/?installed=1" : "/", cookie);
 }
 
 /**

@@ -719,6 +719,26 @@ const withBox = (c: Conv) => ({ ...c, sandbox: c.sandbox_id ? (state.boxes.get(c
 const INSTALLATION_ID = 1;
 const VIEWER = { id: 1042, login: "mockuser", name: "Mock User", avatar_url: `${BASE}/ghweb/avatar.svg` };
 
+/**
+ * Who you can sign in as.
+ *
+ * One identity offline means multiplayer can only be tested by reading the
+ * code. `VIEWER` stays first and owns the repositories, so every existing
+ * behaviour is unchanged; the rest exist to be invited, to accept a link, and
+ * to have their name appear on a turn.
+ */
+const PEOPLE = [
+  VIEWER,
+  { id: 9001, login: "dana", name: "Dana Okonkwo", avatar_url: `${BASE}/ghweb/avatar.svg?dana` },
+  { id: 9002, login: "eli", name: "Eli Fischer", avatar_url: `${BASE}/ghweb/avatar.svg?eli` },
+];
+
+/** The identity a mock access token names, defaulting to the first. */
+function personFor(authorization: string | null): typeof VIEWER {
+  const login = (authorization ?? "").split(":")[1]?.trim();
+  return PEOPLE.find((x) => x.login === login) ?? VIEWER;
+}
+
 interface MockRepo {
   name: string;
   private: boolean;
@@ -833,7 +853,23 @@ function githubApi(req: Request, url: URL, body: Record<string, unknown>): Respo
   const token = /^\/app\/installations\/(\d+)\/access_tokens$/.exec(p);
   if (token) return json({ token: "ghs_mock", expires_at: new Date(Date.now() + 3_600_000).toISOString() });
 
-  if (p === "/user") return json(VIEWER);
+  if (p === "/user") return json(personFor(req.headers.get("authorization")));
+
+  /**
+   * One account by login, which is how somebody with no switchyard account
+   * gets invited. A short allowlist rather than "anything is a person":
+   * inviting a name that does not exist has to stay reachable offline, because
+   * the honest 404 is the more interesting of the two answers.
+   */
+  const byLogin = /^\/users\/([^/]+)$/.exec(p);
+  if (byLogin) {
+    const login = decodeURIComponent(byLogin[1]!).toLowerCase();
+    const known: Record<string, number> = { octocat: 583231, hubot: 5153, dana: 9001, eli: 9002 };
+    if (login === VIEWER.login.toLowerCase()) return json(VIEWER);
+    const id = known[login];
+    if (id === undefined) return json({ message: "Not Found" }, 404);
+    return json({ id, login, name: null, avatar_url: `${BASE}/ghweb/avatar.svg` });
+  }
 
   if (p === "/user/installations") {
     return json({
@@ -922,15 +958,15 @@ const PAGE = (title: string, inner: string) => html(`<!doctype html>
 </style>
 <div class="card">${inner}</div>`);
 
-function githubWeb(req: Request, url: URL): Response {
+function githubWeb(req: Request, url: URL, webBody: Record<string, unknown> = {}): Response {
   const p = url.pathname.slice("/ghweb".length);
 
   if (p === "/avatar.svg") {
-    // Served rather than linked to avatars.githubusercontent.com, so that the
-    // sidebar has a face with the network unplugged — which is the whole
-    // premise of this file.
+    const who = url.search.replace(/^\?/, "") || VIEWER.login;
+    const letter = who.slice(0, 1).toUpperCase();
+    const hue = [...who].reduce((a, c) => a + c.charCodeAt(0), 0) % 360;
     return new Response(
-      `<svg xmlns="http://www.w3.org/2000/svg" width="80" height="80" viewBox="0 0 80 80"><rect width="80" height="80" rx="40" fill="#2f81f7"/><text x="40" y="52" font-family="ui-sans-serif,sans-serif" font-size="34" font-weight="600" fill="#fff" text-anchor="middle">M</text></svg>`,
+      `<svg xmlns="http://www.w3.org/2000/svg" width="80" height="80" viewBox="0 0 80 80"><rect width="80" height="80" rx="40" fill="hsl(${hue} 62% 46%)"/><text x="40" y="52" font-family="ui-sans-serif,sans-serif" font-size="34" font-weight="600" fill="#fff" text-anchor="middle">${letter}</text></svg>`,
       { headers: { "content-type": "image/svg+xml", "cache-control": "max-age=3600" } },
     );
   }
@@ -948,18 +984,30 @@ function githubWeb(req: Request, url: URL): Response {
   if (p === "/login/oauth/authorize") {
     const redirect = url.searchParams.get("redirect_uri") ?? `${APP_URL}/api/auth/callback`;
     const state = url.searchParams.get("state") ?? "";
-    const back = `${redirect}${redirect.includes("?") ? "&" : "?"}${new URLSearchParams({ code: "mockcode", state })}`;
+    // A button per identity, because everything about sharing a track needs a
+    // second person to be worth looking at, and one identity offline means
+    // testing multiplayer by reading the code. The chosen login rides back on
+    // the `code`, which is opaque to the server and is exactly where a real
+    // authorization code carries who authorized it.
+    const buttons = PEOPLE.map(
+      (who) =>
+        `<a class="btn" style="margin-bottom:8px" href="${redirect}${redirect.includes("?") ? "&" : "?"}${new URLSearchParams({ code: `mockcode:${who.login}`, state })}">Sign in as @${who.login}</a>`,
+    ).join("");
     return PAGE(
       "Authorize switchyard",
       `<h1>Authorize switchyard</h1>
        <p>This is the mock GitHub. Nothing here is real and no network was involved.</p>
-       <a class="btn" href="${back}">Sign in as @${VIEWER.login}</a>
+       ${buttons}
        <p style="margin:16px 0 0"><code>${url.searchParams.get("scope") ?? "read:user"}</code></p>`,
     );
   }
 
   if (p === "/login/oauth/access_token") {
-    return json({ access_token: "gho_mock", token_type: "bearer", scope: "read:user" });
+    // The login rides on the code and out again on the token, so nothing here
+    // has to remember who was mid-sign-in — which matters, because two browsers
+    // signing in as two people at once is the case this exists for.
+    const login = (webBody.code ? String(webBody.code) : "").split(":")[1] ?? VIEWER.login;
+    return json({ access_token: `gho_mock:${login}`, token_type: "bearer", scope: "read:user" });
   }
 
   /**
@@ -1020,7 +1068,12 @@ Bun.serve({
     else if (p.startsWith("/gh/")) {
       const body = req.method === "POST" ? ((await req.json().catch(() => ({}))) as Record<string, unknown>) : {};
       res = githubApi(req, url, body);
-    } else if (p.startsWith("/ghweb/") || p === "/ghweb") res = githubWeb(req, url);
+    } else if (p.startsWith("/ghweb/") || p === "/ghweb") {
+      // The token exchange is the one POST on the web host, and its body
+      // carries the code that names who signed in.
+      const body = req.method === "POST" ? ((await req.json().catch(() => ({}))) as Record<string, unknown>) : {};
+      res = githubWeb(req, url, body);
+    }
 
     if (res) return res;
 

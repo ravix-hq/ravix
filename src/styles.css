@@ -563,3 +563,14 @@ h4 { font-size: 11px; color: var(--dim); text-transform: uppercase; letter-spaci
 .person-row .who { min-width: 0; display: flex; flex-direction: column; line-height: 1.25; }
 .person-row .who strong { font-size: 12.5px; font-weight: 550; }
 .person-row .who small { color: var(--dimmer); font-size: 11px; }
+
+/* Somebody invited who has not signed in yet is a row about a promise, not a
+   person who is reading this track — so the face and the name recede while the
+   chip and the remove button stay at full strength, because those are the two
+   things the owner is actually here to act on. */
+.person-row.pending .face, .person-row.pending .who { opacity: 0.55; }
+
+/* The link is a wider grant than naming somebody, so it gets a rule above it
+   rather than sitting flush with the invite box as an equal choice. */
+.link-box { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line); }
+.link-box input[readonly] { font-size: 11.5px; color: var(--dim); }

@@ -36,7 +36,11 @@
  *   GET    /api/tracks/:id/diff
  *   GET    /api/tracks/:id/checks           GitHub's view of the branch
  *   POST   /api/tracks/:id/pull             open a pull request
+ *   GET    /j/:token                        follow an invite link
  *   GET    /api/tracks/:id/people           who can reach this track
+ *   GET    /api/tracks/:id/link             owner: whether a link is out
+ *   POST   /api/tracks/:id/link             owner: mint one, replacing any
+ *   DELETE /api/tracks/:id/link             owner: revoke it
  *   POST   /api/tracks/:id/people           owner: invite by GitHub login
  *   DELETE /api/tracks/:id/people/:login    owner removes, or a member leaves
  *   GET    /api/tracks/:id/exec             whether a terminal will work
@@ -125,7 +129,11 @@ export function buildRouter(ctx: AppContext): (req: Request) => Promise<Response
   on("GET", "/api/tracks/:id/diff", (req, p) => tracks.diff(ctx, req, p.id!));
   on("GET", "/api/tracks/:id/checks", (req, p) => repos.checks(ctx, req, p.id!));
   on("POST", "/api/tracks/:id/pull", (req, p) => repos.openPull(ctx, req, p.id!));
+  on("GET", "/j/:token", (req, p) => people.join(ctx, req, p.token!));
   on("GET", "/api/tracks/:id/people", (req, p) => people.list(ctx, req, p.id!));
+  on("GET", "/api/tracks/:id/link", (req, p) => people.showLink(ctx, req, p.id!));
+  on("POST", "/api/tracks/:id/link", (req, p) => people.mintLink(ctx, req, p.id!));
+  on("DELETE", "/api/tracks/:id/link", (req, p) => people.dropLink(ctx, req, p.id!));
   on("POST", "/api/tracks/:id/people", (req, p) => people.add(ctx, req, p.id!));
   on("DELETE", "/api/tracks/:id/people/:login", (req, p) => people.remove(ctx, req, p.id!, p.login!));
   on("GET", "/api/tracks/:id/exec", (req, p) => terminal.execStatus(ctx, req, p.id!));

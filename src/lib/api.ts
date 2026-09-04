@@ -24,6 +24,7 @@ import type {
   SessionInfo,
   Track,
   TrackHeader,
+  TrackLink,
   TrackOriginInfo,
   TranscriptPage,
 } from "../../shared/api";
@@ -125,6 +126,12 @@ export const api = {
   /** The owner removing somebody, or a member removing themselves. */
   uninvite: (trackId: string, login: string) =>
     call<Person[] | undefined>(`/api/tracks/${trackId}/people/${encodeURIComponent(login)}`, { method: "DELETE" }),
+
+  /** Whether a link is out. Never the link itself — only its hash is stored. */
+  link: (trackId: string) => call<TrackLink | null>(`/api/tracks/${trackId}/link`),
+  /** Mints one, replacing whatever was out. The URL is returned exactly once. */
+  mintLink: (trackId: string) => post<TrackLink>(`/api/tracks/${trackId}/link`),
+  revokeLink: (trackId: string) => call<null>(`/api/tracks/${trackId}/link`, { method: "DELETE" }),
 };
 
 /**

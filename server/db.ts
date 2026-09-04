@@ -170,6 +170,40 @@ export class Db {
       );
       CREATE INDEX IF NOT EXISTS track_members_user ON track_members(user_id);
 
+      -- An invitation to somebody who has not signed in here yet.
+      --
+      -- Keyed on GitHub's **numeric id**, not the login, and that is the whole
+      -- reason this table can exist safely. Logins are renameable, and a login
+      -- freed by a deleted account can be taken by somebody else — so an
+      -- invitation matched on @ana would eventually attach to whoever held
+      -- that name on the day they signed in. The numeric id is stable and
+      -- never reused. The login and avatar are display only, and are
+      -- allowed to be stale by the time the person arrives.
+      CREATE TABLE IF NOT EXISTS track_invites (
+        track_id    TEXT NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
+        github_id   TEXT NOT NULL,
+        login       TEXT NOT NULL,
+        avatar_url  TEXT,
+        invited_by  TEXT NOT NULL,
+        created_at  TEXT NOT NULL,
+        PRIMARY KEY (track_id, github_id)
+      );
+      CREATE INDEX IF NOT EXISTS track_invites_github ON track_invites(github_id);
+
+      -- The other way in: a link.
+      --
+      -- One per track, by primary key, which is what makes minting a new one
+      -- *the* revoke rather than a separate operation somebody has to remember
+      -- to perform. Only the hash is stored: the link is the credential, and a
+      -- copy of this file should not be a set of working invitations.
+      CREATE TABLE IF NOT EXISTS track_links (
+        track_id    TEXT PRIMARY KEY REFERENCES tracks(id) ON DELETE CASCADE,
+        token_hash  TEXT NOT NULL UNIQUE,
+        created_by  TEXT NOT NULL,
+        created_at  TEXT NOT NULL,
+        expires_at  TEXT NOT NULL
+      );
+
       -- Short-lived signed state for the two GitHub round trips. Rows are
       -- deleted on use and swept on age, so a replayed callback finds nothing.
       CREATE TABLE IF NOT EXISTS oauth_states (
@@ -485,6 +519,101 @@ export class Db {
   userByLogin(login: string): UserRow | null {
     const r = this.db.query<RawUser, [string]>("SELECT * FROM users WHERE login = ? COLLATE NOCASE").get(login);
     return r ? toUser(r) : null;
+  }
+
+  // ── invitations to somebody who is not here yet ──────────────────────
+
+  addInvite(input: { trackId: string; githubId: string; login: string; avatarUrl: string | null; invitedBy: string }): void {
+    this.db.run(
+      `INSERT INTO track_invites (track_id, github_id, login, avatar_url, invited_by, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT(track_id, github_id) DO UPDATE SET login = excluded.login, avatar_url = excluded.avatar_url`,
+      [input.trackId, input.githubId, input.login, input.avatarUrl, input.invitedBy, new Date().toISOString()],
+    );
+  }
+
+  invitesOf(trackId: string): { githubId: string; login: string; avatarUrl: string | null }[] {
+    return this.db
+      .query<{ github_id: string; login: string; avatar_url: string | null }, [string]>(
+        "SELECT github_id, login, avatar_url FROM track_invites WHERE track_id = ? ORDER BY created_at",
+      )
+      .all(trackId)
+      .map((r) => ({ githubId: r.github_id, login: r.login, avatarUrl: r.avatar_url }));
+  }
+
+  removeInviteByLogin(trackId: string, login: string): boolean {
+    const before = this.invitesOf(trackId).length;
+    this.db.run("DELETE FROM track_invites WHERE track_id = ? AND login = ? COLLATE NOCASE", [trackId, login]);
+    return this.invitesOf(trackId).length < before;
+  }
+
+  /**
+   * Turn every invitation waiting for this person into a membership.
+   *
+   * Run once, on the sign-in that creates or refreshes their account. Matching
+   * is on the GitHub id the profile just came back with, so an invitation sent
+   * to a login they have since changed still finds them, and one sent to a
+   * login somebody *else* now holds does not.
+   *
+   * Returns the tracks they just joined, so the sign-in can say so.
+   */
+  claimInvites(userId: string, githubId: string): TrackRow[] {
+    const pending = this.db
+      .query<{ track_id: string }, [string]>("SELECT track_id FROM track_invites WHERE github_id = ?")
+      .all(githubId);
+    const joined: TrackRow[] = [];
+    for (const { track_id } of pending) {
+      const track = this.track(track_id);
+      // A track closed while the invitation sat unclaimed is not somewhere to
+      // arrive. Drop the invitation rather than granting a dead seat.
+      if (track && !track.closedAt) {
+        this.addMember(track_id, userId, "invite");
+        joined.push(track);
+      }
+    }
+    this.db.run("DELETE FROM track_invites WHERE github_id = ?", [githubId]);
+    return joined;
+  }
+
+  // ── the link ─────────────────────────────────────────────────────────
+
+  putLink(trackId: string, tokenHash: string, createdBy: string, ttlMs: number): void {
+    const now = Date.now();
+    this.db.run(
+      `INSERT INTO track_links (track_id, token_hash, created_by, created_at, expires_at)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(track_id) DO UPDATE SET
+         token_hash = excluded.token_hash, created_by = excluded.created_by,
+         created_at = excluded.created_at, expires_at = excluded.expires_at`,
+      [trackId, tokenHash, createdBy, new Date(now).toISOString(), new Date(now + ttlMs).toISOString()],
+    );
+  }
+
+  linkOf(trackId: string): { createdAt: string; expiresAt: string } | null {
+    const r = this.db
+      .query<{ created_at: string; expires_at: string }, [string]>(
+        "SELECT created_at, expires_at FROM track_links WHERE track_id = ?",
+      )
+      .get(trackId);
+    if (!r) return null;
+    return { createdAt: r.created_at, expiresAt: r.expires_at };
+  }
+
+  dropLink(trackId: string): void {
+    this.db.run("DELETE FROM track_links WHERE track_id = ?", [trackId]);
+  }
+
+  /** The track a link opens, or null if it is unknown, revoked or expired. */
+  trackForLink(tokenHash: string): TrackRow | null {
+    const r = this.db
+      .query<{ track_id: string; expires_at: string }, [string]>(
+        "SELECT track_id, expires_at FROM track_links WHERE token_hash = ?",
+      )
+      .get(tokenHash);
+    if (!r) return null;
+    if (Date.parse(r.expires_at) <= Date.now()) return null;
+    const track = this.track(r.track_id);
+    return track && !track.closedAt ? track : null;
   }
 
   close(): void {

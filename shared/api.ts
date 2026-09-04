@@ -20,6 +20,23 @@ export interface Person {
   login: string;
   name: string | null;
   avatarUrl: string | null;
+  /**
+   * Invited, but not here yet.
+   *
+   * Somebody can be invited before they have ever signed in — the invitation
+   * waits on their GitHub account rather than on a row we hold — so a track's
+   * people list has two kinds of entry and the difference is worth showing.
+   * A pending person cannot read anything yet.
+   */
+  pending?: boolean;
+}
+
+/** The one live invite link a track may have. */
+export interface TrackLink {
+  /** Absolute, and only ever returned to the owner at the moment it is minted. */
+  url: string | null;
+  createdAt: string;
+  expiresAt: string;
 }
 
 export interface Viewer {

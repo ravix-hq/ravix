@@ -116,6 +116,101 @@ test("the invite box never suggests the person typing", () => {
   expect(db.searchUsers("ana", owner.id).map((u) => u.id)).not.toContain(owner.id);
 });
 
+// ── invitations to somebody who is not here yet ────────────────────────
+
+test("an invitation waits on the GitHub account, not on a row we hold", async () => {
+  const db = fresh();
+  const { shared } = seed(db);
+  db.addInvite({ trackId: shared.id, githubId: "9001", login: "dana", avatarUrl: null, invitedBy: "owner" });
+
+  expect(db.invitesOf(shared.id).map((i) => i.login)).toEqual(["dana"]);
+  // Nobody has joined: an invitation is a promise, not access.
+  expect(db.membersOf(shared.id)).toHaveLength(0);
+
+  const dana = db.upsertUser({ githubId: "9001", login: "dana", name: null, avatarUrl: null, tokenEnc: "x" });
+  const joined = db.claimInvites(dana.id, "9001");
+
+  expect(joined.map((t) => t.id)).toEqual([shared.id]);
+  expect(db.isMember(shared.id, dana.id)).toBe(true);
+  expect(db.invitesOf(shared.id)).toEqual([]);
+});
+
+test("a renamed login still finds them; a recycled one does not", async () => {
+  const db = fresh();
+  const { shared } = seed(db);
+  db.addInvite({ trackId: shared.id, githubId: "9001", login: "dana", avatarUrl: null, invitedBy: "owner" });
+
+  // They changed their name between the invitation and the sign-in.
+  const renamed = db.upsertUser({ githubId: "9001", login: "dana-codes", name: null, avatarUrl: null, tokenEnc: "x" });
+  expect(db.claimInvites(renamed.id, "9001")).toHaveLength(1);
+
+  // And somebody else who later takes the *old* name gets nothing. This is
+  // the whole reason the invitation is keyed on the numeric id.
+  db.addInvite({ trackId: shared.id, githubId: "9002", login: "eli", avatarUrl: null, invitedBy: "owner" });
+  const impostor = db.upsertUser({ githubId: "9999", login: "eli", name: null, avatarUrl: null, tokenEnc: "x" });
+  expect(db.claimInvites(impostor.id, "9999")).toEqual([]);
+  expect(db.isMember(shared.id, impostor.id)).toBe(false);
+});
+
+test("an invitation to a track that closed meanwhile grants nothing", () => {
+  const db = fresh();
+  const { shared } = seed(db);
+  db.addInvite({ trackId: shared.id, githubId: "9001", login: "dana", avatarUrl: null, invitedBy: "owner" });
+  db.closeTrack(shared.id);
+
+  const dana = db.upsertUser({ githubId: "9001", login: "dana", name: null, avatarUrl: null, tokenEnc: "x" });
+  expect(db.claimInvites(dana.id, "9001")).toEqual([]);
+  expect(db.isMember(shared.id, dana.id)).toBe(false);
+  // And it does not linger to be claimed by a later sign-in either.
+  expect(db.invitesOf(shared.id)).toEqual([]);
+});
+
+test("an invitation can be withdrawn before it is taken up", () => {
+  const db = fresh();
+  const { shared } = seed(db);
+  db.addInvite({ trackId: shared.id, githubId: "9001", login: "dana", avatarUrl: null, invitedBy: "owner" });
+
+  expect(db.removeInviteByLogin(shared.id, "DANA")).toBe(true);
+  expect(db.invitesOf(shared.id)).toEqual([]);
+  expect(db.removeInviteByLogin(shared.id, "dana")).toBe(false);
+});
+
+// ── the link ───────────────────────────────────────────────────────────
+
+test("minting a link revokes the one that was out", () => {
+  const db = fresh();
+  const { shared } = seed(db);
+  db.putLink(shared.id, "hash-one", "owner", 60_000);
+  db.putLink(shared.id, "hash-two", "owner", 60_000);
+
+  // One row per track, so there is no "old link" left to work.
+  expect(db.trackForLink("hash-one")).toBeNull();
+  expect(db.trackForLink("hash-two")?.id).toBe(shared.id);
+});
+
+test("a link stops working when revoked, expired, or its track closes", () => {
+  const db = fresh();
+  const { shared, private_ } = seed(db);
+
+  db.putLink(shared.id, "live", "owner", 60_000);
+  expect(db.trackForLink("live")?.id).toBe(shared.id);
+  db.dropLink(shared.id);
+  expect(db.trackForLink("live")).toBeNull();
+
+  db.putLink(shared.id, "stale", "owner", -1);
+  expect(db.trackForLink("stale")).toBeNull();
+
+  db.putLink(private_.id, "doomed", "owner", 60_000);
+  db.closeTrack(private_.id);
+  expect(db.trackForLink("doomed")).toBeNull();
+});
+
+test("an unknown token opens nothing", () => {
+  const db = fresh();
+  seed(db);
+  expect(db.trackForLink("never-minted")).toBeNull();
+});
+
 test("a login lookup is case-insensitive, the way GitHub treats them", () => {
   const db = fresh();
   seed(db);

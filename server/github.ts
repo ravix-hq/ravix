@@ -159,6 +159,25 @@ export class GitHub {
     return body.access_token;
   }
 
+  /**
+   * One GitHub account, by login, read as the App itself.
+   *
+   * Used to invite somebody who has never signed in here: without this, an
+   * invitation could only name a row we already had, and the first person you
+   * want to work with is by definition not one of them. Reading it as the App
+   * rather than as the caller means the answer does not depend on whose token
+   * asked, and the numeric id it returns is what the invitation is stored
+   * against — see `track_invites`.
+   */
+  async userByLogin(login: string): Promise<{ id: number; login: string; name: string | null; avatar_url: string } | null> {
+    try {
+      return await this.request("GET", `/users/${encodeURIComponent(login)}`, { auth: `Bearer ${this.appJwt()}` });
+    } catch (err) {
+      if (err instanceof GitHubError && err.status === 404) return null;
+      throw err;
+    }
+  }
+
   async viewer(userToken: string): Promise<{ id: number; login: string; name: string | null; avatar_url: string }> {
     return this.request("GET", "/user", { auth: `Bearer ${userToken}` });
   }

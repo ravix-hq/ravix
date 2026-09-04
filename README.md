@@ -128,6 +128,22 @@ alternative only suggests people you have already shared with and is therefore
 useless for the first invitation anybody sends. It returns what GitHub already
 publishes: login, display name, avatar. Never an email.
 
+Two things follow from sign-in being GitHub rather than an email:
+
+- **You can invite somebody who has never been here.** A username with no
+  account is resolved against GitHub and the invitation waits on their account
+  until they sign in. It is stored against GitHub's **numeric id**, not the
+  login — logins are renameable, and one freed by a deleted account can be
+  taken by somebody else, so an invitation matched on the name would eventually
+  attach to the wrong person.
+- **Or you can send a link.** One per track; minting a new one is therefore the
+  revoke. Anyone who opens it and signs in with GitHub joins — it is not
+  anonymous, because a shared transcript that cannot say who asked is worse
+  than no transcript. It lasts a week, because the thing it is for is "have a
+  look at this with me" rather than standing access, and only its hash is
+  stored, so it genuinely cannot be shown to you twice. Revoking stops anyone
+  new getting in; people already on the track stay until you remove them.
+
 **The unit of sharing is a track, not a project.** A project is a machine with
 a disk, a settings panel and a bill. A track is one branch in one directory.
 Inviting somebody to a branch is a thing people do every day; inviting them to
