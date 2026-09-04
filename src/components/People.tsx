@@ -17,7 +17,7 @@
 import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import type { Person, Track } from "../../shared/api";
 import { api } from "../lib/api";
-import { Search, X } from "../lib/icons";
+import { AddPerson, Search, X } from "../lib/icons";
 import { Dialog } from "./Dialog";
 
 const same = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
@@ -48,7 +48,18 @@ export interface PeopleStackProps {
  * it takes once it is reporting a fact you did not already know.
  */
 export function PeopleStack({ people, onOpen, max = 3 }: PeopleStackProps) {
-  if (people.length < 2) return null;
+  // A track nobody has been invited to still needs a way in, and this is the
+  // only one there is — a stack of one face is not a control anybody would
+  // think to press, so a solo track gets a word instead. Hiding it until a
+  // track was already shared made sharing impossible to start, which is the
+  // kind of bug that only shows up when somebody looks for the button.
+  if (people.length < 2) {
+    return (
+      <button type="button" className="ghost" onClick={onOpen} title="Invite somebody to this track">
+        <AddPerson size={13} /> Share
+      </button>
+    );
+  }
   const shown = people.slice(0, max);
   const rest = people.length - shown.length;
   return (
