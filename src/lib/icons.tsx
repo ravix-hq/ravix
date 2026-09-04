@@ -177,6 +177,13 @@ export const Settings = (p: P) => (
   </Svg>
 );
 
+export const Pencil = (p: P) => (
+  <Svg {...p}>
+    <path d="M4 20h4L19 9a2.8 2.8 0 0 0-4-4L4 16z" />
+    <path d="m14 6 4 4" />
+  </Svg>
+);
+
 export const Sparkle = (p: P) => (
   <Svg {...p}>
     <path d="M12 3.5 13.7 9l5.5 1.7-5.5 1.8L12 18l-1.7-5.5L4.8 10.7 10.3 9z" />

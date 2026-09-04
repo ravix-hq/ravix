@@ -25,6 +25,7 @@ import { Empty } from "./components/Empty";
 import { Home, SignIn } from "./components/Home";
 import { Yard } from "./components/Yard";
 import { TrackView } from "./components/TrackView";
+import { TrackName } from "./components/TrackName";
 import { Inspector } from "./components/Inspector";
 import { Dock } from "./components/Dock";
 import { NewProject } from "./components/NewProject";
@@ -297,7 +298,17 @@ export function App() {
               {detail ? (
                 <>
                   <span className="sep">›</span>
-                  <span className="truncate">{detail.track.title}</span>
+                  {/* The name is a label and this is where it is edited. The
+                      branch beside it is not: it was cut on the machine when
+                      the track opened, so it stays a chip you can read. */}
+                  <TrackName
+                    track={detail.track}
+                    onRenamed={() => {
+                      void loadDetail(detail.track.id);
+                      void reloadTracks(project.id);
+                    }}
+                    onError={notify}
+                  />
                   <span className="chip mono">{detail.track.branch}</span>
                 </>
               ) : project.repo ? (

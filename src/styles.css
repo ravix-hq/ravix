@@ -462,6 +462,23 @@ h4 { font-size: 11px; color: var(--dim); text-transform: uppercase; letter-spaci
 }
 .crumbs .sep { color: var(--dimmer); }
 .crumbs strong { font-size: 13px; font-weight: 550; }
+
+/* The track's name, which is also the box you rename it in. It reads as the
+   text it replaces until the pointer is over it — a bar of input boxes would
+   be a form, and a rename you have to know about is one nobody finds. The
+   pencil appears on hover for the same reason: the affordance is there when
+   you are looking for it and absent when you are reading. */
+button.crumb-name, input.crumb-name {
+  font: inherit; max-width: 30ch; padding: 2px 6px; border-radius: 5px;
+}
+button.crumb-name {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: none; border: 1px solid transparent; color: var(--ink);
+}
+button.crumb-name:hover:not(:disabled) { background: var(--surface-hover); border-color: var(--line); }
+button.crumb-name .ico { flex: none; color: var(--dimmer); opacity: 0; display: grid; place-items: center; }
+button.crumb-name:hover .ico, button.crumb-name:focus-visible .ico { opacity: 1; }
+input.crumb-name { width: 30ch; }
 .chip {
   display: inline-flex; align-items: center; gap: 5px; padding: 2px 7px;
   border: 1px solid var(--line); border-radius: 999px;

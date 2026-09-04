@@ -24,7 +24,7 @@
  *   GET    /api/projects/:id/stream         the set of tracks, live
  *
  *   GET    /api/tracks/:id                  the track and its ribbon
- *   PATCH  /api/tracks/:id                  rename
+ *   PATCH  /api/tracks/:id                  rename the label, not the worktree
  *   DELETE /api/tracks/:id                  close, and remove the worktree
  *   POST   /api/tracks/:id/prompt
  *   POST   /api/tracks/:id/interrupt

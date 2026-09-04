@@ -331,12 +331,21 @@ export async function stream(ctx: AppContext, req: Request, trackId: string): Pr
   });
 }
 
-/** `PATCH /api/tracks/:id` — rename. */
+/**
+ * `PATCH /api/tracks/:id` — rename the label, and only the label.
+ *
+ * A track is named before anybody knows what it is — after a pull request, a
+ * branch, or the yard's own list — so the name it opened with is frequently
+ * the wrong one by the end. The slug, the branch and the worktree deliberately
+ * do not follow it: those were cut on a real machine when the track opened,
+ * and a directory somebody is working in is not something a rename box should
+ * move under them. The name in the rail is a label; this changes the label.
+ */
 export async function rename(ctx: AppContext, req: Request, trackId: string): Promise<Response> {
   const user = await authenticate(ctx, req);
   const { track, project, role } = trackOf(ctx, user, trackId);
-  // A track's name is its slug is its branch is its directory. Somebody
-  // invited to help is not somebody who gets to move all four.
+  // Somebody invited to help on one branch is not somebody who relabels it in
+  // everybody else's rail.
   requireOwner(role, "rename a track");
   const body = await readJson(req);
   const title = str(body.title, 200).trim();
