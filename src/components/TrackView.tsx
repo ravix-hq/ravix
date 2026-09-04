@@ -38,6 +38,19 @@ export function TrackView(props: TrackViewProps) {
   const [turns, setTurns] = useState<TurnRecord[]>([]);
   const [running, setRunning] = useState(track.status === "running" || track.status === "opening");
   const seen = useRef(new Set<number>());
+  /**
+   * Which track the state below belongs to.
+   *
+   * Every write into `events` and `turns` is made by a closure that captured a
+   * track id at the time it was created, and lands some milliseconds later on
+   * whatever track is on screen *now*. Those are not the same track the moment
+   * somebody clicks a different one in the rail, and the failure is not a
+   * flicker — a late `setTurns` writes another track's prompts into this one's
+   * transcript and they stay there, which reads as the agent having said
+   * things it never said.
+   */
+  const showing = useRef(track.id);
+  showing.current = track.id;
 
   // The transcript so far, then the live stream. Both feed one list,
   // de-duplicated by event id — the stream replays what the fetch already
@@ -51,7 +64,7 @@ export function TrackView(props: TrackViewProps) {
     void api
       .events(track.id)
       .then((page) => {
-        if (!alive) return;
+        if (!alive || showing.current !== track.id) return;
         for (const e of page.events as LogEvent[]) seen.current.add(e.id);
         setEvents(page.events as LogEvent[]);
         setTurns(page.turns);
@@ -76,7 +89,13 @@ export function TrackView(props: TrackViewProps) {
       stage: (data) => absorb(data),
       message: (data) => absorb(data),
     });
+    const forTrack = track.id;
     function absorb(data: unknown): void {
+      // A frame that arrives from the stream of a track we have navigated away
+      // from — the socket is closed on cleanup, but a frame already in flight
+      // still lands here — must not be appended to the transcript now on
+      // screen.
+      if (showing.current !== forTrack) return;
       const ev = data as LogEvent | null;
       if (!ev || typeof ev !== "object") return;
       if (typeof ev.id === "number") {
@@ -96,9 +115,14 @@ export function TrackView(props: TrackViewProps) {
           // The turn is over, so its prompt is now recorded and the track's
           // status has moved. Re-read both rather than guessing at them.
           props.onActivity();
+          const forTrack = track.id;
           void api
-            .events(track.id)
-            .then((page) => setTurns(page.turns))
+            .events(forTrack)
+            .then((page) => {
+              // The unguarded version of this line is how another track's
+              // transcript ends up under this one's header.
+              if (showing.current === forTrack) setTurns(page.turns);
+            })
             .catch(() => undefined);
         }
       }

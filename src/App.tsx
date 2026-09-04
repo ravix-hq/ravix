@@ -334,6 +334,13 @@ export function App() {
               <>
                 <div className="split">
                   <TrackView
+                    // A track switch is a different conversation, not a
+                    // different prop. Keying on the id remounts the whole
+                    // component, so the transcript, the seen-event set and the
+                    // running flag all start empty and nothing from the last
+                    // track can survive into this one by way of state that
+                    // happened to be left behind.
+                    key={detail.track.id}
                     project={project}
                     track={detail.track}
                     header={detail.header}
@@ -344,8 +351,13 @@ export function App() {
                     onActivity={() => void reloadTracks(project.id)}
                   />
                   <div className="inspector">
-                    <Inspector track={detail.track} project={project} capabilities={capabilities} />
-                    <Dock track={detail.track} project={project} capabilities={capabilities} />
+                    {/* Keyed for the same reason as the transcript: an open
+                        directory, a loaded diff and a terminal's scrollback all
+                        belong to one track, and a remount is a cheaper
+                        guarantee of that than every panel remembering to scrub
+                        itself. */}
+                    <Inspector key={detail.track.id} track={detail.track} project={project} capabilities={capabilities} />
+                    <Dock key={detail.track.id} track={detail.track} project={project} capabilities={capabilities} />
                   </div>
                 </div>
               </>
