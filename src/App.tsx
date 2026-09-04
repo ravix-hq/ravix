@@ -140,6 +140,13 @@ export function App() {
    * selection changing, and a panel that just changed something about the
    * track it is showing.
    */
+  // ── navigation ──────────────────────────────────────────────────────
+
+  const go = useCallback((next: Route) => {
+    writeRoute(next);
+    setRoute(next);
+  }, []);
+
   const loadDetail = useCallback(
     async (trackId: string) => {
       wanted.current = trackId;
@@ -149,10 +156,20 @@ export function App() {
       } catch (err) {
         if (wanted.current !== trackId) return;
         setDetail(null);
+        // A track that has stopped existing *for this caller* — closed, or an
+        // invitation withdrawn while the tab was open — answers 404, and
+        // leaving the shell pointed at it shows an empty panel under a URL
+        // that will never resolve again. Go home and re-read the rail, which
+        // is where they can see what they do still have.
+        if (err instanceof ApiError && err.status === 404) {
+          go({ projectId: null, trackId: null });
+          void reloadProjects();
+          return;
+        }
         if (err instanceof ApiError) notify(err.message);
       }
     },
-    [notify],
+    [notify, go, reloadProjects],
   );
 
   useEffect(() => {
@@ -164,13 +181,6 @@ export function App() {
     }
     void loadDetail(trackId);
   }, [route.trackId, loadDetail]);
-
-  // ── navigation ──────────────────────────────────────────────────────
-
-  const go = useCallback((next: Route) => {
-    writeRoute(next);
-    setRoute(next);
-  }, []);
 
   const project = useMemo(() => projects.find((p) => p.id === route.projectId) ?? null, [projects, route.projectId]);
 
@@ -375,6 +385,16 @@ export function App() {
           viewerLogin={session.viewer.login}
           onClose={() => setDialog(null)}
           onChanged={() => void loadDetail(detail.track.id)}
+          onLeft={() => {
+            // They are no longer on this track, so there is nothing here to
+            // come back to — the next read of it is a 404. Close, go home, and
+            // re-read the rail: the whole project may have left it too, if that
+            // track was their only way into it.
+            setDialog(null);
+            go({ projectId: null, trackId: null });
+            void reloadProjects();
+            notify("You have left that track.", false);
+          }}
         />
       ) : null}
 

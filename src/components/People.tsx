@@ -73,9 +73,18 @@ export interface PeopleProps {
   onClose: () => void;
   /** The membership the server just returned, so the shell can re-read the track. */
   onChanged: (people: Person[]) => void;
+  /**
+   * The viewer removed *themselves*.
+   *
+   * Distinct from `onChanged` because there is nothing to hand back: the
+   * server answers 204, and the caller's next read of this track is a 404. The
+   * shell has to leave rather than re-render — which is the one thing this
+   * component cannot do for it.
+   */
+  onLeft: () => void;
 }
 
-export function People({ track, viewerLogin, onClose, onChanged }: PeopleProps) {
+export function People({ track, viewerLogin, onClose, onChanged, onLeft }: PeopleProps) {
   const [people, setPeople] = useState<Person[]>(track.people);
   const [q, setQ] = useState("");
   const [found, setFound] = useState<Person[]>([]);
@@ -202,7 +211,7 @@ export function People({ track, viewerLogin, onClose, onChanged }: PeopleProps) 
     setError(null);
     try {
       await api.uninvite(track.id, viewerLogin);
-      onClose();
+      onLeft();
     } catch (err) {
       setBusy(false);
       setError(err instanceof Error ? err.message : "Could not leave this track.");
