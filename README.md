@@ -337,14 +337,22 @@ discovered:
 - **It is one request in, one response out.** `ls`, `git log` and `npm test` are
   exactly right. `vim` and `top` are not.
 
-## CPU, memory and disk, at the quiet end of the strip
+## CPU, memory and disk, at the quiet end of the project's row
 
 The same exec buys one more thing, and it is deliberately the smallest thing on
 the screen: `cpu 34% · ram 1.4/4G · disk 12/98G`, grey, at the right-hand end of
-the dock's tab strip. Nobody opens switchyard to watch a gauge. But four tracks
-on one project share one CPU allowance, one memory limit and one disk, and when
-the fourth `bun install` of the afternoon starts swapping, "is it me or is it
-the box?" has no other way to be answered from in here.
+the crumbs. Nobody opens switchyard to watch a gauge. But four tracks on one
+project share one CPU allowance, one memory limit and one disk, and when the
+fourth `bun install` of the afternoon starts swapping, "is it me or is it the
+box?" has no other way to be answered from in here.
+
+It is on the project's row rather than in the dock because that is where the
+width is. The dock's tab strip is the more obvious home and does not work: it
+sits in the inspector column, which is 340px at its narrowest and has three tabs
+in it already, so the readout ends up shrinking and truncating to `ram 9.9/1`.
+`flex: none` is the fix for the truncation and the crumbs is the fix for the
+room — the line drops out whole at 1100px, where the window stops having any to
+spare.
 
 Two decisions in `server/vitals.ts` are worth knowing:
 

@@ -34,6 +34,7 @@ import { CloseTrack } from "./components/CloseTrack";
 import { ProjectSettings } from "./components/ProjectSettings";
 import { Search as SearchDialog } from "./components/Search";
 import { People, PeopleStack } from "./components/People";
+import { Vitals } from "./components/Vitals";
 
 type Dialog = "new-project" | "create-from" | "settings" | "search" | "people" | "close-track" | null;
 
@@ -383,6 +384,16 @@ export function App() {
               ) : null}
               {detail ? <PeopleStack people={detail.track.people} present={present} onOpen={() => setDialog("people")} /> : null}
               <span className="spacer" />
+              {/* The machine's own numbers, and the only thing on this row
+                  that is about the box rather than about the work on it. It
+                  belongs to the project rather than to the track — every track
+                  here shares one CPU allowance, one memory limit and one disk
+                  — which is why it sits on the project's row and not in the
+                  dock, where the inspector column is too narrow to hold it
+                  beside three tabs. Grey, small, and at the end furthest from
+                  anything that reads as an action. It renders nothing at all
+                  when there is nothing to say. */}
+              {detail ? <Vitals track={detail.track} /> : null}
               {/* A member has neither of these on the server, so they do not
                   get them here — an owner-only button that answers 403 teaches
                   people to distrust every other button beside it. */}

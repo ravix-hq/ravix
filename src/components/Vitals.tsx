@@ -8,13 +8,18 @@
  * CPU allowance, one memory limit and one disk, and "is it me or is it the
  * box?" cannot otherwise be answered from inside the app.
  *
- * So it lives at the right-hand end of the dock's tab strip — beside Setup,
- * Run and Terminal, which are the other three things about the machine rather
- * than about the conversation — and it renders **nothing at all** when there
- * are no numbers. A deployment without a Sprites token, a machine that has
- * gone to sleep, a kernel whose cgroup files are somewhere else: all of them
- * are a line that is not there, not a row of dashes. The dashes would read as
- * a fault on a machine that is working perfectly well.
+ * So it lives at the right-hand end of the crumbs — the project's own row,
+ * furthest from anything that reads as an action. The dock's tab strip is
+ * where this started and is the wrong home for it: that strip is inside the
+ * inspector column, which is 340px wide before three tabs have had their
+ * share, and a readout that has to fit in what is left of that is a readout
+ * that gets truncated to `ram 9.9/1`.
+ *
+ * It renders **nothing at all** when there are no numbers. A deployment
+ * without a Sprites token, a machine gone to sleep, a kernel that keeps its
+ * counters somewhere else: all of them are a line that is not there, rather
+ * than a row of dashes. The dashes would read as a fault on a machine that is
+ * working perfectly well.
  *
  * The figures are the *machine's*, not the track's. Every track on the project
  * shows the same three numbers, which is the point of showing them.

@@ -28,7 +28,6 @@ import { Chevron } from "../lib/icons";
 import { Run } from "./Run";
 import { Setup } from "./Setup";
 import { Terminal } from "./Terminal";
-import { Vitals } from "./Vitals";
 
 type DockTab = "setup" | "run" | "terminal";
 
@@ -85,15 +84,6 @@ export function Dock({ track, project, capabilities }: { track: Track; project: 
             {t.label}
           </button>
         ))}
-        <span className="spacer" />
-        {/* The far end of the strip, and the only thing in this app that is
-            about the box rather than about the work on it. It is here because
-            the strip is the one row that survives the dock being collapsed —
-            somebody who keeps the dock shut still gets the number — and it is
-            small, grey and at the opposite end from anything clickable
-            because it is a footnote, not a control. It renders nothing when
-            there is nothing to say. */}
-        <Vitals track={track} />
       </div>
       {open ? (
         <div className="dock-body">
