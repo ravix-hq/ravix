@@ -22,7 +22,7 @@
  * doing your work and it is the most reassuring thing on the screen while a
  * worktree is being cut.
  */
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { blocksForTurn, type Block } from "@managoat/fountain-app/acp";
 import { splitAuthor } from "../../shared/author";
 import type { Person, TurnRecord } from "../../shared/api";
@@ -30,6 +30,12 @@ import type { LogEvent } from "../../shared/fountain-types";
 import { Chevron } from "../lib/icons";
 
 export interface TranscriptProps {
+  /**
+   * Which track is on screen. Changing it means the reader is somewhere new,
+   * so the panel goes back to the bottom whatever they had scrolled to in the
+   * track they came from.
+   */
+  trackId: string;
   turns: TurnRecord[];
   events: LogEvent[];
   runtime: string;
@@ -41,8 +47,12 @@ export interface TranscriptProps {
   head?: React.ReactNode;
 }
 
-export function Transcript({ turns, events, runtime, running, head, people = [] }: TranscriptProps) {
+/** Within this many pixels of the bottom still counts as reading the bottom. */
+const SLACK = 80;
+
+export function Transcript({ trackId, turns, events, runtime, running, head, people = [] }: TranscriptProps) {
   const scroller = useRef<HTMLDivElement | null>(null);
+  const content = useRef<HTMLDivElement | null>(null);
   const pinned = useRef(true);
 
   const grouped = useMemo(() => group(turns, events), [turns, events]);
@@ -50,10 +60,37 @@ export function Transcript({ turns, events, runtime, running, head, people = [] 
   // Follow the bottom, but only while the reader is already there. Yanking
   // somebody back down mid-scroll is the single most irritating thing a live
   // transcript can do, and it happens on every chunk.
+  //
+  // A ResizeObserver rather than an effect on the render, because most of what
+  // makes this panel taller does not arrive with a React render: an avatar
+  // decoding, the ribbon gaining a line once the header lands, a font. Each of
+  // those grows the content *after* the effect that would have chased it has
+  // already run, which is exactly the first second of opening a track — the
+  // moment the transcript most needs to be at the bottom and least reliably
+  // was. Observing the scroller too keeps the bottom while the window or the
+  // composer changes size.
   useEffect(() => {
     const el = scroller.current;
-    if (el && pinned.current) el.scrollTop = el.scrollHeight;
-  }, [grouped, running]);
+    const inner = content.current;
+    if (!el || !inner) return;
+    const stick = () => {
+      if (pinned.current) el.scrollTop = el.scrollHeight;
+    };
+    stick();
+    const observer = new ResizeObserver(stick);
+    observer.observe(inner);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
+  // A new track starts pinned. Whether the reader had scrolled up to read
+  // something is a fact about the track they left, and carrying it across is
+  // how you open a chat onto the middle of a conversation you have not read.
+  useLayoutEffect(() => {
+    pinned.current = true;
+    const el = scroller.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [trackId]);
 
   return (
     <div
@@ -61,24 +98,26 @@ export function Transcript({ turns, events, runtime, running, head, people = [] 
       ref={scroller}
       onScroll={(e) => {
         const el = e.currentTarget;
-        pinned.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+        pinned.current = el.scrollHeight - el.scrollTop - el.clientHeight < SLACK;
       }}
     >
-      {head}
-      <div className="transcript">
-        {grouped.map((turn) => (
-          <Turn key={turn.id} turn={turn} runtime={runtime} people={people} />
-        ))}
-        {running ? (
-          <div className="thinking-now">
-            <span className="dots">
-              <i />
-              <i />
-              <i />
-            </span>
-            Working
-          </div>
-        ) : null}
+      <div ref={content}>
+        {head}
+        <div className="transcript">
+          {grouped.map((turn) => (
+            <Turn key={turn.id} turn={turn} runtime={runtime} people={people} />
+          ))}
+          {running ? (
+            <div className="thinking-now">
+              <span className="dots">
+                <i />
+                <i />
+                <i />
+              </span>
+              Working
+            </div>
+          ) : null}
+        </div>
       </div>
     </div>
   );

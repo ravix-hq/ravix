@@ -135,6 +135,7 @@ export function TrackView(props: TrackViewProps) {
   return (
     <div className="centre">
       <Transcript
+        trackId={track.id}
         turns={turns}
         events={events}
         people={track.people}
