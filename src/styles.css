@@ -848,9 +848,3 @@ input.crumb-name { width: 30ch; }
 
 /* ── renaming a track, in the crumb it is read in ──────────────────────── */
 
-.crumb-title { display: inline-flex; align-items: center; gap: 5px; min-width: 0; max-width: 34ch; padding: 2px 6px; background: transparent; border-color: transparent; }
-.crumb-title > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.crumb-title .pencil { flex: none; color: var(--dimmer); opacity: 0; }
-.crumb-title:hover .pencil, .crumb-title:focus-visible .pencil { opacity: 1; }
-.crumb-rename { width: 24ch; padding: 3px 6px; font-size: 12.5px; }
-.crumb-rename[aria-busy="true"] { opacity: 0.6; }
