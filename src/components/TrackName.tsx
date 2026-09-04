@@ -19,12 +19,14 @@ import { Pencil } from "../lib/icons";
 
 export interface TrackNameProps {
   track: Track;
+  /** Whose name to compare against the track's cutter. */
+  viewerLogin: string;
   /** Called once the server has taken it, so the rail and the crumb agree. */
   onRenamed: () => void;
   onError: (message: string) => void;
 }
 
-export function TrackName({ track, onRenamed, onError }: TrackNameProps) {
+export function TrackName({ track, viewerLogin, onRenamed, onError }: TrackNameProps) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(track.title);
   const [saving, setSaving] = useState(false);
@@ -43,10 +45,12 @@ export function TrackName({ track, onRenamed, onError }: TrackNameProps) {
     if (editing) box.current?.select();
   }, [editing]);
 
-  // A member is on this track by invitation to one branch, and the server
-  // refuses the rename for them — so they get the name as text rather than a
-  // control that answers 403.
-  if (track.role !== "owner") return <span className="truncate">{track.title}</span>;
+  // The two the server takes: the project's owner, and whoever cut this track
+  // — a project member can open one, and a name they chose that they cannot
+  // then fix is a worse rule than the one this is guarding. Anybody else gets
+  // the name as text rather than a control that answers 403.
+  const mine = track.role === "owner" || track.createdByLogin.toLowerCase() === viewerLogin.toLowerCase();
+  if (!mine) return <span className="truncate">{track.title}</span>;
 
   async function commit(): Promise<void> {
     if (done.current) return;

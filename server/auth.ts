@@ -153,9 +153,13 @@ export async function callback(ctx: AppContext, req: Request): Promise<Response>
   }
 
   // One invitation is worth landing on; several is a decision, so the rail is
-  // the better place to make it.
-  const only = joined.length === 1 ? joined[0]! : null;
-  if (only) return redirect(`/p/${only.projectId}/t/${only.id}`, cookie);
+  // the better place to make it. A project counts as one thing to arrive at
+  // even when it brought several tracks with it, and it wins over a track:
+  // whoever sent it meant the machine rather than a branch of it.
+  const onlyProject = joined.projects.length === 1 && !joined.tracks.length ? joined.projects[0]! : null;
+  if (onlyProject) return redirect(`/p/${onlyProject.id}`, cookie);
+  const onlyTrack = !joined.projects.length && joined.tracks.length === 1 ? joined.tracks[0]! : null;
+  if (onlyTrack) return redirect(`/p/${onlyTrack.projectId}/t/${onlyTrack.id}`, cookie);
   return redirect(installationId ? "/?installed=1" : "/", cookie);
 }
 

@@ -4,13 +4,16 @@
  * Shorter than paddock's equivalent, and the difference is worth naming:
  * paddock admits people with no account at all, so identity there is a union
  * and every route downstream has to handle both halves. Switchyard has one
- * kind of caller — somebody signed in with GitHub — and one rule: you reach
- * your own projects and no others.
+ * kind of caller — somebody signed in with GitHub — and three doors, in
+ * widening order:
  *
- * That rule is enforced by lookup rather than by a check. `projectOf` selects
- * on `user_id` as well as `id`, so a project belonging to somebody else is not
- * refused, it is *not found* — which is the honest answer, since its existence
- * is not the caller's to learn.
+ *   `trackAccess`    one branch, because you were named on it
+ *   `projectAccess`  every branch on a machine, because you were named on it
+ *   `projectOf`      the machine itself, because you own it
+ *
+ * All three are enforced by lookup rather than by a check, and all three answer
+ * *not found* rather than refusing: the existence of somebody else's project is
+ * not the caller's to learn.
  */
 import type { Config } from "./config";
 import type { Cipher } from "./crypto";
@@ -55,10 +58,11 @@ export async function authenticate(ctx: AppContext, req: Request): Promise<UserR
 /**
  * A project the caller **owns**. 404 for anyone else's.
  *
- * Everything that changes a project — its settings, its machine, its
- * existence, and opening a track on it — goes through this. Somebody invited
- * to a track is not a caller here, and gets the same answer as a stranger:
- * the project's existence is not theirs to learn.
+ * The project's *controls* go through this and nothing else: its settings, its
+ * packages and secrets, the rebuild, and the delete. Somebody invited to the
+ * project is not a caller here — they are a caller at `projectAccess` — and
+ * gets the same answer as a stranger, because a machine you were let onto is
+ * still not a machine you get to re-provision.
  */
 export function projectOf(ctx: AppContext, user: UserRow, projectId: string): ProjectRow {
   const project = ctx.db.project(projectId);
@@ -68,8 +72,37 @@ export function projectOf(ctx: AppContext, user: UserRow, projectId: string): Pr
   return project;
 }
 
-/** Owner, or somebody invited to the track in question. Never anything else. */
+/** Owner, or somebody invited to the track or the project in question. */
 export type Role = "owner" | "member";
+
+export interface ProjectAccess {
+  project: ProjectRow;
+  role: Role;
+}
+
+/**
+ * A project the caller may work in, and in what capacity.
+ *
+ * The wider door, and the one added when "invite somebody to the whole
+ * project" became a thing switchyard can do. A project member reaches every
+ * track on it — the ones open now and the ones opened tomorrow — and may cut
+ * tracks of their own, because a project you were let into where you cannot
+ * start a line of work is only a bundle of track invitations with a nicer
+ * name.
+ *
+ * What it is *not* is `projectOf`. The line between the two is the line the
+ * README draws: the work on the machine is shared, the machine is not. So the
+ * settings panel, the package list, the secrets, the rebuild and the delete
+ * all keep resolving through `projectOf` and refuse a member exactly as they
+ * refuse a stranger.
+ */
+export function projectAccess(ctx: AppContext, user: UserRow, projectId: string): ProjectAccess {
+  const project = ctx.db.project(projectId);
+  if (!project || project.archivedAt) throw new HttpError(404, "not_found", "No such project.");
+  if (project.userId === user.id) return { project, role: "owner" };
+  if (ctx.db.isProjectMember(project.id, user.id)) return { project, role: "member" };
+  throw new HttpError(404, "not_found", "No such project.");
+}
 
 export interface TrackAccess {
   track: TrackRow;
@@ -80,11 +113,17 @@ export interface TrackAccess {
 /**
  * A track the caller may reach, and in what capacity.
  *
- * This is the one place membership widens anything, and it widens it to
- * exactly one track. A member reaching a *second* track of the same project
- * lands here again and is refused again, because the check is per row rather
- * than per project — which is what makes "an invitation is to a branch, not to
- * the machine" true by construction instead of by everybody remembering.
+ * Two ways in, and the order they are tried in is the order of how much they
+ * grant. Somebody named on *this track* gets this track: a second track of the
+ * same project lands here again and is refused again, which is what makes "an
+ * invitation is to a branch, not to the machine" true by construction rather
+ * than by everybody remembering. Somebody invited to the **project** gets all
+ * of them, which is the point of that invitation and is why it is a separate,
+ * deliberate act by the owner rather than something a track invite grows into.
+ *
+ * Both come back as `member`. The distinction between them is about how they
+ * got here, not about what they may do once they are, and every route below
+ * this one wants the second question.
  *
  * A project that has been archived is gone for its members too, and a closed
  * track stops admitting anyone: neither has a surface left to share.
@@ -96,7 +135,9 @@ export function trackAccess(ctx: AppContext, user: UserRow, trackId: string): Tr
   if (!project || project.archivedAt) throw new HttpError(404, "not_found", "No such track.");
 
   if (project.userId === user.id) return { track, project, role: "owner" };
-  if (!track.closedAt && ctx.db.isMember(track.id, user.id)) return { track, project, role: "member" };
+  if (track.closedAt) throw new HttpError(404, "not_found", "No such track.");
+  if (ctx.db.isMember(track.id, user.id)) return { track, project, role: "member" };
+  if (ctx.db.isProjectMember(project.id, user.id)) return { track, project, role: "member" };
   throw new HttpError(404, "not_found", "No such track.");
 }
 
@@ -109,6 +150,26 @@ export function trackOf(ctx: AppContext, user: UserRow, trackId: string): TrackA
 /** Owner-only operations on a track somebody else may also be in. */
 export function requireOwner(role: Role, what: string): void {
   if (role !== "owner") throw new HttpError(403, "owner_only", `Only the owner of this project can ${what}.`);
+}
+
+/**
+ * The same, plus whoever cut the track.
+ *
+ * For renaming and closing, and it exists because project members can open
+ * tracks. Somebody who may make a directory on the machine and then may not
+ * tidy it up leaves the owner sweeping up after their guests, which is a worse
+ * outcome than the one owner-only was protecting against. It is still not "any
+ * member": being invited to help on a branch is not being handed the ability
+ * to end it for everybody else in it.
+ *
+ * Matched on the login rather than a user id because that is what the row
+ * holds — `created_by_login` is written for the ribbon, and the person who
+ * renames their GitHub account is a rarer event than the one this prevents.
+ */
+export function requireOwnerOrCutter(role: Role, user: UserRow, track: TrackRow, what: string): void {
+  if (role === "owner") return;
+  if (track.createdByLogin.toLowerCase() === user.login.toLowerCase()) return;
+  throw new HttpError(403, "owner_only", `Only the owner of this project, or whoever opened this track, can ${what}.`);
 }
 
 /**

@@ -11,7 +11,7 @@
  * a project is a machine that exists whether or not anybody is working in it.
  */
 import type { Project, Track } from "../../shared/api";
-import { Home, Plus, Search, Settings, Spinner } from "../lib/icons";
+import { AddPerson, Home, Plus, Search, Settings, Spinner } from "../lib/icons";
 import { ThemePicker } from "./ThemePicker";
 
 export interface YardProps {
@@ -26,6 +26,7 @@ export interface YardProps {
   onPickTrack: (projectId: string, trackId: string) => void;
   onNewTrack: (projectId: string) => void;
   onProjectSettings: (projectId: string) => void;
+  onProjectPeople: (projectId: string) => void;
 }
 
 export function Yard(props: YardProps) {
@@ -88,11 +89,14 @@ export function Yard(props: YardProps) {
         {projects.map((project) => {
           const tracks = tracksByProject[project.id] ?? [];
           const active = selected.projectId === project.id;
-          // A project you were invited *into* — by way of one of its tracks —
-          // shows the tracks you can reach and nothing else. Cutting a track
-          // and opening the settings are both refused by the server for a
-          // member, so neither appears rather than appearing and failing.
+          // Three kinds of row, and the controls differ because the server
+          // differs. An owner gets everything. Somebody invited to the whole
+          // project can cut tracks and see who else is here, but not touch the
+          // settings. Somebody invited to one *track* gets the tracks they can
+          // reach and nothing else — no new track, no settings, and no people
+          // list, since they are not in a membership that has one.
           const owner = project.role === "owner";
+          const inProject = project.access === "owner" || project.access === "project";
           return (
             <div key={project.id} style={{ marginBottom: 6 }}>
               <div className="row" style={{ gap: 0 }}>
@@ -108,7 +112,7 @@ export function Yard(props: YardProps) {
                   <span className="spacer" />
                   <MachineDot project={project} />
                 </button>
-                {owner ? (
+                {inProject ? (
                   <button
                     type="button"
                     className="x"
@@ -157,6 +161,16 @@ export function Yard(props: YardProps) {
                   </button>
                 );
               })}
+
+              {active && inProject ? (
+                <button type="button" className="track-row" onClick={() => props.onProjectPeople(project.id)}>
+                  <span className="track-num" />
+                  <span className="ico">
+                    <AddPerson size={12} />
+                  </span>
+                  <span className="dim">People</span>
+                </button>
+              ) : null}
 
               {active && owner ? (
                 <button type="button" className="track-row" onClick={() => props.onProjectSettings(project.id)}>

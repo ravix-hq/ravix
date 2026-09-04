@@ -22,6 +22,12 @@
  *   GET    /api/projects/:id/tracks
  *   POST   /api/projects/:id/tracks         a new line off the main
  *   GET    /api/projects/:id/stream         the set of tracks, live
+ *   GET    /api/projects/:id/people         who can reach every track on it
+ *   POST   /api/projects/:id/people         owner: invite by GitHub login
+ *   DELETE /api/projects/:id/people/:login  owner removes, or a member leaves
+ *   GET    /api/projects/:id/link           owner: whether a link is out
+ *   POST   /api/projects/:id/link           owner: mint one, replacing any
+ *   DELETE /api/projects/:id/link           owner: revoke it
  *
  *   GET    /api/tracks/:id                  the track and its ribbon
  *   PATCH  /api/tracks/:id                  rename the label, not the worktree
@@ -49,14 +55,20 @@
  *   POST   /api/tracks/:id/exec             run one command on the machine
  *   GET    /api/tracks/:id/vitals           cpu, memory and disk on the box
  *
+ * The two people blocks are the same six routes at two grains, and that is the
+ * whole of project-level sharing on the wire: `/api/projects/:id/people` lets
+ * somebody into every track on a machine, `/api/tracks/:id/people` into one.
+ * `/j/:token` serves links of both kinds, because a browser holding one has no
+ * idea which it is and should not need to.
+ *
  * The shape of this list is the permission model, and it is a much shorter
  * list than paddock's for one reason: **there is no Fountain proxy here at
  * all**. Paddock forwards a curated set of Fountain paths on the owner's key;
  * switchyard runs on *its own* key, shared by everybody, so forwarding
  * anything would be handing a stranger the account every machine on this
  * deployment is built on. Every route above is a typed operation on something
- * the caller owns, and `projectOf`/`trackOf` decide ownership by lookup rather
- * than by a check that could be forgotten.
+ * the caller may reach, and `projectOf` / `projectAccess` / `trackAccess`
+ * decide that by lookup rather than by a check that could be forgotten.
  */
 import type { AppContext } from "./context";
 import { authenticate } from "./context";
@@ -109,16 +121,21 @@ export function buildRouter(ctx: AppContext): (req: Request) => Promise<Response
     // throws in `start` becomes a connection that closes with no status a
     // browser can read, and `EventSource` retries it forever.
     const user = await authenticate(ctx, req);
-    // Members watch the same channel: it carries "a track changed" and "who is
-    // on it", both of which they need for the one track they can see. It
-    // carries nothing naming a track they cannot.
+    // Members of either kind watch the same channel: it carries "a track
+    // changed" and "who is on it", both of which they need for the tracks they
+    // can see. Events that name a track carry an audience, so it carries
+    // nothing naming one they cannot.
     const project = ctx.db.project(p.id!);
     if (!project || project.archivedAt) throw new HttpError(404, "not_found", "No such project.");
-    if (project.userId !== user.id && !ctx.db.memberTracks(user.id).some((t) => t.projectId === project.id)) {
-      throw new HttpError(404, "not_found", "No such project.");
-    }
+    if (!projects.accessOf(ctx, user.id, project)) throw new HttpError(404, "not_found", "No such project.");
     return projectStream(project.id, user.id, req.signal);
   });
+  on("GET", "/api/projects/:id/people", (req, p) => people.listProject(ctx, req, p.id!));
+  on("POST", "/api/projects/:id/people", (req, p) => people.addProject(ctx, req, p.id!));
+  on("DELETE", "/api/projects/:id/people/:login", (req, p) => people.removeProject(ctx, req, p.id!, p.login!));
+  on("GET", "/api/projects/:id/link", (req, p) => people.showProjectLink(ctx, req, p.id!));
+  on("POST", "/api/projects/:id/link", (req, p) => people.mintProjectLink(ctx, req, p.id!));
+  on("DELETE", "/api/projects/:id/link", (req, p) => people.dropProjectLink(ctx, req, p.id!));
 
   on("GET", "/api/tracks/:id", (req, p) => tracks.show(ctx, req, p.id!));
   on("PATCH", "/api/tracks/:id", (req, p) => tracks.rename(ctx, req, p.id!));

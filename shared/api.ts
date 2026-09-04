@@ -29,6 +29,19 @@ export interface Person {
    * A pending person cannot read anything yet.
    */
   pending?: boolean;
+  /**
+   * Where their access comes from, on a **track's** list.
+   *
+   * `project` means they were invited to the whole project and reach this
+   * track by way of that, rather than by being named on it. The distinction
+   * matters twice over on screen: a name the owner does not remember inviting
+   * to this branch is alarming until the row says how it got there, and the ×
+   * beside a project member belongs in the project's dialog, not this one.
+   *
+   * Absent on the project's own people list, where it would say nothing, and
+   * on the owner, whose claim is neither.
+   */
+  via?: "project" | "track";
 }
 
 /**
@@ -46,8 +59,16 @@ export interface Presence {
   typing: boolean;
 }
 
-/** The one live invite link a track may have. */
-export interface TrackLink {
+/**
+ * The one live invite link a track — or a project — may have.
+ *
+ * One shape for both because they are one thing at two grains: a hash, two
+ * timestamps, and a URL that exists for exactly one response. What differs is
+ * how long it lasts and what it admits somebody to, and neither of those is a
+ * field here — `server/people.ts` holds the TTLs and the dialog holds the
+ * sentence.
+ */
+export interface InviteLink {
   /** Absolute, and only ever returned to the owner at the moment it is minted. */
   url: string | null;
   createdAt: string;
@@ -196,12 +217,27 @@ export interface Project {
   /**
    * What the caller is here.
    *
-   * `member` means they were invited to one or more *tracks* on this project,
-   * not to the project. They see those tracks and nothing else of it: no
-   * settings, no rebuild, no other tracks, no track of their own. The UI reads
-   * this rather than comparing logins, so there is one place that decides.
+   * `member` means anything short of owning it: no settings, no rebuild, no
+   * delete. The UI reads this rather than comparing logins, so there is one
+   * place that decides.
    */
   role: "owner" | "member";
+  /**
+   * *How* they are a member, which is the question `role` cannot answer now
+   * that there are two ways to be one.
+   *
+   *   `owner`    it is theirs
+   *   `project`  invited to the whole project: every track on it, and may open
+   *              more — but still none of the machine's controls
+   *   `tracks`   invited to particular tracks and nothing else of the project
+   *
+   * Two fields rather than a three-valued `role` because almost every gate in
+   * the UI is the owner/not-owner one and would have had to spell out two
+   * cases to keep asking it. This is the second question, asked in the two
+   * places that need it: whether to offer a New track button, and what to say
+   * on an empty project.
+   */
+  access: "owner" | "project" | "tracks";
 }
 
 export interface MachineState {
@@ -436,8 +472,15 @@ export type ProjectEvent =
   | { event: "machine"; data: MachineState }
   | { event: "turn"; data: { trackId: string; status: Track["status"] } }
   | { event: "settings"; data: { rev: number } }
-  /** The membership of a track changed: somebody was invited, or left. */
-  | { event: "people"; data: { trackId: string } }
+  /**
+   * Somebody was invited, or left.
+   *
+   * `trackId` names the track whose membership moved. It is absent when the
+   * change was to the *project's* people, which moves every track's list at
+   * once — so a frame with no id means "re-read what you have open" rather
+   * than naming one row to refresh.
+   */
+  | { event: "people"; data: { trackId?: string } }
   /**
    * Who has a track open, and who is typing in it.
    *

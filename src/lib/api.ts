@@ -15,6 +15,7 @@ import type {
   ExecResult,
   FileContent,
   FileListing,
+  InviteLink,
   IssueRef,
   Person,
   Presence,
@@ -25,7 +26,6 @@ import type {
   SessionInfo,
   Track,
   TrackHeader,
-  TrackLink,
   TrackOriginInfo,
   TranscriptPage,
   VitalsReport,
@@ -140,7 +140,13 @@ export const api = {
   /** CPU, memory and disk on the box, for the readout in the dock's strip. */
   vitals: (id: string) => call<VitalsReport>(`/api/tracks/${id}/vitals`),
 
-  // ── working on a track with somebody else ──────────────────────────
+  // ── working on something with somebody else ────────────────────────
+  //
+  // Two sets of the same five calls, one per grain of sharing. They are spelt
+  // out rather than built from a `kind` parameter because the path is the only
+  // thing that differs and a helper that took `"tracks" | "projects"` would
+  // read as though something else might.
+  //
   /** Autocomplete over everyone who has signed in here. One character is enough. */
   findPeople: (q: string) => call<Person[]>(`/api/users?q=${encodeURIComponent(q)}`),
   people: (trackId: string) => call<Person[]>(`/api/tracks/${trackId}/people`),
@@ -150,10 +156,19 @@ export const api = {
     call<Person[] | undefined>(`/api/tracks/${trackId}/people/${encodeURIComponent(login)}`, { method: "DELETE" }),
 
   /** Whether a link is out. Never the link itself — only its hash is stored. */
-  link: (trackId: string) => call<TrackLink | null>(`/api/tracks/${trackId}/link`),
+  link: (trackId: string) => call<InviteLink | null>(`/api/tracks/${trackId}/link`),
   /** Mints one, replacing whatever was out. The URL is returned exactly once. */
-  mintLink: (trackId: string) => post<TrackLink>(`/api/tracks/${trackId}/link`),
+  mintLink: (trackId: string) => post<InviteLink>(`/api/tracks/${trackId}/link`),
   revokeLink: (trackId: string) => call<null>(`/api/tracks/${trackId}/link`, { method: "DELETE" }),
+
+  /** The same five, for the whole project: every track on it, and the ones to come. */
+  projectPeople: (projectId: string) => call<Person[]>(`/api/projects/${projectId}/people`),
+  inviteToProject: (projectId: string, login: string) => post<Person[]>(`/api/projects/${projectId}/people`, { login }),
+  uninviteFromProject: (projectId: string, login: string) =>
+    call<Person[] | undefined>(`/api/projects/${projectId}/people/${encodeURIComponent(login)}`, { method: "DELETE" }),
+  projectLink: (projectId: string) => call<InviteLink | null>(`/api/projects/${projectId}/link`),
+  mintProjectLink: (projectId: string) => post<InviteLink>(`/api/projects/${projectId}/link`),
+  revokeProjectLink: (projectId: string) => call<null>(`/api/projects/${projectId}/link`, { method: "DELETE" }),
 };
 
 /**

@@ -16,7 +16,7 @@
  *                          is precisely the boundary the App exists to draw.
  */
 import type { AppContext } from "./context";
-import { authenticate, projectOf, requireGitHub, trackAccess, userToken } from "./context";
+import { authenticate, projectAccess, requireGitHub, trackAccess, userToken } from "./context";
 import { asHttpError } from "./github";
 import { HttpError, json, readJson, str } from "./http";
 
@@ -46,11 +46,16 @@ export async function repos(ctx: AppContext, req: Request): Promise<Response> {
  * One route rather than three because the picker switches tabs without
  * changing what it is asking about, and three endpoints would be three places
  * to forget the installation check.
+ *
+ * Open to project members, because they can open tracks and this is the list
+ * they open one *from*. It is read as the installation rather than as the
+ * caller, so it shows the repository the project is on and nothing else of
+ * theirs — which is the same set the project's own header already names.
  */
 export async function refs(ctx: AppContext, req: Request, projectId: string): Promise<Response> {
   const gh = requireGitHub(ctx);
   const user = await authenticate(ctx, req);
-  const project = projectOf(ctx, user, projectId);
+  const { project } = projectAccess(ctx, user, projectId);
   if (!project.repoFullName || !project.installationId) {
     throw new HttpError(409, "no_repo", "This project has no repository, so there is nothing to start from.");
   }

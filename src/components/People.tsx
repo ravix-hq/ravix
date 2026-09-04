@@ -1,14 +1,20 @@
 /**
- * Who is on a track, and how somebody else gets here.
+ * Who is on a track — or on a whole project — and how somebody else gets here.
  *
- * Sharing in switchyard is per *track*, so this dialog is deliberately small:
- * it is a membership list for one branch, not a permissions matrix for a
- * project. The only genuinely difficult thing on the surface is the paragraph
- * near the bottom, which has to describe what an invitation actually buys —
- * and the true answer is broader than the tidy one. `server/people.ts` holds
- * the same sentence in its header, and the two must not drift: a member is
- * confined to this track by routing, but the worktrees share one machine, and
- * the agent staying in its own directory is a rule rather than a wall.
+ * One dialog, two grains, because they are the same six controls over two
+ * different nouns: a list, an invite box, a link, and a way out. Rendering
+ * them from one component is not code-golf; it is what keeps the *sentences*
+ * in step. The paragraph near the bottom of each has to describe what an
+ * invitation actually buys, and the true answer is broader than the tidy one
+ * — the worktrees share a machine, and the agent staying in its own directory
+ * is a rule rather than a wall. `server/people.ts` holds the same paragraph in
+ * its header. Three copies of it would have drifted by the second change.
+ *
+ * What differs between the two is held in `WIRING` and `WORDS` and nowhere
+ * else. A track invitation is one branch; a project invitation is every branch
+ * on the box, now and later, plus the ability to cut more. The dialog says
+ * which it is doing in the words a person reads rather than only in the route
+ * it posts to.
  *
  * Owners and members see different dialogs from the same component, because
  * the server enforces the same split and rendering a control that answers 403
@@ -22,7 +28,7 @@
  * a rule of its own rather than beside the invite box as an equal option.
  */
 import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
-import type { Person, Presence, Track, TrackLink } from "../../shared/api";
+import type { InviteLink, Person, Presence, Project, Track } from "../../shared/api";
 import { api } from "../lib/api";
 import { subject } from "../lib/presence";
 import { AddPerson, Search, X } from "../lib/icons";
@@ -129,25 +135,99 @@ export function PeopleStack({ people, onOpen, present = [], max = 3 }: PeopleSta
   );
 }
 
-export interface PeopleProps {
-  track: Track;
+// ── the two grains ─────────────────────────────────────────────────────
+
+type Grain = "track" | "project";
+
+/**
+ * The calls each grain makes.
+ *
+ * Spelt out per grain rather than assembled from a path fragment: these are
+ * six named operations on two different things, and a `` `/api/${noun}s/` ``
+ * template would make the two look interchangeable at exactly the place where
+ * confusing them hands somebody the wrong machine.
+ */
+const WIRING: Record<Grain, {
+  read: (id: string) => Promise<Person[]>;
+  add: (id: string, login: string) => Promise<Person[]>;
+  drop: (id: string, login: string) => Promise<Person[] | undefined>;
+  link: (id: string) => Promise<InviteLink | null>;
+  mint: (id: string) => Promise<InviteLink>;
+  revoke: (id: string) => Promise<null>;
+}> = {
+  track: { read: api.people, add: api.invite, drop: api.uninvite, link: api.link, mint: api.mintLink, revoke: api.revokeLink },
+  project: {
+    read: api.projectPeople,
+    add: api.inviteToProject,
+    drop: api.uninviteFromProject,
+    link: api.projectLink,
+    mint: api.mintProjectLink,
+    revoke: api.revokeProjectLink,
+  },
+};
+
+/**
+ * Everything a person reads, per grain.
+ *
+ * Held together in one object so the difference between the two dialogs can be
+ * reviewed as prose in one place. The project column is the one that has to
+ * work harder: "every track here" is a claim somebody is agreeing to on
+ * somebody else's behalf, and "and the ones opened later" is the half of it
+ * they would not otherwise expect.
+ */
+const WORDS: Record<Grain, {
+  title: string;
+  reach: (n: number) => string;
+  leaveButton: string;
+  leaveWarning: string;
+  /** Under the list. Ten words, spent on what would surprise somebody. */
+  cost: string;
+  linkGrants: string;
+}> = {
+  track: {
+    title: "People on this track",
+    reach: (n) => (n === 1 ? "Only you" : `${n} people can reach this track`),
+    leaveButton: "Leave this track",
+    leaveWarning: "You lose this track until somebody invites you back.",
+    cost: "This track only — but one machine, so secrets are readable.",
+    linkGrants: "Whoever opens it joins this track.",
+  },
+  project: {
+    title: "People on this project",
+    reach: (n) => (n === 1 ? "Only you" : `${n} people can reach every track on this project`),
+    leaveButton: "Leave this project",
+    leaveWarning: "You lose every track on this project. Any you were invited to by name, you keep.",
+    cost: "Every track here, and the ones opened later. One machine, so secrets are readable.",
+    linkGrants: "Whoever opens it joins the whole project — every track, and may open more.",
+  },
+};
+
+// ── the dialog ─────────────────────────────────────────────────────────
+
+interface PeopleDialogProps {
+  grain: Grain;
+  /** The track or the project this is about. */
+  id: string;
+  role: "owner" | "member";
+  /**
+   * The membership already in hand, when the caller has it.
+   *
+   * A track arrives with its people attached, so its list is drawn before the
+   * read below lands. A project does not, so it passes nothing and the dialog
+   * opens on one frame of an empty list rather than on a wrong one.
+   */
+  seed?: Person[];
   viewerLogin: string;
   onClose: () => void;
-  /** The membership the server just returned, so the shell can re-read the track. */
   onChanged: (people: Person[]) => void;
-  /**
-   * The viewer removed *themselves*.
-   *
-   * Distinct from `onChanged` because there is nothing to hand back: the
-   * server answers 204, and the caller's next read of this track is a 404. The
-   * shell has to leave rather than re-render — which is the one thing this
-   * component cannot do for it.
-   */
   onLeft: () => void;
 }
 
-export function People({ track, viewerLogin, onClose, onChanged, onLeft }: PeopleProps) {
-  const [people, setPeople] = useState<Person[]>(track.people);
+function PeopleDialog({ grain, id, role, seed, viewerLogin, onClose, onChanged, onLeft }: PeopleDialogProps) {
+  const wiring = WIRING[grain];
+  const words = WORDS[grain];
+
+  const [people, setPeople] = useState<Person[]>(seed ?? []);
   const [q, setQ] = useState("");
   const [found, setFound] = useState<Person[]>([]);
   const [listOpen, setListOpen] = useState(false);
@@ -155,7 +235,7 @@ export function People({ track, viewerLogin, onClose, onChanged, onLeft }: Peopl
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [leaving, setLeaving] = useState(false);
-  const [link, setLink] = useState<TrackLink | null>(null);
+  const [link, setLink] = useState<InviteLink | null>(null);
   // Distinct from `link === null`, which is the answer "no link is out". Until
   // the read lands there is no answer at all, and drawing "no link is out" for
   // a track that has one would be a lie the next frame corrects.
@@ -167,36 +247,36 @@ export function People({ track, viewerLogin, onClose, onChanged, onLeft }: Peopl
   const mintedField = useRef<HTMLInputElement>(null);
   const listId = useId();
 
-  const owner = track.role === "owner";
+  const owner = role === "owner";
   const expires = link ? until(link.expiresAt) : null;
 
-  // The track came with its membership attached, so the list is drawn before
+  // A track came with its membership attached, so its list is drawn before
   // this lands. Re-reading is for the case where somebody was added from
   // another window since the detail was fetched; a failure here leaves the
   // known-good list in place rather than replacing it with an error about a
   // refresh nobody asked for.
   useEffect(() => {
     let live = true;
-    void api.people(track.id).then(
+    void wiring.read(id).then(
       (rows) => live && setPeople(rows),
       () => undefined,
     );
     return () => {
       live = false;
     };
-  }, [track.id]);
+  }, [wiring, id]);
 
-  // And again whenever the shell re-reads the track, which it now does on the
-  // stream's `people` event. Without this the dialog is a photograph: somebody
-  // joining by the link you are looking at does not appear in it, which is the
-  // one moment this list is most worth being right.
+  // And again whenever the shell re-reads the subject, which it now does on
+  // the stream's `people` event. Without this the dialog is a photograph:
+  // somebody joining by the link you are looking at does not appear in it,
+  // which is the one moment this list is most worth being right.
   //
   // The server's list wins over local state rather than merging with it —
   // every mutation here already replaces `people` wholesale with what the
   // server returned, so there is nothing local to lose.
   useEffect(() => {
-    setPeople(track.people);
-  }, [track.people]);
+    if (seed) setPeople(seed);
+  }, [seed]);
 
   // Whether a link is out. Owner-only because the route is: a member asking
   // gets a 403, and an error banner about a control they cannot see would be
@@ -204,7 +284,7 @@ export function People({ track, viewerLogin, onClose, onChanged, onLeft }: Peopl
   useEffect(() => {
     if (!owner) return;
     let live = true;
-    void api.link(track.id).then(
+    void wiring.link(id).then(
       (row) => {
         if (!live) return;
         setLink(row);
@@ -216,13 +296,13 @@ export function People({ track, viewerLogin, onClose, onChanged, onLeft }: Peopl
         // than vanishing, because a missing section reads as "this deployment
         // has no links" and the truth is that one read did not come back.
         setLinkKnown(true);
-        setLinkError(err instanceof Error ? err.message : "Could not read this track's invite link.");
+        setLinkError(err instanceof Error ? err.message : "Could not read the invite link.");
       },
     );
     return () => {
       live = false;
     };
-  }, [track.id, owner]);
+  }, [wiring, id, owner]);
 
   // "Copied" is a claim with a shelf life: left up, it stops meaning the last
   // press and starts meaning the button's name.
@@ -292,7 +372,7 @@ export function People({ track, viewerLogin, onClose, onChanged, onLeft }: Peopl
     setBusy(true);
     setError(null);
     try {
-      const next = await api.invite(track.id, name);
+      const next = await wiring.add(id, name);
       setPeople(next);
       onChanged(next);
       setQ("");
@@ -314,7 +394,7 @@ export function People({ track, viewerLogin, onClose, onChanged, onLeft }: Peopl
     setBusy(true);
     setError(null);
     try {
-      const next = await api.uninvite(track.id, login);
+      const next = await wiring.drop(id, login);
       if (next) {
         setPeople(next);
         onChanged(next);
@@ -331,11 +411,11 @@ export function People({ track, viewerLogin, onClose, onChanged, onLeft }: Peopl
     setBusy(true);
     setError(null);
     try {
-      await api.uninvite(track.id, viewerLogin);
+      await wiring.drop(id, viewerLogin);
       onLeft();
     } catch (err) {
       setBusy(false);
-      setError(err instanceof Error ? err.message : "Could not leave this track.");
+      setError(err instanceof Error ? err.message : "Could not leave.");
     }
   }
 
@@ -353,7 +433,7 @@ export function People({ track, viewerLogin, onClose, onChanged, onLeft }: Peopl
     setLinkBusy(true);
     setLinkError(null);
     try {
-      const made = await api.mintLink(track.id);
+      const made = await wiring.mint(id);
       setLink({ url: null, createdAt: made.createdAt, expiresAt: made.expiresAt });
       setMinted(made.url);
       setCopied(false);
@@ -369,14 +449,14 @@ export function People({ track, viewerLogin, onClose, onChanged, onLeft }: Peopl
     setLinkBusy(true);
     setLinkError(null);
     try {
-      await api.revokeLink(track.id);
+      await wiring.revoke(id);
       setLink(null);
       // The URL on screen is dead the moment the server drops the row, and
       // leaving it visible would invite somebody to send a link that no longer
       // admits anyone.
       setMinted(null);
     } catch (err) {
-      setLinkError(err instanceof Error ? err.message : "Could not revoke this track's invite link.");
+      setLinkError(err instanceof Error ? err.message : "Could not revoke the invite link.");
     } finally {
       setLinkBusy(false);
     }
@@ -423,13 +503,13 @@ export function People({ track, viewerLogin, onClose, onChanged, onLeft }: Peopl
 
   return (
     <Dialog
-      title="People on this track"
+      title={words.title}
       onClose={onClose}
       footer={
-        track.role === "member" ? (
+        role === "member" ? (
           leaving ? (
             <>
-              <span className="fine">You lose this track until somebody invites you back.</span>
+              <span className="fine">{words.leaveWarning}</span>
               <span className="spacer" />
               <button type="button" disabled={busy} onClick={() => setLeaving(false)}>
                 Cancel
@@ -441,7 +521,7 @@ export function People({ track, viewerLogin, onClose, onChanged, onLeft }: Peopl
           ) : (
             <>
               <button type="button" className="danger" onClick={() => setLeaving(true)}>
-                Leave this track
+                {words.leaveButton}
               </button>
               <span className="spacer" />
               <button type="button" onClick={onClose}>
@@ -456,7 +536,7 @@ export function People({ track, viewerLogin, onClose, onChanged, onLeft }: Peopl
                   reach it — that is the whole difference between the two kinds
                   of row, and a footer that added them together would contradict
                   the "has not signed in here yet" line six inches above it. */}
-              {here === 1 ? "Only you" : `${here} people can reach this track`}
+              {words.reach(here)}
               {waiting > 0 ? `, ${waiting} invited` : ""}
             </span>
             <span className="spacer" />
@@ -491,9 +571,18 @@ export function People({ track, viewerLogin, onClose, onChanged, onLeft }: Peopl
               </span>
               <span className="spacer" />
               {i === 0 ? <span className="chip">owner</span> : null}
+              {/* A name on a track that nobody remembers inviting to it is
+                  alarming until the row says how it got there. It is also the
+                  one row whose × is in another dialog, so saying which is the
+                  difference between a missing control and a lost one. */}
+              {person.via === "project" ? (
+                <span className="chip" title="In this whole project, so in every track on it. Remove them from the project's people.">
+                  whole project
+                </span>
+              ) : null}
               {person.pending ? <span className="chip">invited</span> : null}
               {same(person.login, viewerLogin) ? <span className="chip">you</span> : null}
-              {owner && i > 0 ? (
+              {owner && i > 0 && person.via !== "project" ? (
                 // One button and one call for both kinds of row. The server
                 // decides which it is — cancelling an invitation that was
                 // never taken up, or removing a member — and it is the same
@@ -591,7 +680,7 @@ export function People({ track, viewerLogin, onClose, onChanged, onLeft }: Peopl
                     className="mono"
                     readOnly
                     value={minted}
-                    aria-label="The invite link for this track"
+                    aria-label="The invite link"
                     // Focusing it selects it, so Tab-then-copy works without
                     // the button, and so does the clipboard fallback below.
                     onFocus={(e) => e.currentTarget.select()}
@@ -629,6 +718,11 @@ export function People({ track, viewerLogin, onClose, onChanged, onLeft }: Peopl
               ) : null}
             </div>
 
+            {/* What the link admits somebody to, said before it is minted
+                rather than after. The project one is the sentence worth
+                reading: it is the widest thing this app hands out, and it is
+                two clicks from a button labelled the same as the track's. */}
+            <span className="hint">{words.linkGrants}</span>
             {link ? (
               <span className="hint">A new link replaces this one. Revoking keeps whoever already joined.</span>
             ) : null}
@@ -643,9 +737,76 @@ export function People({ track, viewerLogin, onClose, onChanged, onLeft }: Peopl
             version lives in the README and in the header of `server/people.ts`,
             where somebody deciding policy will read it. */}
         <p className="fine dimmer" style={{ marginTop: owner ? 4 : 14 }}>
-          This track only — but one machine, so secrets are readable.
+          {words.cost}
         </p>
       </div>
     </Dialog>
+  );
+}
+
+// ── the two of them ────────────────────────────────────────────────────
+
+export interface PeopleProps {
+  track: Track;
+  viewerLogin: string;
+  onClose: () => void;
+  /** The membership the server just returned, so the shell can re-read the track. */
+  onChanged: (people: Person[]) => void;
+  /**
+   * The viewer removed *themselves*.
+   *
+   * Distinct from `onChanged` because there is nothing to hand back: the
+   * server answers 204, and the caller's next read of this track is a 404. The
+   * shell has to leave rather than re-render — which is the one thing this
+   * component cannot do for it.
+   */
+  onLeft: () => void;
+}
+
+export function People({ track, viewerLogin, onClose, onChanged, onLeft }: PeopleProps) {
+  return (
+    <PeopleDialog
+      grain="track"
+      id={track.id}
+      role={track.role}
+      seed={track.people}
+      viewerLogin={viewerLogin}
+      onClose={onClose}
+      onChanged={onChanged}
+      onLeft={onLeft}
+    />
+  );
+}
+
+export interface ProjectPeopleProps {
+  project: Project;
+  viewerLogin: string;
+  onClose: () => void;
+  onChanged: (people: Person[]) => void;
+  /**
+   * The viewer left the project.
+   *
+   * Not necessarily the end of their access here — a track they were named on
+   * individually survives — so the shell re-reads the rail rather than
+   * assuming the project has gone from it.
+   */
+  onLeft: () => void;
+}
+
+export function ProjectPeople({ project, viewerLogin, onClose, onChanged, onLeft }: ProjectPeopleProps) {
+  return (
+    <PeopleDialog
+      grain="project"
+      id={project.id}
+      // Only ever opened for an owner or a project member — somebody here by
+      // way of a single track has no membership this dialog could show, and
+      // the route behind it 404s them. The shell is what decides not to offer
+      // it; this is the same owner/not-owner question every other dialog asks.
+      role={project.role}
+      viewerLogin={viewerLogin}
+      onClose={onClose}
+      onChanged={onChanged}
+      onLeft={onLeft}
+    />
   );
 }

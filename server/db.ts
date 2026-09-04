@@ -156,11 +156,15 @@ export class Db {
 
       -- Who else is in a track.
       --
-      -- Membership is per *track*, not per project, and that is the whole
-      -- permission model: somebody invited to one worktree gets that worktree.
-      -- They do not see the project's other tracks, cannot open one, and
-      -- cannot change what is installed on the machine — the same line paddock
-      -- draws around a terminal, drawn around a branch instead.
+      -- The narrower of the two memberships: somebody invited to one worktree
+      -- gets that worktree. They do not see the project's other tracks, cannot
+      -- open one, and cannot change what is installed on the machine — the
+      -- same line paddock draws around a terminal, drawn around a branch
+      -- instead. project_members below is the wider one, and the two are
+      -- separate tables rather than one with a nullable track_id because they
+      -- answer different questions and are read in different places. They are
+      -- not, however, held at once for one person on one project: the wider
+      -- grant deletes the narrower ones. See addProjectMember.
       CREATE TABLE IF NOT EXISTS track_members (
         track_id    TEXT NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
         user_id     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -198,6 +202,53 @@ export class Db {
       -- copy of this file should not be a set of working invitations.
       CREATE TABLE IF NOT EXISTS track_links (
         track_id    TEXT PRIMARY KEY REFERENCES tracks(id) ON DELETE CASCADE,
+        token_hash  TEXT NOT NULL UNIQUE,
+        created_by  TEXT NOT NULL,
+        created_at  TEXT NOT NULL,
+        expires_at  TEXT NOT NULL
+      );
+
+      -- Who else is in a *project*.
+      --
+      -- The wider membership, and the three tables below it are the same three
+      -- the track has, one level up: a row per person, a row per person who
+      -- has not signed in yet, and one link. Somebody here reaches every track
+      -- on the project — the ones that exist and the ones opened tomorrow —
+      -- and may open tracks of their own. They still cannot reach the
+      -- project's *controls*: settings, packages, secrets, the rebuild and the
+      -- delete stay with the owner, because those are the machine rather than
+      -- the work on it.
+      CREATE TABLE IF NOT EXISTS project_members (
+        project_id  TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        user_id     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        invited_by  TEXT NOT NULL,
+        created_at  TEXT NOT NULL,
+        PRIMARY KEY (project_id, user_id)
+      );
+      CREATE INDEX IF NOT EXISTS project_members_user ON project_members(user_id);
+
+      -- Keyed on GitHub's numeric id for the same reason track_invites is:
+      -- a login is renameable and reusable, so an invitation matched on the
+      -- name would eventually attach to whoever holds it on the day they
+      -- arrive. Here that would hand a stranger the whole machine rather than
+      -- one branch, so the reasoning is the same and the stakes are higher.
+      CREATE TABLE IF NOT EXISTS project_invites (
+        project_id  TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        github_id   TEXT NOT NULL,
+        login       TEXT NOT NULL,
+        avatar_url  TEXT,
+        invited_by  TEXT NOT NULL,
+        created_at  TEXT NOT NULL,
+        PRIMARY KEY (project_id, github_id)
+      );
+      CREATE INDEX IF NOT EXISTS project_invites_github ON project_invites(github_id);
+
+      -- One link per project, hashed, minting is the revoke — all as the
+      -- track's. The TTL is shorter, and people.ts says why: this one admits
+      -- somebody to every branch on the box rather than to the one you were
+      -- looking at when you sent it.
+      CREATE TABLE IF NOT EXISTS project_links (
+        project_id  TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
         token_hash  TEXT NOT NULL UNIQUE,
         created_by  TEXT NOT NULL,
         created_at  TEXT NOT NULL,
@@ -568,24 +619,45 @@ export class Db {
    * to a login they have since changed still finds them, and one sent to a
    * login somebody *else* now holds does not.
    *
-   * Returns the tracks they just joined, so the sign-in can say so.
+   * Returns what they just joined, so the sign-in can say so.
+   *
+   * Projects are claimed **first**, and a track invitation on a project they
+   * have just joined outright is then dropped rather than honoured. It grants
+   * nothing they do not already have, and writing it would be writing the
+   * narrower row that `addProjectMember` exists to delete.
    */
-  claimInvites(userId: string, githubId: string): TrackRow[] {
-    const pending = this.db
+  claimInvites(userId: string, githubId: string): { tracks: TrackRow[]; projects: ProjectRow[] } {
+    const pendingProjects = this.db
+      .query<{ project_id: string }, [string]>("SELECT project_id FROM project_invites WHERE github_id = ?")
+      .all(githubId);
+    const projects: ProjectRow[] = [];
+    for (const { project_id } of pendingProjects) {
+      const project = this.project(project_id);
+      // An archived project is not somewhere to arrive, and neither is your
+      // own: ownership is the stronger claim and is a column, not a row here.
+      if (project && !project.archivedAt && project.userId !== userId) {
+        this.addProjectMember(project_id, userId, "invite");
+        projects.push(project);
+      }
+    }
+    this.db.run("DELETE FROM project_invites WHERE github_id = ?", [githubId]);
+
+    const pendingTracks = this.db
       .query<{ track_id: string }, [string]>("SELECT track_id FROM track_invites WHERE github_id = ?")
       .all(githubId);
-    const joined: TrackRow[] = [];
-    for (const { track_id } of pending) {
+    const tracks: TrackRow[] = [];
+    for (const { track_id } of pendingTracks) {
       const track = this.track(track_id);
       // A track closed while the invitation sat unclaimed is not somewhere to
       // arrive. Drop the invitation rather than granting a dead seat.
-      if (track && !track.closedAt) {
-        this.addMember(track_id, userId, "invite");
-        joined.push(track);
-      }
+      if (!track || track.closedAt) continue;
+      if (this.isProjectMember(track.projectId, userId)) continue;
+      this.addMember(track_id, userId, "invite");
+      tracks.push(track);
     }
     this.db.run("DELETE FROM track_invites WHERE github_id = ?", [githubId]);
-    return joined;
+
+    return { tracks, projects };
   }
 
   // ── the link ─────────────────────────────────────────────────────────
@@ -627,6 +699,151 @@ export class Db {
     if (Date.parse(r.expires_at) <= Date.now()) return null;
     const track = this.track(r.track_id);
     return track && !track.closedAt ? track : null;
+  }
+
+  // ── who else is in a project ─────────────────────────────────────────
+
+  /**
+   * Somebody into the whole project, replacing whatever narrower rows they had.
+   *
+   * The subsumption is the point, and it is here rather than in the route so
+   * that the three ways in — invited by name, arrived on a link, claimed on
+   * sign-in — cannot disagree about it. **One person holds one grade of access
+   * to a project.** Two rows granting the same person the same track by
+   * different routes is a state nothing on screen can render honestly: the
+   * people list would have to show them twice or pick one, and removing them
+   * from the project would leave behind access that neither list explained.
+   *
+   * So this is a promotion, not an addition, and the corollary is worth saying
+   * plainly because it is the surprising half: **taking somebody off a project
+   * takes away every track on it**, including one they were named on
+   * separately before they were promoted. The alternative — a hidden narrower
+   * row that survives — is worse, because it is invisible at exactly the
+   * moment somebody is trying to revoke access.
+   */
+  addProjectMember(projectId: string, userId: string, invitedBy: string): void {
+    this.db.run(
+      "INSERT OR IGNORE INTO project_members (project_id, user_id, invited_by, created_at) VALUES (?, ?, ?, ?)",
+      [projectId, userId, invitedBy, new Date().toISOString()],
+    );
+    this.db.run(
+      "DELETE FROM track_members WHERE user_id = ? AND track_id IN (SELECT id FROM tracks WHERE project_id = ?)",
+      [userId, projectId],
+    );
+  }
+
+  removeProjectMember(projectId: string, userId: string): void {
+    this.db.run("DELETE FROM project_members WHERE project_id = ? AND user_id = ?", [projectId, userId]);
+  }
+
+  isProjectMember(projectId: string, userId: string): boolean {
+    return !!this.db
+      .query<{ n: number }, [string, string]>("SELECT COUNT(*) AS n FROM project_members WHERE project_id = ? AND user_id = ?")
+      .get(projectId, userId)?.n;
+  }
+
+  /** Everyone invited to the whole project, oldest first. Excludes the owner. */
+  projectMembersOf(projectId: string): UserRow[] {
+    return this.db
+      .query<RawUser, [string]>(
+        `SELECT u.* FROM project_members m JOIN users u ON u.id = m.user_id
+         WHERE m.project_id = ? ORDER BY m.created_at`,
+      )
+      .all(projectId)
+      .map(toUser);
+  }
+
+  /** The projects this person was invited into whole. Never the ones they own. */
+  memberProjects(userId: string): ProjectRow[] {
+    return this.db
+      .query<RawProject, [string]>(
+        `SELECT p.* FROM project_members m JOIN projects p ON p.id = m.project_id
+         WHERE m.user_id = ? AND p.archived_at IS NULL ORDER BY p.created_at`,
+      )
+      .all(userId)
+      .map(toProject);
+  }
+
+  /**
+   * The same promotion, for somebody who has not arrived yet.
+   *
+   * A pending track invitation on this project is dropped with it, for the
+   * reason the memberships are: it would grant nothing on the sign-in that
+   * honoured them both, and until then it sits in the track's people list as a
+   * row whose × cancels an invitation that was already superseded.
+   */
+  addProjectInvite(input: { projectId: string; githubId: string; login: string; avatarUrl: string | null; invitedBy: string }): void {
+    this.db.run(
+      `INSERT INTO project_invites (project_id, github_id, login, avatar_url, invited_by, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT(project_id, github_id) DO UPDATE SET login = excluded.login, avatar_url = excluded.avatar_url`,
+      [input.projectId, input.githubId, input.login, input.avatarUrl, input.invitedBy, new Date().toISOString()],
+    );
+    this.db.run(
+      "DELETE FROM track_invites WHERE github_id = ? AND track_id IN (SELECT id FROM tracks WHERE project_id = ?)",
+      [input.githubId, input.projectId],
+    );
+  }
+
+  /** Whether an invitation to the whole project is already out for this account. */
+  hasProjectInvite(projectId: string, githubId: string): boolean {
+    return !!this.db
+      .query<{ n: number }, [string, string]>("SELECT COUNT(*) AS n FROM project_invites WHERE project_id = ? AND github_id = ?")
+      .get(projectId, githubId)?.n;
+  }
+
+  projectInvitesOf(projectId: string): { githubId: string; login: string; avatarUrl: string | null }[] {
+    return this.db
+      .query<{ github_id: string; login: string; avatar_url: string | null }, [string]>(
+        "SELECT github_id, login, avatar_url FROM project_invites WHERE project_id = ? ORDER BY created_at",
+      )
+      .all(projectId)
+      .map((r) => ({ githubId: r.github_id, login: r.login, avatarUrl: r.avatar_url }));
+  }
+
+  removeProjectInviteByLogin(projectId: string, login: string): boolean {
+    const before = this.projectInvitesOf(projectId).length;
+    this.db.run("DELETE FROM project_invites WHERE project_id = ? AND login = ? COLLATE NOCASE", [projectId, login]);
+    return this.projectInvitesOf(projectId).length < before;
+  }
+
+  putProjectLink(projectId: string, tokenHash: string, createdBy: string, ttlMs: number): void {
+    const now = Date.now();
+    this.db.run(
+      `INSERT INTO project_links (project_id, token_hash, created_by, created_at, expires_at)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(project_id) DO UPDATE SET
+         token_hash = excluded.token_hash, created_by = excluded.created_by,
+         created_at = excluded.created_at, expires_at = excluded.expires_at`,
+      [projectId, tokenHash, createdBy, new Date(now).toISOString(), new Date(now + ttlMs).toISOString()],
+    );
+  }
+
+  projectLinkOf(projectId: string): { createdAt: string; expiresAt: string } | null {
+    const r = this.db
+      .query<{ created_at: string; expires_at: string }, [string]>(
+        "SELECT created_at, expires_at FROM project_links WHERE project_id = ?",
+      )
+      .get(projectId);
+    if (!r) return null;
+    return { createdAt: r.created_at, expiresAt: r.expires_at };
+  }
+
+  dropProjectLink(projectId: string): void {
+    this.db.run("DELETE FROM project_links WHERE project_id = ?", [projectId]);
+  }
+
+  /** The project a link opens, or null if it is unknown, revoked, expired or archived. */
+  projectForLink(tokenHash: string): ProjectRow | null {
+    const r = this.db
+      .query<{ project_id: string; expires_at: string }, [string]>(
+        "SELECT project_id, expires_at FROM project_links WHERE token_hash = ?",
+      )
+      .get(tokenHash);
+    if (!r) return null;
+    if (Date.parse(r.expires_at) <= Date.now()) return null;
+    const project = this.project(r.project_id);
+    return project && !project.archivedAt ? project : null;
   }
 
   // ── what you have not read ───────────────────────────────────────────

@@ -33,10 +33,10 @@ import { CreateFrom } from "./components/CreateFrom";
 import { CloseTrack } from "./components/CloseTrack";
 import { ProjectSettings } from "./components/ProjectSettings";
 import { Search as SearchDialog } from "./components/Search";
-import { People, PeopleStack } from "./components/People";
+import { People, PeopleStack, ProjectPeople } from "./components/People";
 import { Vitals } from "./components/Vitals";
 
-type Dialog = "new-project" | "create-from" | "settings" | "search" | "people" | "close-track" | null;
+type Dialog = "new-project" | "create-from" | "settings" | "search" | "people" | "project-people" | "close-track" | null;
 
 interface Route {
   projectId: string | null;
@@ -203,7 +203,17 @@ export function App() {
       // staleness that undermines the feature itself.
       people: (data) => {
         const trackId = (data as { trackId?: string } | null)?.trackId;
-        if (trackId && wanted.current === trackId) void loadDetail(trackId);
+        // No id means the *project's* people moved, which changes who is on
+        // every track at once. Re-read the open one whichever it is, and the
+        // rail besides: a project membership granted just now is a set of
+        // tracks that were not in the sidebar a moment ago.
+        if (!trackId) {
+          void reloadProjects();
+          void reloadTracks(projectId);
+          if (wanted.current) void loadDetail(wanted.current);
+          return;
+        }
+        if (wanted.current === trackId) void loadDetail(trackId);
       },
       // The whole set every time rather than a delta, which is what makes this
       // a plain assignment: there is nothing to merge and nothing to get out
@@ -294,9 +304,10 @@ export function App() {
         e.preventDefault();
         setDialog("search");
       }
-      // Same gate as the button: only the owner of a project can cut a track
-      // on it, so the shortcut is not a back door into a dialog that fails.
-      if (meta && e.key.toLowerCase() === "n" && project?.role === "owner") {
+      // Same gate as the button: cutting a track needs the project rather
+      // than one of its tracks, so the shortcut is not a back door into a
+      // dialog that fails.
+      if (meta && e.key.toLowerCase() === "n" && project && project.access !== "tracks") {
         e.preventDefault();
         setDialog("create-from");
       }
@@ -332,6 +343,10 @@ export function App() {
         onProjectSettings={(projectId) => {
           go({ projectId, trackId: null });
           setDialog("settings");
+        }}
+        onProjectPeople={(projectId) => {
+          go({ projectId, trackId: null });
+          setDialog("project-people");
         }}
       />
 
@@ -371,6 +386,7 @@ export function App() {
                   <TrackName
                     key={detail.track.id}
                     track={detail.track}
+                    viewerLogin={session.viewer.login}
                     onRenamed={() => {
                       void loadDetail(detail.track.id);
                       void reloadTracks(project.id);
@@ -394,25 +410,27 @@ export function App() {
                   anything that reads as an action. It renders nothing at all
                   when there is nothing to say. */}
               {detail ? <Vitals track={detail.track} /> : null}
-              {/* A member has neither of these on the server, so they do not
-                  get them here — an owner-only button that answers 403 teaches
-                  people to distrust every other button beside it. */}
+              {/* Two different gates, because the server draws the line in two
+                  different places. Cutting a track is the work and belongs to
+                  anybody in the project; the settings are the machine and
+                  belong to its owner. A button that answers 403 teaches people
+                  to distrust every other button beside it. */}
+              {project.access !== "tracks" ? (
+                <button type="button" className="ghost" onClick={() => setDialog("create-from")}>
+                  <Plus size={13} /> New track
+                </button>
+              ) : null}
               {project.role === "owner" ? (
-                <>
-                  <button type="button" className="ghost" onClick={() => setDialog("create-from")}>
-                    <Plus size={13} /> New track
-                  </button>
-                  <button type="button" className="ghost" onClick={() => setDialog("settings")}>
-                    Settings
-                  </button>
-                </>
+                <button type="button" className="ghost" onClick={() => setDialog("settings")}>
+                  Settings
+                </button>
               ) : null}
               {/* Closing ends the track for everybody in it and takes the
-                  worktree away, which is the owner's call — a member's way out
-                  is Leave, in the people dialog. Gated on the track's role
-                  rather than the project's because that is what the server
-                  checks. */}
-              {detail && detail.track.role === "owner" ? (
+                  worktree away. That is the owner's call, or the caller's own
+                  if they are the one who cut it — anybody else's way out is
+                  Leave, in the people dialog. The same two-part question the
+                  server asks. */}
+              {detail && (detail.track.role === "owner" || detail.track.createdByLogin === session.viewer.login) ? (
                 <button type="button" className="ghost" onClick={() => setDialog("close-track")} title="Close this track">
                   <X size={13} /> Close track
                 </button>
@@ -469,14 +487,14 @@ export function App() {
                 <div className="centre">
                   <Empty
                     icon={<Machine size={19} />}
-                    title={tracks.length ? "Pick a track" : project.role === "owner" ? "No tracks yet" : "Nothing shared with you here"}
-                    action={project.role === "owner" ? { label: "New track", onClick: () => setDialog("create-from") } : null}
+                    title={tracks.length ? "Pick a track" : project.access !== "tracks" ? "No tracks yet" : "Nothing shared with you here"}
+                    action={project.access !== "tracks" ? { label: "New track", onClick: () => setDialog("create-from") } : null}
                   >
                     {tracks.length
                       ? "Each track is its own worktree on this project's machine, with its own branch and its own conversation."
-                      : project.role === "owner"
+                      : project.access !== "tracks"
                         ? "A track is a piece of work: its own git worktree on this machine, its own branch, its own conversation. Start one from a branch, a pull request, an issue, or from nothing."
-                        : "You were invited to tracks on this project rather than to the project itself, and none of them are open any more. Only its owner can start a new one."}
+                        : "You were invited to tracks on this project rather than to the project itself, and none of them are open any more. Only somebody in the project can start a new one."}
                   </Empty>
                 </div>
               </div>
@@ -545,6 +563,28 @@ export function App() {
             go({ projectId: null, trackId: null });
             void reloadProjects();
             notify("You have left that track.", false);
+          }}
+        />
+      ) : null}
+
+      {dialog === "project-people" && project ? (
+        <ProjectPeople
+          project={project}
+          viewerLogin={session.viewer.login}
+          onClose={() => setDialog(null)}
+          // Somebody let into the project just now can see tracks that were
+          // not in the rail a moment ago, so this re-reads the set rather than
+          // one row.
+          onChanged={() => void reloadTracks(project.id)}
+          onLeft={() => {
+            // Not necessarily the end of their access here: a track they were
+            // named on individually survives leaving the project. So re-read
+            // the rail and let it say what is left, rather than assuming the
+            // project has gone from it.
+            setDialog(null);
+            go({ projectId: null, trackId: null });
+            void reloadProjects();
+            notify("You have left that project.", false);
           }}
         />
       ) : null}

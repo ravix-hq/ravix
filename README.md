@@ -65,8 +65,8 @@ It also decides the architecture. There is **no Fountain proxy**. Paddock
 forwards a curated list of Fountain paths on the owner's key, which is safe
 because the owner is spending their own account. Forwarding anything here would
 hand a stranger the account every machine on the deployment is built on. So
-every route in `server/app.ts` is a typed operation on something the caller
-owns, `shared/api.ts` is the whole of what the browser can name, and the word
+every route in `server/app.ts` is a typed operation on something the caller may
+reach, `shared/api.ts` is the whole of what the browser can name, and the word
 "Fountain" does not appear in `src/` at all.
 
 ## A project is a machine
@@ -168,14 +168,15 @@ shared parser are untouched. On top of it:
   chunks, because a turn that has genuinely stalled is exactly the one that
   stops re-rendering.
 
-## Working on a track with somebody else
+## Working on this with somebody else
 
-Invite them by GitHub username. The box autocompletes over everyone who has
-signed in to this deployment, which does mean it will confirm whether a given
-login has an account here — a trade this deployment has accepted, because the
-alternative only suggests people you have already shared with and is therefore
-useless for the first invitation anybody sends. It returns what GitHub already
-publishes: login, display name, avatar. Never an email.
+Invite them by GitHub username, to **a track** or to **the whole project**. The
+box is the same one either way: it autocompletes over everyone who has signed
+in to this deployment, which does mean it will confirm whether a given login has
+an account here — a trade this deployment has accepted, because the alternative
+only suggests people you have already shared with and is therefore useless for
+the first invitation anybody sends. It returns what GitHub already publishes:
+login, display name, avatar. Never an email.
 
 Two things follow from sign-in being GitHub rather than an email:
 
@@ -185,23 +186,62 @@ Two things follow from sign-in being GitHub rather than an email:
   login — logins are renameable, and one freed by a deleted account can be
   taken by somebody else, so an invitation matched on the name would eventually
   attach to the wrong person.
-- **Or you can send a link.** One per track; minting a new one is therefore the
-  revoke. Anyone who opens it and signs in with GitHub joins — it is not
-  anonymous, because a shared transcript that cannot say who asked is worse
-  than no transcript. It lasts a week, because the thing it is for is "have a
-  look at this with me" rather than standing access, and only its hash is
-  stored, so it genuinely cannot be shown to you twice. Revoking stops anyone
-  new getting in; people already on the track stay until you remove them.
+- **Or you can send a link.** One per track and one per project; minting a new
+  one is therefore the revoke. `/j/<token>` serves both, because a browser
+  holding one has no idea which it is and should not need to. Anyone who opens
+  it and signs in with GitHub joins — it is not anonymous, because a shared
+  transcript that cannot say who asked is worse than no transcript. Only the
+  hash is stored, so a link genuinely cannot be shown to you twice. Revoking
+  stops anyone new getting in; people already in stay until you remove them.
 
-**The unit of sharing is a track, not a project.** A project is a machine with
-a disk, a settings panel and a bill. A track is one branch in one directory.
-Inviting somebody to a branch is a thing people do every day; inviting them to
-your machine is not, and an app that offered only the second would be offering
-the wrong thing under the right name. So a member gets that track's transcript,
-files, diff, terminal and prompt box — and does not see the project's other
-tracks, cannot open one, cannot change the machine, and cannot close the track
-they are in. `trackAccess` decides that per row, which is what makes the rule
-true by construction rather than by everyone remembering it.
+  A track link lasts a week; a project link lasts two days. The shorter number
+  is the whole argument for having two: a project link is the widest thing
+  switchyard hands out, so it is the one that should least survive being
+  forgotten in a chat scrollback. Nobody is worse off — minting another is one
+  button.
+
+### The two grains, and the line they share
+
+**A track invitation** is one branch in one directory. The member gets that
+track's transcript, files, diff, terminal and prompt box, and does not see the
+project's other tracks or open one. `trackAccess` decides that per row.
+
+**A project invitation** is every track on the machine — the ones open now and
+the ones opened next week — plus the ability to cut tracks of their own. It is
+a separate, deliberate act by the owner rather than something a track invite
+grows into, and it lives in its own dialog off the rail. `projectAccess`
+decides it, and the invitation is written against the person rather than
+against the tracks, so nothing has to be back-filled when a new one opens.
+
+For a long time only the first existed, on the argument that inviting somebody
+to a *branch* is an everyday act and inviting them to your *machine* is not.
+That is true and it is still the default. What it missed is that working with
+the same person across a week of branches, re-inviting them to each one, is not
+an everyday act either — and, more to the point, that a track invitation
+already costs most of what a project invitation costs, because they run on one
+box. See *what sharing actually costs*, below. The wider one adds reading the
+other transcripts and opening tracks: real, worth a separate decision, not a
+different order of trust.
+
+**Neither reaches the project's controls.** Settings, packages, secrets,
+rebuild and delete stay with the owner, and that is the line both memberships
+have in common. `projectOf` is the only door to them and it selects on
+`user_id`, so a member is *not found* rather than refused.
+
+Two smaller rules fall out of project members being able to open tracks:
+
+- **Whoever cut a track can rename and close it.** Not any member — being
+  invited to help on a branch is not being handed the ability to end it for
+  everybody else in it — but somebody who may make a directory on the machine
+  and then may not tidy it up leaves the owner sweeping up after their guests.
+- **One person holds one grade of access to a project.** Inviting somebody to
+  the whole project deletes any track rows they held on it, and inviting a
+  project member to a single track is refused as the no-op it is. So removing
+  them from the project is the whole revoke — including a track they were named
+  on beforehand — which the dialog says out loud, because the alternative is a
+  narrower row that survives invisibly at exactly the moment somebody is trying
+  to take access away. A track's people list marks those rows *whole project*
+  and puts their × in the project's dialog, where it works.
 
 Once a track is shared, each prompt is prefixed `[from @login]` so the
 transcript can say who asked and the agent knows who it is working for.
@@ -229,18 +269,25 @@ stops claiming without having to apologise for it.
 Neither is persisted. Presence that survived a restart would be a list of
 people who are not there.
 
-Presence is per **track**, and the `here` event carries an audience: the owner
-and that track's members, nobody else on the project's channel. An event naming
-a track is an event that says the track exists, and a member who cannot see it
-should not learn otherwise from a heartbeat.
+Presence is per **track**, and the `here` event carries an audience: the owner,
+everybody in the project, and that track's own members — nobody else on the
+project's channel. An event naming a track is an event that says the track
+exists, and a member who cannot see it should not learn otherwise from a
+heartbeat.
 
-### What sharing a track actually costs
+### What sharing actually costs
 
 The worktrees are separate directories on **one machine**, and the separation
 between them is the rule in the system prompt rather than a boundary the kernel
 enforces. So somebody you invite can ask the agent for things outside the
-branch you invited them to, including the environment's secrets. The invite
-dialog says this where the decision is being made rather than only here.
+branch you invited them to, including the environment's secrets. Both invite
+dialogs say this where the decision is being made rather than only here.
+
+This is also the honest reason the project grain exists rather than being
+refused on principle. A track invitation *already* reaches the whole box if the
+person asks the agent nicely; pretending otherwise while forcing an owner to
+send eight track invitations to the same colleague was ceremony, not a
+boundary. The boundary that is real is the one below.
 
 The one real mitigation is the same distinction the project panel already
 draws: an **environment** secret is an env var inside the box and anything on

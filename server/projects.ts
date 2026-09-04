@@ -61,29 +61,51 @@ const DEFAULT_RUNTIME = "claude";
  */
 const DEFAULT_MODEL = "anthropic/claude-opus-5";
 
+/**
+ * How the caller reaches a project, or null when they do not.
+ *
+ * Three sources, widest first, and the order is what makes the answer stable:
+ * somebody who owns a project *and* somehow holds rows in it is still its
+ * owner, and somebody in the whole project who is also named on one track is
+ * still in the whole project. The narrowest answer is the one that has to be
+ * checked last or it wins over facts that grant more.
+ *
+ * One function rather than the same three-line union written out in `list`,
+ * `show` and the stream's gate, which is where it was drifting.
+ */
+export function accessOf(ctx: AppContext, userId: string, project: ProjectRow): Project["access"] | null {
+  if (project.userId === userId) return "owner";
+  if (ctx.db.isProjectMember(project.id, userId)) return "project";
+  if (ctx.db.memberTracks(userId).some((t) => t.projectId === project.id)) return "tracks";
+  return null;
+}
+
 /** `GET /api/projects` */
 export async function list(ctx: AppContext, req: Request): Promise<Response> {
   const user = await authenticate(ctx, req);
   const mine = ctx.db.projectsOf(user.id);
 
-  // A project somebody invited you into shows in the rail beside your own,
-  // because the alternative is a track with no home in the sidebar. It is
-  // marked `member`, and the routes it hangs off refuse everything a member
-  // may not do — this is a place in the list, not a share of the project.
-  const owned = new Set(mine.map((p) => p.id));
+  // A project somebody let you into shows in the rail beside your own, whether
+  // they let you into the whole thing or into one track of it — the
+  // alternative is a track with no home in the sidebar. What it is marked
+  // decides which controls the rail draws; the routes behind them refuse the
+  // rest regardless.
+  const seen = new Set(mine.map((p) => p.id));
   const guest: ProjectRow[] = [];
-  for (const track of ctx.db.memberTracks(user.id)) {
-    if (owned.has(track.projectId) || guest.some((p) => p.id === track.projectId)) continue;
-    const project = ctx.db.project(track.projectId);
-    if (project && !project.archivedAt) guest.push(project);
-  }
+  const add = (project: ProjectRow | null) => {
+    if (!project || project.archivedAt || seen.has(project.id)) return;
+    seen.add(project.id);
+    guest.push(project);
+  };
+  for (const project of ctx.db.memberProjects(user.id)) add(project);
+  for (const track of ctx.db.memberTracks(user.id)) add(ctx.db.project(track.projectId));
 
   const rows = [...mine, ...guest];
   const machines = await machinesFor(ctx, rows);
   return json({
     data: rows.map((r) => {
       const owner = r.userId === user.id ? user : (ctx.db.user(r.userId) ?? user);
-      return toProject(r, machines.get(r.id) ?? none(), owner, r.userId === user.id ? "owner" : "member");
+      return toProject(r, machines.get(r.id) ?? none(), owner, accessOf(ctx, user.id, r) ?? "tracks");
     }),
   });
 }
@@ -96,15 +118,14 @@ export async function show(ctx: AppContext, req: Request, id: string): Promise<R
 
   // A member needs the project's name, repository and model to render the
   // header and the composer above their track. They are given exactly that —
-  // the same shape everyone gets, marked `member` — and every route that
-  // would *change* any of it goes through `projectOf` and refuses them.
-  const owner = row.userId === user.id;
-  if (!owner && !ctx.db.memberTracks(user.id).some((t) => t.projectId === row.id)) {
-    throw new HttpError(404, "not_found", "No such project.");
-  }
-  const ownerRow = owner ? user : (ctx.db.user(row.userId) ?? user);
+  // the same shape everyone gets, marked with how they got here — and every
+  // route that would *change* any of it goes through `projectOf` and refuses
+  // them.
+  const access = accessOf(ctx, user.id, row);
+  if (!access) throw new HttpError(404, "not_found", "No such project.");
+  const ownerRow = access === "owner" ? user : (ctx.db.user(row.userId) ?? user);
   const machines = await machinesFor(ctx, [row]);
-  return json({ data: toProject(row, machines.get(row.id) ?? none(), ownerRow, owner ? "owner" : "member") });
+  return json({ data: toProject(row, machines.get(row.id) ?? none(), ownerRow, access) });
 }
 
 /**
@@ -506,7 +527,12 @@ const none = (): MachineState => ({ sandboxId: null, status: "none", spriteName:
 
 // ── shapes and small decisions ─────────────────────────────────────────
 
-export function toProject(row: ProjectRow, machine: MachineState, owner: UserRow, role: "owner" | "member" = "owner"): Project {
+export function toProject(
+  row: ProjectRow,
+  machine: MachineState,
+  owner: UserRow,
+  access: Project["access"] = "owner",
+): Project {
   return {
     id: row.id,
     name: row.name,
@@ -520,7 +546,8 @@ export function toProject(row: ProjectRow, machine: MachineState, owner: UserRow
     machine,
     createdAt: row.createdAt,
     ownerLogin: owner.login,
-    role,
+    role: access === "owner" ? "owner" : "member",
+    access,
   };
 }
 

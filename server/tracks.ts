@@ -24,12 +24,12 @@ import { withAuthor } from "../shared/author";
 import { nameTrack } from "../shared/names";
 import { closeTrackPrompt, openTrackPrompt, starters, type TrackOrigin } from "../shared/spec";
 import type { AppContext } from "./context";
-import { authenticate, projectOf, requireFountain, requireOwner, trackOf } from "./context";
+import { authenticate, projectAccess, requireFountain, requireOwnerOrCutter, trackOf } from "./context";
 import type { ProjectRow, TrackRow } from "./db";
 import { originOf } from "./db";
 import type { ConversationSummary, Fountain } from "./fountain";
 import { asHttpError } from "./fountain";
-import { prepareMachine } from "./projects";
+import { accessOf, prepareMachine } from "./projects";
 import { HttpError, json, readJson, str } from "./http";
 import { peopleOf } from "./people";
 import { publish } from "./hub";
@@ -41,12 +41,15 @@ export async function list(ctx: AppContext, req: Request, projectId: string): Pr
   const project = ctx.db.project(projectId);
   if (!project || project.archivedAt) throw new HttpError(404, "not_found", "No such project.");
 
-  // The owner sees the project's tracks; anybody else sees the ones they were
-  // invited to and is not told there are others. Same list endpoint, because
-  // the sidebar asks the same question either way.
-  const owner = project.userId === user.id;
-  const rows = owner ? ctx.db.tracksOf(project.id) : ctx.db.memberTracks(user.id).filter((t) => t.projectId === project.id);
-  if (!owner && !rows.length) throw new HttpError(404, "not_found", "No such project.");
+  // The owner and anybody invited to the whole project see all of its tracks.
+  // Somebody invited to particular tracks sees those and is not told there are
+  // others. Same list endpoint, because the sidebar asks the same question
+  // whichever of the three is asking.
+  const access = accessOf(ctx, user.id, project);
+  const wide = access === "owner" || access === "project";
+  const rows = wide ? ctx.db.tracksOf(project.id) : ctx.db.memberTracks(user.id).filter((t) => t.projectId === project.id);
+  if (!access || (!wide && !rows.length)) throw new HttpError(404, "not_found", "No such project.");
+  const owner = access === "owner";
 
   const live = await conversationsOf(ctx, project);
   const reads = ctx.db.readsOf(user.id, project.id);
@@ -56,7 +59,7 @@ export async function list(ctx: AppContext, req: Request, projectId: string): Pr
         r,
         project,
         live.get(r.conversationId ?? "") ?? null,
-        peopleOf(ctx, r.id, project.userId),
+        peopleOf(ctx, r.id, project.userId, project.id),
         owner ? "owner" : "member",
         reads.get(r.id) ?? null,
       ),
@@ -92,7 +95,7 @@ export async function show(ctx: AppContext, req: Request, trackId: string): Prom
         track,
         project,
         live.get(track.conversationId ?? "") ?? null,
-        peopleOf(ctx, track.id, project.userId),
+        peopleOf(ctx, track.id, project.userId, project.id),
         role,
         ctx.db.lastReadOf(track.id, user.id),
       ),
@@ -110,10 +113,16 @@ export async function show(ctx: AppContext, req: Request, trackId: string): Prom
  * `origin` rather than four. The slug is derived from whatever the origin
  * names — a PR's title, a branch's name — because a person naming a directory
  * before they have started work is a question with no good answer.
+ *
+ * Open to project members as well as to the owner. Cutting a track is the work
+ * rather than the machine — it makes a directory and a branch, and changes
+ * nothing about what is installed or what the box holds — so it sits on the
+ * `projectAccess` side of the line. The branch carries the *cutter's* login,
+ * not the owner's, so the yard reads as who did what.
  */
 export async function open(ctx: AppContext, req: Request, projectId: string): Promise<Response> {
   const user = await authenticate(ctx, req);
-  const project = projectOf(ctx, user, projectId);
+  const { project } = projectAccess(ctx, user, projectId);
   const fountain = requireFountain(ctx);
   const body = await readJson(req);
 
@@ -326,10 +335,16 @@ export async function presence(ctx: AppContext, req: Request, trackId: string): 
   const { track, project } = trackOf(ctx, user, trackId);
   const body = await readJson(req);
 
-  // Who may be told. The owner always, plus this track's members — and nobody
-  // else on the project's channel, because an event naming a track is an event
-  // that says the track exists.
-  const audience = new Set<string>([project.userId, ...ctx.db.membersOf(track.id).map((m) => m.id)]);
+  // Who may be told. The owner always, everybody in the whole project, and
+  // this track's own members — and nobody else on the project's channel,
+  // because an event naming a track is an event that says the track exists.
+  // The middle group is the one that is easy to forget and shows up as a
+  // project member watching a track whose other readers cannot see them.
+  const audience = new Set<string>([
+    project.userId,
+    ...ctx.db.projectMembersOf(project.id).map((m) => m.id),
+    ...ctx.db.membersOf(track.id).map((m) => m.id),
+  ]);
 
   if (body.leaving === true) {
     leave(track.id, user.id, project.id, audience);
@@ -442,8 +457,8 @@ export async function rename(ctx: AppContext, req: Request, trackId: string): Pr
   const user = await authenticate(ctx, req);
   const { track, project, role } = trackOf(ctx, user, trackId);
   // Somebody invited to help on one branch is not somebody who relabels it in
-  // everybody else's rail.
-  requireOwner(role, "rename a track");
+  // everybody else's rail — but whoever cut it named it in the first place.
+  requireOwnerOrCutter(role, user, track, "rename a track");
   const body = await readJson(req);
   const title = str(body.title, 200).trim();
   if (!title) throw new HttpError(422, "no_title", "A track needs a name.");
@@ -469,8 +484,9 @@ export async function close(ctx: AppContext, req: Request, trackId: string): Pro
   const user = await authenticate(ctx, req);
   const { track, project, role } = trackOf(ctx, user, trackId);
   // Closing ends the track for everybody in it and takes the worktree away.
-  // That is the owner's call, and it is why a member's way out is to leave.
-  requireOwner(role, "close a track");
+  // That is the owner's call, or the caller's own if they are the one who cut
+  // it; for anybody else the way out is to leave.
+  requireOwnerOrCutter(role, user, track, "close a track");
   const fountain = requireFountain(ctx);
   const force = new URL(req.url).searchParams.get("force") === "1";
 
