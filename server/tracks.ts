@@ -20,6 +20,7 @@
 import { randomUUID } from "node:crypto";
 import type { Track, TrackHeader, TrackOriginInfo, TranscriptPage } from "../shared/api";
 import { branchFor, mountPathFor, slugify, trackChannel, workdirFor } from "../shared/ids";
+import { nameTrack } from "../shared/names";
 import { closeTrackPrompt, openTrackPrompt, starters, type TrackOrigin } from "../shared/spec";
 import type { AppContext } from "./context";
 import { authenticate, projectOf, requireFountain, trackOf } from "./context";
@@ -87,7 +88,10 @@ export async function open(ctx: AppContext, req: Request, projectId: string): Pr
   const body = await readJson(req);
 
   const origin = readOrigin(body, project);
-  const title = str(body.title, 200).trim() || defaultTitle(origin);
+  // Every track this project has ever had, closed ones included — see
+  // `nameTrack` for why a closed track's name is still spent.
+  const taken = ctx.db.tracksOf(project.id, true).map((t) => t.slug);
+  const title = str(body.title, 200).trim() || defaultTitle(origin, taken);
   const slug = freeSlug(ctx, project.id, str(body.slug, 60).trim() || title);
   const branch = origin.kind === "pr" && origin.base ? origin.base : branchFor(user.login, slug);
   const workdir = workdirFor(slug);
@@ -517,11 +521,20 @@ function readOrigin(body: Record<string, unknown>, project: ProjectRow): TrackOr
   };
 }
 
-function defaultTitle(origin: TrackOrigin): string {
+/**
+ * What a track is called when nobody said.
+ *
+ * The order is deliberate: a track that came from a pull request, an issue or
+ * a branch already has the best name available — the one the work is called
+ * everywhere else — and inventing a prettier one would break the join between
+ * the sidebar and GitHub. Only a track started from nothing gets a yard name,
+ * because only that one has no name to inherit.
+ */
+function defaultTitle(origin: TrackOrigin, taken: string[]): string {
   if (origin.kind === "pr" && origin.number) return origin.title || `PR #${origin.number}`;
   if (origin.kind === "issue" && origin.number) return origin.title || `Issue #${origin.number}`;
   if (origin.kind === "branch" && origin.base) return origin.base;
-  return "Untitled";
+  return nameTrack(taken);
 }
 
 function originUrl(project: ProjectRow, origin: TrackOrigin): string | null {

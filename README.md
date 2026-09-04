@@ -103,6 +103,15 @@ be atomic, so the track exists before its directory does, the ribbon says
 live the whole time because Fountain queues a prompt behind the turn already
 running.
 
+A track started from a pull request, a branch or an issue takes its name from
+there, because that is the name the work already has everywhere else. One
+started from nothing gets a **yard name** — Crewe, Selkirk, Tarcoola — from
+`shared/names.ts`. That is not decoration: the premise of the app is four
+tracks at once, and four rows reading "Untitled 2" is a sidebar you decode
+rather than read. The name is also the directory, the branch and the thing you
+say out loud, so the list is chosen for slugs that survive all three, and a
+name is spent for good once used — a closed track's branch outlives its row.
+
 Closing a track runs `git worktree remove` — not `rm -rf`, because the clone
 keeps an administrative record of every worktree it cut and a directory deleted
 from underneath it leaves that record behind, after which the *next* track with
