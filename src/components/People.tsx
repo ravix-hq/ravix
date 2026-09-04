@@ -566,11 +566,6 @@ export function People({ track, viewerLogin, onClose, onChanged, onLeft }: Peopl
         {owner && linkKnown ? (
           <div className="field link-box">
             <h4>Invite link</h4>
-            <p className="fine">
-              Anybody who opens the link and signs in with GitHub joins this track. It is not an anonymous door: signing
-              in is the price of walking through it, so the transcript still says who asked for what.
-            </p>
-
             {linkError ? <p className="fine error">{linkError}</p> : null}
 
             {minted ? (
@@ -591,23 +586,21 @@ export function People({ track, viewerLogin, onClose, onChanged, onLeft }: Peopl
                   </button>
                 </div>
                 <span className="hint">
-                  This is the only time the link is shown. Switchyard keeps a hash of it and nothing else, so if you
-                  leave without copying it the only way back is a new link.
-                  {expires ? ` It expires ${expires}.` : ""}
+                  Shown once — copy it now.{expires ? ` Expires ${expires}.` : ""}
                 </span>
               </>
             ) : link ? (
               <span className="hint">
-                A link is out — made {ago(link.createdAt)}
-                {expires ? `, and it expires ${expires}` : ", and it has expired"}. It cannot be shown again: only its
-                hash is stored here, so switchyard does not have the link to show you.
+                {/* "Cannot be shown again" survives the cut because it is the
+                    one thing here nobody would assume. */}
+                Made {ago(link.createdAt)}, {expires ? `expires ${expires}` : "expired"}. Cannot be shown again.
               </span>
             ) : (
               // Not "everybody here was invited by name": a link that was
               // revoked leaves the people it let in, so the honest claim is
               // about the way in that is open now, not about how the list got
               // to be what it is.
-              <span className="hint">No link is out. The only way onto this track right now is being invited by name.</span>
+              <span className="hint">No link is out.</span>
             )}
 
             <div className="row">
@@ -622,24 +615,20 @@ export function People({ track, viewerLogin, onClose, onChanged, onLeft }: Peopl
             </div>
 
             {link ? (
-              <span className="hint">
-                There is one link per track, so making a new one replaces this one and therefore revokes it. Revoking
-                stops anybody new getting in on it. It does not remove the people who already joined that way — they
-                are in the list above, and you take them out by name.
-              </span>
+              <span className="hint">A new link replaces this one. Revoking keeps whoever already joined.</span>
             ) : null}
           </div>
         ) : null}
 
-        {/* The honest version, not the comfortable one. It is the same
-            paragraph as the header of `server/people.ts` because the promise
-            and the enforcement have to be one sentence apart. */}
+        {/* Ten words, and they are spent on the part that would surprise
+            somebody rather than the part that reassures them. What an
+            invitation *covers* is guessable from the dialog it is in; that the
+            worktrees share a machine, and that the separation between them is
+            a rule the agent follows rather than a boundary, is not. The long
+            version lives in the README and in the header of `server/people.ts`,
+            where somebody deciding policy will read it. */}
         <p className="fine dimmer" style={{ marginTop: owner ? 4 : 14 }}>
-          An invitation covers this track only — its transcript, files, diff, terminal and prompt box. It does not
-          include the project's other tracks, the machine's settings, or closing the track. But every track on this
-          project shares one machine, and the separation between the worktrees is a rule the agent follows rather than a
-          boundary the kernel enforces: somebody you invite can ask the agent to read another track's directory, or to
-          print the environment, which on a project with environment secrets means those secrets.
+          This track only — but one machine, so secrets are readable.
         </p>
       </div>
     </Dialog>
