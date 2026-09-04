@@ -134,20 +134,66 @@ export function Transcript({ trackId, turns, events, runtime, running, head, wor
     setTail({ track: trackId, hidden: Math.max(0, first - PAGE) });
   }, [trackId, first]);
 
-  // Put the scroll back where the reader had it, now that the page they asked
-  // for is in the DOM. Before paint, so the move is never seen.
+  // A new track starts pinned. Whether the reader had scrolled up to read
+  // something is a fact about the track they left, and carrying it across is
+  // how you open a chat onto the middle of a conversation you have not read.
+  //
+  // Declared before the two effects under it so that the commit which changes
+  // the track is also the commit they see the reset in: an effect that reset
+  // the flag afterwards would leave one pass in which this track is placed by
+  // the last track's reading position.
+  useLayoutEffect(() => {
+    pinned.current = true;
+    anchor.current = null;
+    const el = scroller.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [trackId]);
+
+  /**
+   * Hold the end, or hold the reader's place — before paint, on every render.
+   *
+   * The two halves are one job seen from the two ends of the scrollback, and
+   * both have to be synchronous, because nothing this panel shows is on screen
+   * at the moment the scroll would naturally have been set: the first page of
+   * turns lands a fetch after the mount, and every page of history lands a
+   * render after the scroll that asked for it. Chasing the end from the
+   * observer below alone is a frame late each time, and a frame late is the
+   * jump.
+   *
+   * At the bottom, the bottom is the whole answer, and it has to win over the
+   * measured restore rather than share with it. The restore is a *difference*
+   * taken before the page went in, and a page asked for while the scroll has
+   * not been put at the end yet — which is every page of the opening fill,
+   * where scrollTop is still the zero it mounted with — measures the distance
+   * to a bottom the reader was never at and puts them at the top of what they
+   * were reading. That is the jump this file was written to avoid, arriving by
+   * way of the machinery meant to avoid it.
+   */
   useLayoutEffect(() => {
     const el = scroller.current;
-    if (!el || anchor.current === null) return;
-    el.scrollTop = el.scrollHeight - anchor.current;
-    anchor.current = null;
-  }, [first]);
+    if (!el) return;
+    if (pinned.current) {
+      el.scrollTop = el.scrollHeight;
+      anchor.current = null;
+      return;
+    }
+    // Otherwise put them back the distance from the bottom they were measured
+    // at, which is what makes a page of history arrive under a still screen.
+    if (anchor.current !== null) {
+      el.scrollTop = el.scrollHeight - anchor.current;
+      anchor.current = null;
+    }
+  });
 
   // Fill the panel upwards. Runs after every render because what makes the
   // rendered tail too short to scroll is not only how many turns are in it —
   // a page of one-line turns, a diff that has not laid out yet, the window
   // being resized taller all leave the same gap, and the answer to each is the
   // same page above.
+  //
+  // After the effect above, never before it: this measures scrollTop, and the
+  // whole point of the ordering is that by the time it does, the scroll is
+  // already where the reader is going to see it.
   useLayoutEffect(() => {
     const el = scroller.current;
     if (!el || first === 0 || anchor.current !== null) return;
@@ -180,16 +226,6 @@ export function Transcript({ trackId, turns, events, runtime, running, head, wor
     observer.observe(el);
     return () => observer.disconnect();
   }, []);
-
-  // A new track starts pinned. Whether the reader had scrolled up to read
-  // something is a fact about the track they left, and carrying it across is
-  // how you open a chat onto the middle of a conversation you have not read.
-  useLayoutEffect(() => {
-    pinned.current = true;
-    anchor.current = null;
-    const el = scroller.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [trackId]);
 
   const last = visible.length - 1;
   // Is the group at the bottom the turn being taken *now*? Between sending a
