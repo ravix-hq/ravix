@@ -91,3 +91,36 @@ describe("Transcript", () => {
     expect(renderToString(<Transcript {...props} />)).not.toContain("thinking-now");
   });
 });
+
+/**
+ * A long track opens on its end, not on its beginning. The first commit is a
+ * page of the newest turns and nothing above them, which is what makes the
+ * bottom of the conversation the first thing on the screen however many turns
+ * are behind it; the rest is laid in above once there is a scroller to measure
+ * against, which is why it is not visible here.
+ */
+describe("Transcript window", () => {
+  const many = Array.from({ length: 40 }, (_, i) => ({
+    id: `t${i}`,
+    prompt: `turn number ${i}`,
+    origin: "user",
+    status: "completed",
+    insertedAt: "2026-09-04T12:00:00Z",
+  }));
+
+  test("opens on the last page of a long track", () => {
+    const html = renderToString(<Transcript {...props} turns={many} events={[]} head={<div>ribbon</div>} />);
+    expect(html).toContain("turn number 39");
+    expect(html).toContain("turn number 35");
+    expect(html).not.toContain("turn number 0<");
+    expect(html).not.toContain("turn number 20");
+  });
+
+  test("the ribbon waits for the top of the track rather than heading the window", () => {
+    const long = renderToString(<Transcript {...props} turns={many} events={[]} head={<div>ribbon</div>} />);
+    expect(long).not.toContain("ribbon");
+    const short = renderToString(<Transcript {...props} turns={many.slice(0, 3)} events={[]} head={<div>ribbon</div>} />);
+    expect(short).toContain("ribbon");
+    expect(short).toContain("turn number 0");
+  });
+});

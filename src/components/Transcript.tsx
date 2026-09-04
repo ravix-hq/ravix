@@ -32,8 +32,18 @@
  * what it did to what, an edit shows the lines it changed, and while the turn
  * is live the last block carries a caret and the indicator underneath names
  * the thing currently happening rather than saying "Working".
+ *
+ * The third: a track is read from the bottom, so it is *built* from the bottom.
+ * Opening one renders the last few turns and nothing else, which puts the
+ * newest thing on the screen in one frame however long the conversation is;
+ * older turns are then laid in above, a page at a time, each time anchored so
+ * that what the reader is looking at does not move. The alternative — commit
+ * the whole history and chase the bottom as it grows — is what makes a
+ * transcript jump for the first second after you click it, because half of
+ * what makes it taller (an avatar decoding, a diff, the ribbon gaining a line)
+ * lands after the scroll that was meant to have found the end.
  */
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { blocksForTurn, type Block } from "@managoat/fountain-app/acp";
 import { splitAuthor } from "../../shared/author";
 import type { Person, TurnRecord } from "../../shared/api";
@@ -65,12 +75,85 @@ export interface TranscriptProps {
 /** Within this many pixels of the bottom still counts as reading the bottom. */
 const SLACK = 80;
 
+/** Turns rendered when a track opens, and added each time more are wanted. */
+const PAGE = 8;
+
+/**
+ * Keep this much rendered, as a multiple of the panel's own height.
+ *
+ * More than one screenful, because a reader who scrolls up needs somewhere to
+ * land while the next page is being laid in, and because a window that ends
+ * exactly at the top of the viewport makes the first turn look like the start
+ * of the conversation.
+ */
+const FILL = 2;
+
+/** Scrolling to within this many pixels of the top asks for the page above. */
+const REACH = 600;
+
 export function Transcript({ trackId, turns, events, runtime, running, head, workdir, people = [] }: TranscriptProps) {
   const scroller = useRef<HTMLDivElement | null>(null);
   const content = useRef<HTMLDivElement | null>(null);
   const pinned = useRef(true);
 
   const grouped = useMemo(() => group(turns, events), [turns, events]);
+
+  // Where the window starts, counted in turns held back from the top.
+  //
+  // Counted from the *front* rather than as "show the last n", because turns
+  // arrive at the back all through a live track and a window measured from
+  // there would slide off the top by one turn for every turn the agent takes
+  // — dropping, among other things, the ribbon out from under a short track
+  // while somebody is reading it. Held with the track it was counted for, so
+  // a different track is back to one page in the render that shows it rather
+  // than one effect later, which is a frame with somebody else's scrollback in
+  // it. Null until somebody asks for history: until then it simply trails the
+  // end of the log, which is what makes the first page correct however much of
+  // the track had arrived when it was worked out.
+  const [tail, setTail] = useState<{ track: string; hidden: number | null }>({ track: trackId, hidden: null });
+  const held = tail.track === trackId ? tail.hidden : null;
+  const first = Math.min(held ?? Math.max(0, grouped.length - PAGE), grouped.length);
+  const visible = first === 0 ? grouped : grouped.slice(first);
+
+  /**
+   * How far the reader was from the bottom when the last page was asked for.
+   *
+   * Prepending is the one thing a scroll container cannot do quietly: the
+   * content above the viewport gets taller and everything the reader was
+   * looking at slides down by exactly that much. Measuring from the bottom
+   * before the page goes in and putting the scroll back the same distance
+   * afterwards is what makes older turns arrive without the screen moving. It
+   * doubles as the guard against asking for two pages at once.
+   */
+  const anchor = useRef<number | null>(null);
+
+  const older = useCallback(() => {
+    const el = scroller.current;
+    if (!el || anchor.current !== null || first === 0) return;
+    anchor.current = el.scrollHeight - el.scrollTop;
+    setTail({ track: trackId, hidden: Math.max(0, first - PAGE) });
+  }, [trackId, first]);
+
+  // Put the scroll back where the reader had it, now that the page they asked
+  // for is in the DOM. Before paint, so the move is never seen.
+  useLayoutEffect(() => {
+    const el = scroller.current;
+    if (!el || anchor.current === null) return;
+    el.scrollTop = el.scrollHeight - anchor.current;
+    anchor.current = null;
+  }, [first]);
+
+  // Fill the panel upwards. Runs after every render because what makes the
+  // rendered tail too short to scroll is not only how many turns are in it —
+  // a page of one-line turns, a diff that has not laid out yet, the window
+  // being resized taller all leave the same gap, and the answer to each is the
+  // same page above.
+  useLayoutEffect(() => {
+    const el = scroller.current;
+    if (!el || first === 0 || anchor.current !== null) return;
+    if (el.scrollHeight > el.clientHeight * FILL) return;
+    older();
+  });
 
   // Follow the bottom, but only while the reader is already there. Yanking
   // somebody back down mid-scroll is the single most irritating thing a live
@@ -103,11 +186,12 @@ export function Transcript({ trackId, turns, events, runtime, running, head, wor
   // how you open a chat onto the middle of a conversation you have not read.
   useLayoutEffect(() => {
     pinned.current = true;
+    anchor.current = null;
     const el = scroller.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, [trackId]);
 
-  const last = grouped.length - 1;
+  const last = visible.length - 1;
   // Is the group at the bottom the turn being taken *now*? Between sending a
   // prompt and the first frame coming back there is a second where the track
   // is running and the newest group is still the last finished turn — long
@@ -115,7 +199,7 @@ export function Transcript({ trackId, turns, events, runtime, running, head, wor
   // report what it was doing then as what it is doing now. A turn Fountain has
   // closed carries its own `stage: turn` event saying so, so the question is
   // answered from the log rather than guessed at from timing.
-  const writing = running && !settled(grouped[last]);
+  const writing = running && !settled(visible[last]);
 
   return (
     <div
@@ -129,12 +213,20 @@ export function Transcript({ trackId, turns, events, runtime, running, head, wor
       onScroll={(e) => {
         const el = e.currentTarget;
         pinned.current = el.scrollHeight - el.scrollTop - el.clientHeight < SLACK;
+        // Reaching for history is a scroll upward towards a top that is not
+        // the top yet. Asked for before it is reached, so the page is in place
+        // by the time the reader gets there and the scrollbar never bottoms
+        // out against a conversation that has more of itself to show.
+        if (el.scrollTop < REACH) older();
       }}
     >
       <div ref={content}>
-        {head}
+        {/* The ribbon is the head of the transcript, not the head of the
+            window into it: it belongs above the first turn of the track, and
+            appears when the reader has wound back far enough to be there. */}
+        {first === 0 ? head : null}
         <div className="transcript">
-          {grouped.map((turn, i) => (
+          {visible.map((turn, i) => (
             <Turn
               key={turn.id}
               turn={turn}
