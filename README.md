@@ -128,6 +128,46 @@ worktree gets **Close track**; a dirty one gets **Discard 3 files and close**,
 because `git worktree remove` refuses a dirty worktree and a close with changes
 in it is a discard whether or not the person was told.
 
+## The transcript is the agent's own stream, formatted
+
+Fountain's conversation stream is forwarded byte for byte — `server/tracks.ts`
+hands the response body straight to the browser, because reading it here to
+re-emit it would mean buffering the one thing whose whole purpose is not being
+buffered. So the deltas arrive as the runtime produced them, and everything
+below is about not throwing that away on the way to the screen.
+
+The shared parser (`@managoat/fountain-app/acp`) says what blocks a turn has
+and in what order. It flattens each tool call to a name and a summary, which is
+all a preview bubble elsewhere in the suite needs and not enough here: rendered
+from that alone, a turn that read four files, ran two commands and rewrote a
+module is eight identical grey chips reading `execute command=…`. That sameness
+— not the latency — is what makes a transcript over a real agent feel generic.
+
+So switchyard reads the same events a second time (`src/lib/tools.ts`) for the
+detail the block dropped, and joins it back on `toolCallId`. Nothing in that
+pass can change the shape of the transcript, and the fifteen other apps on the
+shared parser are untouched. On top of it:
+
+- **The reply is markdown**, because that is what the agent writes.
+  `src/lib/md.ts` is a renderer with no dependency and two properties a live
+  transcript needs: it escapes before it does anything else, so bytes off
+  somebody's repository can never be markup; and it is tolerant of half a
+  construct, because every chunk arrives mid-sentence. An unterminated fence
+  renders as an open code block rather than swallowing the rest of the turn.
+- **A call says what it did to what** — `Ran bun test`, `Read server/app.ts`,
+  `Searched blocksForTurn` — with paths shown relative to the track's own
+  worktree, and its output folded underneath. An edit shows the lines it
+  changed, framed by the ones it did not.
+- **Reasoning is open while the turn is live** and one line afterwards.
+  Watching a machine think is the most legible thing it does; on the second
+  read it is between you and what the agent decided.
+- **The indicator names what is happening** — `Running bun test`, and a
+  counter — rather than saying "Working". The two questions somebody has while
+  watching a machine work are *what is it doing* and *has it hung*, and a row
+  of animated dots answers neither. It counts off a timer, not off arriving
+  chunks, because a turn that has genuinely stalled is exactly the one that
+  stops re-rendering.
+
 ## Working on a track with somebody else
 
 Invite them by GitHub username. The box autocompletes over everyone who has

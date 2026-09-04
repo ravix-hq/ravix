@@ -165,6 +165,7 @@ export function TrackView(props: TrackViewProps) {
         events={events}
         people={track.people}
         runtime={project.runtime}
+        workdir={track.workdir}
         running={running}
         head={
           <Ribbon
