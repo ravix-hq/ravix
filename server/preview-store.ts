@@ -29,6 +29,10 @@ export interface PreviewGrant {
   expires: number;
   kind: "ticket" | "session";
 }
+export interface AgentPreviewGrant {
+  hash: string; trackId: string; userId: string; conversationId: string; promptId: string;
+  sandboxId: string; sprite: string; expires: number;
+}
 
 /** Additive tables; the unique index owns allocation, including across connections. */
 export class PreviewStore {
@@ -46,6 +50,10 @@ export class PreviewStore {
         hash TEXT PRIMARY KEY, track_id TEXT NOT NULL REFERENCES tracks(id),
         session_hash TEXT NOT NULL REFERENCES sessions(token_hash) ON DELETE CASCADE,
         expires INTEGER NOT NULL, kind TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS preview_agent_grants (
+        hash TEXT PRIMARY KEY, track_id TEXT NOT NULL UNIQUE REFERENCES tracks(id),
+        user_id TEXT NOT NULL REFERENCES users(id), expires INTEGER NOT NULL, row TEXT NOT NULL
       );
     `);
   }
@@ -109,5 +117,16 @@ export class PreviewStore {
   }
   revoke(trackId: string, userId?: string) {
     this.db.run(`DELETE FROM preview_grants WHERE track_id=?${userId ? " AND session_hash IN (SELECT token_hash FROM sessions WHERE user_id=?)" : ""}`, userId ? [trackId, userId] : [trackId]);
+  }
+  grantAgent(grant: AgentPreviewGrant) {
+    this.db.run("DELETE FROM preview_agent_grants WHERE expires<=? OR track_id=?", [Date.now(), grant.trackId]);
+    this.db.run("INSERT INTO preview_agent_grants VALUES (?,?,?,?,?)", [grant.hash, grant.trackId, grant.userId, grant.expires, JSON.stringify(grant)]);
+  }
+  agentGrant(hash: string): AgentPreviewGrant | null {
+    const r = this.db.query<{ row: string }, [string, number]>("SELECT row FROM preview_agent_grants WHERE hash=? AND expires>?").get(hash, Date.now());
+    return r ? JSON.parse(r.row) : null;
+  }
+  revokeAgent(trackId: string, userId?: string) {
+    this.db.run(`DELETE FROM preview_agent_grants WHERE track_id=?${userId ? " AND user_id=?" : ""}`, userId ? [trackId, userId] : [trackId]);
   }
 }

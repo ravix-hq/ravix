@@ -87,6 +87,15 @@ export function systemPrompt(input: { project: string; repoPath: string | null; 
     }
   }
   lines.push(
+    "## Live previews",
+    "",
+    "Switchyard can provide a track-scoped preview helper in the turn's instructions.",
+    "When asked to configure or run a live preview, use that helper to save the app",
+    "directory, startup command and readiness path, then start it and inspect status",
+    "and logs. The command must use $PORT and fail on a port collision. Keep the",
+    "preview on this track's working copy. Tell the user to use Open preview after",
+    "readiness passes. Do not ask for their browser session or provider credentials.",
+    "",
     "## How to answer",
     "",
     "Be concise. This is rendered in a terminal-shaped panel, not a document. Prefer",
@@ -297,6 +306,7 @@ export function starters(input: { hasRepo: boolean }): { label: string; prompt: 
     ];
   }
   return [
+    { label: "Set up live preview", prompt: "Set up a live preview for this track. Inspect the app, configure its startup command and readiness path with the Switchyard preview helper, start it, and fix any startup issues until it is Ready." },
     { label: "Review recent PRs", prompt: "Look at the pull requests merged into this repository in the last two weeks and tell me what changed, in the order that matters." },
     { label: "Improve agent instructions", prompt: "Read this repository's agent instructions (CLAUDE.md, AGENTS.md, .cursorrules — whichever exist) and suggest concrete improvements based on what the code actually looks like. Show me a diff before writing anything." },
     { label: "Fix a TODO", prompt: "Find the most worthwhile TODO or FIXME in this repository, explain why it is the one worth doing, and fix it." },

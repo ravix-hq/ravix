@@ -124,6 +124,7 @@ export class Previews {
     });
   }
   async stopService(trackId: string, cleanup = false): Promise<void> {
+    if (cleanup) this.ctx.db.previews.revokeAgent(trackId);
     const row = this.ctx.db.previews.get(trackId);
     if (!row) return;
     this.ctx.db.previews.save({ ...row, desired: "stopped", state: "stopped", leaseUntil: 0, generation: row.generation + 1, cleanup: cleanup || row.cleanup, stopPending: true });
@@ -178,20 +179,29 @@ export class Previews {
       row = this.ctx.db.previews.allocate(trackId, machine.sandboxId, sprite);
       const applied = JSON.stringify(config);
       const service = await this.ctx.sprites!.service(sprite, row.service);
+      const directory = resolveCwd(track.workdir, config.directory);
+      const matches = service?.cmd === "sh" && JSON.stringify(service.args) === JSON.stringify(["-lc", config.command]) &&
+        service.dir === directory && service.env?.PORT === String(row.port) && service.env?.HOST === "127.0.0.1" &&
+        service.http_port == null && !service.needs?.length;
       if (!this.current(row)) return;
-      if (restart || row.appliedConfig !== applied || !service) {
+      if (restart || row.appliedConfig !== applied || !matches) {
         if (service) await this.ctx.sprites!.serviceAction(sprite, row.service, "stop");
+        if (!this.current(row)) return;
+        // PUT can return 200 "already running with that command" while
+        // retaining old args, env or cwd, even after stop. Replace this
+        // track's owned definition so the saved configuration really applies.
+        if (service) await this.ctx.sprites!.serviceAction(sprite, row.service, "delete");
         if (!this.current(row)) return;
         // Refuse a collision before creating a service. Readiness below only
         // examines the allocated port, so a server's fallback is never Ready.
         const check = await this.ctx.sprites!.exec(sprite, ["sh", "-lc", `command -v ss >/dev/null || { echo "Cannot verify preview port: ss is unavailable." >&2; exit 1; }; if ss -H -ltn 'sport = :${row.port}' | read line; then echo 'Preview port ${row.port} is occupied. Stop the conflicting process.' >&2; exit 1; fi`], 15);
         if (check.code) throw new Error(check.stderr || "Preview port collision.");
         if (!this.current(row)) return;
-        const logs = await this.ctx.sprites!.defineService(sprite, row.service, resolveCwd(track.workdir, config.directory), config.command, row.port!);
+        const logs = await this.ctx.sprites!.defineService(sprite, row.service, directory, config.command, row.port!);
         this.update(row, { appliedConfig: applied, state: "starting", logs, startedAt: Date.now() });
       } else if (service.state?.status !== "running") {
-        await this.ctx.sprites!.serviceAction(sprite, row.service, "start");
-        this.update(row, { state: "starting", startedAt: Date.now() });
+        const logs = await this.ctx.sprites!.serviceAction(sprite, row.service, "start");
+        this.update(row, { state: "starting", logs, startedAt: Date.now() });
       }
       if (!this.current(row)) return;
       await this.hold(this.ctx.db.previews.get(trackId)!);
@@ -236,6 +246,15 @@ export class Previews {
     finally { clearTimeout(timer); abort.abort(); await client?.destroy(); }
   }
 
+  async refreshLogs(trackId: string) {
+    const row = this.ctx.db.previews.get(trackId);
+    if (this.ctx.sprites && row?.sprite && row.desired === "running") {
+      const logs = await this.ctx.sprites.serviceLogs(row.sprite, row.service);
+      const fresh = this.ctx.db.previews.get(trackId)!;
+      if (fresh.generation === row.generation) this.ctx.db.previews.save({ ...fresh, logs });
+    }
+  }
+
   start() {
     if (this.timer || this.unavailable()) return;
     void this.tick();
@@ -274,13 +293,8 @@ export async function previewRoute(ctx: AppContext, req: Request, trackId: strin
   if (action === "config") await manager.configure(trackId, parsePreviewConfig((await readJson(req)).config));
   if (action === "stop") await manager.stopService(trackId);
   if (action === "logs") {
-    const row = ctx.db.previews.get(trackId);
     // Persisted failure logs remain available without waking an idle machine.
-    if (ctx.sprites && row?.sprite && row.desired === "running") {
-      const logs = await ctx.sprites!.serviceLogs(row.sprite, row.service);
-      const fresh = ctx.db.previews.get(trackId)!;
-      if (fresh.generation === row.generation) ctx.db.previews.save({ ...fresh, logs });
-    }
+    await manager.refreshLogs(trackId);
   }
   if (action === "open" || action === "restart") {
     void manager.startService(trackId, action === "restart").catch(() => {});

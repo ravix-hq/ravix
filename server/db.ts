@@ -606,6 +606,7 @@ export class Db {
 
   removeMember(trackId: string, userId: string): void {
     this.previews.revoke(trackId, userId);
+    this.previews.revokeAgent(trackId, userId);
     this.db.run("DELETE FROM track_members WHERE track_id = ? AND user_id = ?", [trackId, userId]);
   }
 
@@ -817,6 +818,7 @@ export class Db {
 
   removeProjectMember(projectId: string, userId: string): void {
     for (const track of this.tracksOf(projectId)) this.previews.revoke(track.id, userId);
+    for (const track of this.tracksOf(projectId)) this.previews.revokeAgent(track.id, userId);
     this.db.run("DELETE FROM project_members WHERE project_id = ? AND user_id = ?", [projectId, userId]);
   }
 

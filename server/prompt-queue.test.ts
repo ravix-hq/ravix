@@ -8,6 +8,8 @@ import { buildContext } from "./context";
 import { Cipher, sha256 } from "./crypto";
 import { Db } from "./db";
 import { PromptQueue } from "./prompt-queue";
+import { Sprites } from "./sprites";
+import { visiblePreviewPrompt } from "../shared/previews";
 
 const cleanups: (() => void)[] = [];
 afterEach(() => { for (const cleanup of cleanups.splice(0).reverse()) cleanup(); });
@@ -74,6 +76,29 @@ test("acknowledged prompts and images survive reopening SQLite and deliver witho
   f.state.status = "idle";
   await restarted.tick();
   expect(f.state.posted[1]?.prompt).toBe("second");
+  expect(f.ctx.db.queuedPrompts()).toHaveLength(0);
+});
+
+test("existing conversations receive preview instructions, and helper failure does not strand a saved prompt", async () => {
+  const f = await fixture();
+  f.ctx.config.previews = { domain: "preview.localhost", port: 8082, publicPort: ":8082", protocol: "http:" };
+  f.ctx.fountain!.listConversations = async () => [{ id: "c1", sandbox_id: "s1", status: "idle", inserted_at: "2026-09-05" }] as any;
+  f.ctx.fountain!.sandbox = async () => ({ id: "s1", sprite_name: "sprite" }) as any;
+  let installed = "", fail = false;
+  class Provider extends Sprites {
+    async exec(_sprite: string, argv: string[]) { installed = argv[2]!; if (fail) throw new Error("offline"); return { stdout: "", stderr: "", code: 0 }; }
+  }
+  f.ctx.sprites = new Provider({ token: "provider-test", baseUrl: "unused" });
+  f.state.status = "idle";
+  await f.send("Set up a preview"); await f.worker.tick();
+  expect(f.state.posted[0]!.prompt).toContain("preview tools for this turn");
+  expect(visiblePreviewPrompt(f.state.posted[0]!.prompt)).toBe("Set up a preview");
+  const token = /Authorization: Bearer ([A-Za-z0-9_-]+)/.exec(installed)![1]!;
+  expect(f.state.posted[0]!.prompt).not.toContain(token);
+  fail = true; f.state.status = "idle";
+  await f.send("Keep working"); await f.worker.tick();
+  expect(f.state.posted[1]!.prompt).toContain("could not be prepared");
+  expect(visiblePreviewPrompt(f.state.posted[1]!.prompt)).toBe("Keep working");
   expect(f.ctx.db.queuedPrompts()).toHaveLength(0);
 });
 

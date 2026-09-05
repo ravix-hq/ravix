@@ -37,6 +37,12 @@ const FRAME_EXIT = 3;
 
 export interface SpriteService {
   name: string;
+  cmd?: string;
+  args?: string[];
+  dir?: string;
+  env?: Record<string, string>;
+  needs?: string[] | null;
+  http_port?: number | null;
   state?: { status: string; restart_count?: number; exit_code?: number };
 }
 

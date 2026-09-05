@@ -56,6 +56,31 @@ is no OAuth client and no CORS origin.
 
 ## Track previews
 
+Ask the conversation agent **“Set up a live preview for this track”**, or use
+the **Set up live preview** starter on a repository track. It can inspect the
+app, install its dependencies when needed, save the directory/command/readiness
+settings, start the preview, and use status and logs to fix startup failures.
+When it reports Ready, use **Open preview** to enter through your signed-in
+browser session. These are the same saved track settings the form edits.
+
+Before delivering each user turn, Switchyard installs a small shell helper at
+`/home/sprite/.switchyard/previews/<track-id>.sh` and includes its usage in the
+agent's instructions. Existing conversations get it on their next turn;
+recreating a project or conversation is unnecessary. The transcript displays
+the person's original message, with their attribution, rather than the injected
+instructions. If helper preparation fails, the user's saved prompt still runs
+and the agent is told to use the manual controls.
+
+The helper supports `configure '<JSON>'`, `start`, `status`, `logs`, `restart`
+and `stop`; `configure null` restores the project default. Its two-hour
+credential is stored outside the checkout, only its hash is saved in SQLite,
+and the next delivered turn replaces it. It is limited to the current track,
+conversation, machine and prompt sender's continuing membership. Removing
+access or retiring the track revokes it. It cannot change project defaults,
+mint browser preview tickets, or access provider credentials. As with the
+terminal, tracks share a machine; this is not OS-level isolation between
+collaborators. The private helper must not be printed or copied into a repo.
+
 In project settings, the owner can save an app directory, startup command and
 readiness path. **Configure** on a track saves an override or restores the
 project default. Directories are relative to that track's worktree. Changing

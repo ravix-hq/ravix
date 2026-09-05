@@ -7,6 +7,7 @@ import { FountainHttpError } from "./fountain";
 import { HttpError, json } from "./http";
 import { prepareMachine } from "./projects";
 import { publish } from "./hub";
+import { prepareAgentPreview } from "./agent-previews";
 
 export interface PromptPayload {
   prompt: string;
@@ -145,8 +146,11 @@ export class PromptQueue {
     if (!ctx.db.claimPrompt(row.id)) return;
     try {
       const payload = JSON.parse(ctx.db.queuedPrompt(row.id)!.payload) as PromptPayload;
+      const previewInstructions = await prepareAgentPreview(ctx, row);
+      if (!this.authorized(row)) { ctx.db.setPromptStatus(row.id, "cancelled"); ctx.db.previews.revokeAgent(track.id); return; }
       const shared = ctx.db.membersOf(track.id).length > 0 || ctx.db.projectMembersOf(project.id).length > 0;
-      await fountain.prompt(track.conversationId!, shared ? withAuthor(row.authorLogin, payload.prompt) : payload.prompt, payload.images);
+      const authored = shared ? withAuthor(row.authorLogin, payload.prompt) : payload.prompt;
+      await fountain.prompt(track.conversationId!, previewInstructions ? `${previewInstructions}\n\n${authored}` : authored, payload.images);
       ctx.db.setPromptStatus(row.id, "sent");
       publish(project.id, { event: "turn", data: { trackId: track.id, status: "running" } }, new Set([
         project.userId,

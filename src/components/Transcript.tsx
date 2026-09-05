@@ -46,6 +46,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { blocksForTurn, type Block } from "@managoat/fountain-app/acp";
 import { splitAuthor } from "../../shared/author";
+import { visiblePreviewPrompt } from "../../shared/previews";
 import type { Person, TurnRecord } from "../../shared/api";
 import type { LogEvent } from "../../shared/fountain-types";
 import { renderMarkdown } from "../lib/md";
@@ -341,11 +342,12 @@ function Turn({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const details = useMemo(() => toolDetails(turn.events), [key]);
 
-  const app = turn.prompt ? appTurnLabel(turn.prompt) : null;
+  const prompt = turn.prompt ? visiblePreviewPrompt(turn.prompt) : null;
+  const app = prompt ? appTurnLabel(prompt) : null;
   // A shared track prefixes each prompt with who sent it (`shared/author.ts`).
   // The label comes back off here rather than being rendered as part of what
   // somebody wrote — it was never their words, it was the app naming them.
-  const { login, text } = turn.prompt && !app ? splitAuthor(turn.prompt) : { login: null, text: turn.prompt ?? "" };
+  const { login, text } = prompt && !app ? splitAuthor(prompt) : { login: null, text: prompt ?? "" };
   const who = login ? (people.find((p) => p.login === login) ?? { login, name: null, avatarUrl: null }) : null;
   const lastBlock = blocks.length - 1;
 
