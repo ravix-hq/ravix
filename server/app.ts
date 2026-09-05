@@ -80,6 +80,7 @@ import * as terminal from "./terminal";
 import * as tracks from "./tracks";
 import * as vitals from "./vitals";
 import { projectStream } from "./hub";
+import { watchStream } from "./stream-access";
 import { errorResponse, HttpError, json } from "./http";
 
 type Handler = (req: Request, params: Record<string, string>) => Response | Promise<Response>;
@@ -128,7 +129,12 @@ export function buildRouter(ctx: AppContext): (req: Request) => Promise<Response
     const project = ctx.db.project(p.id!);
     if (!project || project.archivedAt) throw new HttpError(404, "not_found", "No such project.");
     if (!projects.accessOf(ctx, user.id, project)) throw new HttpError(404, "not_found", "No such project.");
-    return projectStream(project.id, user.id, req.signal);
+    const access = watchStream(project.id, user.id, req.signal, () => {
+      const current = ctx.db.project(project.id);
+      return !!current && !current.archivedAt && !!projects.accessOf(ctx, user.id, current);
+    });
+    const response = projectStream(project.id, user.id, access.signal);
+    return new Response(access.forward(response), { headers: response.headers });
   });
   on("GET", "/api/projects/:id/people", (req, p) => people.listProject(ctx, req, p.id!));
   on("POST", "/api/projects/:id/people", (req, p) => people.addProject(ctx, req, p.id!));

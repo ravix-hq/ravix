@@ -18,6 +18,7 @@ import type { AppContext } from "./context";
 import { authenticate, requireGitHub, userToken } from "./context";
 import { GitHubError, asHttpError } from "./github";
 import { claimLink } from "./people";
+import { beginOAuth, clearOAuth, takeOAuth } from "./oauth";
 import type { Capabilities, SessionInfo, Viewer } from "../shared/api";
 import { SESSION_COOKIE, clearedSessionCookie, cookieValue, json, sessionCookie } from "./http";
 
@@ -42,16 +43,15 @@ export async function session(ctx: AppContext, req: Request): Promise<Response> 
     vaults: !!ctx.fountain,
   };
   const gh = ctx.github;
-  const state = randomToken(18);
-  if (gh) ctx.db.putState(state, "signin", null);
+  const attempt = gh ? await beginOAuth(ctx, req, "signin", null) : null;
 
   const info: SessionInfo = {
     viewer: await viewerOf(ctx, req),
-    signInUrl: gh ? gh.authorizeUrl(callbackUrl(ctx), state) : "",
+    signInUrl: gh ? gh.authorizeUrl(callbackUrl(ctx), attempt!.state) : "",
     installUrl: gh ? gh.installUrl() : "",
     capabilities,
   };
-  return json({ data: info });
+  return json({ data: info }, 200, { "cache-control": "no-store", ...(attempt ? { "set-cookie": attempt.cookie } : {}) });
 }
 
 async function viewerOf(ctx: AppContext, req: Request): Promise<Viewer | null> {
@@ -98,6 +98,13 @@ async function viewerOf(ctx: AppContext, req: Request): Promise<Viewer | null> {
  * following GitHub, not by the SPA's fetch.
  */
 export async function callback(ctx: AppContext, req: Request): Promise<Response> {
+  const response = await completeCallback(ctx, req);
+  const cleared = clearOAuth(req, new URL(req.url).searchParams.get("state"));
+  if (cleared) response.headers.append("set-cookie", cleared);
+  return response;
+}
+
+async function completeCallback(ctx: AppContext, req: Request): Promise<Response> {
   const gh = requireGitHub(ctx);
   const url = new URL(req.url);
   const code = url.searchParams.get("code");
@@ -110,11 +117,9 @@ export async function callback(ctx: AppContext, req: Request): Promise<Response>
     return redirect(installationId ? "/?installed=1" : "/?error=github_declined");
   }
 
-  // The state is one-use. A replayed callback finds nothing and is refused,
-  // which is the entire defence against a login CSRF here. It also carries
-  // the invite token, when this sign-in was started by somebody opening a
-  // link — see `people.join`.
-  const parked = state ? ctx.db.takeState(state) : null;
+  // Require the initiating browser's secret before consuming the one-use
+  // state. A callback copied into another browser cannot replace its session.
+  const parked = await takeOAuth(ctx, req, state);
   if (!parked) {
     return redirect("/?error=stale_signin");
   }
@@ -174,9 +179,8 @@ export async function callback(ctx: AppContext, req: Request): Promise<Response>
 export async function install(ctx: AppContext, req: Request): Promise<Response> {
   const gh = requireGitHub(ctx);
   await authenticate(ctx, req);
-  const state = randomToken(18);
-  ctx.db.putState(state, "install", null);
-  return redirect(gh.installUrl(state));
+  const attempt = await beginOAuth(ctx, req, "install", null);
+  return redirect(gh.installUrl(attempt.state), { "set-cookie": attempt.cookie });
 }
 
 export async function signOut(ctx: AppContext, req: Request): Promise<Response> {

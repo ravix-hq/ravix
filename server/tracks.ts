@@ -33,6 +33,7 @@ import { accessOf, prepareMachine } from "./projects";
 import { HttpError, json, readJson, str } from "./http";
 import { peopleOf } from "./people";
 import { publish } from "./hub";
+import { watchStream } from "./stream-access";
 import { beat, leave } from "./presence";
 
 /** `GET /api/projects/:id/tracks` */
@@ -416,24 +417,30 @@ export async function events(ctx: AppContext, req: Request, trackId: string): Pr
 /**
  * `GET /api/tracks/:id/stream` — Fountain's stream, forwarded.
  *
- * The one place switchyard hands a Fountain response body straight through.
- * Reading it here to re-emit would mean buffering a stream whose entire
- * purpose is not being buffered; the authorization has already happened in
- * `trackOf`, and what comes back is one conversation's events and nothing
- * else.
+ * The body is piped without parsing or buffering the transcript. Membership
+ * changes cancel both sides of the pipe, including an upstream request still
+ * waiting for its response headers.
  */
 export async function stream(ctx: AppContext, req: Request, trackId: string): Promise<Response> {
   const user = await authenticate(ctx, req);
-  const { track } = trackOf(ctx, user, trackId);
+  const { track, project } = trackOf(ctx, user, trackId);
   const fountain = requireFountain(ctx);
   if (!track.conversationId) throw new HttpError(409, "not_open", "This track has no conversation yet.");
+  const access = watchStream(project.id, user.id, req.signal, () => {
+    try {
+      return !trackOf(ctx, user, trackId).track.closedAt;
+    } catch {
+      return false;
+    }
+  });
   let res: Response;
   try {
-    res = await fountain.stream(track.conversationId, req.signal);
+    res = await fountain.stream(track.conversationId, access.signal);
   } catch (err) {
+    access.dispose();
     throw asHttpError(err, "watch this track");
   }
-  return new Response(res.body, {
+  return new Response(access.forward(res), {
     status: res.status,
     headers: {
       "content-type": res.headers.get("content-type") ?? "text/event-stream",

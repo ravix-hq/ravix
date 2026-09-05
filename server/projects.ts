@@ -143,6 +143,9 @@ export async function create(ctx: AppContext, req: Request): Promise<Response> {
 
   const repoFullName = str(body.repo, 200).trim() || null;
   const installationId = Number(body.installationId) || null;
+  if (installationId && !repoFullName) {
+    throw new HttpError(422, "no_repo", "A GitHub installation must be attached to an authorized repository.");
+  }
   let name = str(body.name, 120).trim();
   let defaultBranch: string | null = null;
   let isPrivate = false;
@@ -173,6 +176,7 @@ export async function create(ctx: AppContext, req: Request): Promise<Response> {
   let environmentId: string | null = null;
   let vaultId: string | null = null;
   let agentId: string | null = null;
+  let choice = pickRuntime(null);
   try {
     const environment = await fountain.createEnvironment({
       name: label,
@@ -207,7 +211,7 @@ export async function create(ctx: AppContext, req: Request): Promise<Response> {
     if (vaultId && installationId) await refreshCloneToken(ctx, { vaultId, installationId, fountain });
 
     const catalog = await fountain.catalog().catch(() => null);
-    const choice = pickRuntime(catalog);
+    choice = pickRuntime(catalog);
     const agent = await fountain.createAgent({
       name: label,
       model: choice.model,
@@ -241,8 +245,8 @@ export async function create(ctx: AppContext, req: Request): Promise<Response> {
     agentId: agentId!,
     environmentId: environmentId!,
     vaultId,
-    runtime: DEFAULT_RUNTIME,
-    model: DEFAULT_MODEL,
+    runtime: choice.runtime,
+    model: choice.model,
     instructions: "",
   });
 
@@ -278,7 +282,7 @@ export async function refreshCloneToken(
 
 /** Everything a project needs before its machine is woken. */
 export async function prepareMachine(ctx: AppContext, project: ProjectRow, fountain: Fountain): Promise<void> {
-  if (project.vaultId && project.installationId) {
+  if (project.repoFullName && project.vaultId && project.installationId) {
     await refreshCloneToken(ctx, { vaultId: project.vaultId, installationId: project.installationId, fountain });
   }
 }
@@ -472,6 +476,7 @@ export async function destroy(ctx: AppContext, req: Request, id: string): Promis
   }
   await unwind(fountain, { agentId: project.agentId, vaultId: project.vaultId, environmentId: project.environmentId });
   ctx.db.archiveProject(project.id);
+  publish(project.id, { event: "tracks", data: { projectId: project.id } });
   return json({ data: { ok: true } });
 }
 

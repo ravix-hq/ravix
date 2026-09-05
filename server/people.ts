@@ -65,6 +65,7 @@ import type { UserRow } from "./db";
 import { HttpError, SESSION_COOKIE, cookieValue, json, readJson, str } from "./http";
 import { randomToken, sha256 } from "./crypto";
 import { callbackUrl } from "./auth";
+import { beginOAuth } from "./oauth";
 import { publish } from "./hub";
 
 /**
@@ -520,9 +521,10 @@ export async function join(ctx: AppContext, req: Request, token: string): Promis
   const user = session ? ctx.db.sessionUser(await sha256(session)) : null;
   if (!user) {
     const gh = requireGitHub(ctx);
-    const state = randomToken(18);
-    ctx.db.putState(state, "join", token);
-    return seeOther(gh.authorizeUrl(callbackUrl(ctx), state));
+    const attempt = await beginOAuth(ctx, req, "join", token);
+    const response = seeOther(gh.authorizeUrl(callbackUrl(ctx), attempt.state));
+    response.headers.set("set-cookie", attempt.cookie);
+    return response;
   }
 
   const landing = await redeem(ctx, user.id, token);

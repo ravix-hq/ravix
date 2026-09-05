@@ -131,10 +131,11 @@ in it is a discard whether or not the person was told.
 ## The transcript is the agent's own stream, formatted
 
 Fountain's conversation stream is forwarded byte for byte — `server/tracks.ts`
-hands the response body straight to the browser, because reading it here to
-re-emit it would mean buffering the one thing whose whole purpose is not being
-buffered. So the deltas arrive as the runtime produced them, and everything
-below is about not throwing that away on the way to the screen.
+forwards the response one chunk at a time with backpressure, without parsing
+or accumulating the transcript. Removing track or project access cancels the
+upstream request and the browser stream, including an idle connection. So the
+deltas arrive as the runtime produced them, and everything below is about not
+throwing that away on the way to the screen.
 
 The shared parser (`@managoat/fountain-app/acp`) says what blocks a turn has
 and in what order. It flattens each tool call to a name and a summary, which is
