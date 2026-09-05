@@ -27,10 +27,11 @@
 import { generateKeyPairSync } from "node:crypto";
 import { existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { WORKSPACE_ROOT, WORK_ROOT } from "../shared/ids";
+import { WORKSPACE_ROOT, WORK_ROOT, parseChannel } from "../shared/ids";
+import { updateMockPreview } from "./previews";
 import { RECEIPT_PATH } from "../shared/spec";
 
-const PORT = 8793;
+const PORT = Number(process.env.MOCK_PORT || 8793);
 const BASE = `http://localhost:${PORT}`;
 
 /**
@@ -318,7 +319,7 @@ async function runTurn(conv: Conv, prompt: string): Promise<void> {
   await sleep(250);
 
   try {
-    await act(prompt, emit, say);
+    await act(prompt, emit, say, conv);
   } finally {
     await sleep(150);
     conv.status = "idle";
@@ -342,7 +343,7 @@ type Say = (body: string) => Promise<void>;
  * closing one really does take it away, which is how a stale panel would show
  * up in development instead of in production.
  */
-async function act(prompt: string, emit: Emit, say: Say): Promise<void> {
+async function act(prompt: string, emit: Emit, say: Say, conv: Conv): Promise<void> {
   const dir = /\/home\/sprite\/work\/[A-Za-z0-9._-]+/.exec(prompt)?.[0] ?? null;
 
   if (prompt.startsWith("[switchyard] Open this track") && dir) {
@@ -407,7 +408,9 @@ async function act(prompt: string, emit: Emit, say: Say): Promise<void> {
   // the track's own directory, because saying so is the one thing the system
   // prompt spends its whole length on and a fake that wandered elsewhere would
   // be modelling the failure rather than the behaviour.
-  const home = [...state.worktrees.keys()].find((d) => hasFilesUnder(d)) ?? WORK_ROOT;
+  const slug = parseChannel(conv.channel_id)?.trackSlug;
+  const home = slug && state.worktrees.has(`${WORK_ROOT}/${slug}`) ? `${WORK_ROOT}/${slug}` : [...state.worktrees.keys()].find((d) => hasFilesUnder(d)) ?? WORK_ROOT;
+  updateMockPreview(home);
   emit({ kind: "output", stream: "acp", data: tool("x1", `cd ${home} && rg -n "TODO|FIXME"`) });
   await sleep(400);
   emit({ kind: "output", stream: "acp", data: toolDone("x1", "src/lib/window.ts:1:// TODO: rounding here is wrong across a DST boundary") });
@@ -1121,6 +1124,7 @@ console.log(
     "Run the server against it, from apps/switchyard:",
     "",
     `  FOUNTAIN_URL=${BASE} FOUNTAIN_API_KEY=ftn_mock \\`,
+    `  SPRITES_TOKEN=sprites_mock SPRITES_URL=http://localhost:${process.env.MOCK_SPRITES_PORT || 8794} PREVIEW_DOMAIN=preview.localhost \\`,
     `  GITHUB_API_URL=${BASE}/gh GITHUB_WEB_URL=${BASE}/ghweb \\`,
     "  GITHUB_APP_ID=1 GITHUB_APP_SLUG=switchyard-mock \\",
     "  GITHUB_CLIENT_ID=Iv1.mock GITHUB_CLIENT_SECRET=mocksecret \\",

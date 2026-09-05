@@ -16,6 +16,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import type { Project, ProjectSettings as Settings } from "../../shared/api";
 import { api } from "../lib/api";
 import { Machine, Wrench, X } from "../lib/icons";
+import { ProjectPreviewSettings } from "./TrackPreview";
 import { Dialog } from "./Dialog";
 
 export interface ProjectSettingsProps {
@@ -210,6 +211,8 @@ export function ProjectSettings({ project, onClose, onChanged, onDeleted, onNoti
                 starts, which means it reaches the next track you open and not the ones already running.
               </span>
             </div>
+
+            <ProjectPreviewSettings key={project.id} projectId={project.id} />
 
             <h4>Secrets</h4>
             <p className="fine">

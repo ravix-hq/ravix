@@ -13,6 +13,8 @@ import { buildContext } from "./context";
 import { Cipher } from "./crypto";
 import { Db } from "./db";
 import { PromptQueue } from "./prompt-queue";
+import { previews } from "./previews";
+import { createPreviewGateway } from "./preview-gateway";
 
 const config = loadConfig();
 const db = new Db(config.dbPath);
@@ -21,6 +23,9 @@ const ctx = buildContext({ db, cipher, config });
 const promptQueue = new PromptQueue(ctx);
 promptQueue.start();
 const handle = buildRouter(ctx);
+const previewManager = previews(ctx);
+previewManager.start();
+const gateway = config.previews ? createPreviewGateway(ctx).listen(config.previews.port, "0.0.0.0") : null;
 
 const server = Bun.serve({
   port: config.port,
@@ -28,6 +33,13 @@ const server = Bun.serve({
   // timeout would cut every one of them at two minutes.
   idleTimeout: 0,
   fetch: handle,
+});
+
+process.on("SIGTERM", () => {
+  previewManager.stop(); promptQueue.stop();
+  gateway?.close(); gateway?.closeAllConnections();
+  server.stop(true);
+  process.exit(0);
 });
 
 console.log(

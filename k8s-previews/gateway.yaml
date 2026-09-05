@@ -1,0 +1,42 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: switchyard-previews
+  namespace: switchyard
+spec:
+  selector:
+    app: switchyard
+  ports:
+    - name: previews
+      port: 80
+      targetPort: 8082
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: switchyard-previews-tls
+  namespace: switchyard
+spec:
+  secretName: switchyard-previews-tls
+  issuerRef:
+    name: letsencrypt-production
+    kind: ClusterIssuer
+  dnsNames:
+    - "*.preview.switchyard.inevitable.fyi"
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: switchyard-previews
+  namespace: switchyard
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: "HostRegexp(`^t-[a-f0-9]{32}\\.preview\\.switchyard\\.inevitable\\.fyi$`)"
+      kind: Rule
+      services:
+        - name: switchyard-previews
+          port: 80
+  tls:
+    secretName: switchyard-previews-tls

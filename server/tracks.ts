@@ -24,6 +24,7 @@ import { enqueue } from "./prompt-queue";
 import { nameTrack } from "../shared/names";
 import { closeTrackPrompt, openTrackPrompt, starters, type TrackOrigin } from "../shared/spec";
 import type { AppContext } from "./context";
+import { previews } from "./previews";
 import { authenticate, projectAccess, requireFountain, requireOwnerOrCutter, trackOf } from "./context";
 import type { ProjectRow, TrackRow } from "./db";
 import { originOf } from "./db";
@@ -477,6 +478,7 @@ export async function close(ctx: AppContext, req: Request, trackId: string): Pro
   const fountain = requireFountain(ctx);
   const force = new URL(req.url).searchParams.get("force") === "1";
   ctx.db.cancelTrackPrompts(track.id);
+  await previews(ctx).stopService(track.id, true);
 
   if (track.conversationId) {
     // A project with no repository still has a directory per track — the

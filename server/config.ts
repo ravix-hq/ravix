@@ -63,6 +63,7 @@ export interface Config {
   github: GitHubAppConfig | null;
   sprites: { token: string; baseUrl: string } | null;
   sessionMaxAgeMs: number;
+  previews?: { domain: string; port: number; protocol: "https:" | "http:"; publicPort: string } | null;
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -100,7 +101,19 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     github: githubConfig(env),
     sprites: spritesConfig(env),
     sessionMaxAgeMs: 30 * DAY_MS,
+    previews: previewConfig(env, publicUrl),
   };
+}
+
+function previewConfig(env: Record<string, string | undefined>, publicUrl: string): Config["previews"] {
+  const domain = env.PREVIEW_DOMAIN?.trim().toLowerCase();
+  if (!domain) return null;
+  const appHost = new URL(publicUrl).hostname;
+  if (!/^[a-z0-9]+(?:[.-][a-z0-9]+)*\.[a-z]+$/.test(domain) || domain === appHost || (appHost !== "localhost" && domain.endsWith(`.${appHost}`)) || appHost.endsWith(`.${domain}`)) {
+    throw new Error("PREVIEW_DOMAIN must be a dedicated domain outside the Switchyard application host.");
+  }
+  const local = domain.endsWith(".localhost");
+  return { domain, port: Number(env.PREVIEW_PORT || 8082), protocol: local ? "http:" : "https:", publicPort: local ? `:${env.PREVIEW_PORT || 8082}` : "" };
 }
 
 /**

@@ -36,6 +36,7 @@ import { FountainHttpError, asHttpError } from "./fountain";
 import { asHttpError as asGitHubError } from "./github";
 import { HttpError, json, readJson, str } from "./http";
 import { publish } from "./hub";
+import { previews } from "./previews";
 
 /**
  * The credential name is load-bearing.
@@ -411,6 +412,7 @@ export async function rebuild(ctx: AppContext, req: Request, id: string): Promis
   const project = projectOf(ctx, user, id);
   const fountain = requireFountain(ctx);
   for (const track of ctx.db.tracksOf(project.id)) ctx.db.cancelTrackPrompts(track.id);
+  await Promise.all(ctx.db.tracksOf(project.id).map(track => previews(ctx).stopService(track.id, true)));
 
   const removed: string[] = [];
   const failed: { what: string; why: string }[] = [];
@@ -471,6 +473,7 @@ export async function destroy(ctx: AppContext, req: Request, id: string): Promis
   const project = projectOf(ctx, user, id);
   const fountain = requireFountain(ctx);
   for (const track of ctx.db.tracksOf(project.id)) ctx.db.cancelTrackPrompts(track.id);
+  await Promise.all(ctx.db.tracksOf(project.id).map(track => previews(ctx).stopService(track.id, true)));
 
   const conversations = await fountain.listConversations(project.agentId).catch(() => []);
   for (const c of conversations) {

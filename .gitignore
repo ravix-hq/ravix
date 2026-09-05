@@ -4,3 +4,5 @@ data/
 # server can sign an App JWT the mock will accept. Never a real credential,
 # and regenerated on any machine that does not have one.
 mock/dev-key.pem
+
+dist-server/

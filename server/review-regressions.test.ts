@@ -278,9 +278,11 @@ test("client disconnect cancels an idle upstream response", async () => {
   });
   const client = new AbortController();
   const response = await route(new Request(request("/api/tracks/t/stream", "owner"), { signal: client.signal }));
-  const ended = response.body!.getReader().read().catch(() => "disconnected");
+  const ended = response.body!.getReader().read();
   client.abort();
-  expect(await ended).toBe("disconnected");
+  // A client that already disconnected gets EOF; authorization revocations
+  // still error the stream and discard queued output (covered below).
+  expect(await ended).toEqual({ done: true, value: undefined });
   expect(signal.aborted).toBe(true);
   expect(source.cancel).toHaveBeenCalledTimes(1);
 });

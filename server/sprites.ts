@@ -35,6 +35,11 @@ const FRAME_STDOUT = 1;
 const FRAME_STDERR = 2;
 const FRAME_EXIT = 3;
 
+export interface SpriteService {
+  name: string;
+  state?: { status: string; restart_count?: number; exit_code?: number };
+}
+
 export interface SpritesConfig {
   token: string;
   baseUrl: string;
@@ -57,6 +62,50 @@ export class SpritesError extends Error {
 
 export class Sprites {
   constructor(private readonly cfg: SpritesConfig) {}
+
+  async service(sprite: string, name: string): Promise<SpriteService | null> {
+    const r = await this.serviceRequest(sprite, name, "GET", undefined, true);
+    return r.status === 404 ? null : r.json();
+  }
+
+  async defineService(sprite: string, name: string, directory: string, command: string, port: number): Promise<string> {
+    // No http_port: the machine-wide public route must never expose a preview.
+    const r = await this.serviceRequest(sprite, `${name}?duration=1s`, "PUT", {
+      cmd: "sh", args: ["-lc", command], dir: directory, env: { PORT: String(port), HOST: "127.0.0.1" }, needs: [],
+    });
+    return (await r.text()).slice(-32_000);
+  }
+
+  async serviceAction(sprite: string, name: string, action: "start" | "stop" | "delete"): Promise<string> {
+    const path = action === "delete" ? name : `${name}/${action}?duration=1s`;
+    const r = await this.serviceRequest(sprite, path, action === "delete" ? "DELETE" : "POST", undefined, action !== "start");
+    return (await r.text()).slice(-32_000);
+  }
+
+  async serviceLogs(sprite: string, name: string): Promise<string> {
+    const r = await this.exec(sprite, ["tail", "-c", "32000", `/.sprite/logs/services/${name}.log`], 15);
+    return (r.stdout + r.stderr).slice(-32_000);
+  }
+
+  async activity(sprite: string, name: string, release = false): Promise<void> {
+    const argv = ["curl", "--fail-with-body", "--silent", "--show-error", "--unix-socket", "/.sprite/api.sock",
+      "-X", release ? "DELETE" : "PUT", `http://sprite/v1/tasks/${name}`];
+    if (!release) argv.push("-H", "Content-Type: application/json", "-d", '{"expire":"2m"}');
+    const result = await this.exec(sprite, argv, 15);
+    if (result.code && !release) throw new SpritesError(501, "This Sprite does not support expiring preview activity tasks.");
+  }
+
+  private async serviceRequest(sprite: string, path: string, method: string, body?: unknown, missingOk = false): Promise<Response> {
+    const r = await fetch(`${this.cfg.baseUrl}/v1/sprites/${encodeURIComponent(sprite)}/services/${path}`, {
+      method, headers: { authorization: `Bearer ${this.cfg.token}`, "content-type": "application/json" },
+      body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(25_000),
+    });
+    if (!r.ok && !(missingOk && r.status === 404)) {
+      await r.body?.cancel();
+      throw new SpritesError(r.status, `Sprites service operation failed (${r.status}). Check service support and the deployment token.`);
+    }
+    return r;
+  }
 
   /**
    * One command, as an argv, on one sprite.

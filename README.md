@@ -21,6 +21,9 @@ here is a GitHub App, and the reason for it is below.
 
 ## Run it
 
+Track previews: [feature brief](docs/track-previews-brief.md) and
+[verification and deployment handoff](docs/track-previews-verification.md).
+
 Three processes. The mock is a real enough Fountain **and** a real enough GitHub
 to run the whole app offline, sign-in included:
 
@@ -43,11 +46,103 @@ Against the real thing, the server takes:
 | `SWITCHYARD_SECRET` | encrypts stored GitHub tokens; generated into `DATA_DIR/secret` if unset |
 | `PUBLIC_URL` | this server as GitHub reaches it; must match the App's callback |
 | `GITHUB_APP_ID` `GITHUB_APP_SLUG` `GITHUB_CLIENT_ID` `GITHUB_CLIENT_SECRET` `GITHUB_PRIVATE_KEY` | all of them, or none of them |
-| `SPRITES_TOKEN` | optional — with it the terminal, the run panel and the vitals readout are live |
+| `SPRITES_TOKEN` | optional — enables terminal/run/vitals and the preview provider |
+| `PREVIEW_DOMAIN` | optional — dedicated preview hostname suffix; absent means previews are unavailable |
+| `PREVIEW_PORT` | private gateway listener, default `8082`; HTTPS ingress forwards here |
 | `DATA_DIR` `STATIC_DIR` `PORT` | as everywhere else in the suite |
 
 Nothing needs registering on Fountain: the browser never talks to it, so there
 is no OAuth client and no CORS origin.
+
+## Track previews
+
+In project settings, the owner can save an app directory, startup command and
+readiness path. **Configure** on a track saves an override or restores the
+project default. Directories are relative to that track's worktree. Changing
+configuration stops the affected preview; **Open preview** starts it again.
+Track members can configure, open, restart, stop and read logs using their
+existing execution permissions. Closed tracks cannot operate previews.
+
+For a Vite app, select its directory and use:
+
+```sh
+npm run dev -- --host 127.0.0.1 --port "$PORT" --strictPort
+```
+
+Set Vite's `server.allowedHosts` to your preview suffix, for example
+`[".preview.switchyard.inevitable.fyi"]`. Keep HMR on the browser's current
+host and port; avoid hardcoded localhost HMR URLs. Use `/` as the readiness
+path, or an app health endpoint that returns 2xx/3xx. Dependencies must already
+exist in the workspace. The command must honor `$PORT` and refuse a collision;
+the gateway checks only that allocated port. Port checks require `ss` in the
+workspace. Supporting processes, additional ports and writable app data also
+need separate locations or allocations for each track.
+
+**Open preview** opens a private tab and waits for HTTP readiness. **Restart**
+recreates the managed service; **Stop** ends it; **Logs** reads up to 32 KB of
+service output. Failed startup stops automatic retries until another explicit
+open/restart. The page includes a link back to the track for corrections. It
+shows the live working copy, including uncommitted agent changes.
+
+Each track has a named Sprites service, a persistent port reservation and its
+own browser origin. Services do not use the machine's public HTTP service
+route: the gateway carries HTTP and WebSocket/HMR over authenticated private
+TCP tunnels. A one-minute single-use ticket establishes a host-only, HttpOnly
+preview cookie, bound to the signed-in Switchyard session. Membership is checked
+on every request and upgrade; open streams are checked on membership events
+and every second. Sign-out or removal invalidates that user's preview access.
+Provider credentials and gateway cookies never reach the app. These browser
+origins share the project's machine and its existing trust model.
+
+Visible HTML pages send an activity heartbeat every 30 seconds. The server
+holds a 90-second viewing lease and refreshes a two-minute Sprites Task while
+that lease is active. It does not health-poll after the lease expires. After
+five minutes without activity it stops the service; opening it starts it again.
+The app's CSP must allow the injected same-origin
+`/__switchyard/activity.js` script and heartbeat fetch. Apps that block it, or
+serve no HTML, stay active only while requests arrive. The `/__switchyard/`
+path is reserved. Closing a track, rebuilding or archiving a project removes
+its services; failed cleanup is saved for retry. Restarting Switchyard preserves
+services and reconciles recent active intent from SQLite.
+
+### Enable gateway routing
+
+Production requires HTTPS on a wildcard preview domain separate from
+`PUBLIC_URL`. Prefer a different registrable domain from the application. The
+current optional overlay uses `preview.switchyard.inevitable.fyi`, while the
+app is on `switchyard.demo.managoat.com`. It has not been deployed.
+
+1. Provision `*.preview.switchyard.inevitable.fyi` DNS to the cluster ingress.
+2. Confirm the existing `letsencrypt-production` DNS01 issuer can issue for
+   that zone, or change the Certificate's issuer and domain.
+3. Build/publish the new Switchyard image and select `apps/switchyard/k8s-previews`
+   in the deployment's Kustomize/Flux configuration. It includes the base
+   deployment, sets `PREVIEW_DOMAIN`/`PREVIEW_PORT`, and adds the internal
+   gateway Service, wildcard certificate and HTTPS Traefik route.
+4. Preserve the original Host header and allow WebSocket upgrades and long
+   streaming responses through ingress. Keep the gateway listener private.
+   Verify both track URLs and signed-out denial before enabling team use.
+
+Render the optional manifests with
+`kubectl kustomize apps/switchyard/k8s-previews` from the repository root.
+The base `k8s/` deployment leaves previews explicitly unavailable. This version
+uses one Switchyard replica and its existing SQLite volume; orchestration
+locks are process-local. Persist and back up that volume. The production
+build bundles the server's transport dependencies into `dist-server/index.js`;
+the container runs that bundle.
+
+For local development, `bun run mock` also starts a Sprites protocol fixture
+on `:8794` that runs real Node/Vite apps in temporary directories. Its printed
+server command enables `PREVIEW_DOMAIN=preview.localhost`,
+`SPRITES_URL=http://localhost:8794`, and `SPRITES_TOKEN=sprites_mock`.
+`*.preview.localhost` uses HTTP and the explicit gateway port for local testing
+only. Node must be installed. `MOCK_PORT` and `MOCK_SPRITES_PORT` allow an
+isolated fixture alongside another development session.
+
+The [verification record](docs/track-previews-verification.md) distinguishes
+the completed local browser exercise from pending live Sprites, parking and
+physical-phone checks. In particular, a Sprites Task does **not** prevent
+Fountain from independently marking its conversation parked.
 
 ## Whose account is this
 

@@ -32,6 +32,8 @@ import type {
   VitalsReport,
 } from "../../shared/api";
 
+import type { PreviewConfig, PreviewInfo } from "../../shared/previews";
+
 export class ApiError extends Error {
   constructor(
     readonly status: number,
@@ -68,6 +70,11 @@ const post = <T>(path: string, body?: unknown) =>
   call<T>(path, { method: "POST", body: body === undefined ? undefined : JSON.stringify(body) });
 
 export const api = {
+  preview: (trackId: string) => call<PreviewInfo>(`/api/tracks/${trackId}/preview`),
+  previewAction: (trackId: string, action: "open" | "restart" | "stop" | "logs") => post<PreviewInfo & { openUrl?: string }>(`/api/tracks/${trackId}/preview/${action}`),
+  savePreview: (trackId: string, config: PreviewConfig | null) => call<PreviewInfo>(`/api/tracks/${trackId}/preview/config`, { method: "PUT", body: JSON.stringify({ config }) }),
+  previewDefaults: (projectId: string) => call<PreviewConfig | null>(`/api/projects/${projectId}/preview`),
+  savePreviewDefaults: (projectId: string, config: PreviewConfig | null) => call<PreviewConfig | null>(`/api/projects/${projectId}/preview`, { method: "PUT", body: JSON.stringify({ config }) }),
   // ── the shell ──────────────────────────────────────────────────────
   session: () => call<SessionInfo>("/api/session"),
   signOut: () => post<{ ok: true }>("/api/auth/signout"),

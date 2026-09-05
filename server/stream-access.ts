@@ -44,7 +44,11 @@ export function watchStream(
           revoked = () => {
             if (finished) return;
             finish();
-            output.error(controller.signal.reason);
+            // The HTTP consumer has already left on a tab close. Erroring
+            // that abandoned response can become an unhandled stream rejection
+            // in Bun and take the durable queue down with the browser.
+            if (clientSignal.aborted) output.close();
+            else output.error(controller.signal.reason);
             void cancel(controller.signal.reason);
           };
           controller.signal.addEventListener("abort", revoked, { once: true });

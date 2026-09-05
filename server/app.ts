@@ -82,6 +82,7 @@ import * as repos from "./repos";
 import * as terminal from "./terminal";
 import * as tracks from "./tracks";
 import * as vitals from "./vitals";
+import { previewRoute, previewDefaults } from "./previews";
 import { listQueue, cancelPrompt, retryPrompt } from "./prompt-queue";
 import { projectStream } from "./hub";
 import { watchStream } from "./stream-access";
@@ -175,6 +176,13 @@ export function buildRouter(ctx: AppContext): (req: Request) => Promise<Response
   on("GET", "/api/tracks/:id/exec", (req, p) => terminal.execStatus(ctx, req, p.id!));
   on("POST", "/api/tracks/:id/exec", (req, p) => terminal.exec(ctx, req, p.id!));
   on("GET", "/api/tracks/:id/vitals", (req, p) => vitals.vitals(ctx, req, p.id!));
+  on("GET", "/api/tracks/:id/preview", (req, p) => previewRoute(ctx, req, p.id!));
+  on("PUT", "/api/tracks/:id/preview/config", (req, p) => previewRoute(ctx, req, p.id!, "config"));
+  for (const action of ["open", "restart", "stop", "logs"]) {
+    on("POST", `/api/tracks/:id/preview/${action}`, (req, p) => previewRoute(ctx, req, p.id!, action));
+  }
+  on("GET", "/api/projects/:id/preview", (req, p) => previewDefaults(ctx, req, p.id!));
+  on("PUT", "/api/projects/:id/preview", (req, p) => previewDefaults(ctx, req, p.id!));
 
   return async (req: Request): Promise<Response> => {
     const url = new URL(req.url);
