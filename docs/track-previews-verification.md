@@ -2,6 +2,20 @@
 
 ## Live follow-up after merge
 
+The deployment follow-up (#41) also passed CI, rolled out, and obtained its
+wildcard certificate. Chrome's normal **Open preview** flow loaded both Demos
+tracks over their real HTTPS hosts. A file edit hot-reloaded elkhart to version
+2 while hamlet stayed at version 1. An unsigned HTTPS request returned 401;
+the back link returned to the correct signed-in track. Stopping hamlet left
+elkhart Ready. The two temporary overrides were then cleared.
+
+Cleanup exposed a deployed-provider detail absent from the original fixture:
+stopping Vite can leave service state `failed` with exit code 143, and a second
+stop returns HTTP 409 with `service is not running`. Treat that exact response
+as a successful stop; other stop conflicts and all start conflicts still fail.
+Regression tests cover both cases. This also fixes clearing configuration and
+restart/cleanup after an explicitly stopped process.
+
 On September 5, PR #40 merged as `7245ff867639da1285f3769bcdf4d2d83851544d`.
 CI and the image build passed and the matching image rolled out successfully.
 Following the user's request to verify in Chrome, the pod-local harness ran

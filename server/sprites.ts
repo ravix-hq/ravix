@@ -78,7 +78,7 @@ export class Sprites {
 
   async serviceAction(sprite: string, name: string, action: "start" | "stop" | "delete"): Promise<string> {
     const path = action === "delete" ? name : `${name}/${action}?duration=1s`;
-    const r = await this.serviceRequest(sprite, path, action === "delete" ? "DELETE" : "POST", undefined, action !== "start");
+    const r = await this.serviceRequest(sprite, path, action === "delete" ? "DELETE" : "POST", undefined, action !== "start", action === "stop");
     return (await r.text()).slice(-32_000);
   }
 
@@ -95,13 +95,18 @@ export class Sprites {
     if (result.code && !release) throw new SpritesError(501, "This Sprite does not support expiring preview activity tasks.");
   }
 
-  private async serviceRequest(sprite: string, path: string, method: string, body?: unknown, missingOk = false): Promise<Response> {
+  private async serviceRequest(sprite: string, path: string, method: string, body?: unknown, missingOk = false, stoppedOk = false): Promise<Response> {
     const r = await fetch(`${this.cfg.baseUrl}/v1/sprites/${encodeURIComponent(sprite)}/services/${path}`, {
       method, headers: { authorization: `Bearer ${this.cfg.token}`, "content-type": "application/json" },
       body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(25_000),
     });
     if (!r.ok && !(missingOk && r.status === 404)) {
-      await r.body?.cancel();
+      // A stopped process may be reported as failed (SIGTERM/exit 143).
+      // Sprites answers a repeated stop with this specific conflict instead
+      // of 2xx. Its desired outcome is already satisfied; other conflicts,
+      // including start conflicts, must still be surfaced and retried.
+      if (stoppedOk && r.status === 409 && (await r.text()).trim() === "service is not running") return new Response(null, { status: 204 });
+      if (!r.bodyUsed) await r.body?.cancel();
       throw new SpritesError(r.status, `Sprites service operation failed (${r.status}). Check service support and the deployment token.`);
     }
     return r;

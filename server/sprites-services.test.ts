@@ -24,3 +24,21 @@ test("managed services use private ports, bounded NDJSON operations, and expirin
     await sprites.serviceLogs("sprite", "sy-test"); expect(calls[5]!.argv).toEqual(["tail", "-c", "32000", "/.sprite/logs/services/sy-test.log"]);
   } finally { server.stop(true); }
 });
+
+test("stopping an already exited service is idempotent with the live Sprites conflict response", async () => {
+  const server = Bun.serve({ port: 0, fetch: () => new Response("service is not running\n", { status: 409 }) });
+  try {
+    const sprites = new Sprites({ token: "provider-token", baseUrl: `http://localhost:${server.port}` });
+    expect(await sprites.serviceAction("sprite", "sy-test", "stop")).toBe("");
+    expect(await sprites.serviceAction("sprite", "sy-test", "stop")).toBe("");
+    await expect(sprites.serviceAction("sprite", "sy-test", "start")).rejects.toMatchObject({ status: 409 });
+  } finally { server.stop(true); }
+});
+
+test("unrelated stop conflicts remain failures", async () => {
+  const server = Bun.serve({ port: 0, fetch: () => new Response("service operation in progress", { status: 409 }) });
+  try {
+    const sprites = new Sprites({ token: "provider-token", baseUrl: `http://localhost:${server.port}` });
+    await expect(sprites.serviceAction("sprite", "sy-test", "stop")).rejects.toMatchObject({ status: 409 });
+  } finally { server.stop(true); }
+});
