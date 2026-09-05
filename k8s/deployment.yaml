@@ -25,6 +25,7 @@ spec:
           image: ghcr.io/managoat/switchyard:sha-7245ff867639da1285f3769bcdf4d2d83851544d
           ports:
             - containerPort: 8080
+            - containerPort: 8082
           env:
             - name: FOUNTAIN_URL
               value: https://managoat.com
@@ -37,6 +38,10 @@ spec:
             # is the one failure that looks like "sign-in is broken".
             - name: PUBLIC_URL
               value: https://switchyard.demo.managoat.com
+            - name: PREVIEW_DOMAIN
+              value: preview.switchyard.inevitable.fyi
+            - name: PREVIEW_PORT
+              value: "8082"
           envFrom:
             # The whole of what this app is trusted with, and every one of them
             # is genuinely required for a different part of the surface:

@@ -1,25 +1,5 @@
-# Optional overlay. Provision wildcard DNS before selecting this in Flux.
+# Compatibility entry point; previews are now part of the deployed base.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   - ../k8s
-  - gateway.yaml
-patches:
-  - target:
-      kind: Deployment
-      name: switchyard
-    patch: |-
-      - op: add
-        path: /spec/template/spec/containers/0/env/-
-        value:
-          name: PREVIEW_DOMAIN
-          value: preview.switchyard.inevitable.fyi
-      - op: add
-        path: /spec/template/spec/containers/0/env/-
-        value:
-          name: PREVIEW_PORT
-          value: "8082"
-      - op: add
-        path: /spec/template/spec/containers/0/ports/-
-        value:
-          containerPort: 8082

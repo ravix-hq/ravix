@@ -1,5 +1,37 @@
 # Track previews: verification and deployment handoff
 
+## Live follow-up after merge
+
+On September 5, PR #40 merged as `7245ff867639da1285f3769bcdf4d2d83851544d`.
+CI and the image build passed and the matching image rolled out successfully.
+Following the user's request to verify in Chrome, the pod-local harness ran
+against the actual Demos Sprite. Both named services reached HTTP readiness;
+expiring Tasks and private TCP tunneling succeeded.
+
+Chrome denied both preview hosts before a ticket was exchanged, then loaded
+hamlet and elkhart simultaneously. Editing elkhart changed its already-open
+page from version 1 to version 2 through Vite hot reload, while hamlet stayed
+at version 1. This used real Sprites services/tunnels through localhost port
+forwarding, not the mock provider. The temporary services and fixture files
+were removed afterward. A pod replacement during setup also required cleanup
+of the first pair of fixture services, which completed successfully.
+
+The rollout still used the base manifests without the optional gateway.
+Wildcard DNS was verified to resolve to the existing ingress, so the
+follow-up deployment includes that reviewed gateway, TLS certificate and
+preview environment settings in `k8s/`. Production HTTPS verification follows
+certificate readiness. The earlier record below describes the original PR's
+verification state; its live-approval blocker was superseded by this request.
+
+To test through the actual production controls, the harness also accepts
+`--fixtures-only`: it creates the two fixture directories and records their
+ownership in the disposable database, then exits without starting services.
+Configure each track to use `.switchyard-preview-proof` and the printed Vite
+command. Stop and clear those track overrides before running `--cleanup`.
+Physical-phone and a complete Fountain parking/correction cycle remain untested.
+
+## Original PR handoff
+
 September 5, 2026. Implementation is ready for review. Production deployment
 and the live acceptance exercise are still pending. No live service was created
 and no deployment or DNS change was applied during implementation.

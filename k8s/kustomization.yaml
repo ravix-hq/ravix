@@ -9,3 +9,4 @@ resources:
   - service.yaml
   - ingressroute.yaml
   - certificates.yaml
+  - preview-gateway.yaml

@@ -109,23 +109,23 @@ services and reconciles recent active intent from SQLite.
 
 Production requires HTTPS on a wildcard preview domain separate from
 `PUBLIC_URL`. Prefer a different registrable domain from the application. The
-current optional overlay uses `preview.switchyard.inevitable.fyi`, while the
-app is on `switchyard.demo.managoat.com`. It has not been deployed.
+deployment uses `preview.switchyard.inevitable.fyi`, while the app is on
+`switchyard.demo.managoat.com`.
 
 1. Provision `*.preview.switchyard.inevitable.fyi` DNS to the cluster ingress.
 2. Confirm the existing `letsencrypt-production` DNS01 issuer can issue for
    that zone, or change the Certificate's issuer and domain.
-3. Build/publish the new Switchyard image and select `apps/switchyard/k8s-previews`
-   in the deployment's Kustomize/Flux configuration. It includes the base
-   deployment, sets `PREVIEW_DOMAIN`/`PREVIEW_PORT`, and adds the internal
+3. Build/publish the new Switchyard image and use `apps/switchyard/k8s`
+   in the deployment's Kustomize/Flux configuration. It sets
+   `PREVIEW_DOMAIN`/`PREVIEW_PORT` and includes the internal
    gateway Service, wildcard certificate and HTTPS Traefik route.
 4. Preserve the original Host header and allow WebSocket upgrades and long
    streaming responses through ingress. Keep the gateway listener private.
    Verify both track URLs and signed-out denial before enabling team use.
 
-Render the optional manifests with
-`kubectl kustomize apps/switchyard/k8s-previews` from the repository root.
-The base `k8s/` deployment leaves previews explicitly unavailable. This version
+Render the manifests with
+`kubectl kustomize apps/switchyard/k8s` from the repository root.
+`k8s-previews/` remains a compatibility entry point for the same resources. This version
 uses one Switchyard replica and its existing SQLite volume; orchestration
 locks are process-local. Persist and back up that volume. The production
 build bundles the server's transport dependencies into `dist-server/index.js`;
@@ -140,7 +140,7 @@ only. Node must be installed. `MOCK_PORT` and `MOCK_SPRITES_PORT` allow an
 isolated fixture alongside another development session.
 
 The [verification record](docs/track-previews-verification.md) distinguishes
-the completed local browser exercise from pending live Sprites, parking and
+local and live Sprites browser evidence from pending parking and
 physical-phone checks. In particular, a Sprites Task does **not** prevent
 Fountain from independently marking its conversation parked.
 

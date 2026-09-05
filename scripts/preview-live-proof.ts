@@ -58,9 +58,11 @@ for (const t of tracks) {
 for (const t of tracks) {
   await write(t, 1);
   await manager.configure(t.id!, { directory, command: `exec node ${shq(vite)} --host 127.0.0.1 --port "$PORT" --strictPort`, readinessPath: "/" });
+  if (process.argv.includes("--fixtures-only")) continue;
   await manager.startService(t.id!);
   console.log(t.slug, JSON.stringify(manager.info(t.id!)));
 }
+if (process.argv.includes("--fixtures-only")) { console.log("Fixtures prepared; configure the production track previews to use them. Run --cleanup afterward."); process.exit(0); }
 createPreviewGateway(ctx).listen(18082, "127.0.0.1");
 manager.start();
 Bun.serve({ port: 18083, hostname: "127.0.0.1", async fetch(req) {
