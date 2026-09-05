@@ -22,6 +22,7 @@ import type {
   Project,
   ProjectSettings,
   PullRef,
+  QueuedPrompt,
   RepoRef,
   SessionInfo,
   Track,
@@ -106,8 +107,11 @@ export const api = {
     const q = qs.toString();
     return call<{ ok: true }>(`/api/tracks/${id}${q ? `?${q}` : ""}`, { method: "DELETE" });
   },
-  prompt: (id: string, text: string, images: { data: string; media_type: string }[] = []) =>
-    post<{ ok: true }>(`/api/tracks/${id}/prompt`, { prompt: text, ...(images.length ? { images } : {}) }),
+  prompt: (id: string, text: string, images: { data: string; media_type: string }[] = [], requestId: string = crypto.randomUUID()) =>
+    post<{ ok: true }>(`/api/tracks/${id}/prompt`, { requestId, prompt: text, ...(images.length ? { images } : {}) }),
+  promptQueue: (id: string) => call<QueuedPrompt[]>(`/api/tracks/${id}/queue`),
+  cancelPrompt: (id: string, promptId: string) => call<{ ok: true }>(`/api/tracks/${id}/queue/${promptId}`, { method: "DELETE" }),
+  retryPrompt: (id: string, promptId: string) => post<{ ok: true }>(`/api/tracks/${id}/queue/${promptId}/retry`),
   /** This person has seen the track up to now. Clears its unread dot. */
   markRead: (id: string) => post<{ ok: true }>(`/api/tracks/${id}/read`),
   /**

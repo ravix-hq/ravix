@@ -15,6 +15,18 @@
 
 // ── who is here ────────────────────────────────────────────────────────
 
+/** An accepted instruction waiting for delivery, shared with the track. */
+export interface QueuedPrompt {
+  id: string;
+  prompt: string;
+  imageCount: number;
+  authorLogin: string;
+  createdAt: string;
+  status: "queued" | "sending" | "failed" | "unconfirmed";
+  error: string | null;
+  canCancel: boolean;
+}
+
 /** Somebody who can be invited, or who is already in. */
 export interface Person {
   login: string;

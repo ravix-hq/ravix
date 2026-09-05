@@ -33,6 +33,9 @@
  *   PATCH  /api/tracks/:id                  rename the label, not the worktree
  *   DELETE /api/tracks/:id ?branch=1        close; optionally delete the branch
  *   POST   /api/tracks/:id/prompt
+ *   GET    /api/tracks/:id/queue            saved prompts awaiting delivery
+ *   DELETE /api/tracks/:id/queue/:promptId  sender or owner: cancel
+ *   POST   /api/tracks/:id/queue/:promptId/retry
  *   POST   /api/tracks/:id/interrupt
  *   POST   /api/tracks/:id/read             this person has seen it up to now
  *   POST   /api/tracks/:id/presence         heartbeat; {typing} or {leaving}
@@ -79,6 +82,7 @@ import * as repos from "./repos";
 import * as terminal from "./terminal";
 import * as tracks from "./tracks";
 import * as vitals from "./vitals";
+import { listQueue, cancelPrompt, retryPrompt } from "./prompt-queue";
 import { projectStream } from "./hub";
 import { watchStream } from "./stream-access";
 import { errorResponse, HttpError, json } from "./http";
@@ -147,6 +151,9 @@ export function buildRouter(ctx: AppContext): (req: Request) => Promise<Response
   on("PATCH", "/api/tracks/:id", (req, p) => tracks.rename(ctx, req, p.id!));
   on("DELETE", "/api/tracks/:id", (req, p) => tracks.close(ctx, req, p.id!));
   on("POST", "/api/tracks/:id/prompt", (req, p) => tracks.prompt(ctx, req, p.id!));
+  on("GET", "/api/tracks/:id/queue", (req, p) => listQueue(ctx, req, p.id!));
+  on("DELETE", "/api/tracks/:id/queue/:promptId", (req, p) => cancelPrompt(ctx, req, p.id!, p.promptId!));
+  on("POST", "/api/tracks/:id/queue/:promptId/retry", (req, p) => retryPrompt(ctx, req, p.id!, p.promptId!));
   on("POST", "/api/tracks/:id/interrupt", (req, p) => tracks.interrupt(ctx, req, p.id!));
   on("POST", "/api/tracks/:id/read", (req, p) => tracks.markRead(ctx, req, p.id!));
   on("POST", "/api/tracks/:id/presence", (req, p) => tracks.presence(ctx, req, p.id!));

@@ -14,7 +14,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { LogEvent } from "../../shared/fountain-types";
-import type { Capabilities, Presence, Project, Track, TrackHeader, TurnRecord } from "../../shared/api";
+import type { Capabilities, Presence, Project, Track, TrackHeader, TurnRecord, QueuedPrompt } from "../../shared/api";
 import { api, ApiError, subscribe } from "../lib/api";
 import { Branch, Clock, External, Folder, Info, Issue, Pull, Wrench } from "../lib/icons";
 import type { OutgoingImage } from "../lib/images";
@@ -42,6 +42,9 @@ export function TrackView(props: TrackViewProps) {
   const { project, track, header, starters } = props;
   const [events, setEvents] = useState<LogEvent[]>([]);
   const [turns, setTurns] = useState<TurnRecord[]>([]);
+  const [queue, setQueue] = useState<QueuedPrompt[]>([]);
+  const [queueError, setQueueError] = useState(false);
+  const submission = useRef<{ payload: string; id: string } | null>(null);
   const [running, setRunning] = useState(track.status === "running" || track.status === "opening");
   const seen = useRef(new Set<number>());
   /**
@@ -63,6 +66,27 @@ export function TrackView(props: TrackViewProps) {
   // sent from anywhere with a longer life than the view would keep announcing
   // a track this person has already walked away from.
   const pulse = useHeartbeat(track.id);
+
+  useEffect(() => {
+    let alive = true;
+    let fetching = false;
+    async function refresh() {
+      if (fetching) return;
+      fetching = true;
+      try {
+        const saved = await api.promptQueue(track.id);
+        if (alive) { setQueue(saved); setQueueError(false); }
+      } catch { if (alive) setQueueError(true); }
+      finally { fetching = false; }
+    }
+    void refresh();
+    const timer = setInterval(() => void refresh(), 2000);
+    return () => { alive = false; clearInterval(timer); };
+  }, [track.id]);
+
+  useEffect(() => {
+    setRunning(track.status === "running" || track.status === "opening");
+  }, [track.status]);
 
   // Never the reader. "You are typing" is information nobody has ever wanted,
   // and their own name in the line is how a viewer concludes the whole feature
@@ -153,12 +177,15 @@ export function TrackView(props: TrackViewProps) {
 
   const send = useCallback(
     async (text: string, images: OutgoingImage[] = []) => {
-      setRunning(true);
+      const payload = JSON.stringify({ text, images });
+      if (submission.current?.payload !== payload) submission.current = { payload, id: crypto.randomUUID() };
       try {
-        await api.prompt(track.id, text, images);
+        await api.prompt(track.id, text, images, submission.current.id);
+        submission.current = null;
+        // A failed refresh must not make a successfully saved prompt look unsent.
+        void api.promptQueue(track.id).then(setQueue).catch(() => setQueueError(true));
         props.onActivity();
       } catch (err) {
-        setRunning(false);
         if (err instanceof ApiError) props.onError(err.message);
         throw err;
       }
@@ -204,7 +231,7 @@ export function TrackView(props: TrackViewProps) {
       {empty && !running ? (
         <div className="starters">
           {starters.map((s) => (
-            <button key={s.label} type="button" className="starter" onClick={() => void send(s.prompt)}>
+            <button key={s.label} type="button" className="starter" onClick={() => void send(s.prompt).catch(() => undefined)}>
               {s.label}
             </button>
           ))}
@@ -219,6 +246,29 @@ export function TrackView(props: TrackViewProps) {
         {typing.length ? `${subject(typing)} typing…` : ""}
       </div>
 
+      {queue.length ? (
+        <section className="prompt-queue" aria-label="Saved prompts">
+          <div className="queue-heading">{queue.length} saved {queue.length === 1 ? "prompt" : "prompts"} · {queue.some(item => ["failed", "unconfirmed"].includes(item.status)) ? "Resolve delivery to continue" : "You can close this tab"}</div>
+          {queue.map((item, index) => (
+            <div className="queue-item" key={item.id}>
+              <div className="queue-item-head">
+                <strong>{item.status === "sending" ? "Sending…" : item.status === "unconfirmed" ? "Delivery unconfirmed" : item.status === "failed" ? "Needs attention" : `Queued ${index + 1}`}</strong>
+                <span className="dimmer">@{item.authorLogin}{item.imageCount ? ` · ${item.imageCount} ${item.imageCount === 1 ? "image" : "images"}` : ""}</span>
+                <span className="spacer" />
+                {item.canCancel ? <button type="button" className="linkish" onClick={() => {
+                  void api.cancelPrompt(track.id, item.id).then(() => api.promptQueue(track.id)).then(setQueue).catch((err: unknown) => props.onError(err instanceof Error ? err.message : "Could not cancel this prompt."));
+                }}>Cancel</button> : null}
+              </div>
+              <details><summary>{item.prompt.slice(0, 140) || "Image prompt"}</summary><div className="queue-text">{item.prompt}</div></details>
+              {item.error ? <div className="queue-error" role="status">{item.error}</div> : null}
+              {item.canCancel && ["failed", "unconfirmed"].includes(item.status) ? <button type="button" className="linkish" onClick={() => {
+                void api.retryPrompt(track.id, item.id).then(() => api.promptQueue(track.id)).then(setQueue).catch((err: unknown) => props.onError(err instanceof Error ? err.message : "Could not retry this prompt."));
+              }}>{item.status === "unconfirmed" ? "Send again — may run twice" : "Retry delivery"}</button> : null}
+            </div>
+          ))}
+        </section>
+      ) : null}
+      {queueError ? <div className="composer-note" role="status">Could not refresh saved prompts. Reconnecting…</div> : null}
       <Composer
         onSend={send}
         onInterrupt={interrupt}

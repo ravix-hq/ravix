@@ -410,6 +410,7 @@ export async function rebuild(ctx: AppContext, req: Request, id: string): Promis
   const user = await authenticate(ctx, req);
   const project = projectOf(ctx, user, id);
   const fountain = requireFountain(ctx);
+  for (const track of ctx.db.tracksOf(project.id)) ctx.db.cancelTrackPrompts(track.id);
 
   const removed: string[] = [];
   const failed: { what: string; why: string }[] = [];
@@ -469,6 +470,7 @@ export async function destroy(ctx: AppContext, req: Request, id: string): Promis
   const user = await authenticate(ctx, req);
   const project = projectOf(ctx, user, id);
   const fountain = requireFountain(ctx);
+  for (const track of ctx.db.tracksOf(project.id)) ctx.db.cancelTrackPrompts(track.id);
 
   const conversations = await fountain.listConversations(project.agentId).catch(() => []);
   for (const c of conversations) {

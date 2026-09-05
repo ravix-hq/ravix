@@ -14,13 +14,13 @@
  * decision paddock made about first run, for the same reason: the first thing
  * somebody sees is the machine actually doing their work, which is the
  * product. The track is `opening` until the machine answers and `ready`
- * afterwards, and the composer is live the whole time because Fountain queues
- * a prompt behind the turn already running.
+ * afterwards, and the composer stays live because Switchyard saves follow-up
+ * prompts on the server until the conversation is ready.
  */
 import { randomUUID } from "node:crypto";
 import type { Person, Track, TrackHeader, TrackOriginInfo, TranscriptPage } from "../shared/api";
 import { branchFor, mountPathFor, slugify, trackChannel, workdirFor } from "../shared/ids";
-import { withAuthor } from "../shared/author";
+import { enqueue } from "./prompt-queue";
 import { nameTrack } from "../shared/names";
 import { closeTrackPrompt, openTrackPrompt, starters, type TrackOrigin } from "../shared/spec";
 import type { AppContext } from "./context";
@@ -244,39 +244,19 @@ export async function retry(ctx: AppContext, req: Request, trackId: string): Pro
   return json({ data: { ok: true } });
 }
 
-/**
- * `POST /api/tracks/:id/prompt` — a turn from a person.
- *
- * The clone token is re-minted first for the same reason it is on `open`: this
- * turn may well be the one that pushes a branch, and a token that expired
- * while the tab was open fails as an authentication error in the middle of
- * somebody's work.
- */
+/** Accept into SQLite before acknowledging; the server worker owns delivery. */
 export async function prompt(ctx: AppContext, req: Request, trackId: string): Promise<Response> {
   const user = await authenticate(ctx, req);
-  const { track, project } = trackOf(ctx, user, trackId);
-  const fountain = requireFountain(ctx);
+  const { track } = trackOf(ctx, user, trackId);
+  requireFountain(ctx);
   const body = await readJson(req);
   const text = str(body.prompt, 100_000);
   const images = readImages(body.images);
   if (!text.trim() && !images.length) throw new HttpError(422, "empty_prompt", "Say something.");
   if (!track.conversationId) throw new HttpError(409, "not_open", "This track has no conversation yet.");
-
-  // Name the sender only once there is somebody to distinguish them from. A
-  // solo track prefixed with your own login reads as the app talking to
-  // itself, and it would put a label in every transcript in the fleet to serve
-  // the few that are shared.
-  const shared = ctx.db.membersOf(track.id).length > 0;
-  const outgoing = shared ? withAuthor(user.login, text) : text;
-
-  await prepareMachine(ctx, project, fountain);
-  try {
-    await fountain.prompt(track.conversationId, outgoing, images);
-  } catch (err) {
-    throw asHttpError(err, "send that");
-  }
-  publish(project.id, { event: "turn", data: { trackId: track.id, status: "running" } });
-  return json({ data: { ok: true } });
+  if (track.closedAt) throw new HttpError(409, "closed_track", "This track is closed.");
+  enqueue(ctx, track.id, user.id, user.login, body.requestId, { prompt: text, images });
+  return json({ data: { ok: true } }, 202);
 }
 
 /**
@@ -496,6 +476,7 @@ export async function close(ctx: AppContext, req: Request, trackId: string): Pro
   requireOwnerOrCutter(role, user, track, "close a track");
   const fountain = requireFountain(ctx);
   const force = new URL(req.url).searchParams.get("force") === "1";
+  ctx.db.cancelTrackPrompts(track.id);
 
   if (track.conversationId) {
     // A project with no repository still has a directory per track — the

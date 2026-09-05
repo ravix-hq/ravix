@@ -100,8 +100,8 @@ shape of the problem. Making a *conversation* is an API call and takes a moment;
 making a *worktree* is work on a real machine and takes a turn. The two cannot
 be atomic, so the track exists before its directory does, the ribbon says
 "Creating" rather than "Created" until the machine answers, and the composer is
-live the whole time because Fountain queues a prompt behind the turn already
-running.
+live the whole time because Switchyard saves follow-up prompts on its server
+and delivers them when the conversation is ready.
 
 A track started from a pull request, a branch or an issue takes its name from
 there, because that is the name the work already has everywhere else. One
@@ -127,6 +127,45 @@ So the dialog reads the worktree's diff before it draws its button. A clean
 worktree gets **Close track**; a dirty one gets **Discard 3 files and close**,
 because `git worktree remove` refuses a dirty worktree and a close with changes
 in it is a discard whether or not the person was told.
+
+## Queue work and close the tab
+
+Every prompt is saved in Switchyard's SQLite database before the server
+acknowledges it. Text and attached images stay there while another turn runs.
+The **saved prompts** panel shows the order, sender and delivery state; opening
+the track on another device reads that same queue. Closing a tab, changing
+tracks, or restarting the Switchyard server does not discard waiting work.
+
+`server/prompt-queue.ts` runs independently of browser connections. Every two
+seconds it checks the first outstanding prompt on each track, refreshes the
+clone credential, checks the sender still has access, and delivers when the
+conversation is idle. A busy machine or a failed readiness check leaves the
+prompt saved for another attempt. Up to 20 prompts can wait on a track, with
+12 MiB of serialized text and image data per prompt.
+
+The sender or project owner can cancel a waiting prompt. Closing the track,
+rebuilding or deleting its project cancels its pending queue. Removing a
+sender's access prevents their waiting instructions from being delivered.
+Once delivery has started, use **Stop this turn** instead of cancellation.
+
+A unique `requestId` on `POST /api/tracks/:id/prompt` makes a repeated HTTP
+submission return the same receipt. **Saved** means accepted by Switchyard;
+after Fountain accepts delivery, its transcript owns the running turn.
+Fountain does not offer an idempotency key for that second handoff. A lost
+response or a Switchyard restart during delivery therefore leaves the prompt
+as **Delivery unconfirmed**, with later prompts on that track held behind it.
+Check the transcript, then cancel it or explicitly send it again. An uncertain
+delivery is never automatically replayed.
+
+The queue lives on the deployment's existing single SQLite volume; its
+durability depends on that volume. It does not recover a lost Fountain machine
+or guarantee that an accepted agent turn completes successfully.
+
+`GET /api/tracks/:id/queue` reads the queue, `DELETE .../queue/:promptId`
+cancels an item, and `POST .../queue/:promptId/retry` explicitly retries a
+refused or unconfirmed delivery. All three use the track's existing access
+checks. Delivered and cancelled items release their image payloads and retain
+their request ids as receipts.
 
 ## The transcript is the agent's own stream, formatted
 

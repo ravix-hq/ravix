@@ -1,31 +1,10 @@
-/**
- * The prompt box.
- *
- * Two behaviours here are load-bearing rather than decorative, and both come
- * from the same fact: a project is one machine, and a machine runs one turn at
- * a time across every track on it.
- *
- * **The box never locks.** A composer disabled while the agent works teaches
- * people to sit and wait, which is exactly the wrong habit in an app whose
- * whole point is having four things in flight. So Enter always accepts, and a
- * prompt sent into a busy machine is *queued here* and sent when the machine
- * frees up — the line above the box says so, with the option to unsend.
- *
- * **Stop is a first-class control.** Not a small x on a spinner somewhere: the
- * send button becomes a stop button while a turn is running, in the same
- * place, because the thing you most want when an agent is doing the wrong
- * thing is the button your hand is already on.
- *
- * Images arrive by paste, by drop and by the picker, and all three land in the
- * same list: a screenshot is the fastest way to say what is wrong with a page,
- * and every gesture somebody already has for moving one should work.
- */
+/** Every submission is saved by the server, including while a turn runs. */
 import { useEffect, useRef, useState } from "react";
 import { ArrowUp, Picture, X } from "../lib/icons";
 import { accept, ACCEPTED, encodeImage, MAX_IMAGES, type OutgoingImage, rejectionMessage } from "../lib/images";
 
 export interface ComposerProps {
-  /** Sends now. Rejects if the machine refuses; the caller surfaces that. */
+  /** Saves now, even while the machine is busy. Rejects if saving fails. */
   onSend: (text: string, images: OutgoingImage[]) => Promise<void>;
   onInterrupt: () => void;
   /**
@@ -63,15 +42,14 @@ export function Composer({ onSend, onInterrupt, onTyping, running, model, disabl
   const [items, setItems] = useState<Attachment[]>([]);
   const [note, setNote] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
-  const [queued, setQueued] = useState<Pending | null>(null);
   const [sending, setSending] = useState(false);
   const box = useRef<HTMLTextAreaElement | null>(null);
   const picker = useRef<HTMLInputElement | null>(null);
   /**
    * Every object URL this composer has minted and not yet handed back.
    *
-   * An attachment can be in three places at once — the list on screen, a queued
-   * prompt, a send in flight — so "revoke it when it leaves the list" is not a
+   * An attachment can be in the list on screen or a send in flight, so
+   * "revoke it when it leaves the list" is not a
    * rule that holds. One set, written by whoever creates or releases a URL, is:
    * it is also what the unmount below can drain, which is the case that
    * otherwise leaks a megabyte per track somebody clicked away from.
@@ -96,16 +74,6 @@ export function Composer({ onSend, onInterrupt, onTyping, running, model, disabl
       held.clear();
     };
   }, []);
-
-  // The queued line sends itself the moment the machine is free.
-  useEffect(() => {
-    if (!queued || running || sending) return;
-    const pending = queued;
-    setQueued(null);
-    void deliver(pending);
-    // `deliver` is stable enough for this: it closes over setters only.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [queued, running, sending]);
 
   function release(url: string): void {
     if (!urls.current.delete(url)) return;
@@ -187,35 +155,18 @@ export function Composer({ onSend, onInterrupt, onTyping, running, model, disabl
     const value = text.trim();
     // A prompt of nothing but a screenshot is a real prompt: "look at this" is
     // most of what somebody wants to say about a picture.
-    if ((!value && !items.length) || disabled) return;
+    if ((!value && !items.length) || disabled || sending) return;
     const pending: Pending = { text: value, items };
     setText("");
     setItems([]);
     setNote(null);
-    if (running || sending) setQueued(pending);
-    else void deliver(pending);
+    void deliver(pending);
   }
 
   const nothingToSend = !text.trim() && items.length === 0;
 
   return (
     <div className="composer">
-      {queued ? (
-        <div className="queued row">
-          <span className="truncate">Queued behind the turn running now — it sends itself.</span>
-          <button
-            type="button"
-            className="x"
-            aria-label="Unsend the queued message"
-            onClick={() => {
-              restore(queued);
-              setQueued(null);
-            }}
-          >
-            <X size={13} />
-          </button>
-        </div>
-      ) : null}
       {note ? (
         <div className="composer-note" role="status">
           {note}
@@ -316,18 +267,17 @@ export function Composer({ onSend, onInterrupt, onTyping, running, model, disabl
             <button type="button" className="send" onClick={onInterrupt} aria-label="Stop this turn" title="Stop this turn">
               <span style={{ width: 9, height: 9, background: "currentColor", borderRadius: 2 }} />
             </button>
-          ) : (
-            <button
-              type="button"
-              className="send"
-              onClick={submit}
-              disabled={nothingToSend || disabled || sending}
-              aria-label="Send"
-              title="Send"
-            >
-              <ArrowUp size={15} />
-            </button>
-          )}
+          ) : null}
+          <button
+            type="button"
+            className="send"
+            onClick={submit}
+            disabled={nothingToSend || disabled || sending}
+            aria-label="Send"
+            title="Send"
+          >
+            <ArrowUp size={15} />
+          </button>
         </div>
       </div>
     </div>

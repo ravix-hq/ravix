@@ -12,11 +12,14 @@ import { loadConfig } from "./config";
 import { buildContext } from "./context";
 import { Cipher } from "./crypto";
 import { Db } from "./db";
+import { PromptQueue } from "./prompt-queue";
 
 const config = loadConfig();
 const db = new Db(config.dbPath);
 const cipher = await Cipher.from(config.secret);
 const ctx = buildContext({ db, cipher, config });
+const promptQueue = new PromptQueue(ctx);
+promptQueue.start();
 const handle = buildRouter(ctx);
 
 const server = Bun.serve({

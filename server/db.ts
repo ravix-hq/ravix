@@ -11,6 +11,8 @@
  *     are switchyard's ideas rather than Fountain's
  *   - which track is which — a row, because a `channel_id` can say the slug
  *     but not who made it, from what, or what it is called
+ *   - accepted prompts awaiting delivery — work Switchyard owes the caller,
+ *     which must outlive the browser that submitted it
  *
  * Everything else is read live: a track's status, its turn count, whether the
  * machine is up, what is in the worktree. Those are questions with a correct
@@ -70,6 +72,18 @@ export interface TrackRow {
   closedAt: string | null;
   createdAt: string;
   createdByLogin: string;
+}
+
+export interface PromptRow {
+  sequence: number;
+  id: string;
+  trackId: string;
+  userId: string;
+  authorLogin: string;
+  payload: string;
+  createdAt: string;
+  status: "queued" | "sending" | "failed" | "unconfirmed" | "sent" | "cancelled";
+  error: string | null;
 }
 
 export class Db {
@@ -153,6 +167,19 @@ export class Db {
       CREATE UNIQUE INDEX IF NOT EXISTS tracks_slug ON tracks(project_id, slug) WHERE closed_at IS NULL;
       CREATE INDEX IF NOT EXISTS tracks_project ON tracks(project_id, closed_at);
       CREATE INDEX IF NOT EXISTS tracks_conversation ON tracks(conversation_id);
+
+      CREATE TABLE IF NOT EXISTS prompt_queue (
+        sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+        id TEXT NOT NULL UNIQUE,
+        trackId TEXT NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
+        userId TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        authorLogin TEXT NOT NULL,
+        payload TEXT NOT NULL,
+        createdAt TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'queued',
+        error TEXT
+      );
+      CREATE INDEX IF NOT EXISTS prompt_queue_track ON prompt_queue(trackId, status, sequence);
 
       -- Who else is in a track.
       --
@@ -440,6 +467,7 @@ export class Db {
   }
 
   archiveProject(id: string): void {
+    for (const track of this.tracksOf(id)) this.cancelTrackPrompts(track.id);
     this.db.run("UPDATE projects SET archived_at = ? WHERE id = ?", [new Date().toISOString(), id]);
   }
 
@@ -510,7 +538,58 @@ export class Db {
   }
 
   closeTrack(trackId: string): void {
+    this.cancelTrackPrompts(trackId);
     this.db.run("UPDATE tracks SET closed_at = ? WHERE id = ?", [new Date().toISOString(), trackId]);
+  }
+
+  enqueuePrompt(p: Pick<PromptRow, "id" | "trackId" | "userId" | "authorLogin" | "payload">): PromptRow {
+    this.db.run(`INSERT INTO prompt_queue (id, trackId, userId, authorLogin, payload, createdAt)
+      VALUES (?, ?, ?, ?, ?, ?)`, [p.id, p.trackId, p.userId, p.authorLogin, p.payload, new Date().toISOString()]);
+    return this.queuedPrompt(p.id)!;
+  }
+
+  queuedPrompt(id: string): PromptRow | null {
+    return this.db.query<PromptRow, [string]>("SELECT * FROM prompt_queue WHERE id = ?").get(id);
+  }
+
+  queuedPrompts(trackId?: string): PromptRow[] {
+    const where = "status NOT IN ('sent', 'cancelled')";
+    return trackId === undefined
+      ? this.db.query<PromptRow, []>(`SELECT * FROM prompt_queue WHERE ${where} ORDER BY sequence`).all()
+      : this.db.query<PromptRow, [string]>(`SELECT * FROM prompt_queue WHERE ${where} AND trackId = ? ORDER BY sequence`).all(trackId);
+  }
+
+  promptQueueHeads(): Omit<PromptRow, "payload">[] {
+    // Do not load every queued attachment on every sweep. Only the first live
+    // row per track can be delivered; its bytes are loaded just before POST.
+    return this.db.query<Omit<PromptRow, "payload">, []>(`SELECT sequence, id, trackId, userId, authorLogin, createdAt, status, error
+      FROM prompt_queue WHERE sequence IN (
+        SELECT MIN(sequence) FROM prompt_queue WHERE status NOT IN ('sent', 'cancelled') GROUP BY trackId
+      ) ORDER BY sequence`).all();
+  }
+
+  promptQueueSummaries(trackId: string): (Omit<PromptRow, "payload"> & { prompt: string; imageCount: number })[] {
+    return this.db.query<Omit<PromptRow, "payload"> & { prompt: string; imageCount: number }, [string]>(`
+      SELECT sequence, id, trackId, userId, authorLogin, createdAt, status, error,
+        json_extract(payload, '$.prompt') AS prompt, json_array_length(payload, '$.images') AS imageCount
+      FROM prompt_queue WHERE trackId = ? AND status NOT IN ('sent', 'cancelled') ORDER BY sequence`).all(trackId);
+  }
+
+  setPromptStatus(id: string, status: PromptRow["status"], error: string | null = null): void {
+    // Keep the id as a receipt for retried HTTP requests, release large images.
+    this.db.run("UPDATE prompt_queue SET status = ?, error = ?, payload = CASE WHEN ? IN ('sent', 'cancelled') THEN '' ELSE payload END WHERE id = ? AND status NOT IN ('sent', 'cancelled')", [status, error, status, id]);
+  }
+
+  claimPrompt(id: string): boolean {
+    return this.db.run("UPDATE prompt_queue SET status = 'sending', error = NULL WHERE id = ? AND status = 'queued'", [id]).changes === 1;
+  }
+
+  recoverPromptQueue(): void {
+    this.db.run("UPDATE prompt_queue SET status = 'unconfirmed', error = 'The server restarted during delivery. Check the transcript before sending this again.' WHERE status = 'sending'");
+  }
+
+  cancelTrackPrompts(trackId: string): void {
+    this.db.run("UPDATE prompt_queue SET status = 'cancelled', payload = '', error = NULL WHERE trackId = ? AND status != 'sent'", [trackId]);
   }
 
   // ── who else is in a track ───────────────────────────────────────────
