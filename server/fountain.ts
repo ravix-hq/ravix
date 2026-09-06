@@ -218,15 +218,26 @@ export class Fountain {
     return this.data("GET", `/api/conversations/${encodeURIComponent(conversationId)}/turns`);
   }
 
-  /**
-   * The stored log, oldest first.
-   *
-   * `limit` caps at a thousand and defaults to a hundred, which is not enough
-   * for a track somebody has been working in — a partial scrollback that looks
-   * complete is worse than a slow one.
-   */
-  events(conversationId: string): Promise<LogEvent[]> {
-    return this.data("GET", `/api/conversations/${encodeURIComponent(conversationId)}/events?limit=1000`);
+  /** Read every stored page so long tracks retain their later replies. */
+  async events(conversationId: string): Promise<LogEvent[]> {
+    const events = new Map<number, LogEvent>();
+    let after: number | null = null;
+    for (;;) {
+      const query = new URLSearchParams({ limit: "1000" });
+      if (after !== null) query.set("after", String(after));
+      const page = await this.json<{
+        data: LogEvent[];
+        meta?: { has_more: boolean; next_cursor: number | null };
+      }>("GET", `/api/conversations/${encodeURIComponent(conversationId)}/events?${query}`);
+      for (const event of page.data) events.set(event.id, event);
+      if (!page.meta?.has_more) break;
+      const next = page.meta.next_cursor;
+      if (next === null || (after !== null && next <= after)) {
+        throw new Error("Fountain event pagination did not advance");
+      }
+      after = next;
+    }
+    return [...events.values()].sort((a, b) => a.id - b.id);
   }
 
   /**
@@ -289,6 +300,11 @@ export class Fountain {
 
   /** A call whose body is `{data: …}`, unwrapped — which is every one of them. */
   private async data<T>(method: string, path: string, body?: unknown): Promise<T> {
+    const wrapped = await this.json<{ data?: T }>(method, path, body);
+    return (wrapped && typeof wrapped === "object" && "data" in wrapped ? wrapped.data : wrapped) as T;
+  }
+
+  private async json<T>(method: string, path: string, body?: unknown): Promise<T> {
     const res = await this.raw(method, path, {
       body: body === undefined ? null : JSON.stringify(body),
       accept: "application/json",
@@ -312,8 +328,7 @@ export class Fountain {
       if (res.status >= 400) console.error(`switchyard: fountain ${res.status} on ${method} ${path.split("?")[0]}: ${message}`);
       throw new FountainHttpError(res.status, code, message);
     }
-    const wrapped = parsed as { data?: T } | null;
-    return (wrapped && typeof wrapped === "object" && "data" in wrapped ? wrapped.data : parsed) as T;
+    return parsed as T;
   }
 }
 

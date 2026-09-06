@@ -16,6 +16,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { LogEvent } from "../../shared/fountain-types";
 import type { Capabilities, Presence, Project, Track, TrackHeader, TurnRecord, QueuedPrompt } from "../../shared/api";
 import { api, ApiError, subscribe } from "../lib/api";
+import { mergeEvents, mergeTurns } from "../lib/transcript";
 import { experimentalPreviews } from "../lib/features";
 import { Branch, Clock, External, Folder, Info, Issue, Pull, Wrench } from "../lib/icons";
 import type { OutgoingImage } from "../lib/images";
@@ -114,8 +115,8 @@ export function TrackView(props: TrackViewProps) {
       .then((page) => {
         if (!alive || showing.current !== track.id) return;
         for (const e of page.events as LogEvent[]) seen.current.add(e.id);
-        setEvents(page.events as LogEvent[]);
-        setTurns(page.turns);
+        setEvents(current => mergeEvents(current, page.events as LogEvent[]));
+        setTurns(current => mergeTurns(current, page.turns));
       })
       .catch((err: unknown) => {
         if (alive && err instanceof ApiError) props.onError(err.message);
@@ -150,7 +151,7 @@ export function TrackView(props: TrackViewProps) {
         if (seen.current.has(ev.id)) return;
         seen.current.add(ev.id);
       }
-      setEvents((current) => [...current, ev]);
+      setEvents((current) => mergeEvents(current, [ev]));
 
       // `stage: "turn"` is how Fountain says a turn began or ended. Anything
       // else with a stage — `server`, a runtime's own phases — is not a turn
@@ -169,7 +170,11 @@ export function TrackView(props: TrackViewProps) {
             .then((page) => {
               // The unguarded version of this line is how another track's
               // transcript ends up under this one's header.
-              if (showing.current === forTrack) setTurns(page.turns);
+              if (showing.current === forTrack) {
+                setTurns(current => mergeTurns(current, page.turns));
+                for (const event of page.events as LogEvent[]) seen.current.add(event.id);
+                setEvents(current => mergeEvents(current, page.events as LogEvent[]));
+              }
             })
             .catch(() => undefined);
         }

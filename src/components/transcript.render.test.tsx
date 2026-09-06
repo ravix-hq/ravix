@@ -156,3 +156,26 @@ describe("Transcript window", () => {
     expect(short).toContain("turn number 0");
   });
 });
+
+test("replayed prompts and reply chunks render in chronological order", () => {
+  const first = { ...props.turns[0]!, id: "first", prompt: "First question", insertedAt: "2026-09-04T12:00:00Z" };
+  const second = { ...first, id: "second", prompt: "Second question", insertedAt: "2026-09-04T12:01:00Z" };
+  const reply = (id: number, turn_id: string, text: string) => ({
+    ...acp({ sessionUpdate: "agent_message_chunk", content: { type: "text", text } }),
+    id, turn_id,
+  });
+  const html = renderToString(<Transcript {...props} turns={[second, first]} events={[
+    reply(3, "second", "Second answer"),
+    reply(2, "first", " answer"),
+    reply(1, "first", "First"),
+  ]} />);
+  const positions = ["First question", "First answer", "Second question", "Second answer"].map(text => html.indexOf(text));
+  expect(positions.every(position => position >= 0)).toBe(true);
+  expect(positions).toEqual([...positions].sort((a, b) => a - b));
+});
+
+test("unattributed events are rendered once in one pending group", () => {
+  const events = EVENTS.map(event => ({ ...event, turn_id: null }));
+  const html = renderToString(<Transcript {...props} turns={[]} events={events} />);
+  expect(html.match(/<h2>Done<\/h2>/g)).toHaveLength(1);
+});

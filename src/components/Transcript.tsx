@@ -50,6 +50,7 @@ import { visiblePreviewPrompt } from "../../shared/previews";
 import { visibleBrowserPrompt } from "../../shared/browser";
 import type { Person, TurnRecord } from "../../shared/api";
 import type { LogEvent } from "../../shared/fountain-types";
+import { mergeEvents, mergeTurns } from "../lib/transcript";
 import { renderMarkdown } from "../lib/md";
 import { activityOf, describeTool, resultOf, toolDetails, type ToolDetail, type ToolKind } from "../lib/tools";
 import { Chevron, File as FileIcon, Globe, Pencil, Search, Sparkle, Terminal, Wrench, X } from "../lib/icons";
@@ -304,11 +305,11 @@ interface GroupedTurn {
 function group(turns: TurnRecord[], events: LogEvent[], runtime: string): GroupedTurn[] {
   const byTurn = new Map<string, GroupedTurn>();
   const order: string[] = [];
-  for (const t of turns) {
+  for (const t of mergeTurns([], turns)) {
     byTurn.set(t.id, { id: t.id, prompt: t.prompt, events: [] });
     order.push(t.id);
   }
-  for (const ev of events) {
+  for (const ev of mergeEvents([], events)) {
     const id = ev.turn_id || "pending";
     let turn = byTurn.get(id);
     if (!turn) {
