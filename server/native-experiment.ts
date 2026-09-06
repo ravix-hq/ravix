@@ -155,8 +155,8 @@ export class NativeExperiments {
                     s.lastCheck = Date.now();
                     s.checking = this.checkWorkspace(s).catch(error => { void this.stopSession(s, String(error)); }).finally(() => { s.checking = undefined; });
                 }
-                if (s.phase === 'Ready' && Date.now() - s.lastFrame > 15000)
-                    s.phase = 'Connecting';
+                // scrcpy is damage-driven: a healthy static screen may emit no
+                // frames. Producer disconnect and the runner lease fence liveness.
             }
         }, 1000);
         this.timer.unref();
@@ -546,7 +546,7 @@ export class NativeExperiments {
                     }
                     else if (message.type === 'ready') {
                         s.appReady = true;
-                        if (s.lastFrame > Date.now() - 15000)
+                        if (s.producer && s.lastFrame > 0)
                             s.phase = 'Ready';
                     }
                     else if (message.type === 'error')

@@ -1,8 +1,8 @@
 # Native preview runner verification
 
-Date: September 5–6, 2026. Status: **Local Android runtime verified; paired
-Sprite/browser implementation tested locally. Deployment and live gate-2
-verification are pending.**
+Date: September 5–6, 2026. Status: **Deployed Android preview exercised through
+real Sprite Metro, Mac emulator and Chrome. Core live path works; gate-2
+compatibility, reliability and performance checks remain open.**
 The [brief](native-preview-runners-brief.md) remains the full implementation contract.
 
 ## Implemented
@@ -399,3 +399,67 @@ frame counts. See the [pairing instructions](../runner/README.md#paired-android-
 Gate 2 remains open until that deployed run proves the complete path and cleanup.
 The full brief also still requires durable runner identity/registration, queues,
 build reuse/invalidation for arbitrary workspaces and iOS parity.
+
+## First deployed Android preview — September 6, 2026 UTC
+
+Implementation `6f0b37f` passed CI and rolled out through image-pin commit
+`07860ec`. Public `/healthz` returned `ok`; the deployed image matched the
+implementation SHA. Session `12a21bd2-5563-47f4-b675-fbd894f2bd5d` paired with the
+user-started dedicated Mac runner and reused the pinned, previously verified APK.
+
+The initial dependency install could not resolve npm. The Hello Sprite's policy
+allowed only `broker.inevitable.fyi`; that domain resolved while npm and GitHub
+failed. With explicit user approval, added the exact `registry.npmjs.org` allow
+rule, preserving the broker rule. The same install resumed and completed
+(716 packages; about seven minutes including blocked retries). Metro and the
+backend then started on private Sprite ports 30000 and 30001. No public Expo
+tunnel or provider credential in the app was used.
+
+Observed in Chrome through `switchyard.demo.managoat.com`:
+
+- Real H.264 Android frames, including initial bundling and the Hello app.
+  Metro logged a 7.1-second first Android bundle (688 modules).
+- The runner reached Ready after seeing the greeting and Sprite backend reply.
+  The browser independently showed **Hello from the Sprite backend!**.
+- Browser control incremented the counter to **1**, entered **world Jake** in
+  the app's name field, dismissed the keyboard with Back, and scrolled to
+  **You reached the end.**
+- A track conversation changed the greeting and added an animated dot without
+  committing or restarting Metro/device. The browser showed the edit and
+  approximately **28–31 decoded frames/second** while animating. This is observed
+  frame throughput, not a latency percentile or a phone-browser result.
+- A second conversation changed only GREETING to **Updated live**. The browser
+  showed **Updated live, world Jake!**, counter **1**, and the existing backend
+  response together, establishing Fast Refresh with state preserved.
+- A second signed-in viewer decoded the stream but received **Another viewer
+  controls this device** when trying to take control. An unauthenticated GET to
+  the native session API returned **401**.
+- Visual evidence retained locally at `/private/tmp/sy-native-live-20260906.png`.
+
+Issues found during live testing:
+
+- Damage-driven capture emits no frames on a still screen. The server's former
+  15-second frame-age check incorrectly changed Ready to Connecting and blocked
+  input. The correction uses the producer connection and runner lease for
+  liveness after the first verified frame. A regression test advances time by
+  20 seconds and proves static-screen readiness/control remain available.
+- One repeated in-app backend request exceeded its eight-second deadline. The
+  Mac loopback forward then returned HTTP 200 in 0.36 seconds and an in-app retry
+  succeeded. The initial runner backend check also passed. Cause is unresolved;
+  sustained backend reliability is not established.
+- Metro warned that manifest asset resolution was aborted. The app bundle and
+  HMR worked, but icon/font/asset and source-map coverage remains incomplete.
+- A new viewer joining a completely static screen still needs verification:
+  the current relay waits for a new keyframe and does not cache a full GOP.
+
+The readiness correction passed **277 tests / 1,709 assertions / 32 files** and
+the production build. Safari/phone compatibility, input latency percentiles,
+reconnect and sleep behavior, live membership revocation, arbitrary track source
+export/builds, and the remaining product/durability/iOS gates are not complete.
+
+Cleanup was exercised using the browser **Stop** control. The three exact named
+Sprite services returned absent, the SQLite reservation count became zero, and
+no owned emulator or runner process remained in the Mac process listing. A
+separate Sprite `git status --short` returned empty after the conversation
+restored the test edits. The existing web preview remained in its original
+Stopped/unconfigured state throughout this run.

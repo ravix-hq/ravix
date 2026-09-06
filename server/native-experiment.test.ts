@@ -196,3 +196,21 @@ test('failed cleanup retains reservations and a retry removes only owned service
     expect(f.db.nativeExperiments.all()).toHaveLength(0);
     expect(f.state.services.size).toBe(0);
 });
+
+test('a static screen remains ready while its producer and runner lease are live', async () => {
+    const f = await fixture(), s = await f.start(), paired = (await (await f.claim(s.pairingCode!)).json()).data;
+    const runner = await f.connect(s.id, 'runner', paired.token), producer = await f.connect(s.id, 'video', paired.token);
+    await until(async () => (await (await f.request('/api/tracks/track/native')).json()).data.session.phase === 'Connecting');
+    producer.send(JSON.stringify({type:'video',codec:'h264',width:576,height:1280}));
+    const packet=Buffer.alloc(14);packet.writeBigUInt64BE(1n<<61n);packet.writeUInt32BE(2,8);producer.send(packet);
+    runner.send(JSON.stringify({type:'ready'}));
+    await until(async () => (await (await f.request('/api/tracks/track/native')).json()).data.session.phase === 'Ready');
+    const original=Date.now;
+    try {
+        Date.now=()=>original()+20000;
+        await Bun.sleep(1200);
+        expect((await (await f.request('/api/tracks/track/native')).json()).data.session.phase).toBe('Ready');
+        const input=await f.connect(s.id,'input');
+        expect(input.readyState).toBe(WebSocket.OPEN);
+    } finally {Date.now=original;}
+});
