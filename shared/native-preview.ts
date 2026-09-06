@@ -1,4 +1,4 @@
-/** Gate-2 Android experiment. These limits also apply before decoding payloads. */
+/** Gate-2 native experiment. These limits also apply before decoding payloads. */
 export const NATIVE = { version: 1, frameBytes: 2 * 1024 * 1024, configBytes: 128 * 1024, metroPort: 41000, backendPort: 41001, leaseMs: 60000, lifetimeMs: 30 * 60000 } as const;
 export type NativeInput = {
     type: 'touch';
@@ -27,7 +27,9 @@ export interface NativeVideo {
     width: number;
     height: number;
 }
+export type NativePlatform = "android" | "ios";
 export interface NativeInfo {
+    platform: NativePlatform;
     id: string;
     trackId: string;
     phase: string;

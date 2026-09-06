@@ -53,6 +53,7 @@ export interface GitHubAppConfig {
 export interface Config {
   sharedBrowser?: boolean;
   nativePreviewExperiment?: boolean;
+  nativeHelloIosSha256?: string;
   fountainUrl: string;
   fountainKey: string | null;
   dataDir: string;
@@ -94,6 +95,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
   return {
     sharedBrowser: env.SHARED_BROWSER === "1",
     nativePreviewExperiment: env.NATIVE_PREVIEW_EXPERIMENT === "1",
+    nativeHelloIosSha256: /^[a-f0-9]{64}$/.test(env.NATIVE_HELLO_IOS_SHA256 ?? "") ? env.NATIVE_HELLO_IOS_SHA256 : undefined,
     fountainUrl,
     fountainKey: env.FOUNTAIN_API_KEY?.trim() || null,
     dataDir,

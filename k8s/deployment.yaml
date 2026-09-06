@@ -45,6 +45,8 @@ spec:
             # Gate 2: only the pinned private Hello repository can pair a runner.
             - name: NATIVE_PREVIEW_EXPERIMENT
               value: "1"
+            - name: NATIVE_HELLO_IOS_SHA256
+              value: "375169f807696ad02ea5d82f1456b94142378e9f306eb5555bab55afe9abab2f"
             - name: PREVIEW_PORT
               value: "8082"
           envFrom:

@@ -6,8 +6,12 @@ umask 077
 
 runner_account="${1:-switchyard}"
 setup_mode="${2:-install}"
-if [[ "$#" -gt 2 || ( "$setup_mode" != install && "$setup_mode" != --check && "$setup_mode" != --build-hello && "$setup_mode" != --run-hello && "$setup_mode" != --preview-hello ) ]]; then
-  echo 'Usage: provision-account.sh [account] [--check | --build-hello | --run-hello | --preview-hello]' >&2; exit 1
+build_id="${3:-}"
+if [[ ( "$#" -gt 2 && "$setup_mode" != --check-ios-build ) || "$#" -gt 3 || ( "$setup_mode" != install && "$setup_mode" != --check-ios-build && "$setup_mode" != --check && "$setup_mode" != --build-ios-hello && "$setup_mode" != --build-hello && "$setup_mode" != --run-hello && "$setup_mode" != --preview-ios-hello && "$setup_mode" != --preview-hello ) ]]; then
+  echo 'Usage: provision-account.sh [account] [--check-ios-build BUILD_UUID | --check | --build-hello | --build-ios-hello | --run-hello | --preview-hello | --preview-ios-hello]' >&2; exit 1
+fi
+if [[ "$setup_mode" == --check-ios-build && ! "$build_id" =~ ^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$ ]]; then
+  echo 'Supply the explicit iOS build UUID printed in its report.' >&2; exit 1
 fi
 if [[ ! "$runner_account" =~ ^[a-z][a-z0-9_-]*$ ]]; then
   echo 'Choose a standard macOS account name.' >&2; exit 1
@@ -51,15 +55,16 @@ trap '/bin/rm -rf -- "$stage"' EXIT
 /usr/bin/ditto "$runner_source" "$stage/runner"
 /bin/mkdir "$stage/shared"
 /usr/bin/install -m 600 "$runner_source/../shared/native-preview.ts" "$stage/shared/native-preview.ts"
-if [[ "$setup_mode" == --run-hello || "$setup_mode" == --preview-hello ]]; then
+if [[ "$setup_mode" == --run-hello || "$setup_mode" == --preview-ios-hello || "$setup_mode" == --preview-hello ]]; then
   runtime_config=/private/tmp/switchyard-hello-runtime.json
   if [[ "$setup_mode" == --preview-hello ]]; then runtime_config=/private/tmp/switchyard-hello-preview.json; fi
+  if [[ "$setup_mode" == --preview-ios-hello ]]; then runtime_config=/private/tmp/switchyard-hello-ios-preview.json; fi
   [[ -f "$runtime_config" && ! -L "$runtime_config" && "$(stat -f %u "$runtime_config")" == "$(id -u "$SUDO_USER")" ]] || {
-    echo 'Prepare the Hello runtime config with the explicit build path and APK digest first.' >&2; exit 1
+    echo 'Prepare the Hello runtime config with the explicit build path and artifact digest first.' >&2; exit 1
   }
   /usr/bin/install -m 600 "$runtime_config" "$stage/runtime.json"
 fi
-if [[ "$setup_mode" == --build-hello ]]; then
+if [[ "$setup_mode" == --build-hello || "$setup_mode" == --build-ios-hello ]]; then
   fixture_snapshot=/private/tmp/switchyard-hello-source.json
   [[ -f "$fixture_snapshot" && ! -L "$fixture_snapshot" && "$(stat -f %u "$fixture_snapshot")" == "$(id -u "$SUDO_USER")" ]] || {
     echo 'Prepare the Hello World source snapshot as the provisioning account first.' >&2; exit 1
@@ -79,33 +84,37 @@ fi
 /usr/bin/sudo -u "$runner_account" /usr/bin/env -i \
   HOME="$runner_home" USER="$runner_account" LOGNAME="$runner_account" \
   PATH=/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin LANG=en_US.UTF-8 \
-  /bin/bash -s -- "$stage" "$runner_home" "$setup_mode" <<'RUNNER_SETUP'
+  /bin/bash -s -- "$stage" "$runner_home" "$setup_mode" "$build_id" <<'RUNNER_SETUP'
 set -euo pipefail
 umask 077
 stage="$1"
 runner_home="$2"
 setup_mode="$3"
+build_id="$4"
 cd "$runner_home"
 local_bin="$runner_home/.local/bin"
 runtime="$runner_home/.local/share/switchyard"
-if [[ "$setup_mode" == --run-hello || "$setup_mode" == --preview-hello ]]; then
+if [[ "$setup_mode" == --check-ios-build ]]; then
+  exec "$local_bin/bun" "$stage/runner/ios-build-diagnostic.ts" "$USER" "$build_id"
+fi
+if [[ "$setup_mode" == --run-hello || "$setup_mode" == --preview-ios-hello || "$setup_mode" == --preview-hello ]]; then
   [[ -x "$local_bin/bun" && -x "$local_bin/switchyard-runner" ]] || {
     echo 'Runner installation is missing; complete installation first.' >&2; exit 1
   }
   export PATH="$local_bin:$PATH"
   runtime_command=runtime-experiment
-  if [[ "$setup_mode" == --preview-hello ]]; then runtime_command=preview-experiment; fi
+  if [[ "$setup_mode" == --preview-hello || "$setup_mode" == --preview-ios-hello ]]; then runtime_command=preview-experiment; fi
   exec "$local_bin/bun" "$stage/runner/index.ts" "$runtime_command" "$stage/runtime.json"
 fi
-if [[ "$setup_mode" == --build-hello ]]; then
+if [[ "$setup_mode" == --build-hello || "$setup_mode" == --build-ios-hello ]]; then
   [[ -x "$local_bin/bun" && -x "$local_bin/switchyard-runner" ]] || {
     echo 'Runner installation is missing; complete installation first.' >&2; exit 1
   }
   export PATH="$local_bin:$PATH"
   "$local_bin/bun" -e '
-    const [stage, home, account] = process.argv.slice(1);
-    await Bun.write(stage + "/build.json", JSON.stringify({ snapshot: stage + "/source.json", stateDirectory: home + "/.local/share/switchyard/builds", expectedAccount: account }));
-  ' "$stage" "$runner_home" "$USER"
+    const [stage, home, account, mode] = process.argv.slice(1);
+    await Bun.write(stage + "/build.json", JSON.stringify({ snapshot: stage + "/source.json", stateDirectory: home + "/.local/share/switchyard/builds", expectedAccount: account, platform: mode === "--build-ios-hello" ? "ios" : "android" }));
+  ' "$stage" "$runner_home" "$USER" "$setup_mode"
   # Execute the staged runner as the standard account; do not replace the
   # installed adapters or compile from the authoritative source checkout.
   exec "$local_bin/bun" "$stage/runner/index.ts" build-experiment "$stage/build.json"

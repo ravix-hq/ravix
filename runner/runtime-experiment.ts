@@ -14,7 +14,7 @@ export function parseRuntimeConfig(value: unknown): RuntimeConfig {
   const v = value as RuntimeConfig | null;
   if (!v || typeof v !== "object" || typeof v.expectedAccount !== "string" || !/^[a-z][a-z0-9_-]{0,31}$/.test(v.expectedAccount)) throw new Error("Select the dedicated runner account");
   if (typeof v.buildDirectory !== "string" || !new RegExp(`^/Users/${v.expectedAccount}/\\.local/share/switchyard/builds/experiment-[a-f0-9-]{36}$`).test(v.buildDirectory)) throw new Error("Choose an explicit build in the dedicated account");
-  if (typeof v.artifactSha256 !== "string" || !/^[a-f0-9]{64}$/.test(v.artifactSha256)) throw new Error("Pin the verified APK SHA-256");
+  if (typeof v.artifactSha256 !== "string" || !/^[a-f0-9]{64}$/.test(v.artifactSha256)) throw new Error("Pin the verified artifact SHA-256");
   return { expectedAccount: v.expectedAccount, buildDirectory: v.buildDirectory, artifactSha256: v.artifactSha256 };
 }
 

@@ -1,8 +1,10 @@
+import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { appendFile, chmod, lstat, mkdir, readFile } from "node:fs/promises";
+import { appendFile, chmod, lstat, mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { checked, command, type Command, type CommandOptions } from "../process";
 import { acquireExperiment, writePrivateJson } from "../state";
 import { toolPaths, toolEnvironment, type ToolPaths } from "../doctor";
+import { iosLive } from "../ios-live";
 import { scrcpyLive } from "../scrcpy-live";
 
 export type ExperimentConfig = {
@@ -270,36 +272,53 @@ export class AndroidExperiment implements OwnedAdapter {
   }
 }
 
-class IosExperiment implements OwnedAdapter {
+export class IosExperiment implements OwnedAdapter {
   private udid: string | undefined;
   private controller = new AbortController();
   private companion: Promise<Buffer> | undefined;
   private readonly set: string;
-  private readonly socket: string;
-  constructor(private config: Extract<ExperimentConfig, { platform: "ios" }>, private id: string, private directory: string, private tools: ToolPaths, private run: Command, private signal?: AbortSignal) {
-    this.set = join(directory, "simulators"); this.socket = join(directory, "idb.sock");
+  private socket = "";
+  private socketDirectory?: string;
+  constructor(private config: Extract<ExperimentConfig, { platform: "ios" }>, private id: string, private directory: string, private tools: ToolPaths, private run: Command, private signal?: AbortSignal, private env?: NodeJS.ProcessEnv, private lifetimeMs = 90_000) {
+    this.set = join(directory, "simulators");
   }
-  private sim(...args: string[]) { return checked(this.run, [this.tools.xcrun, "simctl", "--set", this.set, ...args], { signal: this.signal, timeoutMs: 120_000 }); }
-  private idb(...args: string[]) { return checked(this.run, [this.tools.idb, "--no-prune-dead-companion", "--companion", this.socket, ...args], { signal: this.signal }); }
+  private sim(...args: string[]) { return checked(this.run, [this.tools.xcrun, "simctl", "--set", this.set, ...args], { env: this.env, signal: this.signal, timeoutMs: 120_000 }); }
+  private idb(...args: string[]) { return checked(this.run, [this.tools.idb, "--no-prune-dead-companion", "--companion", this.socket, ...args], { env: this.env, signal: this.signal }); }
   async boot() {
     // Private set + explicit UDID on every operation; never `booted` or `all`.
-    await checked(this.run, [this.tools.idbCompanion ?? "idb_companion", "--version"]);
-    await checked(this.run, [this.tools.idb, "--help"]);
-    if (Buffer.byteLength(this.socket) > 100) throw new Error("Choose a shorter stateDirectory for the private idb Unix socket (path limit 100 bytes)");
+    await checked(this.run, [this.tools.idbCompanion ?? "idb_companion", "--version"], { env: this.env });
+    await checked(this.run, [this.tools.idb, "--help"], { env: this.env });
+    this.socketDirectory = await mkdtemp(join(process.platform === "darwin" ? "/private/tmp" : tmpdir(), "sy-idb-"));
+    await chmod(this.socketDirectory, 0o700);
+    this.socket = join(this.socketDirectory, "idb.sock");
     await mkdir(this.set, { mode: 0o700 });
     const udid = (await this.sim("create", `Switchyard-${this.id}`, this.config.deviceType, this.config.runtime)).toString().trim();
     if (!/^[A-Fa-f0-9-]{36}$/.test(udid)) throw new Error("simctl returned an invalid device ID");
     this.udid = udid;
-    await writePrivateJson(join(this.directory, "device.json"), { udid, set: this.set });
+    await writePrivateJson(join(this.directory, "device.json"), { udid, set: this.set, socketDirectory: this.socketDirectory });
     await this.sim("boot", udid); await this.sim("bootstatus", udid, "-b");
     this.companion = checked(this.run, [this.tools.idbCompanion ?? "idb_companion", "--udid", udid, "--device-set-path", this.set, "--only", "simulator", "--grpc-domain-sock", this.socket],
-      { signal: AbortSignal.any([this.controller.signal, ...(this.signal ? [this.signal] : [])]), timeoutMs: 90_000, maxBytes: 4 * 1024 * 1024 });
+      { env: this.env, signal: AbortSignal.any([this.controller.signal, ...(this.signal ? [this.signal] : [])]), timeoutMs: this.lifetimeMs, maxBytes: 4 * 1024 * 1024 });
     void this.companion.catch(() => {});
     for (let attempt = 0; ; attempt++) {
       this.signal?.throwIfAborted();
       try { await this.idb("describe"); break; }
       catch (error) { if (attempt === 10) throw error; await Promise.race([Bun.sleep(500), this.companion.then(() => { throw new Error("idb companion exited"); })]); }
     }
+  }
+  private ownedUdid() { if (!this.udid) throw Error("No owned simulator"); return this.udid; }
+  async installHello(path: string) { await this.sim("install", this.ownedUdid(), path); }
+  async forward(port: number) { if (![41000, 41001].includes(port)) throw Error("Unexpected simulator service port"); }
+  async launchHello(port: number) {
+    await this.forward(port);
+    await this.sim("launch", this.ownedUdid(), "com.managoat.switchyard.hello");
+    await this.sim("openurl", this.ownedUdid(), `switchyard-hello://expo-development-client/?url=${encodeURIComponent(`http://127.0.0.1:${port}`)}`);
+  }
+  async readHierarchy() { this.ownedUdid(); return (await this.idb("ui", "describe-all", "--json")).toString(); }
+  async tap(x: number, y: number) { this.ownedUdid(); await this.idb("ui", "tap", String(x), String(y)); }
+  async live(options: Pick<Parameters<typeof iosLive>[0], "metadata" | "frame" | "failed">) {
+    return iosLive({ ...options, idb: this.tools.idb, socket: this.socket, udid: this.ownedUdid(), env: this.env ?? process.env,
+      signal: AbortSignal.any([this.controller.signal, ...(this.signal ? [this.signal] : [])]) });
   }
   async prepare() {
     if (!this.udid) throw new Error("No owned simulator");
@@ -328,15 +347,16 @@ class IosExperiment implements OwnedAdapter {
     await this.idb("ui", "text", "switchyard");
   }
   async record(path: string) {
-    await checked(this.run, [this.tools.idb, "--no-prune-dead-companion", "--companion", this.socket, "record-video", path], { signal: this.signal, interruptAfterMs: 20_000, timeoutMs: 35_000 });
+    await checked(this.run, [this.tools.idb, "--no-prune-dead-companion", "--companion", this.socket, "record-video", path], { env: this.env, signal: this.signal, interruptAfterMs: 20_000, timeoutMs: 35_000 });
   }
   async stop() {
     this.controller.abort(); await this.companion?.catch(() => {});
     if (this.udid) {
       const argv = [this.tools.xcrun, "simctl", "--set", this.set];
       // Shutdown may report already stopped; deletion must succeed to clear lock.
-      await this.run([...argv, "shutdown", this.udid]);
-      await checked(this.run, [...argv, "delete", this.udid]);
+      await this.run([...argv, "shutdown", this.udid], { env: this.env });
+      await checked(this.run, [...argv, "delete", this.udid], { env: this.env });
     }
+    if (this.socketDirectory) await rm(this.socketDirectory, { recursive: true });
   }
 }

@@ -475,3 +475,66 @@ Both follow-up corrections shipped in image
 rollout/public health check passed. The post-fix device run has not yet been
 repeated; the regression tests establish the corrected state transitions. The
 first run's backend timeout and static-screen late-join behavior remain open.
+
+
+## iOS implementation awaiting dedicated-account proof
+
+Added the Hello arm64 simulator build, full-bundle digest verification, private
+CoreSimulator/idb ownership, persistent H.264/HID bridge, and platform-aware
+pairing/viewer controls. The server offers iOS only after an operator pins a
+successful build's artifact digest in `NATIVE_HELLO_IOS_SHA256`. An Android
+artifact or pairing request cannot consume an iOS assignment.
+
+Focused tests cover bundle tampering and executable permissions, runtime report
+validation, baseline/high-profile SPS crop dimensions, fragmented pipe framing,
+key/config packets, bounded accessibility coordinates and platform-bound pairing.
+The full checkout suite passed 293 tests with one unrelated browser test skipped;
+a subsequently added iOS runtime artifact test also passed. Typecheck and the
+production build passed. These checks do not prove the real simulator app,
+idb streaming, Sprite iOS bundling, input, Fast Refresh or browser decoding.
+The dedicated account's Xcode build report and subsequent paired live run are
+still required. See the [iOS commands](../runner/README.md#ios-hello-build-and-paired-preview).
+
+The first dedicated iOS build (`bd436c09-6758-4aaa-ba74-86d8d170e4a9`)
+completed npm installation, Expo prebuild and CocoaPods, then Xcode exited 70
+before compilation: no eligible generic simulator destination, with an
+“iOS 18.5 is not installed” message. No artifact was produced. Host inspection
+found the 18.5 simulator SDK and an available 18.6 runtime. A disposable Xcode
+project under `jake` accepted the same SDK/destination/architecture flags in a
+clean environment, so the SDK/runtime version difference alone does not explain
+the dedicated-account failure. No runtime mapping or installed platform was
+changed. `provision-account.sh switchyard --check-ios-build <build UUID>` now
+collects the dedicated account's first-launch status, SDKs, runtimes, runtime
+mapping, device counts and the retained Hello workspace's destinations/settings.
+It preserves `ios-diagnostic.json` alongside the failed report without compiling
+or booting a device. The account-specific diagnostic is pending.
+
+
+The dedicated-account diagnostic returned a successful first-launch check, the
+18.5 SDK, available 18.6 runtime, and 11 available simulators, but still no
+eligible Hello workspace destinations. A disposable copy of the exact fixture
+including Expo prebuild and CocoaPods accepted simulator destinations under
+`jake`, including through the runner's clean environment and subprocess wrapper.
+Xcode's installer reported 18.6 was already downloaded; no download occurred.
+The precise account-specific cause remains unconfirmed.
+
+The candidate repair explicitly selects installed runtime build 22G86 for the
+18.5 SDK only during the dedicated build, verifies destination eligibility,
+then restores the previous account override/default. The real helper accepted
+the disposable Hello workspace and restored the original mapping under `jake`.
+Unit tests cover selection, existing overrides, cancellation/failure restoration
+and missing runtimes. Typecheck passed. The same `--build-ios-hello` command now
+uses this repair; its dedicated-account result is pending, and no simulator app
+or live iOS preview has yet been verified.
+
+
+The dedicated-account retry succeeded in build
+`8bd7bc9e-f5e7-4822-a014-2c0a6aeb730b`. Destination verification passed after
+selecting runtime 22G86; Xcode compilation took 162.3 seconds. The verified
+arm64 simulator artifact is `SwitchyardHello.app`, 78,597,940 bytes across 196
+files, bundle digest
+`375169f807696ad02ea5d82f1456b94142378e9f306eb5555bab55afe9abab2f`.
+Source and lockfile digests match the previously pinned Hello fixture. The
+report completed without error, including the runtime-mapping cleanup. This
+establishes the dedicated account's native iOS build only. Simulator launch,
+Sprite Metro/backend, browser video/input and iOS Fast Refresh remain pending.

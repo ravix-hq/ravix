@@ -1,14 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../lib/api';
-import { avcCodec, nativeFrame, parseNativeInput, type NativeInfo, type NativeInput, type NativeVideo } from '../../shared/native-preview';
+import { avcCodec, nativeFrame, parseNativeInput, type NativeInfo, type NativePlatform, type NativeInput, type NativeVideo } from '../../shared/native-preview';
 export function NativePreviewLauncher({ trackId, owner }: {
     trackId: string;
     owner: boolean;
 }) {
     const [info, setInfo] = useState<{
         available: boolean;
+        platforms: NativePlatform[];
         session: NativeInfo | null;
     } | null>(null), [busy, setBusy] = useState(false), [error, setError] = useState(''), [code, setCode] = useState('');
+    const [platform, setPlatform] = useState<NativePlatform>('android');
     const refresh = useCallback(async () => { try {
         setInfo(await api.nativePreview(trackId));
     }
@@ -20,7 +22,7 @@ export function NativePreviewLauncher({ trackId, owner }: {
     const session = info.session, cleanupPending = session?.error?.startsWith('Cleanup pending:'), active = session && !['Failed', 'Stopped'].includes(session.phase);
     const action = async (start: boolean) => { setBusy(true); setError(''); try {
         if (start) {
-            const next = await api.startNativePreview(trackId);
+            const next = await api.startNativePreview(trackId, platform);
             setCode(next.pairingCode ?? '');
         }
         else {
@@ -35,10 +37,11 @@ export function NativePreviewLauncher({ trackId, owner }: {
     finally {
         setBusy(false);
     } };
-    return <section className="native-launcher" aria-label="Android preview">
-    <div className="row"><strong>Android preview</strong><span className="chip">Experiment</span><span role="status">{session?.phase ?? 'Stopped'}</span><span className="spacer"/>
+    return <section className="native-launcher" aria-label="Native preview">
+    <div className="row"><strong>{session?.platform === 'ios' ? 'iOS' : 'Native'} preview</strong><span className="chip">Experiment</span><span role="status">{session?.phase ?? 'Stopped'}</span><span className="spacer"/>
       {active ? <a className="ghost" href={`/native/${session.id}`} target="_blank" rel="noopener">Open device</a> : null}
-      {owner ? <button type="button" disabled={busy} onClick={() => void action(!active && !cleanupPending)}>{cleanupPending ? 'Retry cleanup' : active ? 'Stop' : 'Start Android preview'}</button> : null}
+      {owner && !active ? <select aria-label="Device platform" value={platform} onChange={event => setPlatform(event.target.value as NativePlatform)}>{(info.platforms ?? ['android']).map(p => <option key={p} value={p}>{p === 'ios' ? 'iOS' : 'Android'}</option>)}</select> : null}
+      {owner ? <button type="button" disabled={busy} onClick={() => void action(!active && !cleanupPending)}>{cleanupPending ? 'Retry cleanup' : active ? 'Stop' : `Start ${platform === 'ios' ? 'iOS' : 'Android'} preview`}</button> : null}
     </div>
     {code && session?.phase === 'Awaiting runner' ? <div><p>Pair the Mac runner with this experiment. This code works once and expires in five minutes.</p><code className="native-pairing">{code}</code></div> : null}
     {error || session?.error ? <p className="error" role="alert">{error || session?.error}</p> : null}
@@ -168,6 +171,7 @@ export function NativeViewer({ id }: {
     }, [id, controlAttempt]);
     const send = (value: NativeInput) => { try {
         const input = parseNativeInput(value);
+        if (info?.platform === 'ios' && input.type === 'text' && /[^\x20-\x7e]/.test(input.text)) throw Error('iOS text input supports printable ASCII characters.');
         if (inputSocket.current?.readyState !== WebSocket.OPEN)
             throw Error('Take control before interacting with the device.');
         inputSocket.current.send(JSON.stringify(input));
@@ -194,9 +198,9 @@ export function NativeViewer({ id }: {
         }
     };
     return <main className="native-viewer">
-    <header className="row"><a href={info?.trackUrl ?? '/'}>← Back to track</a><strong>Android preview</strong><span role="status">{info?.phase ?? 'Connecting'}</span><span className="spacer"/><span>{watching ? `${fps} fps` : 'Waiting for screen'}</span></header>
+    <header className="row"><a href={info?.trackUrl ?? '/'}>← Back to track</a><strong>{info?.platform === 'ios' ? 'iOS' : 'Android'} preview</strong><span role="status">{info?.phase ?? 'Connecting'}</span><span className="spacer"/><span>{watching ? `${fps} fps` : 'Waiting for screen'}</span></header>
     {error ? <p className="error" role="alert">{error} <a href="/">Open Switchyard</a></p> : null}
-    <div className="native-screen"><canvas ref={canvas} style={{height: 'auto', width: `min(100%, ${68 * (info?.video ? info.video.width / info.video.height : 576 / 1280)}dvh)`}} width={576} height={1280} aria-label="Android device screen" onPointerDown={event => touch('down', event)} onPointerMove={event => touch('move', event)} onPointerUp={event => touch('up', event)} onPointerCancel={event => touch('cancel', event)} onLostPointerCapture={event => touch('cancel', event)} onWheel={event => { if (controlled && videoInfo.current) {
+    <div className="native-screen"><canvas ref={canvas} style={{height: 'auto', width: `min(100%, ${68 * (info?.video ? info.video.width / info.video.height : 576 / 1280)}dvh)`}} width={576} height={1280} aria-label={`${info?.platform === 'ios' ? 'iOS' : 'Android'} device screen`} onPointerDown={event => touch('down', event)} onPointerMove={event => touch('move', event)} onPointerUp={event => touch('up', event)} onPointerCancel={event => touch('cancel', event)} onLostPointerCapture={event => touch('cancel', event)} onWheel={event => { if (controlled && videoInfo.current) {
         event.preventDefault();
         send({ type: 'scroll', delta: Math.max(-16, Math.min(16, -event.deltaY / 50)), ...position(event.clientX, event.clientY) });
     } }}/></div>
@@ -208,15 +212,15 @@ export function NativeViewer({ id }: {
         setError('');
         setControlAttempt(n => n + 1);
     } }}>{controlled ? 'Release control' : 'Take control'}</button>
-      {(['back', 'home', 'enter', 'backspace'] as const).map(key => <button key={key} disabled={!controlled} onClick={() => send({ type: 'key', key })}>{key}</button>)}
-      <button disabled={!watching} onClick={() => { const a = document.createElement('a'); a.href = canvas.current!.toDataURL('image/png'); a.download = 'switchyard-android.png'; a.click(); }}>Screenshot</button>
+      {(['back', 'home', 'enter', 'backspace'] as const).filter(key => info?.platform !== 'ios' || key !== 'back').map(key => <button key={key} disabled={!controlled} onClick={() => send({ type: 'key', key })}>{key}</button>)}
+      <button disabled={!watching} onClick={() => { const a = document.createElement('a'); a.href = canvas.current!.toDataURL('image/png'); a.download = `switchyard-${info?.platform ?? 'android'}.png`; a.click(); }}>Screenshot</button>
       <button disabled={!info} onClick={() => { if (info)
         void api.stopNativePreview(info.trackId).catch(error => setError(String(error))); }}>Stop</button>
     </div>
     <form className="row native-controls" onSubmit={event => { event.preventDefault(); if (text) {
         send({ type: 'text', text });
         setText('');
-    } }}><input aria-label="Text to type on device" placeholder="Tap a device text field, then type here" maxLength={300} value={text} onChange={event => setText(event.target.value)} disabled={!controlled}/><button disabled={!controlled || !text}>Send text</button></form>
+    } }}><input aria-label="Text to type on device" placeholder={info?.platform === 'ios' ? 'Tap a device text field, then type here (ASCII)' : 'Tap a device text field, then type here'} maxLength={300} value={text} onChange={event => setText(event.target.value)} disabled={!controlled}/><button disabled={!controlled || !text}>Send text</button></form>
     <p className="fine">Live Sprite workspace · H.264 · one controller at a time. Closing the viewer releases control; Stop ends the experiment.</p>
   </main>;
 }

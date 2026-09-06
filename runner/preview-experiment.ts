@@ -1,25 +1,28 @@
 import { arch, platform, userInfo } from 'node:os';
 import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
-import { AndroidExperiment } from './adapters/experiment';
+import { AndroidExperiment, IosExperiment } from './adapters/experiment';
 import { toolEnvironment, toolPaths } from './doctor';
 import { acquireExperiment, writePrivateJson } from './state';
 import { command } from './process';
 import { androidNode, expoStartupAction, parseRuntimeConfig, verifyRuntimeBuild, type RuntimeConfig } from './runtime-experiment';
+import { verifyIosBuild, iosNode, iosStartupAction } from './ios-runtime';
 import { startLoopbackForward } from './loopback-forward';
 import { NATIVE, parseNativeInput, type NativeInfo } from '../shared/native-preview';
 interface PreviewConfig extends RuntimeConfig {
+    platform?: "android" | "ios";
     serverUrl: string;
     pairingCode: string;
 }
 export function parsePreviewExperiment(value: unknown): PreviewConfig {
     const runtime = parseRuntimeConfig(value), v = value as PreviewConfig;
+    if (v.platform !== undefined && !["android", "ios"].includes(v.platform)) throw Error("Choose android or ios");
     const url = new URL(v.serverUrl);
     if ((url.protocol !== 'https:' && !(url.protocol === 'http:' && url.hostname === '127.0.0.1')) || url.username || url.password || url.pathname !== '/' || url.search || url.hash)
         throw new Error('Use the Switchyard HTTPS app origin');
     if (typeof v.pairingCode !== 'string' || !/^[\w-]{43}$/.test(v.pairingCode))
         throw new Error('Use a fresh pairing code from the native preview');
-    return { ...runtime, serverUrl: url.origin, pairingCode: v.pairingCode };
+    return { ...runtime, ...(v.platform ? {platform: v.platform} : {}), serverUrl: url.origin, pairingCode: v.pairingCode };
 }
 function socket(url: string, token: string) { const Client = WebSocket as unknown as new (url: string, options: {
     headers: Record<string, string>;
@@ -30,11 +33,12 @@ export async function previewExperiment(config: PreviewConfig, signal?: AbortSig
         throw new Error(`Run as the dedicated ${config.expectedAccount} account`);
     const baseEnv = {HOME: user.homedir, PATH: `${user.homedir}/.local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin`, LANG: 'en_US.UTF-8'};
     const paths = await toolPaths(baseEnv);
-    const build = await verifyRuntimeBuild(config), owned = await acquireExperiment(join(user.homedir, '.local/share/switchyard/runtime'));
+    const target = config.platform ?? "android";
+    const build = await (target === "ios" ? verifyIosBuild(config) : verifyRuntimeBuild(config)), owned = await acquireExperiment(join(user.homedir, '.local/share/switchyard/runtime'));
     const controller = new AbortController(), active = AbortSignal.any([controller.signal, AbortSignal.timeout(NATIVE.lifetimeMs), ...(signal ? [signal] : [])]);
     const env = {...toolEnvironment(paths, baseEnv), TMPDIR: join(owned.directory, 'tmp')};
-    const adapter = new AndroidExperiment({ platform: 'android', stateDirectory: owned.directory, emulatorPort: 5580, deviceType: 'pixel_7', systemImage: 'system-images;android-35;google_apis;arm64-v8a', scrcpyVersion: '4.1' }, owned.id, owned.directory, paths, command, active, env, NATIVE.lifetimeMs);
-    const report = { version: 1, kind: 'android-sprite-preview-experiment', account: user.username, startedAt: new Date().toISOString(), artifactSha256: config.artifactSha256, sourceDigest: build.sourceDigest, sessionId: '', nativeRuntimeVerified: false, spriteMetroVerified: false, spriteBackendVerified: false, browserVerified: false, framesSent: 0, cleanup: 'pending', error: null as string | null };
+    const adapter = target === "ios" ? new IosExperiment({platform: "ios", stateDirectory: owned.directory, runtime: "com.apple.CoreSimulator.SimRuntime.iOS-18-6", deviceType: "com.apple.CoreSimulator.SimDeviceType.iPhone-16"}, owned.id, owned.directory, paths, command, active, env, NATIVE.lifetimeMs) : new AndroidExperiment({ platform: 'android', stateDirectory: owned.directory, emulatorPort: 5580, deviceType: 'pixel_7', systemImage: 'system-images;android-35;google_apis;arm64-v8a', scrcpyVersion: '4.1' }, owned.id, owned.directory, paths, command, active, env, NATIVE.lifetimeMs);
+    const report = { version: 1, kind: `${target}-sprite-preview-experiment`, platform: target, account: user.username, startedAt: new Date().toISOString(), artifactSha256: config.artifactSha256, sourceDigest: build.sourceDigest, sessionId: '', nativeRuntimeVerified: false, spriteMetroVerified: false, spriteBackendVerified: false, browserVerified: false, framesSent: 0, cleanup: 'pending', error: null as string | null };
     let control: WebSocket | undefined, media: WebSocket | undefined, live: Awaited<ReturnType<typeof adapter.live>> | undefined;
     let leaseDeadline = 0, heartbeat: ReturnType<typeof setInterval> | undefined, watchdog: ReturnType<typeof setInterval> | undefined;
     let remote: NativeInfo | null = null, serverEnded = false;
@@ -47,19 +51,20 @@ export async function previewExperiment(config: PreviewConfig, signal?: AbortSig
     try {
         await mkdir(env.TMPDIR, { mode: 0o700 });
         await save();
-        const claim = await fetch(`${config.serverUrl}/api/native/claim`, { method: 'POST', redirect: 'error', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ code: config.pairingCode, artifactSha256: config.artifactSha256 }), signal: AbortSignal.any([active, AbortSignal.timeout(15000)]) });
+        const claim = await fetch(`${config.serverUrl}/api/native/claim`, { method: 'POST', redirect: 'error', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ code: config.pairingCode, artifactSha256: config.artifactSha256, platform: target }), signal: AbortSignal.any([active, AbortSignal.timeout(15000)]) });
         if (!claim.ok)
             throw new Error(`Pairing failed (${claim.status}). Create a fresh code in Switchyard.`);
         const { data } = await claim.json() as {
             data: {
                 id: string;
+                platform?: "android" | "ios";
                 token: string;
                 leaseMs: number;
                 metroPort: number;
                 backendPort: number;
             };
         };
-        if (!data || !Number.isFinite(data.leaseMs) || data.leaseMs <= 0 || !/^[a-f0-9-]{36}$/.test(data.id) || !/^[\w-]{43}$/.test(data.token) || data.metroPort !== NATIVE.metroPort || data.backendPort !== NATIVE.backendPort)
+        if (!data || (data.platform ?? "android") !== target || !Number.isFinite(data.leaseMs) || data.leaseMs <= 0 || !/^[a-f0-9-]{36}$/.test(data.id) || !/^[\w-]{43}$/.test(data.token) || data.metroPort !== NATIVE.metroPort || data.backendPort !== NATIVE.backendPort)
             throw new Error('Invalid runner assignment');
         report.sessionId = data.id;
         leaseDeadline = performance.now() + Math.min(NATIVE.leaseMs, data.leaseMs);
@@ -109,8 +114,8 @@ export async function previewExperiment(config: PreviewConfig, signal?: AbortSig
             if (await status.text() !== 'packager-status:running')
                 throw new Error('Private Sprite Metro did not answer');
         });
-        await phase('boot-owned-emulator', () => adapter.boot());
-        await phase('install-apk', () => adapter.installHello(build.apk));
+        await phase(target === 'ios' ? 'boot-owned-simulator' : 'boot-owned-emulator', () => adapter.boot());
+        await phase(target === 'ios' ? 'install-simulator-app' : 'install-apk', () => adapter.installHello(build.apk));
         await adapter.forward(NATIVE.metroPort);
         await adapter.forward(NATIVE.backendPort);
         await phase('connect-browser-stream', async () => {
@@ -131,29 +136,32 @@ export async function previewExperiment(config: PreviewConfig, signal?: AbortSig
         await phase('launch-from-sprite-metro', () => adapter.launchHello(NATIVE.metroPort));
         const waitFor = async (text: string, timeout = 180000) => {
             const deadline = Date.now() + timeout;
-            let dismissals = 0;
+            let dismissals = 0, lastError = "";
             while (Date.now() < deadline) {
                 active.throwIfAborted();
                 try {
                     const xml = await adapter.readHierarchy();
-                    const node = androidNode(xml, 'text', text, 'com.managoat.switchyard.hello');
+                    if (target === "ios") await writePrivateJson(join(owned.directory, "last-hierarchy.json"), JSON.parse(xml));
+                    const node = target === 'ios' ? iosNode(xml, text) : androidNode(xml, 'text', text, 'com.managoat.switchyard.hello');
                     if (node)
                         return node;
-                    const action = expoStartupAction(xml);
+                    const action = target === 'ios' ? iosStartupAction(xml) : expoStartupAction(xml);
                     if (action && dismissals++ < 3)
                         await adapter.tap(action.x, action.y);
                 }
-                catch {
+                catch (error) {
+                    lastError = String(error);
                     active.throwIfAborted();
                 }
                 await Bun.sleep(1000);
             }
-            throw new Error(`App did not show: ${text}`);
+            await adapter.screenshot(join(owned.directory, "startup-timeout.png")).catch(() => {});
+            throw new Error(`App did not show: ${text}${lastError ? `. ${lastError}` : ""}`);
         };
         await phase('verify-sprite-greeting', async () => { await waitFor('Hello, world!'); report.nativeRuntimeVerified = true; report.spriteMetroVerified = true; await adapter.screenshot(join(owned.directory, 'sprite-greeting.png')); });
         await phase('verify-sprite-backend', async () => {
             const xml = await adapter.readHierarchy();
-            const button = androidNode(xml, 'content-desc', 'Call backend', 'com.managoat.switchyard.hello');
+            const button = target === 'ios' ? iosNode(xml, 'Call backend') : androidNode(xml, 'content-desc', 'Call backend', 'com.managoat.switchyard.hello');
             if (!button)
                 throw new Error('Backend button unavailable');
             await adapter.tap(button.x, button.y);

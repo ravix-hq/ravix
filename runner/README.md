@@ -1,7 +1,7 @@
 # Native runner experiments
 
-This companion implements isolated native tool experiments plus the Android
-Hello preview path for gates 1–2 of the [brief](../docs/native-preview-runners-brief.md).
+This companion implements isolated native tool experiments plus Android and iOS
+Hello preview paths for gates 1–2 of the [brief](../docs/native-preview-runners-brief.md).
 Local Android runtime and Fast Refresh passed on the dedicated account. The
 paired Sprite/browser path has also been exercised live in Chrome, including
 input, Sprite backend calls, state-preserving Fast Refresh and targeted cleanup. Remaining gates and observed results are
@@ -84,8 +84,10 @@ bun run runner experiment /absolute/path/experiment.json
 
 State must use an absolute real path, without symlink ancestors, owned by the
 current account with mode 0700. A missing state directory is created privately.
-Use a short path for iOS: its private Unix socket must fit within 100 bytes.
-The temporary path above is suitable for experiments, not persistent sessions.
+iOS allocates its Unix socket in a separate, private `sy-idb-*` temporary directory
+to stay within the socket path limit. Its exact path is recorded in `device.json`
+and removed after the owned companion exits. The simulator set stays in the
+experiment directory.
 
 Android creates an AVD definition and writable state under the experiment's
 private `ANDROID_USER_HOME` / `ANDROID_AVD_HOME`. It checks for an occupied
@@ -448,3 +450,71 @@ backend timeout, joining static video, manifest assets/source maps, latency
 percentiles, Safari/phone support, and network/sleep recovery.
 Durable runner registration, scheduling, arbitrary builds and iOS browser parity
 remain later gates.
+
+## iOS Hello build and paired preview
+
+The iOS path is implemented but still requires live verification under the
+`switchyard` account. Build from the same private Hello snapshot:
+
+```sh
+sudo /bin/bash \
+  /Users/jake/dev/managoat/demos/apps/switchyard/runner/scripts/provision-account.sh \
+  switchyard --build-ios-hello
+```
+
+The build stages source, runs npm/expo prebuild/CocoaPods, and invokes Xcode for
+an unsigned arm64 iOS Simulator Debug app. It verifies the bundle identifier,
+Mach-O platform and architecture, then hashes the entire `SwitchyardHello.app`
+bundle including paths and executable permissions. The resulting report retains
+the explicit build directory, digest and phase logs. Building does not establish
+runtime, Metro or browser readiness.
+
+After reviewing a successful build report, configure the Switchyard deployment's
+`NATIVE_HELLO_IOS_SHA256` with its artifact digest. Only then does the Hello track
+offer iOS in the platform selector. Start an iOS preview to obtain its one-use
+pairing code. Prepare `/private/tmp/switchyard-hello-ios-preview.json` as the
+provisioning account, mode 0600:
+
+```json
+{
+  "platform": "ios",
+  "expectedAccount": "switchyard",
+  "buildDirectory": "/Users/switchyard/.local/share/switchyard/builds/experiment-<build UUID>",
+  "artifactSha256": "<artifact digest from the successful iOS build report>",
+  "serverUrl": "https://switchyard.demo.managoat.com",
+  "pairingCode": "<fresh code from the iOS preview>"
+}
+```
+
+Then run `provision-account.sh switchyard --preview-ios-hello` with sudo. This
+creates an iPhone 16 on the installed iOS 18.6 runtime in a private simulator set,
+installs only the pinned app, and forwards the same private Sprite Metro/backend
+services used by Android. The simulator shares the Mac's loopback interface.
+The runner verifies the greeting and backend response before enabling control.
+Stop and assignment expiry terminate only its companion, bridge and simulator;
+shared cloud service cleanup and access checks remain the same on both platforms.
+
+Video uses the installed fb-idb 1.5.2 client with companion 1.1.8. A persistent
+Python bridge retains H.264 access-unit boundaries and maps normalized browser
+coordinates to simulator points. Its stdout frame parser and stdin input queue
+are bounded. Capture requests 30 fps at half scale; actual stream dimensions
+come from the SPS. Input supports touch, drag, scroll, Home, Enter, Backspace and
+printable ASCII text. iOS has no Android Back control. Device rotation,
+non-ASCII input, phone-browser compatibility and end-to-end latency are not
+verified. idb does not supply capture PTS; the bridge timestamps arrivals.
+The pinned encoder may reorder frames, so browser decoding and interactive
+latency must be checked live before claiming parity.
+
+If Xcode fails to select a destination, inspect the retained build with
+`sudo /bin/bash runner/scripts/provision-account.sh switchyard --check-ios-build <build UUID>`.
+This collects account-specific Xcode/runtime metadata and destinations into
+`ios-diagnostic.json` in that build directory. It does not rerun dependencies,
+compile, boot devices or change runtime mappings.
+
+For the pinned Xcode 16.4 setup, iOS builds temporarily map the iOS 18.5 SDK to
+installed iOS 18.6 runtime build 22G86 in the dedicated account. This selection
+is recorded in the report, verified before compilation, and the prior mapping
+is restored after success, failure or cancellation. It does not change the
+simulator set or download another runtime. A toolchain upgrade requires updating
+this explicit experiment pin. The dedicated-account retry is still required to
+establish whether this resolves its destination rejection.

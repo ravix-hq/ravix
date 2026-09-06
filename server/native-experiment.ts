@@ -7,7 +7,7 @@ import { machineOf, spriteFor } from './tracks';
 import { spriteTunnel, previewClient } from './sprites-tunnel';
 import { createNativeForwardGateway, type NativeForwardPeer } from './native-forward-gateway';
 import type { NativeServiceReservation } from './native-experiment-store';
-import { NATIVE, nativeFrame, parseNativeInput, type NativeInfo, type NativeVideo } from '../shared/native-preview';
+import { NATIVE, nativeFrame, parseNativeInput, type NativeInfo, type NativePlatform, type NativeVideo } from '../shared/native-preview';
 import loopbackSource from '../runner/scripts/metro-loopback.cjs' with { type: 'text' };
 const FIXTURE = 'managoat/switchyard-expo-hello';
 const NATIVE_HASHES = {
@@ -19,12 +19,35 @@ const NATIVE_HASHES = {
     'package-lock.json': 'f6b006e3c5d6271b6bbd9c0b81e84ed11f5f4c3d2c5b783e6fa41e2766d2e5ac',
 };
 const APK_SHA = '6bf899d7e847633cb70f02aa37b6c5ba8db32d07ff0e8cfb7bb5a168d92afe82';
+async function nativeBody(req: Request, empty = false): Promise<Record<string, unknown>> {
+    const reader = req.body?.getReader(), chunks: Uint8Array[] = [];
+    let size = 0;
+    if (reader) {
+        try {
+            while (true) {
+                const {done, value} = await reader.read();
+                if (done) break;
+                size += value.byteLength;
+                if (size > 1024) { await reader.cancel(); throw new HttpError(413, 'too_large'); }
+                chunks.push(value);
+            }
+        } finally { reader.releaseLock(); }
+    }
+    if (!size && empty) return {};
+    let value: unknown;
+    try { value = JSON.parse(Buffer.concat(chunks).toString()); }
+    catch { throw new HttpError(400, 'invalid_json'); }
+    if (!value || typeof value !== 'object' || Array.isArray(value)) throw new HttpError(400, 'invalid_json');
+    return value as Record<string, unknown>;
+}
 const managers = new WeakMap<AppContext, NativeExperiments>();
 export function nativeExperiments(ctx: AppContext) { let m = managers.get(ctx); if (!m) {
     m = new NativeExperiments(ctx);
     managers.set(ctx, m);
 } return m; }
 interface Session {
+    platform: NativePlatform;
+    artifactSha256: string;
     id: string;
     trackId: string;
     userId: string;
@@ -69,7 +92,7 @@ interface NativePeer {
 export type NativeSocketData = NativePeer | NativeForwardPeer;
 const serviceName = (id: string, kind: string) => `sy-native-${id}-${kind}`;
 const quote = (s: string) => "'" + s.replaceAll("'", "'\\''") + "'";
-/** Opt-in gate-2 fixture: one active Android experiment, no durable runner
+/** Opt-in gate-2 fixture: one active native experiment, no durable runner
  * registration. Each claim is single-use and ends on disconnect or lease loss. */
 export class NativeExperiments {
     fetch(req: Request, server: Server<NativeSocketData>) {
@@ -188,7 +211,7 @@ export class NativeExperiments {
             return false;
         }
     }
-    private info(s: Session): NativeInfo { return { id: s.id, trackId: s.trackId, phase: s.phase, error: s.error, expiresAt: s.expiresAt, runnerOnline: !!s.runner && this.live(s), video: s.video, frames: s.frames }; }
+    private info(s: Session): NativeInfo { return { id: s.id, platform: s.platform, trackId: s.trackId, phase: s.phase, error: s.error, expiresAt: s.expiresAt, runnerOnline: !!s.runner && this.live(s), video: s.video, frames: s.frames }; }
     private async runnerSession(req: Request, id: string) {
         if (req.headers.has('origin') || new URL(req.url).search)
             return null;
@@ -205,7 +228,7 @@ export class NativeExperiments {
         if (req.method === 'GET') {
             if (current && this.live(current))
                 current.lastViewer = Date.now();
-            return Response.json({ data: { available, session: current ? this.info(current) : null } }, { headers: { 'cache-control': 'no-store' } });
+            return Response.json({ data: { available, platforms: this.ctx.config.nativeHelloIosSha256 ? ['android', 'ios'] : ['android'], session: current ? this.info(current) : null } }, { headers: { 'cache-control': 'no-store' } });
         }
         if (req.headers.get('origin') !== this.ctx.config.publicUrl)
             throw new HttpError(403, 'origin', 'Open this action in Switchyard.');
@@ -223,8 +246,13 @@ export class NativeExperiments {
             throw new HttpError(409, 'native_busy', 'The experiment runner is occupied or still cleaning up. Stop it before starting another.');
         if (this.sessions.size >= 10)
             this.sessions.delete(this.sessions.keys().next().value!);
+        const body = await nativeBody(req, true);
+        const platform = (body as {platform?: unknown}).platform ?? 'android';
+        if (platform !== 'android' && platform !== 'ios') throw new HttpError(400, 'platform', 'Choose Android or iOS.');
+        const artifactSha256 = platform === 'ios' ? this.ctx.config.nativeHelloIosSha256 : APK_SHA;
+        if (!artifactSha256) throw new HttpError(409, 'ios_unavailable', 'The iOS Hello build has not been verified yet.');
         const code = randomToken(), now = Date.now();
-        const s: Session = { id: crypto.randomUUID(), trackId, userId: user.id, sessionHash: await sha256(cookieValue(req, SESSION_COOKIE)!), projectId: project.id, projectRevision: project.rev, workdir: track.workdir, agentId: project.agentId,
+        const s: Session = { platform, artifactSha256, id: crypto.randomUUID(), trackId, userId: user.id, sessionHash: await sha256(cookieValue(req, SESSION_COOKIE)!), projectId: project.id, projectRevision: project.rev, workdir: track.workdir, agentId: project.agentId,
             pairHash: await sha256(code), pairUntil: now + 5 * 60000, tokenHash: null, expiresAt: now + NATIVE.lifetimeMs, leaseUntil: now + 5 * 60000, lastViewer: now,
             phase: 'Awaiting runner', error: null, controller: new AbortController(), viewers: new Set(), video: null, frames: 0, lastFrame: 0, appReady: false, lastCheck: 0 };
         // Hashing yields. Recheck capacity and account access before publishing.
@@ -247,27 +275,11 @@ export class NativeExperiments {
     async claim(req: Request) {
         if (!this.ctx.config.nativePreviewExperiment || req.method !== 'POST' || req.headers.has('origin') || new URL(req.url).search)
             throw new HttpError(401, 'unauthorized');
-        const reader = req.body?.getReader(), chunks: Uint8Array[] = [];
-        let size = 0;
-        if (reader) {
-            try {
-                while (true) {
-                    const {done, value} = await reader.read();
-                    if (done) break;
-                    size += value.byteLength;
-                    if (size > 1024) { await reader.cancel(); throw new HttpError(413, 'too_large'); }
-                    chunks.push(value);
-                }
-            } finally { reader.releaseLock(); }
-        }
-        let value: {code?: unknown; artifactSha256?: unknown};
-        try { value = JSON.parse(Buffer.concat(chunks).toString()); }
-        catch { throw new HttpError(400, 'invalid_json'); }
-        if (!value || typeof value !== 'object') throw new HttpError(400, 'invalid_json');
-        if (typeof value.code !== 'string' || !/^[\w-]{43}$/.test(value.code) || value.artifactSha256 !== APK_SHA)
-            throw new HttpError(401, 'unauthorized', 'Pairing requires the verified Hello APK.');
+        const value = await nativeBody(req);
+        if (typeof value.code !== 'string' || !/^[\w-]{43}$/.test(value.code) )
+            throw new HttpError(401, 'unauthorized', 'Pairing requires the verified Hello build.');
         const hash = await sha256(value.code), s = [...this.sessions.values()].find(s => s.pairHash === hash && s.pairUntil > Date.now() && this.live(s));
-        if (!s)
+        if (!s || value.artifactSha256 !== s.artifactSha256 || (value.platform ?? 'android') !== s.platform)
             throw new HttpError(401, 'unauthorized');
         s.pairHash = null; // Consume synchronously before the next await.
         const token = randomToken();
@@ -276,7 +288,7 @@ export class NativeExperiments {
         s.phase = 'Preparing';
         s.pending = this.prepare(s);
         void s.pending.catch(error => { void this.stopSession(s, error instanceof Error ? error.message : String(error)); });
-        return Response.json({ data: { id: s.id, token, leaseMs: NATIVE.leaseMs, expiresAt: s.expiresAt, metroPort: NATIVE.metroPort, backendPort: NATIVE.backendPort } }, { headers: { 'cache-control': 'no-store' } });
+        return Response.json({ data: { id: s.id, platform: s.platform, token, leaseMs: NATIVE.leaseMs, expiresAt: s.expiresAt, metroPort: NATIVE.metroPort, backendPort: NATIVE.backendPort } }, { headers: { 'cache-control': 'no-store' } });
     }
     private assert(s: Session) { if (!this.live(s))
         throw new Error('Native session ended'); }
@@ -569,6 +581,7 @@ export class NativeExperiments {
                 if (message.type === 'heartbeat') return;
                 if (!s.appReady || s.phase !== 'Ready') throw Error('Device is not ready');
                 const input = parseNativeInput(message);
+                if (s.platform === 'ios' && (input.type === 'key' && input.key === 'back' || input.type === 'text' && /[^\x20-\x7e]/.test(input.text))) throw Error('Unsupported iOS input');
                 if ('width' in input && (!s.video || input.width !== s.video.width || input.height !== s.video.height))
                     throw Error('Frame dimensions changed');
                 if (s.runner.getBufferedAmount() > 16384)

@@ -221,3 +221,25 @@ test('a static screen remains ready while its producer and runner lease are live
         expect(input.readyState).toBe(WebSocket.OPEN);
     } finally {Date.now=original;}
 });
+
+test('iOS is offered only with a pinned build and pairing cannot cross platforms', async () => {
+    const f = await fixture();
+    expect((await (await f.request('/api/tracks/track/native')).json()).data.platforms).toEqual(['android']);
+    expect((await f.request('/api/tracks/track/native/start', 'POST', {platform:'ios'})).status).toBe(409);
+    expect((await f.request('/api/tracks/track/native/start', 'POST', {platform:'macos'})).status).toBe(400);
+    f.ctx.config.nativeHelloIosSha256 = 'a'.repeat(64);
+    expect((await (await f.request('/api/tracks/track/native')).json()).data.platforms).toEqual(['android','ios']);
+    const response = await f.request('/api/tracks/track/native/start','POST',{platform:'ios'});
+    expect(response.status).toBe(200);
+    const session = (await response.json()).data;
+    expect(session.platform).toBe('ios');
+    expect((await f.claim(session.pairingCode)).status).toBe(401);
+    const claim = (platform: string, artifactSha256: string) => f.manager.claim(new Request('https://switchyard.test/api/native/claim',{method:'POST',body:JSON.stringify({code:session.pairingCode, platform, artifactSha256})}));
+    await expect(claim('android','a'.repeat(64))).rejects.toMatchObject({status:401});
+    await expect(claim('ios', APK)).rejects.toMatchObject({status:401});
+    const paired = await claim('ios','a'.repeat(64));
+    expect((await paired.json()).data.platform).toBe('ios');
+    await expect(claim('ios','a'.repeat(64))).rejects.toMatchObject({status:401});
+    await f.request('/api/tracks/track/native/stop','POST');
+    expect(f.db.nativeExperiments.all()).toHaveLength(0);
+});
