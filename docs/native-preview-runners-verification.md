@@ -16,7 +16,7 @@ The [brief](native-preview-runners-brief.md) remains the full implementation con
 - Installed toolchain recorded in [toolchain-macos.json](../runner/toolchain-macos.json).
 
 The milestones below record the work in order. The latest paired preview
-implementation is described at the end; no deployment has been performed yet.
+implementation, deployment and live observations are described at the end.
 
 ## Confirmed workstation and provisioning
 
@@ -469,3 +469,9 @@ disconnected` despite successful resource cleanup. The follow-up fixes preserve
 Stopped when the server closes its runner socket and send an explicit final
 session result, allowing the runner to distinguish a normal Stop from transport
 failure. The regression asserts Stopped, no error, and the final result message.
+
+Both follow-up corrections shipped in image
+`sha-27d0a3a4df308a7d27423f72b5441c39927a79c6` (CI pin `c77b5fb`). CI passed and the
+rollout/public health check passed. The post-fix device run has not yet been
+repeated; the regression tests establish the corrected state transitions. The
+first run's backend timeout and static-screen late-join behavior remain open.

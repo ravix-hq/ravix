@@ -2,9 +2,9 @@
 
 This companion implements isolated native tool experiments plus the Android
 Hello preview path for gates 1–2 of the [brief](../docs/native-preview-runners-brief.md).
-Local Android runtime and Fast Refresh passed on the dedicated account. The new
-paired Sprite/browser path is implemented and tested with local fixtures; its
-first deployed device run is pending. Remaining gates and observed results are
+Local Android runtime and Fast Refresh passed on the dedicated account. The
+paired Sprite/browser path has also been exercised live in Chrome, including
+input, Sprite backend calls, state-preserving Fast Refresh and targeted cleanup. Remaining gates and observed results are
 in [verification](../docs/native-preview-runners-verification.md).
 
 From `apps/switchyard`:
@@ -442,7 +442,9 @@ controller and at most eight viewers. Cleanup stops only owned services/devices;
 a SQLite reservation journal retains cloud cleanup work across server restarts.
 Failed cleanup retries and blocks new experiments until it succeeds.
 
-Still to verify on the live path: Sprite Metro bundles and HMR, backend calls,
-browser decoding/control, WAN responsiveness, and disconnect/stop cleanup.
+The first live run verified Sprite Metro bundles/HMR, a backend call, browser
+decoding/control and Stop cleanup. Remaining checks include an intermittent
+backend timeout, joining static video, manifest assets/source maps, latency
+percentiles, Safari/phone support, and network/sleep recovery.
 Durable runner registration, scheduling, arbitrary builds and iOS browser parity
 remain later gates.
