@@ -694,3 +694,14 @@ Validation for this slice: 321 tests passed, one pre-existing real-Chromium
 shared-browser test skipped, zero failures. TypeScript, Vite and the Bun server
 bundle passed. The protocol tests used local provider fixtures; no dedicated
 account simulator was booted during these automated checks.
+
+Deployment: implementation `337b041669c83e2792e0b25dd40e47510f670c67`
+passed workflow `34014778701`; viewer reconnect guard
+`18f2a817407691b932394a201dcb2400540a0f47` passed workflow
+`34014911283` on its resumed attempt. The follow-up was briefly held while an
+independently started iOS preview was active and resumed once it showed Stopped.
+The final deployed image matches `18f2a81`; rollout and public `/healthz` passed.
+The signed-in Hello track displayed **Pair a Mac runner**, and invoking it issued
+a five-minute code. No registered daemon or two-track simulator run has been
+claimed as verified. The provisioning-account config for both existing artifacts
+is prepared at `/private/tmp/switchyard-runner.json` with mode 0600.
