@@ -13,7 +13,16 @@ test.each([
   ["closed", true, "Closed", "idle"],
 ] as const)("%s with unread=%s displays %s", (status: Track["status"], unread, label, kind) => {
   const html = renderToStaticMarkup(<TrackActivity track={{ status }} unread={unread} />);
+  if (kind === "idle") {
+    expect(html).toBe("");
+    return;
+  }
   expect(html).toContain(`track-activity ${kind}`);
-  expect(html).toContain(label);
+  expect(html).toContain(`aria-label="${label}"`);
+  expect(html.replace(/<[^>]*>/g, "")).not.toMatch(/Idle|Needs attention|Running|Opening/);
   if (kind === "busy") expect(html).not.toContain("Needs attention");
+});
+
+test("idle tracks retain their ordinal without a status line", () => {
+  expect(renderToStaticMarkup(<TrackActivity track={{ status: "ready" }} unread={false} ordinal={4} />)).toBe("4");
 });

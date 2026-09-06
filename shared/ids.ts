@@ -86,11 +86,12 @@ export function workdirFor(slug: string): string {
  * A track's branch.
  *
  * Namespaced under the person who asked for it, the way a human would name a
- * branch they intend to push: `jhgaylor/kyoto`. The login comes from GitHub,
+ * branch they intend to push: `jhgaylor/kyoto-<track-id>`. The login comes from GitHub,
  * so it is the same name that will appear on the pull request.
  */
-export function branchFor(login: string, slug: string): string {
-  return `${slugify(login, "sy")}/${slug}`;
+export function branchFor(login: string, slug: string, trackId: string): string {
+  // Names can outlive the local branch and even the project database on GitHub.
+  return `${slugify(login, "sy")}/${slug}-${trackId}`;
 }
 
 /** `/workspace/<name>` for `owner/name`. */

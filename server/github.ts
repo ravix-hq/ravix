@@ -291,7 +291,7 @@ export class GitHub {
    * not an error — so `pushed: false` is a first-class answer and the panel
    * renders "nothing pushed yet" rather than an empty list that looks broken.
    */
-  async checks(installationId: number, fullName: string, ref: string): Promise<ChecksReport> {
+  async checks(installationId: number, fullName: string, ref: string, track?: { createdAt: string; originNumber: number | null }): Promise<ChecksReport> {
     const token = await this.installationToken(installationId);
     let sha: string | null = null;
     try {
@@ -323,7 +323,16 @@ export class GitHub {
 
     // An open one if there is one, else the most recently updated — which for
     // a finished branch is the pull request that merged it.
-    const ranked = [...pulls].sort(
+    // A reused branch name must not attach a previous track's PR. Explicit PR
+    // tracks keep their original PR even when it predates the conversation.
+    const eligible = pulls.filter(p => {
+      if (p.head.ref !== ref) return false;
+      if (!track) return true;
+      if (track.originNumber !== null) return p.number === track.originNumber;
+      // GitHub timestamps have second precision; SQLite timestamps include ms.
+      return !!p.created_at && Date.parse(p.created_at) >= Math.floor(Date.parse(track.createdAt) / 1000) * 1000;
+    });
+    const ranked = eligible.sort(
       (a, b) => Number(!!a.merged_at || a.state === "closed") - Number(!!b.merged_at || b.state === "closed") ||
         b.updated_at.localeCompare(a.updated_at),
     );
@@ -423,6 +432,7 @@ interface RawRepo {
 }
 
 interface RawPull {
+  created_at?: string;
   number: number;
   title: string;
   user: { login: string } | null;

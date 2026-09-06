@@ -95,6 +95,15 @@ const FILL = 2;
 /** Scrolling to within this many pixels of the top asks for the page above. */
 const REACH = 600;
 
+function hasSelection(element: HTMLElement) {
+  const selection = element.ownerDocument.getSelection();
+  if (!selection || selection.isCollapsed) return false;
+  for (let i = 0; i < selection.rangeCount; i++) {
+    if (selection.getRangeAt(i).intersectsNode(element)) return true;
+  }
+  return false;
+}
+
 export function Transcript({ trackId, turns, events, runtime, running, head, footer, workdir, people = [] }: TranscriptProps) {
   const scroller = useRef<HTMLDivElement | null>(null);
   const content = useRef<HTMLDivElement | null>(null);
@@ -175,7 +184,7 @@ export function Transcript({ trackId, turns, events, runtime, running, head, foo
    */
   useLayoutEffect(() => {
     const el = scroller.current;
-    if (!el) return;
+    if (!el || hasSelection(el)) return;
     if (pinned.current) {
       el.scrollTop = el.scrollHeight;
       anchor.current = null;
@@ -222,7 +231,7 @@ export function Transcript({ trackId, turns, events, runtime, running, head, foo
     const inner = content.current;
     if (!el || !inner) return;
     const stick = () => {
-      if (pinned.current) el.scrollTop = el.scrollHeight;
+      if (pinned.current && !hasSelection(el)) el.scrollTop = el.scrollHeight;
     };
     stick();
     const observer = new ResizeObserver(stick);
@@ -453,8 +462,37 @@ function BlockView({
  * changed is the cheapest thing here to not do.
  */
 function Markdown({ body, live }: { body: string; live: boolean }) {
+  const container = useRef<HTMLDivElement>(null);
   const html = useMemo(() => renderMarkdown(body), [body]);
-  return <div className={`block-text md${live ? " live" : ""}`} onClick={async (event) => {
+  const applied = useRef<string | null>(null);
+  const dragging = useRef(false);
+  // Keep selected DOM nodes alive while new chunks arrive. Flush the latest
+  // reply once the reader clears their selection, including after streaming ends.
+  useLayoutEffect(() => {
+    const element = container.current!;
+    const update = () => {
+      if (dragging.current || hasSelection(element) || applied.current === html) return;
+      element.innerHTML = html;
+      applied.current = html;
+    };
+    const down = () => { dragging.current = true; };
+    const up = () => { dragging.current = false; update(); };
+    update();
+    element.addEventListener("pointerdown", down);
+    document.addEventListener("pointerup", up);
+    document.addEventListener("pointercancel", up);
+    document.addEventListener("selectionchange", update);
+    return () => {
+      element.removeEventListener("pointerdown", down);
+      document.removeEventListener("pointerup", up);
+      document.removeEventListener("pointercancel", up);
+      document.removeEventListener("selectionchange", update);
+    };
+  }, [html]);
+  // Supply initial HTML for server rendering; keep this object stable so React
+  // leaves subsequent DOM updates and selection preservation to the effect.
+  const initial = useRef({ __html: html });
+  return <div ref={container} className={`block-text md${live ? " live" : ""}`} onClick={async (event) => {
     if (!(event.target instanceof Element)) return;
     const button = event.target.closest<HTMLButtonElement>("button.code-copy");
     if (!button || button.disabled) return;
@@ -476,7 +514,7 @@ function Markdown({ body, live }: { body: string; live: boolean }) {
         button.setAttribute("aria-label", "Copy code");
       }, 2000);
     }
-  }} dangerouslySetInnerHTML={{ __html: html }} />;
+  }} dangerouslySetInnerHTML={initial.current} />;
 }
 
 /**

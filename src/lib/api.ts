@@ -72,6 +72,44 @@ async function call<T>(path: string, init: RequestInit = {}): Promise<T> {
 const post = <T>(path: string, body?: unknown) =>
   call<T>(path, { method: "POST", body: body === undefined ? undefined : JSON.stringify(body) });
 
+// Files and changes mount together. Share the wake request so entering a
+// track does not run several commands. Nothing is sent to the agent.
+const waking = new Map<string, Promise<void>>();
+
+async function readMachine<T>(trackId: string, path: string): Promise<T> {
+  try {
+    return await call<T>(path);
+  } catch (err) {
+    if (!(err instanceof ApiError) || err.code !== "sandbox_not_ready") throw err;
+    if (!/\bsuspended\b/i.test(err.message)) {
+      throw new ApiError(409, "machine_starting", "The machine is starting. Try again in a moment.");
+    }
+  }
+
+  let wake = waking.get(trackId);
+  if (!wake) {
+    wake = post<ExecResult>(`/api/tracks/${trackId}/exec`, { command: ":", timeoutSec: 30 })
+      .then((result) => {
+        if (result.code !== 0) throw new Error("Wake failed");
+      })
+      .finally(() => { waking.delete(trackId); });
+    waking.set(trackId, wake);
+  }
+  try {
+    await wake;
+  } catch {
+    throw new ApiError(409, "machine_asleep", "The machine is asleep. Try waking it again, or send a message in this track to resume work.");
+  }
+  try {
+    return await call<T>(path);
+  } catch (err) {
+    if (err instanceof ApiError && err.code === "sandbox_not_ready") {
+      throw new ApiError(409, "machine_asleep", "The machine is still getting ready. Try again in a moment, or send a message in this track to resume work.");
+    }
+    throw err;
+  }
+}
+
 export const api = {
   browser: (trackId: string) => call<BrowserInfo>(`/api/tracks/${trackId}/browser`),
   browserAction: (trackId: string, action: "start" | "stop" | "delete-checkpoint", clientId: string, checkpointId?: string) => post<BrowserInfo>(`/api/tracks/${trackId}/browser/${action}`, { clientId, checkpointId }),
@@ -150,9 +188,9 @@ export const api = {
 
   // ── the machine, through a track ───────────────────────────────────
   files: (id: string, path?: string) =>
-    call<FileListing>(`/api/tracks/${id}/files${path ? `?path=${encodeURIComponent(path)}` : ""}`),
-  file: (id: string, path: string) => call<FileContent>(`/api/tracks/${id}/file?path=${encodeURIComponent(path)}`),
-  diff: (id: string) => call<DiffReport>(`/api/tracks/${id}/diff`),
+    readMachine<FileListing>(id, `/api/tracks/${id}/files${path ? `?path=${encodeURIComponent(path)}` : ""}`),
+  file: (id: string, path: string) => readMachine<FileContent>(id, `/api/tracks/${id}/file?path=${encodeURIComponent(path)}`),
+  diff: (id: string) => readMachine<DiffReport>(id, `/api/tracks/${id}/diff`),
   checks: (id: string) => call<ChecksReport>(`/api/tracks/${id}/checks`),
   openPull: (id: string, body: { title?: string; base?: string; body?: string; draft?: boolean }) =>
     post<PullRef & { url: string }>(`/api/tracks/${id}/pull`, body),

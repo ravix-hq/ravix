@@ -46,3 +46,38 @@ test("copies the selected block verbatim and reports clipboard failure", async (
     element.remove();
   }
 });
+
+test("keeps selected reply nodes during streaming and flushes after selection clears", async () => {
+  const element = document.createElement("div");
+  document.body.append(element);
+  const root = createRoot(element);
+  const render = (text: string) => <Transcript trackId="selection" turns={[]} runtime="codex" running events={[{
+    id: text.length, kind: "output", stream: "acp", stage: null, state: null, turn_id: null,
+    ts: "2026-09-06T12:00:00Z",
+    data: JSON.stringify({ jsonrpc: "2.0", method: "session/update", params: { update: {
+      sessionUpdate: "agent_message_chunk", content: { type: "text", text },
+    } } }),
+  }]} />;
+  try {
+    await act(async () => root.render(render("First words")));
+    const paragraph = element.querySelector(".md p")!;
+    const range = document.createRange();
+    range.selectNodeContents(paragraph);
+    const selection = document.getSelection()!;
+    selection.addRange(range);
+    await act(async () => root.render(render("First words and more")));
+    expect(element.querySelector(".md p")).toBe(paragraph);
+    expect(selection.toString()).toBe("First words");
+    expect(paragraph.textContent).toBe("First words");
+    selection.removeAllRanges();
+    await act(async () => document.dispatchEvent(new Event("selectionchange")));
+    expect(element.querySelector(".md p")!.textContent).toBe("First words and more");
+    const updated = element.querySelector(".md p");
+    await act(async () => root.render(render("First words and more")));
+    expect(element.querySelector(".md p")).toBe(updated);
+  } finally {
+    document.getSelection()?.removeAllRanges();
+    await act(async () => root.unmount());
+    element.remove();
+  }
+});
