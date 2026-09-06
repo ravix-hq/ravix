@@ -5,6 +5,8 @@ Status: Android and iOS Hello previews demonstrated; durable runner integration 
 Date: September 5, 2026.\
 Code baseline reviewed: `65ef3c7`.
 
+Resume: [September 6 checkpoint](native-preview-runners-checkpoint.md).
+
 ## Outcome and agreed direction
 
 Make an Expo app on a Switchyard track usable as a real Android or iOS app
