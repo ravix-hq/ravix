@@ -37,7 +37,7 @@ export async function previewExperiment(config: PreviewConfig, signal?: AbortSig
     const report = { version: 1, kind: 'android-sprite-preview-experiment', account: user.username, startedAt: new Date().toISOString(), artifactSha256: config.artifactSha256, sourceDigest: build.sourceDigest, sessionId: '', nativeRuntimeVerified: false, spriteMetroVerified: false, spriteBackendVerified: false, browserVerified: false, framesSent: 0, cleanup: 'pending', error: null as string | null };
     let control: WebSocket | undefined, media: WebSocket | undefined, live: Awaited<ReturnType<typeof adapter.live>> | undefined;
     let leaseDeadline = 0, heartbeat: ReturnType<typeof setInterval> | undefined, watchdog: ReturnType<typeof setInterval> | undefined;
-    let remote: NativeInfo | null = null;
+    let remote: NativeInfo | null = null, serverEnded = false;
     const stop = (error: unknown) => { if (!active.aborted) {
         report.error = error instanceof Error ? error.message : String(error);
         controller.abort();
@@ -77,6 +77,12 @@ export async function previewExperiment(config: PreviewConfig, signal?: AbortSig
                     remote = message;
                     if (['Failed', 'Stopped'].includes(message.phase))
                         throw new Error(message.error || 'Server stopped the preview');
+                }
+                else if (message.type === 'ended') {
+                    if (message.error !== null && typeof message.error !== 'string') throw new Error('Invalid session result');
+                    serverEnded = true;
+                    report.error = message.error;
+                    controller.abort();
                 }
                 else if (live)
                     live.input(parseNativeInput(message));
@@ -167,8 +173,8 @@ export async function previewExperiment(config: PreviewConfig, signal?: AbortSig
             report.error = null;
     }
     catch (error) {
-        report.error ??= error instanceof Error ? error.message : String(error);
-        if (control?.readyState === WebSocket.OPEN)
+        if (!serverEnded) report.error ??= error instanceof Error ? error.message : String(error);
+        if (report.error && control?.readyState === WebSocket.OPEN)
             control.send(JSON.stringify({ type: 'error', error: report.error }));
     }
     finally {

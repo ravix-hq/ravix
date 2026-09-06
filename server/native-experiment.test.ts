@@ -100,6 +100,8 @@ test('pairing is single-use and private services preserve the existing web previ
     expect(results.map(r => r.status).sort()).toEqual([200, 401]);
     const paired = (await results.find(r => r.status === 200)!.json()).data;
     const runner = await f.connect(s.id, 'runner', paired.token);
+    const endings: unknown[] = [];
+    runner.onmessage = event => { const value = JSON.parse(String(event.data)); if (value.type === 'ended') endings.push(value); };
     runner.send(JSON.stringify({ type: 'heartbeat' }));
     await until(async () => (await (await f.request('/api/tracks/track/native')).json()).data.session.phase === 'Connecting');
     expect(f.db.previews.get('track')).toEqual(web);
@@ -123,6 +125,11 @@ test('pairing is single-use and private services preserve the existing web previ
     expect(f.state.upstreamBytes.join('')).not.toContain(paired.token);
     await f.request('/api/tracks/track/native/stop', 'POST');
     expect(f.db.nativeExperiments.all()).toHaveLength(0);
+    await Bun.sleep(50);
+    const stopped = (await (await f.request('/api/tracks/track/native')).json()).data.session;
+    expect(stopped.phase).toBe('Stopped');
+    expect(stopped.error).toBeNull();
+    expect(endings).toEqual([{type:'ended',error:null}]);
     expect(f.db.previews.get('track')).toEqual(web);
 });
 test('video waits for a keyframe, input has one controller, and sign-out ends established channels', async () => {

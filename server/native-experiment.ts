@@ -390,6 +390,7 @@ export class NativeExperiments {
         s.tokenHash = null;
         s.phase = error ? 'Failed' : 'Stopped';
         s.error = error?.slice(-2000) ?? null;
+        s.runner?.send(JSON.stringify({ type: 'ended', error: s.error }));
         for (const ws of [s.runner, s.producer, s.input, ...s.viewers])
             ws?.close(1000, 'Session ended');
         s.stopping = (async () => { await s.pending?.catch(() => { }); await s.checking?.catch(() => { }); if (s.reservation)
@@ -582,7 +583,8 @@ export class NativeExperiments {
             const p = ws.data, s = p.session;
             if (p.role === 'runner' && s.runner === ws) {
                 s.runner = undefined;
-                void this.stopSession(s, 'Runner disconnected');
+                if (this.live(s))
+                    void this.stopSession(s, 'Runner disconnected');
             }
             if (p.role === 'video' && s.producer === ws) {
                 s.producer = undefined;

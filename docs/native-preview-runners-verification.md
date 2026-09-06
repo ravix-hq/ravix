@@ -463,3 +463,9 @@ no owned emulator or runner process remained in the Mac process listing. A
 separate Sprite `git status --short` returned empty after the conversation
 restored the test edits. The existing web preview remained in its original
 Stopped/unconfigured state throughout this run.
+
+The original deployed UI labeled the intentional Stop as `Failed: Runner
+disconnected` despite successful resource cleanup. The follow-up fixes preserve
+Stopped when the server closes its runner socket and send an explicit final
+session result, allowing the runner to distinguish a normal Stop from transport
+failure. The regression asserts Stopped, no error, and the final result message.
