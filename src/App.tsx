@@ -573,7 +573,7 @@ function SwitchyardApp() {
       ) : null}
 
       {dialog === "create-from" && project ? (
-        <CreateFrom project={project} onClose={() => setDialog(null)} onOpen={trackOpened} />
+        <CreateFrom project={project} tracks={tracks} onClose={() => setDialog(null)} onOpen={trackOpened} />
       ) : null}
 
       {dialog === "settings" && project ? (

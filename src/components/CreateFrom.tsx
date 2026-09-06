@@ -1,19 +1,7 @@
-/**
- * "Create from…" — the four ways a track starts.
- *
- * The server takes all of them through one route with an `origin`, and this
- * picker is the reason: branch, pull request and issue differ only in what the
- * opening turn gets told, so they are three tabs over one list rather than
- * three screens. Each tab is fetched the first time it is opened and kept
- * afterwards, because switching back and forth while deciding is the normal
- * way this dialog is used and re-asking GitHub each time would make it stutter.
- *
- * Arrow keys move, Enter opens. That is not decoration: this list is opened to
- * find one row out of fifty, and reaching for the mouse after typing a filter
- * is the slow half of the interaction.
- */
-import { useEffect, useId, useMemo, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
+/** Quick creation from the default branch, with repository sources under Advanced. */
+import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import type { BranchRef, IssueRef, Project, PullRef, Track, TrackOriginInfo } from "../../shared/api";
+import { nameTrack } from "../../shared/names";
 import { api } from "../lib/api";
 import { Branch, Issue, Pull, Search, Sparkle } from "../lib/icons";
 import { Dialog, ago } from "./Dialog";
@@ -42,11 +30,16 @@ interface Row {
 
 export interface CreateFromProps {
   project: Project;
+  tracks?: Track[];
   onOpen: (track: Track) => void;
   onClose: () => void;
 }
 
-export function CreateFrom({ project, onOpen, onClose }: CreateFromProps) {
+export function CreateFrom({ project, tracks = [], onOpen, onClose }: CreateFromProps) {
+  const [advanced, setAdvanced] = useState(false);
+  const [name, setName] = useState(() => nameTrack(tracks.flatMap((track) => [track.title, track.slug])));
+  const starting = useRef(false);
+  const nameId = useId();
   const [tab, setTab] = useState<Tab>("branches");
   const [branches, setBranches] = useState<BranchRef[] | null>(null);
   const [pulls, setPulls] = useState<PullRef[] | null>(null);
@@ -64,7 +57,7 @@ export function CreateFrom({ project, onOpen, onClose }: CreateFromProps) {
     // A project with no repository has nothing to list — the server answers
     // 409 rather than an empty array, which is the honest answer and a bad
     // thing to show somebody as an error they cannot fix.
-    if (!project.repo || loaded) return;
+    if (!advanced || !project.repo || loaded) return;
     let live = true;
     setLoading(true);
     setError(null);
@@ -87,15 +80,17 @@ export function CreateFrom({ project, onOpen, onClose }: CreateFromProps) {
     return () => {
       live = false;
     };
-  }, [tab, project.id, project.repo, loaded]);
+  }, [advanced, tab, project.id, project.repo, loaded]);
 
   async function start(key: string, body: { title?: string; origin: Partial<TrackOriginInfo> }): Promise<void> {
-    if (opening) return;
+    if (starting.current) return;
+    starting.current = true;
     setOpening(key);
     setError(null);
     try {
       onOpen(await api.openTrack(project.id, body));
     } catch (err) {
+      starting.current = false;
       setOpening(null);
       setError(err instanceof Error ? err.message : "Could not open that track.");
     }
@@ -216,18 +211,46 @@ export function CreateFrom({ project, onOpen, onClose }: CreateFromProps) {
 
   return (
     <Dialog
-      title="Create from…"
+      title="New track"
       onClose={onClose}
       footer={
         <>
           <span className="dimmer">
-            <kbd>↑</kbd> <kbd>↓</kbd> to move, <kbd>⏎</kbd> to open
+            {advanced ? <><kbd>↑</kbd> <kbd>↓</kbd> to move, <kbd>⏎</kbd> to open</> : <><kbd>⏎</kbd> to create</>}
           </span>
           <span className="spacer" />
           <span className="dimmer">{project.repo ?? "no repository"}</span>
         </>
       }
     >
+      <form onSubmit={(event) => {
+        event.preventDefault();
+        if (name.trim()) void start("new", { title: name.trim(), origin: { kind: "blank" } });
+      }}>
+        <div className="dialog-body">
+          <div className="field">
+            <label htmlFor={nameId}>Track name</label>
+            <input id={nameId} autoFocus value={name} maxLength={200} required
+              disabled={!!opening} onFocus={(event) => event.currentTarget.select()}
+              onChange={(event) => setName(event.target.value)} autoComplete="off" />
+            <span className="hint">{project.repo
+              ? `New worktree from ${project.defaultBranch || "the default branch"}.`
+              : "Start a blank track."}</span>
+          </div>
+          {error ? <p className="fine error" role="alert">{error}</p> : null}
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <button type="button" className="btn" aria-expanded={advanced}
+              disabled={!!opening} onClick={() => setAdvanced(!advanced)}>
+              {advanced ? "Hide advanced" : "Advanced"}
+            </button>
+            <span className="spacer" />
+            <button type="submit" className="btn primary" disabled={!!opening || !name.trim()}>
+              {opening === "new" ? "Creating…" : "Create track"}
+            </button>
+          </div>
+        </div>
+      </form>
+      {advanced ? <>
       <div className="tabs" role="group" aria-label="Where to start from">
         {TABS.map((t) => (
           <button
@@ -263,7 +286,6 @@ export function CreateFrom({ project, onOpen, onClose }: CreateFromProps) {
           sit beside it, because a screen reader announcing "3 items" over a
           list containing a paragraph is counting the paragraph. */}
       <div className="dialog-body flush">
-        {error ? <p className="fine error">{error}</p> : null}
         {!project.repo && tab === "branches" ? (
           <p className="fine">This project has no repository, so a blank track is the only way in.</p>
         ) : null}
@@ -314,6 +336,7 @@ export function CreateFrom({ project, onOpen, onClose }: CreateFromProps) {
           ))}
         </div>
       </div>
+      </> : null}
     </Dialog>
   );
 }
