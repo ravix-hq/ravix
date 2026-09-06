@@ -446,7 +446,29 @@ function BlockView({
  */
 function Markdown({ body, live }: { body: string; live: boolean }) {
   const html = useMemo(() => renderMarkdown(body), [body]);
-  return <div className={`block-text md${live ? " live" : ""}`} dangerouslySetInnerHTML={{ __html: html }} />;
+  return <div className={`block-text md${live ? " live" : ""}`} onClick={async (event) => {
+    if (!(event.target instanceof Element)) return;
+    const button = event.target.closest<HTMLButtonElement>("button.code-copy");
+    if (!button || button.disabled) return;
+    const code = button.closest(".code-block")?.querySelector("pre code");
+    if (!code) return;
+    button.disabled = true;
+    try {
+      await navigator.clipboard.writeText(code.textContent ?? "");
+      button.textContent = "Copied!";
+      button.setAttribute("aria-label", "Code copied");
+    } catch {
+      button.textContent = "Copy failed";
+      button.setAttribute("aria-label", "Copy failed. Try again");
+    } finally {
+      button.disabled = false;
+      window.setTimeout(() => {
+        if (!button.isConnected) return;
+        button.textContent = "Copy";
+        button.setAttribute("aria-label", "Copy code");
+      }, 2000);
+    }
+  }} dangerouslySetInnerHTML={{ __html: html }} />;
 }
 
 /**

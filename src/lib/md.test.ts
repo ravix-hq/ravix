@@ -19,7 +19,7 @@ describe("renderMarkdown", () => {
 
   test("headings, lists and fences", () => {
     const html = renderMarkdown("# Title\n\n- one\n- two\n\n```ts\nconst x = 1;\n```");
-    expect(html).toBe('<h1>Title</h1><ul><li>one</li><li>two</li></ul><pre><code class="lang-ts">const x = 1;</code></pre>');
+    expect(html).toBe('<h1>Title</h1><ul><li>one</li><li>two</li></ul><div class="code-block"><div class="code-block-toolbar"><button type="button" class="code-copy" aria-label="Copy code" aria-live="polite">Copy</button></div><pre><code class="lang-ts">const x = 1;</code></pre></div>');
   });
 
   test("a blank line between items keeps one list", () => {
@@ -36,7 +36,7 @@ describe("renderMarkdown", () => {
   test("an unterminated fence renders what has arrived", () => {
     // Every chunk of a live reply ends mid-construct; swallowing the rest of
     // the turn until the closing fence lands is the visible failure.
-    expect(renderMarkdown("```\nhalf a f")).toBe("<pre><code>half a f</code></pre>");
+    expect(renderMarkdown("```\nhalf a f")).toContain("<pre><code>half a f</code></pre>");
   });
 
   test("html in the reply is text, not markup", () => {

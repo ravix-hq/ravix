@@ -61,7 +61,7 @@ export function renderMarkdown(src: string): string {
   const flushFence = () => {
     if (!fence) return;
     const cls = fence.lang ? ` class="lang-${escapeHtml(fence.lang)}"` : "";
-    out.push(`<pre><code${cls}>${escapeHtml(fence.lines.join("\n"))}</code></pre>`);
+    out.push(`<div class="code-block"><div class="code-block-toolbar"><button type="button" class="code-copy" aria-label="Copy code" aria-live="polite">Copy</button></div><pre><code${cls}>${escapeHtml(fence.lines.join("\n"))}</code></pre></div>`);
     fence = null;
   };
   const flushAll = () => {
