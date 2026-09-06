@@ -49,6 +49,7 @@ export function TrackView(props: TrackViewProps) {
   const [turns, setTurns] = useState<TurnRecord[]>([]);
   const [queue, setQueue] = useState<QueuedPrompt[]>([]);
   const [queueError, setQueueError] = useState(false);
+  const refreshTranscript = useRef<() => void>(() => {});
   const submission = useRef<{ payload: string; id: string } | null>(null);
   const [running, setRunning] = useState(track.status === "running" || track.status === "opening");
   const seen = useRef(new Set<number>());
@@ -75,12 +76,20 @@ export function TrackView(props: TrackViewProps) {
   useEffect(() => {
     let alive = true;
     let fetching = false;
+    let previous: QueuedPrompt[] = [];
     async function refresh() {
       if (fetching) return;
       fetching = true;
       try {
         const saved = await api.promptQueue(track.id);
-        if (alive) { setQueue(saved); setQueueError(false); }
+        if (alive) {
+          // A delivered prompt disappears from the queue before model output
+          // arrives. Reconcile even if its turn-start stream frame was missed.
+          if (previous.some(item => !saved.some(next => next.id === item.id))) refreshTranscript.current();
+          previous = saved;
+          setQueue(saved);
+          setQueueError(false);
+        }
       } catch { if (alive) setQueueError(true); }
       finally { fetching = false; }
     }
@@ -91,6 +100,7 @@ export function TrackView(props: TrackViewProps) {
 
   useEffect(() => {
     setRunning(track.status === "running" || track.status === "opening");
+    refreshTranscript.current();
   }, [track.status]);
 
   // Never the reader. "You are typing" is information nobody has ever wanted,
@@ -110,19 +120,30 @@ export function TrackView(props: TrackViewProps) {
     seen.current = new Set();
     setEvents([]);
     setTurns([]);
-    void api
-      .events(track.id)
-      .then((page) => {
+    let retryTimers: ReturnType<typeof setTimeout>[] = [];
+    async function refresh() {
+      try {
+        const page = await api.events(track.id);
         if (!alive || showing.current !== track.id) return;
         for (const e of page.events as LogEvent[]) seen.current.add(e.id);
         setEvents(current => mergeEvents(current, page.events as LogEvent[]));
         setTurns(current => mergeTurns(current, page.turns));
-      })
-      .catch((err: unknown) => {
+      } catch (err) {
         if (alive && err instanceof ApiError) props.onError(err.message);
-      });
+      }
+    }
+    const reconcile = () => {
+      retryTimers.forEach(clearTimeout);
+      void refresh();
+      // Delivery and stage events can precede the persisted turn record.
+      retryTimers = [1000, 3000, 7000].map(delay => setTimeout(() => void refresh(), delay));
+    };
+    refreshTranscript.current = reconcile;
+    reconcile();
     return () => {
       alive = false;
+      retryTimers.forEach(clearTimeout);
+      if (refreshTranscript.current === reconcile) refreshTranscript.current = () => {};
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [track.id]);
@@ -161,23 +182,9 @@ export function TrackView(props: TrackViewProps) {
           setRunning(true);
         } else {
           setRunning(false);
-          // The turn is over, so its prompt is now recorded and the track's
-          // status has moved. Re-read both rather than guessing at them.
-          props.onActivity();
-          const forTrack = track.id;
-          void api
-            .events(forTrack)
-            .then((page) => {
-              // The unguarded version of this line is how another track's
-              // transcript ends up under this one's header.
-              if (showing.current === forTrack) {
-                setTurns(current => mergeTurns(current, page.turns));
-                for (const event of page.events as LogEvent[]) seen.current.add(event.id);
-                setEvents(current => mergeEvents(current, page.events as LogEvent[]));
-              }
-            })
-            .catch(() => undefined);
         }
+        props.onActivity();
+        refreshTranscript.current();
       }
     }
     return stop;
