@@ -373,25 +373,32 @@ function Turn({
               {who.avatarUrl ? <img src={who.avatarUrl} alt="" /> : <span className="mono">{who.login.slice(0, 1).toUpperCase()}</span>}
               @{who.login}
             </span>
-          ) : null}
+          ) : <span className="said-who">You</span>}
           <div className="turn-you">{text}</div>
         </div>
       ) : null}
-      {blocks.map((block, i) => (
-        <BlockView
-          key={i}
-          block={block}
-          detail={block.kind === "tool" && block.id ? details.get(block.id) : undefined}
-          workdir={workdir}
-          // The caret belongs to the block being written; reasoning stays open
-          // for the whole turn it was part of. Folding it the instant a tool
-          // call starts collapses the thing somebody is mid-sentence through
-          // and moves everything under it up the screen.
-          live={live && i === lastBlock}
-          turnLive={live}
-        />
-      ))}
-      {live ? <Working since={turn.events[0]?.ts ?? null} what={activityOf(blocks, details, workdir)} /> : null}
+      {blocks.length > 0 || live ? (
+        <section className="agent-terminal" aria-label="Agent output">
+          <div className="agent-terminal-label"><Terminal size={12} /><span>agent</span></div>
+          <div className="agent-terminal-output">
+            {blocks.map((block, i) => (
+              <BlockView
+                key={i}
+                block={block}
+                detail={block.kind === "tool" && block.id ? details.get(block.id) : undefined}
+                workdir={workdir}
+                // The caret belongs to the block being written; reasoning stays open
+                // for the whole turn it was part of. Folding it the instant a tool
+                // call starts collapses the thing somebody is mid-sentence through
+                // and moves everything under it up the screen.
+                live={live && i === lastBlock}
+                turnLive={live}
+              />
+            ))}
+            {live ? <Working since={turn.events[0]?.ts ?? null} what={activityOf(blocks, details, workdir)} /> : null}
+          </div>
+        </section>
+      ) : null}
     </div>
   );
 }

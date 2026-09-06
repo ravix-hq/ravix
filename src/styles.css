@@ -614,18 +614,39 @@ input.crumb-name { width: 30ch; }
 /* ── the transcript ────────────────────────────────────────────────────── */
 
 .scroll { flex: 1; min-height: 0; overflow-y: auto; }
-.transcript { display: flex; flex-direction: column; gap: 14px; padding: 8px 20px 20px; }
+.transcript { display: flex; flex-direction: column; gap: 18px; padding: 8px 20px 20px; }
 
 .turn { display: flex; flex-direction: column; gap: 8px; }
 .turn-you {
-  align-self: flex-end; max-width: 78%;
+  align-self: flex-start; max-width: 100%;
   background: var(--accent-soft); border: 1px solid var(--accent-line); color: var(--accent-ink);
-  border-radius: var(--radius); padding: 8px 12px; white-space: pre-wrap; word-break: break-word;
+  border-left-width: 3px; border-radius: 2px 10px 10px 10px;
+  padding: 9px 12px; white-space: pre-wrap; overflow-wrap: anywhere;
+}
+/* Agent output reads as a terminal stream beneath the human's message. */
+.agent-terminal { min-width: 0; font-family: var(--mono); font-size: 12px; line-height: 1.6; }
+.agent-terminal-label {
+  display: flex; align-items: center; gap: 6px; padding: 3px 0 5px;
+  color: var(--dimmer); font-size: 10px; letter-spacing: 0.06em;
+}
+.agent-terminal-output {
+  display: flex; flex-direction: column; gap: 6px; min-width: 0;
+  border-left: 1px solid var(--line-strong); padding: 4px 0 4px 12px;
+}
+.agent-terminal .block-text { overflow-wrap: anywhere; }
+.agent-terminal .md h1, .agent-terminal .md h2,
+.agent-terminal .md h3, .agent-terminal .md h4 { font-size: 1em; letter-spacing: 0; }
+.agent-terminal .md pre { border-radius: 2px; }
+.agent-terminal .md code { font-size: 1em; }
+.agent-terminal .tool, .agent-terminal .tool-head { border-radius: 2px; }
+@media (max-width: 760px) {
+  .transcript { padding-left: 12px; padding-right: 12px; }
+  .transcript .said { max-width: 100%; }
 }
 /* An app-sent turn is real and belongs in the scrollback, but it is not
    something the person said — so it reads as a note rather than a message. */
 .turn-app {
-  align-self: center; max-width: 88%;
+  align-self: flex-start; max-width: 100%;
   color: var(--dimmer); font-size: 11.5px; font-family: var(--mono);
   border: 1px dashed var(--line); border-radius: 6px; padding: 4px 10px;
 }
@@ -974,10 +995,9 @@ input.crumb-name { width: 30ch; }
 
 /* ── who said it, on a track more than one person types into ──────────── */
 
-/* The label is only ever drawn when a prompt carried an author, so a solo
-   track's transcript is exactly what it was before sharing existed. */
-.said { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; }
-.said-who { display: inline-flex; align-items: center; gap: 5px; padding-right: 2px; color: var(--dimmer); font-size: 11px; }
+/* Keep human messages visibly distinct from the terminal stream below. */
+.said { display: flex; flex-direction: column; align-items: flex-start; align-self: flex-start; max-width: 88%; min-width: 0; gap: 4px; }
+.said-who { display: inline-flex; align-items: center; gap: 5px; padding-left: 2px; color: var(--dim); font-family: var(--mono); font-size: 11px; }
 .said-who img { width: 15px; height: 15px; border-radius: 999px; object-fit: cover; }
 .said-who .mono {
   width: 15px; height: 15px; border-radius: 999px; display: grid; place-items: center;
