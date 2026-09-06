@@ -310,7 +310,7 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-::selection { background: var(--accent-soft); color: var(--accent-ink); }
+::selection { background: Highlight; color: HighlightText; }
 
 /* Scrollbars, quietly. A pale default scrollbar on a near-black panel is the
    loudest thing on the screen and it is never what you are looking at. */
