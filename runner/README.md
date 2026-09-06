@@ -3,7 +3,7 @@
 This companion implements isolated native tool experiments plus Android and iOS
 Hello preview paths for gates 1–2 of the [brief](../docs/native-preview-runners-brief.md).
 Local Android runtime and Fast Refresh passed on the dedicated account. The
-paired Sprite/browser path has also been exercised live in Chrome, including
+paired Android and iOS Sprite/browser paths have also been exercised live in Chrome, including
 input, Sprite backend calls, state-preserving Fast Refresh and targeted cleanup. Remaining gates and observed results are
 in [verification](../docs/native-preview-runners-verification.md).
 
@@ -38,7 +38,8 @@ account. The user confirmed this checkout's Mac as the runner host. The dedicate
 diagnostics. The earlier live capture/input experiments ran under `jake`; they
 have now been followed by a successful Android Hello runtime, input, local
 Metro/backend, Fast Refresh and capture/scroll check under `switchyard`. iOS
-runtime work under that account remains pending.
+now also passes the Sprite Metro/backend, browser video/input and state-preserving
+Fast Refresh checks under that account; see the latest verification record.
 CoreSimulator inventory may fail inside a filesystem/process sandbox; that is
 an inaccessible inventory, not evidence that no simulator runtime is installed.
 

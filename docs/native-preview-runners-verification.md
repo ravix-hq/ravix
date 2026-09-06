@@ -1,8 +1,9 @@
 # Native preview runner verification
 
-Date: September 5–6, 2026. Status: **Deployed Android preview exercised through
-real Sprite Metro, Mac emulator and Chrome. Core live path works; gate-2
-compatibility, reliability and performance checks remain open.**
+Date: September 5–6, 2026. Status: **Android and iOS Hello previews exercised
+through real Sprite Metro, owned Mac devices and Chrome under the dedicated
+runner account. Core live paths work; gate-2 compatibility, reliability and
+performance checks remain open.**
 The [brief](native-preview-runners-brief.md) remains the full implementation contract.
 
 ## Implemented
@@ -622,3 +623,44 @@ and links. The original ten-run acquisition limit remains. Twenty focused
 archive/runner tests pass, including byte preservation, freeing quota, active
 lock refusal and leaving unconfirmed evidence untouched. Dedicated-account
 archiving and the subsequent iOS preview still need the user's sudo invocation.
+
+
+## Dedicated-account iOS preview: successful live verification
+
+Session `75580979-656d-41d0-83df-b4050b29a703`, September 6, 2026,
+using the pinned simulator app bundle digest
+`375169f807696ad02ea5d82f1456b94142378e9f306eb5555bab55afe9abab2f`.
+The user ran the archive helper and then the preview command. This attempt
+passed the retention limit, paired, booted its owned simulator and reached Ready.
+
+Observed in the authenticated Chrome viewer:
+
+- The native greeting was **Hello, world!** and the backend response was
+  **Hello from the Sprite backend!**. Ready followed the runner's actual greeting
+  and backend accessibility checks, rather than process startup alone.
+- H.264 video continued around 27–29 fps during the reviewed interaction.
+  These UI samples are not latency measurements or a performance guarantee.
+- Browser tap changed the counter from 0 to 1. Sending ASCII text **Jake**
+  into the focused native field produced **Hello, worldJake!**.
+- Wheel scrolling traversed the fixture and visibly reached **You reached the end.**
+- A Switchyard agent edit changed only App.tsx's GREETING to
+  **Hello from iOS Sprite**. The running app refreshed to
+  **Hello from iOS Sprite, worldJake!**, preserving counter 1, name worldJake,
+  and the existing backend response. No native rebuild or service restart occurred.
+- The agent restored GREETING to **Hello**, which refreshed again with the state
+  intact. Independent Sprite exec checks returned empty `git status --short`
+  and `git diff -- App.tsx`, both exit 0.
+- A second viewer received live video but its control attempt was rejected with
+  **Another viewer controls this device**. The first retained control.
+- Browser Backspace removed the final e from worldJake; Enter dismissed the
+  native keyboard, leaving **Hello, worldJak!** and counter 1 visible.
+
+Stop ended the session. Independent provider reads found Metro, backend and
+install service definitions absent, and the native cleanup journal empty.
+Process inspection found no remaining dedicated-account runner, idb companion,
+Python bridge or simctl process. The retained local final report and private
+simulator set were not independently read in this browser verification pass.
+The browser Screenshot button, iOS Home, mobile Safari, reconnect/resume behavior,
+measured latency and sustained reliability still need separate coverage. Earlier
+provider disconnects and the reappearing old service definitions remain recorded
+above; this successful run does not resolve their underlying causes.
