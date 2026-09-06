@@ -27,6 +27,7 @@ import { attentionItems } from "./lib/inbox";
 import { Empty } from "./components/Empty";
 import { Landing } from "./components/Landing";
 import { Home, SignIn } from "./components/Home";
+import { PanelResizeHandle } from "./components/PanelResizeHandle";
 import { Yard } from "./components/Yard";
 import { TrackView } from "./components/TrackView";
 import { TrackName } from "./components/TrackName";
@@ -406,6 +407,7 @@ function SwitchyardApp() {
       />
 
       <div className="stage">
+        <PanelResizeHandle side="left" />
         {route.inbox ? (
           <Inbox projectsState={projectsState} projects={projects} tracksByProject={tracksByProject} errors={trackErrors}
             onRetry={() => { void reloadProjects(); projects.forEach((p) => void reloadTracks(p.id)); }}
@@ -522,6 +524,7 @@ function SwitchyardApp() {
                     onActivity={() => void markRead(detail.track.id, project.id)}
                   />
                   <div className="inspector">
+                    <PanelResizeHandle side="right" />
                     {/* Keyed for the same reason as the transcript: an open
                         directory, a loaded diff and a terminal's scrollback all
                         belong to one track, and a remount is a cheaper
