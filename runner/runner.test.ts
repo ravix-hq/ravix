@@ -5,7 +5,8 @@ import { join } from "node:path";
 import { command, type Command } from "./process";
 import { doctor, installedSystemImages, toolEnvironment, type ToolPaths } from "./doctor";
 import { acquireExperiment, privateDirectory, writePrivateJson } from "./state";
-import { experiment, parseExperimentConfig, type ExperimentConfig } from "./adapters/experiment";
+import { experiment, IosExperiment, parseExperimentConfig, type ExperimentConfig } from "./adapters/experiment";
+import { iosStartupAction } from "./ios-runtime";
 
 const paths: ToolPaths = { adb: "adb", emulator: "emulator", avdmanager: "avdmanager", scrcpy: "scrcpy", idb: "idb", xcrun: "xcrun", sdk: "/test/sdk" };
 const ok = (stdout = "", code = 0) => ({ stdout: Buffer.from(stdout), stderr: Buffer.alloc(0), code });
@@ -173,6 +174,35 @@ test("iOS cleanup uses only its private set and created UDID", async () => {
   expect(calls.filter(c => c.includes("delete"))[0]?.at(-1)).toBe(udid);
 });
 
+
+test("iOS dialog accessibility points become integer idb tap coordinates", async () => {
+  // Actual iOS 18.6 confirmation geometry from the dedicated-account run.
+  const hierarchy = JSON.stringify([
+    { AXLabel: 'Open in “Switchyard Hello”?', frame: { x: 77.66666666666666, y: 406, width: 237.99999999999997, height: 20.333333333333314 } },
+    { AXLabel: 'Cancel', frame: { x: 61.66666666666666, y: 446.6666666666667, width: 135, height: 44 } },
+    { AXLabel: 'Open', frame: { x: 197.00000000000003, y: 446.6666666666667, width: 134.66666666666666, height: 44 } },
+  ]);
+  const calls: string[][] = [], directory = await temp();
+  const run: Command = async (argv, options) => {
+    calls.push(argv);
+    if (argv.includes('create')) return ok('11111111-2222-3333-4444-555555555555');
+    if (argv.includes('--grpc-domain-sock')) return new Promise((_, reject) => options!.signal!.addEventListener('abort', () => reject(Error('cancelled')), { once: true }));
+    return ok();
+  };
+  const adapter = new IosExperiment({ stateDirectory: directory, platform: 'ios', deviceType: 'com.apple.CoreSimulator.SimDeviceType.iPhone-16', runtime: 'com.apple.CoreSimulator.SimRuntime.iOS-18-6' }, 'fixture', directory, paths, run);
+  try {
+    await adapter.boot();
+    const point = iosStartupAction(hierarchy)!;
+    expect(point).not.toBeNull();
+    await adapter.tap(point.x, point.y);
+    expect(calls.find(argv => argv.includes('tap'))?.slice(-4)).toEqual(['ui', 'tap', '264', '469']);
+    await adapter.tap(100, 200);
+    expect(calls.at(-1)?.slice(-2)).toEqual(['100', '200']);
+    const count = calls.length;
+    for (const [x, y] of [[NaN, 1], [1, Infinity], [-1, 1], [1, 4096]]) await expect(adapter.tap(x!, y!)).rejects.toThrow('Invalid iOS tap');
+    expect(calls).toHaveLength(count);
+  } finally { await adapter.stop(); }
+});
 
 test("retained experiment quota refuses new work without leaving a stale lock", async () => {
   const dir = await temp();

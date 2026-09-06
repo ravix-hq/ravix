@@ -35,6 +35,9 @@ export function iosNode(hierarchy: string, label: string) {
 }
 export function iosStartupAction(hierarchy: string) {
   const node = (text: string) => iosNode(hierarchy, text);
+  // iOS asks before opening the development-client URL on a fresh simulator.
+  // The alert can hide the app's own title from the accessibility hierarchy.
+  if ((node('Open in “Switchyard Hello”?') || node('Open in "Switchyard Hello"?')) && node('Cancel')) return node('Open');
   if (!node('Switchyard Hello')) return null;
   if (node('This is the developer menu. It gives you access to useful tools in your development builds.')) return node('Continue');
   if (node('Reload') && node('Go home')) return node('Close');

@@ -550,3 +550,26 @@ Metro/backend configuration. Tests exercise bind conflicts without stopping the
 occupant, inactive-listener rejection, activation, assignment cancellation,
 large binary traffic, HTTP and HMR upgrades, and port validation before consuming
 the pairing code. Dedicated iOS runtime/browser verification remains pending.
+
+
+The next paired iOS run (`9aca96a0-bcb9-458e-bd2a-26017ba6d948`)
+passed forwarding, booted the owned simulator and streamed its screen to the
+Chrome viewer at approximately 28 fps. The visible screen showed iOS's
+“Open in ‘Switchyard Hello’?” development-client confirmation; the startup
+helper did not recognize that dialog, so greeting verification timed out.
+The helper now selects Open only when the exact Hello confirmation title and
+Cancel action are present. Regression tests reject unrelated app prompts and
+incomplete dialogs. This confirms browser video, but app launch from Sprite,
+backend calls, browser input and iOS Fast Refresh still need the retry.
+
+
+The follow-up session (`09adbfad-1c13-4a91-9526-f1085f64d09d`;
+local experiment `f2459a5e-33ee-4c89-89ef-39df9c1b8514`) again streamed the
+confirmation at approximately 25–29 fps. The user supplied its retained
+accessibility hierarchy: the title matched, but Open's center was
+(264.33333333333337, 468.6666666666667). The adapter forwarded those decimal
+strings to idb's integer-coordinate tap CLI. It now rounds accessibility points
+at that CLI boundary and rejects invalid coordinates. A regression test using
+the supplied geometry failed with the original command arguments and passes
+with `ui tap 264 469`; 23 focused runner/video tests pass. Dedicated-account
+launch and subsequent app interaction still require another live run.

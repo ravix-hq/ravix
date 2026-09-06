@@ -315,7 +315,12 @@ export class IosExperiment implements OwnedAdapter {
     await this.sim("openurl", this.ownedUdid(), `switchyard-hello://expo-development-client/?url=${encodeURIComponent(`http://127.0.0.1:${port}`)}`);
   }
   async readHierarchy() { this.ownedUdid(); return (await this.idb("ui", "describe-all", "--json")).toString(); }
-  async tap(x: number, y: number) { this.ownedUdid(); await this.idb("ui", "tap", String(x), String(y)); }
+  async tap(x: number, y: number) {
+    this.ownedUdid();
+    if (![x, y].every(n => Number.isFinite(n) && n >= 0 && n < 4096)) throw Error('Invalid iOS tap coordinates');
+    // Accessibility frames use fractional points; idb's coordinate CLI requires integers.
+    await this.idb("ui", "tap", String(Math.round(x)), String(Math.round(y)));
+  }
   async live(options: Pick<Parameters<typeof iosLive>[0], "metadata" | "frame" | "failed">) {
     return iosLive({ ...options, idb: this.tools.idb, socket: this.socket, udid: this.ownedUdid(), env: this.env ?? process.env,
       signal: AbortSignal.any([this.controller.signal, ...(this.signal ? [this.signal] : [])]) });
