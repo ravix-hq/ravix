@@ -12,7 +12,10 @@
     "typecheck": "tsc --noEmit",
     "mock": "bun mock/server.ts",
     "server": "STATIC_DIR= DATA_DIR=./data bun --watch server/index.ts",
-    "start": "bun server/index.ts"
+    "start": "bun server/index.ts",
+    "runner": "bun runner/index.ts",
+    "runner:doctor": "bun runner/index.ts doctor",
+    "runner:test": "bun test runner/"
   },
   "dependencies": {
     "@managoat/fountain-app": "workspace:*",

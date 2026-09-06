@@ -21,6 +21,7 @@ import type { OutgoingImage } from "../lib/images";
 import { others, subject, useHeartbeat } from "../lib/presence";
 import { Composer } from "./Composer";
 import { TrackPreview } from "./TrackPreview";
+import { NativePreviewLauncher } from "./NativePreview";
 import { Transcript } from "./Transcript";
 
 export interface TrackViewProps {
@@ -271,6 +272,7 @@ export function TrackView(props: TrackViewProps) {
       ) : null}
       {queueError ? <div className="composer-note" role="status">Could not refresh saved prompts. Reconnecting…</div> : null}
       <TrackPreview key={track.id} trackId={track.id} closed={track.status === "closed"} />
+      <NativePreviewLauncher trackId={track.id} owner={track.role === "owner"} />
       <Composer
         onSend={send}
         onInterrupt={interrupt}

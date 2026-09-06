@@ -1,0 +1,35 @@
+{
+  "recordedOn": "2026-09-05",
+  "host": {
+    "architecture": "arm64",
+    "macOS": "15.5",
+    "xcode": "16.4",
+    "iosRuntime": "18.6"
+  },
+  "android": {
+    "jdk": "21.0.12.1",
+    "commandLineToolsPackage": "15859902",
+    "emulator": "37.1.11",
+    "compileSdk": 36,
+    "buildTools": "36.0.0",
+    "systemImage": "system-images;android-35;google_apis;arm64-v8a",
+    "systemImageRevision": 9,
+    "deviceType": "pixel_7",
+    "gpu": "host",
+    "scrcpy": "4.1",
+    "commandLineTools": "23.0",
+    "platformTools": "37.0.1",
+    "vulkan": false,
+    "memoryMiB": 4096,
+    "cores": 4
+  },
+  "ios": {
+    "clientPackage": "fb-idb==1.5.2",
+    "companion": "1.1.8",
+    "companionUrl": "https://github.com/facebook/idb/releases/download/v1.1.8/idb-companion.universal.tar.gz",
+    "companionSha256": "3b72cc6a9a5b1a22a188205a84090d3a294347a846180efd755cf1a3c848e3e7",
+    "cocoaPods": "1.17.0",
+    "deviceType": "com.apple.CoreSimulator.SimDeviceType.iPhone-16"
+  },
+  "status": "Installed; see native-preview-runners-verification.md for live evidence and limitations."
+}

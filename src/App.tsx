@@ -35,6 +35,7 @@ import { ProjectSettings } from "./components/ProjectSettings";
 import { Search as SearchDialog } from "./components/Search";
 import { People, PeopleStack, ProjectPeople } from "./components/People";
 import { Vitals } from "./components/Vitals";
+import { NativeViewer } from "./components/NativePreview";
 
 type Dialog = "new-project" | "create-from" | "settings" | "search" | "people" | "project-people" | "close-track" | null;
 
@@ -55,7 +56,13 @@ function writeRoute(route: Route, replace = false): void {
 }
 
 export function App() {
+  const native = /^\/native\/([a-f0-9-]{36})$/.exec(window.location.pathname);
+  return native ? <NativeViewer id={native[1]!} /> : <SwitchyardApp />;
+}
+
+function SwitchyardApp() {
   const [session, setSession] = useState<SessionInfo | null>(null);
+  const [signingOut, setSigningOut] = useState(false);
   const [projects, setProjects] = useState<Project[]>([]);
   const [tracksByProject, setTracks] = useState<Record<string, Track[]>>({});
   const [route, setRoute] = useState<Route>(readRoute);
@@ -84,6 +91,19 @@ export function App() {
   }, []);
 
   // ── boot ────────────────────────────────────────────────────────────
+
+  async function signOut(): Promise<void> {
+    if (signingOut) return;
+    setSigningOut(true);
+    try {
+      await api.signOut();
+      // A full navigation clears cached tracks and closes this tab's streams.
+      window.location.assign("/");
+    } catch (err) {
+      setSigningOut(false);
+      notify(err instanceof Error ? err.message : "Could not sign out. Try again.");
+    }
+  }
 
   useEffect(() => {
     void api
@@ -328,6 +348,8 @@ export function App() {
     <div className="app">
       <Yard
         viewer={session.viewer}
+        signingOut={signingOut}
+        onSignOut={() => void signOut()}
         projects={projects}
         tracksByProject={tracksByProject}
         selected={route}

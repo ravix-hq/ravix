@@ -17,7 +17,7 @@
  */
 import type { AppContext } from "./context";
 import { authenticate, projectAccess, requireGitHub, trackAccess, userToken } from "./context";
-import { asHttpError } from "./github";
+import { asHttpError, GitHubError } from "./github";
 import { HttpError, json, readJson, str } from "./http";
 
 /** `GET /api/github/repos?installation=` — the picker's list. */
@@ -36,6 +36,11 @@ export async function repos(ctx: AppContext, req: Request): Promise<Response> {
     const list = await gh.repositories(token, chosen);
     return json({ data: { installations, selected: chosen, repos: list } });
   } catch (err) {
+    // This call uses the person's OAuth token. A 401 means it must be renewed;
+    // installation permissions and provider outages need different remedies.
+    if (err instanceof GitHubError && err.status === 401) {
+      throw new HttpError(401, "reauthenticate", "Your GitHub sign-in has expired or was revoked. Sign in again to load your repositories.");
+    }
     throw asHttpError(err, "list your repositories");
   }
 }

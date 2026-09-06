@@ -40,6 +40,9 @@ spec:
               value: https://switchyard.demo.managoat.com
             - name: PREVIEW_DOMAIN
               value: preview.switchyard.inevitable.fyi
+            # Gate 2: only the pinned private Hello repository can pair a runner.
+            - name: NATIVE_PREVIEW_EXPERIMENT
+              value: "1"
             - name: PREVIEW_PORT
               value: "8082"
           envFrom:

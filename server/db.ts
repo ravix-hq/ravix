@@ -21,6 +21,7 @@
  */
 import { Database } from "bun:sqlite";
 import { PreviewStore } from "./preview-store";
+import { NativeExperimentStore } from "./native-experiment-store";
 import type { TrackOriginInfo } from "../shared/api";
 
 export interface UserRow {
@@ -90,6 +91,7 @@ export interface PromptRow {
 export class Db {
   private readonly db: Database;
   readonly previews: PreviewStore;
+  readonly nativeExperiments: NativeExperimentStore;
 
   constructor(path: string) {
     this.db = new Database(path, { create: true });
@@ -97,6 +99,7 @@ export class Db {
     this.db.exec("PRAGMA foreign_keys = ON");
     this.migrate();
     this.previews = new PreviewStore(this.db);
+    this.nativeExperiments = new NativeExperimentStore(this.db);
   }
 
   private migrate(): void {

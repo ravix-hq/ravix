@@ -22,6 +22,8 @@ export interface YardProps {
   onHome: () => void;
   onNewProject: () => void;
   onSearch: () => void;
+  onSignOut: () => void;
+  signingOut: boolean;
   onPickProject: (projectId: string) => void;
   onPickTrack: (projectId: string, trackId: string) => void;
   onNewTrack: (projectId: string) => void;
@@ -187,6 +189,9 @@ export function Yard(props: YardProps) {
       </div>
 
       <div className="yard-foot">
+        <button type="button" className="ghost" onClick={props.onSignOut} disabled={props.signingOut}>
+          {props.signingOut ? "Signing out…" : "Sign out"}
+        </button>
         <ThemePicker />
         <div className="yard-foot-row">
           <span className="badge-free">switchyard</span>

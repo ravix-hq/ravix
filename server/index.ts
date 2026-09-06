@@ -15,6 +15,7 @@ import { Db } from "./db";
 import { PromptQueue } from "./prompt-queue";
 import { previews } from "./previews";
 import { createPreviewGateway } from "./preview-gateway";
+import { nativeExperiments, type NativeSocketData } from "./native-experiment";
 
 const config = loadConfig();
 const db = new Db(config.dbPath);
@@ -26,17 +27,21 @@ const handle = buildRouter(ctx);
 const previewManager = previews(ctx);
 previewManager.start();
 const gateway = config.previews ? createPreviewGateway(ctx).listen(config.previews.port, "0.0.0.0") : null;
+const native = nativeExperiments(ctx);
+native.start();
 
-const server = Bun.serve({
+const server = Bun.serve<NativeSocketData>({
   port: config.port,
   // A track's stream stays open as long as its tab is; the default idle
   // timeout would cut every one of them at two minutes.
   idleTimeout: 0,
-  fetch: handle,
+  fetch: (request, server) => request.headers.get("upgrade")?.toLowerCase() === "websocket" && new URL(request.url).pathname.startsWith("/api/native/") ? native.fetch(request,server) : handle(request),
+  websocket: native.websocket,
 });
 
 process.on("SIGTERM", () => {
   previewManager.stop(); promptQueue.stop();
+  native.stop();
   gateway?.close(); gateway?.closeAllConnections();
   server.stop(true);
   process.exit(0);

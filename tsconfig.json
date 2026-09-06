@@ -15,5 +15,5 @@
     "noEmit": true,
     "types": ["bun", "vite/client"]
   },
-  "include": ["src", "shared", "server"]
+  "include": ["src", "shared", "server", "runner"]
 }

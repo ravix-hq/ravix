@@ -56,6 +56,13 @@ is no OAuth client and no CORS origin.
 
 ## Track previews
 
+Planned Android and iOS support is described in the
+[native preview runner brief](docs/native-preview-runners-brief.md). The plan
+uses a Mac runner and keeps the complete preview workflow in the browser.
+Mac provisioning and native capture/input experiments are available through the [runner diagnostics and experiments](runner/README.md);
+[verification status](docs/native-preview-runners-verification.md) records the
+tested toolchains and remaining implementation gates. Native browser previews are not available yet.
+
 Ask the conversation agent **“Set up a live preview for this track”**, or use
 the **Set up live preview** starter on a repository track. It can inspect the
 app, install its dependencies when needed, save the directory/command/readiness

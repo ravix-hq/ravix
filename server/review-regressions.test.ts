@@ -5,6 +5,7 @@ import { Cipher, sha256 } from "./crypto";
 import { Db } from "./db";
 import { resetHub } from "./hub";
 import { prepareMachine } from "./projects";
+import { GitHubError } from "./github";
 
 const databases: Db[] = [];
 afterEach(() => {
@@ -63,6 +64,28 @@ function request(path: string, user?: string, method = "GET", body?: unknown, co
 }
 const cookieOf = (response: Response) => response.headers.getSetCookie().map((c) => c.split(";")[0]).join("; ");
 const stateOf = (url: string) => new URL(url).searchParams.get("state")!;
+
+test("expired user credentials offer reauthentication without misdiagnosing permission failures", async () => {
+  const { route, github } = await fixture();
+  github.installationsFor.mockRejectedValueOnce(new GitHubError(401, "Bad credentials"));
+  const expired = await route(request("/api/github/repos", "owner"));
+  expect(expired.status).toBe(401);
+  expect((await expired.json()).error).toBe("reauthenticate");
+  github.installationsFor.mockRejectedValueOnce(new GitHubError(403, "Forbidden"));
+  const denied = await route(request("/api/github/repos", "owner"));
+  expect(denied.status).toBe(502);
+  expect((await denied.json()).error).toBe("github_rejected");
+});
+
+test("signing out revokes the server session and clears the cookie", async () => {
+  const { route, db } = await fixture();
+  const response = await route(request("/api/auth/signout", "owner", "POST"));
+  expect(response.status).toBe(200);
+  expect(response.headers.get("set-cookie")).toContain("Max-Age=0");
+  expect(db.sessionUser(await sha256("owner"))).toBeNull();
+  expect((await route(request("/api/projects", "owner"))).status).toBe(401);
+  expect(db.sessionUser(await sha256("guest"))).not.toBeNull();
+});
 
 async function signin(route: ReturnType<typeof buildRouter>) {
   const response = await route(request("/api/session"));

@@ -11,7 +11,7 @@
  */
 import { useEffect, useMemo, useState } from "react";
 import type { Project, RepoRef } from "../../shared/api";
-import { api } from "../lib/api";
+import { api, ApiError } from "../lib/api";
 import { Folder, GitHub, Search } from "../lib/icons";
 import { Dialog, ago } from "./Dialog";
 import { Empty } from "./Empty";
@@ -39,6 +39,8 @@ export function NewProject({ onCreated, onClose }: NewProjectProps) {
   const [loading, setLoading] = useState(true);
   const [account, setAccount] = useState<number | undefined>(undefined);
   const [error, setError] = useState<string | null>(null);
+  const [needsSignIn, setNeedsSignIn] = useState(false);
+  const [signingIn, setSigningIn] = useState(false);
   const [filter, setFilter] = useState("");
   // The repository being turned into a project, by full name, so the row that
   // was clicked is the row that reports.
@@ -48,6 +50,7 @@ export function NewProject({ onCreated, onClose }: NewProjectProps) {
     let live = true;
     setLoading(true);
     setError(null);
+    setNeedsSignIn(false);
     api.repos(account).then(
       (data) => {
         if (!live) return;
@@ -57,6 +60,8 @@ export function NewProject({ onCreated, onClose }: NewProjectProps) {
       (err: unknown) => {
         if (!live) return;
         setLoading(false);
+        setListing(null);
+        setNeedsSignIn(err instanceof ApiError && err.status === 401);
         setError(err instanceof Error ? err.message : "Could not read your repositories.");
       },
     );
@@ -69,6 +74,20 @@ export function NewProject({ onCreated, onClose }: NewProjectProps) {
   }, [account]);
 
   const repos = listing?.repos ?? [];
+  async function signInAgain(): Promise<void> {
+    if (signingIn) return;
+    setSigningIn(true);
+    try {
+      // Fetch a fresh, cookie-bound OAuth attempt; the shell's initial URL
+      // may have expired while the person was working in a track.
+      const session = await api.session();
+      if (!session.signInUrl) throw new Error("GitHub sign-in is unavailable.");
+      window.location.assign(session.signInUrl);
+    } catch (err) {
+      setSigningIn(false);
+      setError(err instanceof Error ? err.message : "Could not start GitHub sign-in. Try again.");
+    }
+  }
   const filtered = useMemo(() => {
     const needle = filter.trim().toLowerCase();
     if (!needle) return repos;
@@ -102,7 +121,7 @@ export function NewProject({ onCreated, onClose }: NewProjectProps) {
       title="New project"
       onClose={onClose}
       footer={
-        uninstalled ? null : (
+        uninstalled || needsSignIn ? null : (
           <>
             <button type="button" className="linkish" onClick={install}>
               Add another account
@@ -158,12 +177,21 @@ export function NewProject({ onCreated, onClose }: NewProjectProps) {
           </div>
 
           <div className="dialog-body flush">
-            {error ? <p className="fine error">{error}</p> : null}
+            {error ? (
+              <div style={{ padding: 16 }}>
+                <p className="fine error" role="alert">{error}</p>
+                {needsSignIn ? (
+                  <button type="button" className="primary" disabled={signingIn} onClick={() => void signInAgain()}>
+                    {signingIn ? "Opening GitHub…" : "Sign in again"}
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
             {loading ? (
               <Empty icon={<Folder size={20} />} title="Reading your repositories">
                 Asking GitHub what this installation grants.
               </Empty>
-            ) : filtered.length === 0 ? (
+            ) : error ? null : filtered.length === 0 ? (
               <Empty icon={<Folder size={20} />} title="Nothing matches">
                 {filter.trim()
                   ? `No repository on this account matches "${filter.trim()}".`

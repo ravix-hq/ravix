@@ -1084,3 +1084,12 @@ input.crumb-name { width: 30ch; }
   .track-preview { padding: 8px 10px 2px; }
   .preview-controls button { min-height: 40px; }
 }
+
+.native-launcher { padding: 10px 16px; border-top: 1px solid var(--line); font-size: 12px; }
+.native-pairing { display: block; overflow-wrap: anywhere; user-select: all; padding: 8px; background: var(--bg); }
+.native-viewer { max-width: 1100px; margin: 0 auto; padding: 16px; height: 100dvh; overflow: auto; }
+.native-viewer header { flex-wrap: wrap; gap: 12px; margin-bottom: 12px; }
+.native-screen { display: flex; justify-content: center; background: #111; border-radius: 8px; padding: 8px; }
+.native-screen canvas { touch-action: none; height: min(68dvh, 900px); max-width: 100%; width: auto; object-fit: contain; }
+.native-controls { flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.native-controls input { flex: 1; min-width: 180px; }

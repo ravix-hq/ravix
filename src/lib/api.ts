@@ -33,6 +33,7 @@ import type {
 } from "../../shared/api";
 
 import type { PreviewConfig, PreviewInfo } from "../../shared/previews";
+import type { NativeInfo } from "../../shared/native-preview";
 
 export class ApiError extends Error {
   constructor(
@@ -70,6 +71,10 @@ const post = <T>(path: string, body?: unknown) =>
   call<T>(path, { method: "POST", body: body === undefined ? undefined : JSON.stringify(body) });
 
 export const api = {
+  nativePreview: (trackId: string) => call<{available:boolean;session:NativeInfo|null}>(`/api/tracks/${trackId}/native`),
+  startNativePreview: (trackId: string) => post<NativeInfo>(`/api/tracks/${trackId}/native/start`),
+  stopNativePreview: (trackId: string) => post<{ok:true}>(`/api/tracks/${trackId}/native/stop`),
+  nativeSession: (id: string) => call<NativeInfo & {trackUrl:string}>(`/api/native/sessions/${id}`),
   preview: (trackId: string) => call<PreviewInfo>(`/api/tracks/${trackId}/preview`),
   previewAction: (trackId: string, action: "open" | "restart" | "stop" | "logs") => post<PreviewInfo & { openUrl?: string }>(`/api/tracks/${trackId}/preview/${action}`),
   savePreview: (trackId: string, config: PreviewConfig | null) => call<PreviewInfo>(`/api/tracks/${trackId}/preview/config`, { method: "PUT", body: JSON.stringify({ config }) }),

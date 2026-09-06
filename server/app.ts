@@ -75,6 +75,7 @@
  */
 import type { AppContext } from "./context";
 import { authenticate } from "./context";
+import { nativeExperiments } from "./native-experiment";
 import * as auth from "./auth";
 import * as people from "./people";
 import * as projects from "./projects";
@@ -104,6 +105,10 @@ export function buildRouter(ctx: AppContext): (req: Request) => Promise<Response
   };
 
   on("GET", "/healthz", () => new Response("ok\n", { headers: { "content-type": "text/plain" } }));
+  on("POST", "/api/native/claim", req => nativeExperiments(ctx).claim(req));
+  on("GET", "/api/native/sessions/:id", (req,p) => nativeExperiments(ctx).show(req,p.id!));
+  on("GET", "/api/tracks/:id/native", (req,p) => nativeExperiments(ctx).route(req,p.id!));
+  on("POST", "/api/tracks/:id/native/:action", (req,p) => nativeExperiments(ctx).route(req,p.id!,p.action!));
 
   on("GET", "/api/session", (req) => auth.session(ctx, req));
   on("GET", "/api/auth/callback", (req) => auth.callback(ctx, req));
