@@ -22,7 +22,7 @@ spec:
       containers:
         - name: web
           # Pinned to an immutable sha tag by .github/workflows/build.yml.
-          image: ghcr.io/managoat/switchyard:sha-2a15fb899ba40ae4ddef1ab61ad47da7b5277329
+          image: ghcr.io/managoat/switchyard:sha-ffb9992b7a6cb944640a6376c59e636d44d684cb
           ports:
             - containerPort: 8080
             - containerPort: 8082
