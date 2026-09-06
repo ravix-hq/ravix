@@ -13,9 +13,11 @@
 import { useState } from "react";
 import type { Project, Track } from "../../shared/api";
 import { AddPerson, Chevron, Home, Plus, Search, Settings, Spinner } from "../lib/icons";
+import { TrackPull } from "./TrackPull";
 import { ThemePicker } from "./ThemePicker";
 
 export interface YardProps {
+  github?: boolean;
   viewer: { login: string; name: string | null; avatarUrl: string | null } | null;
   projects: Project[];
   tracksByProject: Record<string, Track[]>;
@@ -160,24 +162,18 @@ export function Yard(props: YardProps) {
                       onClick={() => props.onPickTrack(project.id, track.id)}
                       title={rowTitle(track, unread)}
                     >
-                      {/* Unread at one end of the row, activity at the other.
-                          They were one dot before — a ring around the status —
-                          and the two states a person actually scans for are
-                          exactly the two that can be true at once, which is the
-                          case that made the ring unreadable. Two ends, two
-                          marks, and neither has to be told apart from the other
-                          by colour: a pip where the number was, an arc where the
-                          dot is. The number is the thing that gives way because
-                          it is an ordinal nothing else refers to. */}
                       <span className="track-num">{unread ? <i className="pip" aria-label="unread" /> : i + 1}</span>
-                      <span className="truncate">{track.title}</span>
+                      <span className="track-copy">
+                        <span className="truncate">{track.title}</span>
+                        <TrackActivity track={track} unread={unread} />
+                      </span>
                       <span className="spacer" />
                       {track.stale ? (
                         <span className="chip" title="This track opened before the project's settings changed">
                           older
                         </span>
                       ) : null}
-                      <TrackMark track={track} />
+                      {props.github && project.repo ? <TrackPull track={track} /> : null}
                     </button>
                   );
                 })}
@@ -224,44 +220,29 @@ export function Yard(props: YardProps) {
   );
 }
 
-/** Whether the machine is mid-turn for this track — cutting it, or thinking. */
-const busy = (status: Track["status"]) => status === "running" || status === "opening";
-
-const activity = (status: Track["status"]) =>
-  status === "running" ? "a turn is running" : status === "opening" ? "cutting the worktree" : status;
-
-const rowTitle = (track: Track, unread: boolean) =>
-  [track.title, track.branch, busy(track.status) ? activity(track.status) : null, unread ? "unread" : null]
-    .filter(Boolean)
-    .join(" — ");
-
-/**
- * The right end of a track row: what the machine is doing there now.
- *
- * A turn running is not a brighter shade of sitting still, so it is not drawn
- * as one. It is an arc going round where the other states are a circle staying
- * put — a difference of shape and of motion, which is what survives being six
- * pixels wide, being read by somebody who cannot separate the accent from the
- * green, and sharing a row with the unread pip at the other end.
- *
- * Both marks live in a box the same size, so a turn starting does not shove the
- * title under the pointer sideways.
- */
-function TrackMark({ track }: { track: Track }) {
-  const label = activity(track.status);
-  if (busy(track.status)) {
-    return (
-      <span className={`track-mark spin ${track.status}`} aria-label={label}>
-        <Spinner size={12} />
-      </span>
-    );
-  }
+/** Running takes precedence over unread output until the turn finishes. */
+export function TrackActivity({ track, unread }: { track: Pick<Track, "status">; unread: boolean }) {
+  const state = trackActivity(track.status, unread);
   return (
-    <span className="track-mark">
-      <span className={`dot ${track.status}`} aria-label={label} />
+    <span className={`track-activity ${state.kind}`} title={state.detail}>
+      {state.kind === "busy" ? <span className="track-mark spin" aria-hidden="true"><Spinner size={12} /></span>
+        : <span className="track-activity-symbol" aria-hidden="true">{state.kind === "attention" ? "!" : "–"}</span>}
+      {state.label}
     </span>
   );
 }
+
+function trackActivity(status: Track["status"], unread: boolean) {
+  if (status === "running") return { kind: "busy", label: "Running", detail: "The agent is working" };
+  if (status === "opening") return { kind: "busy", label: "Opening", detail: "Preparing the track's worktree" };
+  if (status === "failed") return { kind: "attention", label: "Needs attention", detail: "The turn failed — open the conversation to review" };
+  if (status === "closed") return { kind: "idle", label: "Closed", detail: "This track is closed" };
+  if (unread) return { kind: "attention", label: "Needs attention", detail: "The agent finished and has an unread reply" };
+  return { kind: "idle", label: "Idle", detail: "No turn is running and all replies have been read" };
+}
+
+const rowTitle = (track: Track, unread: boolean) =>
+  [track.title, track.branch, trackActivity(track.status, unread).detail].filter(Boolean).join(" — ");
 
 /**
  * One dot for the machine, and it says whether the disk exists rather than

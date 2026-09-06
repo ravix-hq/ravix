@@ -302,14 +302,14 @@ export class GitHub {
       );
       sha = branch.commit.sha;
     } catch (err) {
-      if (err instanceof GitHubError && err.status === 404) return { ref, sha: null, pushed: false, runs: [], pull: null };
-      throw err;
+      if (!(err instanceof GitHubError && err.status === 404)) throw err;
+      // Merged PRs remain useful after GitHub deletes their head branch.
     }
 
     const [runs, pulls] = await Promise.all([
-      this.request<{ check_runs: RawCheckRun[] }>("GET", `/repos/${fullName}/commits/${sha}/check-runs?per_page=50`, {
+      sha ? this.request<{ check_runs: RawCheckRun[] }>("GET", `/repos/${fullName}/commits/${sha}/check-runs?per_page=50`, {
         auth: `Bearer ${token}`,
-      }).catch(() => ({ check_runs: [] as RawCheckRun[] })),
+      }) : Promise.resolve({ check_runs: [] as RawCheckRun[] }),
       // `state=all`, not `state=open`. A branch whose pull request has been
       // merged is the *most* interesting case — it is the one where the work
       // landed — and asking only for open ones answered "no pull request for
@@ -318,7 +318,7 @@ export class GitHub {
         "GET",
         `/repos/${fullName}/pulls?state=all&per_page=20&head=${encodeURIComponent(fullName.split("/")[0] + ":" + ref)}`,
         { auth: `Bearer ${token}` },
-      ).catch(() => [] as RawPull[]),
+      ),
     ]);
 
     // An open one if there is one, else the most recently updated — which for
@@ -331,7 +331,7 @@ export class GitHub {
     return {
       ref,
       sha,
-      pushed: true,
+      pushed: sha !== null,
       runs: (runs.check_runs ?? []).map(
         (r): CheckRun => ({
           name: r.name,

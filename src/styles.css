@@ -456,6 +456,12 @@ h4 { font-size: 11px; color: var(--dim); text-transform: uppercase; letter-spaci
   color: var(--dim); background: transparent; border: none; border-radius: 6px;
   text-align: left; font-size: 12.5px; position: relative;
 }
+.track-copy { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.track-activity { display: flex; align-items: center; gap: 5px; font-size: 10.5px; line-height: 14px; font-weight: 500; color: var(--dim); }
+.track-activity.busy { color: var(--accent-ink); }
+.track-activity.attention { color: var(--warn); }
+.track-activity-symbol { width: 12px; height: 12px; display: inline-flex; align-items: center; justify-content: center; flex: none; }
+.track-activity.attention .track-activity-symbol { border: 1px solid currentColor; border-radius: 3px; font-size: 10px; font-weight: 700; }
 .track-row:hover { background: var(--surface-hover); color: var(--ink); border-color: transparent; }
 .track-row.on { background: var(--surface-active); color: var(--ink); }
 /* The rail that makes a list of tracks read as branches off one line. */
@@ -1148,3 +1154,9 @@ input.crumb-name { width: 30ch; }
 .browser-restore { background: var(--notice); border: 1px solid var(--accent-line); padding: 12px; border-radius: 5px; font-size: 12px; }
 .browser-restore button { margin-right: 8px; }
 @media (max-width: 600px) { .shared-browser { padding: 10px; } .browser-heading .chip { display: none; } .browser-toolbar { gap: 5px; } }
+
+/* PR state stays separate from the conversation's activity label. */
+.track-pull { display: inline-flex; align-items: center; flex: none; color: var(--dim); }
+.track-pull.passed { color: var(--ok); }
+.track-pull.failed { color: var(--bad); }
+.track-pull.merged { color: #a371f7; }

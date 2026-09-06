@@ -348,6 +348,7 @@ function SwitchyardApp() {
   return (
     <div className="app">
       <Yard
+        github={capabilities.github}
         viewer={session.viewer}
         signingOut={signingOut}
         onSignOut={() => void signOut()}
