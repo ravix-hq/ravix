@@ -112,7 +112,7 @@ export function NativeViewer({ id }: {
             decoder.decode(new EncodedVideoChunk({ type: frame.key ? 'key' : 'delta', timestamp: frame.timestamp, data: bytes }));
         };
         const connectVideo = () => {
-            if (!alive)
+            if (!alive || (video && video.readyState !== WebSocket.CLOSED))
                 return;
             video = new WebSocket(url('view'));
             video.binaryType = 'arraybuffer';
