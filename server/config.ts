@@ -51,6 +51,7 @@ export interface GitHubAppConfig {
 }
 
 export interface Config {
+  sharedBrowser?: boolean;
   nativePreviewExperiment?: boolean;
   fountainUrl: string;
   fountainKey: string | null;
@@ -91,6 +92,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
   const publicUrl = (env.PUBLIC_URL?.trim().replace(/\/+$/, "") || "http://localhost:5183").trim();
 
   return {
+    sharedBrowser: env.SHARED_BROWSER === "1",
     nativePreviewExperiment: env.NATIVE_PREVIEW_EXPERIMENT === "1",
     fountainUrl,
     fountainKey: env.FOUNTAIN_API_KEY?.trim() || null,

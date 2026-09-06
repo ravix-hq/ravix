@@ -47,6 +47,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { blocksForTurn, type Block } from "@managoat/fountain-app/acp";
 import { splitAuthor } from "../../shared/author";
 import { visiblePreviewPrompt } from "../../shared/previews";
+import { visibleBrowserPrompt } from "../../shared/browser";
 import type { Person, TurnRecord } from "../../shared/api";
 import type { LogEvent } from "../../shared/fountain-types";
 import { renderMarkdown } from "../lib/md";
@@ -71,6 +72,7 @@ export interface TranscriptProps {
   running: boolean;
   /** Rendered above the first turn — the ribbon, the starters, an empty state. */
   head?: React.ReactNode;
+  footer?: React.ReactNode;
 }
 
 /** Within this many pixels of the bottom still counts as reading the bottom. */
@@ -92,7 +94,7 @@ const FILL = 2;
 /** Scrolling to within this many pixels of the top asks for the page above. */
 const REACH = 600;
 
-export function Transcript({ trackId, turns, events, runtime, running, head, workdir, people = [] }: TranscriptProps) {
+export function Transcript({ trackId, turns, events, runtime, running, head, footer, workdir, people = [] }: TranscriptProps) {
   const scroller = useRef<HTMLDivElement | null>(null);
   const content = useRef<HTMLDivElement | null>(null);
   const pinned = useRef(true);
@@ -276,6 +278,7 @@ export function Transcript({ trackId, turns, events, runtime, running, head, wor
             />
           ))}
           {running && !writing ? <Working since={null} what="Working" /> : null}
+          {footer}
         </div>
       </div>
     </div>
@@ -342,7 +345,7 @@ function Turn({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const details = useMemo(() => toolDetails(turn.events), [key]);
 
-  const prompt = turn.prompt ? visiblePreviewPrompt(turn.prompt) : null;
+  const prompt = turn.prompt ? visibleBrowserPrompt(visiblePreviewPrompt(turn.prompt)) : null;
   const app = prompt ? appTurnLabel(prompt) : null;
   // A shared track prefixes each prompt with who sent it (`shared/author.ts`).
   // The label comes back off here rather than being rendered as part of what

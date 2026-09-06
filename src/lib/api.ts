@@ -34,6 +34,7 @@ import type {
 
 import type { PreviewConfig, PreviewInfo } from "../../shared/previews";
 import type { NativeInfo } from "../../shared/native-preview";
+import type { BrowserInfo, BrowserResult, BrowserCheckpoint } from "../../shared/browser";
 
 export class ApiError extends Error {
   constructor(
@@ -71,6 +72,11 @@ const post = <T>(path: string, body?: unknown) =>
   call<T>(path, { method: "POST", body: body === undefined ? undefined : JSON.stringify(body) });
 
 export const api = {
+  browser: (trackId: string) => call<BrowserInfo>(`/api/tracks/${trackId}/browser`),
+  browserAction: (trackId: string, action: "start" | "stop" | "delete-checkpoint", clientId: string, checkpointId?: string) => post<BrowserInfo>(`/api/tracks/${trackId}/browser/${action}`, { clientId, checkpointId }),
+  browserCommand: (trackId: string, clientId: string, command: Record<string, unknown>) => post<BrowserResult>(`/api/tracks/${trackId}/browser/command`, { ...command, clientId }),
+  browserCheckpoint: (trackId: string, clientId: string, label: string) => post<BrowserCheckpoint>(`/api/tracks/${trackId}/browser/checkpoint`, { clientId, label }),
+  browserRestore: (trackId: string, clientId: string, checkpointId: string) => post<BrowserResult>(`/api/tracks/${trackId}/browser/restore`, { clientId, checkpointId }),
   nativePreview: (trackId: string) => call<{available:boolean;session:NativeInfo|null}>(`/api/tracks/${trackId}/native`),
   startNativePreview: (trackId: string) => post<NativeInfo>(`/api/tracks/${trackId}/native/start`),
   stopNativePreview: (trackId: string) => post<{ok:true}>(`/api/tracks/${trackId}/native/stop`),

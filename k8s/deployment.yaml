@@ -38,6 +38,8 @@ spec:
             # is the one failure that looks like "sign-in is broken".
             - name: PUBLIC_URL
               value: https://switchyard.demo.managoat.com
+            - name: SHARED_BROWSER
+              value: "1"
             - name: PREVIEW_DOMAIN
               value: preview.switchyard.inevitable.fyi
             # Gate 2: only the pinned private Hello repository can pair a runner.

@@ -85,6 +85,8 @@ import * as tracks from "./tracks";
 import * as vitals from "./vitals";
 import { previewRoute, previewDefaults } from "./previews";
 import { agentPreviewRoute } from "./agent-previews";
+import { browserRoute } from "./browsers";
+import { agentBrowserRoute } from "./agent-browser";
 import { listQueue, cancelPrompt, retryPrompt } from "./prompt-queue";
 import { projectStream } from "./hub";
 import { watchStream } from "./stream-access";
@@ -183,6 +185,9 @@ export function buildRouter(ctx: AppContext): (req: Request) => Promise<Response
   on("POST", "/api/tracks/:id/exec", (req, p) => terminal.exec(ctx, req, p.id!));
   on("GET", "/api/tracks/:id/vitals", (req, p) => vitals.vitals(ctx, req, p.id!));
   on("GET", "/api/tracks/:id/preview", (req, p) => previewRoute(ctx, req, p.id!));
+  on("GET", "/api/tracks/:id/browser", (req, p) => browserRoute(ctx, req, p.id!));
+  on("POST", "/api/tracks/:id/browser/agent", (req, p) => agentBrowserRoute(ctx, req, p.id!));
+  on("POST", "/api/tracks/:id/browser/:action", (req, p) => browserRoute(ctx, req, p.id!, p.action!));
   on("POST", "/api/tracks/:id/preview/agent", (req, p) => agentPreviewRoute(ctx, req, p.id!));
   on("PUT", "/api/tracks/:id/preview/config", (req, p) => previewRoute(ctx, req, p.id!, "config"));
   for (const action of ["open", "restart", "stop", "logs"]) {

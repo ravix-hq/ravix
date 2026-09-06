@@ -49,10 +49,20 @@ Against the real thing, the server takes:
 | `SPRITES_TOKEN` | optional — enables terminal/run/vitals and the preview provider |
 | `PREVIEW_DOMAIN` | optional — dedicated preview hostname suffix; absent means previews are unavailable |
 | `PREVIEW_PORT` | private gateway listener, default `8082`; HTTPS ingress forwards here |
+| `SHARED_BROWSER` | set to `1` to enable the persistent shared browser and agent helper |
 | `DATA_DIR` `STATIC_DIR` `PORT` | as everywhere else in the suite |
 
 Nothing needs registering on Fountain: the browser never talks to it, so there
 is no OAuth client and no CORS origin.
+
+## Shared browser
+
+With `SHARED_BROWSER=1`, each machine has one Switchyard-owned browser profile
+shared by its tracks and participants. The chat card supports viewing, input,
+human/agent handoff, and encrypted portable checkpoints that an owner can
+restore into another project they own. It is separate from app previews and
+does not require `PREVIEW_DOMAIN`. See [shared browser setup and verification](docs/shared-browser.md)
+for runtime requirements, checkpoint semantics, and the local proof command.
 
 ## Track previews
 

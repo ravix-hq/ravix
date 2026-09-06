@@ -22,6 +22,7 @@
 import { Database } from "bun:sqlite";
 import { PreviewStore } from "./preview-store";
 import { NativeExperimentStore } from "./native-experiment-store";
+import { BrowserStore } from "./browser-store";
 import type { TrackOriginInfo } from "../shared/api";
 
 export interface UserRow {
@@ -92,6 +93,7 @@ export class Db {
   private readonly db: Database;
   readonly previews: PreviewStore;
   readonly nativeExperiments: NativeExperimentStore;
+  readonly browsers: BrowserStore;
 
   constructor(path: string) {
     this.db = new Database(path, { create: true });
@@ -100,6 +102,7 @@ export class Db {
     this.migrate();
     this.previews = new PreviewStore(this.db);
     this.nativeExperiments = new NativeExperimentStore(this.db);
+    this.browsers = new BrowserStore(this.db);
   }
 
   private migrate(): void {
@@ -610,6 +613,7 @@ export class Db {
   removeMember(trackId: string, userId: string): void {
     this.previews.revoke(trackId, userId);
     this.previews.revokeAgent(trackId, userId);
+    this.browsers.revoke(trackId, userId);
     this.db.run("DELETE FROM track_members WHERE track_id = ? AND user_id = ?", [trackId, userId]);
   }
 
@@ -822,6 +826,7 @@ export class Db {
   removeProjectMember(projectId: string, userId: string): void {
     for (const track of this.tracksOf(projectId)) this.previews.revoke(track.id, userId);
     for (const track of this.tracksOf(projectId)) this.previews.revokeAgent(track.id, userId);
+    for (const track of this.tracksOf(projectId)) this.browsers.revoke(track.id, userId);
     this.db.run("DELETE FROM project_members WHERE project_id = ? AND user_id = ?", [projectId, userId]);
   }
 

@@ -22,6 +22,7 @@ import { others, subject, useHeartbeat } from "../lib/presence";
 import { Composer } from "./Composer";
 import { TrackPreview } from "./TrackPreview";
 import { NativePreviewLauncher } from "./NativePreview";
+import { SharedBrowser } from "./SharedBrowser";
 import { Transcript } from "./Transcript";
 
 export interface TrackViewProps {
@@ -215,6 +216,7 @@ export function TrackView(props: TrackViewProps) {
         runtime={project.runtime}
         workdir={track.workdir}
         running={running}
+        footer={track.status !== "closed" ? <SharedBrowser key={track.id} trackId={track.id} owner={track.role === "owner"} /> : null}
         head={
           <Ribbon
             project={project}

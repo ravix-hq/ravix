@@ -8,6 +8,7 @@ import { HttpError, json } from "./http";
 import { prepareMachine } from "./projects";
 import { publish } from "./hub";
 import { prepareAgentPreview } from "./agent-previews";
+import { prepareAgentBrowser } from "./agent-browser";
 
 export interface PromptPayload {
   prompt: string;
@@ -146,7 +147,7 @@ export class PromptQueue {
     if (!ctx.db.claimPrompt(row.id)) return;
     try {
       const payload = JSON.parse(ctx.db.queuedPrompt(row.id)!.payload) as PromptPayload;
-      const previewInstructions = await prepareAgentPreview(ctx, row);
+      const previewInstructions = [await prepareAgentPreview(ctx, row), await prepareAgentBrowser(ctx, row)].filter(Boolean).join("\n\n");
       if (!this.authorized(row)) { ctx.db.setPromptStatus(row.id, "cancelled"); ctx.db.previews.revokeAgent(track.id); return; }
       const shared = ctx.db.membersOf(track.id).length > 0 || ctx.db.projectMembersOf(project.id).length > 0;
       const authored = shared ? withAuthor(row.authorLogin, payload.prompt) : payload.prompt;
