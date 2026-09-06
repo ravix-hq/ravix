@@ -99,7 +99,7 @@ export function Transcript({ trackId, turns, events, runtime, running, head, foo
   const content = useRef<HTMLDivElement | null>(null);
   const pinned = useRef(true);
 
-  const grouped = useMemo(() => group(turns, events), [turns, events]);
+  const grouped = useMemo(() => group(turns, events, runtime), [turns, events, runtime]);
 
   // Where the window starts, counted in turns held back from the top.
   //
@@ -301,7 +301,7 @@ interface GroupedTurn {
  * a trailing group rather than dropped, so the very first thing a new track
  * shows is not an empty panel.
  */
-function group(turns: TurnRecord[], events: LogEvent[]): GroupedTurn[] {
+function group(turns: TurnRecord[], events: LogEvent[], runtime: string): GroupedTurn[] {
   const byTurn = new Map<string, GroupedTurn>();
   const order: string[] = [];
   for (const t of turns) {
@@ -309,16 +309,24 @@ function group(turns: TurnRecord[], events: LogEvent[]): GroupedTurn[] {
     order.push(t.id);
   }
   for (const ev of events) {
-    const id = ev.turn_id ?? "";
+    const id = ev.turn_id || "pending";
     let turn = byTurn.get(id);
     if (!turn) {
-      turn = { id: id || "pending", prompt: null, events: [] };
+      turn = { id, prompt: null, events: [] };
       byTurn.set(turn.id, turn);
       order.push(turn.id);
     }
     turn.events.push(ev);
   }
-  return order.map((id) => byTurn.get(id)!).filter((t) => t.prompt !== null || t.events.length > 0);
+  // Lifecycle events and empty prompts are not messages. Exclude them before
+  // pagination: empty flex items add gaps and can fill the entire opening page.
+  return order.map((id) => byTurn.get(id)!).filter((t) =>
+    t.prompt?.trim() || blocksForTurn(t.events, runtime).some(visibleBlock),
+  );
+}
+
+function visibleBlock(block: Block): boolean {
+  return block.kind === "tool" || block.body.trim().length > 0;
 }
 
 function Turn({
@@ -341,7 +349,7 @@ function Turn({
   // producing exactly the blocks that were already on screen.
   const key = `${turn.events.length}:${turn.events[turn.events.length - 1]?.id ?? ""}`;
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const blocks = useMemo(() => blocksForTurn(turn.events, runtime), [key, runtime]);
+  const blocks = useMemo(() => blocksForTurn(turn.events, runtime).filter(visibleBlock), [key, runtime]);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const details = useMemo(() => toolDetails(turn.events), [key]);
 
@@ -358,7 +366,7 @@ function Turn({
     <div className="turn">
       {app ? (
         <div className="turn-app">{app}</div>
-      ) : turn.prompt ? (
+      ) : text.trim() ? (
         <div className="said">
           {who ? (
             <span className="said-who" title={who.name ? `${who.name} (@${who.login})` : `@${who.login}`}>

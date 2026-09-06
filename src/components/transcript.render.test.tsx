@@ -100,6 +100,38 @@ describe("Transcript", () => {
  * against, which is why it is not visible here.
  */
 describe("Transcript window", () => {
+  test("empty lifecycle turns do not add gaps or displace messages from the opening page", () => {
+    const empty = Array.from({ length: 100 }, (_, i) => ({
+      ...props.turns[0]!, id: `empty-${i}`, prompt: i % 2 ? null : "",
+    }));
+    const events: LogEvent[] = empty.map((t, i) => ({
+      id: 1000 + i, kind: "stage", stage: "turn", state: "completed",
+      stream: null, data: null, turn_id: t.id, ts: "2026-09-04T12:00:00Z",
+    }));
+    const html = renderToString(<Transcript {...props} turns={[...props.turns, ...empty]}
+      events={[...EVENTS, ...events]} head={<div>ribbon</div>} />);
+    expect(html).toContain("render the reply");
+    expect(html).toContain("ribbon");
+    expect(html.match(/class="turn"/g)).toHaveLength(1);
+  });
+
+  test("events without a turn ID share one group and retain every output", () => {
+    const events = ["First", " second"].map((text) => ({
+      ...acp({ sessionUpdate: "agent_message_chunk", content: { type: "text", text } }),
+      turn_id: null,
+    }));
+    const html = renderToString(<Transcript {...props} turns={[]} events={events} />);
+    expect(html).toContain("First second");
+    expect(html.match(/class="turn"/g)).toHaveLength(1);
+  });
+
+  test("whitespace-only output blocks do not create gaps around tool calls", () => {
+    const blank = () => acp({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "\n\n   " } });
+    const html = renderToString(<Transcript {...props} events={[blank(), EVENTS[1]!, blank()]} />);
+    expect(html).toContain("src/lib/md.ts");
+    expect(html).not.toContain('class="block-text md"');
+  });
+
   const many = Array.from({ length: 40 }, (_, i) => ({
     id: `t${i}`,
     prompt: `turn number ${i}`,
