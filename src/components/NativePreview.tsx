@@ -1,3 +1,4 @@
+import type { RunnerInfo } from '../../shared/runners';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../lib/api';
 import { avcCodec, nativeFrame, parseNativeInput, type NativeInfo, type NativePlatform, type NativeInput, type NativeVideo } from '../../shared/native-preview';
@@ -8,8 +9,10 @@ export function NativePreviewLauncher({ trackId, owner }: {
     const [info, setInfo] = useState<{
         available: boolean;
         platforms: NativePlatform[];
+        runners: RunnerInfo[];
         session: NativeInfo | null;
     } | null>(null), [busy, setBusy] = useState(false), [error, setError] = useState(''), [code, setCode] = useState('');
+    const [pairing,setPairing]=useState<{code:string;expiresAt:number}|null>(null);
     const [platform, setPlatform] = useState<NativePlatform>('android');
     const refresh = useCallback(async () => { try {
         setInfo(await api.nativePreview(trackId));
@@ -38,11 +41,15 @@ export function NativePreviewLauncher({ trackId, owner }: {
         setBusy(false);
     } };
     return <section className="native-launcher" aria-label="Native preview">
-    <div className="row"><strong>{session?.platform === 'ios' ? 'iOS' : 'Native'} preview</strong><span className="chip">Experiment</span><span role="status">{session?.phase ?? 'Stopped'}</span><span className="spacer"/>
+    <div className="row"><strong>{session?.platform === 'ios' ? 'iOS' : 'Native'} preview</strong><span className="chip">Experiment</span><span role="status">{session?.phase ?? 'Stopped'}{session?.queuePosition ? ` · queue position ${session.queuePosition}` : ''}</span><span className="spacer"/>
       {active ? <a className="ghost" href={`/native/${session.id}`} target="_blank" rel="noopener">Open device</a> : null}
       {owner && !active ? <select aria-label="Device platform" value={platform} onChange={event => setPlatform(event.target.value as NativePlatform)}>{(info.platforms ?? ['android']).map(p => <option key={p} value={p}>{p === 'ios' ? 'iOS' : 'Android'}</option>)}</select> : null}
       {owner ? <button type="button" disabled={busy} onClick={() => void action(!active && !cleanupPending)}>{cleanupPending ? 'Retry cleanup' : active ? 'Stop' : `Start ${platform === 'ios' ? 'iOS' : 'Android'} preview`}</button> : null}
     </div>
+    {owner ? <div className="row"><button disabled={busy} onClick={async()=>{setBusy(true);setError('');try{setPairing(await api.pairNativeRunner(trackId));}catch(e){setError(String(e));}finally{setBusy(false);}}}>Pair a Mac runner</button>
+      {(info.runners??[]).filter(r=>!r.revoked).map(r=><span key={r.id}>{r.name} · {r.online?'Online':'Offline'} <button disabled={busy} onClick={async()=>{setBusy(true);try{await api.revokeNativeRunner(r.id);await refresh();}catch(e){setError(String(e));}finally{setBusy(false);}}}>Revoke {r.name}</button></span>)}
+    </div> : null}
+    {pairing && pairing.expiresAt>Date.now() ? <div><p>Run the account setup with <code>--pair-runner</code> and paste this code. It expires in five minutes; the registered Mac can run future previews without pairing again.</p><code className="native-pairing">{pairing.code}</code></div> : null}
     {code && session?.phase === 'Awaiting runner' ? <div><p>Pair the Mac runner with this experiment. This code works once and expires in five minutes.</p><code className="native-pairing">{code}</code></div> : null}
     {error || session?.error ? <p className="error" role="alert">{error || session?.error}</p> : null}
   </section>;
@@ -124,6 +131,7 @@ export function NativeViewer({ id }: {
             catch (error) {
                 end(String(error));
             } };
+            video.onopen = () => { retries=0;setError(''); };
             video.onclose = event => { setWatching(false); if (alive && event.code === 1013 && retries++ < 3)
                 retry = setTimeout(connectVideo, 500);
             else if (alive)
@@ -134,14 +142,14 @@ export function NativeViewer({ id }: {
             if (!alive)
                 return;
             setInfo(next);
-            if (['Failed', 'Stopped'].includes(next.phase))
-                end(next.error || 'Preview stopped.');
+            if (['Failed', 'Stopped'].includes(next.phase)) end(next.error || 'Preview stopped.');
+            else if (['Connecting','Ready'].includes(next.phase) && (!video || video.readyState===WebSocket.CLOSED)) { setError('');connectVideo(); }
+            else if (['Queued','Reconciling'].includes(next.phase)) { video?.close();inputSocket.current?.close();setWatching(false);setError(''); }
         }
         catch (error) {
             end(String(error));
         } };
         void poll();
-        connectVideo();
         const timer = setInterval(() => { if (!document.hidden) {
             void poll();
             if (video?.readyState === WebSocket.OPEN)

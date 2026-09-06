@@ -134,7 +134,7 @@ export class AndroidExperiment implements OwnedAdapter {
   private readonly name: string;
   private readonly serial: string;
   private readonly env: NodeJS.ProcessEnv;
-  constructor(private config: Extract<ExperimentConfig, { platform: "android" }>, id: string, private directory: string, private tools: ToolPaths, private run: Command, private signal?: AbortSignal, environment = process.env, private lifetimeMs = 300_000) {
+  constructor(private config: Extract<ExperimentConfig, { platform: "android" }>, id: string, private directory: string, private tools: ToolPaths, private run: Command, private signal?: AbortSignal, environment = process.env, private lifetimeMs = 300_000, private retain = false) {
     this.name = `switchyard-${id}`; this.serial = `emulator-${config.emulatorPort}`;
     this.env = { ...toolEnvironment(tools, environment), ANDROID_USER_HOME: join(directory, "android"), ANDROID_AVD_HOME: join(directory, "avds") };
   }
@@ -154,9 +154,16 @@ export class AndroidExperiment implements OwnedAdapter {
     // A serial occupied by any other process is unavailable; never attach to it.
     const devices = (await this.exec([this.tools.adb, "devices"])).toString();
     if (devices.split(/\r?\n/).some(line => line.startsWith(`${this.serial}\t`))) throw new Error("Selected emulator port is occupied");
-    await mkdir(this.env.ANDROID_USER_HOME!, { mode: 0o700 });
-    await mkdir(this.env.ANDROID_AVD_HOME!, { mode: 0o700 });
+    await mkdir(this.env.ANDROID_USER_HOME!, { mode: 0o700, recursive: this.retain });
+    await mkdir(this.env.ANDROID_AVD_HOME!, { mode: 0o700, recursive: this.retain });
+    const manifest=join(this.directory,'android-device.json');
+    if(this.retain && await Bun.file(manifest).exists()) {
+      const prior=JSON.parse(await readFile(manifest,'utf8'));
+      if(prior.name!==this.name || prior.systemImage!==this.config.systemImage || prior.deviceType!==this.config.deviceType)throw Error('Retained Android identity changed');
+    } else {
     await this.exec([this.tools.avdmanager, "create", "avd", "--name", this.name, "--path", join(this.directory, "avds", this.name), "--package", this.config.systemImage, "--device", this.config.deviceType], { timeoutMs: 60_000, input: "no\n" });
+      if(this.retain)await writePrivateJson(manifest,{name:this.name,systemImage:this.config.systemImage,deviceType:this.config.deviceType});
+    }
     this.created = true;
     // A foreground child with no window. Its process group is terminated on
     // cancellation; no `adb kill-server` or guessed serial kill is used.
@@ -197,7 +204,7 @@ export class AndroidExperiment implements OwnedAdapter {
   private assertOwned() { if (!this.verified) throw new Error("Device ownership has not been verified"); }
   async installHello(apk: string) {
     this.assertOwned();
-    await this.exec([this.tools.adb, "-s", this.serial, "install", "-g", apk], { timeoutMs: 120_000 });
+    await this.exec([this.tools.adb, "-s", this.serial, "install", ...(this.retain ? ["-r"] : []), "-g", apk], { timeoutMs: 120_000 });
   }
   async forward(port: number) {
     this.assertOwned();
@@ -268,7 +275,7 @@ export class AndroidExperiment implements OwnedAdapter {
   }
   async stop() {
     this.controller.abort(); await this.running?.catch(() => {});
-    if (this.created) await checked(this.run, [this.tools.avdmanager, "delete", "avd", "--name", this.name], { env: this.env });
+    if (this.created && !this.retain) await checked(this.run, [this.tools.avdmanager, "delete", "avd", "--name", this.name], { env: this.env });
   }
 }
 
@@ -279,7 +286,7 @@ export class IosExperiment implements OwnedAdapter {
   private readonly set: string;
   private socket = "";
   private socketDirectory?: string;
-  constructor(private config: Extract<ExperimentConfig, { platform: "ios" }>, private id: string, private directory: string, private tools: ToolPaths, private run: Command, private signal?: AbortSignal, private env?: NodeJS.ProcessEnv, private lifetimeMs = 90_000) {
+  constructor(private config: Extract<ExperimentConfig, { platform: "ios" }>, private id: string, private directory: string, private tools: ToolPaths, private run: Command, private signal?: AbortSignal, private env?: NodeJS.ProcessEnv, private lifetimeMs = 90_000, private retain = false) {
     this.set = join(directory, "simulators");
   }
   private sim(...args: string[]) { return checked(this.run, [this.tools.xcrun, "simctl", "--set", this.set, ...args], { env: this.env, signal: this.signal, timeoutMs: 120_000 }); }
@@ -291,8 +298,20 @@ export class IosExperiment implements OwnedAdapter {
     this.socketDirectory = await mkdtemp(join(process.platform === "darwin" ? "/private/tmp" : tmpdir(), "sy-idb-"));
     await chmod(this.socketDirectory, 0o700);
     this.socket = join(this.socketDirectory, "idb.sock");
-    await mkdir(this.set, { mode: 0o700 });
-    const udid = (await this.sim("create", `Switchyard-${this.id}`, this.config.deviceType, this.config.runtime)).toString().trim();
+    await mkdir(this.set, { mode: 0o700, recursive: this.retain });
+    const manifest=join(this.directory,'ios-device.json');
+    let udid: string;
+    if(this.retain && await Bun.file(manifest).exists()){
+      const prior=JSON.parse(await readFile(manifest,'utf8'));
+      if(prior.set!==this.set||prior.runtime!==this.config.runtime||prior.deviceType!==this.config.deviceType)throw Error('Retained iOS identity changed');
+      udid=prior.udid;
+      const inventory=JSON.parse((await this.sim('list','devices','--json')).toString());
+      const owned=inventory.devices?.[this.config.runtime]?.find((d:{udid:string})=>d.udid===udid);
+      if(!owned||owned.name!==`Switchyard-${this.id}`||owned.state!=='Shutdown'||!owned.isAvailable)throw Error('Retained iOS device is unavailable or still running; reconcile it before resuming');
+    }else{
+      udid = (await this.sim("create", `Switchyard-${this.id}`, this.config.deviceType, this.config.runtime)).toString().trim();
+      if(this.retain && /^[A-Fa-f0-9-]{36}$/.test(udid))await writePrivateJson(manifest,{udid,set:this.set,runtime:this.config.runtime,deviceType:this.config.deviceType});
+    }
     if (!/^[A-Fa-f0-9-]{36}$/.test(udid)) throw new Error("simctl returned an invalid device ID");
     this.udid = udid;
     await writePrivateJson(join(this.directory, "device.json"), { udid, set: this.set, socketDirectory: this.socketDirectory });
@@ -360,7 +379,10 @@ export class IosExperiment implements OwnedAdapter {
       const argv = [this.tools.xcrun, "simctl", "--set", this.set];
       // Shutdown may report already stopped; deletion must succeed to clear lock.
       await this.run([...argv, "shutdown", this.udid], { env: this.env });
-      await checked(this.run, [...argv, "delete", this.udid], { env: this.env });
+      if(this.retain){
+        const devices=JSON.parse((await checked(this.run,[...argv,'list','devices','--json'],{env:this.env})).toString());
+        if(!devices.devices?.[this.config.runtime]?.some((d:{udid:string;state:string})=>d.udid===this.udid&&d.state==='Shutdown'))throw Error('Owned simulator did not shut down');
+      }else await checked(this.run, [...argv, "delete", this.udid], { env: this.env });
     }
     if (this.socketDirectory) await rm(this.socketDirectory, { recursive: true });
   }

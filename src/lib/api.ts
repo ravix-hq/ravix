@@ -1,3 +1,4 @@
+import type { RunnerInfo } from '../../shared/runners';
 /**
  * The browser's whole world.
  *
@@ -77,8 +78,10 @@ export const api = {
   browserCommand: (trackId: string, clientId: string, command: Record<string, unknown>) => post<BrowserResult>(`/api/tracks/${trackId}/browser/command`, { ...command, clientId }),
   browserCheckpoint: (trackId: string, clientId: string, label: string) => post<BrowserCheckpoint>(`/api/tracks/${trackId}/browser/checkpoint`, { clientId, label }),
   browserRestore: (trackId: string, clientId: string, checkpointId: string) => post<BrowserResult>(`/api/tracks/${trackId}/browser/restore`, { clientId, checkpointId }),
-  nativePreview: (trackId: string) => call<{available:boolean;platforms:NativePlatform[];session:NativeInfo|null}>(`/api/tracks/${trackId}/native`),
-  startNativePreview: (trackId: string, platform: NativePlatform = "android") => post<NativeInfo>(`/api/tracks/${trackId}/native/start`, {platform}),
+  nativePreview: (trackId: string) => call<{available:boolean;platforms:NativePlatform[];runners:RunnerInfo[];session:NativeInfo|null}>(`/api/tracks/${trackId}/native`),
+  startNativePreview: (trackId: string, platform: NativePlatform = "android") => post<NativeInfo>(`/api/tracks/${trackId}/native/start`, {platform,requestId:crypto.randomUUID()}),
+  pairNativeRunner: (trackId: string) => post<{code:string;expiresAt:number}>(`/api/tracks/${trackId}/native/runner-pair`),
+  revokeNativeRunner: (runnerId: string) => post<{ok:true}>(`/api/native/runners/${runnerId}/revoke`),
   stopNativePreview: (trackId: string) => post<{ok:true}>(`/api/tracks/${trackId}/native/stop`),
   nativeSession: (id: string) => call<NativeInfo & {trackUrl:string}>(`/api/native/sessions/${id}`),
   preview: (trackId: string) => call<PreviewInfo>(`/api/tracks/${trackId}/preview`),

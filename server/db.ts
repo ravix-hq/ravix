@@ -22,6 +22,7 @@
 import { Database } from "bun:sqlite";
 import { PreviewStore } from "./preview-store";
 import { NativeExperimentStore } from "./native-experiment-store";
+import { RunnerStore } from "./runner-store";
 import { BrowserStore } from "./browser-store";
 import type { TrackOriginInfo } from "../shared/api";
 
@@ -93,6 +94,7 @@ export class Db {
   private readonly db: Database;
   readonly previews: PreviewStore;
   readonly nativeExperiments: NativeExperimentStore;
+  readonly runners: RunnerStore;
   readonly browsers: BrowserStore;
 
   constructor(path: string) {
@@ -102,6 +104,7 @@ export class Db {
     this.migrate();
     this.previews = new PreviewStore(this.db);
     this.nativeExperiments = new NativeExperimentStore(this.db);
+    this.runners = new RunnerStore(this.db);
     this.browsers = new BrowserStore(this.db);
   }
 

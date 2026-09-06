@@ -547,3 +547,93 @@ place. Nothing is deleted. Whole directories move into
 old and new paths. Absolute paths inside historical reports retain their original
 values. An existing experiment lock must be resolved before archiving. Rerun the
 preview command after archiving, using a fresh pairing if the old one expired.
+
+## Registered Mac and durable queue (Hello fixture)
+
+The registered-runner path reuses the verified Android/iOS Hello builds. It is
+still restricted to the Hello repository by `NATIVE_PREVIEW_EXPERIMENT`; arbitrary
+project builds and agent helper integration belong to the next product step.
+
+Prepare `/private/tmp/switchyard-runner.json` as the provisioning account with
+mode 0600. Each entry must name an existing verified build; no latest-build
+selection or shell command is accepted:
+
+```json
+{
+  "expectedAccount": "switchyard",
+  "name": "Mac",
+  "serverUrl": "https://switchyard.demo.managoat.com",
+  "builds": [
+    {
+      "platform": "android",
+      "buildDirectory": "/Users/switchyard/.local/share/switchyard/builds/experiment-52e8255f-b89c-4596-846d-1aa6d6002041",
+      "artifactSha256": "6bf899d7e847633cb70f02aa37b6c5ba8db32d07ff0e8cfb7bb5a168d92afe82"
+    },
+    {
+      "platform": "ios",
+      "buildDirectory": "/Users/switchyard/.local/share/switchyard/builds/experiment-8bd7bc9e-f5e7-4822-a014-2c0a6aeb730b",
+      "artifactSha256": "375169f807696ad02ea5d82f1456b94142378e9f306eb5555bab55afe9abab2f"
+    }
+  ]
+}
+```
+
+In the track, choose **Pair a Mac runner**, then run:
+
+```sh
+sudo /bin/bash apps/switchyard/runner/scripts/provision-account.sh switchyard --pair-runner
+```
+
+Paste the five-minute runner pairing code at the prompt. Registration consumes
+it once and stores the reusable credential only in the dedicated account's
+private `managed/identity.json`. SQLite stores its verifier. The command stays
+running in the foreground; start previews from the track. A registered Mac
+receives assignments over its authenticated host WebSocket, separately from
+per-session control/video/forwarding. Browser viewers never receive its credential
+or per-job pairing code. Starting another track queues it behind the current
+preview. Stop the current preview to let the next track use the Mac.
+
+After Ctrl+C or a normal command exit, reconnect without pairing:
+
+```sh
+sudo /bin/bash apps/switchyard/runner/scripts/provision-account.sh switchyard --serve-runner
+```
+
+The server persists requests, target affinity, build identities, queue order,
+connection epochs and assignment generations. Retries with the same request UUID
+return the existing request; another start while that track has active work is
+rejected. On a host disconnect or server restart, channels are fenced and old
+assignments wait out their lease before replacement. Input is never replayed.
+The Mac must finish cleanup before reconnecting; unconfirmed local cleanup or a
+process crash leaves locks and evidence for explicit inspection. Automatic
+recovery of crashed local processes is not implemented yet.
+
+Managed Stop shuts down the owned device and removes Sprite services, while
+retaining its private device directory under `managed/targets/<target UUID>`.
+Android reinstalls with `-r`; iOS reuses only the recorded, shutdown simulator in
+its private set. Targets stay pinned to their original runner. The current engine
+has one global active preview slot; each runner advertises one device and one
+build slot, with at most 32 pending requests per runner. This slice consumes
+existing artifacts; it does not dispatch new build jobs.
+
+Limits are explicit: eight retained targets per Mac, the newest ten completed
+managed runtime reports, five pending pairings per owner, eight registered Macs
+per owner, and 1,000 request records per project. Device data and immutable builds
+are not evicted with run reports. Incomplete cleanup is retained and blocks reuse.
+Idle viewer timeout is five minutes, session deadline thirty minutes, heartbeat
+fifteen seconds, and assignment lease sixty seconds. Wall-clock checks prevent
+sleep from extending a lease.
+
+To explicitly discard a stopped target's app data, first stop the daemon, then
+use its `targetId` from `managed/last-result.json`:
+
+```sh
+sudo /bin/bash apps/switchyard/runner/scripts/provision-account.sh switchyard --reset-target TARGET_UUID
+```
+
+This acquires the account locks, verifies the recorded private device identity,
+refuses a running simulator/emulator, and deletes only that target. A later
+preview creates a fresh device. This is an operator command, not an agent tool.
+Revoking a runner in the track ends its access; re-pairing does not silently move
+its existing targets to a new identity. Build inventory changes and runner
+replacement/migration require explicit follow-up support.

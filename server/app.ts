@@ -107,6 +107,8 @@ export function buildRouter(ctx: AppContext): (req: Request) => Promise<Response
   };
 
   on("GET", "/healthz", () => new Response("ok\n", { headers: { "content-type": "text/plain" } }));
+  on("POST", "/api/native/runners/register", req => nativeExperiments(ctx).coordinator.register(req));
+  on("POST", "/api/native/runners/:id/revoke", (req, p) => nativeExperiments(ctx).coordinator.revoke(req, p.id!));
   on("POST", "/api/native/claim", req => nativeExperiments(ctx).claim(req));
   on("GET", "/api/native/sessions/:id", (req,p) => nativeExperiments(ctx).show(req,p.id!));
   on("GET", "/api/tracks/:id/native", (req,p) => nativeExperiments(ctx).route(req,p.id!));

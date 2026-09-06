@@ -39,6 +39,9 @@ export interface NativeInfo {
     video: NativeVideo | null;
     frames: number;
     pairingCode?: string;
+    queuePosition?: number | null;
+    runnerId?: string;
+    generation?: number;
 }
 export function parseNativeInput(value: unknown): NativeInput {
     const v = value as NativeInput;

@@ -6,6 +6,8 @@ import { randomToken, sha256 } from './crypto';
 import { machineOf, spriteFor } from './tracks';
 import { spriteTunnel, previewClient } from './sprites-tunnel';
 import { createNativeForwardGateway, type NativeForwardPeer } from './native-forward-gateway';
+import { RunnerCoordinator, type RunnerPeer } from './runner-coordinator';
+import type { NativeRequest } from './runner-store';
 import type { NativeServiceReservation } from './native-experiment-store';
 import { NATIVE, nativeFrame, parseNativeInput, type NativeInfo, type NativePlatform, type NativeVideo } from '../shared/native-preview';
 import loopbackSource from '../runner/scripts/metro-loopback.cjs' with { type: 'text' };
@@ -46,6 +48,7 @@ export function nativeExperiments(ctx: AppContext) { let m = managers.get(ctx); 
     managers.set(ctx, m);
 } return m; }
 interface Session {
+    managed?: {generation: number; epoch: number};
     platform: NativePlatform;
     artifactSha256: string;
     metroPort: number;
@@ -92,7 +95,7 @@ interface NativePeer {
     count: number;
     period: number;
 }
-export type NativeSocketData = NativePeer | NativeForwardPeer;
+export type NativeSocketData = NativePeer | NativeForwardPeer | RunnerPeer;
 const serviceName = (id: string, kind: string) => `sy-native-${id}-${kind}`;
 const quote = (s: string) => "'" + s.replaceAll("'", "'\\''") + "'";
 /** Opt-in gate-2 fixture: one active native experiment, no durable runner
@@ -100,6 +103,7 @@ const quote = (s: string) => "'" + s.replaceAll("'", "'\\''") + "'";
 export class NativeExperiments {
     fetch(req: Request, server: Server<NativeSocketData>) {
         const path = new URL(req.url).pathname;
+        if (path.startsWith('/api/native/runners/')) return this.coordinator.upgrade(req, server as unknown as Server<RunnerPeer>);
         if (/^\/api\/native\/sessions\/[^/]+\/forward\//.test(path))
             return this.forward.fetch(req, server as unknown as Server<NativeForwardPeer>);
         return this.upgrade(req, server as unknown as Server<NativePeer>);
@@ -109,15 +113,18 @@ export class NativeExperiments {
         backpressureLimit: 1024 * 1024,
         closeOnBackpressureLimit: true,
         idleTimeout: 60,
-        open: (ws: ServerWebSocket<NativeSocketData>) => { if ('assignment' in ws.data)
+        open: (ws: ServerWebSocket<NativeSocketData>) => { if ('runnerControl' in ws.data) this.coordinator.websocket.open(ws as ServerWebSocket<RunnerPeer>);
+        else if ('assignment' in ws.data)
             this.forward.websocket.open(ws as ServerWebSocket<NativeForwardPeer>);
         else
             this.channels.open(ws as ServerWebSocket<NativePeer>); },
-        message: (ws: ServerWebSocket<NativeSocketData>, data: string | Buffer) => { if ('assignment' in ws.data)
+        message: (ws: ServerWebSocket<NativeSocketData>, data: string | Buffer) => { if ('runnerControl' in ws.data) this.coordinator.websocket.message(ws as ServerWebSocket<RunnerPeer>, data);
+        else if ('assignment' in ws.data)
             this.forward.websocket.message(ws as ServerWebSocket<NativeForwardPeer>, data);
         else
             this.channels.message(ws as ServerWebSocket<NativePeer>, data); },
-        close: (ws: ServerWebSocket<NativeSocketData>) => { if ('assignment' in ws.data)
+        close: (ws: ServerWebSocket<NativeSocketData>) => { if ('runnerControl' in ws.data) this.coordinator.websocket.close(ws as ServerWebSocket<RunnerPeer>);
+        else if ('assignment' in ws.data)
             this.forward.websocket.close(ws as ServerWebSocket<NativeForwardPeer>);
         else
             this.channels.close(ws as ServerWebSocket<NativePeer>); },
@@ -129,7 +136,14 @@ export class NativeExperiments {
     private recoveryTask?: Promise<unknown>;
     private lastRecovery = 0;
     readonly forward;
+    readonly coordinator: RunnerCoordinator;
     constructor(private ctx: AppContext) {
+        this.coordinator = new RunnerCoordinator(ctx, {
+            spawn: (request, pairHash) => this.spawnManaged(request, pairHash),
+            stop: async (id, reason) => { const s = this.sessions.get(id); if (s) { if(s.cleanupError && Date.now()-s.lastCheck<15000)return; s.lastCheck=Date.now(); await this.stopSession(s, reason); } },
+            info: id => { const s = this.sessions.get(id); return s ? this.info(s) : null; },
+            busy: () => this.stopped || this.recovering || this.ctx.db.nativeExperiments.all().length > 0 || [...this.sessions.values()].some(s => this.live(s)),
+        });
         this.forward = createNativeForwardGateway(async (req) => {
             const match = /^\/api\/native\/sessions\/([a-f0-9-]{36})\/forward\/(metro|backend)$/.exec(new URL(req.url).pathname);
             if (!match)
@@ -154,6 +168,7 @@ export class NativeExperiments {
     start() {
         if (this.timer || !this.ctx.config.nativePreviewExperiment)
             return;
+        this.coordinator.start();
         this.recovering = true;
         const recover = () => {
             this.lastRecovery = Date.now();
@@ -161,6 +176,7 @@ export class NativeExperiments {
         };
         recover();
         this.timer = setInterval(() => {
+            void this.coordinator.tick().catch(error => console.error('Native scheduler:', error));
             if (this.recovering && !this.recoveryTask && Date.now() - this.lastRecovery >= 15000) recover();
             for (const s of this.sessions.values()) {
                 if (!this.live(s)) {
@@ -189,6 +205,7 @@ export class NativeExperiments {
     }
     async stop() {
         this.stopped = true;
+        this.coordinator.shutdown();
         if (this.timer) clearInterval(this.timer);
         this.forward.stop();
         await this.recoveryTask;
@@ -197,6 +214,7 @@ export class NativeExperiments {
     private live(s: Session) {
         if (this.stopped || s.controller.signal.aborted || s.expiresAt <= Date.now() || s.leaseUntil <= Date.now())
             return false;
+        if (s.managed && !this.coordinator.current(s.id, s.managed.generation, s.managed.epoch)) return false;
         const user = this.ctx.db.sessionUser(s.sessionHash), track = this.ctx.db.track(s.trackId), project = this.ctx.db.project(s.projectId);
         return !!user && user.id === s.userId && !!track && !track.closedAt && track.workdir === s.workdir &&
             !!project && !project.archivedAt && project.userId === user.id && project.rev === s.projectRevision && project.agentId === s.agentId;
@@ -228,30 +246,38 @@ export class NativeExperiments {
             throw new HttpError(409, 'closed', 'This track is closed.');
         const available = !!this.ctx.config.nativePreviewExperiment && !!this.ctx.fountain && !!this.ctx.sprites && project.repoFullName === FIXTURE;
         const current = [...this.sessions.values()].reverse().find(s => s.trackId === trackId);
+        const durable = this.ctx.db.runners.current(trackId);
         if (req.method === 'GET') {
+            if (durable) this.ctx.db.runners.touch(durable.id);
             if (current && this.live(current))
                 current.lastViewer = Date.now();
-            return Response.json({ data: { available, platforms: this.ctx.config.nativeHelloIosSha256 ? ['android', 'ios'] : ['android'], session: current ? this.info(current) : null } }, { headers: { 'cache-control': 'no-store' } });
+            return Response.json({ data: { available, platforms: this.ctx.config.nativeHelloIosSha256 ? ['android', 'ios'] : ['android'], runners: this.coordinator.list(project.id), session: durable ? this.coordinator.info(durable) : current ? this.info(current) : null } }, { headers: { 'cache-control': 'no-store' } });
         }
         if (req.headers.get('origin') !== this.ctx.config.publicUrl)
             throw new HttpError(403, 'origin', 'Open this action in Switchyard.');
         requireOwner(role, 'start or stop this native experiment');
         if (!available)
             throw new HttpError(501, 'native_unavailable', 'Native experiments are not enabled for this project.');
+        if (action === 'runner-pair') return this.coordinator.pair(req, trackId);
         if (action === 'stop') {
+            if (durable) await this.coordinator.stop(durable.id);
             if (current)
                 await this.stopSession(current);
             return Response.json({ data: { ok: true } });
         }
         if (action !== 'start')
             throw new HttpError(404, 'not_found');
+        const body = await nativeBody(req, true);
+        const platform = body.platform ?? 'android';
+        if (platform !== 'android' && platform !== 'ios') throw new HttpError(400, 'platform', 'Choose Android or iOS.');
+        if (this.coordinator.list(project.id).length) {
+            const info = await this.coordinator.enqueue(req, trackId, platform, body.requestId as string, body.runnerId as string | undefined);
+            return Response.json({data: info}, {headers: {'cache-control': 'no-store'}});
+        }
         if (this.recovering || this.ctx.db.nativeExperiments.all().length || [...this.sessions.values()].some(s => this.live(s)))
             throw new HttpError(409, 'native_busy', 'The experiment runner is occupied or still cleaning up. Stop it before starting another.');
         if (this.sessions.size >= 10)
             this.sessions.delete(this.sessions.keys().next().value!);
-        const body = await nativeBody(req, true);
-        const platform = (body as {platform?: unknown}).platform ?? 'android';
-        if (platform !== 'android' && platform !== 'ios') throw new HttpError(400, 'platform', 'Choose Android or iOS.');
         const artifactSha256 = platform === 'ios' ? this.ctx.config.nativeHelloIosSha256 : APK_SHA;
         if (!artifactSha256) throw new HttpError(409, 'ios_unavailable', 'The iOS Hello build has not been verified yet.');
         const code = randomToken(), now = Date.now();
@@ -264,7 +290,25 @@ export class NativeExperiments {
         this.sessions.set(s.id, s);
         return Response.json({ data: { ...this.info(s), pairingCode: code } }, { headers: { 'cache-control': 'no-store' } });
     }
+    private spawnManaged(request: NativeRequest, pairHash: string) {
+        for (const [id, s] of this.sessions) if (s.controller.signal.aborted && !s.cleanupError) this.sessions.delete(id);
+        const now = Date.now();
+        const s: Session = {...request, managed: {generation: request.generation, epoch: request.epoch},
+            metroPort: NATIVE.metroPort, backendPort: NATIVE.backendPort, pairHash, pairUntil: request.leaseUntil,
+            tokenHash: null, expiresAt: request.deadline, leaseUntil: request.leaseUntil, lastViewer: now,
+            phase: 'Awaiting runner', error: null, controller: new AbortController(), viewers: new Set(),
+            video: null, frames: 0, lastFrame: 0, appReady: false, lastCheck: 0};
+        this.sessions.set(s.id, s);
+    }
     async show(req: Request, id: string) {
+        const durable = this.ctx.db.runners.request(id);
+        if (durable) {
+            const user = await authenticate(this.ctx, req), {track} = trackAccess(this.ctx, user, durable.trackId);
+            if (track.closedAt) throw new HttpError(404, 'not_found');
+            this.ctx.db.runners.touch(id);
+            const live = this.sessions.get(id); if (live) live.lastViewer = Date.now();
+            return Response.json({data: {...this.coordinator.info(durable), trackUrl: `/p/${durable.projectId}/t/${durable.trackId}`}}, {headers: {'cache-control': 'no-store'}});
+        }
         const user = await authenticate(this.ctx, req), s = this.sessions.get(id);
         if (!s)
             throw new HttpError(404, 'not_found', 'This experiment has ended. Start it again from the track.');

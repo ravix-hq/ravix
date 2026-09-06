@@ -7,11 +7,11 @@ umask 077
 runner_account="${1:-switchyard}"
 setup_mode="${2:-install}"
 build_id="${3:-}"
-if [[ ( "$#" -gt 2 && "$setup_mode" != --check-ios-build ) || "$#" -gt 3 || ( "$setup_mode" != install && "$setup_mode" != --archive-runtime && "$setup_mode" != --check-ios-build && "$setup_mode" != --check && "$setup_mode" != --build-ios-hello && "$setup_mode" != --build-hello && "$setup_mode" != --run-hello && "$setup_mode" != --preview-ios-hello && "$setup_mode" != --preview-hello ) ]]; then
-  echo 'Usage: provision-account.sh [account] [--archive-runtime | --check-ios-build BUILD_UUID | --check | --build-hello | --build-ios-hello | --run-hello | --preview-hello | --preview-ios-hello]' >&2; exit 1
+if [[ ( "$#" -gt 2 && "$setup_mode" != --check-ios-build && "$setup_mode" != --reset-target ) || "$#" -gt 3 || ( "$setup_mode" != --reset-target && "$setup_mode" != --pair-runner && "$setup_mode" != --serve-runner && "$setup_mode" != install && "$setup_mode" != --archive-runtime && "$setup_mode" != --check-ios-build && "$setup_mode" != --check && "$setup_mode" != --build-ios-hello && "$setup_mode" != --build-hello && "$setup_mode" != --run-hello && "$setup_mode" != --preview-ios-hello && "$setup_mode" != --preview-hello ) ]]; then
+  echo 'Usage: provision-account.sh [account] [--reset-target TARGET_UUID | --pair-runner | --serve-runner | --archive-runtime | --check-ios-build BUILD_UUID | --check | --build-hello | --build-ios-hello | --run-hello | --preview-hello | --preview-ios-hello]' >&2; exit 1
 fi
-if [[ "$setup_mode" == --check-ios-build && ! "$build_id" =~ ^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$ ]]; then
-  echo 'Supply the explicit iOS build UUID printed in its report.' >&2; exit 1
+if [[ ( "$setup_mode" == --check-ios-build || "$setup_mode" == --reset-target ) && ! "$build_id" =~ ^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$ ]]; then
+  echo 'Supply the explicit build or target UUID from its report.' >&2; exit 1
 fi
 if [[ ! "$runner_account" =~ ^[a-z][a-z0-9_-]*$ ]]; then
   echo 'Choose a standard macOS account name.' >&2; exit 1
@@ -55,6 +55,19 @@ trap '/bin/rm -rf -- "$stage"' EXIT
 /usr/bin/ditto "$runner_source" "$stage/runner"
 /bin/mkdir "$stage/shared"
 /usr/bin/install -m 600 "$runner_source/../shared/native-preview.ts" "$stage/shared/native-preview.ts"
+/usr/bin/install -m 600 "$runner_source/../shared/runners.ts" "$stage/shared/runners.ts"
+if [[ "$setup_mode" == --pair-runner ]]; then
+  runner_config=/private/tmp/switchyard-runner.json
+  [[ -f "$runner_config" && ! -L "$runner_config" && "$(stat -f %u "$runner_config")" == "$(id -u "$SUDO_USER")" ]] || {
+    echo 'Prepare /private/tmp/switchyard-runner.json with the verified builds first.' >&2; exit 1
+  }
+  /usr/bin/install -m 600 "$runner_config" "$stage/runner-config.json"
+  echo 'Paste the runner pairing code from Switchyard:'
+  IFS= read -r pairing_code </dev/tty
+  [[ "$pairing_code" =~ ^[a-zA-Z0-9_-]{43}$ ]] || { echo 'Invalid pairing code.' >&2; exit 1; }
+  printf '%s\n' "$pairing_code" > "$stage/pairing.txt"
+  unset pairing_code
+fi
 if [[ "$setup_mode" == --run-hello || "$setup_mode" == --preview-ios-hello || "$setup_mode" == --preview-hello ]]; then
   runtime_config=/private/tmp/switchyard-hello-runtime.json
   if [[ "$setup_mode" == --preview-hello ]]; then runtime_config=/private/tmp/switchyard-hello-preview.json; fi
@@ -94,6 +107,15 @@ build_id="$4"
 cd "$runner_home"
 local_bin="$runner_home/.local/bin"
 runtime="$runner_home/.local/share/switchyard"
+if [[ "$setup_mode" == --reset-target ]]; then
+  exec "$local_bin/bun" "$stage/runner/index.ts" reset-target "$USER" "$build_id"
+fi
+if [[ "$setup_mode" == --pair-runner ]]; then
+  exec "$local_bin/bun" "$stage/runner/index.ts" register "$stage/runner-config.json" "$stage/pairing.txt"
+fi
+if [[ "$setup_mode" == --serve-runner ]]; then
+  exec "$local_bin/bun" "$stage/runner/index.ts" serve "$runtime/managed/config.json"
+fi
 if [[ "$setup_mode" == --archive-runtime ]]; then
   exec "$local_bin/bun" "$stage/runner/archive-runtime.ts" "$USER"
 fi

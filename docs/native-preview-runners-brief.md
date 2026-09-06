@@ -1,7 +1,7 @@
 # Native preview runners
 
 Audience: product and engineering; implementation handoff for a coding agent.\
-Status: implementation plan; native preview implementation has not started.\
+Status: Android and iOS Hello previews demonstrated; durable runner integration underway. See [verification evidence](native-preview-runners-verification.md) for completed checks and remaining gates.\
 Date: September 5, 2026.\
 Code baseline reviewed: `65ef3c7`.
 

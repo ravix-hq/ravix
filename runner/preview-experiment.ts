@@ -1,9 +1,9 @@
 import { arch, platform, userInfo } from 'node:os';
-import { mkdir } from 'node:fs/promises';
+import { mkdir, readdir }  from 'node:fs/promises';
 import { join } from 'node:path';
 import { AndroidExperiment, IosExperiment } from './adapters/experiment';
 import { toolEnvironment, toolPaths } from './doctor';
-import { acquireExperiment, writePrivateJson } from './state';
+import { acquireExperiment, acquireManagedRun, privateDirectory, writePrivateJson } from './state';
 import { command } from './process';
 import { androidNode, expoStartupAction, parseRuntimeConfig, verifyRuntimeBuild, type RuntimeConfig } from './runtime-experiment';
 import { verifyIosBuild, iosNode, iosStartupAction } from './ios-runtime';
@@ -27,20 +27,32 @@ export function parsePreviewExperiment(value: unknown): PreviewConfig {
 function socket(url: string, token: string) { const Client = WebSocket as unknown as new (url: string, options: {
     headers: Record<string, string>;
 }) => WebSocket; return new Client(url, { headers: { authorization: `Bearer ${token}` } }); }
-export async function previewExperiment(config: PreviewConfig, signal?: AbortSignal) {
+export async function previewExperiment(config: PreviewConfig, signal?: AbortSignal, managed?: {targetId:string;sessionId:string;deadline:number}) {
     const user = userInfo();
     if (platform() !== 'darwin' || arch() !== 'arm64' || user.uid === 0 || user.username !== config.expectedAccount)
         throw new Error(`Run as the dedicated ${config.expectedAccount} account`);
     const baseEnv = {HOME: user.homedir, PATH: `${user.homedir}/.local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin`, LANG: 'en_US.UTF-8'};
     const paths = await toolPaths(baseEnv);
     const target = config.platform ?? "android";
-    const build = await (target === "ios" ? verifyIosBuild(config) : verifyRuntimeBuild(config)), owned = await acquireExperiment(join(user.homedir, '.local/share/switchyard/runtime'));
+    if(managed && (!/^[a-f0-9-]{36}$/.test(managed.targetId)||!/^[a-f0-9-]{36}$/.test(managed.sessionId)||managed.deadline<=Date.now()))throw Error('Invalid managed target');
+    const build = await (target === "ios" ? verifyIosBuild(config) : verifyRuntimeBuild(config));
+    const root=join(user.homedir,'.local/share/switchyard');
+    let deviceDirectory:string|undefined;
+    if(managed){
+      const targets=await privateDirectory(join(root,'managed','targets'));
+      const directory=join(targets,managed.targetId),names=await readdir(targets);
+      if(!names.includes(managed.targetId)&&names.length>=8)throw Error('Eight native targets retained; retire an old target before creating another');
+      deviceDirectory=await privateDirectory(directory);
+    }
+    const owned=managed?await acquireManagedRun(join(root,'runtime'),join(root,'managed')):await acquireExperiment(join(root,'runtime'));
+    deviceDirectory??=owned.directory;
+    const deviceId=managed?.targetId??owned.id;
     const controller = new AbortController(), active = AbortSignal.any([controller.signal, AbortSignal.timeout(NATIVE.lifetimeMs), ...(signal ? [signal] : [])]);
     const env = {...toolEnvironment(paths, baseEnv), TMPDIR: join(owned.directory, 'tmp')};
-    const adapter = target === "ios" ? new IosExperiment({platform: "ios", stateDirectory: owned.directory, runtime: "com.apple.CoreSimulator.SimRuntime.iOS-18-6", deviceType: "com.apple.CoreSimulator.SimDeviceType.iPhone-16"}, owned.id, owned.directory, paths, command, active, env, NATIVE.lifetimeMs) : new AndroidExperiment({ platform: 'android', stateDirectory: owned.directory, emulatorPort: 5580, deviceType: 'pixel_7', systemImage: 'system-images;android-35;google_apis;arm64-v8a', scrcpyVersion: '4.1' }, owned.id, owned.directory, paths, command, active, env, NATIVE.lifetimeMs);
-    const report = { version: 1, kind: `${target}-sprite-preview-experiment`, platform: target, account: user.username, startedAt: new Date().toISOString(), artifactSha256: config.artifactSha256, sourceDigest: build.sourceDigest, sessionId: '', localPorts: null as {metroPort:number;backendPort:number} | null, nativeRuntimeVerified: false, spriteMetroVerified: false, spriteBackendVerified: false, browserVerified: false, framesSent: 0, cleanup: 'pending', error: null as string | null };
+    const adapter = target === "ios" ? new IosExperiment({platform: "ios", stateDirectory: deviceDirectory, runtime: "com.apple.CoreSimulator.SimRuntime.iOS-18-6", deviceType: "com.apple.CoreSimulator.SimDeviceType.iPhone-16"}, deviceId, deviceDirectory, paths, command, active, env, NATIVE.lifetimeMs, !!managed) : new AndroidExperiment({ platform: 'android', stateDirectory: deviceDirectory, emulatorPort: 5580, deviceType: 'pixel_7', systemImage: 'system-images;android-35;google_apis;arm64-v8a', scrcpyVersion: '4.1' }, deviceId, deviceDirectory, paths, command, active, env, NATIVE.lifetimeMs, !!managed);
+    const report = { version: 1, ...(managed ? {targetId:managed.targetId} : {}), kind: `${target}-sprite-preview-experiment`, platform: target, account: user.username, startedAt: new Date().toISOString(), artifactSha256: config.artifactSha256, sourceDigest: build.sourceDigest, sessionId: '', localPorts: null as {metroPort:number;backendPort:number} | null, nativeRuntimeVerified: false, spriteMetroVerified: false, spriteBackendVerified: false, browserVerified: false, framesSent: 0, cleanup: 'pending', error: null as string | null };
     let control: WebSocket | undefined, media: WebSocket | undefined, live: Awaited<ReturnType<typeof adapter.live>> | undefined;
-    let leaseDeadline = 0, heartbeat: ReturnType<typeof setInterval> | undefined, watchdog: ReturnType<typeof setInterval> | undefined;
+    let leaseDeadline = 0, wallLeaseDeadline = 0, heartbeat: ReturnType<typeof setInterval> | undefined, watchdog: ReturnType<typeof setInterval> | undefined;
     let remote: NativeInfo | null = null, serverEnded = false;
     const stop = (error: unknown) => { if (!active.aborted) {
         report.error = error instanceof Error ? error.message : String(error);
@@ -74,6 +86,8 @@ export async function previewExperiment(config: PreviewConfig, signal?: AbortSig
             throw new Error('Invalid runner assignment');
         report.sessionId = data.id;
         leaseDeadline = performance.now() + Math.min(NATIVE.leaseMs, data.leaseMs);
+        wallLeaseDeadline = Date.now() + Math.min(NATIVE.leaseMs, data.leaseMs);
+        if(managed && data.id!==managed.sessionId)throw Error('Claim does not match assigned session');
         const wsBase = config.serverUrl.replace(/^http/, 'ws') + `/api/native/sessions/${data.id}`;
         control = socket(`${wsBase}/runner`, data.token);
         control.onmessage = event => {
@@ -84,7 +98,9 @@ export async function previewExperiment(config: PreviewConfig, signal?: AbortSig
                 if (message.type === 'status') {
                     if (message.id !== data.id || !Number.isFinite(message.leaseMs) || message.leaseMs <= 0)
                         throw new Error('Invalid assignment lease');
+                    if(performance.now()>=leaseDeadline||Date.now()>=wallLeaseDeadline)throw Error('Assignment lease expired');
                     leaseDeadline = performance.now() + Math.min(NATIVE.leaseMs, message.leaseMs);
+                    wallLeaseDeadline = Date.now() + Math.min(NATIVE.leaseMs, message.leaseMs);
                     remote = message;
                     if (['Failed', 'Stopped'].includes(message.phase))
                         throw new Error(message.error || 'Server stopped the preview');
@@ -107,7 +123,7 @@ export async function previewExperiment(config: PreviewConfig, signal?: AbortSig
         await new Promise<void>((resolve, reject) => { const timer = setTimeout(() => reject(new Error('Runner connection timed out')), 10000); control!.onopen = () => { clearTimeout(timer); resolve(); }; });
         heartbeat = setInterval(() => { if (control?.readyState === WebSocket.OPEN)
             control.send(JSON.stringify({ type: 'heartbeat' })); }, 10000);
-        watchdog = setInterval(() => { if (performance.now() > leaseDeadline)
+        watchdog = setInterval(() => { if (performance.now() >= leaseDeadline || Date.now() >= wallLeaseDeadline || (managed && Date.now() >= managed.deadline))
             stop(new Error('Runner assignment expired')); }, 250);
         await phase('wait-for-private-sprite-services', async () => { while (!remote || !['Connecting', 'Ready'].includes((remote as NativeInfo).phase)) {
             active.throwIfAborted();
@@ -148,7 +164,7 @@ export async function previewExperiment(config: PreviewConfig, signal?: AbortSig
                 try {
                     const xml = await adapter.readHierarchy();
                     if (target === "ios") await writePrivateJson(join(owned.directory, "last-hierarchy.json"), JSON.parse(xml));
-                    const node = target === 'ios' ? iosNode(xml, text) : androidNode(xml, 'text', text, 'com.managoat.switchyard.hello');
+                    const node = target === 'ios' ? iosNode(xml, text) : (androidNode(xml, 'text', text, 'com.managoat.switchyard.hello') ?? androidNode(xml, 'content-desc', text, 'com.managoat.switchyard.hello'));
                     if (node)
                         return node;
                     const action = target === 'ios' ? iosStartupAction(xml) : expoStartupAction(xml);
@@ -164,7 +180,7 @@ export async function previewExperiment(config: PreviewConfig, signal?: AbortSig
             await adapter.screenshot(join(owned.directory, "startup-timeout.png")).catch(() => {});
             throw new Error(`App did not show: ${text}${lastError ? `. ${lastError}` : ""}`);
         };
-        await phase('verify-sprite-greeting', async () => { await waitFor('Hello, world!'); report.nativeRuntimeVerified = true; report.spriteMetroVerified = true; await adapter.screenshot(join(owned.directory, 'sprite-greeting.png')); });
+        await phase('verify-sprite-greeting', async () => { await waitFor(managed ? 'Call backend' : 'Hello, world!'); report.nativeRuntimeVerified = true; report.spriteMetroVerified = true; await adapter.screenshot(join(owned.directory, 'sprite-greeting.png')); });
         await phase('verify-sprite-backend', async () => {
             const xml = await adapter.readHierarchy();
             const button = target === 'ios' ? iosNode(xml, 'Call backend') : androidNode(xml, 'content-desc', 'Call backend', 'com.managoat.switchyard.hello');
@@ -197,11 +213,13 @@ export async function previewExperiment(config: PreviewConfig, signal?: AbortSig
             clearInterval(heartbeat);
         if (watchdog)
             clearInterval(watchdog);
-        await live?.close();
+        let streamCleanupError: unknown;
+        try { await live?.close(); } catch (error) { streamCleanupError=error; }
         media?.close();
         control?.close();
         try {
             await adapter.stop();
+            if (streamCleanupError) throw streamCleanupError;
             report.cleanup = 'complete';
             await save();
             await owned.release();

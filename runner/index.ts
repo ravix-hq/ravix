@@ -1,4 +1,6 @@
 #!/usr/bin/env bun
+import { resetTarget } from "./reset-target";
+import { registeredRunner } from "./registered-runner";
 import { doctor } from "./doctor";
 import { writePrivateJson } from "./state";
 import { join } from "node:path";
@@ -11,6 +13,14 @@ import { previewExperiment, parsePreviewExperiment } from "./preview-experiment"
 
 async function main() {
   const args = process.argv.slice(2);
+  if(args[0] === "reset-target" && args.length === 3) { await resetTarget(args[1]!,args[2]!); return; }
+  if ((args[0] === 'register' && args.length === 3) || (args[0] === 'serve' && args.length === 2)) {
+    const controller=new AbortController(),cancel=()=>controller.abort();
+    process.on('SIGINT',cancel);process.on('SIGTERM',cancel);
+    try { await registeredRunner(args[1]!,args[0]==='register'?args[2]:undefined,controller.signal); }
+    finally { process.off('SIGINT',cancel);process.off('SIGTERM',cancel); }
+    return;
+  }
   if (args[0] === "preview-experiment" && args.length === 2) {
     const config = parsePreviewExperiment(JSON.parse(await readFile(args[1]!, "utf8")));
     const controller = new AbortController();
@@ -73,7 +83,7 @@ async function main() {
     } finally { process.off("SIGINT", cancel); process.off("SIGTERM", cancel); }
     return;
   }
-  console.log("Usage: bun run runner/index.ts doctor | experiment <config.json> | snapshot <repository> <output.json> | build-experiment <config.json> | runtime-experiment <config.json>\nDoctor: read-only workstation and native toolchain inventory. Does not register a runner or start devices.");
+  console.log("Usage: bun run runner/index.ts doctor | register <config.json> <pairing.txt> | serve <config.json> | experiment <config.json> | snapshot <repository> <output.json> | build-experiment <config.json> | runtime-experiment <config.json>\nDoctor: read-only workstation and native toolchain inventory. Does not register a runner or start devices.");
   if (args.length && args[0] !== "--help") process.exitCode = 2;
 }
 if (import.meta.main) main().catch(error => { console.error(error instanceof Error ? error.message : String(error)); process.exitCode = 1; });

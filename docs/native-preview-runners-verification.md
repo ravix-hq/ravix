@@ -664,3 +664,33 @@ The browser Screenshot button, iOS Home, mobile Safari, reconnect/resume behavio
 measured latency and sustained reliability still need separate coverage. Earlier
 provider disconnects and the reappearing old service definitions remain recorded
 above; this successful run does not resolve their underlying causes.
+
+## Durable runner and queue implementation
+
+The next slice of gate 3 adds a persisted runner registry, single-use owner
+pairing, hashed host credentials, project allowlists, runner revocation,
+transactional queueing, stable target affinity, request idempotency, connection
+epochs, assignment generations, deadlines and lease reconciliation. A foreground
+Mac daemon consumes those assignments using the previously demonstrated Hello
+preview engine. Browser launch/status now shows queue position and runner status.
+
+Tests exercise two tracks taking turns over an authenticated host WebSocket,
+without another pairing, while existing web preview reservations remain intact.
+SQLite reopening tests retain queued requests and quarantine old assignments;
+stale epochs/generations cannot renew or complete them. Runner protocol tests
+verify duplicate offers execute once and completion follows cleanup. Adapter
+fixtures verify separate iOS device sets retain data and only a recorded shutdown
+device is reused. Managed run evidence is bounded separately from target data.
+
+These are protocol and command-adapter tests, not new live simulator evidence.
+The dedicated-account registered daemon still needs a two-track Android/iOS run
+and browser verification. Gate 3 remains open: distinct newly built artifacts,
+automatic recovery after an unclean local process exit, runner replacement,
+build-job dispatch and broader cache retirement are not implemented in this
+slice. Existing artifacts are verified and identified explicitly. Agent helper
+integration and general Expo project setup remain gate 4 work.
+
+Validation for this slice: 321 tests passed, one pre-existing real-Chromium
+shared-browser test skipped, zero failures. TypeScript, Vite and the Bun server
+bundle passed. The protocol tests used local provider fixtures; no dedicated
+account simulator was booted during these automated checks.

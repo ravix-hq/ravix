@@ -1,4 +1,4 @@
-import { lstat, mkdir, open, readdir, realpath, rename, rm } from "node:fs/promises";
+import { lstat, mkdir, open, readFile, readdir, realpath, rename, rm } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 
@@ -38,4 +38,26 @@ export async function acquireExperiment(statePath: string) {
   } catch (error) { await lock.close(); await rm(lockPath, { force: true }); throw error; }
   await lock.close();
   return { id, directory, release: () => rm(lockPath) };
+}
+
+/** Managed runs retain the newest ten completed reports, with device data elsewhere. */
+export async function acquireManagedRun(runtimePath: string, managedPath: string) {
+  const root=await privateDirectory(runtimePath), runs=await privateDirectory(join(managedPath,'runs'));
+  const lockPath=join(root,'experiment.lock'),lock=await open(lockPath,'wx',0o600).catch(()=>{throw Error('Another preview owns this account; inspect runtime/experiment.lock');});
+  const id=randomUUID(),directory=join(runs,`experiment-${id}`);
+  try{
+    const names=(await readdir(runs)).filter(name=>/^experiment-[a-f0-9-]{36}$/.test(name));
+    const completed=[];
+    for(const name of names){
+      const path=join(runs,name);await privateDirectory(path);
+      const report=JSON.parse(await readFile(join(path,'report.json'),'utf8'));
+      if(report.cleanup!=='complete')throw Error('A managed run needs cleanup; inspect its retained report');
+      completed.push({path,startedAt:String(report.startedAt)});
+    }
+    completed.sort((a,b)=>a.startedAt.localeCompare(b.startedAt));
+    for(const old of completed.slice(0,Math.max(0,completed.length-9)))await rm(old.path,{recursive:true});
+    await lock.writeFile(JSON.stringify({id,pid:process.pid,directory,startedAt:new Date().toISOString()})+'\n');
+    await mkdir(directory,{mode:0o700});
+  }catch(error){await lock.close();await rm(lockPath);throw error;}
+  await lock.close();return {id,directory,release:()=>rm(lockPath)};
 }
