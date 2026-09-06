@@ -37,6 +37,7 @@ export function useDiff(trackId: string): DiffLoad {
     // the old question must not be shown against the new track.
     let live = true;
     setLoading(true);
+    setError(null);
     api.diff(trackId).then(
       (next) => {
         if (!live) return;
@@ -72,6 +73,13 @@ export function Changes({ diff }: { diff: DiffLoad }) {
         to bring one up, or wait for the one that is starting.
       </Empty>
     );
+  }
+
+  if (error?.code === "machine_asleep" || error?.code === "machine_starting") {
+    return <Empty icon={<Machine size={19} />} title={error.code === "machine_asleep" ? "Wake the machine to see changes" : "The machine is starting"}
+      action={{ label: error.code === "machine_asleep" ? "Wake up" : "Try again", onClick: reload }}>
+      {error.message}
+    </Empty>;
   }
 
   if (error) {

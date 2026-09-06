@@ -78,6 +78,7 @@ export function Files({ track }: { track: Track }) {
 
   const load = useCallback(
     async (path: string) => {
+      setError(null);
       setBusy((m) => ({ ...m, [path]: true }));
       try {
         const listing = await api.files(track.id, path);
@@ -158,6 +159,13 @@ export function Files({ track }: { track: Track }) {
     );
   }
 
+  if (error?.code === "machine_asleep" || error?.code === "machine_starting") {
+    return <Empty icon={<Machine size={19} />} title={error.code === "machine_asleep" ? "Wake the machine to browse files" : "The machine is starting"}
+      action={{ label: error.code === "machine_asleep" ? "Wake up" : "Try again", onClick: () => void load(root) }}>
+      {error.message}
+    </Empty>;
+  }
+
   if (file || fileError) {
     return (
       <div className="file-view">
@@ -176,7 +184,9 @@ export function Files({ track }: { track: Track }) {
           <span className="truncate dim">{relative(root, selected ?? "")}</span>
           {file ? <span className="dimmer">{bytes(file.size)}</span> : null}
         </header>
-        {fileError ? <p className="error" style={{ padding: "10px 12px" }}>{fileError}</p> : null}
+        {fileError ? <div style={{ padding: "10px 12px" }}><p className="fine">{fileError}</p>
+          <button type="button" className="ghost" onClick={() => selected && void show(selected)}>Try again</button>
+        </div> : null}
         {file && !isText(file.encoding) ? (
           <p className="fine" style={{ padding: "10px 12px" }}>
             This file is not text — the machine sent it as <code>{file.encoding}</code>, {bytes(file.size)} of it. Showing the
