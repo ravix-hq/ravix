@@ -1146,3 +1146,16 @@ input.crumb-name { width: 30ch; }
 .track-pull.passed { color: var(--ok); }
 .track-pull.failed { color: var(--bad); }
 .track-pull.merged { color: #a371f7; }
+
+/* Cross-project attention feed. */
+.inbox { overflow-y: auto; padding: 32px; width: 100%; }
+.inbox > header, .inbox-list, .inbox-empty { max-width: 900px; margin-inline: auto; }
+.inbox h1 { font-size: 24px; margin: 0; }
+.inbox-list { list-style: none; padding: 0; }
+.inbox-item { display: flex; flex-direction: column; gap: 10px; padding: 20px; margin-top: 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); color: var(--ink); text-decoration: none; }
+.inbox-item:hover { background: var(--surface); border-color: var(--line-strong); }
+.inbox-item:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+.inbox-item strong { font-size: 15px; overflow-wrap: anywhere; }
+.inbox-item time { font-size: 11px; flex-shrink: 0; }
+.inbox-empty { padding: 56px 0; }
+@media (max-width: 700px) { .inbox { padding: 18px; } .inbox-item .row { flex-wrap: wrap; } }

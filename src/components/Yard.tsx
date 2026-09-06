@@ -18,6 +18,9 @@ import { ThemePicker } from "./ThemePicker";
 
 export interface YardProps {
   github?: boolean;
+  inboxActive?: boolean;
+  inboxCount?: number;
+  onInbox?: () => void;
   viewer: { login: string; name: string | null; avatarUrl: string | null } | null;
   projects: Project[];
   tracksByProject: Record<string, Track[]>;
@@ -52,9 +55,13 @@ export function Yard(props: YardProps) {
       </div>
 
       <div className="yard-nav">
+        <button type="button" className={`yard-item${props.inboxActive ? " on" : ""}`} onClick={props.onInbox}>
+          <span className="ico" aria-hidden="true">▤</span>
+          Inbox <span className="spacer" /><span className="chip">{props.inboxCount ?? 0}</span>
+        </button>
         <button
           type="button"
-          className={`yard-item${!selected.projectId ? " on" : ""}`}
+          className={`yard-item${!selected.projectId && !props.inboxActive ? " on" : ""}`}
           onClick={props.onHome}
         >
           <span className="ico">

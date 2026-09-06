@@ -22,6 +22,8 @@ import type { Capabilities, Presence, Project, SessionInfo, Track, TrackHeader }
 import { api, ApiError, subscribe } from "./lib/api";
 import { experimentalPreviews } from "./lib/features";
 import { Info, Machine, Plus, X } from "./lib/icons";
+import { Inbox } from "./components/Inbox";
+import { attentionItems } from "./lib/inbox";
 import { Empty } from "./components/Empty";
 import { Home, SignIn } from "./components/Home";
 import { Yard } from "./components/Yard";
@@ -40,17 +42,18 @@ import { NativeViewer } from "./components/NativePreview";
 type Dialog = "new-project" | "create-from" | "settings" | "search" | "people" | "project-people" | "close-track" | null;
 
 interface Route {
+  inbox?: boolean;
   projectId: string | null;
   trackId: string | null;
 }
 
 function readRoute(): Route {
   const m = /^\/p\/([^/]+)(?:\/t\/([^/]+))?/.exec(window.location.pathname);
-  return { projectId: m?.[1] ?? null, trackId: m?.[2] ?? null };
+  return { projectId: m?.[1] ?? null, trackId: m?.[2] ?? null, inbox: window.location.pathname === "/inbox" || window.location.pathname === "/" };
 }
 
 function writeRoute(route: Route, replace = false): void {
-  const path = route.projectId ? (route.trackId ? `/p/${route.projectId}/t/${route.trackId}` : `/p/${route.projectId}`) : "/";
+  const path = route.projectId ? (route.trackId ? `/p/${route.projectId}/t/${route.trackId}` : `/p/${route.projectId}`) : route.inbox ? "/inbox" : "/home";
   if (path === window.location.pathname) return;
   window.history[replace ? "replaceState" : "pushState"]({}, "", path);
 }
@@ -63,8 +66,10 @@ export function App() {
 function SwitchyardApp() {
   const [session, setSession] = useState<SessionInfo | null>(null);
   const [signingOut, setSigningOut] = useState(false);
+  const [projectsState, setProjectsState] = useState<"loading" | "ready" | "error">("loading");
   const [projects, setProjects] = useState<Project[]>([]);
   const [tracksByProject, setTracks] = useState<Record<string, Track[]>>({});
+  const [trackErrors, setTrackErrors] = useState<Record<string, boolean>>({});
   const [route, setRoute] = useState<Route>(readRoute);
   const [dialog, setDialog] = useState<Dialog>(null);
   const [detail, setDetail] = useState<{ track: Track; header: TrackHeader; starters: { label: string; prompt: string }[] } | null>(null);
@@ -115,7 +120,9 @@ function SwitchyardApp() {
   const reloadProjects = useCallback(async () => {
     try {
       setProjects(await api.projects());
+      setProjectsState("ready");
     } catch (err) {
+      setProjectsState("error");
       if (err instanceof ApiError && err.status !== 401) notify(err.message);
     }
   }, [notify]);
@@ -139,17 +146,38 @@ function SwitchyardApp() {
       try {
         const list = await api.tracks(projectId);
         setTracks((current) => ({ ...current, [projectId]: list }));
+        setTrackErrors((current) => ({ ...current, [projectId]: false }));
       } catch (err) {
-        if (err instanceof ApiError) notify(err.message);
+        setTrackErrors((current) => ({ ...current, [projectId]: true }));
+        if (err instanceof ApiError && (err.status === 403 || err.status === 404)) {
+          setTracks((current) => ({ ...current, [projectId]: [] }));
+        }
       }
     },
-    [notify],
+    [],
   );
 
   useEffect(() => {
     if (!route.projectId) return;
     void reloadTracks(route.projectId);
   }, [route.projectId, reloadTracks]);
+
+  // Refresh every visible project, even when its rail group is collapsed.
+  // One polling loop avoids exhausting browser SSE connections across projects.
+  const projectIds = projects.map((p) => p.id).sort().join(",");
+  useEffect(() => {
+    const ids = projectIds ? projectIds.split(",") : [];
+    let disposed = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const refresh = async () => {
+      await Promise.all(ids.map(reloadTracks));
+      if (!disposed) timer = setTimeout(refresh, 30_000);
+    };
+    void refresh();
+    const onFocus = () => { void reloadProjects(); };
+    window.addEventListener("focus", onFocus);
+    return () => { disposed = true; clearTimeout(timer); window.removeEventListener("focus", onFocus); };
+  }, [projectIds, reloadTracks, reloadProjects]);
 
   /**
    * This person has seen the open track.
@@ -354,6 +382,9 @@ function SwitchyardApp() {
         projects={projects}
         tracksByProject={tracksByProject}
         selected={route}
+        inboxActive={route.inbox}
+        inboxCount={attentionItems(projects, tracksByProject).length}
+        onInbox={() => go({ projectId: null, trackId: null, inbox: true })}
         onHome={() => go({ projectId: null, trackId: null })}
         onNewProject={() => setDialog("new-project")}
         onSearch={() => setDialog("search")}
@@ -374,7 +405,11 @@ function SwitchyardApp() {
       />
 
       <div className="stage">
-        {!project ? (
+        {route.inbox ? (
+          <Inbox projectsState={projectsState} projects={projects} tracksByProject={tracksByProject} errors={trackErrors}
+            onRetry={() => { void reloadProjects(); projects.forEach((p) => void reloadTracks(p.id)); }}
+            onPick={(projectId, trackId) => go({ projectId, trackId })} />
+        ) : !project ? (
           <Home
             session={session}
             projects={projects}
