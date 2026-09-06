@@ -456,8 +456,7 @@ h4 { font-size: 11px; color: var(--dim); text-transform: uppercase; letter-spaci
   color: var(--dim); background: transparent; border: none; border-radius: 6px;
   text-align: left; font-size: 12.5px; position: relative;
 }
-.track-copy { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
-.track-activity { display: flex; align-items: center; gap: 5px; font-size: 10.5px; line-height: 14px; font-weight: 500; color: var(--dim); }
+.track-activity { display: inline-flex; align-items: center; justify-content: center; width: 13px; height: 14px; color: var(--dim); }
 .track-activity.busy { color: var(--accent-ink); }
 .track-activity.attention { color: var(--warn); }
 .track-activity-symbol { width: 12px; height: 12px; display: inline-flex; align-items: center; justify-content: center; flex: none; }

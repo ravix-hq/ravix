@@ -162,11 +162,8 @@ export function Yard(props: YardProps) {
                       onClick={() => props.onPickTrack(project.id, track.id)}
                       title={rowTitle(track, unread)}
                     >
-                      <span className="track-num">{unread ? <i className="pip" aria-label="unread" /> : i + 1}</span>
-                      <span className="track-copy">
-                        <span className="truncate">{track.title}</span>
-                        <TrackActivity track={track} unread={unread} />
-                      </span>
+                      <span className="track-num"><TrackActivity track={track} unread={unread} ordinal={i + 1} /></span>
+                      <span className="truncate">{track.title}</span>
                       <span className="spacer" />
                       {track.stale ? (
                         <span className="chip" title="This track opened before the project's settings changed">
@@ -221,13 +218,14 @@ export function Yard(props: YardProps) {
 }
 
 /** Running takes precedence over unread output until the turn finishes. */
-export function TrackActivity({ track, unread }: { track: Pick<Track, "status">; unread: boolean }) {
+export function TrackActivity({ track, unread, ordinal }: { track: Pick<Track, "status">; unread: boolean; ordinal?: number }) {
   const state = trackActivity(track.status, unread);
+  if (state.kind === "idle") return ordinal ?? null;
   return (
-    <span className={`track-activity ${state.kind}`} title={state.detail}>
+    <span className={`track-activity ${state.kind}`} role="img" aria-label={state.label} title={state.detail}>
       {state.kind === "busy" ? <span className="track-mark spin" aria-hidden="true"><Spinner size={12} /></span>
-        : <span className="track-activity-symbol" aria-hidden="true">{state.kind === "attention" ? "!" : "–"}</span>}
-      {state.label}
+        : track.status === "failed" ? <span className="track-activity-symbol" aria-hidden="true">!</span>
+        : <i className="pip" aria-hidden="true" />}
     </span>
   );
 }
