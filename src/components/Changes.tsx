@@ -12,7 +12,7 @@
  * the tab strip above it shows the number of changed files and cannot get that
  * number from a component it has not mounted. See `Inspector`.
  */
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { DiffFile, DiffReport } from "../../shared/api";
 import { api } from "../lib/api";
 import { Chevron, Machine, Sparkle } from "../lib/icons";
@@ -24,13 +24,16 @@ export interface DiffLoad {
   error: { code: string; message: string } | null;
   loading: boolean;
   reload: () => void;
+  wake: () => void;
 }
 
 export function useDiff(trackId: string): DiffLoad {
   const [report, setReport] = useState<DiffReport | null>(null);
   const [error, setError] = useState<{ code: string; message: string } | null>(null);
   const [loading, setLoading] = useState(true);
-  const [nonce, setNonce] = useState(0);
+  const [request, setRequest] = useState({ nonce: 0, wake: false, trackId });
+
+  const consumedWake = useRef(0);
 
   useEffect(() => {
     // A track can be switched while its diff is in flight, and the answer to
@@ -38,7 +41,9 @@ export function useDiff(trackId: string): DiffLoad {
     let live = true;
     setLoading(true);
     setError(null);
-    api.diff(trackId).then(
+    const shouldWake = request.trackId === trackId && request.wake && consumedWake.current !== request.nonce;
+    if (shouldWake) consumedWake.current = request.nonce;
+    api.diff(trackId, shouldWake).then(
       (next) => {
         if (!live) return;
         setReport(next);
@@ -55,13 +60,16 @@ export function useDiff(trackId: string): DiffLoad {
     return () => {
       live = false;
     };
-  }, [trackId, nonce]);
+  }, [trackId, request]);
 
-  return { report, error, loading, reload: () => setNonce((n) => n + 1) };
+  return { report, error, loading,
+    reload: () => setRequest((r) => ({ nonce: r.nonce + 1, wake: false, trackId })),
+    wake: () => setRequest((r) => ({ nonce: r.nonce + 1, wake: true, trackId })),
+  };
 }
 
 export function Changes({ diff }: { diff: DiffLoad }) {
-  const { report, error, loading, reload } = diff;
+  const { report, error, loading, reload, wake } = diff;
   const [open, setOpen] = useState<Record<string, boolean>>({});
   const slow = useSlow(loading && !report);
   const hunks = useMemo(() => splitDiff(report?.diff ?? ""), [report?.diff]);
@@ -77,7 +85,7 @@ export function Changes({ diff }: { diff: DiffLoad }) {
 
   if (error?.code === "machine_asleep" || error?.code === "machine_starting") {
     return <Empty icon={<Machine size={19} />} title={error.code === "machine_asleep" ? "Wake the machine to see changes" : "The machine is starting"}
-      action={{ label: error.code === "machine_asleep" ? "Wake up" : "Try again", onClick: reload }}>
+      action={{ label: error.code === "machine_asleep" ? "Wake with agent" : "Try again", onClick: error.code === "machine_asleep" ? wake : reload }}>
       {error.message}
     </Empty>;
   }

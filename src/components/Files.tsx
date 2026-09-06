@@ -77,11 +77,11 @@ export function Files({ track }: { track: Track }) {
   const [fileError, setFileError] = useState<string | null>(null);
 
   const load = useCallback(
-    async (path: string) => {
+    async (path: string, wake = false) => {
       setError(null);
       setBusy((m) => ({ ...m, [path]: true }));
       try {
-        const listing = await api.files(track.id, path);
+        const listing = await api.files(track.id, path, wake);
         setDirs((m) => ({ ...m, [path]: { entries: sorted(listing.entries), truncated: listing.truncated } }));
         setError(null);
       } catch (err) {
@@ -161,7 +161,7 @@ export function Files({ track }: { track: Track }) {
 
   if (error?.code === "machine_asleep" || error?.code === "machine_starting") {
     return <Empty icon={<Machine size={19} />} title={error.code === "machine_asleep" ? "Wake the machine to browse files" : "The machine is starting"}
-      action={{ label: error.code === "machine_asleep" ? "Wake up" : "Try again", onClick: () => void load(root) }}>
+      action={{ label: error.code === "machine_asleep" ? "Wake with agent" : "Try again", onClick: () => void load(root, error.code === "machine_asleep") }}>
       {error.message}
     </Empty>;
   }

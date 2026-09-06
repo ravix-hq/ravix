@@ -72,41 +72,56 @@ async function call<T>(path: string, init: RequestInit = {}): Promise<T> {
 const post = <T>(path: string, body?: unknown) =>
   call<T>(path, { method: "POST", body: body === undefined ? undefined : JSON.stringify(body) });
 
-// Files and changes mount together. Share the wake request so entering a
-// track does not run several commands. Nothing is sent to the agent.
+// An exec on Sprites does not resume Fountain's suspended sandbox record.
+// Only an explicit user action sends a turn through the normal prompt queue.
+// Keep an accepted request until a read succeeds, including after a polling
+// timeout, so switching panels or retrying cannot queue another wake turn.
 const waking = new Map<string, Promise<void>>();
 
-async function readMachine<T>(trackId: string, path: string): Promise<T> {
-  try {
-    return await call<T>(path);
-  } catch (err) {
-    if (!(err instanceof ApiError) || err.code !== "sandbox_not_ready") throw err;
-    if (!/\bsuspended\b/i.test(err.message)) {
-      throw new ApiError(409, "machine_starting", "The machine is starting. Try again in a moment.");
-    }
-  }
-
+async function wakeMachine(trackId: string): Promise<void> {
   let wake = waking.get(trackId);
   if (!wake) {
-    wake = post<ExecResult>(`/api/tracks/${trackId}/exec`, { command: ":", timeoutSec: 30 })
-      .then((result) => {
-        if (result.code !== 0) throw new Error("Wake failed");
-      })
-      .finally(() => { waking.delete(trackId); });
+    wake = post(`/api/tracks/${trackId}/prompt`, {
+      requestId: crypto.randomUUID(),
+      prompt: "[switchyard] Wake this track's machine so I can browse files and changes. Run `pwd` in this track's working directory, then stop. Do not edit any files.",
+    }).then(() => undefined).catch((err) => {
+      waking.delete(trackId);
+      throw err;
+    });
     waking.set(trackId, wake);
   }
-  try {
-    await wake;
-  } catch {
-    throw new ApiError(409, "machine_asleep", "The machine is asleep. Try waking it again, or send a message in this track to resume work.");
-  }
-  try {
-    return await call<T>(path);
-  } catch (err) {
-    if (err instanceof ApiError && err.code === "sandbox_not_ready") {
-      throw new ApiError(409, "machine_asleep", "The machine is still getting ready. Try again in a moment, or send a message in this track to resume work.");
+  await wake;
+}
+
+async function readMachine<T>(trackId: string, path: string, wake = false): Promise<T> {
+  let requested = false;
+  // Prompt delivery and provider startup are asynchronous. Bound the wait;
+  // a queued turn may be waiting behind another track on this machine.
+  for (let attempt = 0; ; attempt++) {
+    try {
+      const result = await call<T>(path);
+      waking.delete(trackId);
+      return result;
+    } catch (err) {
+      if (!(err instanceof ApiError) || err.code !== "sandbox_not_ready") throw err;
+      const suspended = /\bsuspended\b/i.test(err.message);
+      if (!wake && !requested) {
+        if (waking.has(trackId)) {
+          throw new ApiError(409, "machine_starting", "A wake turn has been requested. Check the chat and prompt queue, then try again.");
+        }
+        throw new ApiError(409, suspended ? "machine_asleep" : "machine_starting", suspended
+          ? "The machine is asleep. Wake with agent sends a short turn to resume it."
+          : "The machine is starting. Try again in a moment.");
+      }
+      if (!requested && suspended) {
+        await wakeMachine(trackId);
+        requested = true;
+      }
+      if (attempt >= 30) {
+        throw new ApiError(409, "machine_starting", "The machine is still starting or waiting for its turn. Check the chat and prompt queue, then try again.");
+      }
+      await new Promise((resolve) => setTimeout(resolve, 1000));
     }
-    throw err;
   }
 }
 
@@ -187,10 +202,10 @@ export const api = {
   events: (id: string) => call<TranscriptPage>(`/api/tracks/${id}/events`),
 
   // ── the machine, through a track ───────────────────────────────────
-  files: (id: string, path?: string) =>
-    readMachine<FileListing>(id, `/api/tracks/${id}/files${path ? `?path=${encodeURIComponent(path)}` : ""}`),
+  files: (id: string, path?: string, wake = false) =>
+    readMachine<FileListing>(id, `/api/tracks/${id}/files${path ? `?path=${encodeURIComponent(path)}` : ""}`, wake),
   file: (id: string, path: string) => readMachine<FileContent>(id, `/api/tracks/${id}/file?path=${encodeURIComponent(path)}`),
-  diff: (id: string) => readMachine<DiffReport>(id, `/api/tracks/${id}/diff`),
+  diff: (id: string, wake = false) => readMachine<DiffReport>(id, `/api/tracks/${id}/diff`, wake),
   checks: (id: string) => call<ChecksReport>(`/api/tracks/${id}/checks`),
   openPull: (id: string, body: { title?: string; base?: string; body?: string; draft?: boolean }) =>
     post<PullRef & { url: string }>(`/api/tracks/${id}/pull`, body),
