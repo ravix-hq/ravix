@@ -585,25 +585,14 @@ input.crumb-name { width: 30ch; }
 .chip.bad { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 35%, var(--line)); background: var(--bad-soft); }
 .chip.accent { color: var(--accent-ink); border-color: var(--accent-line); background: var(--accent-soft); }
 
-/* The machine's numbers, at the quiet end of the project's row. Dimmer and a
-   size smaller than everything beside it, and tabular so the digits do not
-   jitter under each other every twenty seconds.
-
-   `flex: none` is the whole layout: this is a fixed string of text and a flex
-   item that may shrink clips it mid-glyph rather than dropping it, which is
-   how it ends up reading `ram 9.9/1`. It does not shrink, it goes — and it
-   goes early, at the width where the window stops having room to spare,
-   because it is the least important thing on this row and must never be the
-   reason the name beside it is truncated. */
-.vitals {
-  flex: none;
-  display: flex; align-items: center; gap: 8px; padding-right: 2px;
-  color: var(--dimmer); font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap;
-}
-.vitals > span { display: inline-flex; align-items: baseline; gap: 4px; }
-.vitals > span + span::before { content: "·"; color: var(--line-strong); margin-right: 4px; }
-.vitals b { color: var(--dim); font-weight: 500; }
-.vitals b.hot { color: var(--warn); }
+/* Machine usage stays readable in the dock, including on narrow screens. */
+.machine-stats { padding: 14px 16px; color: var(--dim); font-size: 12px; }
+.machine-stats p { margin: 0 0 12px; }
+.vitals { display: grid; gap: 12px; margin: 0; font-variant-numeric: tabular-nums; }
+.vitals > div { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; }
+.vitals dt { color: var(--dim); }
+.vitals dd { margin: 0; font-weight: 500; }
+.vitals dd.hot { color: var(--warn); }
 
 /* ── the ribbon: what this track is, in four lines ─────────────────────── */
 
@@ -986,9 +975,6 @@ input.crumb-name { width: 30ch; }
   .split { grid-template-columns: minmax(0, 1fr); }
   .inspector { display: none; }
   .inspector.forced { display: flex; }
-  /* The track name, the branch and the buttons all want this row before the
-     footnote does. */
-  .vitals { display: none; }
 }
 @media (max-width: 760px) {
   .app { grid-template-columns: 1fr; }

@@ -1,8 +1,8 @@
 /**
- * The dock: Setup, Run, Terminal, under the track you are reading.
+ * The dock: Setup, Run, Terminal, Machine stats, under the track you are reading.
  *
- * Conductor puts these three under the conversation rather than beside it, and
- * the arrangement is doing real work. All three are about the *machine* — how
+ * Conductor puts these tools under the conversation rather than beside it, and
+ * the arrangement is doing real work. All four are about the *machine* — how
  * its disk was built, what you run on it, what you type at it — while
  * everything above is about the conversation, and everything to the right is
  * about the files. Splitting the screen that way means you never have to
@@ -28,13 +28,15 @@ import { Chevron } from "../lib/icons";
 import { Run } from "./Run";
 import { Setup } from "./Setup";
 import { Terminal } from "./Terminal";
+import { Vitals } from "./Vitals";
 
-type DockTab = "setup" | "run" | "terminal";
+type DockTab = "setup" | "run" | "terminal" | "machine";
 
 const TABS: { key: DockTab; label: string }[] = [
   { key: "setup", label: "Setup" },
   { key: "run", label: "Run" },
   { key: "terminal", label: "Terminal" },
+  { key: "machine", label: "Machine stats" },
 ];
 
 const STORAGE_KEY = "switchyard.dock";
@@ -93,6 +95,7 @@ export function Dock({ track, project, capabilities }: { track: Track; project: 
           {tab === "setup" ? <Setup key={project.id} project={project} /> : null}
           {tab === "run" ? <Run key={track.id} track={track} project={project} capabilities={capabilities} /> : null}
           {tab === "terminal" ? <Terminal key={track.id} track={track} /> : null}
+          {tab === "machine" ? <Vitals key={track.id} track={track} /> : null}
         </div>
       ) : null}
     </div>

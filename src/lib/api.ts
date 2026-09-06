@@ -162,7 +162,7 @@ export const api = {
       `/api/tracks/${id}/exec`,
     ),
   exec: (id: string, command: string, cwd?: string) => post<ExecResult>(`/api/tracks/${id}/exec`, { command, cwd }),
-  /** CPU, memory and disk on the box, for the readout in the dock's strip. */
+  /** CPU, memory and disk on the box, for the machine stats pane. */
   vitals: (id: string) => call<VitalsReport>(`/api/tracks/${id}/vitals`),
 
   // ── working on something with somebody else ────────────────────────

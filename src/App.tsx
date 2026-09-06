@@ -35,7 +35,6 @@ import { CloseTrack } from "./components/CloseTrack";
 import { ProjectSettings } from "./components/ProjectSettings";
 import { Search as SearchDialog } from "./components/Search";
 import { People, PeopleStack, ProjectPeople } from "./components/People";
-import { Vitals } from "./components/Vitals";
 import { NativeViewer } from "./components/NativePreview";
 
 type Dialog = "new-project" | "create-from" | "settings" | "search" | "people" | "project-people" | "close-track" | null;
@@ -433,7 +432,6 @@ function SwitchyardApp() {
                   beside three tabs. Grey, small, and at the end furthest from
                   anything that reads as an action. It renders nothing at all
                   when there is nothing to say. */}
-              {detail ? <Vitals track={detail.track} /> : null}
               {/* Two different gates, because the server draws the line in two
                   different places. Cutting a track is the work and belongs to
                   anybody in the project; the settings are the machine and
