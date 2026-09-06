@@ -10,7 +10,7 @@
  * A project with no open track still shows, collapsed to its own row, because
  * a project is a machine that exists whether or not anybody is working in it.
  */
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { Project, Track } from "../../shared/api";
 import { AddPerson, Chevron, Home, Plus, Search, Settings, Spinner } from "../lib/icons";
 import { TrackPull } from "./TrackPull";
@@ -37,9 +37,38 @@ export interface YardProps {
   onProjectPeople: (projectId: string) => void;
 }
 
+const EXPANDED_PROJECTS_KEY = "switchyard.expandedProjects";
+
+function readExpandedProjects(): Set<string> {
+  try {
+    const saved: unknown = JSON.parse(localStorage.getItem(EXPANDED_PROJECTS_KEY) ?? "[]");
+    if (Array.isArray(saved)) return new Set(saved.filter((id): id is string => typeof id === "string"));
+  } catch {
+    // Unavailable storage or an invalid value leaves projects closed by default.
+  }
+  return new Set();
+}
+
 export function Yard(props: YardProps) {
   const { viewer, projects, tracksByProject, selected } = props;
-  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+  const [expandedProjects, setExpandedProjects] = useState(readExpandedProjects);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(EXPANDED_PROJECTS_KEY, JSON.stringify([...expandedProjects]));
+    } catch {
+      // Expansion still works for this visit when storage is unavailable or full.
+    }
+  }, [expandedProjects]);
+
+  function setProjectExpanded(projectId: string, expanded: boolean) {
+    setExpandedProjects((current) => {
+      const next = new Set(current);
+      if (expanded) next.add(projectId);
+      else next.delete(projectId);
+      return next;
+    });
+  }
   return (
     <nav className="yard" aria-label="Projects and tracks">
       <div className="yard-top">
@@ -102,7 +131,7 @@ export function Yard(props: YardProps) {
         {projects.map((project) => {
           const tracks = tracksByProject[project.id] ?? [];
           const active = selected.projectId === project.id;
-          const expanded = !collapsed[project.id];
+          const expanded = expandedProjects.has(project.id);
           // Three kinds of row, and the controls differ because the server
           // differs. An owner gets everything. Somebody invited to the whole
           // project can cut tracks and see who else is here, but not touch the
@@ -121,7 +150,7 @@ export function Yard(props: YardProps) {
                   aria-expanded={expanded}
                   aria-controls={`project-tracks-${project.id}`}
                   title={`${expanded ? "Collapse" : "Expand"} project`}
-                  onClick={() => setCollapsed((current) => ({ ...current, [project.id]: !current[project.id] }))}
+                  onClick={() => setProjectExpanded(project.id, !expanded)}
                 >
                   <Chevron size={13} open={expanded} />
                 </button>
@@ -129,7 +158,7 @@ export function Yard(props: YardProps) {
                   type="button"
                   className={`project-row${active && !selected.trackId ? " on" : ""}`}
                   onClick={() => {
-                    setCollapsed((current) => ({ ...current, [project.id]: false }));
+                    setProjectExpanded(project.id, true);
                     props.onPickProject(project.id);
                   }}
                 >
