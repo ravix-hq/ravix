@@ -7,8 +7,8 @@ umask 077
 runner_account="${1:-switchyard}"
 setup_mode="${2:-install}"
 build_id="${3:-}"
-if [[ ( "$#" -gt 2 && "$setup_mode" != --check-ios-build ) || "$#" -gt 3 || ( "$setup_mode" != install && "$setup_mode" != --check-ios-build && "$setup_mode" != --check && "$setup_mode" != --build-ios-hello && "$setup_mode" != --build-hello && "$setup_mode" != --run-hello && "$setup_mode" != --preview-ios-hello && "$setup_mode" != --preview-hello ) ]]; then
-  echo 'Usage: provision-account.sh [account] [--check-ios-build BUILD_UUID | --check | --build-hello | --build-ios-hello | --run-hello | --preview-hello | --preview-ios-hello]' >&2; exit 1
+if [[ ( "$#" -gt 2 && "$setup_mode" != --check-ios-build ) || "$#" -gt 3 || ( "$setup_mode" != install && "$setup_mode" != --archive-runtime && "$setup_mode" != --check-ios-build && "$setup_mode" != --check && "$setup_mode" != --build-ios-hello && "$setup_mode" != --build-hello && "$setup_mode" != --run-hello && "$setup_mode" != --preview-ios-hello && "$setup_mode" != --preview-hello ) ]]; then
+  echo 'Usage: provision-account.sh [account] [--archive-runtime | --check-ios-build BUILD_UUID | --check | --build-hello | --build-ios-hello | --run-hello | --preview-hello | --preview-ios-hello]' >&2; exit 1
 fi
 if [[ "$setup_mode" == --check-ios-build && ! "$build_id" =~ ^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$ ]]; then
   echo 'Supply the explicit iOS build UUID printed in its report.' >&2; exit 1
@@ -94,6 +94,9 @@ build_id="$4"
 cd "$runner_home"
 local_bin="$runner_home/.local/bin"
 runtime="$runner_home/.local/share/switchyard"
+if [[ "$setup_mode" == --archive-runtime ]]; then
+  exec "$local_bin/bun" "$stage/runner/archive-runtime.ts" "$USER"
+fi
 if [[ "$setup_mode" == --check-ios-build ]]; then
   exec "$local_bin/bun" "$stage/runner/ios-build-diagnostic.ts" "$USER" "$build_id"
 fi

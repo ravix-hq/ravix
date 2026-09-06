@@ -32,7 +32,7 @@ export async function acquireExperiment(statePath: string) {
   const directory = join(root, `experiment-${id}`);
   try {
     const retained = (await readdir(root)).filter(name => /^experiment-[a-f0-9-]{36}$/.test(name));
-    if (retained.length >= 10) throw new Error("Ten experiment directories retained. Review and remove old evidence before another experiment.");
+    if (retained.length >= 10) throw new Error("Ten experiment directories retained. For completed runtime evidence, run provision-account.sh <account> --archive-runtime; otherwise review the retained evidence before another experiment.");
     await lock.writeFile(JSON.stringify({ id, pid: process.pid, directory, startedAt: new Date().toISOString() }) + "\n");
     await mkdir(directory, { mode: 0o700 });
   } catch (error) { await lock.close(); await rm(lockPath, { force: true }); throw error; }

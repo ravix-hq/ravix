@@ -527,3 +527,22 @@ are closed until pairing activates the forwards. Old runners retain the legacy
 41000/41001 defaults; current runners coexist with other local forwards. Bind
 errors now include the address and port. No native rebuild is required because
 Metro supplies the app's JavaScript configuration.
+
+
+## Archive completed runtime evidence
+
+When ten runtime experiments are retained, run:
+
+```sh
+sudo /bin/bash apps/switchyard/runner/scripts/provision-account.sh switchyard --archive-runtime
+```
+
+This executes as the standard runner account. It takes the same exclusive lock
+as preview startup, then moves only owned runtime directories whose private
+reports confirm complete cleanup (and source restoration for the local Android
+experiment). Builds, incomplete reports, links and unconfirmed cleanup stay in
+place. Nothing is deleted. Whole directories move into
+`~/.local/share/switchyard/runtime/archived/batch-<uuid>/`; `archive.json` records
+old and new paths. Absolute paths inside historical reports retain their original
+values. An existing experiment lock must be resolved before archiving. Rerun the
+preview command after archiving, using a fresh pairing if the old one expired.

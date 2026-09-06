@@ -586,3 +586,39 @@ now tracked separately: the original reason remains visible, and the cleanup
 warning disappears when retry succeeds. Eleven native-session tests and the
 typecheck pass. The latest local runner report is still needed to establish
 why that session originally ended; neither attempt establishes iOS app readiness.
+
+
+The user supplied the remaining report for local run
+`3713389c-ad6a-4153-ba88-02518192b2b4`, session
+`4d1c6276-9fa2-4025-b554-1857be508d42`. It ended while waiting for private
+Sprite services with Bun's unexpected socket-closure error, before forwarding,
+simulator boot or capture. Local cleanup completed. The exact cloud request is
+not identified by this report. After deployment of the error-preservation fix
+(`6fe9326`, workflow `34011397427`, rollout and public health successful),
+provider GETs responded normally, a read-only Sprite exec returned HTTP 200 and
+confirmed App.tsx/server.mjs/Expo CLI in the Hello worktree, and the cleanup
+journal remained empty. These checks support retrying, but do not establish
+that the transport failure cannot recur.
+
+
+Session `0a9b0148-af75-4952-8ad5-a98b89504e54` (local report
+`cc9835d1-cfd5-4eb7-b73d-8102991f670f`) failed before forwarding with
+“Workspace command failed.” Inspection found two managed services from the
+first iOS session `512857a9-d8b1-40a2-bffe-362e5d59e3b6` running again, with
+provider start timestamps 04:20:21Z. Its backend occupied Sprite port 30001;
+30000 was free. The cause of those old definitions returning is unconfirmed.
+After validating their exact experiment names and Hello worktree, only that
+session's backend/install services and temporary preload/status files were
+removed. A subsequent service listing was empty and fresh bind probes confirmed
+both 30000 and 30001 free. The generic workspace error was consistent with the
+port probe's silent nonzero exit. A new dedicated-account run remains necessary.
+
+
+The next run reached the ten-directory retention limit before claiming its
+pairing. `--archive-runtime` now moves completed, cleaned-up runtime evidence
+intact into a private archive batch and records the path mapping. It uses the
+runtime lock and skips builds, incomplete cleanup, foreign/malformed reports
+and links. The original ten-run acquisition limit remains. Twenty focused
+archive/runner tests pass, including byte preservation, freeing quota, active
+lock refusal and leaving unconfirmed evidence untouched. Dedicated-account
+archiving and the subsequent iOS preview still need the user's sudo invocation.
