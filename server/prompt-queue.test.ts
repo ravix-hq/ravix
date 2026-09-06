@@ -14,7 +14,7 @@ import { visiblePreviewPrompt } from "../shared/previews";
 const cleanups: (() => void)[] = [];
 afterEach(() => { for (const cleanup of cleanups.splice(0).reverse()) cleanup(); });
 
-async function fixture() {
+async function fixture(withRepo = false) {
   const dir = mkdtempSync(join(tmpdir(), "switchyard-queue-"));
   const state = {
     status: "running", readFails: false, response: 200, error: "", reads: 0,
@@ -41,8 +41,8 @@ async function fixture() {
   const owner = db.upsertUser({ githubId: "1", login: "ana", name: "Ana", avatarUrl: null, tokenEnc: "test" });
   const guest = db.upsertUser({ githubId: "2", login: "bo", name: "Bo", avatarUrl: null, tokenEnc: "test" });
   const stranger = db.upsertUser({ githubId: "3", login: "cy", name: "Cy", avatarUrl: null, tokenEnc: "test" });
-  db.createProject({ id: "p1", userId: owner.id, name: "Demo", repoFullName: null, repoPrivate: 0, defaultBranch: null,
-    installationId: null, agentId: "a1", environmentId: "e1", vaultId: null, runtime: "claude", model: "anthropic/test", instructions: "" });
+  db.createProject({ id: "p1", userId: owner.id, name: "Demo", repoFullName: withRepo ? "owner/repo" : null, repoPrivate: 0, defaultBranch: null,
+    installationId: withRepo ? 1 : null, agentId: "a1", environmentId: "e1", vaultId: withRepo ? "v1" : null, runtime: "claude", model: "anthropic/test", instructions: "" });
   db.createTrack({ id: "t1", projectId: "p1", conversationId: "c1", slug: "crewe", title: "Crewe", branch: "crewe", workdir: "/work/crewe",
     originKind: "blank", originBase: null, originNumber: null, originTitle: null, originUrl: null, rev: 1, createdByLogin: "ana" });
   for (const user of [owner, guest, stranger]) db.createSession(user.id, await sha256(user.login), config.sessionMaxAgeMs);
@@ -267,4 +267,30 @@ test("a late delivery failure cannot resurrect a closed track's queue", async ()
   await f.worker.tick();
   expect(f.ctx.db.queuedPrompt(id)?.status).toBe("cancelled");
   expect(f.ctx.db.queuedPrompt(id)?.payload).toBe("");
+});
+
+
+test("credential failures hold the prompt until minting and vault delivery recover", async () => {
+  const f = await fixture(true);
+  let mintFails = true, vaultFails = true;
+  f.ctx.github = { mintCloneToken: async () => {
+    if (mintFails) throw new Error("mint unavailable");
+    return "fresh-token";
+  } } as any;
+  f.ctx.fountain!.putSecret = async () => {
+    if (vaultFails) throw new Error("vault unavailable");
+  };
+  f.state.status = "idle";
+  await f.send("Push my changes");
+  await f.worker.tick();
+  expect(f.state.posted).toHaveLength(0);
+  expect(f.ctx.db.queuedPrompts()[0]?.status).toBe("queued");
+  mintFails = false;
+  await f.worker.tick();
+  expect(f.state.posted).toHaveLength(0);
+  expect(f.ctx.db.queuedPrompts()[0]?.status).toBe("queued");
+  vaultFails = false;
+  await f.worker.tick();
+  expect(f.state.posted).toEqual([{ prompt: "Push my changes" }]);
+  expect(f.ctx.db.queuedPrompts()).toHaveLength(0);
 });

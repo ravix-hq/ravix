@@ -89,9 +89,9 @@ export class GitHub {
   }
 
   /** A token for one installation, good for an hour, cached until it nearly is not. */
-  async installationToken(installationId: number): Promise<string> {
+  async installationToken(installationId: number, forceRefresh = false): Promise<string> {
     const cached = this.tokens.get(installationId);
-    if (cached && cached.expiresAtMs > Date.now() + 60_000) return cached.token;
+    if (!forceRefresh && cached && cached.expiresAtMs > Date.now() + 60_000) return cached.token;
     const body = await this.request<{ token: string; expires_at: string }>(
       "POST",
       `/app/installations/${installationId}/access_tokens`,
@@ -110,10 +110,11 @@ export class GitHub {
    * into the project's vault, and Fountain hands the vault to the sandbox when
    * a session starts. An hour later it is dead. So every path that is about to
    * make the machine talk to GitHub — opening a track, sending a turn —
-   * re-mints first. The cache above makes that nearly free.
+   * re-mints first. Bypass the API cache so a turn cannot inherit a token
+   * with only a minute left. Turns longer than an hour still need renewal.
    */
   mintCloneToken(installationId: number): Promise<string> {
-    return this.installationToken(installationId);
+    return this.installationToken(installationId, true);
   }
 
   // ── signing somebody in ──────────────────────────────────────────────

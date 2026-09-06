@@ -378,3 +378,15 @@ test("catalog outages allow unrelated edits and preserve current selection", asy
   expect(saved.status).toBe(200);
   expect(db.project("p")?.name).toBe("Renamed");
 });
+
+test("machine preparation propagates mint and vault failures instead of starting with stale credentials", async () => {
+  const { ctx, project, github, fountain } = await fixture();
+  const repo = { ...project, repoFullName: "owner/repo", installationId: 1 };
+  github.mintCloneToken.mockRejectedValueOnce(new Error("mint unavailable"));
+  await expect(prepareMachine(ctx, repo, fountain as any)).rejects.toThrow("mint unavailable");
+  expect(fountain.putSecret).not.toHaveBeenCalled();
+  fountain.putSecret.mockRejectedValueOnce(new Error("vault unavailable"));
+  await expect(prepareMachine(ctx, repo, fountain as any)).rejects.toThrow("vault unavailable");
+  await prepareMachine(ctx, repo, fountain as any);
+  expect(fountain.putSecret).toHaveBeenLastCalledWith("vaults", "v", "GITHUB_TOKEN", "installation-token");
+});

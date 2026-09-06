@@ -262,24 +262,16 @@ export async function create(ctx: AppContext, req: Request): Promise<Response> {
  * sandbox when a *session* starts — so a project a person comes back to the
  * next morning has a dead token in it, and the symptom is `git push` failing
  * with "Authentication failed" in the middle of a turn. Every path that is
- * about to make the machine talk to GitHub calls this first. GitHub's own
- * token cache makes the repeat calls nearly free.
+ * about to make the machine talk to GitHub calls this first. Mint a fresh token
+ * for each preparation, and propagate failures so queued prompts can retry.
  */
 export async function refreshCloneToken(
   ctx: AppContext,
   input: { vaultId: string; installationId: number; fountain: Fountain },
 ): Promise<void> {
-  const gh = ctx.github;
-  if (!gh) return;
-  try {
-    const token = await gh.mintCloneToken(input.installationId);
-    await input.fountain.putSecret("vaults", input.vaultId, CLONE_SECRET_KEY, token);
-  } catch (err) {
-    // Not fatal on its own: a public repository clones without it, and a
-    // private one fails later with Fountain's own message. Logged rather than
-    // thrown so a GitHub blip does not stop somebody opening a track.
-    console.error("switchyard: could not refresh the clone token:", err instanceof Error ? err.message : err);
-  }
+  const gh = requireGitHub(ctx);
+  const token = await gh.mintCloneToken(input.installationId);
+  await input.fountain.putSecret("vaults", input.vaultId, CLONE_SECRET_KEY, token);
 }
 
 /** Everything a project needs before its machine is woken. */
