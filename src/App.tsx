@@ -23,6 +23,7 @@ import { api, ApiError, subscribe } from "./lib/api";
 import { experimentalPreviews } from "./lib/features";
 import { Info, Machine, Plus, X } from "./lib/icons";
 import { Empty } from "./components/Empty";
+import { Landing } from "./components/Landing";
 import { Home, SignIn } from "./components/Home";
 import { Yard } from "./components/Yard";
 import { TrackView } from "./components/TrackView";
@@ -339,7 +340,7 @@ function SwitchyardApp() {
   // ── render ──────────────────────────────────────────────────────────
 
   if (!session) return <div className="centred" />;
-  if (!session.viewer) return <SignIn session={session} />;
+  if (!session.viewer) return window.location.pathname === "/" ? <Landing /> : <SignIn session={session} />;
 
   const capabilities: Capabilities = session.capabilities;
   const tracks = route.projectId ? (tracksByProject[route.projectId] ?? []) : [];

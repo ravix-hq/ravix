@@ -32,7 +32,8 @@ export function SignIn({ session }: { session: SessionInfo }) {
         <div style={{ color: "var(--ink)", marginBottom: 20 }}>
           <Wordmark unit={5} />
         </div>
-        <h1>Parallel tracks on one machine</h1>
+        <a href="/" className="signin-back">← About Switchyard</a>
+        <h1>Sign in to Switchyard</h1>
         <p className="lede">
           Point switchyard at a repository and it builds you a cloud machine. Every piece of work you start is its own
           git worktree on that machine, with its own agent, its own branch and its own conversation — so four things can
@@ -40,11 +41,9 @@ export function SignIn({ session }: { session: SessionInfo }) {
         </p>
 
         {session.capabilities.github ? (
-          <a className="gh-button" href={session.signInUrl} style={{ textDecoration: "none" }}>
-            <button type="button" className="primary gh-button">
+          <a className="landing-button landing-primary gh-button" href={session.signInUrl}>
               <GitHub size={17} />
               Sign in with GitHub
-            </button>
           </a>
         ) : (
           <p className="error">
