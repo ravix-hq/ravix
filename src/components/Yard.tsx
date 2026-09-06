@@ -10,8 +10,9 @@
  * A project with no open track still shows, collapsed to its own row, because
  * a project is a machine that exists whether or not anybody is working in it.
  */
+import { useState } from "react";
 import type { Project, Track } from "../../shared/api";
-import { AddPerson, Home, Plus, Search, Settings, Spinner } from "../lib/icons";
+import { AddPerson, Chevron, Home, Plus, Search, Settings, Spinner } from "../lib/icons";
 import { ThemePicker } from "./ThemePicker";
 
 export interface YardProps {
@@ -33,6 +34,7 @@ export interface YardProps {
 
 export function Yard(props: YardProps) {
   const { viewer, projects, tracksByProject, selected } = props;
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   return (
     <nav className="yard" aria-label="Projects and tracks">
       <div className="yard-top">
@@ -91,6 +93,7 @@ export function Yard(props: YardProps) {
         {projects.map((project) => {
           const tracks = tracksByProject[project.id] ?? [];
           const active = selected.projectId === project.id;
+          const expanded = !collapsed[project.id];
           // Three kinds of row, and the controls differ because the server
           // differs. An owner gets everything. Somebody invited to the whole
           // project can cut tracks and see who else is here, but not touch the
@@ -104,8 +107,22 @@ export function Yard(props: YardProps) {
               <div className="row" style={{ gap: 0 }}>
                 <button
                   type="button"
+                  className="x"
+                  aria-label={`${expanded ? "Collapse" : "Expand"} ${project.name}`}
+                  aria-expanded={expanded}
+                  aria-controls={`project-tracks-${project.id}`}
+                  title={`${expanded ? "Collapse" : "Expand"} project`}
+                  onClick={() => setCollapsed((current) => ({ ...current, [project.id]: !current[project.id] }))}
+                >
+                  <Chevron size={13} open={expanded} />
+                </button>
+                <button
+                  type="button"
                   className={`project-row${active && !selected.trackId ? " on" : ""}`}
-                  onClick={() => props.onPickProject(project.id)}
+                  onClick={() => {
+                    setCollapsed((current) => ({ ...current, [project.id]: false }));
+                    props.onPickProject(project.id);
+                  }}
                 >
                   <span className="project-mark" aria-hidden="true">
                     {project.name.slice(0, 1).toUpperCase()}
@@ -128,61 +145,63 @@ export function Yard(props: YardProps) {
                 ) : null}
               </div>
 
-              {tracks.map((track, i) => {
-                // The track you are looking at is never unread, whatever the
-                // list says: the read mark is a round trip behind the click,
-                // and a row that lights up the moment you open it teaches
-                // people that the dot means nothing.
-                const unread = track.unread && selected.trackId !== track.id;
-                return (
-                  <button
-                    key={track.id}
-                    type="button"
-                    className={`track-row${selected.trackId === track.id ? " on" : ""}${unread ? " unread" : ""}`}
-                    onClick={() => props.onPickTrack(project.id, track.id)}
-                    title={rowTitle(track, unread)}
-                  >
-                    {/* Unread at one end of the row, activity at the other.
-                        They were one dot before — a ring around the status —
-                        and the two states a person actually scans for are
-                        exactly the two that can be true at once, which is the
-                        case that made the ring unreadable. Two ends, two
-                        marks, and neither has to be told apart from the other
-                        by colour: a pip where the number was, an arc where the
-                        dot is. The number is the thing that gives way because
-                        it is an ordinal nothing else refers to. */}
-                    <span className="track-num">{unread ? <i className="pip" aria-label="unread" /> : i + 1}</span>
-                    <span className="truncate">{track.title}</span>
-                    <span className="spacer" />
-                    {track.stale ? (
-                      <span className="chip" title="This track opened before the project's settings changed">
-                        older
-                      </span>
-                    ) : null}
-                    <TrackMark track={track} />
+              <div id={`project-tracks-${project.id}`} hidden={!expanded}>
+                {tracks.map((track, i) => {
+                  // The track you are looking at is never unread, whatever the
+                  // list says: the read mark is a round trip behind the click,
+                  // and a row that lights up the moment you open it teaches
+                  // people that the dot means nothing.
+                  const unread = track.unread && selected.trackId !== track.id;
+                  return (
+                    <button
+                      key={track.id}
+                      type="button"
+                      className={`track-row${selected.trackId === track.id ? " on" : ""}${unread ? " unread" : ""}`}
+                      onClick={() => props.onPickTrack(project.id, track.id)}
+                      title={rowTitle(track, unread)}
+                    >
+                      {/* Unread at one end of the row, activity at the other.
+                          They were one dot before — a ring around the status —
+                          and the two states a person actually scans for are
+                          exactly the two that can be true at once, which is the
+                          case that made the ring unreadable. Two ends, two
+                          marks, and neither has to be told apart from the other
+                          by colour: a pip where the number was, an arc where the
+                          dot is. The number is the thing that gives way because
+                          it is an ordinal nothing else refers to. */}
+                      <span className="track-num">{unread ? <i className="pip" aria-label="unread" /> : i + 1}</span>
+                      <span className="truncate">{track.title}</span>
+                      <span className="spacer" />
+                      {track.stale ? (
+                        <span className="chip" title="This track opened before the project's settings changed">
+                          older
+                        </span>
+                      ) : null}
+                      <TrackMark track={track} />
+                    </button>
+                  );
+                })}
+
+                {active && inProject ? (
+                  <button type="button" className="track-row" onClick={() => props.onProjectPeople(project.id)}>
+                    <span className="track-num" />
+                    <span className="ico">
+                      <AddPerson size={12} />
+                    </span>
+                    <span className="dim">People</span>
                   </button>
-                );
-              })}
+                ) : null}
 
-              {active && inProject ? (
-                <button type="button" className="track-row" onClick={() => props.onProjectPeople(project.id)}>
-                  <span className="track-num" />
-                  <span className="ico">
-                    <AddPerson size={12} />
-                  </span>
-                  <span className="dim">People</span>
-                </button>
-              ) : null}
-
-              {active && owner ? (
-                <button type="button" className="track-row" onClick={() => props.onProjectSettings(project.id)}>
-                  <span className="track-num" />
-                  <span className="ico">
-                    <Settings size={12} />
-                  </span>
-                  <span className="dim">Project settings</span>
-                </button>
-              ) : null}
+                {active && owner ? (
+                  <button type="button" className="track-row" onClick={() => props.onProjectSettings(project.id)}>
+                    <span className="track-num" />
+                    <span className="ico">
+                      <Settings size={12} />
+                    </span>
+                    <span className="dim">Project settings</span>
+                  </button>
+                ) : null}
+              </div>
             </div>
           );
         })}
