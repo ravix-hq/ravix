@@ -93,7 +93,10 @@ export async function checks(ctx: AppContext, req: Request, trackId: string): Pr
     throw new HttpError(409, "no_repo", "This project has no repository.");
   }
   try {
-    return json({ data: await gh.checks(project.installationId, project.repoFullName, track.branch) });
+    return json({ data: await gh.checks(project.installationId, project.repoFullName, track.branch, {
+      createdAt: track.createdAt,
+      originNumber: track.originKind === "pr" ? track.originNumber : null,
+    }) });
   } catch (err) {
     throw asHttpError(err, "read this branch's checks");
   }

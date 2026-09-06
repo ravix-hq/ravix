@@ -31,7 +31,8 @@ export function Checks({ track, project, capabilities }: { track: Track; project
       </NotConfigured>
     );
   }
-  return <Report track={track} project={project} />;
+  // Reset both fetched checks and locally opened PR state when changing tracks.
+  return <Report key={track.id} track={track} project={project} />;
 }
 
 function Report({ track, project }: { track: Track; project: Project }) {

@@ -36,8 +36,8 @@ test("a channel id that is not ours parses to null rather than to a wrong answer
 });
 
 test("a branch is namespaced under the person who asked for it", () => {
-  expect(branchFor("jhgaylor", "kyoto")).toBe("jhgaylor/kyoto");
-  expect(branchFor("Some.User", "kyoto")).toBe("some-user/kyoto");
+  expect(branchFor("jhgaylor", "kyoto", "track-1")).toBe("jhgaylor/kyoto-track-1");
+  expect(branchFor("Some.User", "kyoto", "track-1")).toBe("some-user/kyoto-track-1");
 });
 
 test("a repository lands where Fountain's own bundled skill looks first", () => {
@@ -47,4 +47,8 @@ test("a repository lands where Fountain's own bundled skill looks first", () => 
 
 test("a track's directory is under the work root", () => {
   expect(workdirFor("kyoto")).toBe("/home/sprite/work/kyoto");
+});
+
+test("reusing a track name gives a different branch even after its old branch is deleted", () => {
+  expect(branchFor("jhgaylor", "antwerp", "track-1")).not.toBe(branchFor("jhgaylor", "antwerp", "track-2"));
 });

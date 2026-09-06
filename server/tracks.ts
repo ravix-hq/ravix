@@ -128,13 +128,14 @@ export async function open(ctx: AppContext, req: Request, projectId: string): Pr
   const fountain = requireFountain(ctx);
   const body = await readJson(req);
 
+  const id = randomUUID();
   const origin = readOrigin(body, project);
   // Every track this project has ever had, closed ones included — see
   // `nameTrack` for why a closed track's name is still spent.
   const taken = ctx.db.tracksOf(project.id, true).map((t) => t.slug);
   const title = str(body.title, 200).trim() || defaultTitle(origin, taken);
   const slug = freeSlug(ctx, project.id, str(body.slug, 60).trim() || title);
-  const branch = origin.kind === "pr" && origin.base ? origin.base : branchFor(user.login, slug);
+  const branch = origin.kind === "pr" && origin.base ? origin.base : branchFor(user.login, slug, id);
   const workdir = workdirFor(slug);
 
   // Before anything wakes the box: the clone token expires in an hour, and
@@ -175,7 +176,7 @@ export async function open(ctx: AppContext, req: Request, projectId: string): Pr
   }
 
   const row = ctx.db.createTrack({
-    id: randomUUID(),
+    id,
     projectId: project.id,
     conversationId,
     slug,
