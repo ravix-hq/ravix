@@ -42,6 +42,7 @@ async function fixture() {
   const fountain = {
     createEnvironment: mock(async () => ({ id: "new-env" })),
     createVault: mock(async () => ({ id: "new-vault" })),
+    updateAgent: mock(async (..._args: unknown[]) => ({})),
     createAgent: mock(async (_input: Record<string, unknown>) => ({ id: "new-agent" })),
     putSecret: mock(async (..._args: unknown[]) => {}),
     catalog: mock(async () => ({ runtimes: ["codex"], models: { codex: ["openai/test-model"] } })),
@@ -335,4 +336,45 @@ test("archiving a project ends its open transcript and project channel", async (
   expect((await route(request("/api/projects/p", "owner", "DELETE"))).status).toBe(200);
   expect(await transcriptEnd).toBe("revoked");
   expect(await projectEnd).toBe("revoked");
+});
+
+
+test("settings expose the catalog and switch harness in place for future tracks", async () => {
+  const { route, db, fountain } = await fixture();
+  const settings = await route(request("/api/projects/p/settings", "owner"));
+  expect((await settings.json()).data).toMatchObject({ runtime: "claude", catalog: { runtimes: ["codex"] } });
+  const response = await route(request("/api/projects/p/settings", "owner", "PUT", { runtime: "codex", model: "openai/test-model" }));
+  expect(response.status).toBe(200);
+  expect(fountain.updateAgent).toHaveBeenCalledWith("a", { runtime: "codex", model: "openai/test-model" });
+  expect(db.project("p")).toMatchObject({ runtime: "codex", model: "openai/test-model", agentId: "a", environmentId: "e", rev: 2 });
+  expect(db.tracksOf("p")).toHaveLength(2);
+  expect(db.tracksOf("p")[0]!.rev).toBe(1);
+});
+
+test("invalid harness/model pairs are rejected before any settings change", async () => {
+  const { route, db, fountain } = await fixture();
+  for (const body of [{ runtime: "codex" }, { model: "invented" }, { runtime: "unknown", model: "openai/test-model" }]) {
+    const response = await route(request("/api/projects/p/settings", "owner", "PUT", { ...body, name: "Changed" }));
+    expect(response.status).toBe(422);
+  }
+  expect(fountain.updateAgent).not.toHaveBeenCalled();
+  expect(db.project("p")).toMatchObject({ name: "Project", runtime: "claude", rev: 1 });
+});
+
+test("upstream failure preserves the saved harness and model", async () => {
+  const { route, db, fountain } = await fixture();
+  fountain.updateAgent.mockRejectedValueOnce(new Error("offline"));
+  const response = await route(request("/api/projects/p/settings", "owner", "PUT", { runtime: "codex", model: "openai/test-model" }));
+  expect(response.status).toBeGreaterThanOrEqual(500);
+  expect(db.project("p")).toMatchObject({ runtime: "claude", model: "anthropic/claude-opus-5", rev: 1 });
+});
+
+test("catalog outages allow unrelated edits and preserve current selection", async () => {
+  const { route, fountain, db } = await fixture();
+  fountain.catalog.mockRejectedValue(new Error("offline"));
+  const response = await route(request("/api/projects/p/settings", "owner"));
+  expect((await response.json()).data.catalog).toBeNull();
+  const saved = await route(request("/api/projects/p/settings", "owner", "PUT", { name: "Renamed", runtime: "claude", model: "anthropic/claude-opus-5" }));
+  expect(saved.status).toBe(200);
+  expect(db.project("p")?.name).toBe("Renamed");
 });

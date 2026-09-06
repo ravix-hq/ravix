@@ -448,8 +448,8 @@ export class Db {
     this.db.run("UPDATE projects SET instructions = ? WHERE id = ?", [instructions, id]);
   }
 
-  setModel(id: string, model: string): void {
-    this.db.run("UPDATE projects SET model = ? WHERE id = ?", [model, id]);
+  setHarness(id: string, runtime: string, model: string): void {
+    this.db.run("UPDATE projects SET runtime = ?, model = ? WHERE id = ?", [runtime, model, id]);
   }
 
   /**

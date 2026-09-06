@@ -268,6 +268,8 @@ export interface ProjectSettings {
   /** Environment secrets: keys only, values are write-only. */
   envKeys: string[];
   vaultKeys: string[];
+  runtime: string;
+  catalog: { runtimes: string[]; models: Record<string, string[]> } | null;
   model: string;
   /** Extra instructions appended to the agent's system prompt. */
   instructions: string;

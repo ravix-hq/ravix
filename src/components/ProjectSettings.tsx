@@ -38,6 +38,7 @@ export function ProjectSettings({ project, onClose, onChanged, onDeleted, onNoti
   const [settings, setSettings] = useState<Settings | null>(null);
   const [name, setName] = useState(project.name);
   const [instructions, setInstructions] = useState("");
+  const [runtime, setRuntime] = useState(project.runtime);
   const [model, setModel] = useState(project.model);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
@@ -62,6 +63,7 @@ export function ProjectSettings({ project, onClose, onChanged, onDeleted, onNoti
         setName(data.name);
         setInstructions(data.instructions);
         setModel(data.model);
+        setRuntime(data.runtime);
       },
       (err: unknown) => live && setError(err instanceof Error ? err.message : "Could not read these settings."),
     );
@@ -75,7 +77,7 @@ export function ProjectSettings({ project, onClose, onChanged, onDeleted, onNoti
     setError(null);
     setNote(null);
     try {
-      await api.saveSettings(project.id, { name: name.trim() || project.name, instructions, model: model.trim() || project.model });
+      await api.saveSettings(project.id, { name: name.trim() || project.name, instructions, runtime, model });
       setNote("Saved. Tracks opened from now on will use it.");
       onChanged?.();
     } catch (err) {
@@ -177,7 +179,7 @@ export function ProjectSettings({ project, onClose, onChanged, onDeleted, onNoti
       onClose={onClose}
       footer={
         <>
-          <button type="button" className="primary" disabled={busy || !settings} onClick={() => void save()}>
+          <button type="button" className="primary" disabled={busy || !settings || !model} onClick={() => void save()}>
             {busy ? "Saving…" : "Save changes"}
           </button>
           <button type="button" onClick={onClose}>
@@ -200,6 +202,30 @@ export function ProjectSettings({ project, onClose, onChanged, onDeleted, onNoti
                 What this project is called here. The repository it clones and the directory it clones into do not change
                 with it.
               </span>
+            </div>
+
+            <div className="field">
+              <label htmlFor="sy-runtime">Harness</label>
+              <select id="sy-runtime" value={runtime} disabled={busy || !settings.catalog} onChange={(e) => {
+                const next = e.target.value;
+                setRuntime(next);
+                const models = settings.catalog?.models[next] ?? [];
+                setModel(next === settings.runtime ? settings.model : models[0] ?? "");
+              }}>
+                {!settings.catalog?.runtimes.includes(settings.runtime) && <option value={settings.runtime}>{settings.runtime} (current)</option>}
+                {settings.catalog?.runtimes.map((item) => <option key={item} value={item} disabled={!settings.catalog?.models[item]?.length}>{item === "claude" ? "Claude Code" : item === "codex" ? "Codex" : item}</option>)}
+              </select>
+              <span className="hint">The coding agent used by new tracks. Existing tracks keep their current harness and model. Your machine and worktrees are kept.</span>
+            </div>
+
+            <div className="field">
+              <label htmlFor="sy-model">Model</label>
+              <select id="sy-model" className="mono" value={model} disabled={busy || !settings.catalog} onChange={(e) => setModel(e.target.value)}>
+                {runtime === settings.runtime && !settings.catalog?.models[runtime]?.includes(settings.model) && <option value={settings.model}>{settings.model} (current)</option>}
+                {!model && <option value="">No models available</option>}
+                {settings.catalog?.models[runtime]?.map((item) => <option key={item} value={item}>{item}</option>)}
+              </select>
+              <span className="hint">{settings.catalog ? "Models available for the selected harness." : "Could not load available harnesses and models. Reopen settings to try again."}</span>
             </div>
 
             <div className="field">
@@ -304,15 +330,6 @@ export function ProjectSettings({ project, onClose, onChanged, onDeleted, onNoti
                 name and replace the value, and nothing can read it back out.
               </span>
             </form>
-
-            <div className="field">
-              <label htmlFor="sy-model">Model</label>
-              <input id="sy-model" className="mono" value={model} onChange={(e) => setModel(e.target.value)} />
-              <span className="hint">
-                The model the agent runs on, as this Fountain names it. Saving it changes the agent in place, so the
-                machine and its disk stay where they are.
-              </span>
-            </div>
 
             <h4>Danger</h4>
 

@@ -295,12 +295,15 @@ export async function settings(ctx: AppContext, req: Request, id: string): Promi
   const project = projectOf(ctx, user, id);
   const fountain = requireFountain(ctx);
   try {
-    const [env, envKeys, vaultKeys] = await Promise.all([
+    const [env, envKeys, vaultKeys, catalog] = await Promise.all([
       fountain.getEnvironment(project.environmentId),
       fountain.secretKeys("environments", project.environmentId).catch(() => []),
       project.vaultId ? fountain.secretKeys("vaults", project.vaultId).catch(() => []) : Promise.resolve([]),
+      fountain.catalog().catch(() => null),
     ]);
     const out: ProjectSettings = {
+      runtime: project.runtime,
+      catalog,
       name: project.name,
       setupScript: env.setup_script ?? "",
       packages: env.packages ?? {},
@@ -335,6 +338,20 @@ export async function updateSettings(ctx: AppContext, req: Request, id: string):
 
   let bumps = false;
   try {
+    const runtime = body.runtime === undefined ? project.runtime : body.runtime;
+    const model = body.model === undefined ? project.model : body.model;
+    const changesHarness = runtime !== project.runtime || model !== project.model;
+    if (changesHarness) {
+      const catalog = await fountain.catalog();
+      if (typeof runtime !== "string" || typeof model !== "string" ||
+          !catalog.runtimes.includes(runtime) || !catalog.models[runtime]?.includes(model)) {
+        throw new HttpError(422, "invalid_model", "Choose an available harness and one of its models.");
+      }
+      await fountain.updateAgent(project.agentId, { runtime, model });
+      ctx.db.setHarness(project.id, runtime, model);
+      bumps = true;
+    }
+
     if (typeof body.name === "string" && body.name.trim()) ctx.db.renameProject(project.id, str(body.name, 120).trim());
 
     if (typeof body.setupScript === "string" || body.packages !== undefined) {
@@ -350,12 +367,6 @@ export async function updateSettings(ctx: AppContext, req: Request, id: string):
       await fountain.updateAgent(project.agentId, {
         system: composeSystem({ ...project, instructions }),
       });
-      bumps = true;
-    }
-
-    if (typeof body.model === "string" && body.model.trim()) {
-      ctx.db.setModel(project.id, str(body.model, 80).trim());
-      await fountain.updateAgent(project.agentId, { model: str(body.model, 80).trim() });
       bumps = true;
     }
 
