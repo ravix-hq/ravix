@@ -35,7 +35,7 @@ export function TrackPull({ track }: { track: Track }) {
       }
     };
     void refresh();
-    const interval = window.setInterval(() => void refresh(), 60_000);
+    const interval = window.setInterval(() => void refresh(), 5 * 60_000);
     document.addEventListener("visibilitychange", refresh);
     return () => { live = false; window.clearInterval(interval); document.removeEventListener("visibilitychange", refresh); };
   }, [track.id, track.branch, track.status]);

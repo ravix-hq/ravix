@@ -43,3 +43,69 @@ for (const scenario of [
     } finally { request.mockRestore(); token.mockRestore(); }
   });
 }
+
+function client() {
+  return new GitHub({ appId: "1", slug: "test", clientId: "test", clientSecret: "test", privateKeyPem: "", webhookSecret: null, apiUrl: "https://api.github.com", webUrl: "https://github.com" });
+}
+
+test("viewers share in-flight checks and cached reports, then refresh after five minutes", async () => {
+  const gh = client();
+  const token = spyOn(gh, "installationToken").mockResolvedValue("test");
+  let now = 1_000_000;
+  const clock = spyOn(Date, "now").mockImplementation(() => now);
+  const fetcher = spyOn(globalThis, "fetch").mockImplementation(Object.assign(async (input: Parameters<typeof fetch>[0]) => {
+    const url = String(input);
+    return Response.json(url.includes("/branches/") ? { commit: { sha: "abc" } } : url.includes("check-runs") ? { check_runs: [] } : []);
+  }, { preconnect: fetch.preconnect }));
+  try {
+    await Promise.all(Array.from({ length: 20 }, () => gh.checks(1, "o/r", "branch")));
+    expect(fetcher).toHaveBeenCalledTimes(3);
+    await gh.checks(1, "o/r", "branch");
+    expect(fetcher).toHaveBeenCalledTimes(3);
+    now += 300_001;
+    await gh.checks(1, "o/r", "branch");
+    expect(fetcher).toHaveBeenCalledTimes(6);
+    await gh.checks(2, "o/r", "branch");
+    expect(fetcher).toHaveBeenCalledTimes(9);
+  } finally { fetcher.mockRestore(); token.mockRestore(); clock.mockRestore(); }
+});
+
+for (const headers of [
+  { "x-ratelimit-remaining": "0", "x-ratelimit-reset": "1600" },
+  { "retry-after": "600" },
+] as Record<string, string>[]) {
+  test(`rate limits stop all reads for an installation until reset: ${JSON.stringify(headers)}`, async () => {
+    const gh = client();
+    const token = spyOn(gh, "installationToken").mockResolvedValue("test");
+    let now = 1_000_000;
+    const clock = spyOn(Date, "now").mockImplementation(() => now);
+    const fetcher = spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(Response.json({ message: "API rate limit exceeded" }, { status: 403, headers }))
+      .mockImplementation(Object.assign(async () => Response.json([]), { preconnect: fetch.preconnect }));
+    try {
+      await expect(gh.checks(1, "o/r", "a")).rejects.toThrow("rate limit");
+      await expect(gh.checks(1, "o/r", "a")).rejects.toThrow("rate limit");
+      await expect(gh.checks(1, "o/r", "b")).rejects.toThrow("rate limit");
+      await expect(gh.pulls(1, "o/other")).rejects.toThrow("rate limit");
+      expect(fetcher).toHaveBeenCalledTimes(1);
+      await gh.pulls(2, "o/r");
+      expect(fetcher).toHaveBeenCalledTimes(2);
+      now = 1_600_001;
+      await gh.pulls(1, "o/r");
+      expect(fetcher).toHaveBeenCalledTimes(3);
+    } finally { fetcher.mockRestore(); token.mockRestore(); clock.mockRestore(); }
+  });
+}
+
+test("permission failures do not block unrelated installation reads", async () => {
+  const gh = client();
+  const token = spyOn(gh, "installationToken").mockResolvedValue("test");
+  const fetcher = spyOn(globalThis, "fetch")
+    .mockResolvedValueOnce(Response.json({ message: "Forbidden" }, { status: 403 }))
+    .mockResolvedValueOnce(Response.json([]));
+  try {
+    await expect(gh.checks(1, "o/r", "a")).rejects.toThrow("Forbidden");
+    await gh.pulls(1, "o/r");
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  } finally { fetcher.mockRestore(); token.mockRestore(); }
+});

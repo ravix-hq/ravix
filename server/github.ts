@@ -30,6 +30,7 @@ export class GitHubError extends Error {
   constructor(
     readonly status: number,
     message: string,
+    readonly retryAtMs?: number,
   ) {
     super(message);
   }
@@ -51,6 +52,9 @@ export class GitHub {
    */
   private readonly api: string;
   private readonly web: string;
+
+  private readonly checksCache = new Map<string, { expiresAt: number; result: Promise<ChecksReport> }>();
+  private readonly rateLimits = new Map<number, { until: number; error: GitHubError }>();
 
   /**
    * Installation tokens, cached until a minute before they expire.
@@ -230,7 +234,7 @@ export class GitHub {
   /** One repository, read as the installation — so it works for private ones. */
   async repository(installationId: number, fullName: string): Promise<RepoRef> {
     const token = await this.installationToken(installationId);
-    const raw = await this.request<RawRepo>("GET", `/repos/${fullName}`, { auth: `Bearer ${token}` });
+    const raw = await this.request<RawRepo>("GET", `/repos/${fullName}`, { auth: `Bearer ${token}`, installationId });
     return toRepoRef(raw, installationId);
   }
 
@@ -241,7 +245,7 @@ export class GitHub {
     const raw = await this.request<{ name: string; commit: { sha: string } }[]>(
       "GET",
       `/repos/${fullName}/branches?per_page=100`,
-      { auth: `Bearer ${token}` },
+      { auth: `Bearer ${token}`, installationId },
     );
     return raw
       .map((b) => ({ name: b.name, sha: b.commit.sha, isDefault: b.name === defaultBranch }))
@@ -253,7 +257,7 @@ export class GitHub {
     const raw = await this.request<RawPull[]>(
       "GET",
       `/repos/${fullName}/pulls?state=open&sort=updated&direction=desc&per_page=50`,
-      { auth: `Bearer ${token}` },
+      { auth: `Bearer ${token}`, installationId },
     );
     return raw.map(toPullRef);
   }
@@ -270,7 +274,7 @@ export class GitHub {
     const raw = await this.request<RawIssue[]>(
       "GET",
       `/repos/${fullName}/issues?state=open&sort=updated&direction=desc&per_page=50`,
-      { auth: `Bearer ${token}` },
+      { auth: `Bearer ${token}`, installationId },
     );
     return raw
       .filter((i) => !i.pull_request)
@@ -293,13 +297,34 @@ export class GitHub {
    * renders "nothing pushed yet" rather than an empty list that looks broken.
    */
   async checks(installationId: number, fullName: string, ref: string, track?: { createdAt: string; originNumber: number | null }): Promise<ChecksReport> {
+    const key = JSON.stringify([installationId, fullName, ref, track?.createdAt, track?.originNumber]);
+    const cached = this.checksCache.get(key);
+    if (cached && cached.expiresAt > Date.now()) return cached.result;
+    // Share both the report and in-flight work across rows, tabs, and viewers.
+    for (const [key, entry] of this.checksCache) {
+      if (entry.expiresAt <= Date.now()) this.checksCache.delete(key);
+    }
+    const entry = { expiresAt: Infinity, result: this.readChecks(installationId, fullName, ref, track) };
+    this.checksCache.set(key, entry);
+    try {
+      const report = await entry.result;
+      entry.expiresAt = Date.now() + 5 * 60_000;
+      return report;
+    } catch (err) {
+      // Failed refreshes must not turn every mounted row into a retry loop.
+      entry.expiresAt = Math.max(Date.now() + 60_000, err instanceof GitHubError ? err.retryAtMs ?? 0 : 0);
+      throw err;
+    }
+  }
+
+  private async readChecks(installationId: number, fullName: string, ref: string, track?: { createdAt: string; originNumber: number | null }): Promise<ChecksReport> {
     const token = await this.installationToken(installationId);
     let sha: string | null = null;
     try {
       const branch = await this.request<{ commit: { sha: string } }>(
         "GET",
         `/repos/${fullName}/branches/${encodeURIComponent(ref)}`,
-        { auth: `Bearer ${token}` },
+        { auth: `Bearer ${token}`, installationId },
       );
       sha = branch.commit.sha;
     } catch (err) {
@@ -309,7 +334,7 @@ export class GitHub {
 
     const [runs, pulls] = await Promise.all([
       sha ? this.request<{ check_runs: RawCheckRun[] }>("GET", `/repos/${fullName}/commits/${sha}/check-runs?per_page=50`, {
-        auth: `Bearer ${token}`,
+        auth: `Bearer ${token}`, installationId,
       }) : Promise.resolve({ check_runs: [] as RawCheckRun[] }),
       // `state=all`, not `state=open`. A branch whose pull request has been
       // merged is the *most* interesting case — it is the one where the work
@@ -318,7 +343,7 @@ export class GitHub {
       this.request<RawPull[]>(
         "GET",
         `/repos/${fullName}/pulls?state=all&per_page=20&head=${encodeURIComponent(fullName.split("/")[0] + ":" + ref)}`,
-        { auth: `Bearer ${token}` },
+        { auth: `Bearer ${token}`, installationId },
       ),
     ]);
 
@@ -364,9 +389,13 @@ export class GitHub {
   ): Promise<PullRef & { url: string }> {
     const token = await this.installationToken(installationId);
     const raw = await this.request<RawPull & { html_url: string }>("POST", `/repos/${fullName}/pulls`, {
-      auth: `Bearer ${token}`,
+      auth: `Bearer ${token}`, installationId,
       body: input,
     });
+    for (const key of this.checksCache.keys()) {
+      const [installation, repo, ref] = JSON.parse(key);
+      if (installation === installationId && repo === fullName && ref === input.head) this.checksCache.delete(key);
+    }
     return { ...toPullRef(raw), url: raw.html_url };
   }
 
@@ -375,8 +404,11 @@ export class GitHub {
   private async request<T>(
     method: string,
     path: string,
-    init: { auth: string; body?: unknown },
+    init: { auth: string; body?: unknown; installationId?: number },
   ): Promise<T> {
+    const blocked = init.installationId === undefined ? undefined : this.rateLimits.get(init.installationId);
+    if (blocked && blocked.until > Date.now()) throw blocked.error;
+    if (init.installationId !== undefined) this.rateLimits.delete(init.installationId);
     const res = await fetch(path.startsWith("http") ? path : `${this.api}${path}`, {
       method,
       headers: {
@@ -401,6 +433,17 @@ export class GitHub {
       } catch {
         /* not JSON — the status line is the whole story */
       }
+      const limited = res.status === 429 || (res.status === 403 && (
+        res.headers.get("x-ratelimit-remaining") === "0" || res.headers.has("retry-after") || /rate limit/i.test(message)
+      ));
+      if (limited) {
+        const retrySeconds = Number(res.headers.get("retry-after"));
+        const reset = Number(res.headers.get("x-ratelimit-reset")) * 1000;
+        const until = Math.max(Date.now() + (retrySeconds > 0 ? retrySeconds * 1000 : 60_000), Number.isFinite(reset) ? reset : 0);
+        const error = new GitHubError(res.status, message, until);
+        if (init.installationId !== undefined) this.rateLimits.set(init.installationId, { until, error });
+        throw error;
+      }
       throw new GitHubError(res.status, message);
     }
     return (text ? JSON.parse(text) : undefined) as T;
@@ -410,6 +453,7 @@ export class GitHub {
 /** A GitHub failure as one of ours, keeping the part a person can act on. */
 export function asHttpError(err: unknown, whatFor: string): HttpError {
   if (err instanceof GitHubError) {
+    if (err.retryAtMs) return new HttpError(503, "github_rate_limited", `GitHub's request limit was reached. Switchyard will retry after ${new Date(err.retryAtMs).toISOString()}.`);
     if (err.status === 401 || err.status === 403) {
       return new HttpError(502, "github_rejected", `GitHub would not let switchyard ${whatFor}: ${err.message}`);
     }
