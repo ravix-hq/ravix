@@ -138,7 +138,6 @@ export function Yard(props: YardProps) {
                   </span>
                   <strong className="truncate">{project.name}</strong>
                   <span className="spacer" />
-                  <MachineDot project={project} />
                 </button>
                 {inProject ? (
                   <button
@@ -248,21 +247,3 @@ function trackActivity(status: Track["status"], unread: boolean) {
 
 const rowTitle = (track: Track, unread: boolean) =>
   [track.title, track.branch, trackActivity(track.status, unread).detail].filter(Boolean).join(" — ");
-
-/**
- * One dot for the machine, and it says whether the disk exists rather than
- * whether anything is running. A project with a machine that has gone to sleep
- * is not in trouble — Fountain wakes it on the next turn — so a sleeping box
- * and a missing one must not look the same.
- */
-function MachineDot({ project }: { project: Project }) {
-  const state = project.machine.status;
-  const label = state === "none" ? "no machine yet" : state === "ready" ? "machine up" : state;
-  // The same box the track rows end in, so the two kinds of row share one
-  // column of marks down the right of the rail rather than nearly sharing it.
-  return (
-    <span className="track-mark">
-      <span className={`dot ${state === "ready" ? "ready" : ""}`} title={label} aria-label={label} />
-    </span>
-  );
-}
