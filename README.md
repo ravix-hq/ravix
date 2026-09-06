@@ -55,6 +55,15 @@ Against the real thing, the server takes:
 Nothing needs registering on Fountain: the browser never talks to it, so there
 is no OAuth client and no CORS origin.
 
+## Experimental preview UI
+
+The shared browser and Android/iOS preview controls are hidden by default,
+including the direct `/native/:id` device viewer. Set
+`VITE_EXPERIMENTAL_PREVIEWS=1` when running `bun run dev` or `bun run build`
+to enable them. This is a build-time UI flag; changing it requires restarting
+Vite or rebuilding the frontend. The corresponding server features must also
+be configured. Regular track web previews remain available.
+
 ## Shared browser
 
 With `SHARED_BROWSER=1`, each machine has one Switchyard-owned browser profile

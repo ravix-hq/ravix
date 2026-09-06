@@ -20,6 +20,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Capabilities, Presence, Project, SessionInfo, Track, TrackHeader } from "../shared/api";
 import { api, ApiError, subscribe } from "./lib/api";
+import { experimentalPreviews } from "./lib/features";
 import { Info, Machine, Plus, X } from "./lib/icons";
 import { Empty } from "./components/Empty";
 import { Home, SignIn } from "./components/Home";
@@ -57,7 +58,7 @@ function writeRoute(route: Route, replace = false): void {
 
 export function App() {
   const native = /^\/native\/([a-f0-9-]{36})$/.exec(window.location.pathname);
-  return native ? <NativeViewer id={native[1]!} /> : <SwitchyardApp />;
+  return experimentalPreviews && native ? <NativeViewer id={native[1]!} /> : <SwitchyardApp />;
 }
 
 function SwitchyardApp() {

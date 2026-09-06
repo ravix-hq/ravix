@@ -16,6 +16,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { LogEvent } from "../../shared/fountain-types";
 import type { Capabilities, Presence, Project, Track, TrackHeader, TurnRecord, QueuedPrompt } from "../../shared/api";
 import { api, ApiError, subscribe } from "../lib/api";
+import { experimentalPreviews } from "../lib/features";
 import { Branch, Clock, External, Folder, Info, Issue, Pull, Wrench } from "../lib/icons";
 import type { OutgoingImage } from "../lib/images";
 import { others, subject, useHeartbeat } from "../lib/presence";
@@ -216,7 +217,7 @@ export function TrackView(props: TrackViewProps) {
         runtime={project.runtime}
         workdir={track.workdir}
         running={running}
-        footer={track.status !== "closed" ? <SharedBrowser key={track.id} trackId={track.id} owner={track.role === "owner"} /> : null}
+        footer={experimentalPreviews && track.status !== "closed" ? <SharedBrowser key={track.id} trackId={track.id} owner={track.role === "owner"} /> : null}
         head={
           <Ribbon
             project={project}
@@ -274,7 +275,7 @@ export function TrackView(props: TrackViewProps) {
       ) : null}
       {queueError ? <div className="composer-note" role="status">Could not refresh saved prompts. Reconnecting…</div> : null}
       <TrackPreview key={track.id} trackId={track.id} closed={track.status === "closed"} />
-      <NativePreviewLauncher trackId={track.id} owner={track.role === "owner"} />
+      {experimentalPreviews ? <NativePreviewLauncher trackId={track.id} owner={track.role === "owner"} /> : null}
       <Composer
         onSend={send}
         onInterrupt={interrupt}
