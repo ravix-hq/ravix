@@ -66,6 +66,7 @@ interface Session {
     lastViewer: number;
     phase: string;
     error: string | null;
+    cleanupError?: string;
     controller: AbortController;
     reservation?: NativeServiceReservation;
     pending?: Promise<void>;
@@ -213,7 +214,7 @@ export class NativeExperiments {
             return false;
         }
     }
-    private info(s: Session): NativeInfo { return { id: s.id, platform: s.platform, trackId: s.trackId, phase: s.phase, error: s.error, expiresAt: s.expiresAt, runnerOnline: !!s.runner && this.live(s), video: s.video, frames: s.frames }; }
+    private info(s: Session): NativeInfo { return { id: s.id, platform: s.platform, trackId: s.trackId, phase: s.phase, error: s.cleanupError ? [s.error, `Cleanup pending: ${s.cleanupError}`].filter(Boolean).join('\n') : s.error, expiresAt: s.expiresAt, runnerOnline: !!s.runner && this.live(s), video: s.video, frames: s.frames }; }
     private async runnerSession(req: Request, id: string) {
         if (req.headers.has('origin') || new URL(req.url).search)
             return null;
@@ -403,16 +404,20 @@ export class NativeExperiments {
     private stopSession(s: Session, error?: string): Promise<void> {
         if (s.stopping)
             return s.stopping;
+        // Cleanup retries must retain the original termination reason.
+        if (!s.controller.signal.aborted) s.error = error?.slice(-2000) ?? null;
         s.controller.abort();
         s.pairHash = null;
         s.tokenHash = null;
-        s.phase = error ? 'Failed' : 'Stopped';
-        s.error = error?.slice(-2000) ?? null;
+        s.phase = s.error || s.cleanupError ? 'Failed' : 'Stopped';
         s.runner?.send(JSON.stringify({ type: 'ended', error: s.error }));
         for (const ws of [s.runner, s.producer, s.input, ...s.viewers])
             ws?.close(1000, 'Session ended');
         s.stopping = (async () => { await s.pending?.catch(() => { }); await s.checking?.catch(() => { }); if (s.reservation)
-            await this.retire(s.reservation); })().catch(error => { s.error = `Cleanup pending: ${String(error).slice(-1500)}`; s.phase = 'Failed'; s.stopping = undefined; });
+            await this.retire(s.reservation);
+            s.cleanupError = undefined;
+            s.phase = s.error ? 'Failed' : 'Stopped';
+        })().catch(error => { s.cleanupError = String(error).slice(-1500); s.phase = 'Failed'; s.stopping = undefined; });
         return s.stopping;
     }
     async upgrade(req: Request, server: Server<NativePeer>) {

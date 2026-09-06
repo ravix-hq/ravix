@@ -202,6 +202,22 @@ test('failed cleanup retains reservations and a retry removes only owned service
     await f.request('/api/tracks/track/native/stop', 'POST');
     expect(f.db.nativeExperiments.all()).toHaveLength(0);
     expect(f.state.services.size).toBe(0);
+    expect((await (await f.request('/api/tracks/track/native')).json()).data.session).toMatchObject({phase:'Stopped',error:null});
+});
+
+test('cleanup failure preserves the runner error and clears only the recovered cleanup warning', async () => {
+    const f=await fixture(), s=await f.start(), paired=(await (await f.claim(s.pairingCode!)).json()).data;
+    const runner=await f.connect(s.id,'runner',paired.token);
+    const session=async ()=>(await (await f.request('/api/tracks/track/native')).json()).data.session;
+    await until(async ()=>(await session()).phase==='Connecting');
+    f.state.failStop=true;
+    runner.send(JSON.stringify({type:'error',error:'Simulator startup failed'}));
+    await until(async ()=>(await session()).error?.includes('Cleanup pending:'));
+    expect((await session()).error).toContain('Simulator startup failed');
+    f.state.failStop=false;
+    await f.request('/api/tracks/track/native/stop','POST');
+    expect(f.db.nativeExperiments.all()).toHaveLength(0);
+    expect(await session()).toMatchObject({phase:'Failed',error:'Simulator startup failed'});
 });
 
 test('a static screen remains ready while its producer and runner lease are live', async () => {

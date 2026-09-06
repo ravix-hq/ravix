@@ -573,3 +573,16 @@ at that CLI boundary and rejects invalid coordinates. A regression test using
 the supplied geometry failed with the original command arguments and passes
 with `ui tap 264 469`; 23 focused runner/video tests pass. Dedicated-account
 launch and subsequent app interaction still require another live run.
+
+
+The user supplied report `67a92738-fb98-44b3-800a-08499e56475e` for session
+`52a3a516-c9a5-4743-8c2c-fcbd3ee0ddde`: the five-minute viewer-idle limit ended
+it during simulator boot, before capture or app verification; local cleanup
+completed. The next session (`4d1c6276-9fa2-4025-b554-1857be508d42`) showed a
+Sprite HTTP 500 during cleanup. Read-only checks subsequently found all three
+owned services absent and the native cleanup journal empty. The viewer retained
+the temporary cleanup error, obscuring the original cause. Cleanup errors are
+now tracked separately: the original reason remains visible, and the cleanup
+warning disappears when retry succeeds. Eleven native-session tests and the
+typecheck pass. The latest local runner report is still needed to establish
+why that session originally ended; neither attempt establishes iOS app readiness.
