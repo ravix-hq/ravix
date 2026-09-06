@@ -308,7 +308,7 @@ export class IosExperiment implements OwnedAdapter {
   }
   private ownedUdid() { if (!this.udid) throw Error("No owned simulator"); return this.udid; }
   async installHello(path: string) { await this.sim("install", this.ownedUdid(), path); }
-  async forward(port: number) { if (![41000, 41001].includes(port)) throw Error("Unexpected simulator service port"); }
+  async forward(port: number) { if (!Number.isInteger(port) || port < 1024 || port > 65535) throw Error("Unexpected simulator service port"); }
   async launchHello(port: number) {
     await this.forward(port);
     await this.sim("launch", this.ownedUdid(), "com.managoat.switchyard.hello");

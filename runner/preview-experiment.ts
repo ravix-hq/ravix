@@ -7,7 +7,7 @@ import { acquireExperiment, writePrivateJson } from './state';
 import { command } from './process';
 import { androidNode, expoStartupAction, parseRuntimeConfig, verifyRuntimeBuild, type RuntimeConfig } from './runtime-experiment';
 import { verifyIosBuild, iosNode, iosStartupAction } from './ios-runtime';
-import { startLoopbackForward } from './loopback-forward';
+import { reserveLoopbackForward } from './loopback-forward';
 import { NATIVE, parseNativeInput, type NativeInfo } from '../shared/native-preview';
 interface PreviewConfig extends RuntimeConfig {
     platform?: "android" | "ios";
@@ -38,7 +38,7 @@ export async function previewExperiment(config: PreviewConfig, signal?: AbortSig
     const controller = new AbortController(), active = AbortSignal.any([controller.signal, AbortSignal.timeout(NATIVE.lifetimeMs), ...(signal ? [signal] : [])]);
     const env = {...toolEnvironment(paths, baseEnv), TMPDIR: join(owned.directory, 'tmp')};
     const adapter = target === "ios" ? new IosExperiment({platform: "ios", stateDirectory: owned.directory, runtime: "com.apple.CoreSimulator.SimRuntime.iOS-18-6", deviceType: "com.apple.CoreSimulator.SimDeviceType.iPhone-16"}, owned.id, owned.directory, paths, command, active, env, NATIVE.lifetimeMs) : new AndroidExperiment({ platform: 'android', stateDirectory: owned.directory, emulatorPort: 5580, deviceType: 'pixel_7', systemImage: 'system-images;android-35;google_apis;arm64-v8a', scrcpyVersion: '4.1' }, owned.id, owned.directory, paths, command, active, env, NATIVE.lifetimeMs);
-    const report = { version: 1, kind: `${target}-sprite-preview-experiment`, platform: target, account: user.username, startedAt: new Date().toISOString(), artifactSha256: config.artifactSha256, sourceDigest: build.sourceDigest, sessionId: '', nativeRuntimeVerified: false, spriteMetroVerified: false, spriteBackendVerified: false, browserVerified: false, framesSent: 0, cleanup: 'pending', error: null as string | null };
+    const report = { version: 1, kind: `${target}-sprite-preview-experiment`, platform: target, account: user.username, startedAt: new Date().toISOString(), artifactSha256: config.artifactSha256, sourceDigest: build.sourceDigest, sessionId: '', localPorts: null as {metroPort:number;backendPort:number} | null, nativeRuntimeVerified: false, spriteMetroVerified: false, spriteBackendVerified: false, browserVerified: false, framesSent: 0, cleanup: 'pending', error: null as string | null };
     let control: WebSocket | undefined, media: WebSocket | undefined, live: Awaited<ReturnType<typeof adapter.live>> | undefined;
     let leaseDeadline = 0, heartbeat: ReturnType<typeof setInterval> | undefined, watchdog: ReturnType<typeof setInterval> | undefined;
     let remote: NativeInfo | null = null, serverEnded = false;
@@ -51,7 +51,13 @@ export async function previewExperiment(config: PreviewConfig, signal?: AbortSig
     try {
         await mkdir(env.TMPDIR, { mode: 0o700 });
         await save();
-        const claim = await fetch(`${config.serverUrl}/api/native/claim`, { method: 'POST', redirect: 'error', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ code: config.pairingCode, artifactSha256: config.artifactSha256, platform: target }), signal: AbortSignal.any([active, AbortSignal.timeout(15000)]) });
+        console.log('Preview: reserve-local-ports');
+        const metroForward = await reserveLoopbackForward({signal: active});
+        const backendForward = await reserveLoopbackForward({signal: active});
+        const localPorts = {metroPort: metroForward.port, backendPort: backendForward.port};
+        report.localPorts = localPorts;
+        await save();
+        const claim = await fetch(`${config.serverUrl}/api/native/claim`, { method: 'POST', redirect: 'error', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ code: config.pairingCode, artifactSha256: config.artifactSha256, platform: target, ...localPorts }), signal: AbortSignal.any([active, AbortSignal.timeout(15000)]) });
         if (!claim.ok)
             throw new Error(`Pairing failed (${claim.status}). Create a fresh code in Switchyard.`);
         const { data } = await claim.json() as {
@@ -64,7 +70,7 @@ export async function previewExperiment(config: PreviewConfig, signal?: AbortSig
                 backendPort: number;
             };
         };
-        if (!data || (data.platform ?? "android") !== target || !Number.isFinite(data.leaseMs) || data.leaseMs <= 0 || !/^[a-f0-9-]{36}$/.test(data.id) || !/^[\w-]{43}$/.test(data.token) || data.metroPort !== NATIVE.metroPort || data.backendPort !== NATIVE.backendPort)
+        if (!data || (data.platform ?? "android") !== target || !Number.isFinite(data.leaseMs) || data.leaseMs <= 0 || !/^[a-f0-9-]{36}$/.test(data.id) || !/^[\w-]{43}$/.test(data.token) || data.metroPort !== localPorts.metroPort || data.backendPort !== localPorts.backendPort)
             throw new Error('Invalid runner assignment');
         report.sessionId = data.id;
         leaseDeadline = performance.now() + Math.min(NATIVE.leaseMs, data.leaseMs);
@@ -108,16 +114,16 @@ export async function previewExperiment(config: PreviewConfig, signal?: AbortSig
             await Bun.sleep(250);
         } });
         await phase('forward-sprite-services', async () => {
-            await startLoopbackForward({ endpoint: `${wsBase}/forward/metro`, token: data.token, signal: active, port: NATIVE.metroPort });
-            await startLoopbackForward({ endpoint: `${wsBase}/forward/backend`, token: data.token, signal: active, port: NATIVE.backendPort });
-            const status = await fetch(`http://127.0.0.1:${NATIVE.metroPort}/status`, { signal: AbortSignal.any([active, AbortSignal.timeout(15000)]) });
+            metroForward.activate({ endpoint: `${wsBase}/forward/metro`, token: data.token });
+            backendForward.activate({ endpoint: `${wsBase}/forward/backend`, token: data.token });
+            const status = await fetch(`http://127.0.0.1:${data.metroPort}/status`, { signal: AbortSignal.any([active, AbortSignal.timeout(15000)]) });
             if (await status.text() !== 'packager-status:running')
                 throw new Error('Private Sprite Metro did not answer');
         });
         await phase(target === 'ios' ? 'boot-owned-simulator' : 'boot-owned-emulator', () => adapter.boot());
         await phase(target === 'ios' ? 'install-simulator-app' : 'install-apk', () => adapter.installHello(build.apk));
-        await adapter.forward(NATIVE.metroPort);
-        await adapter.forward(NATIVE.backendPort);
+        await adapter.forward(data.metroPort);
+        await adapter.forward(data.backendPort);
         await phase('connect-browser-stream', async () => {
             media = socket(`${wsBase}/video`, data.token);
             media.onclose = () => stop(new Error('Screen relay closed'));
@@ -133,7 +139,7 @@ export async function previewExperiment(config: PreviewConfig, signal?: AbortSig
                     report.framesSent++;
                 }, failed: stop });
         });
-        await phase('launch-from-sprite-metro', () => adapter.launchHello(NATIVE.metroPort));
+        await phase('launch-from-sprite-metro', () => adapter.launchHello(data.metroPort));
         const waitFor = async (text: string, timeout = 180000) => {
             const deadline = Date.now() + timeout;
             let dismissals = 0, lastError = "";

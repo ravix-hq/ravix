@@ -8,12 +8,11 @@ export function validateForwardEndpoint(value: string): URL {
   return url;
 }
 
-/** Bind one named, server-authorized service to Mac loopback. The URL identifies
- * a session/channel, never a destination host/port. The bearer is sent only in
- * the WSS upgrade header, not in the native app's URLs or TCP bytes. */
-export async function startLoopbackForward(options: { endpoint: string; token: string; signal: AbortSignal; port?: number }) {
-  const endpoint = validateForwardEndpoint(options.endpoint);
-  if (!/^[a-zA-Z0-9_-]{32,256}$/.test(options.token)) throw new Error("Invalid session credential");
+/** Reserve a loopback listener before pairing so another process cannot take
+ * the chosen port between discovery and connection. Until activation, incoming
+ * connections are closed without opening an upstream channel. */
+export async function reserveLoopbackForward(options: { signal: AbortSignal; port?: number }) {
+  let assignment: {endpoint: URL; token: string} | undefined;
   const port = options.port ?? 0;
   if (!Number.isInteger(port) || (port !== 0 && (port < 1024 || port > 65535))) throw new Error("Invalid loopback port");
   options.signal.throwIfAborted();
@@ -22,9 +21,9 @@ export async function startLoopbackForward(options: { endpoint: string; token: s
   const server = createServer({ allowHalfOpen: true }, (socket: Socket) => {
     socket.allowHalfOpen = true;
     socket.pause();
-    if (stopped || peers.size >= 16) { socket.destroy(); return; }
+    if (stopped || !assignment || peers.size >= 16) { socket.destroy(); return; }
     const ClientSocket = WebSocket as unknown as new (url: string, options: { headers: Record<string, string> }) => WebSocket;
-    const ws = new ClientSocket(endpoint.href, { headers: { authorization: `Bearer ${options.token}` } });
+    const ws = new ClientSocket(assignment.endpoint.href, { headers: { authorization: `Bearer ${assignment.token}` } });
     ws.binaryType = "arraybuffer";
     let tunnel: TcpTunnel | undefined;
     const timer = setTimeout(() => close(), 10_000);
@@ -57,12 +56,26 @@ export async function startLoopbackForward(options: { endpoint: string; token: s
   options.signal.addEventListener("abort", close, { once: true });
   try {
     await new Promise<void>((resolve, reject) => {
-      server.once("error", reject); server.listen(port, "127.0.0.1", resolve);
+      server.once("error", error => reject(new Error(`Unable to bind native preview at 127.0.0.1:${port}: ${error.message}`))); server.listen(port, "127.0.0.1", resolve);
     });
     // Abort during listen still closes the eventual listener.
     if (options.signal.aborted || stopped) { server.close(); throw new Error("Forward assignment ended during startup"); }
     const address = server.address();
     if (!address || typeof address === "string") throw new Error("No loopback listener");
-    return { port: address.port, close };
+    return { port: address.port, close, activate(value: {endpoint: string; token: string}) {
+      if (stopped || options.signal.aborted || assignment) throw new Error("Forward cannot be activated again or after ending");
+      const endpoint = validateForwardEndpoint(value.endpoint);
+      if (!/^[a-zA-Z0-9_-]{32,256}$/.test(value.token)) throw new Error("Invalid session credential");
+      assignment = {endpoint, token: value.token};
+    } };
   } catch (error) { close(); throw error; }
+}
+
+/** Bind an already assigned service; retained for callers that know its token. */
+export async function startLoopbackForward(options: { endpoint: string; token: string; signal: AbortSignal; port?: number }) {
+  validateForwardEndpoint(options.endpoint);
+  if (!/^[a-zA-Z0-9_-]{32,256}$/.test(options.token)) throw new Error("Invalid session credential");
+  const forward = await reserveLoopbackForward(options);
+  try { forward.activate(options); return forward; }
+  catch (error) { forward.close(); throw error; }
 }

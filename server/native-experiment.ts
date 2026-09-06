@@ -48,6 +48,8 @@ export function nativeExperiments(ctx: AppContext) { let m = managers.get(ctx); 
 interface Session {
     platform: NativePlatform;
     artifactSha256: string;
+    metroPort: number;
+    backendPort: number;
     id: string;
     trackId: string;
     userId: string;
@@ -252,7 +254,7 @@ export class NativeExperiments {
         const artifactSha256 = platform === 'ios' ? this.ctx.config.nativeHelloIosSha256 : APK_SHA;
         if (!artifactSha256) throw new HttpError(409, 'ios_unavailable', 'The iOS Hello build has not been verified yet.');
         const code = randomToken(), now = Date.now();
-        const s: Session = { platform, artifactSha256, id: crypto.randomUUID(), trackId, userId: user.id, sessionHash: await sha256(cookieValue(req, SESSION_COOKIE)!), projectId: project.id, projectRevision: project.rev, workdir: track.workdir, agentId: project.agentId,
+        const s: Session = { platform, artifactSha256, metroPort: NATIVE.metroPort, backendPort: NATIVE.backendPort, id: crypto.randomUUID(), trackId, userId: user.id, sessionHash: await sha256(cookieValue(req, SESSION_COOKIE)!), projectId: project.id, projectRevision: project.rev, workdir: track.workdir, agentId: project.agentId,
             pairHash: await sha256(code), pairUntil: now + 5 * 60000, tokenHash: null, expiresAt: now + NATIVE.lifetimeMs, leaseUntil: now + 5 * 60000, lastViewer: now,
             phase: 'Awaiting runner', error: null, controller: new AbortController(), viewers: new Set(), video: null, frames: 0, lastFrame: 0, appReady: false, lastCheck: 0 };
         // Hashing yields. Recheck capacity and account access before publishing.
@@ -281,6 +283,10 @@ export class NativeExperiments {
         const hash = await sha256(value.code), s = [...this.sessions.values()].find(s => s.pairHash === hash && s.pairUntil > Date.now() && this.live(s));
         if (!s || value.artifactSha256 !== s.artifactSha256 || (value.platform ?? 'android') !== s.platform)
             throw new HttpError(401, 'unauthorized');
+        const metroPort = value.metroPort === undefined ? NATIVE.metroPort : value.metroPort, backendPort = value.backendPort === undefined ? NATIVE.backendPort : value.backendPort;
+        if ((value.metroPort === undefined) !== (value.backendPort === undefined) || ![metroPort,backendPort].every(port => typeof port === 'number' && Number.isInteger(port) && port >= 1024 && port <= 65535) || metroPort === backendPort)
+            throw new HttpError(400, 'invalid_ports', 'Choose two distinct, reserved loopback ports.');
+        s.metroPort = metroPort as number; s.backendPort = backendPort as number;
         s.pairHash = null; // Consume synchronously before the next await.
         const token = randomToken();
         s.tokenHash = await sha256(token);
@@ -288,7 +294,7 @@ export class NativeExperiments {
         s.phase = 'Preparing';
         s.pending = this.prepare(s);
         void s.pending.catch(error => { void this.stopSession(s, error instanceof Error ? error.message : String(error)); });
-        return Response.json({ data: { id: s.id, platform: s.platform, token, leaseMs: NATIVE.leaseMs, expiresAt: s.expiresAt, metroPort: NATIVE.metroPort, backendPort: NATIVE.backendPort } }, { headers: { 'cache-control': 'no-store' } });
+        return Response.json({ data: { id: s.id, platform: s.platform, token, leaseMs: NATIVE.leaseMs, expiresAt: s.expiresAt, metroPort: s.metroPort, backendPort: s.backendPort } }, { headers: { 'cache-control': 'no-store' } });
     }
     private assert(s: Session) { if (!this.live(s))
         throw new Error('Native session ended'); }
@@ -346,7 +352,7 @@ export class NativeExperiments {
         }
         for (const [kind, port, command] of [
             ['backend', r.backend, 'exec node server.mjs'],
-            ['metro', r.metro, `unset CI; export EXPO_NO_TELEMETRY=1 EXPO_NO_DOTENV=1 EXPO_OFFLINE=1 EXPO_PUBLIC_API_URL=http://127.0.0.1:${NATIVE.backendPort} EXPO_PACKAGER_PROXY_URL=http://127.0.0.1:${NATIVE.metroPort}; exec node --require ${quote(preload)} node_modules/expo/bin/cli start --dev-client --localhost --port "$PORT"`],
+            ['metro', r.metro, `unset CI; export EXPO_NO_TELEMETRY=1 EXPO_NO_DOTENV=1 EXPO_OFFLINE=1 EXPO_PUBLIC_API_URL=http://127.0.0.1:${s.backendPort} EXPO_PACKAGER_PROXY_URL=http://127.0.0.1:${s.metroPort}; exec node --require ${quote(preload)} node_modules/expo/bin/cli start --dev-client --localhost --port "$PORT"`],
         ] as const) {
             this.assert(s);
             await this.exec(s, `const net=require('node:net');const s=net.createServer();s.on('error',()=>process.exit(1));s.listen(Number(process.argv[2]),'127.0.0.1',()=>s.close());`, [String(port)]);

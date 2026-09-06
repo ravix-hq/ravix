@@ -538,3 +538,15 @@ Source and lockfile digests match the previously pinned Hello fixture. The
 report completed without error, including the runtime-mapping cleanup. This
 establishes the dedicated account's native iOS build only. Simulator launch,
 Sprite Metro/backend, browser video/input and iOS Fast Refresh remain pending.
+
+
+The first paired iOS run (`512857a9-d8b1-40a2-bffe-362e5d59e3b6`)
+validated the build and reached Sprite service forwarding, then failed before
+simulator boot because 127.0.0.1:41001 was occupied by a separate `sprite` process
+under `jake`. The runner report recorded complete cleanup and zero video frames.
+That listener was left running. The follow-up reserves free local ports before
+claiming the session and passes them through the validated pairing assignment to
+Metro/backend configuration. Tests exercise bind conflicts without stopping the
+occupant, inactive-listener rejection, activation, assignment cancellation,
+large binary traffic, HTTP and HMR upgrades, and port validation before consuming
+the pairing code. Dedicated iOS runtime/browser verification remains pending.

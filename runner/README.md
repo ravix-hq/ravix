@@ -428,7 +428,7 @@ sudo /bin/bash apps/switchyard/runner/scripts/provision-account.sh switchyard --
 
 This stages the current runner source, claims the experiment, waits for private
 Sprite Metro/backend services, forwards them over authenticated outbound WSS to
-Mac loopback ports 41000/41001, boots an owned emulator, installs the pinned APK,
+two reserved free Mac loopback ports, boots an owned emulator, installs the pinned APK,
 and starts scrcpy 4.1 H.264 capture. The runner checks the visible greeting and
 backend response before allowing browser control. Open **Open device**, then
 **Take control** to tap, swipe, scroll, type, use navigation keys, or capture a PNG.
@@ -518,3 +518,12 @@ is restored after success, failure or cancellation. It does not change the
 simulator set or download another runtime. A toolchain upgrade requires updating
 this explicit experiment pin. The dedicated-account retry is still required to
 establish whether this resolves its destination rejection.
+
+
+The runner reserves both loopback listeners before pairing and sends their port
+numbers with its claim. Switchyard validates and echoes the pair, then advertises
+those addresses to Metro and the app backend configuration. Incoming connections
+are closed until pairing activates the forwards. Old runners retain the legacy
+41000/41001 defaults; current runners coexist with other local forwards. Bind
+errors now include the address and port. No native rebuild is required because
+Metro supplies the app's JavaScript configuration.

@@ -5,7 +5,7 @@ import { spawn } from "node:child_process";
 import { command } from "./process";
 import { createHash } from "node:crypto";
 import { TcpTunnel, TCP_TUNNEL } from "./tcp-tunnel";
-import { startLoopbackForward, validateForwardEndpoint } from "./loopback-forward";
+import { reserveLoopbackForward, validateForwardEndpoint } from "./loopback-forward";
 import { createNativeForwardGateway } from "../server/native-forward-gateway";
 
 const cleanups: (() => void)[] = [];
@@ -83,7 +83,8 @@ async function fixture(mode: "echo" | "http" = "echo") {
   });
   const server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: gateway.fetch, websocket: gateway.websocket });
   const endpoint = `ws://127.0.0.1:${server.port}/session/one/metro`;
-  const forward = await startLoopbackForward({ endpoint, token, signal: controller.signal });
+  const forward = await reserveLoopbackForward({ signal: controller.signal });
+  forward.activate({endpoint, token});
   cleanups.push(() => { controller.abort(); forward.close(); gateway.stop(); server.stop(true); child.kill("SIGTERM"); });
   return { controller, endpoint, forward, seen, authorized: () => authorized };
 }

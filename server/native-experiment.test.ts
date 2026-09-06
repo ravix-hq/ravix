@@ -243,3 +243,17 @@ test('iOS is offered only with a pinned build and pairing cannot cross platforms
     await f.request('/api/tracks/track/native/stop','POST');
     expect(f.db.nativeExperiments.all()).toHaveLength(0);
 });
+
+test('pairing validates reserved local ports and advertises them to Metro without changing Sprite destinations', async () => {
+    const f=await fixture(), s=await f.start();
+    const claim=(ports:Record<string,unknown>)=>f.manager.claim(new Request('https://switchyard.test/api/native/claim',{method:'POST',body:JSON.stringify({code:s.pairingCode,artifactSha256:APK,...ports})}));
+    for (const ports of [{metroPort:80,backendPort:42024},{metroPort:42023},{metroPort:42023,backendPort:42023},{metroPort:'42023',backendPort:42024},{metroPort:null,backendPort:42024},{metroPort:42023,backendPort:65536}])
+        await expect(claim(ports)).rejects.toMatchObject({status:400});
+    const response=await claim({metroPort:42023,backendPort:42024});
+    expect((await response.json()).data).toMatchObject({metroPort:42023,backendPort:42024});
+    await until(()=>f.state.commands.some(c=>c.includes('EXPO_PACKAGER_PROXY_URL=http://127.0.0.1:42023')));
+    expect(f.state.commands.some(c=>c.includes('EXPO_PUBLIC_API_URL=http://127.0.0.1:42024'))).toBe(true);
+    const reservation=f.db.nativeExperiments.all()[0]!;
+    expect(reservation.metro).toBeGreaterThanOrEqual(30000);expect(reservation.metro).toBeLessThan(40000);
+    await f.request('/api/tracks/track/native/stop','POST');
+});
