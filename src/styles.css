@@ -1100,7 +1100,12 @@ input.crumb-name { width: 30ch; }
   color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 
-.track-preview { border-top: 1px solid var(--line); padding: 10px 16px 4px; }
+.inspector-tabs { flex-wrap: wrap; }
+.preview-platforms { padding: 12px; display: grid; gap: 12px; }
+.preview-platform { border: 1px solid var(--line); border-radius: 8px; padding: 12px; min-width: 0; }
+.preview-platform h3 { margin: 0; font-size: 13px; }
+.preview-platform .row { flex-wrap: wrap; }
+.track-preview { padding-top: 12px; }
 .preview-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .preview-controls button { min-height: 34px; }
 .preview-state { font-size: 12px; color: var(--dim); padding: 0 6px; }
@@ -1111,7 +1116,6 @@ input.crumb-name { width: 30ch; }
 .preview-fields input, .preview-fields textarea { width: 100%; min-width: 0; box-sizing: border-box; }
 .preview-logs { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 55vh; overflow: auto; font-size: 12px; }
 @media (max-width: 760px) {
-  .track-preview { padding: 8px 10px 2px; }
   .preview-controls button { min-height: 40px; }
 }
 

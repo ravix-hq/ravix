@@ -22,8 +22,6 @@ import { Branch, Clock, External, Folder, Info, Issue, Pull, Wrench } from "../l
 import type { OutgoingImage } from "../lib/images";
 import { others, subject, useHeartbeat } from "../lib/presence";
 import { Composer } from "./Composer";
-import { TrackPreview } from "./TrackPreview";
-import { NativePreviewLauncher } from "./NativePreview";
 import { SharedBrowser } from "./SharedBrowser";
 import { Transcript } from "./Transcript";
 
@@ -286,8 +284,6 @@ export function TrackView(props: TrackViewProps) {
         </section>
       ) : null}
       {queueError ? <div className="composer-note" role="status">Could not refresh saved prompts. Reconnecting…</div> : null}
-      <TrackPreview key={track.id} trackId={track.id} closed={track.status === "closed"} />
-      {experimentalPreviews ? <NativePreviewLauncher trackId={track.id} owner={track.role === "owner"} /> : null}
       <Composer
         onSend={send}
         onInterrupt={interrupt}
