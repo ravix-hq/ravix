@@ -165,7 +165,8 @@ export class Previews {
       const { track, project } = this.assertOpen(trackId);
       const config = row.config ?? this.ctx.db.previews.defaults(project.id);
       if (!config) throw new Error("Save a preview startup command and app directory first.");
-      const machine = await machineOf(this.ctx.fountain!, project);
+      // Fresh, not memoised: the reconciler is what notices a replaced machine.
+      const machine = await machineOf(this.ctx.fountain!, project, { fresh: true });
       if (!machine) throw new Error("This project has no machine. Open a track first.");
       const sprite = await spriteFor(this.ctx.fountain!, machine.sandboxId);
       if (!sprite) throw new SpritesError(501, "This workspace does not expose a Sprite. Previews are unavailable.");
@@ -212,7 +213,7 @@ export class Previews {
         if ((actual?.state?.restart_count ?? 0) >= 3) throw new Error("Preview crashed repeatedly. Fix the startup command, then restart. See logs below.");
         if (actual?.state?.status === "running" && await this.ready(row, config.readinessPath)) {
           // A machine replacement during startup cannot publish an old result.
-          const now = await machineOf(this.ctx.fountain!, project);
+          const now = await machineOf(this.ctx.fountain!, project, { fresh: true });
           if (now?.sandboxId !== row.sandboxId) throw new Error("The workspace changed during startup. Open the preview again.");
           this.update(row, { state: "ready", error: null });
           return;

@@ -34,6 +34,7 @@ import { accessOf, prepareMachine } from "./projects";
 import { HttpError, json, readJson, str } from "./http";
 import { peopleOf } from "./people";
 import { publish } from "./hub";
+import { forgetProject, liveConversations, spriteName } from "./machine-cache";
 import { watchStream } from "./stream-access";
 import { beat, leave } from "./presence";
 
@@ -204,6 +205,9 @@ export async function open(ctx: AppContext, req: Request, projectId: string): Pr
     ctx.db.markOpened(row.id);
   }
 
+  // A first track provisions the machine, so what `machineOf` memoised is out
+  // of date the moment this returns.
+  forgetProject(project.id);
   publish(project.id, { event: "tracks", data: { projectId: project.id } });
   return json({ data: toTrack(row, project, null) }, 201);
 }
@@ -499,6 +503,7 @@ export async function close(ctx: AppContext, req: Request, trackId: string): Pro
   }
 
   ctx.db.closeTrack(track.id);
+  forgetProject(project.id);
   publish(project.id, { event: "tracks", data: { projectId: project.id } });
   return json({ data: { ok: true } });
 }
@@ -589,7 +594,7 @@ export function summarizeDiff(diff: string): { path: string; added: number; remo
 // ── the pieces the routes above share ──────────────────────────────────
 
 /**
- * The project's machine, read live from its conversations. Nothing is stored.
+ * The project's machine, read from its conversations. Nothing is stored.
  *
  * The list is enough for everything except the terminal: it carries
  * `sandbox_id`, which is all the file, diff and listing routes need. It does
@@ -597,11 +602,19 @@ export function summarizeDiff(diff: string): { path: string; added: number; remo
  * `"sandbox": null` — so anything wanting `sprite_name` has to ask
  * `spriteFor` and pay for the extra call, rather than reading a field that is
  * reliably absent.
+ *
+ * "Read" rather than "read live": the list is memoised for a few seconds per
+ * project (`machine-cache.ts`), because every route that touches the box asks
+ * this, and the readouts that poll — vitals per viewer, the shared browser —
+ * asked it on a timer. A burst now costs one list call; the writes that change
+ * the answer (open, close, rebuild, destroy) forget it. `fresh` is for the
+ * guards whose whole job is to notice the machine was replaced under them —
+ * the preview reconciler and the agent helper — and asks Fountain every time.
  */
-export async function machineOf(fountain: Fountain, project: ProjectRow): Promise<{ sandboxId: string } | null> {
+export async function machineOf(fountain: Fountain, project: ProjectRow, opts: { fresh?: boolean } = {}): Promise<{ sandboxId: string } | null> {
   let all: ConversationSummary[];
   try {
-    all = await fountain.listConversations(project.agentId);
+    all = await liveConversations(fountain, project, opts);
   } catch (err) {
     throw asHttpError(err, "find this project's machine");
   }
@@ -614,23 +627,32 @@ export async function machineOf(fountain: Fountain, project: ProjectRow): Promis
 /**
  * The sprite behind a sandbox, or null if it is not on Sprites at all.
  *
- * One call, made only by the two panels that need a shell. A sandbox on
- * another provider is a real answer rather than a failure — the terminal says
- * so — which is why this returns null instead of throwing.
+ * Made only by the panels that need a shell, and memoised per sandbox for a
+ * minute: a sandbox id names one machine, and its sprite does not change. A
+ * sandbox on another provider is a real answer rather than a failure — the
+ * terminal says so — which is why this returns null instead of throwing.
  */
 export async function spriteFor(fountain: Fountain, sandboxId: string): Promise<string | null> {
-  try {
-    const sandbox = await fountain.sandbox(sandboxId);
-    return sandbox.sprite_name ?? null;
-  } catch {
-    return null;
-  }
+  return spriteName(fountain, sandboxId, async () => {
+    try {
+      const sandbox = await fountain.sandbox(sandboxId);
+      return sandbox.sprite_name ?? null;
+    } catch {
+      return null;
+    }
+  });
 }
 
+/**
+ * Every conversation on the project's agent, by id — read live, not from the
+ * memo, because this is what the sidebar's status comes from and a turn that
+ * ended must not show as running for another five seconds. The fresh answer
+ * is written through, so a burst of machine reads right after it is free.
+ */
 async function conversationsOf(ctx: AppContext, project: ProjectRow): Promise<Map<string, ConversationSummary>> {
   const out = new Map<string, ConversationSummary>();
   if (!ctx.fountain) return out;
-  const all = await ctx.fountain.listConversations(project.agentId).catch(() => [] as ConversationSummary[]);
+  const all = await liveConversations(ctx.fountain, project, { fresh: true }).catch(() => [] as ConversationSummary[]);
   for (const c of all) out.set(c.id, c);
   return out;
 }

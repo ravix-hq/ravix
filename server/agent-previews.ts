@@ -76,7 +76,9 @@ export async function agentPreviewRoute(ctx: AppContext, req: Request, trackId: 
   const body = await readJson(req);
   const action = body?.action;
   if (!["configure", "start", "restart", "stop", "status", "logs"].includes(String(action))) throw new HttpError(422, "preview_action", "Unknown preview helper command.");
-  const machine = await machineOf(ctx.fountain!, project);
+  // Fresh, not memoised: this is the check that the helper's grant still names
+  // the machine that is there, and a memo could vouch for one that is gone.
+  const machine = await machineOf(ctx.fountain!, project, { fresh: true });
   if (machine?.sandboxId !== grant.sandboxId || await spriteFor(ctx.fountain!, machine.sandboxId) !== grant.sprite) throw new HttpError(409, "preview_replaced", "The workspace changed. Send another message to renew the helper.");
   // Membership can change during provider reads. Never resurrect a revoked grant.
   if (!ctx.db.previews.agentGrant(grant.hash)) throw new HttpError(401, "preview_agent_auth", "Preview access ended.");

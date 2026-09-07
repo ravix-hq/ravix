@@ -36,6 +36,7 @@ import { FountainHttpError, asHttpError } from "./fountain";
 import { asHttpError as asGitHubError } from "./github";
 import { HttpError, json, readJson, str } from "./http";
 import { publish } from "./hub";
+import { forgetProject, liveConversations } from "./machine-cache";
 import { previews } from "./previews";
 import { browsers } from "./browsers";
 
@@ -466,6 +467,7 @@ export async function rebuild(ctx: AppContext, req: Request, id: string): Promis
   // The agent id is the identity, so it is the one column that ever moves —
   // and when it moves, every track on the old disk is gone.
   ctx.db.rebindAgent(project.id, agent.id);
+  forgetProject(project.id);
   for (const t of ctx.db.tracksOf(project.id)) ctx.db.closeTrack(t.id);
   publish(project.id, { event: "tracks", data: { projectId: project.id } });
 
@@ -487,6 +489,7 @@ export async function destroy(ctx: AppContext, req: Request, id: string): Promis
   }
   await unwind(fountain, { agentId: project.agentId, vaultId: project.vaultId, environmentId: project.environmentId });
   ctx.db.archiveProject(project.id);
+  forgetProject(project.id);
   publish(project.id, { event: "tracks", data: { projectId: project.id } });
   return json({ data: { ok: true } });
 }
@@ -499,26 +502,22 @@ export async function destroy(ctx: AppContext, req: Request, id: string): Promis
  * Nothing about a machine is stored: a sandbox id in a row is a claim that
  * goes stale the moment Fountain rebuilds anything, and a UI that confidently
  * shows a box that died an hour ago is worse than one that says it does not
- * know. One list call answers for every project at once.
+ * know. One memoised, agent-narrowed list call answers for each project.
  */
 async function machinesFor(ctx: AppContext, rows: ProjectRow[]): Promise<Map<string, MachineState>> {
   const out = new Map<string, MachineState>();
   if (!rows.length || !ctx.fountain) return out;
-  let all: Awaited<ReturnType<Fountain["listConversations"]>>;
-  try {
-    all = await ctx.fountain.listConversations();
-  } catch {
-    return out;
-  }
-  const byAgent = new Map<string, (typeof all)[number][]>();
-  for (const c of all) {
-    if (!c.agent_id) continue;
-    const list = byAgent.get(c.agent_id) ?? [];
-    list.push(c);
-    byAgent.set(c.agent_id, list);
-  }
-  for (const row of rows) {
-    const mine = (byAgent.get(row.agentId) ?? [])
+  // One narrowed, memoised list per project rather than one unfiltered list of
+  // the whole account: the account's list is every conversation the key has
+  // ever had and an aggregate over each, and this ran on every load of the
+  // rail. The per-project reads are the same ones the track routes make, so
+  // they are usually already in the memo.
+  const fountain = ctx.fountain;
+  const lists = await Promise.all(rows.map((row) => liveConversations(fountain, row).catch(() => null)));
+  rows.forEach((row, i) => {
+    const all = lists[i];
+    if (!all) return;
+    const mine = all
       .filter((c) => c.sandbox_id)
       .sort((a, b) => b.inserted_at.localeCompare(a.inserted_at));
     const newest = mine[0];
@@ -535,7 +534,7 @@ async function machinesFor(ctx: AppContext, rows: ProjectRow[]): Promise<Map<str
           }
         : none(),
     );
-  }
+  });
   return out;
 }
 
