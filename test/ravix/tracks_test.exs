@@ -3,10 +3,10 @@ defmodule Ravix.TracksTest do
 
   import Mimic
 
-  alias Ravix.Fountain.FakeTransport
+  alias Ravix.Fountain.{Client, Error, FakeTransport}
   alias Ravix.Hub
   alias Ravix.Tracks
-  alias Ravix.Tracks.Track
+  alias Ravix.Tracks.{Names, Track}
 
   @root "/home/sprite/work/kyoto"
 
@@ -411,7 +411,7 @@ defmodule Ravix.TracksTest do
     test "a blank track with no name gets a yard name", ctx do
       opening_fountain(ctx.project, false)
       assert {:ok, presented} = Tracks.open(ctx.owner, ctx.project.id, %{})
-      assert presented.title in Ravix.Tracks.Names.yards()
+      assert presented.title in Names.yards()
       assert presented.slug == Ravix.Ids.slugify(presented.title)
     end
 
@@ -426,7 +426,7 @@ defmodule Ravix.TracksTest do
       stub(Ravix.Fountain, :client, fn -> client end)
 
       ExUnit.CaptureLog.capture_log(fn ->
-        assert {:error, %Ravix.Fountain.Error{code: "sandbox_at_capacity"}} =
+        assert {:error, %Error{code: "sandbox_at_capacity"}} =
                  Tracks.open(ctx.owner, ctx.project.id, %{title: "Kyoto"})
       end)
 
@@ -474,7 +474,7 @@ defmodule Ravix.TracksTest do
     end
 
     test "without a Fountain key there are no machines", ctx do
-      client = Ravix.Fountain.Client.new("https://managoat.com", nil)
+      client = Client.new("https://managoat.com", nil)
       stub(Ravix.Fountain, :client, fn -> client end)
       assert {:error, :unconfigured} = Tracks.open(ctx.owner, ctx.project.id, %{title: "Kyoto"})
     end
@@ -801,7 +801,7 @@ defmodule Ravix.TracksTest do
                 entries: [%{name: "app.ts", type: "file", size: 12}],
                 truncated: false
               }} =
-               Tracks.files(ctx.owner, ctx.track.id, "../../../home/sprite/work/kyoto/src")
+               Tracks.files(ctx.owner, ctx.track.id, "../../../../home/sprite/work/kyoto/src")
     end
 
     test "a file, and the diff counted per file", ctx do

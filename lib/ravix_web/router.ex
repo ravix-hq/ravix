@@ -18,7 +18,12 @@ defmodule RavixWeb.Router do
     plug :fetch_live_flash
     plug :put_root_layout, html: {RavixWeb.Layouts, :root}
     plug :protect_from_forgery
-    plug :put_secure_browser_headers
+
+    plug :put_secure_browser_headers, %{
+      "content-security-policy" =>
+        "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' https: data: blob:; connect-src 'self' ws: wss:; frame-src http: https:; object-src 'none'; base-uri 'self'; frame-ancestors 'self'"
+    }
+
     plug RavixWeb.Plugs.CurrentUser
   end
 
@@ -39,15 +44,20 @@ defmodule RavixWeb.Router do
     get "/api/auth/callback", AuthController, :callback
     get "/api/auth/install", AuthController, :install
     post "/auth/signout", AuthController, :signout
+    get "/preview/:track_id", PreviewController, :open
 
     # An invite link, of either kind: a browser holding one has no idea
     # which it is and should not need to.
     get "/j/:token", AuthController, :join
 
-    # The pages. The shell agent adds the live routes here (`/`,
-    # `/p/:project`, `/p/:project/t/:track` on `RavixWeb.WorkspaceLive`);
-    # the landing page is that LiveView too, so `/` stays unrouted until then.
+    # URL selection is shared by the rail and the nested track LiveView.
     live_session :workspace, on_mount: [{RavixWeb.Live.Hooks, :fetch_current_user}] do
+      live "/", WorkspaceLive, :home
+      live "/login", WorkspaceLive, :login
+      live "/home", WorkspaceLive, :projects
+      live "/inbox", WorkspaceLive, :inbox
+      live "/p/:project", WorkspaceLive, :project
+      live "/p/:project/t/:track", WorkspaceLive, :track
     end
   end
 end

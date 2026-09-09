@@ -284,7 +284,8 @@ defmodule Ravix.Projects.Machine do
   @spec unwind(Fountain.Client.t(), %{
           optional(:agent_id) => String.t() | nil,
           optional(:vault_id) => String.t() | nil,
-          optional(:environment_id) => String.t() | nil
+          optional(:environment_id) => String.t() | nil,
+          optional(atom()) => term()
         }) :: :ok
   def unwind(client, ids) do
     if agent_id = Map.get(ids, :agent_id), do: Fountain.delete_agent(client, agent_id)
@@ -406,5 +407,4 @@ defmodule Ravix.Projects.Machine do
 
   defp why(%Error{message: message}), do: message
   defp why(:unconfigured), do: "Fountain is not configured"
-  defp why(other), do: inspect(other)
 end

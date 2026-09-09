@@ -1,42 +1,62 @@
 # Elixir rewrite status
 
-This draft captures the work recovered on `elixir-rewrite` on 2026-09-09.
-It is an incomplete migration and is not ready for deployment.
+Implemented on `elixir-rewrite`, 2026-09-09, in [PR #13](https://github.com/ravix-hq/ravix/pull/13).
+The application now runs as a Phoenix release with LiveView pages.
 
 ## Included
 
-- Phoenix application, Ecto schemas and migrations, runtime configuration,
-  authentication, sessions, and access controls.
-- Projects, tracks, people, prompt queue, machine cache, presence, and
-  transcript handling, with Fountain, GitHub, and Sprites clients.
-- Preview supervision, reconciliation, HTTP gateway, and WebSocket relay.
-- Shared web components, layouts, CSS, and browser hooks for the composer,
-  terminal, transcript scrolling, panel resizing, and theme.
-- ExUnit tests and fixtures, proposed Elixir CI and release deployment,
-  and architecture decisions.
+- Phoenix, Ecto schemas and migrations, runtime configuration, GitHub OAuth,
+  expiring sessions, and scoped access checks on connected LiveViews.
+- Project creation and repository selection, settings, secrets, preview
+  defaults, rebuild/delete, membership management, and invites.
+- Track creation from a blank worktree, branch, PR, or issue; streamed
+  transcripts, prompt queue, image attachments, presence, rename/close,
+  sharing, and pull request creation.
+- Files, diffs, GitHub checks, terminal commands, vitals, and web previews
+  with a supervised HTTP/WebSocket gateway and session-bound access tickets.
+- Landing, home/inbox, search, responsive navigation, 22 themes, and the
+  composer, terminal, transcript, panel resize, and theme browser hooks.
+- The Bun server, React SPA, native runner, and their dependencies are removed.
+  TypeScript remains only in local HTTP mocks and the two files they import.
+- Coverage/static analysis gates, production assets/release assembly,
+  Docker boot and database cutover smoke testing, and Render configuration.
 
-## Remaining before cutover
+## Database cutover
 
-- Implement the LiveView pages and wire `/`, `/p/:project`, and
-  `/p/:project/t/:track`; the workspace live session is currently empty.
-- Resolve the build warning and failing tests, then complete static analysis,
-  coverage, release boot, Docker, and end-to-end parity validation.
-- Finish CI configuration: `coverage.exs` is not yet connected to `mix.exs`,
-  and `mix precommit` does not yet run all the checks described in the ADR.
-- Review the Dockerfile and Render changes before merging: they switch the
-  deployment to the unfinished Phoenix application.
-- Remove the old Bun/React application as part of the completed cutover and
-  update the README. Native previews/runner and shared browser are deferred
-  under issues #11 and #12.
+Elixir owns the `ravix` PostgreSQL schema. Existing Bun tables in `public`
+are preserved, so migration neither collides with nor drops legacy tables.
+The release creates its schema and runs migrations before boot; running
+migrations again is harmless.
 
-## Validation at recovery
+This is a fresh application dataset, consistent with the original rewrite
+scope. It does not import legacy accounts, projects, or tracks. Users sign
+in and create projects again. If legacy data must remain usable, an import
+is required before production cutover; retaining tables is not an import.
 
-- `mix format --check-formatted`: passed after applying `mix format`.
-- `MIX_ENV=test mix compile --warnings-as-errors`: failed because
-  `test/support/tracks_boot.ex` calls undefined/private
-  `Ravix.Presence.start_link/1`.
-- `mix test`: 638 tests, 19 failures. Failures cover transcript page/event
-  handling, presence metadata and lifecycle, follower shutdown, and track
-  events/presence/file paths. This is one local run, not a flake assessment.
-- Remaining CI/static analysis, coverage, release, and deployment checks
-  have not been verified locally.
+## Validation
+
+- The recovered backend's 19 test failures were resolved, including presence
+  metadata, follower subscription/lifecycle, and transcript event handling.
+- The suite includes LiveView tests for scoped navigation, session expiry,
+  membership revocation, project settings, prompt handling, files, changes,
+  checks, previews, and fresh preview tickets.
+- The full local gate runs warnings-as-errors compilation, dependency cleanup,
+  formatting, strict Credo, Sobelow, dependency audit, Dialyzer, tests with
+  an 85% coverage floor, assets, and release assembly.
+- Dialyzer has seven narrowly matched filters for a `mint_web_socket` 1.0.5
+  opaque type defect. The explanation and upstream source are in
+  `.dialyzer_ignore.exs`; real socket tests cover the affected tunnel path.
+- A browser exercised GitHub sign-in, repository selection, project and track
+  creation, prompting, streamed output, files, and settings against the local
+  Fountain/GitHub/Sprites mocks.
+- `scripts/release-smoke.sh` boots the Docker release against disposable
+  PostgreSQL 17, migrates twice, preserves an existing `public.users` row,
+  and checks health, the landing page, and static assets.
+
+## Deployment follow-up
+
+Production Render deployment and real Fountain/GitHub/Sprites integration
+must be verified after merge (#6). Local mock and container checks do not
+establish production credential or infrastructure readiness. Native previews
+and the Mac runner remain deferred under #11; the shared browser remains
+under #12. These exclusions are part of ADR 0002's accepted scope.

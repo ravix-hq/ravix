@@ -345,6 +345,10 @@ defmodule RavixWeb.AuthControllerTest do
     end
 
     defp socket,
-      do: %Phoenix.LiveView.Socket{endpoint: RavixWeb.Endpoint, router: RavixWeb.Router}
+      do: %Phoenix.LiveView.Socket{
+        endpoint: RavixWeb.Endpoint,
+        router: RavixWeb.Router,
+        private: %{lifecycle: %Phoenix.LiveView.Lifecycle{}, live_temp: %{}}
+      }
   end
 end

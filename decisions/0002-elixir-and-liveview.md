@@ -13,12 +13,10 @@ stale_after: 2026-12-09
 
 # 0002 — Ravix is an Elixir application
 
-**Status:** Accepted, 2026-09-09; implementation in progress. This draft PR
-captures the backend port, shared UI components and hooks, and proposed
-deployment and CI changes. The LiveView pages and routes are still missing,
-the TypeScript application remains in the repository, and validation has
-known failures. See [rewrite status](../docs/elixir-rewrite-status.md).
-The decision below describes the intended end state, not a completed cutover.
+**Status:** Accepted, 2026-09-09; implemented in PR #13. The Phoenix backend,
+LiveView pages, release and CI configuration replace the Bun/React application.
+See [rewrite status](https://github.com/ravix-hq/ravix/blob/elixir-rewrite/docs/elixir-rewrite-status.md) for validation and the
+remaining production deployment verification.
 `stale_after` stands until the first Render deploy of the Elixir release
 has been verified (#6), at which point set `verified` and remove it.
 
@@ -43,8 +41,9 @@ Elixir SDK covers every Fountain call Ravix makes, and `managoat_acp` turns
 ACP into the blocks a transcript renders. `docs/elixir-rewrite-brief.md` is
 the exploration this decision came out of.
 
-The timing is unusual: there are no users and no production data, so a
-rewrite costs no migration. That window closes at the first real user.
+The original rewrite scope assumes no production users or data requiring
+an import. Existing database tables can still be present, so the new
+application must preserve them and avoid naming collisions.
 
 ## Decision
 
@@ -56,7 +55,10 @@ on HTTP is what is not a page (the OAuth callback, `/healthz`, the preview
 gateway's control routes).
 
 - **Data.** Ecto schemas and migrations for every table the SQLite-era
-  `db.ts` created, with string primary keys as before. Contexts are the
+  `db.ts` created, with string primary keys as before. The
+  new application stores them in the `ravix` PostgreSQL schema, preserving
+  legacy `public` tables without importing their contents. An import is a
+  deployment prerequisite if legacy records need to remain usable. Contexts are the
   API: `Ravix.Accounts`, `Ravix.Projects`, `Ravix.Tracks`, `Ravix.People`,
   `Ravix.PromptQueue`, `Ravix.Previews`. Every user-facing function takes
   the user; unscoped functions carry the `_unsafe_` prefix and sit adjacent
@@ -102,7 +104,7 @@ One language everywhere. The SDK, the sandbox adapters, the ACP blocks and
 the markdown pipeline are maintained upstream, and the tenancy vocabulary
 is Fountain's. The SPA's interaction tests stop being an acceptance test;
 parity must be checked surface by surface against the TypeScript before
-cutover. The TypeScript remains in the repository during this draft.
+cutover. The retired application and its tests have been removed.
 
 Ravix sets the JavaScript-hook precedent for both codebases; Fountain has
 none. The hook list above is the policy, and adding to it is a decision,
@@ -110,8 +112,8 @@ not a convenience.
 
 The `mock/` fake Fountain, GitHub and Sprites stays in TypeScript with the
 two `shared/` files it imports, because it speaks HTTP and a dev server
-does not care what wrote the fake. Removing the remaining TypeScript is
-part of the unfinished cutover.
+does not care what wrote the fake. These local fixtures are the only remaining
+TypeScript; production runs the Elixir release.
 
 The three Sprites additions Ravix needs beyond `managoat_sandbox` (services,
 the activity lease, the proxy tunnel) live in `Ravix.Sprites` until they

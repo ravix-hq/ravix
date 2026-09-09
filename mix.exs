@@ -9,6 +9,12 @@ defmodule Ravix.MixProject do
       elixirc_paths: elixirc_paths(Mix.env()),
       start_permanent: Mix.env() == :prod,
       aliases: aliases(),
+      test_coverage: elem(Code.eval_file("coverage.exs"), 0),
+      dialyzer: [
+        plt_local_path: "_build/plts",
+        plt_add_apps: [:mix],
+        ignore_warnings: ".dialyzer_ignore.exs"
+      ],
       deps: deps(),
       compilers: [:phoenix_live_view] ++ Mix.compilers(),
       listeners: [Phoenix.CodeReloader]
@@ -57,7 +63,6 @@ defmodule Ravix.MixProject do
       # Fountain and its component libraries (Apache-2.0, maintained upstream).
       {:fountain_sdk, "~> 0.1.0"},
       {:managoat_acp, "~> 0.4.1"},
-      {:managoat_docs, "~> 0.1.1"},
       # GitHub, Sprites and the preview gateway.
       {:req, "~> 0.7.4"},
       {:jose, "~> 1.11"},
@@ -82,6 +87,8 @@ defmodule Ravix.MixProject do
     [
       setup: ["deps.get", "ecto.setup", "assets.setup", "assets.build"],
       "ecto.setup": ["ecto.create", "ecto.migrate", "run priv/repo/seeds.exs"],
+      "ecto.migrate": ["ravix.prepare_database", "ecto.migrate --prefix ravix"],
+      "ecto.rollback": ["ecto.rollback --prefix ravix"],
       "ecto.reset": ["ecto.drop", "ecto.setup"],
       test: ["ecto.create --quiet", "ecto.migrate --quiet", "test"],
       "assets.setup": ["esbuild.install --if-missing"],
@@ -90,7 +97,18 @@ defmodule Ravix.MixProject do
         "esbuild ravix --minify",
         "phx.digest"
       ],
-      precommit: ["compile --warnings-as-errors", "deps.unlock --unused", "format", "test"]
+      precommit: [
+        "compile --warnings-as-errors",
+        "deps.unlock --unused",
+        "format --check-formatted",
+        "credo --strict",
+        "sobelow --config",
+        "cmd mix hex.audit",
+        "cmd env MIX_ENV=dev mix dialyzer",
+        "test --cover",
+        "cmd env MIX_ENV=prod mix assets.deploy",
+        "cmd env MIX_ENV=prod mix release --overwrite"
+      ]
     ]
   end
 end

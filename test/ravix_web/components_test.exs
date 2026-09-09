@@ -295,8 +295,9 @@ defmodule RavixWeb.ComponentsTest do
         |> Safe.to_iodata()
         |> IO.iodata_to_binary()
 
-      assert html =~ ~s|localStorage.getItem("ravix.theme")|
-      assert html =~ ~s|setAttribute("data-theme"|
+      assert html =~ ~s|src="/theme.js"|
+      assert File.read!("priv/static/theme.js") =~ ~s|localStorage.getItem("ravix.theme")|
+      assert File.read!("priv/static/theme.js") =~ ~s|setAttribute("data-theme"|
       assert html =~ ~r|<title[^>]*>Ravix</title>|
       refute html =~ "data-suffix"
       assert html =~ ~s(<meta name="color-scheme" content="dark">)

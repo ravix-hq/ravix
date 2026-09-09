@@ -204,6 +204,12 @@ defmodule Ravix.Sprites.Tunnel do
     {:error, Error.new(502, "Sprites closed the tunnel: #{Exception.message(reason)}")}
   end
 
+  @typep upgrade_acc :: %{
+           status: non_neg_integer() | nil,
+           headers: Mint.Types.headers(),
+           data: iodata()
+         }
+  @spec collect_upgrade(list(), reference(), upgrade_acc()) :: {:more | :done, upgrade_acc()}
   defp collect_upgrade([], _ref, acc), do: {:more, acc}
 
   defp collect_upgrade([{:status, ref, status} | rest], ref, acc),

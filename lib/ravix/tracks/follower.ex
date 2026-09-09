@@ -102,7 +102,7 @@ defmodule Ravix.Tracks.Follower do
   @spec whereis(String.t()) :: pid() | nil
   def whereis(track_id) do
     case Registry.lookup(@registry, track_id) do
-      [{pid, _}] -> pid
+      [{pid, _}] -> if Process.alive?(pid), do: pid, else: nil
       [] -> nil
     end
   end
@@ -163,15 +163,12 @@ defmodule Ravix.Tracks.Follower do
       stop_timer: nil
     }
 
-    {:ok, state, {:continue, :open}}
+    {:ok, state}
   end
 
   @impl true
-  def handle_continue(:open, state), do: {:noreply, open_stream(state)}
-
-  @impl true
   def handle_call({:subscribe, pid}, _from, state) do
-    state = cancel_stop(state)
+    state = state |> cancel_stop() |> open_stream()
 
     if Map.has_key?(state.subscribers, pid) do
       {:reply, :ok, state}
@@ -251,7 +248,7 @@ defmodule Ravix.Tracks.Follower do
     end
 
     # Backed off, doubling up to a ceiling, and reset by any event arriving.
-    delay = min(state.retry_ms * Integer.pow(2, state.attempt), @retry_max_ms)
+    delay = min(state.retry_ms * Integer.pow(2, min(state.attempt, 14)), @retry_max_ms)
     Process.send_after(self(), :reopen, delay)
     %{state | attempt: state.attempt + 1}
   end

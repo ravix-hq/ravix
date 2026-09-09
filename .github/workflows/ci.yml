@@ -3,7 +3,8 @@
 # checksPass). The jobs share nothing, so the job name in a red build says
 # which toolchain to look at: the suite with its coverage threshold, the
 # static analysis, the release assemble and boot, and the decisions bundle
-# (its own workflow). `mix precommit` runs the same steps locally.
+# (its own workflow). `mix precommit` runs analysis, tests, and release assembly;
+# scripts/release-smoke.sh verifies the actual container and isolated database.
 name: CI
 
 on:
@@ -74,7 +75,7 @@ jobs:
           path: |
             deps
             _build/dev
-            priv/plts
+            _build/plts
           key: static-${{ runner.os }}-${{ env.OTP_VERSION }}-${{ env.ELIXIR_VERSION }}-${{ hashFiles('mix.lock') }}
           restore-keys: static-${{ runner.os }}-${{ env.OTP_VERSION }}-${{ env.ELIXIR_VERSION }}-
       - run: mix deps.get
@@ -135,3 +136,12 @@ jobs:
           done
           echo "release did not answer /healthz" >&2
           exit 1
+
+  container:
+    name: Docker release and cutover
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v5
+      - run: docker build -t ravix-elixir-check .
+      - run: scripts/release-smoke.sh ravix-elixir-check

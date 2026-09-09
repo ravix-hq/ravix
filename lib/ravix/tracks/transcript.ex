@@ -124,7 +124,7 @@ defmodule Ravix.Tracks.Transcript do
   def add_event(page, %{"id" => id} = event) when is_integer(id) do
     turn_id = turn_id_of(event)
 
-    {found?, turns} =
+    {turns, found?} =
       Enum.map_reduce(page.turns, false, fn turn, found? ->
         if turn.id == turn_id, do: {lay_in(turn, event, page.runtime), true}, else: {turn, found?}
       end)
@@ -369,8 +369,24 @@ defmodule Ravix.Tracks.Transcript do
   def detail(current, update) do
     kind =
       case update["kind"] do
-        k when k in @tool_kinds -> String.to_atom(k)
-        _ -> current.kind
+        k when k in @tool_kinds ->
+          Map.fetch!(
+            %{
+              "read" => :read,
+              "edit" => :edit,
+              "delete" => :delete,
+              "move" => :move,
+              "search" => :search,
+              "execute" => :execute,
+              "fetch" => :fetch,
+              "think" => :think,
+              "other" => :other
+            },
+            k
+          )
+
+        _ ->
+          current.kind
       end
 
     input =

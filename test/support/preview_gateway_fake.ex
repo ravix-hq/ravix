@@ -358,7 +358,7 @@ defmodule Ravix.PreviewGatewayFake do
 
   # ── the tunnel ───────────────────────────────────────────────────────
 
-  defmodule TunnelClosed do
+  defmodule ErrorTunnelClosed do
     @moduledoc false
     defexception message: "the tunnel closed"
   end
@@ -479,7 +479,7 @@ defmodule Ravix.PreviewGatewayFake do
 
   defmodule Tunnel.HTTP do
     @moduledoc false
-    alias Ravix.PreviewGatewayFake.{Tunnel, TunnelClosed}
+    alias Ravix.PreviewGatewayFake.{ErrorTunnelClosed, Tunnel}
 
     @timeout 30_000
 
@@ -569,7 +569,7 @@ defmodule Ravix.PreviewGatewayFake do
             {:halt, {conn, []}}
 
           {_conn, [{:error, ^ref, _} | _]} ->
-            raise TunnelClosed
+            raise ErrorTunnelClosed
 
           {conn, [_ | rest]} ->
             {[], {conn, rest}}

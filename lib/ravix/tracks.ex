@@ -778,7 +778,11 @@ defmodule Ravix.Tracks do
   def origin_info(%Track{} = row) do
     %{
       kind:
-        if(row.origin_kind in @origin_kinds, do: String.to_atom(row.origin_kind), else: :blank),
+        Map.get(
+          %{"blank" => :blank, "branch" => :branch, "pr" => :pr, "issue" => :issue},
+          row.origin_kind,
+          :blank
+        ),
       base: row.origin_base,
       number: row.origin_number,
       title: row.origin_title,

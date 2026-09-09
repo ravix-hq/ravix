@@ -236,7 +236,6 @@ defmodule Ravix.PromptQueue.Server do
   defp cancel(row), do: PromptQueue.set_status(row.id, :cancelled)
 
   defp compose("", authored), do: authored
-  defp compose(nil, authored), do: authored
   defp compose(instructions, authored), do: instructions <> "\n\n" <> authored
 
   # On a shared track the agent is told who is speaking (shared/author.ts).

@@ -119,6 +119,7 @@ defmodule Ravix.Presence do
 
   @impl true
   def handle_metas("presence:track:" <> track_id, diff, presences, state) do
+    presences = Map.new(presences, fn {id, metas} -> {id, %{metas: metas}} end)
     now = now_ms()
     here = presences_of(presences, now)
 

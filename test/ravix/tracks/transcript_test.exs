@@ -24,7 +24,7 @@ defmodule Ravix.Tracks.TranscriptTest do
         )
       )
 
-  defp tool_done(id, extra \\ %{}),
+  defp tool_done(id, extra),
     do:
       update(
         Map.merge(

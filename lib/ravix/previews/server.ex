@@ -265,7 +265,6 @@ defmodule Ravix.Previews.Server do
     case Previews.assert_open(row.track_id) do
       {:ok, found} -> {:ok, found}
       {:error, {:conflict, _code, message}} -> {:error, message, row}
-      {:error, reason} -> {:error, reason, row}
     end
   end
 
@@ -281,7 +280,6 @@ defmodule Ravix.Previews.Server do
     case Ravix.Tracks.machine_of(project, fresh: true) do
       {:ok, %{sandbox_id: _} = machine} -> {:ok, machine}
       {:ok, nil} -> {:error, "This project has no machine. Open a track first.", row}
-      {:error, reason} -> {:error, reason, row}
     end
   end
 
@@ -323,7 +321,6 @@ defmodule Ravix.Previews.Server do
     case Store.allocate(row.track_id, machine.sandbox_id, sprite) do
       {:ok, row} -> {:ok, row}
       {:error, :no_ports} -> {:error, "This machine has no available preview ports.", row}
-      {:error, reason} -> {:error, reason, row}
     end
   end
 
@@ -412,7 +409,6 @@ defmodule Ravix.Previews.Server do
     case Sprites.exec(Sprites.config(), row.sprite, ["sh", "-lc", script], @check_timeout_sec) do
       {:ok, %{code: 0}} -> :ok
       {:ok, %{stderr: stderr}} -> {:error, blank_to(stderr, "Preview port collision."), row}
-      {:error, reason} -> {:error, reason, row}
     end
   end
 

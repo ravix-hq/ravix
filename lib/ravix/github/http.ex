@@ -106,7 +106,6 @@ defmodule Ravix.GitHub.HTTP do
   end
 
   defp describe(%{__exception__: true} = exception), do: Exception.message(exception)
-  defp describe(other), do: inspect(other)
 
   # ── the answer ─────────────────────────────────────────────────────
 

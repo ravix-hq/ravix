@@ -48,6 +48,7 @@ defmodule Ravix.Previews do
 
   @typedoc "`PreviewInfo` in `shared/previews.ts`, what the track page renders."
   @type info :: %{
+          optional(:open_url) => String.t(),
           available: boolean(),
           unavailable_reason: String.t() | nil,
           config: Row.config() | nil,

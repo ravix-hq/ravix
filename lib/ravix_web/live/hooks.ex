@@ -25,7 +25,7 @@ defmodule RavixWeb.Live.Hooks do
   """
 
   import Phoenix.Component, only: [assign_new: 3]
-  import Phoenix.LiveView, only: [redirect: 2]
+  import Phoenix.LiveView, only: [redirect: 2, attach_hook: 4]
 
   alias Ravix.{Accounts, Crypto}
 
@@ -37,16 +37,34 @@ defmodule RavixWeb.Live.Hooks do
         ) ::
           {:cont, Phoenix.LiveView.Socket.t()} | {:halt, Phoenix.LiveView.Socket.t()}
   def on_mount(:fetch_current_user, _params, session, socket) do
-    {:cont, mount_current_user(session, socket)}
+    {:cont, mount_current_user(session, socket) |> protect_session(session)}
   end
 
   def on_mount(:require_authenticated_user, _params, session, socket) do
-    socket = mount_current_user(session, socket)
+    socket = mount_current_user(session, socket) |> protect_session(session)
 
     case socket.assigns[:current_user] do
       %Accounts.User{} -> {:cont, socket}
       _ -> {:halt, redirect(socket, to: "/")}
     end
+  end
+
+  # Signing out in another tab revokes this socket on its next event/message.
+  defp protect_session(socket, session) do
+    token = session["session_token"]
+    hash = if is_binary(token), do: Crypto.sha256(token)
+
+    guard = fn s ->
+      case hash && Accounts.session_user(hash) do
+        %Accounts.User{} -> {:cont, s}
+        _ -> {:halt, redirect(s, to: "/login")}
+      end
+    end
+
+    socket
+    |> attach_hook(:session_event, :handle_event, fn _, _, s -> guard.(s) end)
+    |> attach_hook(:session_message, :handle_info, fn _, s -> guard.(s) end)
+    |> attach_hook(:session_async, :handle_async, fn _, _, s -> guard.(s) end)
   end
 
   # Mount current_user from the session into socket assigns without hitting

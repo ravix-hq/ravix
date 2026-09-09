@@ -128,9 +128,15 @@ export const Composer = {
     box.addEventListener("drop", this.onDrop)
 
     const form = this.el.form
-    this.onSubmit = () => this.forget()
+    this.onSubmit = () => this.save()
     form?.addEventListener("submit", this.onSubmit)
 
+    this.handleEvent("composer:insert", ({text}) => {
+      this.el.value = text
+      this.save()
+      this.grow()
+      this.el.focus()
+    })
     this.handleEvent("composer:clear", () => {
       this.el.value = ""
       this.forget()

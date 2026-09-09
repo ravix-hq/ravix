@@ -46,7 +46,7 @@ defmodule RavixWeb.PreviewGateway do
     @type t :: %__MODULE__{status: pos_integer(), code: String.t(), message: String.t()}
   end
 
-  defmodule Aborted do
+  defmodule ErrorAborted do
     @moduledoc """
     Drop the connection: the sprite stopped answering mid-body, the browser
     went away, or access was revoked while a body streamed. Raised only
@@ -374,7 +374,7 @@ defmodule RavixWeb.PreviewGateway do
           case read_body(conn, length: @read_chunk, read_length: @read_chunk) do
             {:ok, data, conn} -> {chunks(data), {:done, conn}}
             {:more, data, conn} -> {chunks(data), {:more, conn}}
-            {:error, _} -> raise Aborted
+            {:error, _} -> raise ErrorAborted
           end
 
         {:done, conn} ->
@@ -433,7 +433,7 @@ defmodule RavixWeb.PreviewGateway do
          :open <- revoked_or_open() do
       conn
     else
-      _ -> raise Aborted
+      _ -> raise ErrorAborted
     end
   end
 
@@ -533,6 +533,9 @@ defmodule RavixWeb.PreviewGateway do
 
   # ── replies ──────────────────────────────────────────────────────────
 
+  # Bodies are generated gateway pages or escaped errors; preview app content
+  # is deliberately served on its separate preview origin, never the app origin.
+  # sobelow_skip ["XSS.SendResp"]
   defp reply(conn, status, body, type \\ "text/html; charset=utf-8") do
     conn
     |> put_resp_header("content-type", type)

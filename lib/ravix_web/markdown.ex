@@ -70,6 +70,8 @@ defmodule RavixWeb.Markdown do
   `render/1`, wrapped as safe HTML for a template.
   """
   @spec render_safe(String.t()) :: Phoenix.HTML.safe()
+  # render/1 escapes input before adding markup; malicious HTML/link tests cover it.
+  # sobelow_skip ["XSS.Raw"]
   def render_safe(src), do: Phoenix.HTML.raw(render(src))
 
   # --- one line at a time ---------------------------------------------------

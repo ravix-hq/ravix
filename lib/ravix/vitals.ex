@@ -286,5 +286,4 @@ defmodule Ravix.Vitals do
 
   # Sampling error and a rounded clock can put this a hair outside 0..1.
   defp clamp(n) when is_number(n), do: n |> min(1) |> max(0)
-  defp clamp(_), do: nil
 end

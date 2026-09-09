@@ -50,3 +50,11 @@ ravix-*.tar
 # In case you use Node.js/npm, you want to ignore these.
 npm-debug.log
 /assets/node_modules/
+
+# Analysis artifacts
+/priv/plts/
+*.coverdata
+
+# Phoenix digests and compressed copies (original static files stay tracked).
+/priv/static/**/*-????????????????????????????????.*
+/priv/static/**/*.gz
