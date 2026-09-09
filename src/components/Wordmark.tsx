@@ -8,7 +8,7 @@
  * is what lets it be this literal without the rest of the UI having to match.
  *
  * SVG rather than a grid of divs so it scales, prints and screenshots cleanly,
- * and so the whole thing is one element for the shadow in `.wordmark`.
+ * and so the whole thing is one element.
  */
 
 const GLYPHS: Record<string, string[]> = {

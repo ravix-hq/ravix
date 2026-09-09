@@ -29,10 +29,10 @@ export function SignIn({ session }: { session: SessionInfo }) {
         <ThemePicker />
       </div>
       <div className="signin-card">
-        <div style={{ color: "var(--ink)", marginBottom: 20 }}>
+        <div className="signin-mark">
           <Wordmark unit={5} />
         </div>
-        <a href="/" className="signin-back">← About Ravix</a>
+        <a href="/" className="signin-back">About Ravix</a>
         <h1>Sign in to Ravix</h1>
         <p className="lede">
           Point Ravix at a repository and it builds you a cloud machine. Every piece of work you start is its own
@@ -98,57 +98,59 @@ export function Home({ session, projects, onNewProject, onQuickStart, onPickProj
   return (
     <div className="centred">
       <div className="hero">
-        <div style={{ color: "var(--ink)" }}>
-          <Wordmark />
-        </div>
+        <Wordmark />
         <p className="hero-sub">
           A project is a machine. A track is a worktree on it. Start as many as you like — they share one disk and take
           it in turns.
         </p>
 
-        <div className="cards">
-          <button type="button" className="card" onClick={onNewProject}>
+        <div className="home-actions">
+          <button type="button" className="home-action" onClick={onNewProject}>
             <span className="ico">
-              <Globe size={19} />
+              <Globe size={18} />
             </span>
-            <strong>{installed ? "Open GitHub project" : "Connect GitHub"}</strong>
-            <small>
-              {installed
-                ? "Pick a repository Ravix can see and it builds the machine."
-                : "Install the app on an account to choose which repositories Ravix may see."}
-            </small>
+            <span>
+              <strong>{installed ? "Open a GitHub project" : "Connect GitHub"}</strong>
+              <small>
+                {installed
+                  ? "Pick a repository Ravix can see and it builds the machine."
+                  : "Install the app on an account to choose which repositories Ravix may see."}
+              </small>
+            </span>
           </button>
 
-          <button type="button" className="card" onClick={onQuickStart}>
+          <button type="button" className="home-action" onClick={onQuickStart}>
             <span className="ico">
-              <FolderPlus size={19} />
+              <FolderPlus size={18} />
             </span>
-            <strong>Quick start</strong>
-            <small>A machine with no repository. Somewhere to try things, or to start something new.</small>
+            <span>
+              <strong>Quick start</strong>
+              <small>A machine with no repository. Somewhere to try things, or to start something new.</small>
+            </span>
           </button>
 
           <button
             type="button"
-            className="card"
+            className="home-action"
             disabled
             title="Ravix's machines are in the cloud, so there is no local disk to open."
           >
             <span className="ico">
-              <Folder size={19} />
+              <Folder size={18} />
             </span>
-            <strong>Open local project</strong>
-            <small>
-              Not here: the machine is in the cloud, so there is no folder on this computer for it to open. Push the
-              repository and open it from GitHub.
-            </small>
+            <span>
+              <strong>Open a local project</strong>
+              <small>
+                Not here: the machine is in the cloud, so there is no folder on this computer for it to open. Push the
+                repository and open it from GitHub.
+              </small>
+            </span>
           </button>
         </div>
 
         {projects.length ? (
-          <div style={{ width: "100%" }}>
-            <div className="yard-label" style={{ padding: "0 2px 8px" }}>
-              <span>Recent</span>
-            </div>
+          <div className="home-recent">
+            <h4>Recent</h4>
             {projects.slice(0, 8).map((p) => (
               <button key={p.id} type="button" className="pick-row" onClick={() => onPickProject(p.id)}>
                 <span className="project-mark" aria-hidden="true">
