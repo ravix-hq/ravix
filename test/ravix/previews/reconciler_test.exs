@@ -5,8 +5,9 @@ defmodule Ravix.Previews.ReconcilerTest do
   publish a stale service as Ready. The provider is the scripted one in
   `Ravix.PreviewsFixture`; the clock is the fixture's, moved by hand.
   """
-  use Ravix.DataCase, async: true
+  use Ravix.DataCase, async: true, group: :preview_ports
   use Mimic
+  use ExUnitProperties
 
   import Ravix.PreviewsFixture
 
@@ -151,6 +152,53 @@ defmodule Ravix.Previews.ReconcilerTest do
     assert %{state: :stopped, config: %{directory: "app2"}} = Previews.info(t1.id)
     assert :ok = Previews.start_service(t1.id)
     assert %{state: :ready} = Previews.info(t1.id)
+  end
+
+  property "sequences of intent changes cannot be overwritten by an earlier provider response", %{
+    p: p,
+    project: project
+  } do
+    check all(
+            changes <- list_of(member_of([:stop, :configure]), min_length: 1, max_length: 5),
+            max_runs: 20
+          ) do
+      track = insert_track(project: project, conversation_id: Ecto.UUID.generate())
+      put(p, :barrier, true)
+      creates = state(p).creates
+      starting = Task.async(fn -> Previews.start_service(track.id) end)
+      await(p, &(&1.creates == creates + 1))
+      initial = Store.get(track.id).generation
+
+      pending =
+        for {change, index} <- Enum.with_index(changes, 1) do
+          task =
+            Task.async(fn ->
+              case change do
+                :stop ->
+                  Previews.stop_service(track.id)
+
+                :configure ->
+                  Previews.configure(track.id, %{
+                    directory: "app#{index}",
+                    command: "run #{index}",
+                    readiness_path: "/"
+                  })
+              end
+            end)
+
+          await(p, fn _ -> Store.get(track.id).generation == initial + index end)
+          task
+        end
+
+      put(p, :barrier, false)
+      assert Enum.all?(Task.await_many([starting | pending], 5_000), &(&1 == :ok))
+      row = Store.get(track.id)
+      assert row.generation == initial + length(changes)
+      assert row.desired == :stopped
+      assert row.state == :stopped
+      refute state(p).services[service_id(track.id)] == "running"
+      assert :ok = Previews.stop_service(track.id, true)
+    end
   end
 
   test "port collisions and repeated crashes fail with logs, without an endless restart loop",

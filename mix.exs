@@ -107,6 +107,7 @@ defmodule Ravix.MixProject do
         "cmd env MIX_ENV=dev mix dialyzer",
         "test --cover",
         "cmd bun test",
+        "cmd python3 scripts/coverage-self-test.py",
         "cmd env MIX_ENV=prod mix assets.deploy",
         "cmd env MIX_ENV=prod mix release --overwrite"
       ]

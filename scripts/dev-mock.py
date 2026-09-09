@@ -8,7 +8,7 @@ os.chdir(root)
 port = os.environ.get("PORT", "4000")
 mock_port = os.environ.get("MOCK_PORT", "8793")
 sprites_port = os.environ.get("MOCK_SPRITES_PORT", "8794")
-key = root / "mock/dev-key.pem"
+key = Path(os.environ.get("MOCK_KEY_PATH", str(root / "mock/dev-key.pem")))
 if not key.exists():
     raise SystemExit("Start bun run mock first to generate the development key.")
 os.environ.update({

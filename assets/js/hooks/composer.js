@@ -146,6 +146,7 @@ export const Composer = {
   },
 
   updated() {
+    this.restore()
     this.grow()
   },
 

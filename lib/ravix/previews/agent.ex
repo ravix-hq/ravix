@@ -11,8 +11,7 @@ defmodule Ravix.Previews.Agent do
   defaults, never browser tickets.
 
   `route/3` is the endpoint the helper calls, `POST
-  /api/tracks/:id/preview/agent`; it answers `RavixWeb.Error` refusals
-  because the helper speaks HTTP.
+  /api/tracks/:id/preview/agent`; it returns tagged refusals for the HTTP boundary to translate.
   """
 
   alias Ravix.Accounts
@@ -26,7 +25,6 @@ defmodule Ravix.Previews.Agent do
   alias Ravix.Repo
   alias Ravix.Sprites
   alias Ravix.Tracks.Track
-  alias RavixWeb.Error
 
   @start "[ravix preview tools for this turn]"
   @end_ "[/ravix preview tools]"
@@ -199,9 +197,9 @@ defmodule Ravix.Previews.Agent do
   `POST /api/tracks/:id/preview/agent`: what the helper's bearer token may
   do, checked twice around the provider reads because membership can
   change during them and a revoked grant must never be resurrected.
-  Returns the track's info plus `track_url`, or a `RavixWeb.Error`.
+  Returns the track's info plus `track_url`, or a tagged refusal.
   """
-  @spec route(String.t(), String.t() | nil, map()) :: {:ok, map()} | {:error, Error.t()}
+  @spec route(String.t(), String.t() | nil, map()) :: {:ok, map()} | {:error, term()}
   def route(track_id, authorization, body) do
     with {:ok, grant} <- bearer_grant(authorization, track_id),
          {:ok, user} <- grant_user(grant),
@@ -240,14 +238,14 @@ defmodule Ravix.Previews.Agent do
   defp access(user, track_id) do
     case Access.track_access(user, track_id) do
       {:ok, found} -> {:ok, found}
-      {:error, reason} -> {:error, Error.from(reason, noun: "track")}
+      {:error, reason} -> {:error, reason}
     end
   end
 
   defp open(track_id) do
     case Previews.assert_open(track_id) do
       {:ok, _} -> :ok
-      {:error, reason} -> {:error, Error.from(reason)}
+      {:error, reason} -> {:error, reason}
     end
   end
 
@@ -263,7 +261,7 @@ defmodule Ravix.Previews.Agent do
   defp available do
     case Previews.unavailable() do
       nil -> :ok
-      why -> {:error, %Error{status: 501, code: "preview_unavailable", message: why}}
+      why -> {:error, {:preview_unavailable, why}}
     end
   end
 
@@ -272,9 +270,7 @@ defmodule Ravix.Previews.Agent do
 
     if is_binary(action) and action in @actions,
       do: {:ok, action},
-      else:
-        {:error,
-         Error.from({:unprocessable, "preview_action", "Unknown preview helper command."})}
+      else: {:error, {:unprocessable, "preview_action", "Unknown preview helper command."}}
   end
 
   # Fresh, not memoised: this is the check that the helper's grant still
@@ -287,10 +283,8 @@ defmodule Ravix.Previews.Agent do
     else
       _ ->
         {:error,
-         Error.from(
-           {:conflict, "preview_replaced",
-            "The workspace changed. Send another message to renew the helper."}
-         )}
+         {:conflict, "preview_replaced",
+          "The workspace changed. Send another message to renew the helper."}}
     end
   end
 
@@ -314,7 +308,7 @@ defmodule Ravix.Previews.Agent do
          :ok <- Previews.configure(track_id, config) do
       :ok
     else
-      {:error, reason} -> {:error, Error.from(reason)}
+      {:error, reason} -> {:error, reason}
     end
   end
 
@@ -331,8 +325,8 @@ defmodule Ravix.Previews.Agent do
   defp perform(_status, _track_id, _body), do: :ok
 
   defp wrap(:ok), do: :ok
-  defp wrap({:error, reason}), do: {:error, Error.from(reason)}
+  defp wrap({:error, reason}), do: {:error, reason}
 
   defp auth_error(message),
-    do: {:error, %Error{status: 401, code: "preview_agent_auth", message: message}}
+    do: {:error, {:preview_agent_auth, message}}
 end

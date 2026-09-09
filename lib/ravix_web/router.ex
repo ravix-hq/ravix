@@ -34,6 +34,11 @@ defmodule RavixWeb.Router do
   # Not a page, and not behind the session: Render's health check.
   get "/healthz", RavixWeb.HealthController, :show
 
+  scope "/api", RavixWeb do
+    pipe_through :api
+    post "/tracks/:track_id/preview/agent", PreviewController, :agent
+  end
+
   scope "/", RavixWeb do
     pipe_through :browser
 

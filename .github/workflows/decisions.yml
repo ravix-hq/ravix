@@ -8,15 +8,7 @@ name: Decisions
 on:
   push:
     branches: [main]
-    paths:
-      - 'decisions/**'
-      - 'scripts/decisions-index.sh'
-      - '.github/workflows/decisions.yml'
   pull_request:
-    paths:
-      - 'decisions/**'
-      - 'scripts/decisions-index.sh'
-      - '.github/workflows/decisions.yml'
 
 permissions:
   contents: read

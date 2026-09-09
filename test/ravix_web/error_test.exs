@@ -5,6 +5,8 @@ defmodule RavixWeb.ErrorTest do
   test "context refusal shapes preserve their public status and code" do
     for {reason, status, code} <- [
           {:not_found, 404, "not_found"},
+          {{:preview_agent_auth, "Expired"}, 401, "preview_agent_auth"},
+          {{:preview_unavailable, "Unavailable"}, 501, "preview_unavailable"},
           {:unauthenticated, 401, "unauthenticated"},
           {:session_ended, 401, "unauthenticated"},
           {:reauthenticate, 401, "reauthenticate"},

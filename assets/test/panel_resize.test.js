@@ -52,3 +52,24 @@ test("pointer dragging captures its pointer, ignores others, and cleans up on ca
   hook.el.dispatchEvent(new PointerEvent("lostpointercapture"))
   expect(hook.drag).toBeNull()
 })
+
+test("server patches restore the current accessible width", () => {
+  const {hook} = mountHook(PanelResize,"#handle")
+  key(hook.el,"Home")
+  hook.el.removeAttribute("aria-valuenow")
+  hook.el.removeAttribute("aria-valuemin")
+  hook.updated()
+  expect(hook.el.getAttribute("aria-valuenow")).toBe("220")
+  expect(hook.el.getAttribute("aria-valuemin")).toBe("220")
+})
+
+test("the left handle measures the sidebar even when mounted in the main panel", () => {
+  const app = document.querySelector(".app")
+  const yard = document.createElement("aside")
+  yard.className = "yard"
+  yard.getBoundingClientRect = () => ({width:248})
+  app.prepend(yard)
+  const {hook} = mountHook(PanelResize,"#handle")
+  expect(hook.panel()).toBe(yard)
+  expect(hook.el.getAttribute("aria-valuenow")).toBe("248")
+})

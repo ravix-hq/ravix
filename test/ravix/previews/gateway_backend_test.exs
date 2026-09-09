@@ -1,17 +1,18 @@
-defmodule Ravix.Previews.GatewayBackendTest do
+defmodule RavixWeb.PreviewGateway.RavixBackendTest do
   @moduledoc """
   The backend the gateway is built against, answered by the previews
   context: host resolution, the grant checks the proxy repeats on every
   request, and the destination.
   """
-  use Ravix.DataCase, async: true
+  use Ravix.DataCase, async: true, group: :preview_ports
   use Mimic
 
   import Ravix.PreviewsFixture
 
   alias Ravix.Previews
-  alias Ravix.Previews.{GatewayBackend, Row, Store}
+  alias Ravix.Previews.{Row, Store}
   alias Ravix.Tracks.Track
+  alias RavixWeb.PreviewGateway.RavixBackend, as: GatewayBackend
 
   setup do
     start_tree()

@@ -51,6 +51,12 @@ defmodule RavixWeb.Error do
     %__MODULE__{status: 404, code: "not_found", message: message}
   end
 
+  def from({:preview_agent_auth, message}, _opts),
+    do: %__MODULE__{status: 401, code: "preview_agent_auth", message: message}
+
+  def from({:preview_unavailable, message}, _opts),
+    do: %__MODULE__{status: 501, code: "preview_unavailable", message: message}
+
   def from(:unauthenticated, _opts),
     do: %__MODULE__{status: 401, code: "unauthenticated", message: "Sign in with GitHub."}
 

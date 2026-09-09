@@ -1107,7 +1107,7 @@ Bun.serve({
  * out a token for any JWT — but `appJwt()` really does sign, so the PEM has to
  * be a real one or the server falls over before it ever gets here.
  */
-const keyPath = join(import.meta.dir, "dev-key.pem");
+const keyPath = process.env.MOCK_KEY_PATH || join(import.meta.dir, "dev-key.pem");
 if (!existsSync(keyPath)) {
   const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
   writeFileSync(keyPath, privateKey.export({ type: "pkcs8", format: "pem" }).toString(), { mode: 0o600 });

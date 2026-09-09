@@ -17,18 +17,22 @@
       <button
         :if={owner_or_creator?(@current_user, @track)}
         class="ghost"
-        phx-click="dialog"
+        phx-click={JS.push_focus() |> JS.push("dialog")}
         phx-value-name="rename"
       >
         {@track.title}
       </button>
       <strong :if={!owner_or_creator?(@current_user, @track)}>{@track.title}</strong>
       <span class="chip mono">{@track.branch}</span><span class="chip">{@track.status}</span>
-      <span class="spacer"></span><button class="ghost" phx-click="dialog" phx-value-name="people">People ({length(@present)})</button>
+      <span class="spacer"></span><button
+        class="ghost"
+        phx-click={JS.push_focus() |> JS.push("dialog")}
+        phx-value-name="people"
+      >People ({length(@present)})</button>
       <button
         :if={owner_or_creator?(@current_user, @track)}
         class="ghost"
-        phx-click="dialog"
+        phx-click={JS.push_focus() |> JS.push("dialog")}
         phx-value-name="close"
       >
         Close track
@@ -257,7 +261,12 @@
               <span :if={!check.url}>{check.name}</span>
               <span class="chip">{check.conclusion || check.status}</span>
             </div>
-            <button :if={@project.repo} class="primary" phx-click="dialog" phx-value-name="pull">
+            <button
+              :if={@project.repo}
+              class="primary"
+              phx-click={JS.push_focus() |> JS.push("dialog")}
+              phx-value-name="pull"
+            >
               Open pull request
             </button>
           </div>

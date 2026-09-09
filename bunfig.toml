@@ -5,5 +5,5 @@ coverage = true
 coverageReporter = ["text", "lcov"]
 coverageDir = "./cover/hooks"
 coverageSkipTestFiles = true
-coveragePathIgnorePatterns = ["**/node_modules/**", "assets/test/**"]
+coveragePathIgnorePatterns = ["**/node_modules/**", "assets/test/**", "scripts/**"]
 coverageThreshold = { lines = 0.9, functions = 0.9 }

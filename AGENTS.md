@@ -14,9 +14,12 @@ mix setup
 bun install --frozen-lockfile
 mix test test/ravix/tracks_test.exs       # focused server checks
 mix test test/ravix_web/track_live_test.exs # focused LiveView checks
-bun test                               # all five browser hooks, with coverage
+bun test                               # browser hooks and repository guard fixtures
 mix test --cover                       # production-only coverage groups + HTML
-mix precommit                          # complete local quality gate
+mix precommit                          # local analysis, tests, guard probes, release
+bunx playwright install chromium       # once per Playwright upgrade
+bun run test:browser                    # real Chromium + isolated app/providers/DB
+python3 scripts/secrets.py git .        # redacted history scan
 ```
 
 `python3 scripts/dev-mock.py` starts Phoenix against the local mock; start
@@ -53,8 +56,9 @@ Ecto uses the `ravix` PostgreSQL schema, including migration history. Legacy
 Bun tables in `public` are preserved, not imported. Use the existing migration
 aliases and release migration entry point; never point cleanup at `public`.
 
-Use supervised processes for background work. `Task.async` is for tasks the
-caller awaits; unlinked work belongs under `Ravix.TaskSupervisor`. Use monitors,
+Use supervised processes for production work. Use `Task.Supervisor.async_nolink`
+with an explicit await when a caller owns the result; background work belongs
+under `Ravix.TaskSupervisor`. Bare `Task.async` is allowed in tests only. Use monitors,
 messages, or `render_async` to synchronize tests. A sleep is not proof of readiness.
 A cache invalidation must still answer existing waiters and reject stale writes.
 
@@ -89,6 +93,26 @@ PR descriptions. Do not merge or deploy merely because checks passed.
   coverage gaps, and raise the server/UI gates without hiding untested behavior.
 - `.agents/skills/ravix-elixir/SKILL.md`: implement scoped contexts and supervised
   LiveView/OTP work while preserving the project, track, and preview boundaries.
+
+The custom Credo check in `credo/checks/architecture.ex` enforces web/context
+separation, supervision, and `# ownership: ...` explanations on remote unsafe
+calls. Application startup is the one composition-root exception. Tests prove
+both rejection and acceptance; comments alone do not establish authorization.
+Preview suites sharing the fixture's `s1`/`s2` ports use `group: :preview_ports`
+to avoid cross-transaction uniqueness waits while unrelated suites run in parallel.
+
+Browser tests use production configuration and create/drop only a generated
+`ravix_browser_*` database. Ports 4103/8893/8894 must be free; no existing server
+is reused. `BROWSER_DATABASE_SERVER` can change local PostgreSQL credentials.
+Keep browser tests under `browser/` and retain failure traces. Axe covers the
+default theme; manual checks still matter for other themes and assistive devices.
+
+`bun scripts/quality.mjs` checks pinned runtimes/actions and shared agent files.
+`python3 scripts/coverage-self-test.py` runs disposable negative coverage fixtures.
+The secret scanner has a `self-test` command; `.gitleaksignore` allows only exact,
+reviewed historical fixture fingerprints. Never add a blanket path exemption.
+Dependabot proposes weekly updates; scheduled audits detect new advisories even
+without a code change. Update matching runtime pins together and run the guards.
 
 Claude uses the same guide and skills through symlinks, so edits do not drift.
 Fountain at `~/dev/binarybourbon/fountain` is a useful reference for its ownership

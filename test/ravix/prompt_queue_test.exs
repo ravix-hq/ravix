@@ -1,31 +1,3 @@
-# Wave 2 scaffolding: `Ravix.Previews` is the previews agent's module and
-# the queue calls it by name. Until it lands, this file defines the smallest
-# honest version so the port can be exercised. The block vanishes the moment
-# the real module exists; `preview_hook/2` below stubs whichever is present.
-unless Code.ensure_loaded?(Ravix.Previews) do
-  defmodule Ravix.Previews do
-    @moduledoc false
-
-    def __shim__, do: true
-
-    def prepare_agent_preview(row) do
-      case :persistent_term.get({__MODULE__, :prepare, row.track_id}, nil) do
-        nil -> ""
-        fun -> fun.(row)
-      end
-    end
-
-    def revoke_agent(track_id, _user_id) do
-      case :persistent_term.get({__MODULE__, :revoke, track_id}, nil) do
-        nil -> :ok
-        pid -> send(pid, {:revoked_agent, track_id})
-      end
-
-      :ok
-    end
-  end
-end
-
 defmodule Ravix.PromptQueueTest do
   use Ravix.DataCase, async: true
   use Mimic
@@ -75,13 +47,8 @@ defmodule Ravix.PromptQueueTest do
 
     pid = start_supervised!(spec)
     Sandbox.allow(Repo, self(), pid)
-    for mod <- [Ravix.Fountain, Ravix.Projects | copied_previews()], do: allow(mod, self(), pid)
+    for mod <- [Ravix.Fountain, Ravix.Projects, Ravix.Previews], do: allow(mod, self(), pid)
     pid
-  end
-
-  # The scaffold above cannot be copied by Mimic (it has no beam file); the real module is.
-  defp copied_previews do
-    if function_exported?(Ravix.Previews, :__shim__, 0), do: [], else: [Ravix.Previews]
   end
 
   # A scripted Fountain behind `Ravix.Fountain.client/0`.
@@ -149,24 +116,14 @@ defmodule Ravix.PromptQueueTest do
     Repo.update!(Ecto.Changeset.change(track, closed_at: DateTime.utc_now()))
   end
 
-  defp preview_hook(track, fun) do
-    if function_exported?(Ravix.Previews, :__shim__, 0) do
-      :persistent_term.put({Ravix.Previews, :prepare, track.id}, fun)
-      :persistent_term.put({Ravix.Previews, :revoke, track.id}, self())
+  defp preview_hook(_track, fun) do
+    test = self()
+    stub(Ravix.Previews, :prepare_agent_preview, fun)
 
-      on_exit(fn ->
-        :persistent_term.erase({Ravix.Previews, :prepare, track.id})
-        :persistent_term.erase({Ravix.Previews, :revoke, track.id})
-      end)
-    else
-      test = self()
-      stub(Ravix.Previews, :prepare_agent_preview, fun)
-
-      stub(Ravix.Previews, :revoke_agent, fn track_id, _user_id ->
-        send(test, {:revoked_agent, track_id})
-        :ok
-      end)
-    end
+    stub(Ravix.Previews, :revoke_agent, fn track_id, _user_id ->
+      send(test, {:revoked_agent, track_id})
+      :ok
+    end)
   end
 
   defp status_of(id), do: PromptQueue.get(id).status

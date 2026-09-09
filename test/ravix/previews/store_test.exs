@@ -1,5 +1,5 @@
 defmodule Ravix.Previews.StoreTest do
-  use Ravix.DataCase, async: true
+  use Ravix.DataCase, async: true, group: :preview_ports
 
   alias Ravix.Previews.{Row, Store}
 

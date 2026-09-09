@@ -37,7 +37,7 @@ is required before production cutover; retaining tables is not an import.
 
 - The recovered backend's 19 test failures were resolved, including presence
   metadata, follower subscription/lifecycle, and transcript event handling.
-- The final local suite passes: 707 tests, zero failures, 91.98% production-only coverage.
+- The final local suite passes: 715 tests, zero failures, 92.06% production-only coverage.
 - The suite includes LiveView tests for scoped navigation, session expiry,
   membership revocation, project settings, prompt handling, files, changes,
   checks, previews, and fresh preview tickets.

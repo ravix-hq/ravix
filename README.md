@@ -178,3 +178,16 @@ safe upload, escaped markdown, and preview-origin response functions.
 The Bun server, React SPA, runner, and browser ACP parser were removed in the
 Elixir migration. Their source remains in Git history. Older feature briefs in
 `docs/` describe the pre-migration system and are historical references.
+
+### Additional quality guards
+
+`bun run test:browser` runs Chromium against a disposable production-mode app,
+provider mocks, and a generated PostgreSQL database (ports 4103/8893/8894).
+Install Chromium once with `bunx playwright install chromium`, and build assets
+with `MIX_ENV=prod mix assets.deploy` first. Node is pinned alongside Elixir/OTP
+and Bun in `.tool-versions`.
+
+CI also enforces architecture rules, secret/dependency scans, agent-guide and
+version consistency, generated lifecycle invariants, and negative fixtures for
+the guards themselves. See [engineering quality](docs/engineering-quality.md)
+for the required checks, local commands, and the boundaries each guard proves.

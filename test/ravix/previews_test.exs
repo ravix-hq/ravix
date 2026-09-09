@@ -3,7 +3,7 @@ defmodule Ravix.PreviewsTest do
   The route half of `server/previews.test.ts`: who may operate what,
   configuration validation, tickets, defaults, and the info shape.
   """
-  use Ravix.DataCase, async: true
+  use Ravix.DataCase, async: true, group: :preview_ports
   use Mimic
 
   import Ravix.PreviewsFixture

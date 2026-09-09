@@ -39,3 +39,20 @@ Finish with `mix precommit` and the container smoke test if release/configuratio
 changed. Raise sustainable coverage floors, retaining failure-path assertions.
 Document real-browser checks separately from DOM and LiveView tests; no single
 coverage percentage proves integration or visual parity.
+
+Real-browser checks live in `browser/`. Run `bun run test:browser` after
+`MIX_ENV=prod mix assets.deploy`; install Chromium with
+`bunx playwright install chromium` once. The harness owns its generated database
+and mock processes. Never reuse a developer's server or change tests to accept
+an unverified outcome. Assert transport reconnect, actual upload submission,
+revocation, keyboard focus and accessibility in the running application.
+
+Use `ExUnitProperties` for event sequences. See `lifecycle_properties_test.exs`
+and the preview reconciler property. Synchronize pending work with messages and
+verify every task settles before teardown. Suites using the fixture's fixed
+preview ports belong to `group: :preview_ports`.
+
+Guard changes must include negative evidence: `architecture_test.exs`, the
+repository metadata tests, coverage-self-test.py, and the secret scanner's
+`self-test` exercise rejection paths. A green command with invalid tests is not
+successful validation; inspect the suite summary and fix setup failures.

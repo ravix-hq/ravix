@@ -1,9 +1,9 @@
-defmodule Ravix.Previews.GatewayBackend do
+defmodule RavixWeb.PreviewGateway.RavixBackend do
   @moduledoc """
   What the preview gateway asks of the rest of Ravix, answered by this
   context: `RavixWeb.PreviewGateway.Backend`, one callback each.
 
-  Configured as `config :ravix, preview_backend: Ravix.Previews.GatewayBackend`.
+  Configured as `config :ravix, preview_backend: RavixWeb.PreviewGateway.RavixBackend`.
   Refusals that carry an HTTP status (`assert_open/1`, `destination/1`)
   come back as `%{status, message}` maps through `RavixWeb.Error.from/1`,
   which is what the gateway reads to answer the browser.

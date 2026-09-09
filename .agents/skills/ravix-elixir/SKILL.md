@@ -40,3 +40,11 @@ Keep tagged results and finite atoms at provider boundaries. New suppressions
 need a specific documented false positive and behavior evidence. Run focused
 regressions followed by `mix precommit`; use the repository testing skill when
 working through coverage gaps.
+
+`credo/checks/architecture.ex` makes the context/web direction, remote unsafe
+ownership comments, and supervised production tasks mandatory. Use
+`Task.Supervisor.async_nolink` plus await for owned results; bare Task spawning
+is reserved for tests. Translate tagged preview errors in `RavixWeb.Error`.
+The HTTP gateway adapter lives under `RavixWeb.PreviewGateway`; context code
+must not depend on it. Test routes at the request boundary as well as contexts,
+so an implemented handler cannot silently remain unreachable.

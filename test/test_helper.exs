@@ -11,6 +11,7 @@ for mod <- [
       Ravix.Accounts,
       Ravix.People,
       Ravix.Previews,
+      Ravix.Previews.Agent,
       Ravix.Tracks,
       Ravix.Projects,
       Ravix.PromptQueue,

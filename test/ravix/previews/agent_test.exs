@@ -4,7 +4,7 @@ defmodule Ravix.Previews.AgentTest do
   the shell helper itself, the visible prompt, and what the helper's
   credential may and may not do.
   """
-  use Ravix.DataCase, async: true
+  use Ravix.DataCase, async: true, group: :preview_ports
   use Mimic
 
   import Ravix.PreviewsFixture
@@ -13,7 +13,6 @@ defmodule Ravix.Previews.AgentTest do
   alias Ravix.Previews.{Agent, Store}
   alias Ravix.PromptQueue.Item
   alias Ravix.Tracks.Track
-  alias RavixWeb.Error
 
   defmodule Upstream do
     @moduledoc false
@@ -145,12 +144,12 @@ defmodule Ravix.Previews.AgentTest do
       assert instructions =~ "hosts under .preview.localhost"
       assert hd(state(p).execs) |> Enum.at(2) =~ "umask 077"
 
-      assert {:error, %Error{status: 401}} = call.("status", nil, t2.id, token)
+      assert {:error, {:preview_agent_auth, _}} = call.("status", nil, t2.id, token)
 
-      assert {:error, %Error{status: 422, code: "preview_action"}} =
+      assert {:error, {:unprocessable, "preview_action", _}} =
                call.("open", nil, t1.id, token)
 
-      assert {:error, %Error{status: 422}} = call.("project-defaults", nil, t1.id, token)
+      assert {:error, {:unprocessable, _, _}} = call.("project-defaults", nil, t1.id, token)
 
       config = %{
         "directory" => "apps/web",
@@ -184,7 +183,7 @@ defmodule Ravix.Previews.AgentTest do
       hash = Ravix.Crypto.sha256(token)
       grant = Store.agent_grant(hash)
       assert :ok = Store.grant_agent(%{grant | expires: now(p) - 1})
-      assert {:error, %Error{status: 401}} = call.("status", nil, t1.id, token)
+      assert {:error, {:preview_agent_auth, _}} = call.("status", nil, t1.id, token)
       assert :ok = Store.grant_agent(%{grant | expires: now(p) + 60_000})
       assert {:ok, _} = call.("status", nil, t1.id, token)
 
@@ -192,11 +191,11 @@ defmodule Ravix.Previews.AgentTest do
       Repo.delete_all(from m in Ravix.Tracks.TrackMember, where: m.track_id == ^t1.id)
       Previews.revoke_agent(t1.id, guest.id)
       insert_track_member(t1, guest)
-      assert {:error, %Error{status: 401}} = call.("configure", nil, t1.id, token)
+      assert {:error, {:preview_agent_auth, _}} = call.("configure", nil, t1.id, token)
 
       # The next turn rotates the credential; the old one stays dead.
       Previews.prepare_agent_preview(prompt)
-      assert {:error, %Error{status: 401}} = call.("status", nil, t1.id, token)
+      assert {:error, {:preview_agent_auth, _}} = call.("status", nil, t1.id, token)
     end
 
     test "rejects cancelled turns, replacement conversations, changed sandboxes and closed tracks",
@@ -212,24 +211,24 @@ defmodule Ravix.Previews.AgentTest do
       end
 
       set_status.(:cancelled)
-      assert {:error, %Error{status: 401}} = call.("status", nil, t1.id, token)
+      assert {:error, {:preview_agent_auth, _}} = call.("status", nil, t1.id, token)
       set_status.(:sent)
       assert {:ok, _} = call.("status", nil, t1.id, token)
 
       Repo.update!(Ecto.Changeset.change(Repo.get!(Track, t1.id), conversation_id: "replacement"))
-      assert {:error, %Error{status: 401}} = call.("status", nil, t1.id, token)
+      assert {:error, {:preview_agent_auth, _}} = call.("status", nil, t1.id, token)
       Repo.update!(Ecto.Changeset.change(Repo.get!(Track, t1.id), conversation_id: "t1"))
 
       put(p, :sandbox, "s2")
 
-      assert {:error, %Error{status: 409, code: "preview_replaced"}} =
+      assert {:error, {:conflict, "preview_replaced", _}} =
                call.("configure", nil, t1.id, token)
 
       put(p, :sandbox, "s1")
 
       Repo.update!(Ecto.Changeset.change(Repo.get!(Track, t1.id), closed_at: DateTime.utc_now()))
 
-      assert {:error, %Error{status: 409, code: "closed_track"}} =
+      assert {:error, {:conflict, "closed_track", _}} =
                call.("status", nil, t1.id, token)
     end
 
@@ -238,14 +237,14 @@ defmodule Ravix.Previews.AgentTest do
       token: token,
       call: call
     } do
-      assert {:error, %Error{status: 401}} = Agent.route(t1.id, nil, %{"action" => "status"})
+      assert {:error, {:preview_agent_auth, _}} = Agent.route(t1.id, nil, %{"action" => "status"})
 
-      assert {:error, %Error{status: 401}} =
+      assert {:error, {:preview_agent_auth, _}} =
                Agent.route(t1.id, "Bearer short", %{"action" => "status"})
 
       stub(Ravix.Config, :sprites, fn -> nil end)
 
-      assert {:error, %Error{status: 501, code: "preview_unavailable"}} =
+      assert {:error, {:preview_unavailable, _}} =
                call.("status", nil, t1.id, token)
     end
 
@@ -253,7 +252,7 @@ defmodule Ravix.Previews.AgentTest do
     test "grants are revoked by track cleanup", %{t1: t1, token: token, call: call} do
       assert {:ok, _} = call.("status", nil, t1.id, token)
       assert :ok = Previews.stop_service(t1.id, true)
-      assert {:error, %Error{status: 401}} = call.("status", nil, t1.id, token)
+      assert {:error, {:preview_agent_auth, _}} = call.("status", nil, t1.id, token)
     end
   end
 

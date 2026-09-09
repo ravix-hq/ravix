@@ -1,5 +1,5 @@
 defmodule Ravix.Previews.ServerFailureTest do
-  use Ravix.DataCase, async: true
+  use Ravix.DataCase, async: true, group: :preview_ports
   use Mimic
   import Ravix.PreviewsFixture
   alias Ravix.{Previews, Tracks}

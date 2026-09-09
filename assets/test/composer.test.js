@@ -105,3 +105,15 @@ test("drag feedback ignores text and remains while moving within the composer", 
   expect(hook.box().classList.contains("dragging")).toBe(false)
   expect(hook.attach(null)).toBe(false)
 })
+
+test("an empty reconnect patch restores the draft but an acknowledgement clears it", () => {
+  const {hook, receive} = mountHook(Composer,"textarea")
+  hook.el.value = "Unsent after reconnect"
+  hook.el.dispatchEvent(new Event("input"))
+  hook.el.value = ""
+  hook.updated()
+  expect(hook.el.value).toBe("Unsent after reconnect")
+  receive("composer:clear")
+  hook.updated()
+  expect(hook.el.value).toBe("")
+})

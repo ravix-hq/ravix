@@ -4,17 +4,17 @@ The migration's first gate reported 86.99% coverage, including test support.
 The production-only baseline was server 90.77%, web 73.35%, workspace LiveView
 41.13%, and track LiveView 37.37%. The aggregate hid the new UI's gaps.
 
-The strengthened local gate passes 707 ExUnit tests and 18 DOM tests:
+The strengthened local gate passes 715 ExUnit tests, four generated properties, and 26 DOM/guard tests:
 
 | Area | Production baseline | Current coverage | Enforced floor |
 |---|---:|---:|---:|
-| Server | 90.77% | 92.26% | 92% |
-| Web | 73.35% | 91.20% | 90% |
+| Server | 90.77% | 92.28% | 92% |
+| Web | 73.35% | 91.47% | 90% |
 | Workspace LiveView | 41.13% | 92.91% | 92% |
 | Track LiveView | 37.37% | 93.43% | 92% |
 | Browser hooks | Not measured | 99.09% lines / 98.57% functions | 90% per file |
 
-Overall production line coverage is 91.98%. The old 86.99% aggregate included
+Overall production line coverage is 92.06%. The old 86.99% aggregate included
 test support and is therefore not directly comparable to this production total.
 
 ## Gates
@@ -92,3 +92,66 @@ When a behavior changes, add a regression at the layer that can observe it,
 inspect the affected report, and raise the applicable floor when the measured
 improvement is sustainable. Do not lower a floor or exclude runtime logic to
 make a build pass. Retain failure evidence and investigate races before retrying.
+
+## Required guards
+
+Nine checks form the merge gate: test, static analysis, browser hooks, browser
+smoke, release assembles and boots, Docker release and cutover, okf validate,
+secret scan, and dependency audit. The decisions workflow runs on every PR so
+required checks cannot remain pending because of a path filter. Branch protection
+requires these checks on an up-to-date PR, including for administrators, and
+disables force pushes and branch deletion. Reviews remain a human choice; no
+approval count is imposed.
+
+The browser job uses Chromium against the production configuration, actual
+LiveSocket traffic, and local Fountain/GitHub/Sprites transports. Each invocation
+owns fresh provider processes and a uniquely named database that is dropped on
+exit. It refuses occupied ports. No test-only authentication route is installed.
+The flows cover OAuth, repository/project/track creation, streamed output, image
+submission, draft retention across transport reconnect, session revocation in a
+second tab, keyboard resizing/dialog focus, and axe checks for the default theme.
+Failure traces and screenshots are retained for seven days; retries are disabled.
+
+Run locally after `bunx playwright install chromium`:
+
+```sh
+MIX_ENV=prod mix assets.deploy
+bun run test:browser
+```
+
+The browser regressions found and fixed faint text with insufficient contrast,
+resize ARIA attributes lost after server patches, the sidebar handle measuring
+its neighbouring main panel, lost drafts on reconnect, and dialog focus not
+returning to its trigger. DOM regressions supplement these browser checks.
+
+The architecture Credo check rejects web dependencies from contexts, remote
+`_unsafe_*` calls without an ownership explanation, and unsupervised production
+Task/spawn work. `Ravix.Application` is the composition-root exception to the
+web dependency rule. Static checks cover explicit calls and aliases, not arbitrary
+runtime metaprogramming; ownership comments are review aids, not access proofs.
+The preview gateway adapter now lives in the web layer, and the agent context
+returns tagged errors. A request-level regression also exposed and fixed the
+missing `/api/tracks/:track_id/preview/agent` route; it uses the existing scoped
+bearer capability without accepting browser cookies as authorization.
+
+Generated properties exercise cache completions across invalidated generations,
+terminal queue states under late responses and restart recovery, overlapping
+transcript snapshots with out-of-order replay, and repeated preview intent
+changes while startup is blocked. Delayed LiveView responses are rejected after
+session revocation or track closure. Preview suites share the `:preview_ports`
+ExUnit group because their deterministic provider names share uniqueness keys;
+other groups remain parallel.
+
+Secret scanning uses checksum-pinned Gitleaks with redacted output, including a
+negative synthetic-token fixture. Five exact historical fingerprints cover
+public development keys, PEM-header assertions, and the RFC WebSocket example
+nonce; whole files are not exempted. Dependabot proposes weekly Mix, Bun, Docker,
+and Actions updates. Weekly and manually triggered audits check Hex and Bun
+advisories even when the app has not changed. CI actions use immutable commits.
+
+`bun scripts/quality.mjs` validates runtime pins, immutable Actions, workflow
+triggers, and agent guides/skills; negative fixtures are part of `bun test`.
+`python3 scripts/coverage-self-test.py` creates disposable projects to prove low
+production totals, low groups, empty groups, and a newly untested hook all fail.
+It runs in CI and `mix precommit`. Custom Credo tests verify positive/negative
+examples and that the real configuration enables the check.

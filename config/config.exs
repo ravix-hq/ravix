@@ -11,7 +11,7 @@ config :ravix,
   ecto_repos: [Ravix.Repo],
   generators: [timestamp_type: :utc_datetime],
   # The preview gateway's window onto the previews context.
-  preview_backend: Ravix.Previews.GatewayBackend
+  preview_backend: RavixWeb.PreviewGateway.RavixBackend
 
 # Configure the endpoint
 config :ravix, RavixWeb.Endpoint,

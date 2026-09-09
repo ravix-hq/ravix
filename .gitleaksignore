@@ -1,0 +1,8 @@
+# Generated Phoenix development/test cookie keys, never used in production.
+6b06bf899801c204ab701acd5ef467e1cba86dcf:config/dev.exs:generic-api-key:26
+6b06bf899801c204ab701acd5ef467e1cba86dcf:config/test.exs:generic-api-key:20
+# Assertions containing a PEM header string, not private key material.
+6b06bf899801c204ab701acd5ef467e1cba86dcf:test/ravix/config_test.exs:private-key:57
+3960bec0640d3d1f6351bc42e9d5d5dae745e46e:server/config.test.ts:private-key:29
+# RFC6455's public example WebSocket nonce in the retired runner test.
+41fb7eec7ed05a1dbc0ab4e8e8b7f2ed8c3bee86:runner/tcp-tunnel.test.ts:generic-api-key:124

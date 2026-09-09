@@ -80,8 +80,18 @@
       </div>
       <div class="workspace-actions">
         <.link patch="/inbox" class="ghost">Inbox</.link>
-        <button class="ghost" phx-click="dialog" phx-value-name="search">Search</button>
-        <button class="primary" phx-click="dialog" phx-value-name="new-project">
+        <button
+          class="ghost"
+          phx-click={JS.push_focus() |> JS.push("dialog")}
+          phx-value-name="search"
+        >
+          Search
+        </button>
+        <button
+          class="primary"
+          phx-click={JS.push_focus() |> JS.push("dialog")}
+          phx-value-name="new-project"
+        >
           New project
         </button>
       </div>
@@ -135,9 +145,13 @@
       <nav class="workspace-mobile-nav" aria-label="Workspace navigation">
         <.link patch="/home">Projects</.link><.link patch="/inbox">Inbox</.link><button
           class="ghost"
-          phx-click="dialog"
+          phx-click={JS.push_focus() |> JS.push("dialog")}
           phx-value-name="search"
-        >Tracks</button><button class="ghost" phx-click="dialog" phx-value-name="new-project">New project</button>
+        >Tracks</button><button
+          class="ghost"
+          phx-click={JS.push_focus() |> JS.push("dialog")}
+          phx-value-name="new-project"
+        >New project</button>
       </nav>
       <div
         id="yard-resize"
@@ -159,7 +173,7 @@
         <button
           :if={@project.access != :tracks}
           class="ghost"
-          phx-click="dialog"
+          phx-click={JS.push_focus() |> JS.push("dialog")}
           phx-value-name="new-track"
         >
           New track
@@ -167,7 +181,7 @@
         <button
           :if={@project.access != :tracks}
           class="ghost"
-          phx-click="dialog"
+          phx-click={JS.push_focus() |> JS.push("dialog")}
           phx-value-name="people"
         >
           People
@@ -175,7 +189,7 @@
         <button
           :if={@project.role == :owner}
           class="ghost"
-          phx-click="dialog"
+          phx-click={JS.push_focus() |> JS.push("dialog")}
           phx-value-name="settings"
         >
           Settings
@@ -197,7 +211,7 @@
         <button
           :if={@project.access != :tracks}
           class="primary"
-          phx-click="dialog"
+          phx-click={JS.push_focus() |> JS.push("dialog")}
           phx-value-name="new-track"
         >
           New track
@@ -223,7 +237,11 @@
             {project.name} / {track.title} <span class="chip">{track.status}</span>
           </.link>
         </div>
-        <button class="primary" phx-click="dialog" phx-value-name="new-project">
+        <button
+          class="primary"
+          phx-click={JS.push_focus() |> JS.push("dialog")}
+          phx-value-name="new-project"
+        >
           New project
         </button>
       </div>

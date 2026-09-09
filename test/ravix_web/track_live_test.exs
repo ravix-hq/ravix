@@ -385,6 +385,38 @@ defmodule RavixWeb.TrackLiveTest do
     refute has_element?(ctx.view, "#transcript-turns script")
   end
 
+  for revocation <- [:session, :track] do
+    @revocation revocation
+    test "#{revocation} revocation rejects a delayed provider result", ctx do
+      parent = self()
+
+      stub(Tracks, :files, fn _, _, _ ->
+        send(parent, {:provider_waiting, self()})
+
+        receive do
+          :finish -> {:ok, %{path: "private", entries: [], truncated: false}}
+        after
+          2_000 -> flunk("provider was never released")
+        end
+      end)
+
+      render_click(ctx.view, "refresh-panel")
+      assert_receive {:provider_waiting, provider}
+
+      case @revocation do
+        :session ->
+          token = Plug.Conn.get_session(ctx.conn, :session_token)
+          Ravix.Accounts.end_session(Ravix.Crypto.sha256(token))
+
+        :track ->
+          Repo.update!(Ecto.Changeset.change(ctx.track, closed_at: DateTime.utc_now()))
+      end
+
+      send(provider, :finish)
+      assert_redirect(ctx.parent, if(@revocation == :session, do: "/login", else: "/"), 1_000)
+    end
+  end
+
   defp preview do
     %{state: :stopped, available: true, unavailable_reason: nil, config: nil, logs: "", url: nil}
   end

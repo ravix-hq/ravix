@@ -87,6 +87,10 @@ export const PanelResize = {
     })
   },
 
+  updated() {
+    this.reflect()
+  },
+
   destroyed() {
     this.observer?.disconnect()
   },
@@ -100,7 +104,7 @@ export const PanelResize = {
   },
 
   panel() {
-    return this.el.parentElement
+    return (this.side === "left" && this.app().querySelector(".yard")) || this.el.parentElement
   },
 
   stop() {
