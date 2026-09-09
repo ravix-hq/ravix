@@ -1,4 +1,4 @@
-import type { Database } from 'bun:sqlite';
+import type { Sql } from './sql';
 import type { RunnerCapabilities } from '../shared/runners';
 import { RUNNER } from '../shared/runners';
 import type { NativePlatform } from '../shared/native-preview';
@@ -41,121 +41,112 @@ export interface NativeRequest {
 }
 type Context = Pick<NativeRequest, 'trackId' | 'projectId' | 'userId' | 'sessionHash' | 'projectRevision' | 'agentId' | 'workdir'>;
 const terminal = (phase: string) => ['Stopped', 'Failed'].includes(phase);
-/** Persisted intent and transactional capacity; socket objects never enter SQLite. */
+/** Persisted intent and transactional capacity; socket objects never enter the database.
+ *
+ * Every read-modify-write here runs in a transaction. They were written when
+ * the store was synchronous and nothing could interleave; the transaction
+ * (serialised, see `sql.ts`) keeps that true now that they await. */
 export class RunnerStore {
-    constructor(private db: Database) {
-        db.exec(`CREATE TABLE IF NOT EXISTS native_runner_pairings (hash TEXT PRIMARY KEY, owner TEXT NOT NULL REFERENCES users(id), projects TEXT NOT NULL, expires INTEGER NOT NULL);
+    constructor(private db: Sql) {}
+    async init() {
+        await this.db.exec(`CREATE TABLE IF NOT EXISTS native_runner_pairings (hash TEXT PRIMARY KEY, owner TEXT NOT NULL REFERENCES users(id), projects TEXT NOT NULL, expires BIGINT NOT NULL);
       CREATE TABLE IF NOT EXISTS native_runners (id TEXT PRIMARY KEY, owner TEXT NOT NULL REFERENCES users(id), token_hash TEXT NOT NULL UNIQUE, record TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS native_targets (id TEXT PRIMARY KEY, track_id TEXT NOT NULL REFERENCES tracks(id), platform TEXT NOT NULL, runner_id TEXT NOT NULL REFERENCES native_runners(id), UNIQUE(track_id, platform));
-      CREATE TABLE IF NOT EXISTS native_requests (id TEXT PRIMARY KEY, target_id TEXT NOT NULL REFERENCES native_targets(id), runner_id TEXT NOT NULL REFERENCES native_runners(id), request_id TEXT NOT NULL, record TEXT NOT NULL, UNIQUE(target_id, request_id));`);
+      CREATE TABLE IF NOT EXISTS native_requests (seq INTEGER GENERATED ALWAYS AS IDENTITY, id TEXT PRIMARY KEY, target_id TEXT NOT NULL REFERENCES native_targets(id), runner_id TEXT NOT NULL REFERENCES native_runners(id), request_id TEXT NOT NULL, record TEXT NOT NULL, UNIQUE(target_id, request_id));`);
     }
     pair(hash: string, owner: string, projects: string[], now = Date.now()) {
-        this.db.run('DELETE FROM native_runner_pairings WHERE expires <= ?', [now]);
-        if (this.db.query<{
-            n: number;
-        }, [
-            string
-        ]>('SELECT COUNT(*) AS n FROM native_runner_pairings WHERE owner=?').get(owner)!.n >= 5)
-            throw Error('Five pairings are already pending');
-        this.db.run('INSERT INTO native_runner_pairings VALUES (?,?,?,?)', [hash, owner, JSON.stringify(projects), now + RUNNER.pairingMs]);
+        return this.db.transaction(async () => {
+            await this.db.run('DELETE FROM native_runner_pairings WHERE expires <= $1', [now]);
+            const [pending] = await this.db.query<{ n: number }>('SELECT COUNT(*) AS n FROM native_runner_pairings WHERE owner=$1', [owner]);
+            if ((pending?.n ?? 0) >= 5)
+                throw Error('Five pairings are already pending');
+            await this.db.run('INSERT INTO native_runner_pairings VALUES ($1,$2,$3,$4)', [hash, owner, JSON.stringify(projects), now + RUNNER.pairingMs]);
+        });
     }
     register(pairHash: string, tokenHash: string, name: string, capabilities: RunnerCapabilities, now = Date.now()) {
-        return this.db.transaction(() => {
-            const pair = this.db.query<{
-                owner: string;
-                projects: string;
-                expires: number;
-            }, [
-                string
-            ]>('SELECT * FROM native_runner_pairings WHERE hash=?').get(pairHash);
+        return this.db.transaction(async () => {
+            const [pair] = await this.db.query<{ owner: string; projects: string; expires: number }>('SELECT * FROM native_runner_pairings WHERE hash=$1', [pairHash]);
             if (!pair || pair.expires <= now)
                 throw Error('Pairing expired or already consumed');
-            if (this.runners().filter(r => r.owner === pair.owner && !r.revoked).length >= 8)
+            if ((await this.runners()).filter(r => r.owner === pair.owner && !r.revoked).length >= 8)
                 throw Error('Eight runners are already registered');
             const runner: RegisteredRunner = { id: crypto.randomUUID(), owner: pair.owner, name, tokenHash, projects: JSON.parse(pair.projects), capabilities, epoch: 0, lastSeen: 0, revoked: false };
-            this.db.run('INSERT INTO native_runners VALUES (?,?,?,?)', [runner.id, runner.owner, tokenHash, JSON.stringify(runner)]);
-            this.db.run('DELETE FROM native_runner_pairings WHERE hash=?', [pairHash]);
+            await this.db.run('INSERT INTO native_runners VALUES ($1,$2,$3,$4)', [runner.id, runner.owner, tokenHash, JSON.stringify(runner)]);
+            await this.db.run('DELETE FROM native_runner_pairings WHERE hash=$1', [pairHash]);
             return runner;
-        }).immediate();
+        });
     }
-    runners(): RegisteredRunner[] { return this.db.query<{
-        record: string;
-    }, [
-    ]>('SELECT record FROM native_runners').all().map(r => JSON.parse(r.record)); }
-    runner(id: string) { const row = this.db.query<{
-        record: string;
-    }, [
-        string
-    ]>('SELECT record FROM native_runners WHERE id=?').get(id); return row ? JSON.parse(row.record) as RegisteredRunner : null; }
-    private saveRunner(r: RegisteredRunner) { this.db.run('UPDATE native_runners SET record=? WHERE id=?', [JSON.stringify(r), r.id]); }
-    requests(): NativeRequest[] { return this.db.query<{
-        record: string;
-    }, [
-    ]>('SELECT record FROM native_requests ORDER BY rowid').all().map(r => JSON.parse(r.record)); }
-    request(id: string) { const row = this.db.query<{
-        record: string;
-    }, [
-        string
-    ]>('SELECT record FROM native_requests WHERE id=?').get(id); return row ? JSON.parse(row.record) as NativeRequest : null; }
-    save(s: NativeRequest) { this.db.run('UPDATE native_requests SET record=? WHERE id=?', [JSON.stringify(s), s.id]); }
-    current(trackId: string) { return this.requests().filter(s => s.trackId === trackId).at(-1) ?? null; }
+    async runners(): Promise<RegisteredRunner[]> { return (await this.db.query<{ record: string }>('SELECT record FROM native_runners')).map(r => JSON.parse(r.record)); }
+    async runner(id: string): Promise<RegisteredRunner | null> { const [row] = await this.db.query<{ record: string }>('SELECT record FROM native_runners WHERE id=$1', [id]); return row ? JSON.parse(row.record) as RegisteredRunner : null; }
+    private async saveRunner(r: RegisteredRunner) { await this.db.run('UPDATE native_runners SET record=$1 WHERE id=$2', [JSON.stringify(r), r.id]); }
+    async requests(): Promise<NativeRequest[]> { return (await this.db.query<{ record: string }>('SELECT record FROM native_requests ORDER BY seq')).map(r => JSON.parse(r.record)); }
+    async request(id: string): Promise<NativeRequest | null> { const [row] = await this.db.query<{ record: string }>('SELECT record FROM native_requests WHERE id=$1', [id]); return row ? JSON.parse(row.record) as NativeRequest : null; }
+    async save(s: NativeRequest) { await this.db.run('UPDATE native_requests SET record=$1 WHERE id=$2', [JSON.stringify(s), s.id]); }
+    async current(trackId: string) { return (await this.requests()).filter(s => s.trackId === trackId).at(-1) ?? null; }
     connect(id: string, now = Date.now()) {
-        return this.db.transaction(() => {
-            const r = this.runner(id);
+        return this.db.transaction(async () => {
+            const r = await this.runner(id);
             if (!r || r.revoked)
                 throw Error('Runner revoked');
             r.epoch++;
             r.lastSeen = now;
-            this.saveRunner(r);
-            for (const s of this.requests().filter(s => s.runnerId === id && !terminal(s.phase) && s.phase !== 'Queued')) {
+            await this.saveRunner(r);
+            for (const s of (await this.requests()).filter(s => s.runnerId === id && !terminal(s.phase) && s.phase !== 'Queued')) {
                 s.phase = 'Reconciling';
-                this.save(s);
+                await this.save(s);
             }
             return r;
-        }).immediate();
+        });
     }
     disconnect(id: string, epoch: number) {
-        const r = this.runner(id);
-        if (!r || r.epoch !== epoch)
-            return;
-        r.lastSeen = 0;
-        this.saveRunner(r);
-        for (const s of this.requests())
-            if (s.runnerId === id && !terminal(s.phase) && s.phase !== 'Queued') {
-                s.phase = 'Reconciling';
-                this.save(s);
-            }
+        return this.db.transaction(async () => {
+            const r = await this.runner(id);
+            if (!r || r.epoch !== epoch)
+                return;
+            r.lastSeen = 0;
+            await this.saveRunner(r);
+            for (const s of await this.requests())
+                if (s.runnerId === id && !terminal(s.phase) && s.phase !== 'Queued') {
+                    s.phase = 'Reconciling';
+                    await this.save(s);
+                }
+        });
     }
     heartbeat(id: string, epoch: number, now = Date.now()) {
-        const r = this.runner(id);
-        if (!r || r.revoked || r.epoch !== epoch)
-            return false;
-        r.lastSeen = now;
-        this.saveRunner(r);
-        return true;
+        return this.db.transaction(async () => {
+            const r = await this.runner(id);
+            if (!r || r.revoked || r.epoch !== epoch)
+                return false;
+            r.lastSeen = now;
+            await this.saveRunner(r);
+            return true;
+        });
     }
-    revoke(id: string) { const r = this.runner(id); if (!r)
-        return; r.revoked = true; r.epoch++; this.saveRunner(r); for (const s of this.requests().filter(s => s.runnerId === id && !terminal(s.phase)))
-        this.stop(s.id, 'Runner revoked'); }
+    revoke(id: string) {
+        return this.db.transaction(async () => {
+            const r = await this.runner(id);
+            if (!r)
+                return;
+            r.revoked = true;
+            r.epoch++;
+            await this.saveRunner(r);
+            for (const s of (await this.requests()).filter(s => s.runnerId === id && !terminal(s.phase)))
+                await this.stop(s.id, 'Runner revoked');
+        });
+    }
     enqueue(context: Context, runnerId: string, platform: NativePlatform, requestId: string, now = Date.now()) {
-        return this.db.transaction(() => {
-            const runner = this.runner(runnerId), build = runner?.capabilities.builds.find(b => b.platform === platform);
+        return this.db.transaction(async () => {
+            const runner = await this.runner(runnerId), build = runner?.capabilities.builds.find(b => b.platform === platform);
             if (!runner || runner.revoked || runner.owner !== context.userId || !runner.projects.includes(context.projectId) || !build)
                 throw Error('Runner unavailable for this project and platform');
-            let target = this.db.query<{
-                id: string;
-                runner_id: string;
-            }, [
-                string,
-                string
-            ]>('SELECT id, runner_id FROM native_targets WHERE track_id=? AND platform=?').get(context.trackId, platform);
+            let [target] = await this.db.query<{ id: string; runner_id: string }>('SELECT id, runner_id FROM native_targets WHERE track_id=$1 AND platform=$2', [context.trackId, platform]);
             if (!target) {
                 target = { id: crypto.randomUUID(), runner_id: runnerId };
-                this.db.run('INSERT INTO native_targets VALUES (?,?,?,?)', [target.id, context.trackId, platform, runnerId]);
+                await this.db.run('INSERT INTO native_targets VALUES ($1,$2,$3,$4)', [target.id, context.trackId, platform, runnerId]);
             }
             if (target.runner_id !== runnerId)
                 throw Error('This target belongs to another runner; restore that runner before resuming');
-            const requests = this.requests(), duplicate = requests.find(s => s.targetId === target!.id && s.requestId === requestId);
+            const requests = await this.requests(), duplicate = requests.find(s => s.targetId === target!.id && s.requestId === requestId);
             if (duplicate)
                 return duplicate;
             const active = requests.find(s => s.trackId === context.trackId && !terminal(s.phase));
@@ -166,16 +157,16 @@ export class RunnerStore {
             if (requests.filter(s => s.projectId === context.projectId).length >= 1000)
                 throw Error('Native request history reached its project limit; review retained evidence before continuing');
             const s: NativeRequest = { ...context, id: crypto.randomUUID(), jobId: crypto.randomUUID(), targetId: target.id, runnerId, platform, requestId, generation: 0, epoch: 0, phase: 'Queued', desired: 'run', leaseUntil: 0, deadline: now + 30 * 60000, lastViewer: now, createdAt: now, error: null, artifactSha256: build.artifactSha256, buildIdentity: JSON.stringify(build) };
-            this.db.run('INSERT INTO native_requests VALUES (?,?,?,?,?)', [s.id, s.targetId, runnerId, requestId, JSON.stringify(s)]);
+            await this.db.run('INSERT INTO native_requests (id, target_id, runner_id, request_id, record) VALUES ($1,$2,$3,$4,$5)', [s.id, s.targetId, runnerId, requestId, JSON.stringify(s)]);
             return s;
-        }).immediate();
+        });
     }
     assign(runnerId: string, epoch: number, now = Date.now()) {
-        return this.db.transaction(() => {
-            const r = this.runner(runnerId);
+        return this.db.transaction(async () => {
+            const r = await this.runner(runnerId);
             if (!r || r.revoked || r.epoch !== epoch || now - r.lastSeen >= RUNNER.leaseMs)
                 return null;
-            const requests = this.requests().filter(s => s.runnerId === runnerId && !terminal(s.phase));
+            const requests = (await this.requests()).filter(s => s.runnerId === runnerId && !terminal(s.phase));
             if (requests.some(s => s.phase !== 'Queued'))
                 return null;
             const s = requests.find(s => s.desired === 'run' && s.deadline > now);
@@ -185,63 +176,85 @@ export class RunnerStore {
             s.generation++;
             s.epoch = epoch;
             s.leaseUntil = now + RUNNER.leaseMs;
-            this.save(s);
+            await this.save(s);
             return s;
-        }).immediate();
+        });
     }
     renew(id: string, runnerId: string, epoch: number, generation: number, now = Date.now()) {
-        const s = this.request(id), r = this.runner(runnerId);
-        if (!s || !r || r.revoked || r.epoch !== epoch || s.runnerId !== runnerId || s.epoch !== epoch || s.generation !== generation || s.desired !== 'run' || s.leaseUntil <= now || s.deadline <= now || ['Queued', 'Reconciling', 'Stopping', 'Stopped', 'Failed'].includes(s.phase))
-            return false;
-        s.leaseUntil = Math.min(now + RUNNER.leaseMs, s.deadline);
-        this.save(s);
-        return true;
+        return this.db.transaction(async () => {
+            const s = await this.request(id), r = await this.runner(runnerId);
+            if (!s || !r || r.revoked || r.epoch !== epoch || s.runnerId !== runnerId || s.epoch !== epoch || s.generation !== generation || s.desired !== 'run' || s.leaseUntil <= now || s.deadline <= now || ['Queued', 'Reconciling', 'Stopping', 'Stopped', 'Failed'].includes(s.phase))
+                return false;
+            s.leaseUntil = Math.min(now + RUNNER.leaseMs, s.deadline);
+            await this.save(s);
+            return true;
+        });
     }
-    stop(id: string, error: string | null = null) { const s = this.request(id); if (!s || terminal(s.phase))
-        return; s.desired = 'stop'; s.error = error; if (s.phase === 'Queued')
-        s.phase = error ? 'Failed' : 'Stopped';
-    else
-        s.phase = 'Stopping'; this.save(s); }
+    stop(id: string, error: string | null = null) {
+        return this.db.transaction(async () => {
+            const s = await this.request(id);
+            if (!s || terminal(s.phase))
+                return;
+            s.desired = 'stop';
+            s.error = error;
+            if (s.phase === 'Queued')
+                s.phase = error ? 'Failed' : 'Stopped';
+            else
+                s.phase = 'Stopping';
+            await this.save(s);
+        });
+    }
     complete(id: string, runnerId: string, epoch: number, generation: number, error: string | null) {
-        const s = this.request(id), r = this.runner(runnerId);
-        if (!s || !r || r.revoked || r.epoch !== epoch || s.epoch !== epoch || s.runnerId !== runnerId || s.generation !== generation || terminal(s.phase))
-            return false;
-        s.error ??= error;
-        s.desired = 'stop';
-        s.phase = s.error ? 'Failed' : 'Stopped';
-        s.leaseUntil = 0;
-        this.save(s);
-        return true;
+        return this.db.transaction(async () => {
+            const s = await this.request(id), r = await this.runner(runnerId);
+            if (!s || !r || r.revoked || r.epoch !== epoch || s.epoch !== epoch || s.runnerId !== runnerId || s.generation !== generation || terminal(s.phase))
+                return false;
+            s.error ??= error;
+            s.desired = 'stop';
+            s.phase = s.error ? 'Failed' : 'Stopped';
+            s.leaseUntil = 0;
+            await this.save(s);
+            return true;
+        });
     }
     recover(now = Date.now()) {
-        for (const s of this.requests())
-            if (!terminal(s.phase) && s.phase !== 'Queued') {
-                s.phase = 'Reconciling';
-                s.leaseUntil = Math.min(s.leaseUntil, now + RUNNER.leaseMs);
-                this.save(s);
+        return this.db.transaction(async () => {
+            for (const s of await this.requests())
+                if (!terminal(s.phase) && s.phase !== 'Queued') {
+                    s.phase = 'Reconciling';
+                    s.leaseUntil = Math.min(s.leaseUntil, now + RUNNER.leaseMs);
+                    await this.save(s);
+                }
+            for (const r of await this.runners()) {
+                r.lastSeen = 0;
+                await this.saveRunner(r);
             }
-        for (const r of this.runners()) {
-            r.lastSeen = 0;
-            this.saveRunner(r);
-        }
+        });
     }
     reconcile(now = Date.now()) {
-        for (const s of this.requests()) {
-            if (terminal(s.phase))
-                continue;
-            if (s.deadline <= now || now - s.lastViewer > 5 * 60000)
-                this.stop(s.id, s.deadline <= now ? 'Session deadline reached' : 'Preview idle');
-            const current = this.request(s.id)!;
-            if (current.phase !== 'Queued' && current.leaseUntil <= now) {
-                current.phase = current.desired === 'run' ? 'Queued' : current.error ? 'Failed' : 'Stopped';
-                current.leaseUntil = 0;
-                this.save(current);
+        return this.db.transaction(async () => {
+            for (const s of await this.requests()) {
+                if (terminal(s.phase))
+                    continue;
+                if (s.deadline <= now || now - s.lastViewer > 5 * 60000)
+                    await this.stop(s.id, s.deadline <= now ? 'Session deadline reached' : 'Preview idle');
+                const current = (await this.request(s.id))!;
+                if (current.phase !== 'Queued' && current.leaseUntil <= now) {
+                    current.phase = current.desired === 'run' ? 'Queued' : current.error ? 'Failed' : 'Stopped';
+                    current.leaseUntil = 0;
+                    await this.save(current);
+                }
             }
-        }
+        });
     }
-    touch(id: string, now = Date.now()) { const s = this.request(id); if (s && !terminal(s.phase)) {
-        s.lastViewer = now;
-        this.save(s);
-    } }
-    position(id: string) { const s = this.request(id); return !s || s.phase !== 'Queued' ? null : this.requests().filter(r => r.runnerId === s.runnerId && r.phase === 'Queued').findIndex(r => r.id === id) + 1; }
+    touch(id: string, now = Date.now()) {
+        return this.db.transaction(async () => {
+            const s = await this.request(id);
+            if (s && !terminal(s.phase)) {
+                s.lastViewer = now;
+                await this.save(s);
+            }
+        });
+    }
+    async position(id: string) { const s = await this.request(id); return !s || s.phase !== 'Queued' ? null : (await this.requests()).filter(r => r.runnerId === s.runnerId && r.phase === 'Queued').findIndex(r => r.id === id) + 1; }
 }

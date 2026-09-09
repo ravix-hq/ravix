@@ -27,20 +27,20 @@ exec curl --fail-with-body --silent --show-error --max-time 90 \\
 
 export async function prepareAgentPreview(ctx: AppContext, prompt: Omit<PromptRow, "payload">): Promise<string> {
   if (previews(ctx).unavailable()) return "";
-  const track = ctx.db.track(prompt.trackId)!;
-  const project = ctx.db.project(track.projectId)!;
+  const track = (await ctx.db.track(prompt.trackId))!;
+  const project = (await ctx.db.project(track.projectId))!;
   let hash: string | undefined;
   try {
     const machine = await machineOf(ctx.fountain!, project);
     const sprite = machine && await spriteFor(ctx.fountain!, machine.sandboxId);
     if (!machine || !sprite) throw new Error("No Sprite");
     const token = randomToken(); hash = await sha256(token);
-    ctx.db.previews.grantAgent({ hash, trackId: track.id, userId: prompt.userId, conversationId: track.conversationId!,
+    await ctx.db.previews.grantAgent({ hash, trackId: track.id, userId: prompt.userId, conversationId: track.conversationId!,
       promptId: prompt.id, sandboxId: machine.sandboxId, sprite, expires: Date.now() + 2 * 60 * 60_000 });
     const path = `${STATE_DIR}/previews/${track.id}.sh`;
     const script = agentPreviewScript(`${ctx.config.publicUrl}/api/tracks/${encodeURIComponent(track.id)}/preview/agent`, token);
     const result = await ctx.sprites!.exec(sprite, ["sh", "-lc", `umask 077; mkdir -p ${shq(`${STATE_DIR}/previews`)} && printf %s ${shq(script)} > ${shq(path + ".tmp")} && mv ${shq(path + ".tmp")} ${shq(path)}`], 15);
-    if (result.code || !ctx.db.previews.agentGrant(hash)) throw new Error("Helper unavailable");
+    if (result.code || !(await ctx.db.previews.agentGrant(hash))) throw new Error("Helper unavailable");
     return [
       AGENT_PREVIEW_START,
       `You can configure this track's live preview with: sh ${shq(path)} <command>.`,
@@ -53,7 +53,7 @@ export async function prepareAgentPreview(ctx: AppContext, prompt: Omit<PromptRo
       AGENT_PREVIEW_END,
     ].join("\n");
   } catch {
-    if (hash && ctx.db.previews.agentGrant(hash)) ctx.db.previews.revokeAgent(track.id);
+    if (hash && await ctx.db.previews.agentGrant(hash)) await ctx.db.previews.revokeAgent(track.id);
     // Optional preview plumbing must never strand an ordinary saved prompt.
     return `${AGENT_PREVIEW_START}\nThe preview helper could not be prepared this turn. Continue the requested work; use the track's preview controls if needed.\n${AGENT_PREVIEW_END}`;
   }
@@ -61,13 +61,13 @@ export async function prepareAgentPreview(ctx: AppContext, prompt: Omit<PromptRo
 
 export async function agentPreviewRoute(ctx: AppContext, req: Request, trackId: string): Promise<Response> {
   const token = /^Bearer ([A-Za-z0-9_-]{20,})$/.exec(req.headers.get("authorization") ?? "")?.[1];
-  const grant = token && ctx.db.previews.agentGrant(await sha256(token));
+  const grant = token && await ctx.db.previews.agentGrant(await sha256(token));
   if (!grant || grant.trackId !== trackId) throw new HttpError(401, "preview_agent_auth", "Preview helper expired. Send another message to renew it.");
-  const user = ctx.db.user(grant.userId);
+  const user = await ctx.db.user(grant.userId);
   if (!user) throw new HttpError(401, "preview_agent_auth", "Preview access ended.");
-  const { track, project } = trackAccess(ctx, user, trackId);
-  const manager = previews(ctx); manager.assertOpen(trackId);
-  const prompt = ctx.db.queuedPrompt(grant.promptId);
+  const { track, project } = await trackAccess(ctx, user, trackId);
+  const manager = previews(ctx); await manager.assertOpen(trackId);
+  const prompt = await ctx.db.queuedPrompt(grant.promptId);
   if (track.conversationId !== grant.conversationId || !prompt || prompt.trackId !== trackId || prompt.userId !== user.id || !["sending", "sent", "unconfirmed"].includes(prompt.status)) {
     throw new HttpError(401, "preview_agent_auth", "This preview helper no longer belongs to an active delivered turn.");
   }
@@ -81,13 +81,13 @@ export async function agentPreviewRoute(ctx: AppContext, req: Request, trackId: 
   const machine = await machineOf(ctx.fountain!, project, { fresh: true });
   if (machine?.sandboxId !== grant.sandboxId || await spriteFor(ctx.fountain!, machine.sandboxId) !== grant.sprite) throw new HttpError(409, "preview_replaced", "The workspace changed. Send another message to renew the helper.");
   // Membership can change during provider reads. Never resurrect a revoked grant.
-  if (!ctx.db.previews.agentGrant(grant.hash)) throw new HttpError(401, "preview_agent_auth", "Preview access ended.");
-  trackAccess(ctx, user, trackId); manager.assertOpen(trackId);
-  const latestPrompt = ctx.db.queuedPrompt(grant.promptId);
-  if (ctx.db.track(trackId)?.conversationId !== grant.conversationId || !latestPrompt || !["sending", "sent", "unconfirmed"].includes(latestPrompt.status)) throw new HttpError(401, "preview_agent_auth", "This preview helper's turn has ended or changed.");
+  if (!(await ctx.db.previews.agentGrant(grant.hash))) throw new HttpError(401, "preview_agent_auth", "Preview access ended.");
+  await trackAccess(ctx, user, trackId); await manager.assertOpen(trackId);
+  const latestPrompt = await ctx.db.queuedPrompt(grant.promptId);
+  if ((await ctx.db.track(trackId))?.conversationId !== grant.conversationId || !latestPrompt || !["sending", "sent", "unconfirmed"].includes(latestPrompt.status)) throw new HttpError(401, "preview_agent_auth", "This preview helper's turn has ended or changed.");
   if (action === "configure") await manager.configure(trackId, parsePreviewConfig(body.config));
   if (action === "start" || action === "restart") void manager.startService(trackId, action === "restart").catch(() => {});
   if (action === "stop") await manager.stopService(trackId);
   if (action === "logs") await manager.refreshLogs(trackId);
-  return json({ data: { ...manager.info(trackId), trackUrl: `${ctx.config.publicUrl}/p/${project.id}/t/${trackId}` } }, 200, { "cache-control": "no-store" });
+  return json({ data: { ...(await manager.info(trackId)), trackUrl: `${ctx.config.publicUrl}/p/${project.id}/t/${trackId}` } }, 200, { "cache-control": "no-store" });
 }

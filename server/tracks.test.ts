@@ -1,8 +1,6 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { Db } from "./db";
+import { testSql } from "./sql";
 import { confine, summarizeDiff } from "./tracks";
 
 const ROOT = "/home/sprite/work/kyoto";
@@ -61,23 +59,23 @@ test("an empty diff is an empty list, not a phantom file", () => {
 
 // ── renaming ───────────────────────────────────────────────────────────
 
-test("renaming a track moves the label and nothing on the machine", () => {
-  const db = new Db(join(mkdtempSync(join(tmpdir(), "ravix-tracks-")), "t.sqlite"));
-  const user = db.upsertUser({ githubId: "1", login: "ana", name: "Ana", avatarUrl: null, tokenEnc: "x" });
-  const project = db.createProject({
+test("renaming a track moves the label and nothing on the machine", async () => {
+  const db = await Db.open(await testSql());
+  const user = await db.upsertUser({ githubId: "1", login: "ana", name: "Ana", avatarUrl: null, tokenEnc: "x" });
+  const project = await db.createProject({
     id: "p1", userId: user.id, name: "ledger", repoFullName: "ana/ledger", repoPrivate: 1,
     defaultBranch: "main", installationId: 1, agentId: "a1", environmentId: "e1", vaultId: "v1",
     runtime: "claude", model: "anthropic/claude-opus-5", instructions: "",
   });
-  db.createTrack({
+  await db.createTrack({
     id: "t1", projectId: project.id, conversationId: "c1", slug: "kyoto", title: "Kyoto",
     branch: "ana/kyoto", workdir: ROOT, originKind: "blank", originBase: "main",
     originNumber: null, originTitle: null, originUrl: null, rev: 1, createdByLogin: "ana",
   });
 
-  db.renameTrack("t1", "Rewrite the importer");
+  await db.renameTrack("t1", "Rewrite the importer");
 
-  const after = db.track("t1")!;
+  const after = (await db.track("t1"))!;
   expect(after.title).toBe("Rewrite the importer");
   // The three that were cut on a real machine when the track opened. A rename
   // that moved any of them would be moving a directory somebody is in — and
@@ -85,5 +83,5 @@ test("renaming a track moves the label and nothing on the machine", () => {
   expect(after.slug).toBe("kyoto");
   expect(after.branch).toBe("ana/kyoto");
   expect(after.workdir).toBe(ROOT);
-  expect(db.slugTaken(project.id, "kyoto")).toBe(true);
+  expect(await db.slugTaken(project.id, "kyoto")).toBe(true);
 });

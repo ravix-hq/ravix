@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Db } from './db';
+import { testSql } from './sql';
 import { loadConfig } from './config';
 import { buildContext } from './context';
 import { Cipher, sha256 } from './crypto';
@@ -39,7 +40,7 @@ async function fixture() {
                 ws.send(Buffer.from(`HTTP/1.1 200 OK\r\nContent-Length: ${Buffer.byteLength(body)}\r\n\r\n${body}`));
             } } } });
     const config = loadConfig({ DATA_DIR: dir, RAVIX_SECRET: 'native-session-test-secret-long-enough', PUBLIC_URL: 'https://ravix.test', NATIVE_PREVIEW_EXPERIMENT: '1', FOUNTAIN_URL: `http://127.0.0.1:${provider.port}`, FOUNTAIN_API_KEY: 'fake', SPRITES_URL: `http://127.0.0.1:${provider.port}`, SPRITES_TOKEN: 'provider-secret' });
-    const db = new Db(config.dbPath), ctx = buildContext({ db, config, cipher: await Cipher.from(config.secret) });
+    const db = await Db.open(await testSql()), ctx = buildContext({ db, config, cipher: await Cipher.from(config.secret) });
     class Provider extends Sprites {
         async defineService(_sprite: string, name: string, dir: string, command: string, port: number) { state.commands.push(command); if (name.endsWith('-install'))
             await state.installBarrier; state.services.set(name, { name, dir, cmd: 'sh', args: ['-lc', command], env: { PORT: String(port), HOST: '127.0.0.1' }, state: { status: 'running', exit_code: 0, restart_count: 0 } }); return ''; }
@@ -53,15 +54,15 @@ async function fixture() {
             return { code: 1, stderr: 'Native configuration changed. Rebuild required.', stdout: '' }; return { code: 0, stderr: '', stdout: argv.some(a => a.endsWith('.install')) ? '0' : '' }; }
     }
     ctx.sprites = new Provider({ token: 'fake', baseUrl: 'unused' });
-    const owner = db.upsertUser({ githubId: '1', login: 'owner', name: null, avatarUrl: null, tokenEnc: 'unused' }), member = db.upsertUser({ githubId: '2', login: 'member', name: null, avatarUrl: null, tokenEnc: 'unused' });
+    const owner = await db.upsertUser({ githubId: '1', login: 'owner', name: null, avatarUrl: null, tokenEnc: 'unused' }), member = await db.upsertUser({ githubId: '2', login: 'member', name: null, avatarUrl: null, tokenEnc: 'unused' });
     for (const user of [owner, member])
-        db.createSession(user.id, await sha256(user.login), 60000);
-    db.createProject({ id: 'project', userId: owner.id, name: 'Hello', repoFullName: 'ravix-hq/ravix-expo-hello', repoPrivate: 1, defaultBranch: 'main', installationId: 1, agentId: 'agent', environmentId: 'env', vaultId: null, runtime: 'codex', model: 'test', instructions: '' });
+        await db.createSession(user.id, await sha256(user.login), 60000);
+    await db.createProject({ id: 'project', userId: owner.id, name: 'Hello', repoFullName: 'ravix-hq/ravix-expo-hello', repoPrivate: 1, defaultBranch: 'main', installationId: 1, agentId: 'agent', environmentId: 'env', vaultId: null, runtime: 'codex', model: 'test', instructions: '' });
     for (const id of ['track', 'other'])
-        db.createTrack({ id, projectId: 'project', conversationId: id, slug: id, title: id, branch: id, workdir: `/work/${id}`, originKind: 'blank', originBase: null, originNumber: null, originTitle: null, originUrl: null, rev: 1, createdByLogin: 'owner' });
-    db.addMember('track', member.id, owner.id);
+        await db.createTrack({ id, projectId: 'project', conversationId: id, slug: id, title: id, branch: id, workdir: `/work/${id}`, originKind: 'blank', originBase: null, originNumber: null, originTitle: null, originUrl: null, rev: 1, createdByLogin: 'owner' });
+    await db.addMember('track', member.id, owner.id);
     const manager = nativeExperiments(ctx), router = buildRouter(ctx);
-    manager.start();
+    await manager.start();
     const server = Bun.serve<NativeSocketData>({ port: 0, fetch: (req, server) => req.headers.get('upgrade') === 'websocket' ? manager.fetch(req, server) : router(req), websocket: manager.websocket });
     const request = (path: string, method = 'GET', body?: unknown, user = 'owner', origin = config.publicUrl) => router(new Request(`https://ravix.test${path}`, { method, headers: { cookie: `ravix_session=${user}`, origin }, ...(body ? { body: JSON.stringify(body) } : {}) }));
     const start = async () => { await Bun.sleep(0); const response = await request('/api/tracks/track/native/start', 'POST'); if (!response.ok)
@@ -79,7 +80,7 @@ async function fixture() {
         return ws;
     };
     cleanup.push(async () => { for (const ws of sockets)
-        ws.close(); await manager.stop(); server.stop(true); provider.stop(true); db.close(); rmSync(dir, { recursive: true, force: true }); });
+        ws.close(); await manager.stop(); server.stop(true); provider.stop(true); await db.close(); rmSync(dir, { recursive: true, force: true }); });
     return { db, ctx, manager, state, request, start, claim, connect, owner, member, port: server.port };
 }
 test('fixture scope, owner-only pairing, browser origin and signed-out denial', async () => {
@@ -92,7 +93,7 @@ test('fixture scope, owner-only pairing, browser origin and signed-out denial', 
 });
 test('pairing is single-use and private services preserve the existing web preview', async () => {
     const f = await fixture();
-    const web = f.db.previews.allocate('track', 'sandbox', 'sprite');
+    const web = await f.db.previews.allocate('track', 'sandbox', 'sprite');
     const s = await f.start();
     expect(s.pairingCode).toHaveLength(43);
     expect((await f.request('/api/tracks/track/native/start', 'POST')).status).toBe(409);
@@ -104,8 +105,8 @@ test('pairing is single-use and private services preserve the existing web previ
     runner.onmessage = event => { const value = JSON.parse(String(event.data)); if (value.type === 'ended') endings.push(value); };
     runner.send(JSON.stringify({ type: 'heartbeat' }));
     await until(async () => (await (await f.request('/api/tracks/track/native')).json()).data.session.phase === 'Connecting');
-    expect(f.db.previews.get('track')).toEqual(web);
-    const reservation = f.db.nativeExperiments.all()[0]!;
+    expect(await f.db.previews.get('track')).toEqual(web);
+    const reservation = (await f.db.nativeExperiments.all())[0]!;
     expect(reservation.metro).toBeGreaterThanOrEqual(30000);
     expect(reservation.backend).not.toBe(web.port);
     expect(f.state.commands.some(c => c.includes('EXPO_PACKAGER_PROXY_URL=http://127.0.0.1:41000'))).toBe(true);
@@ -124,13 +125,13 @@ test('pairing is single-use and private services preserve the existing web previ
     }
     expect(f.state.upstreamBytes.join('')).not.toContain(paired.token);
     await f.request('/api/tracks/track/native/stop', 'POST');
-    expect(f.db.nativeExperiments.all()).toHaveLength(0);
+    expect(await f.db.nativeExperiments.all()).toHaveLength(0);
     await Bun.sleep(50);
     const stopped = (await (await f.request('/api/tracks/track/native')).json()).data.session;
     expect(stopped.phase).toBe('Stopped');
     expect(stopped.error).toBeNull();
     expect(endings).toEqual([{type:'ended',error:null}]);
-    expect(f.db.previews.get('track')).toEqual(web);
+    expect(await f.db.previews.get('track')).toEqual(web);
 });
 test('video waits for a keyframe, input has one controller, and sign-out ends established channels', async () => {
     const f = await fixture(), s = await f.start(), paired = (await (await f.claim(s.pairingCode!)).json()).data;
@@ -145,6 +146,8 @@ test('video waits for a keyframe, input has one controller, and sign-out ends es
     producer.send(packet(1n));
     producer.send(packet((1n << 61n) | 2n));
     await until(() => frames.length === 2);
+    // Preparation ends by setting Connecting; a ready sent before that would be overwritten.
+    await until(async () => (await (await f.request('/api/tracks/track/native')).json()).data.session.phase === 'Connecting');
     runner.send(JSON.stringify({type: 'ready'}));
     await until(async () => (await (await f.request('/api/tracks/track/native')).json()).data.session.phase === 'Ready');
     const input = await f.connect(s.id, 'input', undefined, 'member');
@@ -154,7 +157,7 @@ test('video waits for a keyframe, input has one controller, and sign-out ends es
     await until(() => second.readyState === WebSocket.CLOSED);
     input.close();
     await until(() => commands.some(c => c.includes('"cancel"')));
-    f.db.endSession(await sha256('owner'));
+    await f.db.endSession(await sha256('owner'));
     await until(() => runner.readyState === WebSocket.CLOSED);
     await until(() => viewer.readyState === WebSocket.CLOSED);
 });
@@ -170,7 +173,7 @@ test('stopping during service creation cleans up late definitions before releasi
     release();
     await stopping;
     expect(f.state.services.size).toBe(0);
-    expect(f.db.nativeExperiments.all()).toHaveLength(0);
+    expect(await f.db.nativeExperiments.all()).toHaveLength(0);
 });
 test('changed native inputs fail before installation or Metro startup', async () => {
     const f = await fixture();
@@ -179,7 +182,7 @@ test('changed native inputs fail before installation or Metro startup', async ()
     await f.claim(s.pairingCode!);
     await until(async () => (await (await f.request('/api/tracks/track/native')).json()).data.session.phase === 'Failed');
     expect(f.state.commands).toHaveLength(0);
-    await until(() => f.db.nativeExperiments.all().length === 0);
+    await until(async () => (await f.db.nativeExperiments.all()).length === 0);
 });
 
 test('pairing rejects malformed and oversized bodies without consuming the code', async () => {
@@ -196,11 +199,11 @@ test('failed cleanup retains reservations and a retry removes only owned service
     await until(async () => (await (await f.request('/api/tracks/track/native')).json()).data.session.phase === 'Connecting');
     f.state.failStop = true;
     await f.request('/api/tracks/track/native/stop', 'POST');
-    expect(f.db.nativeExperiments.all()).toHaveLength(1);
+    expect(await f.db.nativeExperiments.all()).toHaveLength(1);
     expect((await f.request('/api/tracks/other/native/start', 'POST')).status).toBe(409);
     f.state.failStop = false;
     await f.request('/api/tracks/track/native/stop', 'POST');
-    expect(f.db.nativeExperiments.all()).toHaveLength(0);
+    expect(await f.db.nativeExperiments.all()).toHaveLength(0);
     expect(f.state.services.size).toBe(0);
     expect((await (await f.request('/api/tracks/track/native')).json()).data.session).toMatchObject({phase:'Stopped',error:null});
 });
@@ -216,7 +219,7 @@ test('cleanup failure preserves the runner error and clears only the recovered c
     expect((await session()).error).toContain('Simulator startup failed');
     f.state.failStop=false;
     await f.request('/api/tracks/track/native/stop','POST');
-    expect(f.db.nativeExperiments.all()).toHaveLength(0);
+    expect(await f.db.nativeExperiments.all()).toHaveLength(0);
     expect(await session()).toMatchObject({phase:'Failed',error:'Simulator startup failed'});
 });
 
@@ -257,7 +260,7 @@ test('iOS is offered only with a pinned build and pairing cannot cross platforms
     expect((await paired.json()).data.platform).toBe('ios');
     await expect(claim('ios','a'.repeat(64))).rejects.toMatchObject({status:401});
     await f.request('/api/tracks/track/native/stop','POST');
-    expect(f.db.nativeExperiments.all()).toHaveLength(0);
+    expect(await f.db.nativeExperiments.all()).toHaveLength(0);
 });
 
 test('pairing validates reserved local ports and advertises them to Metro without changing Sprite destinations', async () => {
@@ -269,7 +272,7 @@ test('pairing validates reserved local ports and advertises them to Metro withou
     expect((await response.json()).data).toMatchObject({metroPort:42023,backendPort:42024});
     await until(()=>f.state.commands.some(c=>c.includes('EXPO_PACKAGER_PROXY_URL=http://127.0.0.1:42023')));
     expect(f.state.commands.some(c=>c.includes('EXPO_PUBLIC_API_URL=http://127.0.0.1:42024'))).toBe(true);
-    const reservation=f.db.nativeExperiments.all()[0]!;
+    const reservation=(await f.db.nativeExperiments.all())[0]!;
     expect(reservation.metro).toBeGreaterThanOrEqual(30000);expect(reservation.metro).toBeLessThan(40000);
     await f.request('/api/tracks/track/native/stop','POST');
 });
@@ -303,11 +306,11 @@ test('registered Mac takes queued tracks in order without another browser pairin
     await until(async()=>(await (await f.request('/api/tracks/track/native')).json()).data.session.phase==='Connecting');
     await f.request('/api/tracks/track/native/stop','POST');
     await until(()=>native.readyState===WebSocket.CLOSED);
-    expect(f.db.nativeExperiments.all()).toHaveLength(0);
-    expect(f.db.runners.request(first.id)?.phase).toBe('Stopping');
+    expect(await f.db.nativeExperiments.all()).toHaveLength(0);
+    expect((await f.db.runners.request(first.id))?.phase).toBe('Stopping');
     host.send(JSON.stringify({type:'complete',sessionId:first.id,generation:work.generation,cleanup:'complete',error:null}));
     await until(()=>messages.filter(m=>m.type==='work').length===2);
-    expect(f.db.runners.request(first.id)?.phase).toBe('Stopped');
+    expect((await f.db.runners.request(first.id))?.phase).toBe('Stopped');
     const next=messages.filter(m=>m.type==='work')[1].work;
     expect(next.sessionId).toBe(second.id);expect(next.targetId).not.toBe(work.targetId);
     expect((await f.claim(work.pairingCode)).status).toBe(401);

@@ -30,7 +30,7 @@ queue behavior.
 | `server/db.ts`, `shared/api.ts`, `server/app.ts` | Additive persistence, typed contracts, and routes |
 | `server/projects.ts`, `server/index.ts` | Project rebuild/archive and server startup integration |
 | `src/components/Run.tsx`, `src/components/ProjectSettings.tsx` | Existing run controls and project configuration |
-| `mock/`, `server/*.test.ts`, `k8s/` | Local fixtures, regression tests, and deployment configuration |
+| `mock/`, `server/*.test.ts`, `render.yaml` | Local fixtures, regression tests, and deployment configuration |
 
 Use existing authorization helpers. Project defaults remain owner-controlled;
 track members may operate previews within their existing execution permissions.

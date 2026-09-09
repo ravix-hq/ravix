@@ -50,7 +50,7 @@ export function buildContext(input: { db: Db; cipher: Cipher; config: Config }):
 export async function authenticate(ctx: AppContext, req: Request): Promise<UserRow> {
   const token = cookieValue(req, SESSION_COOKIE);
   if (!token) throw new HttpError(401, "unauthenticated", "Sign in with GitHub.");
-  const user = ctx.db.sessionUser(await sha256(token));
+  const user = await ctx.db.sessionUser(await sha256(token));
   if (!user) throw new HttpError(401, "unauthenticated", "That session has ended. Sign in again.");
   return user;
 }
@@ -64,8 +64,8 @@ export async function authenticate(ctx: AppContext, req: Request): Promise<UserR
  * gets the same answer as a stranger, because a machine you were let onto is
  * still not a machine you get to re-provision.
  */
-export function projectOf(ctx: AppContext, user: UserRow, projectId: string): ProjectRow {
-  const project = ctx.db.project(projectId);
+export async function projectOf(ctx: AppContext, user: UserRow, projectId: string): Promise<ProjectRow> {
+  const project = await ctx.db.project(projectId);
   if (!project || project.userId !== user.id || project.archivedAt) {
     throw new HttpError(404, "not_found", "No such project.");
   }
@@ -96,11 +96,11 @@ export interface ProjectAccess {
  * all keep resolving through `projectOf` and refuse a member exactly as they
  * refuse a stranger.
  */
-export function projectAccess(ctx: AppContext, user: UserRow, projectId: string): ProjectAccess {
-  const project = ctx.db.project(projectId);
+export async function projectAccess(ctx: AppContext, user: UserRow, projectId: string): Promise<ProjectAccess> {
+  const project = await ctx.db.project(projectId);
   if (!project || project.archivedAt) throw new HttpError(404, "not_found", "No such project.");
   if (project.userId === user.id) return { project, role: "owner" };
-  if (ctx.db.isProjectMember(project.id, user.id)) return { project, role: "member" };
+  if (await ctx.db.isProjectMember(project.id, user.id)) return { project, role: "member" };
   throw new HttpError(404, "not_found", "No such project.");
 }
 
@@ -128,23 +128,22 @@ export interface TrackAccess {
  * A project that has been archived is gone for its members too, and a closed
  * track stops admitting anyone: neither has a surface left to share.
  */
-export function trackAccess(ctx: AppContext, user: UserRow, trackId: string): TrackAccess {
-  const track = ctx.db.track(trackId);
+export async function trackAccess(ctx: AppContext, user: UserRow, trackId: string): Promise<TrackAccess> {
+  const track = await ctx.db.track(trackId);
   if (!track) throw new HttpError(404, "not_found", "No such track.");
-  const project = ctx.db.project(track.projectId);
+  const project = await ctx.db.project(track.projectId);
   if (!project || project.archivedAt) throw new HttpError(404, "not_found", "No such track.");
 
   if (project.userId === user.id) return { track, project, role: "owner" };
   if (track.closedAt) throw new HttpError(404, "not_found", "No such track.");
-  if (ctx.db.isMember(track.id, user.id)) return { track, project, role: "member" };
-  if (ctx.db.isProjectMember(project.id, user.id)) return { track, project, role: "member" };
+  if (await ctx.db.isMember(track.id, user.id)) return { track, project, role: "member" };
+  if (await ctx.db.isProjectMember(project.id, user.id)) return { track, project, role: "member" };
   throw new HttpError(404, "not_found", "No such track.");
 }
 
 /** The same, refusing anyone but the owner. For closing, renaming, and settings. */
-export function trackOf(ctx: AppContext, user: UserRow, trackId: string): TrackAccess {
-  const access = trackAccess(ctx, user, trackId);
-  return access;
+export function trackOf(ctx: AppContext, user: UserRow, trackId: string): Promise<TrackAccess> {
+  return trackAccess(ctx, user, trackId);
 }
 
 /** Owner-only operations on a track somebody else may also be in. */

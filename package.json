@@ -9,7 +9,7 @@
   "description": "Ravix: a browser workspace for building software with coding agents. Sign in with GitHub, pick a repository, and every piece of work is its own git worktree on one persistent cloud machine. The server owns the Fountain account.",
   "scripts": {
     "dev": "vite",
-    "build": "tsc --noEmit && vite build && bun build server/index.ts --target=bun --outfile=dist-server/index.js",
+    "build": "tsc --noEmit && vite build && bun build server/index.ts --target=bun --external @electric-sql/pglite --outfile=dist-server/index.js",
     "preview": "vite preview",
     "test": "bun test && bun run --cwd packages/fountain-app test",
     "typecheck": "tsc --noEmit && bun run --cwd packages/fountain-app typecheck",
@@ -28,6 +28,7 @@
     "ws-node": "npm:ws@8.21.3"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.5.8",
     "@happy-dom/global-registrator": "^20.11.6",
     "@types/bun": "^1.2.0",
     "@types/react": "^19.1.0",

@@ -1,4 +1,6 @@
-# Typecheck, test and build on every change.
+# Typecheck, test and build on every change. On main this is also the deploy
+# gate: Render (render.yaml, autoDeployTrigger: checksPass) waits for it to
+# pass before building the Dockerfile and rolling the service.
 name: CI
 
 on:

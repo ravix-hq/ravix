@@ -35,7 +35,7 @@ const DEFAULT_TIMEOUT_SEC = 60;
 /** `POST /api/tracks/:id/exec` */
 export async function exec(ctx: AppContext, req: Request, trackId: string): Promise<Response> {
   const user = await authenticate(ctx, req);
-  const { track, project } = trackOf(ctx, user, trackId);
+  const { track, project } = await trackOf(ctx, user, trackId);
   const sprites = requireSprites(ctx);
   const fountain = requireFountain(ctx);
 
@@ -87,7 +87,7 @@ export async function exec(ctx: AppContext, req: Request, trackId: string): Prom
  */
 export async function execStatus(ctx: AppContext, req: Request, trackId: string): Promise<Response> {
   const user = await authenticate(ctx, req);
-  const { track, project } = trackOf(ctx, user, trackId);
+  const { track, project } = await trackOf(ctx, user, trackId);
   if (!ctx.sprites) return json({ data: { available: false, why: "no_token", cwd: track.workdir } });
 
   const fountain = requireFountain(ctx);

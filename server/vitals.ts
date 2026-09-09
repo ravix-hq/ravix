@@ -46,7 +46,7 @@ const PROBE_TIMEOUT_SEC = 15;
 /** `GET /api/tracks/:id/vitals` */
 export async function vitals(ctx: AppContext, req: Request, trackId: string): Promise<Response> {
   const user = await authenticate(ctx, req);
-  const { track, project } = trackOf(ctx, user, trackId);
+  const { track, project } = await trackOf(ctx, user, trackId);
   if (!ctx.sprites) return json({ data: out("no_token") });
 
   const fountain = requireFountain(ctx);

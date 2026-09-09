@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Db } from "./db";
+import { testSql } from "./sql";
 import { buildContext } from "./context";
 import { loadConfig } from "./config";
 import { Cipher, sha256 } from "./crypto";
@@ -18,21 +19,22 @@ afterEach(() => { for (const fn of cleanup.splice(0).reverse()) fn(); });
 async function fixture() {
   const dir = mkdtempSync(join(tmpdir(), "sy-browser-"));
   const config = loadConfig({ DATA_DIR: dir, RAVIX_SECRET: "browser-test-secret-long-enough", PUBLIC_URL: "http://localhost:5183", FOUNTAIN_API_KEY: "test", SPRITES_TOKEN: "test", SHARED_BROWSER: "1" });
-  const db = new Db(config.dbPath), ctx = buildContext({ db, config, cipher: await Cipher.from(config.secret) });
-  const owner = db.upsertUser({ githubId: "1", login: "owner", name: null, avatarUrl: null, tokenEnc: "test" });
-  const member = db.upsertUser({ githubId: "2", login: "member", name: null, avatarUrl: null, tokenEnc: "test" });
-  const other = db.upsertUser({ githubId: "3", login: "other", name: null, avatarUrl: null, tokenEnc: "test" });
+  const sql = await testSql();
+  const db = await Db.open(sql), ctx = buildContext({ db, config, cipher: await Cipher.from(config.secret) });
+  const owner = await db.upsertUser({ githubId: "1", login: "owner", name: null, avatarUrl: null, tokenEnc: "test" });
+  const member = await db.upsertUser({ githubId: "2", login: "member", name: null, avatarUrl: null, tokenEnc: "test" });
+  const other = await db.upsertUser({ githubId: "3", login: "other", name: null, avatarUrl: null, tokenEnc: "test" });
   for (const [id, user] of [["p", owner], ["next", owner], ["other", other]] as const) {
-    db.createProject({ id, userId: user.id, name: id, repoFullName: null, repoPrivate: 0, defaultBranch: null, installationId: null, agentId: id, environmentId: id, vaultId: null, runtime: "claude", model: "test", instructions: "" });
-    db.browsers.save({ id: `session-${id}`, projectId: id, profile: "shared", sprite: id, sandboxId: id, state: "ready", error: null, tokenEnc: await ctx.cipher.encrypt("worker-private-token") });
+    await db.createProject({ id, userId: user.id, name: id, repoFullName: null, repoPrivate: 0, defaultBranch: null, installationId: null, agentId: id, environmentId: id, vaultId: null, runtime: "claude", model: "test", instructions: "" });
+    await db.browsers.save({ id: `session-${id}`, projectId: id, profile: "shared", sprite: id, sandboxId: id, state: "ready", error: null, tokenEnc: await ctx.cipher.encrypt("worker-private-token") });
   }
-  for (const [id, projectId] of [["a", "p"], ["b", "p"], ["c", "next"], ["d", "other"]]) db.createTrack({ id: id!, projectId: projectId!, conversationId: id!, slug: id!, title: id!, branch: id!, workdir: `/work/${id}`, originKind: "blank", originBase: null, originNumber: null, originTitle: null, originUrl: null, rev: 1, createdByLogin: owner.login });
-  for (const user of [owner, member, other]) db.createSession(user.id, await sha256(user.login), 60000);
-  db.addMember("a", member.id, owner.id);
+  for (const [id, projectId] of [["a", "p"], ["b", "p"], ["c", "next"], ["d", "other"]]) await db.createTrack({ id: id!, projectId: projectId!, conversationId: id!, slug: id!, title: id!, branch: id!, workdir: `/work/${id}`, originKind: "blank", originBase: null, originNumber: null, originTitle: null, originUrl: null, rev: 1, createdByLogin: owner.login });
+  for (const user of [owner, member, other]) await db.createSession(user.id, await sha256(user.login), 60000);
+  await db.addMember("a", member.id, owner.id);
   const manager = browsers(ctx), calls: Record<string, unknown>[] = [];
   const services = new Map<string, SpriteService>(), providerCalls = { uploads: 0, definitions: 0, stops: 0, starts: 0 };
-  let onDestination: (() => void) | undefined;
-  manager.destination = async projectId => { onDestination?.(); return { sprite: projectId, sandboxId: projectId }; };
+  let onDestination: (() => unknown) | undefined;
+  manager.destination = async projectId => { await onDestination?.(); return { sprite: projectId, sandboxId: projectId }; };
   manager.transport = async (_row, command) => {
     calls.push(command);
     if (command.action === "checkpoint") return { version: 1, engine: "chromium", storage: { cookies: [{ value: "machine-account-secret" }], origins: [] }, tabs: [] } as any;
@@ -57,8 +59,8 @@ async function fixture() {
   const request = (track: string, action?: string, body: Record<string, unknown> = {}, login = "owner", origin = config.publicUrl) => router(new Request(`http://localhost/api/tracks/${track}/browser${action ? `/${action}` : ""}`, {
     method: action ? "POST" : "GET", headers: { cookie: `ravix_session=${login}`, origin, "content-type": "application/json" }, ...(action ? { body: JSON.stringify({ clientId, ...body }) } : {}),
   }));
-  cleanup.push(() => { ctx.db.close(); rmSync(dir, { recursive: true, force: true }); });
-  return { ctx, manager, request, calls, owner, member, other, clientId, providerCalls, setOnDestination: (fn: () => void) => { onDestination = fn; } };
+  cleanup.push(() => { void ctx.db.close(); rmSync(dir, { recursive: true, force: true }); });
+  return { ctx, sql, manager, request, calls, owner, member, other, clientId, providerCalls, setOnDestination: (fn: () => unknown) => { onDestination = fn; } };
 }
 
 test("all tracks and participants attach to one shared profile; credentials stay server-side", async () => {
@@ -81,9 +83,9 @@ test("concurrent opens install one private service; stop and reopen reuse the sa
   expect(uploads).toBeGreaterThan(3);
   expect((await f.request("a", "stop", {}, "member")).status).toBe(403);
   expect((await f.request("a", "stop")).status).toBe(200);
-  expect(f.ctx.db.browsers.get("p")?.state).toBe("stopped");
+  expect((await f.ctx.db.browsers.get("p"))?.state).toBe("stopped");
   expect((await f.request("b", "start")).status).toBe(200);
-  expect(f.ctx.db.browsers.get("p")?.id).toBe("session-p");
+  expect((await f.ctx.db.browsers.get("p"))?.id).toBe("session-p");
   expect(f.providerCalls.uploads).toBe(uploads);
   expect(f.providerCalls.starts).toBe(1);
 });
@@ -93,7 +95,7 @@ test("origin, membership, closed-track and command checks precede browser access
   expect((await f.request("a", "command", { action: "status" }, "owner", "https://evil.test")).status).toBe(403);
   expect((await f.request("a", "command", { action: "evaluate", expression: "bad" })).status).toBe(422);
   expect((await f.request("a", "command", { action: "status" }, "other")).status).toBe(404);
-  f.ctx.db.closeTrack("a");
+  await f.ctx.db.closeTrack("a");
   expect((await f.request("a", "command", { action: "status" })).status).toBe(409);
   expect(f.calls).toHaveLength(0);
 });
@@ -117,27 +119,27 @@ test("checkpoints are encrypted, survive SQLite reopen, and restore across proje
   const response = await f.request("a", "checkpoint", { label: "Signed in" }, "member");
   expect(response.status).toBe(200);
   const cp = (await response.json()).data;
-  const saved = f.ctx.db.browsers.checkpoint(cp.id)!;
+  const saved = (await f.ctx.db.browsers.checkpoint(cp.id))!;
   expect(saved.payloadEnc).not.toContain("machine-account-secret");
   expect(JSON.stringify(cp)).not.toContain("storage");
-  f.ctx.db.close(); f.ctx.db = new Db(f.ctx.config.dbPath);
+  await f.ctx.db.close(); f.ctx.db = await Db.open(f.sql);
   expect((await f.request("c", "restore", { checkpointId: cp.id })).status).toBe(200);
   expect(JSON.stringify(f.calls.at(-1)?.checkpoint)).toContain("machine-account-secret");
   expect((await f.request("a", "restore", { checkpointId: cp.id }, "member")).status).toBe(403);
   expect((await f.request("d", "restore", { checkpointId: cp.id }, "other")).status).toBe(404);
   expect((await f.request("c", "delete-checkpoint", { checkpointId: cp.id })).status).toBe(404);
   expect((await f.request("a", "delete-checkpoint", { checkpointId: cp.id })).status).toBe(200);
-  expect(f.ctx.db.browsers.checkpoint(cp.id)).toBeNull();
+  expect(await f.ctx.db.browsers.checkpoint(cp.id)).toBeNull();
 });
 
 test("machine replacement fences old browser input, and closing a track preserves the profile", async () => {
   const f = await fixture();
-  const row = f.ctx.db.browsers.get("p")!;
-  f.ctx.db.browsers.save({ ...row, sandboxId: "previous" });
+  const row = (await f.ctx.db.browsers.get("p"))!;
+  await f.ctx.db.browsers.save({ ...row, sandboxId: "previous" });
   expect((await f.request("a", "command", { action: "status" })).status).toBe(409);
   expect(f.calls).toHaveLength(0);
-  f.ctx.db.closeTrack("a");
-  expect(f.ctx.db.browsers.get("p")?.id).toBe(row.id);
+  await f.ctx.db.closeTrack("a");
+  expect((await f.ctx.db.browsers.get("p"))?.id).toBe(row.id);
 });
 
 test("browser helper instructions remain hidden alongside preview instructions", async () => {
@@ -153,26 +155,26 @@ test("browser helper instructions remain hidden alongside preview instructions",
 test("removed and reinvited members cannot reuse an old browser helper", async () => {
   const f = await fixture();
   const hash = await sha256("test-grant");
-  f.ctx.db.browsers.grant({ hash, trackId: "a", userId: f.member.id, promptId: "p", conversationId: "a", sandboxId: "p", sprite: "p", expires: Date.now() + 60000 });
-  f.ctx.db.removeMember("a", f.member.id); f.ctx.db.addMember("a", f.member.id, f.owner.id);
-  expect(f.ctx.db.browsers.agent(hash)).toBeNull();
+  await f.ctx.db.browsers.grant({ hash, trackId: "a", userId: f.member.id, promptId: "p", conversationId: "a", sandboxId: "p", sprite: "p", expires: Date.now() + 60000 });
+  await f.ctx.db.removeMember("a", f.member.id); await f.ctx.db.addMember("a", f.member.id, f.owner.id);
+  expect(await f.ctx.db.browsers.agent(hash)).toBeNull();
 });
 
 test("agent grants bind input to the delivered prompt and machine and cannot invoke restore", async () => {
   const f = await fixture(), token = "browser-agent-test-token-long-enough";
   const hash = await sha256(token);
-  f.ctx.db.enqueuePrompt({ id: "prompt", trackId: "a", userId: f.member.id, authorLogin: "member", payload: JSON.stringify({ prompt: "Browse" }) });
-  f.ctx.db.setPromptStatus("prompt", "sending");
+  await f.ctx.db.enqueuePrompt({ id: "prompt", trackId: "a", userId: f.member.id, authorLogin: "member", payload: JSON.stringify({ prompt: "Browse" }) });
+  await f.ctx.db.setPromptStatus("prompt", "sending");
   const grant = { hash, trackId: "a", userId: f.member.id, promptId: "prompt", conversationId: "a", sandboxId: "p", sprite: "p", expires: Date.now() + 60000 };
-  f.ctx.db.browsers.grant(grant);
+  await f.ctx.db.browsers.grant(grant);
   const router = buildRouter(f.ctx);
   const request = (action: string) => router(new Request("http://localhost/api/tracks/a/browser/agent", { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify({ action }) }));
   expect((await request("acquire")).status).toBe(200);
   expect(f.calls[0]?.actor).toEqual({ id: "agent:prompt", label: "Agent · a", kind: "agent" });
   expect((await request("restore")).status).toBe(422);
-  f.ctx.db.browsers.grant({ ...grant, sandboxId: "replaced" });
+  await f.ctx.db.browsers.grant({ ...grant, sandboxId: "replaced" });
   expect((await request("status")).status).toBe(409);
-  f.ctx.db.browsers.grant(grant);
-  f.ctx.db.setPromptStatus("prompt", "cancelled");
+  await f.ctx.db.browsers.grant(grant);
+  await f.ctx.db.setPromptStatus("prompt", "cancelled");
   expect((await request("status")).status).toBe(401);
 });

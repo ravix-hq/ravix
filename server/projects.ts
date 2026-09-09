@@ -76,17 +76,17 @@ const DEFAULT_MODEL = "anthropic/claude-opus-5";
  * One function rather than the same three-line union written out in `list`,
  * `show` and the stream's gate, which is where it was drifting.
  */
-export function accessOf(ctx: AppContext, userId: string, project: ProjectRow): Project["access"] | null {
+export async function accessOf(ctx: AppContext, userId: string, project: ProjectRow): Promise<Project["access"] | null> {
   if (project.userId === userId) return "owner";
-  if (ctx.db.isProjectMember(project.id, userId)) return "project";
-  if (ctx.db.memberTracks(userId).some((t) => t.projectId === project.id)) return "tracks";
+  if (await ctx.db.isProjectMember(project.id, userId)) return "project";
+  if ((await ctx.db.memberTracks(userId)).some((t) => t.projectId === project.id)) return "tracks";
   return null;
 }
 
 /** `GET /api/projects` */
 export async function list(ctx: AppContext, req: Request): Promise<Response> {
   const user = await authenticate(ctx, req);
-  const mine = ctx.db.projectsOf(user.id);
+  const mine = await ctx.db.projectsOf(user.id);
 
   // A project somebody let you into shows in the rail beside your own, whether
   // they let you into the whole thing or into one track of it — the
@@ -100,23 +100,23 @@ export async function list(ctx: AppContext, req: Request): Promise<Response> {
     seen.add(project.id);
     guest.push(project);
   };
-  for (const project of ctx.db.memberProjects(user.id)) add(project);
-  for (const track of ctx.db.memberTracks(user.id)) add(ctx.db.project(track.projectId));
+  for (const project of await ctx.db.memberProjects(user.id)) add(project);
+  for (const track of await ctx.db.memberTracks(user.id)) add(await ctx.db.project(track.projectId));
 
   const rows = [...mine, ...guest];
   const machines = await machinesFor(ctx, rows);
-  return json({
-    data: rows.map((r) => {
-      const owner = r.userId === user.id ? user : (ctx.db.user(r.userId) ?? user);
-      return toProject(r, machines.get(r.id) ?? none(), owner, accessOf(ctx, user.id, r) ?? "tracks");
-    }),
-  });
+  const data: Project[] = [];
+  for (const r of rows) {
+    const owner = r.userId === user.id ? user : ((await ctx.db.user(r.userId)) ?? user);
+    data.push(toProject(r, machines.get(r.id) ?? none(), owner, (await accessOf(ctx, user.id, r)) ?? "tracks"));
+  }
+  return json({ data });
 }
 
 /** `GET /api/projects/:id` */
 export async function show(ctx: AppContext, req: Request, id: string): Promise<Response> {
   const user = await authenticate(ctx, req);
-  const row = ctx.db.project(id);
+  const row = await ctx.db.project(id);
   if (!row || row.archivedAt) throw new HttpError(404, "not_found", "No such project.");
 
   // A member needs the project's name, repository and model to render the
@@ -124,9 +124,9 @@ export async function show(ctx: AppContext, req: Request, id: string): Promise<R
   // the same shape everyone gets, marked with how they got here — and every
   // route that would *change* any of it goes through `projectOf` and refuses
   // them.
-  const access = accessOf(ctx, user.id, row);
+  const access = await accessOf(ctx, user.id, row);
   if (!access) throw new HttpError(404, "not_found", "No such project.");
-  const ownerRow = access === "owner" ? user : (ctx.db.user(row.userId) ?? user);
+  const ownerRow = access === "owner" ? user : ((await ctx.db.user(row.userId)) ?? user);
   const machines = await machinesFor(ctx, [row]);
   return json({ data: toProject(row, machines.get(row.id) ?? none(), ownerRow, access) });
 }
@@ -237,7 +237,7 @@ export async function create(ctx: AppContext, req: Request): Promise<Response> {
     throw asHttpError(err, "build this project");
   }
 
-  const row = ctx.db.createProject({
+  const row = await ctx.db.createProject({
     id: projectId,
     userId: user.id,
     name,
@@ -285,7 +285,7 @@ export async function prepareMachine(ctx: AppContext, project: ProjectRow, fount
 /** `GET /api/projects/:id/settings` */
 export async function settings(ctx: AppContext, req: Request, id: string): Promise<Response> {
   const user = await authenticate(ctx, req);
-  const project = projectOf(ctx, user, id);
+  const project = await projectOf(ctx, user, id);
   const fountain = requireFountain(ctx);
   try {
     const [env, envKeys, vaultKeys, catalog] = await Promise.all([
@@ -325,7 +325,7 @@ export async function settings(ctx: AppContext, req: Request, id: string): Promi
  */
 export async function updateSettings(ctx: AppContext, req: Request, id: string): Promise<Response> {
   const user = await authenticate(ctx, req);
-  const project = projectOf(ctx, user, id);
+  const project = await projectOf(ctx, user, id);
   const fountain = requireFountain(ctx);
   const body = await readJson(req);
 
@@ -341,11 +341,11 @@ export async function updateSettings(ctx: AppContext, req: Request, id: string):
         throw new HttpError(422, "invalid_model", "Choose an available harness and one of its models.");
       }
       await fountain.updateAgent(project.agentId, { runtime, model });
-      ctx.db.setHarness(project.id, runtime, model);
+      await ctx.db.setHarness(project.id, runtime, model);
       bumps = true;
     }
 
-    if (typeof body.name === "string" && body.name.trim()) ctx.db.renameProject(project.id, str(body.name, 120).trim());
+    if (typeof body.name === "string" && body.name.trim()) await ctx.db.renameProject(project.id, str(body.name, 120).trim());
 
     if (typeof body.setupScript === "string" || body.packages !== undefined) {
       const patch: Record<string, unknown> = {};
@@ -356,7 +356,7 @@ export async function updateSettings(ctx: AppContext, req: Request, id: string):
 
     if (typeof body.instructions === "string") {
       const instructions = str(body.instructions, 20_000);
-      ctx.db.setInstructions(project.id, instructions);
+      await ctx.db.setInstructions(project.id, instructions);
       await fountain.updateAgent(project.agentId, {
         system: composeSystem({ ...project, instructions }),
       });
@@ -380,7 +380,7 @@ export async function updateSettings(ctx: AppContext, req: Request, id: string):
     throw asHttpError(err, "save these settings");
   }
 
-  const rev = bumps ? ctx.db.bumpRev(project.id) : project.rev;
+  const rev = bumps ? await ctx.db.bumpRev(project.id) : project.rev;
   publish(project.id, { event: "settings", data: { rev } });
   return json({ data: { rev } });
 }
@@ -414,10 +414,10 @@ export function composeSystem(project: ProjectRow): string {
  */
 export async function rebuild(ctx: AppContext, req: Request, id: string): Promise<Response> {
   const user = await authenticate(ctx, req);
-  const project = projectOf(ctx, user, id);
+  const project = await projectOf(ctx, user, id);
   const fountain = requireFountain(ctx);
-  for (const track of ctx.db.tracksOf(project.id)) ctx.db.cancelTrackPrompts(track.id);
-  await Promise.all(ctx.db.tracksOf(project.id).map(track => previews(ctx).stopService(track.id, true)));
+  for (const track of await ctx.db.tracksOf(project.id)) await ctx.db.cancelTrackPrompts(track.id);
+  await Promise.all((await ctx.db.tracksOf(project.id)).map(track => previews(ctx).stopService(track.id, true)));
   await browsers(ctx).stop(project.id);
 
   const removed: string[] = [];
@@ -466,9 +466,9 @@ export async function rebuild(ctx: AppContext, req: Request, id: string): Promis
 
   // The agent id is the identity, so it is the one column that ever moves —
   // and when it moves, every track on the old disk is gone.
-  ctx.db.rebindAgent(project.id, agent.id);
+  await ctx.db.rebindAgent(project.id, agent.id);
   forgetProject(project.id);
-  for (const t of ctx.db.tracksOf(project.id)) ctx.db.closeTrack(t.id);
+  for (const t of await ctx.db.tracksOf(project.id)) await ctx.db.closeTrack(t.id);
   publish(project.id, { event: "tracks", data: { projectId: project.id } });
 
   return json({ data: { removed, failed } });
@@ -477,10 +477,10 @@ export async function rebuild(ctx: AppContext, req: Request, id: string): Promis
 /** `DELETE /api/projects/:id` — the machine, its settings and its secrets. */
 export async function destroy(ctx: AppContext, req: Request, id: string): Promise<Response> {
   const user = await authenticate(ctx, req);
-  const project = projectOf(ctx, user, id);
+  const project = await projectOf(ctx, user, id);
   const fountain = requireFountain(ctx);
-  for (const track of ctx.db.tracksOf(project.id)) ctx.db.cancelTrackPrompts(track.id);
-  await Promise.all(ctx.db.tracksOf(project.id).map(track => previews(ctx).stopService(track.id, true)));
+  for (const track of await ctx.db.tracksOf(project.id)) await ctx.db.cancelTrackPrompts(track.id);
+  await Promise.all((await ctx.db.tracksOf(project.id)).map(track => previews(ctx).stopService(track.id, true)));
   await browsers(ctx).stop(project.id);
 
   const conversations = await fountain.listConversations(project.agentId).catch(() => []);
@@ -488,7 +488,7 @@ export async function destroy(ctx: AppContext, req: Request, id: string): Promis
     if (["pending", "idle", "running"].includes(c.status)) await fountain.terminate(c.id).catch(() => undefined);
   }
   await unwind(fountain, { agentId: project.agentId, vaultId: project.vaultId, environmentId: project.environmentId });
-  ctx.db.archiveProject(project.id);
+  await ctx.db.archiveProject(project.id);
   forgetProject(project.id);
   publish(project.id, { event: "tracks", data: { projectId: project.id } });
   return json({ data: { ok: true } });

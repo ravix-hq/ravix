@@ -63,31 +63,35 @@ export class NativeForwardAccess {
     },
   ) {
     // Includes sign-out and runner fencing, which need not publish a hub event.
-    this.timer = setInterval(() => this.sweep(), 1_000);
+    this.timer = setInterval(() => { void this.sweep(); }, 1_000);
     this.timer.unref();
   }
 
   async issue(sessionId: string, principal: Principal) {
-    this.sweep();
+    await this.sweep();
     if (this.stopped || this.grants.size >= 64) throw new Error("Native forwarding unavailable.");
     const state = this.current(sessionId);
-    if (!state || state.sessionId !== sessionId || !this.allowed(state, principal)) throw new Error("Native assignment unavailable.");
+    if (!state || state.sessionId !== sessionId || !await this.allowed(state, principal)) throw new Error("Native assignment unavailable.");
     const snapshot = structuredClone(state);
     const token = randomToken();
     const verifier = await sha256(token);
     // Recheck after hashing: a concurrent sign-out or revocation wins issuance.
     const current = this.current(sessionId);
-    if (this.stopped || this.grants.size >= 64 || !current || identity(current) !== identity(snapshot) || !this.allowed(current, principal)) throw new Error("Native assignment ended.");
+    if (this.stopped || this.grants.size >= 64 || !current || identity(current) !== identity(snapshot) || !await this.allowed(current, principal)) throw new Error("Native assignment ended.");
+    const workspace = await this.workspace(state.trackId);
+    // The access check yields now; nothing may slip in between this recheck and the grant.
+    const latest = this.current(sessionId);
+    if (this.stopped || this.grants.size >= 64 || !latest || identity(latest) !== identity(snapshot)) throw new Error("Native assignment ended.");
     const expiresAt = Math.min(Date.now() + 60_000, current.leaseUntil);
     const grant: Grant = {
       state: snapshot, principal: { ...principal }, identity: identity(snapshot),
-      workspace: this.workspace(state.trackId), expiresAt,
+      workspace, expiresAt,
       controller: new AbortController(), unsubscribe: () => {},
       timer: setTimeout(() => this.revoke(verifier), Math.max(1, expiresAt - Date.now())),
     };
     grant.timer.unref();
     this.grants.set(verifier, grant);
-    grant.unsubscribe = subscribe(state.projectId, principal.userId, () => { this.live(verifier); });
+    grant.unsubscribe = subscribe(state.projectId, principal.userId, () => { void this.live(verifier); });
     return {
       token, expiresAt,
       paths: Object.fromEntries(Object.keys(snapshot.services).map(name => [name, `/api/native/sessions/${sessionId}/forward/${name}`])) as Partial<Record<NativeServiceName, string>>,
@@ -100,7 +104,7 @@ export class NativeForwardAccess {
     const token = /^Bearer ([a-zA-Z0-9_-]{32,256})$/.exec(request.headers.get("authorization") ?? "")?.[1];
     if (request.method !== "GET" || request.headers.has("origin") || url.search || !path || !token) return null;
     const verifier = await sha256(token);
-    const grant = this.live(verifier);
+    const grant = await this.live(verifier);
     const name = path[2] as NativeServiceName;
     if (!grant || grant.state.sessionId !== path[1]) return null;
     const destination = grant.state.services[name];
@@ -108,9 +112,9 @@ export class NativeForwardAccess {
     return {
       signal: grant.controller.signal,
       connect: async () => {
-        if (!this.live(verifier)) throw new Error("Native assignment ended.");
+        if (!await this.live(verifier)) throw new Error("Native assignment ended.");
         const stream = await this.connect({ ...destination }, grant.controller.signal);
-        if (!this.live(verifier)) { stream.destroy(); throw new Error("Native assignment ended."); }
+        if (!await this.live(verifier)) { stream.destroy(); throw new Error("Native assignment ended."); }
         return stream;
       },
     };
@@ -126,15 +130,16 @@ export class NativeForwardAccess {
     for (const verifier of this.grants.keys()) this.revoke(verifier);
   }
 
-  private sweep() { for (const verifier of this.grants.keys()) this.live(verifier); }
+  private async sweep() { for (const verifier of this.grants.keys()) await this.live(verifier); }
 
-  private live(verifier: string): Grant | null {
+  private async live(verifier: string): Promise<Grant | null> {
     const grant = this.grants.get(verifier);
     if (!grant) return null;
     try {
       const current = this.current(grant.state.sessionId);
       if (!this.stopped && grant.expiresAt > Date.now() && current && identity(current) === grant.identity &&
-          this.allowed(current, grant.principal) && this.workspace(current.trackId) === grant.workspace) return grant;
+          await this.allowed(current, grant.principal) && await this.workspace(current.trackId) === grant.workspace &&
+          this.grants.get(verifier) === grant) return grant;
     } catch { /* A failed state lookup cannot preserve access. */ }
     this.revoke(verifier);
     return null;
@@ -148,16 +153,16 @@ export class NativeForwardAccess {
     grant.controller.abort(new Error("Native assignment ended."));
   }
 
-  private allowed(state: NativeForwardState, principal: Principal): boolean {
+  private async allowed(state: NativeForwardState, principal: Principal): Promise<boolean> {
     try {
       if (!state.active || !Number.isFinite(state.leaseUntil) || state.leaseUntil <= Date.now() ||
           !/^[a-zA-Z0-9_-]{1,128}$/.test(state.sessionId) ||
           !Number.isSafeInteger(state.generation) || state.generation < 1 ||
           !Number.isSafeInteger(state.runnerEpoch) || state.runnerEpoch < 1 ||
           state.runnerId !== principal.runnerId || state.runnerEpoch !== principal.runnerEpoch) return false;
-      const user = this.ctx.db.sessionUser(principal.sessionHash);
+      const user = await this.ctx.db.sessionUser(principal.sessionHash);
       if (!user || user.id !== principal.userId) return false;
-      const { track, project } = trackAccess(this.ctx, user, state.trackId);
+      const { track, project } = await trackAccess(this.ctx, user, state.trackId);
       if (track.closedAt || project.id !== state.projectId || project.rev !== state.projectRevision ||
           project.userId !== state.runnerOwnerId || !state.enabledProjects.includes(project.id)) return false;
       const services = Object.entries(state.services);
@@ -167,9 +172,9 @@ export class NativeForwardAccess {
     } catch { return false; }
   }
 
-  private workspace(trackId: string): string {
-    const track = this.ctx.db.track(trackId)!;
-    const project = this.ctx.db.project(track.projectId)!;
+  private async workspace(trackId: string): Promise<string> {
+    const track = (await this.ctx.db.track(trackId))!;
+    const project = (await this.ctx.db.project(track.projectId))!;
     return JSON.stringify([project.agentId, track.rev, track.workdir, track.branch, track.conversationId]);
   }
 }

@@ -75,7 +75,7 @@ still retain their existing access boundaries.
 
 Checkpoints contain a versioned Chromium storage snapshot (cookies,
 localStorage and IndexedDB), tab URLs, and per-tab sessionStorage. The snapshot
-is encrypted with Ravix's existing AES-GCM cipher before SQLite storage.
+is encrypted with Ravix's existing AES-GCM cipher before it is stored.
 API responses contain checkpoint metadata only. The current limits are 20 tabs,
 20 checkpoints per session and 16 MB per checkpoint response.
 

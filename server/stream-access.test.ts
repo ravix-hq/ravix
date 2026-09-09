@@ -3,10 +3,10 @@ import { watchStream } from "./stream-access";
 
 test("closing a real HTTP viewer cancels upstream without crashing the server", async () => {
   let cancelled = 0;
-  const server = Bun.serve({ port: 0, idleTimeout: 0, fetch(req) {
+  const server = Bun.serve({ port: 0, idleTimeout: 0, async fetch(req) {
     if (new URL(req.url).pathname === "/healthz") return new Response("alive");
     const upstream = new Response(new ReadableStream({ start(c) { c.enqueue(new TextEncoder().encode("data: ready\n\n")); }, cancel() { cancelled++; } }));
-    const access = watchStream("p", "u", req.signal, () => true);
+    const access = await watchStream("p", "u", req.signal, () => true);
     return new Response(access.forward(upstream), { headers: { "content-type": "text/event-stream" } });
   } });
   try {

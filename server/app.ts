@@ -141,12 +141,12 @@ export function buildRouter(ctx: AppContext): (req: Request) => Promise<Response
     // changed" and "who is on it", both of which they need for the tracks they
     // can see. Events that name a track carry an audience, so it carries
     // nothing naming one they cannot.
-    const project = ctx.db.project(p.id!);
+    const project = await ctx.db.project(p.id!);
     if (!project || project.archivedAt) throw new HttpError(404, "not_found", "No such project.");
-    if (!projects.accessOf(ctx, user.id, project)) throw new HttpError(404, "not_found", "No such project.");
-    const access = watchStream(project.id, user.id, req.signal, () => {
-      const current = ctx.db.project(project.id);
-      return !!current && !current.archivedAt && !!projects.accessOf(ctx, user.id, current);
+    if (!(await projects.accessOf(ctx, user.id, project))) throw new HttpError(404, "not_found", "No such project.");
+    const access = await watchStream(project.id, user.id, req.signal, async () => {
+      const current = await ctx.db.project(project.id);
+      return !!current && !current.archivedAt && !!(await projects.accessOf(ctx, user.id, current));
     });
     const response = projectStream(project.id, user.id, access.signal);
     return new Response(access.forward(response), { headers: response.headers });

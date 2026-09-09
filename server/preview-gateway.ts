@@ -77,37 +77,43 @@ export class PreviewHtml extends Transform {
 export function createPreviewGateway(ctx: AppContext) {
   const manager = previews(ctx);
   const connections = new Set<() => void>();
-  function resolveHost(req: IncomingMessage) {
+  async function resolveHost(req: IncomingMessage) {
     const cfg = ctx.config.previews;
     const host = req.headers.host?.toLowerCase();
     if (!cfg || !host || !host.endsWith(`.${cfg.domain}${cfg.publicPort}`)) throw new HttpError(404, "preview", "Preview not found.");
     const name = host.slice(0, -`.${cfg.domain}${cfg.publicPort}`.length);
-    const row = ctx.db.previews.byHost(name);
+    const row = await ctx.db.previews.byHost(name);
     if (!row) throw new HttpError(404, "preview", "Preview not found.");
-    manager.assertOpen(row.trackId);
+    await manager.assertOpen(row.trackId);
     return row;
   }
-  function allowed(row: PreviewRow, grant: PreviewGrant): boolean {
-    if (!ctx.db.previews.getGrant(grant.hash, row.trackId, grant.kind)) return false;
-    const user = ctx.db.sessionUser(grant.sessionHash);
+  async function allowed(row: PreviewRow, grant: PreviewGrant): Promise<boolean> {
+    if (!await ctx.db.previews.getGrant(grant.hash, row.trackId, grant.kind)) return false;
+    const user = await ctx.db.sessionUser(grant.sessionHash);
     if (!user) return false;
-    try { return !trackAccess(ctx, user, row.trackId).track.closedAt && !ctx.db.previews.get(row.trackId)?.cleanup; }
+    try { return !(await trackAccess(ctx, user, row.trackId)).track.closedAt && !(await ctx.db.previews.get(row.trackId))?.cleanup; }
     catch { return false; }
   }
   async function authorize(req: IncomingMessage, row: PreviewRow) {
     const hash = await sha256(cookie(req, cookieName(ctx)));
-    const grant = ctx.db.previews.getGrant(hash, row.trackId, "session");
-    if (!grant || !allowed(row, grant)) throw new HttpError(401, "preview_signin", "Open this preview from your signed-in Ravix track.");
+    const grant = await ctx.db.previews.getGrant(hash, row.trackId, "session");
+    if (!grant || !await allowed(row, grant)) throw new HttpError(401, "preview_signin", "Open this preview from your signed-in Ravix track.");
     return grant;
   }
-  function watch(row: PreviewRow, grant: PreviewGrant, close: () => void) {
-    const track = ctx.db.track(row.trackId)!;
-    const user = ctx.db.sessionUser(grant.sessionHash)!;
-    const check = () => { if (!allowed(row, grant) || ctx.db.previews.get(row.trackId)?.generation !== row.generation) close(); };
-    const unsubscribe = subscribe(track.projectId, user.id, check);
-    const timer = setInterval(check, 1000); timer.unref();
+  async function watch(row: PreviewRow, grant: PreviewGrant, close: () => void) {
+    const track = (await ctx.db.track(row.trackId))!;
+    const user = (await ctx.db.sessionUser(grant.sessionHash))!;
+    let checking = false;
+    const check = async () => {
+      if (checking) return;
+      checking = true;
+      try { if (!await allowed(row, grant) || (await ctx.db.previews.get(row.trackId))?.generation !== row.generation) close(); }
+      finally { checking = false; }
+    };
+    const unsubscribe = subscribe(track.projectId, user.id, () => void check());
+    const timer = setInterval(() => void check(), 1000); timer.unref();
     connections.add(close);
-    check();
+    await check();
     return () => { clearInterval(timer); unsubscribe(); connections.delete(close); };
   }
   function reply(res: ServerResponse, status: number, body: string, type = "text/html; charset=utf-8") {
@@ -122,7 +128,7 @@ export function createPreviewGateway(ctx: AppContext) {
   }
   const server = createServer(async (req, res) => {
     try {
-      const row = resolveHost(req);
+      const row = await resolveHost(req);
       const origin = previewOrigin(ctx, row);
       const path = new URL(req.url!, origin).pathname;
       if (path === `${CONTROL}open` && req.method === "GET") {
@@ -137,11 +143,11 @@ export function createPreviewGateway(ctx: AppContext) {
         if (req.headers.origin !== origin) throw new HttpError(403, "origin", "Open previews from their own host.");
         let body = "";
         for await (const chunk of req) { body += chunk.toString(); if (body.length > 128) throw new HttpError(400, "ticket", "Invalid ticket."); }
-        const ticket = ctx.db.previews.getGrant(await sha256(body), row.trackId, "ticket", true);
-        const user = ticket && ctx.db.sessionUser(ticket.sessionHash);
-        if (!ticket || !user || trackAccess(ctx, user, row.trackId).track.closedAt) throw new HttpError(401, "ticket", "This preview link expired. Open it again from Ravix.");
+        const ticket = await ctx.db.previews.getGrant(await sha256(body), row.trackId, "ticket", true);
+        const user = ticket && await ctx.db.sessionUser(ticket.sessionHash);
+        if (!ticket || !user || (await trackAccess(ctx, user, row.trackId)).track.closedAt) throw new HttpError(401, "ticket", "This preview link expired. Open it again from Ravix.");
         const token = randomToken();
-        ctx.db.previews.grant({ ...ticket, hash: await sha256(token), expires: Date.now() + 12 * 60 * 60_000, kind: "session" });
+        await ctx.db.previews.grant({ ...ticket, hash: await sha256(token), expires: Date.now() + 12 * 60 * 60_000, kind: "session" });
         res.setHeader("set-cookie", `${cookieName(ctx)}=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=43200${ctx.config.previews!.protocol === "https:" ? "; Secure" : ""}`);
         reply(res, 204, ""); return;
       }
@@ -150,21 +156,21 @@ export function createPreviewGateway(ctx: AppContext) {
       // wildcard hosts happen to share a registrable domain.
       if (!["GET", "HEAD"].includes(req.method!) && req.headers.origin !== origin) throw new HttpError(403, "origin", "Cross-origin preview writes are not allowed.");
       if (req.headers["sec-fetch-site"] === "cross-site" || req.headers["sec-fetch-site"] === "same-site") throw new HttpError(403, "origin", "Open the preview directly.");
-      const track = ctx.db.track(row.trackId)!;
+      const track = (await ctx.db.track(row.trackId))!;
       const back = `${ctx.config.publicUrl}/p/${track.projectId}/t/${track.id}`;
       if (path === `${CONTROL}start`) {
-        manager.touch(row.trackId);
+        await manager.touch(row.trackId);
         if (row.state === "stopped") void manager.startService(row.trackId).catch(() => {});
         reply(res, 200, `<meta name="viewport" content="width=device-width,initial-scale=1"><h1>Live working copy</h1><p id="state">Starting preview…</p><pre id="logs"></pre><a href="${escape(back)}">Back to track · send a correction</a><script>
           async function poll(){const r=await fetch('${CONTROL}status');if(!r.ok){document.querySelector('#state').textContent='Access ended. Return to the track.';return;}const s=await r.json();if(s.state==='ready'){location.replace('/');return;}document.querySelector('#state').textContent=s.error||'Starting preview…';document.querySelector('#logs').textContent=s.logs||'';if(s.state!=='failed')setTimeout(poll,1000)}poll();
         </script>`); return;
       }
       if (path === `${CONTROL}status`) {
-        reply(res, 200, JSON.stringify(manager.info(row.trackId)), "application/json"); return;
+        reply(res, 200, JSON.stringify(await manager.info(row.trackId)), "application/json"); return;
       }
       if (path === `${CONTROL}heartbeat` && req.method === "POST") {
         if (row.desired !== "running") throw new HttpError(409, "stopped", "Preview stopped. Open it from the track again.");
-        manager.touch(row.trackId); reply(res, 204, ""); return;
+        await manager.touch(row.trackId); reply(res, 204, ""); return;
       }
       if (path === `${CONTROL}activity.js`) {
         reply(res, 200, `(()=>{const beat=()=>{if(document.visibilityState==='visible')fetch('${CONTROL}heartbeat',{method:'POST'}).catch(()=>{})};beat();setInterval(beat,30000);document.addEventListener('visibilitychange',beat);const host=document.createElement('div');const root=host.attachShadow({mode:'open'});const a=document.createElement('a');a.href=${JSON.stringify(back)};a.textContent='Live working copy · Back to track';a.style.cssText='position:fixed;bottom:12px;right:12px;z-index:2147483647;background:#171717;color:white;padding:10px 14px;border-radius:8px;font:13px system-ui;text-decoration:none';root.append(a);document.body.append(host)})();`, "application/javascript; charset=utf-8"); return;
@@ -174,11 +180,11 @@ export function createPreviewGateway(ctx: AppContext) {
         res.writeHead(302, { location: `${CONTROL}start`, "cache-control": "no-store" }); res.end(); return;
       }
       await manager.destination(row.trackId);
-      manager.touch(row.trackId);
+      await manager.touch(row.trackId);
       const controller = new AbortController();
       let client: ReturnType<typeof previewClient> | undefined;
       const close = () => { controller.abort(); void client?.destroy(); res.destroy(); };
-      const dispose = watch(row, grant, close);
+      const dispose = await watch(row, grant, close);
       res.once("close", () => { dispose(); controller.abort(); void client?.destroy(); });
       req.on("aborted", close);
       const stream = await spriteTunnel(ctx.config.sprites!, row.sprite!, row.port!, controller.signal);
@@ -201,15 +207,15 @@ export function createPreviewGateway(ctx: AppContext) {
     const controller = new AbortController();
     const close = () => { controller.abort(); upstream?.destroy(); socket.destroy(); dispose(); };
     try {
-      const row = resolveHost(req);
+      const row = await resolveHost(req);
       const origin = previewOrigin(ctx, row);
       if (req.headers.origin !== origin || req.headers.upgrade?.toLowerCase() !== "websocket") throw new HttpError(403, "origin", "Invalid WebSocket origin.");
       if (new URL(req.url!, origin).pathname.startsWith(CONTROL)) throw new HttpError(404, "preview", "Unknown preview control.");
       const grant = await authorize(req, row);
       await manager.destination(row.trackId);
       if (row.state !== "ready") throw new HttpError(503, "starting", "Preview is not ready.");
-      manager.touch(row.trackId);
-      dispose = watch(row, grant, close);
+      await manager.touch(row.trackId);
+      dispose = await watch(row, grant, close);
       socket.once("close", close); socket.on("error", close);
       const tunnel = await spriteTunnel(ctx.config.sprites!, row.sprite!, row.port!, controller.signal);
       upstream = tunnel;

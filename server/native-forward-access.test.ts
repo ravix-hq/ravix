@@ -3,6 +3,7 @@ import { PassThrough } from "node:stream";
 import type { AppContext } from "./context";
 import { sha256 } from "./crypto";
 import { Db } from "./db";
+import { testSql } from "./sql";
 import { publish } from "./hub";
 import { NativeForwardAccess, type NativeForwardState } from "./native-forward-access";
 
@@ -10,15 +11,15 @@ const cleanup: (() => void)[] = [];
 afterEach(() => { for (const close of cleanup.splice(0).reverse()) close(); });
 
 async function fixture() {
-  const db = new Db(":memory:");
-  const owner = db.upsertUser({ githubId: "1", login: "owner", name: null, avatarUrl: null, tokenEnc: "unused" });
-  const member = db.upsertUser({ githubId: "2", login: "member", name: null, avatarUrl: null, tokenEnc: "unused" });
+  const db = await Db.open(await testSql());
+  const owner = await db.upsertUser({ githubId: "1", login: "owner", name: null, avatarUrl: null, tokenEnc: "unused" });
+  const member = await db.upsertUser({ githubId: "2", login: "member", name: null, avatarUrl: null, tokenEnc: "unused" });
   const sessionHash = await sha256("browser-session");
-  db.createSession(member.id, sessionHash, 60_000);
-  db.createProject({ id: "project", userId: owner.id, name: "Hello", repoFullName: null, repoPrivate: 0, defaultBranch: null, installationId: null, agentId: "agent", environmentId: "env", vaultId: null, runtime: "codex", model: "test", instructions: "" });
+  await db.createSession(member.id, sessionHash, 60_000);
+  await db.createProject({ id: "project", userId: owner.id, name: "Hello", repoFullName: null, repoPrivate: 0, defaultBranch: null, installationId: null, agentId: "agent", environmentId: "env", vaultId: null, runtime: "codex", model: "test", instructions: "" });
   for (const id of ["track", "other-track"]) {
-    db.createTrack({ id, projectId: "project", conversationId: id, slug: id, title: id, branch: id, workdir: `/work/${id}`, originKind: "blank", originBase: null, originNumber: null, originTitle: null, originUrl: null, rev: 1, createdByLogin: owner.login });
-    db.addMember(id, member.id, owner.id);
+    await db.createTrack({ id, projectId: "project", conversationId: id, slug: id, title: id, branch: id, workdir: `/work/${id}`, originKind: "blank", originBase: null, originNumber: null, originTitle: null, originUrl: null, rev: 1, createdByLogin: owner.login });
+    await db.addMember(id, member.id, owner.id);
   }
   const state: NativeForwardState = {
     sessionId: "native-session", trackId: "track", projectId: "project", projectRevision: 1,
@@ -36,7 +37,7 @@ async function fixture() {
     await barrier;
     return stream;
   });
-  cleanup.push(() => { access.stop(); for (const stream of streams) stream.destroy(); db.close(); });
+  cleanup.push(() => { access.stop(); for (const stream of streams) stream.destroy(); void db.close(); });
   const principal = { userId: member.id, sessionHash, runnerId: "runner", runnerEpoch: 1 };
   const grant = () => access.issue(state.sessionId, principal);
   return { db, owner, member, sessionHash, principal, state, states, access, calls, streams, grant, block: (wait: Promise<void>) => { barrier = wait; } };
@@ -69,13 +70,13 @@ test("grants require track membership and the authenticated runner's current con
     { ...f.principal, sessionHash: "wrong" }, { ...f.principal, userId: f.owner.id },
     { ...f.principal, runnerId: "another-runner" }, { ...f.principal, runnerEpoch: 2 },
   ]) await expect(f.access.issue(f.state.sessionId, principal)).rejects.toThrow();
-  f.db.removeMember("track", f.member.id);
+  await f.db.removeMember("track", f.member.id);
   await expect(f.grant()).rejects.toThrow();
-  f.db.addProjectMember("project", f.member.id, f.owner.id);
+  await f.db.addProjectMember("project", f.member.id, f.owner.id);
   expect((await f.grant()).token.length).toBeGreaterThanOrEqual(32);
 });
 
-const changes: [string, (f: Awaited<ReturnType<typeof fixture>>) => void][] = [
+const changes: [string, (f: Awaited<ReturnType<typeof fixture>>) => void | Promise<unknown>][] = [
   ["sign-out", f => f.db.endSession(f.sessionHash)],
   ["membership removal", f => f.db.removeMember("track", f.member.id)],
   ["track closure", f => f.db.closeTrack("track")],
@@ -95,7 +96,7 @@ for (const [name, change] of changes) test(`${name} revokes an existing native c
   const f = await fixture(); const grant = await f.grant();
   const channel = (await f.access.authorize(request(grant.token)))!;
   expect(channel.signal.aborted).toBe(false);
-  change(f);
+  await change(f);
   expect(await f.access.authorize(request(grant.token))).toBeNull();
   expect(channel.signal.aborted).toBe(true);
   await expect(channel.connect()).rejects.toThrow();
@@ -108,8 +109,13 @@ test("membership events abort established channels immediately and preserve anot
   const grant = await f.grant(); const peer = await f.access.issue("peer", f.principal);
   const channel = (await f.access.authorize(request(grant.token)))!;
   const peerChannel = (await f.access.authorize(request(peer.token, "metro", "peer")))!;
-  f.db.removeMember("track", f.member.id);
+  await f.db.removeMember("track", f.member.id);
   publish("project", { event: "people", data: { trackId: "track" } });
+  // The hub listener re-checks access against the database, which now yields.
+  await new Promise<void>((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error("Membership event did not revoke the channel")), 1_000);
+    channel.signal.addEventListener("abort", () => { clearTimeout(timeout); resolve(); }, { once: true });
+  });
   expect(channel.signal.aborted).toBe(true);
   expect(peerChannel.signal.aborted).toBe(false);
   f.access.revokeSession("native-session");
@@ -141,7 +147,7 @@ test("lease expiry closes an idle channel without another request", async () => 
 test("sign-out polling also closes an idle channel without hub events", async () => {
   const f = await fixture(); const grant = await f.grant();
   const channel = (await f.access.authorize(request(grant.token)))!;
-  f.db.endSession(f.sessionHash);
+  await f.db.endSession(f.sessionHash);
   await new Promise<void>((resolve, reject) => {
     const timeout = setTimeout(() => reject(new Error("Sign-out did not revoke the channel")), 2_000);
     channel.signal.addEventListener("abort", () => { clearTimeout(timeout); resolve(); }, { once: true });

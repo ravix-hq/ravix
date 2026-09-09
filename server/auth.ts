@@ -57,7 +57,7 @@ export async function session(ctx: AppContext, req: Request): Promise<Response> 
 async function viewerOf(ctx: AppContext, req: Request): Promise<Viewer | null> {
   const token = cookieValue(req, SESSION_COOKIE);
   if (!token) return null;
-  const user = ctx.db.sessionUser(await sha256(token));
+  const user = await ctx.db.sessionUser(await sha256(token));
   if (!user) return null;
 
   // Asked live rather than stored, because it is a fact about GitHub that
@@ -134,7 +134,7 @@ async function completeCallback(ctx: AppContext, req: Request): Promise<Response
     throw asHttpError(err, "sign you in");
   }
 
-  const user = ctx.db.upsertUser({
+  const user = await ctx.db.upsertUser({
     githubId: String(profile.id),
     login: profile.login,
     name: profile.name,
@@ -143,14 +143,14 @@ async function completeCallback(ctx: AppContext, req: Request): Promise<Response
   });
 
   const sessionToken = randomToken();
-  ctx.db.createSession(user.id, await sha256(sessionToken), ctx.config.sessionMaxAgeMs);
+  await ctx.db.createSession(user.id, await sha256(sessionToken), ctx.config.sessionMaxAgeMs);
   const cookie = { "set-cookie": sessionCookie(sessionToken, req, Math.floor(ctx.config.sessionMaxAgeMs / 1000)) };
 
   // Anything that was waiting for this person becomes real on the sign-in that
   // proves who they are, and not before. Two sources: invitations sent to
   // their GitHub account before they had one here, and the link that sent them
   // to GitHub in the first place.
-  const joined = ctx.db.claimInvites(user.id, String(profile.id));
+  const joined = await ctx.db.claimInvites(user.id, String(profile.id));
   if (parked.kind === "join" && parked.redirect) {
     const landing = await claimLink(ctx, user.id, parked.redirect);
     if (landing) return redirect(landing, cookie);
@@ -185,7 +185,7 @@ export async function install(ctx: AppContext, req: Request): Promise<Response> 
 
 export async function signOut(ctx: AppContext, req: Request): Promise<Response> {
   const token = cookieValue(req, SESSION_COOKIE);
-  if (token) ctx.db.endSession(await sha256(token));
+  if (token) await ctx.db.endSession(await sha256(token));
   return json({ data: { ok: true } }, 200, { "set-cookie": clearedSessionCookie(req) });
 }
 

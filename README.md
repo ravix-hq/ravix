@@ -45,14 +45,14 @@ Against the real thing, the server takes:
 | --- | --- |
 | `FOUNTAIN_URL` | defaults to `https://managoat.com` |
 | `FOUNTAIN_API_KEY` | **required** — the account every machine is built on |
+| `DATABASE_URL` | Postgres. Required in production; unset, an embedded Postgres (PGlite) runs under `DATA_DIR`, which is what local development and the tests use |
 | `RAVIX_SECRET` | encrypts stored GitHub tokens; generated into `DATA_DIR/secret` if unset |
 | `PUBLIC_URL` | this server as GitHub reaches it; must match the App's callback |
 | `GITHUB_APP_ID` `GITHUB_APP_SLUG` `GITHUB_CLIENT_ID` `GITHUB_CLIENT_SECRET` `GITHUB_PRIVATE_KEY` | all of them, or none of them |
 | `SPRITES_TOKEN` | optional — enables terminal/run/vitals and the preview provider |
-| `PREVIEW_DOMAIN` | optional — dedicated preview hostname suffix; absent means previews are unavailable |
-| `PREVIEW_PORT` | private gateway listener, default `8082`; HTTPS ingress forwards here |
+| `PREVIEW_DOMAIN` | optional — dedicated preview hostname suffix; absent means previews are unavailable. Preview hosts arrive on the same `PORT` as the app and are told apart by Host |
 | `SHARED_BROWSER` | set to `1` to enable the persistent shared browser and agent helper |
-| `DATA_DIR` `STATIC_DIR` `PORT` | where SQLite lives, where the built SPA is served from, and the listener |
+| `DATA_DIR` `STATIC_DIR` `PORT` | where the embedded database and a generated secret live, where the built SPA is served from, and the listener |
 
 Nothing needs registering on Fountain: the browser never talks to it, so there
 is no OAuth client and no CORS origin.
@@ -101,7 +101,7 @@ and the agent is told to use the manual controls.
 
 The helper supports `configure '<JSON>'`, `start`, `status`, `logs`, `restart`
 and `stop`; `configure null` restores the project default. Its two-hour
-credential is stored outside the checkout, only its hash is saved in SQLite,
+credential is stored outside the checkout, only its hash is saved in the database,
 and the next delivered turn replaces it. It is limited to the current track,
 conversation, machine and prompt sender's continuing membership. Removing
 access or retiring the track revokes it. It cannot change project defaults,
@@ -156,7 +156,7 @@ The app's CSP must allow the injected same-origin
 serve no HTML, stay active only while requests arrive. The `/__ravix/`
 path is reserved. Closing a track, rebuilding or archiving a project removes
 its services; failed cleanup is saved for retry. Restarting Ravix preserves
-services and reconciles recent active intent from SQLite.
+services and reconciles recent active intent from the database.
 
 ### Enable gateway routing
 
@@ -165,31 +165,33 @@ Production requires HTTPS on a wildcard preview domain separate from
 deployment uses `preview.ravix.sh`, while the app is on
 `app.ravix.sh`.
 
-1. Provision `*.preview.ravix.sh` DNS to the cluster ingress.
-2. Confirm the existing `letsencrypt-production` DNS01 issuer can issue for
-   that zone, or change the Certificate's issuer and domain.
-3. Build/publish the new Ravix image and use `k8s`
-   in the deployment's Kustomize/Flux configuration. It sets
-   `PREVIEW_DOMAIN`/`PREVIEW_PORT` and includes the internal
-   gateway Service, wildcard certificate and HTTPS Traefik route.
-4. Preserve the original Host header and allow WebSocket upgrades and long
-   streaming responses through ingress. Keep the gateway listener private.
-   Verify both track URLs and signed-out denial before enabling team use.
+The gateway has no listener of its own. It sits on loopback and
+`server/preview-front.ts`, inside the app's one `Bun.serve`, hands it every
+request whose Host is under `PREVIEW_DOMAIN` — WebSocket upgrades included.
+So on Render the whole thing is one web service with two custom domains
+(`render.yaml` names them):
 
-Render the manifests with
-`kubectl kustomize k8s` from the repository root.
-`k8s-previews/` remains a compatibility entry point for the same resources. This version
-uses one Ravix replica and its existing SQLite volume; orchestration
-locks are process-local. Persist and back up that volume. The production
-build bundles the server's transport dependencies into `dist-server/index.js`;
-the container runs that bundle.
+1. Add `*.preview.ravix.sh` and `preview.ravix.sh` as custom domains on the
+   service. Render requires the wildcard's parent to point at Render too; the
+   app answers on the bare host and sets nothing there.
+2. Create the DNS records Render shows for the wildcard: a `CNAME` for `*`
+   to the service's `onrender.com` host, plus the `_acme-challenge` and
+   `_cf-custom-hostname` records it lists. Render issues and renews the
+   wildcard certificate.
+3. Set `PREVIEW_DOMAIN=preview.ravix.sh` (in `render.yaml`) and a
+   `SPRITES_TOKEN`.
+4. Verify both track URLs and signed-out denial before enabling team use.
+
+One instance; orchestration locks are process-local, and the state is in
+Postgres. The production build bundles the server's transport dependencies
+into `dist-server/index.js`; the container runs that bundle.
 
 For local development, `bun run mock` also starts a Sprites protocol fixture
 on `:8794` that runs real Node/Vite apps in temporary directories. Its printed
 server command enables `PREVIEW_DOMAIN=preview.localhost`,
 `SPRITES_URL=http://localhost:8794`, and `SPRITES_TOKEN=sprites_mock`.
-`*.preview.localhost` uses HTTP and the explicit gateway port for local testing
-only. Node must be installed. `MOCK_PORT` and `MOCK_SPRITES_PORT` allow an
+`*.preview.localhost` uses HTTP on the server's own port (`:8081`) for local
+testing only. Node must be installed. `MOCK_PORT` and `MOCK_SPRITES_PORT` allow an
 isolated fixture alongside another development session.
 
 The [verification record](docs/track-previews-verification.md) distinguishes
@@ -277,7 +279,7 @@ in it is a discard whether or not the person was told.
 
 ## Queue work and close the tab
 
-Every prompt is saved in Ravix's SQLite database before the server
+Every prompt is saved in Ravix's database before the server
 acknowledges it. Text and attached images stay there while another turn runs.
 The **saved prompts** panel shows the order, sender and delivery state; opening
 the track on another device reads that same queue. Closing a tab, changing
@@ -304,7 +306,7 @@ as **Delivery unconfirmed**, with later prompts on that track held behind it.
 Check the transcript, then cancel it or explicitly send it again. An uncertain
 delivery is never automatically replayed.
 
-The queue lives on the deployment's existing single SQLite volume; its
+The queue lives in the deployment's Postgres; its
 durability depends on that volume. It does not recover a lost Fountain machine
 or guarantee that an accepted agent turn completes successfully.
 
@@ -655,16 +657,45 @@ product.
 
 ## Deploy
 
-Push to `main`; `.github/workflows/build.yml` builds `ghcr.io/ravix-hq/ravix`
-and pins the sha into `k8s/deployment.yaml`. A Flux `Kustomization` pointed at
-`k8s/` reconciles it. The manifests name `app.ravix.sh` for the app and
-`*.preview.ravix.sh` for track previews; both need DNS at the cluster ingress
-and a GitHub App registered with `https://app.ravix.sh` as its callback.
+Ravix runs on [Render](https://render.com) as one Docker web service and one
+Render Postgres, described by `render.yaml`. Push to `main`; Render waits for
+CI (`.github/workflows/ci.yml`) to pass, builds the `Dockerfile` — install,
+`bun run build`, a runtime image of bun and the two bundles — and swaps the
+running instance. There is no image registry and no pinned sha: the deploy
+*is* the commit, and Render's dashboard rolls back to any earlier one.
 
-The app needs real secrets in the cluster — see `k8s/infisicalsecret.yaml` for
-the folder and the list. The `secretRef` is optional on purpose: before it
-syncs the app still serves and says on screen which variable it is missing,
-which is a better failure than a pod that will not start.
+First time: in the Render dashboard create a **Blueprint** pointing at this
+repository. It reads `render.yaml`, creates the database and the service with
+`DATABASE_URL` wired between them, and prompts for the secrets marked
+`sync: false` — the Fountain key, the GitHub App's five values and the Sprites
+token. `RAVIX_SECRET` is generated by Render. Every secret is optional to
+*start*: the app serves without it and says on screen which variable it is
+missing, which is a better failure than a service that will not boot. Then add
+the custom domains: `app.ravix.sh` for the app, `preview.ravix.sh` and
+`*.preview.ravix.sh` for track previews (see "Enable gateway routing"), and
+register the GitHub App with `https://app.ravix.sh` as its callback.
+
+A shell on the running service is `render ssh ravix` with the
+[Render CLI](https://render.com/docs/cli). The database is the Render Postgres
+`ravix-db`; `psql` against it is one click in its dashboard page.
+
+### The database
+
+Postgres, through `server/sql.ts`. Production talks to Render's over Bun's
+built-in client; `bun run server` and the tests talk to the same Postgres
+compiled to WebAssembly ([PGlite](https://pglite.dev)), on disk under
+`DATA_DIR/pg` or in memory, so nothing has to be installed to work on this.
+The SQL is written once. `RAVIX_TEST_DATABASE_URL` runs the test suite against
+a real server instead; each test starts from an empty schema either way.
+
+The schema is created by `Db.open` with idempotent statements, so a restart
+does nothing and a new table is a new `CREATE TABLE IF NOT EXISTS`. Moving the
+Kubernetes deployment's SQLite file over is one command, run once against an
+empty target:
+
+```sh
+DATABASE_URL=postgres://… bun scripts/sqlite-to-postgres.ts ravix.sqlite
+```
 
 ## Shared code
 
