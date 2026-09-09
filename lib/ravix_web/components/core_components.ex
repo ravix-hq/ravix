@@ -379,6 +379,53 @@ defmodule RavixWeb.CoreComponents do
 
   def icon(assigns), do: RavixWeb.Icons.icon(assigns)
 
+  @doc "The shared, browser-local palette picker for public and workspace pages."
+  attr :id, :string, required: true
+
+  def theme_picker(assigns) do
+    ~H"""
+    <div id={@id} phx-hook="Theme" class="theme-picker">
+      <button
+        class="theme-trigger"
+        data-theme-toggle
+        aria-haspopup="menu"
+        aria-expanded="false"
+        aria-controls={"#{@id}-menu"}
+      >
+        <span class="theme-swatch" data-theme-swatch></span><span class="col"><small>Theme</small><span
+          class="truncate"
+          data-theme-name
+        >Ravix</span></span>
+        <.icon name="chevron" size={12} />
+      </button>
+      <div id={"#{@id}-menu"} class="theme-menu" role="menu" aria-label="Theme" hidden>
+        <button
+          :for={
+            theme <-
+              ~w(ravix slate one-dark dracula nord tokyo-night catppuccin-mocha night-owl monokai gruvbox-dark solarized-dark daylight github-light one-light solarized-light catppuccin-latte mario neon-noir vaporwave matrix hot-dog-stand bubblegum)
+          }
+          class="theme-option"
+          role="menuitemradio"
+          aria-checked="false"
+          data-theme-choice={theme}
+          data-theme-name={
+            String.replace(theme, "-", " ")
+            |> String.split()
+            |> Enum.map_join(" ", &String.capitalize/1)
+          }
+        >
+          <span class="theme-swatch" data-theme={theme}></span><span>{String.replace(theme, "-", " ") |> String.split() |> Enum.map_join(" ", &String.capitalize/1)}</span><span
+            class="check"
+            data-theme-check
+            aria-hidden="true"
+            hidden
+          >✓</span>
+        </button>
+      </div>
+    </div>
+    """
+  end
+
   @doc """
   The shell every modal sits in (`src/components/Dialog.tsx`).
 
@@ -535,7 +582,7 @@ defmodule RavixWeb.CoreComponents do
   A five-by-seven bitmap rather than a font: at this size a typeface is
   somebody else's decision about letterforms, and a grid is the app saying
   what it is. SVG so it scales, prints and screenshots cleanly, and so the
-  whole thing is one element for the shadow in `.wordmark`.
+  whole thing is one element.
 
       <.wordmark />
       <.wordmark text="RAVIX" unit={7} gap={1} />

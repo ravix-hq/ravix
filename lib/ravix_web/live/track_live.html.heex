@@ -49,9 +49,8 @@
         <div id="transcript-scroll" phx-hook="TranscriptTail" class="transcript-scroll">
           <div id="transcript-turns" phx-update="stream">
             <article :for={{dom_id, turn} <- @streams.turns} id={dom_id} class="workspace-turn">
-              <div :if={turn.prompt} class="workspace-prompt">
-                {visible_prompt(turn.prompt)}
-              </div>
+              <div :if={turn.prompt} class="speaker">You</div>
+              <div :if={turn.prompt} class="workspace-prompt">{visible_prompt(turn.prompt)}</div>
               <div :for={block <- turn.blocks}>
                 <div :if={block.kind == :text} class="md">
                   {RavixWeb.Markdown.render_safe(block.body)}
@@ -149,6 +148,15 @@
                 </button>
               </p>
               <div class="workspace-actions">
+                <button
+                  type="button"
+                  class="ghost"
+                  aria-label="Choose images"
+                  phx-click={JS.dispatch("click", to: "##{@uploads.images.ref}")}
+                >
+                  <.icon name="picture" size={17} />
+                </button>
+                <span class="send-hint"><kbd>Enter</kbd> to send</span><span class="spacer"></span>
                 <button
                   class="primary"
                   phx-disable-with="Sending…"

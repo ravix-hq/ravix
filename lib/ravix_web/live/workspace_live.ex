@@ -10,6 +10,7 @@ defmodule RavixWeb.WorkspaceLive do
     socket =
       assign(socket,
         session_token: session["session_token"],
+        github_available: Accounts.capabilities().github,
         projects: [],
         tracks: %{},
         project: nil,

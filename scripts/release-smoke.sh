@@ -37,4 +37,6 @@ curl -fsS "http://${address}/healthz"
 curl -fsS "http://${address}/" | grep -F 'One project' >/dev/null
 curl -fsS "http://${address}/theme.js" | grep -F 'ravix.theme' >/dev/null
 curl -fsS "http://${address}/assets/js/app.js" >/dev/null
-printf 'Release boot, landing page, assets, idempotent migrations, and legacy table preservation passed.\n'
+curl -fsS "http://${address}/fonts/IBMPlexSans-Regular.woff2" >/dev/null
+curl -fsS "http://${address}/fonts/IBMPlexMono-Regular.woff2" >/dev/null
+printf 'Release boot, landing page, fonts, assets, idempotent migrations, and legacy table preservation passed.\n'

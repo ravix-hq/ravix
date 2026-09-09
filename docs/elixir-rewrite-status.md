@@ -14,7 +14,11 @@ The application now runs as a Phoenix release with LiveView pages.
   sharing, and pull request creation.
 - Files, diffs, GitHub checks, terminal commands, vitals, and web previews
   with a supervised HTTP/WebSocket gateway and session-bound access tickets.
-- Landing, home/inbox, search, responsive navigation, 22 themes, and the
+- PR #14’s IBM Plex and graphite/brass redesign, adapted to LiveView: landing,
+  distinct sign-in/home/inbox pages, stacked project actions, and flatter chrome.
+  Fonts are self-hosted; Ravix and Daylight retain readable muted text. See the
+  [adaptation and screenshots](ui-polish/README.md).
+- Search, responsive navigation, 22 themes, and the
   composer, terminal, transcript, panel resize, and theme browser hooks.
 - The Bun server, React SPA, native runner, and their dependencies are removed.
   TypeScript remains only in local HTTP mocks and the two files they import.
@@ -37,7 +41,7 @@ is required before production cutover; retaining tables is not an import.
 
 - The recovered backend's 19 test failures were resolved, including presence
   metadata, follower subscription/lifecycle, and transcript event handling.
-- The final local suite passes: 715 tests, zero failures, 92.06% production-only coverage.
+- The final local suite passes: 717 tests, zero failures, 92.16% production-only coverage.
 - The suite includes LiveView tests for scoped navigation, session expiry,
   membership revocation, project settings, prompt handling, files, changes,
   checks, previews, and fresh preview tickets.

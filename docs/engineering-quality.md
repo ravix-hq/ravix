@@ -4,17 +4,17 @@ The migration's first gate reported 86.99% coverage, including test support.
 The production-only baseline was server 90.77%, web 73.35%, workspace LiveView
 41.13%, and track LiveView 37.37%. The aggregate hid the new UI's gaps.
 
-The strengthened local gate passes 715 ExUnit tests, four generated properties, and 26 DOM/guard tests:
+The strengthened local gate passes 717 ExUnit tests, four generated properties, and 26 DOM/guard tests:
 
 | Area | Production baseline | Current coverage | Enforced floor |
 |---|---:|---:|---:|
 | Server | 90.77% | 92.28% | 92% |
-| Web | 73.35% | 91.47% | 90% |
-| Workspace LiveView | 41.13% | 92.91% | 92% |
+| Web | 73.35% | 91.87% | 90% |
+| Workspace LiveView | 41.13% | 92.96% | 92% |
 | Track LiveView | 37.37% | 93.43% | 92% |
 | Browser hooks | Not measured | 99.09% lines / 98.57% functions | 90% per file |
 
-Overall production line coverage is 92.06%. The old 86.99% aggregate included
+Overall production line coverage is 92.16%. The old 86.99% aggregate included
 test support and is therefore not directly comparable to this production total.
 
 ## Gates
@@ -109,7 +109,10 @@ owns fresh provider processes and a uniquely named database that is dropped on
 exit. It refuses occupied ports. No test-only authentication route is installed.
 The flows cover OAuth, repository/project/track creation, streamed output, image
 submission, draft retention across transport reconnect, session revocation in a
-second tab, keyboard resizing/dialog focus, and axe checks for the default theme.
+second tab, keyboard resizing/dialog focus, and axe checks in Ravix and Daylight.
+The UI adaptation from PR #14 adds local font-loading checks, scratch-project
+creation, recent-project navigation, theme persistence, and screenshots of public
+and workspace pages at desktop, tablet, and mobile widths.
 Failure traces and screenshots are retained for seven days; retries are disabled.
 
 Run locally after `bunx playwright install chromium`:

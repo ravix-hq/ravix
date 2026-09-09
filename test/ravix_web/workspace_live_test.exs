@@ -10,9 +10,71 @@ defmodule RavixWeb.WorkspaceLiveTest do
   test "public landing and sign-in work without a configured backend", %{conn: conn} do
     {:ok, view, html} = live(conn, "/")
     assert html =~ "One project."
-    assert has_element?(view, "a[href='/auth/github']", "Get started")
+    assert has_element?(view, "a[href='/login']", "Sign in with GitHub")
+
+    assert has_element?(
+             view,
+             "#landing-theme[data-phx-hook='Theme'], #landing-theme[phx-hook='Theme']"
+           )
+
+    {:ok, signin, _} = live(conn, "/login")
+    assert has_element?(signin, "h1", "Sign in to Ravix")
+    assert has_element?(signin, "a[href='/']", "About Ravix")
+    assert render(signin) =~ "GitHub sign-in is not configured"
+    refute has_element?(signin, "a[href='/auth/github']")
     refute has_element?(view, "#new-project-form")
     assert {:error, {:live_redirect, %{to: "/login"}}} = live(conn, "/p/no-project")
+  end
+
+  test "home actions open fresh project forms and recent projects stay scoped", %{conn: conn} do
+    user = insert_user()
+    own = insert_project(user: user, name: "Recent work")
+    hidden = insert_project(user: insert_user(), name: "Private work")
+    {:ok, view, _} = live(log_in_user(conn, user), "/home")
+    assert has_element?(view, ".home-recent a[href='/p/#{own.id}']", "Recent work")
+    refute render(view) =~ hidden.name
+    assert has_element?(view, ".home-action[disabled]", "Open a local project")
+    view |> element(".home-action", "Open a GitHub project") |> render_click()
+    view |> form("#new-project-form", name: "Abandoned name") |> render_change()
+    render_click(view, "dismiss")
+    view |> element(".home-action", "Quick start") |> render_click()
+    assert has_element?(view, "#project-name[value='']")
+    assert has_element?(view, "#project-repo option[value='']", "No repository")
+    refute render(view) =~ "Abandoned name"
+  end
+
+  test "inbox shows only failed and unread ready tracks", %{conn: conn} do
+    user = insert_user()
+    project = insert_project(user: user)
+
+    rows =
+      for title <- ["Review this", "Still working", "Needs help"],
+          do: insert_track(project: project, title: title)
+
+    tracks =
+      Enum.zip_with(rows, [:ready, :running, :failed], fn row, status ->
+        row |> Tracks.present(project: project) |> Map.merge(%{status: status, unread: true})
+      end)
+
+    stub(Tracks, :list, fn actual_user, project_id ->
+      assert actual_user.id == user.id
+      assert project_id == project.id
+      {:ok, tracks}
+    end)
+
+    {:ok, view, _} = live(log_in_user(conn, user), "/inbox")
+    assert has_element?(view, ".inbox-item", "Review this")
+    assert has_element?(view, ".inbox-item", "Needs help")
+    refute has_element?(view, ".inbox-item", "Still working")
+    refute has_element?(view, ".inbox-empty")
+
+    stub(Tracks, :list, fn _, _ ->
+      {:ok, Enum.map(tracks, &Map.merge(&1, %{status: :ready, unread: false}))}
+    end)
+
+    view |> element("button", "Refresh") |> render_click()
+    refute has_element?(view, ".inbox-item")
+    assert has_element?(view, ".inbox-empty", "You're all caught up")
   end
 
   test "the rail and inbox are scoped to the signed-in user", %{conn: conn} do
