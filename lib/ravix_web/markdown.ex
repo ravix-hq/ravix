@@ -51,7 +51,15 @@ defmodule RavixWeb.Markdown do
   """
   @spec render(String.t()) :: String.t()
   def render(src) when is_binary(src) do
-    lines = src |> String.replace("\r\n", "\n") |> String.split("\n")
+    # The code-span placeholders below are NUL-framed, which is only safe
+    # while the input has no NUL of its own. Agent output is whatever ran on
+    # somebody's machine -- `cat` on a binary, a UTF-16 file -- so strip them
+    # here rather than trusting that a machine never emits one.
+    lines =
+      src
+      |> String.replace("\0", "")
+      |> String.replace("\r\n", "\n")
+      |> String.split("\n")
 
     state = %{out: [], lists: [], para: [], quote: [], fence: nil, blank: false}
 
@@ -263,8 +271,10 @@ defmodule RavixWeb.Markdown do
       |> String.replace(~r/(^|[\s(\[])\*([^*\s][^*]*)\*/, "\\1<em>\\2</em>")
       |> String.replace(~r/~~([^~]+)~~/, "<del>\\1</del>")
 
-    Regex.replace(~r/\x00(\d+)\x00/, s, fn _, i ->
-      Enum.at(code, String.to_integer(i))
+    Regex.replace(~r/\x00(\d+)\x00/, s, fn whole, i ->
+      # render/1 strips input NULs, so every placeholder here is one this
+      # module wrote; keep the frame rather than raising if that ever slips.
+      Enum.at(code, String.to_integer(i)) || whole
     end)
   end
 

@@ -61,6 +61,17 @@ defmodule RavixWeb.MarkdownTest do
              "<p>&lt;img src=x onerror=&quot;alert(1)&quot;&gt;</p>"
   end
 
+  test "a NUL in the reply cannot collide with the code-span placeholders" do
+    # `cat` on a binary, or any UTF-16 file, puts NUL bytes in the transcript.
+    # They used to reach the placeholder substitution and raise, which killed
+    # the LiveView on render and again on every reconnected replay.
+    nul = <<0>>
+
+    assert render("hello " <> nul <> "0" <> nul <> " world") == "<p>hello 0 world</p>"
+    assert render("`x` then " <> nul <> "0" <> nul) == "<p><code>x</code> then 0</p>"
+    assert render("`x` then " <> nul <> "99" <> nul) == "<p><code>x</code> then 99</p>"
+  end
+
   test "html inside a fence and its language are escaped too" do
     assert render("```c++\n<script>\n```") =~ ~s(<code class="lang-c++">&lt;script&gt;</code>)
     assert render("```\na > b\n```") =~ "<pre><code>a &gt; b</code></pre>"

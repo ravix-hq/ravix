@@ -78,3 +78,32 @@ test("delegated copy resets its label after feedback and tolerates removal", asy
     window.setTimeout = schedule
   }
 })
+
+test("growth is watched on the turns, not only on whatever is laid in above them", () => {
+  // The real track page puts a fixed-height ribbon above the turns. Watching
+  // only the first child left the growing element unobserved, so a reply
+  // whose images or diffs land after the patch stopped following the bottom.
+  document.body.innerHTML = `<div id="transcript" data-track="one"><div class="track-ribbon">created</div><div id="transcript-turns">turns</div></div>`
+  const el = document.querySelector("#transcript")
+  dimensions(el, {scrollHeight: 1000, clientHeight: 200})
+
+  const observed = []
+  const native = globalThis.ResizeObserver
+  globalThis.ResizeObserver = class {
+    observe(node) { observed.push(node) }
+    disconnect() {}
+  }
+  try {
+    const {hook} = mountHook(TranscriptTail, "#transcript")
+    expect(observed).toContain(el.querySelector("#transcript-turns"))
+    expect(observed).toContain(el.querySelector(".track-ribbon"))
+    expect(observed).toContain(el)
+
+    // Re-observing after a patch stays safe to repeat.
+    observed.length = 0
+    hook.updated()
+    expect(observed).toContain(el.querySelector("#transcript-turns"))
+  } finally {
+    globalThis.ResizeObserver = native
+  }
+})

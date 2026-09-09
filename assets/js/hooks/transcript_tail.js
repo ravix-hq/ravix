@@ -9,6 +9,7 @@
 //
 //   <div phx-hook="TranscriptTail" id="transcript" class="scroll log"
 //        data-track={@track.id} data-older-event="older">
+//     <div>… anything above the turns …</div>
 //     <div>… the turns …
 //       <button type="button" class="jump-latest" data-jump-latest>Jump to latest</button>
 //     </div>
@@ -72,7 +73,7 @@ export const TranscriptTail = {
     // the scroller keeps the bottom through all of it.
     this.observer = new ResizeObserver(() => this.stick())
     this.observer.observe(this.el)
-    if (this.el.firstElementChild) this.observer.observe(this.el.firstElementChild)
+    this.observeContent()
     this.stick()
   },
 
@@ -97,7 +98,16 @@ export const TranscriptTail = {
       this.asked = false
     }
     this.anchor = null
-    if (this.el.firstElementChild) this.observer.observe(this.el.firstElementChild)
+    this.observeContent()
+  },
+
+  // Every element child, not just the first: the scroller's own box does not
+  // resize when its content grows, so the growth has to be watched on what
+  // actually grows. Watching only the first child broke silently the moment a
+  // fixed-height ribbon was laid in above the turns; re-observing an element
+  // already observed is a no-op, so this is safe to repeat after every patch.
+  observeContent() {
+    for (const child of this.el.children) this.observer.observe(child)
   },
 
   destroyed() {

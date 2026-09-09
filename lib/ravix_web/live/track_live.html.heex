@@ -14,7 +14,7 @@
   </div>
   <div :if={@track} class="track-workspace-body">
     <header class="crumbs track-crumbs">
-      <.link href={"/p/#{@project.id}"} class="project-crumb">
+      <.link navigate={"/p/#{@project.id}"} class="project-crumb">
         <span class="project-mark" aria-hidden="true">
           {String.first(@project.name) |> String.upcase()}
         </span>
@@ -390,7 +390,7 @@
           <button
             class="ghost dock-toggle"
             phx-click="toggle-dock"
-            aria-expanded={@dock_open}
+            aria-expanded={to_string(@dock_open)}
             aria-controls="machine-dock"
             aria-label={if @dock_open, do: "Collapse the dock", else: "Expand the dock"}
           >

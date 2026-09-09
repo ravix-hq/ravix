@@ -63,8 +63,15 @@ defmodule RavixWeb.WorkspaceLive do
   end
 
   defp select_project(socket, project, track_id, params) do
+    # Expand the project being opened, but only when it is a different one
+    # than was open before. Every patch lands here -- dismissing a dialog,
+    # following a track link -- and re-expanding on each would undo a collapse
+    # the reader just made on the group they are working in.
+    previous = socket.assigns[:project]
+    arriving? = project && (is_nil(previous) || previous.id != project.id)
+
     expanded = socket.assigns.expanded_projects
-    expanded = if project, do: MapSet.put(expanded, project.id), else: expanded
+    expanded = if arriving?, do: MapSet.put(expanded, project.id), else: expanded
 
     socket =
       assign(socket,
@@ -121,8 +128,16 @@ defmodule RavixWeb.WorkspaceLive do
     end
   end
 
-  def handle_event("advanced-track", _, socket),
-    do: {:noreply, assign(socket, advanced_track: !socket.assigns.advanced_track)}
+  def handle_event("advanced-track", _, socket) do
+    if socket.assigns.advanced_track do
+      # Collapsing only hides the origin controls; `hidden` does not disable an
+      # input, so the ref select underneath still submits. Put the origin back
+      # to blank so the form cannot open a track from a ref nobody can see.
+      {:noreply, assign(socket, advanced_track: false, origin_kind: "blank", refs: [])}
+    else
+      {:noreply, assign(socket, advanced_track: true)}
+    end
+  end
 
   def handle_event("search", %{"q" => q}, socket), do: {:noreply, assign(socket, query: q)}
   def handle_event("edit", params, socket), do: {:noreply, assign(socket, form_data: params)}

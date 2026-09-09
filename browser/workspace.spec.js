@@ -97,7 +97,8 @@ test('home quick start creates a scratch project and recent navigation survives 
   await recent.getByRole('link', { name: /Quick start quality/ }).click();
   await expect(page.getByRole('heading', { name: 'Pick a track' })).toBeVisible();
   await expect(page.locator('.crumbs')).toContainText('Quick start quality');
-  await page.getByRole('link', { name: /^Inbox/ }).first().click();
+  // Exact: an empty inbox must not put a "0" badge in the link's name.
+  await page.getByRole('link', { name: 'Inbox', exact: true }).first().click();
   await expect(page.getByRole('heading', { name: "You're all caught up" })).toBeVisible();
   await accessible(page);
   await capture(page, 'inbox-Daylight');

@@ -119,6 +119,62 @@ defmodule RavixWeb.WorkspaceLiveTest do
     refute has_element?(view, "#new-track-form")
   end
 
+  test "a collapsed project stays collapsed across patches", %{conn: conn} do
+    user = insert_user()
+    project = insert_project(user: user)
+    track = insert_track(project: project)
+    {:ok, view, _} = live(log_in_user(conn, user), "/p/#{project.id}/t/#{track.id}")
+
+    # Arriving expands the group; collapsing it is the reader's decision and
+    # the next patch must not undo it.
+    refute has_element?(view, "#project-tracks-#{project.id}[hidden]")
+    view |> element("button[phx-value-id='#{project.id}']") |> render_click()
+    assert has_element?(view, "#project-tracks-#{project.id}[hidden]")
+
+    render_click(view, "dismiss")
+    assert_patch(view, "/p/#{project.id}/t/#{track.id}")
+    assert has_element?(view, "#project-tracks-#{project.id}[hidden]")
+  end
+
+  test "hiding advanced options drops the origin they carried", %{conn: conn} do
+    user = insert_user()
+    project = insert_project(user: user, repo: "owner/repo")
+    {:ok, view, _} = live(log_in_user(conn, user), "/p/#{project.id}?new=track")
+
+    view |> element("button", "Advanced") |> render_click()
+    render_click(view, "origin", %{"kind" => "branch"})
+    refute render(view) =~ "New worktree from"
+
+    # `hidden` does not disable an input: without a reset the ref select would
+    # still submit and open the track from a ref the form no longer shows.
+    view |> element("button", "Hide advanced") |> render_click()
+    assert has_element?(view, "#track-advanced[hidden]")
+    assert render(view) =~ "New worktree from"
+    assert has_element?(view, "button.primary", "Blank")
+  end
+
+  test "disclosure state reaches assistive technology as a string", %{conn: conn} do
+    user = insert_user()
+    project = insert_project(user: user)
+    insert_track(project: project)
+    {:ok, view, _} = live(log_in_user(conn, user), "/home")
+
+    # A bare `aria-expanded` is invalid ARIA and reads as undefined, which is
+    # what a raw boolean renders to in HEEx.
+    assert has_element?(view, "button[aria-expanded='false'][phx-value-id='#{project.id}']")
+    view |> element("button[phx-value-id='#{project.id}']") |> render_click()
+    assert has_element?(view, "button[aria-expanded='true'][phx-value-id='#{project.id}']")
+  end
+
+  test "an empty inbox carries no count", %{conn: conn} do
+    user = insert_user()
+    insert_project(user: user)
+    {:ok, view, _} = live(log_in_user(conn, user), "/inbox")
+
+    assert render(view) =~ "You&#39;re all caught up"
+    refute has_element?(view, "a.yard-item .badge")
+  end
+
   test "track-only members cannot open project creation through a URL", %{conn: conn} do
     owner = insert_user()
     member = insert_user()

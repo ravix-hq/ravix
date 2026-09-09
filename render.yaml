@@ -24,6 +24,11 @@ services:
     runtime: docker
     region: oregon
     plan: 0.5c-512mb
+    # Load-bearing, not a capacity choice: the follower registry, the machine
+    # cache, the prompt-queue sweep and the preview reconciler are all
+    # node-local singletons and nothing clusters them. A second instance would
+    # split preview ownership and double the sweeps, silently.
+    numInstances: 1
     dockerfilePath: ./Dockerfile
     healthCheckPath: /healthz
     # Migrations run against the database before the new release takes over.

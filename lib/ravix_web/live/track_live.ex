@@ -54,6 +54,7 @@ defmodule RavixWeb.TrackLive do
         |> stream(:turns, [])
         |> attach_hook(:track_event_access, :handle_event, fn _, _, s -> guard(s) end)
         |> attach_hook(:track_message_access, :handle_info, fn _, s -> guard(s) end)
+        |> attach_hook(:track_async_access, :handle_async, fn _, _, s -> guard(s) end)
 
       if connected?(socket) do
         Hub.subscribe(socket.assigns.project_id)
