@@ -90,7 +90,7 @@ defmodule Ravix.MixProject do
       "ecto.migrate": ["ravix.prepare_database", "ecto.migrate --prefix ravix"],
       "ecto.rollback": ["ecto.rollback --prefix ravix"],
       "ecto.reset": ["ecto.drop", "ecto.setup"],
-      test: ["ecto.create --quiet", "ecto.migrate --quiet", "test"],
+      test: ["ecto.create --quiet", "ecto.migrate --quiet", "assets.setup", "test"],
       "assets.setup": ["esbuild.install --if-missing"],
       "assets.build": ["compile", "esbuild ravix"],
       "assets.deploy": [

@@ -34,7 +34,7 @@ for i in $(seq 1 30); do
   sleep 1
 done
 curl -fsS "http://${address}/healthz"
-curl -fsS "http://${address}/" | rg -q 'One project'
-curl -fsS "http://${address}/theme.js" | rg -q 'ravix.theme'
+curl -fsS "http://${address}/" | grep -F 'One project' >/dev/null
+curl -fsS "http://${address}/theme.js" | grep -F 'ravix.theme' >/dev/null
 curl -fsS "http://${address}/assets/js/app.js" >/dev/null
 printf 'Release boot, landing page, assets, idempotent migrations, and legacy table preservation passed.\n'
