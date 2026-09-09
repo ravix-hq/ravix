@@ -1,7 +1,7 @@
 /**
  * The empty state, which in this app is a designed surface rather than a gap.
  *
- * Switchyard is a clone of a desktop app that has a local machine underneath
+ * Ravix is a clone of a desktop app that has a local machine underneath
  * it, and this one has a sandbox in somebody else's cloud. Some of what
  * Conductor does therefore has no API behind it here — not yet, and in a
  * couple of cases not ever. Every one of those places gets this component
@@ -62,7 +62,7 @@ export function NotConfigured({ icon, title, variable, children }: { icon: React
       title={title}
       because={
         <>
-          This switchyard has no <code>{variable}</code>, so the feature is switched off here rather than unfinished.
+          This Ravix deployment has no <code>{variable}</code>, so the feature is switched off here rather than unfinished.
         </>
       }
     >

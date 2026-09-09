@@ -1,4 +1,4 @@
-/** A Switchyard session has one shared identity. Actors own control, not profiles. */
+/** A Ravix session has one shared identity. Actors own control, not profiles. */
 export interface BrowserActor { id: string; label: string; kind: "human" | "agent" }
 export interface BrowserTab { id: string; url: string; title: string }
 export interface BrowserState {
@@ -26,8 +26,8 @@ export interface BrowserResult extends BrowserState { text?: string; image?: str
 
 export const BROWSER_WIDTH = 1280;
 export const BROWSER_HEIGHT = 800;
-export const BROWSER_TOOLS_START = "[switchyard browser tools for this turn]";
-export const BROWSER_TOOLS_END = "[/switchyard browser tools]";
+export const BROWSER_TOOLS_START = "[ravix browser tools for this turn]";
+export const BROWSER_TOOLS_END = "[/ravix browser tools]";
 export function visibleBrowserPrompt(prompt: string): string {
   if (!prompt.startsWith(`${BROWSER_TOOLS_START}\n`)) return prompt;
   const end = prompt.indexOf(`\n${BROWSER_TOOLS_END}\n\n`);

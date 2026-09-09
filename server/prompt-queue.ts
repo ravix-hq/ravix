@@ -98,7 +98,7 @@ export class PromptQueue {
     } catch {
       // Leave claims intact for explicit recovery, and retry untouched rows on
       // the next tick. Never log prompt bodies or manufacture a successful send.
-      console.error("switchyard: prompt queue sweep failed");
+      console.error("ravix: prompt queue sweep failed");
     } finally {
       this.busy = false;
     }

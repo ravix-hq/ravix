@@ -7,7 +7,7 @@ paired Android and iOS Sprite/browser paths have also been exercised live in Chr
 input, Sprite backend calls, state-preserving Fast Refresh and targeted cleanup. Remaining gates and observed results are
 in [verification](../docs/native-preview-runners-verification.md).
 
-From `apps/switchyard`:
+From the repository root:
 
 ```sh
 bun run runner:doctor
@@ -34,10 +34,10 @@ shell profiles or the system Java installation. SDK command-line tools must
 live under the SDK root used for images; install `cmdline-tools;latest` into
 that root, because Homebrew's separate `avdmanager` resolves its own SDK. Add versioned SDK command-line tools to `PATH` if they are
 not installed under `cmdline-tools/latest`. Run under the intended dedicated
-account. The user confirmed this checkout's Mac as the runner host. The dedicated `switchyard` account is provisioned and now passes Android/iOS
+account. The user confirmed this checkout's Mac as the runner host. The dedicated `ravix` account is provisioned and now passes Android/iOS
 diagnostics. The earlier live capture/input experiments ran under `jake`; they
 have now been followed by a successful Android Hello runtime, input, local
-Metro/backend, Fast Refresh and capture/scroll check under `switchyard`. iOS
+Metro/backend, Fast Refresh and capture/scroll check under `ravix`. iOS
 now also passes the Sprite Metro/backend, browser video/input and state-preserving
 Fast Refresh checks under that account; see the latest verification record.
 CoreSimulator inventory may fail inside a filesystem/process sandbox; that is
@@ -50,7 +50,7 @@ tools. These commands create and boot a fresh owned device, open its Settings ap
 PNGs and a bounded MP4 recording, then
 stop and delete that experiment's device. They do not use a personal AVD or an
 existing simulator. They are workstation setup experiments; they are not normal
-preview operations exposed to a Switchyard user or agent.
+preview operations exposed to a Ravix user or agent.
 
 Choose installed values from the inventory. The installed package versions are recorded in [toolchain-macos.json](toolchain-macos.json). The Android values below match this Mac. Set `scrcpyVersion` to the exact installed
 version; a mismatch fails before creating a device. No binaries are downloaded.
@@ -155,7 +155,7 @@ The idb Python client (`fb-idb==1.5.2`) is installed with `uv tool`, using Pytho
 3.12. Current Meta Homebrew companion 1.5.2 requires Xcode 26; this Mac has Xcode
 16.4. The official universal companion 1.1.8 archive was instead verified against
 Meta's [historical formula checksum](https://github.com/facebook/homebrew-fb/blob/c038679/idb-companion.rb)
-and installed in `~/.local/share/switchyard/tools/idb-companion/1.1.8`, with
+and installed in `~/.local/share/ravix/tools/idb-companion/1.1.8`, with
 `~/.local/bin/idb_companion` pointing to its executable. Its framework tree is
 preserved. No Xcode upgrade, system Java symlink or shell profile edit was made.
 
@@ -167,14 +167,14 @@ work with the older companion.
 
 ## Set up the dedicated account
 
-The local `switchyard` account was created by the user (UID 502, standard user).
-The user ran provisioning: `/Users/switchyard` was created and the tool
+The local `ravix` account was created by the user (UID 502, standard user).
+The user ran provisioning: `/Users/ravix` was created and the tool
 installation completed. The initial check hit 15-second emulator timeouts; the
-updated recheck now passes both platforms under `switchyard`. For reference,
+updated recheck now passes both platforms under `ravix`. For reference,
 the first-install command from the Demos checkout root is:
 
 ```sh
-sudo /bin/bash apps/switchyard/runner/scripts/provision-account.sh switchyard
+sudo /bin/bash runner/scripts/provision-account.sh ravix
 ```
 
 Review [the setup script](scripts/provision-account.sh) first. It creates the
@@ -193,33 +193,33 @@ The companion currently remains the diagnostic/experiment executable.
 
 This is first-install setup: an existing runner installation is retained and
 causes a refusal. If a check fails after copying, inspect its private
-`~/.local/share/switchyard/doctor.json` rather than deleting the installation.
+`~/.local/share/ravix/doctor.json` rather than deleting the installation.
 CoreSimulator may require first-login initialization for the new account.
 
 Run subsequent diagnostics **as the runner account** with:
 
 ```sh
-~/.local/bin/switchyard-runner doctor
+~/.local/bin/ravix-runner doctor
 ```
 
 Refresh just the diagnostic module and rerun checks without copying SDKs or
 installing packages:
 
 ```sh
-sudo /bin/bash apps/switchyard/runner/scripts/provision-account.sh switchyard --check
+sudo /bin/bash runner/scripts/provision-account.sh ravix --check
 ```
 
 This prints blocker lists plus emulator results/timings and retains the full
 report under the runner account. It can take up to three minutes if all emulator
-probes time out; a timeout still fails readiness. The new diagnostic passed under both `jake` and `switchyard`. The original timeout
+probes time out; a timeout still fails readiness. The new diagnostic passed under both `jake` and `ravix`. The original timeout
 cause remains unconfirmed.
 
 To read only the
 failures from the retained report after an older setup run:
 
 ```sh
-sudo -u switchyard /Users/switchyard/.local/bin/bun -e '
-  const d = await Bun.file("/Users/switchyard/.local/share/switchyard/doctor.json").json();
+sudo -u ravix /Users/ravix/.local/bin/bun -e '
+  const d = await Bun.file("/Users/ravix/.local/share/ravix/doctor.json").json();
   console.log(JSON.stringify({android: d.android.blockers, ios: d.ios.blockers}, null, 2));
 '
 ```
@@ -231,28 +231,28 @@ they do not establish readiness under the new account.
 
 ## Build the Hello World Android artifact
 
-The fixture is [managoat/switchyard-expo-hello](https://github.com/managoat/switchyard-expo-hello).
+The fixture is [ravioli-hq/ravix-expo-hello](https://github.com/ravioli-hq/ravix-expo-hello).
 This build-only experiment creates a debug development APK; it does not start a
 device or Metro, install an app, or provide a browser preview.
 
-A source snapshot has been prepared at `/private/tmp/switchyard-hello-source.json`
+A source snapshot has been prepared at `/private/tmp/ravix-hello-source.json`
 from the fixture checkout. To refresh it after edits, from the Demos root:
 
 ```sh
-bun apps/switchyard/runner/index.ts snapshot /private/tmp/switchyard-expo-hello /private/tmp/switchyard-hello-source.json
+bun runner/index.ts snapshot /private/tmp/ravix-expo-hello /private/tmp/ravix-hello-source.json
 ```
 
 Then run the build under the provisioned standard account:
 
 ```sh
-sudo /bin/bash apps/switchyard/runner/scripts/provision-account.sh switchyard --build-hello
+sudo /bin/bash runner/scripts/provision-account.sh ravix --build-hello
 ```
 
 The helper stages only the current runner code and source snapshot, drops to the
 standard account with an empty environment, and runs the build there. It does not
 replace the installed adapters or copy personal credentials. Its temporary staging
 area is removed after the build. Account-owned source, logs and the artifact remain
-under `~/.local/share/switchyard/builds/experiment-<id>` for review.
+under `~/.local/share/ravix/builds/experiment-<id>` for review.
 
 The pipeline validates the snapshot and fixture identity, runs Android inventory,
 extracts into a fresh private worktree, installs dependencies with `npm ci`, runs
@@ -271,7 +271,7 @@ not a disk quota or production cache eviction policy. Failed builds retain logs.
 Before accepting an artifact, the runner checks its package ID with `aapt2`, checks
 for the ARM64 ABI and records its SHA-256, source digest and lockfile digest.
 Successful compilation alone does not establish native runtime readiness. The
-first live native build passed under `switchyard`; its artifact identity and
+first live native build passed under `ravix`; its artifact identity and
 timings are recorded in [verification](../docs/native-preview-runners-verification.md).
 
 ### Source export limits
@@ -298,13 +298,13 @@ track configuration, native fingerprint invalidation or a reusable build cache.
 
 ## Run the built Hello app locally
 
-Prepare `/private/tmp/switchyard-hello-runtime.json` as the provisioning account,
+Prepare `/private/tmp/ravix-hello-runtime.json` as the provisioning account,
 using an explicit successful build and its APK digest (no newest-build selection):
 
 ```json
 {
-  "expectedAccount": "switchyard",
-  "buildDirectory": "/Users/switchyard/.local/share/switchyard/builds/experiment-52e8255f-b89c-4596-846d-1aa6d6002041",
+  "expectedAccount": "ravix",
+  "buildDirectory": "/Users/ravix/.local/share/ravix/builds/experiment-52e8255f-b89c-4596-846d-1aa6d6002041",
   "artifactSha256": "6bf899d7e847633cb70f02aa37b6c5ba8db32d07ff0e8cfb7bb5a168d92afe82"
 }
 ```
@@ -312,7 +312,7 @@ using an explicit successful build and its APK digest (no newest-build selection
 Then, from the Demos root:
 
 ```sh
-sudo /bin/bash apps/switchyard/runner/scripts/provision-account.sh switchyard --run-hello
+sudo /bin/bash runner/scripts/provision-account.sh ravix --run-hello
 ```
 
 This reuses the APK and installed dependencies. It verifies the artifact hash
@@ -340,7 +340,7 @@ compatibility or human visual review of the recording. The original source is
 restored during cleanup; if an external edit conflicts, it retains the original
 and both locks for manual recovery instead of overwriting that edit.
 
-Results live in `~/.local/share/switchyard/runtime/experiment-<id>`. Temporary
+Results live in `~/.local/share/ravix/runtime/experiment-<id>`. Temporary
 services and the owned emulator stop after completion or failure. The staged
 source and APK remain in the build directory. A crash retains `runtime.lock` in
 the build and `experiment.lock` in runtime state; inspect their referenced
@@ -370,7 +370,7 @@ loss. The gateway is mounted by the opt-in Hello experiment manager in
 services. It is used by `--preview-hello`; `--run-hello` remains local-only.
 
 `server/native-forward-access.ts` implements the authorization callback against
-Switchyard's track memberships and browser session verifiers. A trusted server
+Ravix's track memberships and browser session verifiers. A trusted server
 assignment lookup supplies the runner/project binding, connection epoch, session
 generation and named service destinations; callers cannot choose a host or port.
 Grant tokens are returned only to the server caller for future delivery on the
@@ -402,21 +402,21 @@ against a local provider fixture; a live Sprite run is still pending. No WAN thr
 ## Paired Android Hello preview
 
 Deploy the app with `NATIVE_PREVIEW_EXPERIMENT=1`. Only the project for
-`managoat/switchyard-expo-hello` offers **Start Android preview**. Its owner starts
+`ravioli-hq/ravix-expo-hello` offers **Start Android preview**. Its owner starts
 one experiment and receives a single-use pairing code valid for five minutes.
 The app admits one experiment globally, reuses the verified APK below, and pins
 native configuration, dependencies and image assets. Native changes require a
 rebuild; this gate does not yet implement arbitrary repository builds.
 
-Create `/private/tmp/switchyard-hello-preview.json` as the provisioning user,
+Create `/private/tmp/ravix-hello-preview.json` as the provisioning user,
 mode 600, with these fields and a fresh code from the track:
 
 ```json
 {
-  "expectedAccount": "switchyard",
-  "buildDirectory": "/Users/switchyard/.local/share/switchyard/builds/experiment-52e8255f-b89c-4596-846d-1aa6d6002041",
+  "expectedAccount": "ravix",
+  "buildDirectory": "/Users/ravix/.local/share/ravix/builds/experiment-52e8255f-b89c-4596-846d-1aa6d6002041",
   "artifactSha256": "6bf899d7e847633cb70f02aa37b6c5ba8db32d07ff0e8cfb7bb5a168d92afe82",
-  "serverUrl": "https://switchyard.demo.managoat.com",
+  "serverUrl": "https://app.ravix.sh",
   "pairingCode": "REPLACE_WITH_FRESH_CODE"
 }
 ```
@@ -424,7 +424,7 @@ mode 600, with these fields and a fresh code from the track:
 Then run from the Demos root:
 
 ```sh
-sudo /bin/bash apps/switchyard/runner/scripts/provision-account.sh switchyard --preview-hello
+sudo /bin/bash runner/scripts/provision-account.sh ravix --preview-hello
 ```
 
 This stages the current runner source, claims the experiment, waits for private
@@ -455,39 +455,39 @@ remain later gates.
 ## iOS Hello build and paired preview
 
 The iOS path is implemented but still requires live verification under the
-`switchyard` account. Build from the same private Hello snapshot:
+`ravix` account. Build from the same private Hello snapshot:
 
 ```sh
 sudo /bin/bash \
-  /Users/jake/dev/managoat/demos/apps/switchyard/runner/scripts/provision-account.sh \
-  switchyard --build-ios-hello
+  /Users/jake/dev/ravioli-hq/ravix/runner/scripts/provision-account.sh \
+  ravix --build-ios-hello
 ```
 
 The build stages source, runs npm/expo prebuild/CocoaPods, and invokes Xcode for
 an unsigned arm64 iOS Simulator Debug app. It verifies the bundle identifier,
-Mach-O platform and architecture, then hashes the entire `SwitchyardHello.app`
+Mach-O platform and architecture, then hashes the entire `RavixHello.app`
 bundle including paths and executable permissions. The resulting report retains
 the explicit build directory, digest and phase logs. Building does not establish
 runtime, Metro or browser readiness.
 
-After reviewing a successful build report, configure the Switchyard deployment's
+After reviewing a successful build report, configure the Ravix deployment's
 `NATIVE_HELLO_IOS_SHA256` with its artifact digest. Only then does the Hello track
 offer iOS in the platform selector. Start an iOS preview to obtain its one-use
-pairing code. Prepare `/private/tmp/switchyard-hello-ios-preview.json` as the
+pairing code. Prepare `/private/tmp/ravix-hello-ios-preview.json` as the
 provisioning account, mode 0600:
 
 ```json
 {
   "platform": "ios",
-  "expectedAccount": "switchyard",
-  "buildDirectory": "/Users/switchyard/.local/share/switchyard/builds/experiment-<build UUID>",
+  "expectedAccount": "ravix",
+  "buildDirectory": "/Users/ravix/.local/share/ravix/builds/experiment-<build UUID>",
   "artifactSha256": "<artifact digest from the successful iOS build report>",
-  "serverUrl": "https://switchyard.demo.managoat.com",
+  "serverUrl": "https://app.ravix.sh",
   "pairingCode": "<fresh code from the iOS preview>"
 }
 ```
 
-Then run `provision-account.sh switchyard --preview-ios-hello` with sudo. This
+Then run `provision-account.sh ravix --preview-ios-hello` with sudo. This
 creates an iPhone 16 on the installed iOS 18.6 runtime in a private simulator set,
 installs only the pinned app, and forwards the same private Sprite Metro/backend
 services used by Android. The simulator shares the Mac's loopback interface.
@@ -507,7 +507,7 @@ The pinned encoder may reorder frames, so browser decoding and interactive
 latency must be checked live before claiming parity.
 
 If Xcode fails to select a destination, inspect the retained build with
-`sudo /bin/bash runner/scripts/provision-account.sh switchyard --check-ios-build <build UUID>`.
+`sudo /bin/bash runner/scripts/provision-account.sh ravix --check-ios-build <build UUID>`.
 This collects account-specific Xcode/runtime metadata and destinations into
 `ios-diagnostic.json` in that build directory. It does not rerun dependencies,
 compile, boot devices or change runtime mappings.
@@ -522,7 +522,7 @@ establish whether this resolves its destination rejection.
 
 
 The runner reserves both loopback listeners before pairing and sends their port
-numbers with its claim. Switchyard validates and echoes the pair, then advertises
+numbers with its claim. Ravix validates and echoes the pair, then advertises
 those addresses to Metro and the app backend configuration. Incoming connections
 are closed until pairing activates the forwards. Old runners retain the legacy
 41000/41001 defaults; current runners coexist with other local forwards. Bind
@@ -535,7 +535,7 @@ Metro supplies the app's JavaScript configuration.
 When ten runtime experiments are retained, run:
 
 ```sh
-sudo /bin/bash apps/switchyard/runner/scripts/provision-account.sh switchyard --archive-runtime
+sudo /bin/bash runner/scripts/provision-account.sh ravix --archive-runtime
 ```
 
 This executes as the standard runner account. It takes the same exclusive lock
@@ -543,7 +543,7 @@ as preview startup, then moves only owned runtime directories whose private
 reports confirm complete cleanup (and source restoration for the local Android
 experiment). Builds, incomplete reports, links and unconfirmed cleanup stay in
 place. Nothing is deleted. Whole directories move into
-`~/.local/share/switchyard/runtime/archived/batch-<uuid>/`; `archive.json` records
+`~/.local/share/ravix/runtime/archived/batch-<uuid>/`; `archive.json` records
 old and new paths. Absolute paths inside historical reports retain their original
 values. An existing experiment lock must be resolved before archiving. Rerun the
 preview command after archiving, using a fresh pairing if the old one expired.
@@ -554,24 +554,24 @@ The registered-runner path reuses the verified Android/iOS Hello builds. It is
 still restricted to the Hello repository by `NATIVE_PREVIEW_EXPERIMENT`; arbitrary
 project builds and agent helper integration belong to the next product step.
 
-Prepare `/private/tmp/switchyard-runner.json` as the provisioning account with
+Prepare `/private/tmp/ravix-runner.json` as the provisioning account with
 mode 0600. Each entry must name an existing verified build; no latest-build
 selection or shell command is accepted:
 
 ```json
 {
-  "expectedAccount": "switchyard",
+  "expectedAccount": "ravix",
   "name": "Mac",
-  "serverUrl": "https://switchyard.demo.managoat.com",
+  "serverUrl": "https://app.ravix.sh",
   "builds": [
     {
       "platform": "android",
-      "buildDirectory": "/Users/switchyard/.local/share/switchyard/builds/experiment-52e8255f-b89c-4596-846d-1aa6d6002041",
+      "buildDirectory": "/Users/ravix/.local/share/ravix/builds/experiment-52e8255f-b89c-4596-846d-1aa6d6002041",
       "artifactSha256": "6bf899d7e847633cb70f02aa37b6c5ba8db32d07ff0e8cfb7bb5a168d92afe82"
     },
     {
       "platform": "ios",
-      "buildDirectory": "/Users/switchyard/.local/share/switchyard/builds/experiment-8bd7bc9e-f5e7-4822-a014-2c0a6aeb730b",
+      "buildDirectory": "/Users/ravix/.local/share/ravix/builds/experiment-8bd7bc9e-f5e7-4822-a014-2c0a6aeb730b",
       "artifactSha256": "375169f807696ad02ea5d82f1456b94142378e9f306eb5555bab55afe9abab2f"
     }
   ]
@@ -581,7 +581,7 @@ selection or shell command is accepted:
 In the track, choose **Pair a Mac runner**, then run:
 
 ```sh
-sudo /bin/bash apps/switchyard/runner/scripts/provision-account.sh switchyard --pair-runner
+sudo /bin/bash runner/scripts/provision-account.sh ravix --pair-runner
 ```
 
 Paste the five-minute runner pairing code at the prompt. Registration consumes
@@ -596,7 +596,7 @@ preview. Stop the current preview to let the next track use the Mac.
 After Ctrl+C or a normal command exit, reconnect without pairing:
 
 ```sh
-sudo /bin/bash apps/switchyard/runner/scripts/provision-account.sh switchyard --serve-runner
+sudo /bin/bash runner/scripts/provision-account.sh ravix --serve-runner
 ```
 
 The server persists requests, target affinity, build identities, queue order,
@@ -628,7 +628,7 @@ To explicitly discard a stopped target's app data, first stop the daemon, then
 use its `targetId` from `managed/last-result.json`:
 
 ```sh
-sudo /bin/bash apps/switchyard/runner/scripts/provision-account.sh switchyard --reset-target TARGET_UUID
+sudo /bin/bash runner/scripts/provision-account.sh ravix --reset-target TARGET_UUID
 ```
 
 This acquires the account locks, verifies the recorded private device identity,

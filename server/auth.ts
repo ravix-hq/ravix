@@ -2,7 +2,7 @@
  * Signing in, which here is two round trips to GitHub rather than one.
  *
  * **Authorize** gets an identity: who you are, and a token that speaks as you.
- * **Install** gets access: which repositories switchyard may see. They are
+ * **Install** gets access: which repositories ravix may see. They are
  * separate on purpose and in that order, because the second one is a decision
  * a person makes about their code and it should be made by somebody the app
  * can already name.

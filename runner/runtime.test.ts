@@ -9,7 +9,7 @@ import { command } from "./process";
 
 const cleanup: string[] = [];
 afterEach(async () => { for (const path of cleanup.splice(0)) await rm(path, { recursive: true, force: true }); });
-const sample = { expectedAccount: "switchyard", buildDirectory: "/Users/switchyard/.local/share/switchyard/builds/experiment-52e8255f-b89c-4596-846d-1aa6d6002041", artifactSha256: "a".repeat(64) };
+const sample = { expectedAccount: "ravix", buildDirectory: "/Users/ravix/.local/share/ravix/builds/experiment-52e8255f-b89c-4596-846d-1aa6d6002041", artifactSha256: "a".repeat(64) };
 
 test("runtime config requires an explicit dedicated build and pinned artifact", () => {
   expect(parseRuntimeConfig(sample)).toEqual(sample);
@@ -22,7 +22,7 @@ test("runtime refuses altered APKs, failed reports and linked build files", asyn
   await writeFile(join(worktree, "App.tsx"), "const GREETING = 'Hello';\n");
   const bytes = Buffer.from("fixture apk"); const apk = join(root, "app-debug.apk");
   const config = { ...sample, buildDirectory: root, artifactSha256: digestBytes(bytes) };
-  const report = { kind: "android-build-experiment", account: "switchyard", applicationId: "com.managoat.switchyard.hello", architecture: "arm64-v8a", error: null, sourceDigest: "b".repeat(64), phases: [{ name: "verify-artifact", passed: true }], artifact: { path: apk, sha256: config.artifactSha256, size: bytes.length } };
+  const report = { kind: "android-build-experiment", account: "ravix", applicationId: "sh.ravix.hello", architecture: "arm64-v8a", error: null, sourceDigest: "b".repeat(64), phases: [{ name: "verify-artifact", passed: true }], artifact: { path: apk, sha256: config.artifactSha256, size: bytes.length } };
   await writeFile(apk, bytes); await writeFile(join(root, "report.json"), JSON.stringify(report));
   expect((await verifyRuntimeBuild(config)).source).toContain("'Hello'");
   await writeFile(apk, "tampered apk"); await expect(verifyRuntimeBuild(config)).rejects.toThrow("digest");
@@ -86,17 +86,17 @@ test("Hello install, forwards and deep link stay scoped to the newly created And
     const deviceCalls = calls.filter(c => c[0] === "adb" && c[1] !== "devices");
     expect(deviceCalls.every(c => c[1] === "-s" && c[2] === "emulator-5580")).toBe(true);
     expect(deviceCalls.some(c => c.includes("--no-rebind") && c.at(-1) === "tcp:19281")).toBe(true);
-    expect(deviceCalls.some(c => c.includes("switchyard-hello://expo-development-client/?url=http%3A%2F%2F127.0.0.1%3A19281") && c.at(-1) === "com.managoat.switchyard.hello")).toBe(true);
+    expect(deviceCalls.some(c => c.includes("ravix-hello://expo-development-client/?url=http%3A%2F%2F127.0.0.1%3A19281") && c.at(-1) === "sh.ravix.hello")).toBe(true);
   } finally { await adapter.stop(); }
   expect(calls.some(c => c.includes("kill-server") || c.includes("--remove-all"))).toBe(false);
   expect(calls.at(-1)).toEqual(["avdmanager", "delete", "avd", "--name", name]);
 });
 
 test("Expo onboarding advances to the developer menu, which must close before the greeting", () => {
-  const node = (text: string, bounds: string, description = "") => `<node text="${text}" content-desc="${description}" package="com.managoat.switchyard.hello" bounds="${bounds}" />`;
+  const node = (text: string, bounds: string, description = "") => `<node text="${text}" content-desc="${description}" package="sh.ravix.hello" bounds="${bounds}" />`;
   // Header and onboarding bounds observed in the failed native run. The main
   // menu's header moves to the top when Continue expands it (SDK 54 AppInfo).
-  const header = node("Switchyard Hello", "[221,1770][552,1821]") + node("Runtime version: exposdk:54.0.0", "[221,1832][750,1877]");
+  const header = node("Ravix Hello", "[221,1770][552,1821]") + node("Runtime version: exposdk:54.0.0", "[221,1832][750,1877]");
   const onboarding = header + node("This is the developer menu. It gives you access to useful tools in your development builds.", "[63,1960][1017,2070]") + node("", "[949,1803][991,1845]", "Close") + node("Continue", "[464,2229][617,2274]");
   const menu = header + node("Connected to:", "[105,400][700,450]") + node("Reload", "[180,625][340,675]") + node("Go home", "[650,625][850,675]") + node("", "[949,221][991,263]", "Close");
   const app = node("Hello, world!", "[63,150][850,270]");
@@ -105,11 +105,11 @@ test("Expo onboarding advances to the developer menu, which must close before th
     { action: "close-developer-menu", x: 970, y: 242 },
     null,
   ]);
-  expect(androidNode(app, "text", "Hello, world!", "com.managoat.switchyard.hello")).not.toBeNull();
+  expect(androidNode(app, "text", "Hello, world!", "sh.ravix.hello")).not.toBeNull();
   // Never infer a startup overlay from generic app controls, another package,
   // or header text without the known menu content.
   expect(expoStartupAction(node("Continue", "[0,0][80,80]") + node("", "[90,0][170,80]", "Close"))).toBeNull();
-  expect(expoStartupAction(menu.replaceAll('package="com.managoat.switchyard.hello"', 'package="com.android.settings"'))).toBeNull();
+  expect(expoStartupAction(menu.replaceAll('package="sh.ravix.hello"', 'package="com.android.settings"'))).toBeNull();
   expect(expoStartupAction(header + node("", "[0,0][80,80]", "Close"))).toBeNull();
   expect(expoStartupAction(menu.replace('text="Runtime version: exposdk:54.0.0"', 'text="Runtime version: unknown"'))).toBeNull();
 });

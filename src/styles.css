@@ -1,4 +1,4 @@
-/* Switchyard's shell is a desktop editor: yard on the left, the track you are
+/* Ravix's shell is a desktop editor: yard on the left, the track you are
    working in the middle, the inspector on the right, and a dock underneath it.
    Every colour is a token, so the whole app re-themes from the blocks at the
    top and nothing hard-codes a hex value below the palettes. */
@@ -19,14 +19,14 @@
    what lets the picker draw a live swatch per theme with no swatch classes.
 
    The default shares its selector with `:root` rather than being repeated, so
-   an unthemed page and one explicitly set to `switchyard` are the same
+   an unthemed page and one explicitly set to `ravix` are the same
    declarations. Specificity ties with the blocks below, so it must stay first:
    later blocks win on `<html>` by source order.
 
    `src/lib/theme.ts` is the list these ids come from and `theme.test.ts`
    fails the build if a theme there has no complete block here. */
 
-:root, [data-theme="switchyard"] {
+:root, [data-theme="ravix"] {
   /* Near-black rather than blue-black: the transcript is the brightest thing
      on screen and a tinted ground makes long reading sessions tiring. */
   --bg: #0c0d0f;
@@ -1129,7 +1129,7 @@ input.crumb-name { width: 30ch; }
 .native-controls input { flex: 1; min-width: 180px; }
 
 /* A chat card attaches to the shared machine browser; its pixels never carry
-   executable page content into the Switchyard origin. */
+   executable page content into the Ravix origin. */
 .shared-browser { margin: 20px 0; padding: 14px; border: 1px solid var(--line-strong); border-radius: var(--radius); background: var(--panel); min-width: 0; }
 .shared-browser.expanded { margin: 0; }
 .browser-heading, .browser-toolbar, .browser-checkpoint { display: flex; align-items: center; gap: 8px; min-width: 0; flex-wrap: wrap; }

@@ -83,7 +83,7 @@ async function wakeMachine(trackId: string): Promise<void> {
   if (!wake) {
     wake = post(`/api/tracks/${trackId}/prompt`, {
       requestId: crypto.randomUUID(),
-      prompt: "[switchyard] Wake this track's machine so I can browse files and changes. Run `pwd` in this track's working directory, then stop. Do not edit any files.",
+      prompt: "[ravix] Wake this track's machine so I can browse files and changes. Run `pwd` in this track's working directory, then stop. Do not edit any files.",
     }).then(() => undefined).catch((err) => {
       waking.delete(trackId);
       throw err;
@@ -252,8 +252,8 @@ export const api = {
 /**
  * A server-sent stream, as a subscription.
  *
- * `EventSource` rather than `fetch` + a hand-rolled parser, which is what the
- * rest of this suite uses. The reason the suite hand-rolls it is that Fountain
+ * `EventSource` rather than `fetch` + the hand-rolled parser in
+ * `packages/fountain-app/sse`. The reason that one is hand-rolled is that Fountain
  * needs an `Authorization` header and `EventSource` cannot send one — here the
  * stream is same-origin and authenticated by cookie, so the browser's own
  * implementation applies, reconnection and all.

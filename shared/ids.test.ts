@@ -20,7 +20,7 @@ test("a slug never ends in a separator, however it was truncated", () => {
 
 test("a channel id round-trips", () => {
   const channel = trackChannel("proj-1", "kyoto", 7);
-  expect(channel).toBe("switchyard:proj-1:kyoto@r7");
+  expect(channel).toBe("ravix:proj-1:kyoto@r7");
   expect(parseChannel(channel)).toEqual({ projectId: "proj-1", trackSlug: "kyoto", rev: 7 });
 });
 
@@ -29,8 +29,8 @@ test("a channel id that is not ours parses to null rather than to a wrong answer
   // tracks and another project's is this parse, so a near-miss must not
   // resolve.
   expect(parseChannel("paddock:t2@r7")).toBeNull();
-  expect(parseChannel("switchyard:proj-1:kyoto")).toBeNull();
-  expect(parseChannel("switchyard:proj-1@r7")).toBeNull();
+  expect(parseChannel("ravix:proj-1:kyoto")).toBeNull();
+  expect(parseChannel("ravix:proj-1@r7")).toBeNull();
   expect(parseChannel(null)).toBeNull();
   expect(parseChannel("")).toBeNull();
 });

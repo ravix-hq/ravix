@@ -22,12 +22,14 @@ const GLYPHS: Record<string, string[]> = {
   A: ["01110", "10001", "10001", "11111", "10001", "10001", "10001"],
   R: ["11110", "10001", "10001", "11110", "10100", "10010", "10001"],
   D: ["11110", "10001", "10001", "10001", "10001", "10001", "11110"],
+  V: ["10001", "10001", "10001", "10001", "10001", "01010", "00100"],
+  X: ["10001", "10001", "01010", "00100", "01010", "10001", "10001"],
 };
 
 const COLS = 5;
 const ROWS = 7;
 
-export function Wordmark({ text = "SWITCHYARD", unit = 7, gap = 1 }: { text?: string; unit?: number; gap?: number }) {
+export function Wordmark({ text = "RAVIX", unit = 7, gap = 1 }: { text?: string; unit?: number; gap?: number }) {
   const letters = [...text.toUpperCase()].filter((c) => GLYPHS[c]);
   const letterWidth = COLS * (unit + gap) - gap;
   // A letter's worth of air between words is too much at this size; two cells

@@ -15,7 +15,7 @@ const cleanups: (() => void)[] = [];
 afterEach(() => { for (const cleanup of cleanups.splice(0).reverse()) cleanup(); });
 
 async function fixture(withRepo = false) {
-  const dir = mkdtempSync(join(tmpdir(), "switchyard-queue-"));
+  const dir = mkdtempSync(join(tmpdir(), "ravix-queue-"));
   const state = {
     status: "running", readFails: false, response: 200, error: "", reads: 0,
     posted: [] as { prompt: string; images?: unknown[] }[],
@@ -35,7 +35,7 @@ async function fixture(withRepo = false) {
     state.status = "running";
     return Response.json({ status: "queued" });
   } });
-  const config = loadConfig({ DATA_DIR: dir, SWITCHYARD_SECRET: "queue-test-secret-at-least-16", FOUNTAIN_API_KEY: "test", FOUNTAIN_URL: `http://localhost:${upstream.port}` });
+  const config = loadConfig({ DATA_DIR: dir, RAVIX_SECRET: "queue-test-secret-at-least-16", FOUNTAIN_API_KEY: "test", FOUNTAIN_URL: `http://localhost:${upstream.port}` });
   const db = new Db(config.dbPath);
   const ctx = buildContext({ db, config, cipher: await Cipher.from(config.secret) });
   const owner = db.upsertUser({ githubId: "1", login: "ana", name: "Ana", avatarUrl: null, tokenEnc: "test" });
@@ -49,7 +49,7 @@ async function fixture(withRepo = false) {
   const worker = new PromptQueue(ctx);
   const route = buildRouter(ctx);
   const request = (path: string, method = "GET", body?: unknown, login = "ana") => route(new Request(`http://localhost${path}`, {
-    method, headers: { cookie: `switchyard_session=${login}`, "content-type": "application/json" },
+    method, headers: { cookie: `ravix_session=${login}`, "content-type": "application/json" },
     ...(body ? { body: JSON.stringify(body) } : {}),
   }));
   const send = (prompt: string, id = crypto.randomUUID(), login = "ana", images: unknown[] = []) => request("/api/tracks/t1/prompt", "POST", { requestId: id, prompt, images }, login);

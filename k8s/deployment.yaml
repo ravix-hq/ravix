@@ -1,10 +1,10 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: switchyard
-  namespace: switchyard
+  name: ravix
+  namespace: ravix
   labels:
-    app: switchyard
+    app: ravix
 spec:
   # One replica: the state is a SQLite file on a ReadWriteOnce volume, and the
   # per-project SSE fan-out lives in the process. Two would disagree.
@@ -13,16 +13,16 @@ spec:
     type: Recreate
   selector:
     matchLabels:
-      app: switchyard
+      app: ravix
   template:
     metadata:
       labels:
-        app: switchyard
+        app: ravix
     spec:
       containers:
         - name: web
           # Pinned to an immutable sha tag by .github/workflows/build.yml.
-          image: ghcr.io/managoat/switchyard:sha-29ccfe701593b56764e0e434081200c2981b55af
+          image: ghcr.io/ravioli-hq/ravix:latest
           ports:
             - containerPort: 8080
             - containerPort: 8082
@@ -37,11 +37,11 @@ spec:
             # and setup URLs are registered as. Load-bearing: a mismatch here
             # is the one failure that looks like "sign-in is broken".
             - name: PUBLIC_URL
-              value: https://switchyard.demo.managoat.com
+              value: https://app.ravix.sh
             - name: SHARED_BROWSER
               value: "1"
             - name: PREVIEW_DOMAIN
-              value: preview.switchyard.inevitable.fyi
+              value: preview.ravix.sh
             # Gate 2: only the pinned private Hello repository can pair a runner.
             - name: NATIVE_PREVIEW_EXPERIMENT
               value: "1"
@@ -55,7 +55,7 @@ spec:
             #
             #   FOUNTAIN_API_KEY     the account every machine here runs on.
             #                        Without it there are no projects at all.
-            #   SWITCHYARD_SECRET    encrypts stored tokens; sessions are hashes.
+            #   RAVIX_SECRET    encrypts stored tokens; sessions are hashes.
             #   GITHUB_APP_ID        \
             #   GITHUB_APP_SLUG      |  the App: sign-in, repository access,
             #   GITHUB_CLIENT_ID     |  pull requests, issues, checks, and the
@@ -65,7 +65,7 @@ spec:
             #   SPRITES_TOKEN        optional. With it the terminal and the run
             #                        panel are live; without it they say so.
             - secretRef:
-                name: switchyard-secrets
+                name: ravix-secrets
                 # Optional so a cluster whose Infisical sync has not landed yet
                 # still serves the app, which then says on screen exactly which
                 # variable it is missing. A pod that refuses to start hides that.
@@ -87,4 +87,4 @@ spec:
       volumes:
         - name: data
           persistentVolumeClaim:
-            claimName: switchyard-data
+            claimName: ravix-data

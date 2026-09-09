@@ -21,7 +21,7 @@ export async function scrcpyLive(options: {
     if (createHash('sha256').update(await readFile(SERVER)).digest('hex') !== SERVER_SHA)
         throw new Error('scrcpy 4.1 server digest changed; verify the toolchain');
     const id = (randomBytes(4).readUInt32BE() & 0x7fffffff).toString(16).padStart(8, '0');
-    const jar = `/data/local/tmp/switchyard-scrcpy-${id}.jar`;
+    const jar = `/data/local/tmp/ravix-scrcpy-${id}.jar`;
     const local = new AbortController(), active = AbortSignal.any([local.signal, signal]);
     const exec = (...args: string[]) => checked(run, [adb, '-s', serial, ...args], { env, signal: active, timeoutMs: 15000 });
     let video: Socket | undefined, control: Socket | undefined, port = 0, stopped = false;

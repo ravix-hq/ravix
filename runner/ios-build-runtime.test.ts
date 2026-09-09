@@ -17,7 +17,7 @@ function fixture(previous?: string) {
 }
 test('the provisioned runtime is selected only during the build and the default is restored', async () => {
   const f=fixture();
-  const result=await withIosBuildRuntime({run:f.run,xcrun:'xcrun',env:{HOME:'/Users/switchyard'}},async selection=>{
+  const result=await withIosBuildRuntime({run:f.run,xcrun:'xcrun',env:{HOME:'/Users/ravix'}},async selection=>{
     expect(f.current()).toBe('22G86'); expect(selection.previousOverride).toBeNull(); return 'built';
   });
   expect(result).toBe('built'); expect(f.current()).toBeUndefined();

@@ -213,7 +213,7 @@ export function Terminal({ track }: { track: Track }) {
   if (status.why === "no_sprite") {
     return (
       <Empty icon={<Machine size={20} />} title="No direct access to this machine" because="The sandbox did not name a sprite.">
-        This sandbox is not running on Sprites, so switchyard cannot open a shell on it. Everything else about the track
+        This sandbox is not running on Sprites, so Ravix cannot open a shell on it. Everything else about the track
         works; ask the agent to run the command instead.
       </Empty>
     );
@@ -227,7 +227,7 @@ export function Terminal({ track }: { track: Track }) {
         because="It may be suspended, and it wakes on the next thing that needs it."
         action={{ label: "Try again", onClick: load }}
       >
-        Switchyard knows which machine this track is on but could not reach it just now.
+        Ravix knows which machine this track is on but could not reach it just now.
       </Empty>
     );
   }

@@ -37,7 +37,7 @@ export interface YardProps {
   onProjectPeople: (projectId: string) => void;
 }
 
-const EXPANDED_PROJECTS_KEY = "switchyard.expandedProjects";
+const EXPANDED_PROJECTS_KEY = "ravix.expandedProjects";
 
 function readExpandedProjects(): Set<string> {
   try {
@@ -78,7 +78,7 @@ export function Yard(props: YardProps) {
           <span className="avatar" aria-hidden="true" />
         )}
         <span className="yard-who truncate">
-          <strong className="truncate">{viewer?.name ?? viewer?.login ?? "Switchyard"}</strong>
+          <strong className="truncate">{viewer?.name ?? viewer?.login ?? "Ravix"}</strong>
           <small className="truncate">{viewer ? `@${viewer.login}` : "not signed in"}</small>
         </span>
       </div>
@@ -124,7 +124,7 @@ export function Yard(props: YardProps) {
 
         {projects.length === 0 ? (
           <p className="fine" style={{ padding: "2px 9px" }}>
-            No projects yet. Add one and switchyard builds it a machine.
+            No projects yet. Add one and Ravix builds it a machine.
           </p>
         ) : null}
 
@@ -241,7 +241,7 @@ export function Yard(props: YardProps) {
         </button>
         <ThemePicker />
         <div className="yard-foot-row">
-          <span className="badge-free">switchyard</span>
+          <span className="badge-free">Ravix</span>
           <span className="spacer" />
           <a className="dimmer" style={{ fontSize: 11 }} href="/api/auth/install">
             repo access

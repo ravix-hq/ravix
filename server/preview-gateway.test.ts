@@ -39,7 +39,7 @@ async function fixture() {
       res.on("drain", write); write(); return;
     }
     if (req.url === "/upload") { req.pipe(res); return; }
-    res.writeHead(200, { "content-type": "text/html", "set-cookie": ["app=1; Domain=preview.localhost; Path=/", "__Host-switchyard_preview=evil; Path=/; Secure"] });
+    res.writeHead(200, { "content-type": "text/html", "set-cookie": ["app=1; Domain=preview.localhost; Path=/", "__Host-ravix_preview=evil; Path=/; Secure"] });
     res.end("<!DOCTYPE html><html><head><title>App</title></head><body>track app</body></html>");
   });
   const appPort = await listen(upstream);
@@ -62,7 +62,7 @@ async function fixture() {
     });
   });
   const providerPort = await listen(provider);
-  const config = loadConfig({ DATA_DIR: dir, SWITCHYARD_SECRET: "gateway-test-secret-long-enough", PUBLIC_URL: "http://localhost:5183", SPRITES_TOKEN: "secret-provider-token", SPRITES_URL: `http://127.0.0.1:${providerPort}`, FOUNTAIN_API_KEY: "test", PREVIEW_DOMAIN: "preview.localhost" });
+  const config = loadConfig({ DATA_DIR: dir, RAVIX_SECRET: "gateway-test-secret-long-enough", PUBLIC_URL: "http://localhost:5183", SPRITES_TOKEN: "secret-provider-token", SPRITES_URL: `http://127.0.0.1:${providerPort}`, FOUNTAIN_API_KEY: "test", PREVIEW_DOMAIN: "preview.localhost" });
   const db = new Db(config.dbPath);
   const ctx = buildContext({ db, config, cipher: await Cipher.from(config.secret) });
   ctx.fountain!.listConversations = async () => [{ id: "c", sandbox_id: "s", status: "idle", inserted_at: "2026-09-05" }] as never;
@@ -80,7 +80,7 @@ async function fixture() {
   const port = await listen(gateway); config.previews!.publicPort = `:${port}`;
   const host = `${row.hostname}.preview.localhost:${port}`, origin = `http://${host}`;
   const get = (path = "/", opts: { method?: string; cookie?: string; origin?: string; body?: string; host?: string } = {}) => new Promise<{ status: number; body: string; headers: Record<string, unknown> }>((resolve, reject) => {
-    const req = request({ host: "127.0.0.1", port, path, method: opts.method ?? "GET", headers: { host: opts.host ?? host, cookie: opts.cookie ?? "switchyard_preview_local=preview-session; switchyard_session=NEVER; app=okay", ...(opts.origin ? { origin: opts.origin } : {}) } }, res => {
+    const req = request({ host: "127.0.0.1", port, path, method: opts.method ?? "GET", headers: { host: opts.host ?? host, cookie: opts.cookie ?? "ravix_preview_local=preview-session; ravix_session=NEVER; app=okay", ...(opts.origin ? { origin: opts.origin } : {}) } }, res => {
       let body = ""; res.on("data", c => body += c); res.on("end", () => resolve({ status: res.statusCode!, body, headers: res.headers }));
     }); req.on("error", reject); req.end(opts.body);
   });
@@ -95,7 +95,7 @@ test("auth precedes tunneling; gateway credentials and parent-domain cookies nev
   const f = await fixture();
   expect((await f.get("/", { cookie: "" })).status).toBe(401); expect(f.tunnels()).toBe(0);
   const res = await f.get(); expect(res.status).toBe(200); expect(res.body).toContain("track app");
-  expect(res.body).toContain("/__switchyard/activity.js"); expect(String(f.headers[0]!.cookie).trim()).toBe("app=okay");
+  expect(res.body).toContain("/__ravix/activity.js"); expect(String(f.headers[0]!.cookie).trim()).toBe("app=okay");
   expect(res.headers["set-cookie"]).toEqual(["app=1; Path=/"]);
   const other = f.ctx.db.previews.ensure("t2");
   expect((await f.get("/", { host: `${other.hostname}.preview.localhost:${f.port}` })).status).toBe(401);
@@ -104,16 +104,16 @@ test("auth precedes tunneling; gateway credentials and parent-domain cookies nev
 test("tickets are single-use and exchange only on their own origin", async () => {
   const f = await fixture();
   f.ctx.db.previews.grant({ hash: await sha256("ticket"), trackId: "t1", sessionHash: await sha256("app-session"), expires: Date.now() + 60_000, kind: "ticket" });
-  expect((await f.get("/__switchyard/exchange", { method: "POST", body: "ticket", origin: "http://evil.test" })).status).toBe(403);
-  const accepted = await f.get("/__switchyard/exchange", { method: "POST", body: "ticket", origin: f.origin });
+  expect((await f.get("/__ravix/exchange", { method: "POST", body: "ticket", origin: "http://evil.test" })).status).toBe(403);
+  const accepted = await f.get("/__ravix/exchange", { method: "POST", body: "ticket", origin: f.origin });
   expect(accepted.status).toBe(204); expect(String(accepted.headers["set-cookie"])).toContain("HttpOnly; SameSite=Strict");
-  expect((await f.get("/__switchyard/exchange", { method: "POST", body: "ticket", origin: f.origin })).status).toBe(401);
+  expect((await f.get("/__ravix/exchange", { method: "POST", body: "ticket", origin: f.origin })).status).toBe(401);
 });
 
 test("HTTP streams deliver before completion and access revocation closes existing streams", async () => {
   const f = await fixture();
   await new Promise<void>((resolve, reject) => {
-    const req = request({ host: "127.0.0.1", port: f.port, path: "/stream", headers: { host: f.host, cookie: "switchyard_preview_local=preview-session" } }, res => {
+    const req = request({ host: "127.0.0.1", port: f.port, path: "/stream", headers: { host: f.host, cookie: "ravix_preview_local=preview-session" } }, res => {
       res.once("data", chunk => {
         expect(chunk.toString()).toBe("first\n"); f.ctx.db.removeMember("t1", f.guest.id);
         publish("p", { event: "tracks", data: { projectId: "p" } });
@@ -125,7 +125,7 @@ test("HTTP streams deliver before completion and access revocation closes existi
 
 test("WebSockets preserve text and binary frames and terminate on membership removal", async () => {
   const f = await fixture();
-  const ws = new WebSocket(`ws://127.0.0.1:${f.port}/hmr`, { headers: { host: f.host, origin: f.origin, cookie: "switchyard_preview_local=preview-session" } });
+  const ws = new WebSocket(`ws://127.0.0.1:${f.port}/hmr`, { headers: { host: f.host, origin: f.origin, cookie: "ravix_preview_local=preview-session" } });
   await new Promise<void>((resolve, reject) => { ws.once("open", resolve); ws.once("error", reject); });
   ws.binaryType = "arraybuffer";
   for (const data of ["hot reload", Buffer.from([0, 1, 2, 255])]) {
@@ -141,9 +141,9 @@ test("expired tickets and cross-track exchanges cannot create a preview session"
   const f = await fixture(); const other = f.ctx.db.previews.ensure("t2");
   const otherHost = `${other.hostname}.preview.localhost:${f.port}`;
   f.ctx.db.previews.grant({ hash: await sha256("wrong-track"), trackId: "t1", sessionHash: await sha256("app-session"), expires: Date.now() + 60_000, kind: "ticket" });
-  expect((await f.get("/__switchyard/exchange", { method: "POST", body: "wrong-track", host: otherHost, origin: `http://${otherHost}` })).status).toBe(401);
+  expect((await f.get("/__ravix/exchange", { method: "POST", body: "wrong-track", host: otherHost, origin: `http://${otherHost}` })).status).toBe(401);
   f.ctx.db.previews.grant({ hash: await sha256("expired"), trackId: "t1", sessionHash: await sha256("app-session"), expires: Date.now() - 1, kind: "ticket" });
-  expect((await f.get("/__switchyard/exchange", { method: "POST", body: "expired", origin: f.origin })).status).toBe(401);
+  expect((await f.get("/__ravix/exchange", { method: "POST", body: "expired", origin: f.origin })).status).toBe(401);
   expect(f.tunnels()).toBe(0);
 });
 
@@ -156,7 +156,7 @@ test("removal permanently revokes sessions, even if the member is invited again"
 
 test("sign-out revokes preview sessions and WebSockets fail closed without auth or with a foreign origin", async () => {
   const f = await fixture();
-  for (const headers of [{ origin: f.origin }, { cookie: "switchyard_preview_local=preview-session", origin: "http://other.preview.localhost" }]) {
+  for (const headers of [{ origin: f.origin }, { cookie: "ravix_preview_local=preview-session", origin: "http://other.preview.localhost" }]) {
     const ws = new WebSocket(`ws://127.0.0.1:${f.port}/hmr`, { headers: { host: f.host, ...headers } });
     await new Promise<void>((resolve, reject) => { ws.once("open", () => reject(new Error("unauthorized upgrade"))); ws.on("error", () => resolve()); });
   }

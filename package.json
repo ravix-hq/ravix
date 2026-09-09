@@ -1,15 +1,18 @@
 {
-  "name": "switchyard",
+  "name": "ravix",
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Parallel tracks on one cloud machine. Sign in with GitHub, pick a repository, and every piece of work is its own git worktree with its own agent conversation. The server owns the Fountain account.",
+  "workspaces": [
+    "packages/*"
+  ],
+  "description": "Ravix: a browser workspace for building software with coding agents. Sign in with GitHub, pick a repository, and every piece of work is its own git worktree on one persistent cloud machine. The server owns the Fountain account.",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build && bun build server/index.ts --target=bun --outfile=dist-server/index.js",
     "preview": "vite preview",
-    "test": "bun test",
-    "typecheck": "tsc --noEmit",
+    "test": "bun test && bun run --cwd packages/fountain-app test",
+    "typecheck": "tsc --noEmit && bun run --cwd packages/fountain-app typecheck",
     "mock": "bun mock/server.ts",
     "server": "STATIC_DIR= DATA_DIR=./data bun --watch server/index.ts",
     "start": "bun server/index.ts",
@@ -18,7 +21,7 @@
     "runner:test": "bun test runner/"
   },
   "dependencies": {
-    "@managoat/fountain-app": "workspace:*",
+    "@ravix/fountain-app": "workspace:*",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "undici-node": "npm:undici@7.29.1",
@@ -35,5 +38,6 @@
     "playwright-core": "1.63.0",
     "typescript": "^5.8.0",
     "vite": "^6.3.0"
-  }
+  },
+  "license": "UNLICENSED"
 }

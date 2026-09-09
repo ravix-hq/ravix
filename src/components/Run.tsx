@@ -28,7 +28,7 @@ import { Play } from "../lib/icons";
 import { ExecBlock, type ExecEntry } from "./Terminal";
 
 export function Run({ track, project, capabilities }: { track: Track; project: Project; capabilities: Capabilities }) {
-  const storageKey = `switchyard.run.${project.id}`;
+  const storageKey = `ravix.run.${project.id}`;
   // Read straight out of storage on first render rather than in an effect: an
   // input that shows empty for one frame and then fills in is the kind of
   // flicker people learn to distrust in a panel that also runs commands.

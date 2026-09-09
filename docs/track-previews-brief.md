@@ -1,12 +1,12 @@
 # Track previews
 
-Audience: coding agent implementing the next Switchyard feature.\
+Audience: coding agent implementing the next Ravix feature.\
 Status: product direction agreed; implementation pending.\
 Date: September 5, 2026
 
 ## Outcome
 
-Implement authenticated, durable app previews for Switchyard tracks. The user
+Implement authenticated, durable app previews for Ravix tracks. The user
 must be able to queue a change, close the laptop, open the result on a phone,
 and send a correction from the same track.
 
@@ -18,7 +18,7 @@ including uncommitted changes; it is not an immutable release artifact.
 ## Start here
 
 Read the current checkout before editing; file references below are relative to
-`apps/switchyard/`. Preserve existing terminal execution and durable prompt
+this repository. Preserve existing terminal execution and durable prompt
 queue behavior.
 
 | Entry point | Use |
@@ -53,7 +53,7 @@ tunnel operations during this milestone.
 ## Experience
 
 Save a project default for the app directory, startup command, and readiness
-path, with a per-track override. Switchyard allocates a port and supplies
+path, with a per-track override. Ravix allocates a port and supplies
 `$PORT`; the startup command must honor it. Monorepos select the app directory
 explicitly.
 
@@ -73,7 +73,7 @@ Allocate ports uniquely within each machine and fail clearly on a collision;
 do not let a dev server silently select another port. Extend the existing
 Sprites client to manage a named service rooted in the track's worktree.
 Sprites services already provide startup, crash restart, explicit stop, and
-logs. Reconcile saved intent with actual service state after Switchyard
+logs. Reconcile saved intent with actual service state after Ravix
 restarts, and stop repeated startup failures from becoming an endless crash
 loop. [Sprites services](https://docs.sprites.dev/concepts/services/)
 
@@ -86,8 +86,8 @@ every track independently. [Services routing](https://docs.sprites.dev/concepts/
 [TCP proxy](https://docs.sprites.dev/api/dev-latest/proxy/)
 
 **Access.** Give each track a hostname on a dedicated preview domain, separate
-from Switchyard's application origin. Exchange a short-lived, single-use ticket
-from Switchyard for a host-scoped preview session. Enforce track membership on
+from Ravix's application origin. Exchange a short-lived, single-use ticket
+from Ravix for a host-scoped preview session. Enforce track membership on
 requests and WebSocket connections, including revocation of existing sessions.
 Keep gateway cookies and provider credentials out of upstream app requests.
 Resolve destinations on the server; the browser cannot choose arbitrary ports
@@ -137,7 +137,7 @@ which live checks remain blocked; do not report those checks as passed.
   phone and the user can return to the track to request a correction.
 - Unauthorized visitors cannot access previews, and removing access terminates
   existing preview sessions and connections.
-- Service crashes and Switchyard restarts recover predictably; failed startup
+- Service crashes and Ravix restarts recover predictably; failed startup
   shows actionable logs.
 - An idle preview resumes on demand. Stopping or closing one track leaves
   other previews and agent work intact.
@@ -151,7 +151,7 @@ Use the actual two-track browser exercise to prove hot reload; mocked provider
 responses alone do not establish it.
 
 Run `bun run test`, `bun run build`, and `git diff --check` from
-`apps/switchyard/`. Update the README with configuration and operating steps.
+this repository. Update the README with configuration and operating steps.
 Hand off the implementation with test results, live verification evidence,
 required deployment settings, and any unresolved limitations. Follow the active
 task's authorization for PR creation, merging, and deployment; this brief

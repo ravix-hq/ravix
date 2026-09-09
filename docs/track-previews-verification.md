@@ -40,7 +40,7 @@ verification state; its live-approval blocker was superseded by this request.
 To test through the actual production controls, the harness also accepts
 `--fixtures-only`: it creates the two fixture directories and records their
 ownership in the disposable database, then exits without starting services.
-Configure each track to use `.switchyard-preview-proof` and the printed Vite
+Configure each track to use `.ravix-preview-proof` and the printed Vite
 command. Stop and clear those track overrides before running `--cleanup`.
 Physical-phone and a complete Fountain parking/correction cycle remain untested.
 
@@ -55,18 +55,18 @@ and no deployment or DNS change was applied during implementation.
 | Requirement | Completed evidence | Remaining live check |
 | --- | --- | --- |
 | Independent track routing and HMR | Browser opened two actual Node/Vite apps through the gateway's mocked Sprites transport, with separate track hosts and ports. Conway changed to version 2 while Hamlet remained version 1, without a manual reload. Vite reported connected on both. | Repeat on Demos hamlet/elkhart using the deployed Sprites TCP proxy. |
-| Durable feedback loop | Queued a Conway correction through the ordinary composer, immediately closed the Switchyard tab, then observed version 2 in the open preview. SQLite recorded the prompt delivered and the server remained healthy. | Closed laptop, physical phone, return to track, then a second queued correction against live Demos. |
+| Durable feedback loop | Queued a Conway correction through the ordinary composer, immediately closed the Ravix tab, then observed version 2 in the open preview. SQLite recorded the prompt delivered and the server remained healthy. | Closed laptop, physical phone, return to track, then a second queued correction against live Demos. |
 | Mobile controls | At a 390 × 844 browser viewport, followed the preview's Back to track link, submitted a correction, and reopened Conway at version 3. | Physical phone and mobile browser networking/authentication. |
 | Private access and revocation | Gateway tests reject unsigned HTTP/WS, cross-host and expired tickets, ticket replay, foreign-origin writes/upgrades and removed members. Removal/reinvite does not resurrect a session. Sign-out and revocation terminate existing HTTP streams and WebSockets. | Signed-out browser profile and live removal with established connections. |
 | HTTP and WebSocket transport | Real socket tests cover HTML injection, streaming cancellation, 800 KB uploads, text/binary WebSockets and negotiated subprotocols. An 8 MiB slow-reader test checks bounded tunnel buffering and complete delivery. | Actual Sprites framing and ingress buffering/timeouts. |
-| Durable service supervision | SQLite/fake-provider tests cover concurrent unique ports, cross-connection constraints, repeated starts/restarts, stop during startup, changed configuration, readiness, crash limits, process restart reconciliation, sandbox replacement, failed-stop retry, idle behavior and peer-preserving cleanup. | Live process crash, Switchyard restart, idle suspension/resume and peer agent continuity. |
+| Durable service supervision | SQLite/fake-provider tests cover concurrent unique ports, cross-connection constraints, repeated starts/restarts, stop during startup, changed configuration, readiness, crash limits, process restart reconciliation, sandbox replacement, failed-stop retry, idle behavior and peer-preserving cleanup. | Live process crash, Ravix restart, idle suspension/resume and peer agent continuity. |
 | Unavailable provider | Missing configuration produces an explicit unavailable response; unsupported service/task operations retain actionable failure state. | Actual unsupported provider deployment. |
 
 Local browser fixtures are genuine Vite processes with file watching and HMR;
 the Sprites control plane and TCP relay are local mocks. This proves browser,
 gateway and dev-server compatibility, **not** the deployed provider protocol.
 
-Validation commands from `apps/switchyard/`:
+Validation commands from this repository:
 
 ```sh
 bun run test
@@ -80,7 +80,7 @@ bunx tsc --noEmit --strict --skipLibCheck --target ES2022 --module ESNext \
 The test suite passed **199 tests across 23 files**, with 1,275 assertions.
 The production TypeScript check, Vite build and server bundle passed. The
 bundle was also run locally with the mock stack. The optional Kubernetes
-overlay renders with `kubectl kustomize apps/switchyard/k8s-previews`.
+overlay renders with `kubectl kustomize k8s-previews`.
 Docker image execution was not checked because the local Docker daemon was
 unavailable; CI must build the image from the generated `dist/` and
 `dist-server/` directories.
@@ -97,7 +97,7 @@ coverage, including actual HTTP disconnects.
 Read-only requests against the live deployment confirmed that Demos resolves
 to Sprite `fountain-50e06232-6983bd17` and that its services endpoint answers
 HTTP 200 with an empty list. A bounded command confirmed Node/Bun and the
-hamlet Switchyard checkout with Vite dependencies are present. These checks
+hamlet Ravix checkout with Vite dependencies are present. These checks
 did not exercise service creation, Tasks or a TCP tunnel.
 
 Implementation follows the official [services API](https://docs.sprites.dev/api/dev-latest/services/),
@@ -159,22 +159,22 @@ extending the provider Task would then be insufficient.
 
 ## Deployment and pending live exercise
 
-The existing app host is `switchyard.demo.managoat.com`. No preview wildcard
+The existing app host is `app.ravix.sh`. No preview wildcard
 DNS/certificate/route was present during inspection. The optional
-`k8s-previews/` overlay proposes `*.preview.switchyard.inevitable.fyi` on the
+`k8s-previews/` overlay proposes `*.preview.ravix.sh` on the
 existing Traefik ingress and `letsencrypt-production` DNS01 issuer. It is a
 reviewable configuration, not an applied change. See the README for settings,
 startup command examples, CSP requirements and operating limits.
 
 Automatic approval review rejected copying live provider credentials to a
 local file. A replacement exercise was prepared that keeps credentials inside
-the Switchyard pod. Approval review then rejected that exercise's disposable
+the Ravix pod. Approval review then rejected that exercise's disposable
 files and private services on the two shared Demos tracks without explicit
 approval. The approval question is pending. These live checks are not passes.
 
 `scripts/preview-live-proof.ts` is the prepared operator harness. It reads the
 production SQLite database read-only, uses a separate database under
-`/tmp/switchyard-preview-proof`, creates `.switchyard-preview-proof` fixture
+`/tmp/ravix-preview-proof`, creates `.ravix-preview-proof` fixture
 directories in hamlet/elkhart, and launches two private Vite services. It
 refuses existing fixture directories. It is deliberately specific to those
 selected tracks, and requires their existing Vite installation.
@@ -183,12 +183,12 @@ After live-fixture approval, build it locally, copy only the bundle to the
 current pod, and run it there. Do not export the pod's credentials:
 
 ```sh
-# From apps/switchyard, with POD set to the current Switchyard pod name:
-bun build scripts/preview-live-proof.ts --target=bun --outfile=/tmp/switchyard-preview-proof.js
-kubectl -n switchyard cp /tmp/switchyard-preview-proof.js "$POD":/tmp/switchyard-preview-proof.js
-kubectl -n switchyard exec -it "$POD" -- bun /tmp/switchyard-preview-proof.js
+# From apps/ravix, with POD set to the current Ravix pod name:
+bun build scripts/preview-live-proof.ts --target=bun --outfile=/tmp/ravix-preview-proof.js
+kubectl -n ravix cp /tmp/ravix-preview-proof.js "$POD":/tmp/ravix-preview-proof.js
+kubectl -n ravix exec -it "$POD" -- bun /tmp/ravix-preview-proof.js
 # In another terminal, bind only localhost:
-kubectl -n switchyard port-forward pod/"$POD" 18082:18082 18083:18083
+kubectl -n ravix port-forward pod/"$POD" 18082:18082 18083:18083
 ```
 
 Open `http://localhost:18083`. The launcher and gateway listen only on pod
@@ -200,7 +200,7 @@ stays unchanged. Test the unsigned links in a separate signed-out profile
 services and owned fixtures while the disposable database still exists:
 
 ```sh
-kubectl -n switchyard exec "$POD" -- bun /tmp/switchyard-preview-proof.js --cleanup
+kubectl -n ravix exec "$POD" -- bun /tmp/ravix-preview-proof.js --cleanup
 ```
 
 Inspect cleanup output and the provider service list. Only after cleanup,

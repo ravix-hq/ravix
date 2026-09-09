@@ -33,10 +33,10 @@ test("a project with no repository still gets the rule, without inventing a clon
 
 test("the app's own turns are marked, so the transcript can render them as notes", () => {
   expect(openTrackPrompt({ slug: "kyoto", branch: "j/kyoto", repoPath: null, origin: { kind: "blank", base: null } })).toStartWith(
-    "[switchyard]",
+    "[ravix]",
   );
-  expect(closeTrackPrompt({ slug: "kyoto", repoPath: null, force: false })).toStartWith("[switchyard]");
-  expect(systemPrompt(withRepo)).toContain('"[switchyard]"');
+  expect(closeTrackPrompt({ slug: "kyoto", repoPath: null, force: false })).toStartWith("[ravix]");
+  expect(systemPrompt(withRepo)).toContain('"[ravix]"');
 });
 
 test("a blank track cuts a branch; a pull request checks out the one it is already for", () => {

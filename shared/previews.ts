@@ -3,8 +3,8 @@ export interface PreviewConfig {
   command: string;
   readinessPath: string;
 }
-export const AGENT_PREVIEW_START = "[switchyard preview tools for this turn]";
-export const AGENT_PREVIEW_END = "[/switchyard preview tools]";
+export const AGENT_PREVIEW_START = "[ravix preview tools for this turn]";
+export const AGENT_PREVIEW_END = "[/ravix preview tools]";
 export function visiblePreviewPrompt(prompt: string): string {
   if (!prompt.startsWith(`${AGENT_PREVIEW_START}\n`)) return prompt;
   const end = prompt.indexOf(`\n${AGENT_PREVIEW_END}\n\n`);

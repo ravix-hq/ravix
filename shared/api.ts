@@ -1,5 +1,5 @@
 /**
- * The contract between the browser and the switchyard server.
+ * The contract between the browser and the ravix server.
  *
  * Every one of these shapes is served from `/api/...`. Nothing here is a
  * Fountain shape: the browser has no Fountain key, no Fountain session and no
@@ -113,7 +113,7 @@ export interface SessionInfo {
  * a build flag.
  *
  * The UI reads this instead of guessing, because the honest answer differs per
- * deployment: a switchyard with no Sprites token has no terminal, and a panel
+ * deployment: a ravix with no Sprites token has no terminal, and a panel
  * that pretends otherwise is worse than one that says so. Every `false` here
  * has a designed empty state behind it, not a broken button.
  */
@@ -280,7 +280,7 @@ export interface ProjectSettings {
 /**
  * A track is a worktree, and a conversation about it.
  *
- * Conductor calls these threads or workspaces. Switchyard calls them tracks
+ * Conductor calls these threads or workspaces. Ravix calls them tracks
  * because that is what they are in a yard: parallel lines off one main, each
  * holding something different, all on the same ground.
  */

@@ -53,20 +53,20 @@ test('iOS accessibility coordinates use exact labels and bounded point frames', 
   expect(iosNode(JSON.stringify([{...node('Call backend'),frame:{x:0,y:0,width:9000,height:40}}]),'Call backend')).toBeNull();
   expect(iosNode(JSON.stringify({children:[node('Hello, world!')]}),'Hello, world!')).toEqual({x:60,y:50});
   expect(iosStartupAction(JSON.stringify([node('Continue')]))).toBeNull();
-  expect(iosStartupAction(JSON.stringify(['Switchyard Hello','Reload','Go home','Close'].map(node)))).toEqual({x:60,y:50});
+  expect(iosStartupAction(JSON.stringify(['Ravix Hello','Reload','Go home','Close'].map(node)))).toEqual({x:60,y:50});
 });
 test('iOS startup opens only the named Hello development-client confirmation', () => {
   const hierarchy = (...labels: string[]) => JSON.stringify(labels.map((AXLabel, index) => ({ AXLabel, frame: { x: 10, y: 30 + index * 50, width: 100, height: 40 } })));
-  for (const title of ['Open in “Switchyard Hello”?', 'Open in "Switchyard Hello"?']) {
+  for (const title of ['Open in “Ravix Hello”?', 'Open in "Ravix Hello"?']) {
     expect(iosStartupAction(hierarchy(title, 'Cancel', 'Open'))).toEqual({ x: 60, y: 150 });
     expect(iosStartupAction(hierarchy(title, 'Open'))).toBeNull();
     expect(iosStartupAction(hierarchy(title, 'Cancel'))).toBeNull();
   }
   expect(iosStartupAction(hierarchy('Open in “Another App”?', 'Cancel', 'Open'))).toBeNull();
-  expect(iosStartupAction(hierarchy('Switchyard Hello', 'Cancel', 'Open'))).toBeNull();
+  expect(iosStartupAction(hierarchy('Ravix Hello', 'Cancel', 'Open'))).toBeNull();
 });
 test('preview platform is explicit while older Android pairing files remain valid', () => {
-  const base={expectedAccount:'switchyard',buildDirectory:'/Users/switchyard/.local/share/switchyard/builds/experiment-52e8255f-b89c-4596-846d-1aa6d6002041',artifactSha256:'a'.repeat(64),serverUrl:'https://switchyard.demo.managoat.com',pairingCode:'p'.repeat(43)};
+  const base={expectedAccount:'ravix',buildDirectory:'/Users/ravix/.local/share/ravix/builds/experiment-52e8255f-b89c-4596-846d-1aa6d6002041',artifactSha256:'a'.repeat(64),serverUrl:'https://app.ravix.sh',pairingCode:'p'.repeat(43)};
   expect(parsePreviewExperiment(base).platform).toBeUndefined();
   expect(parsePreviewExperiment({...base,platform:'ios'}).platform).toBe('ios');
   expect(()=>parsePreviewExperiment({...base,platform:'macos'})).toThrow('android or ios');

@@ -9,8 +9,8 @@ export async function verifyIosBuild(config: RuntimeConfig) {
   const path = join(config.buildDirectory, 'report.json'), stat = await lstat(path);
   if (!stat.isFile() || stat.size > 1024 * 1024 || await realpath(path) !== path) throw Error('Invalid iOS build report');
   const report = JSON.parse(await readFile(path, 'utf8'));
-  const app = join(config.buildDirectory, 'SwitchyardHello.app');
-  if (report.kind !== 'ios-build-experiment' || report.platform !== 'ios' || report.account !== config.expectedAccount || report.architecture !== 'arm64' || report.applicationId !== 'com.managoat.switchyard.hello' || report.error !== null || report.artifact?.path !== app || report.artifact?.sha256 !== config.artifactSha256 || !report.phases?.some((p: {name: string; passed: boolean}) => p.name === 'verify-artifact' && p.passed === true) || !/^[a-f0-9]{64}$/.test(report.sourceDigest)) throw Error('Build report does not identify the pinned Hello simulator app');
+  const app = join(config.buildDirectory, 'RavixHello.app');
+  if (report.kind !== 'ios-build-experiment' || report.platform !== 'ios' || report.account !== config.expectedAccount || report.architecture !== 'arm64' || report.applicationId !== 'sh.ravix.hello' || report.error !== null || report.artifact?.path !== app || report.artifact?.sha256 !== config.artifactSha256 || !report.phases?.some((p: {name: string; passed: boolean}) => p.name === 'verify-artifact' && p.passed === true) || !/^[a-f0-9]{64}$/.test(report.sourceDigest)) throw Error('Build report does not identify the pinned Hello simulator app');
   const artifact = await iosArtifact(app);
   if (artifact.sha256 !== config.artifactSha256 || artifact.size !== report.artifact.size || artifact.files !== report.artifact.files) throw Error('Simulator app does not match the pinned build digest');
   return { apk: app, sourceDigest: report.sourceDigest as string };
@@ -37,8 +37,8 @@ export function iosStartupAction(hierarchy: string) {
   const node = (text: string) => iosNode(hierarchy, text);
   // iOS asks before opening the development-client URL on a fresh simulator.
   // The alert can hide the app's own title from the accessibility hierarchy.
-  if ((node('Open in “Switchyard Hello”?') || node('Open in "Switchyard Hello"?')) && node('Cancel')) return node('Open');
-  if (!node('Switchyard Hello')) return null;
+  if ((node('Open in “Ravix Hello”?') || node('Open in "Ravix Hello"?')) && node('Cancel')) return node('Open');
+  if (!node('Ravix Hello')) return null;
   if (node('This is the developer menu. It gives you access to useful tools in your development builds.')) return node('Continue');
   if (node('Reload') && node('Go home')) return node('Close');
   return null;

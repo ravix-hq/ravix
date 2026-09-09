@@ -13,7 +13,7 @@
  * decision paddock made and for the same reason: the machine is the thing
  * people care about, and no configuration change should be able to take it.
  *
- * The credential is the part switchyard does differently, because it has a
+ * The credential is the part ravix does differently, because it has a
  * GitHub App and paddock deliberately does not. A private repository is cloned
  * with an **installation token** — scoped to the repositories that person
  * chose, expiring in an hour — written into the project's *vault* under
@@ -154,7 +154,7 @@ export async function create(ctx: AppContext, req: Request): Promise<Response> {
   let isPrivate = false;
 
   if (repoFullName) {
-    if (!installationId) throw new HttpError(422, "no_installation", "Pick a repository from an account switchyard is installed on.");
+    if (!installationId) throw new HttpError(422, "no_installation", "Pick a repository from an account Ravix is installed on.");
     const gh = requireGitHub(ctx);
     // Proves the installation grants it, and gets the branch we will cut from.
     let repo;
@@ -172,7 +172,7 @@ export async function create(ctx: AppContext, req: Request): Promise<Response> {
   if (!name) throw new HttpError(422, "no_name", "Give the project a name.");
 
   const projectId = randomUUID();
-  const label = `Switchyard · ${name}`;
+  const label = `Ravix · ${name}`;
   const repoPath = repoFullName ? mountPathFor(repoFullName) : null;
 
   // ── the three records, in the only order that works ──────────────────
@@ -222,11 +222,11 @@ export async function create(ctx: AppContext, req: Request): Promise<Response> {
       // The identity's own default, so every track on it gets the same home
       // without having to say so on each conversation.
       sandbox_mode: "persistent",
-      description: repoFullName ? `The agent working on ${repoFullName}.` : "The agent on this switchyard project.",
+      description: repoFullName ? `The agent working on ${repoFullName}.` : "The agent on this Ravix project.",
       system: systemPrompt({ project: name, repoPath, defaultBranch }),
       environment_id: environmentId,
       ...(vaultId ? { vault_id: vaultId } : {}),
-      metadata: { switchyard: { project: projectId } },
+      metadata: { ravix: { project: projectId } },
     });
     agentId = agent.id;
   } catch (err) {
@@ -301,7 +301,7 @@ export async function settings(ctx: AppContext, req: Request, id: string): Promi
       setupScript: env.setup_script ?? "",
       packages: env.packages ?? {},
       envKeys: envKeys.map((k) => k.key),
-      // The clone token is switchyard's own plumbing, not one of the person's
+      // The clone token is Ravix's own plumbing, not one of the person's
       // secrets. Listing it invites somebody to delete it and then wonder why
       // their private repository stopped cloning.
       vaultKeys: vaultKeys.map((k) => k.key).filter((k) => k !== CLONE_SECRET_KEY),
@@ -368,7 +368,7 @@ export async function updateSettings(ctx: AppContext, req: Request, id: string):
       const store = s.store === "vault" ? "vaults" : "environments";
       const key = str(s.key, 200).trim();
       if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) throw new HttpError(422, "bad_key", "A secret name is letters, digits and underscores.");
-      if (key === CLONE_SECRET_KEY) throw new HttpError(422, "reserved_key", `${CLONE_SECRET_KEY} is switchyard's own and is re-minted from GitHub.`);
+      if (key === CLONE_SECRET_KEY) throw new HttpError(422, "reserved_key", `${CLONE_SECRET_KEY} is Ravix's own and is re-minted from GitHub.`);
       const target = store === "vaults" ? project.vaultId : project.environmentId;
       if (!target) throw new HttpError(409, "no_vault", "This project has no vault, so it can only hold environment secrets.");
       if (typeof s.value === "string" && s.value.length) await fountain.putSecret(store, target, key, s.value);
@@ -451,14 +451,14 @@ export async function rebuild(ctx: AppContext, req: Request, id: string): Promis
   let agent;
   try {
     agent = await fountain.createAgent({
-      name: `Switchyard · ${project.name}`,
+      name: `Ravix · ${project.name}`,
       model: project.model || choice.model,
       runtime: project.runtime || choice.runtime,
       sandbox_mode: "persistent",
       system: composeSystem(project),
       environment_id: project.environmentId,
       ...(project.vaultId ? { vault_id: project.vaultId } : {}),
-      metadata: { switchyard: { project: project.id } },
+      metadata: { ravix: { project: project.id } },
     });
   } catch (err) {
     throw asHttpError(err, "build this project a new machine");

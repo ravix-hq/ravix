@@ -8,12 +8,12 @@ import { toolPaths, toolEnvironment } from "./doctor";
 import { acquireExperiment, privateDirectory, writePrivateJson } from "./state";
 import { digestBytes } from "./snapshot";
 
-const APPLICATION_ID = "com.managoat.switchyard.hello";
+const APPLICATION_ID = "sh.ravix.hello";
 export interface RuntimeConfig { expectedAccount: string; buildDirectory: string; artifactSha256: string }
 export function parseRuntimeConfig(value: unknown): RuntimeConfig {
   const v = value as RuntimeConfig | null;
   if (!v || typeof v !== "object" || typeof v.expectedAccount !== "string" || !/^[a-z][a-z0-9_-]{0,31}$/.test(v.expectedAccount)) throw new Error("Select the dedicated runner account");
-  if (typeof v.buildDirectory !== "string" || !new RegExp(`^/Users/${v.expectedAccount}/\\.local/share/switchyard/builds/experiment-[a-f0-9-]{36}$`).test(v.buildDirectory)) throw new Error("Choose an explicit build in the dedicated account");
+  if (typeof v.buildDirectory !== "string" || !new RegExp(`^/Users/${v.expectedAccount}/\\.local/share/ravix/builds/experiment-[a-f0-9-]{36}$`).test(v.buildDirectory)) throw new Error("Choose an explicit build in the dedicated account");
   if (typeof v.artifactSha256 !== "string" || !/^[a-f0-9]{64}$/.test(v.artifactSha256)) throw new Error("Pin the verified artifact SHA-256");
   return { expectedAccount: v.expectedAccount, buildDirectory: v.buildDirectory, artifactSha256: v.artifactSha256 };
 }
@@ -59,7 +59,7 @@ export function androidNode(xml: string, attribute: "resource-id" | "text" | "co
  * app buttons or another package's dialogs cannot trigger these startup taps. */
 export function expoStartupAction(xml: string) {
   const text = (value: string) => androidNode(xml, "text", value, APPLICATION_ID);
-  if (!text("Switchyard Hello") || !text("Runtime version: exposdk:54.0.0")) return null;
+  if (!text("Ravix Hello") || !text("Runtime version: exposdk:54.0.0")) return null;
   if (text("This is the developer menu. It gives you access to useful tools in your development builds.")) {
     const point = text("Continue");
     return point ? { action: "continue-onboarding" as const, ...point } : null;
@@ -87,7 +87,7 @@ export async function runtimeExperiment(config: RuntimeConfig, signal?: AbortSig
   const buildLockPath = join(config.buildDirectory, "runtime.lock");
   const buildLock = await open(buildLockPath, "wx", 0o600).catch(() => { throw new Error("This build has a runtime lock; inspect its evidence before recovery"); });
   let owned: Awaited<ReturnType<typeof acquireExperiment>>;
-  try { owned = await acquireExperiment(join(user.homedir, ".local/share/switchyard/runtime")); }
+  try { owned = await acquireExperiment(join(user.homedir, ".local/share/ravix/runtime")); }
   catch (error) { await buildLock.close(); await rm(buildLockPath); throw error; }
   await buildLock.writeFile(JSON.stringify({ directory: owned.directory, pid: process.pid })); await buildLock.close();
   const controller = new AbortController();

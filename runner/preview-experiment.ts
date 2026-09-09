@@ -19,7 +19,7 @@ export function parsePreviewExperiment(value: unknown): PreviewConfig {
     if (v.platform !== undefined && !["android", "ios"].includes(v.platform)) throw Error("Choose android or ios");
     const url = new URL(v.serverUrl);
     if ((url.protocol !== 'https:' && !(url.protocol === 'http:' && url.hostname === '127.0.0.1')) || url.username || url.password || url.pathname !== '/' || url.search || url.hash)
-        throw new Error('Use the Switchyard HTTPS app origin');
+        throw new Error('Use the Ravix HTTPS app origin');
     if (typeof v.pairingCode !== 'string' || !/^[\w-]{43}$/.test(v.pairingCode))
         throw new Error('Use a fresh pairing code from the native preview');
     return { ...runtime, ...(v.platform ? {platform: v.platform} : {}), serverUrl: url.origin, pairingCode: v.pairingCode };
@@ -36,7 +36,7 @@ export async function previewExperiment(config: PreviewConfig, signal?: AbortSig
     const target = config.platform ?? "android";
     if(managed && (!/^[a-f0-9-]{36}$/.test(managed.targetId)||!/^[a-f0-9-]{36}$/.test(managed.sessionId)||managed.deadline<=Date.now()))throw Error('Invalid managed target');
     const build = await (target === "ios" ? verifyIosBuild(config) : verifyRuntimeBuild(config));
-    const root=join(user.homedir,'.local/share/switchyard');
+    const root=join(user.homedir,'.local/share/ravix');
     let deviceDirectory:string|undefined;
     if(managed){
       const targets=await privateDirectory(join(root,'managed','targets'));
@@ -71,7 +71,7 @@ export async function previewExperiment(config: PreviewConfig, signal?: AbortSig
         await save();
         const claim = await fetch(`${config.serverUrl}/api/native/claim`, { method: 'POST', redirect: 'error', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ code: config.pairingCode, artifactSha256: config.artifactSha256, platform: target, ...localPorts }), signal: AbortSignal.any([active, AbortSignal.timeout(15000)]) });
         if (!claim.ok)
-            throw new Error(`Pairing failed (${claim.status}). Create a fresh code in Switchyard.`);
+            throw new Error(`Pairing failed (${claim.status}). Create a fresh code in Ravix.`);
         const { data } = await claim.json() as {
             data: {
                 id: string;
@@ -118,8 +118,8 @@ export async function previewExperiment(config: PreviewConfig, signal?: AbortSig
                 stop(error);
             }
         };
-        control.onclose = () => stop(new Error('Switchyard control connection closed'));
-        control.onerror = () => stop(new Error('Switchyard control connection failed'));
+        control.onclose = () => stop(new Error('Ravix control connection closed'));
+        control.onerror = () => stop(new Error('Ravix control connection failed'));
         await new Promise<void>((resolve, reject) => { const timer = setTimeout(() => reject(new Error('Runner connection timed out')), 10000); control!.onopen = () => { clearTimeout(timer); resolve(); }; });
         heartbeat = setInterval(() => { if (control?.readyState === WebSocket.OPEN)
             control.send(JSON.stringify({ type: 'heartbeat' })); }, 10000);
@@ -164,7 +164,7 @@ export async function previewExperiment(config: PreviewConfig, signal?: AbortSig
                 try {
                     const xml = await adapter.readHierarchy();
                     if (target === "ios") await writePrivateJson(join(owned.directory, "last-hierarchy.json"), JSON.parse(xml));
-                    const node = target === 'ios' ? iosNode(xml, text) : (androidNode(xml, 'text', text, 'com.managoat.switchyard.hello') ?? androidNode(xml, 'content-desc', text, 'com.managoat.switchyard.hello'));
+                    const node = target === 'ios' ? iosNode(xml, text) : (androidNode(xml, 'text', text, 'sh.ravix.hello') ?? androidNode(xml, 'content-desc', text, 'sh.ravix.hello'));
                     if (node)
                         return node;
                     const action = target === 'ios' ? iosStartupAction(xml) : expoStartupAction(xml);
@@ -183,7 +183,7 @@ export async function previewExperiment(config: PreviewConfig, signal?: AbortSig
         await phase('verify-sprite-greeting', async () => { await waitFor(managed ? 'Call backend' : 'Hello, world!'); report.nativeRuntimeVerified = true; report.spriteMetroVerified = true; await adapter.screenshot(join(owned.directory, 'sprite-greeting.png')); });
         await phase('verify-sprite-backend', async () => {
             const xml = await adapter.readHierarchy();
-            const button = target === 'ios' ? iosNode(xml, 'Call backend') : androidNode(xml, 'content-desc', 'Call backend', 'com.managoat.switchyard.hello');
+            const button = target === 'ios' ? iosNode(xml, 'Call backend') : androidNode(xml, 'content-desc', 'Call backend', 'sh.ravix.hello');
             if (!button)
                 throw new Error('Backend button unavailable');
             await adapter.tap(button.x, button.y);

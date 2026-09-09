@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { blocksForTurn, type Block } from "@managoat/fountain-app/acp";
+import { blocksForTurn, type Block } from "@ravix/fountain-app/acp";
 import { activityOf, describeTool, edit, resultOf, toolDetails } from "./tools";
 import type { LogEvent } from "../../shared/fountain-types";
 

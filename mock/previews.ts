@@ -8,11 +8,11 @@ import type { Subprocess } from "bun";
 
 interface Service { name: string; dir: string; root: string; port: number; status: string; logs: string; process?: Subprocess; version: number; }
 const services = new Map<string, Service>();
-const root = mkdtempSync(join(tmpdir(), "switchyard-preview-mock-"));
+const root = mkdtempSync(join(tmpdir(), "ravix-preview-mock-"));
 const vite = new URL("../node_modules/vite/bin/vite.js", import.meta.url).pathname;
 function render(service: Service) {
   const label = service.dir.replaceAll("<", "&lt;").replaceAll(">", "&gt;");
-  writeFileSync(join(service.root, "index.html"), `<!doctype html><html><head><meta charset="utf-8"><title>Track preview</title><meta name="viewport" content="width=device-width,initial-scale=1"></head><body style="font:20px system-ui;padding:32px;background:#f4f1e9;color:#252c28"><h1>Live track · version ${service.version}</h1><p>${label}</p><p>A saved correction updates this app, even after closing Switchyard.</p><script type="module" src="/main.js"></script></body></html>`);
+  writeFileSync(join(service.root, "index.html"), `<!doctype html><html><head><meta charset="utf-8"><title>Track preview</title><meta name="viewport" content="width=device-width,initial-scale=1"></head><body style="font:20px system-ui;padding:32px;background:#f4f1e9;color:#252c28"><h1>Live track · version ${service.version}</h1><p>${label}</p><p>A saved correction updates this app, even after closing Ravix.</p><script type="module" src="/main.js"></script></body></html>`);
 }
 export function updateMockPreview(workdir: string) {
   for (const service of services.values()) if (service.dir === workdir || service.dir.startsWith(`${workdir}/`)) { service.version++; render(service); }

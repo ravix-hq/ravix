@@ -9,7 +9,7 @@ import { checked, command } from './process';
 export async function resetTarget(account:string,id:string) {
   const user=userInfo();
   if(process.platform!=='darwin'||user.uid===0||user.username!==account||! /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(id))throw Error('Choose an owned target UUID and the dedicated runner account');
-  const root=join(user.homedir,'.local/share/switchyard');
+  const root=join(user.homedir,'.local/share/ravix');
   await privateDirectory(join(root,'managed'));await privateDirectory(join(root,'runtime'));
   const locks:string[]=[];
   try {
@@ -31,11 +31,11 @@ export async function resetTarget(account:string,id:string) {
     const argv=[tools.xcrun,'simctl','--set',set];
     const inventory=JSON.parse((await checked(command,[...argv,'list','devices','--json'],{env})).toString());
     const device=inventory.devices?.[manifest.runtime]?.find((d:{udid:string})=>d.udid===manifest.udid);
-    if(!device||device.name!==`Switchyard-${id}`||device.state!=='Shutdown')throw Error('Owned simulator is missing or still running; reconcile it first');
+    if(!device||device.name!==`Ravix-${id}`||device.state!=='Shutdown')throw Error('Owned simulator is missing or still running; reconcile it first');
     await checked(command,[...argv,'delete',manifest.udid],{env});
   }else{
     const manifest=JSON.parse(await readFile(android,'utf8'));
-    if(manifest.name!==`switchyard-${id}`)throw Error('Invalid emulator ownership evidence');
+    if(manifest.name!==`ravix-${id}`)throw Error('Invalid emulator ownership evidence');
     // The account's one emulator port must be free before removing its disk image.
     const devices=(await checked(command,[tools.adb,'devices'],{env})).toString();
     if(devices.split(/\r?\n/).some(line=>line.startsWith('emulator-5580\t')))throw Error('An emulator is still running; stop it before resetting data');

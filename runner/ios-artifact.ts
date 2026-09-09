@@ -7,7 +7,7 @@ import { join } from 'node:path';
  * No links, special files or unbounded bundle walks are accepted. */
 export async function iosArtifact(path: string) {
   if (await realpath(path) !== path || !(await lstat(path)).isDirectory()) throw new Error('Invalid iOS app directory');
-  const hash = createHash('sha256').update('switchyard-ios-app-v1\0');
+  const hash = createHash('sha256').update('ravix-ios-app-v1\0');
   let size = 0, files = 0, entries = 0;
   const walk = async (relative: string, depth: number): Promise<void> => {
     if (depth > 32) throw new Error('iOS app nesting exceeds limit');

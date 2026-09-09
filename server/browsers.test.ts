@@ -17,7 +17,7 @@ const cleanup: (() => void)[] = [];
 afterEach(() => { for (const fn of cleanup.splice(0).reverse()) fn(); });
 async function fixture() {
   const dir = mkdtempSync(join(tmpdir(), "sy-browser-"));
-  const config = loadConfig({ DATA_DIR: dir, SWITCHYARD_SECRET: "browser-test-secret-long-enough", PUBLIC_URL: "http://localhost:5183", FOUNTAIN_API_KEY: "test", SPRITES_TOKEN: "test", SHARED_BROWSER: "1" });
+  const config = loadConfig({ DATA_DIR: dir, RAVIX_SECRET: "browser-test-secret-long-enough", PUBLIC_URL: "http://localhost:5183", FOUNTAIN_API_KEY: "test", SPRITES_TOKEN: "test", SHARED_BROWSER: "1" });
   const db = new Db(config.dbPath), ctx = buildContext({ db, config, cipher: await Cipher.from(config.secret) });
   const owner = db.upsertUser({ githubId: "1", login: "owner", name: null, avatarUrl: null, tokenEnc: "test" });
   const member = db.upsertUser({ githubId: "2", login: "member", name: null, avatarUrl: null, tokenEnc: "test" });
@@ -55,7 +55,7 @@ async function fixture() {
   ctx.sprites = new Provider({ token: "", baseUrl: "" });
   const router = buildRouter(ctx), clientId = crypto.randomUUID();
   const request = (track: string, action?: string, body: Record<string, unknown> = {}, login = "owner", origin = config.publicUrl) => router(new Request(`http://localhost/api/tracks/${track}/browser${action ? `/${action}` : ""}`, {
-    method: action ? "POST" : "GET", headers: { cookie: `switchyard_session=${login}`, origin, "content-type": "application/json" }, ...(action ? { body: JSON.stringify({ clientId, ...body }) } : {}),
+    method: action ? "POST" : "GET", headers: { cookie: `ravix_session=${login}`, origin, "content-type": "application/json" }, ...(action ? { body: JSON.stringify({ clientId, ...body }) } : {}),
   }));
   cleanup.push(() => { ctx.db.close(); rmSync(dir, { recursive: true, force: true }); });
   return { ctx, manager, request, calls, owner, member, other, clientId, providerCalls, setOnDestination: (fn: () => void) => { onDestination = fn; } };
@@ -143,7 +143,7 @@ test("machine replacement fences old browser input, and closing a track preserve
 test("browser helper instructions remain hidden alongside preview instructions", async () => {
   const f = await fixture();
   const instructions = await prepareAgentBrowser(f.ctx, { sequence: 1, id: "prompt", trackId: "a", userId: f.owner.id, authorLogin: "owner", createdAt: "now", status: "sending", error: null });
-  expect(instructions).toContain("one shared Switchyard browser profile");
+  expect(instructions).toContain("one shared Ravix browser profile");
   expect(instructions).not.toContain("Bearer");
   const prompt = `${AGENT_PREVIEW_START}\npreview instructions\n${AGENT_PREVIEW_END}\n\n${instructions}\n\nHello`;
   expect(visibleBrowserPrompt(visiblePreviewPrompt(prompt))).toBe("Hello");

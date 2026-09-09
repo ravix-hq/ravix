@@ -62,10 +62,10 @@ function writeRoute(route: Route, replace = false): void {
 
 export function App() {
   const native = /^\/native\/([a-f0-9-]{36})$/.exec(window.location.pathname);
-  return experimentalPreviews && native ? <NativeViewer id={native[1]!} /> : <SwitchyardApp />;
+  return experimentalPreviews && native ? <NativeViewer id={native[1]!} /> : <RavixApp />;
 }
 
-function SwitchyardApp() {
+function RavixApp() {
   const [session, setSession] = useState<SessionInfo | null>(null);
   const [signingOut, setSigningOut] = useState(false);
   const [projectsState, setProjectsState] = useState<"loading" | "ready" | "error">("loading");
@@ -116,7 +116,7 @@ function SwitchyardApp() {
     void api
       .session()
       .then(setSession)
-      .catch(() => notify("Could not reach the switchyard server."));
+      .catch(() => notify("Could not reach the Ravix server."));
   }, [notify]);
 
   const reloadProjects = useCallback(async () => {

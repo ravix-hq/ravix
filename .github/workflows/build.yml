@@ -1,0 +1,83 @@
+# Builds the image on every push to main, pushes it to ghcr.io/ravioli-hq/ravix,
+# then pins the immutable sha tag into k8s/deployment.yaml so Flux rolls exactly
+# what was built. The pin commit only touches k8s/, which paths-ignore excludes,
+# so it does not retrigger this workflow.
+#
+# Multi-arch because the target cluster's nodes are arm64. The SPA and server
+# bundles are built on the runner (bun), so the docker stage is just bun + dist/
+# and needs no QEMU-side compile.
+name: build
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "k8s/**"
+      - "**/*.md"
+
+concurrency:
+  group: build-main
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+      - name: Test and build
+        run: |
+          bun install --frozen-lockfile
+          bun run test
+          bun run build
+      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and push
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/ravix:latest
+            ghcr.io/${{ github.repository_owner }}/ravix:sha-${{ github.sha }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+
+  pin:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: main
+      # Matches `latest` as well as an existing pin: deployment.yaml is authored
+      # with `:latest` before the first build has a sha to name.
+      - name: Pin the image sha
+        env:
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          set -euo pipefail
+          f="k8s/deployment.yaml"
+          sed -i -E "s#(image: ghcr\.io/${OWNER}/ravix:)(sha-[0-9a-f]+|latest)#\1sha-${GITHUB_SHA}#" "$f"
+          git add "$f"
+          git diff --cached --quiet && { echo "already pinned"; exit 0; }
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git commit -m "deploy: pin image sha-${GITHUB_SHA::7}"
+          git pull --rebase --autostash
+          git push

@@ -135,13 +135,13 @@ export class AndroidExperiment implements OwnedAdapter {
   private readonly serial: string;
   private readonly env: NodeJS.ProcessEnv;
   constructor(private config: Extract<ExperimentConfig, { platform: "android" }>, id: string, private directory: string, private tools: ToolPaths, private run: Command, private signal?: AbortSignal, environment = process.env, private lifetimeMs = 300_000, private retain = false) {
-    this.name = `switchyard-${id}`; this.serial = `emulator-${config.emulatorPort}`;
+    this.name = `ravix-${id}`; this.serial = `emulator-${config.emulatorPort}`;
     this.env = { ...toolEnvironment(tools, environment), ANDROID_USER_HOME: join(directory, "android"), ANDROID_AVD_HOME: join(directory, "avds") };
   }
   private exec(argv: string[], options: CommandOptions = {}) { return checked(this.run, argv, { env: this.env, signal: AbortSignal.any([this.controller.signal, ...(this.signal ? [this.signal] : [])]), ...options }); }
   private adb(...args: string[]) { return this.exec([this.tools.adb, "-s", this.serial, ...args]); }
   private async hierarchy() {
-    const path = `/sdcard/switchyard-${crypto.randomUUID()}.xml`;
+    const path = `/sdcard/ravix-${crypto.randomUUID()}.xml`;
     // uiautomator can exit zero while printing an error and leaving an older
     // file untouched. Require a fresh successful dump before consuming it.
     const output = (await this.adb("shell", "uiautomator", "dump", path)).toString();
@@ -217,7 +217,7 @@ export class AndroidExperiment implements OwnedAdapter {
     await this.adb("shell", "input", "keyevent", "KEYCODE_WAKEUP");
     await this.adb("shell", "wm", "dismiss-keyguard");
     await this.exec([this.tools.adb, "-s", this.serial, "shell", "am", "start", "-W", "-a", "android.intent.action.VIEW", "-d",
-      `switchyard-hello://expo-development-client/?url=${encodeURIComponent(`http://127.0.0.1:${port}`)}`, "com.managoat.switchyard.hello"], { timeoutMs: 30_000 });
+      `ravix-hello://expo-development-client/?url=${encodeURIComponent(`http://127.0.0.1:${port}`)}`, "sh.ravix.hello"], { timeoutMs: 30_000 });
   }
   async readHierarchy() { this.assertOwned(); return this.hierarchy(); }
   async tap(x: number, y: number) {
@@ -258,11 +258,11 @@ export class AndroidExperiment implements OwnedAdapter {
     await this.adb("shell", "input", "tap", String(Math.round((left! + right!) / 2)), String(Math.round((top! + bottom!) / 2)));
     await Bun.sleep(3000);
     await this.screenshot(join(this.directory, "tap.png"));
-    await this.adb("shell", "input", "text", "switchyard");
+    await this.adb("shell", "input", "text", "ravix");
     await Bun.sleep(3000);
     const after = await this.hierarchy();
     await Bun.write(join(this.directory, "input-after.xml"), after, { mode: 0o600 });
-    if (!after.includes('text="switchyard"')) throw new Error("Android did not show the injected Settings search text");
+    if (!after.includes('text="ravix"')) throw new Error("Android did not show the injected Settings search text");
   }
   async record(path: string) {
     this.assertOwned();
@@ -307,9 +307,9 @@ export class IosExperiment implements OwnedAdapter {
       udid=prior.udid;
       const inventory=JSON.parse((await this.sim('list','devices','--json')).toString());
       const owned=inventory.devices?.[this.config.runtime]?.find((d:{udid:string})=>d.udid===udid);
-      if(!owned||owned.name!==`Switchyard-${this.id}`||owned.state!=='Shutdown'||!owned.isAvailable)throw Error('Retained iOS device is unavailable or still running; reconcile it before resuming');
+      if(!owned||owned.name!==`Ravix-${this.id}`||owned.state!=='Shutdown'||!owned.isAvailable)throw Error('Retained iOS device is unavailable or still running; reconcile it before resuming');
     }else{
-      udid = (await this.sim("create", `Switchyard-${this.id}`, this.config.deviceType, this.config.runtime)).toString().trim();
+      udid = (await this.sim("create", `Ravix-${this.id}`, this.config.deviceType, this.config.runtime)).toString().trim();
       if(this.retain && /^[A-Fa-f0-9-]{36}$/.test(udid))await writePrivateJson(manifest,{udid,set:this.set,runtime:this.config.runtime,deviceType:this.config.deviceType});
     }
     if (!/^[A-Fa-f0-9-]{36}$/.test(udid)) throw new Error("simctl returned an invalid device ID");
@@ -330,8 +330,8 @@ export class IosExperiment implements OwnedAdapter {
   async forward(port: number) { if (!Number.isInteger(port) || port < 1024 || port > 65535) throw Error("Unexpected simulator service port"); }
   async launchHello(port: number) {
     await this.forward(port);
-    await this.sim("launch", this.ownedUdid(), "com.managoat.switchyard.hello");
-    await this.sim("openurl", this.ownedUdid(), `switchyard-hello://expo-development-client/?url=${encodeURIComponent(`http://127.0.0.1:${port}`)}`);
+    await this.sim("launch", this.ownedUdid(), "sh.ravix.hello");
+    await this.sim("openurl", this.ownedUdid(), `ravix-hello://expo-development-client/?url=${encodeURIComponent(`http://127.0.0.1:${port}`)}`);
   }
   async readHierarchy() { this.ownedUdid(); return (await this.idb("ui", "describe-all", "--json")).toString(); }
   async tap(x: number, y: number) {
@@ -368,7 +368,7 @@ export class IosExperiment implements OwnedAdapter {
     await Bun.sleep(1000);
     await this.idb("ui", "tap", "200", "180");
     await Bun.sleep(1000);
-    await this.idb("ui", "text", "switchyard");
+    await this.idb("ui", "text", "ravix");
   }
   async record(path: string) {
     await checked(this.run, [this.tools.idb, "--no-prune-dead-companion", "--companion", this.socket, "record-video", path], { env: this.env, signal: this.signal, interruptAfterMs: 20_000, timeoutMs: 35_000 });

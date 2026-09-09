@@ -14,11 +14,11 @@ test('free ports stay reserved, reject input before activation, and close on ass
       const timer=setTimeout(()=>{peer.destroy();reject(Error('Unassigned forward stayed open'));},1000);
       peer.on('error',()=>{});peer.on('close',()=>{clearTimeout(timer);resolve();});
     });
-    expect(()=>a.activate({endpoint:'wss://switchyard.test/forward',token:'bad'})).toThrow('credential');
-    a.activate({endpoint:'wss://switchyard.test/forward',token:'a'.repeat(43)});
-    expect(()=>a.activate({endpoint:'wss://switchyard.test/forward',token:'b'.repeat(43)})).toThrow('again');
+    expect(()=>a.activate({endpoint:'wss://ravix.test/forward',token:'bad'})).toThrow('credential');
+    a.activate({endpoint:'wss://ravix.test/forward',token:'a'.repeat(43)});
+    expect(()=>a.activate({endpoint:'wss://ravix.test/forward',token:'b'.repeat(43)})).toThrow('again');
   } finally {active.abort();}
-  expect(()=>b.activate({endpoint:'wss://switchyard.test/forward',token:'a'.repeat(43)})).toThrow('after ending');
+  expect(()=>b.activate({endpoint:'wss://ravix.test/forward',token:'a'.repeat(43)})).toThrow('after ending');
 });
 test('a bind conflict leaves the unrelated listener running', async () => {
   const unrelated=createServer(peer=>peer.end('unrelated')), port=await listen(unrelated), active=new AbortController();

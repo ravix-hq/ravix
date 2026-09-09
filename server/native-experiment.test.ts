@@ -38,7 +38,7 @@ async function fixture() {
                 const body = data.toString().includes('/status') ? 'packager-status:running' : '{"ok":true}';
                 ws.send(Buffer.from(`HTTP/1.1 200 OK\r\nContent-Length: ${Buffer.byteLength(body)}\r\n\r\n${body}`));
             } } } });
-    const config = loadConfig({ DATA_DIR: dir, SWITCHYARD_SECRET: 'native-session-test-secret-long-enough', PUBLIC_URL: 'https://switchyard.test', NATIVE_PREVIEW_EXPERIMENT: '1', FOUNTAIN_URL: `http://127.0.0.1:${provider.port}`, FOUNTAIN_API_KEY: 'fake', SPRITES_URL: `http://127.0.0.1:${provider.port}`, SPRITES_TOKEN: 'provider-secret' });
+    const config = loadConfig({ DATA_DIR: dir, RAVIX_SECRET: 'native-session-test-secret-long-enough', PUBLIC_URL: 'https://ravix.test', NATIVE_PREVIEW_EXPERIMENT: '1', FOUNTAIN_URL: `http://127.0.0.1:${provider.port}`, FOUNTAIN_API_KEY: 'fake', SPRITES_URL: `http://127.0.0.1:${provider.port}`, SPRITES_TOKEN: 'provider-secret' });
     const db = new Db(config.dbPath), ctx = buildContext({ db, config, cipher: await Cipher.from(config.secret) });
     class Provider extends Sprites {
         async defineService(_sprite: string, name: string, dir: string, command: string, port: number) { state.commands.push(command); if (name.endsWith('-install'))
@@ -56,23 +56,23 @@ async function fixture() {
     const owner = db.upsertUser({ githubId: '1', login: 'owner', name: null, avatarUrl: null, tokenEnc: 'unused' }), member = db.upsertUser({ githubId: '2', login: 'member', name: null, avatarUrl: null, tokenEnc: 'unused' });
     for (const user of [owner, member])
         db.createSession(user.id, await sha256(user.login), 60000);
-    db.createProject({ id: 'project', userId: owner.id, name: 'Hello', repoFullName: 'managoat/switchyard-expo-hello', repoPrivate: 1, defaultBranch: 'main', installationId: 1, agentId: 'agent', environmentId: 'env', vaultId: null, runtime: 'codex', model: 'test', instructions: '' });
+    db.createProject({ id: 'project', userId: owner.id, name: 'Hello', repoFullName: 'ravioli-hq/ravix-expo-hello', repoPrivate: 1, defaultBranch: 'main', installationId: 1, agentId: 'agent', environmentId: 'env', vaultId: null, runtime: 'codex', model: 'test', instructions: '' });
     for (const id of ['track', 'other'])
         db.createTrack({ id, projectId: 'project', conversationId: id, slug: id, title: id, branch: id, workdir: `/work/${id}`, originKind: 'blank', originBase: null, originNumber: null, originTitle: null, originUrl: null, rev: 1, createdByLogin: 'owner' });
     db.addMember('track', member.id, owner.id);
     const manager = nativeExperiments(ctx), router = buildRouter(ctx);
     manager.start();
     const server = Bun.serve<NativeSocketData>({ port: 0, fetch: (req, server) => req.headers.get('upgrade') === 'websocket' ? manager.fetch(req, server) : router(req), websocket: manager.websocket });
-    const request = (path: string, method = 'GET', body?: unknown, user = 'owner', origin = config.publicUrl) => router(new Request(`https://switchyard.test${path}`, { method, headers: { cookie: `switchyard_session=${user}`, origin }, ...(body ? { body: JSON.stringify(body) } : {}) }));
+    const request = (path: string, method = 'GET', body?: unknown, user = 'owner', origin = config.publicUrl) => router(new Request(`https://ravix.test${path}`, { method, headers: { cookie: `ravix_session=${user}`, origin }, ...(body ? { body: JSON.stringify(body) } : {}) }));
     const start = async () => { await Bun.sleep(0); const response = await request('/api/tracks/track/native/start', 'POST'); if (!response.ok)
         throw Error(await response.text()); return (await response.json()).data as NativeInfo; };
-    const claim = async (code: string) => { const response = await router(new Request('https://switchyard.test/api/native/claim', { method: 'POST', body: JSON.stringify({ code, artifactSha256: APK }) })); return response; };
+    const claim = async (code: string) => { const response = await router(new Request('https://ravix.test/api/native/claim', { method: 'POST', body: JSON.stringify({ code, artifactSha256: APK }) })); return response; };
     const sockets: WebSocket[] = [];
     const connect = async (id: string, role: string, token?: string, user = 'owner') => {
         const Client = WebSocket as unknown as new (url: string, opts: {
             headers: Record<string, string>;
         }) => WebSocket;
-        const ws = new Client(`ws://127.0.0.1:${server.port}/api/native/sessions/${id}/${role}`, { headers: token ? { authorization: `Bearer ${token}` } : { origin: config.publicUrl, cookie: `switchyard_session=${user}` } });
+        const ws = new Client(`ws://127.0.0.1:${server.port}/api/native/sessions/${id}/${role}`, { headers: token ? { authorization: `Bearer ${token}` } : { origin: config.publicUrl, cookie: `ravix_session=${user}` } });
         sockets.push(ws);
         ws.binaryType = 'arraybuffer';
         await new Promise<void>((resolve, reject) => { ws.onopen = () => resolve(); ws.onerror = () => reject(Error('WS rejected')); });
@@ -185,7 +185,7 @@ test('changed native inputs fail before installation or Metro startup', async ()
 test('pairing rejects malformed and oversized bodies without consuming the code', async () => {
     const f = await fixture(), s = await f.start();
     for (const [body, expected] of [['null', 400], ['{', 400], ['x'.repeat(1025), 413]] as const) {
-        const response = await f.manager.claim(new Request('https://switchyard.test/api/native/claim', {method: 'POST', body})).catch(error => error);
+        const response = await f.manager.claim(new Request('https://ravix.test/api/native/claim', {method: 'POST', body})).catch(error => error);
         expect(response.status).toBe(expected);
     }
     expect((await f.claim(s.pairingCode!)).status).toBe(200);
@@ -250,7 +250,7 @@ test('iOS is offered only with a pinned build and pairing cannot cross platforms
     const session = (await response.json()).data;
     expect(session.platform).toBe('ios');
     expect((await f.claim(session.pairingCode)).status).toBe(401);
-    const claim = (platform: string, artifactSha256: string) => f.manager.claim(new Request('https://switchyard.test/api/native/claim',{method:'POST',body:JSON.stringify({code:session.pairingCode, platform, artifactSha256})}));
+    const claim = (platform: string, artifactSha256: string) => f.manager.claim(new Request('https://ravix.test/api/native/claim',{method:'POST',body:JSON.stringify({code:session.pairingCode, platform, artifactSha256})}));
     await expect(claim('android','a'.repeat(64))).rejects.toMatchObject({status:401});
     await expect(claim('ios', APK)).rejects.toMatchObject({status:401});
     const paired = await claim('ios','a'.repeat(64));
@@ -262,7 +262,7 @@ test('iOS is offered only with a pinned build and pairing cannot cross platforms
 
 test('pairing validates reserved local ports and advertises them to Metro without changing Sprite destinations', async () => {
     const f=await fixture(), s=await f.start();
-    const claim=(ports:Record<string,unknown>)=>f.manager.claim(new Request('https://switchyard.test/api/native/claim',{method:'POST',body:JSON.stringify({code:s.pairingCode,artifactSha256:APK,...ports})}));
+    const claim=(ports:Record<string,unknown>)=>f.manager.claim(new Request('https://ravix.test/api/native/claim',{method:'POST',body:JSON.stringify({code:s.pairingCode,artifactSha256:APK,...ports})}));
     for (const ports of [{metroPort:80,backendPort:42024},{metroPort:42023},{metroPort:42023,backendPort:42023},{metroPort:'42023',backendPort:42024},{metroPort:null,backendPort:42024},{metroPort:42023,backendPort:65536}])
         await expect(claim(ports)).rejects.toMatchObject({status:400});
     const response=await claim({metroPort:42023,backendPort:42024});

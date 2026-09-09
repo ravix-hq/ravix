@@ -54,7 +54,7 @@ async function createWorker({ directory, executablePath, token, port = 0 }) {
     }));
     await atomic(manifestPath, manifest);
     // Preserve session cookies as well as Chromium's on-disk persistent cookies.
-    await atomic(path.join(directory, manifest.profile, 'switchyard-storage.json'), await context.storageState({ indexedDB: true }));
+    await atomic(path.join(directory, manifest.profile, 'ravix-storage.json'), await context.storageState({ indexedDB: true }));
   };
   const reopen = async entries => {
     await Promise.all(entries.slice(0, 20).map(async entry => {
@@ -69,7 +69,7 @@ async function createWorker({ directory, executablePath, token, port = 0 }) {
     }));
   };
   await attach(await launch(manifest.profile));
-  const savedStorage = await read(path.join(directory, manifest.profile, 'switchyard-storage.json'));
+  const savedStorage = await read(path.join(directory, manifest.profile, 'ravix-storage.json'));
   if (savedStorage) await context.setStorageState(savedStorage);
   await reopen(manifest.tabs);
   const requireControl = actor => {
@@ -114,7 +114,7 @@ async function createWorker({ directory, executablePath, token, port = 0 }) {
       } catch (error) {
         await context.close().catch(() => {}); pages.clear(); manifest = previous;
         await attach(await launch(previous.profile));
-        const storage = await read(path.join(directory, previous.profile, 'switchyard-storage.json'));
+        const storage = await read(path.join(directory, previous.profile, 'ravix-storage.json'));
         if (storage) await context.setStorageState(storage);
         await reopen(previous.tabs);
         await atomic(manifestPath, previous);
@@ -187,11 +187,11 @@ async function createWorker({ directory, executablePath, token, port = 0 }) {
 module.exports = { createWorker };
 if (require.main === module) {
   (async () => {
-    const directory = process.env.SWITCHYARD_BROWSER_DIR;
-    if (!directory) throw Error('SWITCHYARD_BROWSER_DIR is required.');
+    const directory = process.env.RAVIX_BROWSER_DIR;
+    if (!directory) throw Error('RAVIX_BROWSER_DIR is required.');
     const token = (await fs.readFile(path.join(directory, 'token'), 'utf8')).trim();
     if (token.length < 32) throw Error('Invalid browser service credential.');
-    const worker = await createWorker({ directory, token, executablePath: process.env.SWITCHYARD_CHROMIUM || undefined, port: Number(process.env.PORT || 40000) });
+    const worker = await createWorker({ directory, token, executablePath: process.env.RAVIX_CHROMIUM || undefined, port: Number(process.env.PORT || 40000) });
     console.log(`Shared browser listening on loopback:${worker.port}`);
     let stopping = false;
     for (const signal of ['SIGTERM', 'SIGINT']) process.on(signal, () => { if (stopping) return; stopping = true; void worker.close().finally(() => process.exit(0)); });

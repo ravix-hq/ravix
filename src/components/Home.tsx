@@ -32,12 +32,12 @@ export function SignIn({ session }: { session: SessionInfo }) {
         <div style={{ color: "var(--ink)", marginBottom: 20 }}>
           <Wordmark unit={5} />
         </div>
-        <a href="/" className="signin-back">← About Switchyard</a>
-        <h1>Sign in to Switchyard</h1>
+        <a href="/" className="signin-back">← About Ravix</a>
+        <h1>Sign in to Ravix</h1>
         <p className="lede">
-          Point switchyard at a repository and it builds you a cloud machine. Every piece of work you start is its own
-          git worktree on that machine, with its own agent, its own branch and its own conversation — so four things can
-          be in flight without any of them touching another's files.
+          Point Ravix at a repository and it builds you a cloud machine. Every piece of work you start is its own
+          git worktree on that machine, with its own agent, its own branch and its own conversation — so several
+          things can be in flight at once, none of them touching another's files, and the laptop can close.
         </p>
 
         {session.capabilities.github ? (
@@ -47,7 +47,7 @@ export function SignIn({ session }: { session: SessionInfo }) {
           </a>
         ) : (
           <p className="error">
-            This switchyard has no GitHub App configured, so there is no way to sign in. Set <code>GITHUB_APP_ID</code>{" "}
+            This Ravix deployment has no GitHub App configured, so there is no way to sign in. Set <code>GITHUB_APP_ID</code>{" "}
             and the rest of the App's variables on the server.
           </p>
         )}
@@ -114,8 +114,8 @@ export function Home({ session, projects, onNewProject, onQuickStart, onPickProj
             <strong>{installed ? "Open GitHub project" : "Connect GitHub"}</strong>
             <small>
               {installed
-                ? "Pick a repository switchyard can see and it builds the machine."
-                : "Install the app on an account to choose which repositories switchyard may see."}
+                ? "Pick a repository Ravix can see and it builds the machine."
+                : "Install the app on an account to choose which repositories Ravix may see."}
             </small>
           </button>
 
@@ -131,7 +131,7 @@ export function Home({ session, projects, onNewProject, onQuickStart, onPickProj
             type="button"
             className="card"
             disabled
-            title="Switchyard's machines are in the cloud, so there is no local disk to open."
+            title="Ravix's machines are in the cloud, so there is no local disk to open."
           >
             <span className="ico">
               <Folder size={19} />

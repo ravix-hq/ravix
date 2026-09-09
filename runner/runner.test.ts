@@ -178,7 +178,7 @@ test("iOS cleanup uses only its private set and created UDID", async () => {
 test("iOS dialog accessibility points become integer idb tap coordinates", async () => {
   // Actual iOS 18.6 confirmation geometry from the dedicated-account run.
   const hierarchy = JSON.stringify([
-    { AXLabel: 'Open in “Switchyard Hello”?', frame: { x: 77.66666666666666, y: 406, width: 237.99999999999997, height: 20.333333333333314 } },
+    { AXLabel: 'Open in “Ravix Hello”?', frame: { x: 77.66666666666666, y: 406, width: 237.99999999999997, height: 20.333333333333314 } },
     { AXLabel: 'Cancel', frame: { x: 61.66666666666666, y: 446.6666666666667, width: 135, height: 44 } },
     { AXLabel: 'Open', frame: { x: 197.00000000000003, y: 446.6666666666667, width: 134.66666666666666, height: 44 } },
   ]);
@@ -278,7 +278,7 @@ test('retained Android targets reuse private AVDs and install without clearing a
     if(argv[0]==='scrcpy')return ok('scrcpy 3.3.1');
     if(argv[0]==='emulator')return new Promise((_,reject)=>options!.signal!.addEventListener('abort',()=>reject(Error('stopped')),{once:true}));
     if(argv.includes('getprop'))return ok('1');
-    if(argv.includes('emu')){const avds=options!.env!.ANDROID_AVD_HOME!;return ok('switchyard-'+avds.split('/').at(-2)+'\nOK');}
+    if(argv.includes('emu')){const avds=options!.env!.ANDROID_AVD_HOME!;return ok('ravix-'+avds.split('/').at(-2)+'\nOK');}
     return ok();
   };
   const one=join(root,'one'),two=join(root,'two');await mkdir(one,{mode:0o700});await mkdir(two,{mode:0o700});

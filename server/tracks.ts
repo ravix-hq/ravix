@@ -14,7 +14,7 @@
  * decision paddock made about first run, for the same reason: the first thing
  * somebody sees is the machine actually doing their work, which is the
  * product. The track is `opening` until the machine answers and `ready`
- * afterwards, and the composer stays live because Switchyard saves follow-up
+ * afterwards, and the composer stays live because Ravix saves follow-up
  * prompts on the server until the conversation is ready.
  */
 import { randomUUID } from "node:crypto";
@@ -235,7 +235,7 @@ async function sendOpeningTurn(
     // once: the box runs one turn at a time. Fountain queues it, so this is not
     // the failure it looks like — but a track whose worktree was never cut is
     // one a person needs to be able to retry, which `POST /retry` is for.
-    console.error(`switchyard: opening turn for track ${track.id} did not send:`, err instanceof Error ? err.message : err);
+    console.error(`ravix: opening turn for track ${track.id} did not send:`, err instanceof Error ? err.message : err);
     publish(project.id, { event: "turn", data: { trackId: track.id, status: "failed" } });
   }
 }
@@ -493,7 +493,7 @@ export async function close(ctx: AppContext, req: Request, trackId: string): Pro
     // every bare machine.
     //
     // Best effort, and on purpose. A machine that is asleep, at capacity or
-    // gone must not stop somebody closing a track — the row is switchyard's
+    // gone must not stop somebody closing a track — the row is ravix's
     // and the worktree is tidied on the next survey if this turn never lands.
     const repoPath = project.repoFullName ? mountPathFor(project.repoFullName) : null;
     await fountain

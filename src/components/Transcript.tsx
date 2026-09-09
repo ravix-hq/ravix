@@ -11,9 +11,9 @@
  * server's own ACP parser — turns one turn's events into text, thinking and
  * tool chips. `lib/tools.ts` reads the same events a second time for the
  * detail a chip drops. What this file adds is everything about *reading*
- * them, and two editorial decisions that are switchyard's own.
+ * them, and two editorial decisions that are ravix's own.
  *
- * The first: turns switchyard sent itself are rendered differently from turns
+ * The first: turns ravix sent itself are rendered differently from turns
  * a person sent. Opening a track, closing one, surveying the machine — these
  * are real turns on a real machine and hiding them would make the transcript a
  * lie about what the box has been doing. But they are also not things anybody
@@ -44,7 +44,7 @@
  * lands after the scroll that was meant to have found the end.
  */
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { blocksForTurn, type Block } from "@managoat/fountain-app/acp";
+import { blocksForTurn, type Block } from "@ravix/fountain-app/acp";
 import { splitAuthor } from "../../shared/author";
 import { visiblePreviewPrompt } from "../../shared/previews";
 import { visibleBrowserPrompt } from "../../shared/browser";
@@ -414,16 +414,16 @@ function Turn({
 }
 
 /**
- * A turn switchyard sent itself, as one line.
+ * A turn ravix sent itself, as one line.
  *
  * Matched on the marker the prompt contract puts at the front of every one of
  * them (`shared/spec.ts`), so there is exactly one place that decides what an
  * app turn looks like and it is the same place that writes them.
  */
 function appTurnLabel(prompt: string): string | null {
-  if (!prompt.startsWith("[switchyard]")) return null;
-  const first = prompt.slice("[switchyard]".length).split("\n")[0]!.trim();
-  return first || "Switchyard sent this machine an instruction.";
+  if (!prompt.startsWith("[ravix]")) return null;
+  const first = prompt.slice("[ravix]".length).split("\n")[0]!.trim();
+  return first || "Ravix sent this machine an instruction.";
 }
 
 function BlockView({

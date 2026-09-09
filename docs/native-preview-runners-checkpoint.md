@@ -17,14 +17,14 @@ for configuration, pairing, retention, and reset commands.
 ## Shipped and verified
 
 - Android and iOS Hello previews previously worked through the real Mac, private
-  Sprite Metro/backend, and authenticated Switchyard browser viewer. Browser
+  Sprite Metro/backend, and authenticated Ravix browser viewer. Browser
   input, scrolling, Fast Refresh and single-controller behavior were exercised.
   Detailed evidence and limitations are in the verification document.
 - Durable runner registration and session queue implementation is committed in
   `337b041669c83e2792e0b25dd40e47510f670c67`. The viewer reconnect guard is
   `18f2a817407691b932394a201dcb2400540a0f47`.
 - Last verified deployed image:
-  `ghcr.io/managoat/switchyard:sha-18f2a817407691b932394a201dcb2400540a0f47`.
+  `ghcr.io/ravioli-hq/ravix:latest`.
   CI workflows `34014778701` and `34014911283` passed. Rollout and public
   `/healthz` passed. Documentation was subsequently committed as `3f24676`.
 - 321 tests passed, zero failed; one existing real-Chromium shared-browser test
@@ -54,7 +54,7 @@ an unclean local process exit, build-job dispatch, runner replacement/migration,
 and broader cache retirement remain unfinished. The current engine allows one
 global active preview; advertised per-runner build capacity is not build dispatch.
 
-The product still accepts only `managoat/switchyard-expo-hello` under the existing
+The product still accepts only `ravioli-hq/ravix-expo-hello` under the existing
 feature flag and consumes the pinned artifacts below. General project setup,
 source export/build invalidation, and native agent helpers remain gate 4 work.
 Track agents currently know the web-preview helper; they do not yet configure
@@ -63,7 +63,7 @@ or operate native previews themselves.
 ## Machine and saved artifacts
 
 This checkout's Mac is the intended runner host. It is an Apple Silicon M4 Mac
-running macOS 15.5, with the dedicated **standard** account `switchyard` (UID 502).
+running macOS 15.5, with the dedicated **standard** account `ravix` (UID 502).
 The user created that account and knows its password. Never request or save it.
 The user invokes the provisioning wrapper with sudo; the runner itself executes
 as the standard account with an empty inherited environment.
@@ -74,21 +74,21 @@ helper handles the Xcode SDK 18.5/runtime 18.6 selection and restores its overri
 
 | Artifact | Existing verified build |
 | --- | --- |
-| Android directory | `/Users/switchyard/.local/share/switchyard/builds/experiment-52e8255f-b89c-4596-846d-1aa6d6002041` |
+| Android directory | `/Users/ravix/.local/share/ravix/builds/experiment-52e8255f-b89c-4596-846d-1aa6d6002041` |
 | Android file | `app-debug.apk` |
 | Android SHA-256 | `6bf899d7e847633cb70f02aa37b6c5ba8db32d07ff0e8cfb7bb5a168d92afe82` |
-| iOS directory | `/Users/switchyard/.local/share/switchyard/builds/experiment-8bd7bc9e-f5e7-4822-a014-2c0a6aeb730b` |
-| iOS file | `SwitchyardHello.app` |
+| iOS directory | `/Users/ravix/.local/share/ravix/builds/experiment-8bd7bc9e-f5e7-4822-a014-2c0a6aeb730b` |
+| iOS file | `RavixHello.app` |
 | iOS SHA-256 | `375169f807696ad02ea5d82f1456b94142378e9f306eb5555bab55afe9abab2f` |
 | Source digest | `fa3093b2e002fceef42b1243b932cc1415bbeb9afd82b80043699665840a09ff` |
 | Lockfile digest | `f6b006e3c5d6271b6bbd9c0b81e84ed11f5f4c3d2c5b783e6fa41e2766d2e5ac` |
 
-`/private/tmp/switchyard-runner.json` was prepared with mode 0600 and both exact
-builds, account `switchyard`, name `Mac`, and the public Switchyard origin. It
+`/private/tmp/ravix-runner.json` was prepared with mode 0600 and both exact
+builds, account `ravix`, name `Mac`, and the public Ravix origin. It
 contains no pairing code or credential. Temporary files may disappear; the
 complete equivalent JSON is preserved in the runner README. Other useful but
-non-durable local files are `/private/tmp/switchyard-expo-hello` (fixture checkout)
-and `/private/tmp/switchyard-hello-source.json` (source snapshot).
+non-durable local files are `/private/tmp/ravix-expo-hello` (fixture checkout)
+and `/private/tmp/ravix-hello-source.json` (source snapshot).
 
 ## Exact next steps
 
@@ -101,19 +101,19 @@ and `/private/tmp/switchyard-hello-source.json` (source snapshot).
 
    ```sh
    sudo /bin/bash \
-     /Users/jake/dev/managoat/demos/apps/switchyard/runner/scripts/provision-account.sh \
-     switchyard --pair-runner
+     /Users/jake/dev/ravioli-hq/ravix/runner/scripts/provision-account.sh \
+     ravix --pair-runner
    ```
 
    Paste the fresh code at the prompt and leave the foreground command running.
    Registration stores the private reusable identity and config in the dedicated
-   account's `~/.local/share/switchyard/managed/` directory. Do not print the token.
+   account's `~/.local/share/ravix/managed/` directory. Do not print the token.
 3. If already registered and cleanly stopped, reuse the identity:
 
    ```sh
    sudo /bin/bash \
-     /Users/jake/dev/managoat/demos/apps/switchyard/runner/scripts/provision-account.sh \
-     switchyard --serve-runner
+     /Users/jake/dev/ravioli-hq/ravix/runner/scripts/provision-account.sh \
+     ravix --serve-runner
    ```
 
    Do not register again merely because a pairing code expired. Stale locks or
@@ -134,25 +134,25 @@ saving this checkpoint. Existing five-minute codes are not useful resume state.
 
 ## Project coordinates
 
-- Front door: <https://switchyard.demo.managoat.com>
-- Private repository: `managoat/switchyard-expo-hello`
+- Front door: <https://app.ravix.sh>
+- Private repository: `ravioli-hq/ravix-expo-hello`
 - Project: `e96fc271-182f-44df-a097-55db90ed2932`
 - Existing track: `d792d4c2-26ac-4708-aef1-b1a2f21b44cd`
-- [Open the Hello track](https://switchyard.demo.managoat.com/p/e96fc271-182f-44df-a097-55db90ed2932/t/d792d4c2-26ac-4708-aef1-b1a2f21b44cd)
+- [Open the Hello track](https://app.ravix.sh/p/e96fc271-182f-44df-a097-55db90ed2932/t/d792d4c2-26ac-4708-aef1-b1a2f21b44cd)
 - Branch/workdir: `jhgaylor/main`, `/home/sprite/work/main`
 - Sprite: `fountain-50e06232-e92a6cf2`
-- Application ID: `com.managoat.switchyard.hello`; scheme: `switchyard-hello`
+- Application ID: `sh.ravix.hello`; scheme: `ravix-hello`
 
 ## Repository continuity
 
-The user's checkout `/Users/jake/dev/managoat/demos` contains substantial dirty
+The user's checkout `/Users/jake/dev/ravioli-hq/ravix` contains substantial dirty
 and untracked work, including unrelated shared-browser changes. **Do not reset,
 stash, clean, or commit that checkout wholesale.** Native changes were committed
 and pushed from isolated worktree `/private/tmp/sy-ios-integrated`, branch
-`codex/switchyard-ios-release`, then the owned files were mirrored into the user's
+`codex/ravix-ios-release`, then the owned files were mirrored into the user's
 checkout so its sudo wrapper uses the new runner code. That worktree is clean
 except untracked dependency symlinks (`node_modules` and
-`apps/switchyard/node_modules`); never stage those links.
+`node_modules`); never stage those links.
 
 Use that worktree if it still exists, or create a fresh worktree from current
 `origin/main`. Check for concurrent changes before mirroring any resumed edits.

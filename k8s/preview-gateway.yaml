@@ -1,11 +1,11 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: switchyard-previews
-  namespace: switchyard
+  name: ravix-previews
+  namespace: ravix
 spec:
   selector:
-    app: switchyard
+    app: ravix
   ports:
     - name: previews
       port: 80
@@ -14,29 +14,29 @@ spec:
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
-  name: switchyard-previews-tls
-  namespace: switchyard
+  name: ravix-previews-tls
+  namespace: ravix
 spec:
-  secretName: switchyard-previews-tls
+  secretName: ravix-previews-tls
   issuerRef:
     name: letsencrypt-production
     kind: ClusterIssuer
   dnsNames:
-    - "*.preview.switchyard.inevitable.fyi"
+    - "*.preview.ravix.sh"
 ---
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
-  name: switchyard-previews
-  namespace: switchyard
+  name: ravix-previews
+  namespace: ravix
 spec:
   entryPoints:
     - websecure
   routes:
-    - match: "HostRegexp(`^t-[a-f0-9]{32}\\.preview\\.switchyard\\.inevitable\\.fyi$`)"
+    - match: "HostRegexp(`^t-[a-f0-9]{32}\\.preview\\.ravix\\.inevitable\\.fyi$`)"
       kind: Rule
       services:
-        - name: switchyard-previews
+        - name: ravix-previews
           port: 80
   tls:
-    secretName: switchyard-previews-tls
+    secretName: ravix-previews-tls

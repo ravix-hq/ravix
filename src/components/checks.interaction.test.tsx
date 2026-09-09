@@ -17,7 +17,7 @@ afterAll(async () => {
   await GlobalRegistrator.unregister();
 });
 
-const project = { repo: "managoat/demos" } as Project;
+const project = { repo: "ravioli-hq/ravix" } as Project;
 const track = (id: string) => ({ id, branch: `jhgaylor/${id}`, title: id }) as Track;
 const report = (id: string, number: number | null): ChecksReport => ({
   ref: `jhgaylor/${id}`, sha: number ? "abc123" : null, pushed: number !== null,
@@ -64,7 +64,7 @@ test("switching tracks hides the old PR and checks while loading and ignores its
 test("a PR opened in one track does not override the next track's report", async () => {
   const oldReport = { ...report("old", null), pushed: true, sha: "abc123" };
   const checks = spyOn(api, "checks").mockImplementation(async id => id === "old" ? oldReport : report(id, null));
-  const openPull = spyOn(api, "openPull").mockResolvedValue({ ...report("old", 27).pull!, url: "https://github.com/managoat/demos/pull/27" });
+  const openPull = spyOn(api, "openPull").mockResolvedValue({ ...report("old", 27).pull!, url: "https://github.com/ravioli-hq/ravix/pull/27" });
   const element = document.createElement("div");
   document.body.append(element);
   const root = createRoot(element);

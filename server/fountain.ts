@@ -3,7 +3,7 @@
  *
  * Every other app in this suite hands the browser a Fountain key of its own
  * (dns-desk, arena) or holds one key per signed-in person (paddock, salon).
- * Switchyard holds exactly one, for everybody, because sign-in is GitHub and
+ * Ravix holds exactly one, for everybody, because sign-in is GitHub and
  * a person here has no Fountain account to spend. That makes this file the
  * whole of the app's access to Fountain — there is no proxy through which a
  * browser can reach a path this file does not name.
@@ -121,7 +121,7 @@ export class Fountain {
    * `request` logs the path and the status and nothing else. `store` picks
    * which of the two places it goes: the environment puts it in the box as an
    * ordinary env var, the vault keeps it off the box entirely and lets
-   * Fountain's egress broker substitute it in flight. Switchyard's clone token
+   * Fountain's egress broker substitute it in flight. Ravix's clone token
    * goes in the vault for exactly that reason.
    */
   putSecret(store: "environments" | "vaults", id: string, key: string, value: string): Promise<void> {
@@ -325,7 +325,7 @@ export class Fountain {
       const message = typeof obj.message === "string" ? obj.message : (code ?? `${res.status} ${res.statusText}`);
       // The path and the status, never the body we sent — it may be a secret
       // value on its way to /secrets/:key.
-      if (res.status >= 400) console.error(`switchyard: fountain ${res.status} on ${method} ${path.split("?")[0]}: ${message}`);
+      if (res.status >= 400) console.error(`ravix: fountain ${res.status} on ${method} ${path.split("?")[0]}: ${message}`);
       throw new FountainHttpError(res.status, code, message);
     }
     return parsed as T;
@@ -336,7 +336,7 @@ export class Fountain {
 export function asHttpError(err: unknown, whatFor: string): HttpError {
   if (err instanceof FountainHttpError) {
     if (err.status === 401 || err.status === 403) {
-      return new HttpError(502, "fountain_rejected", "Fountain rejected this deployment's key. Switchyard cannot build machines until that is fixed.");
+      return new HttpError(502, "fountain_rejected", "Fountain rejected this deployment's key. Ravix cannot build machines until that is fixed.");
     }
     if (err.code === "sandbox_at_capacity") {
       return new HttpError(409, "machine_busy", "This machine is already taking a turn. One track at a time — yours is queued.");

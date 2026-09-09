@@ -138,11 +138,11 @@ export function NewProject({ onCreated, onClose }: NewProjectProps) {
         <div className="dialog-body">
           <Empty
             icon={<GitHub size={20} />}
-            title="Switchyard cannot see any repositories yet"
+            title="Ravix cannot see any repositories yet"
             because="Installing it is how you choose which repositories it may read, clone and push to — you can pick a single one."
             action={{ label: "Install on an account", onClick: install }}
           >
-            Switchyard works through a GitHub App, and the App is not installed on any account you belong to. Until it is,
+            Ravix works through a GitHub App, and the App is not installed on any account you belong to. Until it is,
             there is nothing here to build a project from.
           </Empty>
         </div>

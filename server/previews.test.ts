@@ -23,7 +23,7 @@ async function fixture() {
       ? [{ id: "c", sandbox_id: state.sandbox, status: "idle", inserted_at: "2026-09-05" }]
       : { id: state.sandbox, sprite_name: state.sandbox } });
   } });
-  const config = loadConfig({ DATA_DIR: dir, SWITCHYARD_SECRET: "preview-test-secret-long-enough", PUBLIC_URL: "http://localhost:5183", FOUNTAIN_URL: `http://localhost:${upstream.port}`, FOUNTAIN_API_KEY: "test", SPRITES_TOKEN: "test", PREVIEW_DOMAIN: "preview.localhost" });
+  const config = loadConfig({ DATA_DIR: dir, RAVIX_SECRET: "preview-test-secret-long-enough", PUBLIC_URL: "http://localhost:5183", FOUNTAIN_URL: `http://localhost:${upstream.port}`, FOUNTAIN_API_KEY: "test", SPRITES_TOKEN: "test", PREVIEW_DOMAIN: "preview.localhost" });
   const db = new Db(config.dbPath);
   const ctx = buildContext({ db, config, cipher: await Cipher.from(config.secret) });
   class Provider extends Sprites {
@@ -50,7 +50,7 @@ async function fixture() {
   const manager = previews(ctx); manager.ready = async () => state.ready;
   const router = buildRouter(ctx);
   const request = (path: string, method = "GET", body?: unknown, login = "ana", origin = config.publicUrl) => router(new Request(`http://localhost${path}`, {
-    method, headers: { cookie: `switchyard_session=${login}`, origin, "content-type": "application/json" }, ...(body ? { body: JSON.stringify(body) } : {}),
+    method, headers: { cookie: `ravix_session=${login}`, origin, "content-type": "application/json" }, ...(body ? { body: JSON.stringify(body) } : {}),
   }));
   cleanup.push(() => { manager.stop(); ctx.db.close(); upstream.stop(true); rmSync(dir, { recursive: true, force: true }); });
   return { ctx, state, manager, request, owner, guest };
@@ -230,7 +230,7 @@ async function agentFixture(guest = false) {
 test("an installed agent helper configures and starts only its track without granting browser access", async () => {
   const f = await agentFixture(true);
   expect(f.instructions).not.toContain(f.token);
-  expect(f.instructions).toContain("/home/sprite/.switchyard/previews/t1.sh");
+  expect(f.instructions).toContain("/home/sprite/.ravix/previews/t1.sh");
   expect(f.state.execs[0]![2]).toContain("umask 077");
   expect((await f.call("status", undefined, "t2")).status).toBe(401);
   expect((await f.call("open")).status).toBe(422);

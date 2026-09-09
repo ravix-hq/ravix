@@ -46,7 +46,7 @@ for (const side of ["left", "right"] as const) {
       await act(async () => handle.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "End" })));
       const maximum = handle.getAttribute("aria-valuemax")!;
       expect(app.style.getPropertyValue(property)).toBe(`${maximum}px`);
-      expect(localStorage.getItem(`switchyard.panel-width.${side}`)).toBe(maximum);
+      expect(localStorage.getItem(`ravix.panel-width.${side}`)).toBe(maximum);
       await act(async () => root.render(null));
       app.style.removeProperty(property);
       await act(async () => root.render(<PanelResizeHandle side={side} />));

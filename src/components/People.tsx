@@ -658,7 +658,7 @@ function PeopleDialog({ grain, id, role, seed, viewerLogin, onClose, onChanged, 
               <p className="hint">
                 Nobody who has signed in here matches “{q.trim().replace(/^@/, "")}”, which does not stop you. Press{" "}
                 <kbd>⏎</kbd> to invite that GitHub username anyway: the invitation waits until they sign in. If no such
-                account exists on GitHub, switchyard says so instead.
+                account exists on GitHub, Ravix says so instead.
               </p>
             ) : null}
           </div>

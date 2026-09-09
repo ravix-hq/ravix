@@ -1,12 +1,12 @@
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
-  name: switchyard-tls
-  namespace: switchyard
+  name: ravix-tls
+  namespace: ravix
 spec:
-  secretName: switchyard-tls
+  secretName: ravix-tls
   issuerRef:
     name: letsencrypt-production
     kind: ClusterIssuer
   dnsNames:
-    - switchyard.demo.managoat.com
+    - app.ravix.sh

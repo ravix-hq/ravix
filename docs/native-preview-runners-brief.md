@@ -9,7 +9,7 @@ Resume: [September 6 checkpoint](native-preview-runners-checkpoint.md).
 
 ## Outcome and agreed direction
 
-Make an Expo app on a Switchyard track usable as a real Android or iOS app
+Make an Expo app on a Ravix track usable as a real Android or iOS app
 entirely through the browser. A person asks the agent to change a screen, opens
 the device preview, interacts with the result, and requests a correction from
 the same conversation. Uncommitted working-copy changes are part of this loop.
@@ -17,10 +17,10 @@ the same conversation. Uncommitted working-copy changes are part of this loop.
 The user's Mac workstation will host both the Android emulator and the iOS
 simulator. Implement Android with an Expo development build first, then iOS on
 the same runner. The Sprite remains the authoritative source workspace and
-runs Expo/Metro. Switchyard owns authorization, scheduling, and browser access.
+runs Expo/Metro. Ravix owns authorization, scheduling, and browser access.
 
 Browser use is the baseline: normal development and preview operations must
-work without a native Switchyard client, locally installed viewer, or desktop
+work without a native Ravix client, locally installed viewer, or desktop
 interaction on the runner. One-time runner and SDK provisioning happens on the
 Mac. Native clients and cloud runners are later extensions of the session
 contract. Desktop app previews are also later work.
@@ -53,7 +53,7 @@ or capabilities already demonstrated on that Mac.
 
 ```mermaid
 flowchart LR
-  B[Browser: conversation and device viewer] <-->|HTTPS and WSS| S[Switchyard: authorization and session relay]
+  B[Browser: conversation and device viewer] <-->|HTTPS and WSS| S[Ravix: authorization and session relay]
   S <-->|Private Sprites tunnel| P[Sprite: working copy and Expo Metro]
   R[Mac runner: builds and device adapters] -->|Outbound authenticated connections| S
   R --> A[Android emulator]
@@ -63,7 +63,7 @@ flowchart LR
 | Component | Responsibility |
 | --- | --- |
 | Sprite | Agent edits, authoritative worktree, Metro, supporting app services, source export |
-| Switchyard | Track access, runner pairing, target configuration, jobs and leases, private tunnel and stream relay |
+| Ravix | Track access, runner pairing, target configuration, jobs and leases, private tunnel and stream relay |
 | Mac runner | Receive assigned jobs, stage source, build native artifacts, own simulator instances, translate input, produce screen and log streams |
 | Browser | Choose a platform, view the session, send input, read progress/logs, return to the conversation |
 
@@ -79,12 +79,12 @@ the Mac; support configured limits in the protocol from the beginning.
 ## Pairing and connection
 
 The project owner enables a runner for selected projects using a short-lived,
-single-use pairing code generated in Switchyard. Pairing establishes a
+single-use pairing code generated in Ravix. Pairing establishes a
 revocable runner identity. Keep the runner credential in its private state
-directory; Switchyard stores a verifier, and browsers and agents never receive
+directory; Ravix stores a verifier, and browsers and agents never receive
 that credential. Registration and project assignment are owner operations.
 
-The runner initiates TLS connections to Switchyard, so the workstation needs no
+The runner initiates TLS connections to Ravix, so the workstation needs no
 public inbound listener or router port forwarding. Use a versioned WSS control
 connection, and separately authorized data channels for video, Metro traffic,
 and source/artifact transfer. Large transfers must not delay input, cancellation,
@@ -116,12 +116,12 @@ track can share Metro. Starting a device must not replace that track's web
 preview configuration.
 
 The runner exposes a session-owned loopback forward on the Mac. Its traffic
-travels through an authorized Switchyard channel to that track's Metro port
+travels through an authorized Ravix channel to that track's Metro port
 over the existing Sprites transport. Android reaches the forward using a mapping
 for its assigned emulator; iOS uses the simulator's host connection. Verify
 these addresses on the actual runtimes. [Android emulator networking](https://developer.android.com/studio/run/emulator-networking)
 
-Native clients do not inherit Switchyard's browser cookie. The runner's session
+Native clients do not inherit Ravix's browser cookie. The runner's session
 channel supplies authorization, without embedding a credential in the app,
 development URL, or manifest. Resolve forwarding destinations server-side.
 Bind forwards to loopback, map only the assigned device, and keep ADB and
@@ -266,7 +266,7 @@ the first delivery.
 
 Do not silently replace a disconnected workstation with another runner. Mark
 it unavailable, fence its old connection, and reconcile on reconnect. After
-Switchyard restarts, reattach only to current assignments. Closing tracks,
+Ravix restarts, reattach only to current assignments. Closing tracks,
 archiving/rebuilding projects, or revoking a runner invalidates jobs and channel
 grants; disconnected cleanup must finish locally on lease expiry. Retain bounded
 logs and cached artifacts under a documented quota and eviction policy.
@@ -306,7 +306,7 @@ delivery of ordinary saved conversation prompts.
    controls. Do this before treating the shared media contract as settled.
 2. **Prove the complete Android path.** Build one Expo development client from a
    staged track snapshot; run it on the Mac; connect privately to Sprite Metro;
-   view and control it through Switchyard. Show an uncommitted UI edit updating
+   view and control it through Ravix. Show an uncommitted UI edit updating
    in the browser, one app-backend request, and signed-out denial. Measure the
    actual WAN path, including browser on a phone. This gate establishes viability.
 3. **Make sessions durable and bounded.** Implement pairing, assignments, jobs,
@@ -324,12 +324,12 @@ delivery of ordinary saved conversation prompts.
 
 Each gate needs evidence before the next is considered complete. A protocol
 fixture does not prove simulator compatibility, browser decoding, or Metro HMR.
-Cloud runners, autoscaling, physical devices, native Switchyard clients,
+Cloud runners, autoscaling, physical devices, native Ravix clients,
 desktop-app targets, and public anonymous sharing remain future milestones.
 
 ## Repository integration
 
-Keep initial code under `apps/switchyard/`; a runner is a companion executable,
+Keep initial code under this repository; a runner is a companion executable,
 not another independently deployed demo app. Suggested modules, subject to the
 actual implementation:
 
@@ -363,7 +363,7 @@ the live experiments identify a working combination.
 - Two tracks cannot share device data, commands, credentials, or installed build
   identity accidentally. One-slot capacity queues rather than stealing a device.
 - Interrupt source transfer, compilation, install, network connections, and the
-  Switchyard process. Reject stale results and recover without duplicate jobs
+  Ravix process. Reject stale results and recover without duplicate jobs
   or leaked devices. Disconnect the Mac long enough to exercise lease cleanup.
 - Confirm private Metro HTTP and WebSocket traffic and the app's backend route;
   neither depends on a browser cookie or an unprotected public tunnel.

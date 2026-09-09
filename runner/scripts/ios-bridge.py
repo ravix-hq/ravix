@@ -30,7 +30,7 @@ async def main():
     socket, udid = sys.argv[1:]
     if not socket.startswith('/private/tmp/') and not socket.startswith(os.environ['HOME'] + '/'):
         raise ValueError('Use the owned companion socket')
-    logger = logging.getLogger('switchyard.idb')
+    logger = logging.getLogger('ravix.idb')
     async with Client.build(DomainSocketAddress(path=socket), logger, exchange_metadata=False) as client:
         info = await client.describe()
         if info.udid.lower() != udid.lower() or not info.screen_dimensions:

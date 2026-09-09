@@ -8,8 +8,8 @@
  * rather than trusting a row in its database to still be right.
  */
 
-/** Every conversation switchyard owns starts with this. */
-export const CHANNEL_PREFIX = "switchyard";
+/** Every conversation ravix owns starts with this. */
+export const CHANNEL_PREFIX = "ravix";
 
 /** Where a project's repositories are cloned. Fountain's convention. */
 export const WORKSPACE_ROOT = "/workspace";
@@ -17,8 +17,8 @@ export const WORKSPACE_ROOT = "/workspace";
 /** Where a track's worktree lives. One directory per track, under here. */
 export const WORK_ROOT = "/home/sprite/work";
 
-/** Switchyard's corner of the machine — receipts, notes, nothing a person edits. */
-export const STATE_DIR = "/home/sprite/.switchyard";
+/** Ravix's corner of the machine — receipts, notes, nothing a person edits. */
+export const STATE_DIR = "/home/sprite/.ravix";
 
 /**
  * A slug fit for a directory, a git branch and a URL at the same time.
@@ -39,13 +39,13 @@ export function slugify(input: string, fallback = "track"): string {
   return base || fallback;
 }
 
-/** `switchyard:<project>` — the project's own conversations, if it ever has one. */
+/** `ravix:<project>` — the project's own conversations, if it ever has one. */
 export function projectChannel(projectId: string): string {
   return `${CHANNEL_PREFIX}:${projectId}`;
 }
 
 /**
- * `switchyard:<project>:<track>@r<rev>` — a track's conversation.
+ * `ravix:<project>:<track>@r<rev>` — a track's conversation.
  *
  * The revision is the project's settings revision at the moment the track
  * opened. Fountain injects secrets, MCP servers and skills when a session
@@ -67,7 +67,7 @@ export interface ParsedChannel {
 /** The inverse. Null for anything that is not one of ours. */
 export function parseChannel(channelId: string | null | undefined): ParsedChannel | null {
   if (!channelId) return null;
-  const m = /^switchyard:([^:@]+):([^:@]+)@r(\d+)$/.exec(channelId);
+  const m = /^ravix:([^:@]+):([^:@]+)@r(\d+)$/.exec(channelId);
   if (!m) return null;
   return { projectId: m[1]!, trackSlug: m[2]!, rev: Number(m[3]) };
 }

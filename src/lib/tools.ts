@@ -1,9 +1,9 @@
 /**
  * What a tool call *was*, rather than that there was one.
  *
- * `blocksForTurn` (shared, `@managoat/fountain-app/acp`) flattens every call
- * to a name and a summary, because that is all a preview bubble in the rest of
- * the suite needs. A transcript somebody watches a machine work in needs the
+ * `blocksForTurn` (shared, `@ravix/fountain-app/acp`) flattens every call
+ * to a name and a summary, because that is all a preview bubble
+ * needs. A transcript somebody watches a machine work in needs the
  * rest: which of ACP's kinds it was, the arguments it was called with, the
  * files it named, and — for an edit — the actual before and after. Rendered
  * from name and summary alone, a turn that read four files, ran two commands
@@ -17,7 +17,7 @@
  * shape of the transcript, and the fifteen other apps on the shared parser are
  * untouched.
  */
-import type { Block } from "@managoat/fountain-app/acp";
+import type { Block } from "@ravix/fountain-app/acp";
 import type { LogEvent } from "../../shared/fountain-types";
 
 /** ACP's own vocabulary. Anything unrecognised is `other` and renders as its title. */

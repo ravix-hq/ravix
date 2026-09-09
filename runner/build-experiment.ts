@@ -10,7 +10,7 @@ import { withIosBuildRuntime, type IosBuildRuntimeSelection } from "./ios-build-
 import { iosArtifact } from "./ios-artifact";
 
 export interface BuildExperimentConfig { snapshot: string; stateDirectory: string; expectedAccount: string; platform?: "android" | "ios" }
-const APPLICATION_ID = "com.managoat.switchyard.hello";
+const APPLICATION_ID = "sh.ravix.hello";
 
 export function parseBuildConfig(value: unknown): BuildExperimentConfig {
   const v = value as BuildExperimentConfig | null;
@@ -44,7 +44,7 @@ export async function buildExperiment(config: BuildExperimentConfig, signal?: Ab
   if (!packageFile || !appFile || !lockFile) throw new Error("Fixture requires package.json, app.json and package-lock.json at repository root");
   const pkg = JSON.parse(Buffer.from(packageFile.data, "base64").toString());
   const app = JSON.parse(Buffer.from(appFile.data, "base64").toString());
-  if (pkg.name !== "switchyard-expo-hello" || !pkg.dependencies?.["expo-dev-client"] || (target === "ios" ? app.expo?.ios?.bundleIdentifier : app.expo?.android?.package) !== APPLICATION_ID) throw new Error("This experiment only builds the Switchyard Hello Expo development-client fixture");
+  if (pkg.name !== "ravix-expo-hello" || !pkg.dependencies?.["expo-dev-client"] || (target === "ios" ? app.expo?.ios?.bundleIdentifier : app.expo?.android?.package) !== APPLICATION_ID) throw new Error("This experiment only builds the Ravix Hello Expo development-client fixture");
 
   const paths = await toolPaths({ HOME: user.homedir, PATH: `${user.homedir}/.local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin` });
   const owned = await acquireExperiment(config.stateDirectory);
@@ -152,7 +152,7 @@ export async function buildExperiment(config: BuildExperimentConfig, signal?: Ab
         const build = (await exec("app-platform", ["xcrun", "vtool", "-show-build", binary], ios, 15_000)).toString();
         if (abi !== "arm64" || !/platform\s+IOSSIMULATOR/.test(build)) throw new Error("Expected an arm64 simulator executable");
         await iosArtifact(source);
-        const destination = join(owned.directory, "SwitchyardHello.app");
+        const destination = join(owned.directory, "RavixHello.app");
         await cp(source, destination, {recursive: true, errorOnExist: true, force: false});
         report.artifact = await iosArtifact(destination);
       });

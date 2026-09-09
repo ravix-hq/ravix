@@ -6,7 +6,7 @@
  * the right boundary for Fountain and it is why paddock's terminal is a
  * Claude Code prompt rendered as scrollback rather than a shell.
  *
- * Switchyard goes one layer down. Fountain's sandboxes run on Sprites, and a
+ * Ravix goes one layer down. Fountain's sandboxes run on Sprites, and a
  * sandbox tells you the name of its sprite (`sandbox.sprite_name`), so a
  * server holding a Sprites token can talk to the same machine directly. That
  * buys the two panels an agent conversation genuinely cannot give you: a
@@ -15,7 +15,7 @@
  * Three things about this are worth being clear-eyed about, and the UI says
  * all three rather than leaving them to be discovered:
  *
- *   1. **It is optional.** No `SPRITES_TOKEN`, no terminal — and switchyard
+ *   1. **It is optional.** No `SPRITES_TOKEN`, no terminal — and ravix
  *      still works completely, because everything else goes through Fountain.
  *      The panels render a designed empty state naming the missing variable.
  *   2. **It is not a PTY.** Sprites' exec is one HTTP request in, a
@@ -168,7 +168,7 @@ export class Sprites {
    * whatever separator you picked.
    */
   async shell(spriteName: string, command: string, cwd: string, timeoutSec: number): Promise<RawExec & { cwd: string }> {
-    const marker = "__switchyard_cwd__";
+    const marker = "__ravix_cwd__";
     const script = `cd ${shq(cwd)} 2>/dev/null || cd /home/sprite; { ${command}\n }; __rc=$?; printf '\\n${marker}%s\\n' "$PWD"; exit $__rc`;
     const raw = await this.exec(spriteName, ["sh", "-lc", script], timeoutSec);
     const idx = raw.stdout.lastIndexOf(`\n${marker}`);

@@ -8,7 +8,7 @@
  *   the **user's** token   answers "what may *you* see" — installations, and
  *                          the repositories inside them. Asking the App this
  *                          would list every account that ever installed
- *                          switchyard.
+ *                          ravix.
  *   the **installation's** token answers "what is *in* it" — branches, pull
  *                          requests, issues, checks. Asking as the user would
  *                          work and would be wrong: it would succeed for
@@ -105,7 +105,7 @@ export async function checks(ctx: AppContext, req: Request, trackId: string): Pr
 /**
  * `POST /api/tracks/:id/pull` — open a pull request for this track's branch.
  *
- * Switchyard opens it rather than asking the agent to, when the agent has no
+ * Ravix opens it rather than asking the agent to, when the agent has no
  * `gh` on the box. The distinction matters for who it comes from: this one is
  * authored by the App, which is honest — a machine opened it — where a token
  * borrowed from the person would put their name on work they have not read.
@@ -129,7 +129,7 @@ export async function openPull(ctx: AppContext, req: Request, trackId: string): 
       head: track.branch,
       base,
       title,
-      body: str(body.body, 20_000) || `Opened from switchyard track \`${track.slug}\`.`,
+      body: str(body.body, 20_000) || `Opened from Ravix track \`${track.slug}\`.`,
       draft: body.draft !== false,
     });
     return json({ data: pull }, 201);

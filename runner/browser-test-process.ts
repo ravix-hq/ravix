@@ -6,7 +6,7 @@ export async function startTestBrowser({ directory, token, executablePath }: { d
   await mkdir(directory, { recursive: true, mode: 0o700 });
   await writeFile(join(directory, "token"), token, { mode: 0o600 });
   const child = Bun.spawn(["node", join(import.meta.dir, "scripts/browser-worker.cjs")], {
-    env: { ...process.env, SWITCHYARD_BROWSER_DIR: directory, SWITCHYARD_CHROMIUM: executablePath, PORT: "0" }, stdout: "pipe", stderr: "pipe",
+    env: { ...process.env, RAVIX_BROWSER_DIR: directory, RAVIX_CHROMIUM: executablePath, PORT: "0" }, stdout: "pipe", stderr: "pipe",
   });
   const reader = child.stdout.getReader(), errors = new Response(child.stderr).text();
   const timer = setTimeout(() => child.kill("SIGKILL"), 30000);

@@ -11,7 +11,7 @@ import { STATE_DIR } from "../shared/ids";
 import { spriteTunnel, previewClient } from "./sprites-tunnel";
 
 const PORT = 40000; // Web: 20000–29999, native: 30000–39999. One browser per machine.
-const SERVICE = "switchyard-browser";
+const SERVICE = "ravix-browser";
 const LIMIT = 16 * 1024 * 1024;
 const managers = new WeakMap<AppContext, Browsers>();
 export function browsers(ctx: AppContext) {
@@ -58,7 +58,7 @@ export class Browsers {
       const dir = `${STATE_DIR}/browsers/${row.id}`;
       const runtime = `${STATE_DIR}/browser-runtime-1.63.0`;
       const worker = `${runtime}/worker-${(await sha256(source)).slice(0, 12)}.cjs`;
-      const command = `SWITCHYARD_BROWSER_DIR=${shq(dir)} exec node ${shq(worker)}`;
+      const command = `RAVIX_BROWSER_DIR=${shq(dir)} exec node ${shq(worker)}`;
       try {
         const service = await this.ctx.sprites!.service(actual.sprite, SERVICE); authorize();
         const matches = service?.cmd === "sh" && JSON.stringify(service.args) === JSON.stringify(["-lc", command]) && service.env?.PORT === String(PORT) && service.http_port == null;
@@ -88,7 +88,7 @@ export class Browsers {
           try { await this.transport(row, { action: "status" }); ready = true; break; }
           catch { await new Promise(resolve => setTimeout(resolve, 1000)); }
         }
-        if (!ready) throw new HttpError(502, "browser_start", "Chromium did not become ready. Check the switchyard-browser service logs on the machine.");
+        if (!ready) throw new HttpError(502, "browser_start", "Chromium did not become ready. Check the ravix-browser service logs on the machine.");
         authorize(); this.ctx.db.browsers.save({ ...row, state: "ready", error: null });
       } catch (error) {
         this.ctx.db.browsers.save({ ...row, ...actual, state: "failed", error: error instanceof HttpError ? error.message : "Could not start the shared browser. Check the machine connection and service logs." });
@@ -181,7 +181,7 @@ export async function browserRoute(ctx: AppContext, req: Request, trackId: strin
   };
   const access = authorize(), manager = browsers(ctx), projectId = access.project.id;
   if (!action) return json({ data: manager.info(projectId) }, 200, { "cache-control": "no-store" });
-  if (req.headers.get("origin") !== new URL(ctx.config.publicUrl).origin) throw new HttpError(403, "origin", "Open the browser from Switchyard.");
+  if (req.headers.get("origin") !== new URL(ctx.config.publicUrl).origin) throw new HttpError(403, "origin", "Open the browser from Ravix.");
   const body = await browserBody(req);
   if (typeof body.clientId !== "string" || !/^[a-f0-9-]{36}$/.test(body.clientId)) throw new HttpError(422, "browser_client", "Supply a browser client identity.");
   const actor: BrowserActor = { id: `human:${user.id}:${body.clientId}`, label: `@${user.login}`, kind: "human" };

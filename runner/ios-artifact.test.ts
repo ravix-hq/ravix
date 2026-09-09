@@ -30,7 +30,7 @@ test('bundle verification rejects links, empty bundles and non-directory roots',
   await expect(iosArtifact(app)).rejects.toThrow('Empty');
 });
 test('build target is explicit and keeps the existing Android config compatible', () => {
-  const config={snapshot:'/private/snapshot.json',stateDirectory:'/Users/switchyard/builds',expectedAccount:'switchyard'};
+  const config={snapshot:'/private/snapshot.json',stateDirectory:'/Users/ravix/builds',expectedAccount:'ravix'};
   expect(parseBuildConfig(config)).toEqual(config);
   expect(parseBuildConfig({...config,platform:'ios'}).platform).toBe('ios');
   expect(()=>parseBuildConfig({...config,platform:'macos'})).toThrow('android or ios');
@@ -39,10 +39,10 @@ test('build target is explicit and keeps the existing Android config compatible'
 test('iOS runtime verifies successful build evidence and rehashes the entire app before use', async () => {
   const app=await fixture(), directory=join(app,'..');
   const {rename} = await import('node:fs/promises');
-  const artifactPath=join(directory,'SwitchyardHello.app'); await rename(app,artifactPath);
+  const artifactPath=join(directory,'RavixHello.app'); await rename(app,artifactPath);
   const artifact=await iosArtifact(artifactPath);
-  const config={expectedAccount:'switchyard',buildDirectory:directory,artifactSha256:artifact.sha256};
-  const report={kind:'ios-build-experiment',platform:'ios',account:'switchyard',architecture:'arm64',applicationId:'com.managoat.switchyard.hello',error:null,artifact,sourceDigest:'f'.repeat(64),phases:[{name:'verify-artifact',passed:true}]};
+  const config={expectedAccount:'ravix',buildDirectory:directory,artifactSha256:artifact.sha256};
+  const report={kind:'ios-build-experiment',platform:'ios',account:'ravix',architecture:'arm64',applicationId:'sh.ravix.hello',error:null,artifact,sourceDigest:'f'.repeat(64),phases:[{name:'verify-artifact',passed:true}]};
   const save=()=>writeFile(join(directory,'report.json'),JSON.stringify(report),{mode:0o600});
   await save();
   expect((await verifyIosBuild(config)).apk).toBe(artifactPath);

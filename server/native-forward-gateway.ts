@@ -5,7 +5,7 @@ import { TcpTunnel, TCP_TUNNEL } from "../runner/tcp-tunnel";
 /** Supplied by session authorization, not by request parameters. The signal
  * must abort on lease expiry, sign-out, track closure or assignment revocation.
  * Production native session routes do not exist yet; this adapter is tested
- * independently before it is attached to Switchyard's server. */
+ * independently before it is attached to Ravix's server. */
 export interface NativeForwardAssignment {
   signal: AbortSignal;
   connect(): Promise<Duplex>;

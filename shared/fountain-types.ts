@@ -1,4 +1,4 @@
-// Shapes as served by the Fountain API, narrowed to what switchyard reads.
+// Shapes as served by the Fountain API, narrowed to what ravix reads.
 // Lifted from apps/fountain-conversations/src/api/types.ts, which tracks
 // docs/api.md; fields this app never touches are left off on purpose.
 
@@ -14,7 +14,7 @@ export interface Sandbox {
   provider?: string | null;
   /**
    * The identity the disk was built from (ADR 0023). A launch must match all
-   * three to attach with `sandbox_id`; this is the whole reason switchyard keeps
+   * three to attach with `sandbox_id`; this is the whole reason ravix keeps
    * one agent, one environment and one vault and mutates them in place
    * instead of making new ones. See `lib/machine.ts`.
    */
@@ -79,7 +79,7 @@ export interface SecretKey {
 export interface Agent {
   id: string;
   name: string;
-  /** An agent's default. Switchyard's is `persistent`: the machine is the point. */
+  /** An agent's default. Ravix's is `persistent`: the machine is the point. */
   sandbox_mode?: SandboxMode | null;
   description?: string | null;
   system?: string | null;
@@ -132,9 +132,9 @@ export interface Catalog {
 /**
  * A provider account the owner signed in to once, whose tokens Fountain holds.
  *
- * Switchyard only ever reads these. Connecting one "needs a browser and a session,
+ * Ravix only ever reads these. Connecting one "needs a browser and a session,
  * so it is not an API operation" — it happens at Fountain's console, and the
- * most switchyard can do is say whether it has happened and link to where it does.
+ * most ravix can do is say whether it has happened and link to where it does.
  */
 export interface Connection {
   id: string;
@@ -205,7 +205,7 @@ export interface SandboxDiff {
 /**
  * One stored log event, as `GET /api/conversations/:id/events` returns it and
  * as `GET /api/events/stream` pushes it. Structurally a superset of the shared
- * `LogEvent` in `@managoat/fountain-app`, so it passes straight to
+ * `LogEvent` in `@ravix/fountain-app`, so it passes straight to
  * `blocksForTurn` without a cast.
  */
 export interface LogEvent {

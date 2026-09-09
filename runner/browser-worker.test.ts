@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 // Opt in with an isolated test Chromium executable; never attach to a personal profile.
-const executablePath = process.env.SWITCHYARD_BROWSER_TEST_EXECUTABLE;
+const executablePath = process.env.RAVIX_BROWSER_TEST_EXECUTABLE;
 test.skipIf(!executablePath)("real Chromium: control handoff, storage checkpoints, restart and cross-machine restore", async () => {
   const directory = await mkdtemp(join(tmpdir(), "sy-browser-real-")), secondDirectory = await mkdtemp(join(tmpdir(), "sy-browser-copy-"));
   const token = "test-browser-token-with-at-least-32-characters";

@@ -6,7 +6,7 @@
  * top of a new thread — what it is a copy of, what it branched from, what it
  * created, and an offer to add a setup script — and they are not decoration.
  * They are the answer to the question somebody actually has when a machine
- * hands them a directory: *where am I, and what is under me?* Switchyard shows
+ * hands them a directory: *where am I, and what is under me?* Ravix shows
  * the same four, with one difference forced by the architecture: the worktree
  * is cut by a turn on a real machine, so for the first few seconds those lines
  * describe something that is still being made. They say so rather than showing

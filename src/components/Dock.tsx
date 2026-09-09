@@ -39,7 +39,7 @@ const TABS: { key: DockTab; label: string }[] = [
   { key: "machine", label: "Machine stats" },
 ];
 
-const STORAGE_KEY = "switchyard.dock";
+const STORAGE_KEY = "ravix.dock";
 
 interface DockPrefs {
   open: boolean;

@@ -50,7 +50,7 @@ export async function exec(ctx: AppContext, req: Request, trackId: string): Prom
     // A real and reportable state rather than a 500: Fountain may be running
     // this sandbox on a provider that is not Sprites, in which case exec is
     // not "broken", it does not apply.
-    throw new HttpError(501, "no_exec", "This machine does not expose a sprite, so switchyard cannot run commands on it directly.");
+    throw new HttpError(501, "no_exec", "This machine does not expose a sprite, so Ravix cannot run commands on it directly.");
   }
 
   const cwd = resolveCwd(track.workdir, typeof body.cwd === "string" ? body.cwd : undefined);

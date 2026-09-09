@@ -6,7 +6,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-const dataDir = () => mkdtempSync(join(tmpdir(), "switchyard-"));
+const dataDir = () => mkdtempSync(join(tmpdir(), "ravix-"));
 
 const { privateKey } = generateKeyPairSync("rsa", {
   modulusLength: 2048,
@@ -67,7 +67,7 @@ test("the App signs a JWT node accepts from a PKCS#1 key", () => {
   // neighbours. If this throws, every installation token call is dead.
   const gh = new GitHub({
     appId: "1",
-    slug: "switchyard",
+    slug: "ravix",
     clientId: "Iv1.x",
     clientSecret: "s",
     privateKeyPem: normalizePem(privateKey),
@@ -80,5 +80,5 @@ test("the App signs a JWT node accepts from a PKCS#1 key", () => {
   expect(url).toContain("state=st8");
   // `redirect_uri` must round-trip exactly; GitHub compares it literally.
   expect(url).toContain(encodeURIComponent("http://localhost:5183/api/auth/callback"));
-  expect(gh.installUrl()).toBe("https://github.com/apps/switchyard/installations/new");
+  expect(gh.installUrl()).toBe("https://github.com/apps/ravix/installations/new");
 });

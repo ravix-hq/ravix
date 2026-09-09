@@ -4,11 +4,11 @@
  * than anybody wants to audit.
  *
  * The owner's key is encrypted with AES-256-GCM under a key derived from
- * `SWITCHYARD_SECRET`, so a copy of the database alone is not a copy of
+ * `RAVIX_SECRET`, so a copy of the database alone is not a copy of
  * everyone's Fountain access. Session tokens are stored only as SHA-256
  * hashes, for the same reason.
  *
- * Switchyard needs this where phase 1 did not, and the reason is structural:
+ * Ravix needs this where phase 1 did not, and the reason is structural:
  * sandbox identity includes the user, so a guest's turn can only run on the
  * owner's key. Sharing a machine and holding a credential are the same
  * decision.
@@ -21,7 +21,7 @@ export class Cipher {
   private constructor(private readonly key: CryptoKey) {}
 
   static async from(secret: string): Promise<Cipher> {
-    if (secret.length < 16) throw new Error("SWITCHYARD_SECRET must be at least 16 characters");
+    if (secret.length < 16) throw new Error("RAVIX_SECRET must be at least 16 characters");
     const digest = await crypto.subtle.digest("SHA-256", enc.encode(secret));
     const key = await crypto.subtle.importKey("raw", digest, { name: "AES-GCM" }, false, ["encrypt", "decrypt"]);
     return new Cipher(key);

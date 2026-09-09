@@ -19,7 +19,7 @@ import { Db } from "./db";
  */
 
 function fresh(): Db {
-  return new Db(join(mkdtempSync(join(tmpdir(), "switchyard-people-")), "t.sqlite"));
+  return new Db(join(mkdtempSync(join(tmpdir(), "ravix-people-")), "t.sqlite"));
 }
 
 function seed(db: Db) {

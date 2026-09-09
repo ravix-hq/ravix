@@ -36,12 +36,12 @@ export async function prepareAgentBrowser(ctx: AppContext, prompt: Omit<PromptRo
     const result = await ctx.sprites!.exec(actual.sprite, ["sh", "-lc", `umask 077; mkdir -p ${shq(`${STATE_DIR}/browser-tools`)} && printf %s ${shq(script)} > ${shq(path + ".tmp")} && mv ${shq(path + ".tmp")} ${shq(path)}`], 15);
     if (result.code || !ctx.db.browsers.agent(hash)) throw Error("Browser helper unavailable");
     return [BROWSER_TOOLS_START,
-      `This machine has one shared Switchyard browser profile, including machine-account logins, across every track and participant. Use sh ${shq(path)} '<command JSON>' [screenshot-output.jpg] to operate it. Execute the helper; never read, print, copy, or commit it because it contains a temporary credential.`,
+      `This machine has one shared Ravix browser profile, including machine-account logins, across every track and participant. Use sh ${shq(path)} '<command JSON>' [screenshot-output.jpg] to operate it. Execute the helper; never read, print, copy, or commit it because it contains a temporary credential.`,
       'Commands: {"action":"start"}, {"action":"status"}, {"action":"acquire"}, {"action":"release"}, {"action":"open","url":"https://example.com"}. Results include tabs, controller, and revision.',
       'Acquire control before changing anything. A human can take over; on a control conflict stop sending input and wait for release. Release control when done or asking the user to interact. Do not start a separate browser or bypass this helper.',
       'Tab commands include tabId: navigate (+url), close, back, forward, reload, inspect (accessibility text), screenshot (JPEG), click (+x,y normalized 0..1), scroll (+x,y,deltaX,deltaY bounded to +/-2000), text (+text), key (+Playwright key such as Enter or ControlOrMeta+A). Include the current revision on commands that change a tab. Use screenshots and inspect to verify results.',
       'A screenshot command with a second helper argument writes the JPEG to that path and omits image bytes from printed JSON. The fixed viewport is 1280 by 800.',
-      'Save a portable checkpoint with {"action":"checkpoint","label":"Before task"} while controlling the browser. Checkpoints contain cookies, localStorage, IndexedDB, per-tab sessionStorage and tab URLs; they do not undo website actions. Restoring is an owner operation in Switchyard.',
+      'Save a portable checkpoint with {"action":"checkpoint","label":"Before task"} while controlling the browser. Checkpoints contain cookies, localStorage, IndexedDB, per-tab sessionStorage and tab URLs; they do not undo website actions. Restoring is an owner operation in Ravix.',
       'The shared browser card is in this track’s chat. People can open it, take control, log in, and hand it back. Logins may expire and some websites may refuse an automated browser.',
       BROWSER_TOOLS_END].join("\n");
   } catch {

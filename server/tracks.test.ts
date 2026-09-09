@@ -62,7 +62,7 @@ test("an empty diff is an empty list, not a phantom file", () => {
 // ── renaming ───────────────────────────────────────────────────────────
 
 test("renaming a track moves the label and nothing on the machine", () => {
-  const db = new Db(join(mkdtempSync(join(tmpdir(), "switchyard-tracks-")), "t.sqlite"));
+  const db = new Db(join(mkdtempSync(join(tmpdir(), "ravix-tracks-")), "t.sqlite"));
   const user = db.upsertUser({ githubId: "1", login: "ana", name: "Ana", avatarUrl: null, tokenEnc: "x" });
   const project = db.createProject({
     id: "p1", userId: user.id, name: "ledger", repoFullName: "ana/ledger", repoPrivate: 1,

@@ -67,7 +67,7 @@
  * The shape of this list is the permission model, and it is a much shorter
  * list than paddock's for one reason: **there is no Fountain proxy here at
  * all**. Paddock forwards a curated set of Fountain paths on the owner's key;
- * switchyard runs on *its own* key, shared by everybody, so forwarding
+ * ravix runs on *its own* key, shared by everybody, so forwarding
  * anything would be handing a stranger the account every machine on this
  * deployment is built on. Every route above is a typed operation on something
  * the caller may reach, and `projectOf` / `projectAccess` / `trackAccess`

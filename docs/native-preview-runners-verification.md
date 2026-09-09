@@ -23,13 +23,13 @@ implementation, deployment and live observations are described at the end.
 
 The user confirmed this checkout's Mac as the intended workstation and authorized
 Android/idb installation. Experiments ran under `jake` in private disposable
-state directories. The user subsequently created the standard `switchyard` account (UID 502). The user
+state directories. The user subsequently created the standard `ravix` account (UID 502). The user
 ran the provisioning command: home creation and tool installation completed,
 but the final doctor check failed. The user supplied the blocker summary:
 iOS has no blockers; Android emulator version and acceleration probes each
 timed out at 15 seconds. The cause is unconfirmed. The updated diagnostic runs
 emulator probes sequentially with 60-second deadlines and records timings;
-`provision-account.sh switchyard --check` refreshes it without reinstalling tools.
+`provision-account.sh ravix --check` refreshes it without reinstalling tools.
 The user supplied a successful dedicated-account recheck: both blocker lists
 are empty. Emulator version took 5,874 ms, acceleration 322 ms, and AVD listing
 18 ms. Hardware acceleration reports Hypervisor.Framework on macOS 15.5. The
@@ -55,7 +55,7 @@ These experiments executed installed SDK tools and system Settings only.
 | CocoaPods / FFmpeg | 1.17.0 / 9.0.1 |
 
 Both `doctor` prerequisite checks pass outside the execution sandbox. Raw inventory
-is private at `/private/tmp/switchyard-runner-provisioned.json`. CoreSimulator
+is private at `/private/tmp/ravix-runner-provisioned.json`. CoreSimulator
 requires access outside that sandbox. `livePreviewVerified` remains false.
 
 SDK Manager accepted the standard Android package licenses during installation.
@@ -77,7 +77,7 @@ Reviewed experiment: `2319e3e7-48a8-4b81-9c78-e70c8c6aecb1`, retained privately 
 
 - A new device in an experiment-owned simulator set booted without workstation UI.
 - `before.png` shows Settings; `swipe.png` shows the scrolled settings list.
-- `after.png` shows search text **Switchyard** and its no-results screen. This
+- `after.png` shows search text **Ravix** and its no-results screen. This
   confirms swipe, tap and ASCII text input; iOS applied capitalization.
 - idb captured H.264 at 1178 × 2556, 366 frames over 18.135 seconds. FFmpeg decoded
   every frame with the input timebase preserved. Decoded timestamps strictly increase.
@@ -107,7 +107,7 @@ Reviewed experiment: `6e3d5e0e-0e89-4f1f-8710-695beb142728`, retained privately 
   RAM and four cores, hardware GLES (`-gpu host`) and Vulkan disabled.
 - `before.png` shows Settings; `swipe.png` shows the list scrolled down to
   Location and Safety & emergency. `tap.png` shows search; `after.png` visibly
-  contains **switchyard** and the no-results screen with the keyboard open.
+  contains **ravix** and the no-results screen with the keyboard open.
 - A fresh UI hierarchy independently contains the injected search text. The tool
   requires an actual successful dump, because uiautomator can exit zero on error.
 - scrcpy 4.1 produced H.264 at 576 × 1280, 236 frames over 18.350489 seconds.
@@ -142,13 +142,13 @@ was issued. Private reports remain under `/private/tmp/sy-native-android`.
   and cleanup confined to the experiment's device. Runtime tests also cover pinned
   artifact validation/tampering, XML selectors, ownership gates, serial-scoped
   app operations, and loopback binding.
-- Switchyard suite: **265 passed, 0 failed**, 1,631 assertions across 30 files.
+- Ravix suite: **265 passed, 0 failed**, 1,631 assertions across 30 files.
   Existing local HTTP/WebSocket tests require execution outside the sandbox.
-- Switchyard production build and typechecking: **passed**.
+- Ravix production build and typechecking: **passed**.
 - Earlier workspace-wide typechecking: all 18 packages passed.
 
-Private current logs: `/private/tmp/switchyard-native-access-tests.log` and
-`/private/tmp/switchyard-native-access-build.log`. Mocked behavior tests complement
+Private current logs: `/private/tmp/ravix-native-access-tests.log` and
+`/private/tmp/ravix-native-access-build.log`. Mocked behavior tests complement
 the separate native observations; they do not prove browser compatibility.
 
 ## Remaining gates and limitations
@@ -172,20 +172,20 @@ The experiments do not exercise Unicode text, rotation, multi-touch, navigation
 controls, browser pointer cancellation, software decoding or scrcpy/Tango framing.
 Screenshot polling is not used as evidence of responsive live preview.
 
-The private [Hello World Expo SDK 54 fixture](https://github.com/managoat/switchyard-expo-hello)
+The private [Hello World Expo SDK 54 fixture](https://github.com/ravioli-hq/ravix-expo-hello)
 is on `main` at `68fabcd`. Typechecking, Expo dependency compatibility, Android/iOS
 Metro bundle export and loopback backend responses passed. The first Android
-native build passed under `switchyard` on September 5, 2026, as reported by the
-user from the local administrator invocation. The staging checkout is `/private/tmp/switchyard-expo-hello`.
+native build passed under `ravix` on September 5, 2026, as reported by the
+user from the local administrator invocation. The staging checkout is `/private/tmp/ravix-expo-hello`.
 The prepared snapshot has 14 files and digest
 `fa3093b2e002fceef42b1243b932cc1415bbeb9afd82b80043699665840a09ff`.
 The `--build-hello` helper stages it and compiles an Android debug development
-APK under `switchyard`, with fixed commands, bounded resources, retained logs,
+APK under `ravix`, with fixed commands, bounded resources, retained logs,
 package/ABI validation and artifact/source digests. All six build phases passed; compilation took 519,151 ms (8 min 39 sec).
 The retained build is
-`/Users/switchyard/.local/share/switchyard/builds/experiment-52e8255f-b89c-4596-846d-1aa6d6002041`.
+`/Users/ravix/.local/share/ravix/builds/experiment-52e8255f-b89c-4596-846d-1aa6d6002041`.
 Its `app-debug.apk` is 53,812,913 bytes, package
-`com.managoat.switchyard.hello`, ABI `arm64-v8a`, SHA-256
+`sh.ravix.hello`, ABI `arm64-v8a`, SHA-256
 `6bf899d7e847633cb70f02aa37b6c5ba8db32d07ff0e8cfb7bb5a168d92afe82`.
 Lockfile digest:
 `f6b006e3c5d6271b6bbd9c0b81e84ed11f5f4c3d2c5b783e6fa41e2766d2e5ac`.
@@ -207,7 +207,7 @@ edit with React state preserved, and scroll completion. The staged counter label
 runtime source digest is recorded separately. It retains screenshots,
 a capture file and command diagnostics, restores the staged `App.tsx`, stops its
 local services, and deletes its emulator. Cleanup uncertainty retains both locks.
-The first runtime invocation under `switchyard` **failed to observe the greeting**;
+The first runtime invocation under `ravix` **failed to observe the greeting**;
 see the retained failure below.
 
 A separate local Metro preflight under `jake` passed: SDK 54 served its Android
@@ -246,7 +246,7 @@ and clear a stale hierarchy error after a successful hierarchy read.
 ### Diagnosed startup blocker and correction
 
 The user copied the private report, command log and screenshot to
-`/private/tmp/switchyard-runtime-failure`. Review established:
+`/private/tmp/ravix-runtime-failure`. Review established:
 
 - APK installation returned `Success`, both device forwards succeeded, and
   Android launched the fixture's `.MainActivity` with `Status: ok`.
@@ -297,7 +297,7 @@ owned emulator cleanup completed successfully.
 
 These are experiment phase durations, including polling and capture, **not**
 input latency or pure HMR latency measurements. The supplied report verifies
-native runtime, local Metro, local backend and Fast Refresh under `switchyard`.
+native runtime, local Metro, local backend and Fast Refresh under `ravix`.
 The new capture file has not been independently decoded or visually reviewed.
 Sprite Metro, browser viewing/control, WAN behavior and persistent device data
 remain unverified. Runtime App digest:
@@ -323,7 +323,7 @@ may come from browser or agent input. Detailed limits and the observed Bun raw
 TCP compatibility limitation are recorded in the runner README.
 
 `server/native-forward-access.ts` now supplies a separately tested authorization
-component using the real Switchyard database access model. Grants bind a browser
+component using the real Ravix database access model. Grants bind a browser
 session verifier and user to a runner connection epoch, native session generation,
 track/workspace identity, and server-provided `metro`/`backend` destinations.
 Only token hashes are retained. Grants last at most 60 seconds and never outlive
@@ -340,18 +340,18 @@ delivery route, managed Metro reservation, automatic credential renewal, or
 live Sprite connection yet. The default connector is the existing private
 Sprites transport; the access tests supply destination streams instead.
 
-## Hello World Switchyard workspace
+## Hello World Ravix workspace
 
-Created through the signed-in Switchyard UI after the user renewed their GitHub
+Created through the signed-in Ravix UI after the user renewed their GitHub
 sign-in:
 
-- App origin: `https://switchyard.demo.managoat.com`.
-  `preview.switchyard.inevitable.fyi` is the separate web-preview domain.
-- Private repository: `managoat/switchyard-expo-hello`.
+- App origin: `https://app.ravix.sh`.
+  `preview.ravix.sh` is the separate web-preview domain.
+- Private repository: `ravioli-hq/ravix-expo-hello`.
 - Project: `e96fc271-182f-44df-a097-55db90ed2932`.
 - Track: `d792d4c2-26ac-4708-aef1-b1a2f21b44cd`, named
   **Native preview verification**.
-- [Open the track](https://switchyard.demo.managoat.com/p/e96fc271-182f-44df-a097-55db90ed2932/t/d792d4c2-26ac-4708-aef1-b1a2f21b44cd).
+- [Open the track](https://app.ravix.sh/p/e96fc271-182f-44df-a097-55db90ed2932/t/d792d4c2-26ac-4708-aef1-b1a2f21b44cd).
 - The branch picker showed `main` at `68fabcd`; the completed opening turn
   reported `/home/sprite/work/main` on branch `jhgaylor/main`.
 
@@ -388,12 +388,12 @@ Validation on this checkout:
 - Chrome decoded synthetic Annex-B H.264 at approximately **29–30 fps**. Tap,
   text entry and Back reached the local input fixture. This establishes browser
   compatibility with the implemented framing, not real-device or WAN success.
-- A local `switchyard:native-preview-review` container image built successfully
+- A local `ravix:native-preview-review` container image built successfully
   and its internal `/healthz` endpoint passed without host ports or data mounts.
 
 No live Sprite Metro, Sprite backend, browser-to-emulator control or HMR result
 has been established by these checks. The next run requires deploying the tested
-app with the experiment flag and invoking `--preview-hello` under `switchyard`.
+app with the experiment flag and invoking `--preview-hello` under `ravix`.
 The runner intentionally does not mark browser verification from transmitted
 frame counts. See the [pairing instructions](../runner/README.md#paired-android-hello-preview).
 
@@ -416,7 +416,7 @@ rule, preserving the broker rule. The same install resumed and completed
 backend then started on private Sprite ports 30000 and 30001. No public Expo
 tunnel or provider credential in the app was used.
 
-Observed in Chrome through `switchyard.demo.managoat.com`:
+Observed in Chrome through `app.ravix.sh`:
 
 - Real H.264 Android frames, including initial bundling and the Hello app.
   Metro logged a 7.1-second first Android bundle (688 modules).
@@ -504,7 +504,7 @@ found the 18.5 simulator SDK and an available 18.6 runtime. A disposable Xcode
 project under `jake` accepted the same SDK/destination/architecture flags in a
 clean environment, so the SDK/runtime version difference alone does not explain
 the dedicated-account failure. No runtime mapping or installed platform was
-changed. `provision-account.sh switchyard --check-ios-build <build UUID>` now
+changed. `provision-account.sh ravix --check-ios-build <build UUID>` now
 collects the dedicated account's first-launch status, SDKs, runtimes, runtime
 mapping, device counts and the retained Hello workspace's destinations/settings.
 It preserves `ios-diagnostic.json` alongside the failed report without compiling
@@ -532,7 +532,7 @@ or live iOS preview has yet been verified.
 The dedicated-account retry succeeded in build
 `8bd7bc9e-f5e7-4822-a014-2c0a6aeb730b`. Destination verification passed after
 selecting runtime 22G86; Xcode compilation took 162.3 seconds. The verified
-arm64 simulator artifact is `SwitchyardHello.app`, 78,597,940 bytes across 196
+arm64 simulator artifact is `RavixHello.app`, 78,597,940 bytes across 196
 files, bundle digest
 `375169f807696ad02ea5d82f1456b94142378e9f306eb5555bab55afe9abab2f`.
 Source and lockfile digests match the previously pinned Hello fixture. The
@@ -556,7 +556,7 @@ the pairing code. Dedicated iOS runtime/browser verification remains pending.
 The next paired iOS run (`9aca96a0-bcb9-458e-bd2a-26017ba6d948`)
 passed forwarding, booted the owned simulator and streamed its screen to the
 Chrome viewer at approximately 28 fps. The visible screen showed iOS's
-“Open in ‘Switchyard Hello’?” development-client confirmation; the startup
+“Open in ‘Ravix Hello’?” development-client confirmation; the startup
 helper did not recognize that dialog, so greeting verification timed out.
 The helper now selects Open only when the exact Hello confirmation title and
 Cancel action are present. Regression tests reject unrelated app prompts and
@@ -643,7 +643,7 @@ Observed in the authenticated Chrome viewer:
 - Browser tap changed the counter from 0 to 1. Sending ASCII text **Jake**
   into the focused native field produced **Hello, worldJake!**.
 - Wheel scrolling traversed the fixture and visibly reached **You reached the end.**
-- A Switchyard agent edit changed only App.tsx's GREETING to
+- A Ravix agent edit changed only App.tsx's GREETING to
   **Hello from iOS Sprite**. The running app refreshed to
   **Hello from iOS Sprite, worldJake!**, preserving counter 1, name worldJake,
   and the existing backend response. No native rebuild or service restart occurred.
@@ -704,4 +704,4 @@ The final deployed image matches `18f2a81`; rollout and public `/healthz` passed
 The signed-in Hello track displayed **Pair a Mac runner**, and invoking it issued
 a five-minute code. No registered daemon or two-track simulator run has been
 claimed as verified. The provisioning-account config for both existing artifacts
-is prepared at `/private/tmp/switchyard-runner.json` with mode 0600.
+is prepared at `/private/tmp/ravix-runner.json` with mode 0600.

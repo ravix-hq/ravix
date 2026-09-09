@@ -16,7 +16,7 @@ afterEach(() => {
 async function fixture() {
   const db = new Db(":memory:");
   databases.push(db);
-  const cipher = await Cipher.from("switchyard regression tests only");
+  const cipher = await Cipher.from("ravix regression tests only");
   const owner = db.upsertUser({ githubId: "1", login: "owner", name: "Owner", avatarUrl: null, tokenEnc: await cipher.encrypt("owner-token") });
   const guest = db.upsertUser({ githubId: "2", login: "guest", name: "Guest", avatarUrl: null, tokenEnc: await cipher.encrypt("guest-token") });
   for (const [user, token] of [[owner, "owner"], [guest, "guest"]] as const) db.createSession(user.id, await sha256(token), 60_000);
@@ -53,13 +53,13 @@ async function fixture() {
     getEnvironment: mock(async () => ({})),
     secretKeys: mock(async () => []),
   };
-  const ctx = { db, cipher, github, fountain, sprites: null, config: { publicUrl: "https://switchyard.test", sessionMaxAgeMs: 60_000 } } as unknown as AppContext;
+  const ctx = { db, cipher, github, fountain, sprites: null, config: { publicUrl: "https://ravix.test", sessionMaxAgeMs: 60_000 } } as unknown as AppContext;
   return { db, ctx, owner, guest, project, github, fountain, route: buildRouter(ctx) };
 }
 
 function request(path: string, user?: string, method = "GET", body?: unknown, cookie?: string) {
-  return new Request(`https://switchyard.test${path}`, {
-    method, headers: { cookie: [user ? `switchyard_session=${user}` : "", cookie ?? ""].filter(Boolean).join("; ") },
+  return new Request(`https://ravix.test${path}`, {
+    method, headers: { cookie: [user ? `ravix_session=${user}` : "", cookie ?? ""].filter(Boolean).join("; ") },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
 }
@@ -142,12 +142,12 @@ test("callback requires its own browser secret and rejects replay", async () => 
   for (const cookie of [undefined, other.cookie, attempt.cookie.replace(/=.+$/, "=wrong")]) {
     const response = await route(request(path, "owner", "GET", undefined, cookie));
     expect(response.headers.get("location")).toBe("/?error=stale_signin");
-    expect(response.headers.getSetCookie().some((c) => c.startsWith("switchyard_session="))).toBe(false);
+    expect(response.headers.getSetCookie().some((c) => c.startsWith("ravix_session="))).toBe(false);
   }
   expect(github.exchangeCode).not.toHaveBeenCalled();
   const success = await route(request(path, undefined, "GET", undefined, attempt.cookie));
   expect(success.headers.get("location")).toBe("/");
-  expect(success.headers.getSetCookie().some((c) => c.startsWith("switchyard_session="))).toBe(true);
+  expect(success.headers.getSetCookie().some((c) => c.startsWith("ravix_session="))).toBe(true);
   expect(success.headers.getSetCookie().some((c) => c.includes("Max-Age=0"))).toBe(true);
   expect((await route(request(path, undefined, "GET", undefined, attempt.cookie))).headers.get("location")).toBe("/?error=stale_signin");
   expect(github.exchangeCode).toHaveBeenCalledTimes(1);

@@ -13,9 +13,9 @@
  *     carries `data-theme="nord"` resolves `var(--bg)` to Nord's background.
  *     That is how the picker draws a live swatch per theme without a swatch
  *     class per theme, and it means a swatch cannot drift from its palette.
- *   - `switchyard` is the default, and its block shares a selector list with
+ *   - `ravix` is the default, and its block shares a selector list with
  *     `:root` rather than repeating it. So an unthemed page and an explicitly
- *     `switchyard`-themed one are the same declarations, not two copies that
+ *     `ravix`-themed one are the same declarations, not two copies that
  *     have to be kept in step.
  *
  * The list is the IDE canon plus this app's own two, because a person who has
@@ -39,7 +39,7 @@ export interface ThemeDef {
 }
 
 export const THEMES = [
-  { id: "switchyard", name: "Switchyard", mode: "dark" },
+  { id: "ravix", name: "Ravix", mode: "dark" },
   { id: "slate", name: "Slate", mode: "dark" },
   { id: "one-dark", name: "One Dark", mode: "dark" },
   { id: "dracula", name: "Dracula", mode: "dark" },
@@ -65,7 +65,7 @@ export const THEMES = [
 
 export type ThemeId = (typeof THEMES)[number]["id"];
 
-export const DEFAULT_THEME: ThemeId = "switchyard";
+export const DEFAULT_THEME: ThemeId = "ravix";
 
 /**
  * The storage key, which is also written into `index.html`.
@@ -75,7 +75,7 @@ export const DEFAULT_THEME: ThemeId = "switchyard";
  * hard reload — a module import runs too late for that. Two places holding one
  * string is a thing that rots, so `theme.test.ts` asserts they still match.
  */
-export const THEME_KEY = "switchyard.theme";
+export const THEME_KEY = "ravix.theme";
 
 export function isThemeId(value: unknown): value is ThemeId {
   return THEMES.some((theme) => theme.id === value);

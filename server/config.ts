@@ -1,7 +1,7 @@
 /**
  * The server's configuration, from the environment.
  *
- * Switchyard needs more of it than its siblings, and the reason is the one
+ * Ravix needs a fair amount of it, and the reason is the one
  * structural difference: **the browser holds no credential for anything**.
  * Sign-in is GitHub, so nobody here has a Fountain account to spend; every
  * machine runs on this server's Fountain key. That is a real trade — it is
@@ -11,7 +11,7 @@
  *   FOUNTAIN_URL          the Fountain every machine is built on
  *   FOUNTAIN_API_KEY      the account it is built on. Required.
  *   DATA_DIR              SQLite, and a generated secret if none is given
- *   SWITCHYARD_SECRET     encrypts stored tokens; generated into DATA_DIR/secret
+ *   RAVIX_SECRET     encrypts stored tokens; generated into DATA_DIR/secret
  *   PORT                  listen port (8080)
  *   STATIC_DIR            the built SPA; unset serves none (dev, behind Vite)
  *   PUBLIC_URL            this server as GitHub reaches it. Required for OAuth.
@@ -79,7 +79,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
   // A generated secret keeps a fresh deployment working, but it then lives
   // beside the data it protects — which is why the k8s Secret is the right
   // answer and this is only the fallback. Same trade as paddock and salon.
-  let secret = env.SWITCHYARD_SECRET?.trim() ?? "";
+  let secret = env.RAVIX_SECRET?.trim() ?? "";
   if (!secret) {
     const file = join(dataDir, "secret");
     if (existsSync(file)) secret = readFileSync(file, "utf8").trim();
@@ -99,7 +99,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     fountainUrl,
     fountainKey: env.FOUNTAIN_API_KEY?.trim() || null,
     dataDir,
-    dbPath: join(dataDir, "switchyard.sqlite"),
+    dbPath: join(dataDir, "ravix.sqlite"),
     secret,
     port: Number(env.PORT ?? 8081),
     staticDir,
@@ -116,7 +116,7 @@ function previewConfig(env: Record<string, string | undefined>, publicUrl: strin
   if (!domain) return null;
   const appHost = new URL(publicUrl).hostname;
   if (!/^[a-z0-9]+(?:[.-][a-z0-9]+)*\.[a-z]+$/.test(domain) || domain === appHost || (appHost !== "localhost" && domain.endsWith(`.${appHost}`)) || appHost.endsWith(`.${domain}`)) {
-    throw new Error("PREVIEW_DOMAIN must be a dedicated domain outside the Switchyard application host.");
+    throw new Error("PREVIEW_DOMAIN must be a dedicated domain outside the Ravix application host.");
   }
   const local = domain.endsWith(".localhost");
   return { domain, port: Number(env.PREVIEW_PORT || 8082), protocol: local ? "http:" : "https:", publicPort: local ? `:${env.PREVIEW_PORT || 8082}` : "" };
@@ -139,7 +139,7 @@ function githubConfig(env: Record<string, string | undefined>): GitHubAppConfig 
   if (!appId || !clientId || !clientSecret || !rawKey) return null;
   return {
     appId,
-    slug: env.GITHUB_APP_SLUG?.trim() || "switchyard",
+    slug: env.GITHUB_APP_SLUG?.trim() || "ravix",
     clientId,
     clientSecret,
     privateKeyPem: normalizePem(rawKey),

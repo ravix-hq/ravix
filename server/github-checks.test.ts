@@ -38,7 +38,7 @@ for (const scenario of [
       throw new Error(`Unexpected request: ${path}`);
     });
     try {
-      const report = await gh.checks(1, "managoat/demos", "jhgaylor/antwerp", { createdAt: "2026-09-06T12:00:00.123Z", originNumber: scenario.originNumber });
+      const report = await gh.checks(1, "ravioli-hq/ravix", "jhgaylor/antwerp", { createdAt: "2026-09-06T12:00:00.123Z", originNumber: scenario.originNumber });
       expect(report.pull?.number ?? null).toBe(scenario.expected);
     } finally { request.mockRestore(); token.mockRestore(); }
   });

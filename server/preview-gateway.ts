@@ -11,9 +11,9 @@ import { WebSocketServer } from "ws";
 import { framing } from "./sprites-tunnel";
 import { subscribe } from "./hub";
 
-const COOKIE = "__Host-switchyard_preview";
-const LOCAL_COOKIE = "switchyard_preview_local";
-const CONTROL = "/__switchyard/";
+const COOKIE = "__Host-ravix_preview";
+const LOCAL_COOKIE = "ravix_preview_local";
+const CONTROL = "/__ravix/";
 const HOP = new Set(["connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailer", "transfer-encoding", "upgrade"]);
 function cookieName(ctx: AppContext) { return ctx.config.previews?.protocol === "http:" ? LOCAL_COOKIE : COOKIE; }
 function cookie(req: IncomingMessage, name: string) {
@@ -28,7 +28,7 @@ export function upstreamHeaders(headers: IncomingHttpHeaders, host: string, upgr
     if (HOP.has(key) || connection.has(key) || key === "authorization" || key.startsWith("x-forwarded-") || key === "forwarded" || key === "accept-encoding") continue;
     out[key] = value;
   }
-  if (out.cookie) out.cookie = out.cookie.split(";").filter(c => ![COOKIE, LOCAL_COOKIE, "switchyard_session"].includes(c.trim().split("=")[0]!)).join(";");
+  if (out.cookie) out.cookie = out.cookie.split(";").filter(c => ![COOKIE, LOCAL_COOKIE, "ravix_session"].includes(c.trim().split("=")[0]!)).join(";");
   out.host = host;
   out["accept-encoding"] = "identity";
   if (upgrade) { out.connection = "Upgrade"; out.upgrade = "websocket"; }
@@ -41,7 +41,7 @@ function responseHeaders(headers: IncomingHttpHeaders, origin: string): Incoming
     if (HOP.has(key) || connection.has(key) || ["clear-site-data", "alt-svc"].includes(key)) continue;
     out[key] = value;
   }
-  if (out["set-cookie"]) out["set-cookie"] = out["set-cookie"].filter(v => ![COOKIE, LOCAL_COOKIE, "switchyard_session"].includes(v.split("=")[0]!.trim()))
+  if (out["set-cookie"]) out["set-cookie"] = out["set-cookie"].filter(v => ![COOKIE, LOCAL_COOKIE, "ravix_session"].includes(v.split("=")[0]!.trim()))
     .map(v => v.replace(/;\s*Domain=[^;]*/ig, ""));
   if (out.location && /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?([/]|$)/i.test(out.location)) {
     const url = new URL(out.location); out.location = `${origin}${url.pathname}${url.search}${url.hash}`;
@@ -97,7 +97,7 @@ export function createPreviewGateway(ctx: AppContext) {
   async function authorize(req: IncomingMessage, row: PreviewRow) {
     const hash = await sha256(cookie(req, cookieName(ctx)));
     const grant = ctx.db.previews.getGrant(hash, row.trackId, "session");
-    if (!grant || !allowed(row, grant)) throw new HttpError(401, "preview_signin", "Open this preview from your signed-in Switchyard track.");
+    if (!grant || !allowed(row, grant)) throw new HttpError(401, "preview_signin", "Open this preview from your signed-in Ravix track.");
     return grant;
   }
   function watch(row: PreviewRow, grant: PreviewGrant, close: () => void) {
@@ -118,7 +118,7 @@ export function createPreviewGateway(ctx: AppContext) {
     if (res.headersSent) { res.destroy(); return; }
     const status = error instanceof HttpError ? error.status : 502;
     const message = error instanceof HttpError ? error.message : "The preview did not answer. Return to the track to restart it or read its logs.";
-    reply(res, status, `<meta name="viewport" content="width=device-width,initial-scale=1"><p>${escape(message)}</p><a href="${escape(ctx.config.publicUrl)}">Back to Switchyard</a>`);
+    reply(res, status, `<meta name="viewport" content="width=device-width,initial-scale=1"><p>${escape(message)}</p><a href="${escape(ctx.config.publicUrl)}">Back to Ravix</a>`);
   }
   const server = createServer(async (req, res) => {
     try {
@@ -129,7 +129,7 @@ export function createPreviewGateway(ctx: AppContext) {
         // The ticket lives in a fragment: absent from access logs and Referer.
         reply(res, 200, `<meta name="viewport" content="width=device-width,initial-scale=1"><p>Opening private preview…</p><script>
           const ticket=location.hash.slice(1);history.replaceState(null,'',location.pathname);
-          fetch('${CONTROL}exchange',{method:'POST',headers:{'content-type':'text/plain'},body:ticket}).then(r=>{if(!r.ok)throw Error('This preview link expired. Open it again from Switchyard.');location.replace('${CONTROL}start')}).catch(e=>document.querySelector('p').textContent=e.message);
+          fetch('${CONTROL}exchange',{method:'POST',headers:{'content-type':'text/plain'},body:ticket}).then(r=>{if(!r.ok)throw Error('This preview link expired. Open it again from Ravix.');location.replace('${CONTROL}start')}).catch(e=>document.querySelector('p').textContent=e.message);
         </script>`);
         return;
       }
@@ -139,7 +139,7 @@ export function createPreviewGateway(ctx: AppContext) {
         for await (const chunk of req) { body += chunk.toString(); if (body.length > 128) throw new HttpError(400, "ticket", "Invalid ticket."); }
         const ticket = ctx.db.previews.getGrant(await sha256(body), row.trackId, "ticket", true);
         const user = ticket && ctx.db.sessionUser(ticket.sessionHash);
-        if (!ticket || !user || trackAccess(ctx, user, row.trackId).track.closedAt) throw new HttpError(401, "ticket", "This preview link expired. Open it again from Switchyard.");
+        if (!ticket || !user || trackAccess(ctx, user, row.trackId).track.closedAt) throw new HttpError(401, "ticket", "This preview link expired. Open it again from Ravix.");
         const token = randomToken();
         ctx.db.previews.grant({ ...ticket, hash: await sha256(token), expires: Date.now() + 12 * 60 * 60_000, kind: "session" });
         res.setHeader("set-cookie", `${cookieName(ctx)}=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=43200${ctx.config.previews!.protocol === "https:" ? "; Secure" : ""}`);

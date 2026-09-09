@@ -63,7 +63,7 @@ export class RunnerCoordinator {
     private ticking = false;
     constructor(private ctx: AppContext, private engine: Engine) { }
     start() { this.ctx.db.runners.recover(); }
-    private enabled(projectId: string) { const p = this.ctx.db.project(projectId); return !!this.ctx.config.nativePreviewExperiment && !!this.ctx.sprites && !!this.ctx.fountain && p?.repoFullName === 'managoat/switchyard-expo-hello' && !p.archivedAt; }
+    private enabled(projectId: string) { const p = this.ctx.db.project(projectId); return !!this.ctx.config.nativePreviewExperiment && !!this.ctx.sprites && !!this.ctx.fountain && p?.repoFullName === 'ravioli-hq/ravix-expo-hello' && !p.archivedAt; }
     list(projectId: string): RunnerInfo[] { return this.ctx.db.runners.runners().filter(r => r.projects.includes(projectId)).map(r => ({ id: r.id, name: r.name, projects: [projectId], revoked: r.revoked, online: !r.revoked && this.peers.has(r.id) && Date.now() - r.lastSeen < RUNNER.leaseMs, capabilities: r.capabilities })); }
     authorized(s: NativeRequest) {
         const user = this.ctx.db.sessionUser(s.sessionHash), r = this.ctx.db.runners.runner(s.runnerId), track = this.ctx.db.track(s.trackId), project = this.ctx.db.project(s.projectId);

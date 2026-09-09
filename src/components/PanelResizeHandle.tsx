@@ -9,7 +9,7 @@ export function PanelResizeHandle({ side }: { side: "left" | "right" }) {
   const [maximum, setMaximum] = useState(800);
   const minimum = side === "left" ? 220 : 280;
   const property = side === "left" ? "--yard-width" : "--inspector-width";
-  const key = `switchyard.panel-width.${side}`;
+  const key = `ravix.panel-width.${side}`;
 
   function resize(value: number) {
     const next = Math.round(Math.max(minimum, Math.min(maximum, value)));

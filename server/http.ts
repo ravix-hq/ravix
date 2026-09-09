@@ -24,8 +24,8 @@ export function errorResponse(err: unknown): Response {
   if (err instanceof DOMException && err.name === "AbortError") {
     return json({ error: "client_closed", message: "The request was abandoned." }, 499);
   }
-  console.error("switchyard:", err);
-  return json({ error: "internal", message: "Something went wrong on the Switchyard server." }, 500);
+  console.error("ravix:", err);
+  return json({ error: "internal", message: "Something went wrong on the Ravix server." }, 500);
 }
 
 export async function readJson<T = Record<string, unknown>>(req: Request): Promise<T> {
@@ -52,7 +52,7 @@ export function isEmail(s: string): boolean {
 
 // ── the session cookie ─────────────────────────────────────────────────
 
-export const SESSION_COOKIE = "switchyard_session";
+export const SESSION_COOKIE = "ravix_session";
 
 export function cookieValue(req: Request, name: string): string | null {
   const raw = req.headers.get("cookie");

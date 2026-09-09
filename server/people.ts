@@ -4,7 +4,7 @@
  * There are **two units of sharing**, and offering both is the design rather
  * than a convenience. A track is one branch in one directory; a project is the
  * machine every track sits on. Inviting somebody to a branch is a thing people
- * do every day, and for a long time it was the only thing switchyard offered —
+ * do every day, and for a long time it was the only thing ravix offered —
  * on the argument that inviting somebody to your *machine* is not an everyday
  * act, which is true. What that argument missed is that working with the same
  * person across a week of branches, re-inviting them to each one, is not an
@@ -102,7 +102,7 @@ export async function list(ctx: AppContext, req: Request, trackId: string): Prom
 /**
  * A typed username, resolved to whoever it names.
  *
- * Two answers, because switchyard has two kinds of invitation and the
+ * Two answers, because ravix has two kinds of invitation and the
  * difference is not a detail: somebody who has signed in here is a row we can
  * grant access to now, and somebody who has not is an account on GitHub that
  * an invitation has to *wait* for. Shared by both grains of invite so the
@@ -139,7 +139,7 @@ async function resolveLogin(
  *
  * They need not already have signed in here: a username with no account is
  * resolved against GitHub and the invitation waits on their account. What
- * switchyard cannot do is invite a *stranger* — sign-in is GitHub and this app
+ * ravix cannot do is invite a *stranger* — sign-in is GitHub and this app
  * never asks for an email, so there is no address to send anything to, and a
  * row naming a login that has never appeared would be a permission granted to
  * whoever claimed that name first.
@@ -375,7 +375,7 @@ export async function removeProject(ctx: AppContext, req: Request, projectId: st
  * one grants a shell on a machine.
  *
  * Two days for a project, and the shorter number is the whole of the argument
- * for having two. A project link is the widest thing switchyard hands out —
+ * for having two. A project link is the widest thing ravix hands out —
  * every branch on the box, and the ability to cut more — so it is the one that
  * should least survive being forgotten about. Nobody is worse off: minting
  * another is one button, and the people who came in on the old one stay.

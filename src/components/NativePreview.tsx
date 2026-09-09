@@ -207,7 +207,7 @@ export function NativeViewer({ id }: {
     };
     return <main className="native-viewer">
     <header className="row"><a href={info?.trackUrl ?? '/'}>← Back to track</a><strong>{info?.platform === 'ios' ? 'iOS' : 'Android'} preview</strong><span role="status">{info?.phase ?? 'Connecting'}</span><span className="spacer"/><span>{watching ? `${fps} fps` : 'Waiting for screen'}</span></header>
-    {error ? <p className="error" role="alert">{error} <a href="/">Open Switchyard</a></p> : null}
+    {error ? <p className="error" role="alert">{error} <a href="/">Open Ravix</a></p> : null}
     <div className="native-screen"><canvas ref={canvas} style={{height: 'auto', width: `min(100%, ${68 * (info?.video ? info.video.width / info.video.height : 576 / 1280)}dvh)`}} width={576} height={1280} aria-label={`${info?.platform === 'ios' ? 'iOS' : 'Android'} device screen`} onPointerDown={event => touch('down', event)} onPointerMove={event => touch('move', event)} onPointerUp={event => touch('up', event)} onPointerCancel={event => touch('cancel', event)} onLostPointerCapture={event => touch('cancel', event)} onWheel={event => { if (controlled && videoInfo.current) {
         event.preventDefault();
         send({ type: 'scroll', delta: Math.max(-16, Math.min(16, -event.deltaY / 50)), ...position(event.clientX, event.clientY) });
@@ -221,7 +221,7 @@ export function NativeViewer({ id }: {
         setControlAttempt(n => n + 1);
     } }}>{controlled ? 'Release control' : 'Take control'}</button>
       {(['back', 'home', 'enter', 'backspace'] as const).filter(key => info?.platform !== 'ios' || key !== 'back').map(key => <button key={key} disabled={!controlled} onClick={() => send({ type: 'key', key })}>{key}</button>)}
-      <button disabled={!watching} onClick={() => { const a = document.createElement('a'); a.href = canvas.current!.toDataURL('image/png'); a.download = `switchyard-${info?.platform ?? 'android'}.png`; a.click(); }}>Screenshot</button>
+      <button disabled={!watching} onClick={() => { const a = document.createElement('a'); a.href = canvas.current!.toDataURL('image/png'); a.download = `ravix-${info?.platform ?? 'android'}.png`; a.click(); }}>Screenshot</button>
       <button disabled={!info} onClick={() => { if (info)
         void api.stopNativePreview(info.trackId).catch(error => setError(String(error))); }}>Stop</button>
     </div>

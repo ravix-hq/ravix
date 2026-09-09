@@ -1,7 +1,7 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
-// The browser talks only to the Switchyard server (server/), same origin. It
+// The browser talks only to the Ravix server (server/), same origin. It
 // never reaches Fountain, GitHub or Sprites directly and holds no credential
 // for any of them — see shared/api.ts for why that wall is where it is.
 //
@@ -10,7 +10,7 @@ import react from "@vitejs/plugin-react";
 //   bun run mock                                   a fake Fountain on :8793
 //   FOUNTAIN_URL=http://localhost:8793 bun run server
 //   bun run dev                                    this, on :5183
-const server = process.env.SWITCHYARD_SERVER ?? "http://localhost:8081";
+const server = process.env.RAVIX_SERVER ?? "http://localhost:8081";
 const appCommit = (process.env.GITHUB_SHA ?? "dev").slice(0, 7);
 
 export default defineConfig({

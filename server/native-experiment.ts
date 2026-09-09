@@ -11,7 +11,7 @@ import type { NativeRequest } from './runner-store';
 import type { NativeServiceReservation } from './native-experiment-store';
 import { NATIVE, nativeFrame, parseNativeInput, type NativeInfo, type NativePlatform, type NativeVideo } from '../shared/native-preview';
 import loopbackSource from '../runner/scripts/metro-loopback.cjs' with { type: 'text' };
-const FIXTURE = 'managoat/switchyard-expo-hello';
+const FIXTURE = 'ravioli-hq/ravix-expo-hello';
 const NATIVE_HASHES = {
     'assets/adaptive-icon.png': '5f4c0a732b6325bf4071d9124d2ae67e037cb24fcc9c482ef82bea742109a3b8',
     'assets/icon.png': '74c64047eb557b1341bba7a2831eedde9ddb705e6451a9ad9f5552bf558f13de',
@@ -254,7 +254,7 @@ export class NativeExperiments {
             return Response.json({ data: { available, platforms: this.ctx.config.nativeHelloIosSha256 ? ['android', 'ios'] : ['android'], runners: this.coordinator.list(project.id), session: durable ? this.coordinator.info(durable) : current ? this.info(current) : null } }, { headers: { 'cache-control': 'no-store' } });
         }
         if (req.headers.get('origin') !== this.ctx.config.publicUrl)
-            throw new HttpError(403, 'origin', 'Open this action in Switchyard.');
+            throw new HttpError(403, 'origin', 'Open this action in Ravix.');
         requireOwner(role, 'start or stop this native experiment');
         if (!available)
             throw new HttpError(501, 'native_unavailable', 'Native experiments are not enabled for this project.');
@@ -374,13 +374,13 @@ export class NativeExperiments {
             throw new Error('Workspace is not a Sprite');
         s.reservation = this.ctx.db.nativeExperiments.allocate(s.id, s.trackId, sprite);
         await this.checkWorkspace(s);
-        const preload = `/tmp/switchyard-native-${s.id}.cjs`;
+        const preload = `/tmp/ravix-native-${s.id}.cjs`;
         await this.exec(s, `const fs=require('node:fs');fs.writeFileSync(process.argv[2],Buffer.from(process.argv[3],'base64'),{mode:0o600,flag:'wx'});`, [preload, Buffer.from(loopbackSource).toString('base64')]);
         // Start dependency installation as a bounded managed service too: it can
         // be stopped after server loss and never blocks heartbeat/input handling.
         const r = s.reservation;
         const installName = serviceName(s.id, 'install');
-        const installStatus = `/tmp/switchyard-native-${s.id}.install`;
+        const installStatus = `/tmp/ravix-native-${s.id}.install`;
         await this.ctx.sprites!.defineService(sprite, installName, s.workdir, `npm ci --no-audit --no-fund; status=$?; printf '%s' "$status" > ${quote(installStatus)}; exec sleep 1800`, r.metro);
         this.assert(s);
         const installDeadline = Date.now() + 10 * 60000;
@@ -440,7 +440,7 @@ export class NativeExperiments {
             await this.ctx.sprites.serviceAction(r.sprite, serviceName(r.id, kind), 'delete');
             await this.ctx.sprites.activity(r.sprite, serviceName(r.id, kind), true);
         }
-        const result = await this.ctx.sprites.exec(r.sprite, ['rm', '-f', `/tmp/switchyard-native-${r.id}.cjs`, `/tmp/switchyard-native-${r.id}.install`], 10);
+        const result = await this.ctx.sprites.exec(r.sprite, ['rm', '-f', `/tmp/ravix-native-${r.id}.cjs`, `/tmp/ravix-native-${r.id}.install`], 10);
         if (result.code)
             throw new Error('Could not remove Metro preload');
         this.ctx.db.nativeExperiments.remove(r.id);

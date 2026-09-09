@@ -10,14 +10,14 @@ import { privateDirectory, writePrivateJson } from './state';
 async function diagnose(account: string, id: string) {
   const user = userInfo();
   if (platform() !== 'darwin' || arch() !== 'arm64' || user.uid === 0 || user.username !== account || !/^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(id)) throw Error('Use the dedicated account and an explicit build UUID');
-  const directory = join(user.homedir, '.local/share/switchyard/builds', `experiment-${id}`);
+  const directory = join(user.homedir, '.local/share/ravix/builds', `experiment-${id}`);
   const stat = await lstat(directory);
   if (!stat.isDirectory()) throw Error('Build directory missing');
   await privateDirectory(directory);
   const reportPath = join(directory, 'report.json'), reportStat = await lstat(reportPath);
   if (!reportStat.isFile() || reportStat.size > 1024 * 1024 || await realpath(reportPath) !== reportPath) throw Error('Invalid build report');
   const report = JSON.parse(await readFile(reportPath, 'utf8'));
-  if (report.kind !== 'ios-build-experiment' || report.account !== account || report.applicationId !== 'com.managoat.switchyard.hello') throw Error('Not this account’s Hello iOS build');
+  if (report.kind !== 'ios-build-experiment' || report.account !== account || report.applicationId !== 'sh.ravix.hello') throw Error('Not this account’s Hello iOS build');
   const base = {HOME: user.homedir, PATH: `${user.homedir}/.local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin`, LANG: 'en_US.UTF-8'};
   const paths = await toolPaths(base), env = {...buildEnvironment(paths, user.homedir, directory), COCOAPODS_DISABLE_STATS: 'true', RCT_NO_LAUNCH_PACKAGER: '1'};
   const results: Record<string, unknown> = {};
@@ -34,7 +34,7 @@ async function diagnose(account: string, id: string) {
   await probe('runtimes', [paths.xcrun, 'simctl', 'list', 'runtimes', '-j'], text => JSON.parse(text).runtimes.map((r: Record<string, unknown>) => ({identifier:r.identifier, version:r.version, build:r.buildversion, available:r.isAvailable, error:r.availabilityError})));
   await probe('runtimeMatches', [paths.xcrun, 'simctl', 'runtime', 'match', 'list', '-j'], JSON.parse);
   await probe('deviceCounts', [paths.xcrun, 'simctl', 'list', 'devices', 'available', '-j'], text => Object.fromEntries(Object.entries(JSON.parse(text).devices).map(([runtime, devices]) => [runtime, (devices as unknown[]).length])));
-  const project = ['xcodebuild', '-workspace', join(directory, 'worktree/ios/SwitchyardHello.xcworkspace'), '-scheme', 'SwitchyardHello', '-configuration', 'Debug', '-sdk', 'iphonesimulator'];
+  const project = ['xcodebuild', '-workspace', join(directory, 'worktree/ios/RavixHello.xcworkspace'), '-scheme', 'RavixHello', '-configuration', 'Debug', '-sdk', 'iphonesimulator'];
   await probe('destinations', [...project, '-showdestinations']);
   await probe('simulatorSettings', [...project, '-destination', 'generic/platform=iOS Simulator', 'CODE_SIGNING_ALLOWED=NO', 'ARCHS=arm64', 'ONLY_ACTIVE_ARCH=YES', '-showBuildSettings'], text => text.split('\n').filter(line => /^\s*(SDKROOT|SUPPORTED_PLATFORMS|PLATFORM_NAME|IPHONEOS_DEPLOYMENT_TARGET|ARCHS|EXCLUDED_ARCHS)\s*=/.test(line)));
   await writePrivateJson(join(directory, 'ios-diagnostic.json'), results);

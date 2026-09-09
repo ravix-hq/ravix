@@ -1,23 +1,25 @@
-# Switchyard
+# Ravix
 
-**switchyard.demo.managoat.com** — parallel tracks on one cloud machine, on the
+**[ravix.sh](https://ravix.sh)** — a browser workspace for building software
+with coding agents. Parallel tracks on one cloud machine, on the
 [Fountain](https://github.com/BinaryBourbon/fountain) API.
 
-Sign in with GitHub, pick a repository, and switchyard builds it a machine with
-the repository already cloned. Every piece of work you start on it is a
-**track**: its own `git worktree`, its own branch, its own agent conversation.
-Four of them can be in flight at once on one disk, and none of them touches
-another's files.
+Sign in with GitHub, pick a repository, and Ravix builds it a machine with the
+repository already cloned. Every piece of work you start on it is a **track**:
+its own `git worktree`, its own branch, its own agent conversation. Several can
+be in flight at once on one disk, none of them touches another's files, and the
+laptop can close.
 
-It is [Conductor](https://conductor.build)'s shape — projects in a rail, threads
-inside them, files and changes and checks on the right, a dock underneath — with
-the local machine replaced by a sandbox somebody else is paying for. Where that
-substitution costs a feature, the app says so in the place the feature would
-have been rather than shipping a button that does nothing.
+The shape is a desktop editor's — projects in a rail, tracks inside them, files
+and changes and checks on the right, a dock underneath — with the local machine
+replaced by a persistent cloud sandbox. Where that substitution costs a feature,
+the app says so in the place the feature would have been rather than shipping a
+button that does nothing.
 
-A React SPA over a Bun server. Client patterns are [paddock](../paddock)'s; the
-identity model is paddock's too, per project rather than per person. What is new
-here is a GitHub App, and the reason for it is below.
+A React SPA over a Bun server. Identity is per project rather than per person,
+and sign-in is a GitHub App; the reason for that is below.
+
+This repository is private and all rights are reserved — see [LICENSE](LICENSE).
 
 ## Run it
 
@@ -30,7 +32,7 @@ to run the whole app offline, sign-in included:
 ```bash
 bun install
 bun run mock                        # a fake Fountain and GitHub on :8793
-bun run server                      # the Switchyard server on :8081
+bun run server                      # the Ravix server on :8081
 bun run dev                         # the SPA on :5183
 ```
 
@@ -43,14 +45,14 @@ Against the real thing, the server takes:
 | --- | --- |
 | `FOUNTAIN_URL` | defaults to `https://managoat.com` |
 | `FOUNTAIN_API_KEY` | **required** — the account every machine is built on |
-| `SWITCHYARD_SECRET` | encrypts stored GitHub tokens; generated into `DATA_DIR/secret` if unset |
+| `RAVIX_SECRET` | encrypts stored GitHub tokens; generated into `DATA_DIR/secret` if unset |
 | `PUBLIC_URL` | this server as GitHub reaches it; must match the App's callback |
 | `GITHUB_APP_ID` `GITHUB_APP_SLUG` `GITHUB_CLIENT_ID` `GITHUB_CLIENT_SECRET` `GITHUB_PRIVATE_KEY` | all of them, or none of them |
 | `SPRITES_TOKEN` | optional — enables terminal/run/vitals and the preview provider |
 | `PREVIEW_DOMAIN` | optional — dedicated preview hostname suffix; absent means previews are unavailable |
 | `PREVIEW_PORT` | private gateway listener, default `8082`; HTTPS ingress forwards here |
 | `SHARED_BROWSER` | set to `1` to enable the persistent shared browser and agent helper |
-| `DATA_DIR` `STATIC_DIR` `PORT` | as everywhere else in the suite |
+| `DATA_DIR` `STATIC_DIR` `PORT` | where SQLite lives, where the built SPA is served from, and the listener |
 
 Nothing needs registering on Fountain: the browser never talks to it, so there
 is no OAuth client and no CORS origin.
@@ -66,7 +68,7 @@ be configured. Regular track web previews remain available.
 
 ## Shared browser
 
-With `SHARED_BROWSER=1`, each machine has one Switchyard-owned browser profile
+With `SHARED_BROWSER=1`, each machine has one Ravix-owned browser profile
 shared by its tracks and participants. The chat card supports viewing, input,
 human/agent handoff, and encrypted portable checkpoints that an owner can
 restore into another project they own. It is separate from app previews and
@@ -89,8 +91,8 @@ settings, start the preview, and use status and logs to fix startup failures.
 When it reports Ready, use **Open preview** to enter through your signed-in
 browser session. These are the same saved track settings the form edits.
 
-Before delivering each user turn, Switchyard installs a small shell helper at
-`/home/sprite/.switchyard/previews/<track-id>.sh` and includes its usage in the
+Before delivering each user turn, Ravix installs a small shell helper at
+`/home/sprite/.ravix/previews/<track-id>.sh` and includes its usage in the
 agent's instructions. Existing conversations get it on their next turn;
 recreating a project or conversation is unnecessary. The transcript displays
 the person's original message, with their attribution, rather than the injected
@@ -121,7 +123,7 @@ npm run dev -- --host 127.0.0.1 --port "$PORT" --strictPort
 ```
 
 Set Vite's `server.allowedHosts` to your preview suffix, for example
-`[".preview.switchyard.inevitable.fyi"]`. Keep HMR on the browser's current
+`[".preview.ravix.sh"]`. Keep HMR on the browser's current
 host and port; avoid hardcoded localhost HMR URLs. Use `/` as the readiness
 path, or an app health endpoint that returns 2xx/3xx. Dependencies must already
 exist in the workspace. The command must honor `$PORT` and refuse a collision;
@@ -139,7 +141,7 @@ Each track has a named Sprites service, a persistent port reservation and its
 own browser origin. Services do not use the machine's public HTTP service
 route: the gateway carries HTTP and WebSocket/HMR over authenticated private
 TCP tunnels. A one-minute single-use ticket establishes a host-only, HttpOnly
-preview cookie, bound to the signed-in Switchyard session. Membership is checked
+preview cookie, bound to the signed-in Ravix session. Membership is checked
 on every request and upgrade; open streams are checked on membership events
 and every second. Sign-out or removal invalidates that user's preview access.
 Provider credentials and gateway cookies never reach the app. These browser
@@ -150,23 +152,23 @@ holds a 90-second viewing lease and refreshes a two-minute Sprites Task while
 that lease is active. It does not health-poll after the lease expires. After
 five minutes without activity it stops the service; opening it starts it again.
 The app's CSP must allow the injected same-origin
-`/__switchyard/activity.js` script and heartbeat fetch. Apps that block it, or
-serve no HTML, stay active only while requests arrive. The `/__switchyard/`
+`/__ravix/activity.js` script and heartbeat fetch. Apps that block it, or
+serve no HTML, stay active only while requests arrive. The `/__ravix/`
 path is reserved. Closing a track, rebuilding or archiving a project removes
-its services; failed cleanup is saved for retry. Restarting Switchyard preserves
+its services; failed cleanup is saved for retry. Restarting Ravix preserves
 services and reconciles recent active intent from SQLite.
 
 ### Enable gateway routing
 
 Production requires HTTPS on a wildcard preview domain separate from
 `PUBLIC_URL`. Prefer a different registrable domain from the application. The
-deployment uses `preview.switchyard.inevitable.fyi`, while the app is on
-`switchyard.demo.managoat.com`.
+deployment uses `preview.ravix.sh`, while the app is on
+`app.ravix.sh`.
 
-1. Provision `*.preview.switchyard.inevitable.fyi` DNS to the cluster ingress.
+1. Provision `*.preview.ravix.sh` DNS to the cluster ingress.
 2. Confirm the existing `letsencrypt-production` DNS01 issuer can issue for
    that zone, or change the Certificate's issuer and domain.
-3. Build/publish the new Switchyard image and use `apps/switchyard/k8s`
+3. Build/publish the new Ravix image and use `k8s`
    in the deployment's Kustomize/Flux configuration. It sets
    `PREVIEW_DOMAIN`/`PREVIEW_PORT` and includes the internal
    gateway Service, wildcard certificate and HTTPS Traefik route.
@@ -175,9 +177,9 @@ deployment uses `preview.switchyard.inevitable.fyi`, while the app is on
    Verify both track URLs and signed-out denial before enabling team use.
 
 Render the manifests with
-`kubectl kustomize apps/switchyard/k8s` from the repository root.
+`kubectl kustomize k8s` from the repository root.
 `k8s-previews/` remains a compatibility entry point for the same resources. This version
-uses one Switchyard replica and its existing SQLite volume; orchestration
+uses one Ravix replica and its existing SQLite volume; orchestration
 locks are process-local. Persist and back up that volume. The production
 build bundles the server's transport dependencies into `dist-server/index.js`;
 the container runs that bundle.
@@ -197,20 +199,20 @@ Fountain from independently marking its conversation parked.
 
 ## Whose account is this
 
-This is the one app in the suite where the answer is not "yours", and it is
-worth being blunt about because everything else follows from it.
+The answer is not "yours", and it is worth being blunt about because
+everything else follows from it.
 
 Sign-in is GitHub. So a person here has **no Fountain account**, no key to
 paste, and nothing to spend. Every machine runs on the server's single Fountain
-key, and the turns are on the deployment. That buys the thing the demo is
-actually for — you arrive, you pick a repository, and thirty seconds later an
-agent is working in a worktree — at the cost of a server that holds a real
-credential and a shared blast radius if it leaks.
+key, and the turns are on the deployment. That buys the thing the product is
+for — you arrive, you pick a repository, and thirty seconds later an agent is
+working in a worktree, with inference included — at the cost of a server that
+holds a real credential and a shared blast radius if it leaks.
 
-It also decides the architecture. There is **no Fountain proxy**. Paddock
-forwards a curated list of Fountain paths on the owner's key, which is safe
-because the owner is spending their own account. Forwarding anything here would
-hand a stranger the account every machine on the deployment is built on. So
+It also decides the architecture. There is **no Fountain proxy**. An app whose
+users spend their own Fountain accounts can safely forward a curated list of
+Fountain paths on the caller's key. Forwarding anything here would hand a
+stranger the account every machine on the deployment is built on. So
 every route in `server/app.ts` is a typed operation on something the caller may
 reach, `shared/api.ts` is the whole of what the browser can name, and the word
 "Fountain" does not appear in `src/` at all.
@@ -221,9 +223,9 @@ Fountain builds a sandbox from an identity — `(user, agent, environment, vault
 by id. Change any of those ids and the disk you were using is gone.
 
 So a **project** is exactly one agent, one environment and one vault, made
-together at creation and never replaced. Conductor's own definition of a project
-is nearly this sentence — "an environment and an agent" — which is why the word
-survived the port. Every setting the project panel offers is a mutation of one
+together at creation and never replaced. "An environment and an agent" is the
+whole definition of a project here. Every setting the project panel offers is a
+mutation of one
 of those three records in place, so no configuration change can take the machine
 away.
 
@@ -236,9 +238,8 @@ row pointing at a machine nobody can build.
 
 ## A track is a worktree
 
-Conductor calls these threads, or workspaces. Here they are tracks, because
-that is what they are in a yard: parallel lines off one main, each holding
-something different, all on the same ground.
+Other tools call these threads, or workspaces. Here they are tracks: parallel
+lines off one main, each holding something different, all on the same ground.
 
 Opening one sends a turn that runs `git worktree add`, and you watch it happen
 in the transcript. That is not a loading state dressed up — it is the honest
@@ -246,7 +247,7 @@ shape of the problem. Making a *conversation* is an API call and takes a moment;
 making a *worktree* is work on a real machine and takes a turn. The two cannot
 be atomic, so the track exists before its directory does, the ribbon says
 "Creating" rather than "Created" until the machine answers, and the composer is
-live the whole time because Switchyard saves follow-up prompts on its server
+live the whole time because Ravix saves follow-up prompts on its server
 and delivers them when the conversation is ready.
 
 A track started from a pull request, a branch or an issue takes its name from
@@ -276,11 +277,11 @@ in it is a discard whether or not the person was told.
 
 ## Queue work and close the tab
 
-Every prompt is saved in Switchyard's SQLite database before the server
+Every prompt is saved in Ravix's SQLite database before the server
 acknowledges it. Text and attached images stay there while another turn runs.
 The **saved prompts** panel shows the order, sender and delivery state; opening
 the track on another device reads that same queue. Closing a tab, changing
-tracks, or restarting the Switchyard server does not discard waiting work.
+tracks, or restarting the Ravix server does not discard waiting work.
 
 `server/prompt-queue.ts` runs independently of browser connections. Every two
 seconds it checks the first outstanding prompt on each track, refreshes the
@@ -295,10 +296,10 @@ sender's access prevents their waiting instructions from being delivered.
 Once delivery has started, use **Stop this turn** instead of cancellation.
 
 A unique `requestId` on `POST /api/tracks/:id/prompt` makes a repeated HTTP
-submission return the same receipt. **Saved** means accepted by Switchyard;
+submission return the same receipt. **Saved** means accepted by Ravix;
 after Fountain accepts delivery, its transcript owns the running turn.
 Fountain does not offer an idempotency key for that second handoff. A lost
-response or a Switchyard restart during delivery therefore leaves the prompt
+response or a Ravix restart during delivery therefore leaves the prompt
 as **Delivery unconfirmed**, with later prompts on that track held behind it.
 Check the transcript, then cancel it or explicitly send it again. An uncertain
 delivery is never automatically replayed.
@@ -322,17 +323,17 @@ upstream request and the browser stream, including an idle connection. So the
 deltas arrive as the runtime produced them, and everything below is about not
 throwing that away on the way to the screen.
 
-The shared parser (`@managoat/fountain-app/acp`) says what blocks a turn has
+The shared parser (`@ravix/fountain-app/acp`) says what blocks a turn has
 and in what order. It flattens each tool call to a name and a summary, which is
-all a preview bubble elsewhere in the suite needs and not enough here: rendered
+enough for a preview bubble and not enough for a transcript: rendered
 from that alone, a turn that read four files, ran two commands and rewrote a
 module is eight identical grey chips reading `execute command=…`. That sameness
 — not the latency — is what makes a transcript over a real agent feel generic.
 
-So switchyard reads the same events a second time (`src/lib/tools.ts`) for the
+So ravix reads the same events a second time (`src/lib/tools.ts`) for the
 detail the block dropped, and joins it back on `toolCallId`. Nothing in that
-pass can change the shape of the transcript, and the fifteen other apps on the
-shared parser are untouched. On top of it:
+pass can change the shape of the transcript, and the shared parser is
+untouched. On top of it:
 
 - **The reply is markdown**, because that is what the agent writes.
   `src/lib/md.ts` is a renderer with no dependency and two properties a live
@@ -382,7 +383,7 @@ Two things follow from sign-in being GitHub rather than an email:
 
   A track link lasts a week; a project link lasts two days. The shorter number
   is the whole argument for having two: a project link is the widest thing
-  switchyard hands out, so it is the one that should least survive being
+  ravix hands out, so it is the one that should least survive being
   forgotten in a chat scrollback. Nobody is worse off — minting another is one
   button.
 
@@ -495,7 +496,7 @@ are kept from trampling each other by a **rule the agent follows**, stated in
 
 The app does what it can to make that rule stick. It is said three times over —
 in the system prompt, in the turn that cuts the worktree, and in the header of
-every prompt switchyard sends itself — and `shared/spec.test.ts` asserts on the
+every prompt ravix sends itself — and `shared/spec.test.ts` asserts on the
 sentences, so losing one in an edit fails a build rather than being discovered
 by two tracks committing to the same branch. A person's own instructions are
 appended *after* the rule rather than before it, so an `AGENTS.md` that opens
@@ -506,11 +507,10 @@ find that out from behaviour.
 
 ## The GitHub App, and why it is not a token
 
-Paddock's README says there is no GitHub App and there will not be one, and it
-is right for paddock: only the owner adds a repository there, so an App would
-buy a picker and a worse credential. Switchyard is the case paddock names as the
-exception — the app needs to know *which repositories this person can offer*
-before they have typed anything.
+An app where only the owner adds a repository does not need a GitHub App: it
+would buy a picker and a worse credential. Ravix is the other case — the app
+needs to know *which repositories this person can offer* before they have typed
+anything.
 
 An App answers that, and the credential it gives you is strictly better than the
 alternative:
@@ -537,7 +537,7 @@ alternative:
 The same App is the identity provider, so "sign in" and "which repositories may
 we see" come from one registration. `GET /user/installations` with the *user's*
 token is the join, and it is the correct question: asking the App would list
-every account that has ever installed switchyard.
+every account that has ever installed ravix.
 
 Two round trips, in either order. Somebody signed in with no installation is not
 a broken state — it is where everyone is for ten seconds, and where anybody who
@@ -546,10 +546,10 @@ declines stays.
 ## The terminal is real, and it is not a PTY
 
 Fountain deliberately has no exec: reads of a sandbox are free, every write is a
-turn. That is the right boundary for Fountain and it is why paddock's terminal
-is a Claude Code prompt rendered as scrollback.
+turn. That is the right boundary for Fountain, and under it a "terminal" can
+only be an agent prompt rendered as scrollback.
 
-Switchyard goes one layer down. Fountain's sandboxes run on
+Ravix goes one layer down. Fountain's sandboxes run on
 [Sprites](https://sprites.dev), and a sandbox tells you the name of its sprite
 (`sandbox.sprite_name`), so a server holding `SPRITES_TOKEN` can talk to the same
 machine directly. That buys two panels a conversation cannot: a terminal, and a
@@ -574,7 +574,7 @@ discovered:
 
 The same exec buys one more thing, and it is deliberately the smallest thing on
 the screen: `cpu 34% · ram 1.4/4G · disk 12/98G`, grey, at the right-hand end of
-the crumbs. Nobody opens switchyard to watch a gauge. But four tracks on one
+the crumbs. Nobody opens ravix to watch a gauge. But four tracks on one
 project share one CPU allowance, one memory limit and one disk, and when the
 fourth `bun install` of the afternoon starts swapping, "is it me or is it the
 box?" has no other way to be answered from in here.
@@ -607,7 +607,7 @@ would read as a fault on a machine that is working perfectly well.
 
 The theme picker carries the editor canon — One Dark, Dracula, Nord, Tokyo
 Night, Catppuccin, Night Owl, Monokai, Gruvbox, Solarized both ways, GitHub and
-One in their light versions — alongside this app's own Switchyard and Daylight.
+One in their light versions — alongside this app's own Ravix and Daylight.
 It is not decoration. What fills this screen is a transcript full of diffs, and
 somebody who has read diffs in Gruvbox for six years reads them faster in
 Gruvbox.
@@ -628,7 +628,7 @@ near-black panel in it looks like a design choice.
 
 ## What is not here, and why
 
-| Conductor has | Switchyard | Because |
+| A desktop editor has | Ravix | Because |
 | --- | --- | --- |
 | Open a local project | a card, disabled, saying so | The machine is in the cloud. There is no folder on your computer for it to open. |
 | Multiple tabs per thread | one conversation per track | A second tab on the same worktree is two agents editing one branch — the thing the whole app is arranged to prevent. |
@@ -644,27 +644,34 @@ tree, changes, GitHub checks, opening a pull request, the terminal — is real.
 | --- | --- |
 | who you are | a session cookie over a GitHub App OAuth token, encrypted at rest |
 | which repositories you can offer | `GET /user/installations` with your token, live |
-| which project is which | a row — a project's name and repository are switchyard's ideas, not Fountain's |
+| which project is which | a row — a project's name and repository are ravix's ideas, not Fountain's |
 | whether a machine is up | Fountain's conversation list, live. Nothing about a machine is stored. |
 | which track is behind | the revision in its `channel_id` versus the project's |
 
-`shared/spec.ts` and `shared/ids.ts` are the contract — what switchyard asks the
+`shared/spec.ts` and `shared/ids.ts` are the contract — what ravix asks the
 machine for, and the four places a track's slug is load-bearing at once
-(a directory, a branch, a channel id, and a name in the rail). They are the two
-files the suite never shares, because they are the product.
+(a directory, a branch, a channel id, and a name in the rail). They are the
+product.
 
 ## Deploy
 
-Push to `main`; CI builds `ghcr.io/managoat/switchyard` and pins the sha into
-`k8s/deployment.yaml`. Flux in
-[jhgaylor/home-cloud](https://github.com/jhgaylor/home-cloud) reconciles it.
+Push to `main`; `.github/workflows/build.yml` builds `ghcr.io/ravioli-hq/ravix`
+and pins the sha into `k8s/deployment.yaml`. A Flux `Kustomization` pointed at
+`k8s/` reconciles it. The manifests name `app.ravix.sh` for the app and
+`*.preview.ravix.sh` for track previews; both need DNS at the cluster ingress
+and a GitHub App registered with `https://app.ravix.sh` as its callback.
 
-Unlike the rest of the suite, this one needs real secrets in the cluster — see
-`k8s/infisicalsecret.yaml` for the folder and the list. The `secretRef` is
-optional on purpose: before it syncs the app still serves and says on screen
-which variable it is missing, which is a better failure than a pod that will not
-start.
+The app needs real secrets in the cluster — see `k8s/infisicalsecret.yaml` for
+the folder and the list. The `secretRef` is optional on purpose: before it
+syncs the app still serves and says on screen which variable it is missing,
+which is a better failure than a pod that will not start.
+
+## Shared code
+
+`packages/fountain-app` holds the Fountain client libs — the SSE reader, the
+ACP log parser, the settings store and PKCE sign-in. The app imports the ACP
+parser from it; the rest is kept so the package stays whole.
 
 ## License
 
-MIT — see [LICENSE](../../LICENSE).
+All rights reserved — see [LICENSE](LICENSE).

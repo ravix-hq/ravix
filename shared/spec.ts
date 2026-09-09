@@ -1,9 +1,9 @@
 /**
- * The prompt contract: what switchyard asks the machine to do, and how the
+ * The prompt contract: what ravix asks the machine to do, and how the
  * machine reports back. Per-app on purpose — this and `protocol.ts` are the
  * two files the demo suite never shares, because they *are* the product.
  *
- * Switchyard's whole shape follows from one fact and one wish.
+ * Ravix's whole shape follows from one fact and one wish.
  *
  * The fact: a project is **one machine**. Fountain builds a sandbox from an
  * identity — `(user, agent, environment, vault)` by id — so a project that
@@ -20,7 +20,7 @@
  * chroot here and no per-track permission — the isolation is a rule the agent
  * follows. So the rule is stated in three places that reinforce each other:
  * the system prompt (every turn), the track's opening turn (where the worktree
- * is actually made), and the header of every prompt switchyard sends itself.
+ * is actually made), and the header of every prompt ravix sends itself.
  * Saying it once and hoping is how two tracks end up committing to the same
  * branch.
  */
@@ -32,19 +32,19 @@ export const RECEIPT_PATH = `${STATE_DIR}/tracks.json`;
 /**
  * The system prompt for a project's agent.
  *
- * It is the only mechanism switchyard has for keeping tracks apart, so it
+ * It is the only mechanism ravix has for keeping tracks apart, so it
  * spends its length on that and on nothing else. Everything the app could
  * instead put in a per-turn preamble is here, because a system prompt is on
  * every turn including the ones a person types in a hurry.
  */
 export function systemPrompt(input: { project: string; repoPath: string | null; defaultBranch: string | null }): string {
   const lines = [
-    `You are the coding agent on the switchyard machine for the project "${input.project}".`,
+    `You are the coding agent on the Ravix machine for the project "${input.project}".`,
     "",
     "## The one rule",
     "",
     `Every piece of work happens in its own git worktree under ${WORK_ROOT}. Each`,
-    "conversation you are in — switchyard calls it a *track* — owns exactly one of those",
+    "conversation you are in — Ravix calls it a *track* — owns exactly one of those",
     "directories, and its first turn tells you which. That directory is your working",
     "directory for the whole of that conversation.",
     "",
@@ -76,10 +76,10 @@ export function systemPrompt(input: { project: string; repoPath: string | null; 
   );
   if (input.repoPath) {
     lines.push(
-      `Git is configured for pushing: the remote carries a credential switchyard supplies`,
+      `Git is configured for pushing: the remote carries a credential Ravix supplies`,
       "and re-mints before each turn, so `git push -u origin <your branch>` works. Push",
       "when the person asks and not before. Open pull requests with `gh` if it is present,",
-      "otherwise say what you would open and let switchyard do it.",
+      "otherwise say what you would open and let Ravix do it.",
       "",
     );
     if (input.defaultBranch) {
@@ -89,7 +89,7 @@ export function systemPrompt(input: { project: string; repoPath: string | null; 
   lines.push(
     "## Live previews",
     "",
-    "Switchyard can provide a track-scoped preview helper in the turn's instructions.",
+    "Ravix can provide a track-scoped preview helper in the turn's instructions.",
     "When asked to configure or run a live preview, use that helper to save the app",
     "directory, startup command and readiness path, then start it and inspect status",
     "and logs. The command must use $PORT and fail on a port collision. Keep the",
@@ -102,7 +102,7 @@ export function systemPrompt(input: { project: string; repoPath: string | null; 
     "doing the thing to describing the thing. No summaries of what you are about to do,",
     "no recap afterwards unless it is genuinely non-obvious.",
     "",
-    `Turns whose first line starts with "[switchyard]" come from the app itself rather`,
+    `Turns whose first line starts with "[ravix]" come from the app itself rather`,
     "than a person. Follow those exactly, including any strings they ask you to write",
     "back verbatim.",
   );
@@ -125,7 +125,7 @@ export interface TrackOrigin {
  *
  * This is a real turn rather than something the server does over exec, and
  * that is deliberate on two counts. It works on a Fountain with no Sprites
- * token, which is the configuration switchyard must always run in. And the
+ * token, which is the configuration ravix must always run in. And the
  * first thing a person sees in a new track is the machine actually making
  * their branch, in the scrollback, which is the product.
  *
@@ -143,7 +143,7 @@ export function openTrackPrompt(input: {
 }): string {
   const dir = workdirFor(input.slug);
   const lines = [
-    "[switchyard] Open this track. Make its working directory, then stop.",
+    "[ravix] Open this track. Make its working directory, then stop.",
     "",
   ];
 
@@ -238,7 +238,7 @@ export function closeTrackPrompt(input: { slug: string; repoPath: string | null;
   const dir = workdirFor(input.slug);
   if (!input.repoPath) {
     return [
-      "[switchyard] Close this track. Remove its working directory, then stop.",
+      "[ravix] Close this track. Remove its working directory, then stop.",
       "",
       `  rm -rf ${dir}`,
       "",
@@ -246,7 +246,7 @@ export function closeTrackPrompt(input: { slug: string; repoPath: string | null;
     ].join("\n");
   }
   return [
-    "[switchyard] Close this track. Remove its worktree, then stop.",
+    "[ravix] Close this track. Remove its worktree, then stop.",
     "",
     `  cd ${input.repoPath}`,
     `  git worktree remove ${input.force ? "--force " : ""}${dir}`,
@@ -266,14 +266,14 @@ export function closeTrackPrompt(input: { slug: string; repoPath: string | null;
 /**
  * Ask the machine what its tracks actually look like.
  *
- * Switchyard's database says which tracks it *believes* exist. This asks the
+ * Ravix's database says which tracks it *believes* exist. This asks the
  * box, and the two disagreeing is ordinary rather than exceptional: a rebuild,
  * a worktree a person removed by hand in the terminal, a branch pushed and
  * deleted. The panel shows what the machine said, not what the row claimed.
  */
 export function surveyPrompt(): string {
   return [
-    "[switchyard] Report what is on this machine. Change nothing.",
+    "[ravix] Report what is on this machine. Change nothing.",
     "",
     `  cd ${WORKSPACE_ROOT} 2>/dev/null && ls -1`,
     "  git --git-dir=*/.git worktree list 2>/dev/null || true",
@@ -306,7 +306,7 @@ export function starters(input: { hasRepo: boolean }): { label: string; prompt: 
     ];
   }
   return [
-    { label: "Set up live preview", prompt: "Set up a live preview for this track. Inspect the app, configure its startup command and readiness path with the Switchyard preview helper, start it, and fix any startup issues until it is Ready." },
+    { label: "Set up live preview", prompt: "Set up a live preview for this track. Inspect the app, configure its startup command and readiness path with the Ravix preview helper, start it, and fix any startup issues until it is Ready." },
     { label: "Review recent PRs", prompt: "Look at the pull requests merged into this repository in the last two weeks and tell me what changed, in the order that matters." },
     { label: "Improve agent instructions", prompt: "Read this repository's agent instructions (CLAUDE.md, AGENTS.md, .cursorrules — whichever exist) and suggest concrete improvements based on what the code actually looks like. Show me a diff before writing anything." },
     { label: "Fix a TODO", prompt: "Find the most worthwhile TODO or FIXME in this repository, explain why it is the one worth doing, and fix it." },

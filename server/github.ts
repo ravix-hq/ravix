@@ -24,7 +24,7 @@ import type { GitHubAppConfig } from "./config";
 import type { BranchRef, CheckRun, ChecksReport, IssueRef, PullRef, RepoRef } from "../shared/api";
 import { HttpError } from "./http";
 
-const UA = "switchyard (+https://switchyard.demo.managoat.com)";
+const UA = "ravix (+https://app.ravix.sh)";
 
 export class GitHubError extends Error {
   constructor(
@@ -193,7 +193,7 @@ export class GitHub {
    * The installations this person can see *and* this App has.
    *
    * The intersection is the point. Asking the App for its installations would
-   * list every account that has ever installed switchyard; asking the user's
+   * list every account that has ever installed ravix; asking the user's
    * token for theirs lists only the ones they are a member of. The second
    * question is the one the repository picker is actually asking.
    */
@@ -453,9 +453,9 @@ export class GitHub {
 /** A GitHub failure as one of ours, keeping the part a person can act on. */
 export function asHttpError(err: unknown, whatFor: string): HttpError {
   if (err instanceof GitHubError) {
-    if (err.retryAtMs) return new HttpError(503, "github_rate_limited", `GitHub's request limit was reached. Switchyard will retry after ${new Date(err.retryAtMs).toISOString()}.`);
+    if (err.retryAtMs) return new HttpError(503, "github_rate_limited", `GitHub's request limit was reached. Ravix will retry after ${new Date(err.retryAtMs).toISOString()}.`);
     if (err.status === 401 || err.status === 403) {
-      return new HttpError(502, "github_rejected", `GitHub would not let switchyard ${whatFor}: ${err.message}`);
+      return new HttpError(502, "github_rejected", `GitHub would not let Ravix ${whatFor}: ${err.message}`);
     }
     if (err.status === 404) return new HttpError(404, "github_not_found", err.message);
     return new HttpError(err.status >= 500 ? 502 : err.status, "github_error", err.message);

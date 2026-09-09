@@ -3,7 +3,7 @@
  *
  * Shorter than paddock's equivalent, and the difference is worth naming:
  * paddock admits people with no account at all, so identity there is a union
- * and every route downstream has to handle both halves. Switchyard has one
+ * and every route downstream has to handle both halves. Ravix has one
  * kind of caller — somebody signed in with GitHub — and three doors, in
  * widening order:
  *
@@ -84,7 +84,7 @@ export interface ProjectAccess {
  * A project the caller may work in, and in what capacity.
  *
  * The wider door, and the one added when "invite somebody to the whole
- * project" became a thing switchyard can do. A project member reaches every
+ * project" became a thing ravix can do. A project member reaches every
  * track on it — the ones open now and the ones opened tomorrow — and may cut
  * tracks of their own, because a project you were let into where you cannot
  * start a line of work is only a bundle of track invitations with a nicer
@@ -178,18 +178,18 @@ export function requireOwnerOrCutter(role: Role, user: UserRow, track: TrackRow,
  * A deployment with no `FOUNTAIN_API_KEY` can still sign people in and show
  * them their repositories — which is enough of the app working to be
  * confusing. So the failure is named rather than generic: this is the one
- * variable without which switchyard has no machines at all.
+ * variable without which ravix has no machines at all.
  */
 export function requireFountain(ctx: AppContext): Fountain {
   if (!ctx.fountain) {
-    throw new HttpError(503, "no_fountain", "This switchyard has no Fountain account configured, so it cannot build machines.");
+    throw new HttpError(503, "no_fountain", "This Ravix deployment has no Fountain account configured, so it cannot build machines.");
   }
   return ctx.fountain;
 }
 
 export function requireGitHub(ctx: AppContext): GitHub {
   if (!ctx.github) {
-    throw new HttpError(503, "no_github", "This switchyard has no GitHub App configured, so it cannot see repositories.");
+    throw new HttpError(503, "no_github", "This Ravix deployment has no GitHub App configured, so it cannot see repositories.");
   }
   return ctx.github;
 }
@@ -201,7 +201,7 @@ export function requireGitHub(ctx: AppContext): GitHub {
  */
 export function requireSprites(ctx: AppContext): Sprites {
   if (!ctx.sprites) {
-    throw new HttpError(501, "no_exec", "This switchyard has no Sprites token, so it cannot run commands on the machine directly.");
+    throw new HttpError(501, "no_exec", "This Ravix deployment has no Sprites token, so it cannot run commands on the machine directly.");
   }
   return ctx.sprites;
 }

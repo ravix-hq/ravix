@@ -1,6 +1,6 @@
 # Shared browser
 
-Switchyard owns the browser session. There is one shared profile per project
+Ravix owns the browser session. There is one shared profile per project
 machine, used by every authorized participant and agent across its tracks.
 Actors have control leases; they do not have personal browser profiles.
 Machine-account logins are ordinary state in that shared profile. Opening or
@@ -9,23 +9,23 @@ not stop the browser.
 
 ## Runtime and setup
 
-Enable `SHARED_BROWSER=1` on the Switchyard server, alongside `FOUNTAIN_API_KEY`
+Enable `SHARED_BROWSER=1` on the Ravix server, alongside `FOUNTAIN_API_KEY`
 and `SPRITES_TOKEN`. Open a track and use **Shared browser → Open browser**.
 The first open installs pinned `playwright-core@1.63.0` and its Chromium build
-on the Sprite, then registers the private `switchyard-browser` service.
+on the Sprite, then registers the private `ravix-browser` service.
 The machine must have Node, npm, and Chromium's Linux system libraries.
 Provision the system libraries in the machine image/setup using Playwright's
 documented `install-deps chromium` command, with the machine's normal package
 installation privileges. Chromium runs with its sandbox enabled.
 
 The service listens only on loopback port 40000, outside the web and native
-preview port ranges. It has no Sprite public HTTP port. Switchyard reaches it
+preview port ranges. It has no Sprite public HTTP port. Ravix reaches it
 over the existing authenticated Sprites TCP tunnel and supplies a service
 credential from encrypted server storage. Remote pages cannot call the private
 RPC: it requires that credential and refuses browser Origin headers. Browser
-traffic, cookies, and executable page content do not run in Switchyard's origin.
+traffic, cookies, and executable page content do not run in Ravix's origin.
 
-The runtime and profile are under `/home/sprite/.switchyard` (the repository's
+The runtime and profile are under `/home/sprite/.ravix` (the repository's
 `STATE_DIR`), outside track worktrees. Profile storage uses a session ID and an
 internal profile generation; no path derives from a participant's identity.
 There is deliberately no profile picker. A future profile catalog can use
@@ -40,7 +40,7 @@ Active viewers/operations refresh an expiring Sprite activity task; a hidden
 chat does not keep a machine awake indefinitely.
 
 Project rebuild/delete stops the service before removing the machine. Browser
-checkpoints stay in Switchyard's database, independent of the Sprite disk.
+checkpoints stay in Ravix's database, independent of the Sprite disk.
 They are not automatic backups of everything since the last explicit checkpoint.
 
 ## Chat and agent behavior
@@ -75,7 +75,7 @@ still retain their existing access boundaries.
 
 Checkpoints contain a versioned Chromium storage snapshot (cookies,
 localStorage and IndexedDB), tab URLs, and per-tab sessionStorage. The snapshot
-is encrypted with Switchyard's existing AES-GCM cipher before SQLite storage.
+is encrypted with Ravix's existing AES-GCM cipher before SQLite storage.
 API responses contain checkpoint metadata only. The current limits are 20 tabs,
 20 checkpoints per session and 16 MB per checkpoint response.
 
@@ -110,7 +110,7 @@ tracks, access/origin checks, concurrent starts, restart/profile reuse,
 credential exclusion, encrypted checkpoint persistence across a database reopen,
 cross-project owner checks, machine replacement and helper revocation.
 
-The production build and existing Switchyard test suite passed during the
+The production build and existing Ravix test suite passed during the
 implementation. The local UI proof exercised opening a tab, taking control,
 typing and saving a form, expanding the card, and saving/restoring a checkpoint
 through the card. Restore released control and the browser console stayed clear.
@@ -131,15 +131,15 @@ was performed.
 Run the real-browser test:
 
 ```sh
-cd apps/switchyard
-SWITCHYARD_BROWSER_TEST_EXECUTABLE='/path/to/chromium' bun test runner/browser-worker.test.ts
+cd apps/ravix
+RAVIX_BROWSER_TEST_EXECUTABLE='/path/to/chromium' bun test runner/browser-worker.test.ts
 ```
 
 Run the interactive UI proof (real UI/router/worker, local transport in place
 of Sprites):
 
 ```sh
-SWITCHYARD_BROWSER_TEST_EXECUTABLE='/path/to/chromium' bun scripts/browser-live-proof.ts
+RAVIX_BROWSER_TEST_EXECUTABLE='/path/to/chromium' bun scripts/browser-live-proof.ts
 ```
 
 Open `http://127.0.0.1:5199`, then visit the fixture URL shown there inside the

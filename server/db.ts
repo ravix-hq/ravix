@@ -1,5 +1,5 @@
 /**
- * What switchyard remembers.
+ * What ravix remembers.
  *
  * Deliberately small, and the reason is the same one paddock gives: Fountain
  * already knows most of this, and two records of one fact drift. So the rule
@@ -8,10 +8,10 @@
  *
  *   - who signed in, and their GitHub installation — Fountain has no idea
  *   - which project is which — a row, because a project's name and its repo
- *     are switchyard's ideas rather than Fountain's
+ *     are ravix's ideas rather than Fountain's
  *   - which track is which — a row, because a `channel_id` can say the slug
  *     but not who made it, from what, or what it is called
- *   - accepted prompts awaiting delivery — work Switchyard owes the caller,
+ *   - accepted prompts awaiting delivery — work Ravix owes the caller,
  *     which must outlive the browser that submitted it
  *
  * Everything else is read live: a track's status, its turn count, whether the

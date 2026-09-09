@@ -64,7 +64,7 @@ export async function registeredRunner(configFile: string, pairingFile?: string,
     const config = parseRunnerConfig(await privateJson(configFile)), user = userInfo();
     if (process.platform !== 'darwin' || arch() !== 'arm64' || user.uid === 0 || user.username !== config.expectedAccount)
         throw Error(`Run as the dedicated ${config.expectedAccount} account`);
-    const state = await privateDirectory(join(user.homedir, '.local/share/switchyard/managed'));
+    const state = await privateDirectory(join(user.homedir, '.local/share/ravix/managed'));
     const lockPath = join(state, 'runner.lock'), lock = await open(lockPath, 'wx', 0o600).catch(() => { throw Error('A runner already owns this account. Review managed/runner.lock before recovery.'); });
     await lock.writeFile(JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() }) + '\n');
     await lock.close();
@@ -77,7 +77,7 @@ export async function registeredRunner(configFile: string, pairingFile?: string,
                 throw Error('This account already has a runner identity; revoke and archive it before pairing another');
             const code = (await readFile(pairingFile, 'utf8')).trim();
             if (!/^[\w-]{43}$/.test(code))
-                throw Error('Use the runner pairing code shown by Switchyard');
+                throw Error('Use the runner pairing code shown by Ravix');
             const response = await fetch(`${config.serverUrl}/api/native/runners/register`, { method: 'POST', redirect: 'error', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ code, name: config.name, capabilities: caps }), signal: AbortSignal.any([AbortSignal.timeout(15000), ...(signal ? [signal] : [])]) });
             if (!response.ok)
                 throw Error(`Runner registration failed (${response.status}); create a fresh pairing code`);

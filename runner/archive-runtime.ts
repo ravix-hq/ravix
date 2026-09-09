@@ -45,5 +45,5 @@ export async function archiveCompletedRuntime(statePath: string, account: string
 if (import.meta.main) {
   const user = userInfo();
   if (process.argv.length !== 3 || user.uid === 0 || user.username !== process.argv[2]) throw Error('Run as the dedicated runner account');
-  console.log(JSON.stringify(await archiveCompletedRuntime(join(user.homedir, '.local/share/switchyard/runtime'), user.username), null, 2));
+  console.log(JSON.stringify(await archiveCompletedRuntime(join(user.homedir, '.local/share/ravix/runtime'), user.username), null, 2));
 }

@@ -43,7 +43,7 @@ async function fixture() {
 }
 
 function request(token: string, name = "metro", session = "native-session") {
-  return new Request(`https://switchyard.test/api/native/sessions/${session}/forward/${name}`, { headers: { authorization: `Bearer ${token}` } });
+  return new Request(`https://ravix.test/api/native/sessions/${session}/forward/${name}`, { headers: { authorization: `Bearer ${token}` } });
 }
 
 test("named forwards use server destinations and cannot cross sessions or accept browser authentication", async () => {
@@ -56,8 +56,8 @@ test("named forwards use server destinations and cannot cross sessions or accept
   expect(f.calls).toEqual([f.state.services.metro!, f.state.services.backend!]);
   for (const req of [
     request(grant.token, "arbitrary"), request(grant.token, "metro", "other-session"), request("a".repeat(43)),
-    new Request(request(grant.token).url, { headers: { cookie: "switchyard_session=browser-session" } }),
-    new Request(request(grant.token), { headers: { authorization: `Bearer ${grant.token}`, origin: "https://switchyard.test" } }),
+    new Request(request(grant.token).url, { headers: { cookie: "ravix_session=browser-session" } }),
+    new Request(request(grant.token), { headers: { authorization: `Bearer ${grant.token}`, origin: "https://ravix.test" } }),
     new Request(`${request(grant.token).url}?port=22`, { headers: request(grant.token).headers }),
   ]) expect(await f.access.authorize(req)).toBeNull();
   expect(f.calls).toHaveLength(2);

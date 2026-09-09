@@ -1,8 +1,8 @@
 /**
- * A tiny mock of *both* halves of switchyard's world, in one process.
+ * A tiny mock of *both* halves of ravix's world, in one process.
  *
  * Every other app in this suite needs a fake Fountain to be developed offline.
- * Switchyard needs a fake GitHub as well, and not as a convenience: sign-in is
+ * Ravix needs a fake GitHub as well, and not as a convenience: sign-in is
  * a GitHub App, so without one there is no session, without a session there is
  * no project, and without a project there is nothing on the screen at all. A
  * mock that covered only Fountain would leave the app permanently on its
@@ -35,13 +35,13 @@ const PORT = Number(process.env.MOCK_PORT || 8793);
 const BASE = `http://localhost:${PORT}`;
 
 /**
- * Where switchyard is, as a *browser* reaches it — which is Vite in dev, not
+ * Where ravix is, as a *browser* reaches it — which is Vite in dev, not
  * the API server. The install flow needs it because GitHub's own
  * `/apps/:slug/installations/new` carries no `redirect_uri`: the real one
  * redirects to the callback registered on the App, and the fake has to be told
  * the same thing.
  */
-const APP_URL = (process.env.SWITCHYARD_URL ?? "http://localhost:5183").replace(/\/+$/, "");
+const APP_URL = (process.env.RAVIX_URL ?? "http://localhost:5183").replace(/\/+$/, "");
 
 const now = () => new Date().toISOString();
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -85,7 +85,7 @@ const state = {
   secrets: new Map<string, Map<string, string>>(),
   conversations: [] as Conv[],
   /**
-   * One box per agent, not one per account. Switchyard's projects each get
+   * One box per agent, not one per account. Ravix's projects each get
    * their own agent precisely so they each get their own machine, and a mock
    * with a single global sandbox would make two projects look like one.
    */
@@ -180,7 +180,7 @@ function sse(conversationId: string): Response {
  * `repositories` into `/workspace/<name>`.
  *
  * Seeded when the environment is created rather than when a box is built,
- * because that is the moment switchyard names the mount path and it is the
+ * because that is the moment ravix names the mount path and it is the
  * only moment the mock is told about it. An empty `/workspace` made the Files
  * panel look broken when it was merely accurate.
  */
@@ -308,7 +308,7 @@ async function runTurn(conv: Conv, prompt: string): Promise<void> {
     prompt,
     // The app's own turns are marked as such, which is how the transcript can
     // render "Opening this track" differently from something a person typed.
-    origin: prompt.startsWith("[switchyard]") ? "app" : "user",
+    origin: prompt.startsWith("[ravix]") ? "app" : "user",
     status: "running",
     inserted_at: now(),
   };
@@ -336,7 +336,7 @@ type Say = (body: string) => Promise<void>;
 /**
  * What the machine actually does, read out of the prompt.
  *
- * The `[switchyard]` prompts are a contract — `shared/spec.ts` tells the agent
+ * The `[ravix]` prompts are a contract — `shared/spec.ts` tells the agent
  * exactly what to do and exactly what to reply — so the fake honours it rather
  * than answering in general terms. Cutting a worktree really does create the
  * directory here, which is the whole reason the Files panel works offline;
@@ -346,7 +346,7 @@ type Say = (body: string) => Promise<void>;
 async function act(prompt: string, emit: Emit, say: Say, conv: Conv): Promise<void> {
   const dir = /\/home\/sprite\/work\/[A-Za-z0-9._-]+/.exec(prompt)?.[0] ?? null;
 
-  if (prompt.startsWith("[switchyard] Open this track") && dir) {
+  if (prompt.startsWith("[ravix] Open this track") && dir) {
     const repoPath = /The shared clone is (\/\S+?)\./.exec(prompt)?.[1] ?? null;
     const branch = /git worktree add \S+ -b (\S+)/.exec(prompt)?.[1] ?? null;
 
@@ -375,7 +375,7 @@ async function act(prompt: string, emit: Emit, say: Say, conv: Conv): Promise<vo
     return;
   }
 
-  if (prompt.startsWith("[switchyard] Close this track") && dir) {
+  if (prompt.startsWith("[ravix] Close this track") && dir) {
     const removed = removeTree(dir);
     // A track on a bare machine is a plain directory rather than a worktree,
     // and the prompt asks for `rm -rf` accordingly. Echoing `git worktree
@@ -393,7 +393,7 @@ async function act(prompt: string, emit: Emit, say: Say, conv: Conv): Promise<vo
     return;
   }
 
-  if (prompt.startsWith("[switchyard] Report what is on this machine")) {
+  if (prompt.startsWith("[ravix] Report what is on this machine")) {
     const worktrees = [...state.worktrees].map(([path, w]) => ({ path, branch: w.branch, dirty: false }));
     const repos = [...new Set([...state.worktrees.values()].map((w) => w.repoPath).filter((p): p is string => !!p))];
     emit({ kind: "output", stream: "acp", data: tool("t1", `ls -1 ${WORKSPACE_ROOT} && git worktree list`) });
@@ -429,7 +429,7 @@ function hasFilesUnder(dir: string): boolean {
  * Accept a prompt, or refuse it the way Fountain does.
  *
  * The box runs one turn at a time across every conversation on it, and that is
- * not an implementation detail switchyard can paper over — it is the fact the
+ * not an implementation detail ravix can paper over — it is the fact the
  * whole "one machine, several tracks" design is built around. A second track
  * prompted mid-turn gets 409 `sandbox_at_capacity`; a second prompt to the
  * *same* track queues behind its own turn, which is what a person typing twice
@@ -470,12 +470,12 @@ function secretsFor(parent: string, id: string): Map<string, string> {
 async function fountain(req: Request, url: URL): Promise<Response | null> {
   const p = url.pathname;
   const method = req.method;
-  // The bearer token is read and ignored on purpose: switchyard holds exactly
+  // The bearer token is read and ignored on purpose: ravix holds exactly
   // one Fountain key for everybody, and rejecting a wrong one here would only
   // ever catch a typo in the dev command line.
   const body = method === "POST" || method === "PUT" ? ((await req.json().catch(() => ({}))) as Record<string, unknown>) : {};
 
-  if (p === "/api/auth/me") return json({ data: { id: "u-mock", email: "switchyard@example.com" } });
+  if (p === "/api/auth/me") return json({ data: { id: "u-mock", email: "ravix@example.com" } });
 
   if (p === "/api/catalog") {
     return json({
@@ -574,7 +574,7 @@ async function fountain(req: Request, url: URL): Promise<Response | null> {
       // The rule that costs the most to get wrong, so the fake enforces it.
       // A disk is built for (agent, environment, vault) *by id*, and naming
       // only some of them asks for a different identity — one with no
-      // environment and no vault. Fountain answers 422; switchyard's bug was
+      // environment and no vault. Fountain answers 422; ravix's bug was
       // that nothing local ever did, so the attach silently built a second
       // machine and the first one's worktrees vanished from the UI.
       if (!box || box.id !== b.sandbox_id) return json({ error: "sandbox_not_found" }, 404);
@@ -588,7 +588,7 @@ async function fountain(req: Request, url: URL): Promise<Response | null> {
     } else if (!box) {
       box = {
         id: `sb-${agentId}`,
-        sprite_name: `switchyard-${Math.random().toString(36).slice(2, 8)}`,
+        sprite_name: `ravix-${Math.random().toString(36).slice(2, 8)}`,
         status: "ready",
         provider: "mock",
         mode: "persistent",
@@ -616,7 +616,7 @@ async function fountain(req: Request, url: URL): Promise<Response | null> {
       inserted_at: now(),
     };
     state.conversations.push(conv);
-    // A prompt sent with the launch is the first turn. Switchyard sends the
+    // A prompt sent with the launch is the first turn. Ravix sends the
     // opening turn this way on the launch that *provisions* the box and
     // separately on an attach, so a mock that ignored it would leave every
     // brand-new project's first track sitting in `opening` forever.
@@ -770,7 +770,7 @@ interface MockRepo {
 const REPOS: MockRepo[] = [
   { name: "atlas-api", private: false, language: "TypeScript", description: "The public read API. Bun, SQLite, no framework.", pushed_at: "2026-09-03T18:22:11Z" },
   { name: "ledger", private: true, language: "Go", description: "Double-entry books. Do not touch without a test.", pushed_at: "2026-09-02T09:04:47Z" },
-  { name: "switchyard-notes", private: false, language: null, description: "Design notes, mostly markdown.", pushed_at: "2026-08-28T14:51:02Z" },
+  { name: "ravix-notes", private: false, language: null, description: "Design notes, mostly markdown.", pushed_at: "2026-08-28T14:51:02Z" },
   { name: "cabinet", private: false, language: "Elixir", description: "Document store behind atlas-api.", pushed_at: "2026-08-19T07:38:20Z" },
   { name: "dotfiles", private: false, language: "Shell", description: null, pushed_at: "2026-06-11T22:10:05Z" },
   { name: "old-site", private: false, language: "HTML", description: "Archived. Kept for the redirects.", pushed_at: "2025-11-30T16:00:00Z" },
@@ -867,7 +867,7 @@ function githubApi(req: Request, url: URL, body: Record<string, unknown>): Respo
   if (p === "/user") return json(personFor(req.headers.get("authorization")));
 
   /**
-   * One account by login, which is how somebody with no switchyard account
+   * One account by login, which is how somebody with no ravix account
    * gets invited. A short allowlist rather than "anything is a person":
    * inviting a name that does not exist has to stay reachable offline, because
    * the honest 404 is the more interesting of the two answers.
@@ -1005,8 +1005,8 @@ function githubWeb(req: Request, url: URL, webBody: Record<string, unknown> = {}
         `<a class="btn" style="margin-bottom:8px" href="${redirect}${redirect.includes("?") ? "&" : "?"}${new URLSearchParams({ code: `mockcode:${who.login}`, state })}">Sign in as @${who.login}</a>`,
     ).join("");
     return PAGE(
-      "Authorize switchyard",
-      `<h1>Authorize switchyard</h1>
+      "Authorize Ravix",
+      `<h1>Authorize Ravix</h1>
        <p>This is the mock GitHub. Nothing here is real and no network was involved.</p>
        ${buttons}
        <p style="margin:16px 0 0"><code>${url.searchParams.get("scope") ?? "read:user"}</code></p>`,
@@ -1026,7 +1026,7 @@ function githubWeb(req: Request, url: URL, webBody: Record<string, unknown> = {}
    *
    * The real page carries no `redirect_uri` — GitHub sends the browser to the
    * callback registered on the App — so the fake has to be told where that is,
-   * and `SWITCHYARD_URL` is that. It lands with `installation_id` and no
+   * and `RAVIX_URL` is that. It lands with `installation_id` and no
    * `code`, which is the branch in `auth.callback` that means "already signed
    * in, just granted access".
    */
@@ -1121,12 +1121,12 @@ console.log(
     `  github web ${BASE}/ghweb   (sign in as @${VIEWER.login}, ${REPOS.length} repositories)`,
     `  app key    ${keyPath}`,
     "",
-    "Run the server against it, from apps/switchyard:",
+    "Run the server against it, from the repository root:",
     "",
     `  FOUNTAIN_URL=${BASE} FOUNTAIN_API_KEY=ftn_mock \\`,
     `  SPRITES_TOKEN=sprites_mock SPRITES_URL=http://localhost:${process.env.MOCK_SPRITES_PORT || 8794} PREVIEW_DOMAIN=preview.localhost \\`,
     `  GITHUB_API_URL=${BASE}/gh GITHUB_WEB_URL=${BASE}/ghweb \\`,
-    "  GITHUB_APP_ID=1 GITHUB_APP_SLUG=switchyard-mock \\",
+    "  GITHUB_APP_ID=1 GITHUB_APP_SLUG=ravix-mock \\",
     "  GITHUB_CLIENT_ID=Iv1.mock GITHUB_CLIENT_SECRET=mocksecret \\",
     '  GITHUB_PRIVATE_KEY="$(cat mock/dev-key.pem)" \\',
     `  PUBLIC_URL=${APP_URL} STATIC_DIR= DATA_DIR=./data \\`,

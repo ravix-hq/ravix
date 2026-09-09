@@ -279,7 +279,7 @@ export class Previews {
             if (Date.now() - row.lastActivity > IDLE_MS) await this.stopService(row.trackId);
             else if (row.leaseUntil > Date.now() && !this.operations.has(row.trackId)) await this.serial(row.trackId, () => this.ensureRunning(row.trackId, false));
           }
-        } catch (error) { console.error("switchyard: preview reconciliation", row.trackId, error instanceof Error ? error.message : "failed"); }
+        } catch (error) { console.error("ravix: preview reconciliation", row.trackId, error instanceof Error ? error.message : "failed"); }
       }));
     } finally { this.ticking = false; }
   }
@@ -290,7 +290,7 @@ export async function previewRoute(ctx: AppContext, req: Request, trackId: strin
   const { track } = trackAccess(ctx, user, trackId);
   if (track.closedAt) throw new HttpError(409, "closed_track", "This track is closed.");
   const manager = previews(ctx);
-  if (req.method !== "GET" && req.headers.get("origin") !== new URL(ctx.config.publicUrl).origin) throw new HttpError(403, "origin", "Open preview controls from Switchyard.");
+  if (req.method !== "GET" && req.headers.get("origin") !== new URL(ctx.config.publicUrl).origin) throw new HttpError(403, "origin", "Open preview controls from Ravix.");
   if (action === "config") await manager.configure(trackId, parsePreviewConfig((await readJson(req)).config));
   if (action === "stop") await manager.stopService(trackId);
   if (action === "logs") {
@@ -302,7 +302,7 @@ export async function previewRoute(ctx: AppContext, req: Request, trackId: strin
     const row = ctx.db.previews.ensure(trackId);
     const ticket = randomToken();
     ctx.db.previews.grant({ hash: await sha256(ticket), trackId, sessionHash: await sha256(cookieValue(req, SESSION_COOKIE)!), expires: Date.now() + 60_000, kind: "ticket" });
-    return json({ data: { ...manager.info(trackId), openUrl: `${previewOrigin(ctx, row)}/__switchyard/open#${ticket}` } }, 202, { "cache-control": "no-store" });
+    return json({ data: { ...manager.info(trackId), openUrl: `${previewOrigin(ctx, row)}/__ravix/open#${ticket}` } }, 202, { "cache-control": "no-store" });
   }
   return json({ data: manager.info(trackId) }, 200, { "cache-control": "no-store" });
 }
@@ -310,7 +310,7 @@ export async function previewDefaults(ctx: AppContext, req: Request, projectId: 
   const user = await authenticate(ctx, req);
   projectOf(ctx, user, projectId);
   if (req.method === "PUT") {
-    if (req.headers.get("origin") !== new URL(ctx.config.publicUrl).origin) throw new HttpError(403, "origin", "Open settings from Switchyard.");
+    if (req.headers.get("origin") !== new URL(ctx.config.publicUrl).origin) throw new HttpError(403, "origin", "Open settings from Ravix.");
     const config = parsePreviewConfig((await readJson(req)).config);
     ctx.db.previews.setDefaults(projectId, config);
     await Promise.all(ctx.db.tracksOf(projectId).filter(track => !ctx.db.previews.get(track.id)?.config).map(track => previews(ctx).stopService(track.id)));

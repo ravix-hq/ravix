@@ -8,7 +8,7 @@ test('remote assignment cannot choose a host path, executable, platform, expired
     expect(parseRunnerWork({ ...valid, command: 'rm -rf', buildDirectory: '/private' }, 1, caps)).toEqual(valid);
     for (const patch of [{ targetId: '../../private' }, { epoch: 2 }, { deadline: Date.now() - 1 }, { generation: 0 }, { platform: 'ios' }, { artifactSha256: 'b'.repeat(64) }])
         expect(() => parseRunnerWork({ ...valid, ...patch }, 1, caps)).toThrow();
-    expect(() => parseRunnerConfig({ name: 'Mac', expectedAccount: 'switchyard', serverUrl: 'https://app.test/path', builds: [{ platform: 'android', buildDirectory: '/Users/switchyard/.local/share/switchyard/builds/experiment-' + crypto.randomUUID(), artifactSha256: 'a'.repeat(64) }] })).toThrow();
+    expect(() => parseRunnerConfig({ name: 'Mac', expectedAccount: 'ravix', serverUrl: 'https://app.test/path', builds: [{ platform: 'android', buildDirectory: '/Users/ravix/.local/share/ravix/builds/experiment-' + crypto.randomUUID(), artifactSha256: 'a'.repeat(64) }] })).toThrow();
 });
 test('Mac acknowledges a duplicate offer once and reports completion only after cleanup', async () => {
     const assignment = work(), abort = new AbortController();

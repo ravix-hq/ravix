@@ -60,7 +60,7 @@ describe("themes", () => {
   });
 
   test("index.html applies the same storage key this module owns", () => {
-    expect(THEME_KEY).toBe("switchyard.theme");
+    expect(THEME_KEY).toBe("ravix.theme");
     expect(html).toContain(`localStorage.getItem("${THEME_KEY}")`);
     expect(html).toContain('setAttribute("data-theme"');
   });

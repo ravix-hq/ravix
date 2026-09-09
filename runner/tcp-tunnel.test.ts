@@ -150,7 +150,7 @@ test("runner channel rejects missing credentials, browser origins and wrong sess
   const f = await fixture();
   const Client = WebSocket as unknown as new (url: string, options: { headers: Record<string, string> }) => WebSocket;
   for (const [endpoint, headers] of [
-    [f.endpoint, {}], [f.endpoint, { authorization: `Bearer ${token}`, origin: "https://switchyard.example" }],
+    [f.endpoint, {}], [f.endpoint, { authorization: `Bearer ${token}`, origin: "https://ravix.example" }],
     [f.endpoint.replace("/one/", "/other/"), { authorization: `Bearer ${token}` }],
   ] as [string, Record<string, string>][]) {
     await new Promise<void>((resolve, reject) => {
