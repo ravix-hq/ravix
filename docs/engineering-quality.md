@@ -4,17 +4,17 @@ The migration's first gate reported 86.99% coverage, including test support.
 The production-only baseline was server 90.77%, web 73.35%, workspace LiveView
 41.13%, and track LiveView 37.37%. The aggregate hid the new UI's gaps.
 
-The strengthened local gate passes 717 ExUnit tests, four generated properties, and 26 DOM/guard tests:
+The strengthened local gate passes 719 ExUnit tests, four generated properties, and 27 DOM/guard tests:
 
 | Area | Production baseline | Current coverage | Enforced floor |
 |---|---:|---:|---:|
-| Server | 90.77% | 92.28% | 92% |
-| Web | 73.35% | 91.87% | 90% |
-| Workspace LiveView | 41.13% | 92.96% | 92% |
-| Track LiveView | 37.37% | 93.43% | 92% |
+| Server | 90.77% | 92.25% | 92% |
+| Web | 73.35% | 91.80% | 90% |
+| Workspace LiveView | 41.13% | 93.37% | 92% |
+| Track LiveView | 37.37% | 92.50% | 92% |
 | Browser hooks | Not measured | 99.09% lines / 98.57% functions | 90% per file |
 
-Overall production line coverage is 92.16%. The old 86.99% aggregate included
+Overall production line coverage is 92.12%. The old 86.99% aggregate included
 test support and is therefore not directly comparable to this production total.
 
 ## Gates
@@ -113,6 +113,9 @@ second tab, keyboard resizing/dialog focus, and axe checks in Ravix and Daylight
 The UI adaptation from PR #14 adds local font-loading checks, scratch-project
 creation, recent-project navigation, theme persistence, and screenshots of public
 and workspace pages at desktop, tablet, and mobile widths.
+The deployed Switchyard comparison adds project disclosure, advanced track options,
+terminal draft retention across dock changes, parent dialogs from a nested track,
+and scrollable settings checks.
 Failure traces and screenshots are retained for seven days; retries are disabled.
 
 Run locally after `bunx playwright install chromium`:

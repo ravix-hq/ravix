@@ -157,7 +157,10 @@
       </div>
       <div class="workspace-actions yard-nav">
         <.link patch="/inbox" class={["yard-item", @live_action in [:home, :inbox] && "on"]}>
-          <.icon name="terminal" />Inbox
+          <.icon name="terminal" />Inbox<span class="spacer"></span>
+          <span class="badge">
+            {attention_count(@tracks)}
+          </span>
         </.link>
         <.link patch="/home" class={["yard-item", @live_action == :projects && "on"]}>
           <.icon name="home" />Home
@@ -165,48 +168,130 @@
         <button
           class="yard-item"
           phx-click={JS.push_focus() |> JS.push("dialog")}
+          phx-value-name="new-project"
+        >
+          <.icon name="plus" />Add a project
+        </button>
+
+        <button
+          class="yard-item"
+          phx-click={JS.push_focus() |> JS.push("dialog")}
           phx-value-name="search"
         >
           <.icon name="search" />Search
         </button>
-        <button
-          class="yard-item"
-          phx-click={JS.push_focus() |> JS.push("dialog")}
-          phx-value-name="new-project"
-        >
-          <.icon name="plus" />New project
-        </button>
       </div>
       <div class="yard-scroll">
-        <div class="yard-label">Projects</div>
+        <div class="yard-label">
+          <span>Projects</span><span class="spacer"></span><button
+            class="ghost"
+            aria-label="Add a project"
+            phx-click={JS.push_focus() |> JS.push("dialog")}
+            phx-value-name="new-project"
+          ><.icon name="plus" size={13} /></button>
+        </div>
         <section :for={project <- @projects} class="workspace-project">
-          <.link
-            patch={"/p/#{project.id}"}
-            class={["workspace-project-name", @project && @project.id == project.id && "selected"]}
+          <div class="workspace-project-row">
+            <button
+              class="project-toggle ghost"
+              phx-click="toggle-project"
+              phx-value-id={project.id}
+              aria-expanded={MapSet.member?(@expanded_projects, project.id)}
+              aria-controls={"project-tracks-#{project.id}"}
+              aria-label={"#{if MapSet.member?(@expanded_projects, project.id), do: "Collapse", else: "Expand"} #{project.name}"}
+            >
+              <.icon
+                name="chevron"
+                size={12}
+                open={MapSet.member?(@expanded_projects, project.id)}
+              />
+            </button>
+            <.link
+              patch={"/p/#{project.id}"}
+              class={[
+                "workspace-project-name",
+                @project && @project.id == project.id && "selected"
+              ]}
+            >
+              <span class="project-mark" aria-hidden="true">
+                {String.first(project.name) |> String.upcase()}
+              </span>
+              <span class="truncate">{project.name}</span>
+            </.link>
+            <.link
+              :if={project.access != :tracks}
+              patch={"/p/#{project.id}?new=track"}
+              class="project-add"
+              aria-label={"New track in #{project.name}"}
+            >
+              <.icon name="plus" size={13} />
+            </.link>
+          </div>
+          <div
+            id={"project-tracks-#{project.id}"}
+            hidden={!MapSet.member?(@expanded_projects, project.id)}
+            class="project-tracks"
           >
-            <span class="project-mark" aria-hidden="true">
-              {String.first(project.name) |> String.upcase()}
-            </span>
-            <span class="truncate">{project.name}</span>
-          </.link>
-          <.link
-            :for={track <- @tracks[project.id] || []}
-            patch={"/p/#{project.id}/t/#{track.id}"}
-            class={["workspace-track", @track_id == track.id && "selected"]}
-          >
-            <span class={"status-dot #{track.status}"} aria-hidden="true"></span><span class="track-title">{track.title}</span><span
-              :if={track.unread}
-              aria-label="Unread"
-            >●</span>
-          </.link>
+            <.link
+              :for={{track, index} <- Enum.with_index(@tracks[project.id] || [], 1)}
+              patch={"/p/#{project.id}/t/#{track.id}"}
+              class={["workspace-track", @track_id == track.id && "selected"]}
+            >
+              <span
+                :if={track.status in [:running, :opening]}
+                class={"dot #{track.status}"}
+                role="img"
+                aria-label="Working"
+              >
+              </span>
+              <span
+                :if={attention?(track)}
+                class="track-attention"
+                role="img"
+                aria-label="Needs attention"
+              >
+                !
+              </span>
+              <span
+                :if={track.status not in [:running, :opening] && !attention?(track)}
+                class="track-num"
+              >
+                {index}
+              </span>
+              <span class="track-title">{track.title}</span>
+            </.link>
+            <div
+              :if={@project && @project.id == project.id && project.access != :tracks}
+              class="project-links"
+            >
+              <button
+                class="ghost"
+                phx-click={JS.push_focus() |> JS.push("dialog")}
+                phx-value-name="people"
+              >
+                <.icon name="add-person" size={13} />People
+              </button>
+              <button
+                :if={project.role == :owner}
+                class="ghost"
+                phx-click={JS.push_focus() |> JS.push("dialog")}
+                phx-value-name="settings"
+              >
+                <.icon name="settings" size={13} />Project settings
+              </button>
+            </div>
+          </div>
         </section>
       </div>
       <div class="workspace-account">
         <.link href="/auth/signout" method="post" class="ghost">Sign out</.link>
         <.theme_picker id="theme-picker" />
+        <div class="yard-meta">
+          <span class="chip">Ravix</span><a href="/api/auth/install">repo access</a>
+        </div>
       </div>
     </aside>
-    <main class="stage">
+    <main class="stage" id="workspace-stage">
       <nav class="workspace-mobile-nav" aria-label="Workspace navigation">
         <.link patch="/home">Home</.link><.link patch="/inbox">Inbox</.link><button
           class="ghost"
@@ -233,7 +318,10 @@
         data-side="left"
       >
       </div>
-      <div :if={@project} class="crumbs">
+      <div :if={@project && is_nil(@track_id)} class="crumbs">
+        <span class="project-mark" aria-hidden="true">
+          {String.first(@project.name) |> String.upcase()}
+        </span>
         <strong>{@project.name}</strong><span :if={@project.repo} class="chip mono">{@project.repo}</span><span class="spacer"></span>
         <button
           :if={@project.access != :tracks}
@@ -270,14 +358,12 @@
           }
         )}
       </div>
-      <div :if={@project && is_nil(@track_id)} class="workspace-welcome workspace-project-empty">
-        <div class="project-heading">
-          <span class="project-mark" aria-hidden="true">
-            {String.first(@project.name) |> String.upcase()}
-          </span>
-          <h1>{@project.name}</h1>
-        </div>
-        <p>Each track is its own worktree, branch, and agent conversation.</p>
+      <div :if={@project && is_nil(@track_id)} class="workspace-project-empty">
+        <span class="empty-icon"><.icon name="machine" size={20} /></span>
+        <h2>Pick a track</h2>
+        <p>
+          Each track is its own worktree on this project's machine, with its own branch and its own conversation.
+        </p>
         <button
           :if={@project.access != :tracks}
           class="primary"
@@ -340,10 +426,10 @@
       <div :if={is_nil(@project) && @live_action != :projects} class="inbox">
         <header>
           <div class="row">
-            <h1>Inbox</h1>
+            <h1>Inbox <span class="badge">{attention_count(@tracks)}</span></h1>
             <span class="spacer"></span><button class="ghost" phx-click="refresh">Refresh</button>
           </div>
-          <p>Tracks that are ready for review or need a hand.</p>
+          <p>Replies and failed turns across all your projects.</p>
         </header>
         <div
           :if={!Enum.any?(@tracks, fn {_id, tracks} -> Enum.any?(tracks, &attention?/1) end)}
@@ -360,9 +446,15 @@
               class="inbox-item"
             >
               <div class="row">
-                <strong>{track.title}</strong><span class="spacer"></span><span class="chip">{track.status}</span>
+                <span class="chip">
+                  {if track.status == :failed, do: "Failed turn", else: "Unread reply"}
+                </span>
+                <span class="dim">{project.name}</span><span class="spacer"></span><time
+                  :if={track.last_active_at}
+                  datetime={DateTime.to_iso8601(track.last_active_at)}
+                >{Calendar.strftime(track.last_active_at, "%b %-d, %H:%M UTC")}</time>
               </div>
-              <span class="dim">{project.name}</span>
+              <strong>{track.title}</strong><code class="dimmer">{track.branch}</code><span class="dim">{if track.status == :failed, do: "The agent needs a hand. Open the conversation to see what happened.", else: "The agent finished. Open the conversation to read its reply."}</span>
             </.link>
           </div>
         </div>
@@ -434,48 +526,61 @@
       title="New track"
       on_close="dismiss"
     >
-      <div class="workspace-actions">
-        <button
-          :for={
-            {kind, label} <- [
-              {"blank", "Blank"},
-              {"branch", "Branch"},
-              {"pr", "Pull request"},
-              {"issue", "Issue"}
-            ]
-          }
-          :if={kind == "blank" || @project.repo}
-          class={if @origin_kind == kind, do: "primary", else: "ghost"}
-          phx-click="origin"
-          phx-value-kind={kind}
-        >
-          {label}
-        </button>
-      </div>
       <form id="new-track-form" phx-submit="create-track" phx-change="edit">
         <.input
           name="title"
           id="track-title"
-          label="Track title"
+          label="Track name"
           value={@form_data["title"] || ""}
           maxlength="200"
         />
-        <.input
-          :if={@origin_kind != "blank"}
-          name="ref"
-          id="track-ref"
-          label="Start from"
-          type="select"
-          value={@form_data["ref"] || ""}
-          options={Enum.map(@refs, &{ref_label(&1), ref_id(&1)})}
-          required
-        />
+        <p class="hint">New worktree from {@project[:default_branch] || "the default branch"}.</p>
+        <button
+          type="button"
+          class="ghost"
+          phx-click="advanced-track"
+          aria-expanded={@advanced_track}
+          aria-controls="track-advanced"
+        >
+          {if @advanced_track, do: "Hide advanced", else: "Advanced"}
+        </button>
+        <div id="track-advanced" hidden={!@advanced_track}>
+          <div class="workspace-actions origin-options">
+            <button
+              :for={
+                {kind, label} <- [
+                  {"blank", "Blank"},
+                  {"branch", "Branch"},
+                  {"pr", "Pull request"},
+                  {"issue", "Issue"}
+                ]
+              }
+              :if={kind == "blank" || @project.repo}
+              type="button"
+              class={if @origin_kind == kind, do: "primary", else: "ghost"}
+              phx-click="origin"
+              phx-value-kind={kind}
+            >
+              {label}
+            </button>
+          </div>
+          <.input
+            :if={@origin_kind != "blank"}
+            name="ref"
+            id="track-ref"
+            label="Start from"
+            type="select"
+            value={@form_data["ref"] || ""}
+            options={Enum.map(@refs, &{ref_label(&1), ref_id(&1)})}
+            required
+          />
+        </div>
         <button
           class="primary"
           disabled={@busy || (@origin_kind != "blank" && @refs == [])}
           phx-disable-with="Opening…"
         >
-          Open track
+          Create track
         </button>
       </form>
     </.dialog>

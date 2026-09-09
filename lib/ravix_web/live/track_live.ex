@@ -29,6 +29,7 @@ defmodule RavixWeb.TrackLive do
         panel_busy: false,
         file: nil,
         dock: "terminal",
+        dock_open: false,
         output: [],
         exec_busy: false,
         cwd: nil,
@@ -148,7 +149,7 @@ defmodule RavixWeb.TrackLive do
   end
 
   def handle_event("dock", %{"name" => name}, socket) when name in ~w(terminal run vitals) do
-    socket = assign(socket, dock: name)
+    socket = assign(socket, dock: name, dock_open: true)
 
     if name == "vitals" do
       {:noreply,
@@ -161,6 +162,9 @@ defmodule RavixWeb.TrackLive do
       {:noreply, socket}
     end
   end
+
+  def handle_event("toggle-dock", _, socket),
+    do: {:noreply, assign(socket, dock_open: !socket.assigns.dock_open)}
 
   def handle_event("exec", %{"command" => command}, socket) do
     if socket.assigns.exec_busy do

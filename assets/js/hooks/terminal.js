@@ -12,7 +12,11 @@
 //     <div class="term-scroll" data-terminal-output>… the blocks …</div>
 //     <div class="term-input">
 //       <span class="ps1">{@cwd_base} $</span>
-//       <input data-terminal-input aria-label="Command" disabled={@busy} />
+//       <fieldset disabled={@busy}>
+//         <div id="terminal-command" phx-update="ignore">
+//           <input data-terminal-input aria-label="Command" />
+//         </div>
+//       </fieldset>
 //       <button type="button" class="ghost" phx-click="clear">Clear</button>
 //     </div>
 //   </div>
@@ -51,7 +55,7 @@ export const Terminal = {
       if (!input || e.target !== input) return
       if (e.key === "Enter") {
         const command = input.value.trim()
-        if (command && !input.disabled) this.run(command)
+        if (command && !this.busy()) this.run(command)
         return
       }
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "l") {
@@ -83,8 +87,8 @@ export const Terminal = {
     // The input comes back enabled when the command has answered; the next
     // one should not need a click first.
     const input = this.input()
-    if (input && !input.disabled && this.wasBusy) input.focus()
-    this.wasBusy = Boolean(input?.disabled)
+    if (input && !this.busy() && this.wasBusy) input.focus()
+    this.wasBusy = this.busy()
   },
 
   output() {
@@ -93,6 +97,11 @@ export const Terminal = {
 
   input() {
     return this.el.querySelector("[data-terminal-input]")
+  },
+
+  busy() {
+    const input = this.input()
+    return Boolean(input?.disabled || input?.closest("fieldset[disabled]"))
   },
 
   run(command) {

@@ -13,7 +13,14 @@
     <button class="primary" phx-click="retry-load">Try again</button>
   </div>
   <div :if={@track} class="track-workspace-body">
-    <header class="crumbs">
+    <header class="crumbs track-crumbs">
+      <.link href={"/p/#{@project.id}"} class="project-crumb">
+        <span class="project-mark" aria-hidden="true">
+          {String.first(@project.name) |> String.upcase()}
+        </span>
+        <strong>{@project.name}</strong>
+      </.link>
+      <span class="dimmer" aria-hidden="true">›</span>
       <button
         :if={owner_or_creator?(@current_user, @track)}
         class="ghost"
@@ -23,12 +30,30 @@
         {@track.title}
       </button>
       <strong :if={!owner_or_creator?(@current_user, @track)}>{@track.title}</strong>
-      <span class="chip mono">{@track.branch}</span><span class="chip">{@track.status}</span>
+      <span class="chip mono track-branch" title={@track.branch}>{@track.branch}</span>
       <span class="spacer"></span><button
         class="ghost"
         phx-click={JS.push_focus() |> JS.push("dialog")}
         phx-value-name="people"
-      >People ({length(@present)})</button>
+        aria-label={"People (#{length(@present)})"}
+        title="People on this track"
+      ><.icon name="add-person" size={15} /><span>{length(@present)}</span></button>
+      <button
+        :if={@project.access != :tracks}
+        class="ghost"
+        phx-click={JS.push_focus() |> JS.push("dialog", target: "#workspace-stage")}
+        phx-value-name="new-track"
+      >
+        <.icon name="plus" size={13} />New track
+      </button>
+      <button
+        :if={@project.role == :owner}
+        class="ghost"
+        phx-click={JS.push_focus() |> JS.push("dialog", target: "#workspace-stage")}
+        phx-value-name="settings"
+      >
+        Settings
+      </button>
       <button
         :if={owner_or_creator?(@current_user, @track)}
         class="ghost"
@@ -40,38 +65,56 @@
     </header>
     <div class="split">
       <section class="track-conversation" aria-label="Conversation">
-        <div class="track-ribbon">
-          <span>Directory: <code>{@track.workdir}</code></span><span
-            :if={@track.stale}
-            class="chip"
-          >Settings changed — open a new track to use them</span>
-        </div>
         <div id="transcript-scroll" phx-hook="TranscriptTail" class="transcript-scroll">
+          <div class="track-ribbon">
+            <p :if={(@header || %{})[:copy_of]} class="track-copy">
+              You are in a copy of {@header.copy_of} called
+              <code>{Path.basename(@track.workdir)}</code>
+            </p>
+            <div class="ribbon-line">
+              <.icon name="folder" size={13} /><span>Created <code>{@track.workdir}</code></span>
+            </div>
+            <span
+              :if={@track.stale}
+              class="chip"
+            >
+              Settings changed — open a new track to use them
+            </span>
+          </div>
           <div id="transcript-turns" phx-update="stream">
             <article :for={{dom_id, turn} <- @streams.turns} id={dom_id} class="workspace-turn">
-              <div :if={turn.prompt} class="speaker">You</div>
-              <div :if={turn.prompt} class="workspace-prompt">{visible_prompt(turn.prompt)}</div>
-              <div :for={block <- turn.blocks}>
-                <div :if={block.kind == :text} class="md">
-                  {RavixWeb.Markdown.render_safe(block.body)}
-                </div>
-                <details :if={block.kind == :thinking} class="workspace-thinking">
-                  <summary>Thinking</summary>
-                  <div class="md">{RavixWeb.Markdown.render_safe(block.body)}</div>
-                </details>
-                <pre :if={block.kind == :raw}>{block.body}</pre>
-                <details :if={block.kind == :tool} class="workspace-tool">
-                  <summary>
-                    <span class="chip">{block.status}</span> {block.name} {block.summary}
-                  </summary>
-                  <pre :if={block.detail.input != %{}}>{Jason.encode!(block.detail.input, pretty: true)}</pre>
-                  <p :for={path <- block.detail.paths}><code>{path}</code></p>
-                  <div :for={edit <- block.detail.edits}>
-                    <strong>{edit.path}</strong><pre><span :for={line <- edit.lines} class={"diff-#{line.kind}"}>{line.text}{"\n"}</span></pre>
-                  </div>
-                  <pre :if={block.output != ""}>{block.output}</pre>
-                </details>
+              <div :if={turn.prompt} class="said">
+                <span class="speaker">You</span>
+                <div class="workspace-prompt">{visible_prompt(turn.prompt)}</div>
               </div>
+              <section :if={turn.blocks != []} class="agent-terminal" aria-label="Agent output">
+                <div class="agent-terminal-label">
+                  <.icon name="terminal" size={12} /><span>agent</span>
+                </div>
+                <div class="agent-terminal-output">
+                  <div :for={block <- turn.blocks}>
+                    <div :if={block.kind == :text} class="md">
+                      {RavixWeb.Markdown.render_safe(block.body)}
+                    </div>
+                    <details :if={block.kind == :thinking} class="workspace-thinking">
+                      <summary>Thinking</summary>
+                      <div class="md">{RavixWeb.Markdown.render_safe(block.body)}</div>
+                    </details>
+                    <pre :if={block.kind == :raw}>{block.body}</pre>
+                    <details :if={block.kind == :tool} class="workspace-tool">
+                      <summary>
+                        <span class="chip">{block.status}</span> {block.name} {block.summary}
+                      </summary>
+                      <pre :if={block.detail.input != %{}}>{Jason.encode!(block.detail.input, pretty: true)}</pre>
+                      <p :for={path <- block.detail.paths}><code>{path}</code></p>
+                      <div :for={edit <- block.detail.edits}>
+                        <strong>{edit.path}</strong><pre><span :for={line <- edit.lines} class={"diff-#{line.kind}"}>{line.text}{"\n"}</span></pre>
+                      </div>
+                      <pre :if={block.output != ""}>{block.output}</pre>
+                    </details>
+                  </div>
+                </div>
+              </section>
             </article>
           </div>
           <div :if={@page.turns == []} class="workspace-welcome">
@@ -122,7 +165,7 @@
                 phx-hook="Composer"
                 name="text"
                 rows="2"
-                placeholder="Ask your agent…"
+                placeholder="Ask for a change, or a question about this branch"
                 aria-label="Message"
                 data-draft-key={"track:#{@track.id}"}
                 data-typing-event="typing"
@@ -156,13 +199,14 @@
                 >
                   <.icon name="picture" size={17} />
                 </button>
-                <span class="send-hint"><kbd>Enter</kbd> to send</span><span class="spacer"></span>
+                <span class="composer-model mono">{@project.model}</span><span class="send-hint"><kbd>Enter</kbd> to send</span><span class="spacer"></span>
                 <button
                   class="primary"
+                  aria-label="Send"
                   phx-disable-with="Sending…"
                   disabled={is_nil(@track.conversation_id)}
                 >
-                  Send
+                  <.icon name="arrow-up" size={16} />
                 </button>
                 <button
                   :if={@track.status in [:running, :opening]}
@@ -205,10 +249,10 @@
           <button
             :for={
               {name, label} <- [
-                {"files", "Files"},
+                {"files", "All files"},
                 {"changes", "Changes"},
                 {"checks", "Checks"},
-                {"preview", "Preview"}
+                {"preview", "Previews"}
               ]
             }
             class={if @panel == name, do: "selected", else: "ghost"}
@@ -342,56 +386,71 @@
             <a href={@pull.url} target="_blank" rel="noreferrer">View pull request ↗</a>
           </p>
         </div>
-        <nav class="workspace-tabs" aria-label="Machine panels">
+        <nav class="workspace-tabs dock-tabs" aria-label="Machine panels">
+          <button
+            class="ghost dock-toggle"
+            phx-click="toggle-dock"
+            aria-expanded={@dock_open}
+            aria-controls="machine-dock"
+            aria-label={if @dock_open, do: "Collapse the dock", else: "Expand the dock"}
+          >
+            <.icon name="chevron" size={13} open={@dock_open} />
+          </button>
           <button
             :for={name <- ~w(terminal run vitals)}
             class={if @dock == name, do: "selected", else: "ghost"}
             phx-click="dock"
             phx-value-name={name}
           >
-            {String.capitalize(name)}
+            {if name == "vitals", do: "Machine stats", else: String.capitalize(name)}
           </button>
         </nav>
-        <div
-          :if={@dock in ["terminal", "run"]}
-          id="track-terminal"
-          phx-hook="Terminal"
-          class="term workspace-terminal"
-        >
-          <div class="term-scroll" data-terminal-output>
-            <div :for={block <- @output}>
-              <strong>$ {block.command}</strong><pre>{block.stdout}</pre><pre class="error">{block.stderr}</pre>
-              <span :if={block.code && block.code != 0}>
-                Exit {block.code}
-              </span>
+        <div id="machine-dock" hidden={!@dock_open} class="machine-dock">
+          <div
+            hidden={@dock not in ["terminal", "run"]}
+            id="track-terminal"
+            phx-hook="Terminal"
+            class="term workspace-terminal"
+          >
+            <div class="term-scroll" data-terminal-output>
+              <div :for={block <- @output}>
+                <strong>$ {block.command}</strong><pre>{block.stdout}</pre><pre class="error">{block.stderr}</pre>
+                <span :if={block.code && block.code != 0}>
+                  Exit {block.code}
+                </span>
+              </div>
+            </div>
+            <p :if={@dock == "run"} class="hint">
+              Run a command in this track’s worktree. For a persistent service, use Preview.
+            </p>
+            <p class="hint">
+              Commands run without an interactive terminal. Use Preview for persistent servers.
+            </p>
+            <div class="term-input">
+              <span class="ps1">{if @cwd, do: Path.basename(@cwd), else: ""} $</span>
+              <fieldset class="term-command" disabled={@exec_busy}>
+                <div id="terminal-command" phx-update="ignore">
+                  <input data-terminal-input aria-label="Command" />
+                </div>
+              </fieldset>
+              <button
+                class="ghost"
+                phx-click="clear"
+              >
+                Clear
+              </button>
             </div>
           </div>
-          <p :if={@dock == "run"} class="hint">
-            Run a command in this track’s worktree. For a persistent service, use Preview.
-          </p>
-          <p class="hint">
-            Commands run without an interactive terminal. Use Preview for persistent servers.
-          </p>
-          <div class="term-input">
-            <span class="ps1">{if @cwd, do: Path.basename(@cwd), else: ""} $</span>
-            <input data-terminal-input aria-label="Command" disabled={@exec_busy} />
-            <button
-              class="ghost"
-              phx-click="clear"
-            >
-              Clear
-            </button>
+          <div :if={@dock == "vitals"} class="workspace-panel">
+            <p :if={!@vitals}>No machine metrics available.</p>
+            <p :if={@vitals && !@vitals.available}>Metrics unavailable: {@vitals.why}</p>
+            <dl :if={@vitals && @vitals[:vitals]}>
+              <div :for={{key, value} <- @vitals.vitals}>
+                <dt>{key}</dt>
+                <dd>{if is_map(value), do: Jason.encode!(value), else: to_string(value)}</dd>
+              </div>
+            </dl>
           </div>
-        </div>
-        <div :if={@dock == "vitals"} class="workspace-panel">
-          <p :if={!@vitals}>No machine metrics available.</p>
-          <p :if={@vitals && !@vitals.available}>Metrics unavailable: {@vitals.why}</p>
-          <dl :if={@vitals && @vitals[:vitals]}>
-            <div :for={{key, value} <- @vitals.vitals}>
-              <dt>{key}</dt>
-              <dd>{if is_map(value), do: Jason.encode!(value), else: to_string(value)}</dd>
-            </div>
-          </dl>
         </div>
       </aside>
     </div>

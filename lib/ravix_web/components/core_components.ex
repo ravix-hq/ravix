@@ -435,13 +435,11 @@ defmodule RavixWeb.CoreComponents do
   mounts. Focus goes back to the opener if the opener ran `JS.push_focus/0`
   on the way in; `on_close` pops it.
 
-  The inner block is dropped straight between the head and the foot rather
-  than inside a body element, because the pickers need two regions with
-  different scroll behaviour: a `.search-line` that stays put and a
-  `.dialog-body` that scrolls under it.
+  The body scrolls independently of the heading and footer, keeping long
+  settings forms reachable without moving the Close button off screen.
 
       <.dialog id="new-project" title="New project" on_close="close">
-        <div class="dialog-body">...</div>
+        <form>...</form>
         <:footer><.button variant="primary">Create</.button></:footer>
       </.dialog>
   """
@@ -478,7 +476,7 @@ defmodule RavixWeb.CoreComponents do
             <.icon name="x" size={16} />
           </button>
         </div>
-        {render_slot(@inner_block)}
+        <div class="dialog-body">{render_slot(@inner_block)}</div>
         <div :if={@footer != []} class="dialog-foot">{render_slot(@footer)}</div>
       </.focus_wrap>
     </div>

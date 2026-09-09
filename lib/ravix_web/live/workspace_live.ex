@@ -3,6 +3,7 @@ defmodule RavixWeb.WorkspaceLive do
   use RavixWeb, :live_view
 
   alias Ravix.{Accounts, Hub, People, Previews, Projects, Tracks}
+  alias Ravix.Tracks.Names
   alias RavixWeb.Error
 
   @impl true
@@ -13,6 +14,8 @@ defmodule RavixWeb.WorkspaceLive do
         github_available: Accounts.capabilities().github,
         projects: [],
         tracks: %{},
+        expanded_projects: MapSet.new(),
+        advanced_track: false,
         project: nil,
         track_id: nil,
         dialog: nil,
@@ -55,7 +58,26 @@ defmodule RavixWeb.WorkspaceLive do
          |> push_patch(to: "/")}
 
       true ->
-        {:noreply, assign(socket, project: project, track_id: track_id, dialog: nil)}
+        {:noreply, select_project(socket, project, track_id, params)}
+    end
+  end
+
+  defp select_project(socket, project, track_id, params) do
+    expanded = socket.assigns.expanded_projects
+    expanded = if project, do: MapSet.put(expanded, project.id), else: expanded
+
+    socket =
+      assign(socket,
+        project: project,
+        track_id: track_id,
+        dialog: nil,
+        expanded_projects: expanded
+      )
+
+    if params["new"] == "track" && project && project.access != :tracks do
+      open_dialog(socket, "new-track")
+    else
+      socket
     end
   end
 
@@ -70,7 +92,38 @@ defmodule RavixWeb.WorkspaceLive do
 
   @impl true
   def handle_event("refresh", _, socket), do: {:noreply, reload(socket)}
-  def handle_event("dismiss", _, socket), do: {:noreply, assign(socket, dialog: nil)}
+
+  def handle_event("dismiss", _, socket) do
+    socket = assign(socket, dialog: nil)
+
+    {:noreply,
+     if(socket.assigns.project,
+       do:
+         push_patch(socket,
+           to: "/p/#{socket.assigns.project.id}" <> track_suffix(socket.assigns.track_id)
+         ),
+       else: socket
+     )}
+  end
+
+  def handle_event("toggle-project", %{"id" => id}, socket) do
+    expanded = socket.assigns.expanded_projects
+
+    if Enum.any?(socket.assigns.projects, &(&1.id == id)) do
+      expanded =
+        if MapSet.member?(expanded, id),
+          do: MapSet.delete(expanded, id),
+          else: MapSet.put(expanded, id)
+
+      {:noreply, assign(socket, expanded_projects: expanded)}
+    else
+      {:noreply, socket}
+    end
+  end
+
+  def handle_event("advanced-track", _, socket),
+    do: {:noreply, assign(socket, advanced_track: !socket.assigns.advanced_track)}
+
   def handle_event("search", %{"q" => q}, socket), do: {:noreply, assign(socket, query: q)}
   def handle_event("edit", params, socket), do: {:noreply, assign(socket, form_data: params)}
 
@@ -104,7 +157,7 @@ defmodule RavixWeb.WorkspaceLive do
   end
 
   def handle_event("origin", %{"kind" => kind}, socket) when kind in ~w(blank branch pr issue) do
-    socket = assign(socket, origin_kind: kind, refs: [])
+    socket = assign(socket, origin_kind: kind, refs: [], advanced_track: true)
 
     if kind == "blank" do
       {:noreply, socket}
@@ -314,14 +367,31 @@ defmodule RavixWeb.WorkspaceLive do
         end
       end)
 
-    assign(socket, projects: projects, tracks: tracks)
+    assign(socket,
+      projects: projects,
+      tracks: tracks,
+      expanded_projects:
+        MapSet.intersection(socket.assigns.expanded_projects, MapSet.new(projects, & &1.id))
+    )
   end
 
   defp open_dialog(socket, "new-project"),
     do: socket |> assign(dialog: "new-project", form_data: %{}) |> load_repos(nil)
 
   defp open_dialog(socket, "new-track"),
-    do: assign(socket, dialog: "new-track", form_data: %{}, origin_kind: "blank", refs: [])
+    do:
+      assign(socket,
+        dialog: "new-track",
+        form_data: %{
+          "title" =>
+            Names.name_track(
+              Enum.map(socket.assigns.tracks[project_id(socket)] || [], & &1.title)
+            )
+        },
+        origin_kind: "blank",
+        refs: [],
+        advanced_track: false
+      )
 
   defp open_dialog(socket, "search"), do: assign(socket, dialog: "search", query: "")
 
@@ -368,9 +438,17 @@ defmodule RavixWeb.WorkspaceLive do
   defp result(socket, {:error, reason}, _fun),
     do: put_flash(socket, :error, Error.from(reason).message)
 
+  defp track_suffix(nil), do: ""
+  defp track_suffix(id), do: "/t/#{id}"
+
   defp project_id(socket), do: socket.assigns.project && socket.assigns.project.id
   defp ref_id(ref), do: to_string(ref[:number] || ref[:name])
   defp ref_label(ref), do: if(ref[:number], do: "##{ref.number} #{ref.title}", else: ref.name)
+
+  defp attention_count(tracks),
+    do:
+      Enum.reduce(tracks, 0, fn {_id, rows}, count -> count + Enum.count(rows, &attention?/1) end)
+
   defp attention?(track), do: track.status == :failed or (track.status == :ready and track.unread)
 
   defp matching?(track, project, query),

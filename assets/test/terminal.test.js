@@ -59,3 +59,20 @@ test("output follows new lines until the reader scrolls up", () => {
   output.click()
   expect(document.activeElement).toBe(hook.input())
 })
+
+test("a busy fieldset prevents execution and releases focus when the command finishes", () => {
+  document.body.innerHTML = `<div id="terminal"><fieldset disabled><div><input data-terminal-input></div></fieldset></div>`
+  const {hook, events} = mountHook(Terminal, "#terminal")
+  const input = hook.input()
+  input.value = "echo unfinished"
+  key(input, "Enter")
+  hook.updated()
+  expect(input.value).toBe("echo unfinished")
+  expect(events).toHaveLength(0)
+  input.closest("fieldset").disabled = false
+  hook.updated()
+  expect(document.activeElement).toBe(input)
+  key(input, "Enter")
+  expect(input.value).toBe("")
+  expect(events).toEqual([{name: "exec", payload: {command: "echo unfinished"}}])
+})

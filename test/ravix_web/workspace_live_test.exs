@@ -92,6 +92,45 @@ defmodule RavixWeb.WorkspaceLiveTest do
     assert has_element?(view, "a[href='/p/#{own.id}/t/#{track.id}']")
   end
 
+  test "project disclosure and inline creation follow scoped navigation", %{conn: conn} do
+    user = insert_user()
+    project = insert_project(user: user)
+    insert_track(project: project)
+    {:ok, view, _} = live(log_in_user(conn, user), "/home")
+    assert has_element?(view, "#project-tracks-#{project.id}[hidden]")
+    view |> element("button[phx-value-id='#{project.id}']") |> render_click()
+    refute has_element?(view, "#project-tracks-#{project.id}[hidden]")
+    view |> element("button[phx-value-id='#{project.id}']") |> render_click()
+    assert has_element?(view, "#project-tracks-#{project.id}[hidden]")
+    render_click(view, "toggle-project", %{id: "someone-elses-project"})
+    refute render(view) =~ "someone-elses-project"
+    view |> element("a.project-add") |> render_click()
+    assert_patch(view, "/p/#{project.id}?new=track")
+    assert has_element?(view, "#new-track-form")
+    refute has_element?(view, "#project-tracks-#{project.id}[hidden]")
+    view |> form("#new-track-form", title: "Keep this name") |> render_change()
+    view |> element("button", "Advanced") |> render_click()
+    refute has_element?(view, "#track-advanced[hidden]")
+    view |> element("button", "Hide advanced") |> render_click()
+    assert has_element?(view, "#track-advanced[hidden]")
+    assert has_element?(view, "#track-title[value='Keep this name']")
+    render_click(view, "dismiss")
+    assert_patch(view, "/p/#{project.id}")
+    refute has_element?(view, "#new-track-form")
+  end
+
+  test "track-only members cannot open project creation through a URL", %{conn: conn} do
+    owner = insert_user()
+    member = insert_user()
+    project = insert_project(user: owner)
+    track = insert_track(project: project)
+    Ravix.People.add_member(track.id, member.id, owner.id)
+    {:ok, view, _} = live(log_in_user(conn, member), "/p/#{project.id}?new=track")
+    refute has_element?(view, "#new-track-form")
+    refute has_element?(view, "a.project-add")
+    refute has_element?(view, "button", "New track")
+  end
+
   test "a track URL cannot name a different project", %{conn: conn} do
     user = insert_user()
     one = insert_project(user: user)
@@ -113,7 +152,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
     end)
 
     {:ok, view, _} = live(log_in_user(conn, user), "/")
-    view |> element(".workspace-actions button", "New project") |> render_click()
+    view |> element(".workspace-actions button", "Add a project") |> render_click()
     view |> form("#new-project-form", name: "New project", repo: "") |> render_submit()
     render_async(view)
     assert has_element?(view, "a.workspace-project-name", "New project")
