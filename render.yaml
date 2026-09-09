@@ -85,9 +85,9 @@ services:
       #   GITHUB_WEBHOOK_SECRET   verifies installation events
 
 # The service reaches it over Render's private network (connectionString is
-# the internal URL). No public access: to run scripts/sqlite-to-postgres.ts
-# or psql from outside, add your address here for the duration, or use a
-# shell on the service (`render ssh ravix`).
+# the internal URL). No public access: to reach it with psql from outside,
+# add your address here for the duration, or use a shell on the service
+# (`render ssh ravix`).
 databases:
   - name: ravix-db
     databaseName: ravix
