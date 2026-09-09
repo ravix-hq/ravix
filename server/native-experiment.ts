@@ -96,6 +96,8 @@ interface NativePeer {
     period: number;
 }
 export type NativeSocketData = NativePeer | NativeForwardPeer | RunnerPeer;
+/** How long the frame path trusts a database liveness answer. */
+const LIVE_CACHE_MS = 1000;
 const serviceName = (id: string, kind: string) => `sy-native-${id}-${kind}`;
 const quote = (s: string) => "'" + s.replaceAll("'", "'\\''") + "'";
 /** Opt-in gate-2 fixture: one active native experiment, no durable runner
@@ -211,18 +213,44 @@ export class NativeExperiments {
         await this.recoveryTask;
         await Promise.all([...this.sessions.values()].map(s => this.stopSession(s, 'Server stopped')));
     }
-    private async live(s: Session) {
+    /**
+     * Whether a session is still allowed to exist: the in-process facts
+     * (stopped, aborted, expired, lease) every time, then the database's
+     * (session, track, project, runner assignment). The frame path asks this
+     * for every frame and every viewer of it, which was free against
+     * in-process SQLite and is three to nine round trips against Postgres, so
+     * that path passes `recent` and reuses the database answer for up to
+     * `LIVE_CACHE_MS`. Every other caller — the sweep, pairing, open, stop —
+     * still reads fresh, and the sweep closes a dead session within a second
+     * regardless of what a cached frame check said.
+     */
+    private async live(s: Session, recent = false) {
         if (this.stopped || s.controller.signal.aborted || s.expiresAt <= Date.now() || s.leaseUntil <= Date.now())
             return false;
+        return recent ? this.remembered(s, () => this.liveRecord(s)) : this.liveRecord(s);
+    }
+    private async liveRecord(s: Session) {
         if (s.managed && !await this.coordinator.current(s.id, s.managed.generation, s.managed.epoch)) return false;
         const user = await this.ctx.db.sessionUser(s.sessionHash), track = await this.ctx.db.track(s.trackId), project = await this.ctx.db.project(s.projectId);
         return !!user && user.id === s.userId && !!track && !track.closedAt && track.workdir === s.workdir &&
             !!project && !project.archivedAt && project.userId === user.id && project.rev === s.projectRevision && project.agentId === s.agentId;
     }
+    private liveness = new WeakMap<object, { at: number; value: Promise<boolean> }>();
+    private remembered(key: object, fresh: () => Promise<boolean>) {
+        const hit = this.liveness.get(key);
+        if (hit && Date.now() - hit.at < LIVE_CACHE_MS) return hit.value;
+        const entry = { at: Date.now(), value: fresh() };
+        this.liveness.set(key, entry);
+        return entry.value;
+    }
     private async anyLive() { for (const s of this.sessions.values()) if (await this.live(s)) return true; return false; }
-    private async viewerLive(p: NativePeer) {
-        if (!await this.live(p.session) || !p.sessionHash || !p.userId)
+    private async viewerLive(p: NativePeer, recent = false) {
+        if (!await this.live(p.session, recent) || !p.sessionHash || !p.userId)
             return false;
+        return recent ? this.remembered(p, () => this.viewerRecord(p)) : this.viewerRecord(p);
+    }
+    private async viewerRecord(p: NativePeer) {
+        if (!p.sessionHash) return false;
         try {
             const user = await this.ctx.db.sessionUser(p.sessionHash);
             if (!user || user.id !== p.userId)
@@ -548,7 +576,7 @@ export class NativeExperiments {
         message: (ws: ServerWebSocket<NativePeer>, data: string | Buffer) => serial(ws, async () => {
             const p = ws.data, s = p.session;
             try {
-                if (!await this.live(s))
+                if (!await this.live(s, true))
                     throw Error('Session ended');
                 if (Date.now() - p.period >= 1000) {
                     p.period = Date.now();
@@ -585,7 +613,7 @@ export class NativeExperiments {
                             s.phase = 'Ready';
                     }
                     for (const viewer of s.viewers) {
-                        if (!await this.viewerLive(viewer.data)) {
+                        if (!await this.viewerLive(viewer.data, true)) {
                             viewer.close(1008);
                             continue;
                         }
@@ -625,7 +653,7 @@ export class NativeExperiments {
                         throw Error('Unknown runner message');
                     return;
                 }
-                if (!await this.viewerLive(p))
+                if (!await this.viewerLive(p, true))
                     throw Error('Access ended');
                 s.lastViewer = Date.now();
                 if (p.role === 'view') {
