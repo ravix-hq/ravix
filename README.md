@@ -689,13 +689,7 @@ The SQL is written once. `RAVIX_TEST_DATABASE_URL` runs the test suite against
 a real server instead; each test starts from an empty schema either way.
 
 The schema is created by `Db.open` with idempotent statements, so a restart
-does nothing and a new table is a new `CREATE TABLE IF NOT EXISTS`. Moving the
-Kubernetes deployment's SQLite file over is one command, run once against an
-empty target:
-
-```sh
-DATABASE_URL=postgres://… bun scripts/sqlite-to-postgres.ts ravix.sqlite
-```
+does nothing and a new table is a new `CREATE TABLE IF NOT EXISTS`.
 
 ## Shared code
 
