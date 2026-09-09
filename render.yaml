@@ -26,6 +26,8 @@ services:
     plan: 0.5c-512mb
     dockerfilePath: ./Dockerfile
     healthCheckPath: /healthz
+    # Migrations run against the database before the new release takes over.
+    preDeployCommand: /app/bin/migrate
     # Deploy a commit to main only once CI (.github/workflows/ci.yml) is green.
     autoDeployTrigger: checksPass
     domains:
@@ -39,24 +41,15 @@ services:
           property: connectionString
       - key: FOUNTAIN_URL
         value: https://managoat.com
-      - key: STATIC_DIR
-        value: /app/dist
       # Where GitHub sends a browser back to, and what the App's callback and
       # setup URLs are registered as. Load-bearing: a mismatch here is the one
       # failure that looks like "sign-in is broken".
       - key: PUBLIC_URL
         value: https://app.ravix.sh
-      - key: SHARED_BROWSER
-        value: "1"
       - key: PREVIEW_DOMAIN
         value: preview.ravix.sh
-      # Gate 2: only the pinned private Hello repository can pair a runner.
-      - key: NATIVE_PREVIEW_EXPERIMENT
-        value: "1"
-      - key: NATIVE_HELLO_IOS_SHA256
-        value: "375169f807696ad02ea5d82f1456b94142378e9f306eb5555bab55afe9abab2f"
-      # Encrypts stored GitHub tokens; sessions are hashes. Generated once by
-      # Render and kept with the service rather than beside the data.
+      # Encrypts stored GitHub tokens; sessions are hashes; also seeds the
+      # cookie signing key. Generated once by Render and kept with the service.
       - key: RAVIX_SECRET
         generateValue: true
       # The account every machine is built on. Without it there are no

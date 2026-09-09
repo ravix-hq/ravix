@@ -1,0 +1,144 @@
+// The scrollback's tail.
+//
+// Follow the bottom, but only while the reader is already there. Yanking
+// somebody back down mid-scroll is the single most irritating thing a live
+// transcript can do, and it happens on every chunk; so the position is read
+// from the scroll rather than from a click, and a reader who has gone up to
+// read gets a "jump to latest" affordance instead of a shove. What the hook
+// expects, on the scroll container:
+//
+//   <div phx-hook="TranscriptTail" id="transcript" class="scroll log"
+//        data-track={@track.id} data-older-event="older">
+//     <div>… the turns …
+//       <button type="button" class="jump-latest" data-jump-latest>Jump to latest</button>
+//     </div>
+//   </div>
+//
+//   data-track        changes when the reader is somewhere new, which re-pins
+//                     the panel to the bottom whatever they had scrolled to
+//   data-older-event  optional; pushed to the LiveView when the reader nears
+//                     the top, so a page of older turns can be laid in above.
+//                     The hook measures the distance from the bottom before
+//                     each patch and restores it after, so what the reader is
+//                     looking at does not move when the page above lands.
+//
+// The hook toggles `unpinned` on the container while the reader is away from
+// the bottom, which is what shows the affordance; clicking it pins again.
+//
+// It also owns the copy button on every fenced code block the markdown
+// renderer emits (`button.code-copy` inside `.code-block`): the block's text,
+// verbatim, to the clipboard, with the button saying what happened.
+
+/** Within this many pixels of the bottom still counts as reading the bottom. */
+const SLACK = 80
+/** Scrolling to within this many pixels of the top asks for the page above. */
+const REACH = 600
+
+function hasSelection(element) {
+  const selection = element.ownerDocument.getSelection()
+  if (!selection || selection.isCollapsed) return false
+  for (let i = 0; i < selection.rangeCount; i++) {
+    if (selection.getRangeAt(i).intersectsNode(element)) return true
+  }
+  return false
+}
+
+export const TranscriptTail = {
+  mounted() {
+    this.pinned = true
+    this.anchor = null
+    this.track = this.el.dataset.track
+    this.asked = false
+
+    this.el.addEventListener("scroll", () => {
+      this.pinned = this.distance() < SLACK
+      this.el.classList.toggle("unpinned", !this.pinned)
+      if (this.pinned) this.asked = false
+      if (this.el.scrollTop < REACH) this.older()
+    })
+    this.el.addEventListener("click", e => {
+      if (e.target.closest("[data-jump-latest]")) {
+        this.pinned = true
+        this.stick()
+        this.el.classList.remove("unpinned")
+        return
+      }
+      const button = e.target.closest("button.code-copy")
+      if (button && this.el.contains(button)) this.copy(button)
+    })
+
+    // Most of what makes this panel taller does not arrive with a patch: an
+    // avatar decoding, a diff laying out, a font. Observing the content and
+    // the scroller keeps the bottom through all of it.
+    this.observer = new ResizeObserver(() => this.stick())
+    this.observer.observe(this.el)
+    if (this.el.firstElementChild) this.observer.observe(this.el.firstElementChild)
+    this.stick()
+  },
+
+  beforeUpdate() {
+    // The distance from the bottom, so a page laid in above can be undone
+    // from the reader's point of view after the patch.
+    this.anchor = this.pinned ? null : this.el.scrollHeight - this.el.scrollTop
+  },
+
+  updated() {
+    if (this.el.dataset.track !== this.track) {
+      // A new track starts pinned.
+      this.track = this.el.dataset.track
+      this.pinned = true
+      this.asked = false
+      this.el.classList.remove("unpinned")
+    }
+    if (this.pinned) {
+      this.stick()
+    } else if (this.anchor !== null) {
+      this.el.scrollTop = this.el.scrollHeight - this.anchor
+      this.asked = false
+    }
+    this.anchor = null
+    if (this.el.firstElementChild) this.observer.observe(this.el.firstElementChild)
+  },
+
+  destroyed() {
+    this.observer?.disconnect()
+  },
+
+  distance() {
+    return this.el.scrollHeight - this.el.scrollTop - this.el.clientHeight
+  },
+
+  stick() {
+    if (this.pinned && !hasSelection(this.el)) this.el.scrollTop = this.el.scrollHeight
+  },
+
+  // Asked once per approach to the top; the patch that answers resets it.
+  older() {
+    const event = this.el.dataset.olderEvent
+    if (!event || this.asked) return
+    this.asked = true
+    this.pushEvent(event, {})
+  },
+
+  async copy(button) {
+    if (button.disabled) return
+    const code = button.closest(".code-block")?.querySelector("pre code")
+    if (!code) return
+    button.disabled = true
+    try {
+      await navigator.clipboard.writeText(code.textContent ?? "")
+      button.textContent = "Copied!"
+      button.setAttribute("aria-label", "Code copied")
+    } catch {
+      button.textContent = "Copy failed"
+      button.setAttribute("aria-label", "Copy failed. Try again")
+    } finally {
+      button.disabled = false
+      window.setTimeout(() => {
+        if (!button.isConnected) return
+        button.textContent = "Copy"
+        button.setAttribute("aria-label", "Copy code")
+      }, 2000)
+    }
+  },
+}

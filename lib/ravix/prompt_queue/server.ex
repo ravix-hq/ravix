@@ -1,0 +1,264 @@
+defmodule Ravix.PromptQueue.Server do
+  @moduledoc """
+  One worker for this deployment, delivering saved prompts to Fountain.
+
+  No browser connection participates in delivery. Every two seconds the
+  server takes the first live row of every track, checks the sender still
+  has access, asks Fountain whether the conversation is idle, refreshes the
+  clone credential, and only then claims the row and POSTs it. A claim is
+  taken immediately before the POST; after a crash or an ambiguous response
+  the payload is retained but never replayed blindly.
+
+  Tracks are delivered in parallel, one task each under
+  `Ravix.TaskSupervisor`, so a track whose Fountain call is slow does not
+  hold the others; a task that crashes leaves its row for the next sweep.
+  A failed or unconfirmed head is not delivered and holds its track: later
+  instructions cannot overtake one whose outcome needs a person. Other
+  tracks still advance.
+
+  Recovery (`Ravix.PromptQueue.recover/0`) runs at the start of the first
+  sweep rather than in `init/1`, so that starting the process touches no
+  database; the first sweep is one interval after start. `tick/1` runs a
+  sweep now and returns when it is done, which is what tests drive instead
+  of waiting on the timer.
+
+  Options to `start_link/1`: `:name` (default this module), `:interval`
+  in milliseconds (default 2000; `false` for no timer at all, for tests).
+  """
+
+  use GenServer
+
+  require Logger
+
+  alias Ravix.Accounts.{Access, User}
+  alias Ravix.Fountain
+  alias Ravix.Fountain.{Client, Error}
+  alias Ravix.Hub
+  alias Ravix.Projects.{Project, ProjectMember}
+  alias Ravix.PromptQueue
+  alias Ravix.PromptQueue.Item
+  alias Ravix.Repo
+  alias Ravix.Tracks.{Track, TrackMember}
+
+  import Ecto.Query, only: [from: 2]
+
+  @interval 2_000
+  # A backstop only: the Fountain client times out well inside this.
+  @delivery_timeout 5 * 60_000
+
+  @ended "This conversation has ended. Start a new track and copy this prompt there."
+  @waiting "Waiting for the machine connection. Your prompt is saved and will retry automatically."
+  @refused "Delivery was refused. Check the machine and account settings, then retry this prompt."
+  @unconfirmed "Delivery could not be confirmed. Check the transcript before sending this again."
+
+  @type option :: {:name, GenServer.name() | nil} | {:interval, pos_integer() | false}
+
+  @doc "Start the worker. See the module for the options."
+  @spec start_link([option()]) :: GenServer.on_start()
+  def start_link(opts \\ []) do
+    {name, opts} = Keyword.pop(opts, :name, __MODULE__)
+
+    if name,
+      do: GenServer.start_link(__MODULE__, opts, name: name),
+      else: GenServer.start_link(__MODULE__, opts)
+  end
+
+  @doc "Run one sweep now and return once every head has been handled."
+  @spec tick(GenServer.server()) :: :ok
+  def tick(server \\ __MODULE__), do: GenServer.call(server, :tick, @delivery_timeout + 1_000)
+
+  @doc "Stop the worker. A sweep in progress finishes first."
+  @spec stop(GenServer.server()) :: :ok
+  def stop(server \\ __MODULE__), do: GenServer.stop(server)
+
+  # ── callbacks ─────────────────────────────────────────────────────────
+
+  @impl true
+  def init(opts) do
+    interval = Keyword.get(opts, :interval, @interval)
+    {:ok, schedule(%{interval: interval, recovered?: false})}
+  end
+
+  @impl true
+  def handle_call(:tick, _from, state), do: {:reply, :ok, sweep(state)}
+
+  @impl true
+  def handle_info(:tick, state), do: {:noreply, state |> sweep() |> schedule()}
+
+  defp schedule(%{interval: false} = state), do: state
+
+  defp schedule(%{interval: interval} = state) do
+    Process.send_after(self(), :tick, interval)
+    state
+  end
+
+  # ── the sweep ─────────────────────────────────────────────────────────
+
+  defp sweep(state) do
+    state = recover_once(state)
+    client = Fountain.client()
+
+    if Client.configured?(client), do: deliver_heads(client)
+    state
+  rescue
+    # Leave claims intact for explicit recovery, and retry untouched rows on
+    # the next sweep. Never log prompt bodies or manufacture a successful send.
+    error ->
+      Logger.error("ravix: prompt queue sweep failed: #{Exception.message(error)}")
+      state
+  end
+
+  defp recover_once(%{recovered?: true} = state), do: state
+
+  defp recover_once(state) do
+    PromptQueue.recover()
+    %{state | recovered?: true}
+  end
+
+  defp deliver_heads(client) do
+    Ravix.TaskSupervisor
+    |> Task.Supervisor.async_stream_nolink(PromptQueue.heads(), &deliver(client, &1),
+      ordered: false,
+      timeout: @delivery_timeout,
+      on_timeout: :kill_task
+    )
+    |> Enum.each(fn
+      {:ok, _outcome} -> :ok
+      {:exit, reason} -> Logger.error("ravix: prompt delivery crashed: #{inspect(reason)}")
+    end)
+  end
+
+  # ── one head ──────────────────────────────────────────────────────────
+
+  defp deliver(client, %Item{} = row) do
+    cond do
+      not authorized?(row) -> cancel(row)
+      row.status != :queued -> :held
+      true -> deliver_queued(client, row)
+    end
+  end
+
+  defp deliver_queued(client, row) do
+    track = Repo.get!(Track, row.track_id)
+    project = Repo.get!(Project, track.project_id)
+
+    case readiness(client, track, project) do
+      :ready -> claim_and_send(client, row, track, project)
+      :busy -> :waiting
+      :ended -> PromptQueue.set_status(row.id, :failed, @ended)
+      :unavailable -> hold(row)
+    end
+  end
+
+  # Nothing has been sent yet at this point. A read or credential refresh
+  # that failed can safely retry on the next sweep.
+  defp readiness(client, track, project) do
+    case Fountain.get_conversation(client, track.conversation_id) do
+      {:ok, %{"status" => status}} when status in ["running", "pending"] -> :busy
+      {:ok, %{"status" => status}} when status in ["failed", "terminated"] -> :ended
+      {:ok, _conversation} -> machine_readiness(client, project)
+      {:error, _reason} -> :unavailable
+    end
+  end
+
+  defp machine_readiness(client, project) do
+    case Ravix.Projects.prepare_machine(project, client) do
+      :ok -> :ready
+      {:error, _reason} -> :unavailable
+    end
+  end
+
+  defp hold(row) do
+    case PromptQueue.get(row.id) do
+      %Item{status: :queued} -> PromptQueue.set_status(row.id, :queued, @waiting)
+      _ -> :ok
+    end
+  end
+
+  # Membership and cancellation may change during the network calls above.
+  defp claim_and_send(client, row, track, project) do
+    cond do
+      not authorized?(row) -> cancel(row)
+      not PromptQueue.claim(row.id) -> :lost_claim
+      true -> send_claimed(client, row, track, project)
+    end
+  end
+
+  defp send_claimed(client, row, track, project) do
+    outcome =
+      try do
+        post(client, row, track, project)
+      rescue
+        error -> {:error, {:crashed, error}}
+      catch
+        kind, value -> {:error, {kind, value}}
+      end
+
+    settle(outcome, row, track, project)
+  end
+
+  defp post(client, row, track, project) do
+    payload = row.id |> PromptQueue.get() |> Map.fetch!(:payload) |> Jason.decode!()
+    instructions = Ravix.Previews.prepare_agent_preview(row)
+
+    if authorized?(row) do
+      text = compose(instructions, authored(row, track, project, payload["prompt"] || ""))
+      Fountain.prompt(client, track.conversation_id, text, payload["images"] || [])
+    else
+      :revoked
+    end
+  end
+
+  defp settle(:ok, row, track, project) do
+    PromptQueue.set_status(row.id, :sent)
+    Hub.publish(project.id, "turn", %{track_id: track.id, status: "running"})
+  end
+
+  defp settle(:revoked, row, track, _project) do
+    cancel(row)
+    Ravix.Previews.revoke_agent(track.id, nil)
+  end
+
+  # Fountain can reject an idle-looking track because another turn took the
+  # sandbox's capacity meanwhile. A rejection is safe to retry. Any other
+  # refusal needs a person; anything else may or may not have arrived.
+  defp settle({:error, %Error{} = error}, row, _track, _project) do
+    cond do
+      Error.busy?(error) -> PromptQueue.set_status(row.id, :queued)
+      Error.rejected?(error) -> PromptQueue.set_status(row.id, :failed, @refused)
+      true -> PromptQueue.set_status(row.id, :unconfirmed, @unconfirmed)
+    end
+  end
+
+  defp settle({:error, _reason}, row, _track, _project),
+    do: PromptQueue.set_status(row.id, :unconfirmed, @unconfirmed)
+
+  defp cancel(row), do: PromptQueue.set_status(row.id, :cancelled)
+
+  defp compose("", authored), do: authored
+  defp compose(nil, authored), do: authored
+  defp compose(instructions, authored), do: instructions <> "\n\n" <> authored
+
+  # On a shared track the agent is told who is speaking (shared/author.ts).
+  defp authored(row, track, project, prompt) do
+    if shared?(track, project),
+      do: PromptQueue.with_author(row.author_login, prompt),
+      else: prompt
+  end
+
+  defp shared?(track, project) do
+    Repo.exists?(from(m in TrackMember, where: m.track_id == ^track.id)) or
+      Repo.exists?(from(m in ProjectMember, where: m.project_id == ^project.id))
+  end
+
+  # The sender still exists, still has the track, and the track is open with
+  # a conversation to deliver into.
+  defp authorized?(row) do
+    with %User{} = user <- Repo.get(User, row.user_id),
+         {:ok, %{track: track}} <- Access.track_access(user, row.track_id) do
+      is_nil(track.closed_at) and is_binary(track.conversation_id) and track.conversation_id != ""
+    else
+      _ -> false
+    end
+  end
+end
