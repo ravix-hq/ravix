@@ -1,4 +1,4 @@
-import type { Database } from 'bun:sqlite';
+import type { Sql } from './sql';
 export interface NativeServiceReservation {
     id: string;
     trackId: string;
@@ -9,24 +9,21 @@ export interface NativeServiceReservation {
 /** Gate-2 service cleanup journal. Ports 30000–39999 are disjoint from the
  * existing web allocator (20000–29999), including older deployed versions. */
 export class NativeExperimentStore {
-    constructor(private db: Database) {
-        db.exec(`CREATE TABLE IF NOT EXISTS native_experiment_services (
+    constructor(private db: Sql) {}
+    async init() {
+        await this.db.exec(`CREATE TABLE IF NOT EXISTS native_experiment_services (
       id TEXT PRIMARY KEY, track_id TEXT NOT NULL REFERENCES tracks(id), sprite TEXT NOT NULL,
       metro INTEGER NOT NULL, backend INTEGER NOT NULL,
       UNIQUE(sprite, metro), UNIQUE(sprite, backend)
     )`);
     }
-    all(): NativeServiceReservation[] { return this.db.query<{
-        id: string;
-        track_id: string;
-        sprite: string;
-        metro: number;
-        backend: number;
-    }, [
-    ]>('SELECT * FROM native_experiment_services').all().map(r => ({ id: r.id, trackId: r.track_id, sprite: r.sprite, metro: r.metro, backend: r.backend })); }
-    allocate(id: string, trackId: string, sprite: string): NativeServiceReservation {
-        return this.db.transaction(() => {
-            const rows = this.all(), existing = rows.find(r => r.id === id);
+    async all(): Promise<NativeServiceReservation[]> {
+        const rows = await this.db.query<{ id: string; track_id: string; sprite: string; metro: number; backend: number }>('SELECT * FROM native_experiment_services');
+        return rows.map(r => ({ id: r.id, trackId: r.track_id, sprite: r.sprite, metro: r.metro, backend: r.backend }));
+    }
+    allocate(id: string, trackId: string, sprite: string): Promise<NativeServiceReservation> {
+        return this.db.transaction(async () => {
+            const rows = await this.all(), existing = rows.find(r => r.id === id);
             if (existing)
                 return existing;
             const used = new Set(rows.filter(r => r.sprite === sprite).flatMap(r => [r.metro, r.backend]));
@@ -38,9 +35,9 @@ export class NativeExperimentStore {
                 backend++;
             if (backend >= 40000)
                 throw new Error('No available native service ports');
-            this.db.run('INSERT INTO native_experiment_services VALUES (?,?,?,?,?)', [id, trackId, sprite, metro, backend]);
+            await this.db.run('INSERT INTO native_experiment_services VALUES ($1,$2,$3,$4,$5)', [id, trackId, sprite, metro, backend]);
             return { id, trackId, sprite, metro, backend };
-        }).immediate();
+        });
     }
-    remove(id: string) { this.db.run('DELETE FROM native_experiment_services WHERE id=?', [id]); }
+    async remove(id: string) { await this.db.run('DELETE FROM native_experiment_services WHERE id=$1', [id]); }
 }

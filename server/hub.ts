@@ -72,8 +72,8 @@ export function resetHub(): void {
  * One project's events as a server-sent stream.
  *
  * The comment line every twenty seconds is not decoration: an idle SSE
- * connection through Traefik and a browser's own timeouts is closed at around
- * a minute, and a sidebar that silently stops updating is the hardest kind of
+ * connection through a hosting proxy and
+ * a browser's own timeouts is closed at around a minute, and a sidebar that silently stops updating is the hardest kind of
  * bug to notice. A `:` line is a comment in the SSE grammar — it keeps the
  * socket warm and is ignored by `EventSource`.
  */
@@ -115,8 +115,8 @@ export function projectStream(projectId: string, userId: string, signal: AbortSi
       "content-type": "text/event-stream; charset=utf-8",
       "cache-control": "no-cache, no-transform",
       connection: "keep-alive",
-      // Traefik does not buffer, but an nginx in front of it would, and a
-      // buffered event stream is a stream that arrives all at once at the end.
+      // Render's proxy does not buffer, but an nginx in front would, and a
+      // buffered event stream arrives all at once at the end.
       "x-accel-buffering": "no",
     },
   });

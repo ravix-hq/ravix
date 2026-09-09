@@ -1,0 +1,98 @@
+# Render Blueprint for Ravix — https://render.com/docs/blueprint-spec
+#
+# One web service and one Postgres. The per-project SSE fan-out and the
+# preview reconciler live in the process, so this runs as exactly one
+# instance; with the state in Postgres rather than on a disk, a deploy is a
+# zero-downtime swap and the database has Render's backups.
+#
+# The app and the track-preview gateway share the service's single listener
+# and are told apart by Host, so both domains below point at this service:
+#
+#   app.ravix.sh          the app; must match the GitHub App's callback URL
+#   *.preview.ravix.sh    track previews (see README, "Enable gateway routing")
+#
+# Render requires a wildcard's parent to point at Render too, so
+# `preview.ravix.sh` is listed; the app answers there and sets nothing.
+#
+# Secrets (sync: false) are entered in the dashboard when the Blueprint is
+# first applied and never live in this file. The app starts without them and
+# says on screen which one it is missing — a better failure than a service
+# that will not boot.
+services:
+  - type: web
+    name: ravix
+    runtime: docker
+    region: oregon
+    plan: 0.5c-512mb
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /healthz
+    # Deploy a commit to main only once CI (.github/workflows/ci.yml) is green.
+    autoDeployTrigger: checksPass
+    domains:
+      - app.ravix.sh
+      - preview.ravix.sh
+      - "*.preview.ravix.sh"
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: ravix-db
+          property: connectionString
+      - key: FOUNTAIN_URL
+        value: https://managoat.com
+      - key: STATIC_DIR
+        value: /app/dist
+      # Where GitHub sends a browser back to, and what the App's callback and
+      # setup URLs are registered as. Load-bearing: a mismatch here is the one
+      # failure that looks like "sign-in is broken".
+      - key: PUBLIC_URL
+        value: https://app.ravix.sh
+      - key: SHARED_BROWSER
+        value: "1"
+      - key: PREVIEW_DOMAIN
+        value: preview.ravix.sh
+      # Gate 2: only the pinned private Hello repository can pair a runner.
+      - key: NATIVE_PREVIEW_EXPERIMENT
+        value: "1"
+      - key: NATIVE_HELLO_IOS_SHA256
+        value: "375169f807696ad02ea5d82f1456b94142378e9f306eb5555bab55afe9abab2f"
+      # Encrypts stored GitHub tokens; sessions are hashes. Generated once by
+      # Render and kept with the service rather than beside the data.
+      - key: RAVIX_SECRET
+        generateValue: true
+      # The account every machine is built on. Without it there are no
+      # projects at all.
+      - key: FOUNTAIN_API_KEY
+        sync: false
+      # The GitHub App: sign-in, repository access, pull requests, issues,
+      # checks, and the installation token that clones a private repository.
+      # All of them or none of them. The private key is the App's PEM; paste
+      # it with its newlines, escaped `\n` also works.
+      - key: GITHUB_APP_ID
+        sync: false
+      - key: GITHUB_APP_SLUG
+        sync: false
+      - key: GITHUB_CLIENT_ID
+        sync: false
+      - key: GITHUB_CLIENT_SECRET
+        sync: false
+      - key: GITHUB_PRIVATE_KEY
+        sync: false
+      # With it the terminal, the run panel and track previews are live;
+      # without it they say so.
+      - key: SPRITES_TOKEN
+        sync: false
+      # Optional, add in the dashboard if wanted:
+      #   GITHUB_WEBHOOK_SECRET   verifies installation events
+
+# The service reaches it over Render's private network (connectionString is
+# the internal URL). No public access: to run scripts/sqlite-to-postgres.ts
+# or psql from outside, add your address here for the duration, or use a
+# shell on the service (`render ssh ravix`).
+databases:
+  - name: ravix-db
+    databaseName: ravix
+    user: ravix
+    region: oregon
+    plan: 0.1c-256mb
+    postgresMajorVersion: "17"
+    ipAllowList: []

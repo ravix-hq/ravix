@@ -1,2 +1,9 @@
 node_modules
 .git
+.github
+.claude
+dist
+dist-server
+data
+*.sqlite
+mock/dev-key.pem

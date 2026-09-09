@@ -41,39 +41,41 @@ import { beat, leave } from "./presence";
 /** `GET /api/projects/:id/tracks` */
 export async function list(ctx: AppContext, req: Request, projectId: string): Promise<Response> {
   const user = await authenticate(ctx, req);
-  const project = ctx.db.project(projectId);
+  const project = await ctx.db.project(projectId);
   if (!project || project.archivedAt) throw new HttpError(404, "not_found", "No such project.");
 
   // The owner and anybody invited to the whole project see all of its tracks.
   // Somebody invited to particular tracks sees those and is not told there are
   // others. Same list endpoint, because the sidebar asks the same question
   // whichever of the three is asking.
-  const access = accessOf(ctx, user.id, project);
+  const access = await accessOf(ctx, user.id, project);
   const wide = access === "owner" || access === "project";
-  const rows = wide ? ctx.db.tracksOf(project.id) : ctx.db.memberTracks(user.id).filter((t) => t.projectId === project.id);
+  const rows = wide ? await ctx.db.tracksOf(project.id) : (await ctx.db.memberTracks(user.id)).filter((t) => t.projectId === project.id);
   if (!access || (!wide && !rows.length)) throw new HttpError(404, "not_found", "No such project.");
   const owner = access === "owner";
 
   const live = await conversationsOf(ctx, project);
-  const reads = ctx.db.readsOf(user.id, project.id);
-  return json({
-    data: rows.map((r) =>
+  const reads = await ctx.db.readsOf(user.id, project.id);
+  const data: Track[] = [];
+  for (const r of rows) {
+    data.push(
       toTrack(
         r,
         project,
         live.get(r.conversationId ?? "") ?? null,
-        peopleOf(ctx, r.id, project.userId, project.id),
+        await peopleOf(ctx, r.id, project.userId, project.id),
         owner ? "owner" : "member",
         reads.get(r.id) ?? null,
       ),
-    ),
-  });
+    );
+  }
+  return json({ data });
 }
 
 /** `GET /api/tracks/:id` — the track, plus the ribbon that sits above it. */
 export async function show(ctx: AppContext, req: Request, trackId: string): Promise<Response> {
   const user = await authenticate(ctx, req);
-  const { track, project, role } = trackOf(ctx, user, trackId);
+  const { track, project, role } = await trackOf(ctx, user, trackId);
   const fountain = requireFountain(ctx);
   // The environment is read for one boolean, and it is worth the call: the
   // "add a setup script" line in the ribbon is an offer, and an offer that
@@ -98,9 +100,9 @@ export async function show(ctx: AppContext, req: Request, trackId: string): Prom
         track,
         project,
         live.get(track.conversationId ?? "") ?? null,
-        peopleOf(ctx, track.id, project.userId, project.id),
+        await peopleOf(ctx, track.id, project.userId, project.id),
         role,
-        ctx.db.lastReadOf(track.id, user.id),
+        await ctx.db.lastReadOf(track.id, user.id),
       ),
       header,
       starters: starters({ hasRepo: !!project.repoFullName }),
@@ -125,7 +127,7 @@ export async function show(ctx: AppContext, req: Request, trackId: string): Prom
  */
 export async function open(ctx: AppContext, req: Request, projectId: string): Promise<Response> {
   const user = await authenticate(ctx, req);
-  const { project } = projectAccess(ctx, user, projectId);
+  const { project } = await projectAccess(ctx, user, projectId);
   const fountain = requireFountain(ctx);
   const body = await readJson(req);
 
@@ -133,9 +135,9 @@ export async function open(ctx: AppContext, req: Request, projectId: string): Pr
   const origin = readOrigin(body, project);
   // Every track this project has ever had, closed ones included — see
   // `nameTrack` for why a closed track's name is still spent.
-  const taken = ctx.db.tracksOf(project.id, true).map((t) => t.slug);
+  const taken = (await ctx.db.tracksOf(project.id, true)).map((t) => t.slug);
   const title = str(body.title, 200).trim() || defaultTitle(origin, taken);
-  const slug = freeSlug(ctx, project.id, str(body.slug, 60).trim() || title);
+  const slug = await freeSlug(ctx, project.id, str(body.slug, 60).trim() || title);
   const branch = origin.kind === "pr" && origin.base ? origin.base : branchFor(user.login, slug, id);
   const workdir = workdirFor(slug);
 
@@ -176,7 +178,7 @@ export async function open(ctx: AppContext, req: Request, projectId: string): Pr
     throw asHttpError(err, "open this track");
   }
 
-  const row = ctx.db.createTrack({
+  const row = await ctx.db.createTrack({
     id,
     projectId: project.id,
     conversationId,
@@ -202,7 +204,7 @@ export async function open(ctx: AppContext, req: Request, projectId: string): Pr
   } else {
     // It went with the launch. The track is open as far as Fountain is
     // concerned; the worktree lands when that turn does.
-    ctx.db.markOpened(row.id);
+    await ctx.db.markOpened(row.id);
   }
 
   // A first track provisions the machine, so what `machineOf` memoised is out
@@ -228,7 +230,7 @@ async function sendOpeningTurn(
   });
   try {
     await fountain.prompt(track.conversationId, prompt);
-    ctx.db.markOpened(track.id);
+    await ctx.db.markOpened(track.id);
     publish(project.id, { event: "turn", data: { trackId: track.id, status: "ready" } });
   } catch (err) {
     // A machine at capacity is the ordinary case when two tracks are opened at
@@ -243,7 +245,7 @@ async function sendOpeningTurn(
 /** `POST /api/tracks/:id/retry` — send the opening turn again. */
 export async function retry(ctx: AppContext, req: Request, trackId: string): Promise<Response> {
   const user = await authenticate(ctx, req);
-  const { track, project } = trackOf(ctx, user, trackId);
+  const { track, project } = await trackOf(ctx, user, trackId);
   const fountain = requireFountain(ctx);
   await prepareMachine(ctx, project, fountain);
   await sendOpeningTurn(ctx, fountain, track, project, originOf(track) as TrackOrigin);
@@ -253,7 +255,7 @@ export async function retry(ctx: AppContext, req: Request, trackId: string): Pro
 /** Accept into SQLite before acknowledging; the server worker owns delivery. */
 export async function prompt(ctx: AppContext, req: Request, trackId: string): Promise<Response> {
   const user = await authenticate(ctx, req);
-  const { track } = trackOf(ctx, user, trackId);
+  const { track } = await trackOf(ctx, user, trackId);
   requireFountain(ctx);
   const body = await readJson(req);
   const text = str(body.prompt, 100_000);
@@ -261,7 +263,7 @@ export async function prompt(ctx: AppContext, req: Request, trackId: string): Pr
   if (!text.trim() && !images.length) throw new HttpError(422, "empty_prompt", "Say something.");
   if (!track.conversationId) throw new HttpError(409, "not_open", "This track has no conversation yet.");
   if (track.closedAt) throw new HttpError(409, "closed_track", "This track is closed.");
-  enqueue(ctx, track.id, user.id, user.login, body.requestId, { prompt: text, images });
+  await enqueue(ctx, track.id, user.id, user.login, body.requestId, { prompt: text, images });
   return json({ data: { ok: true } }, 202);
 }
 
@@ -275,8 +277,8 @@ export async function prompt(ctx: AppContext, req: Request, trackId: string): Pr
  */
 export async function markRead(ctx: AppContext, req: Request, trackId: string): Promise<Response> {
   const user = await authenticate(ctx, req);
-  const { track, project } = trackOf(ctx, user, trackId);
-  ctx.db.markRead(track.id, user.id);
+  const { track, project } = await trackOf(ctx, user, trackId);
+  await ctx.db.markRead(track.id, user.id);
   publish(project.id, { event: "tracks", data: { projectId: project.id } });
   return json({ data: { ok: true } });
 }
@@ -319,7 +321,7 @@ function readImages(raw: unknown): { data: string; media_type: string }[] {
  */
 export async function presence(ctx: AppContext, req: Request, trackId: string): Promise<Response> {
   const user = await authenticate(ctx, req);
-  const { track, project } = trackOf(ctx, user, trackId);
+  const { track, project } = await trackOf(ctx, user, trackId);
   const body = await readJson(req);
 
   // Who may be told. The owner always, everybody in the whole project, and
@@ -329,8 +331,8 @@ export async function presence(ctx: AppContext, req: Request, trackId: string): 
   // project member watching a track whose other readers cannot see them.
   const audience = new Set<string>([
     project.userId,
-    ...ctx.db.projectMembersOf(project.id).map((m) => m.id),
-    ...ctx.db.membersOf(track.id).map((m) => m.id),
+    ...(await ctx.db.projectMembersOf(project.id)).map((m) => m.id),
+    ...(await ctx.db.membersOf(track.id)).map((m) => m.id),
   ]);
 
   if (body.leaving === true) {
@@ -354,7 +356,7 @@ export async function presence(ctx: AppContext, req: Request, trackId: string): 
 /** `POST /api/tracks/:id/interrupt` */
 export async function interrupt(ctx: AppContext, req: Request, trackId: string): Promise<Response> {
   const user = await authenticate(ctx, req);
-  const { track } = trackOf(ctx, user, trackId);
+  const { track } = await trackOf(ctx, user, trackId);
   const fountain = requireFountain(ctx);
   if (!track.conversationId) throw new HttpError(409, "not_open", "This track has no conversation yet.");
   try {
@@ -375,7 +377,7 @@ export async function interrupt(ctx: AppContext, req: Request, trackId: string):
  */
 export async function events(ctx: AppContext, req: Request, trackId: string): Promise<Response> {
   const user = await authenticate(ctx, req);
-  const { track } = trackOf(ctx, user, trackId);
+  const { track } = await trackOf(ctx, user, trackId);
   const fountain = requireFountain(ctx);
   if (!track.conversationId) return json({ data: { turns: [], events: [] } });
   try {
@@ -409,12 +411,12 @@ export async function events(ctx: AppContext, req: Request, trackId: string): Pr
  */
 export async function stream(ctx: AppContext, req: Request, trackId: string): Promise<Response> {
   const user = await authenticate(ctx, req);
-  const { track, project } = trackOf(ctx, user, trackId);
+  const { track, project } = await trackOf(ctx, user, trackId);
   const fountain = requireFountain(ctx);
   if (!track.conversationId) throw new HttpError(409, "not_open", "This track has no conversation yet.");
-  const access = watchStream(project.id, user.id, req.signal, () => {
+  const access = await watchStream(project.id, user.id, req.signal, async () => {
     try {
-      return !trackOf(ctx, user, trackId).track.closedAt;
+      return !(await trackOf(ctx, user, trackId)).track.closedAt;
     } catch {
       return false;
     }
@@ -448,14 +450,14 @@ export async function stream(ctx: AppContext, req: Request, trackId: string): Pr
  */
 export async function rename(ctx: AppContext, req: Request, trackId: string): Promise<Response> {
   const user = await authenticate(ctx, req);
-  const { track, project, role } = trackOf(ctx, user, trackId);
+  const { track, project, role } = await trackOf(ctx, user, trackId);
   // Somebody invited to help on one branch is not somebody who relabels it in
   // everybody else's rail — but whoever cut it named it in the first place.
   requireOwnerOrCutter(role, user, track, "rename a track");
   const body = await readJson(req);
   const title = str(body.title, 200).trim();
   if (!title) throw new HttpError(422, "no_title", "A track needs a name.");
-  ctx.db.renameTrack(track.id, title);
+  await ctx.db.renameTrack(track.id, title);
   publish(project.id, { event: "tracks", data: { projectId: project.id } });
   return json({ data: { ok: true } });
 }
@@ -475,14 +477,14 @@ export async function rename(ctx: AppContext, req: Request, trackId: string): Pr
  */
 export async function close(ctx: AppContext, req: Request, trackId: string): Promise<Response> {
   const user = await authenticate(ctx, req);
-  const { track, project, role } = trackOf(ctx, user, trackId);
+  const { track, project, role } = await trackOf(ctx, user, trackId);
   // Closing ends the track for everybody in it and takes the worktree away.
   // That is the owner's call, or the caller's own if they are the one who cut
   // it; for anybody else the way out is to leave.
   requireOwnerOrCutter(role, user, track, "close a track");
   const fountain = requireFountain(ctx);
   const force = new URL(req.url).searchParams.get("force") === "1";
-  ctx.db.cancelTrackPrompts(track.id);
+  await ctx.db.cancelTrackPrompts(track.id);
   await previews(ctx).stopService(track.id, true);
 
   if (track.conversationId) {
@@ -502,7 +504,7 @@ export async function close(ctx: AppContext, req: Request, trackId: string): Pro
     await fountain.terminate(track.conversationId).catch(() => undefined);
   }
 
-  ctx.db.closeTrack(track.id);
+  await ctx.db.closeTrack(track.id);
   forgetProject(project.id);
   publish(project.id, { event: "tracks", data: { projectId: project.id } });
   return json({ data: { ok: true } });
@@ -513,7 +515,7 @@ export async function close(ctx: AppContext, req: Request, trackId: string): Pro
 /** `GET /api/tracks/:id/files?path=` — free, and it does not wake a parked box. */
 export async function files(ctx: AppContext, req: Request, trackId: string): Promise<Response> {
   const user = await authenticate(ctx, req);
-  const { track, project } = trackOf(ctx, user, trackId);
+  const { track, project } = await trackOf(ctx, user, trackId);
   const fountain = requireFountain(ctx);
   const machine = await machineOf(fountain, project);
   if (!machine) throw new HttpError(409, "no_machine", "This project has no machine yet.");
@@ -528,7 +530,7 @@ export async function files(ctx: AppContext, req: Request, trackId: string): Pro
 /** `GET /api/tracks/:id/file?path=` */
 export async function file(ctx: AppContext, req: Request, trackId: string): Promise<Response> {
   const user = await authenticate(ctx, req);
-  const { track, project } = trackOf(ctx, user, trackId);
+  const { track, project } = await trackOf(ctx, user, trackId);
   const fountain = requireFountain(ctx);
   const machine = await machineOf(fountain, project);
   if (!machine) throw new HttpError(409, "no_machine", "This project has no machine yet.");
@@ -543,7 +545,7 @@ export async function file(ctx: AppContext, req: Request, trackId: string): Prom
 /** `GET /api/tracks/:id/diff` — `git diff` in this track's worktree, parsed. */
 export async function diff(ctx: AppContext, req: Request, trackId: string): Promise<Response> {
   const user = await authenticate(ctx, req);
-  const { track, project } = trackOf(ctx, user, trackId);
+  const { track, project } = await trackOf(ctx, user, trackId);
   const fountain = requireFountain(ctx);
   const machine = await machineOf(fountain, project);
   if (!machine) throw new HttpError(409, "no_machine", "This project has no machine yet.");
@@ -721,12 +723,12 @@ function originUrl(project: ProjectRow, origin: TrackOrigin): string | null {
  * request means it, and being told "that name is taken" about a name they
  * never chose is a dead end.
  */
-function freeSlug(ctx: AppContext, projectId: string, from: string): string {
+async function freeSlug(ctx: AppContext, projectId: string, from: string): Promise<string> {
   const base = slugify(from);
-  if (!ctx.db.slugTaken(projectId, base)) return base;
+  if (!(await ctx.db.slugTaken(projectId, base))) return base;
   for (let n = 2; n < 100; n++) {
     const candidate = `${base}-${n}`;
-    if (!ctx.db.slugTaken(projectId, candidate)) return candidate;
+    if (!(await ctx.db.slugTaken(projectId, candidate))) return candidate;
   }
   return `${base}-${Date.now().toString(36)}`;
 }

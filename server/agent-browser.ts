@@ -27,14 +27,14 @@ export async function prepareAgentBrowser(ctx: AppContext, prompt: Omit<PromptRo
   const manager = browsers(ctx);
   if (!manager.available()) return "";
   try {
-    const track = ctx.db.track(prompt.trackId)!;
+    const track = (await ctx.db.track(prompt.trackId))!;
     const actual = await manager.destination(track.projectId);
     const token = randomToken(), hash = await sha256(token);
-    ctx.db.browsers.grant({ hash, trackId: track.id, userId: prompt.userId, promptId: prompt.id, conversationId: track.conversationId!, expires: Date.now() + 2 * 60 * 60_000, ...actual });
+    await ctx.db.browsers.grant({ hash, trackId: track.id, userId: prompt.userId, promptId: prompt.id, conversationId: track.conversationId!, expires: Date.now() + 2 * 60 * 60_000, ...actual });
     const path = `${STATE_DIR}/browser-tools/${track.id}.sh`;
     const script = agentBrowserScript(`${ctx.config.publicUrl}/api/tracks/${encodeURIComponent(track.id)}/browser/agent`, token);
     const result = await ctx.sprites!.exec(actual.sprite, ["sh", "-lc", `umask 077; mkdir -p ${shq(`${STATE_DIR}/browser-tools`)} && printf %s ${shq(script)} > ${shq(path + ".tmp")} && mv ${shq(path + ".tmp")} ${shq(path)}`], 15);
-    if (result.code || !ctx.db.browsers.agent(hash)) throw Error("Browser helper unavailable");
+    if (result.code || !(await ctx.db.browsers.agent(hash))) throw Error("Browser helper unavailable");
     return [BROWSER_TOOLS_START,
       `This machine has one shared Ravix browser profile, including machine-account logins, across every track and participant. Use sh ${shq(path)} '<command JSON>' [screenshot-output.jpg] to operate it. Execute the helper; never read, print, copy, or commit it because it contains a temporary credential.`,
       'Commands: {"action":"start"}, {"action":"status"}, {"action":"acquire"}, {"action":"release"}, {"action":"open","url":"https://example.com"}. Results include tabs, controller, and revision.',
@@ -52,16 +52,16 @@ export async function prepareAgentBrowser(ctx: AppContext, prompt: Omit<PromptRo
 export async function agentBrowserRoute(ctx: AppContext, req: Request, trackId: string) {
   const token = /^Bearer ([A-Za-z0-9_-]{20,})$/.exec(req.headers.get("authorization") ?? "")?.[1];
   const hash = token && await sha256(token);
-  const authorize = () => {
-    const grant = hash && ctx.db.browsers.agent(hash), user = grant && ctx.db.user(grant.userId);
+  const authorize = async () => {
+    const grant = hash && await ctx.db.browsers.agent(hash), user = grant && await ctx.db.user(grant.userId);
     if (!grant || !user || grant.trackId !== trackId) throw new HttpError(401, "browser_agent", "Browser helper expired. Send another message to renew it.");
-    const access = trackAccess(ctx, user, trackId), prompt = ctx.db.queuedPrompt(grant.promptId);
+    const access = await trackAccess(ctx, user, trackId), prompt = await ctx.db.queuedPrompt(grant.promptId);
     if (access.track.closedAt || access.track.conversationId !== grant.conversationId || !prompt || prompt.trackId !== trackId || prompt.userId !== user.id || !["sending", "sent", "unconfirmed"].includes(prompt.status)) throw new HttpError(401, "browser_agent", "This browser helper no longer belongs to a delivered turn.");
     return { ...access, grant, user };
   };
-  const access = authorize(), manager = browsers(ctx);
+  const access = await authorize(), manager = browsers(ctx);
   if (!manager.available()) throw new HttpError(501, "browser_unavailable", "Shared browser is unavailable.");
-  const actual = await manager.destination(access.project.id); authorize();
+  const actual = await manager.destination(access.project.id); await authorize();
   if (actual.sprite !== access.grant.sprite || actual.sandboxId !== access.grant.sandboxId) throw new HttpError(409, "browser_machine", "The machine changed. Send another message to renew the browser helper.");
   const body = await browserBody(req);
   const actor = { id: `agent:${access.grant.promptId}`, label: `Agent · ${access.track.title}`, kind: "agent" as const };

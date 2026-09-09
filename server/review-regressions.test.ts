@@ -3,29 +3,30 @@ import { buildRouter } from "./app";
 import type { AppContext } from "./context";
 import { Cipher, sha256 } from "./crypto";
 import { Db } from "./db";
+import { testSql } from "./sql";
 import { resetHub } from "./hub";
 import { prepareMachine } from "./projects";
 import { GitHubError } from "./github";
 
 const databases: Db[] = [];
-afterEach(() => {
+afterEach(async () => {
   resetHub();
-  for (const db of databases.splice(0)) db.close();
+  for (const db of databases.splice(0)) await db.close();
 });
 
 async function fixture() {
-  const db = new Db(":memory:");
+  const db = await Db.open(await testSql());
   databases.push(db);
   const cipher = await Cipher.from("ravix regression tests only");
-  const owner = db.upsertUser({ githubId: "1", login: "owner", name: "Owner", avatarUrl: null, tokenEnc: await cipher.encrypt("owner-token") });
-  const guest = db.upsertUser({ githubId: "2", login: "guest", name: "Guest", avatarUrl: null, tokenEnc: await cipher.encrypt("guest-token") });
-  for (const [user, token] of [[owner, "owner"], [guest, "guest"]] as const) db.createSession(user.id, await sha256(token), 60_000);
-  const project = db.createProject({
+  const owner = await db.upsertUser({ githubId: "1", login: "owner", name: "Owner", avatarUrl: null, tokenEnc: await cipher.encrypt("owner-token") });
+  const guest = await db.upsertUser({ githubId: "2", login: "guest", name: "Guest", avatarUrl: null, tokenEnc: await cipher.encrypt("guest-token") });
+  for (const [user, token] of [[owner, "owner"], [guest, "guest"]] as const) await db.createSession(user.id, await sha256(token), 60_000);
+  const project = await db.createProject({
     id: "p", userId: owner.id, name: "Project", repoFullName: null, repoPrivate: 0,
     defaultBranch: null, installationId: null, agentId: "a", environmentId: "e", vaultId: "v",
     runtime: "claude", model: "anthropic/claude-opus-5", instructions: "",
   });
-  for (const id of ["t", "other"]) db.createTrack({
+  for (const id of ["t", "other"]) await db.createTrack({
     id, projectId: project.id, conversationId: `c-${id}`, slug: id, title: id, branch: id,
     workdir: `/work/${id}`, originKind: "blank", originBase: null, originNumber: null,
     originTitle: null, originUrl: null, rev: 1, createdByLogin: owner.login,
@@ -83,9 +84,9 @@ test("signing out revokes the server session and clears the cookie", async () =>
   const response = await route(request("/api/auth/signout", "owner", "POST"));
   expect(response.status).toBe(200);
   expect(response.headers.get("set-cookie")).toContain("Max-Age=0");
-  expect(db.sessionUser(await sha256("owner"))).toBeNull();
+  expect(await db.sessionUser(await sha256("owner"))).toBeNull();
   expect((await route(request("/api/projects", "owner"))).status).toBe(401);
-  expect(db.sessionUser(await sha256("guest"))).not.toBeNull();
+  expect(await db.sessionUser(await sha256("guest"))).not.toBeNull();
 });
 
 async function signin(route: ReturnType<typeof buildRouter>) {
@@ -125,7 +126,7 @@ test("catalog fallback survives project responses, settings and rebuild", async 
   const { route, db, fountain } = await fixture();
   const response = await route(request("/api/projects", "owner", "POST", { name: "Blank" }));
   const project = (await response.json()).data;
-  for (const result of [project, db.project(project.id), fountain.createAgent.mock.calls[0]![0]]) {
+  for (const result of [project, await db.project(project.id), fountain.createAgent.mock.calls[0]![0]]) {
     expect(result).toMatchObject({ runtime: "codex", model: "openai/test-model" });
   }
   const settings = await route(request(`/api/projects/${project.id}/settings`, "owner"));
@@ -174,15 +175,15 @@ test("expired and pre-upgrade unbound states cannot exchange a code", async () =
   try {
     expect((await route(request(`/api/auth/callback?state=${attempt.state}&code=code`, undefined, "GET", undefined, attempt.cookie))).headers.get("location")).toBe("/?error=stale_signin");
   } finally { clock.mockRestore(); }
-  db.putState(attempt.state, "signin", null);
+  await db.putState(attempt.state, "signin", null);
   expect((await route(request(`/api/auth/callback?state=${attempt.state}&code=code`, undefined, "GET", undefined, attempt.cookie))).headers.get("location")).toBe("/?error=stale_signin");
   expect(github.exchangeCode).not.toHaveBeenCalled();
 });
 
 test("installation and both invite flows bind their callbacks to the browser", async () => {
   const { route, db, owner } = await fixture();
-  db.putLink("t", await sha256("track-link"), owner.id, 60_000);
-  db.putProjectLink("p", await sha256("project-link"), owner.id, 60_000);
+  await db.putLink("t", await sha256("track-link"), owner.id, 60_000);
+  await db.putProjectLink("p", await sha256("project-link"), owner.id, 60_000);
   for (const [path, user, landing] of [
     ["/api/auth/install", "owner", "/"],
     ["/j/track-link", undefined, "/p/p/t/t"],
@@ -198,7 +199,7 @@ test("installation and both invite flows bind their callbacks to the browser", a
 
 test("track and project people responses contain only public profile fields", async () => {
   const { route, db, guest, owner } = await fixture();
-  db.addProjectMember("p", guest.id, owner.id);
+  await db.addProjectMember("p", guest.id, owner.id);
   for (const path of ["/api/tracks/t/people", "/api/projects/p/people"]) {
     const response = await route(request(path, "guest"));
     expect(response.status).toBe(200);
@@ -219,8 +220,8 @@ function upstream() {
 
 for (const scope of ["track", "project"] as const) test(`${scope} removal cancels existing transcripts while leaving the owner's stream open`, async () => {
   const { ctx, route, db, owner, guest } = await fixture();
-  if (scope === "track") db.addMember("t", guest.id, owner.id);
-  else db.addProjectMember("p", guest.id, owner.id);
+  if (scope === "track") await db.addMember("t", guest.id, owner.id);
+  else await db.addProjectMember("p", guest.id, owner.id);
   const guestUpstream = upstream();
   const ownerUpstream = upstream();
   const signals: AbortSignal[] = [];
@@ -249,7 +250,7 @@ for (const scope of ["track", "project"] as const) test(`${scope} removal cancel
 
 test("removal while upstream headers are pending aborts the request", async () => {
   const { ctx, route, db, owner, guest } = await fixture();
-  db.addMember("t", guest.id, owner.id);
+  await db.addMember("t", guest.id, owner.id);
   const started = Promise.withResolvers<void>();
   ctx.fountain!.stream = mock((_id: string, signal?: AbortSignal) => new Promise<Response>((_resolve, reject) => {
     signal!.addEventListener("abort", () => reject(signal!.reason), { once: true });
@@ -263,8 +264,8 @@ test("removal while upstream headers are pending aborts the request", async () =
 
 test("project channel closes when the last membership is removed", async () => {
   const { route, db, owner, guest } = await fixture();
-  db.addMember("t", guest.id, owner.id);
-  db.addMember("other", guest.id, owner.id);
+  await db.addMember("t", guest.id, owner.id);
+  await db.addMember("other", guest.id, owner.id);
   const response = await route(request("/api/projects/p/stream", "guest"));
   const reader = response.body!.getReader();
   await reader.read();
@@ -313,7 +314,7 @@ test("client disconnect cancels an idle upstream response", async () => {
 
 test("revocation discards queued output before an idle client reads it", async () => {
   const { ctx, route, db, owner, guest } = await fixture();
-  db.addMember("t", guest.id, owner.id);
+  await db.addMember("t", guest.id, owner.id);
   const source = upstream();
   ctx.fountain!.stream = mock(async () => source.response);
   const response = await route(request("/api/tracks/t/stream", "guest"));
@@ -346,9 +347,9 @@ test("settings expose the catalog and switch harness in place for future tracks"
   const response = await route(request("/api/projects/p/settings", "owner", "PUT", { runtime: "codex", model: "openai/test-model" }));
   expect(response.status).toBe(200);
   expect(fountain.updateAgent).toHaveBeenCalledWith("a", { runtime: "codex", model: "openai/test-model" });
-  expect(db.project("p")).toMatchObject({ runtime: "codex", model: "openai/test-model", agentId: "a", environmentId: "e", rev: 2 });
-  expect(db.tracksOf("p")).toHaveLength(2);
-  expect(db.tracksOf("p")[0]!.rev).toBe(1);
+  expect(await db.project("p")).toMatchObject({ runtime: "codex", model: "openai/test-model", agentId: "a", environmentId: "e", rev: 2 });
+  expect(await db.tracksOf("p")).toHaveLength(2);
+  expect((await db.tracksOf("p"))[0]!.rev).toBe(1);
 });
 
 test("invalid harness/model pairs are rejected before any settings change", async () => {
@@ -358,7 +359,7 @@ test("invalid harness/model pairs are rejected before any settings change", asyn
     expect(response.status).toBe(422);
   }
   expect(fountain.updateAgent).not.toHaveBeenCalled();
-  expect(db.project("p")).toMatchObject({ name: "Project", runtime: "claude", rev: 1 });
+  expect(await db.project("p")).toMatchObject({ name: "Project", runtime: "claude", rev: 1 });
 });
 
 test("upstream failure preserves the saved harness and model", async () => {
@@ -366,7 +367,7 @@ test("upstream failure preserves the saved harness and model", async () => {
   fountain.updateAgent.mockRejectedValueOnce(new Error("offline"));
   const response = await route(request("/api/projects/p/settings", "owner", "PUT", { runtime: "codex", model: "openai/test-model" }));
   expect(response.status).toBeGreaterThanOrEqual(500);
-  expect(db.project("p")).toMatchObject({ runtime: "claude", model: "anthropic/claude-opus-5", rev: 1 });
+  expect(await db.project("p")).toMatchObject({ runtime: "claude", model: "anthropic/claude-opus-5", rev: 1 });
 });
 
 test("catalog outages allow unrelated edits and preserve current selection", async () => {
@@ -376,7 +377,7 @@ test("catalog outages allow unrelated edits and preserve current selection", asy
   expect((await response.json()).data.catalog).toBeNull();
   const saved = await route(request("/api/projects/p/settings", "owner", "PUT", { name: "Renamed", runtime: "claude", model: "anthropic/claude-opus-5" }));
   expect(saved.status).toBe(200);
-  expect(db.project("p")?.name).toBe("Renamed");
+  expect((await db.project("p"))?.name).toBe("Renamed");
 });
 
 test("machine preparation propagates mint and vault failures instead of starting with stale credentials", async () => {

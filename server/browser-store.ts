@@ -1,4 +1,4 @@
-import type { Database } from "bun:sqlite";
+import type { Sql } from "./sql";
 import type { BrowserCheckpoint } from "../shared/browser";
 
 export interface BrowserSessionRow {
@@ -13,8 +13,9 @@ export interface BrowserGrant {
   sandboxId: string; sprite: string;
 }
 export class BrowserStore {
-  constructor(private db: Database) {
-    db.exec(`CREATE TABLE IF NOT EXISTS browser_sessions (
+  constructor(private db: Sql) {}
+  async init() {
+    await this.db.exec(`CREATE TABLE IF NOT EXISTS browser_sessions (
       id TEXT PRIMARY KEY, project_id TEXT NOT NULL UNIQUE REFERENCES projects(id), data TEXT NOT NULL
     );
     CREATE TABLE IF NOT EXISTS browser_checkpoints (
@@ -25,34 +26,35 @@ export class BrowserStore {
       hash TEXT PRIMARY KEY, track_id TEXT NOT NULL REFERENCES tracks(id), data TEXT NOT NULL
     );`);
   }
-  get(projectId: string): BrowserSessionRow | null {
-    const row = this.db.query<{ data: string }, [string]>("SELECT data FROM browser_sessions WHERE project_id=?").get(projectId);
+  async get(projectId: string): Promise<BrowserSessionRow | null> {
+    const [row] = await this.db.query<{ data: string }>("SELECT data FROM browser_sessions WHERE project_id=$1", [projectId]);
     return row ? JSON.parse(row.data) : null;
   }
-  save(row: BrowserSessionRow) {
-    this.db.run("INSERT INTO browser_sessions VALUES (?,?,?) ON CONFLICT(project_id) DO UPDATE SET data=excluded.data", [row.id, row.projectId, JSON.stringify(row)]);
+  async save(row: BrowserSessionRow) {
+    await this.db.run("INSERT INTO browser_sessions VALUES ($1,$2,$3) ON CONFLICT(project_id) DO UPDATE SET data=excluded.data", [row.id, row.projectId, JSON.stringify(row)]);
   }
-  checkpoints(sessionId: string): BrowserCheckpoint[] {
-    return this.db.query<BrowserCheckpoint, [string]>("SELECT id,session_id AS sessionId,label,created_at AS createdAt FROM browser_checkpoints WHERE session_id=? ORDER BY created_at DESC").all(sessionId);
+  checkpoints(sessionId: string): Promise<BrowserCheckpoint[]> {
+    return this.db.query<BrowserCheckpoint>(`SELECT id, session_id AS "sessionId", label, created_at AS "createdAt" FROM browser_checkpoints WHERE session_id=$1 ORDER BY created_at DESC`, [sessionId]);
   }
-  checkpoint(id: string) {
-    return this.db.query<BrowserCheckpoint & { ownerId: string; payloadEnc: string }, [string]>("SELECT id,session_id AS sessionId,owner_id AS ownerId,label,created_at AS createdAt,payload_enc AS payloadEnc FROM browser_checkpoints WHERE id=?").get(id);
+  async checkpoint(id: string) {
+    const [row] = await this.db.query<BrowserCheckpoint & { ownerId: string; payloadEnc: string }>(`SELECT id, session_id AS "sessionId", owner_id AS "ownerId", label, created_at AS "createdAt", payload_enc AS "payloadEnc" FROM browser_checkpoints WHERE id=$1`, [id]);
+    return row ?? null;
   }
-  addCheckpoint(cp: BrowserCheckpoint, ownerId: string, payloadEnc: string) {
-    this.db.run("INSERT INTO browser_checkpoints VALUES (?,?,?,?,?,?)", [cp.id, cp.sessionId, ownerId, cp.label, cp.createdAt, payloadEnc]);
+  async addCheckpoint(cp: BrowserCheckpoint, ownerId: string, payloadEnc: string) {
+    await this.db.run("INSERT INTO browser_checkpoints VALUES ($1,$2,$3,$4,$5,$6)", [cp.id, cp.sessionId, ownerId, cp.label, cp.createdAt, payloadEnc]);
   }
-  deleteCheckpoint(id: string) { this.db.run("DELETE FROM browser_checkpoints WHERE id=?", [id]); }
-  grant(value: BrowserGrant) {
-    this.db.run("DELETE FROM browser_agent_grants WHERE track_id=?", [value.trackId]);
-    this.db.run("INSERT INTO browser_agent_grants VALUES (?,?,?)", [value.hash, value.trackId, JSON.stringify(value)]);
+  async deleteCheckpoint(id: string) { await this.db.run("DELETE FROM browser_checkpoints WHERE id=$1", [id]); }
+  async grant(value: BrowserGrant) {
+    await this.db.run("DELETE FROM browser_agent_grants WHERE track_id=$1", [value.trackId]);
+    await this.db.run("INSERT INTO browser_agent_grants VALUES ($1,$2,$3)", [value.hash, value.trackId, JSON.stringify(value)]);
   }
-  agent(hash: string): BrowserGrant | null {
-    const row = this.db.query<{ data: string }, [string]>("SELECT data FROM browser_agent_grants WHERE hash=?").get(hash);
+  async agent(hash: string): Promise<BrowserGrant | null> {
+    const [row] = await this.db.query<{ data: string }>("SELECT data FROM browser_agent_grants WHERE hash=$1", [hash]);
     const value: BrowserGrant | null = row ? JSON.parse(row.data) : null;
     return value && value.expires > Date.now() ? value : null;
   }
-  revoke(trackId: string, userId?: string) {
-    if (!userId) this.db.run("DELETE FROM browser_agent_grants WHERE track_id=?", [trackId]);
-    else this.db.run("DELETE FROM browser_agent_grants WHERE track_id=? AND json_extract(data,'$.userId')=?", [trackId, userId]);
+  async revoke(trackId: string, userId?: string) {
+    if (!userId) await this.db.run("DELETE FROM browser_agent_grants WHERE track_id=$1", [trackId]);
+    else await this.db.run("DELETE FROM browser_agent_grants WHERE track_id=$1 AND data::jsonb->>'userId'=$2", [trackId, userId]);
   }
 }

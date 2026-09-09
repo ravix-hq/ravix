@@ -6,7 +6,7 @@ import { randomToken, sha256 } from './crypto';
 import { machineOf, spriteFor } from './tracks';
 import { spriteTunnel, previewClient } from './sprites-tunnel';
 import { createNativeForwardGateway, type NativeForwardPeer } from './native-forward-gateway';
-import { RunnerCoordinator, type RunnerPeer } from './runner-coordinator';
+import { RunnerCoordinator, serial, type RunnerPeer } from './runner-coordinator';
 import type { NativeRequest } from './runner-store';
 import type { NativeServiceReservation } from './native-experiment-store';
 import { NATIVE, nativeFrame, parseNativeInput, type NativeInfo, type NativePlatform, type NativeVideo } from '../shared/native-preview';
@@ -113,21 +113,21 @@ export class NativeExperiments {
         backpressureLimit: 1024 * 1024,
         closeOnBackpressureLimit: true,
         idleTimeout: 60,
-        open: (ws: ServerWebSocket<NativeSocketData>) => { if ('runnerControl' in ws.data) this.coordinator.websocket.open(ws as ServerWebSocket<RunnerPeer>);
+        open: (ws: ServerWebSocket<NativeSocketData>) => { if ('runnerControl' in ws.data) return this.coordinator.websocket.open(ws as ServerWebSocket<RunnerPeer>);
         else if ('assignment' in ws.data)
             this.forward.websocket.open(ws as ServerWebSocket<NativeForwardPeer>);
         else
-            this.channels.open(ws as ServerWebSocket<NativePeer>); },
-        message: (ws: ServerWebSocket<NativeSocketData>, data: string | Buffer) => { if ('runnerControl' in ws.data) this.coordinator.websocket.message(ws as ServerWebSocket<RunnerPeer>, data);
+            return this.channels.open(ws as ServerWebSocket<NativePeer>); },
+        message: (ws: ServerWebSocket<NativeSocketData>, data: string | Buffer) => { if ('runnerControl' in ws.data) return this.coordinator.websocket.message(ws as ServerWebSocket<RunnerPeer>, data);
         else if ('assignment' in ws.data)
             this.forward.websocket.message(ws as ServerWebSocket<NativeForwardPeer>, data);
         else
-            this.channels.message(ws as ServerWebSocket<NativePeer>, data); },
-        close: (ws: ServerWebSocket<NativeSocketData>) => { if ('runnerControl' in ws.data) this.coordinator.websocket.close(ws as ServerWebSocket<RunnerPeer>);
+            return this.channels.message(ws as ServerWebSocket<NativePeer>, data); },
+        close: (ws: ServerWebSocket<NativeSocketData>) => { if ('runnerControl' in ws.data) return this.coordinator.websocket.close(ws as ServerWebSocket<RunnerPeer>);
         else if ('assignment' in ws.data)
             this.forward.websocket.close(ws as ServerWebSocket<NativeForwardPeer>);
         else
-            this.channels.close(ws as ServerWebSocket<NativePeer>); },
+            return this.channels.close(ws as ServerWebSocket<NativePeer>); },
     };
     private sessions = new Map<string, Session>();
     private timer?: ReturnType<typeof setInterval>;
@@ -141,23 +141,23 @@ export class NativeExperiments {
         this.coordinator = new RunnerCoordinator(ctx, {
             spawn: (request, pairHash) => this.spawnManaged(request, pairHash),
             stop: async (id, reason) => { const s = this.sessions.get(id); if (s) { if(s.cleanupError && Date.now()-s.lastCheck<15000)return; s.lastCheck=Date.now(); await this.stopSession(s, reason); } },
-            info: id => { const s = this.sessions.get(id); return s ? this.info(s) : null; },
-            busy: () => this.stopped || this.recovering || this.ctx.db.nativeExperiments.all().length > 0 || [...this.sessions.values()].some(s => this.live(s)),
+            info: async id => { const s = this.sessions.get(id); return s ? this.info(s) : null; },
+            busy: async () => this.stopped || this.recovering || (await this.ctx.db.nativeExperiments.all()).length > 0 || await this.anyLive(),
         });
         this.forward = createNativeForwardGateway(async (req) => {
             const match = /^\/api\/native\/sessions\/([a-f0-9-]{36})\/forward\/(metro|backend)$/.exec(new URL(req.url).pathname);
             if (!match)
                 return null;
             const s = await this.runnerSession(req, match[1]!);
-            if (!s?.reservation || !s.runner || !this.live(s) || !['Connecting', 'Ready'].includes(s.phase))
+            if (!s?.reservation || !s.runner || !await this.live(s) || !['Connecting', 'Ready'].includes(s.phase))
                 return null;
             const r = s.reservation, port = match[2] === 'metro' ? r.metro : r.backend;
             return { signal: s.controller.signal, connect: async () => {
-                    if (!this.live(s))
+                    if (!await this.live(s))
                         throw new Error('Session ended');
-                    const project = this.ctx.db.project(s.projectId)!;
+                    const project = (await this.ctx.db.project(s.projectId))!;
                     const machine = await machineOf(this.ctx.fountain!, project);
-                    if (!this.live(s) || !machine || await spriteFor(this.ctx.fountain!, machine.sandboxId) !== r.sprite) {
+                    if (!await this.live(s) || !machine || await spriteFor(this.ctx.fountain!, machine.sandboxId) !== r.sprite) {
                         void this.stopSession(s, 'Workspace replaced');
                         throw new Error('Workspace replaced');
                     }
@@ -165,21 +165,21 @@ export class NativeExperiments {
                 } };
         });
     }
-    start() {
+    async start() {
         if (this.timer || !this.ctx.config.nativePreviewExperiment)
             return;
-        this.coordinator.start();
+        await this.coordinator.start();
         this.recovering = true;
         const recover = () => {
             this.lastRecovery = Date.now();
-            this.recoveryTask = Promise.allSettled(this.ctx.db.nativeExperiments.all().map(r => this.retire(r))).then(() => { this.recovering = this.ctx.db.nativeExperiments.all().length > 0; }).finally(() => { this.recoveryTask = undefined; });
+            this.recoveryTask = this.ctx.db.nativeExperiments.all().then(rows => Promise.allSettled(rows.map(r => this.retire(r)))).then(async () => { this.recovering = (await this.ctx.db.nativeExperiments.all()).length > 0; }).finally(() => { this.recoveryTask = undefined; });
         };
         recover();
-        this.timer = setInterval(() => {
+        this.timer = setInterval(() => void (async () => {
             void this.coordinator.tick().catch(error => console.error('Native scheduler:', error));
             if (this.recovering && !this.recoveryTask && Date.now() - this.lastRecovery >= 15000) recover();
             for (const s of this.sessions.values()) {
-                if (!this.live(s)) {
+                if (!await this.live(s)) {
                     if (!s.controller.signal.aborted || (!s.stopping && Date.now() - s.lastCheck >= 15000)) {
                         s.lastCheck = Date.now();
                         void this.stopSession(s, s.error ?? 'Session lease or access ended');
@@ -187,7 +187,7 @@ export class NativeExperiments {
                     continue;
                 }
                 for (const ws of [...s.viewers, ...(s.input ? [s.input] : [])])
-                    if (!this.viewerLive(ws.data))
+                    if (!await this.viewerLive(ws.data))
                         ws.close(1008, 'Access ended');
                 if (Date.now() - s.lastViewer > 5 * 60000) {
                     void this.stopSession(s, 'Preview idle');
@@ -200,7 +200,7 @@ export class NativeExperiments {
                 // scrcpy is damage-driven: a healthy static screen may emit no
                 // frames. Producer disconnect and the runner lease fence liveness.
             }
-        }, 1000);
+        })().catch(error => console.error('Native sweep:', error)), 1000);
         this.timer.unref();
     }
     async stop() {
@@ -211,47 +211,48 @@ export class NativeExperiments {
         await this.recoveryTask;
         await Promise.all([...this.sessions.values()].map(s => this.stopSession(s, 'Server stopped')));
     }
-    private live(s: Session) {
+    private async live(s: Session) {
         if (this.stopped || s.controller.signal.aborted || s.expiresAt <= Date.now() || s.leaseUntil <= Date.now())
             return false;
-        if (s.managed && !this.coordinator.current(s.id, s.managed.generation, s.managed.epoch)) return false;
-        const user = this.ctx.db.sessionUser(s.sessionHash), track = this.ctx.db.track(s.trackId), project = this.ctx.db.project(s.projectId);
+        if (s.managed && !await this.coordinator.current(s.id, s.managed.generation, s.managed.epoch)) return false;
+        const user = await this.ctx.db.sessionUser(s.sessionHash), track = await this.ctx.db.track(s.trackId), project = await this.ctx.db.project(s.projectId);
         return !!user && user.id === s.userId && !!track && !track.closedAt && track.workdir === s.workdir &&
             !!project && !project.archivedAt && project.userId === user.id && project.rev === s.projectRevision && project.agentId === s.agentId;
     }
-    private viewerLive(p: NativePeer) {
-        if (!this.live(p.session) || !p.sessionHash || !p.userId)
+    private async anyLive() { for (const s of this.sessions.values()) if (await this.live(s)) return true; return false; }
+    private async viewerLive(p: NativePeer) {
+        if (!await this.live(p.session) || !p.sessionHash || !p.userId)
             return false;
         try {
-            const user = this.ctx.db.sessionUser(p.sessionHash);
+            const user = await this.ctx.db.sessionUser(p.sessionHash);
             if (!user || user.id !== p.userId)
                 return false;
-            return !trackAccess(this.ctx, user, p.session.trackId).track.closedAt;
+            return !(await trackAccess(this.ctx, user, p.session.trackId)).track.closedAt;
         }
         catch {
             return false;
         }
     }
-    private info(s: Session): NativeInfo { return { id: s.id, platform: s.platform, trackId: s.trackId, phase: s.phase, error: s.cleanupError ? [s.error, `Cleanup pending: ${s.cleanupError}`].filter(Boolean).join('\n') : s.error, expiresAt: s.expiresAt, runnerOnline: !!s.runner && this.live(s), video: s.video, frames: s.frames }; }
+    private async info(s: Session): Promise<NativeInfo> { return { id: s.id, platform: s.platform, trackId: s.trackId, phase: s.phase, error: s.cleanupError ? [s.error, `Cleanup pending: ${s.cleanupError}`].filter(Boolean).join('\n') : s.error, expiresAt: s.expiresAt, runnerOnline: !!s.runner && await this.live(s), video: s.video, frames: s.frames }; }
     private async runnerSession(req: Request, id: string) {
         if (req.headers.has('origin') || new URL(req.url).search)
             return null;
         const token = /^Bearer ([a-zA-Z0-9_-]{32,256})$/.exec(req.headers.get('authorization') ?? '')?.[1];
         const s = this.sessions.get(id);
-        return token && s?.tokenHash && await sha256(token) === s.tokenHash && this.live(s) ? s : null;
+        return token && s?.tokenHash && await sha256(token) === s.tokenHash && await this.live(s) ? s : null;
     }
     async route(req: Request, trackId: string, action = ''): Promise<Response> {
-        const user = await authenticate(this.ctx, req), { track, project, role } = trackAccess(this.ctx, user, trackId);
+        const user = await authenticate(this.ctx, req), { track, project, role } = await trackAccess(this.ctx, user, trackId);
         if (track.closedAt)
             throw new HttpError(409, 'closed', 'This track is closed.');
         const available = !!this.ctx.config.nativePreviewExperiment && !!this.ctx.fountain && !!this.ctx.sprites && project.repoFullName === FIXTURE;
         const current = [...this.sessions.values()].reverse().find(s => s.trackId === trackId);
-        const durable = this.ctx.db.runners.current(trackId);
+        const durable = await this.ctx.db.runners.current(trackId);
         if (req.method === 'GET') {
-            if (durable) this.ctx.db.runners.touch(durable.id);
-            if (current && this.live(current))
+            if (durable) await this.ctx.db.runners.touch(durable.id);
+            if (current && await this.live(current))
                 current.lastViewer = Date.now();
-            return Response.json({ data: { available, platforms: this.ctx.config.nativeHelloIosSha256 ? ['android', 'ios'] : ['android'], runners: this.coordinator.list(project.id), session: durable ? this.coordinator.info(durable) : current ? this.info(current) : null } }, { headers: { 'cache-control': 'no-store' } });
+            return Response.json({ data: { available, platforms: this.ctx.config.nativeHelloIosSha256 ? ['android', 'ios'] : ['android'], runners: await this.coordinator.list(project.id), session: durable ? await this.coordinator.info(durable) : current ? await this.info(current) : null } }, { headers: { 'cache-control': 'no-store' } });
         }
         if (req.headers.get('origin') !== this.ctx.config.publicUrl)
             throw new HttpError(403, 'origin', 'Open this action in Ravix.');
@@ -270,11 +271,11 @@ export class NativeExperiments {
         const body = await nativeBody(req, true);
         const platform = body.platform ?? 'android';
         if (platform !== 'android' && platform !== 'ios') throw new HttpError(400, 'platform', 'Choose Android or iOS.');
-        if (this.coordinator.list(project.id).length) {
+        if ((await this.coordinator.list(project.id)).length) {
             const info = await this.coordinator.enqueue(req, trackId, platform, body.requestId as string, body.runnerId as string | undefined);
             return Response.json({data: info}, {headers: {'cache-control': 'no-store'}});
         }
-        if (this.recovering || this.ctx.db.nativeExperiments.all().length || [...this.sessions.values()].some(s => this.live(s)))
+        if (this.recovering || (await this.ctx.db.nativeExperiments.all()).length || await this.anyLive())
             throw new HttpError(409, 'native_busy', 'The experiment runner is occupied or still cleaning up. Stop it before starting another.');
         if (this.sessions.size >= 10)
             this.sessions.delete(this.sessions.keys().next().value!);
@@ -285,10 +286,10 @@ export class NativeExperiments {
             pairHash: await sha256(code), pairUntil: now + 5 * 60000, tokenHash: null, expiresAt: now + NATIVE.lifetimeMs, leaseUntil: now + 5 * 60000, lastViewer: now,
             phase: 'Awaiting runner', error: null, controller: new AbortController(), viewers: new Set(), video: null, frames: 0, lastFrame: 0, appReady: false, lastCheck: 0 };
         // Hashing yields. Recheck capacity and account access before publishing.
-        if (!this.live(s) || [...this.sessions.values()].some(s => this.live(s)))
+        if (!await this.live(s) || await this.anyLive())
             throw new HttpError(409, 'native_busy', 'Native experiment unavailable.');
         this.sessions.set(s.id, s);
-        return Response.json({ data: { ...this.info(s), pairingCode: code } }, { headers: { 'cache-control': 'no-store' } });
+        return Response.json({ data: { ...await this.info(s), pairingCode: code } }, { headers: { 'cache-control': 'no-store' } });
     }
     private spawnManaged(request: NativeRequest, pairHash: string) {
         for (const [id, s] of this.sessions) if (s.controller.signal.aborted && !s.cleanupError) this.sessions.delete(id);
@@ -301,23 +302,23 @@ export class NativeExperiments {
         this.sessions.set(s.id, s);
     }
     async show(req: Request, id: string) {
-        const durable = this.ctx.db.runners.request(id);
+        const durable = await this.ctx.db.runners.request(id);
         if (durable) {
-            const user = await authenticate(this.ctx, req), {track} = trackAccess(this.ctx, user, durable.trackId);
+            const user = await authenticate(this.ctx, req), {track} = await trackAccess(this.ctx, user, durable.trackId);
             if (track.closedAt) throw new HttpError(404, 'not_found');
-            this.ctx.db.runners.touch(id);
+            await this.ctx.db.runners.touch(id);
             const live = this.sessions.get(id); if (live) live.lastViewer = Date.now();
-            return Response.json({data: {...this.coordinator.info(durable), trackUrl: `/p/${durable.projectId}/t/${durable.trackId}`}}, {headers: {'cache-control': 'no-store'}});
+            return Response.json({data: {...await this.coordinator.info(durable), trackUrl: `/p/${durable.projectId}/t/${durable.trackId}`}}, {headers: {'cache-control': 'no-store'}});
         }
         const user = await authenticate(this.ctx, req), s = this.sessions.get(id);
         if (!s)
             throw new HttpError(404, 'not_found', 'This experiment has ended. Start it again from the track.');
-        const { track } = trackAccess(this.ctx, user, s.trackId);
+        const { track } = await trackAccess(this.ctx, user, s.trackId);
         if (track.closedAt)
             throw new HttpError(404, 'not_found');
-        if (this.live(s))
+        if (await this.live(s))
             s.lastViewer = Date.now();
-        return Response.json({ data: { ...this.info(s), trackUrl: `/p/${s.projectId}/t/${s.trackId}` } }, { headers: { 'cache-control': 'no-store' } });
+        return Response.json({ data: { ...await this.info(s), trackUrl: `/p/${s.projectId}/t/${s.trackId}` } }, { headers: { 'cache-control': 'no-store' } });
     }
     async claim(req: Request) {
         if (!this.ctx.config.nativePreviewExperiment || req.method !== 'POST' || req.headers.has('origin') || new URL(req.url).search)
@@ -325,8 +326,9 @@ export class NativeExperiments {
         const value = await nativeBody(req);
         if (typeof value.code !== 'string' || !/^[\w-]{43}$/.test(value.code) )
             throw new HttpError(401, 'unauthorized', 'Pairing requires the verified Hello build.');
-        const hash = await sha256(value.code), s = [...this.sessions.values()].find(s => s.pairHash === hash && s.pairUntil > Date.now() && this.live(s));
-        if (!s || value.artifactSha256 !== s.artifactSha256 || (value.platform ?? 'android') !== s.platform)
+        const hash = await sha256(value.code), s = [...this.sessions.values()].find(s => s.pairHash === hash && s.pairUntil > Date.now());
+        // The liveness check yields: a concurrent claim may have consumed the code meanwhile.
+        if (!s || !await this.live(s) || s.pairHash !== hash || value.artifactSha256 !== s.artifactSha256 || (value.platform ?? 'android') !== s.platform)
             throw new HttpError(401, 'unauthorized');
         const metroPort = value.metroPort === undefined ? NATIVE.metroPort : value.metroPort, backendPort = value.backendPort === undefined ? NATIVE.backendPort : value.backendPort;
         if ((value.metroPort === undefined) !== (value.backendPort === undefined) || ![metroPort,backendPort].every(port => typeof port === 'number' && Number.isInteger(port) && port >= 1024 && port <= 65535) || metroPort === backendPort)
@@ -341,38 +343,38 @@ export class NativeExperiments {
         void s.pending.catch(error => { void this.stopSession(s, error instanceof Error ? error.message : String(error)); });
         return Response.json({ data: { id: s.id, platform: s.platform, token, leaseMs: NATIVE.leaseMs, expiresAt: s.expiresAt, metroPort: s.metroPort, backendPort: s.backendPort } }, { headers: { 'cache-control': 'no-store' } });
     }
-    private assert(s: Session) { if (!this.live(s))
+    private async assert(s: Session) { if (!await this.live(s))
         throw new Error('Native session ended'); }
     private async exec(s: Session, code: string, args: string[] = [], seconds = 30) {
-        this.assert(s);
+        await this.assert(s);
         const result = await this.ctx.sprites!.exec(s.reservation!.sprite, ['node', '-e', code, s.workdir, ...args], seconds);
-        this.assert(s);
+        await this.assert(s);
         if (result.code)
             throw new Error((result.stderr || result.stdout || 'Workspace command failed').slice(-2000));
         return result.stdout;
     }
     private async checkWorkspace(s: Session) {
-        const machine = await machineOf(this.ctx.fountain!, this.ctx.db.project(s.projectId)!);
-        this.assert(s);
+        const machine = await machineOf(this.ctx.fountain!, (await this.ctx.db.project(s.projectId))!);
+        await this.assert(s);
         if (!machine || await spriteFor(this.ctx.fountain!, machine.sandboxId) !== s.reservation!.sprite) throw new Error('Workspace replaced');
         await this.exec(s, `const fs=require('node:fs'),crypto=require('node:crypto');process.chdir(process.argv[1]);for(const name of ['app.config.js','app.config.ts','app.config.cjs','app.config.mjs','android','ios']) {if(fs.existsSync(name))throw Error('Native configuration changed: '+name+'. Rebuild required.');}for(const [name,hash] of Object.entries(JSON.parse(process.argv[2]))) {const stat=fs.lstatSync(name);if(!stat.isFile()||stat.size>8*1024*1024)throw Error('Invalid native input: '+name);if(crypto.createHash('sha256').update(fs.readFileSync(name)).digest('hex')!==hash)throw Error('Native configuration changed: '+name+'. Rebuild required.');}`, [JSON.stringify(NATIVE_HASHES)]);
         const r = s.reservation!;
         for (const kind of ['metro', 'backend']) {
-            this.assert(s);
+            await this.assert(s);
             await this.ctx.sprites!.activity(r.sprite, serviceName(s.id, kind));
         }
     }
     private async prepare(s: Session) {
-        const project = this.ctx.db.project(s.projectId)!;
+        const project = (await this.ctx.db.project(s.projectId))!;
         const machine = await machineOf(this.ctx.fountain!, project);
-        this.assert(s);
+        await this.assert(s);
         if (!machine)
             throw new Error('No Sprite workspace; open the track first');
         const sprite = await spriteFor(this.ctx.fountain!, machine.sandboxId);
-        this.assert(s);
+        await this.assert(s);
         if (!sprite)
             throw new Error('Workspace is not a Sprite');
-        s.reservation = this.ctx.db.nativeExperiments.allocate(s.id, s.trackId, sprite);
+        s.reservation = await this.ctx.db.nativeExperiments.allocate(s.id, s.trackId, sprite);
         await this.checkWorkspace(s);
         const preload = `/tmp/ravix-native-${s.id}.cjs`;
         await this.exec(s, `const fs=require('node:fs');fs.writeFileSync(process.argv[2],Buffer.from(process.argv[3],'base64'),{mode:0o600,flag:'wx'});`, [preload, Buffer.from(loopbackSource).toString('base64')]);
@@ -382,10 +384,10 @@ export class NativeExperiments {
         const installName = serviceName(s.id, 'install');
         const installStatus = `/tmp/ravix-native-${s.id}.install`;
         await this.ctx.sprites!.defineService(sprite, installName, s.workdir, `npm ci --no-audit --no-fund; status=$?; printf '%s' "$status" > ${quote(installStatus)}; exec sleep 1800`, r.metro);
-        this.assert(s);
+        await this.assert(s);
         const installDeadline = Date.now() + 10 * 60000;
         while (true) {
-            this.assert(s);
+            await this.assert(s);
             const install = await this.ctx.sprites!.service(sprite, installName);
             const status = (await this.exec(s, `const fs=require('node:fs');try{process.stdout.write(fs.readFileSync(process.argv[2],'utf8'));}catch(e){if(e.code!=='ENOENT')throw e;}`, [installStatus])).trim();
             if (status === '0')
@@ -399,14 +401,14 @@ export class NativeExperiments {
             ['backend', r.backend, 'exec node server.mjs'],
             ['metro', r.metro, `unset CI; export EXPO_NO_TELEMETRY=1 EXPO_NO_DOTENV=1 EXPO_OFFLINE=1 EXPO_PUBLIC_API_URL=http://127.0.0.1:${s.backendPort} EXPO_PACKAGER_PROXY_URL=http://127.0.0.1:${s.metroPort}; exec node --require ${quote(preload)} node_modules/expo/bin/cli start --dev-client --localhost --port "$PORT"`],
         ] as const) {
-            this.assert(s);
+            await this.assert(s);
             await this.exec(s, `const net=require('node:net');const s=net.createServer();s.on('error',()=>process.exit(1));s.listen(Number(process.argv[2]),'127.0.0.1',()=>s.close());`, [String(port)]);
             await this.ctx.sprites!.defineService(sprite, serviceName(s.id, kind), s.workdir, command, port);
-            this.assert(s);
+            await this.assert(s);
         }
         const deadline = Date.now() + 120000;
         while (true) {
-            this.assert(s);
+            await this.assert(s);
             if (await this.ready(s, r.metro, '/status', 'packager-status:running') && await this.ready(s, r.backend, '/health'))
                 break;
             if (Date.now() > deadline)
@@ -443,7 +445,7 @@ export class NativeExperiments {
         const result = await this.ctx.sprites.exec(r.sprite, ['rm', '-f', `/tmp/ravix-native-${r.id}.cjs`, `/tmp/ravix-native-${r.id}.install`], 10);
         if (result.code)
             throw new Error('Could not remove Metro preload');
-        this.ctx.db.nativeExperiments.remove(r.id);
+        await this.ctx.db.nativeExperiments.remove(r.id);
     }
     private stopSession(s: Session, error?: string): Promise<void> {
         if (s.stopping)
@@ -482,15 +484,15 @@ export class NativeExperiments {
                     return new Response('Unauthorized', { status: 401 });
                 const user = await authenticate(this.ctx, req);
                 s = this.sessions.get(match[1]!);
-                if (!s || !this.live(s))
+                if (!s || !await this.live(s))
                     return new Response('Not found', { status: 404 });
-                trackAccess(this.ctx, user, s.trackId);
+                await trackAccess(this.ctx, user, s.trackId);
                 userId = user.id;
                 sessionHash = await sha256(cookieValue(req, SESSION_COOKIE)!);
                 if (s.viewers.size >= 8)
                     return new Response('Busy', { status: 503 });
             }
-            if (!this.live(s))
+            if (!await this.live(s))
                 return new Response('Unauthorized', { status: 401 });
             if (server.upgrade(req, { data: { role, session: s, userId, sessionHash, waiting: true, count: 0, period: Date.now() } }))
                 return;
@@ -501,9 +503,9 @@ export class NativeExperiments {
         }
     }
     private readonly channels = {
-        open: (ws: ServerWebSocket<NativePeer>) => {
+        open: (ws: ServerWebSocket<NativePeer>) => serial(ws, async () => {
             const p = ws.data, s = p.session;
-            if (!this.live(s)) {
+            if (!await this.live(s)) {
                 ws.close(1008);
                 return;
             }
@@ -513,7 +515,7 @@ export class NativeExperiments {
                     return;
                 }
                 s.runner = ws;
-                ws.send(JSON.stringify({ type: 'status', ...this.info(s), leaseMs: NATIVE.leaseMs }));
+                ws.send(JSON.stringify({ type: 'status', ...await this.info(s), leaseMs: NATIVE.leaseMs }));
             }
             else if (p.role === 'video') {
                 if (s.producer) {
@@ -522,7 +524,7 @@ export class NativeExperiments {
                 }
                 s.producer = ws;
             }
-            else if (!this.viewerLive(p)) {
+            else if (!await this.viewerLive(p)) {
                 ws.close(1008);
             }
             else if (p.role === 'view') {
@@ -542,11 +544,11 @@ export class NativeExperiments {
                 s.input = ws;
                 ws.send(JSON.stringify({ type: 'controller', active: true }));
             }
-        },
-        message: (ws: ServerWebSocket<NativePeer>, data: string | Buffer) => {
+        }, 'Native channel open'),
+        message: (ws: ServerWebSocket<NativePeer>, data: string | Buffer) => serial(ws, async () => {
             const p = ws.data, s = p.session;
             try {
-                if (!this.live(s))
+                if (!await this.live(s))
                     throw Error('Session ended');
                 if (Date.now() - p.period >= 1000) {
                     p.period = Date.now();
@@ -583,7 +585,7 @@ export class NativeExperiments {
                             s.phase = 'Ready';
                     }
                     for (const viewer of s.viewers) {
-                        if (!this.viewerLive(viewer.data)) {
+                        if (!await this.viewerLive(viewer.data)) {
                             viewer.close(1008);
                             continue;
                         }
@@ -610,7 +612,7 @@ export class NativeExperiments {
                         throw Error('Stale runner');
                     if (message.type === 'heartbeat') {
                         s.leaseUntil = Math.min(s.expiresAt, Date.now() + NATIVE.leaseMs);
-                        ws.send(JSON.stringify({ type: 'status', ...this.info(s), leaseMs: Math.max(0, s.leaseUntil - Date.now()) }));
+                        ws.send(JSON.stringify({ type: 'status', ...await this.info(s), leaseMs: Math.max(0, s.leaseUntil - Date.now()) }));
                     }
                     else if (message.type === 'ready') {
                         s.appReady = true;
@@ -623,7 +625,7 @@ export class NativeExperiments {
                         throw Error('Unknown runner message');
                     return;
                 }
-                if (!this.viewerLive(p))
+                if (!await this.viewerLive(p))
                     throw Error('Access ended');
                 s.lastViewer = Date.now();
                 if (p.role === 'view') {
@@ -646,17 +648,17 @@ export class NativeExperiments {
             catch (error) {
                 ws.close(1008, String(error).slice(0, 100));
             }
-        },
-        close: (ws: ServerWebSocket<NativePeer>) => {
+        }, 'Native channel message'),
+        close: (ws: ServerWebSocket<NativePeer>) => serial(ws, async () => {
             const p = ws.data, s = p.session;
             if (p.role === 'runner' && s.runner === ws) {
                 s.runner = undefined;
-                if (this.live(s))
+                if (await this.live(s))
                     void this.stopSession(s, 'Runner disconnected');
             }
             if (p.role === 'video' && s.producer === ws) {
                 s.producer = undefined;
-                if (this.live(s))
+                if (await this.live(s))
                     void this.stopSession(s, 'Screen stream disconnected');
             }
             if (p.role === 'view')
@@ -666,6 +668,6 @@ export class NativeExperiments {
                 if (s.runner && s.video)
                     s.runner.send(JSON.stringify({ type: 'touch', action: 'cancel', x: 0, y: 0, width: s.video.width, height: s.video.height }));
             }
-        },
+        }, 'Native channel close'),
     };
 }

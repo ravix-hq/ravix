@@ -15,25 +15,29 @@ export interface PromptPayload {
   images: { data: string; media_type: string }[];
 }
 
-export function enqueue(ctx: AppContext, trackId: string, userId: string, authorLogin: string, id: unknown, payload: PromptPayload): void {
+export async function enqueue(ctx: AppContext, trackId: string, userId: string, authorLogin: string, id: unknown, payload: PromptPayload): Promise<void> {
   if (typeof id !== "string" || !/^[a-zA-Z0-9-]{16,80}$/.test(id)) {
     throw new HttpError(422, "request_id_required", "Send a unique request id with this prompt.");
   }
-  const existing = ctx.db.queuedPrompt(id);
-  if (existing) {
-    if (existing.trackId !== trackId || existing.userId !== userId) throw new HttpError(409, "request_id_used", "Use a new request id.");
-    return;
-  }
-  if (ctx.db.promptQueueSummaries(trackId).length >= 20) throw new HttpError(409, "queue_full", "This track already has 20 saved prompts. Cancel one or wait for it to run.");
-  const encoded = JSON.stringify(payload);
-  if (encoded.length > 12 * 1024 * 1024) throw new HttpError(413, "prompt_too_large", "This prompt has too many image bytes. Send fewer images.");
-  ctx.db.enqueuePrompt({ id, trackId, userId, authorLogin, payload: encoded });
+  // The receipt check, the cap and the insert were one atomic step when the
+  // database was synchronous; the transaction keeps them so.
+  await ctx.db.transaction(async () => {
+    const existing = await ctx.db.queuedPrompt(id);
+    if (existing) {
+      if (existing.trackId !== trackId || existing.userId !== userId) throw new HttpError(409, "request_id_used", "Use a new request id.");
+      return;
+    }
+    if ((await ctx.db.promptQueueSummaries(trackId)).length >= 20) throw new HttpError(409, "queue_full", "This track already has 20 saved prompts. Cancel one or wait for it to run.");
+    const encoded = JSON.stringify(payload);
+    if (encoded.length > 12 * 1024 * 1024) throw new HttpError(413, "prompt_too_large", "This prompt has too many image bytes. Send fewer images.");
+    await ctx.db.enqueuePrompt({ id, trackId, userId, authorLogin, payload: encoded });
+  });
 }
 
 export async function listQueue(ctx: AppContext, req: Request, trackId: string): Promise<Response> {
   const user = await authenticate(ctx, req);
-  const { role } = trackAccess(ctx, user, trackId);
-  const data: QueuedPrompt[] = ctx.db.promptQueueSummaries(trackId).map((row) => {
+  const { role } = await trackAccess(ctx, user, trackId);
+  const data: QueuedPrompt[] = (await ctx.db.promptQueueSummaries(trackId)).map((row) => {
     return {
       id: row.id, prompt: row.prompt, imageCount: row.imageCount,
       authorLogin: row.authorLogin, createdAt: row.createdAt,
@@ -46,23 +50,29 @@ export async function listQueue(ctx: AppContext, req: Request, trackId: string):
 
 export async function cancelPrompt(ctx: AppContext, req: Request, trackId: string, id: string): Promise<Response> {
   const user = await authenticate(ctx, req);
-  const { role } = trackAccess(ctx, user, trackId);
-  const row = ctx.db.queuedPrompt(id);
-  if (!row || row.trackId !== trackId) throw new HttpError(404, "not_found", "No such queued prompt.");
-  if (role !== "owner" && row.userId !== user.id) throw new HttpError(403, "not_author", "Only the sender or project owner can cancel this prompt.");
-  if (row.status === "sending" || row.status === "sent") throw new HttpError(409, "already_sending", "This prompt is already being delivered. Stop the turn instead.");
-  ctx.db.setPromptStatus(id, "cancelled");
+  const { role } = await trackAccess(ctx, user, trackId);
+  // Read the row and change it in one step, so the worker cannot claim it in
+  // between — which the synchronous database ruled out by construction.
+  await ctx.db.transaction(async () => {
+    const row = await ctx.db.queuedPrompt(id);
+    if (!row || row.trackId !== trackId) throw new HttpError(404, "not_found", "No such queued prompt.");
+    if (role !== "owner" && row.userId !== user.id) throw new HttpError(403, "not_author", "Only the sender or project owner can cancel this prompt.");
+    if (row.status === "sending" || row.status === "sent") throw new HttpError(409, "already_sending", "This prompt is already being delivered. Stop the turn instead.");
+    await ctx.db.setPromptStatus(id, "cancelled");
+  });
   return json({ data: { ok: true } });
 }
 
 export async function retryPrompt(ctx: AppContext, req: Request, trackId: string, id: string): Promise<Response> {
   const user = await authenticate(ctx, req);
-  const { role, track } = trackAccess(ctx, user, trackId);
-  const row = ctx.db.queuedPrompt(id);
-  if (!row || row.trackId !== trackId || track.closedAt) throw new HttpError(404, "not_found", "No such queued prompt.");
-  if (role !== "owner" && row.userId !== user.id) throw new HttpError(403, "not_author", "Only the sender or project owner can resend this prompt.");
-  if (!["failed", "unconfirmed"].includes(row.status)) throw new HttpError(409, "not_failed", "This prompt is not waiting for a retry.");
-  ctx.db.setPromptStatus(id, "queued");
+  const { role, track } = await trackAccess(ctx, user, trackId);
+  await ctx.db.transaction(async () => {
+    const row = await ctx.db.queuedPrompt(id);
+    if (!row || row.trackId !== trackId || track.closedAt) throw new HttpError(404, "not_found", "No such queued prompt.");
+    if (role !== "owner" && row.userId !== user.id) throw new HttpError(403, "not_author", "Only the sender or project owner can resend this prompt.");
+    if (!["failed", "unconfirmed"].includes(row.status)) throw new HttpError(409, "not_failed", "This prompt is not waiting for a retry.");
+    await ctx.db.setPromptStatus(id, "queued");
+  });
   return json({ data: { ok: true } });
 }
 
@@ -76,9 +86,9 @@ export class PromptQueue {
 
   constructor(private readonly ctx: AppContext) {}
 
-  start(): void {
+  async start(): Promise<void> {
     if (this.timer) return;
-    this.ctx.db.recoverPromptQueue();
+    await this.ctx.db.recoverPromptQueue();
     this.timer = setInterval(() => void this.tick(), 2000);
     void this.tick();
   }
@@ -94,7 +104,7 @@ export class PromptQueue {
     try {
       // One head per track, including failed heads: later instructions cannot
       // overtake one whose outcome needs a person. Other tracks still advance.
-      await Promise.all(this.ctx.db.promptQueueHeads().map((row) => this.deliver(row)));
+      await Promise.all((await this.ctx.db.promptQueueHeads()).map((row) => this.deliver(row)));
     } catch {
       // Leave claims intact for explicit recovery, and retry untouched rows on
       // the next tick. Never log prompt bodies or manufacture a successful send.
@@ -104,12 +114,12 @@ export class PromptQueue {
     }
   }
 
-  private authorized(row: Omit<PromptRow, "payload">): boolean {
+  private async authorized(row: Omit<PromptRow, "payload">): Promise<boolean> {
     const { ctx } = this;
-    const user = ctx.db.user(row.userId);
+    const user = await ctx.db.user(row.userId);
     try {
       if (!user) return false;
-      const { track } = trackAccess(ctx, user, row.trackId);
+      const { track } = await trackAccess(ctx, user, row.trackId);
       return !track.closedAt && !!track.conversationId;
     } catch { return false; }
   }
@@ -117,56 +127,56 @@ export class PromptQueue {
   private async deliver(row: Omit<PromptRow, "payload">): Promise<void> {
     const { ctx } = this;
     const fountain = ctx.fountain!;
-    if (!this.authorized(row)) {
-      ctx.db.setPromptStatus(row.id, "cancelled");
+    if (!(await this.authorized(row))) {
+      await ctx.db.setPromptStatus(row.id, "cancelled");
       return;
     }
     if (row.status !== "queued") return;
-    const track = ctx.db.track(row.trackId)!;
-    const project = ctx.db.project(track.projectId)!;
+    const track = (await ctx.db.track(row.trackId))!;
+    const project = (await ctx.db.project(track.projectId))!;
     try {
       const conversation = await fountain.getConversation(track.conversationId!);
       if (["running", "pending"].includes(conversation.status)) return;
       if (["failed", "terminated"].includes(conversation.status)) {
-        ctx.db.setPromptStatus(row.id, "failed", "This conversation has ended. Start a new track and copy this prompt there.");
+        await ctx.db.setPromptStatus(row.id, "failed", "This conversation has ended. Start a new track and copy this prompt there.");
         return;
       }
       await prepareMachine(ctx, project, fountain);
     } catch {
       // Nothing has been sent. A read or credential refresh can safely retry.
-      if (ctx.db.queuedPrompt(row.id)?.status === "queued") {
-        ctx.db.setPromptStatus(row.id, "queued", "Waiting for the machine connection. Your prompt is saved and will retry automatically.");
+      if ((await ctx.db.queuedPrompt(row.id))?.status === "queued") {
+        await ctx.db.setPromptStatus(row.id, "queued", "Waiting for the machine connection. Your prompt is saved and will retry automatically.");
       }
       return;
     }
     // Membership and cancellation may change during the network calls above.
-    if (!this.authorized(row)) {
-      ctx.db.setPromptStatus(row.id, "cancelled");
+    if (!(await this.authorized(row))) {
+      await ctx.db.setPromptStatus(row.id, "cancelled");
       return;
     }
-    if (!ctx.db.claimPrompt(row.id)) return;
+    if (!(await ctx.db.claimPrompt(row.id))) return;
     try {
-      const payload = JSON.parse(ctx.db.queuedPrompt(row.id)!.payload) as PromptPayload;
+      const payload = JSON.parse((await ctx.db.queuedPrompt(row.id))!.payload) as PromptPayload;
       const previewInstructions = [await prepareAgentPreview(ctx, row), await prepareAgentBrowser(ctx, row)].filter(Boolean).join("\n\n");
-      if (!this.authorized(row)) { ctx.db.setPromptStatus(row.id, "cancelled"); ctx.db.previews.revokeAgent(track.id); return; }
-      const shared = ctx.db.membersOf(track.id).length > 0 || ctx.db.projectMembersOf(project.id).length > 0;
+      if (!(await this.authorized(row))) { await ctx.db.setPromptStatus(row.id, "cancelled"); await ctx.db.previews.revokeAgent(track.id); return; }
+      const shared = (await ctx.db.membersOf(track.id)).length > 0 || (await ctx.db.projectMembersOf(project.id)).length > 0;
       const authored = shared ? withAuthor(row.authorLogin, payload.prompt) : payload.prompt;
       await fountain.prompt(track.conversationId!, previewInstructions ? `${previewInstructions}\n\n${authored}` : authored, payload.images);
-      ctx.db.setPromptStatus(row.id, "sent");
+      await ctx.db.setPromptStatus(row.id, "sent");
       publish(project.id, { event: "turn", data: { trackId: track.id, status: "running" } }, new Set([
         project.userId,
-        ...ctx.db.membersOf(track.id).map(member => member.id),
-        ...ctx.db.projectMembersOf(project.id).map(member => member.id),
+        ...(await ctx.db.membersOf(track.id)).map(member => member.id),
+        ...(await ctx.db.projectMembersOf(project.id)).map(member => member.id),
       ]));
     } catch (err) {
       // Fountain can reject an idle-looking track because another turn took
       // the sandbox's capacity meanwhile. A rejection is safe to retry.
       if (err instanceof FountainHttpError && err.status >= 400 && err.status < 500 && ["sandbox_at_capacity", "conversation_busy"].includes(err.code ?? "")) {
-        ctx.db.setPromptStatus(row.id, "queued");
+        await ctx.db.setPromptStatus(row.id, "queued");
       } else if (err instanceof FountainHttpError && err.status >= 400 && err.status < 500) {
-        ctx.db.setPromptStatus(row.id, "failed", "Delivery was refused. Check the machine and account settings, then retry this prompt.");
+        await ctx.db.setPromptStatus(row.id, "failed", "Delivery was refused. Check the machine and account settings, then retry this prompt.");
       } else {
-        ctx.db.setPromptStatus(row.id, "unconfirmed", "Delivery could not be confirmed. Check the transcript before sending this again.");
+        await ctx.db.setPromptStatus(row.id, "unconfirmed", "Delivery could not be confirmed. Check the transcript before sending this again.");
       }
     }
   }

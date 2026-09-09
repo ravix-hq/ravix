@@ -1,7 +1,9 @@
-/** Temporary live routing harness. Run inside Ravix's pod: credentials
- * remain in its environment. Does not mutate the production SQLite database. */
-import { Database } from "bun:sqlite";
+/** Temporary live routing harness. Run inside the Ravix service (a Render
+ * shell): credentials remain in its environment. Reads the production
+ * Postgres (DATABASE_URL) and never writes to it; its own state lives in an
+ * embedded database under /tmp. */
 import { Db } from "../server/db";
+import { openSql } from "../server/sql";
 import { loadConfig } from "../server/config";
 import { buildContext } from "../server/context";
 import { Cipher, sha256, randomToken } from "../server/crypto";
@@ -10,22 +12,25 @@ import { createPreviewGateway } from "../server/preview-gateway";
 import { machineOf, spriteFor } from "../server/tracks";
 import { shq } from "../server/sprites";
 
-const source = new Database("/data/ravix.sqlite", { readonly: true });
-const project = source.query("SELECT * FROM projects WHERE name='demos' AND archived_at IS NULL").get() as Record<string, string>;
+if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL must name the production Postgres.");
+const source = await openSql({ url: process.env.DATABASE_URL });
+const [project] = await source.query<Record<string, string>>("SELECT * FROM projects WHERE name='demos' AND archived_at IS NULL");
 if (!project) throw new Error("Need the selected Demos project.");
-const tracks = source.query("SELECT * FROM tracks WHERE project_id=? AND slug IN ('hamlet','elkhart') AND closed_at IS NULL ORDER BY slug").all(project.id!) as Record<string, string>[];
+const tracks = await source.query<Record<string, string>>("SELECT * FROM tracks WHERE project_id=$1 AND slug IN ('hamlet','elkhart') AND closed_at IS NULL ORDER BY slug", [project.id!]);
 if (tracks.length !== 2) throw new Error("Need the two selected open Demos tracks.");
-const config = loadConfig({ ...process.env, DATA_DIR: "/tmp/ravix-preview-proof", RAVIX_SECRET: "disposable-preview-proof-secret", PUBLIC_URL: "http://localhost:18083", PREVIEW_DOMAIN: "preview.localhost", PREVIEW_PORT: "18082" });
-const db = new Db(config.dbPath);
+await source.close();
+const config = loadConfig({ ...process.env, DATABASE_URL: undefined, DATA_DIR: "/tmp/ravix-preview-proof", RAVIX_SECRET: "disposable-preview-proof-secret", PUBLIC_URL: "http://localhost:18083", PREVIEW_DOMAIN: "preview.localhost" });
+config.previews!.publicPort = ":18082";
+const db = await Db.open(await openSql({ dataDir: config.dataDir }));
 const ctx = buildContext({ db, config, cipher: await Cipher.from(config.secret) });
-const owner = db.upsertUser({ githubId: "proof", login: "proof", name: "Preview proof", avatarUrl: null, tokenEnc: "proof" });
-if (!db.project(project.id!)) db.createProject({ id: project.id!, userId: owner.id, name: "Demos", repoFullName: null, repoPrivate: 0, defaultBranch: null, installationId: null,
+const owner = await db.upsertUser({ githubId: "proof", login: "proof", name: "Preview proof", avatarUrl: null, tokenEnc: "proof" });
+if (!await db.project(project.id!)) await db.createProject({ id: project.id!, userId: owner.id, name: "Demos", repoFullName: null, repoPrivate: 0, defaultBranch: null, installationId: null,
   agentId: project.agent_id!, environmentId: project.environment_id!, vaultId: project.vault_id || null, runtime: "claude", model: "test", instructions: "" });
-const session = randomToken(); db.createSession(owner.id, await sha256(session), 60 * 60_000);
+const session = randomToken(); await db.createSession(owner.id, await sha256(session), 60 * 60_000);
 for (const t of tracks) {
-  if (!db.track(t.id!)) db.createTrack({ id: t.id!, projectId: project.id!, conversationId: t.conversation_id!, slug: t.slug!, title: t.title!, branch: t.branch!, workdir: t.workdir!, originKind: "blank", originBase: null, originNumber: null, originTitle: null, originUrl: null, rev: 1, createdByLogin: "proof" });
+  if (!await db.track(t.id!)) await db.createTrack({ id: t.id!, projectId: project.id!, conversationId: t.conversation_id!, slug: t.slug!, title: t.title!, branch: t.branch!, workdir: t.workdir!, originKind: "blank", originBase: null, originNumber: null, originTitle: null, originUrl: null, rev: 1, createdByLogin: "proof" });
 }
-const machine = await machineOf(ctx.fountain!, db.project(project.id!)!);
+const machine = await machineOf(ctx.fountain!, (await db.project(project.id!))!);
 const sprite = await spriteFor(ctx.fountain!, machine!.sandboxId);
 if (!sprite) throw new Error("Demos is not on Sprites.");
 const directory = ".ravix-preview-proof";
@@ -42,7 +47,7 @@ async function write(t: Record<string, string>, version: number) {
 }
 if (process.argv.includes("--cleanup")) {
   for (const t of tracks) {
-    if (db.previews.get(t.id!)?.config?.directory !== directory) { console.log("No owned fixture to clean", t.slug); continue; }
+    if ((await db.previews.get(t.id!))?.config?.directory !== directory) { console.log("No owned fixture to clean", t.slug); continue; }
     await manager.stopService(t.id!, true);
     const r = await ctx.sprites!.exec(sprite, ["rm", "-rf", `${t.workdir}/${directory}`], 15);
     console.log("cleanup", t.slug, r.code);
@@ -51,7 +56,7 @@ if (process.argv.includes("--cleanup")) {
 }
 // Never overwrite a pre-existing fixture or working-copy directory.
 for (const t of tracks) {
-  if (db.previews.get(t.id!)?.cleanup) throw new Error("Remove the disposable /tmp/ravix-preview-proof database after cleanup before running again.");
+  if ((await db.previews.get(t.id!))?.cleanup) throw new Error("Remove the disposable /tmp/ravix-preview-proof database after cleanup before running again.");
   const check = await ctx.sprites!.exec(sprite, ["sh", "-lc", `test ! -e ${shq(`${t.workdir}/${directory}`)}`], 15);
   if (check.code) throw new Error(`Fixture already exists on ${t.slug}; inspect it before running again.`);
 }
@@ -72,8 +77,8 @@ Bun.serve({ port: 18083, hostname: "127.0.0.1", async fetch(req) {
     const t = tracks.find(t => t.slug === url.pathname.split("/")[2]);
     if (!t) return new Response("missing", { status: 404 });
     const ticket = randomToken();
-    db.previews.grant({ hash: await sha256(ticket), trackId: t.id!, sessionHash: await sha256(session), expires: Date.now() + 60_000, kind: "ticket" });
-    return Response.redirect(`${previewOrigin(ctx, db.previews.get(t.id!)!)}/__ravix/open#${ticket}`);
+    await db.previews.grant({ hash: await sha256(ticket), trackId: t.id!, sessionHash: await sha256(session), expires: Date.now() + 60_000, kind: "ticket" });
+    return Response.redirect(`${previewOrigin(ctx, (await db.previews.get(t.id!))!)}/__ravix/open#${ticket}`);
   }
   if (req.method === "POST" && url.pathname.startsWith("/edit/")) {
     if (req.headers.get("origin") !== "http://localhost:18083") return new Response("Invalid origin", { status: 403 });
@@ -82,6 +87,7 @@ Bun.serve({ port: 18083, hostname: "127.0.0.1", async fetch(req) {
     await write(t, (revision.get(t.id!) ?? 1) + 1);
     return Response.redirect("http://localhost:18083/", 303);
   }
-  return new Response(`<h1>Live Demos routing verification</h1>${tracks.map(t => `<p><a href="/open/${t.slug}">Open ${t.slug}</a> · <a href="${previewOrigin(ctx, db.previews.get(t.id!)!)}">Unsigned ${t.slug}</a></p><form method="post" action="/edit/${t.slug}"><button>Edit ${t.slug}</button></form>`).join("")}`, { headers: { "content-type": "text/html" } });
+  const links = await Promise.all(tracks.map(async t => `<p><a href="/open/${t.slug}">Open ${t.slug}</a> · <a href="${previewOrigin(ctx, (await db.previews.get(t.id!))!)}">Unsigned ${t.slug}</a></p><form method="post" action="/edit/${t.slug}"><button>Edit ${t.slug}</button></form>`));
+  return new Response(`<h1>Live Demos routing verification</h1>${links.join("")}`, { headers: { "content-type": "text/html" } });
 } });
 console.log("Live proof gateway 18082, launcher 18083. Stop and clean up after verification.");

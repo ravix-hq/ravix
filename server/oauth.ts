@@ -10,7 +10,7 @@ const validState = (state: string) => /^[A-Za-z0-9_-]{24}$/.test(state);
 export async function beginOAuth(ctx: AppContext, req: Request, kind: string, redirect: string | null) {
   const state = randomToken(18);
   const secret = randomToken();
-  ctx.db.putState(await sha256(`${state}:${secret}`), kind, redirect);
+  await ctx.db.putState(await sha256(`${state}:${secret}`), kind, redirect);
   return { state, cookie: oauthCookie(req, state, secret, MAX_AGE) };
 }
 

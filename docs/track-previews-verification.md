@@ -173,26 +173,27 @@ files and private services on the two shared Demos tracks without explicit
 approval. The approval question is pending. These live checks are not passes.
 
 `scripts/preview-live-proof.ts` is the prepared operator harness. It reads the
-production SQLite database read-only, uses a separate database under
-`/tmp/ravix-preview-proof`, creates `.ravix-preview-proof` fixture
+production database (`DATABASE_URL`) without writing to it, uses a separate
+embedded database under `/tmp/ravix-preview-proof`, creates `.ravix-preview-proof` fixture
 directories in hamlet/elkhart, and launches two private Vite services. It
 refuses existing fixture directories. It is deliberately specific to those
 selected tracks, and requires their existing Vite installation.
 
 After live-fixture approval, build it locally, copy only the bundle to the
-current pod, and run it there. Do not export the pod's credentials:
+running Render service, and run it there. Do not export the service's
+credentials:
 
 ```sh
-# From apps/ravix, with POD set to the current Ravix pod name:
+# From the repository root, with the Render CLI signed in:
 bun build scripts/preview-live-proof.ts --target=bun --outfile=/tmp/ravix-preview-proof.js
-kubectl -n ravix cp /tmp/ravix-preview-proof.js "$POD":/tmp/ravix-preview-proof.js
-kubectl -n ravix exec -it "$POD" -- bun /tmp/ravix-preview-proof.js
+render ssh ravix -- mkdir -p /tmp && cat > /tmp/ravix-preview-proof.js < /tmp/ravix-preview-proof.js
+render ssh ravix -- bun /tmp/ravix-preview-proof.js
 # In another terminal, bind only localhost:
-kubectl -n ravix port-forward pod/"$POD" 18082:18082 18083:18083
+render ssh ravix -L 18082:127.0.0.1:18082 -L 18083:127.0.0.1:18083
 ```
 
-Open `http://localhost:18083`. The launcher and gateway listen only on pod
-loopback and are accessible through the local forward. The launcher grants
+Open `http://localhost:18083`. The launcher and gateway listen only on the
+instance's loopback and are accessible through the local forward. The launcher grants
 synthetic test access; it is not a production sign-in route and must never
 receive ingress. Open both tracks, edit one and observe HMR while the other
 stays unchanged. Test the unsigned links in a separate signed-out profile
@@ -200,11 +201,11 @@ stays unchanged. Test the unsigned links in a separate signed-out profile
 services and owned fixtures while the disposable database still exists:
 
 ```sh
-kubectl -n ravix exec "$POD" -- bun /tmp/ravix-preview-proof.js --cleanup
+render ssh ravix -- bun /tmp/ravix-preview-proof.js --cleanup
 ```
 
 Inspect cleanup output and the provider service list. Only after cleanup,
-remove the disposable pod database and bundle. A subsequent run needs a fresh
+remove the disposable database and bundle from the instance. A subsequent run needs a fresh
 disposable database. This routing harness alone does not establish the actual
 GitHub-authenticated mobile correction loop or the Fountain idle interval;
 those need the deployed feature with wildcard HTTPS and an actual phone.

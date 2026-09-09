@@ -19,7 +19,7 @@
  * answer somewhere else, and caching them here is how a UI ends up confidently
  * showing a machine that died an hour ago.
  */
-import { Database } from "bun:sqlite";
+import type { Sql } from "./sql";
 import { PreviewStore } from "./preview-store";
 import { NativeExperimentStore } from "./native-experiment-store";
 import { RunnerStore } from "./runner-store";
@@ -91,25 +91,31 @@ export interface PromptRow {
 }
 
 export class Db {
-  private readonly db: Database;
   readonly previews: PreviewStore;
   readonly nativeExperiments: NativeExperimentStore;
   readonly runners: RunnerStore;
   readonly browsers: BrowserStore;
 
-  constructor(path: string) {
-    this.db = new Database(path, { create: true });
-    this.db.exec("PRAGMA journal_mode = WAL");
-    this.db.exec("PRAGMA foreign_keys = ON");
-    this.migrate();
-    this.previews = new PreviewStore(this.db);
-    this.nativeExperiments = new NativeExperimentStore(this.db);
-    this.runners = new RunnerStore(this.db);
-    this.browsers = new BrowserStore(this.db);
+  private constructor(private readonly db: Sql) {
+    this.previews = new PreviewStore(db);
+    this.nativeExperiments = new NativeExperimentStore(db);
+    this.runners = new RunnerStore(db);
+    this.browsers = new BrowserStore(db);
   }
 
-  private migrate(): void {
-    this.db.exec(`
+  /** The database with its schema in place. Every statement is idempotent, so a restart is a no-op. */
+  static async open(sql: Sql): Promise<Db> {
+    const db = new Db(sql);
+    await db.migrate();
+    await db.previews.init();
+    await db.nativeExperiments.init();
+    await db.runners.init();
+    await db.browsers.init();
+    return db;
+  }
+
+  private async migrate(): Promise<void> {
+    await this.db.exec(`
       CREATE TABLE IF NOT EXISTS users (
         id            TEXT PRIMARY KEY,
         github_id     TEXT NOT NULL UNIQUE,
@@ -181,17 +187,17 @@ export class Db {
       CREATE INDEX IF NOT EXISTS tracks_conversation ON tracks(conversation_id);
 
       CREATE TABLE IF NOT EXISTS prompt_queue (
-        sequence INTEGER PRIMARY KEY AUTOINCREMENT,
-        id TEXT NOT NULL UNIQUE,
-        trackId TEXT NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
-        userId TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-        authorLogin TEXT NOT NULL,
-        payload TEXT NOT NULL,
-        createdAt TEXT NOT NULL,
-        status TEXT NOT NULL DEFAULT 'queued',
-        error TEXT
+        sequence     INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+        id           TEXT NOT NULL UNIQUE,
+        track_id     TEXT NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
+        user_id      TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        author_login TEXT NOT NULL,
+        payload      TEXT NOT NULL,
+        created_at   TEXT NOT NULL,
+        status       TEXT NOT NULL DEFAULT 'queued',
+        error        TEXT
       );
-      CREATE INDEX IF NOT EXISTS prompt_queue_track ON prompt_queue(trackId, status, sequence);
+      CREATE INDEX IF NOT EXISTS prompt_queue_track ON prompt_queue(track_id, status, sequence);
 
       -- Who else is in a track.
       --
@@ -320,13 +326,11 @@ export class Db {
 
   // ── users and sessions ───────────────────────────────────────────────
 
-  upsertUser(input: { githubId: string; login: string; name: string | null; avatarUrl: string | null; tokenEnc: string }): UserRow {
+  async upsertUser(input: { githubId: string; login: string; name: string | null; avatarUrl: string | null; tokenEnc: string }): Promise<UserRow> {
     const now = new Date().toISOString();
-    const existing = this.db
-      .query<{ id: string }, [string]>("SELECT id FROM users WHERE github_id = ?")
-      .get(input.githubId);
+    const [existing] = await this.db.query<{ id: string }>("SELECT id FROM users WHERE github_id = $1", [input.githubId]);
     if (existing) {
-      this.db.run("UPDATE users SET login = ?, name = ?, avatar_url = ?, token_enc = ?, last_seen_at = ? WHERE id = ?", [
+      await this.db.run("UPDATE users SET login = $1, name = $2, avatar_url = $3, token_enc = $4, last_seen_at = $5 WHERE id = $6", [
         input.login,
         input.name,
         input.avatarUrl,
@@ -334,24 +338,24 @@ export class Db {
         now,
         existing.id,
       ]);
-      return this.user(existing.id)!;
+      return (await this.user(existing.id))!;
     }
     const id = crypto.randomUUID();
-    this.db.run(
-      "INSERT INTO users (id, github_id, login, name, avatar_url, token_enc, created_at, last_seen_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    await this.db.run(
+      "INSERT INTO users (id, github_id, login, name, avatar_url, token_enc, created_at, last_seen_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
       [id, input.githubId, input.login, input.name, input.avatarUrl, input.tokenEnc, now, now],
     );
-    return this.user(id)!;
+    return (await this.user(id))!;
   }
 
-  user(id: string): UserRow | null {
-    const r = this.db.query<RawUser, [string]>("SELECT * FROM users WHERE id = ?").get(id);
+  async user(id: string): Promise<UserRow | null> {
+    const [r] = await this.db.query<RawUser>("SELECT * FROM users WHERE id = $1", [id]);
     return r ? toUser(r) : null;
   }
 
-  createSession(userId: string, tokenHash: string, maxAgeMs: number): void {
+  async createSession(userId: string, tokenHash: string, maxAgeMs: number): Promise<void> {
     const now = Date.now();
-    this.db.run("INSERT INTO sessions (token_hash, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)", [
+    await this.db.run("INSERT INTO sessions (token_hash, user_id, created_at, expires_at) VALUES ($1, $2, $3, $4)", [
       tokenHash,
       userId,
       new Date(now).toISOString(),
@@ -359,55 +363,50 @@ export class Db {
     ]);
   }
 
-  sessionUser(tokenHash: string): UserRow | null {
-    const row = this.db
-      .query<{ user_id: string; expires_at: string }, [string]>("SELECT user_id, expires_at FROM sessions WHERE token_hash = ?")
-      .get(tokenHash);
+  async sessionUser(tokenHash: string): Promise<UserRow | null> {
+    const [row] = await this.db.query<{ user_id: string; expires_at: string }>("SELECT user_id, expires_at FROM sessions WHERE token_hash = $1", [tokenHash]);
     if (!row) return null;
     if (Date.parse(row.expires_at) <= Date.now()) {
-      this.db.run("DELETE FROM sessions WHERE token_hash = ?", [tokenHash]);
+      await this.db.run("DELETE FROM sessions WHERE token_hash = $1", [tokenHash]);
       return null;
     }
     return this.user(row.user_id);
   }
 
-  endSession(tokenHash: string): void {
-    this.db.run("DELETE FROM sessions WHERE token_hash = ?", [tokenHash]);
+  async endSession(tokenHash: string): Promise<void> {
+    await this.db.run("DELETE FROM sessions WHERE token_hash = $1", [tokenHash]);
   }
 
   // ── the two GitHub round trips ───────────────────────────────────────
 
-  putState(state: string, kind: string, redirect: string | null): void {
-    this.db.run("DELETE FROM oauth_states WHERE created_at < ?", [new Date(Date.now() - 15 * 60_000).toISOString()]);
-    this.db.run("INSERT OR REPLACE INTO oauth_states (state, kind, redirect, created_at) VALUES (?, ?, ?, ?)", [
-      state,
-      kind,
-      redirect,
-      new Date().toISOString(),
-    ]);
+  async putState(state: string, kind: string, redirect: string | null): Promise<void> {
+    await this.db.run("DELETE FROM oauth_states WHERE created_at < $1", [new Date(Date.now() - 15 * 60_000).toISOString()]);
+    await this.db.run(
+      `INSERT INTO oauth_states (state, kind, redirect, created_at) VALUES ($1, $2, $3, $4)
+       ON CONFLICT(state) DO UPDATE SET kind = excluded.kind, redirect = excluded.redirect, created_at = excluded.created_at`,
+      [state, kind, redirect, new Date().toISOString()],
+    );
   }
 
   /** Takes the state — one use only, which is what makes a replayed callback fail. */
-  takeState(state: string): { kind: string; redirect: string | null } | null {
-    const row = this.db
-      .query<{ kind: string; redirect: string | null; created_at: string }, [string]>(
-        "SELECT kind, redirect, created_at FROM oauth_states WHERE state = ?",
-      )
-      .get(state);
+  async takeState(state: string): Promise<{ kind: string; redirect: string | null } | null> {
+    const [row] = await this.db.query<{ kind: string; redirect: string | null; created_at: string }>(
+      "DELETE FROM oauth_states WHERE state = $1 RETURNING kind, redirect, created_at",
+      [state],
+    );
     if (!row) return null;
-    this.db.run("DELETE FROM oauth_states WHERE state = ?", [state]);
     if (Date.parse(row.created_at) < Date.now() - 15 * 60_000) return null;
     return { kind: row.kind, redirect: row.redirect };
   }
 
   // ── projects ─────────────────────────────────────────────────────────
 
-  createProject(p: Omit<ProjectRow, "createdAt" | "archivedAt" | "rev">): ProjectRow {
+  async createProject(p: Omit<ProjectRow, "createdAt" | "archivedAt" | "rev">): Promise<ProjectRow> {
     const now = new Date().toISOString();
-    this.db.run(
+    await this.db.run(
       `INSERT INTO projects (id, user_id, name, repo_full_name, repo_private, default_branch, installation_id,
         agent_id, environment_id, vault_id, runtime, model, rev, instructions, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 1, $13, $14)`,
       [
         p.id,
         p.userId,
@@ -425,31 +424,29 @@ export class Db {
         now,
       ],
     );
-    return this.project(p.id)!;
+    return (await this.project(p.id))!;
   }
 
-  project(id: string): ProjectRow | null {
-    const r = this.db.query<RawProject, [string]>("SELECT * FROM projects WHERE id = ?").get(id);
+  async project(id: string): Promise<ProjectRow | null> {
+    const [r] = await this.db.query<RawProject>("SELECT * FROM projects WHERE id = $1", [id]);
     return r ? toProject(r) : null;
   }
 
-  projectsOf(userId: string): ProjectRow[] {
-    return this.db
-      .query<RawProject, [string]>("SELECT * FROM projects WHERE user_id = ? AND archived_at IS NULL ORDER BY created_at")
-      .all(userId)
-      .map(toProject);
+  async projectsOf(userId: string): Promise<ProjectRow[]> {
+    const rows = await this.db.query<RawProject>("SELECT * FROM projects WHERE user_id = $1 AND archived_at IS NULL ORDER BY created_at", [userId]);
+    return rows.map(toProject);
   }
 
-  renameProject(id: string, name: string): void {
-    this.db.run("UPDATE projects SET name = ? WHERE id = ?", [name, id]);
+  async renameProject(id: string, name: string): Promise<void> {
+    await this.db.run("UPDATE projects SET name = $1 WHERE id = $2", [name, id]);
   }
 
-  setInstructions(id: string, instructions: string): void {
-    this.db.run("UPDATE projects SET instructions = ? WHERE id = ?", [instructions, id]);
+  async setInstructions(id: string, instructions: string): Promise<void> {
+    await this.db.run("UPDATE projects SET instructions = $1 WHERE id = $2", [instructions, id]);
   }
 
-  setHarness(id: string, runtime: string, model: string): void {
-    this.db.run("UPDATE projects SET runtime = ?, model = ? WHERE id = ?", [runtime, model, id]);
+  async setHarness(id: string, runtime: string, model: string): Promise<void> {
+    await this.db.run("UPDATE projects SET runtime = $1, model = $2 WHERE id = $3", [runtime, model, id]);
   }
 
   /**
@@ -460,9 +457,9 @@ export class Db {
    * carry the old number in their `channel_id` and are badged as running older
    * settings, which is true and cannot be worked out any other way.
    */
-  bumpRev(id: string): number {
-    this.db.run("UPDATE projects SET rev = rev + 1 WHERE id = ?", [id]);
-    return this.db.query<{ rev: number }, [string]>("SELECT rev FROM projects WHERE id = ?").get(id)?.rev ?? 1;
+  async bumpRev(id: string): Promise<number> {
+    const [row] = await this.db.query<{ rev: number }>("UPDATE projects SET rev = rev + 1 WHERE id = $1 RETURNING rev", [id]);
+    return row?.rev ?? 1;
   }
 
   /**
@@ -474,22 +471,22 @@ export class Db {
    * closed by the caller in the same breath — a track is a worktree, and that
    * worktree is about to stop existing.
    */
-  rebindAgent(id: string, agentId: string): void {
-    this.db.run("UPDATE projects SET agent_id = ? WHERE id = ?", [agentId, id]);
+  async rebindAgent(id: string, agentId: string): Promise<void> {
+    await this.db.run("UPDATE projects SET agent_id = $1 WHERE id = $2", [agentId, id]);
   }
 
-  archiveProject(id: string): void {
-    for (const track of this.tracksOf(id)) this.cancelTrackPrompts(track.id);
-    this.db.run("UPDATE projects SET archived_at = ? WHERE id = ?", [new Date().toISOString(), id]);
+  async archiveProject(id: string): Promise<void> {
+    for (const track of await this.tracksOf(id)) await this.cancelTrackPrompts(track.id);
+    await this.db.run("UPDATE projects SET archived_at = $1 WHERE id = $2", [new Date().toISOString(), id]);
   }
 
   // ── tracks ───────────────────────────────────────────────────────────
 
-  createTrack(t: Omit<TrackRow, "createdAt" | "openedAt" | "closedAt">): TrackRow {
-    this.db.run(
+  async createTrack(t: Omit<TrackRow, "createdAt" | "openedAt" | "closedAt">): Promise<TrackRow> {
+    await this.db.run(
       `INSERT INTO tracks (id, project_id, conversation_id, slug, title, branch, workdir,
         origin_kind, origin_base, origin_number, origin_title, origin_url, rev, created_at, created_by_login)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
       [
         t.id,
         t.projectId,
@@ -508,144 +505,145 @@ export class Db {
         t.createdByLogin,
       ],
     );
-    return this.track(t.id)!;
+    return (await this.track(t.id))!;
   }
 
-  track(id: string): TrackRow | null {
-    const r = this.db.query<RawTrack, [string]>("SELECT * FROM tracks WHERE id = ?").get(id);
+  async track(id: string): Promise<TrackRow | null> {
+    const [r] = await this.db.query<RawTrack>("SELECT * FROM tracks WHERE id = $1", [id]);
     return r ? toTrack(r) : null;
   }
 
-  trackByConversation(conversationId: string): TrackRow | null {
-    const r = this.db.query<RawTrack, [string]>("SELECT * FROM tracks WHERE conversation_id = ?").get(conversationId);
+  async trackByConversation(conversationId: string): Promise<TrackRow | null> {
+    const [r] = await this.db.query<RawTrack>("SELECT * FROM tracks WHERE conversation_id = $1", [conversationId]);
     return r ? toTrack(r) : null;
   }
 
-  tracksOf(projectId: string, includeClosed = false): TrackRow[] {
+  async tracksOf(projectId: string, includeClosed = false): Promise<TrackRow[]> {
     const sql = includeClosed
-      ? "SELECT * FROM tracks WHERE project_id = ? ORDER BY created_at"
-      : "SELECT * FROM tracks WHERE project_id = ? AND closed_at IS NULL ORDER BY created_at";
-    return this.db.query<RawTrack, [string]>(sql).all(projectId).map(toTrack);
+      ? "SELECT * FROM tracks WHERE project_id = $1 ORDER BY created_at"
+      : "SELECT * FROM tracks WHERE project_id = $1 AND closed_at IS NULL ORDER BY created_at";
+    return (await this.db.query<RawTrack>(sql, [projectId])).map(toTrack);
   }
 
   /** Whether a slug is free right now — the unique index enforces it, this explains it. */
-  slugTaken(projectId: string, slug: string): boolean {
-    return !!this.db
-      .query<{ n: number }, [string, string]>(
-        "SELECT COUNT(*) AS n FROM tracks WHERE project_id = ? AND slug = ? AND closed_at IS NULL",
-      )
-      .get(projectId, slug)?.n;
+  async slugTaken(projectId: string, slug: string): Promise<boolean> {
+    const [row] = await this.db.query<{ n: number }>(
+      "SELECT COUNT(*) AS n FROM tracks WHERE project_id = $1 AND slug = $2 AND closed_at IS NULL",
+      [projectId, slug],
+    );
+    return !!row?.n;
   }
 
-  attachConversation(trackId: string, conversationId: string): void {
-    this.db.run("UPDATE tracks SET conversation_id = ? WHERE id = ?", [conversationId, trackId]);
+  async attachConversation(trackId: string, conversationId: string): Promise<void> {
+    await this.db.run("UPDATE tracks SET conversation_id = $1 WHERE id = $2", [conversationId, trackId]);
   }
 
-  markOpened(trackId: string): void {
-    this.db.run("UPDATE tracks SET opened_at = COALESCE(opened_at, ?) WHERE id = ?", [new Date().toISOString(), trackId]);
+  async markOpened(trackId: string): Promise<void> {
+    await this.db.run("UPDATE tracks SET opened_at = COALESCE(opened_at, $1) WHERE id = $2", [new Date().toISOString(), trackId]);
   }
 
-  renameTrack(trackId: string, title: string): void {
-    this.db.run("UPDATE tracks SET title = ? WHERE id = ?", [title, trackId]);
+  async renameTrack(trackId: string, title: string): Promise<void> {
+    await this.db.run("UPDATE tracks SET title = $1 WHERE id = $2", [title, trackId]);
   }
 
-  closeTrack(trackId: string): void {
-    this.cancelTrackPrompts(trackId);
-    this.db.run("UPDATE tracks SET closed_at = ? WHERE id = ?", [new Date().toISOString(), trackId]);
+  async closeTrack(trackId: string): Promise<void> {
+    await this.cancelTrackPrompts(trackId);
+    await this.db.run("UPDATE tracks SET closed_at = $1 WHERE id = $2", [new Date().toISOString(), trackId]);
   }
 
-  enqueuePrompt(p: Pick<PromptRow, "id" | "trackId" | "userId" | "authorLogin" | "payload">): PromptRow {
-    this.db.run(`INSERT INTO prompt_queue (id, trackId, userId, authorLogin, payload, createdAt)
-      VALUES (?, ?, ?, ?, ?, ?)`, [p.id, p.trackId, p.userId, p.authorLogin, p.payload, new Date().toISOString()]);
-    return this.queuedPrompt(p.id)!;
+  async enqueuePrompt(p: Pick<PromptRow, "id" | "trackId" | "userId" | "authorLogin" | "payload">): Promise<PromptRow> {
+    await this.db.run(`INSERT INTO prompt_queue (id, track_id, user_id, author_login, payload, created_at)
+      VALUES ($1, $2, $3, $4, $5, $6)`, [p.id, p.trackId, p.userId, p.authorLogin, p.payload, new Date().toISOString()]);
+    return (await this.queuedPrompt(p.id))!;
   }
 
-  queuedPrompt(id: string): PromptRow | null {
-    return this.db.query<PromptRow, [string]>("SELECT * FROM prompt_queue WHERE id = ?").get(id);
+  async queuedPrompt(id: string): Promise<PromptRow | null> {
+    const [row] = await this.db.query<PromptRow>(`SELECT ${PROMPT_COLUMNS}, payload FROM prompt_queue WHERE id = $1`, [id]);
+    return row ?? null;
   }
 
-  queuedPrompts(trackId?: string): PromptRow[] {
+  queuedPrompts(trackId?: string): Promise<PromptRow[]> {
     const where = "status NOT IN ('sent', 'cancelled')";
     return trackId === undefined
-      ? this.db.query<PromptRow, []>(`SELECT * FROM prompt_queue WHERE ${where} ORDER BY sequence`).all()
-      : this.db.query<PromptRow, [string]>(`SELECT * FROM prompt_queue WHERE ${where} AND trackId = ? ORDER BY sequence`).all(trackId);
+      ? this.db.query<PromptRow>(`SELECT ${PROMPT_COLUMNS}, payload FROM prompt_queue WHERE ${where} ORDER BY sequence`)
+      : this.db.query<PromptRow>(`SELECT ${PROMPT_COLUMNS}, payload FROM prompt_queue WHERE ${where} AND track_id = $1 ORDER BY sequence`, [trackId]);
   }
 
-  promptQueueHeads(): Omit<PromptRow, "payload">[] {
+  promptQueueHeads(): Promise<Omit<PromptRow, "payload">[]> {
     // Do not load every queued attachment on every sweep. Only the first live
     // row per track can be delivered; its bytes are loaded just before POST.
-    return this.db.query<Omit<PromptRow, "payload">, []>(`SELECT sequence, id, trackId, userId, authorLogin, createdAt, status, error
+    return this.db.query<Omit<PromptRow, "payload">>(`SELECT ${PROMPT_COLUMNS}
       FROM prompt_queue WHERE sequence IN (
-        SELECT MIN(sequence) FROM prompt_queue WHERE status NOT IN ('sent', 'cancelled') GROUP BY trackId
-      ) ORDER BY sequence`).all();
+        SELECT MIN(sequence) FROM prompt_queue WHERE status NOT IN ('sent', 'cancelled') GROUP BY track_id
+      ) ORDER BY sequence`);
   }
 
-  promptQueueSummaries(trackId: string): (Omit<PromptRow, "payload"> & { prompt: string; imageCount: number })[] {
-    return this.db.query<Omit<PromptRow, "payload"> & { prompt: string; imageCount: number }, [string]>(`
-      SELECT sequence, id, trackId, userId, authorLogin, createdAt, status, error,
-        json_extract(payload, '$.prompt') AS prompt, json_array_length(payload, '$.images') AS imageCount
-      FROM prompt_queue WHERE trackId = ? AND status NOT IN ('sent', 'cancelled') ORDER BY sequence`).all(trackId);
+  promptQueueSummaries(trackId: string): Promise<(Omit<PromptRow, "payload"> & { prompt: string; imageCount: number })[]> {
+    // A delivered or cancelled row has an emptied payload, which is not JSON;
+    // those rows are filtered out, and NULLIF keeps the cast honest anyway.
+    return this.db.query<Omit<PromptRow, "payload"> & { prompt: string; imageCount: number }>(`
+      SELECT ${PROMPT_COLUMNS},
+        NULLIF(payload, '')::jsonb->>'prompt' AS prompt,
+        COALESCE(jsonb_array_length(NULLIF(payload, '')::jsonb->'images'), 0) AS "imageCount"
+      FROM prompt_queue WHERE track_id = $1 AND status NOT IN ('sent', 'cancelled') ORDER BY sequence`, [trackId]);
   }
 
-  setPromptStatus(id: string, status: PromptRow["status"], error: string | null = null): void {
+  async setPromptStatus(id: string, status: PromptRow["status"], error: string | null = null): Promise<void> {
     // Keep the id as a receipt for retried HTTP requests, release large images.
-    this.db.run("UPDATE prompt_queue SET status = ?, error = ?, payload = CASE WHEN ? IN ('sent', 'cancelled') THEN '' ELSE payload END WHERE id = ? AND status NOT IN ('sent', 'cancelled')", [status, error, status, id]);
+    await this.db.run("UPDATE prompt_queue SET status = $1, error = $2, payload = CASE WHEN $1 IN ('sent', 'cancelled') THEN '' ELSE payload END WHERE id = $3 AND status NOT IN ('sent', 'cancelled')", [status, error, id]);
   }
 
-  claimPrompt(id: string): boolean {
-    return this.db.run("UPDATE prompt_queue SET status = 'sending', error = NULL WHERE id = ? AND status = 'queued'", [id]).changes === 1;
+  async claimPrompt(id: string): Promise<boolean> {
+    return (await this.db.run("UPDATE prompt_queue SET status = 'sending', error = NULL WHERE id = $1 AND status = 'queued'", [id])) === 1;
   }
 
-  recoverPromptQueue(): void {
-    this.db.run("UPDATE prompt_queue SET status = 'unconfirmed', error = 'The server restarted during delivery. Check the transcript before sending this again.' WHERE status = 'sending'");
+  async recoverPromptQueue(): Promise<void> {
+    await this.db.run("UPDATE prompt_queue SET status = 'unconfirmed', error = 'The server restarted during delivery. Check the transcript before sending this again.' WHERE status = 'sending'");
   }
 
-  cancelTrackPrompts(trackId: string): void {
-    this.db.run("UPDATE prompt_queue SET status = 'cancelled', payload = '', error = NULL WHERE trackId = ? AND status != 'sent'", [trackId]);
+  async cancelTrackPrompts(trackId: string): Promise<void> {
+    await this.db.run("UPDATE prompt_queue SET status = 'cancelled', payload = '', error = NULL WHERE track_id = $1 AND status != 'sent'", [trackId]);
   }
 
   // ── who else is in a track ───────────────────────────────────────────
 
-  addMember(trackId: string, userId: string, invitedBy: string): void {
-    this.db.run(
-      "INSERT OR IGNORE INTO track_members (track_id, user_id, invited_by, created_at) VALUES (?, ?, ?, ?)",
+  async addMember(trackId: string, userId: string, invitedBy: string): Promise<void> {
+    await this.db.run(
+      "INSERT INTO track_members (track_id, user_id, invited_by, created_at) VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING",
       [trackId, userId, invitedBy, new Date().toISOString()],
     );
   }
 
-  removeMember(trackId: string, userId: string): void {
-    this.previews.revoke(trackId, userId);
-    this.previews.revokeAgent(trackId, userId);
-    this.browsers.revoke(trackId, userId);
-    this.db.run("DELETE FROM track_members WHERE track_id = ? AND user_id = ?", [trackId, userId]);
+  async removeMember(trackId: string, userId: string): Promise<void> {
+    await this.previews.revoke(trackId, userId);
+    await this.previews.revokeAgent(trackId, userId);
+    await this.browsers.revoke(trackId, userId);
+    await this.db.run("DELETE FROM track_members WHERE track_id = $1 AND user_id = $2", [trackId, userId]);
   }
 
-  isMember(trackId: string, userId: string): boolean {
-    return !!this.db
-      .query<{ n: number }, [string, string]>("SELECT COUNT(*) AS n FROM track_members WHERE track_id = ? AND user_id = ?")
-      .get(trackId, userId)?.n;
+  async isMember(trackId: string, userId: string): Promise<boolean> {
+    const [row] = await this.db.query<{ n: number }>("SELECT COUNT(*) AS n FROM track_members WHERE track_id = $1 AND user_id = $2", [trackId, userId]);
+    return !!row?.n;
   }
 
   /** Everyone invited to a track, oldest invitation first. Excludes the owner. */
-  membersOf(trackId: string): UserRow[] {
-    return this.db
-      .query<RawUser, [string]>(
-        `SELECT u.* FROM track_members m JOIN users u ON u.id = m.user_id
-         WHERE m.track_id = ? ORDER BY m.created_at`,
-      )
-      .all(trackId)
-      .map(toUser);
+  async membersOf(trackId: string): Promise<UserRow[]> {
+    const rows = await this.db.query<RawUser>(
+      `SELECT u.* FROM track_members m JOIN users u ON u.id = m.user_id
+       WHERE m.track_id = $1 ORDER BY m.created_at`,
+      [trackId],
+    );
+    return rows.map(toUser);
   }
 
   /** The tracks this person was invited to, across every project. */
-  memberTracks(userId: string): TrackRow[] {
-    return this.db
-      .query<RawTrack, [string]>(
-        `SELECT t.* FROM track_members m JOIN tracks t ON t.id = m.track_id
-         WHERE m.user_id = ? AND t.closed_at IS NULL ORDER BY t.created_at`,
-      )
-      .all(userId)
-      .map(toTrack);
+  async memberTracks(userId: string): Promise<TrackRow[]> {
+    const rows = await this.db.query<RawTrack>(
+      `SELECT t.* FROM track_members m JOIN tracks t ON t.id = m.track_id
+       WHERE m.user_id = $1 AND t.closed_at IS NULL ORDER BY t.created_at`,
+      [userId],
+    );
+    return rows.map(toTrack);
   }
 
   /**
@@ -660,49 +658,45 @@ export class Db {
    * Ordered so a prefix match beats a contains match, because somebody typing
    * `ana` means `ana` before `joana`.
    */
-  searchUsers(q: string, excludeUserId: string, limit = 8): UserRow[] {
+  async searchUsers(q: string, excludeUserId: string, limit = 8): Promise<UserRow[]> {
     const like = `%${q}%`;
     const prefix = `${q}%`;
-    return this.db
-      .query<RawUser, [string, string, string, string, number]>(
-        `SELECT * FROM users
-         WHERE id != ? AND (login LIKE ? COLLATE NOCASE OR name LIKE ? COLLATE NOCASE)
-         ORDER BY CASE WHEN login LIKE ? COLLATE NOCASE THEN 0 ELSE 1 END, login
-         LIMIT ?`,
-      )
-      .all(excludeUserId, like, like, prefix, limit)
-      .map(toUser);
+    const rows = await this.db.query<RawUser>(
+      `SELECT * FROM users
+       WHERE id != $1 AND (login ILIKE $2 OR name ILIKE $2)
+       ORDER BY CASE WHEN login ILIKE $3 THEN 0 ELSE 1 END, login
+       LIMIT $4`,
+      [excludeUserId, like, prefix, limit],
+    );
+    return rows.map(toUser);
   }
 
-  userByLogin(login: string): UserRow | null {
-    const r = this.db.query<RawUser, [string]>("SELECT * FROM users WHERE login = ? COLLATE NOCASE").get(login);
+  async userByLogin(login: string): Promise<UserRow | null> {
+    const [r] = await this.db.query<RawUser>("SELECT * FROM users WHERE LOWER(login) = LOWER($1)", [login]);
     return r ? toUser(r) : null;
   }
 
   // ── invitations to somebody who is not here yet ──────────────────────
 
-  addInvite(input: { trackId: string; githubId: string; login: string; avatarUrl: string | null; invitedBy: string }): void {
-    this.db.run(
+  async addInvite(input: { trackId: string; githubId: string; login: string; avatarUrl: string | null; invitedBy: string }): Promise<void> {
+    await this.db.run(
       `INSERT INTO track_invites (track_id, github_id, login, avatar_url, invited_by, created_at)
-       VALUES (?, ?, ?, ?, ?, ?)
+       VALUES ($1, $2, $3, $4, $5, $6)
        ON CONFLICT(track_id, github_id) DO UPDATE SET login = excluded.login, avatar_url = excluded.avatar_url`,
       [input.trackId, input.githubId, input.login, input.avatarUrl, input.invitedBy, new Date().toISOString()],
     );
   }
 
-  invitesOf(trackId: string): { githubId: string; login: string; avatarUrl: string | null }[] {
-    return this.db
-      .query<{ github_id: string; login: string; avatar_url: string | null }, [string]>(
-        "SELECT github_id, login, avatar_url FROM track_invites WHERE track_id = ? ORDER BY created_at",
-      )
-      .all(trackId)
-      .map((r) => ({ githubId: r.github_id, login: r.login, avatarUrl: r.avatar_url }));
+  async invitesOf(trackId: string): Promise<{ githubId: string; login: string; avatarUrl: string | null }[]> {
+    const rows = await this.db.query<{ github_id: string; login: string; avatar_url: string | null }>(
+      "SELECT github_id, login, avatar_url FROM track_invites WHERE track_id = $1 ORDER BY created_at",
+      [trackId],
+    );
+    return rows.map((r) => ({ githubId: r.github_id, login: r.login, avatarUrl: r.avatar_url }));
   }
 
-  removeInviteByLogin(trackId: string, login: string): boolean {
-    const before = this.invitesOf(trackId).length;
-    this.db.run("DELETE FROM track_invites WHERE track_id = ? AND login = ? COLLATE NOCASE", [trackId, login]);
-    return this.invitesOf(trackId).length < before;
+  async removeInviteByLogin(trackId: string, login: string): Promise<boolean> {
+    return (await this.db.run("DELETE FROM track_invites WHERE track_id = $1 AND LOWER(login) = LOWER($2)", [trackId, login])) > 0;
   }
 
   /**
@@ -720,47 +714,45 @@ export class Db {
    * nothing they do not already have, and writing it would be writing the
    * narrower row that `addProjectMember` exists to delete.
    */
-  claimInvites(userId: string, githubId: string): { tracks: TrackRow[]; projects: ProjectRow[] } {
-    const pendingProjects = this.db
-      .query<{ project_id: string }, [string]>("SELECT project_id FROM project_invites WHERE github_id = ?")
-      .all(githubId);
-    const projects: ProjectRow[] = [];
-    for (const { project_id } of pendingProjects) {
-      const project = this.project(project_id);
-      // An archived project is not somewhere to arrive, and neither is your
-      // own: ownership is the stronger claim and is a column, not a row here.
-      if (project && !project.archivedAt && project.userId !== userId) {
-        this.addProjectMember(project_id, userId, "invite");
-        projects.push(project);
+  claimInvites(userId: string, githubId: string): Promise<{ tracks: TrackRow[]; projects: ProjectRow[] }> {
+    return this.db.transaction(async () => {
+      const pendingProjects = await this.db.query<{ project_id: string }>("SELECT project_id FROM project_invites WHERE github_id = $1", [githubId]);
+      const projects: ProjectRow[] = [];
+      for (const { project_id } of pendingProjects) {
+        const project = await this.project(project_id);
+        // An archived project is not somewhere to arrive, and neither is your
+        // own: ownership is the stronger claim and is a column, not a row here.
+        if (project && !project.archivedAt && project.userId !== userId) {
+          await this.addProjectMember(project_id, userId, "invite");
+          projects.push(project);
+        }
       }
-    }
-    this.db.run("DELETE FROM project_invites WHERE github_id = ?", [githubId]);
+      await this.db.run("DELETE FROM project_invites WHERE github_id = $1", [githubId]);
 
-    const pendingTracks = this.db
-      .query<{ track_id: string }, [string]>("SELECT track_id FROM track_invites WHERE github_id = ?")
-      .all(githubId);
-    const tracks: TrackRow[] = [];
-    for (const { track_id } of pendingTracks) {
-      const track = this.track(track_id);
-      // A track closed while the invitation sat unclaimed is not somewhere to
-      // arrive. Drop the invitation rather than granting a dead seat.
-      if (!track || track.closedAt) continue;
-      if (this.isProjectMember(track.projectId, userId)) continue;
-      this.addMember(track_id, userId, "invite");
-      tracks.push(track);
-    }
-    this.db.run("DELETE FROM track_invites WHERE github_id = ?", [githubId]);
+      const pendingTracks = await this.db.query<{ track_id: string }>("SELECT track_id FROM track_invites WHERE github_id = $1", [githubId]);
+      const tracks: TrackRow[] = [];
+      for (const { track_id } of pendingTracks) {
+        const track = await this.track(track_id);
+        // A track closed while the invitation sat unclaimed is not somewhere to
+        // arrive. Drop the invitation rather than granting a dead seat.
+        if (!track || track.closedAt) continue;
+        if (await this.isProjectMember(track.projectId, userId)) continue;
+        await this.addMember(track_id, userId, "invite");
+        tracks.push(track);
+      }
+      await this.db.run("DELETE FROM track_invites WHERE github_id = $1", [githubId]);
 
-    return { tracks, projects };
+      return { tracks, projects };
+    });
   }
 
   // ── the link ─────────────────────────────────────────────────────────
 
-  putLink(trackId: string, tokenHash: string, createdBy: string, ttlMs: number): void {
+  async putLink(trackId: string, tokenHash: string, createdBy: string, ttlMs: number): Promise<void> {
     const now = Date.now();
-    this.db.run(
+    await this.db.run(
       `INSERT INTO track_links (track_id, token_hash, created_by, created_at, expires_at)
-       VALUES (?, ?, ?, ?, ?)
+       VALUES ($1, $2, $3, $4, $5)
        ON CONFLICT(track_id) DO UPDATE SET
          token_hash = excluded.token_hash, created_by = excluded.created_by,
          created_at = excluded.created_at, expires_at = excluded.expires_at`,
@@ -768,30 +760,28 @@ export class Db {
     );
   }
 
-  linkOf(trackId: string): { createdAt: string; expiresAt: string } | null {
-    const r = this.db
-      .query<{ created_at: string; expires_at: string }, [string]>(
-        "SELECT created_at, expires_at FROM track_links WHERE track_id = ?",
-      )
-      .get(trackId);
+  async linkOf(trackId: string): Promise<{ createdAt: string; expiresAt: string } | null> {
+    const [r] = await this.db.query<{ created_at: string; expires_at: string }>(
+      "SELECT created_at, expires_at FROM track_links WHERE track_id = $1",
+      [trackId],
+    );
     if (!r) return null;
     return { createdAt: r.created_at, expiresAt: r.expires_at };
   }
 
-  dropLink(trackId: string): void {
-    this.db.run("DELETE FROM track_links WHERE track_id = ?", [trackId]);
+  async dropLink(trackId: string): Promise<void> {
+    await this.db.run("DELETE FROM track_links WHERE track_id = $1", [trackId]);
   }
 
   /** The track a link opens, or null if it is unknown, revoked or expired. */
-  trackForLink(tokenHash: string): TrackRow | null {
-    const r = this.db
-      .query<{ track_id: string; expires_at: string }, [string]>(
-        "SELECT track_id, expires_at FROM track_links WHERE token_hash = ?",
-      )
-      .get(tokenHash);
+  async trackForLink(tokenHash: string): Promise<TrackRow | null> {
+    const [r] = await this.db.query<{ track_id: string; expires_at: string }>(
+      "SELECT track_id, expires_at FROM track_links WHERE token_hash = $1",
+      [tokenHash],
+    );
     if (!r) return null;
     if (Date.parse(r.expires_at) <= Date.now()) return null;
-    const track = this.track(r.track_id);
+    const track = await this.track(r.track_id);
     return track && !track.closedAt ? track : null;
   }
 
@@ -815,50 +805,48 @@ export class Db {
    * row that survives — is worse, because it is invisible at exactly the
    * moment somebody is trying to revoke access.
    */
-  addProjectMember(projectId: string, userId: string, invitedBy: string): void {
-    this.db.run(
-      "INSERT OR IGNORE INTO project_members (project_id, user_id, invited_by, created_at) VALUES (?, ?, ?, ?)",
+  async addProjectMember(projectId: string, userId: string, invitedBy: string): Promise<void> {
+    await this.db.run(
+      "INSERT INTO project_members (project_id, user_id, invited_by, created_at) VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING",
       [projectId, userId, invitedBy, new Date().toISOString()],
     );
-    this.db.run(
-      "DELETE FROM track_members WHERE user_id = ? AND track_id IN (SELECT id FROM tracks WHERE project_id = ?)",
+    await this.db.run(
+      "DELETE FROM track_members WHERE user_id = $1 AND track_id IN (SELECT id FROM tracks WHERE project_id = $2)",
       [userId, projectId],
     );
   }
 
-  removeProjectMember(projectId: string, userId: string): void {
-    for (const track of this.tracksOf(projectId)) this.previews.revoke(track.id, userId);
-    for (const track of this.tracksOf(projectId)) this.previews.revokeAgent(track.id, userId);
-    for (const track of this.tracksOf(projectId)) this.browsers.revoke(track.id, userId);
-    this.db.run("DELETE FROM project_members WHERE project_id = ? AND user_id = ?", [projectId, userId]);
+  async removeProjectMember(projectId: string, userId: string): Promise<void> {
+    const tracks = await this.tracksOf(projectId);
+    for (const track of tracks) await this.previews.revoke(track.id, userId);
+    for (const track of tracks) await this.previews.revokeAgent(track.id, userId);
+    for (const track of tracks) await this.browsers.revoke(track.id, userId);
+    await this.db.run("DELETE FROM project_members WHERE project_id = $1 AND user_id = $2", [projectId, userId]);
   }
 
-  isProjectMember(projectId: string, userId: string): boolean {
-    return !!this.db
-      .query<{ n: number }, [string, string]>("SELECT COUNT(*) AS n FROM project_members WHERE project_id = ? AND user_id = ?")
-      .get(projectId, userId)?.n;
+  async isProjectMember(projectId: string, userId: string): Promise<boolean> {
+    const [row] = await this.db.query<{ n: number }>("SELECT COUNT(*) AS n FROM project_members WHERE project_id = $1 AND user_id = $2", [projectId, userId]);
+    return !!row?.n;
   }
 
   /** Everyone invited to the whole project, oldest first. Excludes the owner. */
-  projectMembersOf(projectId: string): UserRow[] {
-    return this.db
-      .query<RawUser, [string]>(
-        `SELECT u.* FROM project_members m JOIN users u ON u.id = m.user_id
-         WHERE m.project_id = ? ORDER BY m.created_at`,
-      )
-      .all(projectId)
-      .map(toUser);
+  async projectMembersOf(projectId: string): Promise<UserRow[]> {
+    const rows = await this.db.query<RawUser>(
+      `SELECT u.* FROM project_members m JOIN users u ON u.id = m.user_id
+       WHERE m.project_id = $1 ORDER BY m.created_at`,
+      [projectId],
+    );
+    return rows.map(toUser);
   }
 
   /** The projects this person was invited into whole. Never the ones they own. */
-  memberProjects(userId: string): ProjectRow[] {
-    return this.db
-      .query<RawProject, [string]>(
-        `SELECT p.* FROM project_members m JOIN projects p ON p.id = m.project_id
-         WHERE m.user_id = ? AND p.archived_at IS NULL ORDER BY p.created_at`,
-      )
-      .all(userId)
-      .map(toProject);
+  async memberProjects(userId: string): Promise<ProjectRow[]> {
+    const rows = await this.db.query<RawProject>(
+      `SELECT p.* FROM project_members m JOIN projects p ON p.id = m.project_id
+       WHERE m.user_id = $1 AND p.archived_at IS NULL ORDER BY p.created_at`,
+      [userId],
+    );
+    return rows.map(toProject);
   }
 
   /**
@@ -869,46 +857,42 @@ export class Db {
    * honoured them both, and until then it sits in the track's people list as a
    * row whose × cancels an invitation that was already superseded.
    */
-  addProjectInvite(input: { projectId: string; githubId: string; login: string; avatarUrl: string | null; invitedBy: string }): void {
-    this.db.run(
+  async addProjectInvite(input: { projectId: string; githubId: string; login: string; avatarUrl: string | null; invitedBy: string }): Promise<void> {
+    await this.db.run(
       `INSERT INTO project_invites (project_id, github_id, login, avatar_url, invited_by, created_at)
-       VALUES (?, ?, ?, ?, ?, ?)
+       VALUES ($1, $2, $3, $4, $5, $6)
        ON CONFLICT(project_id, github_id) DO UPDATE SET login = excluded.login, avatar_url = excluded.avatar_url`,
       [input.projectId, input.githubId, input.login, input.avatarUrl, input.invitedBy, new Date().toISOString()],
     );
-    this.db.run(
-      "DELETE FROM track_invites WHERE github_id = ? AND track_id IN (SELECT id FROM tracks WHERE project_id = ?)",
+    await this.db.run(
+      "DELETE FROM track_invites WHERE github_id = $1 AND track_id IN (SELECT id FROM tracks WHERE project_id = $2)",
       [input.githubId, input.projectId],
     );
   }
 
   /** Whether an invitation to the whole project is already out for this account. */
-  hasProjectInvite(projectId: string, githubId: string): boolean {
-    return !!this.db
-      .query<{ n: number }, [string, string]>("SELECT COUNT(*) AS n FROM project_invites WHERE project_id = ? AND github_id = ?")
-      .get(projectId, githubId)?.n;
+  async hasProjectInvite(projectId: string, githubId: string): Promise<boolean> {
+    const [row] = await this.db.query<{ n: number }>("SELECT COUNT(*) AS n FROM project_invites WHERE project_id = $1 AND github_id = $2", [projectId, githubId]);
+    return !!row?.n;
   }
 
-  projectInvitesOf(projectId: string): { githubId: string; login: string; avatarUrl: string | null }[] {
-    return this.db
-      .query<{ github_id: string; login: string; avatar_url: string | null }, [string]>(
-        "SELECT github_id, login, avatar_url FROM project_invites WHERE project_id = ? ORDER BY created_at",
-      )
-      .all(projectId)
-      .map((r) => ({ githubId: r.github_id, login: r.login, avatarUrl: r.avatar_url }));
+  async projectInvitesOf(projectId: string): Promise<{ githubId: string; login: string; avatarUrl: string | null }[]> {
+    const rows = await this.db.query<{ github_id: string; login: string; avatar_url: string | null }>(
+      "SELECT github_id, login, avatar_url FROM project_invites WHERE project_id = $1 ORDER BY created_at",
+      [projectId],
+    );
+    return rows.map((r) => ({ githubId: r.github_id, login: r.login, avatarUrl: r.avatar_url }));
   }
 
-  removeProjectInviteByLogin(projectId: string, login: string): boolean {
-    const before = this.projectInvitesOf(projectId).length;
-    this.db.run("DELETE FROM project_invites WHERE project_id = ? AND login = ? COLLATE NOCASE", [projectId, login]);
-    return this.projectInvitesOf(projectId).length < before;
+  async removeProjectInviteByLogin(projectId: string, login: string): Promise<boolean> {
+    return (await this.db.run("DELETE FROM project_invites WHERE project_id = $1 AND LOWER(login) = LOWER($2)", [projectId, login])) > 0;
   }
 
-  putProjectLink(projectId: string, tokenHash: string, createdBy: string, ttlMs: number): void {
+  async putProjectLink(projectId: string, tokenHash: string, createdBy: string, ttlMs: number): Promise<void> {
     const now = Date.now();
-    this.db.run(
+    await this.db.run(
       `INSERT INTO project_links (project_id, token_hash, created_by, created_at, expires_at)
-       VALUES (?, ?, ?, ?, ?)
+       VALUES ($1, $2, $3, $4, $5)
        ON CONFLICT(project_id) DO UPDATE SET
          token_hash = excluded.token_hash, created_by = excluded.created_by,
          created_at = excluded.created_at, expires_at = excluded.expires_at`,
@@ -916,66 +900,68 @@ export class Db {
     );
   }
 
-  projectLinkOf(projectId: string): { createdAt: string; expiresAt: string } | null {
-    const r = this.db
-      .query<{ created_at: string; expires_at: string }, [string]>(
-        "SELECT created_at, expires_at FROM project_links WHERE project_id = ?",
-      )
-      .get(projectId);
+  async projectLinkOf(projectId: string): Promise<{ createdAt: string; expiresAt: string } | null> {
+    const [r] = await this.db.query<{ created_at: string; expires_at: string }>(
+      "SELECT created_at, expires_at FROM project_links WHERE project_id = $1",
+      [projectId],
+    );
     if (!r) return null;
     return { createdAt: r.created_at, expiresAt: r.expires_at };
   }
 
-  dropProjectLink(projectId: string): void {
-    this.db.run("DELETE FROM project_links WHERE project_id = ?", [projectId]);
+  async dropProjectLink(projectId: string): Promise<void> {
+    await this.db.run("DELETE FROM project_links WHERE project_id = $1", [projectId]);
   }
 
   /** The project a link opens, or null if it is unknown, revoked, expired or archived. */
-  projectForLink(tokenHash: string): ProjectRow | null {
-    const r = this.db
-      .query<{ project_id: string; expires_at: string }, [string]>(
-        "SELECT project_id, expires_at FROM project_links WHERE token_hash = ?",
-      )
-      .get(tokenHash);
+  async projectForLink(tokenHash: string): Promise<ProjectRow | null> {
+    const [r] = await this.db.query<{ project_id: string; expires_at: string }>(
+      "SELECT project_id, expires_at FROM project_links WHERE token_hash = $1",
+      [tokenHash],
+    );
     if (!r) return null;
     if (Date.parse(r.expires_at) <= Date.now()) return null;
-    const project = this.project(r.project_id);
+    const project = await this.project(r.project_id);
     return project && !project.archivedAt ? project : null;
   }
 
   // ── what you have not read ───────────────────────────────────────────
 
-  markRead(trackId: string, userId: string, at = new Date().toISOString()): void {
-    this.db.run(
-      `INSERT INTO track_reads (track_id, user_id, seen_at) VALUES (?, ?, ?)
+  async markRead(trackId: string, userId: string, at = new Date().toISOString()): Promise<void> {
+    await this.db.run(
+      `INSERT INTO track_reads (track_id, user_id, seen_at) VALUES ($1, $2, $3)
        ON CONFLICT(track_id, user_id) DO UPDATE SET seen_at = excluded.seen_at`,
       [trackId, userId, at],
     );
   }
 
   /** When this person last looked at each of a project's tracks. */
-  readsOf(userId: string, projectId: string): Map<string, string> {
-    const rows = this.db
-      .query<{ track_id: string; seen_at: string }, [string, string]>(
-        `SELECT r.track_id, r.seen_at FROM track_reads r JOIN tracks t ON t.id = r.track_id
-         WHERE r.user_id = ? AND t.project_id = ?`,
-      )
-      .all(userId, projectId);
+  async readsOf(userId: string, projectId: string): Promise<Map<string, string>> {
+    const rows = await this.db.query<{ track_id: string; seen_at: string }>(
+      `SELECT r.track_id, r.seen_at FROM track_reads r JOIN tracks t ON t.id = r.track_id
+       WHERE r.user_id = $1 AND t.project_id = $2`,
+      [userId, projectId],
+    );
     return new Map(rows.map((r) => [r.track_id, r.seen_at]));
   }
 
-  lastReadOf(trackId: string, userId: string): string | null {
-    return (
-      this.db
-        .query<{ seen_at: string }, [string, string]>("SELECT seen_at FROM track_reads WHERE track_id = ? AND user_id = ?")
-        .get(trackId, userId)?.seen_at ?? null
-    );
+  async lastReadOf(trackId: string, userId: string): Promise<string | null> {
+    const [row] = await this.db.query<{ seen_at: string }>("SELECT seen_at FROM track_reads WHERE track_id = $1 AND user_id = $2", [trackId, userId]);
+    return row?.seen_at ?? null;
   }
 
-  close(): void {
-    this.db.close();
+  /** One serialised transaction over everything above; see `sql.ts`. */
+  transaction<T>(fn: () => Promise<T>): Promise<T> {
+    return this.db.transaction(fn);
+  }
+
+  close(): Promise<void> {
+    return this.db.close();
   }
 }
+
+/** The queue's columns as `PromptRow` spells them. */
+const PROMPT_COLUMNS = `sequence, id, track_id AS "trackId", user_id AS "userId", author_login AS "authorLogin", created_at AS "createdAt", status, error`;
 
 // ── row shapes, and the snake_case border ──────────────────────────────
 

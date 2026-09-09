@@ -5,6 +5,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Db } from "../server/db";
+import { openSql } from "../server/sql";
 import { Cipher, sha256 } from "../server/crypto";
 import { loadConfig } from "../server/config";
 import { buildContext } from "../server/context";
@@ -18,14 +19,14 @@ if (!executablePath) throw Error("Set RAVIX_BROWSER_TEST_EXECUTABLE to an instal
 const directory = await mkdtemp(join(tmpdir(), "sy-browser-ui-"));
 const port = Number(process.env.BROWSER_PROOF_PORT || 5199), origin = `http://127.0.0.1:${port}`;
 const config = loadConfig({ DATA_DIR: directory, RAVIX_SECRET: "local-proof-secret-not-a-real-credential", PUBLIC_URL: origin, FOUNTAIN_API_KEY: "fixture", SPRITES_TOKEN: "fixture", SHARED_BROWSER: "1" });
-const db = new Db(config.dbPath), ctx = buildContext({ db, config, cipher: await Cipher.from(config.secret) });
-const owner = db.upsertUser({ githubId: "proof", login: "proof", name: "Local proof", avatarUrl: null, tokenEnc: "fixture" });
-db.createSession(owner.id, await sha256("local-proof"), 3600000);
-db.createProject({ id: "proof", userId: owner.id, name: "Proof", repoFullName: null, repoPrivate: 0, defaultBranch: null, installationId: null, agentId: "proof", environmentId: "proof", vaultId: null, runtime: "claude", model: "test", instructions: "" });
-db.createTrack({ id: "proof", projectId: "proof", conversationId: "proof", slug: "proof", title: "Proof", branch: "proof", workdir: "/work/proof", originKind: "blank", originBase: null, originNumber: null, originTitle: null, originUrl: null, rev: 1, createdByLogin: owner.login });
+const db = await Db.open(await openSql({ dataDir: directory })), ctx = buildContext({ db, config, cipher: await Cipher.from(config.secret) });
+const owner = await db.upsertUser({ githubId: "proof", login: "proof", name: "Local proof", avatarUrl: null, tokenEnc: "fixture" });
+await db.createSession(owner.id, await sha256("local-proof"), 3600000);
+await db.createProject({ id: "proof", userId: owner.id, name: "Proof", repoFullName: null, repoPrivate: 0, defaultBranch: null, installationId: null, agentId: "proof", environmentId: "proof", vaultId: null, runtime: "claude", model: "test", instructions: "" });
+await db.createTrack({ id: "proof", projectId: "proof", conversationId: "proof", slug: "proof", title: "Proof", branch: "proof", workdir: "/work/proof", originKind: "blank", originBase: null, originNumber: null, originTitle: null, originUrl: null, rev: 1, createdByLogin: owner.login });
 const token = "local-proof-worker-token-not-a-real-credential";
 const worker = await startTestBrowser({ directory: join(directory, "profile"), executablePath, token });
-db.browsers.save({ id: "proof", projectId: "proof", profile: "shared", sprite: "proof", sandboxId: "proof", state: "ready", error: null, tokenEnc: await ctx.cipher.encrypt(token) });
+await db.browsers.save({ id: "proof", projectId: "proof", profile: "shared", sprite: "proof", sandboxId: "proof", state: "ready", error: null, tokenEnc: await ctx.cipher.encrypt(token) });
 const manager = browsers(ctx);
 manager.destination = async () => ({ sprite: "proof", sandboxId: "proof" });
 manager.transport = async (_row, body) => {
@@ -52,5 +53,5 @@ console.log(`Browser proof: ${origin}`);
 let closing = false;
 for (const signal of ["SIGINT", "SIGTERM"] as const) process.on(signal, () => {
   if (closing) return; closing = true;
-  void worker.close().finally(async () => { server.stop(true); db.close(); await rm(directory, { recursive: true, force: true }); process.exit(0); });
+  void worker.close().finally(async () => { server.stop(true); await db.close(); await rm(directory, { recursive: true, force: true }); process.exit(0); });
 });

@@ -60,7 +60,7 @@ export async function repos(ctx: AppContext, req: Request): Promise<Response> {
 export async function refs(ctx: AppContext, req: Request, projectId: string): Promise<Response> {
   const gh = requireGitHub(ctx);
   const user = await authenticate(ctx, req);
-  const { project } = projectAccess(ctx, user, projectId);
+  const { project } = await projectAccess(ctx, user, projectId);
   if (!project.repoFullName || !project.installationId) {
     throw new HttpError(409, "no_repo", "This project has no repository, so there is nothing to start from.");
   }
@@ -88,7 +88,7 @@ export async function checks(ctx: AppContext, req: Request, trackId: string): Pr
   const user = await authenticate(ctx, req);
   // A member's own branch and its checks are the point of inviting them, so
   // this is track access rather than project ownership.
-  const { track, project } = trackAccess(ctx, user, trackId);
+  const { track, project } = await trackAccess(ctx, user, trackId);
   if (!project.repoFullName || !project.installationId) {
     throw new HttpError(409, "no_repo", "This project has no repository.");
   }
@@ -118,7 +118,7 @@ export async function openPull(ctx: AppContext, req: Request, trackId: string): 
   // can push, and the agent will open a pull request if asked. A button that
   // refused what the prompt box allows would be theatre. The invite dialog
   // says so where the decision is made.
-  const { track, project } = trackAccess(ctx, user, trackId);
+  const { track, project } = await trackAccess(ctx, user, trackId);
   if (!project.repoFullName || !project.installationId) throw new HttpError(409, "no_repo", "This project has no repository.");
 
   const body = await readJson(req);

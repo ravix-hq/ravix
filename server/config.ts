@@ -10,11 +10,17 @@
  *
  *   FOUNTAIN_URL          the Fountain every machine is built on
  *   FOUNTAIN_API_KEY      the account it is built on. Required.
- *   DATA_DIR              SQLite, and a generated secret if none is given
+ *   DATABASE_URL          Postgres. Required in production; without it an
+ *                         embedded Postgres (PGlite) runs under DATA_DIR, which
+ *                         is what `bun run server` and the tests use.
+ *   DATA_DIR              the embedded database, and a generated secret if none is given
  *   RAVIX_SECRET     encrypts stored tokens; generated into DATA_DIR/secret
- *   PORT                  listen port (8080)
+ *   PORT                  the one listen port (8081). Render sets it to 10000.
  *   STATIC_DIR            the built SPA; unset serves none (dev, behind Vite)
  *   PUBLIC_URL            this server as GitHub reaches it. Required for OAuth.
+ *   PREVIEW_DOMAIN        optional; `t-<id>.<domain>` hosts are track previews.
+ *                         They arrive on the same PORT and are told apart by
+ *                         Host, because a hosting platform gives one listener.
  *
  * The GitHub App, all of which must be present together or none of it works:
  *
@@ -57,7 +63,8 @@ export interface Config {
   fountainUrl: string;
   fountainKey: string | null;
   dataDir: string;
-  dbPath: string;
+  /** Null means the embedded database under `dataDir`. */
+  databaseUrl: string | null;
   secret: string;
   port: number;
   staticDir: string | null;
@@ -66,7 +73,12 @@ export interface Config {
   github: GitHubAppConfig | null;
   sprites: { token: string; baseUrl: string } | null;
   sessionMaxAgeMs: number;
-  previews?: { domain: string; port: number; protocol: "https:" | "http:"; publicPort: string } | null;
+  /**
+   * Preview hosts are `<name>.<domain><publicPort>`. `publicPort` is empty in
+   * production (HTTPS on 443) and `:<PORT>` for `*.localhost`, where the
+   * browser reaches the server directly.
+   */
+  previews?: { domain: string; protocol: "https:" | "http:"; publicPort: string } | null;
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -77,8 +89,9 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
   mkdirSync(dataDir, { recursive: true });
 
   // A generated secret keeps a fresh deployment working, but it then lives
-  // beside the data it protects — which is why the k8s Secret is the right
-  // answer and this is only the fallback. Same trade as paddock and salon.
+  // beside the data it protects — which is why the platform's secret store
+  // (render.yaml generates one) is the right answer and this is only the
+  // fallback. Same trade as paddock and salon.
   let secret = env.RAVIX_SECRET?.trim() ?? "";
   if (!secret) {
     const file = join(dataDir, "secret");
@@ -91,6 +104,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
 
   const staticDir = env.STATIC_DIR === undefined ? null : env.STATIC_DIR.trim() || null;
   const publicUrl = (env.PUBLIC_URL?.trim().replace(/\/+$/, "") || "http://localhost:5183").trim();
+  const port = Number(env.PORT ?? 8081);
 
   return {
     sharedBrowser: env.SHARED_BROWSER === "1",
@@ -99,19 +113,19 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     fountainUrl,
     fountainKey: env.FOUNTAIN_API_KEY?.trim() || null,
     dataDir,
-    dbPath: join(dataDir, "ravix.sqlite"),
+    databaseUrl: env.DATABASE_URL?.trim() || null,
     secret,
-    port: Number(env.PORT ?? 8081),
+    port,
     staticDir,
     publicUrl,
     github: githubConfig(env),
     sprites: spritesConfig(env),
     sessionMaxAgeMs: 30 * DAY_MS,
-    previews: previewConfig(env, publicUrl),
+    previews: previewConfig(env, publicUrl, port),
   };
 }
 
-function previewConfig(env: Record<string, string | undefined>, publicUrl: string): Config["previews"] {
+function previewConfig(env: Record<string, string | undefined>, publicUrl: string, port: number): Config["previews"] {
   const domain = env.PREVIEW_DOMAIN?.trim().toLowerCase();
   if (!domain) return null;
   const appHost = new URL(publicUrl).hostname;
@@ -119,7 +133,7 @@ function previewConfig(env: Record<string, string | undefined>, publicUrl: strin
     throw new Error("PREVIEW_DOMAIN must be a dedicated domain outside the Ravix application host.");
   }
   const local = domain.endsWith(".localhost");
-  return { domain, port: Number(env.PREVIEW_PORT || 8082), protocol: local ? "http:" : "https:", publicPort: local ? `:${env.PREVIEW_PORT || 8082}` : "" };
+  return { domain, protocol: local ? "http:" : "https:", publicPort: local ? `:${port}` : "" };
 }
 
 /**

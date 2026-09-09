@@ -1,16 +1,23 @@
 import { subscribe } from "./hub";
 
 /** Keep authorization live while an upstream request or response is open. */
-export function watchStream(
+export async function watchStream(
   projectId: string,
   userId: string,
   clientSignal: AbortSignal,
-  canAccess: () => boolean,
+  canAccess: () => boolean | Promise<boolean>,
 ) {
   const controller = new AbortController();
   const abort = () => controller.abort(new DOMException("Stream access ended.", "AbortError"));
+  // The check reads the database, so it settles after the event that started
+  // it. When it was synchronous a revocation aborted the stream before the
+  // hub's own listener could enqueue anything published in the same breath;
+  // `forward` keeps that by holding each chunk until the checks in flight have
+  // settled. A check that throws is swallowed, as the hub swallowed it then,
+  // and must not become an unhandled rejection.
+  let pending: Promise<void> = Promise.resolve();
   const unsubscribe = subscribe(projectId, userId, () => {
-    if (!canAccess()) abort();
+    pending = pending.then(() => new Promise<boolean>((resolve) => resolve(canAccess())).then((ok) => { if (!ok) abort(); }, () => undefined));
   });
   const dispose = () => {
     unsubscribe();
@@ -18,7 +25,7 @@ export function watchStream(
   };
   controller.signal.addEventListener("abort", dispose, { once: true });
   clientSignal.addEventListener("abort", abort, { once: true });
-  if (clientSignal.aborted || !canAccess()) abort();
+  if (clientSignal.aborted || !(await canAccess())) abort();
 
   return {
     signal: controller.signal,
@@ -57,6 +64,9 @@ export function watchStream(
         async pull(output) {
           try {
             const chunk = await reader.read();
+            // Output published alongside a revocation waits for that check,
+            // and is dropped rather than shown if the check ends the stream.
+            await pending;
             if (finished) return;
             if (chunk.done) {
               finish();
@@ -74,7 +84,10 @@ export function watchStream(
           finish();
           return cancel(reason);
         },
-      });
+      // No read-ahead: a chunk is pulled only for a read that is waiting, so
+      // every chunk passes the hold above rather than sitting in a queue that
+      // was filled before the revocation arrived.
+      }, { highWaterMark: 0 });
     },
   };
 }

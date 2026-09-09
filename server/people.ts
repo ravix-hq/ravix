@@ -89,14 +89,14 @@ export async function search(ctx: AppContext, req: Request): Promise<Response> {
   // One character is a fine query for a login; zero is a request for the
   // whole userbase, which is the one thing this should not hand over.
   if (q.length < 1) return json({ data: [] });
-  return json({ data: ctx.db.searchUsers(q.slice(0, 60), user.id).map(toPerson) });
+  return json({ data: (await ctx.db.searchUsers(q.slice(0, 60), user.id)).map(toPerson) });
 }
 
 /** `GET /api/tracks/:id/people` — who can reach this track. */
 export async function list(ctx: AppContext, req: Request, trackId: string): Promise<Response> {
   const user = await authenticate(ctx, req);
-  const { track, project } = trackAccess(ctx, user, trackId);
-  return json({ data: peopleOf(ctx, track.id, project.userId, project.id) });
+  const { track, project } = await trackAccess(ctx, user, trackId);
+  return json({ data: await peopleOf(ctx, track.id, project.userId, project.id) });
 }
 
 /**
@@ -117,7 +117,7 @@ async function resolveLogin(
   if (!login) throw new HttpError(422, "no_login", "Give a GitHub username.");
 
   // Somebody who has signed in here joins immediately.
-  const existing = ctx.db.userByLogin(login);
+  const existing = await ctx.db.userByLogin(login);
   if (existing) return { user: existing, githubId: existing.githubId };
 
   // Anybody else is invited on GitHub's account rather than on ours. The
@@ -146,12 +146,12 @@ async function resolveLogin(
  */
 export async function add(ctx: AppContext, req: Request, trackId: string): Promise<Response> {
   const user = await authenticate(ctx, req);
-  const { track, project, role } = trackAccess(ctx, user, trackId);
+  const { track, project, role } = await trackAccess(ctx, user, trackId);
   requireOwner(role, "invite people to a track");
 
   const body = await readJson(req);
   const found = await resolveLogin(ctx, body.login);
-  if (found.githubId === ctx.db.user(project.userId)?.githubId) {
+  if (found.githubId === (await ctx.db.user(project.userId))?.githubId) {
     throw new HttpError(422, "already_owner", "That is the owner of this project — they are already in every track of it.");
   }
   // Somebody already in the whole project — or on their way into it — reaches
@@ -160,18 +160,18 @@ export async function add(ctx: AppContext, req: Request, trackId: string): Promi
   // on the next promotion anyway. Refused rather than silently ignored,
   // because the owner is entitled to know their click did nothing.
   const login = found.user ? found.user.login : found.login;
-  if (found.user && ctx.db.isProjectMember(project.id, found.user.id)) {
+  if (found.user && (await ctx.db.isProjectMember(project.id, found.user.id))) {
     throw new HttpError(422, "already_in_project", `@${login} is in this whole project already, so they are already in this track.`);
   }
-  if (ctx.db.hasProjectInvite(project.id, found.githubId)) {
+  if (await ctx.db.hasProjectInvite(project.id, found.githubId)) {
     throw new HttpError(422, "already_in_project", `@${login} is already invited to this whole project, so they will reach this track too.`);
   }
 
-  if (found.user) ctx.db.addMember(track.id, found.user.id, user.id);
-  else ctx.db.addInvite({ trackId: track.id, githubId: found.githubId, login: found.login, avatarUrl: found.avatarUrl, invitedBy: user.id });
+  if (found.user) await ctx.db.addMember(track.id, found.user.id, user.id);
+  else await ctx.db.addInvite({ trackId: track.id, githubId: found.githubId, login: found.login, avatarUrl: found.avatarUrl, invitedBy: user.id });
 
   publish(project.id, { event: "people", data: { trackId: track.id } });
-  return json({ data: peopleOf(ctx, track.id, project.userId, project.id) }, 201);
+  return json({ data: await peopleOf(ctx, track.id, project.userId, project.id) }, 201);
 }
 
 /**
@@ -184,19 +184,19 @@ export async function add(ctx: AppContext, req: Request, trackId: string): Promi
  */
 export async function remove(ctx: AppContext, req: Request, trackId: string, login: string): Promise<Response> {
   const user = await authenticate(ctx, req);
-  const { track, project, role } = trackAccess(ctx, user, trackId);
+  const { track, project, role } = await trackAccess(ctx, user, trackId);
 
   const wanted = login.replace(/^@/, "");
 
   // An invitation that has not been taken up yet is cancelled rather than
   // removed — there is no membership to delete, only a promise to withdraw.
   // Owner-only, because a pending person has no session to ask with.
-  if (role === "owner" && ctx.db.removeInviteByLogin(track.id, wanted)) {
+  if (role === "owner" && (await ctx.db.removeInviteByLogin(track.id, wanted))) {
     publish(project.id, { event: "people", data: { trackId: track.id } });
-    return json({ data: peopleOf(ctx, track.id, project.userId, project.id) });
+    return json({ data: await peopleOf(ctx, track.id, project.userId, project.id) });
   }
 
-  const target = ctx.db.userByLogin(wanted);
+  const target = await ctx.db.userByLogin(wanted);
   if (!target) throw new HttpError(404, "not_found", "No such person on this track.");
   if (role !== "owner" && target.id !== user.id) {
     throw new HttpError(403, "owner_only", "Only the owner of this project can remove somebody else.");
@@ -205,7 +205,7 @@ export async function remove(ctx: AppContext, req: Request, trackId: string, log
   // Silently widening one click into "out of every track on this machine"
   // would be the most surprising thing either dialog could do, so it is named
   // and refused, and the sentence says where the control actually is.
-  if (ctx.db.isProjectMember(project.id, target.id)) {
+  if (await ctx.db.isProjectMember(project.id, target.id)) {
     throw new HttpError(
       409,
       "in_whole_project",
@@ -215,12 +215,12 @@ export async function remove(ctx: AppContext, req: Request, trackId: string, log
     );
   }
 
-  ctx.db.removeMember(track.id, target.id);
+  await ctx.db.removeMember(track.id, target.id);
   publish(project.id, { event: "people", data: { trackId: track.id } });
   // The caller may have just removed their own access, in which case there is
   // nothing left to hand back — 204 rather than a list they cannot see.
   if (target.id === user.id && role !== "owner") return new Response(null, { status: 204 });
-  return json({ data: peopleOf(ctx, track.id, project.userId, project.id) });
+  return json({ data: await peopleOf(ctx, track.id, project.userId, project.id) });
 }
 
 /**
@@ -242,14 +242,14 @@ export async function remove(ctx: AppContext, req: Request, trackId: string, log
  * that is granting the access, and it is the one whose removal would not be
  * enough on its own.
  */
-export function peopleOf(ctx: AppContext, trackId: string, ownerId: string, projectId: string): Person[] {
-  const owner = ctx.db.user(ownerId);
-  const wide = ctx.db.projectMembersOf(projectId);
+export async function peopleOf(ctx: AppContext, trackId: string, ownerId: string, projectId: string): Promise<Person[]> {
+  const owner = await ctx.db.user(ownerId);
+  const wide = await ctx.db.projectMembersOf(projectId);
   const seen = new Set(wide.map((u) => u.id));
-  const narrow = ctx.db.membersOf(trackId).filter((u) => !seen.has(u.id));
+  const narrow = (await ctx.db.membersOf(trackId)).filter((u) => !seen.has(u.id));
   // Pending last, because they cannot read anything yet and the list is
   // mostly read to answer "who can see this".
-  const pending = ctx.db.invitesOf(trackId).map((i) => ({ login: i.login, name: null, avatarUrl: i.avatarUrl, pending: true }));
+  const pending = (await ctx.db.invitesOf(trackId)).map((i) => ({ login: i.login, name: null, avatarUrl: i.avatarUrl, pending: true }));
   return [
     ...(owner ? [owner].map(toPerson) : []),
     ...wide.map((u) => ({ ...toPerson(u), via: "project" as const })),
@@ -266,10 +266,10 @@ export function peopleOf(ctx: AppContext, trackId: string, ownerId: string, proj
  * is not; showing them here would make the owner's own decision unreadable
  * back to them, and would put a × beside a row that this dialog cannot remove.
  */
-export function projectPeopleOf(ctx: AppContext, projectId: string, ownerId: string): Person[] {
-  const owner = ctx.db.user(ownerId);
-  const members = ctx.db.projectMembersOf(projectId);
-  const pending = ctx.db.projectInvitesOf(projectId).map((i) => ({ login: i.login, name: null, avatarUrl: i.avatarUrl, pending: true }));
+export async function projectPeopleOf(ctx: AppContext, projectId: string, ownerId: string): Promise<Person[]> {
+  const owner = await ctx.db.user(ownerId);
+  const members = await ctx.db.projectMembersOf(projectId);
+  const pending = (await ctx.db.projectInvitesOf(projectId)).map((i) => ({ login: i.login, name: null, avatarUrl: i.avatarUrl, pending: true }));
   return [...(owner ? [owner].map(toPerson) : []), ...members.map(toPerson), ...pending];
 }
 
@@ -278,8 +278,8 @@ export function projectPeopleOf(ctx: AppContext, projectId: string, ownerId: str
 /** `GET /api/projects/:id/people` — who can reach every track on this project. */
 export async function listProject(ctx: AppContext, req: Request, projectId: string): Promise<Response> {
   const user = await authenticate(ctx, req);
-  const { project } = projectAccess(ctx, user, projectId);
-  return json({ data: projectPeopleOf(ctx, project.id, project.userId) });
+  const { project } = await projectAccess(ctx, user, projectId);
+  return json({ data: await projectPeopleOf(ctx, project.id, project.userId) });
 }
 
 /**
@@ -296,12 +296,12 @@ export async function listProject(ctx: AppContext, req: Request, projectId: stri
  */
 export async function addProject(ctx: AppContext, req: Request, projectId: string): Promise<Response> {
   const user = await authenticate(ctx, req);
-  const { project, role } = projectAccess(ctx, user, projectId);
+  const { project, role } = await projectAccess(ctx, user, projectId);
   requireOwner(role, "invite people to a project");
 
   const body = await readJson(req);
   const found = await resolveLogin(ctx, body.login);
-  if (found.githubId === ctx.db.user(project.userId)?.githubId) {
+  if (found.githubId === (await ctx.db.user(project.userId))?.githubId) {
     throw new HttpError(422, "already_owner", "That is the owner of this project.");
   }
 
@@ -309,9 +309,9 @@ export async function addProject(ctx: AppContext, req: Request, projectId: strin
   // project go with it, so the list cannot end up showing one person at two
   // grades.
   if (found.user) {
-    ctx.db.addProjectMember(project.id, found.user.id, user.id);
+    await ctx.db.addProjectMember(project.id, found.user.id, user.id);
   } else {
-    ctx.db.addProjectInvite({
+    await ctx.db.addProjectInvite({
       projectId: project.id,
       githubId: found.githubId,
       login: found.login,
@@ -323,7 +323,7 @@ export async function addProject(ctx: AppContext, req: Request, projectId: strin
   // No `trackId`: this changed who is on every track of the project at once,
   // and the browser re-reads the rail rather than one row.
   publish(project.id, { event: "people", data: {} });
-  return json({ data: projectPeopleOf(ctx, project.id, project.userId) }, 201);
+  return json({ data: await projectPeopleOf(ctx, project.id, project.userId) }, 201);
 }
 
 /**
@@ -338,30 +338,30 @@ export async function addProject(ctx: AppContext, req: Request, projectId: strin
  */
 export async function removeProject(ctx: AppContext, req: Request, projectId: string, login: string): Promise<Response> {
   const user = await authenticate(ctx, req);
-  const { project, role } = projectAccess(ctx, user, projectId);
+  const { project, role } = await projectAccess(ctx, user, projectId);
 
   const wanted = login.replace(/^@/, "");
 
   // As on a track: an invitation nobody has taken up is withdrawn rather than
   // removed. Owner-only, because a pending person has no session to ask with.
-  if (role === "owner" && ctx.db.removeProjectInviteByLogin(project.id, wanted)) {
+  if (role === "owner" && (await ctx.db.removeProjectInviteByLogin(project.id, wanted))) {
     publish(project.id, { event: "people", data: {} });
-    return json({ data: projectPeopleOf(ctx, project.id, project.userId) });
+    return json({ data: await projectPeopleOf(ctx, project.id, project.userId) });
   }
 
-  const target = ctx.db.userByLogin(wanted);
+  const target = await ctx.db.userByLogin(wanted);
   if (!target) throw new HttpError(404, "not_found", "No such person on this project.");
   if (role !== "owner" && target.id !== user.id) {
     throw new HttpError(403, "owner_only", "Only the owner of this project can remove somebody else.");
   }
 
-  ctx.db.removeProjectMember(project.id, target.id);
+  await ctx.db.removeProjectMember(project.id, target.id);
   publish(project.id, { event: "people", data: {} });
   // Nothing left to hand back to somebody who just removed their own access:
   // 204 rather than a list they cannot see. The caller has to leave rather
   // than re-render.
   if (target.id === user.id && role !== "owner") return new Response(null, { status: 204 });
-  return json({ data: projectPeopleOf(ctx, project.id, project.userId) });
+  return json({ data: await projectPeopleOf(ctx, project.id, project.userId) });
 }
 
 // ── the other way in: a link ───────────────────────────────────────────
@@ -386,9 +386,9 @@ const PROJECT_LINK_TTL_MS = 2 * 24 * 60 * 60 * 1000;
 /** `GET /api/tracks/:id/link` — whether a link is out, never the link itself. */
 export async function showLink(ctx: AppContext, req: Request, trackId: string): Promise<Response> {
   const user = await authenticate(ctx, req);
-  const { track, role } = trackAccess(ctx, user, trackId);
+  const { track, role } = await trackAccess(ctx, user, trackId);
   requireOwner(role, "see this track's invite link");
-  const link = ctx.db.linkOf(track.id);
+  const link = await ctx.db.linkOf(track.id);
   // The URL is deliberately absent. Only the hash is stored, so it genuinely
   // cannot be shown again — which is worth being honest about rather than
   // implying it was lost.
@@ -405,12 +405,12 @@ export async function showLink(ctx: AppContext, req: Request, trackId: string): 
  */
 export async function mintLink(ctx: AppContext, req: Request, trackId: string): Promise<Response> {
   const user = await authenticate(ctx, req);
-  const { track, role } = trackAccess(ctx, user, trackId);
+  const { track, role } = await trackAccess(ctx, user, trackId);
   requireOwner(role, "make an invite link for a track");
 
   const token = randomToken();
-  ctx.db.putLink(track.id, await sha256(token), user.id, LINK_TTL_MS);
-  const link = ctx.db.linkOf(track.id)!;
+  await ctx.db.putLink(track.id, await sha256(token), user.id, LINK_TTL_MS);
+  const link = (await ctx.db.linkOf(track.id))!;
   return json({
     data: { url: `${ctx.config.publicUrl}/j/${token}`, createdAt: link.createdAt, expiresAt: link.expiresAt },
   }, 201);
@@ -419,9 +419,9 @@ export async function mintLink(ctx: AppContext, req: Request, trackId: string): 
 /** `DELETE /api/tracks/:id/link` — nobody new gets in on it. */
 export async function dropLink(ctx: AppContext, req: Request, trackId: string): Promise<Response> {
   const user = await authenticate(ctx, req);
-  const { track, role } = trackAccess(ctx, user, trackId);
+  const { track, role } = await trackAccess(ctx, user, trackId);
   requireOwner(role, "revoke this track's invite link");
-  ctx.db.dropLink(track.id);
+  await ctx.db.dropLink(track.id);
   // Deliberately not a removal: people who already came in on this link stay,
   // and the owner takes them out by name if that is what they meant. A revoke
   // that silently evicted half a track would be the more surprising of the two.
@@ -431,21 +431,21 @@ export async function dropLink(ctx: AppContext, req: Request, trackId: string): 
 /** `GET /api/projects/:id/link` — whether a link is out, never the link itself. */
 export async function showProjectLink(ctx: AppContext, req: Request, projectId: string): Promise<Response> {
   const user = await authenticate(ctx, req);
-  const { project, role } = projectAccess(ctx, user, projectId);
+  const { project, role } = await projectAccess(ctx, user, projectId);
   requireOwner(role, "see this project's invite link");
-  const link = ctx.db.projectLinkOf(project.id);
+  const link = await ctx.db.projectLinkOf(project.id);
   return json({ data: link ? { url: null, createdAt: link.createdAt, expiresAt: link.expiresAt } : null });
 }
 
 /** `POST /api/projects/:id/link` — mint one, replacing whatever was out. */
 export async function mintProjectLink(ctx: AppContext, req: Request, projectId: string): Promise<Response> {
   const user = await authenticate(ctx, req);
-  const { project, role } = projectAccess(ctx, user, projectId);
+  const { project, role } = await projectAccess(ctx, user, projectId);
   requireOwner(role, "make an invite link for a project");
 
   const token = randomToken();
-  ctx.db.putProjectLink(project.id, await sha256(token), user.id, PROJECT_LINK_TTL_MS);
-  const link = ctx.db.projectLinkOf(project.id)!;
+  await ctx.db.putProjectLink(project.id, await sha256(token), user.id, PROJECT_LINK_TTL_MS);
+  const link = (await ctx.db.projectLinkOf(project.id))!;
   return json({
     data: { url: `${ctx.config.publicUrl}/j/${token}`, createdAt: link.createdAt, expiresAt: link.expiresAt },
   }, 201);
@@ -454,9 +454,9 @@ export async function mintProjectLink(ctx: AppContext, req: Request, projectId: 
 /** `DELETE /api/projects/:id/link` — nobody new gets in on it. */
 export async function dropProjectLink(ctx: AppContext, req: Request, projectId: string): Promise<Response> {
   const user = await authenticate(ctx, req);
-  const { project, role } = projectAccess(ctx, user, projectId);
+  const { project, role } = await projectAccess(ctx, user, projectId);
   requireOwner(role, "revoke this project's invite link");
-  ctx.db.dropProjectLink(project.id);
+  await ctx.db.dropProjectLink(project.id);
   return json({ data: null });
 }
 
@@ -475,23 +475,23 @@ export async function dropProjectLink(ctx: AppContext, req: Request, projectId: 
 async function redeem(ctx: AppContext, userId: string, token: string): Promise<string | null> {
   const hash = await sha256(token);
 
-  const track = ctx.db.trackForLink(hash);
+  const track = await ctx.db.trackForLink(hash);
   if (track) {
-    const project = ctx.db.project(track.projectId);
+    const project = await ctx.db.project(track.projectId);
     if (!project || project.archivedAt) return null;
     // Somebody already in the whole project needs no row and gets none: a
     // track membership written here would outlive their project membership
     // and quietly leave them one branch after being removed.
-    if (project.userId !== userId && !ctx.db.isProjectMember(project.id, userId)) {
-      ctx.db.addMember(track.id, userId, "link");
+    if (project.userId !== userId && !(await ctx.db.isProjectMember(project.id, userId))) {
+      await ctx.db.addMember(track.id, userId, "link");
     }
     publish(project.id, { event: "people", data: { trackId: track.id } });
     return `/p/${project.id}/t/${track.id}`;
   }
 
-  const project = ctx.db.projectForLink(hash);
+  const project = await ctx.db.projectForLink(hash);
   if (project) {
-    if (project.userId !== userId) ctx.db.addProjectMember(project.id, userId, "link");
+    if (project.userId !== userId) await ctx.db.addProjectMember(project.id, userId, "link");
     publish(project.id, { event: "people", data: {} });
     // The project rather than one of its tracks: this link did not name one,
     // and picking a track for somebody is picking which of several
@@ -518,7 +518,7 @@ async function redeem(ctx: AppContext, userId: string, token: string): Promise<s
  */
 export async function join(ctx: AppContext, req: Request, token: string): Promise<Response> {
   const session = cookieValue(req, SESSION_COOKIE);
-  const user = session ? ctx.db.sessionUser(await sha256(session)) : null;
+  const user = session ? await ctx.db.sessionUser(await sha256(session)) : null;
   if (!user) {
     const gh = requireGitHub(ctx);
     const attempt = await beginOAuth(ctx, req, "join", token);

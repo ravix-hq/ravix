@@ -13,6 +13,7 @@ import { join } from "node:path";
 import { buildContext } from "./context";
 import { loadConfig } from "./config";
 import { Db } from "./db";
+import { testSql } from "./sql";
 import { Cipher, sha256 } from "./crypto";
 import { createPreviewGateway } from "./preview-gateway";
 import { publish } from "./hub";
@@ -63,19 +64,19 @@ async function fixture() {
   });
   const providerPort = await listen(provider);
   const config = loadConfig({ DATA_DIR: dir, RAVIX_SECRET: "gateway-test-secret-long-enough", PUBLIC_URL: "http://localhost:5183", SPRITES_TOKEN: "secret-provider-token", SPRITES_URL: `http://127.0.0.1:${providerPort}`, FOUNTAIN_API_KEY: "test", PREVIEW_DOMAIN: "preview.localhost" });
-  const db = new Db(config.dbPath);
+  const db = await Db.open(await testSql());
   const ctx = buildContext({ db, config, cipher: await Cipher.from(config.secret) });
   ctx.fountain!.listConversations = async () => [{ id: "c", sandbox_id: "s", status: "idle", inserted_at: "2026-09-05" }] as never;
   ctx.fountain!.sandbox = async () => ({ id: "s", sprite_name: "sprite" }) as never;
-  const owner = db.upsertUser({ githubId: "1", login: "ana", name: "Ana", avatarUrl: null, tokenEnc: "test" });
-  const guest = db.upsertUser({ githubId: "2", login: "bo", name: "Bo", avatarUrl: null, tokenEnc: "test" });
-  db.createProject({ id: "p", userId: owner.id, name: "Demos", repoFullName: null, repoPrivate: 0, defaultBranch: null, installationId: null, agentId: "a", environmentId: "e", vaultId: null, runtime: "claude", model: "test", instructions: "" });
-  for (const id of ["t1", "t2"]) db.createTrack({ id, projectId: "p", conversationId: id, slug: id, title: id, branch: id, workdir: `/work/${id}`, originKind: "blank", originBase: null, originNumber: null, originTitle: null, originUrl: null, rev: 1, createdByLogin: owner.login });
-  db.addMember("t1", guest.id, owner.id);
-  db.createSession(guest.id, await sha256("app-session"), 60_000);
-  db.previews.grant({ hash: await sha256("preview-session"), trackId: "t1", sessionHash: await sha256("app-session"), expires: Date.now() + 60_000, kind: "session" });
-  const row = db.previews.ensure("t1");
-  Object.assign(row, { sprite: "sprite", sandboxId: "s", port: appPort, desired: "running", state: "ready" }); db.previews.save(row);
+  const owner = await db.upsertUser({ githubId: "1", login: "ana", name: "Ana", avatarUrl: null, tokenEnc: "test" });
+  const guest = await db.upsertUser({ githubId: "2", login: "bo", name: "Bo", avatarUrl: null, tokenEnc: "test" });
+  await db.createProject({ id: "p", userId: owner.id, name: "Demos", repoFullName: null, repoPrivate: 0, defaultBranch: null, installationId: null, agentId: "a", environmentId: "e", vaultId: null, runtime: "claude", model: "test", instructions: "" });
+  for (const id of ["t1", "t2"]) await db.createTrack({ id, projectId: "p", conversationId: id, slug: id, title: id, branch: id, workdir: `/work/${id}`, originKind: "blank", originBase: null, originNumber: null, originTitle: null, originUrl: null, rev: 1, createdByLogin: owner.login });
+  await db.addMember("t1", guest.id, owner.id);
+  await db.createSession(guest.id, await sha256("app-session"), 60_000);
+  await db.previews.grant({ hash: await sha256("preview-session"), trackId: "t1", sessionHash: await sha256("app-session"), expires: Date.now() + 60_000, kind: "session" });
+  const row = await db.previews.ensure("t1");
+  Object.assign(row, { sprite: "sprite", sandboxId: "s", port: appPort, desired: "running", state: "ready" }); await db.previews.save(row);
   const gateway = createPreviewGateway(ctx);
   const port = await listen(gateway); config.previews!.publicPort = `:${port}`;
   const host = `${row.hostname}.preview.localhost:${port}`, origin = `http://${host}`;
@@ -86,7 +87,7 @@ async function fixture() {
   });
   cleanup.push(() => {
     for (const ws of proxyWs.clients) ws.terminate(); for (const ws of appWs.clients) ws.terminate();
-    gateway.closeAllConnections(); gateway.close(); proxyWs.close(); provider.closeAllConnections(); provider.close(); appWs.close(); upstream.closeAllConnections(); upstream.close(); db.close();
+    gateway.closeAllConnections(); gateway.close(); proxyWs.close(); provider.closeAllConnections(); provider.close(); appWs.close(); upstream.closeAllConnections(); upstream.close(); void db.close();
   });
   return { ctx, row, guest, host, origin, port, get, headers, tunnels: () => tunnels };
 }
@@ -97,13 +98,13 @@ test("auth precedes tunneling; gateway credentials and parent-domain cookies nev
   const res = await f.get(); expect(res.status).toBe(200); expect(res.body).toContain("track app");
   expect(res.body).toContain("/__ravix/activity.js"); expect(String(f.headers[0]!.cookie).trim()).toBe("app=okay");
   expect(res.headers["set-cookie"]).toEqual(["app=1; Path=/"]);
-  const other = f.ctx.db.previews.ensure("t2");
+  const other = await f.ctx.db.previews.ensure("t2");
   expect((await f.get("/", { host: `${other.hostname}.preview.localhost:${f.port}` })).status).toBe(401);
 }, 10_000);
 
 test("tickets are single-use and exchange only on their own origin", async () => {
   const f = await fixture();
-  f.ctx.db.previews.grant({ hash: await sha256("ticket"), trackId: "t1", sessionHash: await sha256("app-session"), expires: Date.now() + 60_000, kind: "ticket" });
+  await f.ctx.db.previews.grant({ hash: await sha256("ticket"), trackId: "t1", sessionHash: await sha256("app-session"), expires: Date.now() + 60_000, kind: "ticket" });
   expect((await f.get("/__ravix/exchange", { method: "POST", body: "ticket", origin: "http://evil.test" })).status).toBe(403);
   const accepted = await f.get("/__ravix/exchange", { method: "POST", body: "ticket", origin: f.origin });
   expect(accepted.status).toBe(204); expect(String(accepted.headers["set-cookie"])).toContain("HttpOnly; SameSite=Strict");
@@ -114,8 +115,8 @@ test("HTTP streams deliver before completion and access revocation closes existi
   const f = await fixture();
   await new Promise<void>((resolve, reject) => {
     const req = request({ host: "127.0.0.1", port: f.port, path: "/stream", headers: { host: f.host, cookie: "ravix_preview_local=preview-session" } }, res => {
-      res.once("data", chunk => {
-        expect(chunk.toString()).toBe("first\n"); f.ctx.db.removeMember("t1", f.guest.id);
+      res.once("data", async chunk => {
+        expect(chunk.toString()).toBe("first\n"); await f.ctx.db.removeMember("t1", f.guest.id);
         publish("p", { event: "tracks", data: { projectId: "p" } });
       }); res.on("error", () => {}); res.on("close", resolve);
     }); req.on("error", reject); req.end();
@@ -134,22 +135,22 @@ test("WebSockets preserve text and binary frames and terminate on membership rem
     expect(echo).toEqual(Buffer.from(data)); expect(binary).toBe(typeof data !== "string");
   }
   const closed = new Promise<void>(resolve => ws.once("close", () => resolve()));
-  f.ctx.db.removeMember("t1", f.guest.id); publish("p", { event: "tracks", data: { projectId: "p" } }); await closed;
+  await f.ctx.db.removeMember("t1", f.guest.id); publish("p", { event: "tracks", data: { projectId: "p" } }); await closed;
 }, 10_000);
 
 test("expired tickets and cross-track exchanges cannot create a preview session", async () => {
-  const f = await fixture(); const other = f.ctx.db.previews.ensure("t2");
+  const f = await fixture(); const other = await f.ctx.db.previews.ensure("t2");
   const otherHost = `${other.hostname}.preview.localhost:${f.port}`;
-  f.ctx.db.previews.grant({ hash: await sha256("wrong-track"), trackId: "t1", sessionHash: await sha256("app-session"), expires: Date.now() + 60_000, kind: "ticket" });
+  await f.ctx.db.previews.grant({ hash: await sha256("wrong-track"), trackId: "t1", sessionHash: await sha256("app-session"), expires: Date.now() + 60_000, kind: "ticket" });
   expect((await f.get("/__ravix/exchange", { method: "POST", body: "wrong-track", host: otherHost, origin: `http://${otherHost}` })).status).toBe(401);
-  f.ctx.db.previews.grant({ hash: await sha256("expired"), trackId: "t1", sessionHash: await sha256("app-session"), expires: Date.now() - 1, kind: "ticket" });
+  await f.ctx.db.previews.grant({ hash: await sha256("expired"), trackId: "t1", sessionHash: await sha256("app-session"), expires: Date.now() - 1, kind: "ticket" });
   expect((await f.get("/__ravix/exchange", { method: "POST", body: "expired", origin: f.origin })).status).toBe(401);
   expect(f.tunnels()).toBe(0);
 });
 
 test("removal permanently revokes sessions, even if the member is invited again", async () => {
-  const f = await fixture(); f.ctx.db.removeMember("t1", f.guest.id);
-  f.ctx.db.addMember("t1", f.guest.id, f.ctx.db.project("p")!.userId);
+  const f = await fixture(); await f.ctx.db.removeMember("t1", f.guest.id);
+  await f.ctx.db.addMember("t1", f.guest.id, (await f.ctx.db.project("p"))!.userId);
   expect((await f.get()).status).toBe(401);
   expect(f.tunnels()).toBe(0);
 });
@@ -160,7 +161,7 @@ test("sign-out revokes preview sessions and WebSockets fail closed without auth 
     const ws = new WebSocket(`ws://127.0.0.1:${f.port}/hmr`, { headers: { host: f.host, ...headers } });
     await new Promise<void>((resolve, reject) => { ws.once("open", () => reject(new Error("unauthorized upgrade"))); ws.on("error", () => resolve()); });
   }
-  f.ctx.db.endSession(await sha256("app-session")); expect((await f.get()).status).toBe(401); expect(f.tunnels()).toBe(0);
+  await f.ctx.db.endSession(await sha256("app-session")); expect((await f.get()).status).toBe(401); expect(f.tunnels()).toBe(0);
 });
 
 test("HTTP request bodies are forwarded and cross-origin writes are rejected", async () => {
