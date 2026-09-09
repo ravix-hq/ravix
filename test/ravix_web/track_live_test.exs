@@ -341,11 +341,48 @@ defmodule RavixWeb.TrackLiveTest do
     assert render(ctx.view) =~ "Hello"
   end
 
-  test "transcript snapshots render prompts and tool output", ctx do
-    page = Transcript.page([%{"id" => "turn", "prompt" => "User prompt"}], [], "claude")
+  test "transcript snapshots render prompts, thinking, tools, and raw output safely", ctx do
+    update = fn data ->
+      Jason.encode!(%{jsonrpc: "2.0", method: "session/update", params: %{update: data}})
+    end
+
+    frames = [
+      update.(%{
+        sessionUpdate: "agent_thought_chunk",
+        content: %{type: "text", text: "Considering the change"}
+      }),
+      update.(%{
+        sessionUpdate: "tool_call",
+        toolCallId: "read",
+        title: "Read code",
+        kind: "read",
+        rawInput: %{file_path: "app.ex"}
+      }),
+      update.(%{
+        sessionUpdate: "tool_call_update",
+        toolCallId: "read",
+        status: "completed",
+        content: [%{type: "content", content: %{type: "text", text: "Tool result"}}]
+      }),
+      "Compiler output <script>alert(1)</script>"
+    ]
+
+    events =
+      Enum.with_index(frames, 1)
+      |> Enum.map(fn {data, id} ->
+        %{"id" => id, "turn_id" => "turn", "kind" => "output", "stream" => "acp", "data" => data}
+      end)
+
+    page = Transcript.page([%{"id" => "turn", "prompt" => "User prompt"}], events, "claude")
     stub(Tracks, :events, fn _, _ -> {:ok, page} end)
     render_click(ctx.view, "retry-load")
-    assert render_async(ctx.view) =~ "User prompt"
+    html = render_async(ctx.view)
+    assert html =~ "User prompt"
+    assert html =~ "Considering the change"
+    assert html =~ "Read code"
+    assert html =~ "Tool result"
+    assert html =~ "Compiler output"
+    refute has_element?(ctx.view, "#transcript-turns script")
   end
 
   defp preview do
