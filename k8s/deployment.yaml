@@ -22,7 +22,7 @@ spec:
       containers:
         - name: web
           # Pinned to an immutable sha tag by .github/workflows/build.yml.
-          image: ghcr.io/ravix-hq/ravix:latest
+          image: ghcr.io/ravix-hq/ravix:sha-6607e37788bc14a9f478320819d0d7674ba5436d
           ports:
             - containerPort: 8080
             - containerPort: 8082
