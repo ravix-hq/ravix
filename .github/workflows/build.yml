@@ -1,4 +1,4 @@
-# Builds the image on every push to main, pushes it to ghcr.io/ravioli-hq/ravix,
+# Builds the image on every push to main, pushes it to ghcr.io/ravix-hq/ravix,
 # then pins the immutable sha tag into k8s/deployment.yaml so Flux rolls exactly
 # what was built. The pin commit only touches k8s/, which paths-ignore excludes,
 # so it does not retrigger this workflow.

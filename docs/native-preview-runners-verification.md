@@ -172,7 +172,7 @@ The experiments do not exercise Unicode text, rotation, multi-touch, navigation
 controls, browser pointer cancellation, software decoding or scrcpy/Tango framing.
 Screenshot polling is not used as evidence of responsive live preview.
 
-The private [Hello World Expo SDK 54 fixture](https://github.com/ravioli-hq/ravix-expo-hello)
+The private [Hello World Expo SDK 54 fixture](https://github.com/ravix-hq/ravix-expo-hello)
 is on `main` at `68fabcd`. Typechecking, Expo dependency compatibility, Android/iOS
 Metro bundle export and loopback backend responses passed. The first Android
 native build passed under `ravix` on September 5, 2026, as reported by the
@@ -347,7 +347,7 @@ sign-in:
 
 - App origin: `https://app.ravix.sh`.
   `preview.ravix.sh` is the separate web-preview domain.
-- Private repository: `ravioli-hq/ravix-expo-hello`.
+- Private repository: `ravix-hq/ravix-expo-hello`.
 - Project: `e96fc271-182f-44df-a097-55db90ed2932`.
 - Track: `d792d4c2-26ac-4708-aef1-b1a2f21b44cd`, named
   **Native preview verification**.

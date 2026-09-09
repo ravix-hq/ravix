@@ -24,7 +24,7 @@ for configuration, pairing, retention, and reset commands.
   `337b041669c83e2792e0b25dd40e47510f670c67`. The viewer reconnect guard is
   `18f2a817407691b932394a201dcb2400540a0f47`.
 - Last verified deployed image:
-  `ghcr.io/ravioli-hq/ravix:latest`.
+  `ghcr.io/ravix-hq/ravix:latest`.
   CI workflows `34014778701` and `34014911283` passed. Rollout and public
   `/healthz` passed. Documentation was subsequently committed as `3f24676`.
 - 321 tests passed, zero failed; one existing real-Chromium shared-browser test
@@ -54,7 +54,7 @@ an unclean local process exit, build-job dispatch, runner replacement/migration,
 and broader cache retirement remain unfinished. The current engine allows one
 global active preview; advertised per-runner build capacity is not build dispatch.
 
-The product still accepts only `ravioli-hq/ravix-expo-hello` under the existing
+The product still accepts only `ravix-hq/ravix-expo-hello` under the existing
 feature flag and consumes the pinned artifacts below. General project setup,
 source export/build invalidation, and native agent helpers remain gate 4 work.
 Track agents currently know the web-preview helper; they do not yet configure
@@ -101,7 +101,7 @@ and `/private/tmp/ravix-hello-source.json` (source snapshot).
 
    ```sh
    sudo /bin/bash \
-     /Users/jake/dev/ravioli-hq/ravix/runner/scripts/provision-account.sh \
+     /Users/jake/dev/ravix-hq/ravix/runner/scripts/provision-account.sh \
      ravix --pair-runner
    ```
 
@@ -112,7 +112,7 @@ and `/private/tmp/ravix-hello-source.json` (source snapshot).
 
    ```sh
    sudo /bin/bash \
-     /Users/jake/dev/ravioli-hq/ravix/runner/scripts/provision-account.sh \
+     /Users/jake/dev/ravix-hq/ravix/runner/scripts/provision-account.sh \
      ravix --serve-runner
    ```
 
@@ -135,7 +135,7 @@ saving this checkpoint. Existing five-minute codes are not useful resume state.
 ## Project coordinates
 
 - Front door: <https://app.ravix.sh>
-- Private repository: `ravioli-hq/ravix-expo-hello`
+- Private repository: `ravix-hq/ravix-expo-hello`
 - Project: `e96fc271-182f-44df-a097-55db90ed2932`
 - Existing track: `d792d4c2-26ac-4708-aef1-b1a2f21b44cd`
 - [Open the Hello track](https://app.ravix.sh/p/e96fc271-182f-44df-a097-55db90ed2932/t/d792d4c2-26ac-4708-aef1-b1a2f21b44cd)
@@ -145,7 +145,7 @@ saving this checkpoint. Existing five-minute codes are not useful resume state.
 
 ## Repository continuity
 
-The user's checkout `/Users/jake/dev/ravioli-hq/ravix` contains substantial dirty
+The user's checkout `/Users/jake/dev/ravix-hq/ravix` contains substantial dirty
 and untracked work, including unrelated shared-browser changes. **Do not reset,
 stash, clean, or commit that checkout wholesale.** Native changes were committed
 and pushed from isolated worktree `/private/tmp/sy-ios-integrated`, branch

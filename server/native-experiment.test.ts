@@ -56,7 +56,7 @@ async function fixture() {
     const owner = db.upsertUser({ githubId: '1', login: 'owner', name: null, avatarUrl: null, tokenEnc: 'unused' }), member = db.upsertUser({ githubId: '2', login: 'member', name: null, avatarUrl: null, tokenEnc: 'unused' });
     for (const user of [owner, member])
         db.createSession(user.id, await sha256(user.login), 60000);
-    db.createProject({ id: 'project', userId: owner.id, name: 'Hello', repoFullName: 'ravioli-hq/ravix-expo-hello', repoPrivate: 1, defaultBranch: 'main', installationId: 1, agentId: 'agent', environmentId: 'env', vaultId: null, runtime: 'codex', model: 'test', instructions: '' });
+    db.createProject({ id: 'project', userId: owner.id, name: 'Hello', repoFullName: 'ravix-hq/ravix-expo-hello', repoPrivate: 1, defaultBranch: 'main', installationId: 1, agentId: 'agent', environmentId: 'env', vaultId: null, runtime: 'codex', model: 'test', instructions: '' });
     for (const id of ['track', 'other'])
         db.createTrack({ id, projectId: 'project', conversationId: id, slug: id, title: id, branch: id, workdir: `/work/${id}`, originKind: 'blank', originBase: null, originNumber: null, originTitle: null, originUrl: null, rev: 1, createdByLogin: 'owner' });
     db.addMember('track', member.id, owner.id);

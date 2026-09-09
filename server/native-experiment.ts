@@ -11,7 +11,7 @@ import type { NativeRequest } from './runner-store';
 import type { NativeServiceReservation } from './native-experiment-store';
 import { NATIVE, nativeFrame, parseNativeInput, type NativeInfo, type NativePlatform, type NativeVideo } from '../shared/native-preview';
 import loopbackSource from '../runner/scripts/metro-loopback.cjs' with { type: 'text' };
-const FIXTURE = 'ravioli-hq/ravix-expo-hello';
+const FIXTURE = 'ravix-hq/ravix-expo-hello';
 const NATIVE_HASHES = {
     'assets/adaptive-icon.png': '5f4c0a732b6325bf4071d9124d2ae67e037cb24fcc9c482ef82bea742109a3b8',
     'assets/icon.png': '74c64047eb557b1341bba7a2831eedde9ddb705e6451a9ad9f5552bf558f13de',

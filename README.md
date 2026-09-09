@@ -655,7 +655,7 @@ product.
 
 ## Deploy
 
-Push to `main`; `.github/workflows/build.yml` builds `ghcr.io/ravioli-hq/ravix`
+Push to `main`; `.github/workflows/build.yml` builds `ghcr.io/ravix-hq/ravix`
 and pins the sha into `k8s/deployment.yaml`. A Flux `Kustomization` pointed at
 `k8s/` reconciles it. The manifests name `app.ravix.sh` for the app and
 `*.preview.ravix.sh` for track previews; both need DNS at the cluster ingress

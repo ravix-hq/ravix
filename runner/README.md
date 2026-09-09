@@ -231,7 +231,7 @@ they do not establish readiness under the new account.
 
 ## Build the Hello World Android artifact
 
-The fixture is [ravioli-hq/ravix-expo-hello](https://github.com/ravioli-hq/ravix-expo-hello).
+The fixture is [ravix-hq/ravix-expo-hello](https://github.com/ravix-hq/ravix-expo-hello).
 This build-only experiment creates a debug development APK; it does not start a
 device or Metro, install an app, or provide a browser preview.
 
@@ -402,7 +402,7 @@ against a local provider fixture; a live Sprite run is still pending. No WAN thr
 ## Paired Android Hello preview
 
 Deploy the app with `NATIVE_PREVIEW_EXPERIMENT=1`. Only the project for
-`ravioli-hq/ravix-expo-hello` offers **Start Android preview**. Its owner starts
+`ravix-hq/ravix-expo-hello` offers **Start Android preview**. Its owner starts
 one experiment and receives a single-use pairing code valid for five minutes.
 The app admits one experiment globally, reuses the verified APK below, and pins
 native configuration, dependencies and image assets. Native changes require a
@@ -459,7 +459,7 @@ The iOS path is implemented but still requires live verification under the
 
 ```sh
 sudo /bin/bash \
-  /Users/jake/dev/ravioli-hq/ravix/runner/scripts/provision-account.sh \
+  /Users/jake/dev/ravix-hq/ravix/runner/scripts/provision-account.sh \
   ravix --build-ios-hello
 ```
 
