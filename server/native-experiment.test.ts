@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from 'bun:test';
+import { afterEach, expect, spyOn, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -161,6 +161,30 @@ test('video waits for a keyframe, input has one controller, and sign-out ends es
     await until(() => runner.readyState === WebSocket.CLOSED);
     await until(() => viewer.readyState === WebSocket.CLOSED);
 });
+test('the frame path reuses its liveness answer instead of querying the database per frame', async () => {
+    const f = await fixture(), s = await f.start(), paired = (await (await f.claim(s.pairingCode!)).json()).data;
+    const producer = await f.connect(s.id, 'video', paired.token), viewer = await f.connect(s.id, 'view', undefined, 'member');
+    const frames: ArrayBuffer[] = [];
+    viewer.onmessage = e => { if (e.data instanceof ArrayBuffer) frames.push(e.data); };
+    producer.send(JSON.stringify({ type: 'video', codec: 'h264', width: 576, height: 1280 }));
+    const packet = (flags: bigint) => { const p = Buffer.alloc(14); p.writeBigUInt64BE(flags); p.writeUInt32BE(2, 8); return p; };
+    const key = (n: number) => packet((1n << 61n) | BigInt(n));
+    producer.send(packet(1n << 62n));
+    producer.send(key(1));
+    await until(() => frames.length === 2);
+    const sessions = spyOn(f.db, 'sessionUser');
+    for (let i = 2; i < 32; i++) producer.send(key(i));
+    await until(() => frames.length === 32);
+    // Uncached, thirty frames cost about ninety session lookups (one for the
+    // producer and two for the viewer, per frame). Cached, only the sweep's
+    // fresh reads and at most one refresh per party remain.
+    expect(sessions.mock.calls.length).toBeLessThan(15);
+    sessions.mockRestore();
+    // A signed-out viewer is still cut off: the sweep reads fresh.
+    await f.db.endSession(await sha256('member'));
+    await until(() => viewer.readyState === WebSocket.CLOSED);
+});
+
 test('stopping during service creation cleans up late definitions before releasing reservations', async () => {
     const f = await fixture();
     let release!: () => void;
