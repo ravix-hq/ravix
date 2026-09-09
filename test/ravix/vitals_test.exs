@@ -151,6 +151,31 @@ defmodule Ravix.VitalsTest do
                Vitals.report(owner, track.id)
     end
 
+    test "provider reads distinguish missing machines, unsupported hosts, and transport failures" do
+      owner = insert_user()
+      track = insert_track(project: insert_project(user: owner))
+      stub(Ravix.Config, :sprites, fn -> %{token: "test", base_url: "http://sprites.test"} end)
+      stub(Ravix.Tracks, :machine_of, fn _ -> {:ok, nil} end)
+      assert {:ok, %{available: false, why: :no_machine}} = Vitals.report(owner, track.id)
+      stub(Ravix.Tracks, :machine_of, fn _ -> {:ok, %{sandbox_id: "box"}} end)
+      stub(Ravix.Tracks, :sprite_for, fn "box" -> nil end)
+      assert {:ok, %{available: false, why: :no_sprite}} = Vitals.report(owner, track.id)
+      stub(Ravix.Tracks, :sprite_for, fn "box" -> "sprite" end)
+      stub(Ravix.Sprites, :exec, fn _, "sprite", _, _ -> {:error, :unreachable} end)
+      assert {:ok, %{available: false, why: :unreachable}} = Vitals.report(owner, track.id)
+
+      expect(Ravix.Sprites, :exec, fn _, "sprite", ["sh", "-lc", script], 15 ->
+        assert script =~ Ravix.Sprites.shq(track.workdir)
+        {:ok, %{stdout: "nproc=2\nmeminfo=1024"}}
+      end)
+
+      assert {:ok,
+              %{
+                available: true,
+                vitals: %{cpu_cores: 2, mem_total_bytes: 1_048_576, mem_used_bytes: nil}
+              }} = Vitals.report(owner, track.id)
+    end
+
     test "a stranger is told the track does not exist" do
       stub(Ravix.Config, :sprites, fn -> nil end)
       track = insert_track()

@@ -58,6 +58,31 @@ jobs:
       # The threshold lives in coverage.exs; `--cover` fails the run below it.
       - run: mix test --cover
 
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: elixir-coverage
+          path: cover/
+          retention-days: 7
+
+  hooks:
+    name: browser hooks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v5
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: "1.3.11"
+      - run: bun install --frozen-lockfile
+      - run: bun test
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: hook-coverage
+          path: cover/hooks/
+          retention-days: 7
+
   static:
     name: static analysis
     runs-on: ubuntu-24.04

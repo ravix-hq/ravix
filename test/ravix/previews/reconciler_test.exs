@@ -14,8 +14,6 @@ defmodule Ravix.Previews.ReconcilerTest do
   alias Ravix.Previews.{Reconciler, Row, Store}
   alias Ravix.Tracks.Track
 
-  Ravix.PreviewsFixture.copy_mimics()
-
   @config %{
     "directory" => "apps/demo",
     "command" => ~s(npm run dev -- --port "$PORT" --strictPort),

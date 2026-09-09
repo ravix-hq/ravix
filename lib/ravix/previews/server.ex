@@ -65,17 +65,21 @@ defmodule Ravix.Previews.Server do
   @spec ensure(String.t()) :: pid()
   def ensure(track_id) do
     case Registry.lookup(@registry, track_id) do
-      [{pid, _}] ->
+      [{pid, _}] -> if Process.alive?(pid), do: pid, else: start_server(track_id)
+      [] -> start_server(track_id)
+    end
+  end
+
+  defp start_server(track_id) do
+    callers = [self() | Process.get(:"$callers", [])]
+    spec = {__MODULE__, track_id: track_id, callers: callers}
+
+    case DynamicSupervisor.start_child(@supervisor, spec) do
+      {:ok, pid} ->
         pid
 
-      [] ->
-        callers = [self() | Process.get(:"$callers", [])]
-        spec = {__MODULE__, track_id: track_id, callers: callers}
-
-        case DynamicSupervisor.start_child(@supervisor, spec) do
-          {:ok, pid} -> pid
-          {:error, {:already_started, pid}} -> pid
-        end
+      {:error, {:already_started, pid}} ->
+        if Process.alive?(pid), do: pid, else: ensure(track_id)
     end
   end
 
@@ -280,6 +284,7 @@ defmodule Ravix.Previews.Server do
     case Ravix.Tracks.machine_of(project, fresh: true) do
       {:ok, %{sandbox_id: _} = machine} -> {:ok, machine}
       {:ok, nil} -> {:error, "This project has no machine. Open a track first.", row}
+      {:error, reason} -> {:error, reason, row}
     end
   end
 

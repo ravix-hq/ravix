@@ -12,8 +12,6 @@ defmodule Ravix.PreviewsTest do
   alias Ravix.Previews.{Row, Store}
   alias Ravix.Tracks.Track
 
-  Ravix.PreviewsFixture.copy_mimics()
-
   setup do
     start_tree()
     provider = start_provider()

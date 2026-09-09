@@ -15,8 +15,6 @@ defmodule Ravix.Previews.AgentTest do
   alias Ravix.Tracks.Track
   alias RavixWeb.Error
 
-  Ravix.PreviewsFixture.copy_mimics()
-
   defmodule Upstream do
     @moduledoc false
     @behaviour Plug

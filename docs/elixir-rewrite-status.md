@@ -37,13 +37,13 @@ is required before production cutover; retaining tables is not an import.
 
 - The recovered backend's 19 test failures were resolved, including presence
   metadata, follower subscription/lifecycle, and transcript event handling.
-- The final local suite passes: 651 tests, zero failures, 86.99% coverage.
+- The final local suite passes: 707 tests, zero failures, 91.98% production-only coverage.
 - The suite includes LiveView tests for scoped navigation, session expiry,
   membership revocation, project settings, prompt handling, files, changes,
   checks, previews, and fresh preview tickets.
 - The full local gate runs warnings-as-errors compilation, dependency cleanup,
   formatting, strict Credo, Sobelow, dependency audit, Dialyzer, tests with
-  an 85% coverage floor, assets, and release assembly.
+  a 90% production coverage floor and separate server/UI floors, assets, and release assembly.
 - Dialyzer has seven narrowly matched filters for a `mint_web_socket` 1.0.5
   opaque type defect. The explanation and upstream source are in
   `.dialyzer_ignore.exs`; real socket tests cover the affected tunnel path.
@@ -53,6 +53,9 @@ is required before production cutover; retaining tables is not an import.
 - `scripts/release-smoke.sh` boots the Docker release against disposable
   PostgreSQL 17, migrates twice, preserves an existing `public.users` row,
   and checks health, the landing page, and static assets.
+
+See [engineering quality](engineering-quality.md) for the coverage ratchets,
+18 browser-hook tests, recovery fixes, and contributor/agent tooling.
 
 ## Deployment follow-up
 

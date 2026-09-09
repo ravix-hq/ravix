@@ -84,7 +84,7 @@ gateway's control routes).
   and drop, transcript tail, panel drag, theme. Nothing else runs in the
   browser.
 - **The discipline** is Fountain's, copied: the `precommit` alias, the CI
-  shape with an 85% coverage gate, `DataCase` and `ConnCase` with a factory
+  shape with a 90% production coverage gate and separate server/UI floors, `DataCase` and `ConnCase` with a factory
   through real changesets, Mimic, no fire-and-forget `Task.async`, this
   ADR bundle with `okf validate` in CI. The audit trail and the docs gates
   are not adopted; Ravix has no manual and no audit surface yet.

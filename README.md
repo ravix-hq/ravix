@@ -129,8 +129,21 @@ mix precommit
 ```
 
 This checks compilation with warnings treated as errors, unused lock entries,
-formatting, Credo, Sobelow, Hex advisories, Dialyzer, the ExUnit suite with an
-85% coverage threshold, and production release assembly.
+formatting, Credo, Sobelow, Hex retirement audit, Dialyzer, ExUnit, browser-hook
+DOM tests, and production release assembly. Run `bun install --frozen-lockfile`
+once after cloning to install the development-only hook test dependencies.
+
+Coverage counts production source only, excluding test fixtures. The total floor
+is 90%; separate floors require server 92%, web 90%, workspace LiveView 92%, and
+track LiveView 92%. `mix test --cover` writes the native HTML report and
+`cover/quality.json`. Each JavaScript hook requires 90% line and function coverage
+under `bun test`, with LCOV in `cover/hooks/`. CI retains both reports as artifacts.
+The floors live in `coverage.exs` and `bunfig.toml`; raise them as coverage grows.
+
+[AGENTS.md](AGENTS.md) is the contributor/agent guide (also read through
+`CLAUDE.md`). Repository skills cover scoped Elixir changes and coverage-driven
+testing. See [engineering quality](docs/engineering-quality.md) for the measured
+baseline, design choices, and the limits of each test layer.
 
 CI also migrates and boots a production release. To exercise the actual
 container locally with disposable PostgreSQL 17 and verify legacy-table

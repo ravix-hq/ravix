@@ -13,9 +13,12 @@ for mod <- [
       Ravix.Previews,
       Ravix.Tracks,
       Ravix.Projects,
-      Ravix.PromptQueue
+      Ravix.PromptQueue,
+      Ravix.Terminal,
+      Ravix.Vitals,
+      Ravix.MachineCache,
+      Ravix.Previews.Clock
     ],
-    Code.ensure_loaded?(mod),
     do: Mimic.copy(mod)
 
 ExUnit.start()

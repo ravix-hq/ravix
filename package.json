@@ -1,8 +1,14 @@
 {
-  "name": "ravix-dev-fixtures",
+  "name": "ravix-dev-tools",
   "private": true,
   "type": "module",
-  "description": "Local Fountain, GitHub, and Sprites fixtures; production is Elixir/Phoenix.",
-  "scripts": { "mock": "RAVIX_URL=http://localhost:4000 bun mock/server.ts" },
-  "devDependencies": { "vite": "^6.3.0" }
+  "description": "Local provider fixtures and DOM tests; production is Elixir/Phoenix.",
+  "scripts": {
+    "mock": "RAVIX_URL=http://localhost:4000 bun mock/server.ts",
+    "test:ui": "bun test"
+  },
+  "devDependencies": {
+    "@happy-dom/global-registrator": "20.14.0",
+    "vite": "^6.3.0"
+  }
 }

@@ -227,7 +227,8 @@ defmodule Ravix.MachineCache do
 
   def handle_call(:reset, _from, state) do
     :ets.delete_all_objects(state.table)
-    {:reply, :ok, %{state | loads: %{}}}
+    loads = Enum.reduce(Map.keys(state.loads), state.loads, &drop_load(&2, &1))
+    {:reply, :ok, %{state | loads: loads}}
   end
 
   @impl true

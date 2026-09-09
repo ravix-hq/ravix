@@ -1,14 +1,3 @@
-# `Ravix.Tracks` is the tracks agent's; until it lands, a stand-in with the
-# two functions the previews call, so `test_helper.exs` Mimic-copies a
-# module and the tests stub it the way they will stub the real one.
-if not match?({:module, _}, Code.ensure_compiled(Ravix.Tracks)) do
-  defmodule Ravix.Tracks do
-    @moduledoc false
-    def machine_of(_project, _opts \\ []), do: {:ok, nil}
-    def sprite_for(_sandbox_id), do: nil
-  end
-end
-
 defmodule Ravix.PreviewsFixture do
   @moduledoc """
   The fixture of `server/previews.test.ts`: a scripted Sprites provider, a
@@ -48,24 +37,14 @@ defmodule Ravix.PreviewsFixture do
           now: integer()
         }
 
-  @doc "Make sure the registry and supervisor the servers need are up (until the application starts them)."
+  @doc "Assert that the application owns the preview process tree."
   @spec start_tree() :: :ok
   def start_tree do
-    for spec <- Server.child_specs() do
-      case Supervisor.start_child(Ravix.Supervisor, spec) do
-        {:ok, _} -> :ok
-        {:error, {:already_started, _}} -> :ok
-        {:error, :already_present} -> :ok
-      end
+    for {module, opts} <- Server.child_specs() do
+      name = Keyword.get(opts, :name, module)
+      if is_nil(Process.whereis(name)), do: raise("preview process not started: #{inspect(name)}")
     end
 
-    :ok
-  end
-
-  @doc "Copy the modules the fixture stubs that `test_helper.exs` does not."
-  @spec copy_mimics() :: :ok
-  def copy_mimics do
-    Mimic.copy(Clock)
     :ok
   end
 

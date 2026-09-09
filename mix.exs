@@ -5,7 +5,7 @@ defmodule Ravix.MixProject do
     [
       app: :ravix,
       version: "0.1.0",
-      elixir: "~> 1.15",
+      elixir: "~> 1.19",
       elixirc_paths: elixirc_paths(Mix.env()),
       start_permanent: Mix.env() == :prod,
       aliases: aliases(),
@@ -106,6 +106,7 @@ defmodule Ravix.MixProject do
         "cmd mix hex.audit",
         "cmd env MIX_ENV=dev mix dialyzer",
         "test --cover",
+        "cmd bun test",
         "cmd env MIX_ENV=prod mix assets.deploy",
         "cmd env MIX_ENV=prod mix release --overwrite"
       ]
