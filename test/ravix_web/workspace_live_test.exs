@@ -2,9 +2,10 @@ defmodule RavixWeb.WorkspaceLiveTest do
   use RavixWeb.ConnCase, async: false
   import Phoenix.LiveViewTest
   import Mimic
-  alias Ravix.{Accounts, Crypto, Hub, Projects, QueryCount, Tracks}
+  alias Ravix.{Accounts, Crypto, Hub, Projects, QueryCount, Repo, Tracks}
   alias Ravix.Hub.Event
   alias Ravix.Tracks.Transcript
+  alias RavixWeb.Live.Guard
 
   setup :verify_on_exit!
 
@@ -225,15 +226,48 @@ defmodule RavixWeb.WorkspaceLiveTest do
     assert render(view) =~ "Each track is its own worktree"
   end
 
-  test "expired sessions cannot mutate through an already connected page", %{conn: conn} do
+  test "signing out somewhere else takes this page with it, without being poked", %{conn: conn} do
     user = insert_user()
     {token, _session} = insert_session(user)
     conn = Plug.Test.init_test_session(conn, session_token: token)
     {:ok, view, _} = live(conn, "/")
+
+    # Signing out announces itself, so the page goes at once rather than
+    # waiting for whatever it does next. Before, a page nobody was touching
+    # kept its screen until its next message, which might be minutes.
     Accounts.end_session(Crypto.sha256(token))
+    assert_redirect(view, "/login", 1_000)
+  end
+
+  test "a session gone without notice is still caught, on the page's next act", %{conn: conn} do
+    user = insert_user()
+    {token, session} = insert_session(user)
+    conn = Plug.Test.init_test_session(conn, session_token: token)
+    {:ok, view, _} = live(conn, "/")
+
+    # PubSub is best-effort and Ravix runs on more than one instance (ADR
+    # 0003), so the notice above can go missing. A row deleted without one is
+    # that case, and it is also what an expiry looks like from here, since no
+    # code runs at the moment a session runs out.
+    #
+    # The page holds its answer for at most `Guard.ttl_ms/0`. Ageing that
+    # stands in for the wait, and is the whole of what the held answer costs:
+    # a revocation that used to be seen on the very next message is seen
+    # within fifteen seconds when nothing announced it.
+    Repo.delete!(session)
+    assert render(view) =~ user.login
+
+    :sys.replace_state(view.pid, &age_session_guard/1)
 
     assert {:error, {:redirect, %{to: "/login"}}} =
              render_click(view, "dialog", %{name: "new-project"})
+  end
+
+  # Put the page's held answer far enough in the past that it has run out.
+  defp age_session_guard(state) do
+    update_in(state.socket.assigns.session_guard, fn guard ->
+      %{guard | verified_at_ms: guard.verified_at_ms - Guard.ttl_ms() - 1}
+    end)
   end
 
   test "removed project membership clears the rail on a hub notification", %{conn: conn} do
