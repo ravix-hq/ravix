@@ -203,6 +203,11 @@ test('project, track, streaming, image upload, reconnect, and revocation', async
   await expect(composer).toHaveValue('A draft while opening workspace dialogs');
   await composer.fill('Explain this project for the browser smoke test');
   await composer.press('Enter');
+  // The saved-prompts panel exists for exactly this window: accepted, and
+  // waiting while the machine works. It is also the panel a template bug
+  // once crashed the page on, which this suite caught only by accident.
+  await expect(page.locator('.workspace-queue')).toContainText('Explain this project for the browser smoke test');
+  await expect(page.locator('.workspace-queue .chip')).toBeVisible();
   await expect(page.locator('#transcript-turns')).toContainText('Explain this project for the browser smoke test');
   await expect(page.locator('.workspace-turn').filter({ hasText: 'Explain this project for the browser smoke test' }).locator('.md')).toContainText('There is one TODO worth doing here');
   await expect(composer).toHaveValue('');
