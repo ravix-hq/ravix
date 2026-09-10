@@ -52,15 +52,23 @@ defmodule Ravix.Tracks do
           has_setup_script: boolean()
         }
 
+  @typedoc """
+  Everything a track call can refuse with, and nothing else.
+
+  Two providers show through here rather than being flattened: a `Fountain`
+  failure is the machine's, a `GitHub` one is the repository's, and
+  `RavixWeb.Error` has a different sentence for each. `:unconfigured` is
+  either of them not being set up on this deployment at all.
+  """
   @type reason ::
           :not_found
+          | :unconfigured
           | {:forbidden, String.t()}
           | {:conflict, String.t(), String.t()}
           | {:unprocessable, String.t(), String.t()}
           | {:unavailable, String.t(), String.t()}
           | Fountain.Error.t()
-          | :unconfigured
-          | term()
+          | Ravix.GitHub.Error.t()
 
   # ── reading ───────────────────────────────────────────────────────────
 

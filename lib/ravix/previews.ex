@@ -46,13 +46,20 @@ defmodule Ravix.Previews do
   @ticket_ms 60_000
   @probe_ms 3_000
 
+  @typedoc """
+  Everything a preview call can refuse with, and nothing else.
+
+  It ended in `| term()` until this was written out, which is why
+  `:preview_server_down` reached people as "Something went wrong on the Ravix
+  server" for as long as it did: nothing could say the sentence was missing.
+  """
   @type reason ::
           :not_found
+          | :preview_server_down
           | {:conflict, String.t(), String.t()}
           | {:unprocessable, String.t(), String.t()}
           | {:unavailable, String.t()}
           | {:unavailable, String.t(), String.t()}
-          | term()
 
   @doc "The lease a heartbeat renews, in milliseconds."
   @spec lease_ms() :: pos_integer()

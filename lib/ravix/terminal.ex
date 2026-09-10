@@ -47,13 +47,19 @@ defmodule Ravix.Terminal do
   @typedoc "Whether the terminal will work, before the panel renders a prompt that cannot."
   @type status :: %{available: boolean(), why: Ravix.Vitals.unreachable() | nil, cwd: String.t()}
 
+  @typedoc """
+  Everything an exec call can refuse with, and nothing else.
+
+  Notably not `:unconfigured`: a deployment with no Sprites token is turned
+  into the `no_exec` sentence here, because "the terminal is not available on
+  this Ravix" is a thing the panel can say and a bare atom is not.
+  """
   @type reason ::
           :not_found
           | {:conflict, String.t(), String.t()}
           | {:unprocessable, String.t(), String.t()}
           | {:unavailable, String.t(), String.t()}
           | Ravix.Sprites.Error.t()
-          | term()
 
   @no_exec "This Ravix deployment has no Sprites token, so it cannot run commands on the machine directly."
   @no_sprite "This machine does not expose a sprite, so Ravix cannot run commands on it directly."
