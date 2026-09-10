@@ -136,8 +136,7 @@
                 class={"dot #{track.status}"}
                 role="img"
                 aria-label="Working"
-              >
-              </span>
+              ></span>
               <span
                 :if={attention?(track)}
                 class="track-attention"
@@ -353,14 +352,19 @@
                   datetime={DateTime.to_iso8601(track.last_active_at)}
                 >{Calendar.strftime(track.last_active_at, "%b %-d, %H:%M UTC")}</time>
               </div>
-              <strong>{track.title}</strong><code class="dimmer">{track.branch}</code><span class="dim">{if track.status == :failed, do: "The agent needs a hand. Open the conversation to see what happened.", else: "The agent finished. Open the conversation to read its reply."}</span>
+              <strong>{track.title}</strong><code class="dimmer">{track.branch}</code><span class="dim">{if track.status ==
+                                                                                                              :failed,
+                                                                                                            do:
+                                                                                                              "The agent needs a hand. Open the conversation to see what happened.",
+                                                                                                            else:
+                                                                                                              "The agent finished. Open the conversation to read its reply."}</span>
             </.link>
           </div>
         </div>
       </div>
     </main>
     <.dialog :if={@dialog == "search"} id="search-dialog" title="Find a track" on_close="dismiss">
-      <form phx-change="search">
+      <form id="search-form" phx-change="search">
         <.input
           name="q"
           id="search-query"
@@ -385,7 +389,7 @@
       title="New project"
       on_close="dismiss"
     >
-      <form :if={@installations != []} phx-change="installation">
+      <form :if={@installations != []} id="installation-form" phx-change="installation">
         <.input
           name="installation"
           id="installation"
