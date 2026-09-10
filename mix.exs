@@ -72,7 +72,7 @@ defmodule Ravix.MixProject do
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
       {:sobelow, "~> 0.14", only: [:dev, :test], runtime: false},
-      {:mimic, "~> 1.11", only: :test},
+      {:mimic, "~> 2.4", only: :test},
       {:stream_data, "~> 1.1", only: [:dev, :test]}
     ]
   end
