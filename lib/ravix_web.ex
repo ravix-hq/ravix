@@ -62,6 +62,8 @@ defmodule RavixWeb do
     quote do
       use Phoenix.LiveComponent
 
+      import RavixWeb.Live.Result
+
       unquote(html_helpers())
     end
   end

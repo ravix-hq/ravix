@@ -2,7 +2,7 @@ defmodule RavixWeb.WorkspaceLive do
   @moduledoc "The project rail, inbox, navigation, and project management forms."
   use RavixWeb, :live_view
 
-  alias Ravix.{Accounts, Hub, People, Previews, Projects, Tracks}
+  alias Ravix.{Accounts, Hub, Previews, Projects, Tracks}
   alias Ravix.Hub.Event
   alias Ravix.Tracks.Names
   alias RavixWeb.Live.Guard
@@ -37,8 +37,6 @@ defmodule RavixWeb.WorkspaceLive do
         track_id: nil,
         dialog: nil,
         form_data: %{},
-        people: [],
-        invite: nil,
         repos: [],
         installations: [],
         installation: nil,
@@ -318,41 +316,6 @@ defmodule RavixWeb.WorkspaceLive do
     end
   end
 
-  def handle_event("invite-person", %{"login" => login}, socket) do
-    {:noreply,
-     result(
-       socket,
-       People.add_project(socket.assigns.current_user, project_id(socket), login),
-       &assign(&1, people: &2)
-     )}
-  end
-
-  def handle_event("remove-person", %{"login" => login}, socket) do
-    {:noreply,
-     result(
-       socket,
-       People.remove_project(socket.assigns.current_user, project_id(socket), login),
-       fn s, _ ->
-         s |> reload() |> push_patch(to: "/")
-       end
-     )}
-  end
-
-  def handle_event("invite-link", %{"action" => action}, socket) do
-    user = socket.assigns.current_user
-    id = project_id(socket)
-
-    response =
-      if action == "create",
-        do: People.mint_project_link(user, id),
-        else: People.drop_project_link(user, id)
-
-    {:noreply,
-     result(socket, response, fn s, value ->
-       assign(s, invite: if(action == "create", do: value, else: nil))
-     end)}
-  end
-
   @impl true
   def handle_async(:create_project, {:ok, response}, socket) do
     {:noreply,
@@ -394,6 +357,13 @@ defmodule RavixWeb.WorkspaceLive do
   # of the rail's fields each event can reach, and getting that wrong shows
   # up as a status dot that is quietly a minute stale.
   @impl true
+  # The people dialog did the removal. Either way the rail is now wrong --
+  # a project you just left goes, and a project you took somebody off has a
+  # different set of tracks under it -- so it is re-read and the dialog
+  # closes behind it.
+  def handle_info({:person_removed, :project, _login}, socket),
+    do: {:noreply, socket |> reload() |> push_patch(to: "/")}
+
   def handle_info({:hub, %Event{name: name}}, socket) when name in [:here, :queue],
     do: {:noreply, socket}
 
@@ -469,13 +439,8 @@ defmodule RavixWeb.WorkspaceLive do
     end)
   end
 
-  defp open_dialog(socket, "people") do
-    result(
-      socket,
-      People.list_project(socket.assigns.current_user, project_id(socket)),
-      &assign(&1, dialog: "people", people: &2, invite: nil)
-    )
-  end
+  # The people dialog loads its own list, so opening it is only opening it.
+  defp open_dialog(socket, "people"), do: assign(socket, dialog: "people")
 
   defp open_dialog(socket, _), do: socket
 

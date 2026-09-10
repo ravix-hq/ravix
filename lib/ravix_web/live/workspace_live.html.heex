@@ -600,28 +600,14 @@
         </button>
       </form>
     </.dialog>
-    <.dialog
+    <.live_component
       :if={@dialog == "people" && @project}
-      id="people-dialog"
-      title="Project people"
-      on_close="dismiss"
-    >
-      <p>Project members can open tracks and work in every track on this machine.</p>
-      <div :for={person <- @people} class="workspace-track">
-        <span>@{person.login}</span><button
-          :if={@project.role == :owner || person.login == @current_user.login}
-          class="ghost"
-          phx-click="remove-person"
-          phx-value-login={person.login}
-        >{if person.login == @current_user.login, do: "Leave project", else: "Remove"}</button>
-      </div>
-      <form :if={@project.role == :owner} id="invite-form" phx-submit="invite-person">
-        <.input name="login" id="invite-login" label="GitHub username" value="" required />
-        <button class="primary">
-          Invite
-        </button>
-      </form>
-      <.invite_link owner={@project.role == :owner} invite={@invite} />
-    </.dialog>
+      module={RavixWeb.Live.PeopleDialog}
+      id="people"
+      scope={:project}
+      subject_id={@project.id}
+      owner={@project.role == :owner}
+      current_user={@current_user}
+    />
   </div>
 </Layouts.app>
