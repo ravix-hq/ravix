@@ -26,6 +26,8 @@ defmodule Ravix.Previews.Reconciler do
 
   use GenServer
 
+  import Ecto.Query
+
   require Logger
 
   alias Ravix.Previews
@@ -46,8 +48,10 @@ defmodule Ravix.Previews.Reconciler do
   @spec tick() :: :ok
   def tick do
     if Previews.unavailable() == nil do
+      rows = Store.all()
+
       Ravix.TaskSupervisor
-      |> Task.Supervisor.async_stream_nolink(Store.all(), &reconcile/1,
+      |> Task.Supervisor.async_stream_nolink(with_context(rows), &reconcile/1,
         ordered: false,
         timeout: @row_timeout_ms,
         on_timeout: :kill_task
@@ -56,6 +60,39 @@ defmodule Ravix.Previews.Reconciler do
     end
 
     :ok
+  end
+
+  # Every row's track and project, read for the whole pass rather than for
+  # each row.
+  #
+  # A pass asks the same two questions of every preview -- has this track
+  # closed, has this project been archived -- and asked one row at a time
+  # that was two queries each, on a fifteen-second timer, for every preview
+  # in the deployment. Rows of the same project were reading that project
+  # over again.
+  #
+  # The pass is a snapshot: a track that closes while it runs is reconciled
+  # on the next one, fifteen seconds later, which is the same answer the
+  # tick before it would have given.
+  defp with_context(rows) do
+    tracks =
+      rows
+      |> Enum.map(& &1.track_id)
+      |> then(&Repo.all(from t in Track, where: t.id in ^&1))
+      |> Map.new(&{&1.id, &1})
+
+    projects =
+      tracks
+      |> Map.values()
+      |> Enum.map(& &1.project_id)
+      |> Enum.uniq()
+      |> then(&Repo.all(from p in Project, where: p.id in ^&1))
+      |> Map.new(&{&1.id, &1})
+
+    Enum.map(rows, fn row ->
+      track = Map.get(tracks, row.track_id)
+      {row, track, track && Map.get(projects, track.project_id)}
+    end)
   end
 
   @doc "What one row needs, as a pure decision (`:cleanup`, `:stop`, `:ensure` or `:leave`)."
@@ -83,11 +120,8 @@ defmodule Ravix.Previews.Reconciler do
   end
 
   @doc false
-  @spec reconcile(Row.t()) :: :ok
-  def reconcile(%Row{track_id: track_id} = row) do
-    track = Repo.get(Track, track_id)
-    project = track && Repo.get(Project, track.project_id)
-
+  @spec reconcile({Row.t(), Track.t() | nil, Project.t() | nil}) :: :ok
+  def reconcile({%Row{track_id: track_id} = row, track, project}) do
     result =
       case decide(row, track, project, Clock.now_ms()) do
         :cleanup -> Previews.stop_service(track_id, true)
