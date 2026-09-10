@@ -5,6 +5,7 @@ defmodule RavixWeb.TrackLive do
 
   alias Ravix.{Accounts, Crypto, Hub, People, Previews, PromptQueue, Terminal, Tracks, Vitals}
   alias Ravix.Accounts.Access
+  alias Ravix.Hub.Event
   alias Ravix.Tracks.Transcript
   alias RavixWeb.Error
 
@@ -337,13 +338,20 @@ defmodule RavixWeb.TrackLive do
     end
   end
 
-  def handle_info({:hub, %{event: "here", data: %{track_id: id, present: present}}}, socket) do
-    {:noreply,
-     if(id == socket.assigns.track_id, do: assign(socket, present: present), else: socket)}
+  # An event about a *sibling* track is not this page's business, and saying
+  # so is most of what typing the hub bought. A project with several tracks
+  # being worked on publishes constantly -- a turn starting, a queue moving,
+  # somebody reading a transcript -- and every one of those used to cost
+  # every open page a re-read of its own track, its queue and its whole
+  # transcript. An event naming no track at all is the project's, and is
+  # never skipped.
+  def handle_info({:hub, %Event{} = event}, socket) do
+    if Event.concerns?(event, socket.assigns.track_id) do
+      {:noreply, hub(event, socket)}
+    else
+      {:noreply, socket}
+    end
   end
-
-  def handle_info({:hub, _}, socket),
-    do: {:noreply, socket |> refresh_detail() |> refresh_queue() |> refresh_transcript()}
 
   def handle_info(:refresh, socket) do
     Process.send_after(self(), :refresh, 15_000)
@@ -523,6 +531,30 @@ defmodule RavixWeb.TrackLive do
       end
     end)
   end
+
+  # What each event can actually have changed for the track on screen.
+  #
+  # `:here` is who is looking, and nothing else. `:queue` is the queue.
+  # Everything else lands in the track's own detail: its status and turn
+  # count (`:turn`), its people (`:people`), its title and whether it is
+  # still open (`:tracks`), and whether the project moved out from under it
+  # (`:settings`, which is what `stale` compares).
+  #
+  # Only `:turn` re-reads the transcript. The transcript arrives on the
+  # follower's stream, not on the hub, so re-reading it is a repair for a
+  # gap rather than the way it is kept current -- and a turn beginning or
+  # failing is the one hub event that means the stream may have missed
+  # something.
+  defp hub(%Event{name: :here, present: present}, socket),
+    do: assign(socket, present: present)
+
+  defp hub(%Event{name: :queue}, socket), do: refresh_queue(socket)
+
+  defp hub(%Event{name: :turn}, socket),
+    do: socket |> refresh_detail() |> refresh_queue() |> refresh_transcript()
+
+  defp hub(%Event{name: name}, socket) when name in [:people, :tracks, :settings],
+    do: refresh_detail(socket)
 
   defp refresh_detail(%{assigns: %{track: nil}} = socket), do: socket
 

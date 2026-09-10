@@ -240,7 +240,7 @@ defmodule Ravix.Projects do
     with {:ok, project} <- Ravix.Accounts.Access.project_of(user, id),
          {:ok, client} <- fountain(),
          {:ok, rev} <- Settings.update(project, attrs, client) do
-      Hub.publish(project.id, "settings", %{rev: rev})
+      Hub.publish(project.id, :settings)
       {:ok, %{rev: rev}}
     end
   end

@@ -8,6 +8,7 @@ defmodule Ravix.PresenceTest do
 
   alias Ravix.Accounts.User
   alias Ravix.Hub
+  alias Ravix.Hub.Event
   alias Ravix.Presence
 
   setup_all do
@@ -34,9 +35,10 @@ defmodule Ravix.PresenceTest do
     track = ctx.track
 
     assert_receive {:hub,
-                    %{
-                      event: "here",
-                      data: %{track_id: ^track, present: [%{login: "ana", typing: false}]}
+                    %Event{
+                      name: :here,
+                      track_id: ^track,
+                      present: [%{login: "ana", typing: false}]
                     }}
   end
 
@@ -60,7 +62,7 @@ defmodule Ravix.PresenceTest do
     Process.exit(other, :kill)
     assert_receive {:DOWN, ^ref, :process, _, _}
     track = ctx.track
-    assert_receive {:hub, %{event: "here", data: %{track_id: ^track, present: []}}}, 1_000
+    assert_receive {:hub, %Event{name: :here, track_id: ^track, present: []}}, 1_000
     assert Presence.present(ctx.track) == []
   end
 
@@ -97,7 +99,7 @@ defmodule Ravix.PresenceTest do
     assert ["bo"] == ctx.track |> Presence.present() |> logins()
     track = ctx.track
 
-    assert_receive {:hub, %{event: "here", data: %{track_id: ^track, present: [%{login: "bo"}]}}},
+    assert_receive {:hub, %Event{name: :here, track_id: ^track, present: [%{login: "bo"}]}},
                    1_000
 
     send(other, :leave)
@@ -122,10 +124,9 @@ defmodule Ravix.PresenceTest do
     # stopped, even though no request arrived to say so.
     Presence.beat(ctx.track, ctx.project, ana(), true)
     track = ctx.track
-    assert_receive {:hub, %{event: "here", data: %{track_id: ^track, present: [%{typing: true}]}}}
+    assert_receive {:hub, %Event{name: :here, track_id: ^track, present: [%{typing: true}]}}
 
-    assert_receive {:hub,
-                    %{event: "here", data: %{track_id: ^track, present: [%{typing: false}]}}},
+    assert_receive {:hub, %Event{name: :here, track_id: ^track, present: [%{typing: false}]}},
                    Presence.typing_ttl_ms() + 1_000
   end
 

@@ -17,6 +17,7 @@ defmodule Ravix.PeopleTest do
   """
   use Ravix.DataCase, async: true
   use Mimic
+  alias Ravix.Hub.Event
 
   alias Ravix.Accounts.Access
   alias Ravix.GitHubFake, as: Fake
@@ -653,7 +654,7 @@ defmodule Ravix.PeopleTest do
       assert {:ok, people} = People.add(ctx.owner, track_id, "@Bo")
       assert logins(people) == ["ana", "bo"]
       assert People.member?(track_id, ctx.guest.id)
-      assert_receive {:hub, %{event: "people", data: %{track_id: ^track_id}}}
+      assert_receive {:hub, %Event{name: :people, track_id: ^track_id}}
       # Invited as a person, not a login.
       assert People.invites_of(track_id) == []
     end
@@ -735,7 +736,7 @@ defmodule Ravix.PeopleTest do
       assert {:ok, people} = People.remove(ctx.owner, track_id, "Dana")
       assert logins(people) == ["ana"]
       assert People.invites_of(track_id) == []
-      assert_receive {:hub, %{event: "people", data: %{track_id: ^track_id}}}
+      assert_receive {:hub, %Event{name: :people, track_id: ^track_id}}
     end
 
     test "the owner removes a member, case-insensitively and with or without the @", ctx do
@@ -759,7 +760,7 @@ defmodule Ravix.PeopleTest do
 
       assert {:ok, :left} = People.remove(ctx.guest, track_id, "bo")
       refute People.member?(track_id, ctx.guest.id)
-      assert_receive {:hub, %{event: "people", data: %{track_id: ^track_id}}}
+      assert_receive {:hub, %Event{name: :people, track_id: ^track_id}}
       assert {:error, :not_found} = People.list(ctx.guest, track_id)
     end
 
@@ -850,8 +851,9 @@ defmodule Ravix.PeopleTest do
       assert logins(people) == ["ana", "bo"]
       assert People.project_member?(ctx.project.id, ctx.guest.id)
       refute People.member?(ctx.shared.id, ctx.guest.id)
-      assert_receive {:hub, %{event: "people", data: data}}
-      refute Map.has_key?(data, :track_id)
+      # The project's event names no track: it changed who is on every one
+      # of them, and a page showing any of them has to act on it.
+      assert_receive {:hub, %Event{name: :people, track_id: nil}}
     end
 
     test "inviting somebody not here yet waits on GitHub and drops their track invitations",
@@ -885,7 +887,7 @@ defmodule Ravix.PeopleTest do
 
       assert {:ok, people} = People.remove_project(ctx.owner, ctx.project.id, "@Bo")
       assert logins(people) == ["ana"]
-      assert_receive {:hub, %{event: "people", data: %{}}}
+      assert_receive {:hub, %Event{name: :people}}
       assert {:error, :not_found} = Access.track_access(ctx.guest, ctx.private.id)
       assert {:error, :not_found} = Access.track_access(ctx.guest, ctx.shared.id)
     end
@@ -945,7 +947,7 @@ defmodule Ravix.PeopleTest do
 
       assert {:ok, "/p/#{ctx.project.id}/t/#{track_id}"} == People.claim_link(ctx.other.id, token)
       assert People.member?(track_id, ctx.other.id)
-      assert_receive {:hub, %{event: "people", data: %{track_id: ^track_id}}}
+      assert_receive {:hub, %Event{name: :people, track_id: ^track_id}}
       # Twice is still one seat, and the owner opening their own link writes nothing.
       assert {:ok, _} = People.claim_link(ctx.other.id, token)
       assert {:ok, _} = People.claim_link(ctx.owner.id, token)
@@ -1074,8 +1076,7 @@ defmodule Ravix.PeopleTest do
       assert People.project_member?(ctx.project.id, ctx.guest.id)
       # The promotion rule holds on this way in too.
       refute People.member?(ctx.shared.id, ctx.guest.id)
-      assert_receive {:hub, %{event: "people", data: data}}
-      refute Map.has_key?(data, :track_id)
+      assert_receive {:hub, %Event{name: :people, track_id: nil}}
 
       # The owner opening their own link writes nothing.
       assert {:ok, _} = People.claim_link(ctx.owner.id, token)

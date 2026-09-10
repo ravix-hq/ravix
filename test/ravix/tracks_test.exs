@@ -5,6 +5,7 @@ defmodule Ravix.TracksTest do
 
   alias Ravix.Fountain.{Client, Error, FakeTransport}
   alias Ravix.Hub
+  alias Ravix.Hub.Event
   alias Ravix.QueryCount
   alias Ravix.Tracks
   alias Ravix.Tracks.{Names, Track}
@@ -384,8 +385,10 @@ defmodule Ravix.TracksTest do
       assert row.created_by_login == "Ana"
       project_id = ctx.project.id
       track_id = presented.id
-      assert_receive {:hub, %{event: "turn", data: %{track_id: ^track_id, status: :ready}}}
-      assert_receive {:hub, %{event: "tracks", data: %{project_id: ^project_id}}}
+      assert_receive {:hub, %Event{name: :turn, track_id: ^track_id}}
+      # Named with the track it opened, so a page showing a sibling track of
+      # the same project can leave it alone.
+      assert_receive {:hub, %Event{name: :tracks, project_id: ^project_id, track_id: ^track_id}}
     end
 
     test "provisioning: the opening turn rides along with the launch", ctx do
@@ -479,11 +482,11 @@ defmodule Ravix.TracksTest do
         |> elem(0)
 
       track_id = presented.id
-      assert_receive {:hub, %{event: "turn", data: %{track_id: ^track_id, status: :failed}}}
+      assert_receive {:hub, %Event{name: :turn, track_id: ^track_id}}
       refute Repo.get!(Track, track_id).opened_at
 
       assert :ok = Tracks.retry(ctx.owner, track_id)
-      assert_receive {:hub, %{event: "turn", data: %{track_id: ^track_id, status: :ready}}}
+      assert_receive {:hub, %Event{name: :turn, track_id: ^track_id}}
       assert Repo.get!(Track, track_id).opened_at
     end
 
@@ -582,7 +585,8 @@ defmodule Ravix.TracksTest do
       assert :ok = Tracks.mark_read(ctx.owner, ctx.track.id)
       assert %DateTime{} = Ravix.People.last_read_of(ctx.track.id, ctx.owner.id)
       project_id = ctx.project.id
-      assert_receive {:hub, %{event: "tracks", data: %{project_id: ^project_id}}}
+      track_id = ctx.track.id
+      assert_receive {:hub, %Event{name: :tracks, project_id: ^project_id, track_id: ^track_id}}
     end
 
     test "interrupt reaches the conversation", ctx do
@@ -736,7 +740,8 @@ defmodule Ravix.TracksTest do
       refute prompt.body["prompt"] =~ "git branch -D"
       assert Repo.get!(Track, ctx.track.id).closed_at
       project_id = ctx.project.id
-      assert_receive {:hub, %{event: "tracks", data: %{project_id: ^project_id}}}
+      track_id = ctx.track.id
+      assert_receive {:hub, %Event{name: :tracks, project_id: ^project_id, track_id: ^track_id}}
     end
 
     test "force and the branch go in the turn only when asked", ctx do
