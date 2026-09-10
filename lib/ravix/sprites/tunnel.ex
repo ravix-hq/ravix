@@ -257,24 +257,56 @@ defmodule Ravix.Sprites.Tunnel do
   # The first message must be the connected acknowledgement. Anything else
   # (a binary frame, other JSON, a close) is Sprites refusing the port.
   # Frames that arrive with the acknowledgement are returned for delivery.
+  # Nested `case` rather than `with`, and deliberately not split into helpers.
+  #
+  # A `with`'s bindings are not visible to its `else`, so the `:connected`
+  # branch used to return the `websocket` parameter rather than the one
+  # `decode/2` rebound -- discarding whatever partial frame it had buffered. The
+  # tunnel then resumed decoding mid-frame and the preview "answered with
+  # something other than HTTP" (#15).
+  #
+  # Every extraction that reads better -- pulling the acknowledgement branch
+  # into its own function, or folding the websocket into `acknowledgement/2` --
+  # earns a fresh `Function ... will never be called` from Dialyzer. That is not
+  # a new problem: `.dialyzer_ignore.exs` already carries this exact cascade for
+  # this module, because mint_web_socket 1.0.5 declares its opaque state's
+  # fragment as `tuple()` while `new/4` returns `nil`, which erases the success
+  # typing of everything downstream. Adding a helper would mean adding a
+  # suppression for a defect that is already suppressed one frame up. Nesting
+  # costs a level of indentation and no suppression at all.
   defp await_connected(conn, ref, websocket, buffered, deadline) do
-    with {:ok, websocket, frames} <- decode(websocket, buffered),
-         {:ok, websocket, frames} <- answer_pings(conn, ref, websocket, frames),
-         {:ok, :more} <- acknowledgement(frames) do
-      case await_socket(conn, deadline) do
-        {:ok, {tag, _socket, data}} when tag in [:tcp, :ssl] ->
-          await_connected(conn, ref, websocket, data, deadline)
+    case decode(websocket, buffered) do
+      {:ok, websocket, frames} ->
+        case answer_pings(conn, ref, websocket, frames) do
+          {:ok, websocket, frames} ->
+            case acknowledgement(frames) do
+              # This websocket, not the parameter: it holds what `decode/2`
+              # buffered, which is the whole of the bug.
+              {:ok, :connected, rest} ->
+                {:ok, conn, websocket, rest}
 
-        {:ok, _closed_or_error} ->
-          refuse(conn, "Sprites closed the tunnel before connecting.")
+              {:ok, :more} ->
+                case await_socket(conn, deadline) do
+                  {:ok, {tag, _socket, data}} when tag in [:tcp, :ssl] ->
+                    await_connected(conn, ref, websocket, data, deadline)
 
-        :timeout ->
-          refuse(conn, "Sprites tunnel acknowledgement timed out.")
-      end
-    else
-      {:ok, :connected, rest} -> {:ok, conn, websocket, rest}
-      {:refused, message} -> refuse(conn, message)
-      {:error, reason} -> refuse(conn, "Preview tunnel failed: #{format(reason)}")
+                  {:ok, _closed_or_error} ->
+                    refuse(conn, "Sprites closed the tunnel before connecting.")
+
+                  :timeout ->
+                    refuse(conn, "Sprites tunnel acknowledgement timed out.")
+                end
+
+              {:refused, message} ->
+                refuse(conn, message)
+            end
+
+          {:error, reason} ->
+            refuse(conn, "Preview tunnel failed: #{format(reason)}")
+        end
+
+      {:error, reason} ->
+        refuse(conn, "Preview tunnel failed: #{format(reason)}")
     end
   end
 
