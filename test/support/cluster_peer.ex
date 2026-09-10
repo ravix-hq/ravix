@@ -52,4 +52,14 @@ defmodule Ravix.ClusterPeer do
        Process.sleep(:infinity)
      end}
   end
+
+  @doc """
+  Announce somebody on a track from this node, then stay alive holding them
+  there. Presence is the process, so the beat only stands while this lives.
+  """
+  @spec beat_and_hold(String.t(), String.t(), Ravix.Accounts.User.t()) :: no_return()
+  def beat_and_hold(track_id, project_id, user) do
+    Ravix.Presence.beat(track_id, project_id, user, false)
+    Process.sleep(:infinity)
+  end
 end

@@ -38,4 +38,30 @@ defmodule Ravix.Hub do
     Phoenix.PubSub.broadcast(Ravix.PubSub, topic(project_id), {:hub, %{event: event, data: data}})
     :ok
   end
+
+  @doc """
+  The same event, to this instance's subscribers only.
+
+  For a publisher that is *already* running on every instance. `Phoenix.Presence`
+  hands each node the same diff and each node calls `handle_metas/4` on it, so a
+  cluster-wide broadcast from in there reaches every subscriber once per
+  instance: on two nodes one presence change produced three `here` frames (#19).
+  Publishing locally from a callback that already runs everywhere gets every
+  subscriber exactly one.
+
+  Not the default, and not a tuning knob. Almost everything on the hub is
+  published by whichever single instance handled a request, and that must fan
+  out to the whole cluster or the other instances' readers never hear it. The
+  question to ask is where the *publisher* runs, not how many readers there are.
+  """
+  @spec publish_local(String.t(), String.t(), term()) :: :ok
+  def publish_local(project_id, event, data \\ %{}) do
+    Phoenix.PubSub.local_broadcast(
+      Ravix.PubSub,
+      topic(project_id),
+      {:hub, %{event: event, data: data}}
+    )
+
+    :ok
+  end
 end

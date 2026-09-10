@@ -166,8 +166,13 @@ defmodule Ravix.Presence do
     end
   end
 
+  # Local, not cluster-wide (#19). Every instance runs `handle_metas/4` on the
+  # same diff, so a cluster-wide broadcast from here would reach each reader once
+  # per instance -- measured at three frames for one change on two nodes. Each
+  # instance serving its own readers gets everyone exactly one, and the frame is
+  # the whole room either way, because `list/1` is cluster-wide.
   defp publish(project_id, track_id, here) do
-    Hub.publish(project_id, "here", %{track_id: track_id, present: here})
+    Hub.publish_local(project_id, "here", %{track_id: track_id, present: here})
   end
 
   defp project_id_of(presences) do
