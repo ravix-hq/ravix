@@ -634,4 +634,34 @@ defmodule Ravix.SchemasTest do
       assert String.ends_with?(track.branch, "-fixed-id")
     end
   end
+
+  describe "credentials never reach a log through inspect/1" do
+    test "every stored credential is redacted, and the rest of the row still reads" do
+      # AGENTS.md: no credentials in browser assigns or logs. A `%User{}` is
+      # the `current_user` assign on every page, so a crash report carrying
+      # the socket would have written the encrypted OAuth token out. The rest
+      # are the stored forms of a session, two invite links, an OAuth attempt
+      # and two preview grants -- each is what somebody would need in order to
+      # be somebody else.
+      cases = [
+        {%User{login: "ana", token_enc: "SECRET"}, "ana"},
+        {%Session{token_hash: "SECRET", user_id: "u1"}, "u1"},
+        {%TrackLink{track_id: "t1", token_hash: "SECRET"}, "t1"},
+        {%ProjectLink{project_id: "p1", token_hash: "SECRET"}, "p1"},
+        {%OAuthState{state: "SECRET", redirect: "/here"}, "/here"},
+        {%PreviewGrant{hash: "SECRET", track_id: "t1"}, "t1"},
+        {%PreviewAgentGrant{hash: "SECRET", track_id: "t1"}, "t1"}
+      ]
+
+      for {row, still_visible} <- cases do
+        shown = inspect(row, limit: :infinity)
+
+        refute shown =~ "SECRET",
+               "#{inspect(row.__struct__)} leaks a credential to inspect/1"
+
+        assert shown =~ still_visible,
+               "#{inspect(row.__struct__)} redacted more than the credential"
+      end
+    end
+  end
 end

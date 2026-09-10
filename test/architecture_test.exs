@@ -164,6 +164,15 @@ defmodule Ravix.ArchitectureTest do
     # --strict` is what enforces it, and this is the reminder that the count
     # is zero rather than merely small.
     #
+    # Every context with unscoped row access has somewhere to put it. The
+    # scoped modules keep the doors; the stores keep the rows.
+    stores = Path.wildcard("lib/ravix/*/store.ex")
+    assert length(stores) >= 5
+
+    for path <- ["lib/ravix/people.ex", "lib/ravix/tracks.ex", "lib/ravix/projects.ex"] do
+      refute File.read!(path) =~ ~r/\bRepo\./, "#{path} still reads rows itself"
+    end
+
     # And the doors are one read, not one per caller.
     live = for path <- lib, File.read!(path) =~ ~r/archived_at: nil\} = project ->/, do: path
     assert live == ["lib/ravix/projects/store.ex"]

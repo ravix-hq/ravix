@@ -90,7 +90,7 @@ defmodule Ravix.Tracks.Store do
   @spec rename_track(String.t(), String.t()) :: :ok
   def rename_track(track_id, title), do: update_track(track_id, title: title)
 
-  @doc "Close the row. Waiting prompts are cancelled by the caller through `Ravix.PromptQueue.cancel_track/1`."
+  @doc "Close the row. Waiting prompts are cancelled by the caller through `Ravix.PromptQueue.Store.cancel_track/1`."
   @spec close_track(String.t()) :: :ok
   def close_track(track_id) do
     Repo.update_all(from(t in Track, where: t.id == ^track_id and is_nil(t.closed_at)),

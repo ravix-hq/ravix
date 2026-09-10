@@ -109,11 +109,11 @@ defmodule Ravix.PromptQueueTest do
   defp send_prompt(track, user, text, opts \\ []) do
     id = Keyword.get(opts, :id, request_id())
     images = Keyword.get(opts, :images, [])
-    PromptQueue.enqueue(track.id, user.id, user.login, id, %{prompt: text, images: images})
+    PromptQueue.Store.enqueue(track.id, user.id, user.login, id, %{prompt: text, images: images})
   end
 
   defp close(track) do
-    PromptQueue.cancel_track(track.id)
+    PromptQueue.Store.cancel_track(track.id)
     Repo.update!(Ecto.Changeset.change(track, closed_at: DateTime.utc_now()))
   end
 
@@ -127,7 +127,7 @@ defmodule Ravix.PromptQueueTest do
     end)
   end
 
-  defp status_of(id), do: PromptQueue.get(id).status
+  defp status_of(id), do: PromptQueue.Store.get(id).status
 
   # Backdate a claim so recovery treats it as one no task can still hold.
   defp age_claim(id, by_ms) do
@@ -161,7 +161,7 @@ defmodule Ravix.PromptQueueTest do
 
     Server.tick(restarted)
     assert [_first, %{"prompt" => "second"}] = posted(client)
-    assert PromptQueue.queued_prompts() == []
+    assert PromptQueue.Store.queued_prompts() == []
   end
 
   test "existing conversations receive preview instructions, and helper failure does not strand a prompt",
@@ -190,7 +190,7 @@ defmodule Ravix.PromptQueueTest do
     assert [%{"prompt" => prompt}] = hooked_posts()
     assert prompt =~ "could not be prepared"
     assert String.ends_with?(prompt, "\n\nKeep working")
-    assert PromptQueue.queued_prompts() == []
+    assert PromptQueue.Store.queued_prompts() == []
   end
 
   test "access revoked while the helper is prepared cancels the prompt and its grant", f do
@@ -217,7 +217,7 @@ defmodule Ravix.PromptQueueTest do
 
     assert {:ok, %Item{id: ^id}} = send_prompt(f.track, f.owner, "only once", id: id)
     assert {:ok, %Item{id: ^id}} = send_prompt(f.track, f.owner, "only once", id: id)
-    assert length(PromptQueue.queued_prompts()) == 1
+    assert length(PromptQueue.Store.queued_prompts()) == 1
 
     Server.tick(f.server)
 
@@ -227,7 +227,7 @@ defmodule Ravix.PromptQueueTest do
     Server.tick(f.server)
 
     assert length(posted(client)) == 1
-    assert PromptQueue.get(id).payload == ""
+    assert PromptQueue.Store.get(id).payload == ""
   end
 
   test "cancellation survives restart and does not block the next prompt", f do
@@ -237,9 +237,9 @@ defmodule Ravix.PromptQueueTest do
     send_prompt(f.track, f.owner, "keep me")
 
     assert :ok = PromptQueue.cancel(f.owner, f.track.id, id)
-    assert PromptQueue.get(id).payload == ""
+    assert PromptQueue.Store.get(id).payload == ""
 
-    PromptQueue.recover()
+    PromptQueue.Store.recover()
     Server.tick(start_server())
     assert [%{"prompt" => "keep me"}] = posted(client)
   end
@@ -287,13 +287,13 @@ defmodule Ravix.PromptQueueTest do
     capture_log(fn -> Server.tick(f.server) end)
 
     assert %Item{status: :queued, error: "Waiting for the machine connection." <> _} =
-             PromptQueue.get(id)
+             PromptQueue.Store.get(id)
 
     assert posted(client) == []
 
     Server.tick(f.server)
     assert [%{"prompt" => "after outage"}] = posted(client)
-    assert PromptQueue.get(id).error == nil
+    assert PromptQueue.Store.get(id).error == nil
   end
 
   test "capacity races retry, while ambiguous delivery holds later work for review", f do
@@ -317,7 +317,7 @@ defmodule Ravix.PromptQueueTest do
     capture_log(fn -> Server.tick(f.server) end)
 
     assert %Item{status: :unconfirmed, error: "Delivery could not be confirmed." <> _} =
-             PromptQueue.get(id)
+             PromptQueue.Store.get(id)
 
     count = length(posted(client))
     Server.tick(f.server)
@@ -334,7 +334,7 @@ defmodule Ravix.PromptQueueTest do
     {:ok, %Item{id: id}} = send_prompt(f.track, f.owner, "refused")
 
     capture_log(fn -> Server.tick(f.server) end)
-    assert %Item{status: :failed, error: "Delivery was refused." <> _} = PromptQueue.get(id)
+    assert %Item{status: :failed, error: "Delivery was refused." <> _} = PromptQueue.Store.get(id)
 
     assert :ok = PromptQueue.retry(f.owner, f.track.id, id)
     Server.tick(f.server)
@@ -348,7 +348,7 @@ defmodule Ravix.PromptQueueTest do
     Server.tick(f.server)
 
     assert %Item{status: :failed, error: "This conversation has ended." <> _} =
-             PromptQueue.get(id)
+             PromptQueue.Store.get(id)
   end
 
   test "a conversation that never ran a turn says why, not \"start a new track\"", f do
@@ -381,7 +381,7 @@ defmodule Ravix.PromptQueueTest do
     {:ok, %Item{id: id}} = send_prompt(f.track, f.owner, "hello")
     Server.tick(f.server)
 
-    assert %Item{status: :failed, error: error} = PromptQueue.get(id)
+    assert %Item{status: :failed, error: error} = PromptQueue.Store.get(id)
     assert error =~ "could not be started"
     assert error =~ "Add a credit card"
     refute error =~ "Start a new track"
@@ -399,7 +399,7 @@ defmodule Ravix.PromptQueueTest do
     {:ok, %Item{id: id}} = send_prompt(f.track, f.owner, "hello")
     Server.tick(f.server)
 
-    assert %Item{status: :failed, error: error} = PromptQueue.get(id)
+    assert %Item{status: :failed, error: error} = PromptQueue.Store.get(id)
     assert error =~ "could not be started"
     refute error =~ "Start a new track"
   end
@@ -415,36 +415,36 @@ defmodule Ravix.PromptQueueTest do
     Server.tick(f.server)
 
     assert %Item{status: :failed, error: "This conversation has ended." <> _} =
-             PromptQueue.get(id)
+             PromptQueue.Store.get(id)
   end
 
   test "a claim outliving its task recovers as unconfirmed, never an automatic replay", f do
     client = fountain([])
     {:ok, %Item{id: id}} = send_prompt(f.track, f.owner, "might already have run")
-    assert PromptQueue.claim(id)
+    assert PromptQueue.Store.claim(id)
     assert status_of(id) == :sending
 
     # A claim old enough that nothing can still be working on it.
-    age_claim(id, PromptQueue.claim_timeout_ms() + 1_000)
+    age_claim(id, PromptQueue.Store.claim_timeout_ms() + 1_000)
 
-    PromptQueue.recover()
+    PromptQueue.Store.recover()
     Server.tick(start_server())
     assert posted(client) == []
 
     assert %Item{status: :unconfirmed, error: "The server restarted during delivery." <> _} =
-             PromptQueue.get(id)
+             PromptQueue.Store.get(id)
 
-    assert PromptQueue.get(id).payload != ""
+    assert PromptQueue.Store.get(id).payload != ""
   end
 
   test "a fresh claim is left to the task still holding it", f do
     {:ok, %Item{id: id}} = send_prompt(f.track, f.owner, "still in flight")
-    assert PromptQueue.claim(id)
+    assert PromptQueue.Store.claim(id)
 
     # The delivery tasks are supervised beside the server rather than under
     # it, so they outlive its restart; recovering their rows would POST the
     # same prompt twice.
-    PromptQueue.recover()
+    PromptQueue.Store.recover()
     assert status_of(id) == :sending
   end
 
@@ -509,7 +509,7 @@ defmodule Ravix.PromptQueueTest do
     end)
 
     {:ok, %Item{id: blocked}} = send_prompt(f.track, f.owner, "blocked")
-    PromptQueue.set_status(blocked, :unconfirmed, "Check delivery")
+    PromptQueue.Store.set_status(blocked, :unconfirmed, "Check delivery")
     send_prompt(other, f.owner, "independent work")
 
     Server.tick(f.server)
@@ -528,7 +528,7 @@ defmodule Ravix.PromptQueueTest do
     end)
 
     Server.tick(f.server)
-    assert %Item{status: :cancelled, payload: ""} = PromptQueue.get(id)
+    assert %Item{status: :cancelled, payload: ""} = PromptQueue.Store.get(id)
   end
 
   test "credential failures hold the prompt until the machine can be prepared", f do
@@ -548,7 +548,7 @@ defmodule Ravix.PromptQueueTest do
     assert posted(client) == []
 
     assert %Item{status: :queued, error: "Waiting for the machine connection." <> _} =
-             PromptQueue.get(id)
+             PromptQueue.Store.get(id)
 
     Server.tick(f.server)
     assert posted(client) == []
@@ -556,7 +556,7 @@ defmodule Ravix.PromptQueueTest do
 
     Server.tick(f.server)
     assert [%{"prompt" => "Push my changes"}] = posted(client)
-    assert PromptQueue.queued_prompts() == []
+    assert PromptQueue.Store.queued_prompts() == []
   end
 
   test "an unconfigured Fountain leaves the queue untouched", f do
@@ -597,7 +597,7 @@ defmodule Ravix.PromptQueueTest do
     {:ok, %Item{id: id}} = send_prompt(f.track, f.owner, "in flight")
     assert {:error, {:conflict, "not_failed", _}} = PromptQueue.retry(f.owner, f.track.id, id)
 
-    assert PromptQueue.claim(id)
+    assert PromptQueue.Store.claim(id)
 
     assert {:error, {:conflict, "already_sending", _}} =
              PromptQueue.cancel(f.owner, f.track.id, id)
@@ -605,7 +605,7 @@ defmodule Ravix.PromptQueueTest do
     assert {:ok, [%{id: ^id, status: :sending, can_cancel: false}]} =
              PromptQueue.list(f.owner, f.track.id)
 
-    PromptQueue.set_status(id, :sent)
+    PromptQueue.Store.set_status(id, :sent)
 
     assert {:error, {:conflict, "already_sending", _}} =
              PromptQueue.cancel(f.owner, f.track.id, id)
@@ -618,7 +618,7 @@ defmodule Ravix.PromptQueueTest do
 
   test "a closed track's prompts cannot be retried", f do
     {:ok, %Item{id: id}} = send_prompt(f.track, f.owner, "later")
-    PromptQueue.set_status(id, :failed, "refused")
+    PromptQueue.Store.set_status(id, :failed, "refused")
     close(f.track)
     assert status_of(id) == :cancelled
     assert {:error, :not_found} = PromptQueue.retry(f.owner, f.track.id, id)
@@ -651,23 +651,29 @@ defmodule Ravix.PromptQueueTest do
              send_prompt(f.track, f.owner, "big", images: [huge])
 
     assert {:error, :not_found} =
-             PromptQueue.enqueue("no-such-track", f.owner.id, f.owner.login, request_id(), %{})
+             PromptQueue.Store.enqueue(
+               "no-such-track",
+               f.owner.id,
+               f.owner.login,
+               request_id(),
+               %{}
+             )
   end
 
   test "summaries read the payload and string keys are accepted", f do
     image = %{"media_type" => "image/png", "data" => "aGVsbG8="}
 
     {:ok, %Item{id: id}} =
-      PromptQueue.enqueue(f.track.id, f.owner.id, f.owner.login, request_id(), %{
+      PromptQueue.Store.enqueue(f.track.id, f.owner.id, f.owner.login, request_id(), %{
         "prompt" => "look",
         "images" => [image]
       })
 
     assert [%{id: ^id, prompt: "look", image_count: 1, status: :queued, error: nil}] =
-             PromptQueue.summaries(f.track.id)
+             PromptQueue.Store.summaries(f.track.id)
 
-    assert [%Item{id: ^id}] = PromptQueue.heads()
-    assert [%Item{id: ^id, payload: nil}] = PromptQueue.heads()
+    assert [%Item{id: ^id}] = PromptQueue.Store.heads()
+    assert [%Item{id: ^id, payload: nil}] = PromptQueue.Store.heads()
   end
 
   # ── the hub ───────────────────────────────────────────────────────────
@@ -692,7 +698,7 @@ defmodule Ravix.PromptQueueTest do
     :ok = PromptQueue.cancel(f.owner, track_id, id)
     assert_receive {:hub, %Event{name: :queue, track_id: ^track_id}}
 
-    PromptQueue.cancel_track(track_id)
+    PromptQueue.Store.cancel_track(track_id)
     assert_receive {:hub, %Event{name: :queue, track_id: ^track_id}}
   end
 end
