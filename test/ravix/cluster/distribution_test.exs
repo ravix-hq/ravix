@@ -159,6 +159,16 @@ defmodule Ravix.Cluster.DistributionTest do
 
   defp distribute!(name \\ :"ravix_primary@127.0.0.1") do
     unless Node.alive?() do
+      # epmd, explicitly. The `erl` script starts it when the runtime itself is
+      # given `-name` or `-sname`, but nothing starts it for a node that becomes
+      # distributed later, at runtime, the way this one does. A developer
+      # machine usually has one running already from some earlier `iex --name`;
+      # a fresh CI runner does not, and `net_kernel.start/2` fails there with
+      # `:nodistribution` and no mention of the reason.
+      if epmd = System.find_executable("epmd") do
+        {_output, _status} = System.cmd(epmd, ["-daemon"], stderr_to_stdout: true)
+      end
+
       {:ok, _pid} = :net_kernel.start(name, %{name_domain: :longnames})
     end
 

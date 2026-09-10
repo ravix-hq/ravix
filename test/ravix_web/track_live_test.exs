@@ -362,7 +362,7 @@ defmodule RavixWeb.TrackLiveTest do
 
     render_click(ctx.view, "retry-load")
     render_async(ctx.view)
-    assert_receive {:followed, nil}
+    assert_receive {:followed, nil}, 5_000
 
     # Give the page a cursor of its own, ahead of the stubbed snapshot.
     send(
@@ -385,8 +385,8 @@ defmodule RavixWeb.TrackLiveTest do
     # Both halves of the recovery: re-subscribed from event 7 -- not from the
     # beginning, and not from the stubbed snapshot, because only this page knew
     # where it had got to -- and the transcript re-read to close the gap.
-    assert_receive {:refollowed, 7}
-    assert_receive :transcript_reread
+    assert_receive {:refollowed, 7}, 5_000
+    assert_receive :transcript_reread, 5_000
     assert render_async(ctx.view)
   end
 

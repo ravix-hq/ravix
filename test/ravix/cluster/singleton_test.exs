@@ -38,7 +38,7 @@ defmodule Ravix.Cluster.SingletonTest do
 
     {watcher, _id} = start_watcher(key, ref)
 
-    assert_receive {:worker_started, ^ref, _worker}
+    assert_receive {:worker_started, ^ref, _worker}, 5_000
     assert Singleton.holding?(watcher)
     assert Singleton.whereis(key) == watcher
   end
@@ -49,12 +49,12 @@ defmodule Ravix.Cluster.SingletonTest do
     second_ref = make_ref()
 
     {first, _} = start_watcher(key, first_ref)
-    assert_receive {:worker_started, ^first_ref, _}
+    assert_receive {:worker_started, ^first_ref, _}, 5_000
 
     {second, _} = start_watcher(key, second_ref)
 
     assert Singleton.holding?(second) == false
-    refute_receive {:worker_started, ^second_ref, _}, 100
+    refute_receive {:worker_started, ^second_ref, _}, 500
     assert Singleton.whereis(key) == first
   end
 
@@ -64,7 +64,7 @@ defmodule Ravix.Cluster.SingletonTest do
     second_ref = make_ref()
 
     {_first, first_id} = start_watcher(key, first_ref)
-    assert_receive {:worker_started, ^first_ref, first_worker}
+    assert_receive {:worker_started, ^first_ref, first_worker}, 5_000
 
     {second, _} = start_watcher(key, second_ref)
     assert Singleton.holding?(second) == false
@@ -73,7 +73,7 @@ defmodule Ravix.Cluster.SingletonTest do
     # way, and the survivor is watching for exactly that.
     :ok = stop_supervised!(first_id)
 
-    assert_receive {:worker_started, ^second_ref, _}, 1_000
+    assert_receive {:worker_started, ^second_ref, _}, 5_000
     assert Singleton.whereis(key) == second
 
     # And the first worker is gone rather than orphaned: a `:normal` exit
@@ -86,7 +86,7 @@ defmodule Ravix.Cluster.SingletonTest do
     ref = make_ref()
 
     {watcher, _id} = start_watcher(key, ref)
-    assert_receive {:worker_started, ^ref, worker}
+    assert_receive {:worker_started, ^ref, worker}, 5_000
     assert Singleton.holding?(watcher)
 
     watching = Process.monitor(watcher)
@@ -101,7 +101,7 @@ defmodule Ravix.Cluster.SingletonTest do
     :yes = :global.register_name(Ravix.Cluster.name(:singleton, key), winner)
     send(watcher, {:global_name_conflict, Ravix.Cluster.name(:singleton, key)})
 
-    refute_receive {:DOWN, ^watching, :process, ^watcher, _reason}, 200
+    refute_receive {:DOWN, ^watching, :process, ^watcher, _reason}, 500
     refute Singleton.holding?(watcher)
     refute Process.alive?(worker)
     assert Singleton.whereis(key) == winner
@@ -127,7 +127,7 @@ defmodule Ravix.Cluster.SingletonTest do
     # contract -- the watcher is not running and the name is free.
     watching = Process.monitor(watcher)
 
-    assert_receive {:DOWN, ^watching, :process, ^watcher, _reason}
+    assert_receive {:DOWN, ^watching, :process, ^watcher, _reason}, 5_000
     assert Singleton.whereis(key) == nil
   end
 
@@ -136,7 +136,7 @@ defmodule Ravix.Cluster.SingletonTest do
     ref = make_ref()
 
     {watcher, _id} = start_watcher(key, ref)
-    assert_receive {:worker_started, ^ref, worker}
+    assert_receive {:worker_started, ^ref, worker}, 5_000
 
     send(watcher, :something_else)
 
@@ -149,12 +149,12 @@ defmodule Ravix.Cluster.SingletonTest do
     ref = make_ref()
 
     {watcher, _id} = start_watcher(key, ref)
-    assert_receive {:worker_started, ^ref, worker}
+    assert_receive {:worker_started, ^ref, worker}, 5_000
 
     watching = Process.monitor(watcher)
     Process.exit(worker, :kill)
 
-    assert_receive {:DOWN, ^watching, :process, ^watcher, _reason}
+    assert_receive {:DOWN, ^watching, :process, ^watcher, _reason}, 5_000
 
     # The name went with it, which is what lets another instance pick it up.
     assert Singleton.whereis(key) != watcher

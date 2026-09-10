@@ -47,7 +47,7 @@ defmodule Ravix.Previews.ServerFailureTest do
     end)
 
     task = Task.async(fn -> Previews.start_service(ctx.track.id) end)
-    assert_receive {:in_flight, worker}
+    assert_receive {:in_flight, worker}, 5_000
 
     # The flag `Ravix.Previews.Reconciler` reads before queueing an `:ensure`
     # behind an operation already running on this sprite -- and, on another

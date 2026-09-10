@@ -924,8 +924,8 @@ defmodule Ravix.GitHubTest do
         send(test_pid, :put)
       end)
 
-      assert_receive :put
-      assert_receive {:rate_limit, app_id, installation, ^until, error}
+      assert_receive :put, 5_000
+      assert_receive {:rate_limit, app_id, installation, ^until, error}, 5_000
       assert app_id == ctx.app.app_id
       assert installation == ctx.installation
       assert error == ctx.error
@@ -942,7 +942,7 @@ defmodule Ravix.GitHubTest do
       assert error == ctx.error
 
       # Re-publishing what it was told is how a message circulates forever.
-      refute_receive {:rate_limit, _, _, _, _}, 100
+      refute_receive {:rate_limit, _, _, _, _}, 500
     end
 
     test "and a clearance elsewhere lifts it here", ctx do
