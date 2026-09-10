@@ -62,6 +62,12 @@ defmodule RavixWeb.Router do
     post "/j/:token", AuthController, :claim
 
     # URL selection is shared by the rail and the nested track LiveView.
+    #
+    # There is no marketing page. `/` is the workspace for somebody signed in
+    # and a redirect to `/login` for anybody else; `/login` is the reverse, so
+    # every one of these paths lands a browser on the only thing it can use.
+    # `WorkspaceLive.handle_params/3` decides, because the session is what the
+    # answer turns on and it is one LiveView either way.
     live_session :workspace, on_mount: [{RavixWeb.Live.Hooks, :fetch_current_user}] do
       live "/", WorkspaceLive, :home
       live "/login", WorkspaceLive, :login

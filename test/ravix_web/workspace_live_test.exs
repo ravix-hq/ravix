@@ -7,23 +7,32 @@ defmodule RavixWeb.WorkspaceLiveTest do
 
   setup :verify_on_exit!
 
-  test "public landing and sign-in work without a configured backend", %{conn: conn} do
-    {:ok, view, html} = live(conn, "/")
-    assert html =~ "One project."
-    assert has_element?(view, "a[href='/login']", "Sign in with GitHub")
+  test "a signed-out browser is sent to sign in from anywhere it lands", %{conn: conn} do
+    for path <- ["/", "/home", "/inbox", "/p/no-project"] do
+      assert {:error, {:live_redirect, %{to: "/login"}}} = live(conn, path)
+    end
+  end
 
-    assert has_element?(
-             view,
-             "#landing-theme[data-phx-hook='Theme'], #landing-theme[phx-hook='Theme']"
-           )
-
+  test "sign-in works without a configured backend", %{conn: conn} do
     {:ok, signin, _} = live(conn, "/login")
     assert has_element?(signin, "h1", "Sign in to Ravix")
-    assert has_element?(signin, "a[href='/']", "About Ravix")
+
+    assert has_element?(
+             signin,
+             "#signin-theme[data-phx-hook='Theme'], #signin-theme[phx-hook='Theme']"
+           )
+
     assert render(signin) =~ "GitHub sign-in is not configured"
     refute has_element?(signin, "a[href='/auth/github']")
-    refute has_element?(view, "#new-project-form")
-    assert {:error, {:live_redirect, %{to: "/login"}}} = live(conn, "/p/no-project")
+    refute has_element?(signin, "#new-project-form")
+    # Nothing points back at a page that no longer exists.
+    refute has_element?(signin, "a[href='/']")
+  end
+
+  test "somebody already signed in is sent on from /login to the workspace", %{conn: conn} do
+    user = insert_user()
+
+    assert {:error, {:live_redirect, %{to: "/"}}} = live(log_in_user(conn, user), "/login")
   end
 
   test "home actions open fresh project forms and recent projects stay scoped", %{conn: conn} do

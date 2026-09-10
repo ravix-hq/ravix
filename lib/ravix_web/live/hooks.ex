@@ -14,7 +14,7 @@ defmodule RavixWeb.Live.Hooks do
     * `:fetch_current_user` assigns `:current_user` (a `%Ravix.Accounts.User{}`
       or nil) from the `session_token` the Phoenix session carries, the same
       way `RavixWeb.Plugs.CurrentUser` does for a plain request. Never
-      halts: the shell renders the landing page for nobody and the workspace
+      halts: the shell renders the sign-in card for nobody and the workspace
       for somebody, and it is one LiveView, so the choice is the page's.
     * `:require_authenticated_user` does the same, then halts with a
       redirect to `/` when there is nobody. For pages that have nothing to

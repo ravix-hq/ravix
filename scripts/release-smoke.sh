@@ -38,9 +38,12 @@ curl -fsS "http://${address}/healthz"
 # decides whether an instance takes traffic (ADR 0003). It answers only when the
 # database does, which is the half /healthz deliberately cannot test.
 curl -fsS "http://${address}/readyz"
-curl -fsS "http://${address}/" | grep -F 'One project' >/dev/null
+# `/` has nothing to show a browser with no session, so it redirects; following
+# it is the check, since a release that renders the shell but cannot route a
+# stranger to sign-in is not serving anybody.
+curl -fsSL "http://${address}/" | grep -F 'Sign in to Ravix' >/dev/null
 curl -fsS "http://${address}/theme.js" | grep -F 'ravix.theme' >/dev/null
 curl -fsS "http://${address}/assets/js/app.js" >/dev/null
 curl -fsS "http://${address}/fonts/IBMPlexSans-Regular.woff2" >/dev/null
 curl -fsS "http://${address}/fonts/IBMPlexMono-Regular.woff2" >/dev/null
-printf 'Release boot, readiness, landing page, fonts, assets, idempotent migrations, and legacy table preservation passed.\n'
+printf 'Release boot, readiness, sign-in page, fonts, assets, idempotent migrations, and legacy table preservation passed.\n'

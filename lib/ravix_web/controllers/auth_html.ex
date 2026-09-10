@@ -10,8 +10,9 @@ defmodule RavixWeb.AuthHTML do
 
   A plain form, posting to the same path. Not a LiveView, though the rest of
   the app is one: the claim has to be a POST for `protect_from_forgery` to
-  cover it, and a form works whether or not a socket ever connects. It reuses
-  the landing page's classes so it does not look like a different product.
+  cover it, and a form works whether or not a socket ever connects. It shares
+  the `landing-*` classes with the sign-in card, the only other page a
+  signed-out browser is shown, so it does not look like a different product.
   """
   use RavixWeb, :html
 
