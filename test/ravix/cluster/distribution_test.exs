@@ -131,6 +131,34 @@ defmodule Ravix.Cluster.DistributionTest do
     end
   end
 
+  describe "presence" do
+    test "one change is one `here` frame per reader, not one per instance", ctx do
+      track_id = Ecto.UUID.generate()
+      project_id = Ecto.UUID.generate()
+      parent = self()
+
+      Ravix.Hub.subscribe(project_id)
+      Node.spawn(ctx.node, Ravix.ClusterPeer, :reader, [parent, ["ping"]])
+      assert_receive {:ready, _reader}, 30_000
+      await_fanout()
+
+      # Somebody appears on the *other* instance. Every node runs
+      # `handle_metas/4` on the same diff, so a cluster-wide publish from in
+      # there would reach this reader once per instance -- three frames for one
+      # change, measured, before #19.
+      user = %Ravix.Accounts.User{id: "u1", login: "ana", name: "Ana", avatar_url: nil}
+      Node.spawn(ctx.node, Ravix.ClusterPeer, :beat_and_hold, [track_id, project_id, user])
+
+      assert_receive {:hub, %{event: "here", data: %{track_id: ^track_id, present: present}}},
+                     30_000
+
+      assert [%{login: "ana"}] = present
+
+      # And exactly one. This is the assertion the issue was about.
+      refute_receive {:hub, %{event: "here", data: %{track_id: ^track_id}}}, 1_000
+    end
+  end
+
   describe "a cluster singleton" do
     test "moves to the surviving instance when the holder's node goes away", ctx do
       key = "takeover-#{System.unique_integer([:positive])}"
