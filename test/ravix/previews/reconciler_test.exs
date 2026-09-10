@@ -13,6 +13,7 @@ defmodule Ravix.Previews.ReconcilerTest do
 
   alias Ravix.Previews
   alias Ravix.Previews.{Reconciler, Row, Store}
+  alias Ravix.QueryCount
   alias Ravix.Tracks.Track
 
   @config %{
@@ -417,6 +418,56 @@ defmodule Ravix.Previews.ReconcilerTest do
     assert {:error, {:unavailable, "preview_replaced", _}} = Previews.destination(t1.id)
     await(p, fn _ -> match?(%Row{sprite: "s2", state: :ready}, Store.get(t1.id)) end)
     assert {:ok, %Row{sprite: "s2"}} = Previews.destination(t1.id)
+  end
+
+  test "a pass reads the tracks and the projects once, however many previews there are", ctx do
+    for id <- [ctx.t1.id, ctx.t2.id], do: Store.ensure(id)
+    small = QueryCount.queries(&Reconciler.tick/0)
+
+    for i <- 3..20 do
+      track = insert_track(project: ctx.project, slug: "t#{i}", conversation_id: "c#{i}")
+      Store.ensure(track.id)
+    end
+
+    {_result, queries} = QueryCount.count(&Reconciler.tick/0)
+
+    assert length(queries) == small
+    assert Enum.count(queries, &(&1 == "previews")) == 1
+    assert Enum.count(queries, &(&1 == "tracks")) == 1
+    assert Enum.count(queries, &(&1 == "projects")) == 1
+  end
+
+  test "reconciling one row asks nothing further about its track or its project", ctx do
+    # The other half of the same statement, and the half that has teeth: the
+    # pass hands each row what it needs, so a row reads neither. Asserted
+    # here rather than through `tick/0`, which reconciles rows in tasks of
+    # their own -- a query counter watching the caller would not see them,
+    # and would go on passing if they came back.
+    %Row{} = row = Store.ensure(ctx.t1.id)
+    track = Repo.get!(Track, ctx.t1.id)
+    project = Repo.get!(Ravix.Projects.Project, track.project_id)
+
+    {_result, queries} = QueryCount.count(fn -> Reconciler.reconcile({row, track, project}) end)
+
+    refute "tracks" in queries
+    refute "projects" in queries
+  end
+
+  test "a preview whose track has gone is still cleaned up by the pass", %{p: p, t1: t1, t2: t2} do
+    # The batched read must not lose the case the pass exists to answer. A
+    # track absent from it is a track that has gone, and its service has to
+    # go with it -- while the other project's rows carry on being reconciled.
+    assert :ok = Previews.start_service(t1.id)
+    assert :ok = Previews.start_service(t2.id)
+    gone = Store.get(t1.id)
+
+    Repo.update_all(from(t in Track, where: t.id == ^t1.id),
+      set: [closed_at: DateTime.utc_now()]
+    )
+
+    Reconciler.tick()
+    assert "s1/#{gone.service}" in state(p).deletes
+    assert %Row{state: :ready} = Store.get(t2.id)
   end
 
   test "the decision table", %{t1: t1} do
