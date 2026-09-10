@@ -257,56 +257,44 @@ defmodule Ravix.Sprites.Tunnel do
   # The first message must be the connected acknowledgement. Anything else
   # (a binary frame, other JSON, a close) is Sprites refusing the port.
   # Frames that arrive with the acknowledgement are returned for delivery.
-  # Nested `case` rather than `with`, and deliberately not split into helpers.
+  # The acknowledgement is settled inside the `do` block, not the `else`.
   #
   # A `with`'s bindings are not visible to its `else`, so the `:connected`
-  # branch used to return the `websocket` parameter rather than the one
+  # branch used to return the `websocket` *parameter* rather than the one
   # `decode/2` rebound -- discarding whatever partial frame it had buffered. The
   # tunnel then resumed decoding mid-frame and the preview "answered with
-  # something other than HTTP" (#15).
-  #
-  # Every extraction that reads better -- pulling the acknowledgement branch
-  # into its own function, or folding the websocket into `acknowledgement/2` --
-  # earns a fresh `Function ... will never be called` from Dialyzer. That is not
-  # a new problem: `.dialyzer_ignore.exs` already carries this exact cascade for
-  # this module, because mint_web_socket 1.0.5 declares its opaque state's
-  # fragment as `tuple()` while `new/4` returns `nil`, which erases the success
-  # typing of everything downstream. Adding a helper would mean adding a
-  # suppression for a defect that is already suppressed one frame up. Nesting
-  # costs a level of indentation and no suppression at all.
+  # something other than HTTP" (#15). Here the `else` only handles `{:error, _}`,
+  # which needs no websocket, and every path that does have one names it.
   defp await_connected(conn, ref, websocket, buffered, deadline) do
-    case decode(websocket, buffered) do
-      {:ok, websocket, frames} ->
-        case answer_pings(conn, ref, websocket, frames) do
-          {:ok, websocket, frames} ->
-            case acknowledgement(frames) do
-              # This websocket, not the parameter: it holds what `decode/2`
-              # buffered, which is the whole of the bug.
-              {:ok, :connected, rest} ->
-                {:ok, conn, websocket, rest}
+    with {:ok, websocket, frames} <- decode(websocket, buffered),
+         {:ok, websocket, frames} <- answer_pings(conn, ref, websocket, frames) do
+      case acknowledgement(frames) do
+        # This websocket: the one that decoded these frames.
+        {:ok, :connected, rest} -> {:ok, conn, websocket, rest}
+        {:ok, :more} -> await_more(conn, ref, websocket, deadline)
+        {:refused, message} -> refuse(conn, message)
+      end
+    else
+      {:error, reason} -> refuse(conn, "Preview tunnel failed: #{format(reason)}")
+    end
+  end
 
-              {:ok, :more} ->
-                case await_socket(conn, deadline) do
-                  {:ok, {tag, _socket, data}} when tag in [:tcp, :ssl] ->
-                    await_connected(conn, ref, websocket, data, deadline)
+  # Split out only because inlining it puts `await_connected/5` past Credo's
+  # nesting and complexity limits. It costs one `.dialyzer_ignore.exs` entry,
+  # for the reason already documented there rather than a new one: this module's
+  # whole call graph is unreachable to Dialyzer because mint_web_socket 1.0.5
+  # declares its opaque fragment as `tuple()` while `new/4` returns `nil`, and
+  # `await_connected/5` is itself already on that list.
+  defp await_more(conn, ref, websocket, deadline) do
+    case await_socket(conn, deadline) do
+      {:ok, {tag, _socket, data}} when tag in [:tcp, :ssl] ->
+        await_connected(conn, ref, websocket, data, deadline)
 
-                  {:ok, _closed_or_error} ->
-                    refuse(conn, "Sprites closed the tunnel before connecting.")
+      {:ok, _closed_or_error} ->
+        refuse(conn, "Sprites closed the tunnel before connecting.")
 
-                  :timeout ->
-                    refuse(conn, "Sprites tunnel acknowledgement timed out.")
-                end
-
-              {:refused, message} ->
-                refuse(conn, message)
-            end
-
-          {:error, reason} ->
-            refuse(conn, "Preview tunnel failed: #{format(reason)}")
-        end
-
-      {:error, reason} ->
-        refuse(conn, "Preview tunnel failed: #{format(reason)}")
+      :timeout ->
+        refuse(conn, "Sprites tunnel acknowledgement timed out.")
     end
   end
 
