@@ -295,4 +295,76 @@ defmodule Ravix.Tracks.TranscriptTest do
                Transcript.edit("f", "a\nb", "")
     end
   end
+
+  describe "a stage Fountain failed" do
+    # The production deployment's first track: Sprites refused to build the
+    # machine until the Fly organisation had a card, said so in a sentence with
+    # a link in it, and the page showed the last good stage and then nothing
+    # (#35).
+    @reason ~s({:denied, {:http, 403, %{"error" => "Add a credit card to start using Sprites."}}})
+
+    defp failed_stage(id, stage, reason),
+      do: %{
+        "id" => id,
+        "turn_id" => nil,
+        "kind" => "stage",
+        "stage" => stage,
+        "state" => "failed",
+        "ts" => @ts,
+        "data" => Jason.encode!(%{reason: reason})
+      }
+
+    test "becomes a block that says which stage, and why" do
+      page =
+        Transcript.empty("claude")
+        |> Transcript.add_event(failed_stage(1, "provision", @reason))
+
+      assert [turn] = Transcript.visible_turns(page)
+      assert [%{kind: :failure, stage: "provision", body: body}] = turn.blocks
+      assert body =~ "Add a credit card"
+    end
+
+    test "is drawn even when Fountain gave no reason, because the failure is the news" do
+      page =
+        Transcript.empty("claude")
+        |> Transcript.add_event(%{
+          "id" => 1,
+          "turn_id" => nil,
+          "kind" => "stage",
+          "stage" => "provision",
+          "state" => "failed",
+          "ts" => @ts,
+          "data" => "{}"
+        })
+
+      assert [turn] = Transcript.visible_turns(page)
+      assert [%{kind: :failure, body: ""}] = turn.blocks
+    end
+
+    test "a stage that started or finished is still not a block" do
+      page =
+        Transcript.empty("claude")
+        |> Transcript.add_event(%{
+          "id" => 1,
+          "turn_id" => nil,
+          "kind" => "stage",
+          "stage" => "provision",
+          "state" => "started",
+          "ts" => @ts,
+          "data" => "{}"
+        })
+
+      assert Transcript.visible_turns(page) == []
+    end
+
+    test "failure_reason/1 survives data that is not the shape we expect" do
+      assert Transcript.failure_reason(%{"data" => Jason.encode!(%{reason: " padded "})}) ==
+               "padded"
+
+      # Not JSON at all: kept as it arrived rather than dropped.
+      assert Transcript.failure_reason(%{"data" => "plain words"}) == "plain words"
+      assert Transcript.failure_reason(%{"data" => "{}"}) == ""
+      assert Transcript.failure_reason(%{}) == ""
+    end
+  end
 end

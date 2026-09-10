@@ -350,6 +350,73 @@ defmodule Ravix.PromptQueueTest do
              PromptQueue.get(id)
   end
 
+  test "a conversation that never ran a turn says why, not \"start a new track\"", f do
+    # The circular case (#35): a machine that could not be built ends the
+    # conversation, and telling somebody to start a new track sends them to a
+    # track that fails identically. What breaks the circle is Fountain's reason.
+    reason =
+      ~s({:denied, {:http, 403, %{"error" => "Add a credit card to start using Sprites."}}})
+
+    fountain([], verify: false)
+
+    stub(Ravix.Fountain, :get_conversation, fn _client, id ->
+      {:ok, %{"id" => id, "status" => "failed", "turn_count" => 0}}
+    end)
+
+    stub(Ravix.Fountain, :events, fn _client, _id ->
+      {:ok,
+       [
+         %{"id" => 1, "kind" => "stage", "stage" => "provision", "state" => "started"},
+         %{
+           "id" => 2,
+           "kind" => "stage",
+           "stage" => "provision",
+           "state" => "failed",
+           "data" => Jason.encode!(%{reason: reason})
+         }
+       ]}
+    end)
+
+    {:ok, %Item{id: id}} = send_prompt(f.track, f.owner, "hello")
+    Server.tick(f.server)
+
+    assert %Item{status: :failed, error: error} = PromptQueue.get(id)
+    assert error =~ "could not be started"
+    assert error =~ "Add a credit card"
+    refute error =~ "Start a new track"
+  end
+
+  test "a conversation that never ran and gave no reason still avoids the circular advice", f do
+    fountain([], verify: false)
+
+    stub(Ravix.Fountain, :get_conversation, fn _client, id ->
+      {:ok, %{"id" => id, "status" => "failed", "turn_count" => 0}}
+    end)
+
+    stub(Ravix.Fountain, :events, fn _client, _id -> {:error, :unavailable} end)
+
+    {:ok, %Item{id: id}} = send_prompt(f.track, f.owner, "hello")
+    Server.tick(f.server)
+
+    assert %Item{status: :failed, error: error} = PromptQueue.get(id)
+    assert error =~ "could not be started"
+    refute error =~ "Start a new track"
+  end
+
+  test "a conversation that did run turns still gets the directions", f do
+    fountain([], verify: false)
+
+    stub(Ravix.Fountain, :get_conversation, fn _client, id ->
+      {:ok, %{"id" => id, "status" => "terminated", "turn_count" => 7}}
+    end)
+
+    {:ok, %Item{id: id}} = send_prompt(f.track, f.owner, "too late")
+    Server.tick(f.server)
+
+    assert %Item{status: :failed, error: "This conversation has ended." <> _} =
+             PromptQueue.get(id)
+  end
+
   test "a claim outliving its task recovers as unconfirmed, never an automatic replay", f do
     client = fountain([])
     {:ok, %Item{id: id}} = send_prompt(f.track, f.owner, "might already have run")

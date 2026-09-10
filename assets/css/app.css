@@ -1216,6 +1216,9 @@ input.crumb-name { width: 30ch; }
 .landing-actions > a:not(.landing-button) { color: var(--dim); font-size: 13px; }
 .landing-actions > a:not(.landing-button):hover { color: var(--ink); }
 .landing-note { color: var(--dimmer); font-size: 12px; line-height: 1.5; margin-top: 16px; }
+.workspace-failure { background: var(--danger-bg); border: 1px solid var(--danger-line); border-radius: var(--radius); padding: 10px 12px; margin: 8px 0; }
+.workspace-failure strong { display: block; font-weight: 500; margin-bottom: 6px; }
+.workspace-failure pre { margin: 0; white-space: pre-wrap; word-break: break-word; font-size: 12px; color: var(--dim); }
 .invite { max-width: 46ch; padding: 96px 0 64px; }
 .invite h1 { font-size: clamp(28px, 3.4vw, 38px); }
 .invite form { display: contents; }
