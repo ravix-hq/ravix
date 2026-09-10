@@ -429,6 +429,43 @@ defmodule RavixWeb.CoreComponents do
   end
 
   @doc """
+  The owner's half of an invite dialog: mint a link, revoke it, show it once.
+
+  Both the track dialog and the project dialog offer exactly this, and both
+  had written it out, down to a private `invite_url/1` in one page and an
+  `invitation_url/1` in the other. What the two copies did not share was the
+  revoke button's wording, which is the kind of drift a duplicated block
+  produces on its own.
+
+  The URL is shown only in the turn it was minted in: the server keeps a hash
+  and genuinely cannot show it again, so a link that is out reads as absent
+  here rather than as something to be recovered.
+
+      <.invite_link owner={@track.role == :owner} invite={@invite} />
+  """
+  attr :owner, :boolean, required: true, doc: "only the owner may mint or revoke"
+
+  attr :invite, :map,
+    default: nil,
+    doc: "the freshly minted link, or nil when nothing was just minted"
+
+  def invite_link(assigns) do
+    ~H"""
+    <div :if={@owner}>
+      <button class="ghost" phx-click="invite-link" phx-value-action="create">
+        Create invite link
+      </button>
+      <button class="ghost" phx-click="invite-link" phx-value-action="revoke">
+        Revoke invite link
+      </button>
+    </div>
+    <p :if={@invite && @invite[:url]}>
+      <a href={@invite[:url]}>{@invite[:url]}</a>
+    </p>
+    """
+  end
+
+  @doc """
   The shell every modal sits in (`src/components/Dialog.tsx`).
 
   A dialog is the one place a web app can trap somebody, so the behaviour

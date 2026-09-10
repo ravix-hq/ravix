@@ -500,15 +500,7 @@
           Invite
         </button>
       </form>
-      <div :if={@track.role == :owner}>
-        <button class="ghost" phx-click="invite-link" phx-value-action="create">
-          Create invite link
-        </button>
-        <button class="ghost" phx-click="invite-link" phx-value-action="revoke">
-          Revoke link
-        </button>
-      </div>
-      <p :if={invite_url(@invite)}><a href={invite_url(@invite)}>{invite_url(@invite)}</a></p>
+      <.invite_link owner={@track.role == :owner} invite={@invite} />
     </.dialog>
     <.dialog :if={@dialog == "pull"} id="pull-dialog" title="Open pull request" on_close="dismiss">
       <p>Commit and push your branch before opening a pull request.</p>

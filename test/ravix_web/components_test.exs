@@ -140,6 +140,45 @@ defmodule RavixWeb.ComponentsTest do
     end
   end
 
+  describe "invite_link/1" do
+    test "the owner is offered both buttons, and they are the same two on either dialog" do
+      html = render_component(&CoreComponents.invite_link/1, owner: true, invite: nil)
+      assert html =~ ~s(phx-click="invite-link")
+      assert html =~ ~s(phx-value-action="create")
+      assert html =~ ~s(phx-value-action="revoke")
+      assert html =~ "Create invite link"
+      assert html =~ "Revoke invite link"
+    end
+
+    test "a member is offered neither" do
+      html = render_component(&CoreComponents.invite_link/1, owner: false, invite: nil)
+      refute html =~ "invite-link"
+      refute html =~ "<button"
+    end
+
+    test "a freshly minted link is shown, once, as a link" do
+      html =
+        render_component(&CoreComponents.invite_link/1,
+          owner: true,
+          invite: %{url: "https://ravix.test/j/tok", created_at: nil, expires_at: nil}
+        )
+
+      assert html =~ ~s(<a href="https://ravix.test/j/tok">https://ravix.test/j/tok</a>)
+    end
+
+    test "a link that is merely out has no url and is not shown" do
+      # `Ravix.People.link/2` reports an existing link with `url: nil`, because
+      # only its hash is kept. There is nothing to render and nothing to imply.
+      html =
+        render_component(&CoreComponents.invite_link/1,
+          owner: true,
+          invite: %{url: nil, created_at: DateTime.utc_now(), expires_at: DateTime.utc_now()}
+        )
+
+      refute html =~ "<a href"
+    end
+  end
+
   describe "empty/1 and not_configured/1" do
     test "the empty state says what, why and what to do" do
       assigns = %{}

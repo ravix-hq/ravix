@@ -5,7 +5,6 @@ defmodule RavixWeb.WorkspaceLive do
   alias Ravix.{Accounts, Hub, People, Previews, Projects, Tracks}
   alias Ravix.Hub.Event
   alias Ravix.Tracks.Names
-  alias RavixWeb.Error
   alias RavixWeb.Live.Guard
 
   # The four origins, as the form spells them. One list rather than the three
@@ -494,12 +493,6 @@ defmodule RavixWeb.WorkspaceLive do
     end
   end
 
-  defp result(socket, :ok, fun), do: fun.(socket, nil)
-  defp result(socket, {:ok, value}, fun), do: fun.(socket, value)
-
-  defp result(socket, {:error, reason}, _fun),
-    do: put_flash(socket, :error, Error.from(reason).message)
-
   defp track_suffix(nil), do: ""
   defp track_suffix(id), do: "/t/#{id}"
 
@@ -519,8 +512,4 @@ defmodule RavixWeb.WorkspaceLive do
         String.downcase("#{project.name} #{track.title} #{track.branch}"),
         String.downcase(query)
       )
-
-  defp invitation_url(%{url: url}), do: url
-  defp invitation_url(%{link: link}), do: invitation_url(link)
-  defp invitation_url(_), do: nil
 end
