@@ -10,6 +10,7 @@ for mod <- [
       Ravix.Accounts.Access,
       Ravix.Accounts,
       Ravix.People,
+      Ravix.People.Store,
       Ravix.Previews,
       Ravix.Previews.Agent,
       Ravix.Tracks,

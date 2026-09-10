@@ -4,6 +4,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
   import Mimic
   alias Ravix.{Accounts, Crypto, Hub, Projects, QueryCount, Repo, Tracks}
   alias Ravix.Hub.Event
+  alias Ravix.People.Store, as: People
   alias Ravix.Tracks.Transcript
   alias RavixWeb.Live.Guard
 
@@ -191,7 +192,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
     member = insert_user()
     project = insert_project(user: owner)
     track = insert_track(project: project)
-    Ravix.People.add_member(track.id, member.id, owner.id)
+    People.add_member(track.id, member.id, owner.id)
     {:ok, view, _} = live(log_in_user(conn, member), "/p/#{project.id}?new=track")
     refute has_element?(view, "#new-track-form")
     refute has_element?(view, "a.project-add")
@@ -274,10 +275,10 @@ defmodule RavixWeb.WorkspaceLiveTest do
     owner = insert_user()
     user = insert_user()
     project = insert_project(user: owner)
-    Ravix.People.add_project_member(project.id, user.id, owner.id)
+    People.add_project_member(project.id, user.id, owner.id)
     {:ok, view, _} = live(log_in_user(conn, user), "/p/#{project.id}")
     refute has_element?(view, "button", "Settings")
-    Ravix.People.remove_project_member(project.id, user.id)
+    People.remove_project_member(project.id, user.id)
     Hub.publish(project.id, :people)
     refute render(view) =~ project.name
   end
@@ -344,12 +345,12 @@ defmodule RavixWeb.WorkspaceLiveTest do
     user = insert_user()
     project = insert_project(user: owner)
     track = insert_track(project: project, conversation_id: "conversation-test")
-    Ravix.People.add_member(track.id, user.id, owner.id)
+    People.add_member(track.id, user.id, owner.id)
     stub_track(track)
     {:ok, parent, _} = live(log_in_user(conn, user), "/p/#{project.id}/t/#{track.id}")
     child = find_live_child(parent, "track-#{track.id}")
     render_async(child)
-    Ravix.People.remove_member(track.id, user.id)
+    People.remove_member(track.id, user.id)
     send(child.pid, {:transcript, track.id, %{"id" => 1, "data" => "private output"}})
     assert_redirect(parent, "/", 1_000)
   end

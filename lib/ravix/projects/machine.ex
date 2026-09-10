@@ -210,7 +210,7 @@ defmodule Ravix.Projects.Machine do
          {:ok, agent} <- create_replacement(project, client) do
       # The agent id is the identity, so it is the one column that ever moves,
       # and when it moves, every track on the old disk is gone.
-      Projects.rebind_agent(project.id, agent["id"])
+      Projects.Store.rebind_agent(project.id, agent["id"])
       Ravix.MachineCache.forget_project(project.id)
       Ravix.Tracks.close_all_for_rebuild(project, :rebuild)
       Hub.publish(project.id, :tracks)
@@ -279,7 +279,7 @@ defmodule Ravix.Projects.Machine do
     end
 
     unwind(client, project)
-    Projects.archive(project.id)
+    Projects.Store.archive(project.id)
     Ravix.MachineCache.forget_project(project.id)
     Hub.publish(project.id, :tracks)
     :ok
@@ -289,7 +289,7 @@ defmodule Ravix.Projects.Machine do
   # may keep it awake: cancel every open track's prompts and retire the
   # project's previews before Fountain is touched.
   defp quiesce(project) do
-    Enum.each(Projects.open_tracks(project.id), &Ravix.PromptQueue.cancel_track(&1.id))
+    Enum.each(Projects.Store.open_tracks(project.id), &Ravix.PromptQueue.cancel_track(&1.id))
     Ravix.Previews.retire_project(project.id)
   end
 

@@ -89,7 +89,7 @@ defmodule Ravix.Projects.Settings do
          :ok <- environment(project, attrs, client),
          {:ok, bumps} <- instructions(project, attrs, client, bumps),
          {:ok, bumps} <- secret(project, attrs, client, bumps) do
-      {:ok, if(bumps, do: Projects.bump_rev(project.id), else: project.rev)}
+      {:ok, if(bumps, do: Projects.Store.bump_rev(project.id), else: project.rev)}
     end
   end
 
@@ -108,7 +108,7 @@ defmodule Ravix.Projects.Settings do
              Projects.fountain_result(
                Fountain.update_agent(client, project.agent_id, %{runtime: runtime, model: model})
              ) do
-        Projects.set_harness(project.id, runtime, model)
+        Projects.Store.set_harness(project.id, runtime, model)
         {:ok, true}
       end
     end
@@ -135,7 +135,7 @@ defmodule Ravix.Projects.Settings do
       name when is_binary(name) ->
         case name |> str(120) |> String.trim() do
           "" -> :ok
-          trimmed -> Projects.rename(project.id, trimmed)
+          trimmed -> Projects.Store.rename(project.id, trimmed)
         end
 
       _ ->
@@ -182,7 +182,7 @@ defmodule Ravix.Projects.Settings do
                    system: Projects.compose_system(%{project | instructions: text})
                  })
                ) do
-          Projects.set_instructions(project.id, text)
+          Projects.Store.set_instructions(project.id, text)
           {:ok, true}
         end
 

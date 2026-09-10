@@ -38,16 +38,13 @@ defmodule Ravix.Projects do
   through from the client that produced it.
   """
 
-  import Ecto.Query, only: [from: 2]
-
   alias Ravix.Accounts.User
   alias Ravix.Fountain.Client
   alias Ravix.Hub
   alias Ravix.Ids
-  alias Ravix.Projects.{Machine, Project, Settings}
-  alias Ravix.Repo
+  alias Ravix.People
+  alias Ravix.Projects.{Machine, Project, Settings, Store}
   alias Ravix.Spec
-  alias Ravix.Tracks.Track
 
   @typedoc "How the caller reaches a project. See `access_of/2`."
   @type access :: :owner | :project | :tracks
@@ -114,12 +111,15 @@ defmodule Ravix.Projects do
   """
   @spec list(User.t()) :: [project_map()]
   def list(%User{} = user) do
-    mine = projects_of(user.id)
+    mine = Store.projects_of(user.id)
     seen = MapSet.new(mine, & &1.id)
 
+    # ownership: these two *are* how this caller's access is established --
+    # `list/1` is "every project this person may see", and a membership row is
+    # what makes one of them visible. There is no earlier door to go through.
     guests =
-      Ravix.People.member_projects(user.id) ++
-        Enum.map(Ravix.People.member_tracks(user.id), &get_project(&1.project_id))
+      People.Store.member_projects(user.id) ++
+        Enum.map(People.Store.member_tracks(user.id), &Store.get_project(&1.project_id))
 
     {guest, _seen} =
       Enum.reduce(guests, {[], seen}, fn
@@ -150,7 +150,7 @@ defmodule Ravix.Projects do
   """
   @spec get(User.t(), String.t()) :: {:ok, project_map()} | {:error, :not_found}
   def get(%User{} = user, id) do
-    with %Project{archived_at: nil} = project <- get_project(id) || {:error, :not_found},
+    with %Project{archived_at: nil} = project <- Store.get_project(id) || {:error, :not_found},
          access when not is_nil(access) <- access_of(user.id, project) do
       {:ok, present(project, access, Machine.state(project), owner_of(project, user))}
     else
@@ -175,7 +175,10 @@ defmodule Ravix.Projects do
     cond do
       project.user_id == user_id -> :owner
       Ravix.Accounts.Access.project_member?(project.id, user_id) -> :project
-      Enum.any?(Ravix.People.member_tracks(user_id), &(&1.project_id == project.id)) -> :tracks
+      # ownership: same as `list/1` -- this function answers "what access does
+      # this person have", so the membership rows are the answer, not a
+      # shortcut past one.
+      Enum.any?(People.Store.member_tracks(user_id), &(&1.project_id == project.id)) -> :tracks
       true -> nil
     end
   end
@@ -431,91 +434,6 @@ defmodule Ravix.Projects do
     }
   end
 
-  # ── the rows (server/db.ts, projects) ─────────────────────────────────
-
-  @doc "Insert a project. `rev` starts at 1; `created_at` is stamped."
-  @spec create_project(map()) :: {:ok, Project.t()} | {:error, Ecto.Changeset.t()}
-  def create_project(attrs) do
-    attrs = attrs |> Map.new(fn {k, v} -> {to_string(k), v} end) |> Map.put("rev", 1)
-    %Project{} |> Project.changeset(attrs) |> Repo.insert()
-  end
-
-  @doc "One project by id, archived or not. Unscoped: callers establish ownership first."
-  @spec get_project(String.t()) :: Project.t() | nil
-  def get_project(id) when is_binary(id), do: Repo.get(Project, id)
-  def get_project(_id), do: nil
-
-  @doc "The live projects a person owns, oldest first."
-  @spec projects_of(String.t()) :: [Project.t()]
-  def projects_of(user_id) do
-    Repo.all(
-      from(p in Project,
-        where: p.user_id == ^user_id and is_nil(p.archived_at),
-        order_by: p.created_at
-      )
-    )
-  end
-
-  @doc "Rename a project. Unscoped: called beside a `project_of/2` that established ownership."
-  @spec rename(String.t(), String.t()) :: :ok
-  def rename(id, name), do: update_fields(id, name: name)
-
-  @doc "Replace the person's extra instructions. Unscoped, as `rename/2`."
-  @spec set_instructions(String.t(), String.t()) :: :ok
-  def set_instructions(id, instructions), do: update_fields(id, instructions: instructions)
-
-  @doc "Record the harness the agent now runs. Unscoped, as `rename/2`."
-  @spec set_harness(String.t(), String.t(), String.t()) :: :ok
-  def set_harness(id, runtime, model), do: update_fields(id, runtime: runtime, model: model)
-
-  @doc """
-  Bump the settings revision, and return the new one.
-
-  Called whenever something Fountain injects at session start changes: a
-  secret, an MCP server, a skill, the system prompt. Tracks already open
-  carry the old number in their `channel_id` and are badged as running older
-  settings, which is true and cannot be worked out any other way.
-  """
-  @spec bump_rev(String.t()) :: integer()
-  def bump_rev(id) do
-    query = from(p in Project, where: p.id == ^id, select: p.rev)
-
-    case Repo.update_all(query, inc: [rev: 1]) do
-      {1, [rev]} -> rev
-      _ -> 1
-    end
-  end
-
-  @doc """
-  The one column of the three that ever moves, and only on a rebuild.
-
-  Retiring the agent is what changes the sandbox identity; the environment
-  and vault stay, which is what makes "new machine, same settings" a real
-  distinction rather than a slower delete. Every track of the old disk is
-  closed by the caller in the same breath: a track is a worktree, and that
-  worktree is about to stop existing.
-  """
-  @spec rebind_agent(String.t(), String.t()) :: :ok
-  def rebind_agent(id, agent_id), do: update_fields(id, agent_id: agent_id)
-
-  @doc "Archive a project, cancelling whatever its open tracks still had queued."
-  @spec archive(String.t()) :: :ok
-  def archive(id) do
-    Enum.each(open_tracks(id), &Ravix.PromptQueue.cancel_track(&1.id))
-    update_fields(id, archived_at: DateTime.utc_now())
-  end
-
-  @doc "The open tracks of a project, oldest first. `tracksOf` in db.ts, read here for the rebuild."
-  @spec open_tracks(String.t()) :: [Track.t()]
-  def open_tracks(project_id) do
-    Repo.all(
-      from(t in Track,
-        where: t.project_id == ^project_id and is_nil(t.closed_at),
-        order_by: t.created_at
-      )
-    )
-  end
-
   # ── the integrations, or a refusal that says what is missing ──────────
 
   @doc """
@@ -564,11 +482,6 @@ defmodule Ravix.Projects do
 
   defp owner_of(%Project{user_id: user_id}, %User{id: user_id} = user), do: user
   defp owner_of(%Project{user_id: user_id}, user), do: Ravix.Accounts.get_user(user_id) || user
-
-  defp update_fields(id, fields) do
-    from(p in Project, where: p.id == ^id) |> Repo.update_all(set: fields)
-    :ok
-  end
 
   # The user's GitHub OAuth token, decrypted. Used for anything read as *them*.
   defp user_token(user) do
@@ -672,7 +585,7 @@ defmodule Ravix.Projects do
       )
       |> Map.merge(ids)
 
-    case create_project(attrs) do
+    case Store.create_project(attrs) do
       {:ok, row} ->
         {:ok, row}
 

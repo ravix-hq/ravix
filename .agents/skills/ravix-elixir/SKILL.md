@@ -10,7 +10,8 @@ pattern fits the current code.
 
 Keep effects in their existing boundaries. The web layer calls contexts with
 the authenticated user; contexts establish project/track access before provider
-calls or `_unsafe_*` helpers. Public errors pass through `RavixWeb.Error`.
+calls or their `Store`, and never reach one from a page. Public errors pass
+through `RavixWeb.Error`.
 Changing a context's result shape requires updating its typespec, callers, and
 boundary tests together.
 

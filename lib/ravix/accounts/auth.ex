@@ -52,8 +52,12 @@ defmodule Ravix.Accounts.Auth do
   # How long the per-attempt cookie lives, in seconds. Matches the state row.
   @cookie_max_age_s 15 * 60
 
-  # The context that owns invitations and links; see `claim_invites/2` below.
-  @people Ravix.People
+  # ownership: the invitation rows, read without a door because there is not
+  # one yet: this runs during sign-in, for a person who has no access to
+  # anything until the rows they are named on become memberships. Their GitHub
+  # id, freshly proven by the OAuth exchange, is the whole authorization.
+  # See `claim_invites/2` below for why it is named through an attribute.
+  @people Ravix.People.Store
 
   @doc "Where GitHub sends a browser back to. Registered on the App; must match exactly."
   @spec callback_url() :: String.t()
@@ -140,7 +144,7 @@ defmodule Ravix.Accounts.Auth do
     * GitHub refusing the exchange: `/?error=github_<status>`.
 
   On success: the user is upserted with the token encrypted, invitations
-  waiting on their GitHub id become memberships (`Ravix.People.claim_invites/2`),
+  waiting on their GitHub id become memberships (`Ravix.People.Store.claim_invites/2`),
   and the redirect is where that points. A `join` trip lands back on its invite
   page rather than through it -- an invitation addressed to your GitHub id is
   one somebody sent *you*, but a link is a credential whoever holds it can be

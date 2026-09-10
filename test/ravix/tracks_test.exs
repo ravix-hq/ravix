@@ -481,7 +481,7 @@ defmodule Ravix.TracksTest do
                  Tracks.open(ctx.owner, ctx.project.id, %{title: "Kyoto"})
       end)
 
-      assert Tracks._unsafe_tracks_of(ctx.project.id, true) == []
+      assert Tracks.Store.tracks_of(ctx.project.id, true) == []
     end
 
     test "an opening turn that does not send is reported, and the track can be retried", ctx do
@@ -606,7 +606,7 @@ defmodule Ravix.TracksTest do
 
     test "a read mark is this person's, and the rail is told", ctx do
       assert :ok = Tracks.mark_read(ctx.owner, ctx.track.id)
-      assert %DateTime{} = Ravix.People.last_read_of(ctx.track.id, ctx.owner.id)
+      assert %DateTime{} = Ravix.People.Store.last_read_of(ctx.track.id, ctx.owner.id)
       project_id = ctx.project.id
       track_id = ctx.track.id
       assert_receive {:hub, %Event{name: :tracks, project_id: ^project_id, track_id: ^track_id}}
@@ -707,7 +707,7 @@ defmodule Ravix.TracksTest do
       assert after_rename.slug == "kyoto"
       assert after_rename.branch == "cutter/kyoto"
       assert after_rename.workdir == "/home/sprite/work/kyoto"
-      assert Tracks._unsafe_slug_taken?(ctx.project.id, "kyoto")
+      assert Tracks.Store.slug_taken?(ctx.project.id, "kyoto")
     end
 
     test "the cutter may rename, a mere member may not, and a name is required", ctx do
@@ -803,7 +803,7 @@ defmodule Ravix.TracksTest do
       assert :ok = Tracks.close_all_for_rebuild(ctx.project, :rebuild)
       assert Repo.get!(Track, ctx.track.id).closed_at
       assert Repo.get!(Track, other.id).closed_at
-      assert Tracks._unsafe_tracks_of(ctx.project.id) == []
+      assert Tracks.Store.tracks_of(ctx.project.id) == []
     end
   end
 

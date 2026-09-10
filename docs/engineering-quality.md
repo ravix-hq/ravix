@@ -130,8 +130,9 @@ resize ARIA attributes lost after server patches, the sidebar handle measuring
 its neighbouring main panel, lost drafts on reconnect, and dialog focus not
 returning to its trigger. DOM regressions supplement these browser checks.
 
-The architecture Credo check rejects web dependencies from contexts, remote
-`_unsafe_*` calls without an ownership explanation, and unsupervised production
+The architecture Credo check rejects web dependencies from contexts, any
+mention of a `Ravix.<Context>.Store` from `lib/ravix_web/`, cross-context row
+access without an ownership explanation, and unsupervised production
 Task/spawn work. `Ravix.Application` is the composition-root exception to the
 web dependency rule. Static checks cover explicit calls and aliases, not arbitrary
 runtime metaprogramming; ownership comments are review aids, not access proofs.

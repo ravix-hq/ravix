@@ -1,7 +1,11 @@
 defmodule RavixWeb.PreviewGateway.RavixBackend do
   @moduledoc """
-  What the preview gateway asks of the rest of Ravix, answered by this
-  context: `RavixWeb.PreviewGateway.Backend`, one callback each.
+  What the preview gateway asks of the rest of Ravix, answered by the
+  contexts: `RavixWeb.PreviewGateway.Backend`, one callback each.
+
+  Every callback here is a delegation or a translation of a refusal into an
+  HTTP one. Nothing in this module reads a row: it is in `lib/ravix_web/`,
+  and the row layer is not reachable from there.
 
   Configured as `config :ravix, preview_backend: RavixWeb.PreviewGateway.RavixBackend`.
   Refusals that carry an HTTP status (`assert_open/1`, `destination/1`)
@@ -14,18 +18,10 @@ defmodule RavixWeb.PreviewGateway.RavixBackend do
   alias Ravix.Accounts
   alias Ravix.Accounts.Access
   alias Ravix.Previews
-  alias Ravix.Previews.{Row, Store}
-  alias Ravix.Repo
-  alias Ravix.Tracks.Track
   alias RavixWeb.Error
 
   @impl true
-  def resolve_host(name) do
-    case Store.by_host(name) do
-      %Row{} = row -> {:ok, row}
-      nil -> :error
-    end
-  end
+  defdelegate resolve_host(name), to: Previews, as: :by_host
 
   @impl true
   def assert_open(track_id) do
@@ -36,11 +32,10 @@ defmodule RavixWeb.PreviewGateway.RavixBackend do
   end
 
   @impl true
-  def preview(track_id), do: Store.get(track_id)
+  defdelegate preview(track_id), to: Previews, as: :row
 
   @impl true
-  def get_grant(hash, track_id, kind, consume?),
-    do: Store.get_grant(hash, track_id, kind, consume?)
+  defdelegate get_grant(hash, track_id, kind, consume?), to: Previews, as: :grant_by_hash
 
   @impl true
   def session_user(session_hash), do: Accounts.session_user(session_hash)
@@ -54,26 +49,13 @@ defmodule RavixWeb.PreviewGateway.RavixBackend do
   end
 
   @impl true
-  def allowed?(row, grant) do
-    with %{} <- Store.get_grant(grant.hash, row.track_id, grant.kind, false),
-         %{} = user <- Accounts.session_user(grant.session_hash),
-         {:ok, %{closed_at: nil}} <- track_access(user, row.track_id) do
-      not match?(%Row{cleanup: true}, Store.get(row.track_id))
-    else
-      _ -> false
-    end
-  end
+  defdelegate allowed?(row, grant), to: Previews
 
   @impl true
-  def track(track_id), do: Repo.get(Track, track_id)
+  defdelegate track(track_id), to: Previews
 
   @impl true
-  def grant_session(grant) do
-    case Store.grant(grant) do
-      :ok -> :ok
-      {:error, changeset} -> {:error, changeset}
-    end
-  end
+  defdelegate grant_session(grant), to: Previews, as: :record_grant
 
   @impl true
   def info(track_id), do: Previews.info(track_id)

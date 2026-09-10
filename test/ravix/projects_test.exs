@@ -710,7 +710,7 @@ defmodule Ravix.ProjectsTest do
              } =
                Repo.get!(Project, project.id)
 
-      assert [%{rev: 1}, %{rev: 1}] = Projects.open_tracks(project.id)
+      assert [%{rev: 1}, %{rev: 1}] = Projects.Store.open_tracks(project.id)
       assert_received {:hub, %Event{name: :settings}}
       assert length(requests(client)) == 2
     end
@@ -1192,14 +1192,14 @@ defmodule Ravix.ProjectsTest do
   describe "the rows" do
     test "bump_rev returns the new revision; rebind moves only the agent" do
       project = insert_project()
-      assert Projects.bump_rev(project.id) == 2
-      assert Projects.bump_rev(project.id) == 3
-      assert Projects.bump_rev("missing") == 1
+      assert Projects.Store.bump_rev(project.id) == 2
+      assert Projects.Store.bump_rev(project.id) == 3
+      assert Projects.Store.bump_rev("missing") == 1
 
-      assert :ok = Projects.rebind_agent(project.id, "agent-2")
-      assert :ok = Projects.set_harness(project.id, "codex", "openai/x")
-      assert :ok = Projects.set_instructions(project.id, "hi")
-      assert :ok = Projects.rename(project.id, "new name")
+      assert :ok = Projects.Store.rebind_agent(project.id, "agent-2")
+      assert :ok = Projects.Store.set_harness(project.id, "codex", "openai/x")
+      assert :ok = Projects.Store.set_instructions(project.id, "hi")
+      assert :ok = Projects.Store.rename(project.id, "new name")
 
       assert %Project{
                agent_id: "agent-2",
@@ -1209,9 +1209,9 @@ defmodule Ravix.ProjectsTest do
                name: "new name",
                rev: 3
              } =
-               Projects.get_project(project.id)
+               Projects.Store.get_project(project.id)
 
-      assert Projects.get_project(nil) == nil
+      assert Projects.Store.get_project(nil) == nil
     end
 
     test "projects_of lists live projects oldest first; archive cancels what was queued" do
@@ -1223,19 +1223,19 @@ defmodule Ravix.ProjectsTest do
       prompt = insert_prompt(track: track, user: owner)
       sent = insert_prompt(track: track, user: owner, status: "sent")
 
-      assert Enum.map(Projects.projects_of(owner.id), & &1.id) == [first.id, second.id]
+      assert Enum.map(Projects.Store.projects_of(owner.id), & &1.id) == [first.id, second.id]
 
-      assert :ok = Projects.archive(first.id)
+      assert :ok = Projects.Store.archive(first.id)
       assert Repo.get_by!(Item, id: prompt.id).status == :cancelled
       assert Repo.get_by!(Item, id: sent.id).status == :sent
-      assert Enum.map(Projects.projects_of(owner.id), & &1.id) == [second.id]
+      assert Enum.map(Projects.Store.projects_of(owner.id), & &1.id) == [second.id]
     end
 
     test "create_project starts at revision 1 and refuses a row with no agent" do
       owner = person("owner")
 
       assert {:ok, %Project{rev: 1, created_at: %DateTime{}}} =
-               Projects.create_project(%{
+               Projects.Store.create_project(%{
                  id: "fresh",
                  user_id: owner.id,
                  name: "Fresh",
@@ -1247,7 +1247,7 @@ defmodule Ravix.ProjectsTest do
                })
 
       assert {:error, %Ecto.Changeset{}} =
-               Projects.create_project(%{id: "x", user_id: owner.id, name: "x"})
+               Projects.Store.create_project(%{id: "x", user_id: owner.id, name: "x"})
     end
   end
 end

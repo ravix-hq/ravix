@@ -39,6 +39,63 @@ defmodule Ravix.ArchitectureTest do
     assert [] = issues("RavixWeb.Endpoint.config_change([], [])", "lib/ravix/application.ex")
   end
 
+  test "a page may not reach a row store, however it names one" do
+    for code <- [
+          "Ravix.People.Store.member?(t, u)",
+          "alias Ravix.People.Store",
+          "alias Ravix.Tracks.Store\nStore.get_track(id)",
+          "alias Ravix.Previews.{Row, Store}\nStore.get(id)",
+          "&Ravix.Projects.Store.get_project/1"
+        ] do
+      assert [_ | _] = issues(code, "lib/ravix_web/live/track_live.ex")
+    end
+
+    # No comment excuses it: a page has a user in hand and a door to spend it
+    # at, so reaching past both is the violation rather than the thing to
+    # explain.
+    assert [_ | _] =
+             issues(
+               "# ownership: the page checked\nRavix.People.Store.member?(t, u)",
+               "lib/ravix_web/live/track_live.ex"
+             )
+
+    assert [] = issues("Ravix.People.list(user, id)", "lib/ravix_web/live/track_live.ex")
+  end
+
+  test "a context reaches its own store freely and another's with an explanation" do
+    own = "lib/ravix/people.ex"
+    own_nested = "lib/ravix/people/store.ex"
+    other = "lib/ravix/tracks.ex"
+
+    for code <- [
+          "Ravix.People.Store.member?(t, u)",
+          "alias Ravix.People.Store\nStore.member?(t, u)"
+        ] do
+      assert [] = issues(code, own)
+      assert [] = issues(code, own_nested)
+      assert [_] = issues(code, other)
+      assert [] = issues("# ownership: Access.track_access/2 above\n" <> code, other)
+    end
+
+    # A delegate is a call site too, and the one the door in `Access` uses.
+    assert [_] = issues("defdelegate member?(t, u), to: Ravix.People.Store", other)
+
+    assert [] =
+             issues(
+               "# ownership: the door itself\ndefdelegate member?(t, u), to: Ravix.People.Store",
+               other
+             )
+
+    # An underscored context name still resolves to its own store.
+    assert [] = issues("Ravix.PromptQueue.Store.claim(id)", "lib/ravix/prompt_queue/server.ex")
+
+    # Nothing else called Store is implicated.
+    assert [] = issues("SomeLibrary.Store.get(k)", other)
+  end
+
+  # The prefix this rule was written for is gone: `Ravix.Tracks.Store` is the
+  # boundary now, and nothing in `lib/` is named `_unsafe_` any more. The rule
+  # stays so that reintroducing the weaker convention is still caught.
   test "remote unsafe calls and captures require an ownership explanation" do
     for code <- ["Tracks._unsafe_get_track(id)", "&Tracks._unsafe_get_track/1"] do
       assert [_] = issues(code)
@@ -48,6 +105,31 @@ defmodule Ravix.ArchitectureTest do
     end
 
     assert [] = issues("_unsafe_get_track(id)")
+  end
+
+  test "the tree itself obeys the rules the fixtures describe" do
+    lib = Path.wildcard("lib/**/*.ex")
+    assert length(lib) > 50
+
+    for path <- lib, String.starts_with?(path, "lib/ravix_web/") do
+      refute File.read!(path) =~ ~r/\bRavix\.\w+\.Store\b/,
+             "#{path} names a row store; pages go through the context and Access."
+    end
+
+    for path <- lib do
+      refute File.read!(path) =~ ~r/\bdef _unsafe_/,
+             "#{path} defines an _unsafe_ function; the boundary is a Store module now."
+    end
+
+    # Nor by the back door: no page reads a row itself either.
+    for path <- lib, String.starts_with?(path, "lib/ravix_web/") do
+      refute File.read!(path) =~ ~r/\bRepo\./,
+             "#{path} reads the database directly; ask a context."
+    end
+
+    # And the doors are one read, not one per caller.
+    live = for path <- lib, File.read!(path) =~ ~r/archived_at: nil\} = project ->/, do: path
+    assert live == ["lib/ravix/projects/store.ex"]
   end
 
   test "unsupervised work cannot bypass the guard through aliases or captures" do
