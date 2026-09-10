@@ -31,6 +31,11 @@
 ."},
   {"lib/ravix/sprites/tunnel.ex", "Function request_port/4 will never be called."},
   {"lib/ravix/sprites/tunnel.ex", "Function await_connected/5 will never be called."},
+  # Same cascade, one frame further: `await_more/4` exists only because inlining
+  # it puts `await_connected/5` past Credo's nesting limit, and it is
+  # unreachable to Dialyzer for the identical upstream reason as its caller,
+  # which is already listed above it (#15).
+  {"lib/ravix/sprites/tunnel.ex", "Function await_more/4 will never be called."},
   {"lib/ravix/sprites/tunnel.ex", "Function acknowledgement/1 will never be called."},
   {"lib/ravix/sprites/tunnel.ex", "Function refuse/2 will never be called."},
   {"lib/ravix/sprites/tunnel.ex", "Function format/1 will never be called."}

@@ -257,24 +257,44 @@ defmodule Ravix.Sprites.Tunnel do
   # The first message must be the connected acknowledgement. Anything else
   # (a binary frame, other JSON, a close) is Sprites refusing the port.
   # Frames that arrive with the acknowledgement are returned for delivery.
+  # The acknowledgement is settled inside the `do` block, not the `else`.
+  #
+  # A `with`'s bindings are not visible to its `else`, so the `:connected`
+  # branch used to return the `websocket` *parameter* rather than the one
+  # `decode/2` rebound -- discarding whatever partial frame it had buffered. The
+  # tunnel then resumed decoding mid-frame and the preview "answered with
+  # something other than HTTP" (#15). Here the `else` only handles `{:error, _}`,
+  # which needs no websocket, and every path that does have one names it.
   defp await_connected(conn, ref, websocket, buffered, deadline) do
     with {:ok, websocket, frames} <- decode(websocket, buffered),
-         {:ok, websocket, frames} <- answer_pings(conn, ref, websocket, frames),
-         {:ok, :more} <- acknowledgement(frames) do
-      case await_socket(conn, deadline) do
-        {:ok, {tag, _socket, data}} when tag in [:tcp, :ssl] ->
-          await_connected(conn, ref, websocket, data, deadline)
-
-        {:ok, _closed_or_error} ->
-          refuse(conn, "Sprites closed the tunnel before connecting.")
-
-        :timeout ->
-          refuse(conn, "Sprites tunnel acknowledgement timed out.")
+         {:ok, websocket, frames} <- answer_pings(conn, ref, websocket, frames) do
+      case acknowledgement(frames) do
+        # This websocket: the one that decoded these frames.
+        {:ok, :connected, rest} -> {:ok, conn, websocket, rest}
+        {:ok, :more} -> await_more(conn, ref, websocket, deadline)
+        {:refused, message} -> refuse(conn, message)
       end
     else
-      {:ok, :connected, rest} -> {:ok, conn, websocket, rest}
-      {:refused, message} -> refuse(conn, message)
       {:error, reason} -> refuse(conn, "Preview tunnel failed: #{format(reason)}")
+    end
+  end
+
+  # Split out only because inlining it puts `await_connected/5` past Credo's
+  # nesting and complexity limits. It costs one `.dialyzer_ignore.exs` entry,
+  # for the reason already documented there rather than a new one: this module's
+  # whole call graph is unreachable to Dialyzer because mint_web_socket 1.0.5
+  # declares its opaque fragment as `tuple()` while `new/4` returns `nil`, and
+  # `await_connected/5` is itself already on that list.
+  defp await_more(conn, ref, websocket, deadline) do
+    case await_socket(conn, deadline) do
+      {:ok, {tag, _socket, data}} when tag in [:tcp, :ssl] ->
+        await_connected(conn, ref, websocket, data, deadline)
+
+      {:ok, _closed_or_error} ->
+        refuse(conn, "Sprites closed the tunnel before connecting.")
+
+      :timeout ->
+        refuse(conn, "Sprites tunnel acknowledgement timed out.")
     end
   end
 
