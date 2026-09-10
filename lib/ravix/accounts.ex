@@ -186,27 +186,78 @@ defmodule Ravix.Accounts do
   needs a sweeper and a stale cookie is refused exactly once.
   """
   @spec session_user(String.t()) :: User.t() | nil
-  def session_user(token_hash) when is_binary(token_hash) do
-    case Repo.get(Session, token_hash) do
-      nil ->
-        nil
-
-      %Session{} = session ->
-        if DateTime.compare(session.expires_at, DateTime.utc_now()) != :gt do
-          Repo.delete_all(from s in Session, where: s.token_hash == ^token_hash)
-          nil
-        else
-          get_user(session.user_id)
-        end
+  def session_user(token_hash) do
+    case open_session(token_hash) do
+      {:ok, user, _expires_at} -> user
+      :error -> nil
     end
   end
 
-  def session_user(_), do: nil
+  @doc """
+  The same read, keeping the moment the session runs out.
+
+  For a caller that will be asked "is this still signed in?" many times over
+  and does not want to read the row for each: a session's expiry is a fact
+  about the row that does not change once it is written, so a caller holding
+  it can answer from the clock. What the clock cannot tell it is that the
+  row was *deleted* -- signing out -- which is what `subscribe/1` is for.
+  """
+  @spec open_session(String.t()) :: {:ok, User.t(), DateTime.t()} | :error
+  def open_session(token_hash) when is_binary(token_hash) do
+    with %Session{} = session <- Repo.get(Session, token_hash),
+         %Session{} = session <- live_session(session),
+         %User{} = user <- get_user(session.user_id) do
+      {:ok, user, session.expires_at}
+    else
+      _ -> :error
+    end
+  end
+
+  def open_session(_), do: :error
+
+  # An expired row is deleted on the read that finds it, so the table never
+  # needs a sweeper and a stale cookie is refused exactly once.
+  defp live_session(%Session{} = session) do
+    if DateTime.compare(session.expires_at, DateTime.utc_now()) == :gt do
+      session
+    else
+      Repo.delete_all(from s in Session, where: s.token_hash == ^session.token_hash)
+      nil
+    end
+  end
+
+  @doc "The topic a session's own end is announced on."
+  @spec session_topic(String.t()) :: String.t()
+  def session_topic(token_hash), do: "session:" <> token_hash
+
+  @doc """
+  Hear about this session ending, as `{:session_ended, token_hash}`.
+
+  A page holding an answer about a session needs telling when the answer
+  stops being true. Expiry it can see coming, because it is a time; being
+  signed out somewhere else it cannot, so `end_session/1` says so.
+
+  Best-effort, as everything on PubSub is, and so not the only thing
+  standing between a signed-out browser and the page: a subscriber still
+  re-reads on its own schedule. What this buys is that the usual case --
+  somebody signing out in the next tab -- takes effect at once rather than
+  whenever that schedule next comes round.
+  """
+  @spec subscribe_session(String.t()) :: :ok | {:error, term()}
+  def subscribe_session(token_hash),
+    do: Phoenix.PubSub.subscribe(Ravix.PubSub, session_topic(token_hash))
 
   @doc "Sign a browser out: the row is gone, whatever the cookie still says."
   @spec end_session(String.t()) :: :ok
   def end_session(token_hash) do
     Repo.delete_all(from s in Session, where: s.token_hash == ^token_hash)
+
+    Phoenix.PubSub.broadcast(
+      Ravix.PubSub,
+      session_topic(token_hash),
+      {:session_ended, token_hash}
+    )
+
     :ok
   end
 

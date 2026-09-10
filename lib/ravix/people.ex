@@ -251,8 +251,9 @@ defmodule Ravix.People do
     with {:ok, target} <- find_person(wanted),
          :ok <- may_remove(role, user, target),
          :ok <- refuse_project_member(project, user, target) do
+      # `remove_member/2` tells the hub; saying it again here would only make
+      # every page on the project re-read twice.
       remove_member(track.id, target.id)
-      Ravix.Hub.publish(project.id, :people, track_id: track.id)
 
       # The caller may have just removed their own access, in which case
       # there is nothing left to hand back: `:left` rather than a list they
@@ -371,7 +372,6 @@ defmodule Ravix.People do
     with {:ok, target} <- find_person(wanted),
          :ok <- may_remove(role, user, target) do
       remove_project_member(project.id, target.id)
-      Ravix.Hub.publish(project.id, :people)
 
       # Nothing left to hand back to somebody who just removed their own
       # access. The caller has to leave rather than re-render.
@@ -846,6 +846,13 @@ defmodule Ravix.People do
   @doc """
   Take `user_id` off a track, and with it every preview grant they held
   on it, so a browser tab they left open stops working with the row.
+
+  The hub is told here rather than by the caller. This is the function that
+  takes the access away, and a page holding the answer "yes, they may read
+  this track" finds out it has changed by hearing `:people` on the project
+  -- so the announcement belongs to the revocation and not to whichever of
+  the routes above happened to ask for it. One caller forgetting would be a
+  transcript still streaming to somebody who was removed from it.
   """
   @spec remove_member(String.t(), String.t()) :: :ok
   def remove_member(track_id, user_id) do
@@ -855,6 +862,11 @@ defmodule Ravix.People do
     Repo.delete_all(
       from(m in TrackMember, where: m.track_id == ^track_id and m.user_id == ^user_id)
     )
+
+    case Repo.get(Track, track_id) do
+      %Track{project_id: project_id} -> Ravix.Hub.publish(project_id, :people, track_id: track_id)
+      nil -> :ok
+    end
 
     :ok
   end
@@ -1132,7 +1144,13 @@ defmodule Ravix.People do
     :ok
   end
 
-  @doc "Take `user_id` off a project: the row, and every preview grant on every open track of it."
+  @doc """
+  Take `user_id` off a project: the row, and every preview grant on every
+  open track of it.
+
+  As with `remove_member/2`, the hub is told from here: this is where the
+  access goes, so this is what announces it.
+  """
   @spec remove_project_member(String.t(), String.t()) :: :ok
   def remove_project_member(project_id, user_id) do
     tracks =
@@ -1145,6 +1163,7 @@ defmodule Ravix.People do
       from(m in ProjectMember, where: m.project_id == ^project_id and m.user_id == ^user_id)
     )
 
+    Ravix.Hub.publish(project_id, :people)
     :ok
   end
 

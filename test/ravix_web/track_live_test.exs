@@ -326,6 +326,38 @@ defmodule RavixWeb.TrackLiveTest do
     assert turn > settings
   end
 
+  test "a streamed transcript event costs the page no queries at all", ctx do
+    render(ctx.view)
+
+    # This is the message that arrives fastest: one per chunk while an agent
+    # is talking, to every open page on the track. It used to re-establish
+    # the whole of who is asking first -- the session, the track access, and
+    # the session again -- six queries a chunk, per viewer.
+    event = %{"id" => 1, "turn_id" => "t1", "kind" => "output", "stream" => "acp", "data" => "hi"}
+
+    assert QueryCount.queries(
+             fn ->
+               send(ctx.view.pid, {:transcript, ctx.track.id, event})
+               render(ctx.view)
+             end,
+             from: ctx.view.pid
+           ) == 0
+
+    # And so does the fifteen-second tick, on the parts that are this page's
+    # own. What it costs now is the reads it exists to make.
+    counted =
+      QueryCount.count(
+        fn ->
+          send(ctx.view.pid, :refresh)
+          render_async(ctx.view)
+        end,
+        from: ctx.view.pid
+      )
+
+    {_result, sources} = counted
+    refute "sessions" in sources
+  end
+
   # What one hub event costs the page, in queries, once it has settled.
   defp hub_queries(ctx, event) do
     QueryCount.queries(

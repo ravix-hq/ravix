@@ -6,6 +6,7 @@ defmodule RavixWeb.WorkspaceLive do
   alias Ravix.Hub.Event
   alias Ravix.Tracks.Names
   alias RavixWeb.Error
+  alias RavixWeb.Live.Guard
 
   @impl true
   def mount(_params, session, socket) do
@@ -99,12 +100,19 @@ defmodule RavixWeb.WorkspaceLive do
     end
   end
 
+  # A URL patch is not a message, so no hook has run for it; this is where a
+  # patch establishes that there is still somebody here. It asks the guard
+  # rather than the database, so a burst of patches -- opening a dialog,
+  # dismissing it, following a track link -- costs one read between them
+  # rather than one each. See `RavixWeb.Live.Guard`.
+  defp validate_session(%{assigns: %{current_user: nil}} = socket), do: socket
+
   defp validate_session(socket) do
-    if socket.assigns.current_user &&
-         is_nil(Accounts.session_user(Ravix.Crypto.sha256(socket.assigns.session_token))) do
-      assign(socket, current_user: nil, projects: [], tracks: %{})
-    else
-      socket
+    hash = Ravix.Crypto.sha256(socket.assigns.session_token)
+
+    case Guard.verify(socket.assigns[:session_guard], hash) do
+      {:ok, guard} -> assign(socket, session_guard: guard)
+      :error -> assign(socket, current_user: nil, projects: [], tracks: %{})
     end
   end
 

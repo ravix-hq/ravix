@@ -3,11 +3,12 @@ defmodule RavixWeb.TrackLive do
   use RavixWeb, :live_view
   on_mount {RavixWeb.Live.Hooks, :require_authenticated_user}
 
-  alias Ravix.{Accounts, Crypto, Hub, People, Previews, PromptQueue, Terminal, Tracks, Vitals}
   alias Ravix.Accounts.Access
+  alias Ravix.{Crypto, Hub, People, Previews, PromptQueue, Terminal, Tracks, Vitals}
   alias Ravix.Hub.Event
   alias Ravix.Tracks.Transcript
   alias RavixWeb.Error
+  alias RavixWeb.Live.Guard
 
   @impl true
   def mount(_params, session, socket) do
@@ -44,7 +45,10 @@ defmodule RavixWeb.TrackLive do
         vitals: nil,
         # The monitor reference for this page's transcript follower, if it has
         # one. See `follow/2`.
-        follower: nil
+        follower: nil,
+        # Whether this person still reaches this track, and when that has to
+        # be asked again. See `guard/2`.
+        track_guard: nil
       )
 
     if authorized?(socket) do
@@ -56,8 +60,9 @@ defmodule RavixWeb.TrackLive do
           max_file_size: 8 * 1024 * 1024
         )
         |> stream(:turns, [])
+        |> assign(track_guard: renew(socket))
         |> attach_hook(:track_event_access, :handle_event, fn _, _, s -> guard(s) end)
-        |> attach_hook(:track_message_access, :handle_info, fn _, s -> guard(s) end)
+        |> attach_hook(:track_message_access, :handle_info, &guard(&2, &1))
         |> attach_hook(:track_async_access, :handle_async, fn _, _, s -> guard(s) end)
 
       if connected?(socket) do
@@ -573,19 +578,47 @@ defmodule RavixWeb.TrackLive do
         &assign(&1, queue: &2)
       )
 
+  # Whether this person still reaches this track: read afresh, every time it
+  # is called. `guard/2` is what decides how often that is.
   defp authorized?(socket) do
     case Access.track_access(socket.assigns.current_user, socket.assigns.track_id) do
       {:ok, %{track: track}} ->
-        track.project_id == socket.assigns.project_id and is_nil(track.closed_at) and
-          not is_nil(Accounts.session_user(socket.assigns.session_hash))
+        track.project_id == socket.assigns.project_id and is_nil(track.closed_at)
 
       _ ->
         false
     end
   end
 
-  defp guard(socket) do
-    if authorized?(socket), do: {:cont, socket}, else: {:halt, redirect(socket, to: "/")}
+  # The answer this page holds between reads. It is re-read when the project's
+  # hub says the people or the tracks changed -- which is every way access to
+  # a track can be taken away, and is the contract `Ravix.Tracks.Follower`
+  # already documents for the transcript stream -- and, as a backstop against
+  # a notice going missing on a partition, when it is old. See
+  # `RavixWeb.Live.Guard`; the session half of the question is that hook's,
+  # and has already run by the time this does.
+  defp guard(socket, message \\ nil) do
+    held = Guard.observe(message, socket.assigns.track_guard, socket.assigns.track_id)
+
+    if Guard.holds?(held) do
+      {:cont, assign(socket, track_guard: held)}
+    else
+      if authorized?(socket) do
+        {:cont, assign(socket, track_guard: renew(socket))}
+      else
+        {:halt, redirect(socket, to: "/")}
+      end
+    end
+  end
+
+  # The track answer runs out no later than the session behind it does.
+  defp renew(socket), do: Guard.new(socket.assigns.session_hash, expiry(socket))
+
+  defp expiry(socket) do
+    case socket.assigns[:session_guard] do
+      %Guard{expires_at: %DateTime{} = at} -> at
+      _ -> nil
+    end
   end
 
   defp result(socket, :ok, fun), do: fun.(socket, nil)
