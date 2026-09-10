@@ -2,6 +2,23 @@ import { test, expect } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 
 async function accessible(page) {
+  // Settle first. Axe computes contrast against *composited* colour, so an
+  // element measured while something fades is measured against a blend that
+  // never appears on screen: opening a dialog runs `.scrim`'s 120ms fade, and
+  // a check landing inside that window failed every element behind it at once,
+  // against a background matching no declared theme.
+  //
+  // Only finite animations are waited for. The pulsing status dots and the
+  // spinner run `infinite`, and their `finished` promise never resolves.
+  await page.evaluate(() =>
+    Promise.all(
+      document
+        .getAnimations()
+        .filter((a) => a.effect?.getTiming?.().iterations !== Infinity)
+        .map((a) => a.finished.catch(() => {})),
+    ),
+  );
+
   const result = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze();
   expect(result.violations).toEqual([]);
 }
