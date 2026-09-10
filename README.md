@@ -174,7 +174,7 @@ safe upload, escaped markdown, and preview-origin response functions.
 | Browser hooks and shared stylesheet | `assets/` |
 | Ecto migrations | `priv/repo/migrations/` |
 | ExUnit tests and HTTP/socket fixtures | `test/` |
-| Local TypeScript service fixtures | `mock/`, with their contracts in `shared/` |
+| Local TypeScript service fixtures | `mock/`, with the four values it copies from Elixir in `shared/contract.ts` |
 | Architecture decisions | `decisions/` |
 
 The Bun server, React SPA, runner, and browser ACP parser were removed in the

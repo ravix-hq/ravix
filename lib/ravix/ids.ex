@@ -8,7 +8,9 @@ defmodule Ravix.Ids do
   inverse: the server derives a track's identity from Fountain's own record
   rather than trusting a row in its database to still be right.
 
-  A port of `shared/ids.ts`, function for function.
+  This module owns those names. `shared/contract.ts` holds the slice of them
+  that `mock/server.ts` needs, because the mock runs under bun and cannot call
+  Elixir; `test/ravix/mock_contract_test.exs` fails if the copy drifts.
   """
 
   @typedoc "What a track's `channel_id` says about it."
@@ -70,12 +72,21 @@ defmodule Ravix.Ids do
   def track_channel(project_id, track_slug, rev),
     do: "#{channel_prefix()}:#{project_id}:#{track_slug}@r#{rev}"
 
+  @doc """
+  The shape of a track's `channel_id`.
+
+  Named rather than inlined in `parse_channel/1` so the mock's copy of it can
+  be held to this one by test.
+  """
+  @spec channel_pattern() :: Regex.t()
+  def channel_pattern, do: ~r/^ravix:([^:@]+):([^:@]+)@r(\d+)$/
+
   @doc "The inverse. Nil for anything that is not one of ours."
   @spec parse_channel(String.t() | nil) :: parsed_channel() | nil
   def parse_channel(nil), do: nil
 
   def parse_channel(channel_id) when is_binary(channel_id) do
-    case Regex.run(~r/^ravix:([^:@]+):([^:@]+)@r(\d+)$/, channel_id) do
+    case Regex.run(channel_pattern(), channel_id) do
       [_, project_id, slug, rev] ->
         %{project_id: project_id, track_slug: slug, rev: String.to_integer(rev)}
 
