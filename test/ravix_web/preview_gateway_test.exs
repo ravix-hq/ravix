@@ -415,7 +415,16 @@ defmodule RavixWeb.PreviewGatewayTest do
     upstream = f.app_port
     Store.update_row(f.t1, &%{&1 | port: upstream})
     # The upstream is per test; stopping it drops every socket it holds.
-    :ok = stop_supervised({:preview_gateway_upstream, String.replace(f.row.hostname, "t-", "")})
+    # `stop_supervised/1` answers `{:error, :not_found}` when the child is
+    # already on its way down, which it intermittently is by the time this
+    # line runs -- and matching only `:ok` turned that into a MatchError
+    # rather than the outcome this test is actually about, which is the next
+    # assertion.
+    assert stop_supervised({:preview_gateway_upstream, String.replace(f.row.hostname, "t-", "")}) in [
+             :ok,
+             {:error, :not_found}
+           ]
+
     # Bandit's shutdown sends the app's sockets a 1000, relayed as it came.
     assert {:close, 1000, _reason, _ws} = Client.ws_await_close(ws)
   end

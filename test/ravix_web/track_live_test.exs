@@ -217,6 +217,32 @@ defmodule RavixWeb.TrackLiveTest do
     ctx.view |> form("#preview-config-form") |> render_submit(%{clear: "true"})
   end
 
+  test "the queue panel renders what the context really returns, not a stub of it", ctx do
+    # Every other queue test stubs `PromptQueue.list/2`, which is how a
+    # template bug reached production once: the stub answered with a plain
+    # map, the template read it with `item[:error]`, and the real value is a
+    # struct with no `Access` behaviour. Nothing here is stubbed, so the row
+    # is the one `present/3` actually builds.
+    {:ok, _item} =
+      PromptQueue.Store.enqueue(
+        ctx.track.id,
+        ctx.user.id,
+        ctx.user.login,
+        "browser-smoke-request-id-0001",
+        %{prompt: "Waiting on the machine", images: []}
+      )
+
+    send(ctx.view.pid, {:hub, Event.new(:queue, ctx.project.id, track_id: ctx.track.id)})
+    html = render_async(ctx.view)
+
+    assert html =~ "Waiting on the machine"
+    assert html =~ "workspace-queue"
+    # The chip is the row's status, and the control is its `can_cancel`, both
+    # read off the struct by field.
+    assert has_element?(ctx.view, ".workspace-queue .chip")
+    assert has_element?(ctx.view, "button[phx-click=queue][phx-value-action=cancel]")
+  end
+
   test "queue cancellation and retry preserve the selected prompt id", ctx do
     stub(PromptQueue, :list, fn _, _ ->
       {:ok,
