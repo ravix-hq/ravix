@@ -8,15 +8,41 @@ adr: "0003"
 adr_status: "Accepted"
 date: 2026-09-09
 generated: { by: claude-opus/5, at: 2026-09-09T21:55:00-04:00 }
-verified: { by: claude-opus/5, at: 2026-09-09T21:55:00-04:00 }
+verified: { by: claude-opus/5, at: 2026-09-10T03:45:00-04:00 }
 ---
 
 # 0003 — Ravix runs on more than one instance
 
-**Status:** Accepted. Everything described here is built. The one line not
-verified against Render itself is the `highAvailability` field's shape in
-`render.yaml`, which is flagged in that file and settles on the first Blueprint
-sync.
+**Status:** Accepted, built, and **verified on the production deployment**
+(2026-09-10, https://app.ravix.sh). What that means, since "verified" in an ADR
+is usually a claim about code:
+
+  * Two instances formed one cluster. `Node.list/0` returned the sibling and
+    both nodes were named `ravix@<private IP>`, which is only true if
+    `rel/env.sh.eex`, `RENDER_DISCOVERY_SERVICE` and a shared `RELEASE_COOKIE`
+    were all right at once.
+  * One follower per track and one holder of the reconciler singleton, read from
+    the log rather than a shell — the production service has shell access
+    closed, which is why membership is logged at all (#41).
+  * Two browsers on one track rendered each transcript event once. That is the
+    defect this decision exists to prevent, and it had rested on peer-node tests
+    until then.
+  * A rolling deploy served twelve consecutive `/readyz` probes at 200 with no
+    failed request, and a session open through the swap kept its transcript and
+    its unsent composer text.
+  * The name merge described under *Consequences* happened, and was survivable.
+    A deploy's log shows instances joining, `singleton previews.reconciler
+    stood down to another instance`, and the instance carrying on — which is the
+    whole point of `random_notify_name/3`. With the default resolver that line
+    would instead have been a killed supervised child, a restart, and another
+    kill.
+
+The `highAvailability` field settled the other way round from what was first
+recorded here: it **works**, and applied on the first sync. It was removed in a
+commit that mistook "no HA shown on the service's page" for "the key was
+ignored" — the setting lives on the database's page — and restored once the
+standby was confirmed. `render.yaml` declares it, which is what keeps a later
+sync from switching it off.
 
 ## Context
 
