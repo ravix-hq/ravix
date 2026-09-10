@@ -1252,6 +1252,9 @@ input.crumb-name { width: 30ch; }
 .landing-close .landing-button { flex: none; }
 .landing-footer { display: flex; justify-content: space-between; gap: 20px; padding: 24px 0 36px; font-size: 12px; color: var(--dimmer); }
 .signin-back { display: inline-block; margin-bottom: 16px; font-size: 12px; color: var(--dim); }
+.invite { max-width: 46ch; padding: 96px 0 64px; }
+.invite h1 { font-size: clamp(28px, 3.4vw, 38px); }
+.invite form { display: contents; }
 @media (max-width: 900px) {
   .landing-hero { grid-template-columns: 1fr; gap: 36px; padding: 48px 0; }
   .landing-example { max-width: 520px; width: 100%; }

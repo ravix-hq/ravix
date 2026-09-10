@@ -260,22 +260,23 @@ defmodule Ravix.Accounts.AuthTest do
         assert {:ok, %{redirect: "/"}} = Auth.callback(params(mine), mine.secret)
       end
 
-      test "a join trip claims the link that started it, and lands where it points" do
+      test "a join trip lands back on its invite rather than through it" do
         github_signs_in()
         stub(Ravix.People, :claim_invites, fn _, _ -> %{projects: [], tracks: []} end)
-        stub(Ravix.People, :claim_link, fn _user_id, "link-token" -> {:ok, "/p/p/t/t"} end)
-        mine = attempt("join", "link-token")
-        assert {:ok, %{redirect: "/p/p/t/t"}} = Auth.callback(params(mine), mine.secret)
 
-        stub(Ravix.People, :claim_link, fn _user_id, _token -> :error end)
-        mine = attempt("join", "gone")
-        assert {:ok, %{redirect: "/?error=bad_invite"}} = Auth.callback(params(mine), mine.secret)
+        # Signing in through a link used to claim it on the way past, which made
+        # signing in and joining one act nobody was asked about separately. The
+        # membership is written by the invite page's POST and nowhere else (#16).
+        reject(&Ravix.People.claim_link/2)
+
+        mine = attempt("join", "link-token")
+        assert {:ok, %{redirect: "/j/link-token"}} = Auth.callback(params(mine), mine.secret)
       end
     else
-      test "a join trip without Ravix.People still signs in and reports the bad invite" do
+      test "a join trip without Ravix.People still signs in and lands on the invite" do
         github_signs_in()
         mine = attempt("join", "link-token")
-        assert {:ok, %{redirect: "/?error=bad_invite"}} = Auth.callback(params(mine), mine.secret)
+        assert {:ok, %{redirect: "/j/link-token"}} = Auth.callback(params(mine), mine.secret)
       end
     end
   end

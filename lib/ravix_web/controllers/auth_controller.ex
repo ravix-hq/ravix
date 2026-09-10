@@ -1,13 +1,14 @@
 defmodule RavixWeb.AuthController do
   @moduledoc """
-  The HTTP around signing in: the five routes a browser follows rather than
-  a page renders.
+  The HTTP around signing in: the routes a browser follows rather than a page
+  renders, and the one page it renders.
 
       GET  /auth/github          begin sign-in; redirect to GitHub
       GET  /api/auth/callback    GitHub coming back, from either round trip
       GET  /api/auth/install     go and grant repository access
       POST /auth/signout
-      GET  /j/:token             follow an invite link
+      GET  /j/:token             what an invite link opens
+      POST /j/:token             take it
 
   `/api/auth/callback` keeps its exact path because it is the callback URL
   registered on the GitHub App. `Ravix.Accounts.Auth` decides what each
@@ -107,13 +108,22 @@ defmodule RavixWeb.AuthController do
   end
 
   @doc """
-  `GET /j/:token`: follow an invite link, of either kind.
+  `GET /j/:token`: ask whether to follow an invite link, of either kind.
 
-  Somebody signed in claims it now and lands on what it opened. Somebody who
-  is not goes to GitHub first with the token parked as the attempt's
-  redirect, and the callback claims it on the sign-in that proves who they
-  are (`Ravix.Accounts.Auth.callback/2`). A link that is gone or was never
-  real lands on `/?error=bad_invite`.
+  Somebody signed in is shown what the link opens and joins it with the form's
+  POST. Somebody who is not goes to GitHub first with the token parked as the
+  attempt's redirect, and comes back to this same page
+  (`Ravix.Accounts.Auth.callback/2`). A link that is gone or was never real
+  lands on `/?error=bad_invite`.
+
+  **This route makes no change of its own, and must not.** It used to claim the
+  membership here: `protect_from_forgery` covers only non-GET requests and
+  `SameSite=Lax` permits top-level navigation, so any page a signed-in person
+  visited could send them to an invite link and have it taken silently (#16).
+  What an attacker got was a project of their own composition sitting in
+  somebody else's rail -- an in-app phishing surface on a trusted origin --
+  rather than access to anything of the victim's, which is why this was rated
+  low and fixed rather than embargoed.
   """
   @spec join(Plug.Conn.t(), map()) :: Plug.Conn.t()
   def join(conn, %{"token" => token}) do
@@ -129,6 +139,28 @@ defmodule RavixWeb.AuthController do
           {:error, reason} -> Error.send_json(conn, reason)
         end
 
+      _user ->
+        case link_target(token) do
+          {:ok, target} -> render(conn, :confirm, target: target, token: token)
+          :error -> conn |> put_status(:see_other) |> redirect(to: "/?error=bad_invite")
+        end
+    end
+  end
+
+  @doc """
+  `POST /j/:token`: take the invite.
+
+  The membership is written here and nowhere else, behind
+  `protect_from_forgery`. A signed-out post is somebody whose session went away
+  while the page was open; send them round the sign-in trip rather than losing
+  the link.
+  """
+  @spec claim(Plug.Conn.t(), map()) :: Plug.Conn.t()
+  def claim(conn, %{"token" => token}) do
+    case conn.assigns[:current_user] do
+      nil ->
+        join(conn, %{"token" => token})
+
       user ->
         to =
           case claim_link(user.id, token) do
@@ -141,12 +173,18 @@ defmodule RavixWeb.AuthController do
   end
 
   # `Ravix.People` is built alongside this controller; named through an
-  # attribute so this compiles without it, in which case no link can be claimed.
+  # attribute so this compiles without it, in which case no link can be read
+  # and none can be claimed.
   defp claim_link(user_id, token) do
-    if Code.ensure_loaded?(@people) and function_exported?(@people, :claim_link, 2),
-      do: @people.claim_link(user_id, token),
-      else: :error
+    if people_exports?(:claim_link, 2), do: @people.claim_link(user_id, token), else: :error
   end
+
+  defp link_target(token) do
+    if people_exports?(:link_target, 1), do: @people.link_target(token), else: :error
+  end
+
+  defp people_exports?(fun, arity),
+    do: Code.ensure_loaded?(@people) and function_exported?(@people, fun, arity)
 
   # ── the attempt cookie ─────────────────────────────────────────────
 

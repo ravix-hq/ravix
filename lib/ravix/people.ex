@@ -678,6 +678,82 @@ defmodule Ravix.People do
     end
   end
 
+  @typedoc "What a link opens, for the page that asks before claiming it."
+  @type link_target :: %{
+          kind: :project | :track,
+          project: String.t(),
+          track: String.t() | nil,
+          invited_by: String.t() | nil
+        }
+
+  @doc """
+  What a link opens, without claiming it.
+
+  `claim_link/2` is this lookup followed by a write. This is the half a
+  confirmation page needs, so that following an invite link is a question
+  rather than an act: `GET /j/:token` used to add the membership, and a GET
+  carries no CSRF token and is reachable by any page that can navigate a
+  signed-in browser (#16).
+
+  `:error` for a link that is gone, expired, closed or was never real -- the
+  same answer `claim_link/2` gives for each, so what the page says cannot tell
+  a bad token from a good one.
+
+  `invited_by` is whoever minted the link, by login. Worth naming: an invitation
+  is a claim about who is asking, and the one piece of it a stranger cannot
+  forge is the account that actually holds the project.
+  """
+  @spec link_target(String.t()) :: {:ok, link_target()} | :error
+  def link_target(token) do
+    hash = Ravix.Crypto.sha256(token)
+
+    case track_for_link(hash) do
+      %Track{} = track -> track_target(track, hash)
+      nil -> project_target(project_for_link(hash), hash)
+    end
+  end
+
+  defp track_target(%Track{} = track, hash) do
+    case Repo.get(Project, track.project_id) do
+      %Project{archived_at: nil} = project ->
+        {:ok,
+         %{
+           kind: :track,
+           project: project.name,
+           track: track.title,
+           invited_by: minted_by(TrackLink, :track_id, track.id, hash)
+         }}
+
+      _ ->
+        :error
+    end
+  end
+
+  defp project_target(nil, _hash), do: :error
+
+  defp project_target(%Project{} = project, hash) do
+    {:ok,
+     %{
+       kind: :project,
+       project: project.name,
+       track: nil,
+       invited_by: minted_by(ProjectLink, :project_id, project.id, hash)
+     }}
+  end
+
+  # The row is re-read by hash as well as by id: a link that was replaced
+  # between the lookup above and this one belongs to whoever minted the
+  # *current* link, and naming the previous sender would be a small lie on a
+  # page whose whole job is saying who is asking.
+  defp minted_by(schema, key, id, hash) do
+    with %{created_by: user_id} <- Repo.get_by(schema, [{key, id}, {:token_hash, hash}]),
+         %User{login: login} <- Repo.get(User, user_id) do
+      login
+    else
+      _ -> nil
+    end
+  end
+
   defp redeem_track(user_id, %Track{} = track) do
     case Repo.get(Project, track.project_id) do
       %Project{archived_at: nil} = project ->

@@ -929,6 +929,33 @@ defmodule Ravix.PeopleTest do
       assert logins(People.members_of(track_id)) == ["cy"]
     end
 
+    test "link_target/1 says what a link opens without opening it", ctx do
+      %{id: track_id} = ctx.shared
+      assert {:ok, %{url: url}} = People.mint_link(ctx.owner, track_id)
+      token = url |> String.split("/j/") |> List.last()
+
+      assert {:ok, target} = People.link_target(token)
+      assert target.kind == :track
+      assert target.track == Repo.get!(Ravix.Tracks.Track, track_id).title
+      assert target.project == ctx.project.name
+      assert target.invited_by == ctx.owner.login
+
+      # The whole point: reading a link is not taking it (#16).
+      refute People.member?(track_id, ctx.other.id)
+    end
+
+    test "link_target/1 refuses a link that is gone, and says nothing about which", ctx do
+      assert {:ok, %{url: url}} = People.mint_link(ctx.owner, ctx.shared.id)
+      token = url |> String.split("/j/") |> List.last()
+      assert {:ok, _} = People.link_target(token)
+
+      # Minting again *is* the revoke, so the previous token stops describing
+      # anything -- the same answer a token that was never real gets.
+      assert {:ok, _} = People.mint_link(ctx.owner, ctx.shared.id)
+      assert People.link_target(token) == :error
+      assert People.link_target("never-real") == :error
+    end
+
     test "somebody already in the whole project gets no track row from a link", ctx do
       People.add_project_member(ctx.project.id, ctx.guest.id, "owner")
       assert {:ok, %{url: url}} = People.mint_link(ctx.owner, ctx.shared.id)
@@ -994,6 +1021,24 @@ defmodule Ravix.PeopleTest do
 
       assert :ok = People.drop_project_link(ctx.owner, ctx.project.id)
       assert {:ok, nil} = People.project_link(ctx.owner, ctx.project.id)
+    end
+
+    test "link_target/1 on a project link names the project and not a track", ctx do
+      assert {:ok, %{url: url}} = People.mint_project_link(ctx.owner, ctx.project.id)
+      token = url |> String.split("/j/") |> List.last()
+
+      assert {:ok, target} = People.link_target(token)
+      assert target.kind == :project
+      assert target.project == ctx.project.name
+      assert target.track == nil
+      assert target.invited_by == ctx.owner.login
+
+      refute People.project_member?(ctx.project.id, ctx.other.id)
+
+      # An archived project has nothing to join, and says so the same way a
+      # token that was never real does.
+      archive_project(ctx.project)
+      assert People.link_target(token) == :error
     end
 
     test "a project link promotes whoever opens it and lands them on the project", ctx do

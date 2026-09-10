@@ -55,8 +55,11 @@ defmodule RavixWeb.Router do
     get "/preview/:track_id", PreviewController, :open
 
     # An invite link, of either kind: a browser holding one has no idea
-    # which it is and should not need to.
+    # which it is and should not need to. The GET only says what the link
+    # opens; the POST is what joins, so that `protect_from_forgery` covers it
+    # and a link cannot be taken by navigating somebody to it (#16).
     get "/j/:token", AuthController, :join
+    post "/j/:token", AuthController, :claim
 
     # URL selection is shared by the rail and the nested track LiveView.
     live_session :workspace, on_mount: [{RavixWeb.Live.Hooks, :fetch_current_user}] do

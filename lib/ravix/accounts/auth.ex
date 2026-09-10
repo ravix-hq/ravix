@@ -141,8 +141,10 @@ defmodule Ravix.Accounts.Auth do
 
   On success: the user is upserted with the token encrypted, invitations
   waiting on their GitHub id become memberships (`Ravix.People.claim_invites/2`),
-  the invite link that started a `join` trip is claimed, and the redirect is
-  where that all points.
+  and the redirect is where that points. A `join` trip lands back on its invite
+  page rather than through it -- an invitation addressed to your GitHub id is
+  one somebody sent *you*, but a link is a credential whoever holds it can be
+  navigated into, so taking it stays a separate, explicit POST (#16).
   """
   @spec callback(map(), String.t() | nil) :: outcome()
   def callback(params, browser_secret) do
@@ -224,12 +226,13 @@ defmodule Ravix.Accounts.Auth do
     end
   end
 
-  defp landing(%{kind: "join", redirect: link}, _joined, user_id, _installation_id)
+  # Back to the invite, not into it. Signing in through a link used to claim it
+  # on the way past, which made the sign-in and the joining one act that nobody
+  # was asked about separately; now both routes end on the same page, and the
+  # membership is only ever written by its POST (#16).
+  defp landing(%{kind: "join", redirect: link}, _joined, _user_id, _installation_id)
        when is_binary(link) do
-    case claim_link(user_id, link) do
-      {:ok, path} -> path
-      _ -> "/?error=bad_invite"
-    end
+    "/j/" <> link
   end
 
   # One invitation is worth landing on; several is a decision, so the rail is
@@ -254,12 +257,6 @@ defmodule Ravix.Accounts.Auth do
     if people_exports?(:claim_invites, 2),
       do: @people.claim_invites(user_id, github_id),
       else: %{tracks: [], projects: []}
-  end
-
-  defp claim_link(user_id, token) do
-    if people_exports?(:claim_link, 2),
-      do: @people.claim_link(user_id, token),
-      else: :error
   end
 
   defp people_exports?(fun, arity),

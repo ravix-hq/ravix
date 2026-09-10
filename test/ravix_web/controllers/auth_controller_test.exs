@@ -260,13 +260,48 @@ defmodule RavixWeb.AuthControllerTest do
     end
 
     if Code.ensure_loaded?(Ravix.People) do
-      test "somebody signed in claims it now and lands on what it opened", %{conn: conn} do
-        %{conn: conn, user: user} = register_and_log_in_user(%{conn: conn})
-        user_id = user.id
-        stub(Ravix.People, :claim_link, fn ^user_id, "link-token" -> {:ok, "/p/p/t/t"} end)
-        assert redirected_to(get(conn, "/j/link-token"), 303) == "/p/p/t/t"
+      test "somebody signed in is asked, and the GET claims nothing", %{conn: conn} do
+        %{conn: conn} = register_and_log_in_user(%{conn: conn})
 
-        stub(Ravix.People, :claim_link, fn ^user_id, "gone" -> :error end)
+        stub(Ravix.People, :link_target, fn "link-token" ->
+          {:ok, %{kind: :track, project: "acme", track: "Fix the bug", invited_by: "ana"}}
+        end)
+
+        # The regression this route exists to prevent (#16). A GET carries no
+        # CSRF token and `SameSite=Lax` permits top-level navigation, so any
+        # page a signed-in person visits could otherwise take an invite on
+        # their behalf by sending them here.
+        reject(&Ravix.People.claim_link/2)
+
+        html = html_response(get(conn, "/j/link-token"), 200)
+
+        # It says what is being joined, and who is asking.
+        assert html =~ "Fix the bug"
+        assert html =~ "acme"
+        assert html =~ "@ana"
+
+        # And the only thing that joins is a form that posts.
+        assert html =~ ~s(method="post")
+        assert html =~ ~s(action="/j/link-token")
+        assert html =~ "_csrf_token"
+      end
+
+      test "a project link says so, without a track", %{conn: conn} do
+        %{conn: conn} = register_and_log_in_user(%{conn: conn})
+
+        stub(Ravix.People, :link_target, fn "link-token" ->
+          {:ok, %{kind: :project, project: "acme", track: nil, invited_by: nil}}
+        end)
+
+        html = html_response(get(conn, "/j/link-token"), 200)
+        assert html =~ "Join a project"
+        assert html =~ "acme"
+        refute html =~ "Invited by"
+      end
+
+      test "a link that is gone lands on the error", %{conn: conn} do
+        %{conn: conn} = register_and_log_in_user(%{conn: conn})
+        stub(Ravix.People, :link_target, fn "gone" -> :error end)
         assert redirected_to(get(conn, "/j/gone"), 303) == "/?error=bad_invite"
       end
     else
@@ -276,6 +311,40 @@ defmodule RavixWeb.AuthControllerTest do
         %{conn: conn} = register_and_log_in_user(%{conn: conn})
         assert redirected_to(get(conn, "/j/link-token"), 303) == "/?error=bad_invite"
       end
+    end
+  end
+
+  # ── POST /j/:token ───────────────────────────────────────────────────
+
+  describe "POST /j/:token" do
+    if Code.ensure_loaded?(Ravix.People) do
+      test "takes the invite and lands on what it opened", %{conn: conn} do
+        %{conn: conn, user: user} = register_and_log_in_user(%{conn: conn})
+        user_id = user.id
+        stub(Ravix.People, :claim_link, fn ^user_id, "link-token" -> {:ok, "/p/p/t/t"} end)
+        assert redirected_to(post(conn, "/j/link-token"), 303) == "/p/p/t/t"
+      end
+
+      test "a link that went away between the page and the button says so", %{conn: conn} do
+        %{conn: conn, user: user} = register_and_log_in_user(%{conn: conn})
+        user_id = user.id
+        stub(Ravix.People, :claim_link, fn ^user_id, "gone" -> :error end)
+        assert redirected_to(post(conn, "/j/gone"), 303) == "/?error=bad_invite"
+      end
+    end
+
+    test "a session that went away while the page was open keeps the link", %{conn: conn} do
+      # Round the sign-in trip with the token parked, rather than losing it and
+      # leaving somebody on an error page holding a link that still works.
+      response = post(conn, "/j/link-token")
+      location = redirected_to(response, 303)
+      assert String.starts_with?(location, "https://github.test/login/oauth/authorize?")
+
+      state = state_of(location)
+      assert %{value: secret} = response.resp_cookies["ravix_oauth_" <> state]
+
+      assert %{kind: "join", redirect: "link-token"} =
+               Accounts.take_state(Crypto.sha256("#{state}:#{secret}"))
     end
   end
 
