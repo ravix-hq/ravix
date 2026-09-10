@@ -101,6 +101,35 @@ defmodule RavixWeb.Live.PeopleDialog do
   defp leave_label(:track), do: "Leave"
   defp leave_label(:project), do: "Leave project"
 
+  @doc """
+  Why this person is in this list, when that is not what the dialog is about.
+
+  A track's list holds people who were never named on the track: its owner,
+  and anybody let into the whole project. Without this, the owner reads a
+  name they do not remember inviting to this branch and has no way to tell
+  where it came from -- which is alarming, and is the thing `via` was being
+  computed for long before anything displayed it.
+
+  The project's own dialog says nothing for its own members, because there
+  the answer is "they are project members" and the dialog already said so.
+  """
+  @spec badge(People.person(), :track | :project) :: String.t() | nil
+  def badge(%{via: :owner}, _scope), do: "owner"
+  def badge(%{via: :pending}, _scope), do: "invited, not signed in yet"
+  def badge(%{via: :project}, :track), do: "in the whole project"
+  def badge(_person, _scope), do: nil
+
+  # A control that cannot work is worse than no control. The owner holds the
+  # project and cannot be removed from it or from a track on it; somebody
+  # whose access comes from the project cannot be taken off one of its tracks
+  # -- `Ravix.People.remove/3` refuses both, and the badge beside them now
+  # says where to go instead.
+  defp removable?(%{via: :owner}, _scope, _owner?, _user), do: false
+  defp removable?(%{via: :project}, :track, _owner?, _user), do: false
+
+  defp removable?(person, _scope, owner?, user),
+    do: owner? or person.login == user.login
+
   @impl true
   def render(assigns) do
     ~H"""
@@ -111,8 +140,9 @@ defmodule RavixWeb.Live.PeopleDialog do
         </p>
         <div :for={person <- @people} class="workspace-track">
           <span>@{person.login}</span>
+          <small :if={badge(person, @scope)}>{badge(person, @scope)}</small>
           <button
-            :if={@owner || person.login == @current_user.login}
+            :if={removable?(person, @scope, @owner, @current_user)}
             class="ghost"
             phx-click="remove-person"
             phx-value-login={person.login}

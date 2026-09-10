@@ -78,6 +78,21 @@ defmodule Ravix.People do
   alias Ravix.Projects.{Project, ProjectLink}
   alias Ravix.Tracks.{Track, TrackLink}
 
+  @typedoc """
+  Somebody in a people list, as a page reads it.
+
+  The shape is `Ravix.People.Store`'s, named again here because a page may
+  not mention a store -- `Ravix.Credo.Architecture` refuses it, and a
+  typespec is a mention.
+  """
+  @type person :: Store.person()
+
+  @typedoc "How this person comes to be in the list; see `Ravix.People.Store.via/0`."
+  @type via :: Store.via()
+
+  @typedoc "A GitHub account the invite box suggests; see `Ravix.People.Store.profile/0`."
+  @type profile :: Store.profile()
+
   @typedoc "The `InviteLink` of `shared/api.ts`. `url` is only ever present at the moment of minting."
   @type invite_link :: %{
           url: String.t() | nil,
@@ -128,7 +143,7 @@ defmodule Ravix.People do
   already publishes about a person: login, display name, avatar. Never an
   email, and never anything about what they have here.
   """
-  @spec search(User.t(), String.t() | nil) :: [Store.person()]
+  @spec search(User.t(), String.t() | nil) :: [profile()]
   def search(%User{} = user, q) do
     q = q |> to_string() |> String.trim()
 

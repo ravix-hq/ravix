@@ -88,6 +88,73 @@ defmodule RavixWeb.Live.PeopleDialogTest do
     end
   end
 
+  describe "the list says how each person got there" do
+    test "a project member on a track's dialog is marked, and cannot be removed there", ctx do
+      wide = insert_user()
+      insert_project_member(ctx.project, wide)
+
+      html =
+        ctx.conn |> track_page(ctx.owner, ctx.project, ctx.track) |> open_people() |> render()
+
+      assert html =~ "@#{wide.login}"
+      assert html =~ "in the whole project"
+
+      # `Ravix.People.remove/3` refuses this with "…is in this whole project,
+      # not just this track". A button whose only outcome is that sentence is
+      # worse than no button: the badge says the same thing without a click.
+      refute html =~ ~s(phx-value-login="#{wide.login}")
+    end
+
+    test "somebody named on the track itself is not marked, and can be removed", ctx do
+      narrow = insert_user()
+      insert_track_member(ctx.track, narrow)
+
+      html =
+        ctx.conn |> track_page(ctx.owner, ctx.project, ctx.track) |> open_people() |> render()
+
+      assert html =~ ~s(phx-value-login="#{narrow.login}")
+      refute html =~ "in the whole project"
+    end
+
+    test "the owner is named as such and is offered nothing", ctx do
+      html =
+        ctx.conn |> track_page(ctx.owner, ctx.project, ctx.track) |> open_people() |> render()
+
+      assert html =~ "@#{ctx.owner.login}"
+      assert html =~ "owner"
+
+      # Leaving is not something the owner of the project can do to their own
+      # track. The control used to be offered and silently did nothing.
+      refute html =~ ~s(phx-value-login="#{ctx.owner.login}")
+    end
+
+    test "an invitation nobody has taken up says so", ctx do
+      insert_track_invite(ctx.track, github_id: "9001", login: "dana")
+
+      html =
+        ctx.conn |> track_page(ctx.owner, ctx.project, ctx.track) |> open_people() |> render()
+
+      assert html =~ "@dana"
+      assert html =~ "invited, not signed in yet"
+      # Withdrawing an invitation is still the owner's to do.
+      assert html =~ ~s(phx-value-login="dana")
+    end
+
+    test "the project's own dialog does not label its own members", ctx do
+      member = insert_user()
+      insert_project_member(ctx.project, member)
+
+      {:ok, view, _} = live(log_in_user(ctx.conn, ctx.owner), "/p/#{ctx.project.id}")
+      html = view |> open_people() |> render()
+
+      assert html =~ "@#{member.login}"
+      # Here "in the whole project" is what the dialog is about, so saying it
+      # per row is noise.
+      refute html =~ "in the whole project"
+      assert html =~ ~s(phx-value-login="#{member.login}")
+    end
+  end
+
   describe "who is offered the controls" do
     test "the owner may invite and mint a link", ctx do
       {:ok, view, _} = live(log_in_user(ctx.conn, ctx.owner), "/p/#{ctx.project.id}")
