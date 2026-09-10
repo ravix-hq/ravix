@@ -414,7 +414,9 @@ defmodule RavixWeb.CoreComponents do
             |> Enum.map_join(" ", &String.capitalize/1)
           }
         >
-          <span class="theme-swatch" data-theme={theme}></span><span>{String.replace(theme, "-", " ") |> String.split() |> Enum.map_join(" ", &String.capitalize/1)}</span><span
+          <span class="theme-swatch" data-theme={theme}></span><span>{String.replace(theme, "-", " ")
+          |> String.split()
+          |> Enum.map_join(" ", &String.capitalize/1)}</span><span
             class="check"
             data-theme-check
             aria-hidden="true"

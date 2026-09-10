@@ -203,7 +203,8 @@
                 >
                   <.icon name="picture" size={17} />
                 </button>
-                <span class="composer-model mono">{@project.model}</span><span class="send-hint"><kbd>Enter</kbd> to send</span><span class="spacer"></span>
+                <span class="composer-model mono">{@project.model}</span><span class="send-hint"><kbd>Enter</kbd>
+                to send</span><span class="spacer"></span>
                 <button
                   class="primary"
                   aria-label="Send"
@@ -354,8 +355,7 @@
               title="Track preview"
               class="workspace-preview"
               sandbox="allow-scripts allow-forms allow-same-origin allow-popups allow-downloads"
-            >
-            </iframe>
+            ></iframe>
             <pre :if={@preview[:logs]}>{@preview.logs}</pre>
             <details>
               <summary>Preview configuration</summary>
