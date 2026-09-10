@@ -38,7 +38,7 @@ defmodule Ravix.PromptQueue.Server do
   alias Ravix.PromptQueue
   alias Ravix.PromptQueue.Item
   alias Ravix.Repo
-  alias Ravix.Tracks.{Track, TrackMember}
+  alias Ravix.Tracks.{Track, TrackMember, Transcript}
 
   import Ecto.Query, only: [from: 2]
 
@@ -47,6 +47,11 @@ defmodule Ravix.PromptQueue.Server do
   @delivery_timeout 5 * 60_000
 
   @ended "This conversation has ended. Start a new track and copy this prompt there."
+  # For a conversation that failed before it ever ran a turn. `@ended` tells
+  # somebody to start a new track and copy the prompt there, which is right for
+  # a conversation that finished and wrong -- circular, even -- for one whose
+  # machine could not be built: the new track fails the same way (#35).
+  @never_started "The machine for this track could not be started, so the prompt was not sent."
   @waiting "Waiting for the machine connection. Your prompt is saved and will retry automatically."
   @refused "Delivery was refused. Check the machine and account settings, then retry this prompt."
   @unconfirmed "Delivery could not be confirmed. Check the transcript before sending this again."
@@ -144,7 +149,7 @@ defmodule Ravix.PromptQueue.Server do
     case readiness(client, track, project) do
       :ready -> claim_and_send(client, row, track, project)
       :busy -> :waiting
-      :ended -> PromptQueue.set_status(row.id, :failed, @ended)
+      {:ended, message} -> PromptQueue.set_status(row.id, :failed, message)
       :unavailable -> hold(row)
     end
   end
@@ -153,12 +158,59 @@ defmodule Ravix.PromptQueue.Server do
   # that failed can safely retry on the next sweep.
   defp readiness(client, track, project) do
     case Fountain.get_conversation(client, track.conversation_id) do
-      {:ok, %{"status" => status}} when status in ["running", "pending"] -> :busy
-      {:ok, %{"status" => status}} when status in ["failed", "terminated"] -> :ended
-      {:ok, _conversation} -> machine_readiness(client, project)
-      {:error, _reason} -> :unavailable
+      {:ok, %{"status" => status}} when status in ["running", "pending"] ->
+        :busy
+
+      {:ok, %{"status" => status} = conversation} when status in ["failed", "terminated"] ->
+        {:ended, ended_message(client, track, conversation)}
+
+      {:ok, _conversation} ->
+        machine_readiness(client, project)
+
+      {:error, _reason} ->
+        :unavailable
     end
   end
+
+  # Why it ended, in Fountain's own words when it has any.
+  #
+  # A conversation that never ran a turn did not "end" in any sense a person
+  # would recognise -- it failed to start, and the reason is on the stage event
+  # that failed. Worth one extra read on a path that is already terminal: the
+  # deployment that found this was refused by Sprites for want of a credit card,
+  # and said so, and none of it reached the screen (#35).
+  defp ended_message(client, track, conversation) do
+    # Only a turn count we were actually given. A missing one means Fountain did
+    # not say, which is not the same as zero, and guessing "never started" for a
+    # conversation that may have run for an hour would be its own wrong message.
+    if conversation["turn_count"] == 0 do
+      case failure_reason(client, track.conversation_id) do
+        nil -> @never_started
+        reason -> @never_started <> " " <> reason
+      end
+    else
+      @ended
+    end
+  end
+
+  defp failure_reason(client, conversation_id) do
+    with {:ok, events} <- Fountain.events(client, conversation_id),
+         %{} = event <- Enum.find(Enum.reverse(events), &failed_stage?/1) do
+      case Transcript.failure_reason(event) do
+        "" -> nil
+        reason -> reason
+      end
+    else
+      _ -> nil
+    end
+  rescue
+    # A prompt held for a reason we could not fetch still gets the plain
+    # message; the sweep must not crash over an explanation.
+    _error -> nil
+  end
+
+  defp failed_stage?(event),
+    do: event["kind"] == "stage" and event["state"] == "failed"
 
   defp machine_readiness(client, project) do
     case Ravix.Projects.prepare_machine(project, client) do

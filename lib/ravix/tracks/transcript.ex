@@ -25,6 +25,7 @@ defmodule Ravix.Tracks.Transcript do
       second time: the call's ACP `kind`, its arguments, the paths it named,
       and for an edit the before-and-after as diff lines.
     * `%{kind: :raw, body}`: a line the adapter emitted that is not ACP.
+    * `%{kind: :failure, stage, body}`: a stage Fountain failed, and why.
 
   Timestamps are the log's own ISO-8601 strings: when the chunk landed, not
   when the model produced it (one flush apart at most).
@@ -299,11 +300,46 @@ defmodule Ravix.Tracks.Transcript do
     if acp_runtime?(runtime), do: acc, else: push_text(acc, :text, data, event["ts"])
   end
 
+  # A stage that failed, with whatever Fountain said about it. These carried no
+  # block at all until #35, so a machine that could not be built showed as the
+  # last successful stage and then nothing: the track looked like it was still
+  # thinking, and the only red thing on the page was a queued prompt claiming
+  # the conversation had ended. The reason is Fountain's own text and is drawn
+  # as such -- it named a billing page on the deployment that found this, which
+  # is exactly the kind of sentence that must not be swallowed.
+  defp output(%{"kind" => "stage", "state" => "failed"} = event, _runtime, acc) do
+    push(acc, %{kind: :failure, stage: event["stage"], body: failure_reason(event)})
+  end
+
   defp output(_event, _runtime, acc), do: acc
 
-  @doc "A block worth drawing: any tool, or text that is not blank."
+  @doc """
+  What Fountain said about a stage that failed, or `""` when it said nothing.
+
+  `data` is a JSON object on the wire, `{"reason": "..."}`. Anything else is
+  returned as it arrived rather than dropped, since the point is not losing it.
+
+  Public because `Ravix.PromptQueue.Server` reads the same event for the same
+  reason: a prompt held behind a conversation that never started should say why,
+  and both places must agree on where "why" lives (#35).
+  """
+  @spec failure_reason(event()) :: String.t()
+  def failure_reason(%{"data" => data}) when is_binary(data) do
+    case Jason.decode(data) do
+      {:ok, %{"reason" => reason}} when is_binary(reason) -> String.trim(reason)
+      {:ok, %{}} -> ""
+      _ -> String.trim(data)
+    end
+  end
+
+  def failure_reason(_event), do: ""
+
+  @doc "A block worth drawing: any tool, a failure, or text that is not blank."
   @spec visible_block?(block()) :: boolean()
   def visible_block?(%{kind: :tool}), do: true
+  # A failed stage is worth drawing even when Fountain gave no reason: that a
+  # stage failed at all is the news, and a silent turn is what #35 was.
+  def visible_block?(%{kind: :failure}), do: true
   def visible_block?(%{body: body}) when is_binary(body), do: String.trim(body) != ""
   def visible_block?(_), do: false
 

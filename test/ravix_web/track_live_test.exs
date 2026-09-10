@@ -390,6 +390,35 @@ defmodule RavixWeb.TrackLiveTest do
     assert render_async(ctx.view)
   end
 
+  test "a failed stage reaches the page, with the reason Fountain gave", ctx do
+    # #35: this arrived as a stage event and rendered as nothing, so a machine
+    # that could not be built looked like a machine still thinking. The reason
+    # named a billing page; losing it cost a person an afternoon.
+    reason =
+      ~s({:denied, {:http, 403, %{"error" => "Add a credit card to start using Sprites."}}})
+
+    send(ctx.view.pid, {
+      :transcript,
+      ctx.track.id,
+      %{
+        "id" => 1,
+        "turn_id" => nil,
+        "kind" => "stage",
+        "stage" => "provision",
+        "state" => "failed",
+        "ts" => "2026-09-10T06:41:17Z",
+        "data" => Jason.encode!(%{reason: reason})
+      }
+    })
+
+    html = render(ctx.view)
+    assert html =~ "provision failed"
+    assert html =~ "Add a credit card"
+
+    # Fountain's words, escaped rather than trusted: the reason is upstream text.
+    refute has_element?(ctx.view, "#transcript-turns script")
+  end
+
   test "transcript snapshots render prompts, thinking, tools, and raw output safely", ctx do
     update = fn data ->
       Jason.encode!(%{jsonrpc: "2.0", method: "session/update", params: %{update: data}})

@@ -101,6 +101,10 @@
                       <div class="md">{RavixWeb.Markdown.render_safe(block.body)}</div>
                     </details>
                     <pre :if={block.kind == :raw}>{block.body}</pre>
+                    <div :if={block.kind == :failure} class="workspace-failure" role="status">
+                      <strong>{block.stage} failed</strong>
+                      <pre :if={block.body != ""}>{block.body}</pre>
+                    </div>
                     <details :if={block.kind == :tool} class="workspace-tool">
                       <summary>
                         <span class="chip">{block.status}</span> {block.name} {block.summary}
