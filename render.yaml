@@ -149,20 +149,18 @@ projects:
             # 0.1-CPU plan it was: that requirement, not capacity, is what sets this.
             plan: 1c-2g
             postgresMajorVersion: "17"
-            # High availability is a DASHBOARD setting on this database, not a field
-            # here (#20). The first sync accepted a `highAvailability: {enabled: true}`
-            # block without complaint and without effect -- the shape was a guess, taken
-            # from a spec page that renders its example in a collapsed block, and an
-            # unrecognised key is ignored rather than refused. Guessing a second time
-            # would be worse than saying where the switch actually is.
+            # A standby that takes over at the same URL, and it is this field that turns
+            # it on -- the first sync applied it exactly as written. An earlier commit
+            # removed it on the strength of "I do not see HA in the dashboard", which
+            # turned out to be the wrong page: the service, not the database. Restored,
+            # because a Blueprint that stops declaring something it configured is a
+            # Blueprint that may switch it off on the next sync.
             #
-            # Turn it on at: ravix-db -> Settings -> High Availability. The plan below is
-            # already the reason it can be: HA needs at least one CPU, which the
-            # `0.1c-256mb` this replaced did not have.
-            #
-            # What it buys, and what the app does about it: the standby takes over at the
-            # same URL, and failover terminates every connection at once. Postgrex
-            # reconnects on its own; `queue_target`/`queue_interval` in
-            # config/runtime.exs are what make requests arriving during the gap wait
+            # HA needs at least one CPU, which is why the plan below is no longer
+            # `0.1c-256mb`. Failover terminates every connection at once; Postgrex
+            # reconnects on its own, and `queue_target`/`queue_interval` in
+            # config/runtime.exs are what make the requests arriving during the gap wait
             # rather than fail.
+            highAvailability:
+              enabled: true
             ipAllowList: []
