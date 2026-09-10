@@ -91,22 +91,11 @@ defmodule Ravix.People.Store do
 
   @doc "Whether `user_id` was named on this track. The owner is not: they own the project."
   @spec member?(String.t(), String.t()) :: boolean()
-  def member?(track_id, user_id) do
-    Repo.exists?(from(m in TrackMember, where: m.track_id == ^track_id and m.user_id == ^user_id))
-  end
+  def member?(track_id, user_id), do: seated?(TrackMember, :track_id, track_id, user_id)
 
   @doc "Everyone invited to a track, oldest invitation first. Excludes the owner."
   @spec members_of(String.t()) :: [User.t()]
-  def members_of(track_id) do
-    Repo.all(
-      from(m in TrackMember,
-        join: u in assoc(m, :user),
-        where: m.track_id == ^track_id,
-        order_by: m.created_at,
-        select: u
-      )
-    )
-  end
+  def members_of(track_id), do: seats_on(TrackMember, :track_id, track_id)
 
   @doc """
   `members_of/1` for several tracks at once, grouped by track id.
@@ -167,15 +156,7 @@ defmodule Ravix.People.Store do
 
   @doc "The invitations waiting on a track, oldest first."
   @spec invites_of(String.t()) :: [invite()]
-  def invites_of(track_id) do
-    Repo.all(
-      from(i in TrackInvite,
-        where: i.track_id == ^track_id,
-        order_by: i.created_at,
-        select: %{github_id: i.github_id, login: i.login, avatar_url: i.avatar_url}
-      )
-    )
-  end
+  def invites_of(track_id), do: invites_on(TrackInvite, :track_id, track_id)
 
   @doc "`invites_of/1` for several tracks at once, grouped by track id. Absent when a track has none."
   @spec invites_by_track([String.t()]) :: %{String.t() => [invite()]}
@@ -192,18 +173,8 @@ defmodule Ravix.People.Store do
 
   @doc "Withdraw a track invitation by the login it was sent to. True when one was there to withdraw."
   @spec remove_invite_by_login(String.t(), String.t()) :: boolean()
-  def remove_invite_by_login(track_id, login) do
-    lowered = String.downcase(login)
-
-    {n, _} =
-      Repo.delete_all(
-        from(i in TrackInvite,
-          where: i.track_id == ^track_id and fragment("LOWER(?)", i.login) == ^lowered
-        )
-      )
-
-    n > 0
-  end
+  def remove_invite_by_login(track_id, login),
+    do: withdraw_invite(TrackInvite, :track_id, track_id, login)
 
   @doc """
   Turn every invitation waiting for this person into a membership.
@@ -277,42 +248,16 @@ defmodule Ravix.People.Store do
 
   @doc "Put a track's one link, replacing whatever was there. `ttl_ms` from now."
   @spec put_link(String.t(), String.t(), String.t(), integer()) :: :ok
-  def put_link(track_id, token_hash, created_by, ttl_ms) do
-    now = DateTime.utc_now()
-
-    %TrackLink{}
-    |> TrackLink.changeset(%{
-      track_id: track_id,
-      token_hash: token_hash,
-      created_by: created_by,
-      created_at: now,
-      expires_at: DateTime.add(now, ttl_ms, :millisecond)
-    })
-    |> Repo.insert!(
-      on_conflict: {:replace, [:token_hash, :created_by, :created_at, :expires_at]},
-      conflict_target: :track_id
-    )
-
-    :ok
-  end
+  def put_link(track_id, token_hash, created_by, ttl_ms),
+    do: put_link_row(TrackLink, :track_id, track_id, token_hash, created_by, ttl_ms)
 
   @doc "When a track's link was made and when it lapses, or nil. Never the hash."
   @spec link_of(String.t()) :: %{created_at: DateTime.t(), expires_at: DateTime.t()} | nil
-  def link_of(track_id) do
-    Repo.one(
-      from(l in TrackLink,
-        where: l.track_id == ^track_id,
-        select: %{created_at: l.created_at, expires_at: l.expires_at}
-      )
-    )
-  end
+  def link_of(track_id), do: link_row(TrackLink, :track_id, track_id)
 
   @doc "Delete a track's link. Nobody who came in on it is touched."
   @spec drop_link(String.t()) :: :ok
-  def drop_link(track_id) do
-    Repo.delete_all(from(l in TrackLink, where: l.track_id == ^track_id))
-    :ok
-  end
+  def drop_link(track_id), do: drop_link_row(TrackLink, :track_id, track_id)
 
   @doc "The track a link opens, or nil if it is unknown, revoked, expired, or the track closed."
   @spec track_for_link(String.t()) :: Track.t() | nil
@@ -390,24 +335,12 @@ defmodule Ravix.People.Store do
 
   @doc "Whether `user_id` was let into the whole project. The owner is not: ownership is a column."
   @spec project_member?(String.t(), String.t()) :: boolean()
-  def project_member?(project_id, user_id) do
-    Repo.exists?(
-      from(m in ProjectMember, where: m.project_id == ^project_id and m.user_id == ^user_id)
-    )
-  end
+  def project_member?(project_id, user_id),
+    do: seated?(ProjectMember, :project_id, project_id, user_id)
 
   @doc "Everyone invited to the whole project, oldest first. Excludes the owner."
   @spec project_members_of(String.t()) :: [User.t()]
-  def project_members_of(project_id) do
-    Repo.all(
-      from(m in ProjectMember,
-        join: u in assoc(m, :user),
-        where: m.project_id == ^project_id,
-        order_by: m.created_at,
-        select: u
-      )
-    )
-  end
+  def project_members_of(project_id), do: seats_on(ProjectMember, :project_id, project_id)
 
   @doc "The live projects this person was invited into whole. Never the ones they own."
   @spec member_projects(String.t()) :: [Project.t()]
@@ -465,69 +398,25 @@ defmodule Ravix.People.Store do
 
   @doc "The invitations waiting on a project, oldest first."
   @spec project_invites_of(String.t()) :: [invite()]
-  def project_invites_of(project_id) do
-    Repo.all(
-      from(i in ProjectInvite,
-        where: i.project_id == ^project_id,
-        order_by: i.created_at,
-        select: %{github_id: i.github_id, login: i.login, avatar_url: i.avatar_url}
-      )
-    )
-  end
+  def project_invites_of(project_id), do: invites_on(ProjectInvite, :project_id, project_id)
 
   @doc "Withdraw a project invitation by the login it was sent to. True when one was there to withdraw."
   @spec remove_project_invite_by_login(String.t(), String.t()) :: boolean()
-  def remove_project_invite_by_login(project_id, login) do
-    lowered = String.downcase(login)
-
-    {n, _} =
-      Repo.delete_all(
-        from(i in ProjectInvite,
-          where: i.project_id == ^project_id and fragment("LOWER(?)", i.login) == ^lowered
-        )
-      )
-
-    n > 0
-  end
+  def remove_project_invite_by_login(project_id, login),
+    do: withdraw_invite(ProjectInvite, :project_id, project_id, login)
 
   @doc "Put a project's one link, replacing whatever was there. `ttl_ms` from now."
   @spec put_project_link(String.t(), String.t(), String.t(), integer()) :: :ok
-  def put_project_link(project_id, token_hash, created_by, ttl_ms) do
-    now = DateTime.utc_now()
-
-    %ProjectLink{}
-    |> ProjectLink.changeset(%{
-      project_id: project_id,
-      token_hash: token_hash,
-      created_by: created_by,
-      created_at: now,
-      expires_at: DateTime.add(now, ttl_ms, :millisecond)
-    })
-    |> Repo.insert!(
-      on_conflict: {:replace, [:token_hash, :created_by, :created_at, :expires_at]},
-      conflict_target: :project_id
-    )
-
-    :ok
-  end
+  def put_project_link(project_id, token_hash, created_by, ttl_ms),
+    do: put_link_row(ProjectLink, :project_id, project_id, token_hash, created_by, ttl_ms)
 
   @doc "When a project's link was made and when it lapses, or nil. Never the hash."
   @spec project_link_of(String.t()) :: %{created_at: DateTime.t(), expires_at: DateTime.t()} | nil
-  def project_link_of(project_id) do
-    Repo.one(
-      from(l in ProjectLink,
-        where: l.project_id == ^project_id,
-        select: %{created_at: l.created_at, expires_at: l.expires_at}
-      )
-    )
-  end
+  def project_link_of(project_id), do: link_row(ProjectLink, :project_id, project_id)
 
   @doc "Delete a project's link. Nobody who came in on it is touched."
   @spec drop_project_link(String.t()) :: :ok
-  def drop_project_link(project_id) do
-    Repo.delete_all(from(l in ProjectLink, where: l.project_id == ^project_id))
-    :ok
-  end
+  def drop_project_link(project_id), do: drop_link_row(ProjectLink, :project_id, project_id)
 
   @doc "The project a link opens, or nil if it is unknown, revoked, expired or archived."
   @spec project_for_link(String.t()) :: Project.t() | nil
@@ -541,6 +430,101 @@ defmodule Ravix.People.Store do
     else
       _ -> nil
     end
+  end
+
+  # ── the same row, on either side of the line ─────────────────────────
+  #
+  # A track and a project are shared by the same three tables one level
+  # apart, and seven of these reads were the same query written twice. They
+  # are one query each now, with the schema and its key passed in.
+  #
+  # What is *not* here is as deliberate: `add_member/3`, `remove_member/2`,
+  # `add_invite/1` and `track_for_link/1` still have their project twins
+  # written out, because those four genuinely differ -- the wider grant
+  # deletes the narrower rows, removing somebody from a project revokes
+  # previews on every track under it, and a link is dead when its track
+  # closes or its project is archived, which are different questions. Before
+  # this, all eleven pairs looked alike and a reader had no way to tell the
+  # seven that were the same from the four that were not.
+  #
+  # The public names stay one per unit of sharing. Passing the unit as an
+  # argument would make `member?(wrong_scope, id, user)` a thing that
+  # compiles, in the module where that answer decides who gets a shell.
+
+  defp seated?(schema, key, id, user_id) do
+    Repo.exists?(from(m in schema, where: field(m, ^key) == ^id and m.user_id == ^user_id))
+  end
+
+  defp seats_on(schema, key, id) do
+    Repo.all(
+      from(m in schema,
+        join: u in assoc(m, :user),
+        where: field(m, ^key) == ^id,
+        order_by: m.created_at,
+        select: u
+      )
+    )
+  end
+
+  defp invites_on(schema, key, id) do
+    Repo.all(
+      from(i in schema,
+        where: field(i, ^key) == ^id,
+        order_by: i.created_at,
+        select: %{github_id: i.github_id, login: i.login, avatar_url: i.avatar_url}
+      )
+    )
+  end
+
+  # True when there was one to withdraw, which is how the routes tell an
+  # invitation that was cancelled from a name nobody had invited.
+  defp withdraw_invite(schema, key, id, login) do
+    lowered = String.downcase(login)
+
+    {n, _} =
+      Repo.delete_all(
+        from(i in schema,
+          where: field(i, ^key) == ^id and fragment("LOWER(?)", i.login) == ^lowered
+        )
+      )
+
+    n > 0
+  end
+
+  # One row per subject, by primary key, which is what makes minting a new
+  # link *the* revoke rather than a second thing to remember.
+  defp put_link_row(schema, key, id, token_hash, created_by, ttl_ms) do
+    now = DateTime.utc_now()
+
+    schema
+    |> struct()
+    |> schema.changeset(%{
+      key => id,
+      :token_hash => token_hash,
+      :created_by => created_by,
+      :created_at => now,
+      :expires_at => DateTime.add(now, ttl_ms, :millisecond)
+    })
+    |> Repo.insert!(
+      on_conflict: {:replace, [:token_hash, :created_by, :created_at, :expires_at]},
+      conflict_target: key
+    )
+
+    :ok
+  end
+
+  defp link_row(schema, key, id) do
+    Repo.one(
+      from(l in schema,
+        where: field(l, ^key) == ^id,
+        select: %{created_at: l.created_at, expires_at: l.expires_at}
+      )
+    )
+  end
+
+  defp drop_link_row(schema, key, id) do
+    Repo.delete_all(from(l in schema, where: field(l, ^key) == ^id))
+    :ok
   end
 
   defp live?(expires_at), do: DateTime.compare(expires_at, DateTime.utc_now()) == :gt

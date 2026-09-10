@@ -459,6 +459,119 @@ defmodule Ravix.PeopleTest do
     end
   end
 
+  describe "the reads a track and a project share" do
+    setup :seed
+
+    setup ctx do
+      insert_track_member(ctx.shared, ctx.guest)
+      insert_project_member(ctx.project, ctx.guest)
+      :ok
+    end
+
+    test "a seat reads the same on either side, and does not answer for the other", ctx do
+      stranger = insert_user()
+
+      assert People.Store.member?(ctx.shared.id, ctx.guest.id)
+      assert People.Store.project_member?(ctx.project.id, ctx.guest.id)
+
+      refute People.Store.member?(ctx.shared.id, stranger.id)
+      refute People.Store.project_member?(ctx.project.id, stranger.id)
+
+      # The ids are both strings, and each read only ever consults its own
+      # table: a project id asked of the track's seats is simply not there.
+      refute People.Store.member?(ctx.project.id, ctx.guest.id)
+      refute People.Store.project_member?(ctx.shared.id, ctx.guest.id)
+    end
+
+    test "both lists come back oldest first and exclude the owner", ctx do
+      later = ctx.other
+      insert_track_member(ctx.shared, later)
+      insert_project_member(ctx.project, later)
+
+      assert Enum.map(People.Store.members_of(ctx.shared.id), & &1.id) ==
+               [ctx.guest.id, later.id]
+
+      assert Enum.map(People.Store.project_members_of(ctx.project.id), & &1.id) ==
+               [ctx.guest.id, later.id]
+
+      refute ctx.owner.id in Enum.map(People.Store.members_of(ctx.shared.id), & &1.id)
+      refute ctx.owner.id in Enum.map(People.Store.project_members_of(ctx.project.id), & &1.id)
+    end
+
+    test "both invitation lists carry the same three display fields", ctx do
+      People.Store.add_invite(%{
+        track_id: ctx.shared.id,
+        github_id: "9001",
+        login: "ana",
+        avatar_url: "a.png",
+        invited_by: ctx.owner.id
+      })
+
+      People.Store.add_project_invite(%{
+        project_id: ctx.project.id,
+        github_id: "9002",
+        login: "bo",
+        avatar_url: "b.png",
+        invited_by: ctx.owner.id
+      })
+
+      assert [%{github_id: "9001", login: "ana", avatar_url: "a.png"}] =
+               People.Store.invites_of(ctx.shared.id)
+
+      assert [%{github_id: "9002", login: "bo", avatar_url: "b.png"}] =
+               People.Store.project_invites_of(ctx.project.id)
+    end
+
+    test "withdrawing an invitation is case-insensitive on either side, and says whether it found one",
+         ctx do
+      People.Store.add_invite(%{
+        track_id: ctx.shared.id,
+        github_id: "1",
+        login: "Ana",
+        invited_by: ctx.owner.id
+      })
+
+      People.Store.add_project_invite(%{
+        project_id: ctx.project.id,
+        github_id: "2",
+        login: "Bo",
+        invited_by: ctx.owner.id
+      })
+
+      assert People.Store.remove_invite_by_login(ctx.shared.id, "ANA")
+      assert People.Store.remove_project_invite_by_login(ctx.project.id, "bO")
+
+      refute People.Store.remove_invite_by_login(ctx.shared.id, "ana")
+      refute People.Store.remove_project_invite_by_login(ctx.project.id, "bo")
+    end
+
+    test "a link is one row per subject on either side, so minting replaces", ctx do
+      People.Store.put_link(ctx.shared.id, "hash-a", ctx.owner.id, 60_000)
+      People.Store.put_link(ctx.shared.id, "hash-b", ctx.owner.id, 60_000)
+      People.Store.put_project_link(ctx.project.id, "hash-c", ctx.owner.id, 60_000)
+      People.Store.put_project_link(ctx.project.id, "hash-d", ctx.owner.id, 60_000)
+
+      assert People.Store.track_for_link("hash-b").id == ctx.shared.id
+      assert People.Store.project_for_link("hash-d").id == ctx.project.id
+      refute People.Store.track_for_link("hash-a")
+      refute People.Store.project_for_link("hash-c")
+
+      # And what is read back is the two dates, never the hash.
+      assert %{created_at: %DateTime{}, expires_at: %DateTime{}} =
+               link = People.Store.link_of(ctx.shared.id)
+
+      refute Map.has_key?(link, :token_hash)
+
+      assert %{created_at: %DateTime{}, expires_at: %DateTime{}} =
+               People.Store.project_link_of(ctx.project.id)
+
+      assert People.Store.drop_link(ctx.shared.id) == :ok
+      assert People.Store.drop_project_link(ctx.project.id) == :ok
+      refute People.Store.link_of(ctx.shared.id)
+      refute People.Store.project_link_of(ctx.project.id)
+    end
+  end
+
   describe "project link rows" do
     setup :seed
 
