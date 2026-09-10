@@ -34,7 +34,7 @@ defmodule Ravix.Tracks do
   alias Ravix.People
   alias Ravix.Projects.Project
   alias Ravix.Spec
-  alias Ravix.Tracks.{Diff, Files, Follower, Names, Store, Track, Transcript}
+  alias Ravix.Tracks.{Diff, Files, Follower, Names, Store, Track, Transcript, View}
 
   @image_types ~w(image/png image/jpeg image/gif image/webp)
   # base64 is four characters per three bytes; the cap is on the decoded size.
@@ -43,37 +43,6 @@ defmodule Ravix.Tracks do
 
   @typedoc "What the caller may do here."
   @type role :: :owner | :member
-
-  @typedoc "The `Track` of `shared/api.ts`, with atom keys; see `present/2`."
-  @type track_map :: %{
-          id: String.t(),
-          project_id: String.t(),
-          conversation_id: String.t() | nil,
-          slug: String.t(),
-          title: String.t(),
-          branch: String.t(),
-          workdir: String.t(),
-          origin: origin_info(),
-          status: :opening | :ready | :running | :failed | :closed,
-          stale: boolean(),
-          opened_at: DateTime.t() | nil,
-          last_active_at: DateTime.t() | nil,
-          turn_count: non_neg_integer(),
-          created_at: DateTime.t(),
-          created_by_login: String.t(),
-          people: [map()],
-          role: role(),
-          unread: boolean()
-        }
-
-  @typedoc "How a track was started, the `TrackOriginInfo` of `shared/api.ts`."
-  @type origin_info :: %{
-          kind: Track.origin_kind(),
-          base: String.t() | nil,
-          number: integer() | nil,
-          title: String.t() | nil,
-          url: String.t() | nil
-        }
 
   @typedoc "The ribbon at the top of a track: the four lines Conductor shows on a new thread."
   @type header :: %{
@@ -105,7 +74,7 @@ defmodule Ravix.Tracks do
   because this is what the sidebar's status comes from and a turn that
   ended must not show as running for another five seconds.
   """
-  @spec list(User.t(), String.t()) :: {:ok, [track_map()]} | {:error, :not_found}
+  @spec list(User.t(), String.t()) :: {:ok, [View.t()]} | {:error, :not_found}
   def list(%User{} = user, project_id) do
     with %Project{} = project <- live_project(project_id),
          {:ok, access} <- access_of(user.id, project) do
@@ -155,7 +124,7 @@ defmodule Ravix.Tracks do
   keeps appearing after you have accepted it reads as a broken app.
   """
   @spec get(User.t(), String.t()) ::
-          {:ok, %{track: track_map(), header: header(), starters: [map()]}} | {:error, reason()}
+          {:ok, %{track: View.t(), header: header(), starters: [map()]}} | {:error, reason()}
   def get(%User{} = user, track_id) do
     with {:ok, %{track: track, project: project, role: role}} <-
            Access.track_access(user, track_id),
@@ -226,7 +195,7 @@ defmodule Ravix.Tracks do
   tests want.
   """
   @spec open(User.t(), String.t(), map(), opening_turn: :async | :sync) ::
-          {:ok, track_map()} | {:error, reason()}
+          {:ok, View.t()} | {:error, reason()}
   def open(%User{} = user, project_id, attrs, opts \\ []) do
     attrs = stringify(attrs)
 
@@ -752,13 +721,13 @@ defmodule Ravix.Tracks do
   your last look is not. The comparison is against `last_active_at` rather
   than a turn count so a streamed reply marks it unread as it arrives.
   """
-  @spec present(Track.t(), keyword()) :: track_map()
+  @spec present(Track.t(), keyword()) :: View.t()
   def present(%Track{} = row, opts \\ []) do
     project = Keyword.get(opts, :project)
     live = Keyword.get(opts, :live)
     last_active = parse_time(live && live["last_active_at"])
 
-    %{
+    %View{
       id: row.id,
       project_id: row.project_id,
       conversation_id: row.conversation_id,
@@ -781,7 +750,7 @@ defmodule Ravix.Tracks do
   end
 
   @doc "How a track was started, from its row."
-  @spec origin_info(Track.t()) :: origin_info()
+  @spec origin_info(Track.t()) :: View.origin()
   def origin_info(%Track{} = row) do
     %{
       # No coercion: the column is one of four and the database enforces it.

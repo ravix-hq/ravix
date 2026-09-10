@@ -402,7 +402,7 @@ defmodule RavixWeb.TrackLive do
 
   defp async_result(:preview_action, {:ok, response}, socket) do
     result(assign(socket, panel_busy: false), response, fn s, preview ->
-      assign(s, preview: preview, preview_url: preview[:open_url] || s.assigns.preview_url)
+      assign(s, preview: preview, preview_url: preview.open_url || s.assigns.preview_url)
     end)
   end
 

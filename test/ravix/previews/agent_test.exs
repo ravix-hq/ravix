@@ -164,7 +164,18 @@ defmodule Ravix.Previews.AgentTest do
       assert Store.defaults(project.id).directory == "apps/demo"
 
       assert {:ok, data} = call.("start", nil, t1.id, token)
+      # The helper starts the service and is handed no way into it: `open_url`
+      # is a single-use browser ticket and the agent's answer is built field by
+      # field in `Ravix.Previews.Agent`, so the key is absent rather than nil.
       refute Map.has_key?(data, :open_url)
+
+      # And it survives the wire. `RavixWeb.PreviewController.agent/2` hands
+      # this straight to `json/2`, and every controller test stubs the route,
+      # so nothing else ever encodes the real shape -- which is how a struct
+      # with no `Jason.Encoder` would have reached production as a 500.
+      assert {:ok, encoded} = Jason.encode(data)
+      assert %{"state" => "stopped", "track_url" => _} = Jason.decode!(encoded)
+      refute Map.has_key?(Jason.decode!(encoded), "open_url")
       await(p, fn _ -> Store.get(t1.id).state == :ready end)
       assert {:ok, %{logs: "Error: command not found"}} = call.("logs", nil, t1.id, token)
       assert {:ok, %{state: :stopped}} = call.("stop", nil, t1.id, token)

@@ -27,7 +27,7 @@ defmodule Ravix.PromptQueue do
 
   alias Ravix.Accounts.{Access, User}
   alias Ravix.Hub
-  alias Ravix.PromptQueue.Item
+  alias Ravix.PromptQueue.{Item, View}
   alias Ravix.Repo
   alias Ravix.Tracks.Track
 
@@ -49,18 +49,6 @@ defmodule Ravix.PromptQueue do
           error: String.t() | nil,
           prompt: String.t() | nil,
           image_count: non_neg_integer()
-        }
-
-  @typedoc "What `shared/api.ts` calls a `QueuedPrompt`."
-  @type queued_prompt :: %{
-          id: String.t(),
-          prompt: String.t() | nil,
-          image_count: non_neg_integer(),
-          author_login: String.t(),
-          created_at: DateTime.t(),
-          status: Item.status(),
-          error: String.t() | nil,
-          can_cancel: boolean()
         }
 
   @max_waiting 20
@@ -98,7 +86,7 @@ defmodule Ravix.PromptQueue do
   end
 
   @doc "The waiting prompts on a track, as the saved-prompts panel shows them."
-  @spec list(User.t(), String.t()) :: {:ok, [queued_prompt()]} | {:error, reason()}
+  @spec list(User.t(), String.t()) :: {:ok, [View.t()]} | {:error, reason()}
   def list(%User{} = user, track_id) do
     with {:ok, %{role: role}} <- Access.track_access(user, track_id) do
       {:ok, track_id |> summaries() |> Enum.map(&present(&1, role, user))}
@@ -130,9 +118,9 @@ defmodule Ravix.PromptQueue do
   end
 
   @doc "A `QueuedPrompt` from a summary, for `role` and the person looking."
-  @spec present(summary(), :owner | :member, User.t()) :: queued_prompt()
+  @spec present(summary(), :owner | :member, User.t()) :: View.t()
   def present(row, role, %User{id: user_id}) do
-    %{
+    %View{
       id: row.id,
       prompt: row.prompt,
       image_count: row.image_count,
