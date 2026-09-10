@@ -554,6 +554,29 @@ defmodule Ravix.PeopleTest do
       assert {:ok, ^people} = People.list(ctx.guest, ctx.shared.id)
     end
 
+    test "people_by_track/3 gives every named track the list people_of/3 would", ctx do
+      People.add_project_member(ctx.project.id, ctx.other.id, "owner")
+      People.add_member(ctx.shared.id, ctx.guest.id, "owner")
+      insert_track_invite(ctx.shared, github_id: "9001", login: "dana", avatar_url: "https://a/d")
+
+      ids = [ctx.shared.id, ctx.private.id]
+      batched = People.people_by_track(ids, ctx.owner.id, ctx.project.id)
+
+      assert Map.keys(batched) |> Enum.sort() == Enum.sort(ids)
+
+      for id <- ids do
+        assert batched[id] == People.people_of(id, ctx.owner.id, ctx.project.id)
+      end
+
+      # The track with nobody of its own still gets the project's people.
+      assert batched[ctx.private.id] == [
+               %{login: "ana", name: "Ana", avatar_url: nil},
+               %{login: "cy", name: "Cy", avatar_url: nil, via: :project}
+             ]
+
+      assert People.people_by_track([], ctx.owner.id, ctx.project.id) == %{}
+    end
+
     test "somebody who is both is shown once, as a project member", ctx do
       insert_track_member(ctx.shared, ctx.guest)
       insert_project_member(ctx.project, ctx.guest)

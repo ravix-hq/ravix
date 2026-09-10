@@ -5,6 +5,7 @@ defmodule Ravix.TracksTest do
 
   alias Ravix.Fountain.{Client, Error, FakeTransport}
   alias Ravix.Hub
+  alias Ravix.QueryCount
   alias Ravix.Tracks
   alias Ravix.Tracks.{Names, Track}
 
@@ -220,6 +221,30 @@ defmodule Ravix.TracksTest do
       quiet_fountain(ctx.project)
       assert {:error, :not_found} = Tracks.list(insert_user(), ctx.project.id)
       assert {:error, :not_found} = Tracks.list(ctx.owner, Ecto.UUID.generate())
+    end
+
+    test "the sidebar costs the same whether a project has two tracks or twenty", ctx do
+      quiet_fountain(ctx.project)
+      assert {:ok, [_, _]} = Tracks.list(ctx.owner, ctx.project.id)
+      small = QueryCount.queries(fn -> Tracks.list(ctx.owner, ctx.project.id) end)
+
+      for i <- 3..20, do: insert_track(project: ctx.project, slug: "t#{i}")
+      insert_project_member(ctx.project, insert_user())
+      insert_track_member(ctx.a, insert_user())
+
+      {result, queries} = QueryCount.count(fn -> Tracks.list(ctx.owner, ctx.project.id) end)
+      assert {:ok, listed} = result
+      assert length(listed) == 20
+
+      # Was four per track -- the same project members and the same owner,
+      # read again for every row -- so twenty tracks cost eighty-three
+      # queries. The count is now flat, and this is the assertion that says
+      # so: no assertion on the returned list can see the difference.
+      assert length(queries) == small
+      assert Enum.count(queries, &(&1 == "project_members")) == 1
+      assert Enum.count(queries, &(&1 == "users")) == 1
+      assert Enum.count(queries, &(&1 == "track_members")) == 1
+      assert Enum.count(queries, &(&1 == "track_invites")) == 1
     end
 
     test "a Fountain that cannot be reached still lists the rows", ctx do
