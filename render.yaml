@@ -24,11 +24,13 @@
 # Render Projects and Environments (added after the first sync). Resources
 # declared at the *root* of a Blueprint keep whatever project they are already
 # in on every later sync, which is why the first apply left these outside
-# `ravix` however the dashboard was arranged. Declaring them inside an
+# `Ravix` however the dashboard was arranged. The name is matched exactly,
+# capital included: a lowercase `ravix` here made a second, empty project
+# rather than finding the one that was already there. Declaring them inside an
 # environment is what actually places them. A resource must be declared in one
 # place only -- root or an environment, never both.
 projects:
-  - name: ravix
+  - name: Ravix
     environments:
       - name: production
 
