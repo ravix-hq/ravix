@@ -28,7 +28,7 @@ defmodule Ravix.Accounts.Auth do
   """
 
   alias Ravix.Accounts
-  alias Ravix.Accounts.User
+  alias Ravix.Accounts.{OAuthState, User}
   alias Ravix.{Config, Crypto, GitHub}
   alias Ravix.GitHub.Error, as: GitHubError
 
@@ -69,13 +69,13 @@ defmodule Ravix.Accounts.Auth do
   end
 
   @doc """
-  Begin a round trip of `kind` (`"signin"`, `"install"`, `"join"`) that
+  Begin a round trip of `kind` (`:signin`, `:install`, `:join`) that
   lands at `redirect` afterwards (a link token for `join`, nil otherwise).
 
   Stores the row and returns the state for the URL and the secret the
   controller puts in the attempt's cookie (see `cookie_name/1`).
   """
-  @spec begin(String.t(), String.t() | nil) ::
+  @spec begin(OAuthState.kind(), String.t() | nil) ::
           {:ok, attempt()} | {:error, {:unavailable, String.t()}}
   def begin(kind, redirect) do
     with {:ok, _app} <- github() do
@@ -230,7 +230,7 @@ defmodule Ravix.Accounts.Auth do
   # on the way past, which made the sign-in and the joining one act that nobody
   # was asked about separately; now both routes end on the same page, and the
   # membership is only ever written by its POST (#16).
-  defp landing(%{kind: "join", redirect: link}, _joined, _user_id, _installation_id)
+  defp landing(%{kind: :join, redirect: link}, _joined, _user_id, _installation_id)
        when is_binary(link) do
     "/j/" <> link
   end

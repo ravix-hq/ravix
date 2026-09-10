@@ -38,7 +38,6 @@ defmodule Ravix.Tracks do
   alias Ravix.Spec
   alias Ravix.Tracks.{Diff, Files, Follower, Names, Track, TrackMember, Transcript}
 
-  @origin_kinds ~w(branch pr issue blank)
   @image_types ~w(image/png image/jpeg image/gif image/webp)
   # base64 is four characters per three bytes; the cap is on the decoded size.
   @image_max_chars div(8 * 1024 * 1024 * 4, 3)
@@ -71,7 +70,7 @@ defmodule Ravix.Tracks do
 
   @typedoc "How a track was started, the `TrackOriginInfo` of `shared/api.ts`."
   @type origin_info :: %{
-          kind: :branch | :pr | :issue | :blank,
+          kind: Track.origin_kind(),
           base: String.t() | nil,
           number: integer() | nil,
           title: String.t() | nil,
@@ -268,7 +267,7 @@ defmodule Ravix.Tracks do
     slug = free_slug(project.id, text(attrs["slug"], 60) |> non_empty() || title)
 
     branch =
-      if origin.kind == "pr" and origin.base,
+      if origin.kind == :pr and origin.base,
         do: origin.base,
         else: Ids.branch_for(user.login, slug, id)
 
@@ -662,7 +661,7 @@ defmodule Ravix.Tracks do
          :ok <- require_repo(project, "This project has no repository.") do
       Ravix.GitHub.checks(app, project.installation_id, project.repo_full_name, track.branch, %{
         created_at: track.created_at,
-        origin_number: if(track.origin_kind == "pr", do: track.origin_number)
+        origin_number: if(track.origin_kind == :pr, do: track.origin_number)
       })
     end
   end
@@ -781,12 +780,8 @@ defmodule Ravix.Tracks do
   @spec origin_info(Track.t()) :: origin_info()
   def origin_info(%Track{} = row) do
     %{
-      kind:
-        Map.get(
-          %{"blank" => :blank, "branch" => :branch, "pr" => :pr, "issue" => :issue},
-          row.origin_kind,
-          :blank
-        ),
+      # No coercion: the column is one of four and the database enforces it.
+      kind: row.origin_kind,
       base: row.origin_base,
       number: row.origin_number,
       title: row.origin_title,
@@ -815,11 +810,14 @@ defmodule Ravix.Tracks do
 
   # ── the pieces `open/4` is made of ────────────────────────────────────
 
+  # The browser's word for the kind, which is a string and may be anything,
+  # against the four there are. This is the boundary: past it the kind is one
+  # of `Track.origin_kinds/0` and nothing downstream re-checks it.
   defp read_origin(raw, project) when is_map(raw) do
-    kind = if raw["kind"] in @origin_kinds, do: raw["kind"], else: "blank"
+    kind = Enum.find(Track.origin_kinds(), :blank, &(to_string(&1) == raw["kind"]))
 
-    if kind == "blank" do
-      %{kind: "blank", base: project.default_branch, number: nil, title: nil}
+    if kind == :blank do
+      %{kind: :blank, base: project.default_branch, number: nil, title: nil}
     else
       %{
         kind: kind,
@@ -847,20 +845,20 @@ defmodule Ravix.Tracks do
   # name available (the one the work is called everywhere else), and
   # inventing a prettier one would break the join between the sidebar and
   # GitHub. Only a track started from nothing gets a yard name.
-  defp default_title(%{kind: "pr", number: n} = origin, _taken) when is_integer(n),
+  defp default_title(%{kind: :pr, number: n} = origin, _taken) when is_integer(n),
     do: origin.title || "PR ##{n}"
 
-  defp default_title(%{kind: "issue", number: n} = origin, _taken) when is_integer(n),
+  defp default_title(%{kind: :issue, number: n} = origin, _taken) when is_integer(n),
     do: origin.title || "Issue ##{n}"
 
-  defp default_title(%{kind: "branch", base: base}, _taken) when is_binary(base) and base != "",
+  defp default_title(%{kind: :branch, base: base}, _taken) when is_binary(base) and base != "",
     do: base
 
   defp default_title(_origin, taken), do: Names.name_track(taken)
 
   defp origin_url(%Project{repo_full_name: repo}, %{number: n} = origin)
        when is_binary(repo) and is_integer(n) do
-    kind = if origin.kind == "pr", do: "pull", else: "issues"
+    kind = if origin.kind == :pr, do: "pull", else: "issues"
     "https://github.com/#{repo}/#{kind}/#{n}"
   end
 

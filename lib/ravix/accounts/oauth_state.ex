@@ -9,12 +9,17 @@ defmodule Ravix.Accounts.OAuthState do
   use Ecto.Schema
   import Ecto.Changeset
 
+  @kinds ~w(signin install join)a
+
+  @typedoc "Which round trip a parked state belongs to."
+  @type kind :: :signin | :install | :join
+
   @primary_key {:state, :string, autogenerate: false}
 
   @type t :: %__MODULE__{}
 
   schema "oauth_states" do
-    field :kind, :string
+    field :kind, Ecto.Enum, values: @kinds
     field :redirect, :string
     field :created_at, :utc_datetime_usec
   end
@@ -28,6 +33,7 @@ defmodule Ravix.Accounts.OAuthState do
     |> cast(attrs, @fields)
     |> Ravix.Schema.stamp(:created_at)
     |> validate_required([:state, :kind, :created_at])
+    |> check_constraint(:kind, name: :oauth_states_kind)
     |> unique_constraint(:state, name: :oauth_states_pkey)
   end
 end

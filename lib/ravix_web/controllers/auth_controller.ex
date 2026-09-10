@@ -36,7 +36,7 @@ defmodule RavixWeb.AuthController do
   @doc "`GET /auth/github`: mint an attempt and send the browser to GitHub."
   @spec github(Plug.Conn.t(), map()) :: Plug.Conn.t()
   def github(conn, _params) do
-    with {:ok, attempt} <- Auth.begin("signin", nil),
+    with {:ok, attempt} <- Auth.begin(:signin, nil),
          {:ok, url} <- Auth.authorize_url(attempt.state) do
       conn
       |> put_attempt_cookie(attempt)
@@ -87,7 +87,7 @@ defmodule RavixWeb.AuthController do
   def install(conn, _params) do
     with {:ok, _app} <- Auth.github(),
          {:ok, _user} <- CurrentUser.require_user(conn),
-         {:ok, attempt} <- Auth.begin("install", nil),
+         {:ok, attempt} <- Auth.begin(:install, nil),
          {:ok, url} <- Auth.install_url(attempt.state) do
       conn
       |> put_attempt_cookie(attempt)
@@ -129,7 +129,7 @@ defmodule RavixWeb.AuthController do
   def join(conn, %{"token" => token}) do
     case conn.assigns[:current_user] do
       nil ->
-        with {:ok, attempt} <- Auth.begin("join", token),
+        with {:ok, attempt} <- Auth.begin(:join, token),
              {:ok, url} <- Auth.authorize_url(attempt.state) do
           conn
           |> put_attempt_cookie(attempt)

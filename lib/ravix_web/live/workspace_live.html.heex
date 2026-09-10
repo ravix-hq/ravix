@@ -452,14 +452,7 @@
         <div id="track-advanced" hidden={!@advanced_track}>
           <div class="workspace-actions origin-options">
             <button
-              :for={
-                {kind, label} <- [
-                  {"blank", "Blank"},
-                  {"branch", "Branch"},
-                  {"pr", "Pull request"},
-                  {"issue", "Issue"}
-                ]
-              }
+              :for={{kind, label} <- origin_choices()}
               :if={kind == "blank" || @project.repo}
               type="button"
               class={if @origin_kind == kind, do: "primary", else: "ghost"}

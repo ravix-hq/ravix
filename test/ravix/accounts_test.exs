@@ -158,7 +158,7 @@ defmodule Ravix.AccountsTest do
   describe "put_state/3 and take_state/1" do
     test "a state is taken once" do
       assert :ok = Accounts.put_state("s1", "signin", nil)
-      assert %{kind: "signin", redirect: nil} = Accounts.take_state("s1")
+      assert %{kind: :signin, redirect: nil} = Accounts.take_state("s1")
       assert Accounts.take_state("s1") == nil
       assert Accounts.take_state("never") == nil
       assert Accounts.take_state(nil) == nil
@@ -167,7 +167,7 @@ defmodule Ravix.AccountsTest do
     test "putting a state again replaces its kind and redirect" do
       :ok = Accounts.put_state("s2", "signin", nil)
       :ok = Accounts.put_state("s2", "join", "link-token")
-      assert %{kind: "join", redirect: "link-token"} = Accounts.take_state("s2")
+      assert %{kind: :join, redirect: "link-token"} = Accounts.take_state("s2")
     end
 
     test "a state older than fifteen minutes is worthless and gets swept" do

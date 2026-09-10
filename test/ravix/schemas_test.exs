@@ -73,13 +73,21 @@ defmodule Ravix.SchemasTest do
   describe "OAuthState" do
     test "inserts and is keyed by state" do
       state = insert_oauth_state(kind: "install", redirect: "/p/x")
-      assert %OAuthState{kind: "install", redirect: "/p/x"} = Repo.get!(OAuthState, state.state)
+      assert %OAuthState{kind: :install, redirect: "/p/x"} = Repo.get!(OAuthState, state.state)
 
       assert {:error, changeset} =
-               OAuthState.changeset(%OAuthState{}, %{"state" => state.state, "kind" => "login"})
+               OAuthState.changeset(%OAuthState{}, %{"state" => state.state, "kind" => "signin"})
                |> Repo.insert()
 
       assert %{state: ["has already been taken"]} = errors_on(changeset)
+    end
+
+    test "a kind that is not one of the three is refused" do
+      assert {:error, changeset} =
+               OAuthState.changeset(%OAuthState{}, %{"state" => "s", "kind" => "login"})
+               |> Repo.insert()
+
+      assert %{kind: ["is invalid"]} = errors_on(changeset)
     end
 
     test "requires kind" do
@@ -232,6 +240,32 @@ defmodule Ravix.SchemasTest do
 
       for field <- ~w(project_id slug title branch workdir origin_kind created_by_login)a do
         assert errors[field] == ["can't be blank"], "#{field} should be required"
+      end
+    end
+
+    test "a kind that is not one of the four is refused, by the changeset and by the column" do
+      project = insert_project()
+
+      assert {:error, changeset} =
+               Track.changeset(%Track{}, track_attrs(project: project, origin_kind: "weird"))
+               |> Repo.insert()
+
+      assert %{origin_kind: ["is invalid"]} = errors_on(changeset)
+
+      # And beneath the changeset, so that a write which did not go through it
+      # cannot leave a row the read side would have to second-guess. This is
+      # what let `Tracks.origin_info/1` stop coercing an unknown kind to
+      # `blank` on the way out.
+      assert_raise Postgrex.Error, ~r/tracks_origin_kind/, fn ->
+        Repo.query!(
+          """
+          INSERT INTO ravix.tracks
+            (id, project_id, slug, title, branch, workdir, origin_kind, rev,
+             created_at, created_by_login)
+          VALUES ($1, $2, 'x', 'x', 'x', 'x', 'weird', 1, now(), 'ana')
+          """,
+          [Ecto.UUID.generate(), project.id]
+        )
       end
     end
 
