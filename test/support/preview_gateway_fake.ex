@@ -123,7 +123,9 @@ defmodule Ravix.PreviewGatewayFake do
       host: host,
       origin: "http://#{host}",
       other_host: "#{other.hostname}.preview.localhost:#{port}",
-      cookie: "ravix_preview_local=preview-session-#{s}; ravix_session=NEVER; app=okay",
+      cookie:
+        "ravix_preview_local=preview-session-#{s}; " <>
+          "#{RavixWeb.Endpoint.session_cookie_name()}=NEVER; app=okay",
       tunnels: fn -> Store.tunnels(row.sprite) end
     }
   end
@@ -483,7 +485,7 @@ defmodule Ravix.PreviewGatewayFake do
 
     @timeout 30_000
 
-    def request(pid, method, path, headers, body) do
+    def request(pid, method, path, headers, body, _opts \\ []) do
       with {:ok, conn} <- Tunnel.take(pid),
            {:ok, conn, ref} <- start(conn, method, path, headers, body),
            {:ok, conn} <- send_body(conn, ref, body),

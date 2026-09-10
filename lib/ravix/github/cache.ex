@@ -177,9 +177,22 @@ defmodule Ravix.GitHub.Cache do
     end
   end
 
-  def handle_call({:checks_done, key, result, expires_at}, _from, state) do
-    :ets.insert(@table, {{:checks, key}, :ready, result, expires_at})
-    {:reply, :ok, settle(state, key, {:wait, result})}
+  def handle_call({:checks_done, key, result, expires_at}, {pid, _}, state) do
+    case :ets.lookup(@table, {:checks, key}) do
+      # Still the read this key is waiting on, so its answer is current.
+      [{_, :inflight, ^pid}] ->
+        :ets.insert(@table, {{:checks, key}, :ready, result, expires_at})
+        {:reply, :ok, settle(state, key, {:wait, result})}
+
+      # Dropped while this read was in flight: it was started before whatever
+      # invalidated the key -- opening the pull request, most often -- so its
+      # answer is already out of date. Everyone waiting on it still gets it,
+      # because it is the best answer that exists right now, but it must not
+      # be cached: a five-minute stale report is how "no pull request" outlives
+      # the pull request.
+      _ ->
+        {:reply, :ok, settle(state, key, {:wait, result})}
+    end
   end
 
   def handle_call({:checks_abort, key}, _from, state) do
@@ -188,7 +201,13 @@ defmodule Ravix.GitHub.Cache do
   end
 
   def handle_call({:checks_drop, app_id, matches?}, _from, state) do
-    for [key] <- :ets.match(@table, {{:checks, {app_id, :"$1"}}, :ready, :_, :_}),
+    # Both shapes: a cached report, and a read that is still running. Dropping
+    # the in-flight entry is what takes away its right to cache what it
+    # returns; it still answers everyone already waiting on it.
+    ready = :ets.match(@table, {{:checks, {app_id, :"$1"}}, :ready, :_, :_})
+    inflight = :ets.match(@table, {{:checks, {app_id, :"$1"}}, :inflight, :_})
+
+    for [key] <- ready ++ inflight,
         matches?.(key),
         do: :ets.delete(@table, {:checks, {app_id, key}})
 

@@ -1,15 +1,37 @@
 defmodule RavixWeb.Endpoint do
   use Phoenix.Endpoint, otp_app: :ravix
 
-  # The session will be stored in the cookie and signed,
-  # this means its contents can be read but not tampered with.
-  # Set :encryption_salt if you would also like to encrypt it.
+  # The session is stored in the cookie and signed, so its contents can be
+  # read but not tampered with. It carries the session token, so `Secure`
+  # matters: without it the browser sends the token in the clear on a first
+  # plaintext visit, before `force_ssl`'s redirect and before HSTS is cached.
   @session_options [
     store: :cookie,
     key: "_ravix_key",
     signing_salt: "FcRHQdEE",
     same_site: "Lax"
   ]
+
+  @doc """
+  The browser session cookie's name, so the preview gateway can scrub it in
+  both directions rather than keeping its own copy of the name to drift from.
+  """
+  @spec session_cookie_name() :: String.t()
+  def session_cookie_name, do: Keyword.fetch!(@session_options, :key)
+
+  @doc """
+  `@session_options` with `Secure` set when the app is actually reached over
+  HTTPS. This follows `PUBLIC_URL` rather than the build: the browser suite
+  runs the production build over plain HTTP on localhost, where a `Secure`
+  cookie would be stored and never sent back.
+  """
+  @spec session_options() :: keyword()
+  def session_options do
+    case Ravix.Config.public_url() do
+      "https://" <> _ -> Keyword.put(@session_options, :secure, true)
+      _ -> @session_options
+    end
+  end
 
   socket "/live", Phoenix.LiveView.Socket,
     websocket: [connect_info: [session: @session_options]],
@@ -51,6 +73,24 @@ defmodule RavixWeb.Endpoint do
 
   plug Plug.MethodOverride
   plug Plug.Head
-  plug Plug.Session, @session_options
+  plug :session
   plug RavixWeb.Router
+
+  # `session_options/0` reads runtime configuration, so the plug is built on
+  # first use and kept rather than baked in at compile time.
+  defp session(conn, _opts) do
+    Plug.Session.call(conn, session_plug())
+  end
+
+  defp session_plug do
+    case :persistent_term.get({__MODULE__, :session_plug}, nil) do
+      nil ->
+        opts = Plug.Session.init(session_options())
+        :persistent_term.put({__MODULE__, :session_plug}, opts)
+        opts
+
+      opts ->
+        opts
+    end
+  end
 end

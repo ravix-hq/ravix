@@ -990,6 +990,36 @@ defmodule Ravix.ProjectsTest do
       assert Repo.get!(Project, project.id).agent_id == "a"
       refute_received {:hub, %{event: "tracks"}}
     end
+
+    test "a rebuild that lost its agent and then failed can still be retried", ctx do
+      %{owner: owner, project: project} = ctx
+      quiet_peers()
+
+      # The old agent goes; its replacement does not arrive.
+      fountain([
+        {%{method: "GET", path: "/api/conversations"}, {200, [], %{data: []}}},
+        {%{method: "DELETE", path: "/api/agents/a"}, {204, [], %{}}},
+        {%{method: "GET", path: "/api/catalog"}, {200, [], %{runtimes: [], models: []}}},
+        {%{method: "POST", path: "/api/agents"}, {500, [], %{error: "no capacity"}}}
+      ])
+
+      assert {:error, %Ravix.Fountain.Error{status: 500}} = Projects.rebuild(owner, project.id)
+      assert Repo.get!(Project, project.id).agent_id == "a"
+
+      # `agent_id` still names an agent Fountain no longer has, so the retry
+      # meets a 404 on the delete. Treating that as "already gone" is what
+      # keeps the project rebuildable rather than leaving destroy as the only
+      # way out of a half-finished rebuild.
+      fountain([
+        {%{method: "GET", path: "/api/conversations"}, {200, [], %{data: []}}},
+        {%{method: "DELETE", path: "/api/agents/a"}, {404, [], %{error: "not_found"}}},
+        {%{method: "GET", path: "/api/catalog"}, {200, [], %{runtimes: [], models: []}}},
+        {%{method: "POST", path: "/api/agents"}, {200, [], %{id: "b"}}}
+      ])
+
+      assert {:ok, _report} = Projects.rebuild(owner, project.id)
+      assert Repo.get!(Project, project.id).agent_id == "b"
+    end
   end
 
   describe "destroy/2" do

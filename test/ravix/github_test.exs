@@ -2,7 +2,7 @@ defmodule Ravix.GitHubTest do
   use ExUnit.Case, async: true
 
   alias Ravix.GitHub
-  alias Ravix.GitHub.{Clock, Error}
+  alias Ravix.GitHub.{Cache, Clock, Error}
   alias Ravix.GitHubFake, as: Fake
 
   setup do
@@ -635,6 +635,70 @@ defmodule Ravix.GitHubTest do
       assert {:error, %Error{status: 500}} = GitHub.checks(app, 1, "o/r", "a")
       assert {:error, %Error{status: 500}} = GitHub.checks(app, 1, "o/r", "a")
       assert Fake.request_count("/repos/") == 1
+    end
+  end
+
+  describe "checks cache invalidation" do
+    test "a read already running when the key is dropped answers its waiters but caches nothing" do
+      app_id = "cache-#{System.unique_integer([:positive])}"
+      started = self()
+      release = make_ref()
+
+      runner =
+        Task.async(fn ->
+          Cache.checks(app_id, "feat", Clock.now_ms(), fn ->
+            send(started, {:running, release})
+            receive do: ({^release, :go} -> :ok)
+            {:ok, %{pull: nil}}
+          end)
+        end)
+
+      assert_receive {:running, ^release}
+
+      # The pull request is opened while the report is still being fetched.
+      Cache.drop_checks(app_id, &(&1 == "feat"))
+      send(runner.pid, {release, :go})
+
+      # The runner still answers -- it is the only answer that exists -- but
+      # its pre-PR result must not outlive the drop.
+      assert {:ok, %{pull: nil}} = Task.await(runner)
+
+      assert Cache.checks(app_id, "feat", Clock.now_ms(), fn -> {:ok, %{pull: :fresh}} end) ==
+               {:ok, %{pull: :fresh}}
+    end
+
+    test "an uninvalidated read is cached as before" do
+      app_id = "cache-#{System.unique_integer([:positive])}"
+      now = Clock.now_ms()
+
+      assert Cache.checks(app_id, "feat", now, fn -> {:ok, %{pull: :first}} end) ==
+               {:ok, %{pull: :first}}
+
+      assert Cache.checks(app_id, "feat", now, fn -> {:ok, %{pull: :second}} end) ==
+               {:ok, %{pull: :first}}
+    end
+  end
+
+  describe "installation token expiry" do
+    test "a response with no parseable expiry is re-minted rather than reused forever", %{
+      app: app
+    } do
+      Fake.install([
+        {"POST", ~r{/access_tokens$},
+         fn conn ->
+           # A proxy, a GHES variant, or anything that drops the field.
+           Req.Test.json(conn, %{token: "t-#{System.unique_integer([:positive])}"})
+         end}
+      ])
+
+      assert {:ok, first} = GitHub.installation_token(app, 9)
+
+      # Erlang term order sorts every atom above every integer, so an unparsed
+      # expiry compared with `>` used to read as "good forever" -- and an hour
+      # later every call carried a token GitHub had stopped accepting.
+      assert {:ok, second} = GitHub.installation_token(app, 9)
+      assert second != first
+      assert Fake.request_count("access_tokens") == 2
     end
   end
 

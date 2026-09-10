@@ -10,6 +10,8 @@ defmodule Ravix.PreviewsTest do
 
   alias Ravix.Previews
   alias Ravix.Previews.{Row, Store}
+  alias Ravix.PreviewsFixture
+  alias Ravix.Sprites.Error, as: SpritesError
   alias Ravix.Tracks.Track
 
   setup do
@@ -132,6 +134,41 @@ defmodule Ravix.PreviewsTest do
     stub(Ravix.Tracks, :sprite_for, fn id -> id end)
     assert :ok = Previews.start_service(t1.id)
     assert %{available: true, state: :ready} = Previews.info(t1.id)
+  end
+
+  test "a machine that cannot be reached fails the startup with a reason, not silently", %{
+    p: p,
+    t1: t1
+  } do
+    # The port check is the first thing that talks to the machine, and it is
+    # reached after the old service has already been dropped. Without a clause
+    # for this the `case` raised past `fail/1`, leaving the row `:starting`
+    # with a nil error: the page said "Starting..." until the idle timer
+    # quietly stopped it five minutes later, and nobody was ever told why.
+    PreviewsFixture.put(p, :exec_error, SpritesError.new(404, "It may be asleep."))
+
+    assert :ok = Previews.start_service(t1.id)
+    assert %{state: :failed, error: error} = Previews.info(t1.id)
+    assert error =~ "asleep"
+
+    PreviewsFixture.put(p, :exec_error, nil)
+    assert :ok = Previews.start_service(t1.id)
+    assert %{state: :ready} = Previews.info(t1.id)
+  end
+
+  test "cleanup completes for a track whose machine is already gone", %{p: p, t1: t1} do
+    assert :ok = Previews.start_service(t1.id)
+    assert %Row{sprite: sprite} = Store.get(t1.id)
+    assert sprite != nil
+
+    # Releasing an activity lease on a machine that no longer exists is not
+    # work left undone. Treating it as a failure kept `cleanup: true` set, and
+    # the reconciler then re-ran the whole cleanup every fifteen seconds for
+    # the life of the deployment.
+    PreviewsFixture.put(p, :exec_error, SpritesError.new(404, "No such sprite."))
+    assert :ok = Previews.stop_service(t1.id, true)
+
+    assert %Row{sprite: nil, port: nil, stop_pending: false} = Store.get(t1.id)
   end
 
   test "touch renews the lease only on an open track", %{p: p, t1: t1} do

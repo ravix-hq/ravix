@@ -11,8 +11,9 @@ defmodule RavixWeb.PreviewGateway.Headers do
 
   Towards the browser: the same hop-by-hop set, `clear-site-data` (an app must
   not be able to sign the person out of the gateway) and `alt-svc`. An app
-  cannot set the gateway's cookies, nor set any cookie on a parent domain
-  (`Domain=` is stripped, so every cookie stays host-only). Redirects to
+  cannot set the gateway's cookies or the app's session cookie, nor set any
+  cookie on a parent domain (a `Domain` attribute is stripped however it is
+  spelled, so every cookie stays host-only). Redirects to
   `localhost` are rewritten to the preview origin, since dev servers name
   themselves that way. Every answer is `no-store` and `no-referrer`:
   authenticated content must never survive access loss in a shared cache, and
@@ -21,8 +22,7 @@ defmodule RavixWeb.PreviewGateway.Headers do
 
   @cookie "__Host-ravix_preview"
   @local_cookie "ravix_preview_local"
-  @session_cookie "ravix_session"
-  @private_cookies [@cookie, @local_cookie, @session_cookie]
+  @private_cookies [@cookie, @local_cookie]
 
   @hop ~w(connection keep-alive proxy-authenticate proxy-authorization te trailer transfer-encoding upgrade)
   @response_drop @hop ++ ~w(clear-site-data alt-svc)
@@ -99,7 +99,7 @@ defmodule RavixWeb.PreviewGateway.Headers do
   defp keep_response({"set-cookie", cookie}, _origin, acc) do
     if private_cookie?(cookie),
       do: acc,
-      else: [{"set-cookie", Regex.replace(~r/;\s*Domain=[^;]*/i, cookie, "")} | acc]
+      else: [{"set-cookie", strip_domain(cookie)} | acc]
   end
 
   defp keep_response({"location", location}, origin, acc),
@@ -129,10 +129,20 @@ defmodule RavixWeb.PreviewGateway.Headers do
   defp cookie_header(""), do: []
   defp cookie_header(cookie), do: [{"cookie", cookie}]
 
+  # RFC 6265 5.2 splits each attribute on its first `=` and trims whitespace
+  # from both halves, so `Domain =x`, `domain\t= x` and `Domain=x` are one
+  # attribute to a browser. Anchoring the pattern on `=` alone let a single
+  # space through, which is enough to put a cookie on the registrable domain.
+  defp strip_domain(cookie), do: Regex.replace(~r/;\s*domain\s*=[^;]*/i, cookie, "")
+
   defp private_cookie?(pair) do
     name = pair |> String.split("=", parts: 2) |> hd() |> String.trim()
-    name in @private_cookies
+    name in private_cookies()
   end
+
+  # The app's session cookie is named by the endpoint, so this cannot drift
+  # from what the app actually sets.
+  defp private_cookies, do: [RavixWeb.Endpoint.session_cookie_name() | @private_cookies]
 
   defp rewrite_location(location, origin) do
     if Regex.match?(~r{^https?://(localhost|127\.0\.0\.1)(:\d+)?(/|$)}i, location) do

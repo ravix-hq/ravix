@@ -266,35 +266,50 @@ defmodule Ravix.Previews do
     end
   end
 
+  # The row to stop, or nil when the caller decided against a different one.
+  defp stoppable(track_id, expected) do
+    case Store.get(track_id) do
+      %Row{generation: generation} = row when is_nil(expected) or generation == expected -> row
+      _gone_or_moved_on -> nil
+    end
+  end
+
+  defp mark_stopped(nil, _track_id, _cleanup?), do: nil
+
+  defp mark_stopped(%Row{} = row, track_id, cleanup?) do
+    Store.save!(%Row{
+      row
+      | desired: :stopped,
+        state: :stopped,
+        lease_until: 0,
+        generation: row.generation + 1,
+        cleanup: cleanup? or row.cleanup,
+        stop_pending: true
+    })
+
+    Store.revoke(track_id)
+    Store.get(track_id)
+  end
+
   @doc """
   Stop a track's service. With `cleanup?`, the track is done for good: the
   agent grant goes, the service is deleted, and the port is released. A
   stop that cannot reach Sprites stays `stop_pending` for the reconciler.
+
+  `expected` is the generation the caller decided against. The reconciler
+  decides from a snapshot and can be queued behind a slow startup, so by the
+  time it gets here somebody may have opened the preview again; stopping on
+  the strength of the old snapshot would revoke the grants they were just
+  issued and leave the page saying Stopped with no error. A generation that
+  has moved means the decision was about a preview that no longer exists, so
+  it is dropped. `nil` stops whatever is current.
   """
-  @spec stop_service(String.t(), boolean()) :: :ok | {:error, reason()}
-  def stop_service(track_id, cleanup? \\ false) do
+  @spec stop_service(String.t(), boolean(), non_neg_integer() | nil) :: :ok | {:error, reason()}
+  def stop_service(track_id, cleanup? \\ false, expected \\ nil) do
     {:ok, current} =
       Repo.transaction(fn ->
         if cleanup?, do: Store.revoke_agent(track_id)
-
-        case Store.get(track_id) do
-          nil ->
-            nil
-
-          %Row{} = row ->
-            Store.save!(%Row{
-              row
-              | desired: :stopped,
-                state: :stopped,
-                lease_until: 0,
-                generation: row.generation + 1,
-                cleanup: cleanup? or row.cleanup,
-                stop_pending: true
-            })
-
-            Store.revoke(track_id)
-            Store.get(track_id)
-        end
+        track_id |> stoppable(expected) |> mark_stopped(track_id, cleanup?)
       end)
 
     case current do

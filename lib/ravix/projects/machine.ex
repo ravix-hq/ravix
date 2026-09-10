@@ -206,7 +206,7 @@ defmodule Ravix.Projects.Machine do
     with {:ok, conversations} <-
            Projects.fountain_result(Fountain.list_conversations(client, project.agent_id)),
          {removed, failed} = terminate_live(client, conversations),
-         :ok <- Projects.fountain_result(Fountain.delete_agent(client, project.agent_id)),
+         :ok <- delete_old_agent(client, project.agent_id),
          {:ok, agent} <- create_replacement(project, client) do
       # The agent id is the identity, so it is the one column that ever moves,
       # and when it moves, every track on the old disk is gone.
@@ -215,6 +215,19 @@ defmodule Ravix.Projects.Machine do
       Ravix.Tracks.close_all_for_rebuild(project, :rebuild)
       Hub.publish(project.id, "tracks", %{project_id: project.id})
       {:ok, %{removed: removed ++ ["agent"], failed: failed}}
+    end
+  end
+
+  # A rebuild that got as far as deleting the agent and then failed to build
+  # its replacement leaves `agent_id` naming something Fountain no longer has.
+  # The retry has to be able to walk back over that step, so an agent that is
+  # already gone is the outcome this wanted: without it the second attempt
+  # stops on the 404 and the project can never be rebuilt again, only
+  # destroyed.
+  defp delete_old_agent(client, agent_id) do
+    case Projects.fountain_result(Fountain.delete_agent(client, agent_id)) do
+      {:error, %Error{status: 404}} -> :ok
+      other -> other
     end
   end
 

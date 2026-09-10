@@ -172,6 +172,52 @@ defmodule RavixWeb.PreviewGatewayTest do
     assert header(headers, "accept-encoding") == "identity"
   end
 
+  test "a Domain attribute is stripped however it is spelled, and the app's cookie never lands" do
+    name = RavixWeb.Endpoint.session_cookie_name()
+
+    strip = fn cookie ->
+      [{"set-cookie", header}] =
+        [{"set-cookie", cookie}]
+        |> Headers.response_headers("https://t.preview.example")
+        |> Enum.filter(fn {k, _} -> k == "set-cookie" end)
+
+      header
+    end
+
+    # RFC 6265 trims whitespace around an attribute name, so a browser reads
+    # every one of these as Domain and scopes the cookie to ravix.sh -- which
+    # is a sibling of the app host, not a stranger to it.
+    assert strip.("a=b; Domain=ravix.sh; Path=/") == "a=b; Path=/"
+    assert strip.("a=b; Domain =ravix.sh; Path=/") == "a=b; Path=/"
+    assert strip.("a=b; domain = ravix.sh; Path=/") == "a=b; Path=/"
+    assert strip.("a=b; DOMAIN\t=ravix.sh") == "a=b"
+
+    # An app running someone's branch must not be able to name the cookie the
+    # Ravix session lives in, whatever it tries to scope it to.
+    assert Headers.response_headers(
+             [{"set-cookie", "#{name}=stolen; Domain =ravix.sh; Path=/"}],
+             "https://t.preview.example"
+           )
+           |> Enum.filter(fn {k, _} -> k == "set-cookie" end) == []
+  end
+
+  test "an upstream content-length never survives the gateway's own re-framing", %{f: f} do
+    # Every proxied body goes out through `send_chunked/2`, so the length the
+    # upstream declared no longer describes what Ravix writes. Bandit treats a
+    # declared content-length as a promise and streams raw bytes with no
+    # framing, so forwarding a stale one desynchronises the connection: the
+    # browser stops at the declared length and reads whatever the sandbox sent
+    # after it as the start of the next response.
+    gz = get(f, "/gzip")
+    assert gz.status == 200
+    assert headers(gz, "content-length") == []
+    assert :zlib.gunzip(gz.body) == "inflated"
+
+    html = get(f)
+    assert html.status == 200
+    assert headers(html, "content-length") == []
+  end
+
   test "redirects, every Set-Cookie, encodings and streamed bodies pass through untouched", %{
     f: f
   } do
@@ -386,7 +432,7 @@ defmodule RavixWeb.PreviewGatewayTest do
         {"x-forwarded-for", "1.2.3.4"},
         {"forwarded", "for=1.2.3.4"},
         {"accept-encoding", "gzip"},
-        {"cookie", "__Host-ravix_preview=a; ravix_session=b"},
+        {"cookie", "__Host-ravix_preview=a; #{RavixWeb.Endpoint.session_cookie_name()}=b"},
         {"cookie", "app=1"},
         {"host", "wrong"},
         {"user-agent", "test"}
@@ -402,7 +448,10 @@ defmodule RavixWeb.PreviewGatewayTest do
       assert {"upgrade", "websocket"} in Headers.upstream_headers([], "h", true)
 
       refute Enum.any?(
-               Headers.upstream_headers([{"cookie", "ravix_session=x"}], "h"),
+               Headers.upstream_headers(
+                 [{"cookie", "#{RavixWeb.Endpoint.session_cookie_name()}=x"}],
+                 "h"
+               ),
                &(elem(&1, 0) == "cookie")
              )
     end

@@ -66,6 +66,7 @@ defmodule Ravix.PromptQueue do
   @max_waiting 20
   @max_payload_bytes 12 * 1024 * 1024
   @done [:sent, :cancelled]
+  @claim_timeout_ms 6 * 60_000
 
   @restart_error "The server restarted during delivery. Check the transcript before sending this again."
 
@@ -232,6 +233,13 @@ defmodule Ravix.PromptQueue do
     {_count, tracks} =
       Item
       |> where([p], p.id == ^id and p.status not in ^@done)
+      # Nothing to tell anyone when the row already says this. The queue
+      # server re-parks its head every two seconds while a machine is waking
+      # or Fountain is unreachable, and every publish makes each open track
+      # page re-read its transcript from Fountain -- so an unguarded write
+      # turns a 15-second poll into a 2-second one against a dependency that
+      # is already failing, per viewer, for as long as the outage lasts.
+      |> where([p], p.status != ^status or fragment("? IS DISTINCT FROM ?", p.error, ^error))
       |> select([p], p.track_id)
       |> Repo.update_all(set: [status: status, error: error] ++ payload_update)
 
@@ -248,27 +256,50 @@ defmodule Ravix.PromptQueue do
       Item
       |> where([p], p.id == ^id and p.status == :queued)
       |> select([p], p.track_id)
-      |> Repo.update_all(set: [status: :sending, error: nil])
+      |> Repo.update_all(set: [status: :sending, error: nil, claimed_at: DateTime.utc_now()])
 
     Enum.each(tracks, &publish_queue/1)
     count == 1
   end
 
   @doc """
-  After a restart: a row the previous server was delivering may or may not
-  have reached Fountain. It becomes `:unconfirmed` for a person to check;
-  it is never replayed blindly.
+  Rows whose claim has outlived any task that could still be holding it.
+
+  A `:sending` row may or may not have reached Fountain, so it becomes
+  `:unconfirmed` for a person to check and is never replayed blindly. What
+  the claim age decides is *which* rows those are. Reclaiming every
+  `:sending` row would replay one that a surviving task is still POSTing --
+  the delivery tasks are supervised beside this server, not under it, so they
+  outlive its restart, and a deploy overlaps two instances entirely. Waiting
+  out `claim_timeout_ms/0` instead means only a claim nothing can still be
+  working on is taken back, which also unsticks a row whose task died between
+  the POST and the status write: `:sending` is refused by both `cancel/3` and
+  `retry/3`, so without this it would hold its track's head forever.
+
+  A row with no `claimed_at` was claimed before this column existed and is
+  treated as stale.
   """
   @spec recover() :: :ok
   def recover do
+    cutoff = DateTime.add(DateTime.utc_now(), -claim_timeout_ms(), :millisecond)
+
     {_count, tracks} =
       Item
       |> where([p], p.status == :sending)
+      |> where([p], is_nil(p.claimed_at) or p.claimed_at < ^cutoff)
       |> select([p], p.track_id)
       |> Repo.update_all(set: [status: :unconfirmed, error: @restart_error])
 
     tracks |> Enum.uniq() |> Enum.each(&publish_queue/1)
   end
+
+  @doc """
+  How long a claim is honoured before `recover/0` may take it back. Longer
+  than the server's own delivery timeout, so a task that is about to be
+  killed for running long still settles its own row first.
+  """
+  @spec claim_timeout_ms() :: pos_integer()
+  def claim_timeout_ms, do: @claim_timeout_ms
 
   @doc "Cancel everything on a track that has not been sent: the track closed, or its project went."
   @spec cancel_track(String.t()) :: :ok

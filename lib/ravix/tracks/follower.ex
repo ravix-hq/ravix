@@ -83,8 +83,27 @@ defmodule Ravix.Tracks.Follower do
     with {:ok, conversation_id} <- conversation_id(track_id, opts),
          {:ok, pid} <- ensure_started(track_id, conversation_id, opts) do
       :ok = Phoenix.PubSub.subscribe(Ravix.PubSub, topic(track_id))
-      GenServer.call(pid, {:subscribe, self()})
+      join(pid, track_id, conversation_id, opts)
     end
+  end
+
+  # A follower stops three seconds after its last subscriber leaves, and its
+  # registry entry outlives the decision, so `ensure_started/3` can hand back
+  # one that is already on its way out. This call runs in the LiveView
+  # process, where an exit is the track page crashing on the reader, so take
+  # the answer and start a fresh follower instead.
+  defp join(pid, track_id, conversation_id, opts, retried? \\ false) do
+    GenServer.call(pid, {:subscribe, self()})
+  catch
+    :exit, _reason when not retried? ->
+      case ensure_started(track_id, conversation_id, opts) do
+        {:ok, ^pid} -> {:error, :not_open}
+        {:ok, fresh} -> join(fresh, track_id, conversation_id, opts, true)
+        {:error, reason} -> {:error, reason}
+      end
+
+    :exit, _reason ->
+      {:error, :not_open}
   end
 
   @doc "Stop receiving a track's events. The follower stops shortly after its last subscriber leaves."

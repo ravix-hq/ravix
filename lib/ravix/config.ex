@@ -109,13 +109,14 @@ defmodule Ravix.Config do
          client_id when is_binary(client_id) <- get(:github_client_id) |> blank_to(nil),
          client_secret when is_binary(client_secret) <-
            get(:github_client_secret) |> blank_to(nil),
-         raw_key when is_binary(raw_key) <- get(:github_private_key) |> blank_to(nil) do
+         raw_key when is_binary(raw_key) <- get(:github_private_key) |> blank_to(nil),
+         pem when is_binary(pem) <- signing_pem(raw_key) do
       %GitHubApp{
         app_id: app_id,
         slug: get(:github_app_slug) |> blank_to(nil) || "ravix",
         client_id: client_id,
         client_secret: client_secret,
-        private_key_pem: normalize_pem(raw_key),
+        private_key_pem: pem,
         webhook_secret: get(:github_webhook_secret) |> blank_to(nil),
         api_url:
           (get(:github_api_url) |> blank_to(nil) || "https://api.github.com")
@@ -127,6 +128,31 @@ defmodule Ravix.Config do
     else
       _ -> nil
     end
+  end
+
+  # All of them or none of them, and a key that cannot sign is none of them.
+  # Sign-in uses the client secret rather than the key, so a bad PEM leaves an
+  # App that looks complete and works right up to the first repository call,
+  # which raises out of JOSE instead of returning a tagged error. Checking it
+  # here is what keeps `github/0` the single all-or-nothing answer it claims.
+  defp signing_pem(raw_key) do
+    pem = normalize_pem(raw_key)
+
+    case JOSE.JWK.from_pem(pem) do
+      %JOSE.JWK{} = jwk -> if signer?(jwk), do: pem
+      _ -> nil
+    end
+  rescue
+    _ -> nil
+  end
+
+  defp signer?(jwk) do
+    JOSE.JWT.sign(jwk, %{"alg" => "RS256"}, %{"probe" => 1})
+    true
+  rescue
+    _ -> false
+  catch
+    _, _ -> false
   end
 
   @doc """

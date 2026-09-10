@@ -27,12 +27,32 @@ config :ravix, RavixWeb.Endpoint, http: [port: port]
 # reader is in `Ravix.Config`; nothing else touches the environment.
 env = fn name -> System.get_env(name) end
 
+# Checked here rather than at first use: `Ravix.Crypto` raises on a short
+# secret, and its only caller is the OAuth callback, so a deploy would go
+# green and fail on everyone's sign-in.
+ravix_secret = fn secret ->
+  if String.length(secret) < 16,
+    do: raise("environment variable RAVIX_SECRET must be at least 16 characters"),
+    else: secret
+end
+
 config :ravix, Ravix.Config,
   port: port,
   public_url: env.("PUBLIC_URL"),
   secret:
-    env.("RAVIX_SECRET") ||
-      if(config_env() != :prod, do: "ravix-development-secret-not-for-production"),
+    (env.("RAVIX_SECRET") && ravix_secret.(env.("RAVIX_SECRET"))) ||
+      if(config_env() != :prod,
+        do: "ravix-development-secret-not-for-production",
+        else:
+          raise("""
+          environment variable RAVIX_SECRET is missing.
+
+          It encrypts stored GitHub tokens, so without it the app boots, passes
+          its health check, serves the landing page, and then raises on the
+          OAuth callback -- nobody can sign in, and the deploy reports success.
+          Generate one with: mix phx.gen.secret
+          """)
+      ),
   fountain_url: env.("FOUNTAIN_URL"),
   fountain_api_key: env.("FOUNTAIN_API_KEY"),
   github_app_id: env.("GITHUB_APP_ID"),

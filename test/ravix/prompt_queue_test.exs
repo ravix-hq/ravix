@@ -128,6 +128,14 @@ defmodule Ravix.PromptQueueTest do
 
   defp status_of(id), do: PromptQueue.get(id).status
 
+  # Backdate a claim so recovery treats it as one no task can still hold.
+  defp age_claim(id, by_ms) do
+    Ravix.Repo.update_all(
+      Ecto.Query.from(p in Ravix.PromptQueue.Item, where: p.id == ^id),
+      set: [claimed_at: DateTime.add(DateTime.utc_now(), -by_ms, :millisecond)]
+    )
+  end
+
   # ── delivery ──────────────────────────────────────────────────────────
 
   test "acknowledged prompts and images survive a restart and deliver without a browser", f do
@@ -342,11 +350,14 @@ defmodule Ravix.PromptQueueTest do
              PromptQueue.get(id)
   end
 
-  test "a server crash during POST recovers as unconfirmed, never an automatic replay", f do
+  test "a claim outliving its task recovers as unconfirmed, never an automatic replay", f do
     client = fountain([])
     {:ok, %Item{id: id}} = send_prompt(f.track, f.owner, "might already have run")
     assert PromptQueue.claim(id)
     assert status_of(id) == :sending
+
+    # A claim old enough that nothing can still be working on it.
+    age_claim(id, PromptQueue.claim_timeout_ms() + 1_000)
 
     PromptQueue.recover()
     Server.tick(start_server())
@@ -356,6 +367,17 @@ defmodule Ravix.PromptQueueTest do
              PromptQueue.get(id)
 
     assert PromptQueue.get(id).payload != ""
+  end
+
+  test "a fresh claim is left to the task still holding it", f do
+    {:ok, %Item{id: id}} = send_prompt(f.track, f.owner, "still in flight")
+    assert PromptQueue.claim(id)
+
+    # The delivery tasks are supervised beside the server rather than under
+    # it, so they outlive its restart; recovering their rows would POST the
+    # same prompt twice.
+    PromptQueue.recover()
+    assert status_of(id) == :sending
   end
 
   test "project members retain authorship and a full queue refuses more work", f do

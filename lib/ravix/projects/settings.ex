@@ -169,14 +169,20 @@ defmodule Ravix.Projects.Settings do
     case Map.get(attrs, "instructions") do
       text when is_binary(text) ->
         text = str(text, 20_000)
-        Projects.set_instructions(project.id, text)
 
+        # Fountain first, then the row -- the same order as `harness/3` above.
+        # Saved-but-not-pushed is the one state with no signal for it: the
+        # panel reads the new text back from the row as though it took, while
+        # the agent keeps running the old system prompt, and the `rev` bump
+        # that would badge open tracks as stale never happens because this
+        # failure stops it.
         with {:ok, _agent} <-
                Projects.fountain_result(
                  Fountain.update_agent(client, project.agent_id, %{
                    system: Projects.compose_system(%{project | instructions: text})
                  })
                ) do
+          Projects.set_instructions(project.id, text)
           {:ok, true}
         end
 

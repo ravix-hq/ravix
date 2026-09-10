@@ -411,8 +411,18 @@ defmodule Ravix.Sprites.Tunnel.HTTP do
 
   defp step({:chunked, :trailers}, buffer) do
     case :binary.split(buffer, "\r\n") do
-      [_trailer, rest] -> step({:chunked, :trailers}, rest)
-      [_partial] -> {:more, {:chunked, :trailers}, buffer}
+      [_trailer, rest] ->
+        step({:chunked, :trailers}, rest)
+
+      # Bounded like the size line above it: without this a sandbox can send
+      # its terminating `0\r\n` and then stream forever without another
+      # CRLF, and the unmatched trailer grows in this process until the node
+      # runs out of memory.
+      [_partial] when byte_size(buffer) > @max_head ->
+        raise Error.new(502, "The preview sent a malformed chunked body.")
+
+      [_partial] ->
+        {:more, {:chunked, :trailers}, buffer}
     end
   end
 

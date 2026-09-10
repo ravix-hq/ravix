@@ -76,7 +76,7 @@ defmodule Ravix.PromptQueue.Server do
   @impl true
   def init(opts) do
     interval = Keyword.get(opts, :interval, @interval)
-    {:ok, schedule(%{interval: interval, recovered?: false})}
+    {:ok, schedule(%{interval: interval})}
   end
 
   @impl true
@@ -95,7 +95,13 @@ defmodule Ravix.PromptQueue.Server do
   # ── the sweep ─────────────────────────────────────────────────────────
 
   defp sweep(state) do
-    state = recover_once(state)
+    # Every sweep, not once at boot. A claim can outlive the task holding it
+    # -- killed for running long, or lost between the POST and the status
+    # write -- and `:sending` is refused by both `cancel/3` and `retry/3`, so
+    # nothing else would ever take it back. `PromptQueue.recover/0` only
+    # reclaims claims older than `claim_timeout_ms/0`, so a task that is still
+    # working is left alone.
+    PromptQueue.recover()
     client = Fountain.client()
 
     if Client.configured?(client), do: deliver_heads(client)
@@ -106,13 +112,6 @@ defmodule Ravix.PromptQueue.Server do
     error ->
       Logger.error("ravix: prompt queue sweep failed: #{Exception.message(error)}")
       state
-  end
-
-  defp recover_once(%{recovered?: true} = state), do: state
-
-  defp recover_once(state) do
-    PromptQueue.recover()
-    %{state | recovered?: true}
   end
 
   defp deliver_heads(client) do

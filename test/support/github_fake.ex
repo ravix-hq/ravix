@@ -125,6 +125,15 @@ defmodule Ravix.GitHubFake do
     end
   end
 
+  @doc "The public half of `private_key_pem/0`: a well-formed PEM that cannot sign."
+  @spec public_key_pem() :: String.t()
+  def public_key_pem do
+    {_, pem} =
+      private_key_pem() |> JOSE.JWK.from_pem() |> JOSE.JWK.to_public() |> JOSE.JWK.to_pem()
+
+    pem
+  end
+
   @doc "The same key as PKCS#8 (`BEGIN PRIVATE KEY`), the other shape GitHub accepts."
   @spec private_key_pem_pkcs8() :: String.t()
   def private_key_pem_pkcs8 do

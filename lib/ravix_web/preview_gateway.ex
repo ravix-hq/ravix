@@ -65,6 +65,12 @@ defmodule RavixWeb.PreviewGateway do
   @max_frame 1024 * 1024
   @session_ttl_ms 12 * 60 * 60 * 1000
   @read_chunk 65_536
+  # How long the gateway waits for the next piece of a response body. Without
+  # it a sandbox that sends a head and then stops -- a hung dev server, or a
+  # deliberate stall -- pins a Bandit connection process, a tunnel GenServer
+  # and a Sprites WebSocket for as long as the node runs, and nothing else
+  # cuts it: `Watch` only fires on revocation.
+  @body_timeout 120_000
   @conn_key :preview_gateway_conn
   @generic "The preview did not answer. Return to the track to restart it or read its logs."
   @not_found "Preview not found."
@@ -346,7 +352,12 @@ defmodule RavixWeb.PreviewGateway do
       try do
         headers = Headers.upstream_headers(conn.req_headers, host)
         body = if conn.method in ["GET", "HEAD"], do: nil, else: request_body(conn)
-        response = tunnel_http().request(tunnel, conn.method, target(conn), headers, body)
+
+        response =
+          tunnel_http().request(tunnel, conn.method, target(conn), headers, body,
+            body_timeout: @body_timeout
+          )
+
         conn = Process.delete(@conn_key) || conn
 
         case response do
@@ -390,19 +401,39 @@ defmodule RavixWeb.PreviewGateway do
   defp respond(conn, status, response_headers, stream, origin) do
     headers = Headers.response_headers(response_headers, origin)
 
+    # Media types are case-insensitive, and `response_headers/2` downcases
+    # names but not values: `TEXT/HTML` is still HTML.
     html? =
       conn.method != "HEAD" and
-        String.contains?(value(headers, "content-type"), "text/html") and
+        headers |> value("content-type") |> String.downcase() |> String.contains?("text/html") and
         value(headers, "content-encoding") == ""
 
+    bodyless? = conn.method == "HEAD" or status in [204, 304]
+
     headers =
-      if html?,
-        do: Enum.reject(headers, fn {name, _} -> name in ["content-length", "etag"] end),
-        else: headers
+      cond do
+        # A HEAD or 204/304 sends no body, so an upstream length still
+        # describes what a GET would have returned and is worth keeping.
+        bodyless? ->
+          headers
+
+        # Everything else is re-framed by `send_chunked/2`, so an upstream
+        # length no longer describes what goes out. Bandit treats a declared
+        # `content-length` as a promise and streams raw bytes with no framing,
+        # so leaving one here desynchronises the connection: the browser stops
+        # reading at the declared length and parses whatever the sandbox sent
+        # after it as the next response. An `etag` survives a byte-for-byte
+        # relay but not the HTML rewrite.
+        html? ->
+          Enum.reject(headers, fn {name, _} -> name in ["content-length", "etag"] end)
+
+        true ->
+          Enum.reject(headers, fn {name, _} -> name == "content-length" end)
+      end
 
     conn = put_headers(conn, headers)
 
-    if conn.method == "HEAD" or status in [204, 304] do
+    if bodyless? do
       send_resp(conn, status, "")
     else
       conn

@@ -37,6 +37,26 @@ defmodule Ravix.ConfigTest do
       end
     end
 
+    test "a private key that cannot sign disables the App as surely as a missing one" do
+      override_all(@required)
+
+      # Sign-in uses the client secret rather than the key, so each of these
+      # leaves an App that looks complete and works right up to the first
+      # repository call -- which raised out of JOSE instead of returning a
+      # tagged error, and took the LiveView with it.
+      for {label, key} <- [
+            {"the body without its armour", "MIIEpAIBAAKCAQEAy8Dbv8prpJ/0kKhlGeJY"},
+            {"not a PEM at all", "not-a-pem-at-all"},
+            {"a public key", Ravix.GitHubFake.public_key_pem()}
+          ] do
+        Config.put(:github_private_key, key)
+        assert Config.github() == nil, "#{label} should disable the App"
+      end
+
+      Config.put(:github_private_key, Ravix.GitHubFake.private_key_pem())
+      assert %GitHubApp{} = Config.github()
+    end
+
     test "defaults and trimming" do
       override_all(
         @required ++

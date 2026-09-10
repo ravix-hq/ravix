@@ -24,6 +24,7 @@ defmodule Ravix.PreviewsFixture do
           ready: boolean() | (-> boolean()),
           crash: non_neg_integer(),
           collide: boolean(),
+          exec_error: term(),
           creates: non_neg_integer(),
           stops: [String.t()],
           deletes: [String.t()],
@@ -57,6 +58,7 @@ defmodule Ravix.PreviewsFixture do
       ready: true,
       crash: 0,
       collide: false,
+      exec_error: nil,
       creates: 0,
       stops: [],
       deletes: [],
@@ -188,15 +190,21 @@ defmodule Ravix.PreviewsFixture do
         &Map.update!(&1, :holds, fn holds -> holds ++ ["#{sprite}/#{name}/#{release?}"] end)
       )
 
-      :ok
+      # `activity/4` runs through `exec/4`, so an unreachable machine fails
+      # here exactly as it does for the port check.
+      state(pid).exec_error |> then(&if &1, do: {:error, &1}, else: :ok)
     end)
 
     stub(Ravix.Sprites, :exec, fn _cfg, _sprite, argv, _timeout ->
       Agent.update(pid, &Map.update!(&1, :execs, fn execs -> execs ++ [argv] end))
 
-      if state(pid).collide,
-        do: {:ok, %{stdout: "", stderr: "Port occupied", code: 1}},
-        else: {:ok, %{stdout: "", stderr: "", code: 0}}
+      cond do
+        # A machine that is asleep, gone, or unreachable, which is what
+        # `Sprites.exec/4` answers with rather than raising.
+        error = state(pid).exec_error -> {:error, error}
+        state(pid).collide -> {:ok, %{stdout: "", stderr: "Port occupied", code: 1}}
+        true -> {:ok, %{stdout: "", stderr: "", code: 0}}
+      end
     end)
 
     :ok

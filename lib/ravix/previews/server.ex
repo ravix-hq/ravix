@@ -202,12 +202,26 @@ defmodule Ravix.Previews.Server do
   defp retire(%Row{} = row, remove?) do
     with cfg when is_map(cfg) <- Sprites.config(),
          {:ok, _} <- Sprites.service_action(cfg, row.sprite, row.service, :stop),
-         :ok <- Sprites.activity(cfg, row.sprite, row.service, true),
+         :ok <- release_activity(cfg, row),
          _ = Process.delete(@hold_key),
          {:ok, _} <- remove(cfg, row, remove?) do
       :ok
     else
       nil -> {:error, {:unavailable, "Restore SPRITES_TOKEN to stop the saved preview service."}}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  # `service_action/4` treats a missing sprite as already-stopped, but
+  # `activity/4` goes through `exec/4`, which has no such notion and fails for
+  # a machine that is asleep or gone. Releasing a lease on a machine that no
+  # longer exists is not work left undone, and holding cleanup open for it is:
+  # the row keeps `cleanup: true`, so the reconciler decides `:cleanup` again
+  # every fifteen seconds, for the life of the deployment, per abandoned track.
+  defp release_activity(cfg, row) do
+    case Sprites.activity(cfg, row.sprite, row.service, true) do
+      :ok -> :ok
+      {:error, %Sprites.Error{status: status}} when status in [404, 501] -> :ok
       {:error, reason} -> {:error, reason}
     end
   end
@@ -412,8 +426,19 @@ defmodule Ravix.Previews.Server do
         "echo 'Preview port #{row.port} is occupied. Stop the conflicting process.' >&2; exit 1; fi"
 
     case Sprites.exec(Sprites.config(), row.sprite, ["sh", "-lc", script], @check_timeout_sec) do
-      {:ok, %{code: 0}} -> :ok
-      {:ok, %{stderr: stderr}} -> {:error, blank_to(stderr, "Preview port collision."), row}
+      {:ok, %{code: 0}} ->
+        :ok
+
+      {:ok, %{stderr: stderr}} ->
+        {:error, blank_to(stderr, "Preview port collision."), row}
+
+      # A machine that is asleep, gone, or unreachable answers here, and so
+      # does an unconfigured Sprites. Without this clause the `case` raises,
+      # which skips `fail/1` entirely: the row keeps `state: :starting` and a
+      # nil error while its old service has already been dropped, so the page
+      # says "Starting..." until the idle timer quietly stops it.
+      {:error, reason} ->
+        {:error, reason, row}
     end
   end
 

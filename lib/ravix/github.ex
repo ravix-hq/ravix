@@ -94,7 +94,12 @@ defmodule Ravix.GitHub do
     now = Clock.now_ms()
 
     case if(force_refresh, do: :error, else: Cache.token(app.app_id, installation_id)) do
-      {:ok, token, expires_at_ms} when expires_at_ms > now + 60_000 ->
+      # `is_integer` is load-bearing: `expires_at_ms` is nil when the response
+      # carried no parseable `expires_at`, and in Erlang term order every atom
+      # sorts above every integer, so `nil > now` is true and the entry would
+      # be honoured forever -- long past the point GitHub stopped accepting it.
+      {:ok, token, expires_at_ms}
+      when is_integer(expires_at_ms) and expires_at_ms > now + 60_000 ->
         {:ok, token}
 
       _ ->

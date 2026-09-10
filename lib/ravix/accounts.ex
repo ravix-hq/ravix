@@ -84,11 +84,27 @@ defmodule Ravix.Accounts do
   def get_user(id) when is_binary(id), do: Repo.get(User, id)
   def get_user(_), do: nil
 
-  @doc "A user by GitHub login, case-insensitively, or nil."
+  @doc """
+  A user by GitHub login, case-insensitively, or nil.
+
+  Nil for an *ambiguous* login as much as an unknown one, and the difference
+  is worth naming. `login` has no unique index and cannot have one: GitHub
+  frees a name the moment somebody renames, and a row here is allowed to be
+  stale until they next sign in, so a stale `dana` and the new owner of
+  `dana` can both exist. Both callers are consequential -- one grants access
+  to a track, the other takes it away -- and answering either with a guess is
+  how "remove @dana" silently revokes the wrong account. The invite path
+  falls through to GitHub, which answers by numeric id; the removal path
+  refuses rather than picking.
+  """
   @spec user_by_login(String.t()) :: User.t() | nil
   def user_by_login(login) when is_binary(login) do
     lowered = String.downcase(login)
-    Repo.one(from u in User, where: fragment("lower(?)", u.login) == ^lowered, limit: 1)
+
+    case Repo.all(from u in User, where: fragment("lower(?)", u.login) == ^lowered, limit: 2) do
+      [%User{} = user] -> user
+      _none_or_ambiguous -> nil
+    end
   end
 
   @doc """
