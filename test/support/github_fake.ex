@@ -110,19 +110,44 @@ defmodule Ravix.GitHubFake do
     end
   end
 
-  @doc "A PKCS#1 PEM (`BEGIN RSA PRIVATE KEY`), as GitHub issues them. Generated once per run."
+  @doc """
+  A PKCS#1 PEM (`BEGIN RSA PRIVATE KEY`), as GitHub issues them. Generated once
+  per run, and once means once.
+
+  The generation is behind a lock because the check and the store are not one
+  step. Several async suites call this within milliseconds of the run starting
+  -- `app/0` is in the setup of four of them -- and RSA-2048 keygen is slow
+  enough that they all saw an empty `:persistent_term`, all generated a
+  different key, and all stored it. Each caller kept *its own* key in the
+  `%GitHubApp{}` it built, while `verify_app_jwt!/1` reads whatever the last
+  writer stored: every test but one was then holding a key the fake would not
+  verify with. It surfaced as `App JWT signature did not verify` in whichever
+  test lost, a long way from here, and only under the scheduling of a machine
+  with fewer cores than a developer's.
+  """
   @spec private_key_pem() :: String.t()
   def private_key_pem do
     case :persistent_term.get({__MODULE__, :pem}, nil) do
-      nil ->
-        key = :public_key.generate_key({:rsa, 2048, 65_537})
-        pem = :public_key.pem_encode([:public_key.pem_entry_encode(:RSAPrivateKey, key)])
-        :persistent_term.put({__MODULE__, :pem}, pem)
-        pem
-
-      pem ->
-        pem
+      nil -> generate_key_once()
+      pem -> pem
     end
+  end
+
+  # Re-checked inside the lock: the caller that waited for it must take the key
+  # the winner stored rather than generate a second one.
+  defp generate_key_once do
+    :global.trans({{__MODULE__, :pem}, self()}, fn ->
+      case :persistent_term.get({__MODULE__, :pem}, nil) do
+        nil ->
+          key = :public_key.generate_key({:rsa, 2048, 65_537})
+          pem = :public_key.pem_encode([:public_key.pem_entry_encode(:RSAPrivateKey, key)])
+          :persistent_term.put({__MODULE__, :pem}, pem)
+          pem
+
+        pem ->
+          pem
+      end
+    end)
   end
 
   @doc "The public half of `private_key_pem/0`: a well-formed PEM that cannot sign."
