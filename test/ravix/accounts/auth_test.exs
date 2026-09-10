@@ -46,7 +46,7 @@ defmodule Ravix.Accounts.AuthTest do
       assert String.length(state) == 24
       assert Accounts.take_state(state) == nil
 
-      assert %{kind: "join", redirect: "link-token"} =
+      assert %{kind: :join, redirect: "link-token"} =
                Accounts.take_state(Crypto.sha256("#{state}:#{secret}"))
     end
 

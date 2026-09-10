@@ -264,11 +264,11 @@ defmodule Ravix.Accounts do
   # ── the two GitHub round trips ───────────────────────────────────────
 
   @doc """
-  Park a state for a round trip: which kind (`signin`, `install`, `join`)
+  Park a state for a round trip: which kind (`:signin`, `:install`, `:join`)
   and where to land afterwards. States older than fifteen minutes are swept
   on every write, so the table stays the size of the last quarter hour.
   """
-  @spec put_state(String.t(), String.t(), String.t() | nil) :: :ok
+  @spec put_state(String.t(), OAuthState.kind(), String.t() | nil) :: :ok
   def put_state(state, kind, redirect) do
     cutoff = DateTime.add(DateTime.utc_now(), -@state_max_age_s, :second)
     Repo.delete_all(from s in OAuthState, where: s.created_at < ^cutoff)
@@ -289,7 +289,7 @@ defmodule Ravix.Accounts do
   end
 
   @doc "Takes the state: one use only, which is what makes a replayed callback fail."
-  @spec take_state(String.t()) :: %{kind: String.t(), redirect: String.t() | nil} | nil
+  @spec take_state(String.t()) :: %{kind: OAuthState.kind(), redirect: String.t() | nil} | nil
   def take_state(state) when is_binary(state) do
     cutoff = DateTime.add(DateTime.utc_now(), -@state_max_age_s, :second)
 

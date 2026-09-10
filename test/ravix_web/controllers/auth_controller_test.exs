@@ -57,7 +57,7 @@ defmodule RavixWeb.AuthControllerTest do
 
       assert cookie[:same_site] == "Lax"
       refute cookie[:secure]
-      assert %{kind: "signin"} = Accounts.take_state(Crypto.sha256("#{state}:#{secret}"))
+      assert %{kind: :signin} = Accounts.take_state(Crypto.sha256("#{state}:#{secret}"))
     end
 
     test "the cookie is Secure behind a TLS-terminating proxy", %{conn: conn} do
@@ -182,7 +182,7 @@ defmodule RavixWeb.AuthControllerTest do
       assert %{value: secret, path: "/api/auth/callback"} =
                response.resp_cookies["ravix_oauth_" <> state]
 
-      assert %{kind: "install"} = Accounts.take_state(Crypto.sha256("#{state}:#{secret}"))
+      assert %{kind: :install} = Accounts.take_state(Crypto.sha256("#{state}:#{secret}"))
     end
 
     test "a stranger is told to sign in", %{conn: conn} do
@@ -250,7 +250,7 @@ defmodule RavixWeb.AuthControllerTest do
       assert %{value: secret, path: "/api/auth/callback"} =
                response.resp_cookies["ravix_oauth_" <> state]
 
-      assert %{kind: "join", redirect: "link-token"} =
+      assert %{kind: :join, redirect: "link-token"} =
                Accounts.take_state(Crypto.sha256("#{state}:#{secret}"))
     end
 
@@ -343,7 +343,7 @@ defmodule RavixWeb.AuthControllerTest do
       state = state_of(location)
       assert %{value: secret} = response.resp_cookies["ravix_oauth_" <> state]
 
-      assert %{kind: "join", redirect: "link-token"} =
+      assert %{kind: :join, redirect: "link-token"} =
                Accounts.take_state(Crypto.sha256("#{state}:#{secret}"))
     end
   end

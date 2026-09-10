@@ -15,14 +15,21 @@ defmodule Ravix.Tracks.Track do
   it over rows whose `closed_at` is null.
 
   `rev` is the project rev this track opened at. A lower one means older
-  settings. `origin_kind` is free text (`blank`, `pr`, `branch`, ...); the
-  other `origin_*` columns describe what the track was created from.
+  settings. `origin_kind` is one of four and the database says so, so the
+  read side can trust it rather than coercing anything it does not know into
+  `blank`; the other `origin_*` columns describe what the track was created
+  from.
   """
   use Ecto.Schema
   import Ecto.Changeset
 
   @primary_key {:id, :string, autogenerate: false}
   @foreign_key_type :string
+
+  @origin_kinds ~w(blank branch pr issue)a
+
+  @typedoc "What a track was started from."
+  @type origin_kind :: :blank | :branch | :pr | :issue
 
   @type t :: %__MODULE__{}
 
@@ -33,7 +40,7 @@ defmodule Ravix.Tracks.Track do
     field :title, :string
     field :branch, :string
     field :workdir, :string
-    field :origin_kind, :string
+    field :origin_kind, Ecto.Enum, values: @origin_kinds
     field :origin_base, :string
     field :origin_number, :integer
     field :origin_title, :string
@@ -56,6 +63,10 @@ defmodule Ravix.Tracks.Track do
              origin_number origin_title origin_url rev opened_at closed_at created_at created_by_login)a
   @required ~w(id project_id slug title branch workdir origin_kind rev created_at created_by_login)a
 
+  @doc "The four things a track can be started from."
+  @spec origin_kinds() :: [origin_kind()]
+  def origin_kinds, do: @origin_kinds
+
   @doc """
   A track. The caller usually brings the id, since the branch name is
   derived from it; one is minted otherwise.
@@ -70,6 +81,7 @@ defmodule Ravix.Tracks.Track do
     |> validate_number(:rev, greater_than_or_equal_to: 1)
     |> foreign_key_constraint(:project_id)
     |> unique_constraint(:id, name: :tracks_pkey)
+    |> check_constraint(:origin_kind, name: :tracks_origin_kind)
     |> unique_constraint([:project_id, :slug],
       name: :tracks_slug,
       error_key: :slug,

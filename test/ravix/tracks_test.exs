@@ -140,7 +140,7 @@ defmodule Ravix.TracksTest do
     test "the origin is typed", %{project: project, track: track} do
       pr = %{
         track
-        | origin_kind: "pr",
+        | origin_kind: :pr,
           origin_number: 12,
           origin_title: "Fix",
           origin_url: "https://github.com/x/y/pull/12"
@@ -155,8 +155,11 @@ defmodule Ravix.TracksTest do
                }
              } = Tracks.present(pr, project: project)
 
-      assert %{origin: %{kind: :blank}} =
-               Tracks.present(%{track | origin_kind: "weird"}, project: project)
+      # There is no longer a fifth kind to coerce here: the column is one of
+      # four, and a row carrying anything else cannot be written. See
+      # `Ravix.SchemasTest` for the refusal and `open/4` for the boundary
+      # where a browser's word becomes one of the four.
+      assert Tracks.Track.origin_kinds() == [:blank, :branch, :pr, :issue]
     end
   end
 
@@ -407,6 +410,26 @@ defmodule Ravix.TracksTest do
       insert_track(project: ctx.project, slug: "kyoto-2", closed_at: DateTime.utc_now())
       opening_fountain(ctx.project, false)
       assert {:ok, %{slug: "kyoto-2"}} = Tracks.open(ctx.owner, ctx.project.id, %{title: "Kyoto"})
+    end
+
+    test "an origin the browser made up opens a blank track", ctx do
+      opening_fountain(ctx.project, false)
+
+      # The kind arrives as text from a form and is one of four by the time it
+      # reaches a row: this is the boundary, and past it nothing re-checks.
+      assert {:ok, presented} =
+               Tracks.open(ctx.owner, ctx.project.id, %{
+                 "title" => "Kyoto",
+                 "origin" => %{"kind" => "weird", "base" => "somewhere", "number" => 9}
+               })
+
+      assert presented.origin == %{
+               kind: :blank,
+               base: "main",
+               number: nil,
+               title: nil,
+               url: nil
+             }
     end
 
     test "a pull request names the track, its branch and its link", ctx do

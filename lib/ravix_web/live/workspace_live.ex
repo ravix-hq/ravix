@@ -8,6 +8,22 @@ defmodule RavixWeb.WorkspaceLive do
   alias RavixWeb.Error
   alias RavixWeb.Live.Guard
 
+  # The four origins, as the form spells them. One list rather than the three
+  # that had grown -- this module's guard, the buttons in the template, and
+  # `Ravix.Tracks.Track`'s own -- since the day they disagree is the day the
+  # form offers something the context refuses.
+  @origin_kinds Enum.map(Ravix.Tracks.Track.origin_kinds(), &to_string/1)
+  @origin_labels %{
+    "blank" => "Blank",
+    "branch" => "Branch",
+    "pr" => "Pull request",
+    "issue" => "Issue"
+  }
+
+  @doc "The origin buttons on the new-track form, in the order they are offered."
+  @spec origin_choices() :: [{String.t(), String.t()}]
+  def origin_choices, do: Enum.map(@origin_kinds, &{&1, @origin_labels[&1]})
+
   @impl true
   def mount(_params, session, socket) do
     socket =
@@ -190,7 +206,7 @@ defmodule RavixWeb.WorkspaceLive do
      |> start_async(:create_project, fn -> Projects.create(user, attrs) end)}
   end
 
-  def handle_event("origin", %{"kind" => kind}, socket) when kind in ~w(blank branch pr issue) do
+  def handle_event("origin", %{"kind" => kind}, socket) when kind in @origin_kinds do
     socket = assign(socket, origin_kind: kind, refs: [], advanced_track: true)
 
     if kind == "blank" do
