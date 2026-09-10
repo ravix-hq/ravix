@@ -64,8 +64,8 @@ terminal draft; parent dialogs opened from a nested track preserve the composer.
 Axe reports no violations on the checked Ravix and Daylight pages. The full
 screenshot matrix and failure traces are retained in browser CI artifacts.
 
-`mix precommit` passes 719 tests and four generated properties, with 92.12%
-production coverage, plus 27 DOM/guard tests and the static/release gates.
+`mix precommit` passes 739 tests and four generated properties, with 92.16%
+production coverage, plus 28 DOM/guard tests and the static/release gates.
 Docker smoke verifies release boot, fonts/assets, repeatable migrations, and
 preservation of legacy tables. Chrome comparison also covered populated home,
 project, inbox, track, and new-track views.
