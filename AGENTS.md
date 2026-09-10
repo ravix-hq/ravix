@@ -44,9 +44,12 @@ checking who owns it. Tests use `ravix_test` and SQL Sandbox transactions.
 ## Invariants that matter
 
 Every user-facing context call takes the current user and establishes scoped
-access through `Ravix.Accounts.Access`. `_unsafe_*` calls need an adjacent
-scoped fetch or an explicit internal sweep. Project membership and track
-membership differ; a track share does not grant the entire project.
+access through `Ravix.Accounts.Access`. Row access with no user in hand lives
+in a `Ravix.<Context>.Store`, never beside the scoped functions: a page may
+not name one at all, and a context reaching into another's writes a
+`# ownership:` comment naming the door it already went through. Project
+membership and track membership differ; a track share does not grant the
+entire project.
 
 Mount-time authentication is insufficient. Connected events, messages, URL
 patches, and async results must respect session expiry and membership removal.
@@ -107,8 +110,8 @@ PR descriptions. Do not merge or deploy merely because checks passed.
   LiveView/OTP work while preserving the project, track, and preview boundaries.
 
 The custom Credo check in `credo/checks/architecture.ex` enforces web/context
-separation, supervision, and `# ownership: ...` explanations on remote unsafe
-calls. Application startup is the one composition-root exception. Tests prove
+separation, supervision, the `Store` boundary above, and `# ownership: ...`
+explanations on cross-context row access. Application startup is the one composition-root exception. Tests prove
 both rejection and acceptance; comments alone do not establish authorization.
 Preview suites sharing the fixture's `s1`/`s2` ports use `group: :preview_ports`
 to avoid cross-transaction uniqueness waits while unrelated suites run in parallel.

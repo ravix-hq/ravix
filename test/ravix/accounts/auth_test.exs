@@ -227,14 +227,14 @@ defmodule Ravix.Accounts.AuthTest do
       test "one project invitation is worth landing on; one of each is the rail's decision" do
         github_signs_in()
 
-        stub(Ravix.People, :claim_invites, fn _user_id, "3" ->
+        stub(Ravix.People.Store, :claim_invites, fn _user_id, "3" ->
           %{projects: [%{id: "p1"}], tracks: []}
         end)
 
         mine = attempt()
         assert {:ok, %{redirect: "/p/p1"}} = Auth.callback(params(mine), mine.secret)
 
-        stub(Ravix.People, :claim_invites, fn _user_id, "3" ->
+        stub(Ravix.People.Store, :claim_invites, fn _user_id, "3" ->
           %{projects: [%{id: "p1"}], tracks: [%{id: "t1", project_id: "p1"}]}
         end)
 
@@ -245,14 +245,14 @@ defmodule Ravix.Accounts.AuthTest do
       test "one track invitation lands on the track; several is the rail's decision" do
         github_signs_in()
 
-        stub(Ravix.People, :claim_invites, fn _user_id, _github_id ->
+        stub(Ravix.People.Store, :claim_invites, fn _user_id, _github_id ->
           %{projects: [], tracks: [%{id: "t1", project_id: "p1"}]}
         end)
 
         mine = attempt()
         assert {:ok, %{redirect: "/p/p1/t/t1"}} = Auth.callback(params(mine), mine.secret)
 
-        stub(Ravix.People, :claim_invites, fn _user_id, _github_id ->
+        stub(Ravix.People.Store, :claim_invites, fn _user_id, _github_id ->
           %{projects: [%{id: "p1"}, %{id: "p2"}], tracks: []}
         end)
 
@@ -262,7 +262,7 @@ defmodule Ravix.Accounts.AuthTest do
 
       test "a join trip lands back on its invite rather than through it" do
         github_signs_in()
-        stub(Ravix.People, :claim_invites, fn _, _ -> %{projects: [], tracks: []} end)
+        stub(Ravix.People.Store, :claim_invites, fn _, _ -> %{projects: [], tracks: []} end)
 
         # Signing in through a link used to claim it on the way past, which made
         # signing in and joining one act nobody was asked about separately. The

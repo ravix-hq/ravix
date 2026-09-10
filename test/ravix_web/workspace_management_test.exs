@@ -169,7 +169,7 @@ defmodule RavixWeb.WorkspaceManagementTest do
 
   test "removing a project member changes database access", ctx do
     member = insert_user()
-    People.add_project_member(ctx.project.id, member.id, ctx.user.id)
+    People.Store.add_project_member(ctx.project.id, member.id, ctx.user.id)
     render_click(ctx.view, "dialog", %{name: "people"})
     ctx.view |> element("button[phx-value-login='#{member.login}']") |> render_click()
     render_async(ctx.view)

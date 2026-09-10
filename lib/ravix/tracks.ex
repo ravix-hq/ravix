@@ -18,13 +18,11 @@ defmodule Ravix.Tracks do
   afterwards, and the composer stays live because Ravix saves follow-up
   prompts on the server until the conversation is ready.
 
-  Every user-facing function takes the `%Ravix.Accounts.User{}` and goes
-  through one of the three doors in `Ravix.Accounts.Access` first. The
-  `_unsafe_` reads at the bottom are the track half of `server/db.ts`, for
-  the contexts that have already established ownership.
+  Every function here takes the `%Ravix.Accounts.User{}` and goes through one
+  of the three doors in `Ravix.Accounts.Access` first. There are no
+  exceptions; the rows themselves are `Ravix.Tracks.Store`, which takes ids
+  and asks nobody.
   """
-
-  import Ecto.Query
 
   alias Ravix.Accounts.Access
   alias Ravix.Accounts.User
@@ -33,10 +31,10 @@ defmodule Ravix.Tracks do
   alias Ravix.Hub
   alias Ravix.Ids
   alias Ravix.MachineCache
+  alias Ravix.People
   alias Ravix.Projects.Project
-  alias Ravix.Repo
   alias Ravix.Spec
-  alias Ravix.Tracks.{Diff, Files, Follower, Names, Track, TrackMember, Transcript}
+  alias Ravix.Tracks.{Diff, Files, Follower, Names, Store, Track, Transcript}
 
   @image_types ~w(image/png image/jpeg image/gif image/webp)
   # base64 is four characters per three bytes; the cap is on the decoded size.
@@ -115,8 +113,8 @@ defmodule Ravix.Tracks do
 
       rows =
         if wide,
-          do: _unsafe_tracks_of(project.id),
-          else: _unsafe_member_tracks_of(user.id, project.id)
+          do: Store.tracks_of(project.id),
+          else: Store.member_tracks_of(user.id, project.id)
 
       if not wide and rows == [],
         do: {:error, :not_found},
@@ -129,11 +127,13 @@ defmodule Ravix.Tracks do
 
   defp present_all(rows, project, user, role) do
     live = conversations_of(project)
-    reads = Ravix.People.reads_of(user.id, project.id)
+    # ownership: `list/1` above went through `Access.project_access/2` for this
+    # project, and these are read markers on tracks within it.
+    reads = People.Store.reads_of(user.id, project.id)
     # Both of these are read for the whole list rather than per row: the
     # sidebar is the one caller that asks for twenty tracks at once, and
     # per-row reads made its cost grow with the project.
-    people = Ravix.People.people_by_track(Enum.map(rows, & &1.id), project.user_id, project.id)
+    people = People.Store.people_by_track(Enum.map(rows, & &1.id), project.user_id, project.id)
 
     Enum.map(rows, fn row ->
       present(row,
@@ -189,9 +189,11 @@ defmodule Ravix.Tracks do
            present(track,
              project: project,
              live: live[track.conversation_id],
-             people: Ravix.People.people_of(track.id, project.user_id, project.id),
+             # ownership: `get/2` opened with `Access.track_access/2` on this
+             # very track; both of these are that caller's own view of it.
+             people: People.Store.people_of(track.id, project.user_id, project.id),
              role: role,
-             last_read: Ravix.People.last_read_of(track.id, user.id)
+             last_read: People.Store.last_read_of(track.id, user.id)
            ),
          header: header,
          starters: Spec.starters(%{has_repo: not is_nil(project.repo_full_name)})
@@ -245,7 +247,7 @@ defmodule Ravix.Tracks do
           ),
         # It went with the launch. The track is open as far as Fountain is
         # concerned; the worktree lands when that turn does.
-        else: _unsafe_mark_opened(track.id)
+        else: Store.mark_opened(track.id)
 
       # A first track provisions the machine, so what the memo holds is out
       # of date the moment this returns.
@@ -262,7 +264,7 @@ defmodule Ravix.Tracks do
     origin = read_origin(attrs["origin"], project)
     # Every track this project has ever had, closed ones included; see
     # `Ravix.Tracks.Names.name_track/2` for why a closed track's name is still spent.
-    taken = project.id |> _unsafe_tracks_of(true) |> Enum.map(& &1.slug)
+    taken = project.id |> Store.tracks_of(true) |> Enum.map(& &1.slug)
     title = text(attrs["title"], 200) |> non_empty() || default_title(origin, taken)
     slug = free_slug(project.id, text(attrs["slug"], 60) |> non_empty() || title)
 
@@ -307,7 +309,7 @@ defmodule Ravix.Tracks do
   # The conversation on Fountain, then the row that remembers it.
   defp cut(client, %{conversation: conversation, row: row}) do
     with {:ok, %{"id" => conversation_id}} <- Fountain.create_conversation(client, conversation) do
-      _unsafe_create_track(Map.put(row, :conversation_id, conversation_id))
+      Store.create_track(Map.put(row, :conversation_id, conversation_id))
     end
   end
 
@@ -347,7 +349,7 @@ defmodule Ravix.Tracks do
 
     case Fountain.prompt(client, track.conversation_id, prompt) do
       :ok ->
-        _unsafe_mark_opened(track.id)
+        Store.mark_opened(track.id)
         Hub.publish(project.id, :turn, track_id: track.id)
 
       {:error, reason} ->
@@ -419,7 +421,9 @@ defmodule Ravix.Tracks do
   @spec mark_read(User.t(), String.t()) :: :ok | {:error, reason()}
   def mark_read(%User{} = user, track_id) do
     with {:ok, %{track: track, project: project}} <- Access.track_access(user, track_id) do
-      Ravix.People.mark_read(track.id, user.id, DateTime.utc_now())
+      # ownership: `Access.track_access/2` on the line above; a person may
+      # always mark their own read position on a track they may open.
+      People.Store.mark_read(track.id, user.id, DateTime.utc_now())
       publish_tracks(project.id, track.id)
     end
   end
@@ -511,7 +515,7 @@ defmodule Ravix.Tracks do
          title when is_binary(title) <-
            text(title, 200) |> non_empty() ||
              {:error, {:unprocessable, "no_title", "A track needs a name."}} do
-      _unsafe_rename_track(track.id, title)
+      Store.rename_track(track.id, title)
       publish_tracks(project.id, track.id)
     end
   end
@@ -557,7 +561,7 @@ defmodule Ravix.Tracks do
         Fountain.terminate(client, track.conversation_id)
       end
 
-      _unsafe_close_track(track.id)
+      Store.close_track(track.id)
       MachineCache.forget_project(project.id)
       publish_tracks(project.id, track.id)
     end
@@ -571,9 +575,9 @@ defmodule Ravix.Tracks do
   """
   @spec close_all_for_rebuild(Project.t(), atom()) :: :ok
   def close_all_for_rebuild(%Project{id: project_id}, _reason) do
-    Enum.each(_unsafe_tracks_of(project_id), fn track ->
+    Enum.each(Store.tracks_of(project_id), fn track ->
       Ravix.PromptQueue.cancel_track(track.id)
-      _unsafe_close_track(track.id)
+      Store.close_track(track.id)
     end)
   end
 
@@ -872,13 +876,13 @@ defmodule Ravix.Tracks do
   defp free_slug(project_id, from) do
     base = Ids.slugify(from)
 
-    if _unsafe_slug_taken?(project_id, base), do: suffixed_slug(project_id, base), else: base
+    if Store.slug_taken?(project_id, base), do: suffixed_slug(project_id, base), else: base
   end
 
   defp suffixed_slug(project_id, base) do
     Enum.find_value(2..99, fn n ->
       candidate = "#{base}-#{n}"
-      unless _unsafe_slug_taken?(project_id, candidate), do: candidate
+      unless Store.slug_taken?(project_id, candidate), do: candidate
     end) ||
       "#{base}-#{Integer.to_string(System.system_time(:millisecond), 36) |> String.downcase()}"
   end
@@ -930,19 +934,15 @@ defmodule Ravix.Tracks do
     cond do
       project.user_id == user_id -> {:ok, :owner}
       Access.project_member?(project.id, user_id) -> {:ok, :project}
-      _unsafe_member_tracks_of(user_id, project.id) != [] -> {:ok, :tracks}
+      Store.member_tracks_of(user_id, project.id) != [] -> {:ok, :tracks}
       true -> {:error, :not_found}
     end
   end
 
-  defp live_project(project_id) when is_binary(project_id) do
-    case Repo.get(Project, project_id) do
-      %Project{archived_at: nil} = project -> project
-      _ -> nil
-    end
-  end
-
-  defp live_project(_), do: nil
+  # ownership: the read every door in `Ravix.Accounts.Access` starts with, and
+  # the same one, so this module cannot come to disagree with the doors about
+  # what an archived project is.
+  defp live_project(project_id), do: Ravix.Projects.Store.live_project(project_id)
 
   # Named with the track it is about, so a page showing a *different* track
   # of the same project can leave it alone. The wider `:tracks` event, with
@@ -996,94 +996,6 @@ defmodule Ravix.Tracks do
 
   defp stringify(attrs) when is_map(attrs), do: Map.new(attrs, fn {k, v} -> {to_string(k), v} end)
   defp stringify(_), do: %{}
-
-  # ── the rows (server/db.ts, the track half) ───────────────────────────
-  #
-  # Unscoped, as the name says: each is called beside a door in
-  # `Ravix.Accounts.Access` that already answered, or by a context that
-  # holds the project.
-
-  @doc "A track row. The caller brings the id, since the branch name carries it."
-  @spec _unsafe_create_track(map()) :: {:ok, Track.t()} | {:error, Ecto.Changeset.t()}
-  def _unsafe_create_track(attrs), do: %Track{} |> Track.changeset(attrs) |> Repo.insert()
-
-  @doc "One track by id, closed or not."
-  @spec _unsafe_get_track(String.t()) :: Track.t() | nil
-  def _unsafe_get_track(id) when is_binary(id), do: Repo.get(Track, id)
-  def _unsafe_get_track(_id), do: nil
-
-  @doc "The track a conversation belongs to."
-  @spec _unsafe_track_by_conversation(String.t()) :: Track.t() | nil
-  def _unsafe_track_by_conversation(conversation_id) when is_binary(conversation_id),
-    do: Repo.get_by(Track, conversation_id: conversation_id)
-
-  def _unsafe_track_by_conversation(_), do: nil
-
-  @doc "A project's tracks, oldest first: the open ones, or every one it ever had."
-  @spec _unsafe_tracks_of(String.t(), boolean()) :: [Track.t()]
-  def _unsafe_tracks_of(project_id, include_closed? \\ false) do
-    query = from(t in Track, where: t.project_id == ^project_id, order_by: t.created_at)
-    query = if include_closed?, do: query, else: where(query, [t], is_nil(t.closed_at))
-    Repo.all(query)
-  end
-
-  @doc "The open tracks of one project this person was named on, oldest first."
-  @spec _unsafe_member_tracks_of(String.t(), String.t()) :: [Track.t()]
-  def _unsafe_member_tracks_of(user_id, project_id) do
-    Repo.all(
-      from(t in Track,
-        join: m in TrackMember,
-        on: m.track_id == t.id,
-        where: m.user_id == ^user_id and t.project_id == ^project_id and is_nil(t.closed_at),
-        order_by: t.created_at
-      )
-    )
-  end
-
-  @doc "Whether a slug is free right now: the unique index enforces it, this explains it."
-  @spec _unsafe_slug_taken?(String.t(), String.t()) :: boolean()
-  def _unsafe_slug_taken?(project_id, slug) do
-    Repo.exists?(
-      from(t in Track,
-        where: t.project_id == ^project_id and t.slug == ^slug and is_nil(t.closed_at)
-      )
-    )
-  end
-
-  @doc "Give a track its conversation, in the instant between the two."
-  @spec _unsafe_attach_conversation(String.t(), String.t()) :: :ok
-  def _unsafe_attach_conversation(track_id, conversation_id) do
-    update_track(track_id, conversation_id: conversation_id)
-  end
-
-  @doc "The opening turn reported back. Idempotent: the first time stands."
-  @spec _unsafe_mark_opened(String.t()) :: :ok
-  def _unsafe_mark_opened(track_id) do
-    Repo.update_all(from(t in Track, where: t.id == ^track_id and is_nil(t.opened_at)),
-      set: [opened_at: DateTime.utc_now()]
-    )
-
-    :ok
-  end
-
-  @doc "Rename the label, and only the label."
-  @spec _unsafe_rename_track(String.t(), String.t()) :: :ok
-  def _unsafe_rename_track(track_id, title), do: update_track(track_id, title: title)
-
-  @doc "Close the row. Waiting prompts are cancelled by the caller through `Ravix.PromptQueue.cancel_track/1`."
-  @spec _unsafe_close_track(String.t()) :: :ok
-  def _unsafe_close_track(track_id) do
-    Repo.update_all(from(t in Track, where: t.id == ^track_id and is_nil(t.closed_at)),
-      set: [closed_at: DateTime.utc_now()]
-    )
-
-    :ok
-  end
-
-  defp update_track(track_id, changes) do
-    Repo.update_all(from(t in Track, where: t.id == ^track_id), set: changes)
-    :ok
-  end
 
   @doc """
   A page subscribing to a track's live transcript. See `Ravix.Tracks.Follower.subscribe/2`.

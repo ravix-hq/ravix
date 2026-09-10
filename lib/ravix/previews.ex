@@ -452,6 +452,70 @@ defmodule Ravix.Previews do
   @spec agent_preview_script(String.t(), String.t()) :: String.t()
   defdelegate agent_preview_script(url, token), to: Agent, as: :script
 
+  # ── the preview gateway's questions ──────────────────────────────────
+  #
+  # `RavixWeb.PreviewGateway` runs before there is a signed-in caller: it has
+  # a hostname, a cookie and a ticket, and works out from those whether the
+  # browser holding them may be let through. So these take no user, and they
+  # are here rather than in the gateway's adapter because the adapter is in
+  # `lib/ravix_web/` and reaching the row layer from there is the one thing
+  # `Ravix.Credo.Architecture` will not allow, comment or no comment. The
+  # gateway asks a context; the context reads the rows.
+
+  @doc "The preview a hostname belongs to, or `:error` for a name that is not one of ours."
+  @spec by_host(String.t()) :: {:ok, Row.t()} | :error
+  def by_host(name) do
+    case Store.by_host(name) do
+      %Row{} = row -> {:ok, row}
+      nil -> :error
+    end
+  end
+
+  @doc "The preview row for a track, without ensuring one exists."
+  @spec row(String.t()) :: Row.t() | nil
+  defdelegate row(track_id), to: Store, as: :get
+
+  @doc "A browser or agent grant by hash, consumed if asked. A ticket is single-use."
+  @spec grant_by_hash(String.t(), String.t(), atom(), boolean()) :: map() | nil
+  defdelegate grant_by_hash(hash, track_id, kind, consume?), to: Store, as: :get_grant
+
+  @doc "Record a browser grant against the session that opened it."
+  @spec record_grant(map()) :: :ok | {:error, Ecto.Changeset.t()}
+  defdelegate record_grant(grant), to: Store, as: :grant
+
+  @doc """
+  The track a preview belongs to, for the back-link the gateway renders.
+
+  Unscoped on purpose, and safely: the caller reached it by resolving a
+  preview hostname it was already allowed onto, and the two fields read from
+  it are the ids that build a URL back to the track.
+  """
+  # ownership: `RavixWeb.PreviewGateway` has already put this request through
+  # `allowed?/2` above, which re-asks `Access.track_access/2` for the person
+  # holding the grant. This read only names the track that answer was about.
+  @spec track(String.t()) :: Track.t() | nil
+  defdelegate track(track_id), to: Ravix.Tracks.Store, as: :get_track
+
+  @doc """
+  Whether a grant still admits its holder.
+
+  Four things have to hold at once, and they are re-asked on every request
+  rather than trusted from the one that minted the grant: the grant exists,
+  the Ravix session behind it is alive, that person still has access to the
+  track, the track is open, and the preview is not being torn down. A
+  membership revoked a second ago closes the preview a second later.
+  """
+  @spec allowed?(Row.t(), map()) :: boolean()
+  def allowed?(%Row{} = row, grant) do
+    with %{} <- Store.get_grant(grant.hash, row.track_id, grant.kind, false),
+         %{} = user <- Ravix.Accounts.session_user(grant.session_hash),
+         {:ok, %{track: %{closed_at: nil}}} <- Access.track_access(user, row.track_id) do
+      not match?(%Row{cleanup: true}, Store.get(row.track_id))
+    else
+      _ -> false
+    end
+  end
+
   # ── the routes ───────────────────────────────────────────────────────
 
   @doc "`GET /api/tracks/:id/preview`: the info for a track the user may see."

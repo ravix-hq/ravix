@@ -1,5 +1,5 @@
 defmodule Ravix.Credo.Architecture do
-  @moduledoc "Enforce context direction, scoped unsafe calls, and supervised work."
+  @moduledoc "Enforce context direction, the row-layer boundary, and supervised work."
   use Credo.Check, id: "RVX001", base_priority: :high, category: :warning
 
   @spawn ~w(spawn spawn_link spawn_monitor spawn_opt)a
@@ -16,6 +16,9 @@ defmodule Ravix.Credo.Architecture do
       {_, aliases} = Macro.prewalk(ast, %{}, &aliases/2)
       {_, findings} = Macro.prewalk(ast, [], &inspect_node(&1, &2, path, lines))
       {_, findings} = Macro.prewalk(ast, findings, &tasks(&1, &2, aliases))
+
+      {_, findings} =
+        Macro.prewalk(ast, findings, &stores(&1, &2, aliases, path, lines))
 
       findings
       |> Enum.uniq()
@@ -67,6 +70,16 @@ defmodule Ravix.Credo.Architecture do
 
   defp inspect_node(node, found, _path, _lines), do: {node, found}
 
+  # `alias A.B.{C, D}` binds two names, and a rule that cannot see them is a
+  # rule anybody can step around by grouping their aliases.
+  defp aliases({:alias, _, [{{:., _, [{:__aliases__, _, base}, :{}]}, _, tails} | _]} = node, acc) do
+    {node,
+     Enum.reduce(tails, acc, fn
+       {:__aliases__, _, parts}, acc -> Map.put(acc, List.last(parts), base ++ parts)
+       _, acc -> acc
+     end)}
+  end
+
   defp aliases({:alias, _, [{:__aliases__, _, parts} | opts]} = node, acc) do
     name = opts |> List.first() |> Kernel.||([]) |> Keyword.get(:as)
 
@@ -108,6 +121,94 @@ defmodule Ravix.Credo.Architecture do
     do: {node, [{meta[:line], "Do not import Task; call supervised work explicitly."} | found]}
 
   defp tasks(node, found, _aliases), do: {node, found}
+
+  # ── the row layer ─────────────────────────────────────────────────────
+  #
+  # A `Ravix.<Context>.Store` takes ids and establishes nobody's access. Two
+  # rules, and the first has no exception: a page may not reach one. Pages
+  # have a user in hand and `Ravix.Accounts.Access` to spend it at, so a page
+  # calling a store is a page that decided not to ask.
+  #
+  # The second is for contexts, which legitimately hold ids they were let in
+  # to. Reaching into *another* context's store is allowed and has to say so:
+  # the `# ownership:` comment names the door the caller already went through.
+  # Its own store needs no comment, because the module around it is the door.
+
+  defp stores({:defdelegate, meta, [_fun, opts]} = node, found, aliases, path, lines)
+       when is_list(opts) do
+    case Keyword.get(opts, :to) do
+      {:__aliases__, _, parts} -> {node, store_finding(parts, meta, found, aliases, path, lines)}
+      _ -> {node, found}
+    end
+  end
+
+  defp stores(
+         {{:., _, [{:__aliases__, _, parts}, fun]}, meta, args} = node,
+         found,
+         aliases,
+         path,
+         lines
+       )
+       when is_atom(fun) and is_list(args) do
+    {node, store_finding(parts, meta, found, aliases, path, lines)}
+  end
+
+  defp stores({:alias, meta, [{:__aliases__, _, parts} | _]} = node, found, aliases, path, lines) do
+    # An alias is only worth flagging in the web layer, where naming a store at
+    # all is the violation. A context aliasing one is judged at its call sites.
+    if web?(path),
+      do: {node, store_finding(parts, meta, found, aliases, path, lines)},
+      else: {node, found}
+  end
+
+  defp stores(node, found, _aliases, _path, _lines), do: {node, found}
+
+  defp store_finding(parts, meta, found, aliases, path, lines) do
+    parts = resolve(parts, aliases)
+
+    with true <- List.last(parts) == :Store,
+         [:Ravix, context | _] <- parts do
+      cond do
+        web?(path) ->
+          [
+            {meta[:line],
+             "The web layer must not reach a row store; go through the context and " <>
+               "`Ravix.Accounts.Access`."}
+            | found
+          ]
+
+        context != context_of(path) and not ownership?(lines, meta[:line]) ->
+          [
+            {meta[:line],
+             "Reaching another context's Store needs a nearby # ownership: comment " <>
+               "naming the door this caller already went through."}
+            | found
+          ]
+
+        true ->
+          found
+      end
+    else
+      _ -> found
+    end
+  end
+
+  defp resolve([first | rest], aliases),
+    do: Enum.reject(Map.get(aliases, first, [first]) ++ rest, &(&1 == Elixir))
+
+  defp web?(path), do: String.starts_with?(path, "lib/ravix_web/")
+
+  # `lib/ravix/people/store.ex` and `lib/ravix/people.ex` are both People.
+  defp context_of("lib/ravix/" <> rest) do
+    rest
+    |> String.split("/")
+    |> List.first()
+    |> Path.rootname()
+    |> Macro.camelize()
+    |> String.to_atom()
+  end
+
+  defp context_of(_), do: nil
 
   defp ownership?(lines, line) do
     Enum.any?(max(1, line - 6)..line, fn n ->

@@ -242,14 +242,14 @@ defmodule RavixWeb.TrackLiveTest do
 
   test "track invites can be minted, revoked, and members removed", ctx do
     member = insert_user()
-    People.add_member(ctx.track.id, member.id, ctx.user.id)
+    People.Store.add_member(ctx.track.id, member.id, ctx.user.id)
     render_click(ctx.view, "dialog", %{name: "people"})
     ctx.view |> element("button", "Create invite link") |> render_click()
     assert has_element?(ctx.view, "#track-people-dialog a[href*='/j/']")
     ctx.view |> element("button", "Revoke invite link") |> render_click()
     refute has_element?(ctx.view, "#track-people-dialog a[href*='/j/']")
     ctx.view |> element("button[phx-value-login='#{member.login}']") |> render_click()
-    refute People.member?(ctx.track.id, member.id)
+    refute People.Store.member?(ctx.track.id, member.id)
     render_click(ctx.view, "dismiss")
     refute has_element?(ctx.view, "#track-people-dialog")
   end

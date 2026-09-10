@@ -25,12 +25,12 @@ defmodule Ravix.Accounts.Access do
   into the 404 and 403 the TypeScript threw.
   """
 
-  import Ecto.Query
-
   alias Ravix.Accounts.User
-  alias Ravix.Projects.{Project, ProjectMember}
+  alias Ravix.People.Store, as: People
+  alias Ravix.Projects.Project
+  alias Ravix.Projects.Store, as: Projects
   alias Ravix.Repo
-  alias Ravix.Tracks.{Track, TrackMember}
+  alias Ravix.Tracks.Track
 
   @typedoc "Owner, or somebody invited to the track or the project in question."
   @type role :: :owner | :member
@@ -162,31 +162,34 @@ defmodule Ravix.Accounts.Access do
     end
   end
 
-  @doc "Whether `user_id` was named on `track_id`."
-  @spec member?(String.t(), String.t()) :: boolean()
-  def member?(track_id, user_id) do
-    Repo.exists?(from m in TrackMember, where: m.track_id == ^track_id and m.user_id == ^user_id)
-  end
+  @doc """
+  Whether `user_id` was named on `track_id`.
 
-  @doc "Whether `user_id` was let into the whole of `project_id`."
+  # ownership: this is a door, not something behind one. The question "was
+  this person named on this track" has no earlier authorization to establish,
+  because it *is* the authorization every other caller establishes.
+  """
+  @spec member?(String.t(), String.t()) :: boolean()
+  defdelegate member?(track_id, user_id), to: People
+
+  @doc """
+  Whether `user_id` was let into the whole of `project_id`.
+
+  # ownership: as `member?/2` -- the door itself.
+  """
   @spec project_member?(String.t(), String.t()) :: boolean()
-  def project_member?(project_id, user_id) do
-    Repo.exists?(
-      from m in ProjectMember, where: m.project_id == ^project_id and m.user_id == ^user_id
-    )
-  end
+  defdelegate project_member?(project_id, user_id), to: People
 
   # A project that exists and has not been archived. Every door starts here:
   # an archived project is gone for everybody, its owner included.
-  defp live_project(project_id) when is_binary(project_id) do
-    case Repo.get(Project, project_id) do
-      %Project{archived_at: nil} = project -> project
-      _ -> nil
-    end
-  end
+  #
+  # ownership: `Ravix.Projects.Store.live_project/1` is that read, and lives
+  # there so this module and `Ravix.People` cannot come to differ about what
+  # "archived" means.
+  defp live_project(project_id), do: Projects.live_project(project_id)
 
-  defp live_project(_), do: nil
-
+  # ownership: a door again. Whether the track exists at all is the first
+  # thing `track_access/2` has to know, before there is anyone to check.
   defp get_track(track_id) when is_binary(track_id), do: Repo.get(Track, track_id)
   defp get_track(_), do: nil
 end
