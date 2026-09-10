@@ -131,12 +131,16 @@ defmodule Ravix.Tracks do
   defp present_all(rows, project, user, role) do
     live = conversations_of(project)
     reads = Ravix.People.reads_of(user.id, project.id)
+    # Both of these are read for the whole list rather than per row: the
+    # sidebar is the one caller that asks for twenty tracks at once, and
+    # per-row reads made its cost grow with the project.
+    people = Ravix.People.people_by_track(Enum.map(rows, & &1.id), project.user_id, project.id)
 
     Enum.map(rows, fn row ->
       present(row,
         project: project,
         live: live[row.conversation_id],
-        people: Ravix.People.people_of(row.id, project.user_id, project.id),
+        people: Map.fetch!(people, row.id),
         role: role,
         last_read: reads[row.id]
       )

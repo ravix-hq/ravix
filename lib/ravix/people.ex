@@ -517,16 +517,65 @@ defmodule Ravix.People do
   @spec people_of(String.t(), String.t(), String.t()) :: [person()]
   def people_of(track_id, owner_id, project_id) do
     wide = project_members_of(project_id)
-    seen = MapSet.new(wide, & &1.id)
-    narrow = track_id |> members_of() |> Enum.reject(&MapSet.member?(seen, &1.id))
-    # Pending last, because they cannot read anything yet and the list is
-    # mostly read to answer "who can see this".
-    pending = track_id |> invites_of() |> Enum.map(&pending_person/1)
 
-    owner_entry(owner_id) ++
-      Enum.map(wide, &Map.put(present_person(&1), :via, :project)) ++
+    assemble(
+      shared_people(owner_id, wide),
+      MapSet.new(wide, & &1.id),
+      members_of(track_id),
+      invites_of(track_id)
+    )
+  end
+
+  @doc """
+  `people_of/3` for a whole project's tracks at once, keyed by track id.
+
+  The sidebar asks this of every track it lists, and asked one at a time it
+  is four queries each: the same project members and the same owner, read
+  again per row. Twenty tracks cost eighty-three queries and eighty of them
+  had the answer already. Here the two project-wide lists are read once and
+  the two per-track ones are read for every named track together, so the
+  count stops depending on how many tracks a project has.
+
+  Every id given is a key in the answer, including the tracks with nobody
+  on them beyond the project's own people.
+
+  Unscoped, as `people_of/3` is: the caller has already resolved the
+  project, and the ids are the tracks that resolution allowed.
+  """
+  @spec people_by_track([String.t()], String.t(), String.t()) :: %{String.t() => [person()]}
+  def people_by_track([], _owner_id, _project_id), do: %{}
+
+  def people_by_track(track_ids, owner_id, project_id) do
+    wide = project_members_of(project_id)
+    shared = shared_people(owner_id, wide)
+    seen = MapSet.new(wide, & &1.id)
+    members = members_by_track(track_ids)
+    invites = invites_by_track(track_ids)
+
+    Map.new(track_ids, fn track_id ->
+      {track_id,
+       assemble(
+         shared,
+         seen,
+         Map.get(members, track_id, []),
+         Map.get(invites, track_id, [])
+       )}
+    end)
+  end
+
+  # The half of the list that is the same for every track on a project.
+  defp shared_people(owner_id, wide) do
+    owner_entry(owner_id) ++ Enum.map(wide, &Map.put(present_person(&1), :via, :project))
+  end
+
+  # Pending last, because they cannot read anything yet and the list is
+  # mostly read to answer "who can see this".
+  defp assemble(shared, seen, members, invites) do
+    narrow = Enum.reject(members, &MapSet.member?(seen, &1.id))
+
+    shared ++
       Enum.map(narrow, &Map.put(present_person(&1), :via, :track)) ++
-      pending
+      Enum.map(invites, &pending_person/1)
   end
 
   @doc """
@@ -829,6 +878,26 @@ defmodule Ravix.People do
     )
   end
 
+  @doc """
+  `members_of/1` for several tracks at once, grouped by track id.
+
+  A track nobody was named on is absent rather than empty; `people_by_track/3`
+  supplies the default, since it is the one that knows every id it was asked
+  about.
+  """
+  @spec members_by_track([String.t()]) :: %{String.t() => [User.t()]}
+  def members_by_track(track_ids) do
+    Repo.all(
+      from(m in TrackMember,
+        join: u in assoc(m, :user),
+        where: m.track_id in ^track_ids,
+        order_by: m.created_at,
+        select: {m.track_id, u}
+      )
+    )
+    |> Enum.group_by(&elem(&1, 0), &elem(&1, 1))
+  end
+
   @doc "The open tracks this person was invited to, across every project."
   @spec member_tracks(String.t()) :: [Track.t()]
   def member_tracks(user_id) do
@@ -876,6 +945,19 @@ defmodule Ravix.People do
         select: %{github_id: i.github_id, login: i.login, avatar_url: i.avatar_url}
       )
     )
+  end
+
+  @doc "`invites_of/1` for several tracks at once, grouped by track id. Absent when a track has none."
+  @spec invites_by_track([String.t()]) :: %{String.t() => [invite()]}
+  def invites_by_track(track_ids) do
+    Repo.all(
+      from(i in TrackInvite,
+        where: i.track_id in ^track_ids,
+        order_by: i.created_at,
+        select: {i.track_id, %{github_id: i.github_id, login: i.login, avatar_url: i.avatar_url}}
+      )
+    )
+    |> Enum.group_by(&elem(&1, 0), &elem(&1, 1))
   end
 
   @doc "Withdraw a track invitation by the login it was sent to. True when one was there to withdraw."
