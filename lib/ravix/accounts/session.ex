@@ -10,6 +10,9 @@ defmodule Ravix.Accounts.Session do
   use Ecto.Schema
   import Ecto.Changeset
 
+  # The session credential's stored form: whoever holds it is signed in. A primary key cannot take `redact:`,
+  # so it is kept out of `inspect/1` here instead.
+  @derive {Inspect, except: [:token_hash]}
   @primary_key {:token_hash, :string, autogenerate: false}
   @foreign_key_type :string
 

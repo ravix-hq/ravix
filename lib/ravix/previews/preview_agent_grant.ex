@@ -11,6 +11,9 @@ defmodule Ravix.Previews.PreviewAgentGrant do
   use Ecto.Schema
   import Ecto.Changeset
 
+  # The helper script's bearer token, hashed. A primary key cannot take `redact:`,
+  # so it is kept out of `inspect/1` here instead.
+  @derive {Inspect, except: [:hash]}
   @primary_key {:hash, :string, autogenerate: false}
   @foreign_key_type :string
 

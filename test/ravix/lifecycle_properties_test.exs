@@ -72,35 +72,35 @@ defmodule Ravix.QueuePropertiesTest do
           ) do
       id = Ecto.UUID.generate()
       payload = %{prompt: "Exactly once", images: []}
-      assert {:ok, _} = PromptQueue.enqueue(track.id, user.id, user.login, id, payload)
+      assert {:ok, _} = PromptQueue.Store.enqueue(track.id, user.id, user.login, id, payload)
 
       if terminal == :sent,
-        do: PromptQueue.set_status(id, :sent),
-        else: PromptQueue.cancel_track(track.id)
+        do: PromptQueue.Store.set_status(id, :sent),
+        else: PromptQueue.Store.cancel_track(track.id)
 
       for action <- actions do
         case action do
           :claim ->
-            refute PromptQueue.claim(id)
+            refute PromptQueue.Store.claim(id)
 
           :recover ->
-            PromptQueue.recover()
+            PromptQueue.Store.recover()
 
           :retry ->
             assert {:error, _} = PromptQueue.retry(user, track.id, id)
 
           :duplicate ->
             assert {:ok, %{id: ^id}} =
-                     PromptQueue.enqueue(track.id, user.id, user.login, id, payload)
+                     PromptQueue.Store.enqueue(track.id, user.id, user.login, id, payload)
 
           :cancel ->
-            PromptQueue.cancel_track(track.id)
+            PromptQueue.Store.cancel_track(track.id)
 
           status ->
-            PromptQueue.set_status(id, status)
+            PromptQueue.Store.set_status(id, status)
         end
 
-        assert %{status: ^terminal, payload: ""} = PromptQueue.get(id)
+        assert %{status: ^terminal, payload: ""} = PromptQueue.Store.get(id)
       end
     end
   end

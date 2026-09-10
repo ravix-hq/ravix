@@ -107,7 +107,9 @@ defmodule Ravix.Projects.Store do
   @doc "Archive a project, cancelling whatever its open tracks still had queued."
   @spec archive(String.t()) :: :ok
   def archive(id) do
-    Enum.each(open_tracks(id), &Ravix.PromptQueue.cancel_track(&1.id))
+    # ownership: the project is being archived, which takes its tracks with
+    # it; prompts queued for them have nowhere left to be delivered.
+    Enum.each(open_tracks(id), &Ravix.PromptQueue.Store.cancel_track(&1.id))
     update_fields(id, archived_at: DateTime.utc_now())
   end
 
