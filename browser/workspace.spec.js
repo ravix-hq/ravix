@@ -7,8 +7,8 @@ async function accessible(page) {
 }
 
 async function signIn(page) {
+  // `/` has nothing for a browser with no session and sends it here itself.
   await page.goto('/');
-  await page.getByRole('link', { name: 'Sign in', exact: true }).click();
   await page.getByRole('link', { name: 'Sign in with GitHub', exact: true }).click();
   await page.getByRole('link', { name: 'Sign in as @mockuser', exact: true }).click();
   await expect(page.getByRole('link', { name: 'Sign out' })).toBeVisible();
@@ -37,7 +37,13 @@ async function capture(page, name) {
 
 test('public design loads local Plex fonts and works in dark, light, and narrow layouts', async ({ page }) => {
   test.setTimeout(120_000);
-  await page.goto('/');
+  // The only public page. Pointing a signed-out browser at the root, or at a
+  // workspace URL it cannot open, arrives at the same place.
+  for (const path of ['/', '/inbox']) {
+    await page.goto(path);
+    await expect(page).toHaveURL(/\/login$/);
+  }
+  await expect(page.getByRole('heading', { name: 'Sign in to Ravix' })).toBeVisible();
   await expect(page.locator('[data-phx-main]')).toHaveClass(/phx-connected/);
   const fonts = await page.evaluate(async () => {
     const faces = [...document.fonts];
@@ -52,22 +58,12 @@ test('public design loads local Plex fonts and works in dark, light, and narrow 
     for (const width of [1280, 820, 390]) {
       await page.setViewportSize({ width, height: 900 });
       await accessible(page);
-      await capture(page, `landing-${theme}-${width}`);
-    }
-  }
-  await page.getByRole('link', { name: 'Sign in', exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'Sign in to Ravix' })).toBeVisible();
-  await expect(page.locator('html')).toHaveAttribute('data-theme', 'daylight');
-  for (const theme of ['Daylight', 'Ravix']) {
-    await chooseTheme(page, theme);
-    for (const width of [390, 1280]) {
-      await page.setViewportSize({ width, height: 900 });
-      await accessible(page);
       await capture(page, `login-${theme}-${width}`);
     }
   }
-  await page.getByRole('link', { name: 'About Ravix' }).click();
-  await expect(page.getByRole('heading', { name: 'One project. Many tracks.' })).toBeVisible();
+  // The chosen theme is the browser's, so it survives the redirect back here.
+  await page.goto('/');
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'daylight');
 });
 
 test('home quick start creates a scratch project and recent navigation survives theme changes', async ({ page }) => {
@@ -226,7 +222,7 @@ test('project, track, streaming, image upload, reconnect, and revocation', async
   const other = await context.newPage();
   await other.goto('/home');
   await other.getByRole('link', { name: 'Sign out' }).click();
-  await expect(other.getByRole('link', { name: 'Sign in', exact: true })).toBeVisible();
+  await expect(other.getByRole('heading', { name: 'Sign in to Ravix' })).toBeVisible();
   await page.evaluate(() => document.querySelector("#composer-form")?.requestSubmit());
   await expect(page.getByRole('heading', { name: 'Sign in to Ravix' })).toBeVisible();
   await signIn(page);

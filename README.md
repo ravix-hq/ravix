@@ -26,8 +26,10 @@ mix setup
 mix phx.server
 ```
 
-Open [localhost:4000](http://localhost:4000). Without external-service
-configuration, the landing page works; signing in and provisioning machines
+Open [localhost:4000](http://localhost:4000), which redirects to the sign-in
+page: there is no marketing page, so the root is the workspace for somebody
+signed in and `/login` for anybody else. Without external-service
+configuration, that page renders; signing in and provisioning machines
 require the services described below.
 
 To develop against local fixtures, install Bun and run these in separate
@@ -155,7 +157,7 @@ scripts/release-smoke.sh ravix-elixir-check
 ```
 
 The script cleans up the containers and network it creates. It checks `/healthz`,
-the landing page and assets, migration idempotence, and that a pre-existing
+the sign-in page and assets, migration idempotence, and that a pre-existing
 `public.users` table survives unchanged.
 
 The narrow Dialyzer filters in `.dialyzer_ignore.exs` document an upstream

@@ -40,6 +40,22 @@ defmodule RavixWeb.WorkspaceLive do
   def handle_params(params, _uri, socket) do
     socket = validate_session(socket)
 
+    case wrong_page(socket) do
+      nil -> {:noreply, open_url(socket, params)}
+      to -> {:noreply, push_navigate(socket, to: to)}
+    end
+  end
+
+  # Which of the two pages this LiveView is the URL entitled to, if not the one
+  # it named. There is no marketing page: the domain is the product. A stranger
+  # is sent to sign in from wherever they landed, and somebody already signed in
+  # never sees `/login`, because the workspace is what they came back for.
+  defp wrong_page(%{assigns: %{current_user: nil, live_action: :login}}), do: nil
+  defp wrong_page(%{assigns: %{current_user: nil}}), do: "/login"
+  defp wrong_page(%{assigns: %{live_action: :login}}), do: "/"
+  defp wrong_page(_socket), do: nil
+
+  defp open_url(socket, params) do
     project = Enum.find(socket.assigns.projects, &(&1.id == params["project"]))
     track_id = params["track"]
 
@@ -47,18 +63,12 @@ defmodule RavixWeb.WorkspaceLive do
       is_nil(track_id) or
         Enum.any?(socket.assigns.tracks[params["project"]] || [], &(&1.id == track_id))
 
-    cond do
-      is_nil(socket.assigns.current_user) and socket.assigns.live_action not in [:home, :login] ->
-        {:noreply, push_navigate(socket, to: "/login")}
-
-      params["project"] && (is_nil(project) or not valid_track) ->
-        {:noreply,
-         socket
-         |> put_flash(:error, "That project or track is no longer available.")
-         |> push_patch(to: "/")}
-
-      true ->
-        {:noreply, select_project(socket, project, track_id, params)}
+    if params["project"] && (is_nil(project) or not valid_track) do
+      socket
+      |> put_flash(:error, "That project or track is no longer available.")
+      |> push_patch(to: "/")
+    else
+      select_project(socket, project, track_id, params)
     end
   end
 
