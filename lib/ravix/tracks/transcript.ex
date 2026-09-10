@@ -106,10 +106,17 @@ defmodule Ravix.Tracks.Transcript do
 
     known = MapSet.new(records, & &1.id)
     orphans = Enum.reject(page.turns, &MapSet.member?(known, &1.id))
-    sorted = Enum.sort_by(merged, &(&1.inserted_at || ""))
+    sorted = Enum.sort_by(merged, &ordered_at/1)
 
-    %{page | turns: Enum.map(sorted ++ orphans, &finish(&1, page.runtime))}
+    %{page | turns: Enum.map(sorted ++ orphans, &rebuild(&1, page.runtime))}
   end
+
+  # A turn Fountain sent without a usable timestamp belongs at the end, where a
+  # just-created turn actually is. Treating a missing one as the empty string
+  # made it the earliest thing in the transcript, so the newest turn rendered
+  # above the entire history.
+  defp ordered_at(%{inserted_at: at}) when is_binary(at), do: {0, at}
+  defp ordered_at(_undated), do: {1, ""}
 
   @doc "Every event in `events`, laid into its turn. Duplicates (by id) are ignored."
   @spec add_events(page(), [event()]) :: page()
@@ -175,28 +182,54 @@ defmodule Ravix.Tracks.Transcript do
   defp new_turn(record, runtime) do
     %{id: nil, prompt: nil, origin: nil, status: nil, inserted_at: nil, events: [], blocks: []}
     |> Map.merge(record)
-    |> finish(runtime)
+    |> rebuild(runtime)
   end
 
   defp lay_in(turn, event, runtime) do
-    if Enum.any?(turn.events, &(&1["id"] == event["id"])) do
-      turn
-    else
-      events = Enum.sort_by([event | turn.events], & &1["id"])
-      finish(%{turn | events: events}, runtime)
+    cond do
+      Enum.any?(turn.events, &(&1["id"] == event["id"])) ->
+        turn
+
+      # The streaming case, and the only one that repeats: the event belongs
+      # after everything the turn already holds, so its blocks are the blocks
+      # already computed plus this one folded on. Re-reducing the whole turn
+      # per event costs a JSON decode of every line of every earlier event,
+      # which is quadratic in the length of the turn and runs inside each
+      # reader's LiveView process.
+      appended?(turn.events, event) ->
+        finish(%{turn | events: turn.events ++ [event]}, fold(event, runtime, acc(turn)))
+
+      # Out of order: the order the blocks are in changes, so it is rebuilt.
+      true ->
+        rebuild(%{turn | events: Enum.sort_by([event | turn.events], & &1["id"])}, runtime)
     end
   end
 
-  # The derived fields, recomputed whenever the events change.
-  defp finish(turn, runtime) do
-    blocks = blocks_for_turn(turn.events, runtime)
+  defp appended?([], _event), do: true
+  defp appended?(events, event), do: List.last(events)["id"] < event["id"]
+
+  # Everything derived, from the events themselves.
+  defp rebuild(turn, runtime),
+    do: finish(turn, Enum.reduce(turn.events, empty_acc(), &fold(&1, runtime, &2)))
+
+  # The derived fields, from a reduction over the turn's events.
+  defp finish(turn, acc) do
+    blocks = blocks_of(acc)
     visible = Enum.filter(blocks, &visible_block?/1)
 
     turn
     |> Map.put(:blocks, visible)
-    |> Map.put(:settled?, settled?(turn.events))
+    |> Map.put(:acc, acc)
+    |> Map.put(:settled?, turn[:settled?] == true or settled?(turn.events))
     |> Map.put(:visible?, has_text?(turn.prompt) or visible != [])
   end
+
+  defp acc(%{acc: acc}), do: acc
+  defp acc(_turn), do: empty_acc()
+
+  defp empty_acc, do: {[], %{}}
+  defp fold(event, runtime, acc), do: output(event, runtime, acc)
+  defp blocks_of({blocks, _tools}), do: Enum.reverse(blocks)
 
   defp turn_id_of(event) do
     case event["turn_id"] do
@@ -248,8 +281,7 @@ defmodule Ravix.Tracks.Transcript do
   """
   @spec blocks_for_turn([event()], String.t()) :: [block()]
   def blocks_for_turn(events, runtime) do
-    {blocks, _tools} = Enum.reduce(events, {[], %{}}, &output(&1, runtime, &2))
-    Enum.reverse(blocks)
+    events |> Enum.reduce(empty_acc(), &output(&1, runtime, &2)) |> blocks_of()
   end
 
   defp output(%{"kind" => "output", "stream" => "acp", "data" => data} = event, _runtime, acc)

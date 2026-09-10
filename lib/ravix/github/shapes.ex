@@ -108,10 +108,15 @@ defmodule Ravix.GitHub.Shapes do
       number: i["number"],
       title: i["title"],
       author: get_in(i, ["user", "login"]),
+      # A label GitHub sends in some other shape is a label we cannot name, not
+      # a reason to raise `FunctionClauseError` out of `GitHub.issues/3`.
       labels:
-        Enum.map(i["labels"] || [], fn
-          name when is_binary(name) -> name
-          %{"name" => name} -> name
+        i["labels"]
+        |> List.wrap()
+        |> Enum.flat_map(fn
+          name when is_binary(name) -> [name]
+          %{"name" => name} when is_binary(name) -> [name]
+          _unnamed -> []
         end),
       updated_at: i["updated_at"]
     }

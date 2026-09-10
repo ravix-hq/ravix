@@ -228,6 +228,33 @@ defmodule Ravix.Tracks.TranscriptTest do
       assert [%{id: "t9", prompt: "do x", blocks: [%{body: "x"}]}] = page.turns
     end
 
+    test "out-of-order events still read in id order" do
+      page = Transcript.page([%{"id" => "t1", "prompt" => "hi"}], [], "claude")
+
+      # The blocks are folded incrementally while events arrive in order; one
+      # that lands out of order has to put the turn back together.
+      page = Transcript.add_event(page, event(9, text_chunk("c")))
+      page = Transcript.add_event(page, event(7, text_chunk("a")))
+      page = Transcript.add_event(page, event(8, text_chunk("b")))
+
+      assert [%{blocks: [%{body: "abc"}]}] = page.turns
+      assert page.last_event_id == 9
+    end
+
+    test "a turn with no timestamp sorts to the end, not the top" do
+      page =
+        Transcript.add_turns(Transcript.page([], [], "claude"), [
+          %{"id" => "old", "prompt" => "first", "inserted_at" => @ts},
+          %{"id" => "new", "prompt" => "just now"},
+          %{"id" => "mid", "prompt" => "second", "inserted_at" => @later}
+        ])
+
+      # Treating a missing timestamp as the empty string made it the earliest
+      # thing in the transcript, so a just-created turn rendered above the
+      # entire history.
+      assert Enum.map(page.turns, & &1.id) == ["old", "mid", "new"]
+    end
+
     test "live?/2 is true only for a running, unsettled last turn" do
       page =
         Transcript.page(

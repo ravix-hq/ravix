@@ -113,7 +113,22 @@ defmodule Ravix.GitHub.HTTP do
 
   defp interpret(_app, _installation_id, %Req.Response{status: status, body: body})
        when status in 200..299 do
-    {:ok, decode(body)}
+    case decode(body) do
+      # Every caller reads the answer as JSON: `body["token"]`, or
+      # `Enum.map(body, &Shapes.pull_ref/1)`. A 200 carrying something else --
+      # a proxy interstitial, a WAF challenge, a maintenance page -- used to
+      # reach them as a bare string and raise `Access`/`Enumerable` errors out
+      # of the context, past the `{:ok, _} | {:error, _}` this promises.
+      raw when is_binary(raw) ->
+        {:error,
+         %Error{
+           status: status,
+           message: "GitHub answered #{status} with something that is not JSON."
+         }}
+
+      value ->
+        {:ok, value}
+    end
   end
 
   defp interpret(app, installation_id, %Req.Response{status: status, body: body} = response) do

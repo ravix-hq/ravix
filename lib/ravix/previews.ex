@@ -162,9 +162,15 @@ defmodule Ravix.Previews do
   def touch(track_id) do
     with {:ok, _} <- assert_open(track_id) do
       Repo.transaction(fn ->
+        # Merge the two fields this owns onto a locked read rather than
+        # writing back the whole row it saw. Every other writer already works
+        # this way; writing the read-in row wholesale meant a `publish_ready`
+        # that committed in between was reverted to `:starting`, and the
+        # gateway kept sending the reader back to the start page.
         %Row{} = row = Store.ensure(track_id)
+        %Row{} = fresh = Store.lock(track_id) || row
         now = Clock.now_ms()
-        Store.save!(%Row{row | last_activity: now, lease_until: now + @lease_ms})
+        Store.save!(%Row{fresh | last_activity: now, lease_until: now + @lease_ms})
       end)
 
       :ok

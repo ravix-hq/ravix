@@ -80,7 +80,9 @@ services:
       - key: SPRITES_TOKEN
         sync: false
       # Optional, add in the dashboard if wanted:
-      #   GITHUB_WEBHOOK_SECRET   verifies installation events
+      #   GITHUB_WEBHOOK_SECRET   read into config and carried on the App, but
+      #                           nothing consumes it yet: there is no webhook
+      #                           route, so setting it verifies nothing today.
 
 # The service reaches it over Render's private network (connectionString is
 # the internal URL). No public access: to reach it with psql from outside,

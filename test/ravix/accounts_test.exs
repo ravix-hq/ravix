@@ -79,6 +79,28 @@ defmodule Ravix.AccountsTest do
       assert Accounts.search_users("split", me.id) |> Enum.map(& &1.id) == [banana.id]
       assert Accounts.search_users("nobody", me.id) == []
     end
+
+    test "wildcards in the term are literal, not a way to ask for everyone" do
+      me = insert_user(login: "asker")
+      insert_user(login: "alice")
+      insert_user(login: "bob")
+
+      logins = fn q ->
+        Accounts.search_users(q, me.id) |> Enum.map(& &1.login) |> Enum.sort()
+      end
+
+      # `People.search/2` refuses an empty query precisely so nobody can ask
+      # for the whole userbase. A bare wildcard walked straight past that
+      # guard into `ILIKE '%%%'`, which matches every row, and the ranking
+      # made the result walkable a letter at a time.
+      assert logins.("%") == []
+      assert logins.("_") == []
+      assert logins.("a%") == []
+
+      # An ordinary term still works.
+      assert logins.("ali") == ["alice"]
+      assert logins.("bo") == ["bob"]
+    end
   end
 
   describe "user_token/1" do

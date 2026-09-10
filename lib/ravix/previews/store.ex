@@ -131,6 +131,20 @@ defmodule Ravix.Previews.Store do
   end
 
   @doc """
+  A track's row, held against concurrent writers for the rest of the
+  transaction. Nil when the track has no row yet.
+  """
+  @spec lock(String.t()) :: Row.t() | nil
+  def lock(track_id) do
+    query = from p in Preview, where: p.track_id == ^track_id, lock: "FOR UPDATE"
+
+    case Repo.one(query) do
+      nil -> nil
+      %Preview{row: row} -> Row.decode(row)
+    end
+  end
+
+  @doc """
   Write a row, replacing what was there.
 
   Fails (with the changeset) when the port is taken on that sprite: the

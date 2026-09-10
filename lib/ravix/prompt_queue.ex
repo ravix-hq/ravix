@@ -294,6 +294,30 @@ defmodule Ravix.PromptQueue do
   end
 
   @doc """
+  Record a prompt as delivered, even if the track closed while it was in
+  flight.
+
+  The only writer that can put a `:sending` row into `:cancelled` is
+  `cancel_track/1` -- an explicit `cancel/3` refuses that status -- so this
+  runs when a track closed between the POST and its answer. The prompt did
+  reach Fountain and is running, and `set_status/3` would refuse the write
+  because `:cancelled` is already a done status, leaving the queue claiming
+  it was cancelled. Only success may take this door: a late *failure* still
+  cannot move a cancelled row, which is what stops a closed track's queue
+  coming back to life.
+  """
+  @spec mark_delivered(String.t()) :: :ok
+  def mark_delivered(id) do
+    {_count, tracks} =
+      Item
+      |> where([p], p.id == ^id and p.status != :sent)
+      |> select([p], p.track_id)
+      |> Repo.update_all(set: [status: :sent, error: nil, payload: ""])
+
+    Enum.each(tracks, &publish_queue/1)
+  end
+
+  @doc """
   How long a claim is honoured before `recover/0` may take it back. Longer
   than the server's own delivery timeout, so a task that is about to be
   killed for running long still settles its own row first.

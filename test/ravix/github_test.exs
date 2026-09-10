@@ -679,6 +679,50 @@ defmodule Ravix.GitHubTest do
     end
   end
 
+  describe "answers that are not JSON" do
+    test "a 2xx carrying an interstitial is a tagged error, not a raise", %{app: app} do
+      Fake.install([
+        Fake.token_route(app),
+        {"GET", ~r{/repositories},
+         fn conn ->
+           conn
+           |> Plug.Conn.put_resp_content_type("text/html")
+           |> Plug.Conn.send_resp(200, "<html>checking your browser</html>")
+         end}
+      ])
+
+      # A proxy or WAF answering 200 with a page used to reach `body["token"]`
+      # and `Enum.map(body, ...)` as a bare string, raising `Access` and
+      # `Enumerable` errors out of the context and taking the LiveView with
+      # them, past the `{:ok, _} | {:error, _}` this promises.
+      assert {:error, %Error{status: 200, message: message}} =
+               GitHub.repositories(app, "gho_user", 1)
+
+      assert message =~ "not JSON"
+    end
+  end
+
+  describe "issue labels" do
+    test "a label in an unexpected shape is skipped rather than raising", %{app: app} do
+      Fake.install([
+        Fake.token_route(app),
+        {"GET", ~r{/issues},
+         [
+           %{
+             number: 4,
+             title: "Bug",
+             user: %{login: "dana"},
+             labels: ["plain", %{name: "object"}, %{color: "f00"}, nil],
+             updated_at: "2026-01-01T00:00:00Z"
+           }
+         ]}
+      ])
+
+      assert {:ok, [%{number: 4, labels: labels}]} = GitHub.issues(app, 1, "o/r")
+      assert labels == ["plain", "object"]
+    end
+  end
+
   describe "installation token expiry" do
     test "a response with no parseable expiry is re-minted rather than reused forever", %{
       app: app

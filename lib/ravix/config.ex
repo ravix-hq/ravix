@@ -117,6 +117,8 @@ defmodule Ravix.Config do
         client_id: client_id,
         client_secret: client_secret,
         private_key_pem: pem,
+        # Carried for a webhook receiver that does not exist yet; nothing
+        # reads it, so no payload is being verified against it today.
         webhook_secret: get(:github_webhook_secret) |> blank_to(nil),
         api_url:
           (get(:github_api_url) |> blank_to(nil) || "https://api.github.com")
@@ -159,9 +161,17 @@ defmodule Ravix.Config do
   Track previews, or nil when `PREVIEW_DOMAIN` is unset.
 
   Preview hosts are `<name>.<domain><public_port>`. The domain must be a
-  dedicated one outside the application host, so a preview can never set a
-  cookie the app reads. `*.localhost` domains use plain HTTP on the server's
-  own port, for local development only.
+  dedicated one outside the application host: not the app host, not under it,
+  and not above it. That is ancestry, which is less than it sounds -- cookie
+  scope is decided by the registrable domain, and `preview.ravix.sh` is a
+  sibling of `app.ravix.sh`, not a stranger to it, so a `Domain=ravix.sh`
+  cookie reaches both. Keeping a preview out of the app's cookies is
+  therefore the gateway's job rather than this check's:
+  `RavixWeb.PreviewGateway.Headers` strips any `Domain` attribute and refuses
+  to relay a `Set-Cookie` naming the app's session cookie at all.
+
+  `*.localhost` domains use plain HTTP on the server's own port, for local
+  development only.
   """
   @spec previews() :: previews() | nil
   def previews do

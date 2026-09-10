@@ -390,16 +390,22 @@ defmodule Ravix.Fountain do
   end
 
   # The path and the status, never the body we sent: it may be a secret value
-  # on its way to /secrets.
+  # on its way to /secrets. Upstream's own message is usually the useful half
+  # of a failure, but it is derived from Fountain's response body, and a
+  # rejected secret is exactly the kind of value an API echoes back to say
+  # what was wrong with it -- so on those paths the status is the whole log.
   defp fail(%Fountain.Error{} = error, method, path) do
     ours = Error.from_sdk(error)
 
     if ours.status >= 400 do
-      Logger.error("ravix: fountain #{ours.status} on #{method} #{path}: #{ours.message}")
+      detail = if secret_path?(path), do: "", else: ": #{ours.message}"
+      Logger.error("ravix: fountain #{ours.status} on #{method} #{path}#{detail}")
     end
 
     ours
   end
+
+  defp secret_path?(path), do: String.contains?(path, "/secrets")
 
   defp conversation(http, id), do: Fountain.Conversation.new(http, escape(id))
 

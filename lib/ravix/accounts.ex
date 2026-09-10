@@ -112,13 +112,18 @@ defmodule Ravix.Accounts do
   invite box. Never the caller.
 
   This does mean the box will tell you who has signed in here, which is a
-  trade this deployment has accepted. Ordered so a prefix match beats a
+  trade this deployment has accepted. Confirming one login at a time is the
+  whole of that trade, so the term's own `%` and `_` are escaped rather than
+  left live: `People.search/2` refuses an empty query precisely so nobody can
+  ask for the whole userbase, and a bare `%` walked straight past it into
+  `ILIKE '%%%'`, which matches every row. Ordered so a prefix match beats a
   contains match, because somebody typing `ana` means `ana` before `joana`.
   """
   @spec search_users(String.t(), String.t(), pos_integer()) :: [User.t()]
   def search_users(q, exclude_user_id, limit \\ 8) do
-    like = "%#{q}%"
-    prefix = "#{q}%"
+    escaped = escape_like(q)
+    like = "%#{escaped}%"
+    prefix = "#{escaped}%"
 
     Repo.all(
       from u in User,
@@ -129,6 +134,14 @@ defmodule Ravix.Accounts do
         ],
         limit: ^limit
     )
+  end
+
+  # `\\` first, or it would escape the escapes added after it.
+  defp escape_like(q) do
+    q
+    |> String.replace("\\", "\\\\")
+    |> String.replace("%", "\\%")
+    |> String.replace("_", "\\_")
   end
 
   @doc """

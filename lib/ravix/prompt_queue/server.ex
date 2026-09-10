@@ -209,7 +209,7 @@ defmodule Ravix.PromptQueue.Server do
   end
 
   defp settle(:ok, row, track, project) do
-    PromptQueue.set_status(row.id, :sent)
+    PromptQueue.mark_delivered(row.id)
     Hub.publish(project.id, "turn", %{track_id: track.id, status: "running"})
   end
 
