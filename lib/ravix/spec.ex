@@ -25,7 +25,9 @@ defmodule Ravix.Spec do
   Saying it once and hoping is how two tracks end up committing to the same
   branch.
 
-  A port of `shared/spec.ts`, text for text.
+  This module is where that text lives. It had a TypeScript twin while the
+  old server was still serving; it does not any more, because a prompt
+  contract kept in two languages is a contract that can disagree with itself.
   """
 
   alias Ravix.Ids

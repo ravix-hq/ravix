@@ -27,9 +27,8 @@
 import { generateKeyPairSync } from "node:crypto";
 import { existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { WORKSPACE_ROOT, WORK_ROOT, parseChannel } from "../shared/ids";
+import { WORKSPACE_ROOT, WORK_ROOT, RECEIPT_PATH, parseChannel } from "../shared/contract";
 import { updateMockPreview } from "./previews";
-import { RECEIPT_PATH } from "../shared/spec";
 
 const PORT = Number(process.env.MOCK_PORT || 8793);
 const BASE = `http://localhost:${PORT}`;
@@ -336,7 +335,7 @@ type Say = (body: string) => Promise<void>;
 /**
  * What the machine actually does, read out of the prompt.
  *
- * The `[ravix]` prompts are a contract — `shared/spec.ts` tells the agent
+ * The `[ravix]` prompts are a contract — `Ravix.Spec` tells the agent
  * exactly what to do and exactly what to reply — so the fake honours it rather
  * than answering in general terms. Cutting a worktree really does create the
  * directory here, which is the whole reason the Files panel works offline;
