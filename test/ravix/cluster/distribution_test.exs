@@ -13,6 +13,7 @@ defmodule Ravix.Cluster.DistributionTest do
   a time: see the comment on `setup`.
   """
   use ExUnit.Case, async: false
+  alias Ravix.Hub.Event
 
   @moduletag :distributed
   @moduletag :capture_log
@@ -149,13 +150,13 @@ defmodule Ravix.Cluster.DistributionTest do
       user = %Ravix.Accounts.User{id: "u1", login: "ana", name: "Ana", avatar_url: nil}
       Node.spawn(ctx.node, Ravix.ClusterPeer, :beat_and_hold, [track_id, project_id, user])
 
-      assert_receive {:hub, %{event: "here", data: %{track_id: ^track_id, present: present}}},
+      assert_receive {:hub, %Event{name: :here, track_id: ^track_id, present: present}},
                      30_000
 
       assert [%{login: "ana"}] = present
 
       # And exactly one. This is the assertion the issue was about.
-      refute_receive {:hub, %{event: "here", data: %{track_id: ^track_id}}}, 1_000
+      refute_receive {:hub, %Event{name: :here, track_id: ^track_id}}, 1_000
     end
   end
 

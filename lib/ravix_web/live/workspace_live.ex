@@ -3,6 +3,7 @@ defmodule RavixWeb.WorkspaceLive do
   use RavixWeb, :live_view
 
   alias Ravix.{Accounts, Hub, People, Previews, Projects, Tracks}
+  alias Ravix.Hub.Event
   alias Ravix.Tracks.Names
   alias RavixWeb.Error
 
@@ -358,10 +359,22 @@ defmodule RavixWeb.WorkspaceLive do
        |> assign(busy: false)
        |> put_flash(:error, "The operation could not finish. Refresh and try again.")}
 
+  # The rail shows a track's title, branch, status and last activity, and
+  # which projects exist at all. Two events cannot move any of that and are
+  # dropped rather than reloaded: who is *looking* at a track, and a track's
+  # prompt queue, which this page does not render. The queue is the one
+  # worth naming, because it moves on every prompt sent, delivered or
+  # cancelled, and re-listing every project's tracks for each of those was
+  # the largest thing this page did for no visible reason.
+  #
+  # Everything else reloads. A narrower rule here would have to know which
+  # of the rail's fields each event can reach, and getting that wrong shows
+  # up as a status dot that is quietly a minute stale.
   @impl true
-  def handle_info({:hub, %{event: "here"}}, socket), do: {:noreply, socket}
+  def handle_info({:hub, %Event{name: name}}, socket) when name in [:here, :queue],
+    do: {:noreply, socket}
 
-  def handle_info({:hub, _event}, socket) do
+  def handle_info({:hub, %Event{}}, socket) do
     socket = reload(socket)
 
     if socket.assigns.project &&

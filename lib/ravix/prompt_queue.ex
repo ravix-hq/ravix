@@ -474,7 +474,7 @@ defmodule Ravix.PromptQueue do
   # which the row does not carry; one read of the track finds it.
   defp publish_queue(track_id) do
     case Repo.get(Track, track_id) do
-      %Track{project_id: project_id} -> Hub.publish(project_id, "queue", %{track_id: track_id})
+      %Track{project_id: project_id} -> Hub.publish(project_id, :queue, track_id: track_id)
       nil -> :ok
     end
   end

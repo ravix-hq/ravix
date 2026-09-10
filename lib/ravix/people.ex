@@ -211,7 +211,7 @@ defmodule Ravix.People do
           })
       end
 
-      Ravix.Hub.publish(project.id, "people", %{track_id: track.id})
+      Ravix.Hub.publish(project.id, :people, track_id: track.id)
       {:ok, people_of(track.id, project.user_id, project.id)}
     end
   end
@@ -239,7 +239,7 @@ defmodule Ravix.People do
       # withdraw. Owner-only, because a pending person has no session to ask
       # with.
       if role == :owner and remove_invite_by_login(track.id, wanted) do
-        Ravix.Hub.publish(project.id, "people", %{track_id: track.id})
+        Ravix.Hub.publish(project.id, :people, track_id: track.id)
         {:ok, people_of(track.id, project.user_id, project.id)}
       else
         remove_from_track(user, track, project, role, wanted)
@@ -252,7 +252,7 @@ defmodule Ravix.People do
          :ok <- may_remove(role, user, target),
          :ok <- refuse_project_member(project, user, target) do
       remove_member(track.id, target.id)
-      Ravix.Hub.publish(project.id, "people", %{track_id: track.id})
+      Ravix.Hub.publish(project.id, :people, track_id: track.id)
 
       # The caller may have just removed their own access, in which case
       # there is nothing left to hand back: `:left` rather than a list they
@@ -331,7 +331,7 @@ defmodule Ravix.People do
 
       # No `track_id`: this changed who is on every track of the project at
       # once, and the page re-reads the rail rather than one row.
-      Ravix.Hub.publish(project.id, "people", %{})
+      Ravix.Hub.publish(project.id, :people)
       {:ok, project_people_of(project.id, project.user_id)}
     end
   end
@@ -359,7 +359,7 @@ defmodule Ravix.People do
       # than removed. Owner-only, because a pending person has no session to
       # ask with.
       if role == :owner and remove_project_invite_by_login(project.id, wanted) do
-        Ravix.Hub.publish(project.id, "people", %{})
+        Ravix.Hub.publish(project.id, :people)
         {:ok, project_people_of(project.id, project.user_id)}
       else
         remove_from_project(user, project, role, wanted)
@@ -371,7 +371,7 @@ defmodule Ravix.People do
     with {:ok, target} <- find_person(wanted),
          :ok <- may_remove(role, user, target) do
       remove_project_member(project.id, target.id)
-      Ravix.Hub.publish(project.id, "people", %{})
+      Ravix.Hub.publish(project.id, :people)
 
       # Nothing left to hand back to somebody who just removed their own
       # access. The caller has to leave rather than re-render.
@@ -812,7 +812,7 @@ defmodule Ravix.People do
         if project.user_id != user_id and not project_member?(project.id, user_id),
           do: add_member(track.id, user_id, "link")
 
-        Ravix.Hub.publish(project.id, "people", %{track_id: track.id})
+        Ravix.Hub.publish(project.id, :people, track_id: track.id)
         {:ok, "/p/#{project.id}/t/#{track.id}"}
 
       _ ->
@@ -824,7 +824,7 @@ defmodule Ravix.People do
 
   defp redeem_project(user_id, %Project{} = project) do
     if project.user_id != user_id, do: add_project_member(project.id, user_id, "link")
-    Ravix.Hub.publish(project.id, "people", %{})
+    Ravix.Hub.publish(project.id, :people)
     # The project rather than one of its tracks: this link did not name
     # one, and picking a track for somebody is picking which of several
     # conversations they have walked into.

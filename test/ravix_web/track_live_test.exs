@@ -2,7 +2,8 @@ defmodule RavixWeb.TrackLiveTest do
   use RavixWeb.ConnCase, async: false
   import Phoenix.LiveViewTest
   import Mimic
-  alias Ravix.{People, Previews, PromptQueue, Repo, Terminal, Tracks, Vitals}
+  alias Ravix.Hub.Event
+  alias Ravix.{People, Previews, PromptQueue, QueryCount, Repo, Terminal, Tracks, Vitals}
   alias Ravix.Tracks.{Track, Transcript}
 
   setup :verify_on_exit!
@@ -221,7 +222,7 @@ defmodule RavixWeb.TrackLiveTest do
        [%{id: "queued", prompt: "Fix this", status: :failed, can_cancel: true, error: "Offline"}]}
     end)
 
-    send(ctx.view.pid, {:hub, %{event: "queue"}})
+    send(ctx.view.pid, {:hub, Event.new(:queue, ctx.project.id, track_id: ctx.track.id)})
     render_async(ctx.view)
 
     expect(PromptQueue, :retry, fn user, id, item ->
@@ -279,11 +280,71 @@ defmodule RavixWeb.TrackLiveTest do
     assert path == "/p/#{ctx.project.id}"
   end
 
+  test "an event about a sibling track costs this page nothing of its own", ctx do
+    # A project's hub carries every track's news to every page on it. This
+    # page shows one track, so a turn starting, a queue moving or somebody
+    # being invited *elsewhere* is not its business -- and used to cost it a
+    # re-read of its own track, its queue and its whole transcript for every
+    # one of them.
+    #
+    # Stated as a comparison rather than as a number because a message costs
+    # something before this page's own clauses ever see it: the session and
+    # access guards attached at mount run on every one. What is asserted is
+    # that a sibling's event costs *that and nothing more*, and that an event
+    # this page must act on costs more than that.
+    sibling = insert_track(project: ctx.project, slug: "elsewhere")
+    render(ctx.view)
+
+    counts =
+      for name <- [:people, :tracks, :turn, :queue] do
+        hub_queries(ctx, Event.new(name, ctx.project.id, track_id: sibling.id))
+      end
+
+    assert [guards] = Enum.uniq(counts),
+           "sibling events cost different amounts: #{inspect(counts)}"
+
+    # An event naming this track, and one naming no track at all -- the
+    # project's own, which is how a page learns the people it belongs to
+    # have changed -- both cost more, because both are acted on.
+    assert hub_queries(ctx, Event.new(:people, ctx.project.id, track_id: ctx.track.id)) > guards
+    assert hub_queries(ctx, Event.new(:people, ctx.project.id)) > guards
+  end
+
+  test "only a turn on this track re-reads the transcript", ctx do
+    render(ctx.view)
+    track_id = ctx.track.id
+
+    # `:queue` moves the queue and nothing else. The transcript arrives on
+    # the follower's stream rather than on the hub, so re-reading it is a
+    # repair for a gap, and a turn beginning or failing is the one hub event
+    # that means the stream may have missed something.
+    queue = hub_queries(ctx, Event.new(:queue, ctx.project.id, track_id: track_id))
+    turn = hub_queries(ctx, Event.new(:turn, ctx.project.id, track_id: track_id))
+    settings = hub_queries(ctx, Event.new(:settings, ctx.project.id))
+
+    assert turn > queue
+    assert turn > settings
+  end
+
+  # What one hub event costs the page, in queries, once it has settled.
+  defp hub_queries(ctx, event) do
+    QueryCount.queries(
+      fn ->
+        send(ctx.view.pid, {:hub, event})
+        render_async(ctx.view)
+      end,
+      from: ctx.view.pid
+    )
+  end
+
   test "presence updates only affect their own track", ctx do
     send(
       ctx.view.pid,
       {:hub,
-       %{event: "here", data: %{track_id: "other", present: [%{login: "outsider", typing: true}]}}}
+       Event.new(:here, ctx.project.id,
+         track_id: "other",
+         present: [%{login: "outsider", typing: true}]
+       )}
     )
 
     refute render(ctx.view) =~ "outsider"
@@ -291,10 +352,10 @@ defmodule RavixWeb.TrackLiveTest do
     send(
       ctx.view.pid,
       {:hub,
-       %{
-         event: "here",
-         data: %{track_id: ctx.track.id, present: [%{login: "teammate", typing: true}]}
-       }}
+       Event.new(:here, ctx.project.id,
+         track_id: ctx.track.id,
+         present: [%{login: "teammate", typing: true}]
+       )}
     )
 
     assert render(ctx.view) =~ "@teammate is typing"

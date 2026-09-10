@@ -172,7 +172,7 @@ defmodule Ravix.Presence do
   # instance serving its own readers gets everyone exactly one, and the frame is
   # the whole room either way, because `list/1` is cluster-wide.
   defp publish(project_id, track_id, here) do
-    Hub.publish_local(project_id, "here", %{track_id: track_id, present: here})
+    Hub.publish_local(project_id, :here, track_id: track_id, present: here)
   end
 
   defp project_id_of(presences) do

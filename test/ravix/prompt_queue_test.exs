@@ -7,6 +7,7 @@ defmodule Ravix.PromptQueueTest do
   alias Ecto.Adapters.SQL.Sandbox
   alias Ravix.Fountain.{Error, FakeTransport}
   alias Ravix.Hub
+  alias Ravix.Hub.Event
   alias Ravix.PromptQueue
   alias Ravix.PromptQueue.{Item, Server}
   alias Ravix.Tracks.TrackMember
@@ -677,21 +678,21 @@ defmodule Ravix.PromptQueueTest do
     track_id = f.track.id
 
     {:ok, %Item{id: id}} = send_prompt(f.track, f.owner, "watched")
-    assert_receive {:hub, %{event: "queue", data: %{track_id: ^track_id}}}
+    assert_receive {:hub, %Event{name: :queue, track_id: ^track_id}}
 
     Server.tick(f.server)
     # Claimed, then sent, then the turn.
-    assert_receive {:hub, %{event: "queue", data: %{track_id: ^track_id}}}
-    assert_receive {:hub, %{event: "queue", data: %{track_id: ^track_id}}}
-    assert_receive {:hub, %{event: "turn", data: %{track_id: ^track_id, status: "running"}}}
+    assert_receive {:hub, %Event{name: :queue, track_id: ^track_id}}
+    assert_receive {:hub, %Event{name: :queue, track_id: ^track_id}}
+    assert_receive {:hub, %Event{name: :turn, track_id: ^track_id}}
     assert status_of(id) == :sent
 
     {:ok, %Item{id: id}} = send_prompt(f.track, f.owner, "cancelled")
-    assert_receive {:hub, %{event: "queue", data: %{track_id: ^track_id}}}
+    assert_receive {:hub, %Event{name: :queue, track_id: ^track_id}}
     :ok = PromptQueue.cancel(f.owner, track_id, id)
-    assert_receive {:hub, %{event: "queue", data: %{track_id: ^track_id}}}
+    assert_receive {:hub, %Event{name: :queue, track_id: ^track_id}}
 
     PromptQueue.cancel_track(track_id)
-    assert_receive {:hub, %{event: "queue", data: %{track_id: ^track_id}}}
+    assert_receive {:hub, %Event{name: :queue, track_id: ^track_id}}
   end
 end

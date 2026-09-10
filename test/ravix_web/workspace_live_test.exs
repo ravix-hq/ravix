@@ -2,7 +2,8 @@ defmodule RavixWeb.WorkspaceLiveTest do
   use RavixWeb.ConnCase, async: false
   import Phoenix.LiveViewTest
   import Mimic
-  alias Ravix.{Accounts, Crypto, Hub, Projects, Tracks}
+  alias Ravix.{Accounts, Crypto, Hub, Projects, QueryCount, Tracks}
+  alias Ravix.Hub.Event
   alias Ravix.Tracks.Transcript
 
   setup :verify_on_exit!
@@ -243,8 +244,43 @@ defmodule RavixWeb.WorkspaceLiveTest do
     {:ok, view, _} = live(log_in_user(conn, user), "/p/#{project.id}")
     refute has_element?(view, "button", "Settings")
     Ravix.People.remove_project_member(project.id, user.id)
-    Hub.publish(project.id, "people")
+    Hub.publish(project.id, :people)
     refute render(view) =~ project.name
+  end
+
+  test "the rail ignores the two events it cannot render", %{conn: conn} do
+    user = insert_user()
+    project = insert_project(user: user)
+    track = insert_track(project: project, title: "On the rail")
+    {:ok, view, _} = live(log_in_user(conn, user), "/p/#{project.id}")
+    assert render(view) =~ "On the rail"
+
+    cost = fn name ->
+      QueryCount.queries(
+        fn ->
+          send(view.pid, {:hub, Event.new(name, project.id, track_id: track.id)})
+          render(view)
+        end,
+        from: view.pid
+      )
+    end
+
+    # The rail shows a track's title, branch, status and last activity. Who
+    # is looking at a track and what is in its prompt queue are neither, and
+    # the queue moves on every prompt sent, delivered or cancelled -- so
+    # re-listing every project's tracks for each of those was the largest
+    # thing this page did for nothing anybody could see.
+    #
+    # A comparison rather than a number, because the session guard attached
+    # at mount reads a row on every message before this page's own clauses
+    # see it. What is asserted is that these two cost that and nothing more.
+    ignored = Enum.map([:here, :queue], cost)
+    assert [guard] = Enum.uniq(ignored), "the ignored events differ: #{inspect(ignored)}"
+
+    # Everything else still reloads: a narrower rule would have to know
+    # which of the rail's fields each event can reach, and getting that
+    # wrong shows up as a status dot that is quietly a minute stale.
+    for name <- [:people, :tracks, :turn, :settings], do: assert(cost.(name) > guard)
   end
 
   test "a track loads its transcript, sends prompts, and renders its files", %{conn: conn} do

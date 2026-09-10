@@ -213,7 +213,7 @@ defmodule Ravix.Projects.Machine do
       Projects.rebind_agent(project.id, agent["id"])
       Ravix.MachineCache.forget_project(project.id)
       Ravix.Tracks.close_all_for_rebuild(project, :rebuild)
-      Hub.publish(project.id, "tracks", %{project_id: project.id})
+      Hub.publish(project.id, :tracks)
       {:ok, %{removed: removed ++ ["agent"], failed: failed}}
     end
   end
@@ -281,7 +281,7 @@ defmodule Ravix.Projects.Machine do
     unwind(client, project)
     Projects.archive(project.id)
     Ravix.MachineCache.forget_project(project.id)
-    Hub.publish(project.id, "tracks", %{project_id: project.id})
+    Hub.publish(project.id, :tracks)
     :ok
   end
 

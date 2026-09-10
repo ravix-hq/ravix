@@ -251,7 +251,7 @@ defmodule Ravix.Tracks do
       # A first track provisions the machine, so what the memo holds is out
       # of date the moment this returns.
       MachineCache.forget_project(project.id)
-      publish_tracks(project.id)
+      publish_tracks(project.id, track.id)
       {:ok, present(track, project: project, live: nil, role: role)}
     end
   end
@@ -349,12 +349,12 @@ defmodule Ravix.Tracks do
     case Fountain.prompt(client, track.conversation_id, prompt) do
       :ok ->
         _unsafe_mark_opened(track.id)
-        Hub.publish(project.id, "turn", %{track_id: track.id, status: :ready})
+        Hub.publish(project.id, :turn, track_id: track.id)
 
       {:error, reason} ->
         require Logger
         Logger.error("ravix: opening turn for track #{track.id} did not send: #{inspect(reason)}")
-        Hub.publish(project.id, "turn", %{track_id: track.id, status: :failed})
+        Hub.publish(project.id, :turn, track_id: track.id)
     end
 
     :ok
@@ -421,7 +421,7 @@ defmodule Ravix.Tracks do
   def mark_read(%User{} = user, track_id) do
     with {:ok, %{track: track, project: project}} <- Access.track_access(user, track_id) do
       Ravix.People.mark_read(track.id, user.id, DateTime.utc_now())
-      publish_tracks(project.id)
+      publish_tracks(project.id, track.id)
     end
   end
 
@@ -513,7 +513,7 @@ defmodule Ravix.Tracks do
            text(title, 200) |> non_empty() ||
              {:error, {:unprocessable, "no_title", "A track needs a name."}} do
       _unsafe_rename_track(track.id, title)
-      publish_tracks(project.id)
+      publish_tracks(project.id, track.id)
     end
   end
 
@@ -560,7 +560,7 @@ defmodule Ravix.Tracks do
 
       _unsafe_close_track(track.id)
       MachineCache.forget_project(project.id)
-      publish_tracks(project.id)
+      publish_tracks(project.id, track.id)
     end
   end
 
@@ -946,8 +946,12 @@ defmodule Ravix.Tracks do
 
   defp live_project(_), do: nil
 
-  defp publish_tracks(project_id),
-    do: Hub.publish(project_id, "tracks", %{project_id: project_id})
+  # Named with the track it is about, so a page showing a *different* track
+  # of the same project can leave it alone. The wider `:tracks` event, with
+  # no track named, is the rebuild and the delete: those really do change
+  # every track on the project at once and every page must act on them.
+  defp publish_tracks(project_id, track_id),
+    do: Hub.publish(project_id, :tracks, track_id: track_id)
 
   defp fountain do
     client = Fountain.client()

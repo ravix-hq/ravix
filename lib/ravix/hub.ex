@@ -11,9 +11,14 @@ defmodule Ravix.Hub do
   A subscriber re-checks access as it handles each message. The hub does
   not: publishing is by project id and a process that lost its seat on the
   project is expected to notice on the next message and leave.
+
+  Everything on it is a `Ravix.Hub.Event`, delivered as `{:hub, %Event{}}`,
+  and the field to route on is `track_id`: a page showing one track can
+  ignore an event that names a different one, and must not ignore one that
+  names none. `Event.concerns?/2` is that question asked once.
   """
 
-  @type event :: %{event: String.t(), data: term()}
+  alias Ravix.Hub.Event
 
   @doc "The topic for a project."
   @spec topic(String.t()) :: String.t()
@@ -28,14 +33,22 @@ defmodule Ravix.Hub do
   def unsubscribe(project_id), do: Phoenix.PubSub.unsubscribe(Ravix.PubSub, topic(project_id))
 
   @doc """
-  Publish to everyone on a project. Delivered as `{:hub, %{event: name, data: data}}`.
+  Publish to everyone on a project. Delivered as `{:hub, %Ravix.Hub.Event{}}`.
+
+  `opts` are the event's own optional fields, `:track_id` above all; see
+  `Ravix.Hub.Event` for what leaving it out claims.
 
   Best-effort by design: a publisher's own request never fails because a
   listener went away.
   """
-  @spec publish(String.t(), String.t(), term()) :: :ok
-  def publish(project_id, event, data \\ %{}) do
-    Phoenix.PubSub.broadcast(Ravix.PubSub, topic(project_id), {:hub, %{event: event, data: data}})
+  @spec publish(String.t(), Event.name(), keyword()) :: :ok
+  def publish(project_id, name, opts \\ []) do
+    Phoenix.PubSub.broadcast(
+      Ravix.PubSub,
+      topic(project_id),
+      {:hub, Event.new(name, project_id, opts)}
+    )
+
     :ok
   end
 
@@ -54,12 +67,12 @@ defmodule Ravix.Hub do
   out to the whole cluster or the other instances' readers never hear it. The
   question to ask is where the *publisher* runs, not how many readers there are.
   """
-  @spec publish_local(String.t(), String.t(), term()) :: :ok
-  def publish_local(project_id, event, data \\ %{}) do
+  @spec publish_local(String.t(), Event.name(), keyword()) :: :ok
+  def publish_local(project_id, name, opts \\ []) do
     Phoenix.PubSub.local_broadcast(
       Ravix.PubSub,
       topic(project_id),
-      {:hub, %{event: event, data: data}}
+      {:hub, Event.new(name, project_id, opts)}
     )
 
     :ok

@@ -4,6 +4,7 @@ defmodule Ravix.ProjectsTest do
 
   alias Ravix.Fountain.{Client, FakeTransport}
   alias Ravix.GitHubFake, as: GH
+  alias Ravix.Hub.Event
   alias Ravix.Projects
   alias Ravix.Projects.{Machine, Project, Settings}
   alias Ravix.PromptQueue.Item
@@ -710,7 +711,7 @@ defmodule Ravix.ProjectsTest do
                Repo.get!(Project, project.id)
 
       assert [%{rev: 1}, %{rev: 1}] = Projects.open_tracks(project.id)
-      assert_received {:hub, %{event: "settings", data: %{rev: 2}}}
+      assert_received {:hub, %Event{name: :settings}}
       assert length(requests(client)) == 2
     end
 
@@ -772,7 +773,7 @@ defmodule Ravix.ProjectsTest do
                })
 
       assert %Project{name: "Renamed", rev: 1} = Repo.get!(Project, project.id)
-      assert_received {:hub, %{event: "settings", data: %{rev: 1}}}
+      assert_received {:hub, %Event{name: :settings}}
     end
 
     test "a blank name is not a rename", %{owner: owner, project: project} do
@@ -949,7 +950,7 @@ defmodule Ravix.ProjectsTest do
       assert_received {:retired, "p"}
       assert_received {:forgot, "p"}
       assert_received {:closed_all, "p", :rebuild}
-      assert_received {:hub, %{event: "tracks", data: %{project_id: "p"}}}
+      assert_received {:hub, %Event{name: :tracks, project_id: "p"}}
     end
 
     test "the catalog fills in a project with no harness of its own", %{
@@ -988,7 +989,7 @@ defmodule Ravix.ProjectsTest do
 
       assert {:error, %Ravix.Fountain.Error{status: 500}} = Projects.rebuild(owner, project.id)
       assert Repo.get!(Project, project.id).agent_id == "a"
-      refute_received {:hub, %{event: "tracks"}}
+      refute_received {:hub, %Event{name: :tracks}}
     end
 
     test "a rebuild that lost its agent and then failed can still be retried", ctx do
@@ -1045,7 +1046,7 @@ defmodule Ravix.ProjectsTest do
 
       assert %Project{archived_at: %DateTime{}} = Repo.get!(Project, project.id)
       assert Repo.get_by!(Item, id: prompt.id).status == :cancelled
-      assert_received {:hub, %{event: "tracks", data: %{project_id: "p"}}}
+      assert_received {:hub, %Event{name: :tracks, project_id: "p"}}
       assert List.last(requests(client)) == {"DELETE", "/api/environments/e"}
       assert {:error, :not_found} = Projects.get(owner, project.id)
       assert Projects.list(owner) == []

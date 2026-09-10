@@ -73,7 +73,7 @@ defmodule RavixWeb.PreviewGatewayTest do
     assert {:data, "first\n", client} = Client.next(client)
 
     Store.remove_member(f.t1, f.guest.id)
-    Hub.publish(f.project, "tracks", %{project_id: f.project})
+    Hub.publish(f.project, :tracks)
 
     assert {:error, _reason, _received, _client} = Client.drain(client)
     assert get(f).status == 401
@@ -88,7 +88,7 @@ defmodule RavixWeb.PreviewGatewayTest do
     assert {:ok, {:binary, <<0, 1, 2, 255>>}, ws} = Client.ws_recv(ws)
 
     Store.remove_member(f.t1, f.guest.id)
-    Hub.publish(f.project, "tracks", %{project_id: f.project})
+    Hub.publish(f.project, :tracks)
     assert {:close, 1008, _reason, _ws} = Client.ws_await_close(ws)
   end
 
@@ -391,7 +391,7 @@ defmodule RavixWeb.PreviewGatewayTest do
     assert {:data, "first\n", client} = Client.next(client)
 
     Store.update_row(f.t1, &%{&1 | generation: 1})
-    Hub.publish(f.project, "tracks", %{project_id: f.project})
+    Hub.publish(f.project, :tracks)
     assert {:error, _reason, _received, _client} = Client.drain(client)
   end
 

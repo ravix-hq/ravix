@@ -3,6 +3,7 @@ defmodule RavixWeb.WorkspaceManagementTest do
   import Phoenix.LiveViewTest
   import Mimic
   alias Ravix.{Accounts, People, Previews, Projects, Tracks}
+  alias Ravix.Hub.Event
 
   setup :verify_on_exit!
 
@@ -187,7 +188,7 @@ defmodule RavixWeb.WorkspaceManagementTest do
     refute has_element?(ctx.view, "#search-dialog a[href='/p/#{ctx.project.id}/t/#{track.id}']")
     render_click(ctx.view, "dismiss")
     refute has_element?(ctx.view, "#search-dialog")
-    send(ctx.view.pid, {:hub, %{event: "here"}})
+    send(ctx.view.pid, {:hub, Event.new(:here, ctx.project.id, track_id: track.id)})
     assert render(ctx.view) =~ ctx.project.name
   end
 
