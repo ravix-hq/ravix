@@ -621,17 +621,7 @@
           Invite
         </button>
       </form>
-      <div :if={@project.role == :owner}>
-        <button class="ghost" phx-click="invite-link" phx-value-action="create">
-          Create invite link
-        </button>
-        <button class="ghost" phx-click="invite-link" phx-value-action="revoke">
-          Revoke invite link
-        </button>
-      </div>
-      <p :if={invitation_url(@invite)}>
-        <a href={invitation_url(@invite)}>{invitation_url(@invite)}</a>
-      </p>
+      <.invite_link owner={@project.role == :owner} invite={@invite} />
     </.dialog>
   </div>
 </Layouts.app>

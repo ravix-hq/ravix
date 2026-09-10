@@ -621,16 +621,8 @@ defmodule RavixWeb.TrackLive do
     end
   end
 
-  defp result(socket, :ok, fun), do: fun.(socket, nil)
-  defp result(socket, {:ok, value}, fun), do: fun.(socket, value)
-  defp result(socket, {:error, reason}, _), do: error(socket, reason)
-  defp error(socket, reason), do: put_flash(socket, :error, Error.from(reason).message)
-
   defp owner_or_creator?(user, track),
     do: track.role == :owner or track.created_by_login == user.login
-
-  defp invite_url(%{url: url}), do: url
-  defp invite_url(_), do: nil
 
   defp visible_prompt(prompt) do
     prompt = Ravix.Previews.Agent.visible_prompt(prompt)

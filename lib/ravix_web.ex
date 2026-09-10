@@ -50,6 +50,10 @@ defmodule RavixWeb do
     quote do
       use Phoenix.LiveView
 
+      # Every page turns the same three tagged results into the same three
+      # socket changes; see `RavixWeb.Live.Result`.
+      import RavixWeb.Live.Result
+
       unquote(html_helpers())
     end
   end
