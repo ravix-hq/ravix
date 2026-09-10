@@ -27,8 +27,10 @@ defmodule Ravix.Application do
       # first opened against this instance. It keeps Fountain's conversation
       # stream open while anyone anywhere is looking at the transcript.
       {DynamicSupervisor, name: Ravix.Tracks.Follower.Supervisor, strategy: :one_for_one},
-      # Installation tokens, per-installation rate limits and the checks cache.
+      # Installation tokens and per-installation rate limits, plus the memo
+      # that shares one checks read between every row asking about a branch.
       Ravix.GitHub.Cache,
+      {Ravix.Memo, name: Ravix.GitHub.Cache.Checks},
       # Accepted prompts awaiting delivery, swept every two seconds. The
       # sweep is off under test (config/test.exs): a timer outside the SQL
       # sandbox would race every test that owns a connection.

@@ -38,15 +38,13 @@ defmodule Ravix.MachineCache do
   hand one test another's answer. In production there is one client.
   """
 
-  use GenServer
-
   alias Ravix.Fountain
   alias Ravix.Fountain.Client
+  alias Ravix.Memo
 
-  @table __MODULE__
+  @memo __MODULE__
   @ttl_ms 5_000
   @sprite_ttl_ms 60_000
-  @load_timeout 90_000
   @live_statuses ~w(pending idle running)
 
   @typedoc "A conversation as `GET /api/conversations` lists it (string keys)."
@@ -65,9 +63,7 @@ defmodule Ravix.MachineCache do
   def sprite_ttl_ms, do: @sprite_ttl_ms
 
   @doc false
-  def start_link(opts \\ []) do
-    GenServer.start_link(__MODULE__, opts, name: Keyword.get(opts, :name, __MODULE__))
-  end
+  def child_spec(opts), do: Memo.child_spec(Keyword.put_new(opts, :name, @memo))
 
   @doc """
   The project's agent's conversations: from the memo while fresh, unless
@@ -154,163 +150,51 @@ defmodule Ravix.MachineCache do
   @doc "Forget what was derived for one project, on every client."
   @spec forget_project(String.t()) :: :ok
   def forget_project(project_id) do
-    GenServer.call(server(), {:forget_project, project_id})
+    Memo.forget_where(@memo, &match?({_client, :conversations, ^project_id, _agent}, &1))
   end
 
   @doc "For tests: forget everything."
   @spec reset() :: :ok
-  def reset, do: GenServer.call(server(), :reset)
+  def reset, do: Memo.reset(@memo)
 
   # ── the memo ──────────────────────────────────────────────────────────
 
   defp memo(key, load, ttl_for, opts) do
-    now = Keyword.get_lazy(opts, :now_ms, &now_ms/0)
+    Memo.fetch(@memo, key, load, expires_at(ttl_for), memo_opts(opts))
+  end
 
-    case :ets.lookup(table(), key) do
-      [{^key, value, expires_at}] when expires_at > now ->
-        {:ok, value}
-
-      _ ->
-        GenServer.call(server(), {:load, key, load, ttl_for, now}, @load_timeout)
+  # `ttl_for` is handed the loaded value, as it always was. A failure is not
+  # remembered at all: the next caller retries rather than being told for
+  # five seconds that Fountain is down.
+  defp expires_at(ttl_for) do
+    fn
+      {:ok, value}, started -> started + ttl_for.(value)
+      _other, _started -> nil
     end
   end
 
-  defp forget(key), do: GenServer.call(server(), {:forget, key})
+  defp memo_opts(opts) do
+    now = Keyword.take(opts, [:now_ms])
+    [on_crash: &crashed/1] ++ now
+  end
+
+  defp crashed(reason) do
+    {:error,
+     %Ravix.Fountain.Error{
+       status: 0,
+       code: "load_crashed",
+       message: message(reason),
+       kind: :connection
+     }}
+  end
+
+  defp message(%{__exception__: true} = error), do: Exception.message(error)
+  defp message(reason), do: inspect(reason)
+
+  defp forget(key), do: Memo.forget(@memo, key)
 
   defp list_key(client, project),
     do: {client_id(client), :conversations, project.id, project.agent_id}
 
   defp client_id(%Client{base_url: base_url}), do: base_url
-
-  defp now_ms, do: System.system_time(:millisecond)
-
-  defp server, do: __MODULE__
-  defp table, do: @table
-
-  # ── the server: coalescing loads, one task each ───────────────────────
-
-  @impl true
-  def init(opts) do
-    table = Keyword.get(opts, :table, @table)
-    :ets.new(table, [:named_table, :set, :public, read_concurrency: true])
-    {:ok, %{table: table, loads: %{}}}
-  end
-
-  @impl true
-  def handle_call({:load, key, load, ttl_for, now}, from, state) do
-    case :ets.lookup(state.table, key) do
-      [{^key, value, expires_at}] when expires_at > now ->
-        {:reply, {:ok, value}, state}
-
-      _ ->
-        {:noreply, start_or_join(state, key, load, ttl_for, now, from)}
-    end
-  end
-
-  def handle_call({:forget, key}, _from, state) do
-    :ets.delete(state.table, key)
-    # A load in flight answers its waiters but is not remembered.
-    {:reply, :ok, %{state | loads: drop_load(state.loads, key)}}
-  end
-
-  def handle_call({:forget_project, project_id}, _from, state) do
-    :ets.match_delete(state.table, {{:_, :conversations, project_id, :_}, :_, :_})
-
-    loads =
-      state.loads
-      |> Map.keys()
-      |> Enum.filter(&match?({_, :conversations, ^project_id, _}, &1))
-      |> Enum.reduce(state.loads, &drop_load(&2, &1))
-
-    {:reply, :ok, %{state | loads: loads}}
-  end
-
-  def handle_call(:reset, _from, state) do
-    :ets.delete_all_objects(state.table)
-    loads = Enum.reduce(Map.keys(state.loads), state.loads, &drop_load(&2, &1))
-    {:reply, :ok, %{state | loads: loads}}
-  end
-
-  @impl true
-  def handle_info({ref, result}, state) when is_reference(ref) do
-    Process.demonitor(ref, [:flush])
-
-    case Enum.find(state.loads, fn {_key, load} -> load.ref == ref end) do
-      nil ->
-        # Forgotten while in flight. Its waiters were answered by the load
-        # that replaced it, or are answered here when there was none.
-        {:noreply, state}
-
-      {key, load} ->
-        settle(state.table, key, load, result)
-        {:noreply, %{state | loads: Map.delete(state.loads, key)}}
-    end
-  end
-
-  def handle_info({:DOWN, ref, :process, _pid, reason}, state) do
-    case Enum.find(state.loads, fn {_key, load} -> load.ref == ref end) do
-      nil ->
-        {:noreply, state}
-
-      {key, load} ->
-        error =
-          {:error,
-           %Ravix.Fountain.Error{
-             status: 0,
-             code: "load_crashed",
-             message: inspect(reason),
-             kind: :connection
-           }}
-
-        Enum.each(load.waiters, &GenServer.reply(&1, error))
-        {:noreply, %{state | loads: Map.delete(state.loads, key)}}
-    end
-  end
-
-  defp start_or_join(state, key, load, ttl_for, now, from) do
-    case Map.fetch(state.loads, key) do
-      {:ok, running} ->
-        put_in(state.loads[key], %{running | waiters: [from | running.waiters]})
-
-      :error ->
-        task = Task.Supervisor.async_nolink(Ravix.TaskSupervisor, fn -> safe_load(load) end)
-        put_in(state.loads[key], %{ref: task.ref, waiters: [from], ttl_for: ttl_for, now: now})
-    end
-  end
-
-  defp safe_load(load) do
-    load.()
-  rescue
-    error ->
-      {:error,
-       %Ravix.Fountain.Error{
-         status: 0,
-         code: "load_raised",
-         message: Exception.message(error),
-         kind: :connection
-       }}
-  end
-
-  defp settle(table, key, load, {:ok, value} = result) do
-    # Held from the moment the load started, as the TypeScript did, so the
-    # value's own TTL is not stretched by however long Fountain took. A load
-    # forgotten while in flight answers its waiters but is not remembered.
-    unless match?({:forgotten, _, _}, key),
-      do: :ets.insert(table, {key, value, load.now + load.ttl_for.(value)})
-
-    Enum.each(load.waiters, &GenServer.reply(&1, result))
-  end
-
-  defp settle(_table, _key, load, result) do
-    Enum.each(load.waiters, &GenServer.reply(&1, result))
-  end
-
-  # A forgotten load: its waiters still deserve an answer, so the record is
-  # kept under a key no reader asks for until the task reports.
-  defp drop_load(loads, key) do
-    case Map.pop(loads, key) do
-      {nil, loads} -> loads
-      {load, loads} -> Map.put(loads, {:forgotten, key, load.ref}, load)
-    end
-  end
 end
