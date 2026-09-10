@@ -27,8 +27,20 @@ defmodule Ravix.Tracks.Follower do
   therefore stops receiving on the event after the revocation, which is the
   same guarantee.
 
-  Registered in `Ravix.Tracks.Follower.Registry` and started under
-  `Ravix.Tracks.Follower.Supervisor`, both of which the application starts.
+  **One follower per track in the cluster, not per instance.** The name is a
+  `:global` one (`Ravix.Cluster.via/2`), because the broadcast above reaches
+  every node: a second follower on a second instance would deliver every event
+  to every reader twice. Supervision stays local -- whichever instance first
+  needs a track starts the follower under its own
+  `Ravix.Tracks.Follower.Supervisor`, which the application starts -- so a
+  subscriber's `pid` may well be on another node, and so may the follower's.
+
+  **A subscriber must monitor what `subscribe/2` returns.** On one instance a
+  follower could only die with its readers; across a cluster it dies with a node
+  that its readers may outlive, and `:global` releases the name without starting
+  a replacement anywhere. Nothing else can recover from that, because the only
+  cursor that survives is the reader's own: `RavixWeb.TrackLive` re-subscribes
+  with the newest event id it holds. Hence the `{:ok, pid}`.
   """
 
   use GenServer, restart: :temporary
@@ -40,7 +52,6 @@ defmodule Ravix.Tracks.Follower do
   alias Ravix.Repo
   alias Ravix.Tracks.Track
 
-  @registry __MODULE__.Registry
   @supervisor __MODULE__.Supervisor
   @linger_ms 3_000
   @retry_ms 1_000
@@ -59,10 +70,6 @@ defmodule Ravix.Tracks.Follower do
   @spec topic(String.t()) :: String.t()
   def topic(track_id), do: "track:" <> track_id
 
-  @doc "The registry the application starts for followers."
-  @spec registry() :: atom()
-  def registry, do: @registry
-
   @doc "The dynamic supervisor the application starts for followers."
   @spec supervisor() :: atom()
   def supervisor, do: @supervisor
@@ -77,8 +84,12 @@ defmodule Ravix.Tracks.Follower do
   does not have the follower replay it (a follower already running keeps its
   own cursor). `:client`, `:stream_opts`, `:linger_ms` and `:retry_ms` exist
   for tests and only matter to the follower this call starts.
+
+  Returns the follower's pid, which the caller is expected to monitor: it may be
+  on another node, and a node that goes away takes the stream with it without
+  putting a replacement anywhere (see the module docs).
   """
-  @spec subscribe(String.t(), [option()]) :: :ok | {:error, :not_open | term()}
+  @spec subscribe(String.t(), [option()]) :: {:ok, pid()} | {:error, :not_open | term()}
   def subscribe(track_id, opts \\ []) do
     with {:ok, conversation_id} <- conversation_id(track_id, opts),
          {:ok, pid} <- ensure_started(track_id, conversation_id, opts) do
@@ -88,12 +99,14 @@ defmodule Ravix.Tracks.Follower do
   end
 
   # A follower stops three seconds after its last subscriber leaves, and its
-  # registry entry outlives the decision, so `ensure_started/3` can hand back
-  # one that is already on its way out. This call runs in the LiveView
+  # name outlives the decision, so `ensure_started/3` can hand back one that is
+  # already on its way out. In a cluster it can also hand back one whose node
+  # left between the lookup and this call. This call runs in the LiveView
   # process, where an exit is the track page crashing on the reader, so take
   # the answer and start a fresh follower instead.
   defp join(pid, track_id, conversation_id, opts, retried? \\ false) do
-    GenServer.call(pid, {:subscribe, self()})
+    :ok = GenServer.call(pid, {:subscribe, self()})
+    {:ok, pid}
   catch
     :exit, _reason when not retried? ->
       case ensure_started(track_id, conversation_id, opts) do
@@ -117,18 +130,13 @@ defmodule Ravix.Tracks.Follower do
     end
   end
 
-  @doc "The follower for a track, if one is running."
+  @doc "The follower for a track, anywhere in the cluster, if one is running."
   @spec whereis(String.t()) :: pid() | nil
-  def whereis(track_id) do
-    case Registry.lookup(@registry, track_id) do
-      [{pid, _}] -> if Process.alive?(pid), do: pid, else: nil
-      [] -> nil
-    end
-  end
+  def whereis(track_id), do: Ravix.Cluster.whereis(:follower, track_id)
 
   @doc false
   def start_link(args) do
-    GenServer.start_link(__MODULE__, args, name: {:via, Registry, {@registry, args.track_id}})
+    GenServer.start_link(__MODULE__, args, name: Ravix.Cluster.via(:follower, args.track_id))
   end
 
   defp conversation_id(track_id, opts) do

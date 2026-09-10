@@ -1,9 +1,11 @@
 # Render Blueprint for Ravix — https://render.com/docs/blueprint-spec
 #
-# One web service and one Postgres. The per-project SSE fan-out and the
-# preview reconciler live in the process, so this runs as exactly one
-# instance; with the state in Postgres rather than on a disk, a deploy is a
-# zero-downtime swap and the database has Render's backups.
+# One web service on two instances, and one Postgres with a standby. Nothing
+# durable lives in a process: sessions, grants and the prompt queue are rows, so
+# a request may land on either instance and a deploy is a rolling swap (ADR
+# 0003). The instances form one Erlang cluster and the processes that must not
+# exist twice -- a track's transcript follower, a track's preview server, the
+# preview reconciler -- are named through `:global`.
 #
 # The app and the track-preview gateway share the service's single listener
 # and are told apart by Host, so both domains below point at this service:
@@ -24,15 +26,32 @@ services:
     runtime: docker
     region: oregon
     plan: 0.5c-512mb
-    # Load-bearing, not a capacity choice: the follower registry, the machine
-    # cache, the prompt-queue sweep and the preview reconciler are all
-    # node-local singletons and nothing clusters them. A second instance would
-    # split preview ownership and double the sweeps, silently.
-    numInstances: 1
+    # Two, so that losing one instance is a degraded service rather than an
+    # outage. This was 1, and load-bearing at 1: the follower registry and the
+    # preview servers were node-local singletons, so a second instance would
+    # have split preview ownership and doubled every transcript event, silently.
+    # ADR 0003 is what changed that; `rel/env.sh.eex` and RELEASE_COOKIE below
+    # are what make these two instances one cluster rather than two.
+    numInstances: 2
     dockerfilePath: ./Dockerfile
-    healthCheckPath: /healthz
-    # Migrations run against the database before the new release takes over.
+    # Readiness, not liveness: /healthz answers as soon as the endpoint listens,
+    # which an instance whose database pool has not connected would also do.
+    # /readyz asks the database first, so an instance joins the rotation when it
+    # can actually serve. Deliberately not a cluster check -- the first instance
+    # of a deploy has no peers and would wait for a sibling that is waiting for
+    # it.
+    healthCheckPath: /readyz
+    # Migrations run against the database before the new release takes over --
+    # which means they run while the *old* release is still serving every
+    # request. Every migration must therefore be one the running code survives:
+    # add before you read, stop reading before you drop (ADR 0003).
     preDeployCommand: /app/bin/migrate
+
+    # The drain window: Render waits this long after SIGTERM before killing the
+    # container. It has to exceed the endpoint's own `shutdown_timeout` (20s, in
+    # config/runtime.exs) or the connections that window exists to protect are
+    # dropped anyway. Render's own maximum is 300.
+    maxShutdownDelaySeconds: 30
     # Deploy a commit to main only once CI (.github/workflows/ci.yml) is green.
     autoDeployTrigger: checksPass
     domains:
@@ -44,6 +63,24 @@ services:
         fromDatabase:
           name: ravix-db
           property: connectionString
+      # Not listed here, and not an omission: Render injects
+      # RENDER_DISCOVERY_SERVICE into every service with more than one instance.
+      # It is a DNS name whose A records are the instances' private addresses.
+      # `config/runtime.exs` hands it to DNSCluster and `rel/env.sh.eex` gives
+      # each instance a node name at the matching address; without both halves
+      # the instances run but never meet.
+      #
+      # The shared secret two nodes need before they will talk. Generated once
+      # and held by the service, rather than the per-build cookie a release
+      # bakes in: during a deploy the old and new instances are different
+      # builds, and with different cookies they would form two clusters, each
+      # running its own follower for every open track for the length of the
+      # drain.
+      - key: RELEASE_COOKIE
+        generateValue: true
+      # Explicit because it is now multiplied: two instances hold two pools.
+      - key: POOL_SIZE
+        value: "10"
       - key: FOUNTAIN_URL
         value: https://managoat.com
       # Where GitHub sends a browser back to, and what the App's callback and
@@ -93,6 +130,19 @@ databases:
     databaseName: ravix
     user: ravix
     region: oregon
-    plan: 0.1c-256mb
+    # A high-availability standby needs at least one CPU, so this cannot be the
+    # 0.1-CPU plan it was: that requirement, not capacity, is what sets this.
+    plan: 1c-2g
     postgresMajorVersion: "17"
+    # A standby that takes over at the same URL. Failover terminates every
+    # connection at once, which the app survives by reconnecting -- see the
+    # `queue_target`/`queue_interval` note in config/runtime.exs.
+    #
+    # VERIFY ON FIRST SYNC: the spec documents this field but renders its
+    # example in a collapsed block, so the nested form below is the documented
+    # shape and not one this repository has seen Render accept. If the sync
+    # rejects it, the dashboard toggle does the same job and this becomes a
+    # comment.
+    highAvailability:
+      enabled: true
     ipAllowList: []

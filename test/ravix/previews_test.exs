@@ -296,9 +296,13 @@ defmodule Ravix.PreviewsTest do
     assert owner.id != guest.id
   end
 
-  test "the supervision tree is three children" do
-    assert [{Registry, _}, {DynamicSupervisor, _}, Ravix.Previews.Reconciler] =
+  test "the supervision tree is three children, the reconciler behind a cluster singleton" do
+    assert [{Registry, _}, {DynamicSupervisor, _}, {Ravix.Cluster.Singleton, singleton}] =
              Previews.child_specs()
+
+    # The tick must run on one instance, not on each of them (ADR 0003).
+    assert singleton[:child] == Ravix.Previews.Reconciler
+    assert singleton[:key] == "previews.reconciler"
   end
 
   defp service_id(track_id) do

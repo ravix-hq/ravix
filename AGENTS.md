@@ -62,6 +62,18 @@ under `Ravix.TaskSupervisor`. Bare `Task.async` is allowed in tests only. Use mo
 messages, or `render_async` to synchronize tests. A sleep is not proof of readiness.
 A cache invalidation must still answer existing waiters and reject stale writes.
 
+The app runs on more than one instance (ADR 0003), so ask of any new process
+whether a second instance may run its own. A per-track process that must not
+exist twice is named through `Ravix.Cluster.via/2` (`:global`) and supervised
+node-locally; recurring work that must not run twice goes behind
+`Ravix.Cluster.Singleton`; work that is merely cheaper once, like the prompt
+queue's sweep, stays on every instance and stays idempotent. Nothing is handed
+over when an instance leaves: `:global` releases the name and the database is
+the state. A process holding something a caller still needs must therefore be
+monitored *by* that caller, which is why `Tracks.follow/3` returns a pid.
+Migrations run while the previous release is still serving, so they are
+expand/contract: add before reading, stop reading before dropping.
+
 Keep atoms bounded at external boundaries, pass explicit provider configuration,
 and return predictable tagged errors. Escape user/agent output; Markdown's raw
 HTML boundary is centralized. Preview access tickets belong to the signed-in
@@ -100,6 +112,12 @@ calls. Application startup is the one composition-root exception. Tests prove
 both rejection and acceptance; comments alone do not establish authorization.
 Preview suites sharing the fixture's `s1`/`s2` ports use `group: :preview_ports`
 to avoid cross-transaction uniqueness waits while unrelated suites run in parallel.
+
+Cluster behavior that only a second BEAM can show lives in
+`test/ravix/cluster/distribution_test.exs`, which starts real peer nodes running
+the whole application; peer-side code goes in `test/support` because a test
+module's beam never reaches a peer. Keep to one peer at a time and wait for it to
+leave `Node.list/0`, or `:global` starts disconnecting nodes to protect itself.
 
 Browser tests use production configuration and create/drop only a generated
 `ravix_browser_*` database. Ports 4103/8893/8894 must be free; no existing server

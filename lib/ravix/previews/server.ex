@@ -14,10 +14,18 @@ defmodule Ravix.Previews.Server do
   during a sixty-second startup take effect: the startup re-reads the row at
   every step and abandons itself when the generation moved on.
 
-  Servers are started on demand under `Ravix.Previews.Supervisor` and found
-  through `Ravix.Previews.Registry`; one that has had nothing to do for ten
-  minutes stops. They carry the `$callers` of whoever started them, so the
-  SQL sandbox and Mimic follow a test into them.
+  Servers are started on demand under `Ravix.Previews.Supervisor` and named
+  through `:global` (`Ravix.Cluster.via/2`), so there is one per track in the
+  *cluster* and not one per instance (ADR 0003): the chain above is a lock on a
+  sprite, and two instances holding it would be no lock at all. One that has had
+  nothing to do for ten minutes stops. They carry the `$callers` of whoever
+  started them, so the SQL sandbox and Mimic follow a test into them.
+
+  `Ravix.Previews.Registry` stays, demoted to one job: the `:idle`/`:busy` flag
+  that `busy?/1` reads. It is node-local, on whichever instance owns the server,
+  because a `:global` name carries no value and the flag has to be readable
+  without sending the server a message -- its mailbox is, when the answer
+  matters, exactly what is blocked.
   """
 
   use GenServer, restart: :temporary
@@ -37,6 +45,10 @@ defmodule Ravix.Previews.Server do
   @hold_ms 30_000
   @idle_ms 10 * 60_000
   @check_timeout_sec 15
+  # Reading one flag off a sibling instance. Short on purpose: the caller is a
+  # fifteen-second reconciliation tick, and a slow answer is worth less than a
+  # prompt "assume busy" (see `busy?/1`).
+  @busy_timeout_ms 1_000
   @hold_key :ravix_preview_hold_at
 
   @typedoc "What a server is asked to do, in order of arrival."
@@ -58,15 +70,15 @@ defmodule Ravix.Previews.Server do
   @doc false
   def start_link(opts) do
     track_id = Keyword.fetch!(opts, :track_id)
-    GenServer.start_link(__MODULE__, opts, name: {:via, Registry, {@registry, track_id, :idle}})
+    GenServer.start_link(__MODULE__, opts, name: Ravix.Cluster.via(:preview, track_id))
   end
 
-  @doc "The server for a track, started if it is not running."
+  @doc "The server for a track, anywhere in the cluster, started here if it is not running."
   @spec ensure(String.t()) :: pid()
   def ensure(track_id) do
-    case Registry.lookup(@registry, track_id) do
-      [{pid, _}] -> if Process.alive?(pid), do: pid, else: start_server(track_id)
-      [] -> start_server(track_id)
+    case Ravix.Cluster.whereis(:preview, track_id) do
+      nil -> start_server(track_id)
+      pid -> if alive?(pid), do: pid, else: start_server(track_id)
     end
   end
 
@@ -78,10 +90,19 @@ defmodule Ravix.Previews.Server do
       {:ok, pid} ->
         pid
 
+      # Another instance got there first, which is the whole point of the name.
       {:error, {:already_started, pid}} ->
-        if Process.alive?(pid), do: pid, else: ensure(track_id)
+        if alive?(pid), do: pid, else: ensure(track_id)
     end
   end
+
+  # `Process.alive?/1` raises on a pid from another node, and a `:global` name
+  # can briefly outlive its process: the removal is asynchronous, as a local
+  # `Registry` entry was. For a remote server the answer is whether its instance
+  # is still in the cluster -- one that died individually is caught instead by
+  # `run/2`, which turns the exit into `{:error, :preview_server_down}`.
+  defp alive?(pid) when node(pid) == node(), do: Process.alive?(pid)
+  defp alive?(pid), do: node(pid) in Node.list()
 
   @doc """
   Run an operation on a track's server and wait for it.
@@ -97,18 +118,43 @@ defmodule Ravix.Previews.Server do
     :exit, _ -> {:error, :preview_server_down}
   end
 
-  @doc "Whether an operation is in flight on a track (`operations.has` in the TypeScript)."
+  @doc """
+  Whether an operation is in flight on a track (`operations.has` in the TypeScript).
+
+  The flag is held on the instance that owns the server, so this reads across the
+  cluster when it has to. An instance that cannot answer counts as busy: the only
+  caller is `Ravix.Previews.Reconciler`, deciding whether to queue an `:ensure`,
+  and "leave this track alone and come back in fifteen seconds" is the answer
+  that cannot start work behind an operation it could not see.
+  """
   @spec busy?(String.t()) :: boolean()
   def busy?(track_id) do
-    match?([{_, :busy}], Registry.lookup(@registry, track_id))
+    case Ravix.Cluster.whereis(:preview, track_id) do
+      nil -> false
+      pid -> pid |> node() |> busy_on(track_id)
+    end
   end
+
+  @doc false
+  @spec busy_on(node(), String.t()) :: boolean()
+  def busy_on(owner, track_id) when owner == node(), do: local_busy?(track_id)
+
+  def busy_on(owner, track_id) do
+    :erpc.call(owner, __MODULE__, :local_busy?, [track_id], @busy_timeout_ms)
+  catch
+    _kind, _reason -> true
+  end
+
+  @doc false
+  @spec local_busy?(String.t()) :: boolean()
+  def local_busy?(track_id), do: match?([{_, :busy}], Registry.lookup(@registry, track_id))
 
   @doc "Stop a track's server if it is running (tests, and a track that is gone)."
   @spec stop(String.t()) :: :ok
   def stop(track_id) do
-    case Registry.lookup(@registry, track_id) do
-      [{pid, _}] -> GenServer.stop(pid, :normal)
-      [] -> :ok
+    case Ravix.Cluster.whereis(:preview, track_id) do
+      nil -> :ok
+      pid -> GenServer.stop(pid, :normal)
     end
   catch
     :exit, _ -> :ok
@@ -144,8 +190,17 @@ defmodule Ravix.Previews.Server do
   def handle_info(:timeout, state), do: {:stop, :normal, state}
   def handle_info(_other, state), do: {:noreply, state, @idle_ms}
 
+  # Registered on first use rather than in `init/1`. A predecessor for this
+  # track has already released its `:global` name by the time a successor can
+  # start, but `Registry` reaps its entry on a monitor message, which may not
+  # have arrived yet; an operation is late enough that it has.
   defp mark(track_id, value) do
-    Registry.update_value(@registry, track_id, fn _ -> value end)
+    case Registry.update_value(@registry, track_id, fn _ -> value end) do
+      :error -> Registry.register(@registry, track_id, value)
+      {_new, _old} -> :ok
+    end
+
+    :ok
   end
 
   defp perform({:ensure_running, generation, restart?}, track_id) do

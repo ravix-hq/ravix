@@ -83,6 +83,15 @@ if config_env() == :prod do
     pool_size: String.to_integer(System.get_env("POOL_SIZE") || "10"),
     # For machines with several cores, consider starting multiple pools of `pool_size`
     # pool_count: 4,
+    # A high-availability failover terminates every connection at once and the
+    # standby answers at the same URL a moment later (ADR 0003). Postgrex
+    # reconnects on its own; what these two decide is what happens to the
+    # requests that arrive during the gap. The default `queue_target` of 50ms
+    # makes DBConnection start refusing checkouts as soon as the pool is slow,
+    # which turns a few seconds of failover into errors on pages that would have
+    # been served by waiting. Wait instead, up to two seconds.
+    queue_target: 200,
+    queue_interval: 2_000,
     socket_options: maybe_ipv6
 
   # The secret key base is used to sign/encrypt cookies and other secrets.
@@ -101,7 +110,17 @@ if config_env() == :prod do
 
   host = (System.get_env("PUBLIC_URL") || "https://app.ravix.sh") |> URI.parse() |> Map.get(:host)
 
-  config :ravix, :dns_cluster_query, System.get_env("DNS_CLUSTER_QUERY")
+  # How the instances of this service find each other (ADR 0003). Render sets
+  # RENDER_DISCOVERY_SERVICE to a DNS name whose A records are every instance of
+  # the service, which is exactly what `DNSCluster` wants; DNS_CLUSTER_QUERY
+  # still wins, for a deployment that names its own. Unset on one instance, and
+  # then `Ravix.Application` starts `DNSCluster` with `:ignore`.
+  #
+  # `rel/env.sh.eex` is the other half: without a `name` distribution and a node
+  # named for this address, there is nothing here for a sibling to connect to.
+  config :ravix,
+         :dns_cluster_query,
+         System.get_env("DNS_CLUSTER_QUERY") || System.get_env("RENDER_DISCOVERY_SERVICE")
 
   config :ravix, RavixWeb.Endpoint,
     url: [host: host, port: 443, scheme: "https"],
@@ -110,7 +129,21 @@ if config_env() == :prod do
       # Set it to  {0, 0, 0, 0, 0, 0, 0, 1} for local network only access.
       # See the documentation on https://hexdocs.pm/bandit/Bandit.html#t:options/0
       # for details about using IPv6 vs IPv4 and loopback vs public addresses.
-      ip: {0, 0, 0, 0, 0, 0, 0, 0}
+      ip: {0, 0, 0, 0, 0, 0, 0, 0},
+      # How long a draining instance keeps serving the connections it already
+      # has (ADR 0003). Explicit because it is load-bearing on every deploy and
+      # it is half of a pair: `render.yaml`'s `maxShutdownDelaySeconds` is the
+      # other half and has to be the larger of the two, or Render kills the
+      # container mid-drain and the connections this window exists to protect
+      # are dropped anyway. Bandit's own default is 15s.
+      #
+      # A LiveView socket never "completes", so what this really buys is that
+      # somebody mid-sentence when the deploy started keeps a working page for
+      # twenty more seconds and then reconnects to a new instance, rather than
+      # being cut off the moment the swap begins. The endpoint is the last child
+      # in `Ravix.Application`, so it drains before the followers and preview
+      # servers those pages are talking to go away.
+      thousand_island_options: [shutdown_timeout: 20_000]
     ],
     secret_key_base: secret_key_base
 

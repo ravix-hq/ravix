@@ -36,6 +36,31 @@ defmodule Ravix.Previews.ServerFailureTest do
     refute Server.busy?(ctx.track.id)
   end
 
+  test "an operation in flight reads as busy, and idle again once it settles", ctx do
+    configure(ctx)
+    test_pid = self()
+
+    stub(Tracks, :machine_of, fn _, _ ->
+      send(test_pid, {:in_flight, self()})
+      receive do: (:go -> :ok)
+      {:error, {:unavailable, "Fountain is offline"}}
+    end)
+
+    task = Task.async(fn -> Previews.start_service(ctx.track.id) end)
+    assert_receive {:in_flight, worker}
+
+    # The flag `Ravix.Previews.Reconciler` reads before queueing an `:ensure`
+    # behind an operation already running on this sprite -- and, on another
+    # instance, the one it fetches over `:erpc`. The server registers it on its
+    # first operation rather than at startup, so a regression there would leave
+    # every track looking permanently idle.
+    assert Server.busy?(ctx.track.id)
+
+    send(worker, :go)
+    assert :ok = Task.await(task)
+    refute Server.busy?(ctx.track.id)
+  end
+
   test "idle preview processes stop and can be recreated", ctx do
     pid = Server.ensure(ctx.track.id)
     send(pid, :unrelated)

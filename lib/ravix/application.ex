@@ -18,9 +18,10 @@ defmodule Ravix.Application do
       Ravix.MachineCache,
       # Who is looking at which track, and who is typing.
       Ravix.Presence,
-      # One follower per track keeps Fountain's conversation stream open while
-      # anyone is looking at the transcript.
-      {Registry, keys: :unique, name: Ravix.Tracks.Follower.Registry},
+      # One follower per track -- per cluster, not per instance (ADR 0003): the
+      # name is a `:global` one, so this supervisor holds whichever tracks were
+      # first opened against this instance. It keeps Fountain's conversation
+      # stream open while anyone anywhere is looking at the transcript.
       {DynamicSupervisor, name: Ravix.Tracks.Follower.Supervisor, strategy: :one_for_one},
       # Installation tokens, per-installation rate limits and the checks cache.
       Ravix.GitHub.Cache,

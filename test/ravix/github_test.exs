@@ -904,5 +904,58 @@ defmodule Ravix.GitHubTest do
     }
   end
 
+  # ── the rate limit, across instances ─────────────────────────────────
+
+  describe "rate limits are the deployment's, not one instance's" do
+    setup do
+      installation = System.unique_integer([:positive])
+      %{installation: installation, error: %Error{status: 403, message: "rate limited"}}
+    end
+
+    test "a limit met here is told to the others", ctx do
+      Phoenix.PubSub.subscribe(Ravix.PubSub, "github:rate_limit")
+      test_pid = self()
+      until = Clock.now_ms() + 60_000
+
+      # From another process, because `broadcast_from/4` excludes the sender and
+      # the point is what a *sibling* receives.
+      spawn(fn ->
+        Cache.put_rate_limit(ctx.app.app_id, ctx.installation, until, ctx.error)
+        send(test_pid, :put)
+      end)
+
+      assert_receive :put
+      assert_receive {:rate_limit, app_id, installation, ^until, error}
+      assert app_id == ctx.app.app_id
+      assert installation == ctx.installation
+      assert error == ctx.error
+    end
+
+    test "a limit met elsewhere is remembered here, without being echoed back", ctx do
+      Phoenix.PubSub.subscribe(Ravix.PubSub, "github:rate_limit")
+      until = Clock.now_ms() + 60_000
+
+      send(Cache, {:rate_limit, ctx.app.app_id, ctx.installation, until, ctx.error})
+      :ok = GenServer.call(Cache, :ping)
+
+      assert {:ok, ^until, error} = Cache.rate_limit(ctx.app.app_id, ctx.installation)
+      assert error == ctx.error
+
+      # Re-publishing what it was told is how a message circulates forever.
+      refute_receive {:rate_limit, _, _, _, _}, 100
+    end
+
+    test "and a clearance elsewhere lifts it here", ctx do
+      until = Clock.now_ms() + 60_000
+      Cache.put_rate_limit_local(ctx.app.app_id, ctx.installation, until, ctx.error)
+      assert {:ok, _, _} = Cache.rate_limit(ctx.app.app_id, ctx.installation)
+
+      send(Cache, {:rate_limit_cleared, ctx.app.app_id, ctx.installation})
+      :ok = GenServer.call(Cache, :ping)
+
+      assert Cache.rate_limit(ctx.app.app_id, ctx.installation) == :error
+    end
+  end
+
   defp pad(n), do: String.pad_leading(Integer.to_string(n), 2, "0")
 end

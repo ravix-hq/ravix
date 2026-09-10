@@ -60,7 +60,7 @@ defmodule Ravix.Tracks.FollowerTest do
 
   test "events are broadcast to the subscriber, and the stream is resumed from the last id",
        ctx do
-    assert :ok = subscribe(ctx)
+    assert {:ok, _follower} = subscribe(ctx)
     track_id = ctx.track_id
     assert_receive {:transcript, ^track_id, %{"id" => 1, "data" => "line 1"}}, 1_000
     assert_receive {:transcript, ^track_id, %{"id" => 2}}, 1_000
@@ -69,7 +69,7 @@ defmodule Ravix.Tracks.FollowerTest do
   end
 
   test "one follower per track, shared by every subscriber", ctx do
-    assert :ok = subscribe(ctx)
+    assert {:ok, _follower} = subscribe(ctx)
     pid = Follower.whereis(ctx.track_id)
     assert is_pid(pid)
 
@@ -79,7 +79,7 @@ defmodule Ravix.Tracks.FollowerTest do
 
     other =
       spawn(fn ->
-        :ok = subscribe(ctx, client: client)
+        {:ok, _} = subscribe(ctx, client: client)
         send(parent, {:other, Follower.whereis(ctx.track_id)})
         Process.sleep(:infinity)
       end)
@@ -89,7 +89,7 @@ defmodule Ravix.Tracks.FollowerTest do
   end
 
   test "the follower stops a little after its last subscriber leaves, and not before", ctx do
-    assert :ok = subscribe(ctx)
+    assert {:ok, _follower} = subscribe(ctx)
     pid = Follower.whereis(ctx.track_id)
     ref = Process.monitor(pid)
 
@@ -105,7 +105,7 @@ defmodule Ravix.Tracks.FollowerTest do
 
     watcher =
       spawn(fn ->
-        :ok = subscribe(ctx, client: client)
+        {:ok, _} = subscribe(ctx, client: client)
         send(parent, :subscribed)
         Process.sleep(:infinity)
       end)
@@ -118,10 +118,10 @@ defmodule Ravix.Tracks.FollowerTest do
   end
 
   test "coming back within the grace period keeps the follower", ctx do
-    assert :ok = subscribe(ctx)
+    assert {:ok, _follower} = subscribe(ctx)
     pid = Follower.whereis(ctx.track_id)
     :ok = Follower.unsubscribe(ctx.track_id)
-    assert :ok = subscribe(ctx)
+    assert {:ok, _follower} = subscribe(ctx)
     Process.sleep(150)
     assert Process.alive?(pid)
     assert Follower.whereis(ctx.track_id) == pid
@@ -131,7 +131,7 @@ defmodule Ravix.Tracks.FollowerTest do
        ctx do
     track = insert_track(conversation_id: ctx.conversation_id)
 
-    assert :ok =
+    assert {:ok, _follower} =
              Follower.subscribe(track.id,
                client: client(ctx.conversation_id),
                stream_opts: @stream_opts,

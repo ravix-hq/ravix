@@ -30,7 +30,11 @@ defmodule RavixWeb.TrackLiveTest do
     end)
 
     stub(Tracks, :events, fn _, _ -> {:ok, Transcript.empty("claude")} end)
-    stub(Tracks, :follow, fn _, _, _ -> :ok end)
+    # `follow/3` hands back the follower to monitor. The caller's own pid stands
+    # in for one that stays alive: monitoring yourself is legal and never fires,
+    # so no test sees a spurious recovery. The tests that exercise the recovery
+    # itself return a process they can kill.
+    stub(Tracks, :follow, fn _, _, _ -> {:ok, self()} end)
     stub(Tracks, :beat, fn _, _, _ -> :ok end)
     stub(Tracks, :mark_read, fn _, _ -> :ok end)
 
@@ -339,6 +343,51 @@ defmodule RavixWeb.TrackLiveTest do
     send(ctx.view.pid, :refresh)
     assert render_async(ctx.view) =~ "Transcript offline"
     assert render(ctx.view) =~ "Hello"
+  end
+
+  test "a follower that goes away is replaced, from the page's own cursor", ctx do
+    test_pid = self()
+
+    # The follower is one process for the whole cluster and may be on another
+    # instance (ADR 0003). Nothing restarts it when that instance leaves, and
+    # nothing else knows which event this page already holds -- so the page
+    # monitors it and re-subscribes itself, or it stops receiving the transcript
+    # and never finds out.
+    follower = spawn(fn -> Process.sleep(:infinity) end)
+
+    expect(Tracks, :follow, fn _user, _id, opts ->
+      send(test_pid, {:followed, opts[:after]})
+      {:ok, follower}
+    end)
+
+    render_click(ctx.view, "retry-load")
+    render_async(ctx.view)
+    assert_receive {:followed, nil}
+
+    # Give the page a cursor of its own, ahead of the stubbed snapshot.
+    send(
+      ctx.view.pid,
+      {:transcript, ctx.track.id, %{"id" => 7, "turn_id" => "t", "kind" => "raw"}}
+    )
+
+    expect(Tracks, :follow, fn _user, _id, opts ->
+      send(test_pid, {:refollowed, opts[:after]})
+      {:ok, self()}
+    end)
+
+    expect(Tracks, :events, fn _user, _id ->
+      send(test_pid, :transcript_reread)
+      {:ok, Transcript.empty("claude")}
+    end)
+
+    Process.exit(follower, :kill)
+
+    # Both halves of the recovery: re-subscribed from event 7 -- not from the
+    # beginning, and not from the stubbed snapshot, because only this page knew
+    # where it had got to -- and the transcript re-read to close the gap.
+    assert_receive {:refollowed, 7}
+    assert_receive :transcript_reread
+    assert render_async(ctx.view)
   end
 
   test "transcript snapshots render prompts, thinking, tools, and raw output safely", ctx do

@@ -40,7 +40,10 @@ defmodule RavixWeb.TrackLive do
         invite: nil,
         pull: nil,
         attached_images: [],
-        vitals: nil
+        vitals: nil,
+        # The monitor reference for this page's transcript follower, if it has
+        # one. See `follow/2`.
+        follower: nil
       )
 
     if authorized?(socket) do
@@ -347,6 +350,23 @@ defmodule RavixWeb.TrackLive do
     {:noreply, socket |> refresh_detail() |> refresh_queue() |> refresh_transcript()}
   end
 
+  # The follower went away, which on a cluster means its instance did (ADR
+  # 0003): `:global` releases the name and starts no replacement, and this page
+  # is the only thing that still knows which event id it holds. So it starts a
+  # fresh follower from that id and re-reads the transcript to close whatever
+  # the gap was. `follow/2` goes through `Tracks.follow/3`, so access is
+  # re-established rather than assumed. A `:DOWN` for any other reference is a
+  # monitor this page no longer owns.
+  def handle_info({:DOWN, ref, :process, _pid, _reason}, socket) do
+    if socket.assigns.follower == ref do
+      socket = assign(socket, follower: nil)
+
+      {:noreply, socket |> follow(socket.assigns.page) |> refresh_transcript()}
+    else
+      {:noreply, socket}
+    end
+  end
+
   @impl true
   def handle_async(name, response, socket) do
     if authorized?(socket) do
@@ -357,11 +377,7 @@ defmodule RavixWeb.TrackLive do
   end
 
   defp async_result(:load, {:ok, {:ok, detail, project, page}}, socket) do
-    if detail.track.conversation_id,
-      do:
-        Tracks.follow(socket.assigns.current_user, socket.assigns.track_id,
-          after: page.last_event_id
-        )
+    socket = if detail.track.conversation_id, do: follow(socket, page), else: socket
 
     Tracks.beat(socket.assigns.current_user, socket.assigns.track_id, false)
     Tracks.mark_read(socket.assigns.current_user, socket.assigns.track_id)
@@ -464,6 +480,25 @@ defmodule RavixWeb.TrackLive do
            {:ok, page} <- Tracks.events(user, id),
            do: {:ok, detail, project, page}
     end)
+  end
+
+  # Subscribe to the track's live transcript from the newest event this page
+  # already has, and monitor the follower that serves it. The monitor is the
+  # whole point: see the `:DOWN` clause above. The page's own transcript is
+  # unaffected by a failure here, which is why an error is not surfaced -- the
+  # events simply stop arriving and the fifteen-second refresh keeps working.
+  defp follow(socket, page) do
+    case socket.assigns.follower do
+      nil -> :ok
+      ref -> Process.demonitor(ref, [:flush])
+    end
+
+    case Tracks.follow(socket.assigns.current_user, socket.assigns.track_id,
+           after: page.last_event_id
+         ) do
+      {:ok, pid} -> assign(socket, follower: Process.monitor(pid))
+      {:error, _reason} -> assign(socket, follower: nil)
+    end
   end
 
   defp refresh_transcript(socket) do

@@ -11,14 +11,19 @@ defmodule Ravix.GitHub.Cache do
       like a permissions problem and is not one.
     * **Rate limits**, per installation. Once GitHub says stop, every read for
       that installation is refused locally until the reset, so twenty mounted
-      rows do not each discover the limit for themselves.
+      rows do not each discover the limit for themselves. The limit is GitHub's
+      and belongs to the whole deployment rather than to one instance, so it is
+      broadcast: without that, each instance would have to earn the same 403 for
+      itself, and "twenty rows" would become twenty per instance (ADR 0003).
     * **Checks reports**, for five minutes, including the in-flight read.
       Rows, tabs and viewers asking about the same branch share one request;
       a failed read is remembered for a minute (or until the rate limit
       lifts) so a failure does not turn every mounted row into a retry loop.
 
-  Tokens and rate limits live in a public ETS table and are read and written
-  by the caller. Checks go through the server, which is the only place that
+  Tokens and rate limits live in a public ETS table on each instance and are
+  read and written by the caller. Tokens stay local deliberately: they are
+  cheap to mint, GitHub is happy to have several outstanding, and shipping a
+  credential between instances to save a request is a bad trade. Checks go through the server, which is the only place that
   can hand one caller the read and park the others until it lands.
 
   Started by `Ravix.Application`. If it is not running when first used (a
@@ -31,6 +36,7 @@ defmodule Ravix.GitHub.Cache do
   alias Ravix.GitHub.{Clock, Error}
 
   @table :ravix_github_cache
+  @topic "github:rate_limit"
 
   @type app_id :: String.t()
   @type installation_id :: integer()
@@ -79,20 +85,51 @@ defmodule Ravix.GitHub.Cache do
     end
   end
 
-  @doc "Refuse reads for this installation until `until_ms`, answering `error`."
+  @doc """
+  Refuse reads for this installation until `until_ms`, answering `error`.
+
+  Told to the other instances too. One instance earning a 403 is the whole
+  deployment's news: the limit is GitHub's, counted per installation, and an
+  instance that has not heard will spend the next reads discovering it again.
+  """
   @spec put_rate_limit(app_id(), installation_id(), integer(), Error.t()) :: :ok
   def put_rate_limit(app_id, installation_id, until_ms, %Error{} = error) do
+    put_rate_limit_local(app_id, installation_id, until_ms, error)
+    tell_siblings({:rate_limit, app_id, installation_id, until_ms, error})
+  end
+
+  @doc "Forget a rate limit (it expired, or a request got through), here and elsewhere."
+  @spec clear_rate_limit(app_id(), installation_id()) :: :ok
+  def clear_rate_limit(app_id, installation_id) do
+    clear_rate_limit_local(app_id, installation_id)
+    tell_siblings({:rate_limit_cleared, app_id, installation_id})
+  end
+
+  @doc false
+  @spec put_rate_limit_local(app_id(), installation_id(), integer(), Error.t()) :: :ok
+  def put_rate_limit_local(app_id, installation_id, until_ms, %Error{} = error) do
     ensure()
     :ets.insert(@table, {{:rate_limit, app_id, installation_id}, until_ms, error})
     :ok
   end
 
-  @doc "Forget a rate limit (it expired, or a request got through)."
-  @spec clear_rate_limit(app_id(), installation_id()) :: :ok
-  def clear_rate_limit(app_id, installation_id) do
+  @doc false
+  @spec clear_rate_limit_local(app_id(), installation_id()) :: :ok
+  def clear_rate_limit_local(app_id, installation_id) do
     ensure()
     :ets.delete(@table, {:rate_limit, app_id, installation_id})
     :ok
+  end
+
+  # Best-effort and one-way. A sibling that misses this is not wrong, only
+  # uninformed: it will find the limit out the way this instance did. So a
+  # PubSub that is not up (a test that never started it) must not fail a
+  # GitHub read that has otherwise succeeded.
+  defp tell_siblings(message) do
+    Phoenix.PubSub.broadcast_from(Ravix.PubSub, self(), @topic, message)
+    :ok
+  catch
+    _kind, _reason -> :ok
   end
 
   # ── checks ─────────────────────────────────────────────────────────
@@ -157,6 +194,7 @@ defmodule Ravix.GitHub.Cache do
   @impl true
   def init(_opts) do
     :ets.new(@table, [:named_table, :public, :set, read_concurrency: true])
+    Phoenix.PubSub.subscribe(Ravix.PubSub, @topic)
     {:ok, %{waiters: %{}, monitors: %{}}}
   end
 
@@ -216,7 +254,21 @@ defmodule Ravix.GitHub.Cache do
 
   def handle_call(:ping, _from, state), do: {:reply, :ok, state}
 
+  # Another instance met the limit, or got through it. Written straight to this
+  # instance's table without being broadcast onward: `broadcast_from/4` already
+  # excluded the sender, and re-publishing what we were told is how a message
+  # goes round forever.
   @impl true
+  def handle_info({:rate_limit, app_id, installation_id, until_ms, error}, state) do
+    put_rate_limit_local(app_id, installation_id, until_ms, error)
+    {:noreply, state}
+  end
+
+  def handle_info({:rate_limit_cleared, app_id, installation_id}, state) do
+    clear_rate_limit_local(app_id, installation_id)
+    {:noreply, state}
+  end
+
   def handle_info({:DOWN, ref, :process, _pid, _reason}, state) do
     case Map.pop(state.monitors, ref) do
       {nil, _} ->

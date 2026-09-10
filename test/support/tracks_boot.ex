@@ -5,7 +5,6 @@ defmodule Ravix.TracksBoot do
     for name <- [
           Ravix.MachineCache,
           Ravix.Presence,
-          Ravix.Tracks.Follower.Registry,
           Ravix.Tracks.Follower.Supervisor
         ] do
       unless Process.whereis(name), do: raise("#{inspect(name)} is not running")

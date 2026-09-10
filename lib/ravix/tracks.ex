@@ -1079,8 +1079,15 @@ defmodule Ravix.Tracks do
     :ok
   end
 
-  @doc "A page subscribing to a track's live transcript. See `Ravix.Tracks.Follower.subscribe/2`."
-  @spec follow(User.t(), String.t(), keyword()) :: :ok | {:error, reason()}
+  @doc """
+  A page subscribing to a track's live transcript. See `Ravix.Tracks.Follower.subscribe/2`.
+
+  Returns the follower's pid so the page can monitor it: the follower is one per
+  cluster and may be on another node, and a node that leaves takes the stream
+  with it (ADR 0003). Only the caller knows which event id it already holds, so
+  only the caller can re-subscribe from the right place.
+  """
+  @spec follow(User.t(), String.t(), keyword()) :: {:ok, pid()} | {:error, reason()}
   def follow(%User{} = user, track_id, opts \\ []) do
     with {:ok, %{track: track}} <- Access.track_access(user, track_id),
          :ok <-

@@ -18,6 +18,7 @@ for mod <- [
       Ravix.Terminal,
       Ravix.Vitals,
       Ravix.MachineCache,
+      Ravix.Health,
       Ravix.Previews.Clock
     ],
     do: Mimic.copy(mod)

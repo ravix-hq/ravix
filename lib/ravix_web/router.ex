@@ -31,8 +31,11 @@ defmodule RavixWeb.Router do
     plug :accepts, ["json"]
   end
 
-  # Not a page, and not behind the session: Render's health check.
+  # Not pages, and not behind the session. `/readyz` is what Render's health
+  # check reads and so what gates the rotation; `/healthz` only says the process
+  # is up. See `RavixWeb.HealthController`.
   get "/healthz", RavixWeb.HealthController, :show
+  get "/readyz", RavixWeb.HealthController, :ready
 
   scope "/api", RavixWeb do
     pipe_through :api

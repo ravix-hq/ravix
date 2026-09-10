@@ -75,9 +75,18 @@ defmodule Ravix.Previews do
   @spec idle_ms() :: pos_integer()
   def idle_ms, do: @idle_ms
 
-  @doc "The supervision tree the previews need, for `Ravix.Application`."
+  @doc """
+  The supervision tree the previews need, for `Ravix.Application`.
+
+  The reconciler is wrapped: its pass is "never twice for one track", which on
+  more than one instance means it has to run on exactly one of them (ADR 0003).
+  Every instance starts the watcher; one of them ends up starting the tick.
+  """
   @spec child_specs() :: [{module(), keyword()} | module()]
-  def child_specs, do: Server.child_specs() ++ [Ravix.Previews.Reconciler]
+  def child_specs do
+    Server.child_specs() ++
+      [{Ravix.Cluster.Singleton, key: "previews.reconciler", child: Ravix.Previews.Reconciler}]
+  end
 
   # ── availability and presentation ────────────────────────────────────
 
