@@ -136,9 +136,9 @@
         <div :if={@queue != []} class="workspace-queue">
           <div :for={item <- @queue}>
             <span class="chip">{item.status}</span> {item.prompt}
-            <span :if={item[:error]}>{item.error}</span>
+            <span :if={item.error}>{item.error}</span>
             <button
-              :if={item[:can_cancel]}
+              :if={item.can_cancel}
               class="ghost"
               phx-click="queue"
               phx-value-action="cancel"
