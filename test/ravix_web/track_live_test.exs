@@ -148,21 +148,36 @@ defmodule RavixWeb.TrackLiveTest do
        }}
     end)
 
-    render_hook(ctx.view, "exec", %{command: "cd src"})
+    ctx.view |> element("#track-terminal") |> render_hook("exec", %{command: "cd src"})
     assert render_async(ctx.view) =~ "Exit 2"
     assert render(ctx.view) =~ "problem"
-    render_click(ctx.view, "dock", %{name: "run"})
-    render_hook(ctx.view, "exec", %{command: "pwd"})
+    ctx.view |> element("button[phx-click=dock][phx-value-name=run]") |> render_click()
+    ctx.view |> element("#track-terminal") |> render_hook("exec", %{command: "pwd"})
     assert render_async(ctx.view) =~ "out"
-    render_click(ctx.view, "clear")
+    ctx.view |> element("button[phx-click=clear]") |> render_click()
     refute render(ctx.view) =~ "$ pwd"
   end
 
   test "terminal errors restore command entry and remain visible", ctx do
     expect(Terminal, :exec, fn _, _, _ -> {:error, {:unavailable, "Machine asleep"}} end)
-    render_hook(ctx.view, "exec", %{command: "pwd"})
+    ctx.view |> element("#track-terminal") |> render_hook("exec", %{command: "pwd"})
     assert render_async(ctx.view) =~ "Machine asleep"
     refute has_element?(ctx.view, "input[data-terminal-input][disabled]")
+  end
+
+  test "the dock keeps its own state and its refusals still reach the page", ctx do
+    # The dock is a `live_component`, and a component cannot put a flash in
+    # the page's own socket -- `put_flash/3` there changes a socket nothing
+    # renders. Without the hand-off in `RavixWeb.Live.Result.error/2` the
+    # person clicks, nothing happens, and nothing says why.
+    expect(Terminal, :exec, fn _, _, _ -> {:error, {:unavailable, "Machine asleep"}} end)
+    ctx.view |> element("#track-terminal") |> render_hook("exec", %{command: "pwd"})
+    render_async(ctx.view)
+    assert render(ctx.view) =~ "Machine asleep"
+
+    # And the scrollback is the component's, not the page's: the dock
+    # re-renders around it while the transcript beside it does not.
+    refute render(ctx.view) =~ ~s(id="track-terminal" hidden)
   end
 
   test "vitals render both metrics and explicit unavailability", ctx do
@@ -170,10 +185,10 @@ defmodule RavixWeb.TrackLiveTest do
       {:ok, %{available: true, vitals: %{cpu: %{percent: 12}, memory: "32MB"}}}
     end)
 
-    render_click(ctx.view, "dock", %{name: "vitals"})
+    ctx.view |> element("button[phx-click=dock][phx-value-name=vitals]") |> render_click()
     assert render(ctx.view) =~ "32MB"
     expect(Vitals, :report, fn _, _ -> {:ok, %{available: false, why: :no_machine}} end)
-    render_click(ctx.view, "dock", %{name: "vitals"})
+    ctx.view |> element("button[phx-click=dock][phx-value-name=vitals]") |> render_click()
     assert render(ctx.view) =~ "no_machine"
   end
 

@@ -28,8 +28,29 @@ defmodule RavixWeb.Live.Result do
   def result(socket, {:ok, value}, fun), do: fun.(socket, value)
   def result(socket, {:error, reason}, _fun), do: error(socket, reason)
 
-  @doc "Flash the sentence `RavixWeb.Error` has for `reason`."
+  @doc """
+  Flash the sentence `RavixWeb.Error` has for `reason`.
+
+  A `live_component` cannot do this itself. `Phoenix.LiveView.put_flash/3`
+  inside one changes a socket the page never renders, so the flash is
+  dropped and the refusal is silent -- the person clicks, nothing happens,
+  and nothing says why. So a component hands the sentence to its parent
+  instead, which is the only process with a flash to put it in.
+
+  Both pages handle `{:flash, :error, message}` for this reason.
+  """
   @spec error(Phoenix.LiveView.Socket.t(), term()) :: Phoenix.LiveView.Socket.t()
-  def error(socket, reason),
-    do: Phoenix.LiveView.put_flash(socket, :error, Error.from(reason).message)
+  def error(socket, reason) do
+    message = Error.from(reason).message
+
+    if component?(socket) do
+      send(self(), {:flash, :error, message})
+      socket
+    else
+      Phoenix.LiveView.put_flash(socket, :error, message)
+    end
+  end
+
+  # `@myself` is assigned only inside a `live_component`.
+  defp component?(socket), do: Map.has_key?(socket.assigns, :myself)
 end

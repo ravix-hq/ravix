@@ -364,6 +364,11 @@ defmodule RavixWeb.WorkspaceLive do
   def handle_info({:person_removed, :project, _login}, socket),
     do: {:noreply, socket |> reload() |> push_patch(to: "/")}
 
+  # A `live_component` cannot put a flash in the page's own socket, so it
+  # sends the sentence here; see `RavixWeb.Live.Result.error/2`.
+  def handle_info({:flash, kind, message}, socket),
+    do: {:noreply, put_flash(socket, kind, message)}
+
   def handle_info({:hub, %Event{name: name}}, socket) when name in [:here, :queue],
     do: {:noreply, socket}
 

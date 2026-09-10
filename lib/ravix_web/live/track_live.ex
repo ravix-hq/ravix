@@ -4,7 +4,7 @@ defmodule RavixWeb.TrackLive do
   on_mount {RavixWeb.Live.Hooks, :require_authenticated_user}
 
   alias Ravix.Accounts.Access
-  alias Ravix.{Crypto, Hub, Previews, PromptQueue, Terminal, Tracks, Vitals}
+  alias Ravix.{Crypto, Hub, Previews, PromptQueue, Tracks}
   alias Ravix.Hub.Event
   alias Ravix.Tracks.Transcript
   alias RavixWeb.Error
@@ -30,17 +30,11 @@ defmodule RavixWeb.TrackLive do
         panel_error: nil,
         panel_busy: false,
         file: nil,
-        dock: "terminal",
-        dock_open: false,
-        output: [],
-        exec_busy: false,
-        cwd: nil,
         preview: nil,
         preview_url: nil,
         dialog: nil,
         pull: nil,
         attached_images: [],
-        vitals: nil,
         # The monitor reference for this page's transcript follower, if it has
         # one. See `follow/2`.
         follower: nil,
@@ -156,49 +150,6 @@ defmodule RavixWeb.TrackLive do
      )}
   end
 
-  def handle_event("dock", %{"name" => name}, socket) when name in ~w(terminal run vitals) do
-    socket = assign(socket, dock: name, dock_open: true)
-
-    if name == "vitals" do
-      {:noreply,
-       result(
-         socket,
-         Vitals.report(socket.assigns.current_user, socket.assigns.track_id),
-         &assign(&1, vitals: &2)
-       )}
-    else
-      {:noreply, socket}
-    end
-  end
-
-  def handle_event("toggle-dock", _, socket),
-    do: {:noreply, assign(socket, dock_open: !socket.assigns.dock_open)}
-
-  def handle_event("exec", %{"command" => command}, socket) do
-    if socket.assigns.exec_busy do
-      {:noreply, socket}
-    else
-      user = socket.assigns.current_user
-      id = socket.assigns.track_id
-      cwd = socket.assigns.cwd
-
-      socket =
-        assign(socket,
-          exec_busy: true,
-          output:
-            Enum.take(
-              socket.assigns.output ++ [%{command: command, stdout: "", stderr: "", code: nil}],
-              -200
-            )
-        )
-
-      {:noreply,
-       start_async(socket, :exec, fn -> Terminal.exec(user, id, %{command: command, cwd: cwd}) end)}
-    end
-  end
-
-  def handle_event("clear", _, socket), do: {:noreply, assign(socket, output: [])}
-
   def handle_event("preview", %{"action" => action}, socket)
       when action in ~w(open restart stop logs) do
     user = socket.assigns.current_user
@@ -307,6 +258,11 @@ defmodule RavixWeb.TrackLive do
       else: {:noreply, socket}
   end
 
+  # A `live_component` cannot put a flash in the page's own socket, so it
+  # sends the sentence here; see `RavixWeb.Live.Result.error/2`.
+  def handle_info({:flash, kind, message}, socket),
+    do: {:noreply, put_flash(socket, kind, message)}
+
   def handle_info({:hub, %Event{} = event}, socket) do
     if Event.concerns?(event, socket.assigns.track_id) do
       {:noreply, hub(event, socket)}
@@ -359,8 +315,7 @@ defmodule RavixWeb.TrackLive do
       header: detail.header,
       starters: detail.starters,
       page: page,
-      loading: false,
-      cwd: detail.track.workdir
+      loading: false
     )
     |> stream(:turns, Transcript.visible_turns(page), reset: true)
     |> refresh_queue()
@@ -390,15 +345,6 @@ defmodule RavixWeb.TrackLive do
 
   defp async_result(:panel, {:ok, {:error, reason}}, socket),
     do: assign(socket, panel_busy: false, panel_error: Error.from(reason).message)
-
-  defp async_result(:exec, {:ok, response}, socket) do
-    result(assign(socket, exec_busy: false), response, fn s, output ->
-      assign(s,
-        cwd: output.cwd,
-        output: List.update_at(s.assigns.output, -1, &Map.merge(&1, output))
-      )
-    end)
-  end
 
   defp async_result(:preview_action, {:ok, response}, socket) do
     result(assign(socket, panel_busy: false), response, fn s, preview ->
