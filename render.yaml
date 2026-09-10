@@ -32,7 +32,7 @@
 projects:
   - name: Ravix
     environments:
-      - name: production
+      - name: Production
 
         services:
           - type: web
