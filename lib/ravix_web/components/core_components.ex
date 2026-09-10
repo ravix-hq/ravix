@@ -449,13 +449,15 @@ defmodule RavixWeb.CoreComponents do
     default: nil,
     doc: "the freshly minted link, or nil when nothing was just minted"
 
+  attr :target, :any, default: nil, doc: "a `@myself` when the dialog is a live_component"
+
   def invite_link(assigns) do
     ~H"""
     <div :if={@owner}>
-      <button class="ghost" phx-click="invite-link" phx-value-action="create">
+      <button class="ghost" phx-click="invite-link" phx-value-action="create" phx-target={@target}>
         Create invite link
       </button>
-      <button class="ghost" phx-click="invite-link" phx-value-action="revoke">
+      <button class="ghost" phx-click="invite-link" phx-value-action="revoke" phx-target={@target}>
         Revoke invite link
       </button>
     </div>

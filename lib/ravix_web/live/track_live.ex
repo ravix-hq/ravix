@@ -4,7 +4,7 @@ defmodule RavixWeb.TrackLive do
   on_mount {RavixWeb.Live.Hooks, :require_authenticated_user}
 
   alias Ravix.Accounts.Access
-  alias Ravix.{Crypto, Hub, People, Previews, PromptQueue, Terminal, Tracks, Vitals}
+  alias Ravix.{Crypto, Hub, Previews, PromptQueue, Terminal, Tracks, Vitals}
   alias Ravix.Hub.Event
   alias Ravix.Tracks.Transcript
   alias RavixWeb.Error
@@ -38,8 +38,6 @@ defmodule RavixWeb.TrackLive do
         preview: nil,
         preview_url: nil,
         dialog: nil,
-        people: [],
-        invite: nil,
         pull: nil,
         attached_images: [],
         vitals: nil,
@@ -233,18 +231,7 @@ defmodule RavixWeb.TrackLive do
 
   def handle_event("dialog", %{"name" => name}, socket)
       when name in ~w(rename close people pull) do
-    socket = assign(socket, dialog: name)
-
-    {:noreply,
-     if(name == "people",
-       do:
-         result(
-           socket,
-           People.list(socket.assigns.current_user, socket.assigns.track_id),
-           &assign(&1, people: &2)
-         ),
-       else: socket
-     )}
+    {:noreply, assign(socket, dialog: name)}
   end
 
   def handle_event("dismiss", _, socket), do: {:noreply, assign(socket, dialog: nil)}
@@ -267,45 +254,6 @@ defmodule RavixWeb.TrackLive do
        ),
        fn s, _ -> redirect(s, to: "/p/#{s.assigns.project_id}") end
      )}
-  end
-
-  def handle_event("invite-person", %{"login" => login}, socket) do
-    {:noreply,
-     result(
-       socket,
-       People.add(socket.assigns.current_user, socket.assigns.track_id, login),
-       &assign(&1, people: &2)
-     )}
-  end
-
-  def handle_event("remove-person", %{"login" => login}, socket) do
-    {:noreply,
-     result(
-       socket,
-       People.remove(socket.assigns.current_user, socket.assigns.track_id, login),
-       fn s, _ ->
-         if login == s.assigns.current_user.login,
-           do: redirect(s, to: "/"),
-           else:
-             result(
-               s,
-               People.list(s.assigns.current_user, s.assigns.track_id),
-               &assign(&1, people: &2)
-             )
-       end
-     )}
-  end
-
-  def handle_event("invite-link", %{"action" => action}, socket) do
-    response =
-      if action == "create",
-        do: People.mint_link(socket.assigns.current_user, socket.assigns.track_id),
-        else: People.drop_link(socket.assigns.current_user, socket.assigns.track_id)
-
-    {:noreply,
-     result(socket, response, fn s, v ->
-       assign(s, invite: if(action == "create", do: v, else: nil))
-     end)}
   end
 
   def handle_event("open-pull", params, socket) do
@@ -350,6 +298,15 @@ defmodule RavixWeb.TrackLive do
   # every open page a re-read of its own track, its queue and its whole
   # transcript. An event naming no track at all is the project's, and is
   # never skipped.
+  # The people dialog did the removal. Losing your own access to the track
+  # you are looking at is the only one that moves you; taking somebody else
+  # off it leaves you where you are.
+  def handle_info({:person_removed, :track, login}, socket) do
+    if login == socket.assigns.current_user.login,
+      do: {:noreply, push_navigate(socket, to: "/")},
+      else: {:noreply, socket}
+  end
+
   def handle_info({:hub, %Event{} = event}, socket) do
     if Event.concerns?(event, socket.assigns.track_id) do
       {:noreply, hub(event, socket)}

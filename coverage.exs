@@ -4,7 +4,7 @@
 [
   tool: Ravix.Coverage,
   summary: [threshold: 90],
-  groups: [server: 92, web: 90, workspace: 92, track: 92],
+  groups: [server: 92, web: 92, workspace: 95, track: 93],
   ignore_modules: [
     Ravix.Application,
     Ravix.Repo,
