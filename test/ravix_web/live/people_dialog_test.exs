@@ -184,13 +184,23 @@ defmodule RavixWeb.Live.PeopleDialogTest do
       {:ok, view, _} = live(log_in_user(ctx.conn, ctx.owner), "/p/#{ctx.project.id}")
       view = open_people(view)
 
-      html =
-        view
-        |> element("#people-invite-form")
-        |> render_submit(%{"login" => "nobody-here-by-that-name"})
+      view
+      |> element("#people-invite-form")
+      |> render_submit(%{"login" => "nobody-here-by-that-name"})
 
-      # The dialog is a component; its refusals still land in the page's flash.
-      assert html =~ "GitHub" or html =~ "No such"
+      # The component hands the sentence to the page, which puts it in the
+      # flash on its next message, so the page is re-read rather than the
+      # submit's own return being inspected.
+      html = render(view)
+
+      # A `live_component` cannot put a flash in the page's own socket -- it
+      # has to hand the sentence to the parent. This assertion used to be
+      # `html =~ "GitHub" or html =~ "No such"`, which passed on the form's
+      # own "GitHub username" label while the refusal was in fact being
+      # dropped on the floor. Assert the sentence itself.
+      # This deployment has no GitHub App, so that is the refusal. Whichever
+      # it is, the point is that a sentence arrives at all.
+      assert html =~ "no GitHub App configured"
       assert has_element?(view, "#people-dialog")
     end
   end

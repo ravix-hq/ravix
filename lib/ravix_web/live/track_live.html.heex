@@ -390,72 +390,13 @@
             <a href={@pull.url} target="_blank" rel="noreferrer">View pull request ↗</a>
           </p>
         </div>
-        <nav class="workspace-tabs dock-tabs" aria-label="Machine panels">
-          <button
-            class="ghost dock-toggle"
-            phx-click="toggle-dock"
-            aria-expanded={to_string(@dock_open)}
-            aria-controls="machine-dock"
-            aria-label={if @dock_open, do: "Collapse the dock", else: "Expand the dock"}
-          >
-            <.icon name="chevron" size={13} open={@dock_open} />
-          </button>
-          <button
-            :for={name <- ~w(terminal run vitals)}
-            class={if @dock == name, do: "selected", else: "ghost"}
-            phx-click="dock"
-            phx-value-name={name}
-          >
-            {if name == "vitals", do: "Machine stats", else: String.capitalize(name)}
-          </button>
-        </nav>
-        <div id="machine-dock" hidden={!@dock_open} class="machine-dock">
-          <div
-            hidden={@dock not in ["terminal", "run"]}
-            id="track-terminal"
-            phx-hook="Terminal"
-            class="term workspace-terminal"
-          >
-            <div class="term-scroll" data-terminal-output>
-              <div :for={block <- @output}>
-                <strong>$ {block.command}</strong><pre>{block.stdout}</pre><pre class="error">{block.stderr}</pre>
-                <span :if={block.code && block.code != 0}>
-                  Exit {block.code}
-                </span>
-              </div>
-            </div>
-            <p :if={@dock == "run"} class="hint">
-              Run a command in this track’s worktree. For a persistent service, use Preview.
-            </p>
-            <p class="hint">
-              Commands run without an interactive terminal. Use Preview for persistent servers.
-            </p>
-            <div class="term-input">
-              <span class="ps1">{if @cwd, do: Path.basename(@cwd), else: ""} $</span>
-              <fieldset class="term-command" disabled={@exec_busy}>
-                <div id="terminal-command" phx-update="ignore">
-                  <input data-terminal-input aria-label="Command" />
-                </div>
-              </fieldset>
-              <button
-                class="ghost"
-                phx-click="clear"
-              >
-                Clear
-              </button>
-            </div>
-          </div>
-          <div :if={@dock == "vitals"} class="workspace-panel">
-            <p :if={!@vitals}>No machine metrics available.</p>
-            <p :if={@vitals && !@vitals.available}>Metrics unavailable: {@vitals.why}</p>
-            <dl :if={@vitals && @vitals[:vitals]}>
-              <div :for={{key, value} <- @vitals.vitals}>
-                <dt>{key}</dt>
-                <dd>{if is_map(value), do: Jason.encode!(value), else: to_string(value)}</dd>
-              </div>
-            </dl>
-          </div>
-        </div>
+        <.live_component
+          module={RavixWeb.Live.MachineDock}
+          id="machine-dock-panel"
+          track_id={@track_id}
+          workdir={@track.workdir}
+          current_user={@current_user}
+        />
       </aside>
     </div>
     <.dialog :if={@dialog == "rename"} id="rename-dialog" title="Rename track" on_close="dismiss">
