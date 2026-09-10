@@ -107,6 +107,39 @@ defmodule Ravix.ArchitectureTest do
     assert [] = issues("_unsafe_get_track(id)")
   end
 
+  test "a Repo call reaching another context's rows needs the same explanation" do
+    previews = "lib/ravix/previews.ex"
+    tracks = "lib/ravix/tracks.ex"
+
+    # Every real context aliases the repo, so the fixtures do too.
+    for body <- [
+          "Repo.get(Ravix.Tracks.Track, id)",
+          "alias Ravix.Tracks.Track\nRepo.get(Track, id)",
+          "Repo.all(from t in Ravix.Tracks.Track, where: t.id == ^id)",
+          "Repo.transaction(fn -> Repo.get(Ravix.Tracks.Track, id) end)"
+        ],
+        code = "alias Ravix.Repo\n" <> body do
+      assert [_ | _] = issues(code, previews)
+      assert [] = issues("# ownership: Access.track_access/2 above\n" <> code, previews)
+      # Its own rows are its own business.
+      assert [] = issues(code, tracks)
+    end
+
+    # A membership table is named after its subject and filed under it, but
+    # `Ravix.People` is the context that reads and writes all seven.
+    seat = "alias Ravix.Repo\nRepo.exists?(from m in Ravix.Tracks.TrackMember)"
+    assert [] = issues(seat, "lib/ravix/people/store.ex")
+    assert [_] = issues(seat, previews)
+
+    # Naming a foreign module outside a Repo call is untouched: a schema's
+    # `belongs_to` crosses contexts by design, and so does a supervision tree.
+    assert [] = issues("belongs_to :track, Ravix.Tracks.Track", previews)
+    assert [] = issues("children = [Ravix.Tracks.Follower.Supervisor]", previews)
+
+    # And nothing outside the application is implicated.
+    assert [] = issues("alias Ravix.Repo\nRepo.all(from u in SomeLibrary.Thing)", previews)
+  end
+
   test "the tree itself obeys the rules the fixtures describe" do
     lib = Path.wildcard("lib/**/*.ex")
     assert length(lib) > 50
@@ -127,6 +160,10 @@ defmodule Ravix.ArchitectureTest do
              "#{path} reads the database directly; ask a context."
     end
 
+    # Every cross-context Repo read in the tree explains itself; `mix credo
+    # --strict` is what enforces it, and this is the reminder that the count
+    # is zero rather than merely small.
+    #
     # And the doors are one read, not one per caller.
     live = for path <- lib, File.read!(path) =~ ~r/archived_at: nil\} = project ->/, do: path
     assert live == ["lib/ravix/projects/store.ex"]

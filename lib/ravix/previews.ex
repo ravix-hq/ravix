@@ -29,16 +29,16 @@ defmodule Ravix.Previews do
   database alone.
   """
 
-  import Ecto.Query
-
   alias Ravix.Accounts.Access
   alias Ravix.Accounts.User
   alias Ravix.Crypto
   alias Ravix.Previews.{Agent, Clock, Row, Server, Store, View}
   alias Ravix.Projects.Project
+  alias Ravix.Projects.Store, as: Projects
   alias Ravix.Repo
   alias Ravix.Sprites
   alias Ravix.Sprites.Tunnel
+  alias Ravix.Tracks.Store, as: Tracks
   alias Ravix.Tracks.Track
 
   @lease_ms 90_000
@@ -116,8 +116,11 @@ defmodule Ravix.Previews do
   def present(%Row{} = row) do
     why = unavailable() || row.unavailable
 
+    # ownership: the preview row names this track, and the caller reached
+    # the row by resolving a preview it was already allowed onto. Read only
+    # to find the project whose defaults apply.
     defaults =
-      case Repo.get(Track, row.track_id) do
+      case Tracks.get_track(row.track_id) do
         %Track{project_id: project_id} -> Store.defaults(project_id)
         nil -> nil
       end
@@ -138,8 +141,11 @@ defmodule Ravix.Previews do
   @spec assert_open(String.t()) ::
           {:ok, %{track: Track.t(), project: Project.t()}} | {:error, reason()}
   def assert_open(track_id) do
-    track = Repo.get(Track, track_id)
-    project = track && Repo.get(Project, track.project_id)
+    # ownership: this *is* the door for the preview flow -- it answers whether
+    # there is a live track and project behind a preview at all, and every
+    # caller of it goes on to check the person separately.
+    track = Tracks.get_track(track_id)
+    project = track && Projects.live_project(track.project_id)
 
     cond do
       track == nil or track.closed_at != nil -> closed()
@@ -413,7 +419,9 @@ defmodule Ravix.Previews do
   @doc "A project is being rebuilt or archived: remove every track's service (failures retry)."
   @spec retire_project(String.t()) :: :ok
   def retire_project(project_id) do
-    track_ids = Repo.all(from t in Track, where: t.project_id == ^project_id, select: t.id)
+    # ownership: the projects context is retiring this project and asked for
+    # its previews to go with it; naming its tracks is how they are found.
+    track_ids = track_ids_of(project_id)
 
     Ravix.TaskSupervisor
     |> Task.Supervisor.async_stream_nolink(track_ids, &stop_service(&1, true),
@@ -438,6 +446,16 @@ defmodule Ravix.Previews do
   @doc "The helper script the agent runs (`agentPreviewScript`)."
   @spec agent_preview_script(String.t(), String.t()) :: String.t()
   defdelegate agent_preview_script(url, token), to: Agent, as: :script
+
+  # Every track of a project, open or closed: a preview outlives the track
+  # being closed until something retires it, so both halves matter here.
+  #
+  # ownership: both callers established the project first -- `retire_project/1`
+  # is the projects context asking, and `set_defaults/3` went through
+  # `Access.project_of/2`.
+  defp track_ids_of(project_id) do
+    project_id |> Tracks.tracks_of(true) |> Enum.map(& &1.id)
+  end
 
   # ── the preview gateway's questions ──────────────────────────────────
   #
@@ -615,9 +633,10 @@ defmodule Ravix.Previews do
          {:ok, config} <- parse_config(config) do
       Store.set_defaults(project_id, config)
 
+      # ownership: `set_defaults/3` opened with `Access.project_of/2` on this
+      # project; these are the tracks the new default reaches.
       affected =
-        for track_id <-
-              Repo.all(from t in Track, where: t.project_id == ^project_id, select: t.id),
+        for track_id <- track_ids_of(project_id),
             not match?(%Row{config: %{}}, Store.get(track_id)),
             do: track_id
 

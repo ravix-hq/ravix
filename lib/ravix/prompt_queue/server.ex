@@ -143,6 +143,8 @@ defmodule Ravix.PromptQueue.Server do
   end
 
   defp deliver_queued(client, row) do
+    # ownership: `authorized?/1` below ran first and put the row's sender
+    # through `Access.track_access/2`. These read what to send it to.
     track = Repo.get!(Track, row.track_id)
     project = Repo.get!(Project, track.project_id)
 
@@ -296,6 +298,9 @@ defmodule Ravix.PromptQueue.Server do
       else: prompt
   end
 
+  # ownership: whether anybody besides the owner can see this track, which
+  # decides only whether the agent is told who is speaking. Not an access
+  # decision; `authorized?/1` is.
   defp shared?(track, project) do
     Repo.exists?(from(m in TrackMember, where: m.track_id == ^track.id)) or
       Repo.exists?(from(m in ProjectMember, where: m.project_id == ^project.id))
@@ -304,7 +309,10 @@ defmodule Ravix.PromptQueue.Server do
   # The sender still exists, still has the track, and the track is open with
   # a conversation to deliver into.
   defp authorized?(row) do
-    with %User{} = user <- Repo.get(User, row.user_id),
+    # ownership: this *is* the door. A queued prompt outlives the request that
+    # made it, so who sent it is re-established here rather than trusted from
+    # whenever it was accepted.
+    with %User{} = user <- Ravix.Accounts.get_user(row.user_id),
          {:ok, %{track: track}} <- Access.track_access(user, row.track_id) do
       is_nil(track.closed_at) and is_binary(track.conversation_id) and track.conversation_id != ""
     else

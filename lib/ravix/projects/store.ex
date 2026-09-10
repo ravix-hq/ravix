@@ -111,16 +111,16 @@ defmodule Ravix.Projects.Store do
     update_fields(id, archived_at: DateTime.utc_now())
   end
 
-  @doc "The open tracks of a project, oldest first. `tracksOf` in db.ts, read here for the rebuild."
+  @doc """
+  The open tracks of a project, oldest first, read here for the rebuild.
+
+  The tracks context already answers this; asking it rather than writing the
+  query again is what stops the two drifting about what "open" means.
+  """
+  # ownership: the rebuild and the archive both establish the project through
+  # `Access.project_of/2` before naming its tracks.
   @spec open_tracks(String.t()) :: [Track.t()]
-  def open_tracks(project_id) do
-    Repo.all(
-      from(t in Track,
-        where: t.project_id == ^project_id and is_nil(t.closed_at),
-        order_by: t.created_at
-      )
-    )
-  end
+  defdelegate open_tracks(project_id), to: Ravix.Tracks.Store, as: :tracks_of
 
   defp update_fields(id, fields) do
     from(p in Project, where: p.id == ^id) |> Repo.update_all(set: fields)

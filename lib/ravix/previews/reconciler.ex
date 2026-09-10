@@ -78,6 +78,9 @@ defmodule Ravix.Previews.Reconciler do
     tracks =
       rows
       |> Enum.map(& &1.track_id)
+      # ownership: the reconciler is a sweep, not a request -- it has no caller
+      # to establish anything for. These are the tracks behind the preview rows
+      # it just read, named so their project's machine can be checked.
       |> then(&Repo.all(from t in Track, where: t.id in ^&1))
       |> Map.new(&{&1.id, &1})
 
@@ -86,6 +89,8 @@ defmodule Ravix.Previews.Reconciler do
       |> Map.values()
       |> Enum.map(& &1.project_id)
       |> Enum.uniq()
+      # ownership: as above -- a sweep with no caller, reading the projects
+      # those tracks sit on so each preview can be checked against its machine.
       |> then(&Repo.all(from p in Project, where: p.id in ^&1))
       |> Map.new(&{&1.id, &1})
 

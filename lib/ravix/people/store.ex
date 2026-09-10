@@ -47,6 +47,7 @@ defmodule Ravix.People.Store do
   alias Ravix.Projects.{Project, ProjectInvite, ProjectLink, ProjectMember}
   alias Ravix.Projects.Store, as: Projects
   alias Ravix.Repo
+  alias Ravix.Tracks.Store, as: Tracks
   alias Ravix.Tracks.{Track, TrackInvite, TrackLink, TrackMember, TrackRead}
 
   # ── who else is in a track ─────────────────────────────────────
@@ -81,7 +82,10 @@ defmodule Ravix.People.Store do
       from(m in TrackMember, where: m.track_id == ^track_id and m.user_id == ^user_id)
     )
 
-    case Repo.get(Track, track_id) do
+    # ownership: the seat this just deleted named the track, so the row is
+    # already this caller's business. Read only to learn which project's hub
+    # to tell.
+    case Tracks.get_track(track_id) do
       %Track{project_id: project_id} -> Ravix.Hub.publish(project_id, :people, track_id: track_id)
       nil -> :ok
     end
@@ -234,7 +238,9 @@ defmodule Ravix.People.Store do
           # A track closed while the invitation sat unclaimed is not
           # somewhere to arrive. Drop the invitation rather than granting a
           # dead seat.
-          %Track{closed_at: nil} = track <- [Repo.get(Track, track_id)],
+          # ownership: no door yet -- this is sign-in, and the invitation row
+          # naming this track is the only claim the person has.
+          %Track{closed_at: nil} = track <- [Tracks.get_track(track_id)],
           not project_member?(track.project_id, user_id) do
         add_member(track.id, user_id, "invite")
         track
@@ -264,7 +270,9 @@ defmodule Ravix.People.Store do
   def track_for_link(token_hash) do
     with %TrackLink{} = link <- Repo.get_by(TrackLink, token_hash: token_hash),
          true <- live?(link.expires_at),
-         %Track{closed_at: nil} = track <- Repo.get(Track, link.track_id) do
+         # ownership: holding the link is the authorization, and the row it
+         # matched names this track.
+         %Track{closed_at: nil} = track <- Tracks.get_track(link.track_id) do
       track
     else
       _ -> nil
@@ -319,8 +327,10 @@ defmodule Ravix.People.Store do
   """
   @spec remove_project_member(String.t(), String.t()) :: :ok
   def remove_project_member(project_id, user_id) do
-    tracks =
-      Repo.all(from(t in Track, where: t.project_id == ^project_id and is_nil(t.closed_at)))
+    # ownership: taking somebody off a project takes away every track on it,
+    # so the open ones have to be named to revoke their previews. `open_tracks/1`
+    # is the projects context's own read of that list.
+    tracks = Projects.open_tracks(project_id)
 
     Enum.each(tracks, &Ravix.Previews.revoke(&1.id, user_id))
     Enum.each(tracks, &Ravix.Previews.revoke_agent(&1.id, user_id))
@@ -580,8 +590,11 @@ defmodule Ravix.People.Store do
   """
   @spec minted_by(module(), atom(), String.t(), String.t()) :: String.t() | nil
   def minted_by(schema, key, id, hash) do
+    # ownership: the link hash is the authorization, and it has just been
+    # matched against this row. The user read turns a stored id into the login
+    # a page shows, and nothing else.
     with %{created_by: user_id} <- Repo.get_by(schema, [{key, id}, {:token_hash, hash}]),
-         %User{login: login} <- Repo.get(User, user_id) do
+         %User{login: login} <- Ravix.Accounts.get_user(user_id) do
       login
     else
       _ -> nil

@@ -29,6 +29,7 @@ defmodule Ravix.PromptQueue do
   alias Ravix.Hub
   alias Ravix.PromptQueue.{Item, View}
   alias Ravix.Repo
+  alias Ravix.Tracks.Store, as: Tracks
   alias Ravix.Tracks.Track
 
   @type reason ::
@@ -461,7 +462,10 @@ defmodule Ravix.PromptQueue do
   # The panel re-reads a track's queue on this. Publishing is by project,
   # which the row does not carry; one read of the track finds it.
   defp publish_queue(track_id) do
-    case Repo.get(Track, track_id) do
+    # ownership: every caller reached this queue through
+    # `Access.track_access/2` on this very track; the read only finds which
+    # project's hub to tell.
+    case Tracks.get_track(track_id) do
       %Track{project_id: project_id} -> Hub.publish(project_id, :queue, track_id: track_id)
       nil -> :ok
     end
