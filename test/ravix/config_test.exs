@@ -63,7 +63,6 @@ defmodule Ravix.ConfigTest do
           [
             github_private_key: Ravix.GitHubFake.private_key_pem(),
             github_app_slug: nil,
-            github_webhook_secret: " ",
             github_api_url: "https://api.github.test/",
             github_web_url: nil
           ]
@@ -71,20 +70,17 @@ defmodule Ravix.ConfigTest do
 
       app = Config.github()
       assert app.slug == "ravix"
-      assert app.webhook_secret == nil
       assert app.api_url == "https://api.github.test"
       assert app.web_url == "https://github.com"
       assert String.starts_with?(app.private_key_pem, "-----BEGIN RSA PRIVATE KEY-----\n")
 
       override_all(
         github_app_slug: " my-app ",
-        github_webhook_secret: "wh",
         github_web_url: "https://gh.test/"
       )
 
       app = Config.github()
       assert app.slug == "my-app"
-      assert app.webhook_secret == "wh"
       assert app.web_url == "https://gh.test"
       assert app.api_url == "https://api.github.test"
     end
