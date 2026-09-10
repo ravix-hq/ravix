@@ -168,6 +168,10 @@ defmodule Ravix.Cluster.Singleton do
 
     case apply(module, function, args) do
       {:ok, child} ->
+        # Which instance runs it, in the log. Two instances both claiming the
+        # same key is the failure this whole module exists to prevent, and on a
+        # deployment without shell access the log is the only place it shows.
+        Logger.info("ravix: singleton #{state.key} running on #{node()}")
         %{state | child: child}
 
       other ->

@@ -11,6 +11,10 @@ defmodule Ravix.Application do
       RavixWeb.Telemetry,
       Ravix.Repo,
       {DNSCluster, query: Application.get_env(:ravix, :dns_cluster_query) || :ignore},
+      # Says in the log who this instance can see, because clustering is the one
+      # thing here that fails silently and a shell is not always available to
+      # ask (ADR 0003).
+      Ravix.Cluster.Watch,
       {Phoenix.PubSub, name: Ravix.PubSub},
       # Unlinked, supervised background work; never `Task.async` for fire-and-forget.
       {Task.Supervisor, name: Ravix.TaskSupervisor},
