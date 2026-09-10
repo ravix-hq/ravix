@@ -10,6 +10,8 @@ defmodule RavixWeb.Error do
   shape is added here once and every surface agrees on it.
   """
 
+  require Logger
+
   alias Ravix.Fountain.Error, as: FountainError
   alias Ravix.GitHub.Error, as: GitHubError
   alias Ravix.Sprites.Error, as: SpritesError
@@ -38,7 +40,8 @@ defmodule RavixWeb.Error do
       `Ravix.Fountain.Error.as_http/2`; `%Ravix.GitHub.Error{}` through
       `Ravix.GitHub.Error.describe/2`; `%Ravix.Sprites.Error{}` keeps its status.
     * `%Ecto.Changeset{}` is 422 `invalid` with the first field error.
-    * anything else is the 500 the TypeScript logged and hid.
+    * `:preview_server_down` is 503 `preview_unavailable`.
+    * anything else is a logged 500.
   """
   @spec from(term(), [option()]) :: t()
   def from(reason, opts \\ [])
@@ -50,6 +53,19 @@ defmodule RavixWeb.Error do
     message = if noun, do: "No such #{noun}.", else: "No such thing here."
     %__MODULE__{status: 404, code: "not_found", message: message}
   end
+
+  # The track's preview server stopped underneath the call -- an instance
+  # left the cluster mid-operation, most often. `Ravix.Previews.Server.run/2`
+  # turns that exit into this rather than exiting the caller, and it reached
+  # here as an unrecognised shape for as long as this clause was missing: a
+  # person who pressed Stop at the wrong moment was told the server had a
+  # problem, which is both alarming and not what happened.
+  def from(:preview_server_down, _opts),
+    do: %__MODULE__{
+      status: 503,
+      code: "preview_unavailable",
+      message: "The preview service is not running right now. Try again in a moment."
+    }
 
   def from({:preview_agent_auth, message}, _opts),
     do: %__MODULE__{status: 401, code: "preview_agent_auth", message: message}
@@ -105,7 +121,15 @@ defmodule RavixWeb.Error do
     %__MODULE__{status: 422, code: "invalid", message: changeset_message(changeset)}
   end
 
-  def from(_other, _opts), do: %__MODULE__{}
+  # Anything with no clause above. The browser gets the generic 500, because
+  # a refusal nobody wrote a sentence for is not a refusal we can describe
+  # safely -- but it is logged, because the alternative is what happened to
+  # `:preview_server_down`: an ordinary condition reading as an internal
+  # error, indefinitely, with nothing anywhere saying so.
+  def from(other, _opts) do
+    Logger.warning("ravix: no RavixWeb.Error clause for #{shape_of(other)}; answering 500")
+    %__MODULE__{}
+  end
 
   @doc "Answer `conn` with the error as JSON (`{error, message}`), as `errorResponse` did, and halt."
   @spec send_json(Plug.Conn.t(), term()) :: Plug.Conn.t()
@@ -122,6 +146,26 @@ defmodule RavixWeb.Error do
     %{status: status, code: code, message: message} = FountainError.as_http(error, what_for(opts))
     %__MODULE__{status: status, code: code, message: message}
   end
+
+  # The shape, never the payload. What a missing clause needs is the tag and
+  # the arity; the values beside it are whatever the refusal was carrying,
+  # which for a failed secret write is the secret.
+  defp shape_of(reason) when is_atom(reason), do: inspect(reason)
+
+  defp shape_of(%module{}), do: "%#{inspect(module)}{}"
+
+  defp shape_of(reason) when is_tuple(reason) and tuple_size(reason) > 0 do
+    case elem(reason, 0) do
+      tag when is_atom(tag) ->
+        rest = List.duplicate("_", tuple_size(reason) - 1)
+        "{" <> Enum.join([inspect(tag) | rest], ", ") <> "}"
+
+      _ ->
+        "a #{tuple_size(reason)}-tuple"
+    end
+  end
+
+  defp shape_of(reason), do: "a #{inspect(:erlang.map_get(:__struct__, reason))}"
 
   defp what_for(opts), do: Keyword.get(opts, :what_for, "do that")
 
