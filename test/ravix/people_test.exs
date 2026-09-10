@@ -661,10 +661,10 @@ defmodule Ravix.PeopleTest do
       assert {:ok, people} = People.list(ctx.owner, ctx.shared.id)
 
       assert people == [
-               %{login: "ana", name: "Ana", avatar_url: nil},
+               %{login: "ana", name: "Ana", avatar_url: nil, via: :owner},
                %{login: "cy", name: "Cy", avatar_url: nil, via: :project},
                %{login: "bo", name: "Bo", avatar_url: nil, via: :track},
-               %{login: "dana", name: nil, avatar_url: "https://a/d", pending: true}
+               %{login: "dana", name: nil, avatar_url: "https://a/d", via: :pending}
              ]
 
       # A member sees the same list.
@@ -687,7 +687,7 @@ defmodule Ravix.PeopleTest do
 
       # The track with nobody of its own still gets the project's people.
       assert batched[ctx.private.id] == [
-               %{login: "ana", name: "Ana", avatar_url: nil},
+               %{login: "ana", name: "Ana", avatar_url: nil, via: :owner},
                %{login: "cy", name: "Cy", avatar_url: nil, via: :project}
              ]
 
@@ -723,20 +723,17 @@ defmodule Ravix.PeopleTest do
       assert {:ok, people} = People.list(ctx.guest, ctx.shared.id)
       assert length(people) == 2
 
+      # Every entry carries exactly these four, so a page never infers which
+      # kind of person it is holding from the absence of a key.
       for person <- people do
-        expected =
-          if person[:via],
-            do: [:avatar_url, :login, :name, :via],
-            else: [:avatar_url, :login, :name]
-
-        assert Enum.sort(Map.keys(person)) == expected
+        assert Enum.sort(Map.keys(person)) == [:avatar_url, :login, :name, :via]
       end
 
       assert {:ok, people} = People.list_project(ctx.guest, ctx.project.id)
       assert length(people) == 2
 
       for person <- people,
-          do: assert(Enum.sort(Map.keys(person)) == [:avatar_url, :login, :name])
+          do: assert(Enum.sort(Map.keys(person)) == [:avatar_url, :login, :name, :via])
     end
   end
 
@@ -778,7 +775,7 @@ defmodule Ravix.PeopleTest do
     test "somebody who has not signed in is invited on GitHub's account", ctx do
       assert {:ok, people} = People.add(ctx.owner, ctx.shared.id, "dana")
 
-      assert [%{login: "dana", name: nil, avatar_url: "https://a/9001", pending: true}] =
+      assert [%{login: "dana", name: nil, avatar_url: "https://a/9001", via: :pending}] =
                tl(people)
 
       assert [%{github_id: "9001", login: "dana"}] = People.Store.invites_of(ctx.shared.id)
@@ -949,9 +946,9 @@ defmodule Ravix.PeopleTest do
       assert {:ok, people} = People.list_project(ctx.owner, ctx.project.id)
 
       assert people == [
-               %{login: "ana", name: "Ana", avatar_url: nil},
-               %{login: "bo", name: "Bo", avatar_url: nil},
-               %{login: "dana", name: nil, avatar_url: nil, pending: true}
+               %{login: "ana", name: "Ana", avatar_url: nil, via: :owner},
+               %{login: "bo", name: "Bo", avatar_url: nil, via: :project},
+               %{login: "dana", name: nil, avatar_url: nil, via: :pending}
              ]
 
       assert {:ok, ^people} = People.list_project(ctx.guest, ctx.project.id)
@@ -977,7 +974,7 @@ defmodule Ravix.PeopleTest do
       insert_track_invite(ctx.shared, github_id: "9001", login: "dana")
 
       assert {:ok, people} = People.add_project(ctx.owner, ctx.project.id, "dana")
-      assert [%{login: "dana", pending: true}] = tl(people)
+      assert [%{login: "dana", via: :pending}] = tl(people)
       assert People.Store.invites_of(ctx.shared.id) == []
       assert People.Store.has_project_invite?(ctx.project.id, "9001")
     end
