@@ -27,7 +27,6 @@ defmodule Ravix.Config do
             client_id: String.t(),
             client_secret: String.t(),
             private_key_pem: String.t(),
-            webhook_secret: String.t() | nil,
             api_url: String.t(),
             web_url: String.t()
           }
@@ -37,7 +36,6 @@ defmodule Ravix.Config do
       :client_id,
       :client_secret,
       :private_key_pem,
-      :webhook_secret,
       :api_url,
       :web_url
     ]
@@ -119,7 +117,6 @@ defmodule Ravix.Config do
         private_key_pem: pem,
         # Carried for a webhook receiver that does not exist yet; nothing
         # reads it, so no payload is being verified against it today.
-        webhook_secret: get(:github_webhook_secret) |> blank_to(nil),
         api_url:
           (get(:github_api_url) |> blank_to(nil) || "https://api.github.com")
           |> String.trim_trailing("/"),

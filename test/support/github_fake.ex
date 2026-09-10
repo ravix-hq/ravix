@@ -38,7 +38,6 @@ defmodule Ravix.GitHubFake do
         client_id: "Iv1.x",
         client_secret: "s",
         private_key_pem: private_key_pem(),
-        webhook_secret: nil,
         api_url: "https://api.github.test",
         web_url: "https://github.test"
       },
