@@ -95,8 +95,12 @@ projects:
               # Explicit because it is now multiplied: two instances hold two pools.
               - key: POOL_SIZE
                 value: "10"
+              # Ravix's own Fountain, not the hosted one. Pointing at managoat.com with
+              # a key minted here fails as `fountain_rejected` -- "Fountain rejected
+              # this deployment's key" -- which reads like a bad key and is a bad
+              # address. The same key answers 200 here and 401 there.
               - key: FOUNTAIN_URL
-                value: https://managoat.com
+                value: https://ravix-fountain.onrender.com
               # Where GitHub sends a browser back to, and what the App's callback and
               # setup URLs are registered as. Load-bearing: a mismatch here is the one
               # failure that looks like "sign-in is broken".
