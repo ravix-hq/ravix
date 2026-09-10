@@ -1,6 +1,10 @@
-# Typecheck, test and build on every change. On main this is also the deploy
-# gate: Render (render.yaml, autoDeployTrigger: checksPass) waits for it to
-# pass before building the Dockerfile and rolling the service.
+# The gate. Every push to main and every pull request; on main this is also
+# what Render waits for before it deploys (render.yaml, autoDeployTrigger:
+# checksPass). The jobs share nothing, so the job name in a red build says
+# which toolchain to look at: the suite with its coverage threshold, the
+# static analysis, the release assemble and boot, and the decisions bundle
+# (its own workflow). `mix precommit` runs analysis, tests, and release assembly;
+# scripts/release-smoke.sh verifies the actual container and isolated database.
 name: CI
 
 on:
@@ -8,18 +12,222 @@ on:
     branches: [main]
   pull_request:
 
+concurrency:
+  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 permissions:
   contents: read
 
+env:
+  MIX_ENV: test
+  ELIXIR_VERSION: "1.19.5"
+  OTP_VERSION: "28.5"
+
 jobs:
-  check:
-    runs-on: ubuntu-latest
+  test:
+    name: test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: ravix_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v5
+      - uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # v1.24.1
         with:
-          bun-version: latest
+          elixir-version: ${{ env.ELIXIR_VERSION }}
+          otp-version: ${{ env.OTP_VERSION }}
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            deps
+            _build/test
+          key: test-${{ runner.os }}-${{ env.OTP_VERSION }}-${{ env.ELIXIR_VERSION }}-${{ hashFiles('mix.lock') }}
+          restore-keys: test-${{ runner.os }}-${{ env.OTP_VERSION }}-${{ env.ELIXIR_VERSION }}-
+      - run: mix deps.get
+      - run: mix compile --warnings-as-errors
+      - run: mix ecto.create && mix ecto.migrate
+      # The threshold lives in coverage.exs; `--cover` fails the run below it.
+      - run: mix test --cover
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: '1.3.11'
       - run: bun install --frozen-lockfile
-      - run: bun run typecheck
-      - run: bun run test
-      - run: bun run build
+      - name: Coverage guards reject negative fixtures
+        run: python3 scripts/coverage-self-test.py
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: elixir-coverage
+          path: cover/
+          retention-days: 7
+
+  hooks:
+    name: browser hooks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v5
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: "1.3.11"
+      - run: bun install --frozen-lockfile
+      - run: bun test
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: hook-coverage
+          path: cover/hooks/
+          retention-days: 7
+
+  static:
+    name: static analysis
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      MIX_ENV: dev
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v5
+      - uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # v1.24.1
+        with:
+          elixir-version: ${{ env.ELIXIR_VERSION }}
+          otp-version: ${{ env.OTP_VERSION }}
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            deps
+            _build/dev
+            _build/plts
+          key: static-${{ runner.os }}-${{ env.OTP_VERSION }}-${{ env.ELIXIR_VERSION }}-${{ hashFiles('mix.lock') }}
+          restore-keys: static-${{ runner.os }}-${{ env.OTP_VERSION }}-${{ env.ELIXIR_VERSION }}-
+      - run: mix deps.get
+      - name: mix.lock lists nothing unused
+        run: mix deps.unlock --unused && git diff --exit-code mix.lock
+      - run: mix format --check-formatted
+      - run: mix compile --warnings-as-errors
+      - run: mix credo --strict
+      - run: mix sobelow --config
+      - run: mix hex.audit
+      - run: mix dialyzer --format github
+
+  release:
+    name: release assembles and boots
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      MIX_ENV: prod
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: ravix
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v5
+      - uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # v1.24.1
+        with:
+          elixir-version: ${{ env.ELIXIR_VERSION }}
+          otp-version: ${{ env.OTP_VERSION }}
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            deps
+            _build/prod
+          key: release-${{ runner.os }}-${{ env.OTP_VERSION }}-${{ env.ELIXIR_VERSION }}-${{ hashFiles('mix.lock') }}
+          restore-keys: release-${{ runner.os }}-${{ env.OTP_VERSION }}-${{ env.ELIXIR_VERSION }}-
+      - run: mix deps.get --only prod
+      - run: mix assets.setup && mix assets.deploy
+      - run: mix release --overwrite
+      - name: Migrate and boot the release, probe /healthz and /readyz
+        env:
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/ravix
+          RAVIX_SECRET: ci-release-boot-secret-not-a-real-credential
+          PUBLIC_URL: http://localhost:4000
+          PORT: "4000"
+        run: |
+          set -euo pipefail
+          _build/prod/rel/ravix/bin/migrate
+          _build/prod/rel/ravix/bin/server &
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:4000/healthz >/dev/null 2>&1; then
+              # Readiness too, and not interchangeably: /healthz says the
+              # process is up, /readyz says the database answers, and the
+              # second is what gates an instance into the load balancer's
+              # rotation (ADR 0003).
+              curl -fsS http://localhost:4000/readyz && exit 0
+              echo "release answered /healthz but not /readyz" >&2
+              exit 1
+            fi
+            sleep 1
+          done
+          echo "release did not answer /healthz" >&2
+          exit 1
+
+  container:
+    name: Docker release and cutover
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v5
+      - run: docker build -t ravix-elixir-check .
+      - run: scripts/release-smoke.sh ravix-elixir-check
+
+  browser:
+    name: browser smoke
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      MIX_ENV: prod
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v5
+      - uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # v1.24.1
+        with:
+          elixir-version: ${{ env.ELIXIR_VERSION }}
+          otp-version: ${{ env.OTP_VERSION }}
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: '1.3.11'
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '26.7.0'
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            deps
+            _build/prod
+          key: browser-${{ runner.os }}-${{ env.OTP_VERSION }}-${{ env.ELIXIR_VERSION }}-${{ hashFiles('mix.lock') }}
+      - run: mix deps.get --only prod
+      - run: mix assets.setup && mix assets.deploy
+      - run: bun install --frozen-lockfile
+      - run: bunx playwright install --with-deps chromium
+      - run: bun run test:browser
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: failure()
+        with:
+          name: browser-failures
+          path: |
+            test-results/
+            playwright-report/
+          retention-days: 7

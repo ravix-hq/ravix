@@ -1,0 +1,528 @@
+<div class="track-workspace">
+  <div class="toasts">
+    <.toast :if={message = Phoenix.Flash.get(@flash, :error)} id="track-error" kind={:error}>
+      {message}
+    </.toast>
+    <.toast :if={message = Phoenix.Flash.get(@flash, :info)} id="track-info" kind={:info}>
+      {message}
+    </.toast>
+  </div>
+  <div :if={@loading} class="workspace-welcome" role="status">Loading track…</div>
+  <div :if={!@loading && is_nil(@track)} class="workspace-welcome">
+    <p>Could not load this track.</p>
+    <button class="primary" phx-click="retry-load">Try again</button>
+  </div>
+  <div :if={@track} class="track-workspace-body">
+    <header class="crumbs track-crumbs">
+      <.link navigate={"/p/#{@project.id}"} class="project-crumb">
+        <span class="project-mark" aria-hidden="true">
+          {String.first(@project.name) |> String.upcase()}
+        </span>
+        <strong>{@project.name}</strong>
+      </.link>
+      <span class="dimmer" aria-hidden="true">›</span>
+      <button
+        :if={owner_or_creator?(@current_user, @track)}
+        class="ghost"
+        phx-click={JS.push_focus() |> JS.push("dialog")}
+        phx-value-name="rename"
+      >
+        {@track.title}
+      </button>
+      <strong :if={!owner_or_creator?(@current_user, @track)}>{@track.title}</strong>
+      <span class="chip mono track-branch" title={@track.branch}>{@track.branch}</span>
+      <span class="spacer"></span><button
+        class="ghost"
+        phx-click={JS.push_focus() |> JS.push("dialog")}
+        phx-value-name="people"
+        aria-label={"People (#{length(@present)})"}
+        title="People on this track"
+      ><.icon name="add-person" size={15} /><span>{length(@present)}</span></button>
+      <button
+        :if={@project.access != :tracks}
+        class="ghost"
+        phx-click={JS.push_focus() |> JS.push("dialog", target: "#workspace-stage")}
+        phx-value-name="new-track"
+      >
+        <.icon name="plus" size={13} />New track
+      </button>
+      <button
+        :if={@project.role == :owner}
+        class="ghost"
+        phx-click={JS.push_focus() |> JS.push("dialog", target: "#workspace-stage")}
+        phx-value-name="settings"
+      >
+        Settings
+      </button>
+      <button
+        :if={owner_or_creator?(@current_user, @track)}
+        class="ghost"
+        phx-click={JS.push_focus() |> JS.push("dialog")}
+        phx-value-name="close"
+      >
+        Close track
+      </button>
+    </header>
+    <div class="split">
+      <section class="track-conversation" aria-label="Conversation">
+        <div id="transcript-scroll" phx-hook="TranscriptTail" class="transcript-scroll">
+          <div class="track-ribbon">
+            <p :if={(@header || %{})[:copy_of]} class="track-copy">
+              You are in a copy of {@header.copy_of} called
+              <code>{Path.basename(@track.workdir)}</code>
+            </p>
+            <div class="ribbon-line">
+              <.icon name="folder" size={13} /><span>Created <code>{@track.workdir}</code></span>
+            </div>
+            <span
+              :if={@track.stale}
+              class="chip"
+            >
+              Settings changed — open a new track to use them
+            </span>
+          </div>
+          <div id="transcript-turns" phx-update="stream">
+            <article :for={{dom_id, turn} <- @streams.turns} id={dom_id} class="workspace-turn">
+              <div :if={turn.prompt} class="said">
+                <span class="speaker">You</span>
+                <div class="workspace-prompt">{visible_prompt(turn.prompt)}</div>
+              </div>
+              <section :if={turn.blocks != []} class="agent-terminal" aria-label="Agent output">
+                <div class="agent-terminal-label">
+                  <.icon name="terminal" size={12} /><span>agent</span>
+                </div>
+                <div class="agent-terminal-output">
+                  <div :for={block <- turn.blocks}>
+                    <div :if={block.kind == :text} class="md">
+                      {RavixWeb.Markdown.render_safe(block.body)}
+                    </div>
+                    <details :if={block.kind == :thinking} class="workspace-thinking">
+                      <summary>Thinking</summary>
+                      <div class="md">{RavixWeb.Markdown.render_safe(block.body)}</div>
+                    </details>
+                    <pre :if={block.kind == :raw}>{block.body}</pre>
+                    <details :if={block.kind == :tool} class="workspace-tool">
+                      <summary>
+                        <span class="chip">{block.status}</span> {block.name} {block.summary}
+                      </summary>
+                      <pre :if={block.detail.input != %{}}>{Jason.encode!(block.detail.input, pretty: true)}</pre>
+                      <p :for={path <- block.detail.paths}><code>{path}</code></p>
+                      <div :for={edit <- block.detail.edits}>
+                        <strong>{edit.path}</strong><pre><span :for={line <- edit.lines} class={"diff-#{line.kind}"}>{line.text}{"\n"}</span></pre>
+                      </div>
+                      <pre :if={block.output != ""}>{block.output}</pre>
+                    </details>
+                  </div>
+                </div>
+              </section>
+            </article>
+          </div>
+          <div :if={@page.turns == []} class="workspace-welcome">
+            <h2>What would you like to work on?</h2>
+            <button
+              :for={starter <- @starters}
+              class="ghost"
+              phx-click="starter"
+              phx-value-prompt={starter.prompt}
+            >
+              {starter.label}
+            </button>
+          </div>
+        </div>
+        <div :if={@queue != []} class="workspace-queue">
+          <div :for={item <- @queue}>
+            <span class="chip">{item.status}</span> {item.prompt}
+            <span :if={item[:error]}>{item.error}</span>
+            <button
+              :if={item[:can_cancel]}
+              class="ghost"
+              phx-click="queue"
+              phx-value-action="cancel"
+              phx-value-id={item.id}
+            >
+              Cancel
+            </button>
+            <button
+              :if={item.can_cancel && item.status in [:failed, :unconfirmed]}
+              class="ghost"
+              phx-click="queue"
+              phx-value-action="retry"
+              phx-value-id={item.id}
+            >
+              Retry
+            </button>
+          </div>
+        </div>
+        <div class="workspace-composer">
+          <p :for={person <- Enum.filter(@present, & &1.typing)} class="hint">
+            @{person.login} is typing…
+          </p>
+          <form id="composer-form" phx-submit="send" phx-change="validate">
+            <div class="composer-box" data-composer-box>
+              <div class="composer-note" data-composer-note hidden></div>
+              <textarea
+                id={"composer-#{@track.id}"}
+                phx-hook="Composer"
+                name="text"
+                rows="2"
+                placeholder="Ask for a change, or a question about this branch"
+                aria-label="Message"
+                data-draft-key={"track:#{@track.id}"}
+                data-typing-event="typing"
+                disabled={is_nil(@track.conversation_id)}
+              ></textarea>
+              <.live_file_input upload={@uploads.images} aria-label="Attach images" />
+              <div :for={entry <- @uploads.images.entries} class="workspace-upload">
+                <span>{entry.client_name} ({entry.progress}%)</span><button
+                  type="button"
+                  class="ghost"
+                  phx-click="cancel-upload"
+                  phx-value-ref={entry.ref}
+                >Remove</button>
+                <p :for={err <- upload_errors(@uploads.images, entry)} role="alert">
+                  {upload_error(err)}
+                </p>
+              </div>
+              <p :for={err <- upload_errors(@uploads.images)} role="alert">{upload_error(err)}</p>
+              <p :if={@attached_images != []}>
+                {length(@attached_images)} attached image(s) retained for retry.
+                <button type="button" class="ghost" phx-click="clear-attachments">
+                  Remove retained images
+                </button>
+              </p>
+              <div class="workspace-actions">
+                <button
+                  type="button"
+                  class="ghost"
+                  aria-label="Choose images"
+                  phx-click={JS.dispatch("click", to: "##{@uploads.images.ref}")}
+                >
+                  <.icon name="picture" size={17} />
+                </button>
+                <span class="composer-model mono">{@project.model}</span><span class="send-hint"><kbd>Enter</kbd> to send</span><span class="spacer"></span>
+                <button
+                  class="primary"
+                  aria-label="Send"
+                  phx-disable-with="Sending…"
+                  disabled={is_nil(@track.conversation_id)}
+                >
+                  <.icon name="arrow-up" size={16} />
+                </button>
+                <button
+                  :if={@track.status in [:running, :opening]}
+                  type="button"
+                  class="ghost"
+                  phx-click="interrupt"
+                >
+                  Stop
+                </button>
+                <button
+                  :if={@track.status in [:failed, :opening]}
+                  type="button"
+                  class="ghost"
+                  phx-click="retry-track"
+                >
+                  Wake / retry
+                </button>
+              </div>
+            </div>
+          </form>
+        </div>
+      </section>
+      <aside class="inspector" aria-label="Track inspector">
+        <div
+          id="inspector-resize"
+          phx-hook="PanelResize"
+          class="panel-resize-handle right"
+          role="separator"
+          tabindex="0"
+          aria-label="Inspector width"
+          aria-orientation="vertical"
+          data-var="--inspector-width"
+          data-min="300"
+          data-max="900"
+          data-key="ravix.panel-width.right"
+          data-side="right"
+        >
+        </div>
+        <nav class="workspace-tabs" aria-label="Inspector panels">
+          <button
+            :for={
+              {name, label} <- [
+                {"files", "All files"},
+                {"changes", "Changes"},
+                {"checks", "Checks"},
+                {"preview", "Previews"}
+              ]
+            }
+            class={if @panel == name, do: "selected", else: "ghost"}
+            phx-click="panel"
+            phx-value-name={name}
+          >
+            {label}
+          </button>
+        </nav>
+        <div class="workspace-panel">
+          <button class="ghost" phx-click="refresh-panel" disabled={@panel_busy}>Refresh</button>
+          <p :if={@panel_busy} role="status">Loading…</p>
+          <p :if={@panel_error} role="alert">{@panel_error}</p>
+          <div :if={@panel == "files" && @panel_data}>
+            <button
+              class="ghost"
+              phx-click="directory"
+              phx-value-path={Path.dirname(@panel_data.path)}
+            >
+              ↑ Parent
+            </button>
+            <code>{@panel_data.path}</code>
+            <div :for={entry <- @panel_data.entries}>
+              <button
+                class="workspace-file"
+                phx-click={if entry.type == "directory", do: "directory", else: "file"}
+                phx-value-path={Path.join(@panel_data.path, entry.name)}
+              >
+                {if entry.type == "directory", do: "▸ ", else: ""}{entry.name}
+              </button>
+            </div>
+            <p :if={@panel_data.truncated}>Directory listing is truncated.</p>
+            <div :if={@file}>
+              <h4>{@file.path}</h4>
+              <pre :if={@file.encoding != "base64"}>{@file.content}</pre>
+              <p :if={@file.encoding == "base64"}>Binary file ({@file.size} bytes).</p>
+              <p :if={@file.truncated}>File content is truncated.</p>
+            </div>
+          </div>
+          <div :if={@panel == "changes" && @panel_data}>
+            <p :if={@panel_data.diff == ""}>No changes yet.</p>
+            <div :for={file <- @panel_data.files}>
+              <code>{file.path}</code> +{file.added} −{file.removed}
+            </div>
+            <pre>{@panel_data.diff}</pre>
+            <p :if={@panel_data.truncated}>Diff is truncated.</p>
+          </div>
+          <div :if={@panel == "checks" && @panel_data}>
+            <p :if={@panel_data[:pull]}>
+              <a href={@panel_data.pull.url} target="_blank" rel="noreferrer">
+                Pull request #{@panel_data.pull.number}: {@panel_data.pull.title}
+              </a>
+            </p>
+            <div :for={check <- @panel_data[:runs] || []}>
+              <a :if={check.url} href={check.url} target="_blank" rel="noreferrer">
+                {check.name}
+              </a>
+              <span :if={!check.url}>{check.name}</span>
+              <span class="chip">{check.conclusion || check.status}</span>
+            </div>
+            <button
+              :if={@project.repo}
+              class="primary"
+              phx-click={JS.push_focus() |> JS.push("dialog")}
+              phx-value-name="pull"
+            >
+              Open pull request
+            </button>
+          </div>
+          <div :if={@panel == "preview" && @preview}>
+            <p>Status: {@preview.state}</p>
+            <p :if={@preview[:unavailable_reason]}>{@preview.unavailable_reason}</p>
+            <div class="workspace-actions">
+              <button
+                :for={action <- ~w(open restart stop logs)}
+                class="ghost"
+                phx-click="preview"
+                phx-value-action={action}
+                disabled={@panel_busy}
+              >
+                {String.capitalize(action)}
+              </button>
+            </div>
+            <a
+              :if={@preview_url}
+              href={~p"/preview/#{@track_id}"}
+              target="_blank"
+              rel="noreferrer"
+            >
+              Open preview in new tab ↗
+            </a>
+            <iframe
+              :if={@preview_url}
+              src={@preview_url}
+              title="Track preview"
+              class="workspace-preview"
+              sandbox="allow-scripts allow-forms allow-same-origin allow-popups allow-downloads"
+            >
+            </iframe>
+            <pre :if={@preview[:logs]}>{@preview.logs}</pre>
+            <details>
+              <summary>Preview configuration</summary>
+              <form id="preview-config-form" phx-submit="preview-config">
+                <.input
+                  name="directory"
+                  id="preview-directory"
+                  label="App directory"
+                  value={(@preview[:config] || %{})[:directory] || "."}
+                />
+                <.input
+                  name="command"
+                  id="preview-command"
+                  label="Command (must honor $PORT)"
+                  value={(@preview[:config] || %{})[:command] || ""}
+                />
+                <.input
+                  name="readiness_path"
+                  id="preview-path"
+                  label="Readiness path"
+                  value={(@preview[:config] || %{})[:readiness_path] || "/"}
+                />
+                <button class="primary">Save</button><button
+                  class="ghost"
+                  name="clear"
+                  value="true"
+                >Use project defaults</button>
+              </form>
+            </details>
+          </div>
+          <p :if={@pull}>
+            <a href={@pull.url} target="_blank" rel="noreferrer">View pull request ↗</a>
+          </p>
+        </div>
+        <nav class="workspace-tabs dock-tabs" aria-label="Machine panels">
+          <button
+            class="ghost dock-toggle"
+            phx-click="toggle-dock"
+            aria-expanded={to_string(@dock_open)}
+            aria-controls="machine-dock"
+            aria-label={if @dock_open, do: "Collapse the dock", else: "Expand the dock"}
+          >
+            <.icon name="chevron" size={13} open={@dock_open} />
+          </button>
+          <button
+            :for={name <- ~w(terminal run vitals)}
+            class={if @dock == name, do: "selected", else: "ghost"}
+            phx-click="dock"
+            phx-value-name={name}
+          >
+            {if name == "vitals", do: "Machine stats", else: String.capitalize(name)}
+          </button>
+        </nav>
+        <div id="machine-dock" hidden={!@dock_open} class="machine-dock">
+          <div
+            hidden={@dock not in ["terminal", "run"]}
+            id="track-terminal"
+            phx-hook="Terminal"
+            class="term workspace-terminal"
+          >
+            <div class="term-scroll" data-terminal-output>
+              <div :for={block <- @output}>
+                <strong>$ {block.command}</strong><pre>{block.stdout}</pre><pre class="error">{block.stderr}</pre>
+                <span :if={block.code && block.code != 0}>
+                  Exit {block.code}
+                </span>
+              </div>
+            </div>
+            <p :if={@dock == "run"} class="hint">
+              Run a command in this track’s worktree. For a persistent service, use Preview.
+            </p>
+            <p class="hint">
+              Commands run without an interactive terminal. Use Preview for persistent servers.
+            </p>
+            <div class="term-input">
+              <span class="ps1">{if @cwd, do: Path.basename(@cwd), else: ""} $</span>
+              <fieldset class="term-command" disabled={@exec_busy}>
+                <div id="terminal-command" phx-update="ignore">
+                  <input data-terminal-input aria-label="Command" />
+                </div>
+              </fieldset>
+              <button
+                class="ghost"
+                phx-click="clear"
+              >
+                Clear
+              </button>
+            </div>
+          </div>
+          <div :if={@dock == "vitals"} class="workspace-panel">
+            <p :if={!@vitals}>No machine metrics available.</p>
+            <p :if={@vitals && !@vitals.available}>Metrics unavailable: {@vitals.why}</p>
+            <dl :if={@vitals && @vitals[:vitals]}>
+              <div :for={{key, value} <- @vitals.vitals}>
+                <dt>{key}</dt>
+                <dd>{if is_map(value), do: Jason.encode!(value), else: to_string(value)}</dd>
+              </div>
+            </dl>
+          </div>
+        </div>
+      </aside>
+    </div>
+    <.dialog :if={@dialog == "rename"} id="rename-dialog" title="Rename track" on_close="dismiss">
+      <form id="rename-form" phx-submit="rename">
+        <.input name="title" id="rename-title" label="Title" value={@track.title} required />
+        <button class="primary">
+          Save
+        </button>
+      </form>
+    </.dialog>
+    <.dialog :if={@dialog == "close"} id="close-dialog" title="Close track" on_close="dismiss">
+      <p>
+        This closes the track for everyone and removes its worktree. Commit and push work you want to keep first.
+      </p>
+      <form id="close-form" phx-submit="close">
+        <.input
+          name="force"
+          id="close-force"
+          type="checkbox"
+          label="Discard uncommitted changes"
+          value={false}
+        /><button class="danger" phx-disable-with="Closing…">Close track</button>
+      </form>
+    </.dialog>
+    <.dialog
+      :if={@dialog == "people"}
+      id="track-people-dialog"
+      title="Track people"
+      on_close="dismiss"
+    >
+      <div :for={person <- @people} class="workspace-track">
+        <span>@{person.login}</span><button
+          :if={@track.role == :owner || person.login == @current_user.login}
+          class="ghost"
+          phx-click="remove-person"
+          phx-value-login={person.login}
+        >{if person.login == @current_user.login, do: "Leave", else: "Remove"}</button>
+      </div>
+      <form :if={@track.role == :owner} id="track-invite-form" phx-submit="invite-person">
+        <.input name="login" id="track-invite-login" label="GitHub username" value="" required />
+        <button class="primary">
+          Invite
+        </button>
+      </form>
+      <div :if={@track.role == :owner}>
+        <button class="ghost" phx-click="invite-link" phx-value-action="create">
+          Create invite link
+        </button>
+        <button class="ghost" phx-click="invite-link" phx-value-action="revoke">
+          Revoke link
+        </button>
+      </div>
+      <p :if={invite_url(@invite)}><a href={invite_url(@invite)}>{invite_url(@invite)}</a></p>
+    </.dialog>
+    <.dialog :if={@dialog == "pull"} id="pull-dialog" title="Open pull request" on_close="dismiss">
+      <p>Commit and push your branch before opening a pull request.</p>
+      <form id="pull-form" phx-submit="open-pull">
+        <.input name="title" id="pull-title" label="Title" value={@track.title} required /><.input
+          name="base"
+          id="pull-base"
+          label="Base branch"
+          value={@project.default_branch || "main"}
+          required
+        /><.input name="body" id="pull-body" type="textarea" label="Description" value="" /><.input
+          name="draft"
+          id="pull-draft"
+          type="checkbox"
+          label="Draft pull request"
+          value={true}
+        /><button class="primary" phx-disable-with="Opening…">Open pull request</button>
+      </form>
+    </.dialog>
+  </div>
+</div>

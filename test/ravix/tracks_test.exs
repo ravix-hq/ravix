@@ -1,0 +1,923 @@
+defmodule Ravix.TracksTest do
+  use Ravix.DataCase, async: true
+
+  import Mimic
+
+  alias Ravix.Fountain.{Client, Error, FakeTransport}
+  alias Ravix.Hub
+  alias Ravix.Tracks
+  alias Ravix.Tracks.{Names, Track}
+
+  @root "/home/sprite/work/kyoto"
+
+  setup_all do
+    Ravix.TracksBoot.ensure_running()
+    :ok
+  end
+
+  # ── the pure parts ─────────────────────────────────────────────────────
+
+  describe "confine/2" do
+    test "the file panel cannot read outside its own track" do
+      # `GET /api/sandboxes/:id/file` will serve anything on the box, including
+      # another track's work and `/home/sprite/.ssh`. This is what stops it.
+      assert Tracks.confine(@root, nil) == @root
+      assert Tracks.confine(@root, "src/app.ts") == "#{@root}/src/app.ts"
+      assert Tracks.confine(@root, "../other/secret") == @root
+      assert Tracks.confine(@root, "/home/sprite/.ssh/id_ed25519") == @root
+      assert Tracks.confine(@root, "/home/sprite/work/kyoto-2/x") == @root
+      assert Tracks.confine(@root, "#{@root}/deep/./file") == "#{@root}/deep/file"
+    end
+  end
+
+  describe "summarize_diff/1" do
+    test "a diff is counted per file, without the headers" do
+      diff =
+        Enum.join(
+          [
+            "diff --git a/src/app.ts b/src/app.ts",
+            "index 111..222 100644",
+            "--- a/src/app.ts",
+            "+++ b/src/app.ts",
+            "@@ -1,3 +1,4 @@",
+            " context",
+            "+added one",
+            "+added two",
+            "-removed one",
+            "diff --git a/new.txt b/new.txt",
+            "new file mode 100644",
+            "--- /dev/null",
+            "+++ b/new.txt",
+            "@@ -0,0 +1,1 @@",
+            "+hello"
+          ],
+          "\n"
+        )
+
+      assert Tracks.summarize_diff(diff) == [
+               # `+++` and `---` are file headers rather than content; counting
+               # them puts a phantom line on every changed file.
+               %{path: "src/app.ts", added: 2, removed: 1, status: :modified},
+               %{path: "new.txt", added: 1, removed: 0, status: :added}
+             ]
+    end
+
+    test "a deletion and a rename are told apart" do
+      deleted =
+        "diff --git a/gone.ts b/gone.ts\ndeleted file mode 100644\n--- a/gone.ts\n+++ /dev/null\n-x"
+
+      assert [%{path: "gone.ts", added: 0, removed: 1, status: :deleted}] =
+               Tracks.summarize_diff(deleted)
+
+      renamed =
+        "diff --git a/old.ts b/new.ts\nsimilarity index 100%\nrename from old.ts\nrename to new.ts"
+
+      assert [%{path: "new.ts", status: :renamed}] = Tracks.summarize_diff(renamed)
+    end
+
+    test "an empty diff is an empty list, not a phantom file" do
+      assert Tracks.summarize_diff("") == []
+      assert Tracks.summarize_diff("\n\n") == []
+    end
+  end
+
+  describe "present/2" do
+    setup do
+      project = insert_project(rev: 3)
+
+      {:ok,
+       project: project,
+       track: insert_track(project: project, rev: 3, opened_at: DateTime.utc_now())}
+    end
+
+    test "status comes from the row and the live conversation", %{project: project, track: track} do
+      assert %{status: :ready} = Tracks.present(track, project: project)
+
+      assert %{status: :running} =
+               Tracks.present(track, project: project, live: %{"status" => "running"})
+
+      assert %{status: :failed} =
+               Tracks.present(track, project: project, live: %{"status" => "failed"})
+
+      assert %{status: :opening} = Tracks.present(%{track | opened_at: nil}, project: project)
+      closed = %{track | closed_at: DateTime.utc_now()}
+
+      assert %{status: :closed} =
+               Tracks.present(closed, project: project, live: %{"status" => "running"})
+    end
+
+    test "stale is a comparison of revisions, not a flag", %{project: project, track: track} do
+      refute Tracks.present(track, project: project).stale
+      assert Tracks.present(%{track | rev: 2}, project: project).stale
+    end
+
+    test "unread follows the machine's last word against this person's last look", %{
+      project: project,
+      track: track
+    } do
+      refute Tracks.present(track, project: project).unread
+      live = %{"last_active_at" => "2026-09-09T10:00:00Z", "turn_count" => 4}
+      presented = Tracks.present(track, project: project, live: live)
+      assert presented.unread
+      assert presented.turn_count == 4
+      assert presented.last_active_at == ~U[2026-09-09 10:00:00Z]
+
+      refute Tracks.present(track,
+               project: project,
+               live: live,
+               last_read: ~U[2026-09-09 10:00:01Z]
+             ).unread
+
+      assert Tracks.present(track,
+               project: project,
+               live: live,
+               last_read: ~U[2026-09-09 09:59:59Z]
+             ).unread
+    end
+
+    test "the origin is typed", %{project: project, track: track} do
+      pr = %{
+        track
+        | origin_kind: "pr",
+          origin_number: 12,
+          origin_title: "Fix",
+          origin_url: "https://github.com/x/y/pull/12"
+      }
+
+      assert %{
+               origin: %{
+                 kind: :pr,
+                 number: 12,
+                 title: "Fix",
+                 url: "https://github.com/x/y/pull/12"
+               }
+             } = Tracks.present(pr, project: project)
+
+      assert %{origin: %{kind: :blank}} =
+               Tracks.present(%{track | origin_kind: "weird"}, project: project)
+    end
+  end
+
+  # ── the rows, and who may see them ─────────────────────────────────────
+
+  defp quiet_fountain(project, conversations \\ []) do
+    client =
+      FakeTransport.client(
+        [
+          {%{method: "GET", path: "/api/conversations", query: %{agent_id: project.agent_id}},
+           {200, [], %{data: conversations}}}
+        ],
+        verify: false
+      )
+
+    stub(Ravix.Fountain, :client, fn -> client end)
+    client
+  end
+
+  describe "list/2" do
+    setup do
+      owner = insert_user()
+      project = insert_project(user: owner)
+      a = insert_track(project: project, slug: "a", conversation_id: "c-a")
+      b = insert_track(project: project, slug: "b", conversation_id: "c-b")
+      _closed = insert_track(project: project, slug: "z", closed_at: DateTime.utc_now())
+      {:ok, owner: owner, project: project, a: a, b: b}
+    end
+
+    test "the owner sees every open track, with live status", ctx do
+      quiet_fountain(ctx.project, [
+        %{
+          id: "c-a",
+          status: "running",
+          last_active_at: "2026-09-09T10:00:00Z",
+          turn_count: 2,
+          inserted_at: "x"
+        }
+      ])
+
+      assert {:ok, [a, b]} = Tracks.list(ctx.owner, ctx.project.id)
+      assert a.slug == "a" and a.status == :running and a.role == :owner and a.unread
+      assert b.slug == "b" and b.status == :opening and b.turn_count == 0
+      assert [%{login: owner_login}] = a.people
+      assert owner_login == ctx.owner.login
+    end
+
+    test "a project member sees every track as a member", ctx do
+      quiet_fountain(ctx.project)
+      member = insert_user()
+      insert_project_member(ctx.project, member)
+      assert {:ok, [%{role: :member}, %{role: :member}]} = Tracks.list(member, ctx.project.id)
+    end
+
+    test "somebody invited to one track sees that one and is not told about the others", ctx do
+      quiet_fountain(ctx.project)
+      guest = insert_user()
+      insert_track_member(ctx.b, guest)
+      assert {:ok, [%{slug: "b", role: :member}]} = Tracks.list(guest, ctx.project.id)
+    end
+
+    test "a stranger, and a member of nothing here, get not found", ctx do
+      quiet_fountain(ctx.project)
+      assert {:error, :not_found} = Tracks.list(insert_user(), ctx.project.id)
+      assert {:error, :not_found} = Tracks.list(ctx.owner, Ecto.UUID.generate())
+    end
+
+    test "a Fountain that cannot be reached still lists the rows", ctx do
+      client =
+        FakeTransport.client(
+          [{%{method: "GET", path: "/api/conversations"}, {:error, :econnrefused}}],
+          verify: false
+        )
+
+      stub(Ravix.Fountain, :client, fn -> client end)
+      assert {:ok, [%{status: :opening}, _]} = Tracks.list(ctx.owner, ctx.project.id)
+    end
+  end
+
+  describe "get/2" do
+    test "the track, its ribbon and the starters", _ctx do
+      owner = insert_user()
+      project = insert_project(user: owner, repo_full_name: "acme/ledger")
+
+      track =
+        insert_track(
+          project: project,
+          slug: "kyoto",
+          origin_kind: "branch",
+          origin_base: "main",
+          branch: "ana/kyoto"
+        )
+
+      client =
+        FakeTransport.client(
+          [
+            {%{method: "GET", path: "/api/conversations"}, {200, [], %{data: []}}},
+            {%{method: "GET", path: "/api/environments/#{project.environment_id}"},
+             {200, [], %{data: %{setup_script: "npm ci\n"}}}}
+          ],
+          verify: false
+        )
+
+      stub(Ravix.Fountain, :client, fn -> client end)
+
+      assert {:ok, %{track: presented, header: header, starters: starters}} =
+               Tracks.get(owner, track.id)
+
+      assert presented.id == track.id
+
+      assert header == %{
+               copy_of: "ledger",
+               branched_from: %{branch: "ana/kyoto", base: "main"},
+               created: %{dir: "kyoto", files: nil},
+               has_setup_script: true
+             }
+
+      assert [%{label: _, prompt: _} | _] = starters
+      assert {:error, :not_found} = Tracks.get(insert_user(), track.id)
+    end
+  end
+
+  # ── opening ────────────────────────────────────────────────────────────
+
+  describe "open/4" do
+    setup do
+      owner = insert_user(login: "Ana")
+
+      project =
+        insert_project(user: owner, repo_full_name: "acme/ledger", default_branch: "main", rev: 2)
+
+      stub(Ravix.Projects, :prepare_machine, fn _project, _client -> :ok end)
+      Hub.subscribe(project.id)
+      {:ok, owner: owner, project: project}
+    end
+
+    # A Fountain with (or without) a machine, that accepts one conversation
+    # and, on an attach, one prompt.
+    defp opening_fountain(project, machine?) do
+      conversations =
+        if machine?,
+          do: [
+            %{
+              id: "c-old",
+              sandbox_id: "sb-1",
+              status: "idle",
+              inserted_at: "2026-09-01T00:00:00Z"
+            }
+          ],
+          else: []
+
+      client =
+        FakeTransport.client(
+          [
+            {%{method: "GET", path: "/api/conversations", query: %{agent_id: project.agent_id}},
+             {200, [], %{data: conversations}}},
+            {%{method: "POST", path: "/api/conversations"}, {201, [], %{data: %{id: "c-new"}}}}
+          ] ++
+            if(machine?,
+              do: [
+                {%{method: "POST", path: "/api/conversations/c-new/prompts"},
+                 {202, [], %{data: %{}}}}
+              ],
+              else: []
+            )
+        )
+
+      stub(Ravix.Fountain, :client, fn -> client end)
+      client
+    end
+
+    test "attaching to the machine that is there: the opening turn is a separate prompt", ctx do
+      client = opening_fountain(ctx.project, true)
+
+      assert {:ok, presented} =
+               Tracks.open(ctx.owner, ctx.project.id, %{"title" => "Kyoto"}, opening_turn: :sync)
+
+      assert presented.slug == "kyoto"
+      assert presented.title == "Kyoto"
+      assert presented.branch == "ana/kyoto-#{presented.id}"
+      assert presented.workdir == "/home/sprite/work/kyoto"
+      assert presented.conversation_id == "c-new"
+      assert presented.role == :owner
+      assert presented.origin == %{kind: :blank, base: "main", number: nil, title: nil, url: nil}
+
+      [_list, create, prompt] = FakeTransport.calls(client)
+      assert create.body["sandbox_id"] == "sb-1"
+      assert create.body["channel_id"] == "ravix:#{ctx.project.id}:kyoto@r2"
+      assert create.body["fresh"] == true
+      assert create.body["agent_id"] == ctx.project.agent_id
+      assert create.body["environment_id"] == ctx.project.environment_id
+      assert create.body["vault_id"] == ctx.project.vault_id
+      refute Map.has_key?(create.body, "prompt")
+      assert prompt.body["prompt"] =~ "[ravix] Open this track"
+
+      assert prompt.body["prompt"] =~
+               "git worktree add /home/sprite/work/kyoto -b ana/kyoto-#{presented.id} origin/main"
+
+      row = Repo.get!(Track, presented.id)
+      assert row.opened_at
+      assert row.rev == 2
+      assert row.created_by_login == "Ana"
+      project_id = ctx.project.id
+      track_id = presented.id
+      assert_receive {:hub, %{event: "turn", data: %{track_id: ^track_id, status: :ready}}}
+      assert_receive {:hub, %{event: "tracks", data: %{project_id: ^project_id}}}
+    end
+
+    test "provisioning: the opening turn rides along with the launch", ctx do
+      client = opening_fountain(ctx.project, false)
+      assert {:ok, presented} = Tracks.open(ctx.owner, ctx.project.id, %{title: "Kyoto"})
+
+      [_list, create] = FakeTransport.calls(client)
+      assert create.body["sandbox_mode"] == "persistent"
+      refute Map.has_key?(create.body, "sandbox_id")
+      assert create.body["prompt"] =~ "[ravix] Open this track"
+      assert Repo.get!(Track, presented.id).opened_at
+    end
+
+    test "a name in use gets a suffix rather than a refusal, and a closed name is free", ctx do
+      insert_track(project: ctx.project, slug: "kyoto")
+      insert_track(project: ctx.project, slug: "kyoto-2", closed_at: DateTime.utc_now())
+      opening_fountain(ctx.project, false)
+      assert {:ok, %{slug: "kyoto-2"}} = Tracks.open(ctx.owner, ctx.project.id, %{title: "Kyoto"})
+    end
+
+    test "a pull request names the track, its branch and its link", ctx do
+      client = opening_fountain(ctx.project, false)
+
+      origin = %{
+        "kind" => "pr",
+        "base" => "feature/x",
+        "number" => 12,
+        "title" => "Fix the importer"
+      }
+
+      assert {:ok, presented} = Tracks.open(ctx.owner, ctx.project.id, %{"origin" => origin})
+      assert presented.title == "Fix the importer"
+      assert presented.slug == "fix-the-importer"
+      assert presented.branch == "feature/x"
+
+      assert presented.origin == %{
+               kind: :pr,
+               base: "feature/x",
+               number: 12,
+               title: "Fix the importer",
+               url: "https://github.com/acme/ledger/pull/12"
+             }
+
+      [_list, create] = FakeTransport.calls(client)
+      assert create.body["prompt"] =~ "pull request #12"
+    end
+
+    test "a blank track with no name gets a yard name", ctx do
+      opening_fountain(ctx.project, false)
+      assert {:ok, presented} = Tracks.open(ctx.owner, ctx.project.id, %{})
+      assert presented.title in Names.yards()
+      assert presented.slug == Ravix.Ids.slugify(presented.title)
+    end
+
+    test "a machine that refuses leaves no row behind", ctx do
+      client =
+        FakeTransport.client([
+          {%{method: "GET", path: "/api/conversations"}, {200, [], %{data: []}}},
+          {%{method: "POST", path: "/api/conversations"},
+           {409, [], %{error: "sandbox_at_capacity", message: "busy"}}}
+        ])
+
+      stub(Ravix.Fountain, :client, fn -> client end)
+
+      ExUnit.CaptureLog.capture_log(fn ->
+        assert {:error, %Error{code: "sandbox_at_capacity"}} =
+                 Tracks.open(ctx.owner, ctx.project.id, %{title: "Kyoto"})
+      end)
+
+      assert Tracks._unsafe_tracks_of(ctx.project.id, true) == []
+    end
+
+    test "an opening turn that does not send is reported, and the track can be retried", ctx do
+      client =
+        FakeTransport.client([
+          {%{method: "GET", path: "/api/conversations"},
+           {200, [],
+            %{data: [%{id: "c-old", sandbox_id: "sb-1", status: "idle", inserted_at: "x"}]}}},
+          {%{method: "POST", path: "/api/conversations"}, {201, [], %{data: %{id: "c-new"}}}},
+          {%{method: "POST", path: "/api/conversations/c-new/prompts"},
+           {409, [], %{error: "sandbox_at_capacity"}}},
+          {%{method: "POST", path: "/api/conversations/c-new/prompts"}, {202, [], %{}}}
+        ])
+
+      stub(Ravix.Fountain, :client, fn -> client end)
+
+      {:ok, presented} =
+        ExUnit.CaptureLog.with_log(fn ->
+          Tracks.open(ctx.owner, ctx.project.id, %{title: "Kyoto"}, opening_turn: :sync)
+        end)
+        |> elem(0)
+
+      track_id = presented.id
+      assert_receive {:hub, %{event: "turn", data: %{track_id: ^track_id, status: :failed}}}
+      refute Repo.get!(Track, track_id).opened_at
+
+      assert :ok = Tracks.retry(ctx.owner, track_id)
+      assert_receive {:hub, %{event: "turn", data: %{track_id: ^track_id, status: :ready}}}
+      assert Repo.get!(Track, track_id).opened_at
+    end
+
+    test "a project member may cut a track; a stranger may not", ctx do
+      opening_fountain(ctx.project, false)
+      member = insert_user(login: "bo")
+      insert_project_member(ctx.project, member)
+
+      assert {:ok, %{role: :member, created_by_login: "bo"}} =
+               Tracks.open(member, ctx.project.id, %{title: "Theirs"})
+
+      assert {:error, :not_found} = Tracks.open(insert_user(), ctx.project.id, %{title: "Nope"})
+    end
+
+    test "without a Fountain key there are no machines", ctx do
+      client = Client.new("https://managoat.com", nil)
+      stub(Ravix.Fountain, :client, fn -> client end)
+      assert {:error, :unconfigured} = Tracks.open(ctx.owner, ctx.project.id, %{title: "Kyoto"})
+    end
+  end
+
+  # ── talking to it ──────────────────────────────────────────────────────
+
+  describe "prompt/3" do
+    setup do
+      owner = insert_user()
+      project = insert_project(user: owner)
+      track = insert_track(project: project, conversation_id: "c1")
+      quiet_fountain(project)
+      {:ok, owner: owner, project: project, track: track}
+    end
+
+    test "is accepted into the queue with its images", ctx do
+      expect(Ravix.PromptQueue, :enqueue, fn track_id, user_id, login, request_id, payload ->
+        assert track_id == ctx.track.id
+        assert user_id == ctx.owner.id
+        assert login == ctx.owner.login
+        assert request_id == "req-1"
+        assert payload == %{prompt: "hello", images: [%{data: "aGk=", media_type: "image/png"}]}
+        {:ok, %{id: request_id}}
+      end)
+
+      images = [
+        %{"data" => "aGk=", "media_type" => "image/png"},
+        %{"data" => "x", "media_type" => "text/plain"},
+        "junk"
+      ]
+
+      assert {:ok, %{id: "req-1"}} =
+               Tracks.prompt(ctx.owner, ctx.track.id, %{
+                 "prompt" => "hello",
+                 "images" => images,
+                 "request_id" => "req-1"
+               })
+    end
+
+    test "says something, or nothing is saved", ctx do
+      assert {:error, {:unprocessable, "empty_prompt", _}} =
+               Tracks.prompt(ctx.owner, ctx.track.id, %{prompt: "   "})
+    end
+
+    test "an image over the cap is refused before anything is saved", ctx do
+      huge = String.duplicate("A", div(8 * 1024 * 1024 * 4, 3) + 1)
+
+      assert {:error, {:unprocessable, "image_too_large", _}} =
+               Tracks.prompt(ctx.owner, ctx.track.id, %{
+                 prompt: "x",
+                 images: [%{data: huge, media_type: "image/png"}]
+               })
+    end
+
+    test "a track with no conversation, or a closed one, cannot be prompted", ctx do
+      unopened = insert_track(project: ctx.project, conversation_id: nil)
+
+      assert {:error, {:conflict, "not_open", _}} =
+               Tracks.prompt(ctx.owner, unopened.id, %{prompt: "x"})
+
+      closed =
+        insert_track(project: ctx.project, conversation_id: "c9", closed_at: DateTime.utc_now())
+
+      assert {:error, {:conflict, "closed_track", _}} =
+               Tracks.prompt(ctx.owner, closed.id, %{prompt: "x"})
+    end
+  end
+
+  describe "mark_read/2, interrupt/2, beat/3 and leave/2" do
+    setup do
+      owner = insert_user()
+      project = insert_project(user: owner)
+      track = insert_track(project: project, conversation_id: "c1")
+      Hub.subscribe(project.id)
+      {:ok, owner: owner, project: project, track: track}
+    end
+
+    test "a read mark is this person's, and the rail is told", ctx do
+      assert :ok = Tracks.mark_read(ctx.owner, ctx.track.id)
+      assert %DateTime{} = Ravix.People.last_read_of(ctx.track.id, ctx.owner.id)
+      project_id = ctx.project.id
+      assert_receive {:hub, %{event: "tracks", data: %{project_id: ^project_id}}}
+    end
+
+    test "interrupt reaches the conversation", ctx do
+      client =
+        FakeTransport.client([
+          {%{method: "POST", path: "/api/conversations/c1/interrupt"}, {200, [], %{data: %{}}}}
+        ])
+
+      stub(Ravix.Fountain, :client, fn -> client end)
+      assert :ok = Tracks.interrupt(ctx.owner, ctx.track.id)
+    end
+
+    test "presence goes through the track's door", ctx do
+      assert {:ok, [%{login: login, typing: true}]} = Tracks.beat(ctx.owner, ctx.track.id, true)
+      assert login == ctx.owner.login
+      assert {:error, :not_found} = Tracks.beat(insert_user(), ctx.track.id, false)
+      assert :ok = Tracks.leave(ctx.owner, ctx.track.id)
+      assert Ravix.Presence.present(ctx.track.id) == []
+    end
+  end
+
+  describe "events/3" do
+    test "turns and events become a page; a track with no conversation an empty one" do
+      owner = insert_user()
+      project = insert_project(user: owner, runtime: "claude")
+      track = insert_track(project: project, conversation_id: "c1")
+
+      line =
+        Jason.encode!(%{
+          jsonrpc: "2.0",
+          method: "session/update",
+          params: %{
+            update: %{sessionUpdate: "agent_message_chunk", content: %{type: "text", text: "hi"}}
+          }
+        })
+
+      client =
+        FakeTransport.client([
+          {%{method: "GET", path: "/api/conversations/c1/turns"},
+           {200, [],
+            %{data: [%{id: "t1", prompt: "say hi", inserted_at: "2026-09-09T10:00:00Z"}]}}},
+          {%{method: "GET", path: "/api/conversations/c1/events"},
+           {200, [],
+            %{
+              data: [
+                %{
+                  id: 1,
+                  kind: "output",
+                  stream: "acp",
+                  data: line,
+                  turn_id: "t1",
+                  ts: "2026-09-09T10:00:01Z"
+                }
+              ],
+              meta: %{has_more: false}
+            }}}
+        ])
+
+      stub(Ravix.Fountain, :client, fn -> client end)
+      assert {:ok, page} = Tracks.events(owner, track.id)
+      assert [%{id: "t1", prompt: "say hi", blocks: [%{kind: :text, body: "hi"}]}] = page.turns
+      assert page.last_event_id == 1
+
+      unopened = insert_track(project: project, conversation_id: nil)
+      assert {:ok, %{turns: []}} = Tracks.events(owner, unopened.id)
+    end
+  end
+
+  # ── renaming and closing ───────────────────────────────────────────────
+
+  describe "rename/3" do
+    setup do
+      owner = insert_user(login: "owner")
+      project = insert_project(user: owner)
+      cutter = insert_user(login: "cutter")
+      insert_project_member(project, cutter)
+
+      track =
+        insert_track(
+          project: project,
+          slug: "kyoto",
+          title: "Kyoto",
+          branch: "cutter/kyoto",
+          created_by_login: "Cutter"
+        )
+
+      {:ok, owner: owner, project: project, cutter: cutter, track: track}
+    end
+
+    test "renaming a track moves the label and nothing on the machine", ctx do
+      assert :ok = Tracks.rename(ctx.owner, ctx.track.id, "Rewrite the importer")
+      after_rename = Repo.get!(Track, ctx.track.id)
+      assert after_rename.title == "Rewrite the importer"
+      # The three that were cut on a real machine when the track opened.
+      assert after_rename.slug == "kyoto"
+      assert after_rename.branch == "cutter/kyoto"
+      assert after_rename.workdir == "/home/sprite/work/kyoto"
+      assert Tracks._unsafe_slug_taken?(ctx.project.id, "kyoto")
+    end
+
+    test "the cutter may rename, a mere member may not, and a name is required", ctx do
+      assert :ok = Tracks.rename(ctx.cutter, ctx.track.id, "Mine")
+      member = insert_user(login: "guest")
+      insert_track_member(ctx.track, member)
+      assert {:error, {:forbidden, _}} = Tracks.rename(member, ctx.track.id, "Theirs")
+
+      assert {:error, {:unprocessable, "no_title", _}} =
+               Tracks.rename(ctx.owner, ctx.track.id, "  ")
+    end
+  end
+
+  describe "close/3" do
+    setup do
+      owner = insert_user()
+      project = insert_project(user: owner, repo_full_name: "acme/ledger")
+
+      track =
+        insert_track(
+          project: project,
+          slug: "kyoto",
+          conversation_id: "c1",
+          branch: "ana/kyoto-1"
+        )
+
+      stub(Ravix.PromptQueue, :cancel_track, fn _track_id -> :ok end)
+      stub(Ravix.Previews, :stop_service, fn _track_id, true -> :ok end)
+      Hub.subscribe(project.id)
+      {:ok, owner: owner, project: project, track: track}
+    end
+
+    defp closing_fountain(responses) do
+      client =
+        FakeTransport.client([
+          {%{method: "POST", path: "/api/conversations/c1/prompts"},
+           Keyword.get(responses, :prompt, {202, [], %{}})},
+          {%{method: "POST", path: "/api/conversations/c1/terminate"},
+           Keyword.get(responses, :terminate, {200, [], %{}})}
+        ])
+
+      stub(Ravix.Fountain, :client, fn -> client end)
+      client
+    end
+
+    test "the worktree is removed by a turn, the conversation ended, the row closed", ctx do
+      client = closing_fountain([])
+      assert :ok = Tracks.close(ctx.owner, ctx.track.id)
+      [prompt, _terminate] = FakeTransport.calls(client)
+      assert prompt.body["prompt"] =~ "[ravix] Close this track"
+      assert prompt.body["prompt"] =~ "git worktree remove /home/sprite/work/kyoto"
+      refute prompt.body["prompt"] =~ "--force"
+      refute prompt.body["prompt"] =~ "git branch -D"
+      assert Repo.get!(Track, ctx.track.id).closed_at
+      project_id = ctx.project.id
+      assert_receive {:hub, %{event: "tracks", data: %{project_id: ^project_id}}}
+    end
+
+    test "force and the branch go in the turn only when asked", ctx do
+      client = closing_fountain([])
+      assert :ok = Tracks.close(ctx.owner, ctx.track.id, force: true, delete_branch: true)
+      [prompt, _] = FakeTransport.calls(client)
+      assert prompt.body["prompt"] =~ "git worktree remove --force /home/sprite/work/kyoto"
+      assert prompt.body["prompt"] =~ "git branch -D ana/kyoto-1"
+    end
+
+    test "a machine that will not take the turn does not stop the close", ctx do
+      closing_fountain(
+        prompt: {409, [], %{error: "sandbox_at_capacity"}},
+        terminate: {:error, :econnrefused}
+      )
+
+      ExUnit.CaptureLog.capture_log(fn ->
+        assert :ok = Tracks.close(ctx.owner, ctx.track.id)
+      end)
+
+      assert Repo.get!(Track, ctx.track.id).closed_at
+    end
+
+    test "the cutter may close; a member invited to help may not", ctx do
+      closing_fountain([])
+      cutter = insert_user(login: ctx.track.created_by_login)
+      insert_track_member(ctx.track, cutter)
+      guest = insert_user()
+      insert_track_member(ctx.track, guest)
+      assert {:error, {:forbidden, _}} = Tracks.close(guest, ctx.track.id)
+      assert :ok = Tracks.close(cutter, ctx.track.id)
+    end
+
+    test "a rebuild closes every open row without touching the machine", ctx do
+      other = insert_track(project: ctx.project)
+      assert :ok = Tracks.close_all_for_rebuild(ctx.project, :rebuild)
+      assert Repo.get!(Track, ctx.track.id).closed_at
+      assert Repo.get!(Track, other.id).closed_at
+      assert Tracks._unsafe_tracks_of(ctx.project.id) == []
+    end
+  end
+
+  # ── the machine's surfaces ─────────────────────────────────────────────
+
+  describe "files/3, file/3 and diff/2" do
+    setup do
+      owner = insert_user()
+      project = insert_project(user: owner)
+      track = insert_track(project: project, slug: "kyoto")
+      {:ok, owner: owner, project: project, track: track}
+    end
+
+    defp machine_fountain(project, extra) do
+      client =
+        FakeTransport.client(
+          [
+            {%{method: "GET", path: "/api/conversations", query: %{agent_id: project.agent_id}},
+             {200, [],
+              %{data: [%{id: "c1", sandbox_id: "sb-1", status: "idle", inserted_at: "x"}]}}}
+          ] ++ extra
+        )
+
+      stub(Ravix.Fountain, :client, fn -> client end)
+      client
+    end
+
+    test "a directory, confined, as the panel reads it", ctx do
+      machine_fountain(ctx.project, [
+        {%{
+           method: "GET",
+           path: "/api/sandboxes/sb-1/files",
+           query: %{path: "/home/sprite/work/kyoto/src"}
+         },
+         {200, [],
+          %{
+            data: %{
+              path: "/home/sprite/work/kyoto/src",
+              entries: [%{name: "app.ts", type: "file", size: 12}],
+              truncated: false
+            }
+          }}}
+      ])
+
+      assert {:ok,
+              %{
+                path: "/home/sprite/work/kyoto/src",
+                entries: [%{name: "app.ts", type: "file", size: 12}],
+                truncated: false
+              }} =
+               Tracks.files(ctx.owner, ctx.track.id, "../../../../home/sprite/work/kyoto/src")
+    end
+
+    test "a file, and the diff counted per file", ctx do
+      diff = "diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n+x"
+
+      machine_fountain(ctx.project, [
+        {%{
+           method: "GET",
+           path: "/api/sandboxes/sb-1/file",
+           query: %{path: "/home/sprite/work/kyoto/a.txt"}
+         },
+         {200, [],
+          %{
+            data: %{
+              path: "/home/sprite/work/kyoto/a.txt",
+              size: 1,
+              truncated: false,
+              encoding: "utf-8",
+              content: "x"
+            }
+          }}},
+        {%{
+           method: "GET",
+           path: "/api/sandboxes/sb-1/diff",
+           query: %{path: "/home/sprite/work/kyoto"}
+         },
+         {200, [],
+          %{
+            data: %{
+              path: "/home/sprite/work/kyoto",
+              repo_root: "/workspace/ledger",
+              diff: diff,
+              truncated: false
+            }
+          }}}
+      ])
+
+      assert {:ok, %{content: "x", encoding: "utf-8"}} =
+               Tracks.file(ctx.owner, ctx.track.id, "a.txt")
+
+      assert {:ok, %{repo_root: "/workspace/ledger", files: [%{path: "a.txt", added: 1}]}} =
+               Tracks.diff(ctx.owner, ctx.track.id)
+    end
+
+    test "no machine yet is a conflict the panel names", ctx do
+      quiet_fountain(ctx.project)
+      assert {:error, {:conflict, "no_machine", _}} = Tracks.files(ctx.owner, ctx.track.id, nil)
+    end
+  end
+
+  describe "checks/2 and open_pull/3" do
+    setup do
+      owner = insert_user()
+
+      project =
+        insert_project(
+          user: owner,
+          repo_full_name: "acme/ledger",
+          installation_id: 7,
+          default_branch: "main"
+        )
+
+      track =
+        insert_track(
+          project: project,
+          slug: "kyoto",
+          title: "Kyoto",
+          branch: "ana/kyoto-1",
+          origin_kind: "pr",
+          origin_number: 12
+        )
+
+      app = Ravix.GitHubFake.app()
+      stub(Ravix.Config, :github, fn -> app end)
+      {:ok, owner: owner, project: project, track: track, app: app}
+    end
+
+    test "checks are read as the installation, for this branch and this track", ctx do
+      expect(Ravix.GitHub, :checks, fn app, 7, "acme/ledger", "ana/kyoto-1", narrow ->
+        assert app == ctx.app
+        assert narrow.origin_number == 12
+        assert narrow.created_at == ctx.track.created_at
+        {:ok, %{ref: "ana/kyoto-1", sha: nil, pushed: false, runs: [], pull: nil}}
+      end)
+
+      assert {:ok, %{pushed: false}} = Tracks.checks(ctx.owner, ctx.track.id)
+    end
+
+    test "a pull request is opened by the App with the track's defaults", ctx do
+      expect(Ravix.GitHub, :open_pull, fn _app, 7, "acme/ledger", input ->
+        assert input == %{
+                 head: "ana/kyoto-1",
+                 base: "main",
+                 title: "Kyoto",
+                 body: "Opened from Ravix track `kyoto`.",
+                 draft: true
+               }
+
+        {:ok, %{number: 13, url: "https://github.com/acme/ledger/pull/13"}}
+      end)
+
+      assert {:ok, %{number: 13}} = Tracks.open_pull(ctx.owner, ctx.track.id, %{})
+    end
+
+    test "a project without a repository has nothing to check, and no App is its own refusal",
+         ctx do
+      bare =
+        insert_track(
+          project: insert_project(user: ctx.owner, repo_full_name: nil, installation_id: nil)
+        )
+
+      assert {:error, {:conflict, "no_repo", _}} = Tracks.checks(ctx.owner, bare.id)
+      stub(Ravix.Config, :github, fn -> nil end)
+
+      assert {:error, {:unavailable, "no_github", _}} =
+               Tracks.open_pull(ctx.owner, ctx.track.id, %{})
+    end
+  end
+end

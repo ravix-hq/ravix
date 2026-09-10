@@ -1,0 +1,127 @@
+defmodule Ravix.Previews.Reconciler do
+  @moduledoc """
+  The fifteen-second tick of `server/previews.ts`: the database says what
+  each preview should be, and this makes it so.
+
+  For every row, in parallel across tracks and never twice for one track:
+
+    * a track that closed, a project that was archived, or a row marked
+      for cleanup, still holding a sprite: remove its service (`stop_service`
+      with cleanup), which is also how a cleanup that failed is retried
+    * a stop that never reached Sprites (`stop_pending`): stop again
+    * a running preview nobody has touched for five minutes: stop it
+    * a running preview whose viewing lease is live, and no operation in
+      flight: make sure it is running (which refreshes the sprite's
+      activity task, notices a replaced machine, and after a restart of
+      Ravix restores what the database says should be up)
+
+  A preview whose lease expired but whose idle time has not is left alone:
+  no health polling of an idle machine. Failed startups have `desired`
+  set to stopped and so are never retried here; only an explicit open or
+  restart tries again.
+
+  `tick/0` runs one pass synchronously, for tests and for the process.
+  Nothing happens at all while `Ravix.Previews.unavailable/0` says so.
+  """
+
+  use GenServer
+
+  require Logger
+
+  alias Ravix.Previews
+  alias Ravix.Previews.{Clock, Row, Server, Store}
+  alias Ravix.Projects.Project
+  alias Ravix.Repo
+  alias Ravix.Tracks.Track
+
+  @interval_ms 15_000
+  @row_timeout_ms 5 * 60_000
+
+  @doc false
+  def start_link(opts \\ []) do
+    GenServer.start_link(__MODULE__, opts, name: Keyword.get(opts, :name, __MODULE__))
+  end
+
+  @doc "One reconciliation pass over every preview row, waited for."
+  @spec tick() :: :ok
+  def tick do
+    if Previews.unavailable() == nil do
+      Ravix.TaskSupervisor
+      |> Task.Supervisor.async_stream_nolink(Store.all(), &reconcile/1,
+        ordered: false,
+        timeout: @row_timeout_ms,
+        on_timeout: :kill_task
+      )
+      |> Stream.run()
+    end
+
+    :ok
+  end
+
+  @doc "What one row needs, as a pure decision (`:cleanup`, `:stop`, `:ensure` or `:leave`)."
+  @spec decide(Row.t(), Track.t() | nil, Project.t() | nil, integer()) ::
+          :cleanup | :stop | :ensure | :leave
+  def decide(%Row{} = row, track, project, now) do
+    cond do
+      gone?(track, project) or row.cleanup -> if row.sprite, do: :cleanup, else: :leave
+      row.stop_pending -> :stop
+      row.desired != :running -> :leave
+      true -> decide_running(row, now)
+    end
+  end
+
+  defp gone?(track, project) do
+    track == nil or track.closed_at != nil or project == nil or project.archived_at != nil
+  end
+
+  defp decide_running(row, now) do
+    cond do
+      now - row.last_activity > Previews.idle_ms() -> :stop
+      row.lease_until > now and not Server.busy?(row.track_id) -> :ensure
+      true -> :leave
+    end
+  end
+
+  @doc false
+  @spec reconcile(Row.t()) :: :ok
+  def reconcile(%Row{track_id: track_id} = row) do
+    track = Repo.get(Track, track_id)
+    project = track && Repo.get(Project, track.project_id)
+
+    result =
+      case decide(row, track, project, Clock.now_ms()) do
+        :cleanup -> Previews.stop_service(track_id, true)
+        :stop -> Previews.stop_service(track_id, false, row.generation)
+        :ensure -> Server.run(track_id, {:ensure_running, row.generation, false})
+        :leave -> :ok
+      end
+
+    case result do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        Logger.error("ravix: preview reconciliation #{track_id} #{Server.message_of(reason)}")
+    end
+
+    :ok
+  rescue
+    error -> Logger.error("ravix: preview reconciliation #{track_id} #{Exception.message(error)}")
+  end
+
+  @impl true
+  def init(opts) do
+    interval = Keyword.get(opts, :interval_ms, @interval_ms)
+    send(self(), :tick)
+    {:ok, %{interval: interval}}
+  end
+
+  @impl true
+  def handle_info(:tick, state) do
+    tick()
+    Process.send_after(self(), :tick, state.interval)
+    {:noreply, state}
+  end
+
+  def handle_info(_other, state), do: {:noreply, state}
+end

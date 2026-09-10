@@ -1,0 +1,746 @@
+<Layouts.app flash={@flash}>
+  <div :if={is_nil(@current_user) && @live_action != :login} class="landing">
+    <header class="landing-nav">
+      <a href="/" aria-label="Ravix home"><.wordmark unit={4} /></a>
+      <nav aria-label="Main navigation">
+        <a href="#how-it-works">How it works</a>
+        <.theme_picker id="landing-theme" />
+        <a class="landing-button landing-primary" href="/login">Sign in</a>
+      </nav>
+    </header>
+    <main>
+      <section class="landing-hero" aria-labelledby="landing-title">
+        <div>
+          <h1 id="landing-title">One project.<br />Many tracks.</h1>
+          <p class="landing-intro">
+            Ravix is a browser workspace for building software with coding agents. Give a feature, a bug fix and your next idea their own branches on one persistent cloud machine, and the work keeps going after you close the lid.
+          </p>
+          <div class="landing-actions">
+            <a class="landing-button landing-primary" href="/login">Sign in with GitHub</a><a href="#how-it-works">How it works</a>
+          </div>
+          <p class="landing-note">
+            No local setup. No API key to bring. Inference is included.
+          </p>
+        </div>
+        <div class="landing-example" aria-label="Example project with three separate tracks">
+          <div class="landing-example-head">
+            <span class="project-mark" aria-hidden="true">Y</span><strong>your-project</strong><span class="chip mono">owner/repo</span>
+          </div>
+          <div class="landing-tracks">
+            <div
+              :for={
+                {title, branch, status, dot} <- [
+                  {"Build the next feature", "feature/dashboard", "Working", "running"},
+                  {"Fix a stubborn bug", "fix/sign-in", "Queued", ""},
+                  {"Try something new", "explore/new-idea", "Ready", "ready"}
+                ]
+              }
+              class="landing-track"
+            >
+              <span class={"dot #{dot}"} aria-hidden="true"></span>
+              <div><strong>{title}</strong><code>{branch}</code></div>
+              <span class="landing-tag">{status}</span>
+            </div>
+          </div>
+          <div class="landing-example-foot">
+            Each track is its own worktree, branch, and conversation — on one machine.
+          </div>
+        </div>
+      </section>
+      <section class="landing-workflow" id="how-it-works">
+        <h2>From a repository to a review</h2>
+        <div class="landing-steps">
+          <article>
+            <h3>Connect the repository</h3>
+            <p>
+              Sign in with GitHub and choose a repository. Ravix prepares a cloud machine with your code already cloned.
+            </p>
+          </article>
+          <article>
+            <h3>Open a track</h3>
+            <p>
+              Tell an agent what you want to change. Each track gets its own branch, files and conversation, so separate tasks stay separate.
+            </p>
+          </article>
+          <article>
+            <h3>Read what changed</h3>
+            <p>
+              Read the diff, check the files, and ask for a live preview. Iterate, then open a pull request when you are ready.
+            </p>
+          </article>
+        </div>
+      </section>
+      <section class="landing-details" aria-label="About your workspace">
+        <article>
+          <.icon name="machine" size={18} />
+          <div>
+            <h3>A machine you can leave running</h3>
+            <p>
+              The disk persists between visits. Tracks share its resources, agents take turns on it, and nothing is left running on your laptop.
+            </p>
+          </div>
+        </article>
+        <article>
+          <.icon name="github" size={18} />
+          <div>
+            <h3>Only the repositories you pick</h3>
+            <p>
+              Connect through the GitHub App and select which repositories Ravix can access. No personal access token to paste.
+            </p>
+          </div>
+        </article>
+      </section>
+      <section class="landing-close">
+        <div>
+          <h2>Give the next idea a track</h2>
+          <p>
+            Start with a repository. Send a teammate a link, and they review the plan, not the pull request.
+          </p>
+        </div>
+        <a class="landing-button landing-primary" href="/login">Sign in with GitHub</a>
+      </section>
+    </main>
+    <footer class="landing-footer">
+      <span>Ravix</span><span>Parallel tracks on one cloud machine</span>
+    </footer>
+  </div>
+  <main :if={is_nil(@current_user) && @live_action == :login} class="centred signin-page">
+    <div class="corner-theme"><.theme_picker id="signin-theme" /></div>
+    <div class="signin-card">
+      <div class="signin-mark"><.wordmark unit={5} /></div>
+      <a href="/" class="signin-back">About Ravix</a>
+      <h1>Sign in to Ravix</h1>
+      <p class="lede">
+        Point Ravix at a repository and it builds you a cloud machine. Every piece of work you start is its own git worktree on that machine, with its own agent, its own branch and its own conversation — so several things can be in flight at once, none of them touching another's files, and the laptop can close.
+      </p>
+      <a
+        :if={@github_available}
+        class="landing-button landing-primary gh-button"
+        href="/auth/github"
+      >
+        <.icon name="github" size={17} />Sign in with GitHub
+      </a>
+      <p :if={!@github_available} class="error">
+        GitHub sign-in is not configured for this deployment. Contact the person who runs it to get access.
+      </p>
+      <ul class="points">
+        <li>
+          <.icon name="github" size={14} class="ico" />
+          <span>
+            Sign-in is a GitHub App, so the machine sees the repositories you pick and nothing else. A personal token would have handed it everything you can reach.
+          </span>
+        </li>
+        <li>
+          <.icon name="machine" size={14} class="ico" />
+          <span>
+            The machine is a persistent sandbox with your repository already cloned. It keeps its disk between visits.
+          </span>
+        </li>
+        <li>
+          <.icon name="sparkle" size={14} class="ico" />
+          <span>
+            The Fountain account every machine runs on belongs to this deployment, not to you — so there is no key to paste, and the turns are on the house.
+          </span>
+        </li>
+      </ul>
+    </div>
+  </main>
+  <div :if={@current_user} class="app">
+    <aside class="yard" aria-label="Projects and tracks">
+      <div class="yard-top">
+        <span class="avatar workspace-avatar" aria-hidden="true">
+          {String.first(@current_user.login) |> String.upcase()}
+        </span>
+        <div class="yard-who">
+          <strong>{@current_user.name || @current_user.login}</strong><small>@{@current_user.login}</small>
+        </div>
+      </div>
+      <div class="workspace-actions yard-nav">
+        <.link patch="/inbox" class={["yard-item", @live_action in [:home, :inbox] && "on"]}>
+          <.icon name="terminal" />Inbox<span class="spacer"></span>
+          <span :if={attention_count(@tracks) > 0} class="badge">
+            {attention_count(@tracks)}
+          </span>
+        </.link>
+        <.link patch="/home" class={["yard-item", @live_action == :projects && "on"]}>
+          <.icon name="home" />Home
+        </.link>
+        <button
+          class="yard-item"
+          phx-click={JS.push_focus() |> JS.push("dialog")}
+          phx-value-name="new-project"
+        >
+          <.icon name="plus" />Add a project
+        </button>
+
+        <button
+          class="yard-item"
+          phx-click={JS.push_focus() |> JS.push("dialog")}
+          phx-value-name="search"
+        >
+          <.icon name="search" />Search
+        </button>
+      </div>
+      <div class="yard-scroll">
+        <div class="yard-label">
+          <span>Projects</span><span class="spacer"></span><button
+            class="ghost"
+            aria-label="Add a project"
+            phx-click={JS.push_focus() |> JS.push("dialog")}
+            phx-value-name="new-project"
+          ><.icon name="plus" size={13} /></button>
+        </div>
+        <section :for={project <- @projects} class="workspace-project">
+          <div class="workspace-project-row">
+            <button
+              class="project-toggle ghost"
+              phx-click="toggle-project"
+              phx-value-id={project.id}
+              aria-expanded={to_string(MapSet.member?(@expanded_projects, project.id))}
+              aria-controls={"project-tracks-#{project.id}"}
+              aria-label={"#{if MapSet.member?(@expanded_projects, project.id), do: "Collapse", else: "Expand"} #{project.name}"}
+            >
+              <.icon
+                name="chevron"
+                size={12}
+                open={MapSet.member?(@expanded_projects, project.id)}
+              />
+            </button>
+            <.link
+              patch={"/p/#{project.id}"}
+              class={[
+                "workspace-project-name",
+                @project && @project.id == project.id && "selected"
+              ]}
+            >
+              <span class="project-mark" aria-hidden="true">
+                {String.first(project.name) |> String.upcase()}
+              </span>
+              <span class="truncate">{project.name}</span>
+            </.link>
+            <.link
+              :if={project.access != :tracks}
+              patch={"/p/#{project.id}?new=track"}
+              class="project-add"
+              aria-label={"New track in #{project.name}"}
+            >
+              <.icon name="plus" size={13} />
+            </.link>
+          </div>
+          <div
+            id={"project-tracks-#{project.id}"}
+            hidden={!MapSet.member?(@expanded_projects, project.id)}
+            class="project-tracks"
+          >
+            <.link
+              :for={{track, index} <- Enum.with_index(@tracks[project.id] || [], 1)}
+              patch={"/p/#{project.id}/t/#{track.id}"}
+              class={["workspace-track", @track_id == track.id && "selected"]}
+            >
+              <span
+                :if={track.status in [:running, :opening]}
+                class={"dot #{track.status}"}
+                role="img"
+                aria-label="Working"
+              >
+              </span>
+              <span
+                :if={attention?(track)}
+                class="track-attention"
+                role="img"
+                aria-label="Needs attention"
+              >
+                !
+              </span>
+              <span
+                :if={track.status not in [:running, :opening] && !attention?(track)}
+                class="track-num"
+              >
+                {index}
+              </span>
+              <span class="track-title">{track.title}</span>
+            </.link>
+            <div
+              :if={@project && @project.id == project.id && project.access != :tracks}
+              class="project-links"
+            >
+              <button
+                class="ghost"
+                phx-click={JS.push_focus() |> JS.push("dialog")}
+                phx-value-name="people"
+              >
+                <.icon name="add-person" size={13} />People
+              </button>
+              <button
+                :if={project.role == :owner}
+                class="ghost"
+                phx-click={JS.push_focus() |> JS.push("dialog")}
+                phx-value-name="settings"
+              >
+                <.icon name="settings" size={13} />Project settings
+              </button>
+            </div>
+          </div>
+        </section>
+      </div>
+      <div class="workspace-account">
+        <.link href="/auth/signout" method="post" class="ghost">Sign out</.link>
+        <.theme_picker id="theme-picker" />
+        <div class="yard-meta">
+          <span class="chip">Ravix</span><a href="/api/auth/install">repo access</a>
+        </div>
+      </div>
+    </aside>
+    <main class="stage" id="workspace-stage">
+      <nav class="workspace-mobile-nav" aria-label="Workspace navigation">
+        <.link patch="/home">Home</.link><.link patch="/inbox">Inbox</.link><button
+          class="ghost"
+          phx-click={JS.push_focus() |> JS.push("dialog")}
+          phx-value-name="search"
+        >Tracks</button><button
+          class="ghost"
+          phx-click={JS.push_focus() |> JS.push("dialog")}
+          phx-value-name="new-project"
+        >New project</button>
+      </nav>
+      <div
+        id="yard-resize"
+        phx-hook="PanelResize"
+        class="panel-resize-handle left"
+        role="separator"
+        tabindex="0"
+        aria-label="Sidebar width"
+        aria-orientation="vertical"
+        data-var="--yard-width"
+        data-min="220"
+        data-max="480"
+        data-key="ravix.panel-width.left"
+        data-side="left"
+      >
+      </div>
+      <div :if={@project && is_nil(@track_id)} class="crumbs">
+        <span class="project-mark" aria-hidden="true">
+          {String.first(@project.name) |> String.upcase()}
+        </span>
+        <strong>{@project.name}</strong><span :if={@project.repo} class="chip mono">{@project.repo}</span><span class="spacer"></span>
+        <button
+          :if={@project.access != :tracks}
+          class="ghost"
+          phx-click={JS.push_focus() |> JS.push("dialog")}
+          phx-value-name="new-track"
+        >
+          New track
+        </button>
+        <button
+          :if={@project.access != :tracks}
+          class="ghost"
+          phx-click={JS.push_focus() |> JS.push("dialog")}
+          phx-value-name="people"
+        >
+          People
+        </button>
+        <button
+          :if={@project.role == :owner}
+          class="ghost"
+          phx-click={JS.push_focus() |> JS.push("dialog")}
+          phx-value-name="settings"
+        >
+          Settings
+        </button>
+      </div>
+      <div :if={@project && @track_id} class="workspace-track-host">
+        {live_render(@socket, RavixWeb.TrackLive,
+          id: "track-#{@track_id}",
+          session: %{
+            "session_token" => @session_token,
+            "track_id" => @track_id,
+            "project_id" => @project.id
+          }
+        )}
+      </div>
+      <div :if={@project && is_nil(@track_id)} class="workspace-project-empty">
+        <span class="empty-icon"><.icon name="machine" size={20} /></span>
+        <h2>Pick a track</h2>
+        <p>
+          Each track is its own worktree on this project's machine, with its own branch and its own conversation.
+        </p>
+        <button
+          :if={@project.access != :tracks}
+          class="primary"
+          phx-click={JS.push_focus() |> JS.push("dialog")}
+          phx-value-name="new-track"
+        >
+          New track
+        </button>
+        <p :if={@project.access == :tracks}>Choose a track shared with you in the sidebar.</p>
+      </div>
+      <div :if={is_nil(@project) && @live_action == :projects} class="centred workspace-home">
+        <div class="hero">
+          <.wordmark />
+          <p class="hero-sub">
+            A project is a machine. A track is a worktree on it. Start as many as you like — they share one disk and take it in turns.
+          </p>
+          <div class="home-actions">
+            <button
+              class="home-action"
+              phx-click={JS.push_focus() |> JS.push("dialog")}
+              phx-value-name="new-project"
+            >
+              <.icon name="globe" size={18} class="ico" />
+              <span>
+                <strong>Open a GitHub project</strong><small>Pick a repository Ravix can see and it builds the machine. Connect GitHub to choose which repositories it can access.</small>
+              </span>
+            </button>
+            <button
+              class="home-action"
+              phx-click={JS.push_focus() |> JS.push("dialog")}
+              phx-value-name="new-project"
+            >
+              <.icon name="folder-plus" size={18} class="ico" />
+              <span>
+                <strong>Quick start</strong><small>A machine with no repository. Somewhere to try things, or to start something new.</small>
+              </span>
+            </button>
+            <button class="home-action" disabled>
+              <.icon name="folder" size={18} class="ico" />
+              <span>
+                <strong>Open a local project</strong><small>The machine is in the cloud, so there is no folder on this computer for it to open. Push the repository and open it from GitHub.</small>
+              </span>
+            </button>
+          </div>
+          <section :if={@projects != []} class="home-recent" aria-label="Recent projects">
+            <h2>Recent</h2>
+            <.link
+              :for={project <- Enum.take(@projects, 8)}
+              patch={"/p/#{project.id}"}
+              class="pick-row"
+            >
+              <span class="project-mark" aria-hidden="true">
+                {String.first(project.name) |> String.upcase()}
+              </span>
+              <span>{project.name}</span><span class="meta mono">{project.repo || "no repository"}</span>
+            </.link>
+          </section>
+        </div>
+      </div>
+      <div :if={is_nil(@project) && @live_action != :projects} class="inbox">
+        <header>
+          <div class="row">
+            <h1>
+              Inbox
+              <span :if={attention_count(@tracks) > 0} class="badge">
+                {attention_count(@tracks)}
+              </span>
+            </h1>
+            <span class="spacer"></span><button class="ghost" phx-click="refresh">Refresh</button>
+          </div>
+          <p>Replies and failed turns across all your projects.</p>
+        </header>
+        <div
+          :if={!Enum.any?(@tracks, fn {_id, tracks} -> Enum.any?(tracks, &attention?/1) end)}
+          class="inbox-empty"
+        >
+          <h2>You're all caught up</h2>
+          <p>When a track needs your attention, it will appear here.</p>
+        </div>
+        <div class="inbox-list">
+          <div :for={project <- @projects}>
+            <.link
+              :for={track <- Enum.filter(@tracks[project.id] || [], &attention?/1)}
+              patch={"/p/#{project.id}/t/#{track.id}"}
+              class="inbox-item"
+            >
+              <div class="row">
+                <span class="chip">
+                  {if track.status == :failed, do: "Failed turn", else: "Unread reply"}
+                </span>
+                <span class="dim">{project.name}</span><span class="spacer"></span><time
+                  :if={track.last_active_at}
+                  datetime={DateTime.to_iso8601(track.last_active_at)}
+                >{Calendar.strftime(track.last_active_at, "%b %-d, %H:%M UTC")}</time>
+              </div>
+              <strong>{track.title}</strong><code class="dimmer">{track.branch}</code><span class="dim">{if track.status == :failed, do: "The agent needs a hand. Open the conversation to see what happened.", else: "The agent finished. Open the conversation to read its reply."}</span>
+            </.link>
+          </div>
+        </div>
+      </div>
+    </main>
+    <.dialog :if={@dialog == "search"} id="search-dialog" title="Find a track" on_close="dismiss">
+      <form phx-change="search">
+        <.input
+          name="q"
+          id="search-query"
+          value={@query}
+          label="Search projects and tracks"
+          autofocus
+        />
+      </form>
+      <div :for={project <- @projects}>
+        <.link
+          :for={track <- Enum.filter(@tracks[project.id] || [], &matching?(&1, project, @query))}
+          patch={"/p/#{project.id}/t/#{track.id}"}
+          class="workspace-track"
+        >
+          {project.name} / {track.title}
+        </.link>
+      </div>
+    </.dialog>
+    <.dialog
+      :if={@dialog == "new-project"}
+      id="new-project-dialog"
+      title="New project"
+      on_close="dismiss"
+    >
+      <form :if={@installations != []} phx-change="installation">
+        <.input
+          name="installation"
+          id="installation"
+          label="GitHub account"
+          type="select"
+          value={@installation}
+          options={Enum.map(@installations, &{&1.account, &1.id})}
+        />
+      </form>
+      <form id="new-project-form" phx-submit="create-project" phx-change="edit">
+        <.input
+          name="name"
+          id="project-name"
+          label="Project name"
+          value={@form_data["name"] || ""}
+          maxlength="120"
+        />
+        <.input
+          name="repo"
+          id="project-repo"
+          label="Repository"
+          type="select"
+          value={@form_data["repo"] || ""}
+          options={[
+            {"No repository (scratch)", ""} | Enum.map(@repos, &{&1.full_name, &1.full_name})
+          ]}
+        />
+        <p><a href="/api/auth/install">Connect or manage GitHub repositories ↗</a></p>
+        <button class="primary" disabled={@busy} phx-disable-with="Creating…">
+          Create project
+        </button>
+      </form>
+    </.dialog>
+    <.dialog
+      :if={@dialog == "new-track" && @project}
+      id="new-track-dialog"
+      title="New track"
+      on_close="dismiss"
+    >
+      <form id="new-track-form" phx-submit="create-track" phx-change="edit">
+        <.input
+          name="title"
+          id="track-title"
+          label="Track name"
+          value={@form_data["title"] || ""}
+          maxlength="200"
+        />
+        <p :if={@origin_kind == "blank"} class="hint">
+          New worktree from {@project[:default_branch] || "the default branch"}.
+        </p>
+        <button
+          type="button"
+          class="ghost"
+          phx-click="advanced-track"
+          aria-expanded={to_string(@advanced_track)}
+          aria-controls="track-advanced"
+        >
+          {if @advanced_track, do: "Hide advanced", else: "Advanced"}
+        </button>
+        <div id="track-advanced" hidden={!@advanced_track}>
+          <div class="workspace-actions origin-options">
+            <button
+              :for={
+                {kind, label} <- [
+                  {"blank", "Blank"},
+                  {"branch", "Branch"},
+                  {"pr", "Pull request"},
+                  {"issue", "Issue"}
+                ]
+              }
+              :if={kind == "blank" || @project.repo}
+              type="button"
+              class={if @origin_kind == kind, do: "primary", else: "ghost"}
+              phx-click="origin"
+              phx-value-kind={kind}
+            >
+              {label}
+            </button>
+          </div>
+          <.input
+            :if={@origin_kind != "blank"}
+            name="ref"
+            id="track-ref"
+            label="Start from"
+            type="select"
+            value={@form_data["ref"] || ""}
+            options={Enum.map(@refs, &{ref_label(&1), ref_id(&1)})}
+            required
+          />
+        </div>
+        <button
+          class="primary"
+          disabled={@busy || (@origin_kind != "blank" && @refs == [])}
+          phx-disable-with="Opening…"
+        >
+          Create track
+        </button>
+      </form>
+    </.dialog>
+    <.dialog
+      :if={@dialog == "settings" && @settings}
+      id="settings-dialog"
+      title="Project settings"
+      on_close="dismiss"
+      wide
+    >
+      <form id="settings-form" phx-submit="save-settings">
+        <.input name="name" id="settings-name" label="Name" value={@settings.name} required />
+        <.input
+          name="runtime"
+          id="settings-runtime"
+          label="Harness"
+          value={@settings.runtime}
+          list="runtime-options"
+        />
+        <datalist id="runtime-options">
+          <option :for={runtime <- (@settings.catalog || %{})["runtimes"] || []} value={runtime} />
+        </datalist>
+        <.input name="model" id="settings-model" label="Model" value={@settings.model} />
+        <.input
+          type="textarea"
+          name="instructions"
+          id="settings-instructions"
+          label="Instructions"
+          value={@settings.instructions}
+          rows="5"
+        />
+        <.input
+          type="textarea"
+          name="setup_script"
+          id="settings-setup"
+          label="Setup script"
+          value={@settings.setup_script}
+          rows="5"
+        />
+        <.input
+          :for={kind <- ~w(apt pip npm)}
+          name={kind}
+          id={"packages-#{kind}"}
+          label={"#{kind} packages"}
+          value={Enum.join(@settings.packages[kind] || [], " ")}
+        />
+        <button class="primary" phx-disable-with="Saving…">Save settings</button>
+      </form>
+      <hr />
+      <h3>Secrets</h3>
+      <p>Values are write-only. Submit an empty value to remove a secret.</p>
+      <p>Environment: {Enum.join(@settings.env_keys, ", ")}</p>
+      <p>Vault: {Enum.join(@settings.vault_keys, ", ")}</p>
+      <form id="secret-form" phx-submit="save-secret">
+        <.input
+          name="store"
+          id="secret-store"
+          label="Store"
+          type="select"
+          value="env"
+          options={[{"Environment", "env"}, {"Vault", "vault"}]}
+        />
+        <.input name="key" id="secret-key" label="Key" value="" required />
+        <.input
+          name="value"
+          id="secret-value"
+          type="password"
+          label="Value"
+          value=""
+          autocomplete="new-password"
+        />
+        <button class="primary" phx-disable-with="Saving…">Update secret</button>
+      </form>
+      <hr />
+      <h3>Preview defaults</h3>
+      <form id="preview-defaults-form" phx-submit="save-preview-defaults">
+        <.input
+          name="directory"
+          id="default-directory"
+          label="App directory"
+          value={(@preview_defaults || %{})[:directory] || "."}
+        />
+        <.input
+          name="command"
+          id="default-command"
+          label="Command (must honor $PORT)"
+          value={(@preview_defaults || %{})[:command] || ""}
+        />
+        <.input
+          name="readiness_path"
+          id="default-readiness"
+          label="Readiness path"
+          value={(@preview_defaults || %{})[:readiness_path] || "/"}
+        />
+        <button class="primary">Save defaults</button><button
+          name="clear"
+          value="true"
+          class="ghost"
+        >Clear defaults</button>
+      </form>
+      <hr />
+      <h3>Machine and project</h3>
+      <p>
+        Rebuilding discards the machine and closes every track. Deleting also removes the project settings and secrets.
+      </p>
+      <form id="project-danger-form" phx-submit="project-danger">
+        <.input
+          name="confirm"
+          id="danger-confirm"
+          label={"Type #{@project.name} to confirm"}
+          value=""
+          required
+        />
+        <button name="action" value="rebuild" class="ghost" disabled={@busy}>
+          Rebuild machine
+        </button>
+        <button name="action" value="delete" class="danger" disabled={@busy}>
+          Delete project
+        </button>
+      </form>
+    </.dialog>
+    <.dialog
+      :if={@dialog == "people" && @project}
+      id="people-dialog"
+      title="Project people"
+      on_close="dismiss"
+    >
+      <p>Project members can open tracks and work in every track on this machine.</p>
+      <div :for={person <- @people} class="workspace-track">
+        <span>@{person.login}</span><button
+          :if={@project.role == :owner || person.login == @current_user.login}
+          class="ghost"
+          phx-click="remove-person"
+          phx-value-login={person.login}
+        >{if person.login == @current_user.login, do: "Leave project", else: "Remove"}</button>
+      </div>
+      <form :if={@project.role == :owner} id="invite-form" phx-submit="invite-person">
+        <.input name="login" id="invite-login" label="GitHub username" value="" required />
+        <button class="primary">
+          Invite
+        </button>
+      </form>
+      <div :if={@project.role == :owner}>
+        <button class="ghost" phx-click="invite-link" phx-value-action="create">
+          Create invite link
+        </button>
+        <button class="ghost" phx-click="invite-link" phx-value-action="revoke">
+          Revoke invite link
+        </button>
+      </div>
+      <p :if={invitation_url(@invite)}>
+        <a href={invitation_url(@invite)}>{invitation_url(@invite)}</a>
+      </p>
+    </.dialog>
+  </div>
+</Layouts.app>
