@@ -372,7 +372,9 @@ defmodule Ravix.Tracks do
            ),
          :ok <-
            check(is_nil(track.closed_at), {:conflict, "closed_track", "This track is closed."}) do
-      Ravix.PromptQueue.enqueue(track.id, user.id, user.login, payload["request_id"], %{
+      # ownership: `prompt/3` opened with `Access.track_access/2` on this
+      # track, and the row records who is sending on it.
+      Ravix.PromptQueue.Store.enqueue(track.id, user.id, user.login, payload["request_id"], %{
         prompt: text,
         images: images
       })
@@ -514,7 +516,9 @@ defmodule Ravix.Tracks do
            Access.track_access(user, track_id),
          :ok <- Access.require_owner_or_cutter(role, user, track, "close a track"),
          {:ok, client} <- fountain() do
-      Ravix.PromptQueue.cancel_track(track.id)
+      # ownership: the track was just closed through `Access.track_access/2`;
+      # prompts waiting to be delivered to it have nowhere to go.
+      Ravix.PromptQueue.Store.cancel_track(track.id)
       Ravix.Previews.stop_service(track.id, true)
 
       if track.conversation_id do
@@ -545,7 +549,9 @@ defmodule Ravix.Tracks do
   @spec close_all_for_rebuild(Project.t(), atom()) :: :ok
   def close_all_for_rebuild(%Project{id: project_id}, _reason) do
     Enum.each(Store.tracks_of(project_id), fn track ->
-      Ravix.PromptQueue.cancel_track(track.id)
+      # ownership: the track was just closed through `Access.track_access/2`;
+      # prompts waiting to be delivered to it have nowhere to go.
+      Ravix.PromptQueue.Store.cancel_track(track.id)
       Store.close_track(track.id)
     end)
   end

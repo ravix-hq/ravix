@@ -14,6 +14,9 @@ defmodule Ravix.Accounts.OAuthState do
   @typedoc "Which round trip a parked state belongs to."
   @type kind :: :signin | :install | :join
 
+  # The OAuth attempt's secret, which is what makes the callback unforgeable. A primary key cannot take `redact:`,
+  # so it is kept out of `inspect/1` here instead.
+  @derive {Inspect, except: [:state]}
   @primary_key {:state, :string, autogenerate: false}
 
   @type t :: %__MODULE__{}

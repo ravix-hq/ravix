@@ -16,7 +16,7 @@ defmodule Ravix.PromptQueue.Server do
   instructions cannot overtake one whose outcome needs a person. Other
   tracks still advance.
 
-  Recovery (`Ravix.PromptQueue.recover/0`) runs at the start of the first
+  Recovery (`Ravix.Store.recover/0`) runs at the start of the first
   sweep rather than in `init/1`, so that starting the process touches no
   database; the first sweep is one interval after start. `tick/1` runs a
   sweep now and returns when it is done, which is what tests drive instead
@@ -37,6 +37,7 @@ defmodule Ravix.PromptQueue.Server do
   alias Ravix.Projects.{Project, ProjectMember}
   alias Ravix.PromptQueue
   alias Ravix.PromptQueue.Item
+  alias Ravix.PromptQueue.Store
   alias Ravix.Repo
   alias Ravix.Tracks.{Track, TrackMember, Transcript}
 
@@ -103,10 +104,10 @@ defmodule Ravix.PromptQueue.Server do
     # Every sweep, not once at boot. A claim can outlive the task holding it
     # -- killed for running long, or lost between the POST and the status
     # write -- and `:sending` is refused by both `cancel/3` and `retry/3`, so
-    # nothing else would ever take it back. `PromptQueue.recover/0` only
+    # nothing else would ever take it back. `Store.recover/0` only
     # reclaims claims older than `claim_timeout_ms/0`, so a task that is still
     # working is left alone.
-    PromptQueue.recover()
+    Store.recover()
     client = Fountain.client()
 
     if Client.configured?(client), do: deliver_heads(client)
@@ -121,7 +122,7 @@ defmodule Ravix.PromptQueue.Server do
 
   defp deliver_heads(client) do
     Ravix.TaskSupervisor
-    |> Task.Supervisor.async_stream_nolink(PromptQueue.heads(), &deliver(client, &1),
+    |> Task.Supervisor.async_stream_nolink(Store.heads(), &deliver(client, &1),
       ordered: false,
       timeout: @delivery_timeout,
       on_timeout: :kill_task
@@ -151,7 +152,7 @@ defmodule Ravix.PromptQueue.Server do
     case readiness(client, track, project) do
       :ready -> claim_and_send(client, row, track, project)
       :busy -> :waiting
-      {:ended, message} -> PromptQueue.set_status(row.id, :failed, message)
+      {:ended, message} -> Store.set_status(row.id, :failed, message)
       :unavailable -> hold(row)
     end
   end
@@ -222,8 +223,8 @@ defmodule Ravix.PromptQueue.Server do
   end
 
   defp hold(row) do
-    case PromptQueue.get(row.id) do
-      %Item{status: :queued} -> PromptQueue.set_status(row.id, :queued, @waiting)
+    case Store.get(row.id) do
+      %Item{status: :queued} -> Store.set_status(row.id, :queued, @waiting)
       _ -> :ok
     end
   end
@@ -232,7 +233,7 @@ defmodule Ravix.PromptQueue.Server do
   defp claim_and_send(client, row, track, project) do
     cond do
       not authorized?(row) -> cancel(row)
-      not PromptQueue.claim(row.id) -> :lost_claim
+      not Store.claim(row.id) -> :lost_claim
       true -> send_claimed(client, row, track, project)
     end
   end
@@ -251,7 +252,7 @@ defmodule Ravix.PromptQueue.Server do
   end
 
   defp post(client, row, track, project) do
-    payload = row.id |> PromptQueue.get() |> Map.fetch!(:payload) |> Jason.decode!()
+    payload = row.id |> Store.get() |> Map.fetch!(:payload) |> Jason.decode!()
     instructions = Ravix.Previews.prepare_agent_preview(row)
 
     if authorized?(row) do
@@ -263,7 +264,7 @@ defmodule Ravix.PromptQueue.Server do
   end
 
   defp settle(:ok, row, track, project) do
-    PromptQueue.mark_delivered(row.id)
+    Store.mark_delivered(row.id)
     Hub.publish(project.id, :turn, track_id: track.id)
   end
 
@@ -277,16 +278,16 @@ defmodule Ravix.PromptQueue.Server do
   # refusal needs a person; anything else may or may not have arrived.
   defp settle({:error, %Error{} = error}, row, _track, _project) do
     cond do
-      Error.busy?(error) -> PromptQueue.set_status(row.id, :queued)
-      Error.rejected?(error) -> PromptQueue.set_status(row.id, :failed, @refused)
-      true -> PromptQueue.set_status(row.id, :unconfirmed, @unconfirmed)
+      Error.busy?(error) -> Store.set_status(row.id, :queued)
+      Error.rejected?(error) -> Store.set_status(row.id, :failed, @refused)
+      true -> Store.set_status(row.id, :unconfirmed, @unconfirmed)
     end
   end
 
   defp settle({:error, _reason}, row, _track, _project),
-    do: PromptQueue.set_status(row.id, :unconfirmed, @unconfirmed)
+    do: Store.set_status(row.id, :unconfirmed, @unconfirmed)
 
-  defp cancel(row), do: PromptQueue.set_status(row.id, :cancelled)
+  defp cancel(row), do: Store.set_status(row.id, :cancelled)
 
   defp compose("", authored), do: authored
   defp compose(instructions, authored), do: instructions <> "\n\n" <> authored

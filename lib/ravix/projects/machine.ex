@@ -289,7 +289,13 @@ defmodule Ravix.Projects.Machine do
   # may keep it awake: cancel every open track's prompts and retire the
   # project's previews before Fountain is touched.
   defp quiesce(project) do
-    Enum.each(Projects.Store.open_tracks(project.id), &Ravix.PromptQueue.cancel_track(&1.id))
+    # ownership: `quiesce/1` runs behind `Access.project_of/2` on a rebuild or
+    # a destroy; the machine these prompts were queued for is going away.
+    Enum.each(
+      Projects.Store.open_tracks(project.id),
+      &Ravix.PromptQueue.Store.cancel_track(&1.id)
+    )
+
     Ravix.Previews.retire_project(project.id)
   end
 

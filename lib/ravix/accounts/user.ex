@@ -23,7 +23,10 @@ defmodule Ravix.Accounts.User do
     field :name, :string
     field :avatar_url, :string
     # The user's OAuth token, encrypted. Refreshed on each sign-in.
-    field :token_enc, :string
+    # The GitHub OAuth token, encrypted. Redacted because a `%User{}` is the
+    # `current_user` assign on every page, so any crash report or `inspect`
+    # of a socket would otherwise write it to the log.
+    field :token_enc, :string, redact: true
     field :created_at, :utc_datetime_usec
     field :last_seen_at, :utc_datetime_usec
 

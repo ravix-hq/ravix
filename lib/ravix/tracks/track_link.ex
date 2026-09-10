@@ -17,7 +17,8 @@ defmodule Ravix.Tracks.TrackLink do
 
   schema "track_links" do
     belongs_to :track, Ravix.Tracks.Track, primary_key: true
-    field :token_hash, :string
+    # The link is the credential; this is its stored form and belongs in no log.
+    field :token_hash, :string, redact: true
     field :created_by, :string
     field :created_at, :utc_datetime_usec
     field :expires_at, :utc_datetime_usec

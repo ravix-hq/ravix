@@ -543,7 +543,11 @@ defmodule Ravix.TracksTest do
     end
 
     test "is accepted into the queue with its images", ctx do
-      expect(Ravix.PromptQueue, :enqueue, fn track_id, user_id, login, request_id, payload ->
+      expect(Ravix.PromptQueue.Store, :enqueue, fn track_id,
+                                                   user_id,
+                                                   login,
+                                                   request_id,
+                                                   payload ->
         assert track_id == ctx.track.id
         assert user_id == ctx.owner.id
         assert login == ctx.owner.login
@@ -734,7 +738,7 @@ defmodule Ravix.TracksTest do
           branch: "ana/kyoto-1"
         )
 
-      stub(Ravix.PromptQueue, :cancel_track, fn _track_id -> :ok end)
+      stub(Ravix.PromptQueue.Store, :cancel_track, fn _track_id -> :ok end)
       stub(Ravix.Previews, :stop_service, fn _track_id, true -> :ok end)
       Hub.subscribe(project.id)
       {:ok, owner: owner, project: project, track: track}

@@ -16,6 +16,7 @@ for mod <- [
       Ravix.Tracks,
       Ravix.Projects,
       Ravix.PromptQueue,
+      Ravix.PromptQueue.Store,
       Ravix.Terminal,
       Ravix.Vitals,
       Ravix.MachineCache,

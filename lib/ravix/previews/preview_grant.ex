@@ -12,6 +12,9 @@ defmodule Ravix.Previews.PreviewGrant do
   use Ecto.Schema
   import Ecto.Changeset
 
+  # A browser's way into a preview. A primary key cannot take `redact:`,
+  # so it is kept out of `inspect/1` here instead.
+  @derive {Inspect, except: [:hash]}
   @primary_key {:hash, :string, autogenerate: false}
   @foreign_key_type :string
 
