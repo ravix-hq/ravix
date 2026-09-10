@@ -47,7 +47,9 @@ Every user-facing context call takes the current user and establishes scoped
 access through `Ravix.Accounts.Access`. Row access with no user in hand lives
 in a `Ravix.<Context>.Store`, never beside the scoped functions: a page may
 not name one at all, and a context reaching into another's writes a
-`# ownership:` comment naming the door it already went through. Project
+`# ownership:` comment naming the door it already went through. The same
+comment is required of a `Repo` call that names another context's schema,
+because otherwise the unchecked path is the shorter one to write. Project
 membership and track membership differ; a track share does not grant the
 entire project.
 

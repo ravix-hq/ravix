@@ -24,6 +24,7 @@ defmodule Ravix.Previews.Agent do
   alias Ravix.PromptQueue.Item
   alias Ravix.Repo
   alias Ravix.Sprites
+  alias Ravix.Tracks.Store, as: Tracks
   alias Ravix.Tracks.Track
 
   @start "[ravix preview tools for this turn]"
@@ -103,6 +104,9 @@ defmodule Ravix.Previews.Agent do
     if Previews.unavailable() do
       ""
     else
+      # ownership: `Ravix.Tracks` calls this while writing a turn on a track
+      # it has already put through `Access.track_access/2`. The rows are read
+      # to write the helper's instructions, and nothing is decided by them.
       track = Repo.get!(Track, track_id)
       project = Repo.get!(Project, track.project_id)
 
@@ -270,6 +274,9 @@ defmodule Ravix.Previews.Agent do
   end
 
   defp delivered_turn(track, grant, user) do
+    # ownership: this is a door, not something behind one. The helper presents
+    # a bearer grant and this is what decides whether the turn that minted it
+    # really was this person's, on this track, and actually delivered.
     prompt = Repo.get_by(Item, id: grant.prompt_id)
 
     if track.conversation_id == grant.conversation_id and prompt != nil and
@@ -314,8 +321,11 @@ defmodule Ravix.Previews.Agent do
   end
 
   defp turn_still_on(track_id, grant) do
+    # ownership: the same door as `delivered_turn/3`, re-asked at the end of
+    # the request: a grant stops working the moment its turn does, so this is
+    # read again rather than trusted from a moment ago.
     prompt = Repo.get_by(Item, id: grant.prompt_id)
-    track = Repo.get(Track, track_id)
+    track = Tracks.get_track(track_id)
 
     if track != nil and track.conversation_id == grant.conversation_id and prompt != nil and
          prompt.status in @delivered,

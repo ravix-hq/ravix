@@ -114,7 +114,23 @@ defmodule Ravix.Tracks.FollowerTest do
     pid = Follower.whereis(ctx.track_id)
     ref = Process.monitor(pid)
     Process.exit(watcher, :kill)
-    assert_receive {:DOWN, ^ref, :process, ^pid, :normal}, 1_000
+
+    # Deliberately not `assert_receive` with `:normal` in the pattern. This
+    # test fails intermittently under a loaded suite, and an unmatched pattern
+    # leaves the message in the mailbox and times out saying nothing -- so a
+    # follower that exited for the wrong reason and one that never exited
+    # looked identical from here. Take any exit, then say which it was.
+    receive do
+      {:DOWN, ^ref, :process, ^pid, reason} ->
+        assert reason == :normal
+    after
+      1_000 ->
+        flunk("""
+        The follower did not stop within 1s of its last subscriber dying.
+        alive: #{Process.alive?(pid)}
+        state: #{if Process.alive?(pid), do: inspect(:sys.get_state(pid), limit: 20), else: "gone"}
+        """)
+    end
   end
 
   test "coming back within the grace period keeps the follower", ctx do

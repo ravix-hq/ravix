@@ -2,6 +2,25 @@ defmodule Ravix.Credo.Architecture do
   @moduledoc "Enforce context direction, the row-layer boundary, and supervised work."
   use Credo.Check, id: "RVX001", base_priority: :high, category: :warning
 
+  # Which context owns which table, where the directory does not say.
+  #
+  # A membership row is named after its subject and lives in that subject's
+  # directory -- `Ravix.Tracks.TrackMember` under `tracks/` -- but the context
+  # that reads and writes all seven of them is `Ravix.People`, because
+  # membership is what People *is*. `tracks/track.ex` and `projects/project.ex`
+  # name them only in `has_many`, which is a schema declaration and not a read.
+  #
+  # Anywhere else, the directory is the owner.
+  @owners %{
+    TrackMember: :People,
+    TrackInvite: :People,
+    TrackLink: :People,
+    TrackRead: :People,
+    ProjectMember: :People,
+    ProjectInvite: :People,
+    ProjectLink: :People
+  }
+
   @spawn ~w(spawn spawn_link spawn_monitor spawn_opt)a
   @task ~w(start start_link async async_stream)a
 
@@ -19,6 +38,9 @@ defmodule Ravix.Credo.Architecture do
 
       {_, findings} =
         Macro.prewalk(ast, findings, &stores(&1, &2, aliases, path, lines))
+
+      {_, findings} =
+        Macro.prewalk(ast, findings, &foreign_rows(&1, &2, aliases, path, lines))
 
       findings
       |> Enum.uniq()
@@ -121,6 +143,67 @@ defmodule Ravix.Credo.Architecture do
     do: {node, [{meta[:line], "Do not import Task; call supervised work explicitly."} | found]}
 
   defp tasks(node, found, _aliases), do: {node, found}
+
+  # ── another context's rows, the short way round ──────────────────────
+  #
+  # The `Store` rule below is about module names, and `Repo` is not one of
+  # them: a context calling `Repo.get(Track, id)` reaches another context's
+  # rows with nothing to say so, while the same read through
+  # `Tracks.Store.get_track/1` would have to explain itself. That left the
+  # shorter path to write as the unchecked one, which is the wrong way round.
+  #
+  # So a `Repo` call that names a module belonging to another context wants
+  # the same `# ownership:` comment. Naming one *outside* a `Repo` call is
+  # untouched -- a schema's `belongs_to` crosses contexts by design, and so
+  # does a supervisor listing children.
+
+  defp foreign_rows(
+         {{:., _, [{:__aliases__, _, parts}, fun]}, meta, args} = node,
+         found,
+         aliases,
+         path,
+         lines
+       )
+       when is_atom(fun) and is_list(args) do
+    if resolve(parts, aliases) == [:Ravix, :Repo] and not ownership?(lines, meta[:line]) do
+      {node, args |> foreign_in(aliases, path) |> Enum.reduce(found, &flag_foreign(&1, &2, meta))}
+    else
+      {node, found}
+    end
+  end
+
+  defp foreign_rows(node, found, _aliases, _path, _lines), do: {node, found}
+
+  # Every module named anywhere inside the call, including inside an
+  # `Ecto.Query` expression or a transaction's function body.
+  defp foreign_in(args, aliases, path) do
+    mine = context_of(path)
+
+    {_, named} =
+      Macro.prewalk(args, [], fn
+        {:__aliases__, _, parts} = n, acc -> {n, [resolve(parts, aliases) | acc]}
+        n, acc -> {n, acc}
+      end)
+
+    named
+    |> Enum.filter(&match?([:Ravix, _ctx, _mod | _], &1))
+    |> Enum.reject(&(owner_of(&1) == mine))
+    |> Enum.map(&Enum.join(Enum.map(&1, fn p -> Atom.to_string(p) end), "."))
+    |> Enum.uniq()
+  end
+
+  # The declared owner if there is one, else the directory the module sits in.
+  defp owner_of([:Ravix, ctx, mod | _]), do: Map.get(@owners, mod, ctx)
+
+  defp flag_foreign(name, found, meta) do
+    [
+      {meta[:line],
+       "This Repo call names #{name}, which belongs to another context. Read it through " <>
+         "that context's Store, or add a nearby # ownership: comment saying which door " <>
+         "this caller already went through."}
+      | found
+    ]
+  end
 
   # ── the row layer ─────────────────────────────────────────────────────
   #
