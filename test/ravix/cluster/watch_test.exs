@@ -65,7 +65,13 @@ defmodule Ravix.Cluster.WatchTest do
 
     log = capture_log(fn -> send(watch, :something_else) && Process.sleep(40) end)
 
-    assert log == "" or not (log =~ "ravix: ")
+    # This module's own lines, not everybody's. `capture_log/1` sees the whole
+    # VM's log, and a crash report belonging to an async test that has already
+    # finished can still be written inside this window -- `Ravix.Cluster.
+    # Singleton` logs "ravix: singleton ... could not start" at :error, which
+    # the test log level does not suppress. Asserting on any "ravix: " line
+    # made this test fail on somebody else's noise, roughly one run in ten.
+    refute log =~ ~r/ravix: (.+ (joined|left); now |cluster of one|clustered;)/
     assert Process.alive?(watch)
   end
 

@@ -34,7 +34,7 @@ defmodule Ravix.Previews do
   alias Ravix.Accounts.Access
   alias Ravix.Accounts.User
   alias Ravix.Crypto
-  alias Ravix.Previews.{Agent, Clock, Row, Server, Store}
+  alias Ravix.Previews.{Agent, Clock, Row, Server, Store, View}
   alias Ravix.Projects.Project
   alias Ravix.Repo
   alias Ravix.Sprites
@@ -45,19 +45,6 @@ defmodule Ravix.Previews do
   @idle_ms 5 * 60_000
   @ticket_ms 60_000
   @probe_ms 3_000
-
-  @typedoc "`PreviewInfo` in `shared/previews.ts`, what the track page renders."
-  @type info :: %{
-          optional(:open_url) => String.t(),
-          available: boolean(),
-          unavailable_reason: String.t() | nil,
-          config: Row.config() | nil,
-          override: Row.config() | nil,
-          state: Row.state(),
-          error: String.t() | nil,
-          logs: String.t(),
-          url: String.t() | nil
-        }
 
   @type reason ::
           :not_found
@@ -121,11 +108,11 @@ defmodule Ravix.Previews do
   end
 
   @doc "A track's `PreviewInfo`, creating its (stopped) row on first sight."
-  @spec info(String.t()) :: info()
+  @spec info(String.t()) :: View.t()
   def info(track_id), do: track_id |> Store.ensure() |> present()
 
   @doc "`PreviewInfo` for a row: the track's override or the project default, and the row's state."
-  @spec present(Row.t()) :: info()
+  @spec present(Row.t()) :: View.t()
   def present(%Row{} = row) do
     why = unavailable() || row.unavailable
 
@@ -135,7 +122,7 @@ defmodule Ravix.Previews do
         nil -> nil
       end
 
-    %{
+    %View{
       available: why == nil,
       unavailable_reason: why,
       config: row.config || defaults,
@@ -519,7 +506,7 @@ defmodule Ravix.Previews do
   # ── the routes ───────────────────────────────────────────────────────
 
   @doc "`GET /api/tracks/:id/preview`: the info for a track the user may see."
-  @spec status(User.t(), String.t()) :: {:ok, info()} | {:error, reason()}
+  @spec status(User.t(), String.t()) :: {:ok, View.t()} | {:error, reason()}
   def status(%User{} = user, track_id) do
     with {:ok, _track} <- open_track(user, track_id), do: {:ok, info(track_id)}
   end
@@ -536,12 +523,12 @@ defmodule Ravix.Previews do
 
   The origin check the TypeScript did is the web layer's business here.
   """
-  @spec act(User.t(), String.t(), String.t(), map()) :: {:ok, info()} | {:error, reason()}
+  @spec act(User.t(), String.t(), String.t(), map()) :: {:ok, View.t()} | {:error, reason()}
   def act(%User{} = user, track_id, action, params \\ %{}) do
     with {:ok, _track} <- open_track(user, track_id),
          :ok <- perform(action, track_id, params),
          {:ok, extra} <- opened(action, track_id, params) do
-      {:ok, Map.merge(info(track_id), extra)}
+      {:ok, struct!(info(track_id), extra)}
     end
   end
 

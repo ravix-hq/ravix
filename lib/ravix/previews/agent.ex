@@ -215,8 +215,28 @@ defmodule Ravix.Previews.Agent do
          :ok <- turn_still_on(track_id, grant),
          :ok <- perform(action, track_id, body) do
       track_url = "#{Ravix.Config.public_url()}/p/#{project.id}/t/#{track_id}"
-      {:ok, Map.put(Previews.info(track_id), :track_url, track_url)}
+      {:ok, answer(Previews.info(track_id), track_url)}
     end
+  end
+
+  # What the helper script is told, written out rather than derived from
+  # `Ravix.Previews.View`. Two reasons, and both are about the audience: this
+  # one is JSON on a wire that a script parses, so it should change when we
+  # decide to change it and not when a field is added to a page's view; and
+  # `open_url` is a single-use browser ticket, which is exactly the field
+  # that must never appear here by having been forgotten about.
+  defp answer(%Previews.View{} = info, track_url) do
+    %{
+      available: info.available,
+      unavailable_reason: info.unavailable_reason,
+      config: info.config,
+      override: info.override,
+      state: info.state,
+      error: info.error,
+      logs: info.logs,
+      url: info.url,
+      track_url: track_url
+    }
   end
 
   defp bearer_grant(authorization, track_id) do

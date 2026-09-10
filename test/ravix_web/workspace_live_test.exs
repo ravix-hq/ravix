@@ -65,7 +65,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
 
     tracks =
       Enum.zip_with(rows, [:ready, :running, :failed], fn row, status ->
-        row |> Tracks.present(project: project) |> Map.merge(%{status: status, unread: true})
+        row |> Tracks.present(project: project) |> struct!(status: status, unread: true)
       end)
 
     stub(Tracks, :list, fn actual_user, project_id ->
@@ -81,7 +81,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
     refute has_element?(view, ".inbox-empty")
 
     stub(Tracks, :list, fn _, _ ->
-      {:ok, Enum.map(tracks, &Map.merge(&1, %{status: :ready, unread: false}))}
+      {:ok, Enum.map(tracks, &struct!(&1, status: :ready, unread: false))}
     end)
 
     view |> element("button", "Refresh") |> render_click()

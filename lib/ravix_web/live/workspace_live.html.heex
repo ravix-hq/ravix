@@ -438,7 +438,7 @@
           maxlength="200"
         />
         <p :if={@origin_kind == "blank"} class="hint">
-          New worktree from {@project[:default_branch] || "the default branch"}.
+          New worktree from {@project.default_branch || "the default branch"}.
         </p>
         <button
           type="button"

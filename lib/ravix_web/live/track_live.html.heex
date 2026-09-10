@@ -136,9 +136,9 @@
         <div :if={@queue != []} class="workspace-queue">
           <div :for={item <- @queue}>
             <span class="chip">{item.status}</span> {item.prompt}
-            <span :if={item[:error]}>{item.error}</span>
+            <span :if={item.error}>{item.error}</span>
             <button
-              :if={item[:can_cancel]}
+              :if={item.can_cancel}
               class="ghost"
               phx-click="queue"
               phx-value-action="cancel"
@@ -329,7 +329,7 @@
           </div>
           <div :if={@panel == "preview" && @preview}>
             <p>Status: {@preview.state}</p>
-            <p :if={@preview[:unavailable_reason]}>{@preview.unavailable_reason}</p>
+            <p :if={@preview.unavailable_reason}>{@preview.unavailable_reason}</p>
             <div class="workspace-actions">
               <button
                 :for={action <- ~w(open restart stop logs)}
@@ -356,7 +356,7 @@
               class="workspace-preview"
               sandbox="allow-scripts allow-forms allow-same-origin allow-popups allow-downloads"
             ></iframe>
-            <pre :if={@preview[:logs]}>{@preview.logs}</pre>
+            <pre :if={@preview.logs}>{@preview.logs}</pre>
             <details>
               <summary>Preview configuration</summary>
               <form id="preview-config-form" phx-submit="preview-config">
@@ -364,19 +364,19 @@
                   name="directory"
                   id="preview-directory"
                   label="App directory"
-                  value={(@preview[:config] || %{})[:directory] || "."}
+                  value={(@preview.config || %{})[:directory] || "."}
                 />
                 <.input
                   name="command"
                   id="preview-command"
                   label="Command (must honor $PORT)"
-                  value={(@preview[:config] || %{})[:command] || ""}
+                  value={(@preview.config || %{})[:command] || ""}
                 />
                 <.input
                   name="readiness_path"
                   id="preview-path"
                   label="Readiness path"
-                  value={(@preview[:config] || %{})[:readiness_path] || "/"}
+                  value={(@preview.config || %{})[:readiness_path] || "/"}
                 />
                 <button class="primary">Save</button><button
                   class="ghost"

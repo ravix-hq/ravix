@@ -4,6 +4,7 @@ defmodule RavixWeb.TrackLiveTest do
   import Mimic
   alias Ravix.Hub.Event
   alias Ravix.{People, Previews, PromptQueue, QueryCount, Repo, Terminal, Tracks, Vitals}
+  alias Ravix.PromptQueue.View, as: QueuedPrompt
   alias Ravix.Tracks.{Track, Transcript}
 
   setup :verify_on_exit!
@@ -219,7 +220,18 @@ defmodule RavixWeb.TrackLiveTest do
   test "queue cancellation and retry preserve the selected prompt id", ctx do
     stub(PromptQueue, :list, fn _, _ ->
       {:ok,
-       [%{id: "queued", prompt: "Fix this", status: :failed, can_cancel: true, error: "Offline"}]}
+       [
+         %QueuedPrompt{
+           id: "queued",
+           prompt: "Fix this",
+           image_count: 0,
+           author_login: ctx.user.login,
+           created_at: DateTime.utc_now(),
+           status: :failed,
+           can_cancel: true,
+           error: "Offline"
+         }
+       ]}
     end)
 
     send(ctx.view.pid, {:hub, Event.new(:queue, ctx.project.id, track_id: ctx.track.id)})
@@ -588,7 +600,19 @@ defmodule RavixWeb.TrackLiveTest do
     end
   end
 
+  # The real struct, not a map that happens to have some of its keys: the
+  # template reads these by field, and `@enforce_keys` is what stops this
+  # stub drifting away from what `Ravix.Previews.present/1` really returns.
   defp preview do
-    %{state: :stopped, available: true, unavailable_reason: nil, config: nil, logs: "", url: nil}
+    %Previews.View{
+      state: :stopped,
+      available: true,
+      unavailable_reason: nil,
+      config: nil,
+      override: nil,
+      error: nil,
+      logs: "",
+      url: nil
+    }
   end
 end

@@ -43,7 +43,7 @@ defmodule Ravix.Projects do
   alias Ravix.Hub
   alias Ravix.Ids
   alias Ravix.People
-  alias Ravix.Projects.{Machine, Project, Settings, Store}
+  alias Ravix.Projects.{Machine, Project, Settings, Store, View}
   alias Ravix.Spec
 
   @typedoc "How the caller reaches a project. See `access_of/2`."
@@ -54,24 +54,6 @@ defmodule Ravix.Projects do
           sandbox_id: String.t() | nil,
           status: :none | :pending | :starting | :ready | :suspended | :terminated | :failed,
           sprite_name: String.t() | nil
-        }
-
-  @typedoc "`Project` from `shared/api.ts`, atom keys, snake_case."
-  @type project_map :: %{
-          id: String.t(),
-          name: String.t(),
-          repo: String.t() | nil,
-          repo_private: boolean(),
-          default_branch: String.t() | nil,
-          repo_path: String.t() | nil,
-          runtime: String.t(),
-          model: String.t(),
-          rev: integer(),
-          machine: machine(),
-          created_at: DateTime.t(),
-          owner_login: String.t(),
-          role: :owner | :member,
-          access: access()
         }
 
   @type reason ::
@@ -109,7 +91,7 @@ defmodule Ravix.Projects do
   regardless. Each project carries its machine state, one memoised Fountain
   list per project through `Ravix.MachineCache.conversations/3`.
   """
-  @spec list(User.t()) :: [project_map()]
+  @spec list(User.t()) :: [View.t()]
   def list(%User{} = user) do
     mine = Store.projects_of(user.id)
     seen = MapSet.new(mine, & &1.id)
@@ -148,7 +130,7 @@ defmodule Ravix.Projects do
   function that would *change* any of it goes through `project_of/2` and
   refuses them.
   """
-  @spec get(User.t(), String.t()) :: {:ok, project_map()} | {:error, :not_found}
+  @spec get(User.t(), String.t()) :: {:ok, View.t()} | {:error, :not_found}
   def get(%User{} = user, id) do
     with %Project{archived_at: nil} = project <- Store.get_project(id) || {:error, :not_found},
          access when not is_nil(access) <- access_of(user.id, project) do
@@ -196,7 +178,7 @@ defmodule Ravix.Projects do
   `attrs` (string or atom keys): `name`, `repo` (`owner/name`),
   `installation_id`. A name is required unless a repository supplies one.
   """
-  @spec create(User.t(), map()) :: {:ok, project_map()} | {:error, reason()}
+  @spec create(User.t(), map()) :: {:ok, View.t()} | {:error, reason()}
   def create(%User{} = user, attrs) do
     with {:ok, client} <- fountain(),
          {:ok, input} <- parse_create(attrs),
@@ -405,7 +387,7 @@ defmodule Ravix.Projects do
   # ── shapes ────────────────────────────────────────────────────────────
 
   @doc "The `Project` map for a row, looking up the owner's login."
-  @spec present(Project.t(), access(), machine()) :: project_map()
+  @spec present(Project.t(), access(), machine()) :: View.t()
   def present(%Project{} = project, access, machine),
     do: present(project, access, machine, Ravix.Accounts.get_user(project.user_id))
 
@@ -414,9 +396,9 @@ defmodule Ravix.Projects do
   every gate in the UI asks; `access` is the second question, asked in the
   two places that need it.
   """
-  @spec present(Project.t(), access(), machine(), User.t() | nil) :: project_map()
+  @spec present(Project.t(), access(), machine(), User.t() | nil) :: View.t()
   def present(%Project{} = project, access, machine, owner) do
-    %{
+    %View{
       id: project.id,
       name: project.name,
       repo: project.repo_full_name,
