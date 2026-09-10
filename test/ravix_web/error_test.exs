@@ -125,4 +125,71 @@ defmodule RavixWeb.ErrorTest do
       refute log =~ "internal.example"
     end
   end
+
+  describe "the contexts' vocabularies are covered" do
+    # `@type reason` in each context used to end in `| term()`, so it
+    # documented four shapes and then admitted anything. With the escape
+    # hatches gone, this walks what the types now declare and holds every
+    # member to having a sentence of its own here. A context that grows a new
+    # refusal and forgets `RavixWeb.Error` fails at this line rather than in
+    # production.
+    @vocabularies %{
+      Ravix.Previews => [
+        :not_found,
+        :preview_server_down,
+        {:conflict, "closed_track", "That track is closed."},
+        {:unprocessable, "preview_config", "Supply a preview configuration."},
+        {:unavailable, "Previews are not configured."},
+        {:unavailable, "preview_replaced", "Something else took the port."}
+      ],
+      Ravix.Terminal => [
+        :not_found,
+        {:conflict, "no_machine", "The workspace is not available."},
+        {:unprocessable, "empty_command", "Type a command."},
+        {:unavailable, "no_exec", "No Sprites token."},
+        %Ravix.Sprites.Error{status: 502, message: "offline"}
+      ],
+      Ravix.Tracks => [
+        :not_found,
+        :unconfigured,
+        {:forbidden, "Only the owner can do that."},
+        {:conflict, "closed_track", "That track is closed."},
+        {:unprocessable, "bad_origin", "That origin is not one of the four."},
+        {:unavailable, "no_fountain", "No Fountain account is configured."},
+        %Ravix.Fountain.Error{status: 502, code: "bad_gateway", message: "no", kind: :http},
+        %Ravix.GitHub.Error{status: 403, message: "denied"}
+      ]
+    }
+
+    test "every refusal each context declares has a sentence, and none is the generic 500" do
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          for {context, reasons} <- @vocabularies, reason <- reasons do
+            error = Error.from(reason)
+
+            refute error.code == "internal",
+                   "#{inspect(context)} can return #{inspect(reason)} and it falls through to 500"
+
+            assert error.message != "",
+                   "#{inspect(context)} can return #{inspect(reason)} with no sentence"
+          end
+        end)
+
+      # And nothing above reached the catch-all, which logs when it fires.
+      refute log =~ "no RavixWeb.Error clause"
+    end
+
+    test "the escape hatches are gone and stay gone" do
+      # The point of the exercise: a context cannot quietly widen its refusals
+      # again without this failing.
+      for path <- ~w(lib/ravix/previews.ex lib/ravix/terminal.ex lib/ravix/tracks.ex) do
+        source = File.read!(path)
+        [_, reason_type] = Regex.run(~r/@type reason ::(.*?)\n\n/s, source)
+
+        refute reason_type =~ "term()",
+               "#{path} admits any term as a refusal again; every one needs a clause in " <>
+                 "RavixWeb.Error.from/2, and `| term()` is how that stops being checkable."
+      end
+    end
+  end
 end
