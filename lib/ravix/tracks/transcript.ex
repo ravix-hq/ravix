@@ -237,7 +237,7 @@ defmodule Ravix.Tracks.Transcript do
 
   defp empty_acc, do: Turn.empty_fold()
   defp fold(event, runtime, acc), do: output(event, runtime, acc)
-  defp blocks_of({blocks, _tools}), do: Enum.reverse(blocks)
+  defp blocks_of(blocks), do: Enum.reverse(blocks)
 
   @doc """
   Has Fountain closed this turn? `stage: "turn"` in any state other than
@@ -307,7 +307,7 @@ defmodule Ravix.Tracks.Transcript do
   # as such -- it named a billing page on the deployment that found this, which
   # is exactly the kind of sentence that must not be swallowed.
   defp output(%Event{kind: :stage, state: "failed"} = event, _runtime, acc) do
-    push(acc, %Block.Failure{stage: event.stage, body: failure_reason(event)})
+    [%Block.Failure{stage: event.stage, body: failure_reason(event)} | acc]
   end
 
   defp output(_event, _runtime, acc), do: acc
@@ -354,7 +354,7 @@ defmodule Ravix.Tracks.Transcript do
         Enum.reduce(Blocks.from_update(update), acc, &apply_block(&1, update, ts, &2))
 
       {:invalid, raw} ->
-        push(acc, %Block.Raw{body: raw})
+        [%Block.Raw{body: raw} | acc]
 
       _ ->
         acc
@@ -367,34 +367,22 @@ defmodule Ravix.Tracks.Transcript do
   defp apply_block(%{kind: :thinking, body: body}, _update, ts, acc),
     do: push_text(acc, Block.Thinking, body, ts)
 
-  defp apply_block(%{kind: :tool_use} = block, update, ts, {blocks, tools}) do
-    tool = Block.tool(block, ts, detail(Detail.new(), update))
-    tools = if is_binary(block.id), do: Map.put(tools, block.id, length(blocks)), else: tools
-    {[tool | blocks], tools}
-  end
+  defp apply_block(%{kind: :tool_use} = block, update, ts, blocks),
+    do: [Block.tool(block, ts, detail(Detail.new(), update)) | blocks]
 
-  defp apply_block(%{kind: :tool_result, tool_id: id} = block, update, ts, {blocks, tools} = acc) do
-    case Map.fetch(tools, id) do
-      {:ok, index} ->
-        position = length(blocks) - 1 - index
-
-        blocks =
-          List.update_at(blocks, position, fn tool ->
-            %{
-              tool
-              | status: if(block.error?, do: :error, else: :done),
-                output: block.body,
-                ended_at: ts,
-                detail: detail(tool.detail, update)
-            }
-          end)
-
-        {blocks, tools}
-
-      :error ->
-        acc
-    end
-  end
+  # A result is paired onto its call by matching the struct that carries the
+  # id, not by an offset remembered when the call went past. The offset
+  # version was a transliteration of `tools[id] = blocks.length - 1`: it kept
+  # a second map beside the blocks, converted forward index to reverse
+  # position with `length(blocks) - 1 - index`, and was correct only while
+  # nothing ever changed the length of the list in between. Matching asks the
+  # list directly, so no invariant has to hold and no second map has to exist.
+  #
+  # A `tool_id` that is not a string pairs with nothing --- a `%Tool{id: nil}`
+  # would otherwise match one --- so those fall to the catch-all below.
+  defp apply_block(%{kind: :tool_result, tool_id: id} = block, update, ts, blocks)
+       when is_binary(id),
+       do: pair_result(blocks, id, block, update, ts)
 
   # Permission requests and anything the ACP library adds later have no
   # rendering in the transcript yet; they are dropped rather than drawn as
@@ -405,14 +393,31 @@ defmodule Ravix.Tracks.Transcript do
   # first and last chunk that landed in it. `%module{}` binds the struct at
   # the head of the list and the second argument matches against it, which is
   # the struct-name-as-tag version of the `kind` field these blocks carried.
-  defp push_text({[%module{} = last | rest], tools}, module, body, ts) do
-    {[%{last | body: last.body <> body, ended_at: ts || last.ended_at} | rest], tools}
+  defp push_text([%module{} = last | rest], module, body, ts),
+    do: [%{last | body: last.body <> body, ended_at: ts || last.ended_at} | rest]
+
+  defp push_text(blocks, module, body, ts),
+    do: [struct!(module, body: body, started_at: ts, ended_at: ts) | blocks]
+
+  # The tool the result belongs to, updated in place. Not found is the list
+  # unchanged: a result whose call this turn never saw is dropped, as it was.
+  defp pair_result([%Block.Tool{id: id} = tool | rest], id, result, update, ts) do
+    [
+      %{
+        tool
+        | status: if(result.error?, do: :error, else: :done),
+          output: result.body,
+          ended_at: ts,
+          detail: detail(tool.detail, update)
+      }
+      | rest
+    ]
   end
 
-  defp push_text(acc, module, body, ts),
-    do: push(acc, struct!(module, body: body, started_at: ts, ended_at: ts))
+  defp pair_result([block | rest], id, result, update, ts),
+    do: [block | pair_result(rest, id, result, update, ts)]
 
-  defp push({blocks, tools}, block), do: {[block | blocks], tools}
+  defp pair_result([], _id, _result, _update, _ts), do: []
 
   # ── tool detail (src/lib/tools.ts) ────────────────────────────────────
 
