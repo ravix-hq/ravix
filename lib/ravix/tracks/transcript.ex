@@ -38,6 +38,7 @@ defmodule Ravix.Tracks.Transcript do
 
   alias Managoat.ACP.Blocks
   alias Managoat.ACP.Protocol
+  alias Ravix.Fountain.Shapes.Turn
   alias Ravix.Tracks.Transcript.Event
 
   @acp_runtimes ~w(claude codex opencode)
@@ -169,21 +170,29 @@ defmodule Ravix.Tracks.Transcript do
 
   # ── one turn ──────────────────────────────────────────────────────────
 
-  @doc "A Fountain turn as the `TurnRecord` of `shared/api.ts`."
-  @spec turn_record(map()) :: %{
+  @doc """
+  A `Ravix.Fountain.Shapes.Turn` as the page carries it.
+
+  The page's turns are maps because a turn grows `events` and `blocks` as the
+  transcript folds output into it; this is the part that comes off the wire.
+  It used to read each field as `raw["id"] || raw[:id]`, accepting either
+  spelling from a map with no shape at all. The shape is the boundary's now,
+  and this only has to change containers.
+  """
+  @spec turn_record(Turn.t()) :: %{
           id: String.t(),
           prompt: String.t() | nil,
           origin: String.t() | nil,
           status: String.t() | nil,
           inserted_at: String.t() | nil
         }
-  def turn_record(raw) do
+  def turn_record(%Turn{} = turn) do
     %{
-      id: to_string(raw["id"] || raw[:id]),
-      prompt: string_or_nil(raw["prompt"] || raw[:prompt]),
-      origin: string_or_nil(raw["origin"] || raw[:origin]),
-      status: string_or_nil(raw["status"] || raw[:status]),
-      inserted_at: string_or_nil(raw["inserted_at"] || raw[:inserted_at])
+      id: turn.id,
+      prompt: turn.prompt,
+      origin: turn.origin,
+      status: turn.status,
+      inserted_at: turn.inserted_at
     }
   end
 
@@ -525,7 +534,4 @@ defmodule Ravix.Tracks.Transcript do
 
   defp has_text?(text) when is_binary(text), do: String.trim(text) != ""
   defp has_text?(_), do: false
-
-  defp string_or_nil(value) when is_binary(value), do: value
-  defp string_or_nil(_), do: nil
 end

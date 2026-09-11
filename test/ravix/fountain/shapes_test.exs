@@ -2,7 +2,7 @@ defmodule Ravix.Fountain.ShapesTest do
   use ExUnit.Case, async: true
 
   alias Ravix.Fountain.Shapes
-  alias Ravix.Fountain.Shapes.{Conversation, Sandbox}
+  alias Ravix.Fountain.Shapes.{Conversation, Sandbox, Turn}
 
   describe "conversation/1" do
     test "reads the fields the rest of Ravix asks for" do
@@ -146,6 +146,34 @@ defmodule Ravix.Fountain.ShapesTest do
 
     test "nothing is nil" do
       assert Shapes.newest([]) == nil
+    end
+  end
+
+  describe "turn/1" do
+    test "reads the prompt and what became of it" do
+      assert %Turn{
+               id: "t1",
+               prompt: "hi",
+               origin: "api",
+               status: "done",
+               inserted_at: "2026-09-09T00:00:00Z"
+             } =
+               Shapes.turn(%{
+                 "id" => "t1",
+                 "prompt" => "hi",
+                 "origin" => "api",
+                 "status" => "done",
+                 "inserted_at" => "2026-09-09T00:00:00Z"
+               })
+    end
+
+    test "a numbered turn is keyed as a string, because the transcript keys on it" do
+      assert %Turn{id: "17"} = Shapes.turn(%{"id" => 17})
+    end
+
+    test "a field that is not a string is nothing, not a coerced something" do
+      assert %Turn{prompt: nil, origin: nil, status: nil, inserted_at: nil} =
+               Shapes.turn(%{"id" => "t", "prompt" => 5, "origin" => %{}, "status" => ["x"]})
     end
   end
 

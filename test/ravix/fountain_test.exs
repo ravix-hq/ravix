@@ -5,7 +5,7 @@ defmodule Ravix.FountainTest do
 
   alias Ravix.Fountain
   alias Ravix.Fountain.{Client, Error, FakeTransport}
-  alias Ravix.Fountain.Shapes.{Conversation, Sandbox}
+  alias Ravix.Fountain.Shapes.{Conversation, Sandbox, Turn}
 
   @auth {"authorization", "Bearer fake-key"}
 
@@ -454,7 +454,9 @@ defmodule Ravix.FountainTest do
 
       assert :ok = Fountain.interrupt(client, "c1")
       assert :ok = Fountain.terminate(client, "c1")
-      assert {:ok, [%{"id" => "t1", "prompt" => "hi"}]} = Fountain.turns(client, "c1")
+
+      assert {:ok, [%Turn{id: "t1", prompt: "hi", origin: "api", status: "done"}]} =
+               Fountain.turns(client, "c1")
     end
 
     test "terminate on a conversation that is gone is a not-found error" do

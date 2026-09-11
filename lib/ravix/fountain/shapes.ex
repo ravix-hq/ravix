@@ -82,6 +82,29 @@ defmodule Ravix.Fountain.Shapes do
           }
   end
 
+  defmodule Turn do
+    @moduledoc """
+    One prompt and what became of it, as `GET /api/conversations/:id/turns`
+    lists it.
+
+    Turns live apart from the output: the events carry what the machine said,
+    and this carries what it was asked and whether the asking finished.
+    `status` and `origin` stay strings -- Fountain's own vocabularies, which
+    the transcript reports rather than branches on.
+    """
+
+    @enforce_keys [:id, :prompt, :origin, :status, :inserted_at]
+    defstruct @enforce_keys
+
+    @type t :: %__MODULE__{
+            id: String.t(),
+            prompt: String.t() | nil,
+            origin: String.t() | nil,
+            status: String.t() | nil,
+            inserted_at: String.t() | nil
+          }
+  end
+
   defmodule Sandbox do
     @moduledoc "A sandbox, as `GET /api/sandboxes/:id` serves it."
 
@@ -125,6 +148,29 @@ defmodule Ravix.Fountain.Shapes do
   @doc "A list of conversations, from the JSON Fountain sent."
   @spec conversations([map()]) :: [Conversation.t()]
   def conversations(raw) when is_list(raw), do: Enum.map(raw, &conversation/1)
+
+  @doc """
+  One turn, from the JSON Fountain sent.
+
+  `id` is stringified because Fountain numbers turns and the transcript keys
+  on them; everything else is a string or nothing. A field that came as
+  something other than a string is nothing rather than a coerced one, which
+  is what `string_or_nil/1` in the transcript did before this.
+  """
+  @spec turn(map()) :: Turn.t()
+  def turn(raw) when is_map(raw) do
+    %Turn{
+      id: to_string(raw["id"]),
+      prompt: string_or_nil(raw["prompt"]),
+      origin: string_or_nil(raw["origin"]),
+      status: string_or_nil(raw["status"]),
+      inserted_at: string_or_nil(raw["inserted_at"])
+    }
+  end
+
+  @doc "A list of turns, from the JSON Fountain sent."
+  @spec turns([map()]) :: [Turn.t()]
+  def turns(raw) when is_list(raw), do: Enum.map(raw, &turn/1)
 
   @doc "One sandbox, from the JSON Fountain sent."
   @spec sandbox(map()) :: Sandbox.t()
@@ -179,4 +225,7 @@ defmodule Ravix.Fountain.Shapes do
   end
 
   defp time(_other), do: nil
+
+  defp string_or_nil(value) when is_binary(value), do: value
+  defp string_or_nil(_value), do: nil
 end

@@ -2,6 +2,7 @@ defmodule RavixWeb.TrackLiveTest do
   use RavixWeb.ConnCase, async: false
   import Phoenix.LiveViewTest
   import Mimic
+  alias Ravix.Fountain.Shapes
   alias Ravix.Hub.Event
   alias Ravix.{People, Previews, PromptQueue, QueryCount, Repo, Terminal, Tracks, Vitals}
   alias Ravix.PromptQueue.View, as: QueuedPrompt
@@ -694,7 +695,8 @@ defmodule RavixWeb.TrackLiveTest do
         %{"id" => id, "turn_id" => "turn", "kind" => "output", "stream" => "acp", "data" => data}
       end)
 
-    page = Transcript.page([%{"id" => "turn", "prompt" => "User prompt"}], events, "claude")
+    turns = Shapes.turns([%{"id" => "turn", "prompt" => "User prompt"}])
+    page = Transcript.page(turns, events, "claude")
     stub(Tracks, :events, fn _, _ -> {:ok, page} end)
     render_click(ctx.view, "retry-load")
     html = render_async(ctx.view)
