@@ -43,6 +43,7 @@ defmodule Ravix.Tracks do
   alias Ravix.Accounts.User
   alias Ravix.Fountain
   alias Ravix.Fountain.Client
+  alias Ravix.Fountain.Launch
   alias Ravix.Fountain.Shapes.Conversation
   alias Ravix.Hub
   alias Ravix.Ids
@@ -60,6 +61,7 @@ defmodule Ravix.Tracks do
     Header,
     Names,
     Origin,
+    Plan,
     Store,
     Track,
     Transcript,
@@ -265,6 +267,8 @@ defmodule Ravix.Tracks do
 
   # Everything a new track is called, decided before anything wakes the box:
   # the conversation Fountain is asked for, and the row that will remember it.
+  # See `Ravix.Tracks.Plan`.
+  @spec plan(User.t(), Project.t(), map(), MachineCache.machine()) :: Plan.t()
   defp plan(user, project, attrs, machine) do
     id = Ecto.UUID.generate()
     origin = read_origin(attrs["origin"], project)
@@ -279,9 +283,17 @@ defmodule Ravix.Tracks do
         do: origin.base,
         else: Ids.branch_for(user.login, slug, id)
 
-    %{
+    %Plan{
+      id: id,
+      project_id: project.id,
+      rev: project.rev,
+      slug: slug,
+      title: title,
+      branch: branch,
+      workdir: Ids.workdir_for(slug),
+      created_by_login: user.login,
       origin: origin,
-      conversation: %{
+      conversation: %Launch{
         agent_id: project.agent_id,
         environment_id: project.environment_id,
         vault_id: project.vault_id,
@@ -293,30 +305,15 @@ defmodule Ravix.Tracks do
         # provisioning start answering 422. On an attach it is sent separately
         # afterwards, where a machine at capacity can be reported and retried.
         prompt: if(machine, do: nil, else: opening_prompt(slug, branch, project, origin))
-      },
-      row: %{
-        id: id,
-        project_id: project.id,
-        slug: slug,
-        title: title,
-        branch: branch,
-        workdir: Ids.workdir_for(slug),
-        origin_kind: origin.kind,
-        origin_base: origin.base,
-        origin_number: origin.number,
-        origin_title: origin.title,
-        origin_url: origin.url,
-        rev: project.rev,
-        created_by_login: user.login
       }
     }
   end
 
   # The conversation on Fountain, then the row that remembers it.
-  defp cut(client, %{conversation: conversation, row: row}) do
+  defp cut(client, %Plan{} = plan) do
     with {:ok, %Conversation{id: conversation_id}} <-
-           Fountain.create_conversation(client, conversation) do
-      Store.create_track(Map.put(row, :conversation_id, conversation_id))
+           Fountain.create_conversation(client, plan.conversation) do
+      Store.create_track(Plan.track_attrs(plan, conversation_id))
     end
   end
 

@@ -4,13 +4,30 @@ defmodule Ravix.FountainTest do
   import ExUnit.CaptureLog
 
   alias Ravix.Fountain
-  alias Ravix.Fountain.{Client, Error, FakeTransport}
+  alias Ravix.Fountain.{Client, Error, FakeTransport, Launch}
   alias Ravix.Fountain.Shapes
   alias Ravix.Fountain.Shapes.{Conversation, Sandbox, Turn}
 
   @auth {"authorization", "Bearer fake-key"}
 
   defp fake(expectations, opts \\ []), do: FakeTransport.client(expectations, opts)
+
+  # All seven fields, spelled out, with the values that put nothing on the
+  # wire; each test then names only the ones it is about. `struct!/2` and not
+  # a map merge, so a field misspelled in a test raises here rather than
+  # silently testing the default.
+  defp launch(fields \\ []) do
+    %Launch{
+      agent_id: "a",
+      environment_id: nil,
+      vault_id: nil,
+      sandbox_id: nil,
+      channel_id: "ch",
+      title: nil,
+      prompt: nil
+    }
+    |> struct!(fields)
+  end
 
   # ── the client ──────────────────────────────────────────────────────────
 
@@ -59,8 +76,7 @@ defmodule Ravix.FountainTest do
       assert {:error, :unconfigured} = Fountain.list_conversations(client)
       assert {:error, :unconfigured} = Fountain.get_conversation(client, "c")
 
-      assert {:error, :unconfigured} =
-               Fountain.create_conversation(client, %{agent_id: "a", channel_id: "ch"})
+      assert {:error, :unconfigured} = Fountain.create_conversation(client, launch())
 
       assert {:error, :unconfigured} = Fountain.prompt(client, "c", "hi")
       assert {:error, :unconfigured} = Fountain.interrupt(client, "c")
@@ -324,15 +340,17 @@ defmodule Ravix.FountainTest do
         ])
 
       assert {:ok, %Conversation{id: "c1", status: :pending}} =
-               Fountain.create_conversation(client, %{
-                 agent_id: "agent-1",
-                 environment_id: "env-1",
-                 vault_id: "vault-1",
-                 sandbox_id: nil,
-                 title: "Fix the build",
-                 channel_id: "ravix:p1:fix-the-build:1",
-                 prompt: "Open the track."
-               })
+               Fountain.create_conversation(
+                 client,
+                 launch(
+                   agent_id: "agent-1",
+                   environment_id: "env-1",
+                   vault_id: "vault-1",
+                   title: "Fix the build",
+                   channel_id: "ravix:p1:fix-the-build:1",
+                   prompt: "Open the track."
+                 )
+               )
     end
 
     test "attaching: sandbox_id instead of a mode, no prompt, blanks left off" do
@@ -351,14 +369,16 @@ defmodule Ravix.FountainTest do
         ])
 
       assert {:ok, %Conversation{id: "c2", status: :other}} =
-               Fountain.create_conversation(client, %{
-                 agent_id: "agent-1",
-                 environment_id: "env-1",
-                 vault_id: nil,
-                 sandbox_id: "sb-1",
-                 title: "",
-                 channel_id: "ravix:p1:next:1"
-               })
+               Fountain.create_conversation(
+                 client,
+                 launch(
+                   agent_id: "agent-1",
+                   environment_id: "env-1",
+                   sandbox_id: "sb-1",
+                   title: "",
+                   channel_id: "ravix:p1:next:1"
+                 )
+               )
     end
 
     test "an identity mismatch comes back with Fountain's code" do
@@ -374,11 +394,10 @@ defmodule Ravix.FountainTest do
 
       capture_log(fn ->
         assert {:error, %Error{status: 409, code: "sandbox_identity_mismatch"} = error} =
-                 Fountain.create_conversation(client, %{
-                   agent_id: "agent-1",
-                   channel_id: "ch",
-                   sandbox_id: "sb-1"
-                 })
+                 Fountain.create_conversation(
+                   client,
+                   launch(agent_id: "agent-1", channel_id: "ch", sandbox_id: "sb-1")
+                 )
 
         assert %{status: 409, code: "identity_mismatch"} = Error.as_http(error, "open this track")
       end)
