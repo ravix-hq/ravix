@@ -5,7 +5,7 @@ defmodule Ravix.SpritesTest do
 
   alias Ravix.Sprites
   alias Ravix.Sprites.Error
-  alias Ravix.Sprites.Shapes.Service
+  alias Ravix.Sprites.Shapes.{Exec, Service}
   alias Ravix.SpritesFake, as: Fake
 
   @cfg Fake.config()
@@ -15,12 +15,12 @@ defmodule Ravix.SpritesTest do
   describe "decode_frames/1" do
     test "stdout and stderr stay separate, and the exit code arrives" do
       raw = Fake.frame(1, "out") <> Fake.frame(2, "err") <> <<3, 3>>
-      assert Sprites.decode_frames(raw) == %{stdout: "out", stderr: "err", code: 3}
+      assert Sprites.decode_frames(raw) == %Exec{stdout: "out", stderr: "err", code: 3}
     end
 
     test "a frame ends at the next id byte, so interleaved output reassembles in order" do
       raw = Fake.frame(1, "a") <> Fake.frame(2, "E") <> Fake.frame(1, "b") <> <<3, 0>>
-      assert Sprites.decode_frames(raw) == %{stdout: "ab", stderr: "E", code: 0}
+      assert Sprites.decode_frames(raw) == %Exec{stdout: "ab", stderr: "E", code: 0}
     end
 
     test "no exit frame reads as success rather than as a crash" do
@@ -30,11 +30,11 @@ defmodule Ravix.SpritesTest do
     end
 
     test "an empty body is not an error" do
-      assert Sprites.decode_frames(<<>>) == %{stdout: "", stderr: "", code: 0}
+      assert Sprites.decode_frames(<<>>) == %Exec{stdout: "", stderr: "", code: 0}
     end
 
     test "bytes that are not UTF-8 are replaced rather than passed to the page" do
-      assert %{stdout: "a�b"} = Sprites.decode_frames(Fake.frame(1, <<?a, 0xFF, ?b>>))
+      assert %Exec{stdout: "a�b"} = Sprites.decode_frames(Fake.frame(1, <<?a, 0xFF, ?b>>))
     end
   end
 
@@ -235,15 +235,14 @@ defmodule Ravix.SpritesTest do
       Fake.exec_response(conn, "a.ex\nb.ex\n\n__ravix_cwd__/home/sprite/work/it's/src\n", "", 0)
     end)
 
-    assert {:ok,
-            %{stdout: "a.ex\nb.ex\n", stderr: "", code: 0, cwd: "/home/sprite/work/it's/src"}} =
+    assert {:ok, %Exec{stdout: "a.ex\nb.ex\n", stderr: "", code: 0}, "/home/sprite/work/it's/src"} =
              Sprites.shell(@cfg, "s", "cd src && ls", "/home/sprite/work/it's", 30)
   end
 
   test "shell keeps the cwd it was given when the marker never printed" do
     Fake.install(fn conn, _call -> Fake.exec_response(conn, "partial", "killed", 137) end)
 
-    assert {:ok, %{stdout: "partial", stderr: "killed", code: 137, cwd: "/w"}} =
+    assert {:ok, %Exec{stdout: "partial", stderr: "killed", code: 137}, "/w"} =
              Sprites.shell(@cfg, "s", "sleep 100", "/w", 1)
   end
 
