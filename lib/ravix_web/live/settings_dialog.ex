@@ -256,7 +256,7 @@ defmodule RavixWeb.Live.SettingsDialog do
             list="runtime-options"
           />
           <datalist id="runtime-options">
-            <option :for={runtime <- (@settings.catalog || %{})["runtimes"] || []} value={runtime} />
+            <option :for={runtime <- @settings.catalog.runtimes} value={runtime} />
           </datalist>
           <.input field={f[:model]} id="settings-model" label="Model" />
           <.input

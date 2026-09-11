@@ -276,7 +276,8 @@ defmodule Ravix.Projects do
   end
 
   @doc "The runtime and model, reconciled with what this Fountain actually has. See `Ravix.Projects.Machine.pick_runtime/1`."
-  @spec pick_runtime(map() | nil) :: %{runtime: String.t(), model: String.t()}
+  @spec pick_runtime(Ravix.Fountain.Shapes.Catalog.t()) ::
+          %{runtime: String.t(), model: String.t()}
   defdelegate pick_runtime(catalog), to: Machine
 
   @doc "`refresh_clone_token/2` on this deployment's Fountain client."

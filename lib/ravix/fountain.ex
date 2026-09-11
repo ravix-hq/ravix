@@ -50,9 +50,17 @@ defmodule Ravix.Fountain do
 
   # ── what this Fountain can do ─────────────────────────────────────────
 
-  @doc "`GET /api/catalog`: the runtimes, models and package managers this Fountain runs."
-  @spec catalog(Client.t()) :: result(record())
-  def catalog(client), do: data(client, "GET", "/api/catalog")
+  @doc """
+  `GET /api/catalog`: the runtimes and models this Fountain runs.
+
+  A `Ravix.Fountain.Shapes.Catalog`, not the record. It also serves
+  `package_managers` and `mcp_servers`, which nothing here reads; see the
+  shape for why they are not carried.
+  """
+  @spec catalog(Client.t()) :: result(Shapes.Catalog.t())
+  def catalog(client) do
+    with {:ok, raw} <- data(client, "GET", "/api/catalog"), do: {:ok, Shapes.catalog(raw)}
+  end
 
   @doc "`GET /api/auth/me`: the account the key belongs to."
   @spec me(Client.t()) :: result(record())
