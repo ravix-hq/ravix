@@ -395,7 +395,11 @@ defmodule RavixWeb.WorkspaceLiveTest do
 
     {:ok, view, _} = live(log_in_user(conn, user), "/p/#{project.id}")
     view |> element("button", "Settings") |> render_click()
-    view |> form("#settings-form", instructions: "Be precise", apt: "git curl") |> render_submit()
+
+    view
+    |> form("#settings-form", settings: [instructions: "Be precise", apt: "git curl"])
+    |> render_submit()
+
     assert render(view) =~ "Settings saved"
   end
 

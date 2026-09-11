@@ -50,6 +50,7 @@ defmodule RavixWeb.Live.Form do
           | :preview_config
           | :preview_defaults
           | :secret
+          | :settings
 
   @typedoc """
   A form's shape: the field types to cast, and which field each refusal
@@ -77,6 +78,21 @@ defmodule RavixWeb.Live.Form do
     rename_track: {%{title: :string}, %{"no_title" => :title}},
     preview_config: @preview_config,
     preview_defaults: @preview_config,
+    settings:
+      {%{
+         name: :string,
+         runtime: :string,
+         model: :string,
+         instructions: :string,
+         setup_script: :string,
+         # The three package boxes are one space-separated line each, and
+         # `Ravix.Projects.Settings.normalize_packages/1` is what turns them
+         # into the map Fountain takes. They are fields here so the form can
+         # keep what was typed across a refusal.
+         apt: :string,
+         pip: :string,
+         npm: :string
+       }, %{"invalid_runtime" => :runtime, "invalid_model" => :model, "no_name" => :name}},
     secret:
       {%{store: :string, key: :string, value: :string},
        %{

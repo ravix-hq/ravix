@@ -487,44 +487,35 @@
       on_close="dismiss"
       wide
     >
-      <form id="settings-form" phx-submit="save-settings">
-        <.input name="name" id="settings-name" label="Name" value={@settings.name} required />
-        <.input
-          name="runtime"
-          id="settings-runtime"
-          label="Harness"
-          value={@settings.runtime}
-          list="runtime-options"
-        />
+      <.form :let={f} for={@settings_form} id="settings-form" phx-submit="save-settings">
+        <.input field={f[:name]} id="settings-name" label="Name" required />
+        <.input field={f[:runtime]} id="settings-runtime" label="Harness" list="runtime-options" />
         <datalist id="runtime-options">
           <option :for={runtime <- (@settings.catalog || %{})["runtimes"] || []} value={runtime} />
         </datalist>
-        <.input name="model" id="settings-model" label="Model" value={@settings.model} />
+        <.input field={f[:model]} id="settings-model" label="Model" />
         <.input
           type="textarea"
-          name="instructions"
+          field={f[:instructions]}
           id="settings-instructions"
           label="Instructions"
-          value={@settings.instructions}
           rows="5"
         />
         <.input
           type="textarea"
-          name="setup_script"
+          field={f[:setup_script]}
           id="settings-setup"
           label="Setup script"
-          value={@settings.setup_script}
           rows="5"
         />
         <.input
           :for={kind <- ~w(apt pip npm)}
-          name={kind}
+          field={f[String.to_existing_atom(kind)]}
           id={"packages-#{kind}"}
           label={"#{kind} packages"}
-          value={Enum.join(@settings.packages[kind] || [], " ")}
         />
         <button class="primary" phx-disable-with="Saving…">Save settings</button>
-      </form>
+      </.form>
       <hr />
       <h3>Secrets</h3>
       <p>Values are write-only. Submit an empty value to remove a secret.</p>
