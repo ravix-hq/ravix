@@ -668,4 +668,55 @@ defmodule Ravix.SchemasTest do
       end
     end
   end
+
+  # -- the declared graph ---------------------------------------------------
+
+  describe "associations" do
+    # Thirty-four `belongs_to`/`has_many`/`has_one` declarations, and until
+    # this test nothing exercised most of them: there is no `Repo.preload/2`
+    # anywhere in `lib/`, and `assoc/2` appears in one file. The read paths are
+    # hand-written joins, deliberately -- `Ravix.Tracks.present_all/4` batches
+    # what a preload would fan out -- so the declarations are documentation.
+    #
+    # Documentation that nothing runs is documentation that can drift. A
+    # `belongs_to` naming a column an expand/contract migration dropped, or a
+    # `has_many` whose `foreign_key` was never renamed with its column, is
+    # wrong in a way no test and no compiler notices, right up until somebody
+    # writes the first `preload` and gets a Postgres error.
+    #
+    # So every declared association is joined through, against the real
+    # database. `limit: 0` because the question is whether Postgres accepts
+    # the columns, not what is in them.
+    test "every declared association joins against the database" do
+      for {schema, name} <- declared_associations() do
+        # Both structs are selected, not a constant: that names every column
+        # of both schemas in the SQL, so a field declared with no column
+        # behind it fails here too. `limit: 0` means no row is ever decoded.
+        query = from(s in schema, join: a in assoc(s, ^name), limit: 0, select: {s, a})
+
+        assert Repo.all(query) == [],
+               "#{inspect(schema)} declares #{name}, which does not join"
+      end
+    end
+
+    test "the walk found the whole graph, so a green run is not an empty one" do
+      found = declared_associations()
+
+      assert length(found) == 34
+      assert {Track, :project} in found
+      assert {Project, :tracks} in found
+      assert {Preview, :track} in found
+    end
+
+    defp declared_associations do
+      {:ok, modules} = :application.get_key(:ravix, :modules)
+
+      for module <- Enum.sort(modules),
+          Code.ensure_loaded?(module),
+          function_exported?(module, :__schema__, 1),
+          name <- module.__schema__(:associations) do
+        {module, name}
+      end
+    end
+  end
 end
