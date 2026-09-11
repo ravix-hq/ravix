@@ -19,6 +19,17 @@ defmodule Ravix.Previews.View do
 
   alias Ravix.Previews.Row
 
+  # The preview's own starting page polls `/__ravix/status` and reads
+  # `state`, `error` and `logs` off the JSON. Those three, and no more.
+  #
+  # `open_url` in particular must never be in it: it is a single-use ticket
+  # minted for the Ravix session that asked, and this response is served on
+  # the *preview* origin, to a page that is showing because somebody's
+  # access is still being decided. `url` is left out for the same reason it
+  # is not read --- the page navigates to `/` when the state says ready,
+  # rather than being handed a link.
+  @derive {Jason.Encoder, only: [:state, :error, :logs]}
+
   @enforce_keys [
     :available,
     :unavailable_reason,

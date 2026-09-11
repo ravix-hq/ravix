@@ -84,6 +84,15 @@ defmodule Ravix.Previews do
   """
   @type disposition :: Store.disposition()
 
+  @typedoc """
+  A browser or agent grant; see `Ravix.Previews.Store`.
+
+  Named again here for the same reason as `disposition/0`: the gateway
+  reads grants and lives in `lib/ravix_web/`, where a store may not be
+  mentioned, and a typespec is a mention.
+  """
+  @type grant :: Store.grant()
+
   @doc "The lease a heartbeat renews, in milliseconds."
   @spec lease_ms() :: pos_integer()
   def lease_ms, do: @lease_ms

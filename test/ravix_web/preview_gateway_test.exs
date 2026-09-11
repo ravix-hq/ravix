@@ -341,7 +341,14 @@ defmodule RavixWeb.PreviewGatewayTest do
 
     status = get(f, "/__ravix/status")
     assert header(status.headers, "content-type") == "application/json"
-    assert Jason.decode!(status.body)["state"] == "stopped"
+    body = Jason.decode!(status.body)
+    assert body["state"] == "stopped"
+
+    # The starting page above reads exactly `state`, `error` and `logs`, and
+    # this is served on the preview origin to somebody whose access is still
+    # being decided. `open_url` is a single-use ticket for a Ravix session
+    # and must never appear here; the rest is simply not the page's business.
+    assert Map.keys(body) |> Enum.sort() == ["error", "logs", "state"]
     assert f.tunnels.() == 0
   end
 

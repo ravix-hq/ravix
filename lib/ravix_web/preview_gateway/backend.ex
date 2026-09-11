@@ -4,54 +4,53 @@ defmodule RavixWeb.PreviewGateway.Backend do
 
   The TypeScript gateway reached into `ctx.db.previews`, `ctx.db`,
   `trackAccess` and the preview manager. Those are exactly the calls here,
-  one callback each, so the gateway can be built and tested before the
-  previews context exists and the context can implement them without
-  knowing how the proxy works. `Ravix.Previews` provides the module and it is
-  configured as `config :ravix, preview_backend: Ravix.Previews.Gateway`.
+  one callback each, so the gateway can be built and tested without the
+  previews context and the context can implement them without knowing how
+  the proxy works. `RavixWeb.PreviewGateway.RavixBackend` provides the
+  module and it is configured as
+  `config :ravix, preview_backend: RavixWeb.PreviewGateway.RavixBackend`.
 
-  Shapes the gateway reads (structs or maps, atom keys):
+  ## Why a port at all
 
-    * a preview row: `track_id`, `hostname`, `sprite`, `port`, `desired`
-      (`:running | :stopped`), `state` (`:ready | :starting | :failed |
-      :stopped`), `generation`
-    * a grant: `hash`, `track_id`, `session_hash`, `expires` (ms), `kind`
-      (`:ticket | :session`)
-    * a track: `id`, `project_id`, `closed_at`
-    * a user: `id`
+  Because of what it keeps out of the test, not because of what it lets in.
+  `test/ravix_web/preview_gateway_test.exs` stands up a real Bandit front,
+  a real upstream app, real Mint clients and a real WebSocket relay, and
+  runs `async: true` against no database. That is a proxy-machinery suite,
+  and giving it rows would make it a database suite that happens to proxy.
+
+  What the port does *not* buy is looser shapes. The callback types below
+  were `%{... optional(atom()) => term()}` maps --- structural typing,
+  wide enough that a fake could answer with a map literal and a struct
+  would satisfy the same spec. That undid the `@enforce_keys` work
+  everywhere else and had a known cost in this repository: a stub that
+  answers with a map literal hides the template bug that only browser
+  smoke then finds.
+
+  So the shapes here are the production structs. The fake builds
+  `%Ravix.Previews.Row{}`, `%Ravix.Tracks.Track{}` and
+  `%Ravix.Accounts.User{}` --- none of which needs a database, only a
+  `Repo` call does --- and a field added to one of them reaches the fake as
+  a compile error or a missing key rather than as a `nil` the gateway reads
+  as "not ready".
   """
 
-  @type row :: %{
-          :track_id => String.t(),
-          :hostname => String.t(),
-          :sprite => String.t() | nil,
-          :port => pos_integer() | nil,
-          :desired => :running | :stopped,
-          :state => atom(),
-          :generation => integer(),
-          optional(atom()) => term()
-        }
-  @type grant :: %{
-          :hash => String.t(),
-          :track_id => String.t(),
-          :session_hash => String.t(),
-          :expires => integer(),
-          :kind => :ticket | :session,
-          optional(atom()) => term()
-        }
-  @type track :: %{
-          :id => String.t(),
-          :project_id => String.t(),
-          :closed_at => term(),
-          optional(atom()) => term()
-        }
-  @type user :: %{:id => String.t(), optional(atom()) => term()}
+  @typedoc "A track's preview record. `Ravix.Previews.Row`."
+  @type row :: Ravix.Previews.Row.t()
+
+  @typedoc "A browser or agent grant, as `Ravix.Previews.grant/0` names it for this side."
+  @type grant :: Ravix.Previews.grant()
+
+  @typedoc "The track the preview belongs to. `Ravix.Tracks.Track`."
+  @type track :: Ravix.Tracks.Track.t()
+
+  @typedoc "The signed-in person. `Ravix.Accounts.User`."
+  @type user :: Ravix.Accounts.User.t()
 
   @typedoc """
   A refusal with an HTTP status. Anything else is a 502 (or, for
   `assert_open/1`, the 409 the TypeScript raised).
   """
-  @type refusal ::
-          %{:status => pos_integer(), :message => String.t(), optional(atom()) => term()} | term()
+  @type refusal :: RavixWeb.Error.t() | term()
 
   @doc "The preview row for the first label of a preview host (`ctx.db.previews.byHost`)."
   @callback resolve_host(name :: String.t()) :: {:ok, row()} | :error
@@ -92,7 +91,7 @@ defmodule RavixWeb.PreviewGateway.Backend do
   @callback grant_session(grant()) :: :ok | {:error, term()}
 
   @doc "The status page's JSON (`manager.info`)."
-  @callback info(track_id :: String.t()) :: map()
+  @callback info(track_id :: String.t()) :: Ravix.Previews.View.t()
 
   @doc "Someone is looking: extend the viewing lease (`manager.touch`)."
   @callback touch(track_id :: String.t()) :: :ok
@@ -101,7 +100,7 @@ defmodule RavixWeb.PreviewGateway.Backend do
   @callback start_service(track_id :: String.t()) :: :ok | {:error, term()}
 
   @doc "Make sure the sprite is awake and the row names it (`manager.destination`)."
-  @callback destination(track_id :: String.t()) :: {:ok, term()} | {:error, refusal()}
+  @callback destination(track_id :: String.t()) :: {:ok, row()} | {:error, refusal()}
 
   @doc "`Ravix.Config.public_url/0`."
   @callback public_url() :: String.t()
