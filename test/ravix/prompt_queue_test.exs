@@ -664,6 +664,19 @@ defmodule Ravix.PromptQueueTest do
                request_id(),
                %{}
              )
+
+    # Encoding happens before the transaction opens, so a payload too large
+    # to store is refused for being too large rather than after a row lock
+    # it was never going to use. Both refusals are still refusals; which
+    # one arrives says where the work stopped.
+    assert {:error, {:unprocessable, "prompt_too_large", _}} =
+             PromptQueue.Store.enqueue(
+               "no-such-track",
+               f.owner.id,
+               f.owner.login,
+               request_id(),
+               %{"images" => [huge]}
+             )
   end
 
   test "summaries read the payload and string keys are accepted", f do
