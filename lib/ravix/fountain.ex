@@ -247,11 +247,14 @@ defmodule Ravix.Fountain do
   end
 
   @doc "`GET /api/conversations/:id/turns`: the prompts, which live apart from the output."
-  @spec turns(Client.t(), id()) :: result([record()])
+  @spec turns(Client.t(), id()) :: result([Shapes.Turn.t()])
   def turns(client, id) do
-    call(client, "GET", "/api/conversations/#{escape(id)}/turns", fn http ->
-      Fountain.Conversation.turns(conversation(http, id))
-    end)
+    with {:ok, raw} <-
+           call(client, "GET", "/api/conversations/#{escape(id)}/turns", fn http ->
+             Fountain.Conversation.turns(conversation(http, id))
+           end) do
+      {:ok, Shapes.turns(raw)}
+    end
   end
 
   @doc """

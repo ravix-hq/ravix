@@ -109,6 +109,7 @@ end
 defmodule Ravix.TranscriptPropertiesTest do
   use ExUnit.Case, async: true
   use ExUnitProperties
+  alias Ravix.Fountain.Shapes
   alias Ravix.Tracks.Transcript
 
   property "overlapping snapshots and out-of-order live replay produce the same transcript once" do
@@ -117,7 +118,7 @@ defmodule Ravix.TranscriptPropertiesTest do
             weights <- list_of(integer(), length: length(chunks)),
             max_runs: 60
           ) do
-      turns = [%{"id" => "turn", "prompt" => "User prompt"}]
+      turns = Shapes.turns([%{"id" => "turn", "prompt" => "User prompt"}])
 
       events =
         for {chunk, id} <- Enum.with_index(chunks, 1) do

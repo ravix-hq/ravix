@@ -1,11 +1,16 @@
 defmodule Ravix.Tracks.TranscriptTest do
   use ExUnit.Case, async: true
 
+  alias Ravix.Fountain.Shapes
   alias Ravix.Tracks.Transcript
   alias Ravix.Tracks.Transcript.Event
 
   @ts "2026-09-09T10:00:00Z"
   @later "2026-09-09T10:00:05Z"
+
+  # The JSON Fountain serves, through the boundary that really decodes it.
+  # `Transcript.page/3` takes turns, not the maps they arrived as.
+  defp wire_turns(raw), do: Shapes.turns(raw)
 
   defp update(params),
     do: Jason.encode!(%{jsonrpc: "2.0", method: "session/update", params: %{update: params}})
@@ -229,7 +234,7 @@ defmodule Ravix.Tracks.TranscriptTest do
         event(4, text_chunk("new"), turn: nil)
       ]
 
-      page = Transcript.page(turns, events, "claude")
+      page = Transcript.page(wire_turns(turns), events, "claude")
       assert Enum.map(page.turns, & &1.id) == ["t1", "t2", "pending"]
       assert page.last_event_id == 4
 
@@ -247,7 +252,7 @@ defmodule Ravix.Tracks.TranscriptTest do
     test "a turn with nothing to show is not visible; lifecycle-only turns stay out of the page" do
       turns = [%{"id" => "t1", "prompt" => "  "}, %{"id" => "t2", "prompt" => "say hi"}]
       events = [event(1, nil, turn: "t1", kind: "stage", stage: "turn", state: "started")]
-      page = Transcript.page(turns, events, "claude")
+      page = Transcript.page(wire_turns(turns), events, "claude")
       assert Enum.map(Transcript.visible_turns(page), & &1.id) == ["t2"]
     end
 
@@ -258,7 +263,7 @@ defmodule Ravix.Tracks.TranscriptTest do
 
   describe "add_event/2 and add_turns/2" do
     test "a live event lands in its turn and is not counted twice" do
-      page = Transcript.page([%{"id" => "t1", "prompt" => "hi"}], [], "claude")
+      page = Transcript.page(wire_turns([%{"id" => "t1", "prompt" => "hi"}]), [], "claude")
       page = Transcript.add_event(page, event(7, text_chunk("a")))
       page = Transcript.add_event(page, event(7, text_chunk("a")))
       page = Transcript.add_event(page, event(8, text_chunk("b")))
@@ -271,15 +276,18 @@ defmodule Ravix.Tracks.TranscriptTest do
       assert [%{id: "t9", prompt: nil}] = page.turns
 
       page =
-        Transcript.add_turns(page, [
-          %{"id" => "t9", "prompt" => "do x", "inserted_at" => "2026-09-09T10:00:00Z"}
-        ])
+        Transcript.add_turns(
+          page,
+          wire_turns([
+            %{"id" => "t9", "prompt" => "do x", "inserted_at" => "2026-09-09T10:00:00Z"}
+          ])
+        )
 
       assert [%{id: "t9", prompt: "do x", blocks: [%{body: "x"}]}] = page.turns
     end
 
     test "out-of-order events still read in id order" do
-      page = Transcript.page([%{"id" => "t1", "prompt" => "hi"}], [], "claude")
+      page = Transcript.page(wire_turns([%{"id" => "t1", "prompt" => "hi"}]), [], "claude")
 
       # The blocks are folded incrementally while events arrive in order; one
       # that lands out of order has to put the turn back together.
@@ -293,11 +301,14 @@ defmodule Ravix.Tracks.TranscriptTest do
 
     test "a turn with no timestamp sorts to the end, not the top" do
       page =
-        Transcript.add_turns(Transcript.page([], [], "claude"), [
-          %{"id" => "old", "prompt" => "first", "inserted_at" => @ts},
-          %{"id" => "new", "prompt" => "just now"},
-          %{"id" => "mid", "prompt" => "second", "inserted_at" => @later}
-        ])
+        Transcript.add_turns(
+          Transcript.page([], [], "claude"),
+          wire_turns([
+            %{"id" => "old", "prompt" => "first", "inserted_at" => @ts},
+            %{"id" => "new", "prompt" => "just now"},
+            %{"id" => "mid", "prompt" => "second", "inserted_at" => @later}
+          ])
+        )
 
       # Treating a missing timestamp as the empty string made it the earliest
       # thing in the transcript, so a just-created turn rendered above the
@@ -308,7 +319,7 @@ defmodule Ravix.Tracks.TranscriptTest do
     test "live?/2 is true only for a running, unsettled last turn" do
       page =
         Transcript.page(
-          [%{"id" => "t1", "prompt" => "hi"}],
+          wire_turns([%{"id" => "t1", "prompt" => "hi"}]),
           [event(1, text_chunk("a"))],
           "claude"
         )
