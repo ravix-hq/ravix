@@ -202,7 +202,7 @@ defmodule Ravix.Tracks do
              last_read: People.Store.last_read_of(track.id, user.id)
            ),
          header: header,
-         starters: Spec.starters(%{has_repo: not is_nil(project.repo_full_name)})
+         starters: Spec.starters(project)
        }}
     end
   end
@@ -368,14 +368,8 @@ defmodule Ravix.Tracks do
     :ok
   end
 
-  defp opening_prompt(slug, branch, project, origin) do
-    Spec.open_track_prompt(%{
-      slug: slug,
-      branch: branch,
-      repo_path: repo_path(project),
-      origin: origin
-    })
-  end
+  defp opening_prompt(slug, branch, project, origin),
+    do: Spec.open_track_prompt(project, origin, slug, branch)
 
   # ── talking to it ─────────────────────────────────────────────────────
 
@@ -564,12 +558,10 @@ defmodule Ravix.Tracks do
 
       if track.conversation_id do
         prompt =
-          Spec.close_track_prompt(%{
-            slug: track.slug,
-            repo_path: repo_path(project),
+          Spec.close_track_prompt(project, track.slug,
             force: Keyword.get(opts, :force, false) == true,
             delete_branch: if(Keyword.get(opts, :delete_branch, false) == true, do: track.branch)
-          })
+          )
 
         Fountain.prompt(client, track.conversation_id, prompt)
         Fountain.terminate(client, track.conversation_id)
@@ -886,11 +878,6 @@ defmodule Ravix.Tracks do
     end) ||
       "#{base}-#{Integer.to_string(System.system_time(:millisecond), 36) |> String.downcase()}"
   end
-
-  defp repo_path(%Project{repo_full_name: repo}) when is_binary(repo) and repo != "",
-    do: Ids.mount_path_for(repo)
-
-  defp repo_path(_project), do: nil
 
   defp setup_script?(%{"setup_script" => script}) when is_binary(script),
     do: String.trim(script) != ""
