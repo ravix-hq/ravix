@@ -149,13 +149,18 @@ defmodule Ravix.PreviewsFixture do
   @doc "Stub configuration, the provider, the machine, readiness and the clock for this test."
   @spec stub_provider(pid()) :: :ok
   def stub_provider(pid) do
-    stub(Ravix.Config, :sprites, fn -> %{token: "test", base_url: "http://sprites.test"} end)
+    stub(Ravix.Config, :sprites, fn ->
+      %Ravix.Config.Sprites{token: "test", base_url: "http://sprites.test"}
+    end)
 
     stub(Ravix.Config, :previews, fn ->
       %{domain: "preview.localhost", protocol: :http, public_port: ":5183"}
     end)
 
-    stub(Ravix.Config, :fountain, fn -> %{url: "http://fountain.test", key: "test"} end)
+    stub(Ravix.Config, :fountain, fn ->
+      %Ravix.Config.Fountain{url: "http://fountain.test", key: "test"}
+    end)
+
     stub(Ravix.Config, :public_url, fn -> "http://localhost:5183" end)
 
     stub(Clock, :now_ms, fn -> now(pid) end)

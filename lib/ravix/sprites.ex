@@ -51,8 +51,13 @@ defmodule Ravix.Sprites do
   @service_timeout 25_000
   @cwd_marker "__ravix_cwd__"
 
-  @typedoc "The Sprites API token and base URL, or nil when there is none."
-  @type config :: %{token: String.t(), base_url: String.t()} | nil
+  @typedoc """
+  The Sprites API token and base URL, or nil when there is none.
+
+  `Ravix.Config.Sprites`, which redacts the token from `Inspect`; every
+  function here takes one as its first argument, so it travels widely.
+  """
+  @type config :: Ravix.Config.Sprites.t() | nil
 
   @typedoc "A managed service as Sprites describes it. See `Ravix.Sprites.Shapes`."
   @type service :: Shapes.Service.t()

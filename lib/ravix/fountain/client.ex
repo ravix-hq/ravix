@@ -12,7 +12,17 @@ defmodule Ravix.Fountain.Client do
   `FOUNTAIN_API_KEY`, `FOUNTAIN_TOKEN` and `~/.fountain/credentials`, and a
   Ravix whose config says "no key" must not quietly pick one up from the
   operator's shell. The `Fountain.Config` is built here, from our config alone.
+
+  `:http` is excluded from `Inspect` because the key is three structs down
+  inside it (`Fountain.HTTP` holds a `Fountain.Config`, which holds
+  `api_key`) and the SDK does not redact its own. A client is passed as an
+  argument to most of `Ravix.Fountain`, so anything that inspects one --- a
+  crash report, a log line, `dbg/1` --- would otherwise print the key every
+  machine on this deployment runs on. `configured?/1` is the question
+  callers actually ask of it, and it survives the redaction.
   """
+
+  @derive {Inspect, except: [:http]}
 
   @type t :: %__MODULE__{http: Fountain.HTTP.t() | nil, base_url: String.t()}
 

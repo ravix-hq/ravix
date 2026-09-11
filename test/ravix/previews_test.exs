@@ -115,8 +115,8 @@ defmodule Ravix.PreviewsTest do
              url: nil
            } = Previews.info(t1.id)
 
-    stub(Ravix.Config, :sprites, fn -> %{token: "t", base_url: "u"} end)
-    stub(Ravix.Config, :fountain, fn -> %{url: "u", key: nil} end)
+    stub(Ravix.Config, :sprites, fn -> %Ravix.Config.Sprites{token: "t", base_url: "u"} end)
+    stub(Ravix.Config, :fountain, fn -> %Ravix.Config.Fountain{url: "u", key: nil} end)
 
     assert %{unavailable_reason: "Previews unavailable: Fountain is not configured."} =
              Previews.info(t1.id)

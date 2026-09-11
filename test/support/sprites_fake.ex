@@ -46,7 +46,8 @@ defmodule Ravix.SpritesFake do
 
   @doc "A config pointed at the fake API."
   @spec config() :: Ravix.Sprites.config()
-  def config, do: %{token: "provider-token", base_url: "http://sprites.test"}
+  def config,
+    do: %Ravix.Config.Sprites{token: "provider-token", base_url: "http://sprites.test"}
 
   @doc "Route this test's Sprites API requests to `handler`, which answers with the conn."
   @spec install((Plug.Conn.t(), call() -> Plug.Conn.t())) :: :ok
@@ -125,7 +126,7 @@ defmodule Ravix.SpritesFake do
   @spec start_proxy(keyword()) :: Ravix.Sprites.config()
   def start_proxy(opts \\ []) do
     port = start_bandit({__MODULE__.Proxy, token: Keyword.get(opts, :token, @token)})
-    %{token: @token, base_url: "http://127.0.0.1:#{port}"}
+    %Ravix.Config.Sprites{token: @token, base_url: "http://127.0.0.1:#{port}"}
   end
 
   @doc "Start the app inside the sprite on a loopback port and return that port."
