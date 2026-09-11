@@ -957,5 +957,26 @@ defmodule Ravix.GitHubTest do
     end
   end
 
+  # ── supervision ──────────────────────────────────────────────────────
+
+  describe "the cache's processes" do
+    test "are both children of the application supervisor" do
+      children =
+        Ravix.Supervisor
+        |> Supervisor.which_children()
+        |> Map.new(fn {id, pid, _type, _mods} -> {id, pid} end)
+
+      assert is_pid(children[Cache])
+      assert is_pid(children[Ravix.GitHub.Cache.Checks])
+    end
+
+    test "own the tables, so neither is conjured by a caller" do
+      assert :ets.info(:ravix_github_cache, :owner) == Process.whereis(Cache)
+
+      assert :ets.info(Ravix.GitHub.Cache.Checks, :owner) ==
+               Process.whereis(Ravix.GitHub.Cache.Checks)
+    end
+  end
+
   defp pad(n), do: String.pad_leading(Integer.to_string(n), 2, "0")
 end
