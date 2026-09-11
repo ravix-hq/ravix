@@ -3,6 +3,7 @@ defmodule Ravix.VitalsTest do
 
   import Mimic
 
+  alias Ravix.MachineCache.Machine
   alias Ravix.Vitals
   alias Ravix.Vitals.{Readings, Report}
 
@@ -162,7 +163,7 @@ defmodule Ravix.VitalsTest do
 
       stub(Ravix.Tracks, :machine_of, fn _ -> {:ok, nil} end)
       assert {:ok, %Report{available: false, why: :no_machine}} = Vitals.report(owner, track.id)
-      stub(Ravix.Tracks, :machine_of, fn _ -> {:ok, %{sandbox_id: "box"}} end)
+      stub(Ravix.Tracks, :machine_of, fn _ -> {:ok, %Machine{sandbox_id: "box"}} end)
       stub(Ravix.Tracks, :sprite_for, fn "box" -> nil end)
       assert {:ok, %Report{available: false, why: :no_sprite}} = Vitals.report(owner, track.id)
       stub(Ravix.Tracks, :sprite_for, fn "box" -> "sprite" end)

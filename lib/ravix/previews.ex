@@ -33,6 +33,7 @@ defmodule Ravix.Previews do
   alias Ravix.Accounts.User
   alias Ravix.Clock
   alias Ravix.Crypto
+  alias Ravix.MachineCache.Machine
   alias Ravix.Previews.{Agent, Config, Grant, Row, Server, Store, View}
   alias Ravix.Projects.Project
   alias Ravix.Projects.Store, as: Projects
@@ -229,14 +230,10 @@ defmodule Ravix.Previews do
   @spec destination(String.t()) :: {:ok, Row.t()} | {:error, reason()}
   def destination(track_id) do
     with {:ok, %{project: project}} <- assert_open(track_id),
-         {:ok, actual} <- locate(project) do
+         {:ok, %Machine{sandbox_id: actual_sandbox}, actual_sprite} <- locate(project) do
       case Store.get(track_id) do
-        %Row{sprite: sprite, sandbox_id: sandbox_id} = row
-        when sprite == actual.sprite and sandbox_id == actual.sandbox_id ->
-          {:ok, row}
-
-        _ ->
-          replaced(track_id)
+        %Row{sprite: ^actual_sprite, sandbox_id: ^actual_sandbox} = row -> {:ok, row}
+        _ -> replaced(track_id)
       end
     end
   end
@@ -253,12 +250,15 @@ defmodule Ravix.Previews do
       "The workspace changed. Open the preview again while its service restarts."}}
   end
 
+  # The machine and the sprite in front of it: two answers from two calls,
+  # so they are two values rather than a map that looks like a `Machine`
+  # with a field `Machine` cannot have.
   defp locate(project) do
     case Ravix.Tracks.machine_of(project) do
-      {:ok, %{sandbox_id: sandbox_id}} ->
+      {:ok, %Machine{sandbox_id: sandbox_id} = machine} ->
         case Ravix.Tracks.sprite_for(sandbox_id) do
           sprite when is_binary(sprite) ->
-            {:ok, %{sandbox_id: sandbox_id, sprite: sprite}}
+            {:ok, machine, sprite}
 
           _ ->
             {:error, {:unavailable, "This workspace does not expose a Sprite."}}

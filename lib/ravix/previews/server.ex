@@ -51,6 +51,7 @@ defmodule Ravix.Previews.Server do
   require Logger
 
   alias Ravix.Clock
+  alias Ravix.MachineCache.Machine
   alias Ravix.Previews
   alias Ravix.Previews.{Row, Store}
   alias Ravix.Repo
@@ -455,7 +456,7 @@ defmodule Ravix.Previews.Server do
   # Fresh, not memoised: the reconciler is what notices a replaced machine.
   defp machine(row, project) do
     case Ravix.Tracks.machine_of(project, fresh: true) do
-      {:ok, %{sandbox_id: _} = machine} -> {:ok, machine}
+      {:ok, %Machine{} = machine} -> {:ok, machine}
       {:ok, nil} -> {:error, "This project has no machine. Open a track first.", row}
       {:error, reason} -> {:error, reason, row}
     end
