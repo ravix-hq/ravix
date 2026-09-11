@@ -3,6 +3,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
   import Phoenix.LiveViewTest
   import Mimic
   alias Ravix.{Accounts, Crypto, Hub, Previews, Projects, QueryCount, Repo, Tracks}
+  alias Ravix.Fountain.Shapes.Catalog
   alias Ravix.GitHub.{ChecksReport, Shapes}
   alias Ravix.Hub.Event
   alias Ravix.People.Store, as: People
@@ -377,7 +378,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
       packages: %{},
       env_keys: [],
       vault_keys: [],
-      catalog: nil
+      catalog: Catalog.empty()
     }
 
     stub(Projects, :settings, fn _, id ->

@@ -5,6 +5,7 @@ defmodule Ravix.FountainTest do
 
   alias Ravix.Fountain
   alias Ravix.Fountain.{Client, Error, FakeTransport}
+  alias Ravix.Fountain.Shapes
   alias Ravix.Fountain.Shapes.{Conversation, Sandbox, Turn}
 
   @auth {"authorization", "Bearer fake-key"}
@@ -95,8 +96,8 @@ defmodule Ravix.FountainTest do
             %{data: %{runtimes: ["claude"], models: %{claude: ["anthropic/claude-opus-5"]}}}}}
         ])
 
-      assert {:ok, %{"runtimes" => ["claude"], "models" => %{"claude" => [_]}}} =
-               Fountain.catalog(client)
+      assert {:ok, %Shapes.Catalog{runtimes: ["claude"]} = catalog} = Fountain.catalog(client)
+      assert Shapes.Catalog.models_for(catalog, "claude") == ["anthropic/claude-opus-5"]
 
       [call] = FakeTransport.calls(client)
       assert call.body == nil

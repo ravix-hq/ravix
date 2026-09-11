@@ -6,12 +6,36 @@ defmodule Ravix.Fountain.Shapes do
   reason: Fountain's JSON arrives as string-keyed maps, and a field addressed
   by a string nobody checks answers `nil` when it is misspelled or renamed.
   `Ravix.Tracks.Transcript.Event` closed that door for the event stream; this
-  closes it for the conversations and sandboxes, which is where the rest of
-  Ravix asks its questions.
+  closes it for the conversations, sandboxes and the catalog, which is where
+  the rest of Ravix asks its questions.
 
-  Past these functions a conversation is a `Conversation` and a sandbox is a
-  `Sandbox`, with atom keys and `@enforce_keys`, so a misspelled field is a
-  compile error rather than a `nil` that reads as "not live".
+  Past these functions a conversation is a `Conversation`, a sandbox is a
+  `Sandbox` and the catalog is a `Catalog`, with atom keys and
+  `@enforce_keys`, so a misspelled field is a compile error rather than a
+  `nil` that reads as "not live".
+
+  ## The catalog, and what a missing shape costs
+
+  `Catalog` arrived last and is worth recording, because the code that read
+  the catalog without one shows what this module is for. `GET /api/catalog`
+  was the one endpoint here whose answer Ravix *branches* on and had no
+  shape, so `Ravix.Projects.Machine` reached into the raw record through a
+  private `field/2` that tried both spellings of every key:
+
+      defp field(map, key) when is_map(map) and is_atom(key),
+        do: map[key] || map[Atom.to_string(key)]
+
+      defp field(map, key) when is_map(map) and is_binary(key),
+        do: map[key] || Enum.find_value(map, &atom_keyed(&1, key))
+
+  Fountain sends JSON, so the atom halves of both clauses could never match
+  in production; the second clause's scan over the map existed so that a
+  *test* could write `%{models: %{codex: [...]}}` and be understood. That is
+  the wrong way round. A stub should answer the shape the provider answers,
+  and a lookup that reads either spelling cannot tell a key it does not
+  recognise from one that is not there --- which matters here, because
+  `Ravix.Projects.Machine.pick_runtime/1` treats "no models for this runtime"
+  as a reason to fall through to a default rather than as something to report.
 
   ## The status vocabulary
 
@@ -114,6 +138,47 @@ defmodule Ravix.Fountain.Shapes do
     @type t :: %__MODULE__{id: String.t() | nil, sprite_name: String.t() | nil}
   end
 
+  defmodule Catalog do
+    @moduledoc """
+    What this Fountain can build an agent with, as `GET /api/catalog` serves it.
+
+    Two of the four keys it serves. `package_managers` and `mcp_servers` are
+    not here because nothing in Ravix reads them: an environment's `packages`
+    is whatever the project's settings panel was given, and a shape that
+    carried fields no caller asks for would make the next reader wonder which
+    of them a decision depends on.
+
+    `runtimes` is Fountain's vocabulary and stays strings --- Ravix compares
+    them to one default and otherwise passes them through --- so `models` is
+    keyed by a string too, for the same reason a Sprites service's `env` is.
+    `models_for/2` is the only way the pairing is read, which is what stops a
+    caller reaching into the map with whichever spelling it has to hand.
+    """
+
+    @enforce_keys [:runtimes, :models]
+    defstruct @enforce_keys
+
+    @type t :: %__MODULE__{
+            runtimes: [String.t()],
+            models: %{String.t() => [String.t()]}
+          }
+
+    @doc """
+    A catalog that says nothing, which is what a Fountain that could not be
+    read amounts to.
+
+    A real value rather than a `nil` every caller then has to test: the
+    decision `Ravix.Projects.Machine.pick_runtime/1` makes from an empty
+    catalog is the same one it makes from no catalog at all.
+    """
+    @spec empty() :: t()
+    def empty, do: %__MODULE__{runtimes: [], models: %{}}
+
+    @doc "The models this catalog offers for `runtime`, or `[]` for a runtime it does not list."
+    @spec models_for(t(), String.t()) :: [String.t()]
+    def models_for(%__MODULE__{models: models}, runtime), do: Map.get(models, runtime, [])
+  end
+
   @statuses %{
     "pending" => :pending,
     "idle" => :idle,
@@ -178,6 +243,22 @@ defmodule Ravix.Fountain.Shapes do
     do: %Sandbox{id: raw["id"], sprite_name: raw["sprite_name"]}
 
   @doc """
+  The catalog, from the JSON Fountain sent.
+
+  Total, unlike the shapes above, because the one caller wants a decision
+  rather than a failure: a Fountain that served something other than an
+  object offers no runtimes, which is the same answer as one that could not
+  be reached. Values that are not strings are dropped rather than carried,
+  because `pick_runtime/1` reads them with `String.contains?/2`.
+  """
+  @spec catalog(term()) :: Catalog.t()
+  def catalog(raw) when is_map(raw) do
+    %Catalog{runtimes: strings(raw["runtimes"]), models: models(raw["models"])}
+  end
+
+  def catalog(_other), do: Catalog.empty()
+
+  @doc """
   The conversation is attached to a machine that may still be woken.
 
   `pending`, `idle` or `running`. This is the question
@@ -228,4 +309,16 @@ defmodule Ravix.Fountain.Shapes do
 
   defp string_or_nil(value) when is_binary(value), do: value
   defp string_or_nil(_value), do: nil
+
+  defp strings(list) when is_list(list), do: Enum.filter(list, &is_binary/1)
+  defp strings(_other), do: []
+
+  # Keyed by runtime name, and the keys are Fountain's JSON object, so they
+  # are already strings. A key that is not one names no runtime Ravix could
+  # have asked for, so it is not kept.
+  defp models(map) when is_map(map) do
+    for {runtime, offered} <- map, is_binary(runtime), into: %{}, do: {runtime, strings(offered)}
+  end
+
+  defp models(_other), do: %{}
 end

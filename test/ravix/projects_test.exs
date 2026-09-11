@@ -10,7 +10,9 @@ defmodule Ravix.ProjectsTest do
   alias Ravix.Projects.{Machine, MachineState, Project, Settings}
   alias Ravix.PromptQueue.Item
 
-  @catalog %{runtimes: ["codex"], models: %{codex: ["openai/test-model"]}}
+  # As Fountain serves it: a JSON object, string keys. A fixture that answered
+  # atoms would be a shape no Fountain sends (see `Ravix.Fountain.Shapes`).
+  @catalog %{"runtimes" => ["codex"], "models" => %{"codex" => ["openai/test-model"]}}
   @clone "GITHUB_TOKEN"
 
   # ── fixtures ──────────────────────────────────────────────────────────
@@ -102,16 +104,23 @@ defmodule Ravix.ProjectsTest do
   # ── pick_runtime (projects.test.ts) ───────────────────────────────────
 
   describe "pick_runtime/1" do
+    # Every catalog here goes through `Shapes.catalog/1`, from the string keys
+    # Fountain sends, rather than being written as the atom-keyed map the
+    # deleted `field/2` used to accept.
+    defp catalog(runtimes, models),
+      do: Shapes.catalog(%{"runtimes" => runtimes, "models" => models})
+
     test "the default is provider-prefixed, the way Fountain writes them" do
-      assert %{model: model} = Projects.pick_runtime(nil)
+      assert %{model: model} = Projects.pick_runtime(Shapes.Catalog.empty())
       assert model =~ ~r{^[a-z0-9_-]+/[a-z0-9._-]+$}
     end
 
     test "the catalog wins over the default when it offers the same model" do
-      catalog = %{
-        "runtimes" => ["claude", "codex"],
-        "models" => %{"claude" => ["anthropic/claude-opus-5", "anthropic/claude-sonnet-5"]}
-      }
+      catalog =
+        catalog(
+          ["claude", "codex"],
+          %{"claude" => ["anthropic/claude-opus-5", "anthropic/claude-sonnet-5"]}
+        )
 
       assert Projects.pick_runtime(catalog) == %{
                runtime: "claude",
@@ -120,20 +129,49 @@ defmodule Ravix.ProjectsTest do
     end
 
     test "a Fountain without our preferred model still yields a usable one" do
-      no_opus = %{runtimes: ["claude"], models: %{claude: ["anthropic/claude-sonnet-5"]}}
+      no_opus = catalog(["claude"], %{"claude" => ["anthropic/claude-sonnet-5"]})
       assert Projects.pick_runtime(no_opus).model == "anthropic/claude-sonnet-5"
 
-      other_opus = %{runtimes: ["claude"], models: %{claude: ["vendor/opus-9"]}}
+      other_opus = catalog(["claude"], %{"claude" => ["vendor/opus-9"]})
       assert Projects.pick_runtime(other_opus).model == "vendor/opus-9"
     end
 
     test "a Fountain without our preferred runtime falls to its first" do
-      no_claude = %{runtimes: ["codex"], models: %{codex: ["openai/gpt-5"]}}
+      no_claude = catalog(["codex"], %{"codex" => ["openai/gpt-5"]})
       assert Projects.pick_runtime(no_claude) == %{runtime: "codex", model: "openai/gpt-5"}
     end
 
     test "an empty catalog is not a crash" do
-      assert Projects.pick_runtime(%{runtimes: [], models: %{}}).runtime == "claude"
+      assert Projects.pick_runtime(Shapes.Catalog.empty()).runtime == "claude"
+    end
+
+    test "a runtime the catalog lists with no models falls to the default model" do
+      assert Projects.pick_runtime(catalog(["codex"], %{})) ==
+               %{runtime: "codex", model: "anthropic/claude-opus-5"}
+    end
+  end
+
+  describe "Shapes.catalog/1" do
+    test "an answer that is not an object is an empty catalog, not a crash" do
+      assert Shapes.catalog("nope") == Shapes.Catalog.empty()
+      assert Shapes.catalog(nil) == Shapes.Catalog.empty()
+      assert Shapes.catalog(%{}) == Shapes.Catalog.empty()
+    end
+
+    test "values that are not strings are dropped rather than carried" do
+      catalog =
+        Shapes.catalog(%{
+          "runtimes" => ["claude", 7, nil],
+          "models" => %{"claude" => ["anthropic/claude-opus-5", %{}], "codex" => "not a list"}
+        })
+
+      assert catalog.runtimes == ["claude"]
+      assert Shapes.Catalog.models_for(catalog, "claude") == ["anthropic/claude-opus-5"]
+      assert Shapes.Catalog.models_for(catalog, "codex") == []
+    end
+
+    test "models_for/2 answers [] for a runtime the catalog does not list" do
+      assert Shapes.Catalog.models_for(Shapes.Catalog.empty(), "claude") == []
     end
   end
 
@@ -636,9 +674,9 @@ defmodule Ravix.ProjectsTest do
 
       assert settings == %Ravix.Projects.Settings{
                runtime: "claude",
-               catalog: %{
-                 "runtimes" => ["codex"],
-                 "models" => %{"codex" => ["openai/test-model"]}
+               catalog: %Shapes.Catalog{
+                 runtimes: ["codex"],
+                 models: %{"codex" => ["openai/test-model"]}
                },
                name: "Project",
                setup_script: "apt update",
@@ -660,7 +698,10 @@ defmodule Ravix.ProjectsTest do
         {%{method: "GET", path: "/api/catalog"}, {500, [], "down"}}
       ])
 
-      assert {:ok, %{catalog: nil, env_keys: [], vault_keys: [], setup_script: "", packages: %{}}} =
+      empty = Shapes.Catalog.empty()
+
+      assert {:ok,
+              %{catalog: ^empty, env_keys: [], vault_keys: [], setup_script: "", packages: %{}}} =
                Projects.settings(owner, project.id)
 
       fountain([

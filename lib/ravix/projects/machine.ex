@@ -13,6 +13,7 @@ defmodule Ravix.Projects.Machine do
   alias Ravix.Fountain
   alias Ravix.Fountain.Error
   alias Ravix.Fountain.Shapes
+  alias Ravix.Fountain.Shapes.Catalog
   alias Ravix.Fountain.Shapes.Conversation
   alias Ravix.Hub
   alias Ravix.Ids
@@ -122,7 +123,7 @@ defmodule Ravix.Projects.Machine do
   defp clone_token(_client, _project, state), do: {:ok, state}
 
   defp agent(client, project, state) do
-    choice = pick_runtime(catalog_or_nil(client))
+    choice = pick_runtime(catalog(client))
 
     body =
       %{
@@ -233,7 +234,7 @@ defmodule Ravix.Projects.Machine do
   end
 
   defp create_replacement(project, client) do
-    choice = pick_runtime(catalog_or_nil(client))
+    choice = pick_runtime(catalog(client))
 
     body =
       %{
@@ -366,13 +367,14 @@ defmodule Ravix.Projects.Machine do
   Not a question the app asks. A form on first run is a form between
   somebody and the thing they came for, answered identically by everyone,
   and the project panel says what was picked and lets it be changed
-  afterwards, which is where the decision belongs. The catalog is Fountain's
-  record (string keys) or nil when it could not be read.
-  """
-  @spec pick_runtime(map() | nil) :: %{runtime: String.t(), model: String.t()}
-  def pick_runtime(catalog) do
-    runtimes = field(catalog, :runtimes) |> List.wrap()
+  afterwards, which is where the decision belongs.
 
+  Takes a `Ravix.Fountain.Shapes.Catalog`. A Fountain that could not be read
+  arrives as `Ravix.Fountain.Shapes.Catalog.empty/0`, which decides the same
+  way, so there is no second argument shape and no nil to test for.
+  """
+  @spec pick_runtime(Catalog.t()) :: %{runtime: String.t(), model: String.t()}
+  def pick_runtime(%Catalog{runtimes: runtimes} = catalog) do
     runtime =
       cond do
         @default_runtime in runtimes -> @default_runtime
@@ -380,7 +382,7 @@ defmodule Ravix.Projects.Machine do
         true -> @default_runtime
       end
 
-    models = field(catalog, :models) |> field(runtime) |> List.wrap()
+    models = Catalog.models_for(catalog, runtime)
 
     model =
       cond do
@@ -393,26 +395,21 @@ defmodule Ravix.Projects.Machine do
     %{runtime: runtime, model: model}
   end
 
-  @doc "The catalog, or nil when it could not be read: nothing here should fail on it."
-  @spec catalog_or_nil(Fountain.Client.t()) :: map() | nil
-  def catalog_or_nil(client) do
+  @doc """
+  The catalog, empty when it could not be read: nothing here should fail on it.
+
+  `Ravix.Fountain.Shapes.Catalog.empty/0` rather than nil because every
+  caller --- `pick_runtime/1` and the settings panel's runtime list --- does
+  the same thing with both, and a nil that is only ever turned back into an
+  empty one is a nil two modules have to remember.
+  """
+  @spec catalog(Fountain.Client.t()) :: Catalog.t()
+  def catalog(client) do
     case Fountain.catalog(client) do
-      {:ok, catalog} when is_map(catalog) -> catalog
-      _ -> nil
+      {:ok, %Catalog{} = catalog} -> catalog
+      _ -> Catalog.empty()
     end
   end
-
-  # A key from a record that may be keyed by atoms (a test) or strings (Fountain).
-  defp field(map, key) when is_map(map) and is_atom(key),
-    do: map[key] || map[Atom.to_string(key)]
-
-  defp field(map, key) when is_map(map) and is_binary(key),
-    do: map[key] || Enum.find_value(map, &atom_keyed(&1, key))
-
-  defp field(_other, _key), do: nil
-
-  defp atom_keyed({k, v}, key) when is_atom(k), do: if(Atom.to_string(k) == key, do: v)
-  defp atom_keyed(_pair, _key), do: nil
 
   defp label(%Project{name: name}), do: "Ravix · #{name}"
 

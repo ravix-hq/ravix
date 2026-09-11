@@ -3,6 +3,7 @@ defmodule RavixWeb.WorkspaceManagementTest do
   import Phoenix.LiveViewTest
   import Mimic
   alias Ravix.{Accounts, People, Previews, Projects, Tracks}
+  alias Ravix.Fountain.Shapes.Catalog
   alias Ravix.Hub.Event
 
   setup :verify_on_exit!
@@ -350,7 +351,7 @@ defmodule RavixWeb.WorkspaceManagementTest do
          packages: %{},
          env_keys: [],
          vault_keys: [],
-         catalog: nil
+         catalog: Catalog.empty()
        }}
     end)
 

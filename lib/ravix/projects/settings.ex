@@ -11,6 +11,7 @@ defmodule Ravix.Projects.Settings do
   """
 
   alias Ravix.Fountain
+  alias Ravix.Fountain.Shapes.Catalog
   alias Ravix.Projects
   alias Ravix.Projects.Project
 
@@ -20,7 +21,9 @@ defmodule Ravix.Projects.Settings do
 
   It was `ProjectSettings` from `shared/api.ts`, a bare map, which is also
   why `read/2` and the panel could disagree about whether `catalog` is ever
-  absent as opposed to nil.
+  absent as opposed to nil. They cannot now: it is a
+  `Ravix.Fountain.Shapes.Catalog` and a Fountain that would not answer is
+  an empty one, so the panel reads `catalog.runtimes` and finds a list.
   """
   @enforce_keys [
     :name,
@@ -42,7 +45,7 @@ defmodule Ravix.Projects.Settings do
           env_keys: [String.t()],
           vault_keys: [String.t()],
           runtime: String.t(),
-          catalog: map() | nil,
+          catalog: Catalog.t(),
           model: String.t(),
           instructions: String.t()
         }
@@ -77,7 +80,7 @@ defmodule Ravix.Projects.Settings do
   @doc """
   The settings, read live from the environment, the two secret stores and
   the catalog. The environment read has to succeed; the rest degrade to
-  empty lists and a nil catalog, since a panel with no catalog is still a
+  empty lists and an empty catalog, since a panel with no catalog is still a
   panel.
   """
   @spec read(Project.t(), Fountain.Client.t()) :: {:ok, t()} | {:error, term()}
@@ -87,7 +90,7 @@ defmodule Ravix.Projects.Settings do
       {:ok,
        %__MODULE__{
          runtime: project.runtime,
-         catalog: Projects.Machine.catalog_or_nil(client),
+         catalog: Projects.Machine.catalog(client),
          name: project.name,
          setup_script: env["setup_script"] || "",
          packages: if(is_map(env["packages"]), do: env["packages"], else: %{}),
@@ -202,13 +205,11 @@ defmodule Ravix.Projects.Settings do
   # runtime is fine and the model is not. One code for both said "choose an
   # available harness and one of its models" over a form with two inputs,
   # which is true and does not point anywhere.
-  defp validate_harness(catalog, runtime, model) when is_binary(runtime) and is_binary(model) do
-    runtimes = List.wrap(catalog["runtimes"])
-    models = List.wrap(get_in(catalog, ["models", runtime]))
-
+  defp validate_harness(%Catalog{} = catalog, runtime, model)
+       when is_binary(runtime) and is_binary(model) do
     cond do
-      runtime not in runtimes -> invalid_runtime()
-      model not in models -> invalid_model()
+      runtime not in catalog.runtimes -> invalid_runtime()
+      model not in Catalog.models_for(catalog, runtime) -> invalid_model()
       true -> :ok
     end
   end
