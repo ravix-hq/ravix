@@ -41,7 +41,21 @@ defmodule RavixWeb.PreviewGateway do
   alias RavixWeb.PreviewGateway.{Headers, Html, Relay, Watch}
 
   defmodule Error do
-    @moduledoc "A refusal with the status the browser should see; `HttpError` in the TypeScript."
+    @moduledoc """
+    A refusal with the status the browser should see.
+
+    It was `HttpError` in the TypeScript, raised from wherever the refusal
+    was decided and caught once at the top; six `!` functions here did the
+    same, which made the set of ways a request could end something you
+    found by reading all of them. Now every step answers `{:error, %Error{}}`
+    and `handle/4` matches on it, so the paths are in the `with` chains
+    that take them.
+
+    It stays an exception because `Plug.Exception` gives it a status, and
+    because `ErrorAborted` --- the one refusal that genuinely has to unwind,
+    since it happens after the headers are out and there is no conn left to
+    return --- is its neighbour.
+    """
     defexception [:status, :code, :message]
     @type t :: %__MODULE__{status: pos_integer(), code: String.t(), message: String.t()}
   end
@@ -58,6 +72,8 @@ defmodule RavixWeb.PreviewGateway do
   end
 
   @control "/__ravix/"
+  @open @control <> "open"
+  @exchange @control <> "exchange"
   @start @control <> "start"
   @status @control <> "status"
   @heartbeat @control <> "heartbeat"
@@ -75,6 +91,8 @@ defmodule RavixWeb.PreviewGateway do
   @generic "The preview did not answer. Return to the track to restart it or read its logs."
   @not_found "Preview not found."
   @unknown_control "Unknown preview control."
+  @closed_track "This track is closed or being retired."
+  @sign_in "Open this preview from your signed-in Ravix track."
 
   @impl Plug
   def init(opts), do: opts
@@ -112,128 +130,160 @@ defmodule RavixWeb.PreviewGateway do
   defp handle(conn, backend, cfg, name) do
     websocket? = header(conn, "upgrade") == "websocket"
 
-    try do
-      row = resolve_host!(backend, name)
-      host = "#{row.hostname}.#{cfg.domain}#{cfg.public_port}"
-      origin = "#{cfg.protocol}://#{host}"
+    result =
+      with {:ok, site} <- resolve(backend, cfg, name) do
+        if websocket?, do: upgrade(conn, site), else: request(conn, site)
+      end
 
-      if websocket?,
-        do: upgrade(conn, backend, cfg, row, host, origin),
-        else: request(conn, backend, cfg, row, host, origin)
-    rescue
-      error in Error ->
-        if websocket?, do: refuse_upgrade(conn, error), else: fail(conn, backend, error)
+    case result do
+      %Plug.Conn{} = conn -> conn
+      {:error, %Error{} = error} when websocket? -> refuse_upgrade(conn, error)
+      {:error, %Error{} = error} -> fail(conn, backend, error)
     end
   end
 
   # ── resolution and authorization ─────────────────────────────────────
 
-  defp resolve_host!(backend, name) do
-    case backend.resolve_host(name) do
-      {:ok, row} ->
-        case backend.assert_open(row.track_id) do
-          :ok ->
-            row
+  # The whole of what a preview request is served against, settled once and
+  # then constant. It used to be six positional arguments threaded through
+  # `request`, `authorized`, `proxy`, `exchange` and `upgrade`; `@enforce_keys`
+  # is what stops a seventh being forgotten at one of the call sites.
+  defmodule Site do
+    @moduledoc false
+    @enforce_keys [:backend, :cfg, :row, :host, :origin]
+    defstruct @enforce_keys
+  end
 
-          {:error, reason} ->
-            raise refusal(reason, 409, "closed_track", "This track is closed or being retired.")
-        end
+  defp resolve(backend, cfg, name) do
+    with {:ok, row} <- resolve_host(backend, name) do
+      host = "#{row.hostname}.#{cfg.domain}#{cfg.public_port}"
 
-      :error ->
-        raise Error, status: 404, code: "preview", message: @not_found
+      {:ok,
+       %Site{
+         backend: backend,
+         cfg: cfg,
+         row: row,
+         host: host,
+         origin: "#{cfg.protocol}://#{host}"
+       }}
     end
   end
 
-  defp authorize!(conn, backend, cfg, row) do
+  defp resolve_host(backend, name) do
+    with {:ok, row} <- found(backend.resolve_host(name)),
+         :ok <- open(backend, row.track_id) do
+      {:ok, row}
+    end
+  end
+
+  defp found({:ok, row}), do: {:ok, row}
+  defp found(:error), do: refuse(404, "preview", @not_found)
+
+  defp open(backend, track_id) do
+    case backend.assert_open(track_id) do
+      :ok -> :ok
+      {:error, reason} -> refusal(reason, 409, "closed_track", @closed_track)
+    end
+  end
+
+  defp authorize(conn, %Site{} = site) do
     hash =
-      conn.req_headers |> Headers.cookie(Headers.cookie_name(cfg.protocol)) |> Crypto.sha256()
+      conn.req_headers
+      |> Headers.cookie(Headers.cookie_name(site.cfg.protocol))
+      |> Crypto.sha256()
 
-    grant = backend.get_grant(hash, row.track_id, :session, :peek)
+    grant = site.backend.get_grant(hash, site.row.track_id, :session, :peek)
 
-    if grant && backend.allowed?(row, grant),
-      do: grant,
-      else:
-        raise(Error,
-          status: 401,
-          code: "preview_signin",
-          message: "Open this preview from your signed-in Ravix track."
-        )
+    if grant && site.backend.allowed?(site.row, grant),
+      do: {:ok, grant},
+      else: refuse(401, "preview_signin", @sign_in)
   end
 
-  defp track!(backend, track_id) do
-    backend.track(track_id) || raise Error, status: 404, code: "preview", message: @not_found
+  defp track(%Site{} = site) do
+    case site.backend.track(site.row.track_id) do
+      nil -> refuse(404, "preview", @not_found)
+      track -> {:ok, track}
+    end
   end
 
-  defp destination!(backend, track_id) do
-    case backend.destination(track_id) do
+  defp destination(%Site{} = site) do
+    case site.backend.destination(site.row.track_id) do
       {:ok, _} -> :ok
-      {:error, reason} -> raise refusal(reason, 502, "preview_unavailable", @generic)
+      {:error, reason} -> refusal(reason, 502, "preview_unavailable", @generic)
     end
   end
 
-  defp watch!(backend, row, grant, project_id) do
-    case Watch.start(backend, row, grant, project_id) do
-      {:ok, watch} ->
-        watch
-
-      :revoked ->
-        raise Error,
-          status: 401,
-          code: "preview_signin",
-          message: "Open this preview from your signed-in Ravix track."
+  defp watch(%Site{} = site, grant, project_id) do
+    case Watch.start(site.backend, site.row, grant, project_id) do
+      {:ok, watch} -> {:ok, watch}
+      :revoked -> refuse(401, "preview_signin", @sign_in)
     end
   end
 
-  defp open_tunnel!(backend, row) do
-    with %Ravix.Config.Sprites{} = sprites <- backend.sprites_config(),
-         {:ok, tunnel} <- tunnel_module().open(sprites, row.sprite, row.port, []) do
-      tunnel
+  defp open_tunnel(%Site{} = site) do
+    with %Ravix.Config.Sprites{} = sprites <- site.backend.sprites_config(),
+         {:ok, tunnel} <- tunnel_module().open(sprites, site.row.sprite, site.row.port, []) do
+      {:ok, tunnel}
     else
-      _ -> raise Error, status: 502, code: "preview_unavailable", message: @generic
+      _ -> refuse(502, "preview_unavailable", @generic)
     end
   end
+
+  # `refuse/3` is a refusal the gateway decided on; `refusal/4` is one a
+  # backend handed back, whose own status and sentence win when it has them
+  # (`assert_open/1` and `destination/1` answer with the words the person
+  # should read) and which otherwise falls back to the generic pair.
+  defp refuse(status, code, message),
+    do: {:error, %Error{status: status, code: code, message: message}}
 
   defp refusal(%{status: status, message: message}, _status, code, _message)
        when is_integer(status),
-       do: %Error{status: status, code: code, message: message}
+       do: {:error, %Error{status: status, code: code, message: message}}
 
-  defp refusal(_reason, status, code, message),
-    do: %Error{status: status, code: code, message: message}
+  defp refusal(_reason, status, code, message), do: refuse(status, code, message)
 
   # ── plain requests ───────────────────────────────────────────────────
 
-  defp request(conn, backend, cfg, row, host, origin) do
-    path = conn.request_path
-
-    cond do
-      path == @control <> "open" and conn.method == "GET" ->
-        reply(conn, 200, open_page())
-
-      path == @control <> "exchange" and conn.method == "POST" ->
-        exchange(conn, backend, cfg, row, origin)
-
-      true ->
-        authorized(conn, backend, cfg, row, host, origin)
+  defp request(conn, %Site{} = site) do
+    case {conn.request_path, conn.method} do
+      {@open, "GET"} -> reply(conn, 200, open_page())
+      {@exchange, "POST"} -> exchange(conn, site)
+      _ -> authorized(conn, site)
     end
   end
 
-  defp exchange(conn, backend, cfg, row, origin) do
-    if header(conn, "origin") != origin,
-      do: raise(Error, status: 403, code: "origin", message: "Open previews from their own host.")
+  defp exchange(conn, %Site{} = site) do
+    with :ok <- same_origin_exactly(conn, site.origin, "Open previews from their own host."),
+         {:ok, body, conn} <- read_ticket(conn),
+         {:ok, ticket} <- claim_ticket(site, body),
+         {:ok, token} <- mint_session(site, ticket) do
+      secure = if site.cfg.protocol == :https, do: "; Secure", else: ""
 
-    {body, conn} = read_ticket!(conn)
-    ticket = backend.get_grant(Crypto.sha256(body), row.track_id, :ticket, :consume)
-    user = ticket && backend.session_user(ticket.session_hash)
-    open? = user && match?({:ok, %{closed_at: nil}}, backend.track_access(user, row.track_id))
+      conn
+      |> put_resp_header(
+        "set-cookie",
+        "#{Headers.cookie_name(site.cfg.protocol)}=#{token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=43200#{secure}"
+      )
+      |> reply(204, "")
+    end
+  end
 
-    unless open?,
-      do:
-        raise(Error,
-          status: 401,
-          code: "ticket",
-          message: "This preview link expired. Open it again from Ravix."
-        )
+  # The ticket is single-use, so reading it spends it. Everything that can
+  # make it worthless -- no such ticket, a Ravix session that has since
+  # ended, a track the person no longer reaches or that has closed --
+  # answers with one sentence, because telling them apart would tell an
+  # unauthenticated caller which.
+  defp claim_ticket(%Site{} = site, body) do
+    ticket = site.backend.get_grant(Crypto.sha256(body), site.row.track_id, :ticket, :consume)
+    user = ticket && site.backend.session_user(ticket.session_hash)
 
+    if user &&
+         match?({:ok, %{closed_at: nil}}, site.backend.track_access(user, site.row.track_id)),
+       do: {:ok, ticket},
+       else: refuse(401, "ticket", "This preview link expired. Open it again from Ravix.")
+  end
+
+  defp mint_session(%Site{} = site, ticket) do
     token = Crypto.random_token()
 
     session = %{
@@ -244,134 +294,133 @@ defmodule RavixWeb.PreviewGateway do
       kind: :session
     }
 
-    case backend.grant_session(session) do
-      :ok -> :ok
-      {:error, _} -> raise Error, status: 502, code: "preview_unavailable", message: @generic
+    case site.backend.grant_session(session) do
+      :ok -> {:ok, token}
+      {:error, _} -> refuse(502, "preview_unavailable", @generic)
     end
-
-    secure = if cfg.protocol == :https, do: "; Secure", else: ""
-
-    conn
-    |> put_resp_header(
-      "set-cookie",
-      "#{Headers.cookie_name(cfg.protocol)}=#{token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=43200#{secure}"
-    )
-    |> reply(204, "")
   end
 
-  defp read_ticket!(conn) do
+  defp read_ticket(conn) do
     case read_body(conn, length: 128, read_length: 128) do
-      {:ok, body, conn} when byte_size(body) <= 128 -> {body, conn}
-      _ -> raise Error, status: 400, code: "ticket", message: "Invalid ticket."
+      {:ok, body, conn} when byte_size(body) <= 128 -> {:ok, body, conn}
+      _ -> refuse(400, "ticket", "Invalid ticket.")
     end
   end
 
-  defp authorized(conn, backend, cfg, row, host, origin) do
-    grant = authorize!(conn, backend, cfg, row)
-    same_origin!(conn, origin)
-    track = track!(backend, row.track_id)
-    back = "#{backend.public_url()}/p/#{track.project_id}/t/#{track.id}"
+  defp authorized(conn, %Site{} = site) do
+    with {:ok, grant} <- authorize(conn, site),
+         :ok <- same_origin(conn, site.origin),
+         {:ok, track} <- track(site) do
+      back = "#{site.backend.public_url()}/p/#{track.project_id}/t/#{track.id}"
 
-    cond do
-      String.starts_with?(conn.request_path, @control) ->
-        control(conn, backend, row, back)
+      cond do
+        String.starts_with?(conn.request_path, @control) ->
+          control(conn, site, back)
 
-      row.state != :ready ->
-        conn
-        |> put_resp_header("location", @start)
-        |> put_resp_header("cache-control", "no-store")
-        |> send_resp(302, "")
+        site.row.state != :ready ->
+          conn
+          |> put_resp_header("location", @start)
+          |> put_resp_header("cache-control", "no-store")
+          |> send_resp(302, "")
 
-      true ->
-        proxy(conn, backend, row, grant, track, host, origin)
+        true ->
+          proxy(conn, site, grant, track)
+      end
     end
   end
 
   # Same-origin writes and upgrades also prevent cross-track CSRF when
   # wildcard hosts happen to share a registrable domain.
-  defp same_origin!(conn, origin) do
-    if conn.method not in ["GET", "HEAD"] and header(conn, "origin") != origin,
-      do:
-        raise(Error,
-          status: 403,
-          code: "origin",
-          message: "Cross-origin preview writes are not allowed."
-        )
+  defp same_origin(conn, origin) do
+    cond do
+      conn.method not in ["GET", "HEAD"] and header(conn, "origin") != origin ->
+        refuse(403, "origin", "Cross-origin preview writes are not allowed.")
 
-    if header(conn, "sec-fetch-site") in ["cross-site", "same-site"],
-      do: raise(Error, status: 403, code: "origin", message: "Open the preview directly.")
+      header(conn, "sec-fetch-site") in ["cross-site", "same-site"] ->
+        refuse(403, "origin", "Open the preview directly.")
+
+      true ->
+        :ok
+    end
   end
 
-  defp control(conn, backend, row, back) do
+  defp same_origin_exactly(conn, origin, message) do
+    if header(conn, "origin") == origin, do: :ok, else: refuse(403, "origin", message)
+  end
+
+  defp control(conn, %Site{} = site, back) do
     case {conn.request_path, conn.method} do
       {@start, _} ->
-        backend.touch(row.track_id)
-        if row.state == :stopped, do: start_service(backend, row.track_id)
+        site.backend.touch(site.row.track_id)
+        if site.row.state == :stopped, do: start_service(site)
         reply(conn, 200, start_page(back))
 
       {@status, _} ->
-        reply(conn, 200, Jason.encode!(backend.info(row.track_id)), "application/json")
+        reply(conn, 200, Jason.encode!(site.backend.info(site.row.track_id)), "application/json")
 
       {@heartbeat, "POST"} ->
-        if row.desired != :running,
-          do:
-            raise(Error,
-              status: 409,
-              code: "stopped",
-              message: "Preview stopped. Open it from the track again."
-            )
-
-        backend.touch(row.track_id)
-        reply(conn, 204, "")
+        if site.row.desired == :running do
+          site.backend.touch(site.row.track_id)
+          reply(conn, 204, "")
+        else
+          refuse(409, "stopped", "Preview stopped. Open it from the track again.")
+        end
 
       {@activity, _} ->
         reply(conn, 200, activity_script(back), "application/javascript; charset=utf-8")
 
       _ ->
-        raise Error, status: 404, code: "preview", message: @unknown_control
+        refuse(404, "preview", @unknown_control)
     end
   end
 
   # Fire and forget, as the TypeScript's `void manager.startService(...)`.
-  defp start_service(backend, track_id) do
-    Task.Supervisor.start_child(Ravix.TaskSupervisor, fn -> backend.start_service(track_id) end)
+  defp start_service(%Site{} = site) do
+    Task.Supervisor.start_child(Ravix.TaskSupervisor, fn ->
+      site.backend.start_service(site.row.track_id)
+    end)
   end
 
   # ── the reverse proxy ────────────────────────────────────────────────
 
-  defp proxy(conn, backend, row, grant, track, host, origin) do
-    destination!(backend, row.track_id)
-    backend.touch(row.track_id)
-    watch = watch!(backend, row, grant, track.project_id)
-
-    try do
-      tunnel = open_tunnel!(backend, row)
-      tunnel_module = tunnel_module()
-      Watch.attach(watch, fn -> tunnel_module.close(tunnel) end)
-
+  defp proxy(conn, %Site{} = site, grant, track) do
+    with :ok <- destination(site),
+         _ = site.backend.touch(site.row.track_id),
+         {:ok, watch} <- watch(site, grant, track.project_id) do
       try do
-        headers = Headers.upstream_headers(conn.req_headers, host)
-        body = if conn.method in ["GET", "HEAD"], do: nil, else: request_body(conn)
+        with {:ok, tunnel} <- open_tunnel(site) do
+          tunnel_module = tunnel_module()
+          Watch.attach(watch, fn -> tunnel_module.close(tunnel) end)
 
-        response =
-          tunnel_http().request(tunnel, conn.method, target(conn), headers, body,
-            body_timeout: @body_timeout
-          )
-
-        conn = Process.delete(@conn_key) || conn
-
-        case response do
-          {:ok, status, response_headers, stream} ->
-            respond(conn, status, response_headers, stream, origin)
-
-          {:error, _reason} ->
-            raise Error, status: 502, code: "preview_unavailable", message: @generic
+          try do
+            relay(conn, site, tunnel)
+          after
+            tunnel_module.close(tunnel)
+          end
         end
       after
-        tunnel_module.close(tunnel)
+        Watch.stop(watch)
       end
-    after
-      Watch.stop(watch)
+    end
+  end
+
+  defp relay(conn, %Site{} = site, tunnel) do
+    headers = Headers.upstream_headers(conn.req_headers, site.host)
+    body = if conn.method in ["GET", "HEAD"], do: nil, else: request_body(conn)
+
+    response =
+      tunnel_http().request(tunnel, conn.method, target(conn), headers, body,
+        body_timeout: @body_timeout
+      )
+
+    conn = Process.delete(@conn_key) || conn
+
+    case response do
+      {:ok, status, response_headers, stream} ->
+        respond(conn, status, response_headers, stream, site.origin)
+
+      {:error, _reason} ->
+        refuse(502, "preview_unavailable", @generic)
     end
   end
 
@@ -498,37 +547,37 @@ defmodule RavixWeb.PreviewGateway do
 
   # ── WebSocket upgrades ───────────────────────────────────────────────
 
-  defp upgrade(conn, backend, cfg, row, host, origin) do
-    if header(conn, "origin") != origin,
-      do: raise(Error, status: 403, code: "origin", message: "Invalid WebSocket origin.")
-
-    if String.starts_with?(conn.request_path, @control),
-      do: raise(Error, status: 404, code: "preview", message: @unknown_control)
-
-    grant = authorize!(conn, backend, cfg, row)
-    destination!(backend, row.track_id)
-
-    if row.state != :ready,
-      do: raise(Error, status: 503, code: "starting", message: "Preview is not ready.")
-
-    backend.touch(row.track_id)
-    track = track!(backend, row.track_id)
-    watch = watch!(backend, row, grant, track.project_id)
-
-    tunnel =
-      try do
-        open_tunnel!(backend, row)
-      rescue
-        error in Error ->
-          Watch.stop(watch)
-          reraise error, __STACKTRACE__
+  defp upgrade(conn, %Site{} = site) do
+    with :ok <- same_origin_exactly(conn, site.origin, "Invalid WebSocket origin."),
+         :ok <- not_control(conn),
+         {:ok, grant} <- authorize(conn, site),
+         :ok <- destination(site),
+         :ok <- ready(site),
+         _ = site.backend.touch(site.row.track_id),
+         {:ok, track} <- track(site),
+         {:ok, watch} <- watch(site, grant, track.project_id) do
+      case open_tunnel(site) do
+        {:ok, tunnel} -> relay_socket(conn, site, tunnel, watch)
+        {:error, _} = refusal -> stop_watch(watch, refusal)
       end
+    end
+  end
 
+  defp not_control(conn) do
+    if String.starts_with?(conn.request_path, @control),
+      do: refuse(404, "preview", @unknown_control),
+      else: :ok
+  end
+
+  defp ready(%Site{row: %{state: :ready}}), do: :ok
+  defp ready(%Site{}), do: refuse(503, "starting", "Preview is not ready.")
+
+  defp relay_socket(conn, %Site{} = site, tunnel, watch) do
     tunnel_module = tunnel_module()
 
     headers =
       conn.req_headers
-      |> Headers.upstream_headers(host, :upgrade)
+      |> Headers.upstream_headers(site.host, :upgrade)
       |> Enum.reject(fn {name, _} ->
         name in ~w(connection upgrade sec-websocket-extensions sec-websocket-key sec-websocket-version)
       end)
@@ -553,9 +602,17 @@ defmodule RavixWeb.PreviewGateway do
 
       {:error, _reason} ->
         tunnel_module.close(tunnel)
-        Watch.stop(watch)
-        raise Error, status: 502, code: "preview_unavailable", message: @generic
+        stop_watch(watch, refuse(502, "preview_unavailable", @generic))
     end
+  end
+
+  # An upgrade that gets this far owns the watch, because a successful one
+  # hands it to `Relay` to stop. So every way out from here that is not a
+  # live socket has to stop it, which is the whole of what the old
+  # `rescue ... reraise` around `open_tunnel!/2` was for.
+  defp stop_watch(watch, refusal) do
+    Watch.stop(watch)
+    refusal
   end
 
   defp refuse_upgrade(conn, %Error{status: status}) do

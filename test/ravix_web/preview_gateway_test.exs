@@ -293,6 +293,37 @@ defmodule RavixWeb.PreviewGatewayTest do
     assert f.tunnels.() == 0
   end
 
+  test "a refusal is a returned value, not an unwound stack", %{f: f} do
+    # Every one of these used to be a `raise Error` somewhere down the call
+    # chain, caught by a `try/rescue` in `handle/4`. They are `{:error,
+    # %Error{}}` now, and what proves the conversion is complete is that
+    # each still answers with the page rather than reaching Bandit as a
+    # crash --- which is what an uncaught refusal would now do.
+    refusals = [
+      {"an unknown control", fn -> get(f, "/__ravix/nope") end, 404},
+      {"no session cookie", fn -> get(f, "/", cookie: "") end, 401},
+      {"a bad ticket",
+       fn ->
+         get(f, "/__ravix/exchange", method: "POST", body: "not-a-ticket", origin: f.origin)
+       end, 401},
+      {"a cross-origin exchange",
+       fn ->
+         get(f, "/__ravix/exchange", method: "POST", body: "t", origin: "http://elsewhere.test")
+       end, 403}
+    ]
+
+    for {what, request, status} <- refusals do
+      response = request.()
+      assert response.status == status, "#{what} answered #{response.status}, not #{status}"
+      assert header(response.headers, "cache-control") == "no-store"
+    end
+
+    # A refusal decided by the backend keeps the backend's own sentence,
+    # rather than being flattened into the gateway's generic one.
+    Store.update_track(f.t1, &%{&1 | closed_at: DateTime.utc_now()})
+    assert get(f).body =~ "closed or being retired"
+  end
+
   test "a preview that is not ready sends the browser to the starting page", %{f: f} do
     Store.update_row(f.t1, &%{&1 | state: :stopped})
 
