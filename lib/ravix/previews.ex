@@ -569,9 +569,9 @@ defmodule Ravix.Previews do
     end
   end
 
-  # ── the routes ───────────────────────────────────────────────────────
+  # ── what the panel asks for ──────────────────────────────────────────
 
-  @doc "`GET /api/tracks/:id/preview`: the info for a track the user may see."
+  @doc "The info for a track the user may see."
   @spec status(User.t(), String.t()) :: {:ok, View.t()} | {:error, reason()}
   def status(%User{} = user, track_id) do
     with {:ok, _track} <- open_track(user, track_id), do: {:ok, info(track_id)}
@@ -684,7 +684,7 @@ defmodule Ravix.Previews do
     end
   end
 
-  @doc "`GET /api/projects/:id/preview`: the owner's defaults."
+  @doc "The owner's defaults."
   @spec defaults(User.t(), String.t()) :: {:ok, Row.config() | nil} | {:error, reason()}
   def defaults(%User{} = user, project_id) do
     with {:ok, _project} <- Access.project_of(user, project_id),
@@ -692,7 +692,7 @@ defmodule Ravix.Previews do
   end
 
   @doc """
-  `PUT /api/projects/:id/preview`: save the owner's defaults (a raw map, or
+  Save the owner's defaults (a raw map, or
   nil to clear) and stop every track that runs on them.
   """
   @spec set_defaults(User.t(), String.t(), map() | nil) ::
