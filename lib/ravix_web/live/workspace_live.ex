@@ -6,21 +6,34 @@ defmodule RavixWeb.WorkspaceLive do
   alias Ravix.Hub.Event
   alias Ravix.Tracks.Names
   alias RavixWeb.Live.Guard
+  alias RavixWeb.Live.Params
 
-  # The four origins, as the form spells them. One list rather than the three
-  # that had grown -- this module's guard, the buttons in the template, and
-  # `Ravix.Tracks.Track`'s own -- since the day they disagree is the day the
-  # form offers something the context refuses.
-  @origin_kinds Enum.map(Ravix.Tracks.Track.origin_kinds(), &to_string/1)
-  @origin_labels %{
-    "blank" => "Blank",
-    "branch" => "Branch",
-    "pr" => "Pull request",
-    "issue" => "Issue"
+  # The four origins. One list rather than the three that had grown -- this
+  # module's guard, the buttons in the template, and `Ravix.Tracks.Track`'s
+  # own -- since the day they disagree is the day the form offers something
+  # the context refuses.
+  #
+  # They stay as `Track.origin_kinds/0` gives them: atoms. They used to be
+  # mapped through `to_string/1` here and then, four clauses into the event
+  # handler, mapped back with `%{"branch" => :branches, ...}`. The strings
+  # existed only because the buttons send strings, which is one boundary and
+  # is `@form_origins`' whole job.
+  @origin_kinds Ravix.Tracks.Track.origin_kinds()
+  @form_origins Map.new(@origin_kinds, &{to_string(&1), &1})
+  @origin_labels %{blank: "Blank", branch: "Branch", pr: "Pull request", issue: "Issue"}
+  @origin_refs %{branch: :branches, pr: :pulls, issue: :issues}
+
+  # The five dialogs, as the buttons spell them and as this module does.
+  @dialogs %{
+    "search" => :search,
+    "new-project" => :new_project,
+    "new-track" => :new_track,
+    "settings" => :settings,
+    "people" => :people
   }
 
   @doc "The origin buttons on the new-track form, in the order they are offered."
-  @spec origin_choices() :: [{String.t(), String.t()}]
+  @spec origin_choices() :: [{Ravix.Tracks.Track.origin_kind(), String.t()}]
   def origin_choices, do: Enum.map(@origin_kinds, &{&1, @origin_labels[&1]})
 
   @impl true
@@ -41,7 +54,7 @@ defmodule RavixWeb.WorkspaceLive do
         installations: [],
         installation: nil,
         refs: [],
-        origin_kind: "blank",
+        origin_kind: :blank,
         query: "",
         busy: false,
         settings: nil,
@@ -107,7 +120,7 @@ defmodule RavixWeb.WorkspaceLive do
       )
 
     if params["new"] == "track" && project && project.access != :tracks do
-      open_dialog(socket, "new-track")
+      open_dialog(socket, :new_track)
     else
       socket
     end
@@ -165,7 +178,7 @@ defmodule RavixWeb.WorkspaceLive do
       # Collapsing only hides the origin controls; `hidden` does not disable an
       # input, so the ref select underneath still submits. Put the origin back
       # to blank so the form cannot open a track from a ref nobody can see.
-      {:noreply, assign(socket, advanced_track: false, origin_kind: "blank", refs: [])}
+      {:noreply, assign(socket, advanced_track: false, origin_kind: :blank, refs: [])}
     else
       {:noreply, assign(socket, advanced_track: true)}
     end
@@ -174,9 +187,8 @@ defmodule RavixWeb.WorkspaceLive do
   def handle_event("search", %{"q" => q}, socket), do: {:noreply, assign(socket, query: q)}
   def handle_event("edit", params, socket), do: {:noreply, assign(socket, form_data: params)}
 
-  def handle_event("dialog", %{"name" => name}, socket) do
-    {:noreply, open_dialog(socket, name)}
-  end
+  def handle_event("dialog", %{"name" => name}, socket) when is_map_key(@dialogs, name),
+    do: {:noreply, open_dialog(socket, Map.fetch!(@dialogs, name))}
 
   def handle_event("installation", %{"installation" => id}, socket) do
     case Integer.parse(id) do
@@ -203,20 +215,21 @@ defmodule RavixWeb.WorkspaceLive do
      |> start_async(:create_project, fn -> Projects.create(user, attrs) end)}
   end
 
-  def handle_event("origin", %{"kind" => kind}, socket) when kind in @origin_kinds do
+  def handle_event("origin", %{"kind" => word}, socket) when is_map_key(@form_origins, word) do
+    kind = Map.fetch!(@form_origins, word)
     socket = assign(socket, origin_kind: kind, refs: [], advanced_track: true)
 
-    if kind == "blank" do
-      {:noreply, socket}
-    else
-      refs_kind = %{"branch" => :branches, "pr" => :pulls, "issue" => :issues}[kind]
+    case @origin_refs[kind] do
+      nil ->
+        {:noreply, socket}
 
-      {:noreply,
-       result(
-         socket,
-         Projects.refs(socket.assigns.current_user, project_id(socket), refs_kind),
-         &assign(&1, refs: &2)
-       )}
+      refs_kind ->
+        {:noreply,
+         result(
+           socket,
+           Projects.refs(socket.assigns.current_user, project_id(socket), refs_kind),
+           &assign(&1, refs: &2)
+         )}
     end
   end
 
@@ -224,11 +237,17 @@ defmodule RavixWeb.WorkspaceLive do
     kind = socket.assigns.origin_kind
     ref = Enum.find(socket.assigns.refs, &(ref_id(&1) == params["ref"]))
 
+    # `Tracks.open/4` takes browser-shaped attrs and does its own narrowing of
+    # the kind against `Track.origin_kinds/0` (`read_origin/2`), so the word
+    # goes back over that boundary as a string -- the context is not to start
+    # trusting this page more than it trusts an HTTP body.
+    word = to_string(kind)
+
     origin =
       case {kind, ref} do
-        {"branch", %{} = r} -> %{kind: kind, base: r.name}
-        {"pr", %{} = r} -> %{kind: kind, number: r.number, title: r.title, base: r.base_ref}
-        {"issue", %{} = r} -> %{kind: kind, number: r.number, title: r.title}
+        {:branch, %{} = r} -> %{kind: word, base: r.name}
+        {:pr, %{} = r} -> %{kind: word, number: r.number, title: r.title, base: r.base_ref}
+        {:issue, %{} = r} -> %{kind: word, number: r.number, title: r.title}
         _ -> %{kind: "blank"}
       end
 
@@ -261,7 +280,7 @@ defmodule RavixWeb.WorkspaceLive do
        fn s, _ ->
          s
          |> reload()
-         |> open_dialog("settings")
+         |> open_dialog(:settings)
          |> put_flash(
            :info,
            "Settings saved. Open a new track to use updated instructions and secrets."
@@ -278,14 +297,14 @@ defmodule RavixWeb.WorkspaceLive do
          secret: Map.take(params, ~w(store key value))
        }),
        fn s, _ ->
-         s |> open_dialog("settings") |> put_flash(:info, "Secret updated.")
+         s |> open_dialog(:settings) |> put_flash(:info, "Secret updated.")
        end
      )}
   end
 
   def handle_event("save-preview-defaults", params, socket) do
     config =
-      if params["clear"] == "true",
+      if Params.flag(params, "clear"),
         do: nil,
         else: Map.take(params, ~w(directory command readiness_path))
 
@@ -299,22 +318,11 @@ defmodule RavixWeb.WorkspaceLive do
      )}
   end
 
-  def handle_event("project-danger", %{"action" => action, "confirm" => name}, socket)
-      when action in ~w(rebuild delete) do
-    if socket.assigns.project && name == socket.assigns.project.name do
-      user = socket.assigns.current_user
-      id = project_id(socket)
+  def handle_event("project-danger", %{"action" => "rebuild", "confirm" => name}, socket),
+    do: {:noreply, project_danger(socket, name, &Projects.rebuild/2)}
 
-      {:noreply,
-       socket
-       |> assign(busy: true)
-       |> start_async(:project_danger, fn ->
-         if action == "rebuild", do: Projects.rebuild(user, id), else: Projects.destroy(user, id)
-       end)}
-    else
-      {:noreply, put_flash(socket, :error, "Type the project name to confirm.")}
-    end
-  end
+  def handle_event("project-danger", %{"action" => "delete", "confirm" => name}, socket),
+    do: {:noreply, project_danger(socket, name, &Projects.destroy/2)}
 
   @impl true
   def handle_async(:create_project, {:ok, response}, socket) do
@@ -411,27 +419,27 @@ defmodule RavixWeb.WorkspaceLive do
     )
   end
 
-  defp open_dialog(socket, "new-project"),
-    do: socket |> assign(dialog: "new-project", form_data: %{}) |> load_repos(nil)
+  defp open_dialog(socket, :new_project),
+    do: socket |> assign(dialog: :new_project, form_data: %{}) |> load_repos(nil)
 
-  defp open_dialog(socket, "new-track"),
+  defp open_dialog(socket, :new_track),
     do:
       assign(socket,
-        dialog: "new-track",
+        dialog: :new_track,
         form_data: %{
           "title" =>
             Names.name_track(
               Enum.map(socket.assigns.tracks[project_id(socket)] || [], & &1.title)
             )
         },
-        origin_kind: "blank",
+        origin_kind: :blank,
         refs: [],
         advanced_track: false
       )
 
-  defp open_dialog(socket, "search"), do: assign(socket, dialog: "search", query: "")
+  defp open_dialog(socket, :search), do: assign(socket, dialog: :search, query: "")
 
-  defp open_dialog(socket, "settings") do
+  defp open_dialog(socket, :settings) do
     result(socket, Projects.settings(socket.assigns.current_user, project_id(socket)), fn s,
                                                                                           settings ->
       defaults =
@@ -440,14 +448,28 @@ defmodule RavixWeb.WorkspaceLive do
           _ -> nil
         end
 
-      assign(s, dialog: "settings", settings: settings, preview_defaults: defaults)
+      assign(s, dialog: :settings, settings: settings, preview_defaults: defaults)
     end)
   end
 
   # The people dialog loads its own list, so opening it is only opening it.
-  defp open_dialog(socket, "people"), do: assign(socket, dialog: "people")
+  defp open_dialog(socket, :people), do: assign(socket, dialog: :people)
 
-  defp open_dialog(socket, _), do: socket
+  # The typed confirmation is the gate; which of the two irreversible things
+  # happens after it is decided by the clause above, not by a string compared
+  # again down here.
+  defp project_danger(socket, confirmation, call) do
+    if socket.assigns.project && confirmation == socket.assigns.project.name do
+      user = socket.assigns.current_user
+      id = project_id(socket)
+
+      socket
+      |> assign(busy: true)
+      |> start_async(:project_danger, fn -> call.(user, id) end)
+    else
+      put_flash(socket, :error, "Type the project name to confirm.")
+    end
+  end
 
   defp load_repos(socket, id) do
     if Accounts.capabilities().github do

@@ -3,6 +3,14 @@ defmodule RavixWeb.TrackLive do
   use RavixWeb, :live_view
   on_mount {RavixWeb.Live.Hooks, :require_authenticated_user}
 
+  # The browser's words for the tabs and the dialogs, and Ravix's. Fixed
+  # tables, guarded with `is_map_key/2`, so the conversion happens once at
+  # the boundary, nothing past it compares strings, and a name nobody
+  # declared matches no clause -- exactly as the `in ~w(...)` guards these
+  # replace behaved.
+  @tabs %{"files" => :files, "changes" => :changes, "checks" => :checks, "preview" => :preview}
+  @dialogs %{"rename" => :rename, "close" => :close, "people" => :people, "pull" => :pull}
+
   alias Ravix.Accounts.Access
   alias Ravix.{Crypto, Hub, Previews, PromptQueue, Tracks}
   alias Ravix.GitHub.ChecksReport
@@ -12,6 +20,8 @@ defmodule RavixWeb.TrackLive do
   alias Ravix.Tracks.Transcript.Event, as: TranscriptEvent
   alias RavixWeb.Error
   alias RavixWeb.Live.Guard
+  alias RavixWeb.Live.Panel
+  alias RavixWeb.Live.Params
 
   @impl true
   def mount(_params, session, socket) do
@@ -28,11 +38,7 @@ defmodule RavixWeb.TrackLive do
         loading: true,
         queue: [],
         present: [],
-        panel: "files",
-        panel_data: nil,
-        panel_error: nil,
-        panel_busy: false,
-        file: nil,
+        panel: Panel.new(),
         preview: nil,
         preview_url: nil,
         dialog: nil,
@@ -124,32 +130,28 @@ defmodule RavixWeb.TrackLive do
          load(s)
        end)}
 
-  def handle_event("queue", %{"action" => action, "id" => id}, socket)
-      when action in ~w(cancel retry) do
-    response =
-      if action == "cancel",
-        do: PromptQueue.cancel(socket.assigns.current_user, socket.assigns.track_id, id),
-        else: PromptQueue.retry(socket.assigns.current_user, socket.assigns.track_id, id)
+  def handle_event("queue", %{"action" => "cancel", "id" => id}, socket),
+    do: {:noreply, queued(socket, &PromptQueue.cancel/3, id)}
 
-    {:noreply, result(socket, response, fn s, _ -> refresh_queue(s) end)}
-  end
+  def handle_event("queue", %{"action" => "retry", "id" => id}, socket),
+    do: {:noreply, queued(socket, &PromptQueue.retry/3, id)}
 
-  def handle_event("panel", %{"name" => name}, socket)
-      when name in ~w(files changes checks preview) do
-    {:noreply, socket |> assign(panel: name, file: nil) |> load_panel()}
+  def handle_event("panel", %{"name" => name}, socket) when is_map_key(@tabs, name) do
+    panel = Panel.select(socket.assigns.panel, Map.fetch!(@tabs, name))
+    {:noreply, socket |> assign(panel: panel) |> load_panel()}
   end
 
   def handle_event("refresh-panel", _, socket), do: {:noreply, load_panel(socket)}
 
   def handle_event("directory", %{"path" => path}, socket),
-    do: {:noreply, load_panel(assign(socket, file: nil), path)}
+    do: {:noreply, load_panel(update_panel(socket, &Panel.close_file/1), path)}
 
   def handle_event("file", %{"path" => path}, socket) do
     {:noreply,
      result(
        socket,
        Tracks.file(socket.assigns.current_user, socket.assigns.track_id, path),
-       &assign(&1, file: &2)
+       &update_panel(&1, fn panel -> Panel.open_file(panel, &2) end)
      )}
   end
 
@@ -172,7 +174,7 @@ defmodule RavixWeb.TrackLive do
 
   def handle_event("preview-config", params, socket) do
     config =
-      if params["clear"] == "true",
+      if Params.flag(params, "clear"),
         do: nil,
         else: Map.take(params, ~w(directory command readiness_path))
 
@@ -184,10 +186,8 @@ defmodule RavixWeb.TrackLive do
      )}
   end
 
-  def handle_event("dialog", %{"name" => name}, socket)
-      when name in ~w(rename close people pull) do
-    {:noreply, assign(socket, dialog: name)}
-  end
+  def handle_event("dialog", %{"name" => name}, socket) when is_map_key(@dialogs, name),
+    do: {:noreply, assign(socket, dialog: Map.fetch!(@dialogs, name))}
 
   def handle_event("dismiss", _, socket), do: {:noreply, assign(socket, dialog: nil)}
 
@@ -205,14 +205,14 @@ defmodule RavixWeb.TrackLive do
      result(
        socket,
        Tracks.close(socket.assigns.current_user, socket.assigns.track_id,
-         force: params["force"] == "true"
+         force: Params.flag(params, "force")
        ),
        fn s, _ -> redirect(s, to: "/p/#{s.assigns.project_id}") end
      )}
   end
 
   def handle_event("open-pull", params, socket) do
-    attrs = Map.put(params, "draft", params["draft"] != "false")
+    attrs = Map.put(params, "draft", Params.flag(params, "draft", true))
 
     {:noreply,
      result(
@@ -353,16 +353,16 @@ defmodule RavixWeb.TrackLive do
   # after somebody switched tabs was filed under whichever panel they had
   # moved to.
   defp async_result(:panel, {:ok, {:ok, %Previews.View{} = preview}}, socket),
-    do: assign(socket, preview: preview, panel_busy: false)
+    do: socket |> assign(preview: preview) |> update_panel(&Panel.settled/1)
 
   defp async_result(:panel, {:ok, {:ok, data}}, socket),
-    do: assign(socket, panel_data: data, panel_busy: false)
+    do: update_panel(socket, &Panel.loaded(&1, data))
 
   defp async_result(:panel, {:ok, {:error, reason}}, socket),
-    do: assign(socket, panel_busy: false, panel_error: Error.from(reason).message)
+    do: update_panel(socket, &Panel.failed(&1, Error.from(reason).message))
 
   defp async_result(:preview_action, {:ok, response}, socket) do
-    result(assign(socket, panel_busy: false), response, fn s, preview ->
+    result(update_panel(socket, &Panel.settled/1), response, fn s, preview ->
       assign(s, preview: preview, preview_url: preview.open_url || s.assigns.preview_url)
     end)
   end
@@ -370,7 +370,8 @@ defmodule RavixWeb.TrackLive do
   defp async_result(_name, {:exit, _reason}, socket),
     do:
       socket
-      |> assign(loading: false, panel_busy: false, exec_busy: false)
+      |> assign(loading: false, exec_busy: false)
+      |> update_panel(&Panel.settled/1)
       |> put_flash(:error, "Could not finish loading. Please try again.")
 
   # File paths are issued by LiveView after validating its managed upload.
@@ -447,7 +448,7 @@ defmodule RavixWeb.TrackLive do
     hash = socket.assigns.session_hash
 
     socket
-    |> assign(panel_busy: true)
+    |> update_panel(&%{&1 | busy?: true})
     |> start_async(:preview_action, fn -> call.(user, id, hash) end)
   end
 
@@ -532,18 +533,25 @@ defmodule RavixWeb.TrackLive do
   defp load_panel(socket, path \\ nil) do
     user = socket.assigns.current_user
     id = socket.assigns.track_id
-    panel = socket.assigns.panel
+    tab = socket.assigns.panel.tab
 
     socket
-    |> assign(panel_busy: true, panel_error: nil, panel_data: nil)
+    |> update_panel(&Panel.loading/1)
     |> start_async(:panel, fn ->
-      case panel do
-        "files" -> Tracks.files(user, id, path)
-        "changes" -> Tracks.diff(user, id)
-        "checks" -> Tracks.checks(user, id)
-        "preview" -> Previews.status(user, id)
+      case tab do
+        :files -> Tracks.files(user, id, path)
+        :changes -> Tracks.diff(user, id)
+        :checks -> Tracks.checks(user, id)
+        :preview -> Previews.status(user, id)
       end
     end)
+  end
+
+  defp update_panel(socket, fun), do: assign(socket, panel: fun.(socket.assigns.panel))
+
+  defp queued(socket, call, id) do
+    response = call.(socket.assigns.current_user, socket.assigns.track_id, id)
+    result(socket, response, fn s, _ -> refresh_queue(s) end)
   end
 
   # What each event can actually have changed for the track on screen.

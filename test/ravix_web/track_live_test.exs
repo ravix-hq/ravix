@@ -192,6 +192,30 @@ defmodule RavixWeb.TrackLiveTest do
     assert render(ctx.view) =~ "no_machine"
   end
 
+  test "a tab or dialog name nobody declared is refused, not shown", ctx do
+    # The `in ~w(files changes checks preview)` guards these replace made an
+    # undeclared name match no clause. A lookup table that answered `nil`
+    # instead would have put the page on a tab that renders nothing, so the
+    # table is guarded with `is_map_key/2` and the behaviour is unchanged.
+    Process.flag(:trap_exit, true)
+
+    assert catch_exit(render_click(ctx.view, "panel", %{name: "secrets"}))
+  end
+
+  test "a name the browser sent still selects the tab and the dialog it names", ctx do
+    # The words on the wire are unchanged; what changed is that they stop at
+    # `handle_event/3`. Both of these render through an atom comparison now,
+    # so they are what says the conversion happened and still lines up.
+    render_click(ctx.view, "panel", %{name: "changes"})
+    assert has_element?(ctx.view, "button.selected", "Changes")
+
+    render_click(ctx.view, "dialog", %{name: "rename"})
+    assert has_element?(ctx.view, "#rename-dialog")
+
+    render_click(ctx.view, "dismiss", %{})
+    refute has_element?(ctx.view, "#rename-dialog")
+  end
+
   test "preview actions keep status and use fresh tickets for the iframe", ctx do
     stub(Previews, :status, fn _, _ -> {:ok, preview()} end)
     render_click(ctx.view, "panel", %{name: "preview"})
