@@ -28,8 +28,9 @@ defmodule Ravix.GitHub do
   they are the defaults and nothing sets them.
   """
 
+  alias Ravix.Clock
   alias Ravix.Config.GitHubApp
-  alias Ravix.GitHub.{Cache, ChecksReport, Clock, Error, HTTP, Shapes}
+  alias Ravix.GitHub.{Cache, ChecksReport, Error, HTTP, Shapes}
 
   @type app :: GitHubApp.t() | nil
   @type error :: {:error, Error.t() | :unconfigured}

@@ -16,10 +16,11 @@ defmodule Ravix.Previews.Agent do
 
   alias Ravix.Accounts
   alias Ravix.Accounts.Access
+  alias Ravix.Clock
   alias Ravix.Crypto
   alias Ravix.Ids
   alias Ravix.Previews
-  alias Ravix.Previews.{Clock, Store}
+  alias Ravix.Previews.Store
   alias Ravix.Projects.Project
   alias Ravix.PromptQueue.Item
   alias Ravix.Repo

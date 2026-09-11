@@ -30,8 +30,9 @@ defmodule Ravix.Previews.Reconciler do
 
   require Logger
 
+  alias Ravix.Clock
   alias Ravix.Previews
-  alias Ravix.Previews.{Clock, Row, Server, Store}
+  alias Ravix.Previews.{Row, Server, Store}
   alias Ravix.Projects.Project
   alias Ravix.Repo
   alias Ravix.Tracks.Track

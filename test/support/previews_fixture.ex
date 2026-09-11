@@ -8,14 +8,15 @@ defmodule Ravix.PreviewsFixture do
   holds, a readiness answer, a crash count, a port collision, a stop that
   fails, a barrier that stalls service creation). `stub_provider/1` puts
   Mimic stubs on `Ravix.Sprites`, `Ravix.Tracks`, `Ravix.Config`,
-  `Ravix.Previews.ready?/2` and `Ravix.Previews.Clock` that read and write
+  `Ravix.Previews.ready?/2` and `Ravix.Clock` that read and write
   it; because the previews' processes carry `$callers`, the stubs follow
   the test into them.
   """
 
   import Mimic
 
-  alias Ravix.Previews.{Clock, Server}
+  alias Ravix.Clock
+  alias Ravix.Previews.Server
   alias Ravix.Sprites.Error
   alias Ravix.Sprites.Shapes
 
