@@ -43,6 +43,16 @@ defmodule Ravix.PromptQueue.Store do
           image_count: non_neg_integer()
         }
 
+  @max_waiting 20
+
+  @max_payload_bytes 12 * 1024 * 1024
+
+  @done [:sent, :cancelled]
+
+  @claim_timeout_ms 6 * 60_000
+
+  @restart_error "The server restarted during delivery. Check the transcript before sending this again."
+
   @doc """
   Save a prompt for `track_id`, or return the receipt an earlier save left.
 
@@ -59,24 +69,64 @@ defmodule Ravix.PromptQueue.Store do
           {:ok, Item.t()} | {:error, PromptQueue.reason()}
   def enqueue(track_id, user_id, author_login, id, payload) do
     with :ok <- validate_request_id(id),
+         {:ok, encoded} <- encode(payload),
          {:ok, {item, inserted?}} <-
            Repo.transaction(fn ->
-             enqueue_locked(track_id, user_id, author_login, id, payload)
+             enqueue_locked(track_id, user_id, author_login, id, encoded)
            end) do
       if inserted?, do: publish_queue(track_id)
       {:ok, item}
     end
   end
 
-  @max_waiting 20
+  # Inside the transaction. The receipt check, the cap of twenty waiting
+  # prompts per track and the insert were one atomic step when the database
+  # was synchronous, and they stay one here: the track row is locked so two
+  # saves for one track cannot both pass the cap, and the unique index on id
+  # covers the receipt. Returns the row and whether this call inserted it.
+  #
+  # Refusing means `Repo.rollback/1`, so there is exactly one place that
+  # does it, in the same `with`-then-rollback shape as `cancel_locked/4` and
+  # `retry_locked/4` next door. It used to be four places in three
+  # functions, one of which was `encode/1` --- turning a payload into JSON,
+  # which touches no row and had no business ending a transaction. Encoding
+  # happens before this opens now, so a prompt too large to store is refused
+  # without taking a lock it was never going to use.
+  defp enqueue_locked(track_id, user_id, author_login, id, encoded) do
+    with {:ok, _track} <- lock_track(track_id),
+         {:ok, existing} <- receipt(id, track_id, user_id),
+         {:ok, _room} <- room(existing, track_id) do
+      case existing do
+        %Item{} -> {existing, false}
+        nil -> {insert(track_id, user_id, author_login, id, encoded), true}
+      end
+    else
+      {:error, reason} -> Repo.rollback(reason)
+    end
+  end
 
-  @max_payload_bytes 12 * 1024 * 1024
+  # The same request id twice is the same prompt, even after it was
+  # delivered; the same id on somebody else's track or from somebody else is
+  # a collision and must not answer with their row.
+  defp receipt(id, track_id, user_id) do
+    case get(id) do
+      %Item{track_id: ^track_id, user_id: ^user_id} = existing -> {:ok, existing}
+      %Item{} -> {:error, {:conflict, "request_id_used", "Use a new request id."}}
+      nil -> {:ok, nil}
+    end
+  end
 
-  @done [:sent, :cancelled]
+  defp room(%Item{}, _track_id), do: {:ok, :held}
 
-  @claim_timeout_ms 6 * 60_000
-
-  @restart_error "The server restarted during delivery. Check the transcript before sending this again."
+  defp room(nil, track_id) do
+    if waiting_count(track_id) >= @max_waiting do
+      {:error,
+       {:conflict, "queue_full",
+        "This track already has #{@max_waiting} saved prompts. Cancel one or wait for it to run."}}
+    else
+      {:ok, :free}
+    end
+  end
 
   @doc "One row by its request id, payload included, whatever its status."
   @spec get(String.t()) :: Item.t() | nil
@@ -272,39 +322,17 @@ defmodule Ravix.PromptQueue.Store do
       {:error,
        {:unprocessable, "request_id_required", "Send a unique request id with this prompt."}}
 
-  # Inside the transaction. The track row is locked so two saves for one
-  # track cannot both pass the cap; the unique index on id covers the
-  # receipt. Returns the row and whether this call inserted it.
-  defp enqueue_locked(track_id, user_id, author_login, id, payload) do
-    lock_track!(track_id)
-
-    case get(id) do
-      %Item{track_id: ^track_id, user_id: ^user_id} = existing ->
-        {existing, false}
-
-      %Item{} ->
-        Repo.rollback({:conflict, "request_id_used", "Use a new request id."})
-
-      nil ->
-        if waiting_count(track_id) >= @max_waiting do
-          Repo.rollback(
-            {:conflict, "queue_full",
-             "This track already has #{@max_waiting} saved prompts. Cancel one or wait for it to run."}
-          )
-        end
-
-        {insert(track_id, user_id, author_login, id, encode(payload)), true}
-    end
-  end
-
-  defp lock_track!(track_id) do
+  # The track row is locked for the rest of the transaction so two saves for
+  # one track cannot both pass the cap; the unique index on id covers the
+  # receipt.
+  defp lock_track(track_id) do
     Track
     |> where([t], t.id == ^track_id)
     |> lock("FOR UPDATE")
     |> Repo.one()
     |> case do
-      nil -> Repo.rollback(:not_found)
-      %Track{} = track -> track
+      nil -> {:error, :not_found}
+      %Track{} = track -> {:ok, track}
     end
   end
 
@@ -324,13 +352,12 @@ defmodule Ravix.PromptQueue.Store do
     encoded = Jason.encode!(body)
 
     if byte_size(encoded) > @max_payload_bytes do
-      Repo.rollback(
-        {:unprocessable, "prompt_too_large",
-         "This prompt has too many image bytes. Send fewer images."}
-      )
+      {:error,
+       {:unprocessable, "prompt_too_large",
+        "This prompt has too many image bytes. Send fewer images."}}
+    else
+      {:ok, {body, encoded}}
     end
-
-    {body, encoded}
   end
 
   defp insert(track_id, user_id, author_login, id, {body, encoded}) do
