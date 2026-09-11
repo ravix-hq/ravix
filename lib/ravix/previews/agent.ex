@@ -20,6 +20,7 @@ defmodule Ravix.Previews.Agent do
   alias Ravix.Crypto
   alias Ravix.Ids
   alias Ravix.Previews
+  alias Ravix.Previews.AgentGrant
   alias Ravix.Previews.Store
   alias Ravix.Projects.Project
   alias Ravix.PromptQueue.Item
@@ -124,7 +125,7 @@ defmodule Ravix.Previews.Agent do
       token = Crypto.random_token()
       hash = Crypto.sha256(token)
 
-      grant = %{
+      grant = %AgentGrant{
         hash: hash,
         track_id: track.id,
         user_id: user_id,

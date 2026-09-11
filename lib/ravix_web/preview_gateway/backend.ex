@@ -37,7 +37,7 @@ defmodule RavixWeb.PreviewGateway.Backend do
   @typedoc "A track's preview record. `Ravix.Previews.Row`."
   @type row :: Ravix.Previews.Row.t()
 
-  @typedoc "A browser or agent grant, as `Ravix.Previews.grant/0` names it for this side."
+  @typedoc "A browser grant, as `Ravix.Previews.grant/0` names it for this side."
   @type grant :: Ravix.Previews.grant()
 
   @typedoc "The track the preview belongs to. `Ravix.Tracks.Track`."
@@ -65,7 +65,7 @@ defmodule RavixWeb.PreviewGateway.Backend do
   @callback get_grant(
               hash :: String.t(),
               track_id :: String.t(),
-              kind :: :ticket | :session,
+              kind :: Ravix.Previews.Grant.kind(),
               disposition :: Ravix.Previews.disposition()
             ) ::
               grant() | nil

@@ -17,33 +17,28 @@ defmodule Ravix.Previews.Store do
 
   alias Ravix.Accounts.Session
   alias Ravix.Clock
-  alias Ravix.Previews.{Preview, PreviewAgentGrant, PreviewDefault, PreviewGrant, Row}
+
+  alias Ravix.Previews.{
+    AgentGrant,
+    Grant,
+    Preview,
+    PreviewAgentGrant,
+    PreviewDefault,
+    PreviewGrant,
+    Row
+  }
+
   alias Ravix.Repo
 
   @first_port 20_000
   @last_port 29_999
   @allocate_attempts 8
 
-  @typedoc "A browser grant: the hash of a ticket or preview cookie, tied to a Ravix session."
-  @type grant :: %{
-          hash: String.t(),
-          track_id: String.t(),
-          session_hash: String.t(),
-          expires: integer(),
-          kind: :ticket | :session
-        }
+  @typedoc "A browser grant; see `Ravix.Previews.Grant`."
+  @type grant :: Grant.t()
 
-  @typedoc "The helper's grant for one delivered turn."
-  @type agent_grant :: %{
-          hash: String.t(),
-          track_id: String.t(),
-          user_id: String.t(),
-          conversation_id: String.t() | nil,
-          prompt_id: String.t(),
-          sandbox_id: String.t(),
-          sprite: String.t(),
-          expires: integer()
-        }
+  @typedoc "The helper's grant for one delivered turn; see `Ravix.Previews.AgentGrant`."
+  @type agent_grant :: AgentGrant.t()
 
   # ── defaults ─────────────────────────────────────────────────────────
 
@@ -263,14 +258,14 @@ defmodule Ravix.Previews.Store do
 
   @doc "Store a grant, sweeping expired ones on the way."
   @spec grant(grant()) :: :ok | {:error, Ecto.Changeset.t()}
-  def grant(grant) do
+  def grant(%Grant{} = grant) do
     now = Clock.now_ms()
     Repo.delete_all(from g in PreviewGrant, where: g.expires <= ^now)
 
     case Repo.insert(
            PreviewGrant.changeset(
              %PreviewGrant{},
-             Map.take(grant, [:hash, :track_id, :session_hash, :expires, :kind])
+             Map.from_struct(grant)
            )
          ) do
       {:ok, _} -> :ok
@@ -286,7 +281,7 @@ defmodule Ravix.Previews.Store do
   @type disposition :: :peek | :consume
 
   @doc "An unexpired grant of `kind` on `track_id`, deleted on the way out when `:consume`."
-  @spec get_grant(String.t(), String.t(), :ticket | :session, disposition()) :: grant() | nil
+  @spec get_grant(String.t(), String.t(), Grant.kind(), disposition()) :: grant() | nil
   def get_grant(hash, track_id, kind, disposition \\ :peek)
       when disposition in [:peek, :consume] do
     now = Clock.now_ms()
@@ -330,7 +325,7 @@ defmodule Ravix.Previews.Store do
   end
 
   defp present_grant(%PreviewGrant{} = g) do
-    %{
+    %Grant{
       hash: g.hash,
       track_id: g.track_id,
       session_hash: g.session_hash,
@@ -343,7 +338,7 @@ defmodule Ravix.Previews.Store do
 
   @doc "Store the helper's grant for a track, replacing the last one and sweeping expired ones."
   @spec grant_agent(agent_grant()) :: :ok | {:error, Ecto.Changeset.t()}
-  def grant_agent(grant) do
+  def grant_agent(%AgentGrant{} = grant) do
     now = Clock.now_ms()
     track_id = grant.track_id
 
@@ -356,7 +351,7 @@ defmodule Ravix.Previews.Store do
       track_id: track_id,
       user_id: grant.user_id,
       expires: grant.expires,
-      row: encode_agent_grant(grant)
+      row: AgentGrant.encode(grant)
     }
 
     case Repo.insert(PreviewAgentGrant.changeset(%PreviewAgentGrant{}, attrs)) do
@@ -372,7 +367,7 @@ defmodule Ravix.Previews.Store do
 
     case Repo.one(from g in PreviewAgentGrant, where: g.hash == ^hash and g.expires > ^now) do
       nil -> nil
-      %PreviewAgentGrant{row: row} -> decode_agent_grant(row)
+      %PreviewAgentGrant{row: row} -> AgentGrant.decode(row)
     end
   end
 
@@ -383,16 +378,5 @@ defmodule Ravix.Previews.Store do
     query = if user_id, do: where(query, [g], g.user_id == ^user_id), else: query
     Repo.delete_all(query)
     :ok
-  end
-
-  @agent_keys ~w(hash track_id user_id conversation_id prompt_id sandbox_id sprite expires)a
-
-  defp encode_agent_grant(grant) do
-    Map.new(@agent_keys, fn key -> {Atom.to_string(key), Map.get(grant, key)} end)
-  end
-
-  defp decode_agent_grant(row) do
-    row = Row.normalize_keys(row)
-    Map.new(@agent_keys, fn key -> {key, row[Atom.to_string(key)]} end)
   end
 end

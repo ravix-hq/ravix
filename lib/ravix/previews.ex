@@ -33,7 +33,7 @@ defmodule Ravix.Previews do
   alias Ravix.Accounts.User
   alias Ravix.Clock
   alias Ravix.Crypto
-  alias Ravix.Previews.{Agent, Config, Row, Server, Store, View}
+  alias Ravix.Previews.{Agent, Config, Grant, Row, Server, Store, View}
   alias Ravix.Projects.Project
   alias Ravix.Projects.Store, as: Projects
   alias Ravix.Repo
@@ -85,13 +85,13 @@ defmodule Ravix.Previews do
   @type disposition :: Store.disposition()
 
   @typedoc """
-  A browser or agent grant; see `Ravix.Previews.Store`.
+  A browser grant; see `Ravix.Previews.Grant`.
 
   Named again here for the same reason as `disposition/0`: the gateway
   reads grants and lives in `lib/ravix_web/`, where a store may not be
   mentioned, and a typespec is a mention.
   """
-  @type grant :: Store.grant()
+  @type grant :: Grant.t()
 
   @doc "The lease a heartbeat renews, in milliseconds."
   @spec lease_ms() :: pos_integer()
@@ -527,13 +527,12 @@ defmodule Ravix.Previews do
   @spec row(String.t()) :: Row.t() | nil
   defdelegate row(track_id), to: Store, as: :get
 
-  @doc "A browser or agent grant by hash, consumed if asked. A ticket is single-use."
-  @spec grant_by_hash(String.t(), String.t(), :ticket | :session, disposition()) ::
-          Store.grant() | nil
+  @doc "A browser grant by hash, consumed if asked. A ticket is single-use."
+  @spec grant_by_hash(String.t(), String.t(), Grant.kind(), disposition()) :: grant() | nil
   defdelegate grant_by_hash(hash, track_id, kind, disposition), to: Store, as: :get_grant
 
   @doc "Record a browser grant against the session that opened it."
-  @spec record_grant(map()) :: :ok | {:error, Ecto.Changeset.t()}
+  @spec record_grant(grant()) :: :ok | {:error, Ecto.Changeset.t()}
   defdelegate record_grant(grant), to: Store, as: :grant
 
   @doc """
@@ -558,8 +557,8 @@ defmodule Ravix.Previews do
   track, the track is open, and the preview is not being torn down. A
   membership revoked a second ago closes the preview a second later.
   """
-  @spec allowed?(Row.t(), map()) :: boolean()
-  def allowed?(%Row{} = row, grant) do
+  @spec allowed?(Row.t(), grant()) :: boolean()
+  def allowed?(%Row{} = row, %Grant{} = grant) do
     with %{} <- Store.get_grant(grant.hash, row.track_id, grant.kind, :peek),
          %{} = user <- Ravix.Accounts.session_user(grant.session_hash),
          {:ok, %{track: %{closed_at: nil}}} <- Access.track_access(user, row.track_id) do
@@ -664,7 +663,7 @@ defmodule Ravix.Previews do
         ticket = Crypto.random_token()
 
         with :ok <-
-               Store.grant(%{
+               Store.grant(%Grant{
                  hash: Crypto.sha256(ticket),
                  track_id: track_id,
                  session_hash: session_hash,
