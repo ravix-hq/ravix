@@ -27,7 +27,9 @@ defmodule Ravix.MachineCache do
 
   The sprite behind a sandbox never changes for a given sandbox id, so that
   lookup is memoised for longer; a "not a sprite" answer only briefly, since
-  a sandbox mid-provisioning may not have one yet.
+  a sandbox mid-provisioning may not have one yet. A project's environment
+  is memoised for the same minute and forgotten when settings are saved,
+  which is the only thing that changes it.
 
   Values live in a public ETS table so a hit never touches the server; only
   misses go through the GenServer, which is where concurrent misses are
@@ -47,6 +49,7 @@ defmodule Ravix.MachineCache do
   @memo __MODULE__
   @ttl_ms 5_000
   @sprite_ttl_ms 60_000
+  @environment_ttl_ms 60_000
 
   @typedoc "A conversation as `GET /api/conversations` lists it."
   @type conversation :: Conversation.t()
@@ -62,6 +65,10 @@ defmodule Ravix.MachineCache do
   @doc "How long a sandbox's sprite name stands. It does not change."
   @spec sprite_ttl_ms() :: pos_integer()
   def sprite_ttl_ms, do: @sprite_ttl_ms
+
+  @doc "How long an environment record stands before it is re-read."
+  @spec environment_ttl_ms() :: pos_integer()
+  def environment_ttl_ms, do: @environment_ttl_ms
 
   @doc false
   def child_spec(opts), do: Memo.child_spec(Keyword.put_new(opts, :name, @memo))
@@ -147,10 +154,42 @@ defmodule Ravix.MachineCache do
     end
   end
 
+  @doc """
+  A project's environment record, memoised for a minute.
+
+  `Ravix.Tracks.get/2` reads this for one boolean --- whether the project
+  has a setup script, which decides whether the ribbon offers to add one ---
+  and `get/2` runs on every refresh of every open track page. Uncached, that
+  was a Fountain round trip per page per refresh for an answer that changes
+  only when somebody saves settings.
+
+  That save calls `forget_environment/1`, so the minute is the backstop for
+  a change made on another instance rather than the thing keeping this
+  current. `Ravix.Projects.Settings.get/2` deliberately does not come
+  through here: the settings form is the page that edits the environment and
+  must show what is actually stored.
+  """
+  @spec environment(Client.t(), String.t(), opts()) ::
+          {:ok, map()} | {:error, Fountain.failure()}
+  def environment(%Client{} = client, environment_id, opts \\ []) do
+    memo(
+      {client_id(client), :environment, environment_id},
+      fn -> Fountain.get_environment(client, environment_id) end,
+      fn _ -> @environment_ttl_ms end,
+      opts
+    )
+  end
+
   @doc "Forget what was derived for one project, on every client."
   @spec forget_project(String.t()) :: :ok
   def forget_project(project_id) do
     Memo.forget_where(@memo, &match?({_client, :conversations, ^project_id, _agent}, &1))
+  end
+
+  @doc "Forget one environment, on every client. Called when settings are saved."
+  @spec forget_environment(String.t()) :: :ok
+  def forget_environment(environment_id) do
+    Memo.forget_where(@memo, &match?({_client, :environment, ^environment_id}, &1))
   end
 
   @doc "For tests: forget everything."

@@ -11,6 +11,22 @@ defmodule RavixWeb.TrackLive do
   @tabs %{"files" => :files, "changes" => :changes, "checks" => :checks, "preview" => :preview}
   @dialogs %{"rename" => :rename, "close" => :close, "people" => :people, "pull" => :pull}
 
+  # How often the page re-reads everything without being told to.
+  #
+  # This is a backstop and nothing else. Ravix runs on more than one instance
+  # (ADR 0003) and PubSub is best-effort, so a partition can eat the hub event
+  # that would have refreshed the ribbon or the queue; the tick is what closes
+  # that gap. Everything it covers already arrives on its own: turns and
+  # queue movements on the project's hub, transcript events from the track's
+  # `Ravix.Tracks.Follower`.
+  #
+  # It was fifteen seconds, which is the interval of a primary update path
+  # rather than a backstop, and it made every open page --- including one
+  # nobody was looking at --- cost two Fountain reads and a transcript read
+  # four times a minute. `RavixWeb.Live.Guard` keeps its own fifteen because
+  # what it backstops is somebody's access being revoked.
+  @refresh_ms 60_000
+
   alias Ravix.Accounts.Access
   alias Ravix.{Crypto, Hub, Previews, PromptQueue, Tracks}
   alias Ravix.GitHub.ChecksReport
@@ -71,7 +87,7 @@ defmodule RavixWeb.TrackLive do
 
       if connected?(socket) do
         Hub.subscribe(socket.assigns.project_id)
-        Process.send_after(self(), :refresh, 15_000)
+        Process.send_after(self(), :refresh, @refresh_ms)
       end
 
       {:ok, if(connected?(socket), do: load(socket), else: socket)}
@@ -298,7 +314,7 @@ defmodule RavixWeb.TrackLive do
   end
 
   def handle_info(:refresh, socket) do
-    Process.send_after(self(), :refresh, 15_000)
+    Process.send_after(self(), :refresh, @refresh_ms)
     {:noreply, socket |> refresh_detail() |> refresh_queue() |> refresh_transcript()}
   end
 
@@ -320,6 +336,19 @@ defmodule RavixWeb.TrackLive do
   end
 
   @impl true
+  # Read afresh, and deliberately not left to the `:track_async_access` hook
+  # attached at mount. The hook holds an answer for up to `Guard.ttl_ms/0`,
+  # which is right for a message: the news that would have invalidated it
+  # arrives on the hub, and the worst case is a page that is fifteen seconds
+  # late to notice.
+  #
+  # An async result is not that. It carries data a provider was asked for
+  # *before* the revocation --- a file listing, a diff, a transcript --- and
+  # rendering it is handing somebody bytes they are no longer entitled to.
+  # A track closed straight in the database publishes nothing for the hook to
+  # hear, so the held answer would still stand. The two extra queries buy the
+  # test named "track revocation rejects a delayed provider result", which is
+  # worth them.
   def handle_async(name, response, socket) do
     if authorized?(socket) do
       {:noreply, async_result(name, response, socket)}
@@ -350,6 +379,15 @@ defmodule RavixWeb.TrackLive do
 
   defp async_result(:load, {:ok, {:error, reason}}, socket),
     do: socket |> assign(loading: false) |> error(reason)
+
+  defp async_result(:detail, {:ok, {:ok, detail}}, socket),
+    do: assign(socket, track: detail.track, header: detail.header)
+
+  defp async_result(:detail, {:ok, {:error, reason}}, socket), do: error(socket, reason)
+
+  defp async_result(:queue, {:ok, {:ok, queue}}, socket), do: assign(socket, queue: queue)
+
+  defp async_result(:queue, {:ok, {:error, reason}}, socket), do: error(socket, reason)
 
   defp async_result(:transcript, {:ok, {:ok, page}}, socket) do
     newer =
@@ -383,6 +421,13 @@ defmodule RavixWeb.TrackLive do
       |> assign(preview_url: preview.open_url || s.assigns.preview_url)
     end)
   end
+
+  # A background refresh that crashed leaves the page showing what it had.
+  # The generic clause below belongs to the reads somebody is waiting on: it
+  # clears `loading` and says so, which is the wrong answer for a tick nobody
+  # asked for. Access lost mid-refresh is `Guard`'s to notice, not this.
+  defp async_result(name, {:exit, _reason}, socket) when name in [:detail, :queue],
+    do: socket
 
   defp async_result(_name, {:exit, _reason}, socket),
     do:
@@ -613,22 +658,32 @@ defmodule RavixWeb.TrackLive do
     )
   end
 
+  # The three refreshes below all run off a message --- a hub event, a stage
+  # event on the transcript, the backstop tick --- and none of them may be
+  # run in this process. `Tracks.get/2` alone is two Fountain round trips, so
+  # a page that did it inline stopped rendering, stopped answering clicks and
+  # stopped taking transcript events for as long as Fountain took to answer,
+  # on every event of a turn.
+  #
+  # Naming each one also fixes what a burst does to the screen. A second
+  # `start_async/3` under the same name supersedes the first, and LiveView
+  # drops the superseded answer rather than delivering it, so a stage event
+  # arriving mid-read cannot render a detail older than the one after it. The
+  # superseded read itself still runs; what keeps a burst from costing a call
+  # per event is the memo behind `Tracks.get/2`, not this.
   defp refresh_detail(%{assigns: %{track: nil}} = socket), do: socket
 
   defp refresh_detail(socket) do
-    result(socket, Tracks.get(socket.assigns.current_user, socket.assigns.track_id), fn s,
-                                                                                        detail ->
-      assign(s, track: detail.track, header: detail.header)
-    end)
+    user = socket.assigns.current_user
+    id = socket.assigns.track_id
+    start_async(socket, :detail, fn -> Tracks.get(user, id) end)
   end
 
-  defp refresh_queue(socket),
-    do:
-      result(
-        socket,
-        PromptQueue.list(socket.assigns.current_user, socket.assigns.track_id),
-        &assign(&1, queue: &2)
-      )
+  defp refresh_queue(socket) do
+    user = socket.assigns.current_user
+    id = socket.assigns.track_id
+    start_async(socket, :queue, fn -> PromptQueue.list(user, id) end)
+  end
 
   # Whether this person still reaches this track: read afresh, every time it
   # is called. `guard/2` is what decides how often that is.

@@ -246,6 +246,10 @@ defmodule Ravix.Projects.Settings do
              Projects.fountain_result(
                Fountain.update_environment(client, project.environment_id, patch)
              ) do
+        # The track ribbon's "add a setup script" offer is read from the
+        # memoised environment, so the answer this just changed has to be
+        # dropped or the offer keeps appearing for another minute.
+        Ravix.MachineCache.forget_environment(project.environment_id)
         :ok
       end
     end

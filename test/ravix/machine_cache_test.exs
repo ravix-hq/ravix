@@ -92,6 +92,39 @@ defmodule Ravix.MachineCacheTest do
     assert length(FakeTransport.calls(client)) == 3
   end
 
+  test "an environment stands for a minute and is dropped when it is forgotten" do
+    id = "env-#{System.unique_integer([:positive])}"
+
+    body = fn script ->
+      {%{method: "GET", path: "/api/environments/#{id}"},
+       {200, [], %{data: %{"id" => id, "setup_script" => script}}}}
+    end
+
+    client = FakeTransport.client([body.(""), body.("make setup"), body.("make setup")])
+    ttl = MachineCache.environment_ttl_ms()
+
+    # `Ravix.Tracks.get/2` reads this on every refresh of every open page, so
+    # the burst a turn produces has to cost one call, not one each.
+    assert {:ok, %{"setup_script" => ""}} = MachineCache.environment(client, id, now_ms: 0)
+    assert {:ok, %{"setup_script" => ""}} = MachineCache.environment(client, id, now_ms: ttl - 1)
+    assert length(FakeTransport.calls(client)) == 1
+
+    # Saving settings is the only thing that changes the answer, and it says
+    # so rather than leaving the ribbon offering a script somebody just wrote.
+    MachineCache.forget_environment(id)
+
+    assert {:ok, %{"setup_script" => "make setup"}} =
+             MachineCache.environment(client, id, now_ms: ttl - 1)
+
+    assert length(FakeTransport.calls(client)) == 2
+
+    # The minute is the backstop for a save made on another instance.
+    assert {:ok, %{"setup_script" => "make setup"}} =
+             MachineCache.environment(client, id, now_ms: 2 * ttl)
+
+    assert length(FakeTransport.calls(client)) == 3
+  end
+
   test "two clients do not share an answer", %{project: project} do
     f = fountain(project, [[@row]])
     g = fountain(project, [[]])

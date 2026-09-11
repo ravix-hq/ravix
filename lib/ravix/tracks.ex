@@ -138,9 +138,12 @@ defmodule Ravix.Tracks do
   `GET /api/tracks/:id`: the track, plus the ribbon that sits above it and
   the starter chips.
 
-  The environment is read for one boolean, and it is worth the call: the
-  "add a setup script" line in the ribbon is an offer, and an offer that
-  keeps appearing after you have accepted it reads as a broken app.
+  The environment is read for one boolean: the "add a setup script" line in
+  the ribbon is an offer, and an offer that keeps appearing after you have
+  accepted it reads as a broken app. It comes from `Ravix.MachineCache`
+  rather than from Fountain directly, because this function runs on every
+  refresh of every open track page and the answer changes only when
+  somebody saves settings --- which forgets it.
   """
   @spec get(User.t(), String.t()) ::
           {:ok, %{track: View.t(), header: header(), starters: [Spec.Starter.t()]}}
@@ -152,7 +155,7 @@ defmodule Ravix.Tracks do
       live = conversations_of(project)
 
       environment =
-        case Fountain.get_environment(client, project.environment_id) do
+        case MachineCache.environment(client, project.environment_id) do
           {:ok, env} -> env
           _ -> nil
         end
