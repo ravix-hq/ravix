@@ -102,9 +102,9 @@ before applying migrations. Context queries use it by default.
 
 The old Bun application's `public` tables are preserved and are not imported.
 This is a fresh application-data cutover, as chosen in the rewrite decision;
-users sign in again and create their projects in the Elixir application. If
-existing Bun data needs to be carried over, that requires a separate import
-before deployment. Do not drop the public tables as part of deployment.
+users sign in again and create their projects in the Elixir application. There
+is no legacy data to import. Do not drop the public tables as part of
+deployment.
 
 ```sh
 mix ecto.migrate
@@ -177,9 +177,11 @@ safe upload, escaped markdown, and preview-origin response functions.
 | Local TypeScript service fixtures | `mock/`, with the four values it copies from Elixir in `shared/contract.ts` |
 | Architecture decisions | `decisions/` |
 
-The Bun server, React SPA, runner, and browser ACP parser were removed in the
-Elixir migration. Their source remains in Git history. Older feature briefs in
-`docs/` describe the pre-migration system and are historical references.
+Bun is a development dependency only. It runs the `mock/` service fixtures, the
+`assets/test/` hook tests, and Playwright; nothing it builds is served, because
+Phoenix compiles `assets/` through `mix assets.deploy`. Older feature briefs in
+`docs/` describe the pre-migration system and are historical references; the
+code they describe lives in Git history.
 
 ### Additional quality guards
 
