@@ -36,6 +36,7 @@ defmodule Ravix.PromptQueue.Server do
   alias Ravix.Hub
   alias Ravix.Projects.{Project, ProjectMember}
   alias Ravix.PromptQueue
+  alias Ravix.PromptQueue.Body
   alias Ravix.PromptQueue.Item
   alias Ravix.PromptQueue.Store
   alias Ravix.Repo
@@ -258,13 +259,15 @@ defmodule Ravix.PromptQueue.Server do
     settle(outcome, row, track, project)
   end
 
+  # Re-read rather than taken from `row`: the sweep picked that up before the
+  # network calls above, and a cancellation since then has released the body.
   defp post(client, row, track, project) do
-    payload = row.id |> Store.get() |> Map.fetch!(:body) || %{}
+    body = row.id |> Store.get() |> Map.fetch!(:body) |> Body.decode()
     instructions = Ravix.Previews.prepare_agent_preview(row)
 
     if authorized?(row) do
-      text = compose(instructions, authored(row, track, project, payload["prompt"] || ""))
-      Fountain.prompt(client, track.conversation_id, text, payload["images"] || [])
+      text = compose(instructions, authored(row, track, project, body.prompt))
+      Fountain.prompt(client, track.conversation_id, text, body.images)
     else
       :revoked
     end
