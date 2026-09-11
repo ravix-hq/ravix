@@ -56,7 +56,7 @@ defmodule RavixWeb.ErrorTest do
     test "a preview server that stopped mid-operation is a 503, not an internal error" do
       # `Ravix.Previews.Server.run/2` answers this when the process holding a
       # track's preview goes away underneath the call, which reaches a page
-      # through `Previews.act/4` whenever somebody presses Stop at the wrong
+      # through `Previews.stop/2` whenever somebody presses Stop at the wrong
       # moment. It had no clause here and rendered as the generic 500.
       error = Error.from(:preview_server_down)
 

@@ -150,19 +150,22 @@ defmodule RavixWeb.TrackLive do
      )}
   end
 
-  def handle_event("preview", %{"action" => action}, socket)
-      when action in ~w(open restart stop logs) do
-    user = socket.assigns.current_user
-    id = socket.assigns.track_id
-    hash = socket.assigns.session_hash
+  # One clause per button, because the four are four different calls: two of
+  # them need the session hash to mint a ticket with and two have no use for
+  # it. A single clause taking the word the button sent could only hand that
+  # word onward and let the context sort it out, which is how "stop" and a
+  # typo became the same request.
+  def handle_event("preview", %{"action" => "open"}, socket),
+    do: {:noreply, preview_async(socket, &Previews.open(&1, &2, &3))}
 
-    {:noreply,
-     socket
-     |> assign(panel_busy: true)
-     |> start_async(:preview_action, fn ->
-       Previews.act(user, id, action, %{session_hash: hash})
-     end)}
-  end
+  def handle_event("preview", %{"action" => "restart"}, socket),
+    do: {:noreply, preview_async(socket, &Previews.restart(&1, &2, &3))}
+
+  def handle_event("preview", %{"action" => "stop"}, socket),
+    do: {:noreply, preview_async(socket, fn user, id, _hash -> Previews.stop(user, id) end)}
+
+  def handle_event("preview", %{"action" => "logs"}, socket),
+    do: {:noreply, preview_async(socket, fn user, id, _hash -> Previews.logs(user, id) end)}
 
   def handle_event("preview-config", params, socket) do
     config =
@@ -173,9 +176,7 @@ defmodule RavixWeb.TrackLive do
     {:noreply,
      result(
        socket,
-       Previews.act(socket.assigns.current_user, socket.assigns.track_id, "config", %{
-         config: config
-       }),
+       Previews.save_config(socket.assigns.current_user, socket.assigns.track_id, config),
        &assign(&1, preview: &2)
      )}
   end
@@ -421,6 +422,19 @@ defmodule RavixWeb.TrackLive do
     user = socket.assigns.current_user
     id = socket.assigns.track_id
     start_async(socket, :transcript, fn -> Tracks.events(user, id) end)
+  end
+
+  # The four preview buttons all do the same thing to the page -- mark the
+  # panel busy and answer later -- and differ only in which context call they
+  # make, so that call is what they pass in.
+  defp preview_async(socket, call) do
+    user = socket.assigns.current_user
+    id = socket.assigns.track_id
+    hash = socket.assigns.session_hash
+
+    socket
+    |> assign(panel_busy: true)
+    |> start_async(:preview_action, fn -> call.(user, id, hash) end)
   end
 
   defp load_panel(socket, path \\ nil) do

@@ -509,7 +509,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
   test "a new preview tab gets a fresh ticket tied to the signed-in session", %{conn: conn} do
     user = insert_user()
 
-    expect(Ravix.Previews, :act, fn actual_user, "track-id", "open", %{session_hash: hash} ->
+    expect(Ravix.Previews, :open, fn actual_user, "track-id", hash ->
       assert actual_user.id == user.id
       assert byte_size(hash) > 0
       {:ok, %{open_url: "https://track.preview.example/__ravix/open#ticket"}}

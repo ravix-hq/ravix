@@ -193,16 +193,31 @@ defmodule Ravix.PreviewsTest do
     assert track_id == t1.id and session_hash == session.token_hash
     assert expires == now(p) + 60_000
 
-    assert {:ok, %{open_url: open_url}} =
-             Previews.act(owner, t1.id, "open", %{session_hash: session.token_hash})
+    assert {:ok, %{open_url: open_url}} = Previews.open(owner, t1.id, session.token_hash)
 
     assert String.starts_with?(open_url, origin <> "/__ravix/open#")
     # The start runs in the background; the page polls info until it is ready.
     await(p, fn _ -> Store.get(t1.id).state == :ready end)
 
-    assert {:error, {:unprocessable, "session", _}} = Previews.act(owner, t1.id, "open", %{})
     assert {:error, :not_found} = Previews.open_ticket(insert_user(), t1.id, session.token_hash)
     await_background()
+  end
+
+  test "a refused open starts nothing, because the ticket is minted first", %{
+    p: p,
+    owner: owner,
+    t1: t1
+  } do
+    assert Previews.stop(owner, t1.id) == {:ok, Previews.info(t1.id)}
+    services = Map.keys(state(p).services)
+
+    # No session hash means no ticket, which means a refusal rather than a
+    # service the caller was never going to be let into.
+    assert {:error, {:unprocessable, "session", _}} = Previews.open(owner, t1.id, nil)
+
+    await_background()
+    assert Map.keys(state(p).services) == services
+    assert Store.get(t1.id).desired == :stopped
   end
 
   test "the actions configure, stop and read logs for a member, and refuse a stranger", %{
@@ -215,20 +230,22 @@ defmodule Ravix.PreviewsTest do
     config = %{"directory" => "apps/web", "command" => "run", "readinessPath" => "/"}
 
     assert {:ok, %{override: %{directory: "apps/web"}}} =
-             Previews.act(guest, t1.id, "config", %{"config" => config})
+             Previews.save_config(guest, t1.id, config)
 
     assert {:error, {:unprocessable, "preview_directory", _}} =
-             Previews.act(guest, t1.id, "config", %{
-               config: %{directory: "/etc", command: "x", readiness_path: "/"}
+             Previews.save_config(guest, t1.id, %{
+               directory: "/etc",
+               command: "x",
+               readiness_path: "/"
              })
 
     assert :ok = Previews.start_service(t1.id)
-    assert {:ok, %{state: :ready, logs: "startup logs"}} = Previews.act(guest, t1.id, "status")
-    assert {:ok, %{logs: "Error: command not found"}} = Previews.act(guest, t1.id, "logs")
-    assert {:ok, %{state: :stopped}} = Previews.act(owner, t1.id, "stop")
+    assert {:ok, %{state: :ready, logs: "startup logs"}} = Previews.status(guest, t1.id)
+    assert {:ok, %{logs: "Error: command not found"}} = Previews.logs(guest, t1.id)
+    assert {:ok, %{state: :stopped}} = Previews.stop(owner, t1.id)
     assert Map.values(state(p).services) == ["stopped"]
-    assert {:ok, %{override: nil}} = Previews.act(guest, t1.id, "config", %{config: nil})
-    assert {:error, :not_found} = Previews.act(insert_user(), t1.id, "stop")
+    assert {:ok, %{override: nil}} = Previews.save_config(guest, t1.id, nil)
+    assert {:error, :not_found} = Previews.stop(insert_user(), t1.id)
   end
 
   test "saving defaults stops the tracks that run on them and leaves overrides alone", %{
