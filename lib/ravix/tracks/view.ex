@@ -17,6 +17,7 @@ defmodule Ravix.Tracks.View do
   where it is built, and a misspelt one no longer compiles.
   """
 
+  alias Ravix.People.Person
   alias Ravix.Tracks.Track
 
   @typedoc "How a track was started, from its row."
@@ -73,7 +74,7 @@ defmodule Ravix.Tracks.View do
           turn_count: non_neg_integer(),
           created_at: DateTime.t(),
           created_by_login: String.t(),
-          people: [map()],
+          people: [Person.t()],
           role: :owner | :member,
           unread: boolean()
         }

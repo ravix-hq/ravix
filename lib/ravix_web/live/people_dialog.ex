@@ -23,6 +23,7 @@ defmodule RavixWeb.Live.PeopleDialog do
   use RavixWeb, :live_component
 
   alias Ravix.People
+  alias Ravix.People.Person
 
   @doc "The two units of sharing, and everything that differs between them."
   @spec scopes() :: [:track | :project]
@@ -113,21 +114,21 @@ defmodule RavixWeb.Live.PeopleDialog do
   The project's own dialog says nothing for its own members, because there
   the answer is "they are project members" and the dialog already said so.
   """
-  @spec badge(People.person(), :track | :project) :: String.t() | nil
-  def badge(%{via: :owner}, _scope), do: "owner"
-  def badge(%{via: :pending}, _scope), do: "invited, not signed in yet"
-  def badge(%{via: :project}, :track), do: "in the whole project"
-  def badge(_person, _scope), do: nil
+  @spec badge(Person.t(), :track | :project) :: String.t() | nil
+  def badge(%Person{via: :owner}, _scope), do: "owner"
+  def badge(%Person{via: :pending}, _scope), do: "invited, not signed in yet"
+  def badge(%Person{via: :project}, :track), do: "in the whole project"
+  def badge(%Person{}, _scope), do: nil
 
   # A control that cannot work is worse than no control. The owner holds the
   # project and cannot be removed from it or from a track on it; somebody
   # whose access comes from the project cannot be taken off one of its tracks
   # -- `Ravix.People.remove/3` refuses both, and the badge beside them now
   # says where to go instead.
-  defp removable?(%{via: :owner}, _scope, _owner?, _user), do: false
-  defp removable?(%{via: :project}, :track, _owner?, _user), do: false
+  defp removable?(%Person{via: :owner}, _scope, _owner?, _user), do: false
+  defp removable?(%Person{via: :project}, :track, _owner?, _user), do: false
 
-  defp removable?(person, _scope, owner?, user),
+  defp removable?(%Person{} = person, _scope, owner?, user),
     do: owner? or person.login == user.login
 
   @impl true
