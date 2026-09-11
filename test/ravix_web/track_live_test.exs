@@ -53,7 +53,7 @@ defmodule RavixWeb.TrackLiveTest do
     conn = log_in_user(conn, user)
     {:ok, parent, _} = live(conn, "/p/#{project.id}/t/#{track.id}")
     view = find_live_child(parent, "track-#{track.id}")
-    render_async(view)
+    settle(view)
     %{conn: conn, parent: parent, view: view, user: user, project: project, track: track}
   end
 
@@ -73,8 +73,13 @@ defmodule RavixWeb.TrackLiveTest do
     render_click(ctx.view, "dialog", %{name: "rename"})
     ctx.view |> form("#rename-form", rename_track: [title: "A useful title"]) |> render_submit()
     assert Repo.get!(Track, ctx.track.id).title == "A useful title"
-    assert has_element?(ctx.view, "header button", "A useful title")
+
+    # The dialog closes on the answer from `Ravix.Tracks.rename/3`; the ribbon
+    # above it is re-read for the new name, and that read is a Fountain call
+    # this page will not make in its own process.
     refute has_element?(ctx.view, "#rename-dialog")
+    render_async(ctx.view)
+    assert has_element?(ctx.view, "header button", "A useful title")
   end
 
   test "a refusal about the title lands on the title, not in a toast", ctx do
@@ -530,6 +535,16 @@ defmodule RavixWeb.TrackLiveTest do
   end
 
   # What one hub event costs the page, in queries, once it has settled.
+  # `render_async/1` waits on the async reads outstanding when it is called,
+  # and not on any the first of them starts. The page's load is exactly that
+  # shape --- it settles, and *then* reads the queue and the open panel --- so
+  # one call leaves a second generation in flight and the next thing a test
+  # measures is paying for somebody else's read.
+  defp settle(view) do
+    render_async(view)
+    render_async(view)
+  end
+
   defp hub_queries(ctx, event) do
     QueryCount.queries(
       fn ->
@@ -758,6 +773,62 @@ defmodule RavixWeb.TrackLiveTest do
     assert html =~ "Tool result"
     assert html =~ "Compiler output"
     refute has_element?(ctx.view, "#transcript-turns script")
+  end
+
+  test "a refresh leaves the page answering while the provider is thinking", ctx do
+    # `Ravix.Tracks.get/2` is two Fountain round trips, and the page runs it
+    # on news it did not ask for: a hub event, a stage event on the transcript,
+    # the backstop tick. Run in this process it stopped everything else ---
+    # clicks, renders, the transcript arriving --- for however long Fountain
+    # took, on every event of a turn.
+    parent = self()
+    detail = stub_detail(ctx)
+
+    stub(Tracks, :get, fn _, _ ->
+      send(parent, {:detail_waiting, self()})
+
+      receive do
+        :finish -> detail
+      after
+        2_000 -> flunk("detail read was never released")
+      end
+    end)
+
+    send(ctx.view.pid, {:hub, Event.new(:settings, ctx.project.id)})
+    assert_receive {:detail_waiting, provider}
+    refute provider == ctx.view.pid
+
+    # The read is outstanding and the page is still a page.
+    assert render_click(ctx.view, "dialog", %{name: "rename"}) =~ "rename-form"
+    assert has_element?(ctx.view, "#rename-dialog")
+
+    send(provider, :finish)
+    render_async(ctx.view)
+    assert has_element?(ctx.view, "#rename-dialog")
+  end
+
+  test "a refresh that crashes leaves the page showing what it had", ctx do
+    stub(Tracks, :get, fn _, _ -> raise "Fountain fell over" end)
+
+    ExUnit.CaptureLog.capture_log(fn ->
+      send(ctx.view.pid, {:hub, Event.new(:settings, ctx.project.id)})
+      render_async(ctx.view)
+    end)
+
+    # Still the track it was showing, and no "could not finish loading" for a
+    # read nobody asked for. That message belongs to the reads somebody is
+    # waiting on.
+    assert render(ctx.view) =~ ctx.track.title
+    refute render(ctx.view) =~ "Could not finish loading"
+  end
+
+  defp stub_detail(ctx) do
+    {:ok,
+     %{
+       track: Tracks.present(Repo.get!(Track, ctx.track.id), role: :owner),
+       header: blank_header(),
+       starters: []
+     }}
   end
 
   for revocation <- [:session, :track] do
