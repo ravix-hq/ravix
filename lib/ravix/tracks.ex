@@ -568,7 +568,7 @@ defmodule Ravix.Tracks do
 
   @doc "`GET /api/tracks/:id/files?path=`: one directory, confined to the worktree. Free; it does not wake a parked box."
   @spec files(User.t(), String.t(), String.t() | nil) ::
-          {:ok, Files.listing()} | {:error, reason()}
+          {:ok, Files.Listing.t()} | {:error, reason()}
   def files(%User{} = user, track_id, path) do
     with {:ok, track, client, sandbox_id} <- machine_read(user, track_id),
          {:ok, raw} <- Fountain.listing(client, sandbox_id, confine(track.workdir, path)) do
@@ -578,7 +578,7 @@ defmodule Ravix.Tracks do
 
   @doc "`GET /api/tracks/:id/file?path=`: one file, confined to the worktree."
   @spec file(User.t(), String.t(), String.t() | nil) ::
-          {:ok, Files.content()} | {:error, reason()}
+          {:ok, Files.Content.t()} | {:error, reason()}
   def file(%User{} = user, track_id, path) do
     with {:ok, track, client, sandbox_id} <- machine_read(user, track_id),
          {:ok, raw} <- Fountain.file(client, sandbox_id, confine(track.workdir, path)) do
@@ -587,34 +587,25 @@ defmodule Ravix.Tracks do
   end
 
   @doc "`GET /api/tracks/:id/diff`: `git diff` in this track's worktree, parsed per file."
-  @spec diff(User.t(), String.t()) ::
-          {:ok,
-           %{
-             path: String.t(),
-             repo_root: String.t() | nil,
-             diff: String.t(),
-             truncated: boolean(),
-             files: [Diff.file()]
-           }}
-          | {:error, reason()}
+  @spec diff(User.t(), String.t()) :: {:ok, Diff.t()} | {:error, reason()}
   def diff(%User{} = user, track_id) do
     with {:ok, track, client, sandbox_id} <- machine_read(user, track_id),
          {:ok, raw} <- Fountain.diff(client, sandbox_id, track.workdir) do
       diff = raw["diff"] || ""
 
       {:ok,
-       %{
+       %Diff{
          path: raw["path"],
          repo_root: raw["repo_root"],
          diff: diff,
          truncated: raw["truncated"] == true,
-         files: summarize_diff(diff)
+         changes: summarize_diff(diff)
        }}
     end
   end
 
   @doc "A unified diff, counted per file. See `Ravix.Tracks.Diff.summarize/1`."
-  @spec summarize_diff(String.t()) :: [Diff.file()]
+  @spec summarize_diff(String.t()) :: [Diff.Change.t()]
   defdelegate summarize_diff(diff), to: Diff, as: :summarize
 
   @doc "A path, pinned inside the track's own worktree. See `Ravix.Tracks.Files.confine/2`."

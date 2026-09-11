@@ -271,62 +271,7 @@
           <button class="ghost" phx-click="refresh-panel" disabled={@panel_busy}>Refresh</button>
           <p :if={@panel_busy} role="status">Loading…</p>
           <p :if={@panel_error} role="alert">{@panel_error}</p>
-          <div :if={@panel == "files" && @panel_data}>
-            <button
-              class="ghost"
-              phx-click="directory"
-              phx-value-path={Path.dirname(@panel_data.path)}
-            >
-              ↑ Parent
-            </button>
-            <code>{@panel_data.path}</code>
-            <div :for={entry <- @panel_data.entries}>
-              <button
-                class="workspace-file"
-                phx-click={if entry.type == "directory", do: "directory", else: "file"}
-                phx-value-path={Path.join(@panel_data.path, entry.name)}
-              >
-                {if entry.type == "directory", do: "▸ ", else: ""}{entry.name}
-              </button>
-            </div>
-            <p :if={@panel_data.truncated}>Directory listing is truncated.</p>
-            <div :if={@file}>
-              <h4>{@file.path}</h4>
-              <pre :if={@file.encoding != "base64"}>{@file.content}</pre>
-              <p :if={@file.encoding == "base64"}>Binary file ({@file.size} bytes).</p>
-              <p :if={@file.truncated}>File content is truncated.</p>
-            </div>
-          </div>
-          <div :if={@panel == "changes" && @panel_data}>
-            <p :if={@panel_data.diff == ""}>No changes yet.</p>
-            <div :for={file <- @panel_data.files}>
-              <code>{file.path}</code> +{file.added} −{file.removed}
-            </div>
-            <pre>{@panel_data.diff}</pre>
-            <p :if={@panel_data.truncated}>Diff is truncated.</p>
-          </div>
-          <div :if={@panel == "checks" && @panel_data}>
-            <p :if={@panel_data[:pull]}>
-              <a href={@panel_data.pull.url} target="_blank" rel="noreferrer">
-                Pull request #{@panel_data.pull.number}: {@panel_data.pull.title}
-              </a>
-            </p>
-            <div :for={check <- @panel_data[:runs] || []}>
-              <a :if={check.url} href={check.url} target="_blank" rel="noreferrer">
-                {check.name}
-              </a>
-              <span :if={!check.url}>{check.name}</span>
-              <span class="chip">{check.conclusion || check.status}</span>
-            </div>
-            <button
-              :if={@project.repo}
-              class="primary"
-              phx-click={JS.push_focus() |> JS.push("dialog")}
-              phx-value-name="pull"
-            >
-              Open pull request
-            </button>
-          </div>
+          <.panel_body :if={@panel_data} data={@panel_data} file={@file} project={@project} />
           <div :if={@panel == "preview" && @preview}>
             <p>Status: {@preview.state}</p>
             <p :if={@preview.unavailable_reason}>{@preview.unavailable_reason}</p>

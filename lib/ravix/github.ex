@@ -29,20 +29,14 @@ defmodule Ravix.GitHub do
   """
 
   alias Ravix.Config.GitHubApp
-  alias Ravix.GitHub.{Cache, Clock, Error, HTTP, Shapes}
+  alias Ravix.GitHub.{Cache, ChecksReport, Clock, Error, HTTP, Shapes}
 
   @type app :: GitHubApp.t() | nil
   @type error :: {:error, Error.t() | :unconfigured}
   @type installation_id :: integer()
 
-  @typedoc "The Checks tab: what GitHub thinks of a branch."
-  @type checks_report :: %{
-          ref: String.t(),
-          sha: String.t() | nil,
-          pushed: boolean(),
-          runs: [Shapes.check_run()],
-          pull: Shapes.pull_ref() | nil
-        }
+  @typedoc "The Checks tab: what GitHub thinks of a branch. See `Ravix.GitHub.ChecksReport`."
+  @type checks_report :: ChecksReport.t()
 
   @typedoc """
   The track a checks report is for, so a reused branch name does not attach a
@@ -382,7 +376,7 @@ defmodule Ravix.GitHub do
          {:ok, runs} <- check_runs(app, installation_id, full_name, sha),
          {:ok, pulls} <- pulls_for_head(app, installation_id, full_name, ref) do
       {:ok,
-       %{
+       %ChecksReport{
          ref: ref,
          sha: sha,
          pushed: sha != nil,

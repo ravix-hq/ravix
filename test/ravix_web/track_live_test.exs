@@ -5,7 +5,7 @@ defmodule RavixWeb.TrackLiveTest do
   alias Ravix.Hub.Event
   alias Ravix.{People, Previews, PromptQueue, QueryCount, Repo, Terminal, Tracks, Vitals}
   alias Ravix.PromptQueue.View, as: QueuedPrompt
-  alias Ravix.Tracks.{Track, Transcript}
+  alias Ravix.Tracks.{Files, Track, Transcript}
 
   setup :verify_on_exit!
 
@@ -42,10 +42,10 @@ defmodule RavixWeb.TrackLiveTest do
 
     stub(Tracks, :files, fn _, _, path ->
       {:ok,
-       %{
+       %Files.Listing{
          path: path || track.workdir,
          truncated: false,
-         entries: [%{name: "src", type: "directory", size: 0}]
+         entries: [%Files.Entry{name: "src", type: "directory", size: 0}]
        }}
     end)
 
@@ -632,7 +632,8 @@ defmodule RavixWeb.TrackLiveTest do
         send(parent, {:provider_waiting, self()})
 
         receive do
-          :finish -> {:ok, %{path: "private", entries: [], truncated: false}}
+          :finish ->
+            {:ok, %Files.Listing{path: "private", entries: [], truncated: false}}
         after
           2_000 -> flunk("provider was never released")
         end

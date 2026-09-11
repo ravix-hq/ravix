@@ -2,9 +2,11 @@ defmodule RavixWeb.WorkspaceLiveTest do
   use RavixWeb.ConnCase, async: false
   import Phoenix.LiveViewTest
   import Mimic
-  alias Ravix.{Accounts, Crypto, Hub, Projects, QueryCount, Repo, Tracks}
+  alias Ravix.{Accounts, Crypto, Hub, Previews, Projects, QueryCount, Repo, Tracks}
+  alias Ravix.GitHub.ChecksReport
   alias Ravix.Hub.Event
   alias Ravix.People.Store, as: People
+  alias Ravix.Tracks.{Diff, Files}
   alias Ravix.Tracks.Transcript
   alias RavixWeb.Live.Guard
 
@@ -398,15 +400,27 @@ defmodule RavixWeb.WorkspaceLiveTest do
     track = insert_track(project: project, conversation_id: "conversation-test")
     stub_track(track)
 
+    # Real structs, not map literals with the right-looking keys. The panel
+    # now dispatches on which struct it was handed, so a stub that answers
+    # with a map exercises nothing -- and `@enforce_keys` is what stops these
+    # drifting from what the contexts really return.
     stub(Tracks, :file, fn _, _, _ ->
       {:ok,
-       %{path: "app.ex", content: "hello file", encoding: "utf-8", size: 10, truncated: false}}
+       %Files.Content{
+         path: "app.ex",
+         content: "hello file",
+         encoding: "utf-8",
+         size: 10,
+         truncated: false
+       }}
     end)
 
     stub(Tracks, :diff, fn _, _ ->
       {:ok,
-       %{
-         files: [%{path: "app.ex", added: 1, removed: 0}],
+       %Diff{
+         path: "/workspace/app",
+         repo_root: "/workspace/app",
+         changes: [%Diff.Change{path: "app.ex", added: 1, removed: 0, status: :modified}],
          diff: "+hello change",
          truncated: false
        }}
@@ -414,7 +428,9 @@ defmodule RavixWeb.WorkspaceLiveTest do
 
     stub(Tracks, :checks, fn _, _ ->
       {:ok,
-       %{
+       %ChecksReport{
+         ref: "track-branch",
+         sha: "abc123",
          pull: nil,
          pushed: true,
          runs: [
@@ -430,11 +446,13 @@ defmodule RavixWeb.WorkspaceLiveTest do
 
     stub(Ravix.Previews, :status, fn _, _ ->
       {:ok,
-       %{
+       %Previews.View{
          state: :stopped,
          available: true,
          unavailable_reason: nil,
          config: nil,
+         override: nil,
+         error: nil,
          logs: "",
          url: nil
        }}
@@ -531,10 +549,10 @@ defmodule RavixWeb.WorkspaceLiveTest do
 
     stub(Tracks, :files, fn _, _, _ ->
       {:ok,
-       %{
+       %Files.Listing{
          path: track.workdir,
          truncated: false,
-         entries: [%{name: "app.ex", type: "file", size: 10}]
+         entries: [%Files.Entry{name: "app.ex", type: "file", size: 10}]
        }}
     end)
   end

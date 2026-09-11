@@ -9,20 +9,47 @@ defmodule Ravix.Tracks.Files do
   rather more than that.
 
   The two readers here are free: a Fountain sandbox read does not wake a
-  parked box. The shapes they answer are `FileListing` and `FileContent`
-  from `shared/api.ts`, with atom keys.
+  parked box. What they answer are `Listing` and `Content` below -- structs
+  rather than the bare maps they were, so that the panel holding one can be
+  asked *which* it is holding instead of being told by a second assign, and
+  so a field renamed here fails where the value is built.
   """
 
-  @typedoc "One entry of a directory. Fountain's word for a directory is `\"directory\"`."
-  @type entry :: %{name: String.t(), type: String.t(), size: integer() | nil}
-  @type listing :: %{path: String.t(), entries: [entry()], truncated: boolean()}
-  @type content :: %{
-          path: String.t(),
-          size: integer(),
-          truncated: boolean(),
-          encoding: String.t(),
-          content: String.t()
-        }
+  defmodule Entry do
+    @moduledoc "One entry of a directory. Fountain's word for a directory is `\"directory\"`."
+
+    @enforce_keys [:name, :type, :size]
+    defstruct @enforce_keys
+
+    @type t :: %__MODULE__{name: String.t(), type: String.t(), size: integer() | nil}
+  end
+
+  defmodule Listing do
+    @moduledoc "A directory, as the Files panel shows it."
+
+    @enforce_keys [:path, :entries, :truncated]
+    defstruct @enforce_keys
+
+    @type t :: %__MODULE__{path: String.t(), entries: [Entry.t()], truncated: boolean()}
+  end
+
+  defmodule Content do
+    @moduledoc """
+    One file's bytes. `encoding` is `"base64"` for a file that is not text,
+    which is the panel's cue to report a size rather than render it.
+    """
+
+    @enforce_keys [:path, :size, :truncated, :encoding, :content]
+    defstruct @enforce_keys
+
+    @type t :: %__MODULE__{
+            path: String.t(),
+            size: integer(),
+            truncated: boolean(),
+            encoding: String.t(),
+            content: String.t()
+          }
+  end
 
   @doc """
   A path, pinned inside the track's own worktree.
@@ -56,23 +83,23 @@ defmodule Ravix.Tracks.Files do
   end
 
   @doc "A Fountain listing as the page reads it."
-  @spec present_listing(map()) :: listing()
+  @spec present_listing(map()) :: Listing.t()
   def present_listing(raw) do
-    %{
+    %Listing{
       path: raw["path"],
       truncated: raw["truncated"] == true,
       entries:
         raw["entries"]
         |> List.wrap()
         |> Enum.filter(&is_map/1)
-        |> Enum.map(&%{name: &1["name"], type: &1["type"] || "other", size: &1["size"]})
+        |> Enum.map(&%Entry{name: &1["name"], type: &1["type"] || "other", size: &1["size"]})
     }
   end
 
   @doc "A Fountain file read as the page reads it."
-  @spec present_file(map()) :: content()
+  @spec present_file(map()) :: Content.t()
   def present_file(raw) do
-    %{
+    %Content{
       path: raw["path"],
       size: raw["size"] || 0,
       truncated: raw["truncated"] == true,
