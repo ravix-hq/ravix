@@ -30,7 +30,7 @@ defmodule Ravix.PresenceTest do
   defp logins(present), do: Enum.map(present, & &1.login)
 
   test "a beat puts somebody in the room, and everybody on the project hears", ctx do
-    assert ["ana"] == ctx.track |> Presence.beat(ctx.project, ana(), false) |> logins()
+    assert ["ana"] == ctx.track |> Presence.beat(ctx.project, ana(), :watching) |> logins()
     assert ["ana"] == ctx.track |> Presence.present() |> logins()
     track = ctx.track
 
@@ -50,7 +50,7 @@ defmodule Ravix.PresenceTest do
     # Sorted by login rather than by arrival, so the row does not reshuffle
     # every time somebody's heartbeat lands.
     other = spawn_watcher(ctx, bo())
-    Presence.beat(ctx.track, ctx.project, ana(), false)
+    Presence.beat(ctx.track, ctx.project, ana(), :watching)
     assert ["ana", "bo"] == ctx.track |> Presence.present() |> logins()
     send(other, :leave)
   end
@@ -67,7 +67,7 @@ defmodule Ravix.PresenceTest do
   end
 
   test "typing expires long before watching does", ctx do
-    Presence.beat(ctx.track, ctx.project, ana(), true)
+    Presence.beat(ctx.track, ctx.project, ana(), :typing)
     now = System.system_time(:millisecond)
     assert [%{typing: true}] = Presence.present(ctx.track, now)
     # Three seconds later they are still in the room and no longer mid-sentence.
@@ -79,14 +79,14 @@ defmodule Ravix.PresenceTest do
     # The composer pings on a timer *and* on keystrokes. If the slower one
     # arriving second cleared the flag, the indicator would blink off between
     # words, which is exactly when it should be on.
-    Presence.beat(ctx.track, ctx.project, ana(), true)
-    assert [%{typing: true}] = Presence.beat(ctx.track, ctx.project, ana(), false)
+    Presence.beat(ctx.track, ctx.project, ana(), :typing)
+    assert [%{typing: true}] = Presence.beat(ctx.track, ctx.project, ana(), :watching)
   end
 
   test "a typing pulse refreshes the window rather than extending it forever", ctx do
-    Presence.beat(ctx.track, ctx.project, ana(), true)
+    Presence.beat(ctx.track, ctx.project, ana(), :typing)
     first = System.system_time(:millisecond)
-    Presence.beat(ctx.track, ctx.project, ana(), true)
+    Presence.beat(ctx.track, ctx.project, ana(), :typing)
     ttl = Presence.typing_ttl_ms()
     assert [%{typing: true}] = Presence.present(ctx.track, first + ttl - 500)
     assert [%{typing: false}] = Presence.present(ctx.track, first + ttl * 2 + 1)
@@ -94,7 +94,7 @@ defmodule Ravix.PresenceTest do
 
   test "leaving is immediate, and only removes the one who left", ctx do
     other = spawn_watcher(ctx, bo())
-    Presence.beat(ctx.track, ctx.project, ana(), false)
+    Presence.beat(ctx.track, ctx.project, ana(), :watching)
     :ok = Presence.leave(ctx.track, "u-ana")
     assert ["bo"] == ctx.track |> Presence.present() |> logins()
     track = ctx.track
@@ -106,13 +106,13 @@ defmodule Ravix.PresenceTest do
   end
 
   test "leaving a track you are not in changes nothing", ctx do
-    Presence.beat(ctx.track, ctx.project, ana(), false)
+    Presence.beat(ctx.track, ctx.project, ana(), :watching)
     :ok = Presence.leave(ctx.track, "u-nobody")
     assert ["ana"] == ctx.track |> Presence.present() |> logins()
   end
 
   test "presence is per track, not per project", ctx do
-    Presence.beat(ctx.track, ctx.project, ana(), false)
+    Presence.beat(ctx.track, ctx.project, ana(), :watching)
     other = spawn_watcher(%{ctx | track: ctx.track <> "-2"}, bo())
     assert ["ana"] == ctx.track |> Presence.present() |> logins()
     assert ["bo"] == (ctx.track <> "-2") |> Presence.present() |> logins()
@@ -122,7 +122,7 @@ defmodule Ravix.PresenceTest do
   test "a lapsed typing pulse is announced without anybody asking", ctx do
     # The pulse lands, and three seconds later a frame goes out saying it
     # stopped, even though no request arrived to say so.
-    Presence.beat(ctx.track, ctx.project, ana(), true)
+    Presence.beat(ctx.track, ctx.project, ana(), :typing)
     track = ctx.track
     assert_receive {:hub, %Event{name: :here, track_id: ^track, present: [%{typing: true}]}}
 
@@ -136,7 +136,7 @@ defmodule Ravix.PresenceTest do
 
     pid =
       spawn(fn ->
-        Presence.beat(ctx.track, ctx.project, user, false)
+        Presence.beat(ctx.track, ctx.project, user, :watching)
         send(parent, {:watching, self()})
 
         receive do

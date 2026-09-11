@@ -496,7 +496,7 @@ defmodule Ravix.TracksTest do
                  Tracks.open(ctx.owner, ctx.project.id, %{title: "Kyoto"})
       end)
 
-      assert Tracks.Store.tracks_of(ctx.project.id, true) == []
+      assert Tracks.Store.tracks_of(ctx.project.id, :all) == []
     end
 
     test "an opening turn that does not send is reported, and the track can be retried", ctx do
@@ -642,9 +642,11 @@ defmodule Ravix.TracksTest do
     end
 
     test "presence goes through the track's door", ctx do
-      assert {:ok, [%{login: login, typing: true}]} = Tracks.beat(ctx.owner, ctx.track.id, true)
+      assert {:ok, [%{login: login, typing: true}]} =
+               Tracks.beat(ctx.owner, ctx.track.id, :typing)
+
       assert login == ctx.owner.login
-      assert {:error, :not_found} = Tracks.beat(insert_user(), ctx.track.id, false)
+      assert {:error, :not_found} = Tracks.beat(insert_user(), ctx.track.id, :watching)
       assert :ok = Tracks.leave(ctx.owner, ctx.track.id)
       assert Ravix.Presence.present(ctx.track.id) == []
     end
@@ -754,7 +756,7 @@ defmodule Ravix.TracksTest do
         )
 
       stub(Ravix.PromptQueue.Store, :cancel_track, fn _track_id -> :ok end)
-      stub(Ravix.Previews, :stop_service, fn _track_id, true -> :ok end)
+      stub(Ravix.Previews, :stop_service, fn _track_id, :cleanup -> :ok end)
       Hub.subscribe(project.id)
       {:ok, owner: owner, project: project, track: track}
     end

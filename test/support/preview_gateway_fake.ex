@@ -182,7 +182,7 @@ defmodule Ravix.PreviewGatewayFake do
           &put_in(&1, [:grants, {grant.hash, grant.track_id, grant.kind}], grant)
         )
 
-    def get_grant(hash, track_id, kind, consume?) do
+    def get_grant(hash, track_id, kind, disposition) do
       now = Ravix.PreviewGatewayFake.now()
 
       Agent.get_and_update(__MODULE__, fn state ->
@@ -190,7 +190,11 @@ defmodule Ravix.PreviewGatewayFake do
 
         case Map.get(state.grants, key) do
           %{expires: expires} = grant when expires > now ->
-            {grant, if(consume?, do: update_in(state.grants, &Map.delete(&1, key)), else: state)}
+            {grant,
+             if(disposition == :consume,
+               do: update_in(state.grants, &Map.delete(&1, key)),
+               else: state
+             )}
 
           _ ->
             {nil, state}
@@ -282,8 +286,8 @@ defmodule Ravix.PreviewGatewayFake do
     def preview(track_id), do: Store.row(track_id)
 
     @impl true
-    def get_grant(hash, track_id, kind, consume?),
-      do: Store.get_grant(hash, track_id, kind, consume?)
+    def get_grant(hash, track_id, kind, disposition),
+      do: Store.get_grant(hash, track_id, kind, disposition)
 
     @impl true
     def session_user(hash), do: Store.session_user(hash)
@@ -304,7 +308,7 @@ defmodule Ravix.PreviewGatewayFake do
 
     @impl true
     def allowed?(row, grant) do
-      with %{} <- Store.get_grant(grant.hash, row.track_id, grant.kind, false),
+      with %{} <- Store.get_grant(grant.hash, row.track_id, grant.kind, :peek),
            %{} = user <- Store.session_user(grant.session_hash),
            {:ok, %{closed_at: nil}} <- track_access(user, row.track_id) do
         current = Store.row(row.track_id)

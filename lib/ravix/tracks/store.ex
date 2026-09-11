@@ -36,11 +36,14 @@ defmodule Ravix.Tracks.Store do
 
   def track_by_conversation(_), do: nil
 
-  @doc "A project's tracks, oldest first: the open ones, or every one it ever had."
-  @spec tracks_of(String.t(), boolean()) :: [Track.t()]
-  def tracks_of(project_id, include_closed? \\ false) do
+  @typedoc "The open tracks of a project, or every one it ever had."
+  @type scope :: :open | :all
+
+  @doc "A project's tracks, oldest first."
+  @spec tracks_of(String.t(), scope()) :: [Track.t()]
+  def tracks_of(project_id, scope \\ :open) when scope in [:open, :all] do
     query = from(t in Track, where: t.project_id == ^project_id, order_by: t.created_at)
-    query = if include_closed?, do: query, else: where(query, [t], is_nil(t.closed_at))
+    query = if scope == :all, do: query, else: where(query, [t], is_nil(t.closed_at))
     Repo.all(query)
   end
 

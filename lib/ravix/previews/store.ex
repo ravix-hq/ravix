@@ -278,9 +278,17 @@ defmodule Ravix.Previews.Store do
     end
   end
 
-  @doc "An unexpired grant of `kind` on `track_id`, deleted on the way out when `consume?`."
-  @spec get_grant(String.t(), String.t(), :ticket | :session, boolean()) :: grant() | nil
-  def get_grant(hash, track_id, kind, consume? \\ false) do
+  @typedoc """
+  Whether reading a grant also spends it. A ticket is single-use, so the
+  read that authorizes it must delete it; a session grant is read on every
+  request and must survive being looked at.
+  """
+  @type disposition :: :peek | :consume
+
+  @doc "An unexpired grant of `kind` on `track_id`, deleted on the way out when `:consume`."
+  @spec get_grant(String.t(), String.t(), :ticket | :session, disposition()) :: grant() | nil
+  def get_grant(hash, track_id, kind, disposition \\ :peek)
+      when disposition in [:peek, :consume] do
     now = Clock.now_ms()
 
     query =
@@ -290,7 +298,7 @@ defmodule Ravix.Previews.Store do
         select: g
 
     found =
-      if consume? do
+      if disposition == :consume do
         {_count, rows} = Repo.delete_all(query)
         List.first(rows)
       else

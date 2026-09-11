@@ -62,12 +62,12 @@ defmodule RavixWeb.PreviewGateway.Backend do
   @doc "The current row for a track, re-read to notice a new generation (`ctx.db.previews.get`)."
   @callback preview(track_id :: String.t()) :: row() | nil
 
-  @doc "An unexpired grant, deleted on the way out when `consume?` (`ctx.db.previews.getGrant`)."
+  @doc "An unexpired grant, deleted on the way out when `:consume` (`ctx.db.previews.getGrant`)."
   @callback get_grant(
               hash :: String.t(),
               track_id :: String.t(),
               kind :: :ticket | :session,
-              consume? :: boolean()
+              disposition :: Ravix.Previews.disposition()
             ) ::
               grant() | nil
 

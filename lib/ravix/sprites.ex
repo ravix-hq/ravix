@@ -73,6 +73,11 @@ defmodule Ravix.Sprites do
           cwd: String.t()
         }
 
+  @typedoc """
+  Which way an activity lease is being moved: taken and renewed, or dropped.
+  """
+  @type lease :: :hold | :release
+
   @type error :: Error.t() | :unconfigured
 
   @doc "The configured client, or nil without a `SPRITES_TOKEN`."
@@ -155,8 +160,7 @@ defmodule Ravix.Sprites do
   end
 
   @doc """
-  Hold (or with `release?`, drop) the activity lease that keeps a preview's
-  machine awake.
+  Hold or release the activity lease that keeps a preview's machine awake.
 
   The lease is a Sprites task named after the service that expires two
   minutes after the last touch, taken over the machine's local API socket.
@@ -164,8 +168,8 @@ defmodule Ravix.Sprites do
   which comes back as a 501 so the preview can say the feature is missing
   rather than retrying forever.
   """
-  @spec activity(config(), String.t(), String.t(), boolean()) :: :ok | {:error, error()}
-  def activity(cfg, sprite, name, release? \\ false) do
+  @spec activity(config(), String.t(), String.t(), lease()) :: :ok | {:error, error()}
+  def activity(cfg, sprite, name, lease \\ :hold) when lease in [:hold, :release] do
     argv =
       [
         "curl",
@@ -175,16 +179,16 @@ defmodule Ravix.Sprites do
         "--unix-socket",
         "/.sprite/api.sock",
         "-X",
-        if(release?, do: "DELETE", else: "PUT"),
+        if(lease == :release, do: "DELETE", else: "PUT"),
         "http://sprite/v1/tasks/#{name}"
       ] ++
-        if(release?,
+        if(lease == :release,
           do: [],
           else: ["-H", "Content-Type: application/json", "-d", ~s({"expire":"2m"})]
         )
 
     case exec(cfg, sprite, argv, 15) do
-      {:ok, %{code: code}} when code != 0 and not release? ->
+      {:ok, %{code: code}} when code != 0 and lease == :hold ->
         {:error, Error.new(501, "This Sprite does not support expiring preview activity tasks.")}
 
       {:ok, _} ->

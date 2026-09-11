@@ -35,7 +35,7 @@ defmodule RavixWeb.PreviewGateway.RavixBackend do
   defdelegate preview(track_id), to: Previews, as: :row
 
   @impl true
-  defdelegate get_grant(hash, track_id, kind, consume?), to: Previews, as: :grant_by_hash
+  defdelegate get_grant(hash, track_id, kind, disposition), to: Previews, as: :grant_by_hash
 
   @impl true
   def session_user(session_hash), do: Accounts.session_user(session_hash)

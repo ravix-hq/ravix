@@ -82,7 +82,7 @@ defmodule RavixWeb.TrackLive do
   def handle_event("validate", _, socket), do: {:noreply, socket}
 
   def handle_event("typing", _, socket) do
-    Tracks.beat(socket.assigns.current_user, socket.assigns.track_id, true)
+    Tracks.beat(socket.assigns.current_user, socket.assigns.track_id, :typing)
     {:noreply, socket}
   end
 
@@ -316,7 +316,7 @@ defmodule RavixWeb.TrackLive do
   defp async_result(:load, {:ok, {:ok, detail, project, page}}, socket) do
     socket = if detail.track.conversation_id, do: follow(socket, page), else: socket
 
-    Tracks.beat(socket.assigns.current_user, socket.assigns.track_id, false)
+    Tracks.beat(socket.assigns.current_user, socket.assigns.track_id, :watching)
     Tracks.mark_read(socket.assigns.current_user, socket.assigns.track_id)
 
     socket

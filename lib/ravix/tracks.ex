@@ -242,7 +242,7 @@ defmodule Ravix.Tracks do
     origin = read_origin(attrs["origin"], project)
     # Every track this project has ever had, closed ones included; see
     # `Ravix.Tracks.Names.name_track/2` for why a closed track's name is still spent.
-    taken = project.id |> Store.tracks_of(true) |> Enum.map(& &1.slug)
+    taken = project.id |> Store.tracks_of(:all) |> Enum.map(& &1.slug)
     title = text(attrs["title"], 200) |> non_empty() || default_title(origin, taken)
     slug = free_slug(project.id, text(attrs["slug"], 60) |> non_empty() || title)
 
@@ -432,11 +432,11 @@ defmodule Ravix.Tracks do
   is still in the room. Called from the page's own process, which is what
   `Ravix.Presence` tracks. Returns who is in the room now.
   """
-  @spec beat(User.t(), String.t(), boolean()) ::
+  @spec beat(User.t(), String.t(), Ravix.Presence.activity()) ::
           {:ok, [Ravix.Presence.presence()]} | {:error, :not_found}
-  def beat(%User{} = user, track_id, typing?) do
+  def beat(%User{} = user, track_id, activity) do
     with {:ok, %{track: track, project: project}} <- Access.track_access(user, track_id) do
-      {:ok, Ravix.Presence.beat(track.id, project.id, user, typing?)}
+      {:ok, Ravix.Presence.beat(track.id, project.id, user, activity)}
     end
   end
 
@@ -529,7 +529,7 @@ defmodule Ravix.Tracks do
       # ownership: the track was just closed through `Access.track_access/2`;
       # prompts waiting to be delivered to it have nowhere to go.
       Ravix.PromptQueue.Store.cancel_track(track.id)
-      Ravix.Previews.stop_service(track.id, true)
+      Ravix.Previews.stop_service(track.id, :cleanup)
 
       if track.conversation_id do
         prompt =

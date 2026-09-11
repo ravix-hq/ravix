@@ -55,8 +55,8 @@ defmodule Ravix.Previews.Server do
 
   @typedoc "What a server is asked to do, in order of arrival."
   @type operation ::
-          {:ensure_running, generation :: integer(), restart? :: boolean()}
-          | {:retire, Row.t(), remove? :: boolean(), changes :: keyword()}
+          {:ensure_running, generation :: integer(), Previews.start_mode()}
+          | {:retire, Row.t(), Previews.stop_mode(), changes :: keyword()}
 
   @typep failure :: {:error, :stale} | {:error, term(), Row.t()}
 
@@ -205,15 +205,15 @@ defmodule Ravix.Previews.Server do
     :ok
   end
 
-  defp perform({:ensure_running, generation, restart?}, track_id) do
+  defp perform({:ensure_running, generation, mode}, track_id) do
     case Store.get(track_id) do
-      %Row{generation: ^generation} -> ensure_running(track_id, restart?)
+      %Row{generation: ^generation} -> ensure_running(track_id, mode)
       _ -> :ok
     end
   end
 
-  defp perform({:retire, row, remove?, changes}, _track_id) do
-    with :ok <- retire(row, remove?), do: update(row, changes)
+  defp perform({:retire, row, mode, changes}, _track_id) do
+    with :ok <- retire(row, mode), do: update(row, changes)
   end
 
   # ── shared with the caller-side operations ───────────────────────────
@@ -254,14 +254,14 @@ defmodule Ravix.Previews.Server do
 
   # Stop the service and release its activity task; delete it when the
   # track is done with it.
-  defp retire(%Row{sprite: nil}, _remove?), do: :ok
+  defp retire(%Row{sprite: nil}, _mode), do: :ok
 
-  defp retire(%Row{} = row, remove?) do
+  defp retire(%Row{} = row, mode) do
     with %Ravix.Config.Sprites{} = cfg <- Sprites.config(),
          {:ok, _} <- Sprites.service_action(cfg, row.sprite, row.service, :stop),
          :ok <- release_activity(cfg, row),
          _ = Process.delete(@hold_key),
-         {:ok, _} <- remove(cfg, row, remove?) do
+         {:ok, _} <- remove(cfg, row, mode) do
       :ok
     else
       nil -> {:error, {:unavailable, "Restore SPRITES_TOKEN to stop the saved preview service."}}
@@ -276,15 +276,17 @@ defmodule Ravix.Previews.Server do
   # the row keeps `cleanup: true`, so the reconciler decides `:cleanup` again
   # every fifteen seconds, for the life of the deployment, per abandoned track.
   defp release_activity(cfg, row) do
-    case Sprites.activity(cfg, row.sprite, row.service, true) do
+    case Sprites.activity(cfg, row.sprite, row.service, :release) do
       :ok -> :ok
       {:error, %Sprites.Error{status: status}} when status in [404, 501] -> :ok
       {:error, reason} -> {:error, reason}
     end
   end
 
-  defp remove(_cfg, _row, false), do: {:ok, ""}
-  defp remove(cfg, row, true), do: Sprites.service_action(cfg, row.sprite, row.service, :delete)
+  defp remove(_cfg, _row, :stop), do: {:ok, ""}
+
+  defp remove(cfg, row, :cleanup),
+    do: Sprites.service_action(cfg, row.sprite, row.service, :delete)
 
   # Refresh the two-minute Sprites task while the viewing lease is held, at
   # most every thirty seconds.
@@ -295,7 +297,7 @@ defmodule Ravix.Previews.Server do
     if row.sprite == nil or row.lease_until <= now or held_at > now - @hold_ms do
       :ok
     else
-      with :ok <- Sprites.activity(Sprites.config(), row.sprite, row.service, false) do
+      with :ok <- Sprites.activity(Sprites.config(), row.sprite, row.service, :hold) do
         Process.put(@hold_key, now)
         :ok
       end
@@ -304,10 +306,10 @@ defmodule Ravix.Previews.Server do
 
   # ── ensure_running ───────────────────────────────────────────────────
 
-  defp ensure_running(track_id, restart?) do
+  defp ensure_running(track_id, mode) do
     with %Row{} = row <- Store.get(track_id),
          true <- current?(row) do
-      case start(row, restart?) do
+      case start(row, mode) do
         :ok -> :ok
         {:error, :stale} -> :ok
         {:error, reason, row} -> fail(row, reason)
@@ -317,8 +319,8 @@ defmodule Ravix.Previews.Server do
     end
   end
 
-  @spec start(Row.t(), boolean()) :: :ok | failure()
-  defp start(row, restart?) do
+  @spec start(Row.t(), Previews.start_mode()) :: :ok | failure()
+  defp start(row, mode) do
     with {:ok, %{track: track, project: project}} <- open(row),
          {:ok, config} <- config_for(row, project),
          {:ok, machine} <- machine(row, project),
@@ -326,7 +328,7 @@ defmodule Ravix.Previews.Server do
          :ok <- fresh(row),
          {:ok, row} <- replace_if_moved(row, machine, sprite),
          {:ok, row} <- allocate(row, machine, sprite),
-         {:ok, row} <- define(row, track, config, restart?),
+         {:ok, row} <- define(row, track, config, mode),
          :ok <- fresh(row),
          :ok <- sprites(hold(Store.get(row.track_id) || row), row) do
       await_ready(row, project, config, Clock.now_ms() + @start_ms, @max_probes)
@@ -378,7 +380,7 @@ defmodule Ravix.Previews.Server do
     if row.sprite == sprite and row.sandbox_id == machine.sandbox_id do
       {:ok, row}
     else
-      with :ok <- sprites(retire(row, true), row),
+      with :ok <- sprites(retire(row, :cleanup), row),
            :ok <- fresh(row) do
         update(row,
           sprite: nil,
@@ -400,7 +402,7 @@ defmodule Ravix.Previews.Server do
     end
   end
 
-  defp define(row, track, config, restart?) do
+  defp define(row, track, config, mode) do
     cfg = Sprites.config()
     fingerprint = Row.fingerprint(config)
     directory = Sprites.resolve_cwd(track.workdir, config.directory)
@@ -408,7 +410,7 @@ defmodule Ravix.Previews.Server do
     with {:ok, service} <- sprites(Sprites.service(cfg, row.sprite, row.service), row),
          :ok <- fresh(row) do
       cond do
-        restart? or row.applied_config != fingerprint or
+        mode == :restart or row.applied_config != fingerprint or
             not matches?(service, config, directory, row.port) ->
           redefine(row, service, config, directory, fingerprint)
 
@@ -580,7 +582,7 @@ defmodule Ravix.Previews.Server do
   defp retire_or_defer(%Row{sprite: nil}), do: :ok
 
   defp retire_or_defer(row) do
-    case retire(row, false) do
+    case retire(row, :stop) do
       :ok -> :ok
       {:error, _reason} -> update(row, stop_pending: true)
     end

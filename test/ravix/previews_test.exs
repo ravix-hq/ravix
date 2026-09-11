@@ -166,9 +166,24 @@ defmodule Ravix.PreviewsTest do
     # the reconciler then re-ran the whole cleanup every fifteen seconds for
     # the life of the deployment.
     PreviewsFixture.put(p, :exec_error, SpritesError.new(404, "No such sprite."))
-    assert :ok = Previews.stop_service(t1.id, true)
+    assert :ok = Previews.stop_service(t1.id, :cleanup)
 
     assert %Row{sprite: nil, port: nil, stop_pending: false} = Store.get(t1.id)
+  end
+
+  test "start and stop take a word for what they are doing, and only those words", %{t1: t1} do
+    # The point of the atoms over `true`/`false`: an unknown word matches no
+    # clause, where a boolean typo silently meant the other thing. This is
+    # the same closed vocabulary `Ravix.Fountain.Shapes` keeps for statuses.
+    assert :ok = Previews.start_service(t1.id, :start)
+    assert :ok = Previews.start_service(t1.id, :restart)
+    assert :ok = Previews.stop_service(t1.id, :stop)
+    assert :ok = Previews.stop_service(t1.id, :cleanup)
+
+    for bad <- [true, false, :teardown, "restart"] do
+      assert_raise FunctionClauseError, fn -> Previews.start_service(t1.id, bad) end
+      assert_raise FunctionClauseError, fn -> Previews.stop_service(t1.id, bad) end
+    end
   end
 
   test "touch renews the lease only on an open track", %{p: p, t1: t1} do
@@ -215,7 +230,7 @@ defmodule Ravix.PreviewsTest do
     assert [^origin, ticket] = String.split(url, "/__ravix/open#")
 
     assert %{track_id: track_id, session_hash: session_hash, kind: :ticket, expires: expires} =
-             Store.get_grant(Ravix.Crypto.sha256(ticket), t1.id, :ticket, true)
+             Store.get_grant(Ravix.Crypto.sha256(ticket), t1.id, :ticket, :consume)
 
     assert track_id == t1.id and session_hash == session.token_hash
     assert expires == now(p) + 60_000
@@ -314,7 +329,7 @@ defmodule Ravix.PreviewsTest do
     grant = insert_preview_agent_grant(t1, owner)
     assert Store.agent_grant(grant.hash)
 
-    assert :ok = Previews.stop_service(t1.id, true)
+    assert :ok = Previews.stop_service(t1.id, :cleanup)
     assert %Row{cleanup: true, port: nil, sprite: nil, state: :stopped} = Store.get(t1.id)
     assert Store.agent_grant(grant.hash) == nil
     assert Repo.all(Ravix.Previews.PreviewGrant) == []
