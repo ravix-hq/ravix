@@ -36,6 +36,7 @@ defmodule Ravix.Previews.Server do
   alias Ravix.Previews.{Clock, Row, Store}
   alias Ravix.Repo
   alias Ravix.Sprites
+  alias Ravix.Sprites.Shapes
 
   @registry Ravix.Previews.Registry
   @supervisor Ravix.Previews.Supervisor
@@ -410,7 +411,7 @@ defmodule Ravix.Previews.Server do
             not matches?(service, config, directory, row.port) ->
           redefine(row, service, config, directory, fingerprint)
 
-        get_in(service, ["state", "status"]) != "running" ->
+        not Shapes.running?(service) ->
           resume(row)
 
         true ->
@@ -497,15 +498,8 @@ defmodule Ravix.Previews.Server do
     end
   end
 
-  defp matches?(nil, _config, _directory, _port), do: false
-
-  defp matches?(service, config, directory, port) do
-    service["cmd"] == "sh" and service["args"] == ["-lc", config.command] and
-      service["dir"] == directory and
-      get_in(service, ["env", "PORT"]) == Integer.to_string(port) and
-      get_in(service, ["env", "HOST"]) == "127.0.0.1" and service["http_port"] == nil and
-      (service["needs"] || []) == []
-  end
+  defp matches?(service, config, directory, port),
+    do: Shapes.defined_as?(service, config.command, directory, port)
 
   defp await_ready(row, _project, config, _deadline, 0), do: not_ready(row, config)
 
@@ -513,7 +507,7 @@ defmodule Ravix.Previews.Server do
     with :ok <- fresh(row),
          {:ok, actual} <- sprites(Sprites.service(Sprites.config(), row.sprite, row.service), row),
          :ok <- not_crashed(actual, row),
-         false <- running?(actual) and Previews.ready?(row, config.readiness_path) do
+         false <- Shapes.running?(actual) and Previews.ready?(row, config.readiness_path) do
       Clock.sleep(@probe_ms)
 
       if Clock.now_ms() < deadline,
@@ -526,10 +520,10 @@ defmodule Ravix.Previews.Server do
     end
   end
 
-  defp running?(actual), do: get_in(actual, ["state", "status"]) == "running"
-
+  # `actual` is nil while Sprites has no definition yet: not crashed, and the
+  # readiness loop keeps polling.
   defp not_crashed(actual, row) do
-    if (get_in(actual, ["state", "restart_count"]) || 0) >= 3,
+    if Shapes.crash_looping?(actual),
       do:
         {:error,
          "Preview crashed repeatedly. Fix the startup command, then restart. See logs below.",

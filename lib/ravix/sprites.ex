@@ -39,6 +39,7 @@ defmodule Ravix.Sprites do
   """
 
   alias Ravix.Sprites.Error
+  alias Ravix.Sprites.Shapes
 
   # Sprites' exec frames its output: 1 = stdout, 2 = stderr, 3 = exit code.
   @frame_stdout 1
@@ -53,8 +54,8 @@ defmodule Ravix.Sprites do
   @typedoc "The Sprites API token and base URL, or nil when there is none."
   @type config :: %{token: String.t(), base_url: String.t()} | nil
 
-  @typedoc "A managed service as Sprites describes it (`name`, `cmd`, `args`, `dir`, `env`, `state`)."
-  @type service :: %{optional(String.t()) => term()}
+  @typedoc "A managed service as Sprites describes it. See `Ravix.Sprites.Shapes`."
+  @type service :: Shapes.Service.t()
 
   @typedoc "What one exec produced."
   @type raw_exec :: %{stdout: String.t(), stderr: String.t(), code: non_neg_integer()}
@@ -390,7 +391,7 @@ defmodule Ravix.Sprites do
   defp decode_service(body) when is_binary(body) do
     case Jason.decode(body) do
       {:ok, %{} = service} ->
-        {:ok, service}
+        {:ok, Shapes.service(service)}
 
       _ ->
         {:error,
@@ -398,7 +399,7 @@ defmodule Ravix.Sprites do
     end
   end
 
-  defp decode_service(%{} = service), do: {:ok, service}
+  defp decode_service(%{} = service), do: {:ok, Shapes.service(service)}
 
   defp decode_service(_other),
     do:

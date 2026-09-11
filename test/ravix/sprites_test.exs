@@ -5,6 +5,7 @@ defmodule Ravix.SpritesTest do
 
   alias Ravix.Sprites
   alias Ravix.Sprites.Error
+  alias Ravix.Sprites.Shapes.Service
   alias Ravix.SpritesFake, as: Fake
 
   @cfg Fake.config()
@@ -105,7 +106,7 @@ defmodule Ravix.SpritesTest do
     assert :ok = Sprites.activity(@cfg, "sprite", "sy-test", true)
     assert {:ok, ""} = Sprites.service_logs(@cfg, "sprite", "sy-test")
 
-    assert {:ok, %{"name" => "sy-test", "state" => %{"status" => "running"}}} =
+    assert {:ok, %Service{name: "sy-test", status: "running"}} =
              Sprites.service(@cfg, "sprite", "sy-test")
 
     [define, stop, delete, hold, release, logs, get] = Fake.calls()

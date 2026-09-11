@@ -17,6 +17,7 @@ defmodule Ravix.PreviewsFixture do
 
   alias Ravix.Previews.{Clock, Server}
   alias Ravix.Sprites.Error
+  alias Ravix.Sprites.Shapes
 
   @type state :: %{
           sandbox: String.t(),
@@ -216,6 +217,10 @@ defmodule Ravix.PreviewsFixture do
     end)
   end
 
+  # Through `Ravix.Sprites.Shapes.service/1`, the same function the real
+  # `Ravix.Sprites.service/3` decodes with. The fixture scripts the JSON
+  # Sprites sends; a struct literal here would be claiming a shape rather
+  # than exercising the boundary that builds it.
   defp service(pid, sprite, name) do
     id = "#{sprite}/#{name}"
     state = state(pid)
@@ -225,10 +230,13 @@ defmodule Ravix.PreviewsFixture do
         nil
 
       status ->
-        Map.merge(state.definitions[id] || %{}, %{
+        state.definitions[id]
+        |> Kernel.||(%{})
+        |> Map.merge(%{
           "name" => name,
           "state" => %{"status" => status, "restart_count" => state.crash}
         })
+        |> Shapes.service()
     end
   end
 
