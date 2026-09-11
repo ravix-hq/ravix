@@ -41,6 +41,7 @@ defmodule RavixWeb.TrackLive do
         present: [],
         panel: Panel.new(),
         preview: nil,
+        preview_form: Form.new(:preview_config),
         preview_url: nil,
         dialog: nil,
         rename_form: Form.new(:rename_track),
@@ -175,16 +176,15 @@ defmodule RavixWeb.TrackLive do
     do: {:noreply, preview_async(socket, fn user, id, _hash -> Previews.logs(user, id) end)}
 
   def handle_event("preview-config", params, socket) do
-    config =
-      if Params.flag(params, "clear"),
-        do: nil,
-        else: Map.take(params, ~w(directory command readiness_path))
+    fields = Map.get(params, "preview_config", %{})
+    config = if Params.flag(params, "clear"), do: nil, else: fields
 
     {:noreply,
      result(
-       socket,
+       assign(socket, preview_form: Form.new(:preview_config, fields)),
        Previews.save_config(socket.assigns.current_user, socket.assigns.track_id, config),
-       &assign(&1, preview: &2)
+       &show_preview(&1, &2),
+       :preview_form
      )}
   end
 
@@ -368,7 +368,7 @@ defmodule RavixWeb.TrackLive do
   # after somebody switched tabs was filed under whichever panel they had
   # moved to.
   defp async_result(:panel, {:ok, {:ok, %Previews.View{} = preview}}, socket),
-    do: socket |> assign(preview: preview) |> update_panel(&Panel.settled/1)
+    do: socket |> show_preview(preview) |> update_panel(&Panel.settled/1)
 
   defp async_result(:panel, {:ok, {:ok, data}}, socket),
     do: update_panel(socket, &Panel.loaded(&1, data))
@@ -378,7 +378,9 @@ defmodule RavixWeb.TrackLive do
 
   defp async_result(:preview_action, {:ok, response}, socket) do
     result(update_panel(socket, &Panel.settled/1), response, fn s, preview ->
-      assign(s, preview: preview, preview_url: preview.open_url || s.assigns.preview_url)
+      s
+      |> show_preview(preview)
+      |> assign(preview_url: preview.open_url || s.assigns.preview_url)
     end)
   end
 
@@ -592,6 +594,24 @@ defmodule RavixWeb.TrackLive do
 
   defp hub(%Event{name: name}, socket) when name in [:people, :tracks, :settings],
     do: refresh_detail(socket)
+
+  # The configuration form always shows what would actually be used --- the
+  # track's override if it has one, the project's default otherwise --- so
+  # it is rebuilt whenever the preview is, rather than being a box somebody
+  # typed in once. Rebuilding also clears a refusal from the last attempt.
+  defp show_preview(socket, %Previews.View{} = preview) do
+    config = preview.config || %{}
+
+    assign(socket,
+      preview: preview,
+      preview_form:
+        Form.new(:preview_config, %{
+          "directory" => Map.get(config, :directory, "."),
+          "command" => Map.get(config, :command, ""),
+          "readiness_path" => Map.get(config, :readiness_path, "/")
+        })
+    )
+  end
 
   defp refresh_detail(%{assigns: %{track: nil}} = socket), do: socket
 

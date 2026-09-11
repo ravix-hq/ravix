@@ -60,7 +60,9 @@ defmodule RavixWeb.WorkspaceLive do
         query: "",
         busy: false,
         settings: nil,
-        preview_defaults: nil
+        preview_defaults: nil,
+        defaults_form: Form.new(:preview_defaults),
+        secret_form: Form.new(:secret)
       )
 
     {:ok, if(socket.assigns.current_user, do: reload(socket), else: socket)}
@@ -296,32 +298,39 @@ defmodule RavixWeb.WorkspaceLive do
      )}
   end
 
-  def handle_event("save-secret", params, socket) do
+  def handle_event("save-secret", %{"secret" => params}, socket) do
+    # The store and the key go back into the form so a refusal can be
+    # corrected. The value does not: a secret in an assign is a secret in
+    # the page's state and in its next diff, which is the one thing this
+    # form must not do, and `<.input type="password">` would render it
+    # straight back into the box.
+    kept = Map.drop(params, ["value"])
+
     {:noreply,
      result(
-       socket,
+       assign(socket, secret_form: Form.new(:secret, kept)),
        Projects.update_settings(socket.assigns.current_user, project_id(socket), %{
          secret: Map.take(params, ~w(store key value))
        }),
        fn s, _ ->
          s |> open_dialog(:settings) |> put_flash(:info, "Secret updated.")
-       end
+       end,
+       :secret_form
      )}
   end
 
   def handle_event("save-preview-defaults", params, socket) do
-    config =
-      if Params.flag(params, "clear"),
-        do: nil,
-        else: Map.take(params, ~w(directory command readiness_path))
+    fields = Map.get(params, "preview_defaults", %{})
+    config = if Params.flag(params, "clear"), do: nil, else: fields
 
     {:noreply,
      result(
-       socket,
+       assign(socket, defaults_form: Form.new(:preview_defaults, fields)),
        Previews.set_defaults(socket.assigns.current_user, project_id(socket), config),
        fn s, defaults ->
-         s |> assign(preview_defaults: defaults) |> put_flash(:info, "Preview defaults saved.")
-       end
+         s |> show_defaults(defaults) |> put_flash(:info, "Preview defaults saved.")
+       end,
+       :defaults_form
      )}
   end
 
@@ -462,12 +471,35 @@ defmodule RavixWeb.WorkspaceLive do
           _ -> nil
         end
 
-      assign(s, dialog: :settings, settings: settings, preview_defaults: defaults)
+      s
+      |> assign(dialog: :settings, settings: settings)
+      |> show_defaults(defaults)
+      # The secret form is always blank: values are write-only, so there is
+      # nothing to read back, and a key left in the box from the last save
+      # invites somebody to overwrite a secret they meant to add beside.
+      |> assign(secret_form: Form.new(:secret, %{"store" => "env"}))
     end)
   end
 
   # The people dialog loads its own list, so opening it is only opening it.
   defp open_dialog(socket, :people), do: assign(socket, dialog: :people)
+
+  # The defaults form shows what is saved, so it is rebuilt from the answer
+  # rather than left holding what was typed --- which is also what clears a
+  # refusal once the save goes through.
+  defp show_defaults(socket, defaults) do
+    config = defaults || %{}
+
+    assign(socket,
+      preview_defaults: defaults,
+      defaults_form:
+        Form.new(:preview_defaults, %{
+          "directory" => Map.get(config, :directory, "."),
+          "command" => Map.get(config, :command, ""),
+          "readiness_path" => Map.get(config, :readiness_path, "/")
+        })
+    )
+  end
 
   # The typed confirmation is the gate; which of the two irreversible things
   # happens after it is decided by the clause above, not by a string compared

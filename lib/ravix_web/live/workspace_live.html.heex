@@ -530,53 +530,41 @@
       <p>Values are write-only. Submit an empty value to remove a secret.</p>
       <p>Environment: {Enum.join(@settings.env_keys, ", ")}</p>
       <p>Vault: {Enum.join(@settings.vault_keys, ", ")}</p>
-      <form id="secret-form" phx-submit="save-secret">
+      <.form :let={f} for={@secret_form} id="secret-form" phx-submit="save-secret">
         <.input
-          name="store"
+          field={f[:store]}
           id="secret-store"
           label="Store"
           type="select"
-          value="env"
           options={[{"Environment", "env"}, {"Vault", "vault"}]}
         />
-        <.input name="key" id="secret-key" label="Key" value="" required />
+        <.input field={f[:key]} id="secret-key" label="Key" required />
         <.input
-          name="value"
+          field={f[:value]}
           id="secret-value"
           type="password"
           label="Value"
-          value=""
           autocomplete="new-password"
         />
         <button class="primary" phx-disable-with="Saving…">Update secret</button>
-      </form>
+      </.form>
       <hr />
       <h3>Preview defaults</h3>
-      <form id="preview-defaults-form" phx-submit="save-preview-defaults">
-        <.input
-          name="directory"
-          id="default-directory"
-          label="App directory"
-          value={(@preview_defaults || %{})[:directory] || "."}
-        />
-        <.input
-          name="command"
-          id="default-command"
-          label="Command (must honor $PORT)"
-          value={(@preview_defaults || %{})[:command] || ""}
-        />
-        <.input
-          name="readiness_path"
-          id="default-readiness"
-          label="Readiness path"
-          value={(@preview_defaults || %{})[:readiness_path] || "/"}
-        />
+      <.form
+        :let={f}
+        for={@defaults_form}
+        id="preview-defaults-form"
+        phx-submit="save-preview-defaults"
+      >
+        <.input field={f[:directory]} id="default-directory" label="App directory" />
+        <.input field={f[:command]} id="default-command" label="Command (must honor $PORT)" />
+        <.input field={f[:readiness_path]} id="default-readiness" label="Readiness path" />
         <button class="primary">Save defaults</button><button
           name="clear"
           value="true"
           class="ghost"
         >Clear defaults</button>
-      </form>
+      </.form>
       <hr />
       <h3>Machine and project</h3>
       <p>
