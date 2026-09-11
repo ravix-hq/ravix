@@ -2,9 +2,20 @@ defmodule Ravix.MachineCacheTest do
   use ExUnit.Case, async: true
 
   alias Ravix.Fountain.FakeTransport
+  alias Ravix.Fountain.Shapes.Conversation
   alias Ravix.MachineCache
 
+  # The JSON Fountain serves, and the shape `Ravix.Fountain` turns it into.
   @row %{"id" => "c1", "sandbox_id" => "s1", "status" => "idle", "inserted_at" => "2026-09-07"}
+  @conversation %Conversation{
+    id: "c1",
+    status: :idle,
+    sandbox_id: "s1",
+    sprite_name: nil,
+    inserted_at: "2026-09-07",
+    last_active_at: nil,
+    turn_count: nil
+  }
 
   setup_all do
     Ravix.TracksBoot.ensure_running()
@@ -37,7 +48,7 @@ defmodule Ravix.MachineCacheTest do
       |> Enum.map(&Task.async(fn -> MachineCache.conversations(client, project, now_ms: &1) end))
       |> Task.await_many()
 
-    assert results == [{:ok, [@row]}, {:ok, [@row]}, {:ok, [@row]}]
+    assert results == [{:ok, [@conversation]}, {:ok, [@conversation]}, {:ok, [@conversation]}]
     # Narrowed to the project's agent, never the whole account.
     assert [%{query: %{"agent_id" => agent}}] = FakeTransport.calls(client)
     assert agent == project.agent_id
@@ -46,15 +57,15 @@ defmodule Ravix.MachineCacheTest do
   test "the memo expires", %{project: project} do
     client = fountain(project, [[@row], []])
     ttl = MachineCache.ttl_ms()
-    assert {:ok, [@row]} = MachineCache.conversations(client, project, now_ms: 0)
-    assert {:ok, [@row]} = MachineCache.conversations(client, project, now_ms: ttl - 1)
+    assert {:ok, [@conversation]} = MachineCache.conversations(client, project, now_ms: 0)
+    assert {:ok, [@conversation]} = MachineCache.conversations(client, project, now_ms: ttl - 1)
     assert {:ok, []} = MachineCache.conversations(client, project, now_ms: ttl)
     assert length(FakeTransport.calls(client)) == 2
   end
 
   test "a fresh read asks Fountain and refreshes the memo for everyone else", %{project: project} do
     client = fountain(project, [[@row], []])
-    assert {:ok, [@row]} = MachineCache.conversations(client, project, now_ms: 0)
+    assert {:ok, [@conversation]} = MachineCache.conversations(client, project, now_ms: 0)
     assert {:ok, []} = MachineCache.conversations(client, project, now_ms: 1, fresh: true)
     assert {:ok, []} = MachineCache.conversations(client, project, now_ms: 2)
     assert length(FakeTransport.calls(client)) == 2
@@ -73,7 +84,7 @@ defmodule Ravix.MachineCacheTest do
          {200, [], %{data: []}}}
       ])
 
-    assert {:ok, [@row]} = MachineCache.conversations(client, project, now_ms: 0)
+    assert {:ok, [@conversation]} = MachineCache.conversations(client, project, now_ms: 0)
     assert {:ok, []} = MachineCache.conversations(client, other, now_ms: 0)
     MachineCache.forget_project(project.id)
     assert {:ok, []} = MachineCache.conversations(client, project, now_ms: 1)
@@ -84,7 +95,7 @@ defmodule Ravix.MachineCacheTest do
   test "two clients do not share an answer", %{project: project} do
     f = fountain(project, [[@row]])
     g = fountain(project, [[]])
-    assert {:ok, [@row]} = MachineCache.conversations(f, project, now_ms: 0)
+    assert {:ok, [@conversation]} = MachineCache.conversations(f, project, now_ms: 0)
     assert {:ok, []} = MachineCache.conversations(g, project, now_ms: 0)
   end
 

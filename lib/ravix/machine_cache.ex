@@ -40,15 +40,16 @@ defmodule Ravix.MachineCache do
 
   alias Ravix.Fountain
   alias Ravix.Fountain.Client
+  alias Ravix.Fountain.Shapes
+  alias Ravix.Fountain.Shapes.{Conversation, Sandbox}
   alias Ravix.Memo
 
   @memo __MODULE__
   @ttl_ms 5_000
   @sprite_ttl_ms 60_000
-  @live_statuses ~w(pending idle running)
 
-  @typedoc "A conversation as `GET /api/conversations` lists it (string keys)."
-  @type conversation :: %{optional(String.t()) => term()}
+  @typedoc "A conversation as `GET /api/conversations` lists it."
+  @type conversation :: Conversation.t()
   @typedoc "Which machine a project is on, or nil when no live conversation names one."
   @type machine :: %{sandbox_id: String.t()} | nil
   @type project :: %{:id => String.t(), :agent_id => String.t(), optional(atom()) => term()}
@@ -104,11 +105,10 @@ defmodule Ravix.MachineCache do
     with {:ok, all} <- conversations(client, project, opts) do
       newest =
         all
-        |> Enum.filter(&(is_binary(&1["sandbox_id"]) and &1["status"] in @live_statuses))
-        |> Enum.sort_by(&to_string(&1["inserted_at"]), :desc)
-        |> List.first()
+        |> Enum.filter(&(is_binary(&1.sandbox_id) and Shapes.live?(&1)))
+        |> Shapes.newest()
 
-      {:ok, if(newest, do: %{sandbox_id: newest["sandbox_id"]})}
+      {:ok, if(newest, do: %{sandbox_id: newest.sandbox_id})}
     end
   end
 
@@ -128,7 +128,7 @@ defmodule Ravix.MachineCache do
       sandbox_id,
       fn ->
         case Fountain.sandbox(client, sandbox_id) do
-          {:ok, %{"sprite_name" => name}} when is_binary(name) and name != "" -> name
+          {:ok, %Sandbox{sprite_name: name}} when is_binary(name) and name != "" -> name
           _ -> nil
         end
       end,

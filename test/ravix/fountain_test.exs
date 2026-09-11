@@ -5,6 +5,7 @@ defmodule Ravix.FountainTest do
 
   alias Ravix.Fountain
   alias Ravix.Fountain.{Client, Error, FakeTransport}
+  alias Ravix.Fountain.Shapes.{Conversation, Sandbox}
 
   @auth {"authorization", "Bearer fake-key"}
 
@@ -283,7 +284,7 @@ defmodule Ravix.FountainTest do
           {%{method: "GET", path: "/api/conversations", query: %{}}, {200, [], %{data: []}}}
         ])
 
-      assert {:ok, [%{"id" => "c1", "sandbox_id" => "sb-1"}]} =
+      assert {:ok, [%Conversation{id: "c1", sandbox_id: "sb-1", status: :idle}]} =
                Fountain.list_conversations(client, "agent-1")
 
       assert {:ok, []} = Fountain.list_conversations(client)
@@ -297,7 +298,7 @@ defmodule Ravix.FountainTest do
             %{data: %{id: "c1", status: "running", sandbox: %{id: "sb-1", sprite_name: "sp-1"}}}}}
         ])
 
-      assert {:ok, %{"sandbox" => %{"sprite_name" => "sp-1"}}} =
+      assert {:ok, %Conversation{status: :running, sprite_name: "sp-1"}} =
                Fountain.get_conversation(client, "c1")
     end
   end
@@ -321,7 +322,7 @@ defmodule Ravix.FountainTest do
            {201, [], %{data: %{id: "c1", status: "pending"}}}}
         ])
 
-      assert {:ok, %{"id" => "c1"}} =
+      assert {:ok, %Conversation{id: "c1", status: :pending}} =
                Fountain.create_conversation(client, %{
                  agent_id: "agent-1",
                  environment_id: "env-1",
@@ -348,7 +349,7 @@ defmodule Ravix.FountainTest do
            {201, [], %{data: %{id: "c2"}}}}
         ])
 
-      assert {:ok, %{"id" => "c2"}} =
+      assert {:ok, %Conversation{id: "c2", status: :other}} =
                Fountain.create_conversation(client, %{
                  agent_id: "agent-1",
                  environment_id: "env-1",
@@ -704,7 +705,7 @@ defmodule Ravix.FountainTest do
             }}}
         ])
 
-      assert {:ok, %{"sprite_name" => "sp-1"}} = Fountain.sandbox(client, "sb-1")
+      assert {:ok, %Sandbox{sprite_name: "sp-1"}} = Fountain.sandbox(client, "sb-1")
 
       assert {:ok, %{"entries" => [%{"type" => "directory"}]}} =
                Fountain.listing(client, "sb-1", "/workspace/repo")

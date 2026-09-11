@@ -29,7 +29,7 @@ defmodule Ravix.Fountain do
   require Logger
 
   alias Fountain.HTTP
-  alias Ravix.Fountain.{Client, Error}
+  alias Ravix.Fountain.{Client, Error, Shapes}
 
   @type id :: String.t()
   @type store :: :environments | :vaults
@@ -151,16 +151,22 @@ defmodule Ravix.Fountain do
   object is a detail-endpoint field. Anything wanting `sprite_name` has to ask
   `sandbox/2` and pay for the extra call.
   """
-  @spec list_conversations(Client.t(), id() | nil) :: result([record()])
-  def list_conversations(client, agent_id \\ nil),
-    do: list(client, "/api/conversations", query: [agent_id: agent_id])
+  @spec list_conversations(Client.t(), id() | nil) :: result([Shapes.Conversation.t()])
+  def list_conversations(client, agent_id \\ nil) do
+    with {:ok, raw} <- list(client, "/api/conversations", query: [agent_id: agent_id]) do
+      {:ok, Shapes.conversations(raw)}
+    end
+  end
 
   @doc "`GET /api/conversations/:id`, sandbox embedded."
-  @spec get_conversation(Client.t(), id()) :: result(record())
+  @spec get_conversation(Client.t(), id()) :: result(Shapes.Conversation.t())
   def get_conversation(client, id) do
-    call(client, "GET", "/api/conversations/#{escape(id)}", fn http ->
-      Fountain.Conversation.get(conversation(http, id))
-    end)
+    with {:ok, raw} <-
+           call(client, "GET", "/api/conversations/#{escape(id)}", fn http ->
+             Fountain.Conversation.get(conversation(http, id))
+           end) do
+      {:ok, Shapes.conversation(raw)}
+    end
   end
 
   @doc """
@@ -195,7 +201,7 @@ defmodule Ravix.Fountain do
   conversation. The `channel_id` is still sent: it is the track's durable
   membership of its machine, the name Fountain files the conversation under.
   """
-  @spec create_conversation(Client.t(), map()) :: result(record())
+  @spec create_conversation(Client.t(), map()) :: result(Shapes.Conversation.t())
   def create_conversation(client, attrs) do
     body =
       %{
@@ -209,7 +215,9 @@ defmodule Ravix.Fountain do
       |> optional("title", attrs[:title])
       |> optional("prompt", attrs[:prompt])
 
-    data(client, "POST", "/api/conversations", body: body)
+    with {:ok, raw} <- data(client, "POST", "/api/conversations", body: body) do
+      {:ok, Shapes.conversation(raw)}
+    end
   end
 
   @doc """
@@ -334,8 +342,12 @@ defmodule Ravix.Fountain do
   the list would conclude, wrongly and permanently, that this machine is not
   on Sprites.
   """
-  @spec sandbox(Client.t(), id()) :: result(record())
-  def sandbox(client, id), do: data(client, "GET", "/api/sandboxes/#{escape(id)}")
+  @spec sandbox(Client.t(), id()) :: result(Shapes.Sandbox.t())
+  def sandbox(client, id) do
+    with {:ok, raw} <- data(client, "GET", "/api/sandboxes/#{escape(id)}") do
+      {:ok, Shapes.sandbox(raw)}
+    end
+  end
 
   @doc "`GET /api/sandboxes/:id/files?path=`: one directory. Does not wake a parked box."
   @spec listing(Client.t(), id(), String.t()) :: result(record())

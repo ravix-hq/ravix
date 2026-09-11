@@ -28,6 +28,7 @@ defmodule Ravix.Tracks do
   alias Ravix.Accounts.User
   alias Ravix.Fountain
   alias Ravix.Fountain.Client
+  alias Ravix.Fountain.Shapes.Conversation
   alias Ravix.Hub
   alias Ravix.Ids
   alias Ravix.MachineCache
@@ -285,7 +286,8 @@ defmodule Ravix.Tracks do
 
   # The conversation on Fountain, then the row that remembers it.
   defp cut(client, %{conversation: conversation, row: row}) do
-    with {:ok, %{"id" => conversation_id}} <- Fountain.create_conversation(client, conversation) do
+    with {:ok, %Conversation{id: conversation_id}} <-
+           Fountain.create_conversation(client, conversation) do
       Store.create_track(Map.put(row, :conversation_id, conversation_id))
     end
   end
@@ -706,7 +708,7 @@ defmodule Ravix.Tracks do
   defp conversations_of(project) do
     with {:ok, client} <- fountain(),
          {:ok, all} <- MachineCache.conversations(client, project, fresh: true) do
-      Map.new(all, &{&1["id"], &1})
+      Map.new(all, &{&1.id, &1})
     else
       _ -> %{}
     end
@@ -718,7 +720,7 @@ defmodule Ravix.Tracks do
   The `Track` of `shared/api.ts` for a row.
 
   Options: `project` (required for `stale`), `live` (the conversation as
-  Fountain lists it, string keys, or nil), `people`, `role` (`:owner` by
+  Fountain lists it, or nil), `people`, `role` (`:owner` by
   default) and `last_read` (a `DateTime`). The revision is in the channel id
   the conversation already carries, so "is this track behind?" is a
   comparison rather than a stored flag. A track nobody has opened is unread
@@ -730,7 +732,7 @@ defmodule Ravix.Tracks do
   def present(%Track{} = row, opts \\ []) do
     project = Keyword.get(opts, :project)
     live = Keyword.get(opts, :live)
-    last_active = parse_time(live && live["last_active_at"])
+    last_active = live && live.last_active_at
 
     %View{
       id: row.id,
@@ -745,7 +747,7 @@ defmodule Ravix.Tracks do
       stale: not is_nil(project) and row.rev < project.rev,
       opened_at: row.opened_at,
       last_active_at: last_active,
-      turn_count: (live && live["turn_count"]) || 0,
+      turn_count: (live && live.turn_count) || 0,
       created_at: row.created_at,
       created_by_login: row.created_by_login,
       people: Keyword.get(opts, :people, []),
@@ -768,23 +770,14 @@ defmodule Ravix.Tracks do
   end
 
   defp status_of(%Track{closed_at: closed}, _live) when not is_nil(closed), do: :closed
-  defp status_of(_row, %{"status" => "running"}), do: :running
-  defp status_of(_row, %{"status" => "failed"}), do: :failed
+  defp status_of(_row, %Conversation{status: :running}), do: :running
+  defp status_of(_row, %Conversation{status: :failed}), do: :failed
   defp status_of(%Track{opened_at: nil}, _live), do: :opening
   defp status_of(_row, _live), do: :ready
 
   defp unread?(nil, _last_read), do: false
   defp unread?(_last_active, nil), do: true
   defp unread?(last_active, last_read), do: DateTime.compare(last_active, last_read) == :gt
-
-  defp parse_time(text) when is_binary(text) do
-    case DateTime.from_iso8601(text) do
-      {:ok, time, _offset} -> time
-      _ -> nil
-    end
-  end
-
-  defp parse_time(_), do: nil
 
   # ── the pieces `open/4` is made of ────────────────────────────────────
 
