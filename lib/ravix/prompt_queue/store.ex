@@ -53,7 +53,7 @@ defmodule Ravix.PromptQueue.Store do
   synchronous; the transaction (with the track row locked) keeps them so.
 
   `payload` is `%{prompt: text, images: [%{data, media_type}]}` (atom or
-  string keys); it is stored as JSON and refused above 12 MiB.
+  string keys); it is stored as `jsonb` and refused above 12 MiB.
   """
   @spec enqueue(String.t(), String.t(), String.t(), term(), map()) ::
           {:ok, Item.t()} | {:error, PromptQueue.reason()}
@@ -92,7 +92,7 @@ defmodule Ravix.PromptQueue.Store do
   end
 
   @doc """
-  The first live row on every track, without payloads.
+  The first live row on every track, without the bytes.
 
   Not every queued attachment on every sweep: only the first live row per
   track can be delivered, and its bytes are loaded just before the POST. A
@@ -102,7 +102,10 @@ defmodule Ravix.PromptQueue.Store do
   @spec heads() :: [Item.t()]
   def heads do
     first = live() |> group_by([p], p.track_id) |> select([p], min(p.sequence))
-    fields = Item.__schema__(:fields) -- [:payload]
+    # Neither the parsed body nor its JSON string: the head is read every two
+    # seconds per track and the attachments are loaded once, just before the
+    # POST.
+    fields = Item.__schema__(:fields) -- [:body, :payload]
 
     Item
     |> where([p], p.sequence in subquery(first))
@@ -112,10 +115,13 @@ defmodule Ravix.PromptQueue.Store do
   end
 
   @doc """
-  The live rows of a track with `prompt` and `image_count` read out of the
-  JSON payload, for the panel. A delivered or cancelled row has an emptied
-  payload, which is not JSON; those rows are filtered out, and `NULLIF`
-  keeps the cast honest anyway.
+  The live rows of a track with the prompt and the image count, for the panel.
+
+  Both are read straight off the row. They used to be cast out of a `text`
+  column in the query -- `NULLIF(?, '')::jsonb->>'prompt'` and
+  `jsonb_array_length(...)` -- with the `NULLIF` defending against the empty
+  string a released payload was set to. `body` is `jsonb` and `image_count`
+  is a column, so neither cast nor sentinel is needed.
   """
   @spec summaries(String.t()) :: [summary()]
   def summaries(track_id) do
@@ -131,9 +137,8 @@ defmodule Ravix.PromptQueue.Store do
       created_at: p.created_at,
       status: p.status,
       error: p.error,
-      prompt: fragment("NULLIF(?, '')::jsonb->>'prompt'", p.payload),
-      image_count:
-        fragment("COALESCE(jsonb_array_length(NULLIF(?, '')::jsonb->'images'), 0)", p.payload)
+      prompt: fragment("? ->> 'prompt'", p.body),
+      image_count: p.image_count
     })
     |> Repo.all()
   end
@@ -142,13 +147,14 @@ defmodule Ravix.PromptQueue.Store do
   Move a row to `status` with `error`, unless it is already done.
 
   The id stays behind as a receipt for retried HTTP requests; a `:sent` or
-  `:cancelled` row releases its payload. Nothing here checks who is asking:
+  `:cancelled` row releases its payload, keeping `image_count` so the panel
+  can still say what was sent. Nothing here checks who is asking:
   the server calls it on rows it is delivering, `cancel/3` and `retry/3`
   call it inside a transaction that established the person's right to.
   """
   @spec set_status(String.t(), Item.status(), String.t() | nil) :: :ok
   def set_status(id, status, error \\ nil) do
-    payload_update = if status in @done, do: [payload: ""], else: []
+    released = if status in @done, do: [body: nil, payload: ""], else: []
 
     {_count, tracks} =
       Item
@@ -161,7 +167,7 @@ defmodule Ravix.PromptQueue.Store do
       # is already failing, per viewer, for as long as the outage lasts.
       |> where([p], p.status != ^status or fragment("? IS DISTINCT FROM ?", p.error, ^error))
       |> select([p], p.track_id)
-      |> Repo.update_all(set: [status: status, error: error] ++ payload_update)
+      |> Repo.update_all(set: [status: status, error: error] ++ released)
 
     Enum.each(tracks, &publish_queue/1)
   end
@@ -232,7 +238,7 @@ defmodule Ravix.PromptQueue.Store do
       Item
       |> where([p], p.id == ^id and p.status != :sent)
       |> select([p], p.track_id)
-      |> Repo.update_all(set: [status: :sent, error: nil, payload: ""])
+      |> Repo.update_all(set: [status: :sent, error: nil, body: nil, payload: ""])
 
     Enum.each(tracks, &publish_queue/1)
   end
@@ -250,7 +256,7 @@ defmodule Ravix.PromptQueue.Store do
   def cancel_track(track_id) do
     Item
     |> where([p], p.track_id == ^track_id and p.status != :sent)
-    |> Repo.update_all(set: [status: :cancelled, payload: "", error: nil])
+    |> Repo.update_all(set: [status: :cancelled, body: nil, payload: "", error: nil])
 
     publish_queue(track_id)
   end
@@ -305,12 +311,17 @@ defmodule Ravix.PromptQueue.Store do
   defp waiting_count(track_id),
     do: live() |> where([p], p.track_id == ^track_id) |> Repo.aggregate(:count)
 
+  # One body, from either spelling the caller used, plus the JSON string of
+  # it for the release that still reads `payload`. The size is measured on
+  # the encoded bytes because that is what goes over the wire and onto the
+  # disk, whatever the map costs in memory.
   defp encode(payload) do
-    encoded =
-      Jason.encode!(%{
-        prompt: Map.get(payload, :prompt) || Map.get(payload, "prompt") || "",
-        images: Map.get(payload, :images) || Map.get(payload, "images") || []
-      })
+    body = %{
+      "prompt" => Map.get(payload, :prompt) || Map.get(payload, "prompt") || "",
+      "images" => Map.get(payload, :images) || Map.get(payload, "images") || []
+    }
+
+    encoded = Jason.encode!(body)
 
     if byte_size(encoded) > @max_payload_bytes do
       Repo.rollback(
@@ -319,16 +330,18 @@ defmodule Ravix.PromptQueue.Store do
       )
     end
 
-    encoded
+    {body, encoded}
   end
 
-  defp insert(track_id, user_id, author_login, id, encoded) do
+  defp insert(track_id, user_id, author_login, id, {body, encoded}) do
     %Item{}
     |> Item.changeset(%{
       id: id,
       track_id: track_id,
       user_id: user_id,
       author_login: author_login,
+      body: body,
+      image_count: length(body["images"]),
       payload: encoded
     })
     |> Repo.insert!()

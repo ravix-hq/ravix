@@ -420,12 +420,16 @@ defmodule Ravix.SchemasTest do
       end
     end
 
-    test "requires payload, author and the two parents" do
+    test "requires the body, the author and the two parents" do
       errors = errors_on(Item.changeset(%Item{}, %{}))
 
-      for field <- ~w(track_id user_id author_login payload)a do
+      for field <- ~w(track_id user_id author_login body)a do
         assert errors[field] == ["can't be blank"], "#{field} should be required"
       end
+
+      # `payload` is the JSON string of `body`, written only until the
+      # release that reads it is gone, so it is not what the row needs.
+      refute errors[:payload]
     end
 
     test "id is unique: the receipt for a retried request" do
