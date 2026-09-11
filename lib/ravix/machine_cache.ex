@@ -44,7 +44,9 @@ defmodule Ravix.MachineCache do
   alias Ravix.Fountain.Client
   alias Ravix.Fountain.Shapes
   alias Ravix.Fountain.Shapes.{Conversation, Sandbox}
+  alias Ravix.MachineCache.Machine
   alias Ravix.Memo
+  alias Ravix.Projects.Project
 
   @memo __MODULE__
   @ttl_ms 5_000
@@ -54,8 +56,7 @@ defmodule Ravix.MachineCache do
   @typedoc "A conversation as `GET /api/conversations` lists it."
   @type conversation :: Conversation.t()
   @typedoc "Which machine a project is on, or nil when no live conversation names one."
-  @type machine :: %{sandbox_id: String.t()} | nil
-  @type project :: %{:id => String.t(), :agent_id => String.t(), optional(atom()) => term()}
+  @type machine :: Machine.t() | nil
   @type opts :: [fresh: boolean(), now_ms: integer()]
 
   @doc "How long a conversation list stands before it is re-read."
@@ -79,9 +80,9 @@ defmodule Ravix.MachineCache do
   Narrowed to the project's agent, never the whole account. A failed read is
   nobody's answer: the next caller retries.
   """
-  @spec conversations(Client.t(), project(), opts()) ::
+  @spec conversations(Client.t(), Project.t(), opts()) ::
           {:ok, [conversation()]} | {:error, Fountain.failure()}
-  def conversations(%Client{} = client, project, opts \\ []) do
+  def conversations(%Client{} = client, %Project{} = project, opts \\ []) do
     key = list_key(client, project)
     if opts[:fresh], do: forget(key)
 
@@ -106,16 +107,16 @@ defmodule Ravix.MachineCache do
   guards whose whole job is to notice the machine was replaced under them
   (the preview reconciler and the agent helper) and asks Fountain every time.
   """
-  @spec machine_of(Client.t(), project(), opts()) ::
+  @spec machine_of(Client.t(), Project.t(), opts()) ::
           {:ok, machine()} | {:error, Fountain.failure()}
-  def machine_of(%Client{} = client, project, opts \\ []) do
+  def machine_of(%Client{} = client, %Project{} = project, opts \\ []) do
     with {:ok, all} <- conversations(client, project, opts) do
       newest =
         all
         |> Enum.filter(&(is_binary(&1.sandbox_id) and Shapes.live?(&1)))
         |> Shapes.newest()
 
-      {:ok, if(newest, do: %{sandbox_id: newest.sandbox_id})}
+      {:ok, if(newest, do: %Machine{sandbox_id: newest.sandbox_id})}
     end
   end
 

@@ -16,6 +16,7 @@ defmodule Ravix.PreviewsFixture do
   import Mimic
 
   alias Ravix.Clock
+  alias Ravix.MachineCache.Machine
   alias Ravix.Previews.Server
   alias Ravix.Sprites.Error
   alias Ravix.Sprites.Shapes
@@ -219,7 +220,7 @@ defmodule Ravix.PreviewsFixture do
 
   defp machine(pid) do
     Agent.get_and_update(pid, fn state ->
-      {{:ok, %{sandbox_id: state.sandbox}}, %{state | reads: state.reads + 1}}
+      {{:ok, %Machine{sandbox_id: state.sandbox}}, %{state | reads: state.reads + 1}}
     end)
   end
 

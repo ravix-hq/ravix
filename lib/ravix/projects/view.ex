@@ -15,8 +15,8 @@ defmodule Ravix.Projects.View do
   of going missing on the page.
   """
 
-  @typedoc "Which machine a project is on, or nil when no live conversation names one."
-  @type machine :: %{sandbox_id: String.t()} | nil
+  @typedoc "Which machine a project is on; see `Ravix.MachineCache.Machine`."
+  @type machine :: Ravix.MachineCache.machine()
 
   @typedoc "How the caller reaches this project: they own it, were let into it, or into tracks on it."
   @type access :: :owner | :project | :tracks | nil

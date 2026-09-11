@@ -28,6 +28,7 @@ defmodule Ravix.Vitals do
 
   alias Ravix.Accounts.Access
   alias Ravix.Accounts.User
+  alias Ravix.MachineCache.Machine
   alias Ravix.Sprites
   alias Ravix.Tracks
 
@@ -170,7 +171,7 @@ defmodule Ravix.Vitals do
 
   defp machine(project) do
     case Tracks.machine_of(project) do
-      {:ok, %{sandbox_id: _} = machine} -> {:ok, machine}
+      {:ok, %Machine{} = machine} -> {:ok, machine}
       _ -> :no_machine
     end
   end

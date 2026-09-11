@@ -4,6 +4,7 @@ defmodule Ravix.MachineCacheTest do
   alias Ravix.Fountain.FakeTransport
   alias Ravix.Fountain.Shapes.Conversation
   alias Ravix.MachineCache
+  alias Ravix.Projects.Project
 
   # The JSON Fountain serves, and the shape `Ravix.Fountain` turns it into.
   @row %{"id" => "c1", "sandbox_id" => "s1", "status" => "idle", "inserted_at" => "2026-09-07"}
@@ -26,7 +27,7 @@ defmodule Ravix.MachineCacheTest do
   # this test's own even though the table is shared by every async module.
   setup do
     n = System.unique_integer([:positive])
-    {:ok, project: %{id: "p-#{n}", agent_id: "a-#{n}"}}
+    {:ok, project: %Project{id: "p-#{n}", agent_id: "a-#{n}"}}
   end
 
   defp fountain(project, responses) do
@@ -72,7 +73,7 @@ defmodule Ravix.MachineCacheTest do
   end
 
   test "forgetting a project drops its memo and nobody else's", %{project: project} do
-    other = %{id: project.id <> "-other", agent_id: project.agent_id <> "-other"}
+    other = %Project{id: project.id <> "-other", agent_id: project.agent_id <> "-other"}
 
     client =
       FakeTransport.client([
