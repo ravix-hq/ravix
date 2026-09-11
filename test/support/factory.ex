@@ -267,10 +267,16 @@ defmodule Ravix.Factory do
       |> take_assoc("track", "track_id")
       |> take_assoc("user", "user_id")
 
+    # One value in both columns, as `Ravix.PromptQueue.Store` writes it, for
+    # as long as the expand phase writes both.
+    body = %{"prompt" => "Hello from #{uniq()}", "images" => []}
+
     defaults(attrs, %{
       "id" => Ecto.UUID.generate(),
       "author_login" => "user",
-      "payload" => Jason.encode!(%{prompt: "Hello from #{uniq()}", images: []}),
+      "body" => body,
+      "image_count" => length(body["images"]),
+      "payload" => Jason.encode!(body),
       "status" => "queued",
       "error" => nil
     })

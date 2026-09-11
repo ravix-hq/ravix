@@ -679,7 +679,44 @@ defmodule Ravix.PromptQueueTest do
              PromptQueue.Store.summaries(f.track.id)
 
     assert [%Item{id: ^id}] = PromptQueue.Store.heads()
-    assert [%Item{id: ^id, payload: nil}] = PromptQueue.Store.heads()
+
+    # The head carries neither the parsed body nor its JSON string: it is read
+    # every two seconds per track, and the attachments are loaded once, just
+    # before the POST.
+    assert [%Item{id: ^id, body: nil, payload: nil}] = PromptQueue.Store.heads()
+  end
+
+  test "a delivered row releases its bytes and keeps its count", f do
+    image = %{"media_type" => "image/png", "data" => "aGVsbG8="}
+
+    {:ok, %Item{id: id}} =
+      PromptQueue.Store.enqueue(f.track.id, f.owner.id, f.owner.login, request_id(), %{
+        prompt: "look",
+        images: [image, image]
+      })
+
+    assert %Item{image_count: 2} = stored = PromptQueue.Store.get(id)
+    assert stored.body["prompt"] == "look"
+    assert length(stored.body["images"]) == 2
+
+    PromptQueue.Store.set_status(id, :sent)
+
+    # The images are gone, because they are large and they have been sent.
+    # The count stays, because the panel still has to say what was sent, and
+    # the id stays as the receipt for a retried request.
+    assert %Item{id: ^id, status: :sent, body: nil, image_count: 2} = PromptQueue.Store.get(id)
+  end
+
+  test "the body is stored as JSON the database understands, not a string", f do
+    {:ok, %Item{id: id}} =
+      PromptQueue.Store.enqueue(f.track.id, f.owner.id, f.owner.login, request_id(), %{
+        prompt: "look",
+        images: []
+      })
+
+    # Read back through the column rather than through a cast in the query,
+    # which is what `summaries/1` used to need.
+    assert %Item{body: %{"prompt" => "look", "images" => []}} = PromptQueue.Store.get(id)
   end
 
   # ── the hub ───────────────────────────────────────────────────────────

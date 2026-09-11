@@ -259,7 +259,7 @@ defmodule Ravix.PromptQueue.Server do
   end
 
   defp post(client, row, track, project) do
-    payload = row.id |> Store.get() |> Map.fetch!(:payload) |> Jason.decode!()
+    payload = row.id |> Store.get() |> Map.fetch!(:body) || %{}
     instructions = Ravix.Previews.prepare_agent_preview(row)
 
     if authorized?(row) do
