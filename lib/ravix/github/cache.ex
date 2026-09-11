@@ -26,9 +26,13 @@ defmodule Ravix.GitHub.Cache do
   credential between instances to save a request is a bad trade. Checks go through the server, which is the only place that
   can hand one caller the read and park the others until it lands.
 
-  Started by `Ravix.Application`. If it is not running when first used (a
-  test run before it was wired in) the first caller starts it unsupervised,
-  so the table outlives any single test process.
+  Both processes are started by `Ravix.Application`: this one, which owns the
+  token and rate-limit table and listens for its siblings' news, and the
+  plain `Ravix.Memo` that holds the checks reports. Neither is started
+  lazily. A caller that reaches a cold table is a caller running without the
+  application, and a table it quietly conjures for itself is one nothing
+  supervises and nothing restarts -- a test that wants the cache should
+  start the application, or `start_supervised!/1` the pair it needs.
   """
 
   use GenServer
@@ -58,8 +62,6 @@ defmodule Ravix.GitHub.Cache do
   @doc "The cached token for an installation and when it expires, if any."
   @spec token(app_id(), installation_id()) :: {:ok, String.t(), integer()} | :error
   def token(app_id, installation_id) do
-    ensure()
-
     case :ets.lookup(@table, {:token, app_id, installation_id}) do
       [{_, token, expires_at_ms}] -> {:ok, token, expires_at_ms}
       [] -> :error
@@ -69,7 +71,6 @@ defmodule Ravix.GitHub.Cache do
   @doc "Remember a freshly minted token."
   @spec put_token(app_id(), installation_id(), String.t(), integer()) :: :ok
   def put_token(app_id, installation_id, token, expires_at_ms) do
-    ensure()
     :ets.insert(@table, {{:token, app_id, installation_id}, token, expires_at_ms})
     :ok
   end
@@ -79,8 +80,6 @@ defmodule Ravix.GitHub.Cache do
   @doc "The rate limit GitHub imposed on an installation, if one is remembered."
   @spec rate_limit(app_id(), installation_id()) :: {:ok, integer(), Error.t()} | :error
   def rate_limit(app_id, installation_id) do
-    ensure()
-
     case :ets.lookup(@table, {:rate_limit, app_id, installation_id}) do
       [{_, until_ms, error}] -> {:ok, until_ms, error}
       [] -> :error
@@ -110,7 +109,6 @@ defmodule Ravix.GitHub.Cache do
   @doc false
   @spec put_rate_limit_local(app_id(), installation_id(), integer(), Error.t()) :: :ok
   def put_rate_limit_local(app_id, installation_id, until_ms, %Error{} = error) do
-    ensure()
     :ets.insert(@table, {{:rate_limit, app_id, installation_id}, until_ms, error})
     :ok
   end
@@ -118,7 +116,6 @@ defmodule Ravix.GitHub.Cache do
   @doc false
   @spec clear_rate_limit_local(app_id(), installation_id()) :: :ok
   def clear_rate_limit_local(app_id, installation_id) do
-    ensure()
     :ets.delete(@table, {:rate_limit, app_id, installation_id})
     :ok
   end
@@ -145,8 +142,6 @@ defmodule Ravix.GitHub.Cache do
   """
   @spec checks(app_id(), checks_key(), integer(), (-> checks_result())) :: checks_result()
   def checks(app_id, key, now_ms, fun) when is_function(fun, 0) do
-    ensure()
-
     Memo.fetch(@checks, {app_id, key}, fun, &checks_expiry/2,
       now_ms: now_ms,
       run: :caller,
@@ -157,7 +152,6 @@ defmodule Ravix.GitHub.Cache do
   @doc "Drop every checks report whose key `matches?` (a pull request was opened)."
   @spec drop_checks(app_id(), (checks_key() -> boolean())) :: :ok
   def drop_checks(app_id, matches?) when is_function(matches?, 1) do
-    ensure()
     Memo.forget_where(@checks, fn {id, key} -> id == app_id and matches?.(key) end)
   end
 
@@ -189,6 +183,9 @@ defmodule Ravix.GitHub.Cache do
     {:ok, %{}}
   end
 
+  # A synchronous round trip, so a caller can be sure every `handle_info/2`
+  # queued ahead of it has run. Used by the tests that broadcast a rate limit
+  # and then assert this instance took it.
   @impl true
   def handle_call(:ping, _from, state), do: {:reply, :ok, state}
 
@@ -208,26 +205,4 @@ defmodule Ravix.GitHub.Cache do
   end
 
   defp crashed, do: %Error{status: nil, message: "The checks read did not complete."}
-
-  # The application supervisor starts both; a bare test run gets them on
-  # first use. Two processes because they hold different things: this one
-  # owns the token and rate-limit table and listens for siblings' news, and
-  # `@checks` is a plain `Ravix.Memo`.
-  defp ensure do
-    if :ets.whereis(@table) == :undefined do
-      case GenServer.start(__MODULE__, [], name: __MODULE__) do
-        {:ok, _pid} -> :ok
-        {:error, {:already_started, _pid}} -> GenServer.call(__MODULE__, :ping)
-      end
-    end
-
-    if :ets.whereis(@checks) == :undefined do
-      case Memo.start_link(name: @checks) do
-        {:ok, pid} -> Process.unlink(pid)
-        {:error, {:already_started, _pid}} -> :ok
-      end
-    end
-
-    :ok
-  end
 end
