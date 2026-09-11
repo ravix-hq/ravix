@@ -291,6 +291,53 @@ defmodule RavixWeb.WorkspaceManagementTest do
     assert render(ctx.view) =~ ctx.project.name
   end
 
+  test "the dialog's own busy flag disables its two irreversible buttons", ctx do
+    settings(ctx)
+    parent = self()
+
+    # `busy` used to be one boolean for the whole page, written by three
+    # unrelated operations --- creating a project, creating a track, and
+    # these two --- so what it meant depended on which had touched it last.
+    # It belongs to the dialog that renders the buttons it disables.
+    stub(Projects, :rebuild, fn _, _ ->
+      send(parent, {:rebuilding, self()})
+
+      receive do
+        :finish -> :ok
+      after
+        2_000 -> flunk("rebuild was never released")
+      end
+    end)
+
+    ctx.view
+    |> form("#project-danger-form", confirm: ctx.project.name)
+    |> render_submit(%{action: "rebuild"})
+
+    assert_receive {:rebuilding, rebuilding}
+    assert has_element?(ctx.view, "button[value=rebuild][disabled]")
+    assert has_element?(ctx.view, "button[value=delete][disabled]")
+
+    send(rebuilding, :finish)
+    render_async(ctx.view)
+    assert_patch(ctx.view, "/")
+  end
+
+  test "a rebuild that crashes re-enables the buttons and says so", ctx do
+    settings(ctx)
+    stub(Projects, :rebuild, fn _, _ -> raise "provisioning fell over" end)
+
+    ExUnit.CaptureLog.capture_log(fn ->
+      ctx.view
+      |> form("#project-danger-form", confirm: ctx.project.name)
+      |> render_submit(%{action: "rebuild"})
+
+      render_async(ctx.view)
+    end)
+
+    assert render(ctx.view) =~ "The operation could not finish"
+    refute has_element?(ctx.view, "button[value=rebuild][disabled]")
+  end
+
   defp settings(ctx) do
     stub(Projects, :settings, fn _, _ ->
       {:ok,

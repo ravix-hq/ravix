@@ -480,103 +480,13 @@
         </button>
       </.form>
     </.dialog>
-    <.dialog
-      :if={@dialog == :settings && @settings}
-      id="settings-dialog"
-      title="Project settings"
-      on_close="dismiss"
-      wide
-    >
-      <.form :let={f} for={@settings_form} id="settings-form" phx-submit="save-settings">
-        <.input field={f[:name]} id="settings-name" label="Name" required />
-        <.input field={f[:runtime]} id="settings-runtime" label="Harness" list="runtime-options" />
-        <datalist id="runtime-options">
-          <option :for={runtime <- (@settings.catalog || %{})["runtimes"] || []} value={runtime} />
-        </datalist>
-        <.input field={f[:model]} id="settings-model" label="Model" />
-        <.input
-          type="textarea"
-          field={f[:instructions]}
-          id="settings-instructions"
-          label="Instructions"
-          rows="5"
-        />
-        <.input
-          type="textarea"
-          field={f[:setup_script]}
-          id="settings-setup"
-          label="Setup script"
-          rows="5"
-        />
-        <.input
-          :for={kind <- ~w(apt pip npm)}
-          field={f[String.to_existing_atom(kind)]}
-          id={"packages-#{kind}"}
-          label={"#{kind} packages"}
-        />
-        <button class="primary" phx-disable-with="Saving…">Save settings</button>
-      </.form>
-      <hr />
-      <h3>Secrets</h3>
-      <p>Values are write-only. Submit an empty value to remove a secret.</p>
-      <p>Environment: {Enum.join(@settings.env_keys, ", ")}</p>
-      <p>Vault: {Enum.join(@settings.vault_keys, ", ")}</p>
-      <.form :let={f} for={@secret_form} id="secret-form" phx-submit="save-secret">
-        <.input
-          field={f[:store]}
-          id="secret-store"
-          label="Store"
-          type="select"
-          options={[{"Environment", "env"}, {"Vault", "vault"}]}
-        />
-        <.input field={f[:key]} id="secret-key" label="Key" required />
-        <.input
-          field={f[:value]}
-          id="secret-value"
-          type="password"
-          label="Value"
-          autocomplete="new-password"
-        />
-        <button class="primary" phx-disable-with="Saving…">Update secret</button>
-      </.form>
-      <hr />
-      <h3>Preview defaults</h3>
-      <.form
-        :let={f}
-        for={@defaults_form}
-        id="preview-defaults-form"
-        phx-submit="save-preview-defaults"
-      >
-        <.input field={f[:directory]} id="default-directory" label="App directory" />
-        <.input field={f[:command]} id="default-command" label="Command (must honor $PORT)" />
-        <.input field={f[:readiness_path]} id="default-readiness" label="Readiness path" />
-        <button class="primary">Save defaults</button><button
-          name="clear"
-          value="true"
-          class="ghost"
-        >Clear defaults</button>
-      </.form>
-      <hr />
-      <h3>Machine and project</h3>
-      <p>
-        Rebuilding discards the machine and closes every track. Deleting also removes the project settings and secrets.
-      </p>
-      <form id="project-danger-form" phx-submit="project-danger">
-        <.input
-          name="confirm"
-          id="danger-confirm"
-          label={"Type #{@project.name} to confirm"}
-          value=""
-          required
-        />
-        <button name="action" value="rebuild" class="ghost" disabled={@busy}>
-          Rebuild machine
-        </button>
-        <button name="action" value="delete" class="danger" disabled={@busy}>
-          Delete project
-        </button>
-      </form>
-    </.dialog>
+    <.live_component
+      :if={@dialog == :settings && @project}
+      module={RavixWeb.Live.SettingsDialog}
+      id="settings-dialog-panel"
+      project={@project}
+      current_user={@current_user}
+    />
     <.live_component
       :if={@dialog == :people && @project}
       module={RavixWeb.Live.PeopleDialog}
