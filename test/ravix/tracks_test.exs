@@ -7,6 +7,7 @@ defmodule Ravix.TracksTest do
   alias Ravix.Fountain.Shapes
   alias Ravix.Hub
   alias Ravix.Hub.Event
+  alias Ravix.PromptQueue.Body
   alias Ravix.QueryCount
   alias Ravix.Tracks
   alias Ravix.Tracks.{Diff, Files, Names, Track}
@@ -561,16 +562,20 @@ defmodule Ravix.TracksTest do
     end
 
     test "is accepted into the queue with its images", ctx do
-      expect(Ravix.PromptQueue.Store, :enqueue, fn track_id,
-                                                   user_id,
-                                                   login,
-                                                   request_id,
-                                                   payload ->
+      expect(Ravix.PromptQueue.Store, :enqueue, fn track_id, user_id, login, request_id, body ->
         assert track_id == ctx.track.id
         assert user_id == ctx.owner.id
         assert login == ctx.owner.login
         assert request_id == "req-1"
-        assert payload == %{prompt: "hello", images: [%{data: "aGk=", media_type: "image/png"}]}
+
+        # A struct, so the image that is not an image and the entry that is
+        # not a map are gone by here rather than being two shapes the queue
+        # has to keep tolerating.
+        assert body == %Body{
+                 prompt: "hello",
+                 images: [%Body.Image{data: "aGk=", media_type: "image/png"}]
+               }
+
         {:ok, %{id: request_id}}
       end)
 

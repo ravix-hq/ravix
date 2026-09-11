@@ -24,6 +24,7 @@ defmodule Ravix.PromptQueue.Store do
 
   alias Ravix.Hub
   alias Ravix.PromptQueue
+  alias Ravix.PromptQueue.Body
   alias Ravix.PromptQueue.Item
   alias Ravix.Repo
   alias Ravix.Tracks.Store, as: Tracks
@@ -62,14 +63,15 @@ defmodule Ravix.PromptQueue.Store do
   track and the insert were one atomic step when the database was
   synchronous; the transaction (with the track row locked) keeps them so.
 
-  `payload` is `%{prompt: text, images: [%{data, media_type}]}` (atom or
-  string keys); it is stored as `jsonb` and refused above 12 MiB.
+  `body` is a `Ravix.PromptQueue.Body`, or anything
+  `Ravix.PromptQueue.Body.decode/1` can read as one; it is stored as `jsonb`
+  and refused above 12 MiB.
   """
-  @spec enqueue(String.t(), String.t(), String.t(), term(), map()) ::
+  @spec enqueue(String.t(), String.t(), String.t(), term(), Body.t() | map()) ::
           {:ok, Item.t()} | {:error, PromptQueue.reason()}
-  def enqueue(track_id, user_id, author_login, id, payload) do
+  def enqueue(track_id, user_id, author_login, id, body) do
     with :ok <- validate_request_id(id),
-         {:ok, encoded} <- encode(payload),
+         {:ok, encoded} <- encode(body),
          {:ok, {item, inserted?}} <-
            Repo.transaction(fn ->
              enqueue_locked(track_id, user_id, author_login, id, encoded)
@@ -339,36 +341,38 @@ defmodule Ravix.PromptQueue.Store do
   defp waiting_count(track_id),
     do: live() |> where([p], p.track_id == ^track_id) |> Repo.aggregate(:count)
 
-  # One body, from either spelling the caller used, plus the JSON string of
-  # it for the release that still reads `payload`. The size is measured on
-  # the encoded bytes because that is what goes over the wire and onto the
-  # disk, whatever the map costs in memory.
-  defp encode(payload) do
-    body = %{
-      "prompt" => Map.get(payload, :prompt) || Map.get(payload, "prompt") || "",
-      "images" => Map.get(payload, :images) || Map.get(payload, "images") || []
-    }
-
-    encoded = Jason.encode!(body)
+  # The stored document, plus the JSON string of it for the release that
+  # still reads `payload`. The size is measured on the encoded bytes because
+  # that is what goes over the wire and onto the disk, whatever the struct
+  # costs in memory.
+  #
+  # Either spelling still enqueues, which the test named "string keys are
+  # accepted" is about. What changed is that the tolerance is
+  # `Body.decode/1`'s, in one place, rather than a pair of
+  # `Map.get(payload, :prompt) || Map.get(payload, "prompt")` written out
+  # here and nowhere near the `payload["images"]` that read it back.
+  defp encode(body) do
+    document = body |> Body.decode() |> Body.encode()
+    encoded = Jason.encode!(document)
 
     if byte_size(encoded) > @max_payload_bytes do
       {:error,
        {:unprocessable, "prompt_too_large",
         "This prompt has too many image bytes. Send fewer images."}}
     else
-      {:ok, {body, encoded}}
+      {:ok, {document, encoded}}
     end
   end
 
-  defp insert(track_id, user_id, author_login, id, {body, encoded}) do
+  defp insert(track_id, user_id, author_login, id, {document, encoded}) do
     %Item{}
     |> Item.changeset(%{
       id: id,
       track_id: track_id,
       user_id: user_id,
       author_login: author_login,
-      body: body,
-      image_count: length(body["images"]),
+      body: document,
+      image_count: length(document["images"]),
       payload: encoded
     })
     |> Repo.insert!()

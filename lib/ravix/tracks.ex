@@ -49,6 +49,8 @@ defmodule Ravix.Tracks do
   alias Ravix.MachineCache
   alias Ravix.People
   alias Ravix.Projects.Project
+  alias Ravix.PromptQueue.Body
+  alias Ravix.PromptQueue.Body.Image
   alias Ravix.Spec
   alias Ravix.Tracks.{Diff, Files, Follower, Header, Names, Store, Track, Transcript, View}
 
@@ -398,10 +400,13 @@ defmodule Ravix.Tracks do
            check(is_nil(track.closed_at), {:conflict, "closed_track", "This track is closed."}) do
       # ownership: `prompt/3` opened with `Access.track_access/2` on this
       # track, and the row records who is sending on it.
-      Ravix.PromptQueue.Store.enqueue(track.id, user.id, user.login, payload["request_id"], %{
-        prompt: text,
-        images: images
-      })
+      Ravix.PromptQueue.Store.enqueue(
+        track.id,
+        user.id,
+        user.login,
+        payload["request_id"],
+        %Body{prompt: text, images: images}
+      )
     end
   end
 
@@ -897,7 +902,7 @@ defmodule Ravix.Tracks do
            {:error, {:unprocessable, "image_too_large", "That image is larger than 8 MB."}}}
 
         true ->
-          {:cont, {:ok, [%{data: data, media_type: type} | acc]}}
+          {:cont, {:ok, [%Image{data: data, media_type: type} | acc]}}
       end
     end)
     |> case do
