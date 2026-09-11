@@ -29,7 +29,7 @@ defmodule Ravix.Fountain do
   require Logger
 
   alias Fountain.HTTP
-  alias Ravix.Fountain.{Client, Error, Shapes}
+  alias Ravix.Fountain.{Client, Error, Launch, Shapes}
 
   @type id :: String.t()
   @type store :: :environments | :vaults
@@ -187,8 +187,10 @@ defmodule Ravix.Fountain do
   thing to get wrong in the app: it does not fail loudly, it hands you a
   second machine.
 
-  `attrs`: `:agent_id` and `:channel_id` (required), `:environment_id`,
-  `:vault_id`, `:sandbox_id`, `:title`, `:prompt`.
+  `Ravix.Fountain.Launch` names all seven fields and enforces every one of
+  them, including the ones that are optional *on the wire*: the identity
+  rule above is only a rule if a caller cannot leave half of it out, and a
+  map let them.
 
   `:prompt` is the first turn, sent in the same call. Not an optimisation:
   every app in this suite that starts a *fresh* conversation sends its prompt
@@ -209,19 +211,19 @@ defmodule Ravix.Fountain do
   conversation. The `channel_id` is still sent: it is the track's durable
   membership of its machine, the name Fountain files the conversation under.
   """
-  @spec create_conversation(Client.t(), map()) :: result(Shapes.Conversation.t())
-  def create_conversation(client, attrs) do
+  @spec create_conversation(Client.t(), Launch.t()) :: result(Shapes.Conversation.t())
+  def create_conversation(client, %Launch{} = launch) do
     body =
       %{
-        "agent_id" => Map.fetch!(attrs, :agent_id),
-        "channel_id" => Map.fetch!(attrs, :channel_id),
+        "agent_id" => launch.agent_id,
+        "channel_id" => launch.channel_id,
         "fresh" => true
       }
-      |> optional("environment_id", attrs[:environment_id])
-      |> optional("vault_id", attrs[:vault_id])
-      |> sandbox_identity(attrs[:sandbox_id])
-      |> optional("title", attrs[:title])
-      |> optional("prompt", attrs[:prompt])
+      |> optional("environment_id", launch.environment_id)
+      |> optional("vault_id", launch.vault_id)
+      |> sandbox_identity(launch.sandbox_id)
+      |> optional("title", launch.title)
+      |> optional("prompt", launch.prompt)
 
     with {:ok, raw} <- data(client, "POST", "/api/conversations", body: body) do
       {:ok, Shapes.conversation(raw)}
