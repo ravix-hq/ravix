@@ -395,16 +395,11 @@ defmodule RavixWeb.TrackLive do
       |> Enum.flat_map(& &1.events)
       |> Enum.filter(&(&1.id > (page.last_event_id || 0)))
 
-    page = Transcript.add_events(page, newer)
-    socket |> assign(page: page) |> stream(:turns, Transcript.visible_turns(page), reset: true)
+    repair(socket, Transcript.add_events(page, newer))
   end
 
   defp async_result(:transcript, {:ok, {:error, reason}}, socket), do: error(socket, reason)
 
-  # Which assign the answer belongs in is a question about the answer. It used
-  # to be asked of `socket.assigns.panel` instead, so a reply that arrived
-  # after somebody switched tabs was filed under whichever panel they had
-  # moved to.
   defp async_result(:panel, {:ok, {:ok, %Previews.View{} = preview}}, socket),
     do: socket |> show_preview(preview) |> update_panel(&Panel.settled/1)
 
@@ -435,6 +430,51 @@ defmodule RavixWeb.TrackLive do
       |> assign(loading: false, exec_busy: false)
       |> update_panel(&Panel.settled/1)
       |> put_flash(:error, "Could not finish loading. Please try again.")
+
+  # The repair read, rendered as what actually differs.
+  #
+  # `Tracks.events/2` answers the whole transcript, and this used to hand all
+  # of it to `stream/4` with `reset: true`: every turn's DOM replaced, on
+  # every stage event of every turn, for a read whose usual answer is
+  # "nothing you were not already told". The transcript is the longest thing
+  # on the page and that is the message which arrives fastest, so the two
+  # multiply.
+  #
+  # Only the shape a repair usually has is repaired turn by turn: the same
+  # turns in the same order, some with more in them, possibly more after
+  # them. Anything else --- a turn the provider no longer has, a gap filling
+  # in the *middle*, a reorder --- resets, because `stream_insert/4` appends
+  # and cannot express any of those. Getting that wrong would leave a ghost
+  # turn or an out-of-order one on the screen, which is worse than the cost
+  # this is avoiding.
+  defp repair(socket, page) do
+    was = Transcript.visible_turns(socket.assigns.page)
+    now = Transcript.visible_turns(page)
+    socket = assign(socket, page: page)
+
+    if appended_to?(was, now),
+      do: Enum.reduce(now, socket, &insert_changed(&2, was, &1)),
+      else: stream(socket, :turns, now, reset: true)
+  end
+
+  # Are the turns on screen still the leading turns of the new page, in the
+  # same order? Content may differ; identity and position may not.
+  defp appended_to?(was, now) do
+    length(now) >= length(was) and
+      now |> Enum.take(length(was)) |> Enum.map(& &1.id) == Enum.map(was, & &1.id)
+  end
+
+  defp insert_changed(socket, was, turn) do
+    case Enum.find(was, &(&1.id == turn.id)) do
+      ^turn -> socket
+      _other -> stream_insert(socket, :turns, turn)
+    end
+  end
+
+  # Which assign the answer belongs in is a question about the answer. It used
+  # to be asked of `socket.assigns.panel` instead, so a reply that arrived
+  # after somebody switched tabs was filed under whichever panel they had
+  # moved to.
 
   # File paths are issued by LiveView after validating its managed upload.
   # sobelow_skip ["Traversal.FileModule"]

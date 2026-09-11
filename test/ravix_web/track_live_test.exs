@@ -831,6 +831,94 @@ defmodule RavixWeb.TrackLiveTest do
      }}
   end
 
+  describe "the transcript repair read" do
+    # A page for `turns`, each one an agent message saying `text`. The frames
+    # are ACP because the runtime is, which is what `Ravix.Tracks.Transcript`
+    # reads to decide how to lay an event into its turn.
+    defp transcript(turns, opts \\ []) do
+      {events, _} =
+        Enum.flat_map_reduce(turns, Keyword.get(opts, :from, 1), fn {id, text}, next ->
+          frame =
+            Jason.encode!(%{
+              jsonrpc: "2.0",
+              method: "session/update",
+              params: %{
+                update: %{
+                  sessionUpdate: "agent_message_chunk",
+                  content: %{type: "text", text: text}
+                }
+              }
+            })
+
+          {[
+             %{
+               "id" => next,
+               "turn_id" => id,
+               "kind" => "output",
+               "stream" => "acp",
+               "data" => frame
+             }
+           ], next + 1}
+        end)
+
+      shapes = Shapes.turns(Enum.map(turns, fn {id, _} -> %{"id" => id, "prompt" => id} end))
+      Transcript.page(shapes, events, "claude")
+    end
+
+    defp repair(ctx, page) do
+      stub(Tracks, :events, fn _, _ -> {:ok, page} end)
+      send(ctx.view.pid, {:hub, Event.new(:turn, ctx.project.id, track_id: ctx.track.id)})
+      render_async(ctx.view)
+    end
+
+    test "renders a turn that gained content and a turn that arrived after it", ctx do
+      html = repair(ctx, transcript([{"t1", "first"}, {"t2", "second"}]))
+      assert html =~ "first"
+      assert html =~ "second"
+
+      # The common shape: the turns on screen are still the leading turns, one
+      # of them says more, and there is a new one after them. Only those two
+      # are re-sent; the assertion a page can make is that both are right.
+      html =
+        repair(ctx, transcript([{"t1", "first"}, {"t2", "second, revised"}, {"t3", "third"}]))
+
+      assert html =~ "first"
+      assert html =~ "second, revised"
+      assert html =~ "third"
+    end
+
+    test "a turn the provider no longer has leaves no ghost on the screen", ctx do
+      html = repair(ctx, transcript([{"t1", "first"}, {"t2", "second"}]))
+      assert html =~ "second"
+
+      # The provider's own events have moved past the ones this page is
+      # holding, so the merge above does not put `t2` back: the answer really
+      # is that the turn is gone. Not an append, and `stream_insert/4` has no
+      # way to remove anything, which is what the reset is still there for.
+      html = repair(ctx, transcript([{"t1", "first"}], from: 50))
+      assert html =~ "first"
+      refute html =~ "second"
+    end
+
+    test "a gap that fills in the middle arrives in order", ctx do
+      html = repair(ctx, transcript([{"t1", "first"}, {"t3", "third"}]))
+      assert html =~ "first"
+      assert html =~ "third"
+
+      # `t2` belongs between them, and `stream_insert/4` appends, so this is
+      # the other shape that has to reset rather than be repaired in place.
+      html = repair(ctx, transcript([{"t1", "first"}, {"t2", "second"}, {"t3", "third"}]))
+      assert [_, _, _] = Regex.scan(~r/first|second|third/, html) |> Enum.uniq()
+
+      positions =
+        Enum.map(["first", "second", "third"], fn text ->
+          html |> String.split(text) |> hd() |> String.length()
+        end)
+
+      assert positions == Enum.sort(positions), "turns rendered out of order"
+    end
+  end
+
   for revocation <- [:session, :track] do
     @revocation revocation
     test "#{revocation} revocation rejects a delayed provider result", ctx do
