@@ -65,17 +65,12 @@ defmodule Ravix.Tracks.Files do
   def confine(root, requested) when is_binary(requested) do
     absolute = if String.starts_with?(requested, "/"), do: requested, else: "#{root}/#{requested}"
 
-    normalized =
-      absolute
-      |> String.split("/")
-      |> Enum.reduce([], fn
-        part, parts when part in ["", "."] -> parts
-        "..", [] -> []
-        "..", [_ | parts] -> parts
-        part, parts -> [part | parts]
-      end)
-      |> Enum.reverse()
-      |> then(&("/" <> Enum.join(&1, "/")))
+    # `Path.expand/1` on an already-absolute path is pure string work: it
+    # resolves `.` and `..`, collapses repeated separators, and stops at the
+    # root, which is every case the hand-written reduction here covered. It
+    # touches no filesystem, so a `..` that escapes is flattened rather than
+    # followed, and the comparison below is what refuses it.
+    normalized = Path.expand(absolute, "/")
 
     if normalized == root or String.starts_with?(normalized, root <> "/"),
       do: normalized,

@@ -464,20 +464,11 @@ defmodule Ravix.Sprites do
   defp blank_to("", default), do: default
   defp blank_to(value, _default), do: value
 
-  defp normalize_posix(path) do
-    parts =
-      path
-      |> String.split("/")
-      |> Enum.reduce([], fn
-        part, acc when part in ["", "."] -> acc
-        "..", [] -> []
-        "..", [_top | rest] -> rest
-        part, acc -> [part | acc]
-      end)
-      |> Enum.reverse()
-
-    "/" <> Enum.join(parts, "/")
-  end
+  # The same normalisation `Ravix.Tracks.Files.confine/2` needs, and the same
+  # answer: `Path.expand/1`. Both had their own copy of a four-clause
+  # reduction over the segments, which is a port of a JavaScript helper and
+  # is what the standard library already does.
+  defp normalize_posix(path), do: Path.expand(path, "/")
 
   # The last 32,000 bytes, without a torn multibyte character at the front.
   defp tail(text) when is_binary(text) and byte_size(text) <= @tail, do: text

@@ -28,11 +28,16 @@ defmodule Ravix.Tracks.Transcript.Turn do
   alias Ravix.Tracks.Transcript.{Block, Event}
 
   @typedoc """
-  The blocks so far, newest first, and where each tool call sits in that list
-  so its result can be paired onto it. Internal to the fold; read it through
+  The blocks so far, newest first. Internal to the fold; read it through
   `blocks` instead.
+
+  It used to carry a second map from tool id to the position of that call in
+  this list, so a `tool_result` could be paired onto its `tool_use` by
+  arithmetic. `Ravix.Tracks.Transcript` now finds the call by matching the
+  `%Block.Tool{}` that holds the id, which is what the struct is for, so
+  there is nothing to carry beside the blocks.
   """
-  @type fold :: {[Block.t()], %{optional(String.t()) => non_neg_integer()}}
+  @type fold :: [Block.t()]
 
   @enforce_keys [:id]
   defstruct [
@@ -45,7 +50,7 @@ defmodule Ravix.Tracks.Transcript.Turn do
     blocks: [],
     settled?: false,
     visible?: false,
-    fold: {[], %{}}
+    fold: []
   ]
 
   @type t :: %__MODULE__{
@@ -63,5 +68,5 @@ defmodule Ravix.Tracks.Transcript.Turn do
 
   @doc "An empty fold, for a turn whose events have not been read yet."
   @spec empty_fold() :: fold()
-  def empty_fold, do: {[], %{}}
+  def empty_fold, do: []
 end
