@@ -30,15 +30,19 @@ defmodule RavixWeb.Live.PeopleDialog do
   def scopes, do: [:track, :project]
 
   @impl true
+  def mount(socket), do: {:ok, assign(socket, invite: nil)}
+
+  @impl true
   def update(assigns, socket) do
     socket = assign(socket, assigns)
 
-    {:ok,
-     if socket.assigns[:people] do
-       socket
-     else
-       assign(socket, invite: nil) |> load()
-     end}
+    # Unlike `invite: nil` above, this one is not a default `mount/1` could
+    # have set: listing people needs the scope and the signed-in user, and
+    # those arrive with the parent's assigns. It stays a guard on the assign
+    # the load writes, which also means a refused load --- `result/3` leaves
+    # the socket untouched --- is retried on the next update rather than
+    # leaving the dialog permanently empty.
+    {:ok, if(socket.assigns[:people], do: socket, else: load(socket))}
   end
 
   @impl true

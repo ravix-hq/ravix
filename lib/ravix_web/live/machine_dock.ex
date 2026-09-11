@@ -38,25 +38,32 @@ defmodule RavixWeb.Live.MachineDock do
   # is a page that eventually stops rendering.
   @scrollback 200
 
+  # `mount/1` runs exactly once per component instance, before the first
+  # `update/2`. What stood here was `if socket.assigns[:dock]`, which is that
+  # once-only callback written as a sentinel key --- and a sentinel spelled
+  # through `assigns[...]` rather than `assigns...` is one that answers nil
+  # for a misspelling, so the defaults would be re-applied on every parent
+  # re-render and the strip would close itself while somebody was reading it.
+  @impl true
+  def mount(socket) do
+    {:ok,
+     assign(socket,
+       dock: :terminal,
+       dock_open: false,
+       output: [],
+       exec_busy: false,
+       vitals: nil
+     )}
+  end
+
   @impl true
   def update(assigns, socket) do
-    socket = assign(socket, assigns)
-
-    {:ok,
-     if socket.assigns[:dock] do
-       # `cwd` follows the track's worktree until a command answers from
-       # somewhere else, so a re-render must not walk it back.
-       socket
-     else
-       assign(socket,
-         dock: :terminal,
-         dock_open: false,
-         output: [],
-         exec_busy: false,
-         cwd: assigns.workdir,
-         vitals: nil
-       )
-     end}
+    # `cwd` cannot be one of those: it is seeded from the track's worktree,
+    # which arrives with the parent's assigns and so does not exist yet in
+    # `mount/1`. It follows the worktree only until a command answers from
+    # somewhere else, and `assign_new/3` is the framework's way of saying
+    # exactly that --- seed it the first time, never walk it back after.
+    {:ok, socket |> assign(assigns) |> assign_new(:cwd, fn -> assigns.workdir end)}
   end
 
   @impl true
