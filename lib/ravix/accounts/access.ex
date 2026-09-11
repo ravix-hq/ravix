@@ -25,7 +25,7 @@ defmodule Ravix.Accounts.Access do
   into the 404 and 403 the TypeScript threw.
   """
 
-  alias Ravix.Accounts.User
+  alias Ravix.Accounts.{ProjectAccess, TrackAccess, User}
   alias Ravix.People.Store, as: People
   alias Ravix.Projects.Project
   alias Ravix.Projects.Store, as: Projects
@@ -35,8 +35,11 @@ defmodule Ravix.Accounts.Access do
   @typedoc "Owner, or somebody invited to the track or the project in question."
   @type role :: :owner | :member
 
-  @type project_access :: %{project: Project.t(), role: role()}
-  @type track_access :: %{track: Track.t(), project: Project.t(), role: role()}
+  @typedoc "What `project_access/2` answers. See `Ravix.Accounts.ProjectAccess`."
+  @type project_access :: ProjectAccess.t()
+
+  @typedoc "What `track_access/2` answers. See `Ravix.Accounts.TrackAccess`."
+  @type track_access :: TrackAccess.t()
 
   @doc """
   A project the caller **owns**. Not found for anyone else's.
@@ -78,11 +81,11 @@ defmodule Ravix.Accounts.Access do
         {:error, :not_found}
 
       %Project{user_id: ^user_id} = project ->
-        {:ok, %{project: project, role: :owner}}
+        {:ok, %ProjectAccess{project: project, role: :owner}}
 
       %Project{} = project ->
         if project_member?(project.id, user_id),
-          do: {:ok, %{project: project, role: :member}},
+          do: {:ok, %ProjectAccess{project: project, role: :member}},
           else: {:error, :not_found}
     end
   end
@@ -112,13 +115,13 @@ defmodule Ravix.Accounts.Access do
          %Project{} = project <- live_project(track.project_id) do
       cond do
         project.user_id == user_id ->
-          {:ok, %{track: track, project: project, role: :owner}}
+          {:ok, %TrackAccess{track: track, project: project, role: :owner}}
 
         track.closed_at != nil ->
           {:error, :not_found}
 
         member?(track.id, user_id) or project_member?(project.id, user_id) ->
-          {:ok, %{track: track, project: project, role: :member}}
+          {:ok, %TrackAccess{track: track, project: project, role: :member}}
 
         true ->
           {:error, :not_found}

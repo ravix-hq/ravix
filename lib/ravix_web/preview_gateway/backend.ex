@@ -106,7 +106,7 @@ defmodule RavixWeb.PreviewGateway.Backend do
   @callback public_url() :: String.t()
 
   @doc "`Ravix.Config.previews/0`."
-  @callback previews_config() :: Ravix.Config.previews() | nil
+  @callback previews_config() :: Ravix.Config.Previews.t() | nil
 
   @doc "`Ravix.Config.sprites/0`; the tunnel's credentials."
   @callback sprites_config() :: Ravix.Config.Sprites.t() | nil

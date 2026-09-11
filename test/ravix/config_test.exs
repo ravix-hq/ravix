@@ -132,7 +132,7 @@ defmodule Ravix.ConfigTest do
         port: 5183
       )
 
-      assert Config.previews() == %{
+      assert Config.previews() == %Config.Previews{
                domain: "preview.localhost",
                protocol: :http,
                public_port: ":5183"
@@ -142,7 +142,7 @@ defmodule Ravix.ConfigTest do
     test "a real domain is HTTPS with no port" do
       override_all(preview_domain: "ravix-preview.dev", public_url: "https://app.ravix.sh")
 
-      assert Config.previews() == %{
+      assert Config.previews() == %Config.Previews{
                domain: "ravix-preview.dev",
                protocol: :https,
                public_port: ""
@@ -161,7 +161,7 @@ defmodule Ravix.ConfigTest do
 
     test "under localhost, any other domain is allowed" do
       override_all(public_url: "http://localhost:4000", preview_domain: "p.localhost.dev")
-      assert %{domain: "p.localhost.dev", protocol: :https} = Config.previews()
+      assert %Config.Previews{domain: "p.localhost.dev", protocol: :https} = Config.previews()
     end
   end
 

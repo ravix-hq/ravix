@@ -57,7 +57,7 @@ defmodule RavixWeb.PreviewGateway.RavixBackendTest do
     assert RavixWeb.PreviewGateway.Backend in (GatewayBackend.module_info(:attributes)[:behaviour] ||
                                                  [])
 
-    assert GatewayBackend.previews_config() == %{
+    assert GatewayBackend.previews_config() == %Ravix.Config.Previews{
              domain: "preview.localhost",
              protocol: :http,
              public_port: ":5183"
