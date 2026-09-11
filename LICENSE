@@ -1,10 +1,24 @@
-Copyright (c) 2026 Ravix HQ. All rights reserved.
+Copyright (c) 2026 Ravix. All rights reserved.
 
-This software and its source code are proprietary and confidential. No part of
-this repository may be used, copied, modified, merged, published, distributed,
-sublicensed, or sold, in whole or in part, without the prior written permission
-of the copyright holder.
+This source code is made publicly readable. No licence is granted.
+
+You may view this repository and its history. You may not copy, modify,
+merge, publish, distribute, sublicense, sell, or create derivative works
+from any part of it, and you may not use it to provide a service, without
+prior written permission from the copyright holder.
+
+Contributions submitted through pull requests are offered to the copyright
+holder for inclusion under this same notice.
+
+Third-party dependencies are not covered by this notice. Each remains under
+its own licence, as declared by its package: the Elixir dependencies in
+`mix.exs` and the JavaScript ones in `package.json`, none of which are
+vendored into this repository.
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
