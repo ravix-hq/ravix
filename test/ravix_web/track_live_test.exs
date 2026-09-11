@@ -316,9 +316,38 @@ defmodule RavixWeb.TrackLiveTest do
       {:ok, preview()}
     end)
 
-    ctx.view |> form("#preview-config-form", command: "npm start") |> render_submit()
+    ctx.view
+    |> form("#preview-config-form", preview_config: [command: "npm start"])
+    |> render_submit()
+
     expect(Previews, :save_config, fn _, _, nil -> {:ok, preview()} end)
     ctx.view |> form("#preview-config-form") |> render_submit(%{clear: "true"})
+  end
+
+  test "a bad preview command is refused on the command, not over the whole page", ctx do
+    render_click(ctx.view, "panel", %{name: "preview"})
+    render_async(ctx.view)
+
+    # `Ravix.Previews.parse_config/1` answers three different sentences for
+    # three different boxes. All three used to arrive as one toast at the top
+    # of the page, which said what was wrong but not where.
+    expect(Previews, :save_config, fn _, _, _ ->
+      {:error,
+       {:unprocessable, "preview_command",
+        "Supply a startup command that honors $PORT and fails if that port is occupied."}}
+    end)
+
+    ctx.view
+    |> form("#preview-config-form", preview_config: [command: "python -m http.server 8000"])
+    |> render_submit()
+
+    assert has_element?(ctx.view, "#preview-config-form .field p.error", "honors $PORT")
+
+    # And what was typed is still there to be corrected.
+    assert has_element?(
+             ctx.view,
+             "#preview-command[value='python -m http.server 8000']"
+           )
   end
 
   test "the queue panel renders what the context really returns, not a stub of it", ctx do

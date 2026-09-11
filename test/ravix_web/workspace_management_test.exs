@@ -108,10 +108,39 @@ defmodule RavixWeb.WorkspaceManagementTest do
     end)
 
     ctx.view
-    |> form("#secret-form", store: "vault", key: "TOKEN", value: "private-value")
+    |> form("#secret-form", secret: [store: "vault", key: "TOKEN", value: "private-value"])
     |> render_submit()
 
     assert render(ctx.view) =~ "Secret updated"
+    refute render(ctx.view) =~ "private-value"
+  end
+
+  test "a bad secret name is refused on the name, and the value never comes back", ctx do
+    settings(ctx)
+
+    # `Ravix.Projects.Settings.validate_key/1` is the authority and has its
+    # own coverage in `projects_test.exs`; it is stubbed here because this
+    # fixture has no Fountain, so a real call refuses for that instead. What
+    # is under test is the page: a refusal whose code names a field arrives
+    # beside that field rather than as a toast.
+    expect(Projects, :update_settings, fn _, _, _ ->
+      {:error, {:unprocessable, "bad_key", "A secret name is letters, digits and underscores."}}
+    end)
+
+    ctx.view
+    |> form("#secret-form", secret: [store: "env", key: "not a key", value: "private-value"])
+    |> render_submit()
+
+    assert has_element?(
+             ctx.view,
+             "#secret-form .field p.error",
+             "letters, digits and underscores"
+           )
+
+    # The key is kept so it can be corrected. The value is not: it is
+    # write-only, and rendering it back into the page is the one thing this
+    # form must never do, refusal or no refusal.
+    assert has_element?(ctx.view, "#secret-key[value='not a key']")
     refute render(ctx.view) =~ "private-value"
   end
 
@@ -120,9 +149,11 @@ defmodule RavixWeb.WorkspaceManagementTest do
     # Exercise actual scoped persistence and config validation.
     ctx.view
     |> form("#preview-defaults-form",
-      directory: ".",
-      command: "PORT=$PORT mix phx.server",
-      readiness_path: "/healthz"
+      preview_defaults: [
+        directory: ".",
+        command: "PORT=$PORT mix phx.server",
+        readiness_path: "/healthz"
+      ]
     )
     |> render_submit()
 

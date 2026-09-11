@@ -43,7 +43,13 @@ defmodule RavixWeb.Live.Form do
   alias Ecto.Changeset
 
   @typedoc "The form's name in the DOM and in the params it submits."
-  @type name :: :new_project | :new_track | :rename_track
+  @type name ::
+          :new_project
+          | :new_track
+          | :rename_track
+          | :preview_config
+          | :preview_defaults
+          | :secret
 
   @typedoc """
   A form's shape: the field types to cast, and which field each refusal
@@ -52,10 +58,34 @@ defmodule RavixWeb.Live.Form do
   """
   @type shape :: {%{atom() => atom()}, %{String.t() => atom()}}
 
+  # A track's preview configuration and a project's default for it are the
+  # same three fields refused by the same `Ravix.Previews.parse_config/1`,
+  # so they are one shape under two names. The codes it answers with ---
+  # `preview_directory`, `preview_command`, `preview_readiness` --- name
+  # their fields exactly, which is why all three sentences were arriving as
+  # a single toast that did not say which box was wrong.
+  @preview_config {%{directory: :string, command: :string, readiness_path: :string},
+                   %{
+                     "preview_directory" => :directory,
+                     "preview_command" => :command,
+                     "preview_readiness" => :readiness_path
+                   }}
+
   @forms %{
     new_project: {%{name: :string, repo: :string}, %{"no_name" => :name}},
     new_track: {%{title: :string, ref: :string}, %{"no_title" => :title}},
-    rename_track: {%{title: :string}, %{"no_title" => :title}}
+    rename_track: {%{title: :string}, %{"no_title" => :title}},
+    preview_config: @preview_config,
+    preview_defaults: @preview_config,
+    secret:
+      {%{store: :string, key: :string, value: :string},
+       %{
+         "bad_key" => :key,
+         "reserved_key" => :key,
+         # A project with no vault can still hold environment secrets, so
+         # the refusal belongs on the store picker rather than the name.
+         "no_vault" => :store
+       }}
   }
 
   @doc """
