@@ -11,21 +11,15 @@ defmodule Ravix.Tracks.Transcript do
   The browser used to do this parse itself, on every frame, with
   `blocksForTurn` from `packages/fountain-app/src/acp.ts`. Here the server
   does it once, over `Managoat.ACP.Blocks`, and the page renders what it is
-  handed. The block shapes are the ones `src/components/Transcript.tsx`
-  drew, so the port of that component reads the same fields:
+  handed.
 
-    * `%{kind: :text, body, started_at, ended_at}`: the reply, markdown.
-      Adjacent chunks are one block.
-    * `%{kind: :thinking, body, started_at, ended_at}`: reasoning, folded
-      away once the turn is over.
-    * `%{kind: :tool, id, name, summary, status, output, started_at,
-      ended_at, detail}`: one call and its result, paired on the ACP
-      `toolCallId`. `status` is `:running` until a terminal update lands,
-      then `:done` or `:error`. `detail` is what `src/lib/tools.ts` read a
-      second time: the call's ACP `kind`, its arguments, the paths it named,
-      and for an edit the before-and-after as diff lines.
-    * `%{kind: :raw, body}`: a line the adapter emitted that is not ACP.
-    * `%{kind: :failure, stage, body}`: a stage Fountain failed, and why.
+  Every shape this module builds is a struct: `Ravix.Tracks.Transcript.Page`
+  holds `Ravix.Tracks.Transcript.Turn`s, each of which holds
+  `Ravix.Tracks.Transcript.Block`s -- five of those, one per drawn thing,
+  matched by struct rather than by a `:kind` field. They were anonymous maps
+  translated from `src/components/Transcript.tsx`, which is why a turn
+  carried an `:acc` key named in no type and `block` was declared as
+  `map()`. See `Ravix.Tracks.Transcript.Block` for what that cost.
 
   Timestamps are the log's own ISO-8601 strings: when the chunk landed, not
   when the model produced it (one flush apart at most).
@@ -38,8 +32,8 @@ defmodule Ravix.Tracks.Transcript do
 
   alias Managoat.ACP.Blocks
   alias Managoat.ACP.Protocol
-  alias Ravix.Fountain.Shapes.Turn
-  alias Ravix.Tracks.Transcript.Event
+  alias Ravix.Fountain.Shapes.Turn, as: Wire
+  alias Ravix.Tracks.Transcript.{Block, Detail, Edit, Event, Page, Turn}
 
   @acp_runtimes ~w(claude codex opencode)
   @tool_kinds ~w(read edit delete move search execute fetch think other)
@@ -47,23 +41,14 @@ defmodule Ravix.Tracks.Transcript do
   @typedoc "A parsed log event. See `Ravix.Tracks.Transcript.Event`."
   @type event :: Event.t()
 
-  @typedoc "One turn, as Fountain records it, plus its events and their blocks."
-  @type turn :: %{
-          id: String.t(),
-          prompt: String.t() | nil,
-          origin: String.t() | nil,
-          status: String.t() | nil,
-          inserted_at: String.t() | nil,
-          events: [event()],
-          blocks: [block()],
-          settled?: boolean(),
-          visible?: boolean()
-        }
+  @typedoc "One turn and its output. See `Ravix.Tracks.Transcript.Turn`."
+  @type turn :: Turn.t()
 
-  @type block :: map()
+  @typedoc "One drawn thing. See `Ravix.Tracks.Transcript.Block`."
+  @type block :: Block.t()
 
-  @typedoc "The transcript so far: turns in order, and the newest event id seen."
-  @type page :: %{turns: [turn()], last_event_id: integer() | nil, runtime: String.t()}
+  @typedoc "The transcript so far. See `Ravix.Tracks.Transcript.Page`."
+  @type page :: Page.t()
 
   # ── the page ──────────────────────────────────────────────────────────
 
@@ -81,15 +66,15 @@ defmodule Ravix.Tracks.Transcript do
   in a trailing group rather than dropped, so the very first thing a new
   track shows is not an empty panel.
   """
-  @spec page([map()], [Event.t() | map()], String.t()) :: page()
+  @spec page([Wire.t()], [Event.t() | map()], String.t()) :: Page.t()
   def page(raw_turns, events, runtime) do
-    %{turns: [], last_event_id: nil, runtime: runtime || ""}
+    %Page{turns: [], last_event_id: nil, runtime: runtime || ""}
     |> add_turns(raw_turns)
     |> add_events(events)
   end
 
   @doc "An empty page for a track with no conversation yet."
-  @spec empty(String.t()) :: page()
+  @spec empty(String.t()) :: Page.t()
   def empty(runtime), do: page([], [], runtime)
 
   @doc """
@@ -97,16 +82,30 @@ defmodule Ravix.Tracks.Transcript do
   a new one is placed by `inserted_at` among the recorded turns, ahead of the
   groups that only exist because events named them.
   """
-  @spec add_turns(page(), [map()]) :: page()
-  def add_turns(page, raw_turns) do
+  @spec add_turns(Page.t(), [Wire.t()]) :: Page.t()
+  def add_turns(%Page{} = page, raw_turns) do
     records = Enum.map(raw_turns, &turn_record/1)
     by_id = Map.new(page.turns, &{&1.id, &1})
 
     merged =
       Enum.map(records, fn record ->
         case Map.fetch(by_id, record.id) do
-          {:ok, existing} -> Map.merge(existing, record)
-          :error -> new_turn(record, page.runtime)
+          # Only the wire fields are refreshed, named one by one: this was a
+          # `Map.merge/2` of the whole record over the whole turn, which
+          # worked only because the record happened to hold no key the turn
+          # derives. Naming them is what keeps the events and the fold the
+          # turn has already accumulated out of reach of a fresh turns list.
+          {:ok, existing} ->
+            %{
+              existing
+              | prompt: record.prompt,
+                origin: record.origin,
+                status: record.status,
+                inserted_at: record.inserted_at
+            }
+
+          :error ->
+            new_turn(record, page.runtime)
         end
       end)
 
@@ -121,11 +120,11 @@ defmodule Ravix.Tracks.Transcript do
   # just-created turn actually is. Treating a missing one as the empty string
   # made it the earliest thing in the transcript, so the newest turn rendered
   # above the entire history.
-  defp ordered_at(%{inserted_at: at}) when is_binary(at), do: {0, at}
-  defp ordered_at(_undated), do: {1, ""}
+  defp ordered_at(%Turn{inserted_at: at}) when is_binary(at), do: {0, at}
+  defp ordered_at(%Turn{}), do: {1, ""}
 
   @doc "Every event in `events`, laid into its turn. Duplicates (by id) are ignored."
-  @spec add_events(page(), [Event.t() | map()]) :: page()
+  @spec add_events(Page.t(), [Event.t() | map()]) :: Page.t()
   def add_events(page, events), do: Enum.reduce(events, page, &add_event(&2, &1))
 
   @doc """
@@ -133,7 +132,7 @@ defmodule Ravix.Tracks.Transcript do
   seen this event id already is unchanged, because a snapshot and the
   stream it was taken from overlap.
   """
-  @spec add_event(page(), Event.t() | map()) :: page()
+  @spec add_event(Page.t(), Event.t() | map()) :: Page.t()
   def add_event(page, raw) do
     case Event.from(raw) do
       %Event{id: id} = event when is_integer(id) -> place(page, event, id)
@@ -141,7 +140,7 @@ defmodule Ravix.Tracks.Transcript do
     end
   end
 
-  defp place(page, %Event{turn_id: turn_id} = event, id) do
+  defp place(%Page{} = page, %Event{turn_id: turn_id} = event, id) do
     {turns, found?} =
       Enum.map_reduce(page.turns, false, fn turn, found? ->
         if turn.id == turn_id, do: {lay_in(turn, event, page.runtime), true}, else: {turn, found?}
@@ -150,18 +149,18 @@ defmodule Ravix.Tracks.Transcript do
     turns =
       if found?,
         do: turns,
-        else: turns ++ [lay_in(new_turn(%{id: turn_id}, page.runtime), event, page.runtime)]
+        else: turns ++ [lay_in(new_turn(%Turn{id: turn_id}, page.runtime), event, page.runtime)]
 
     %{page | turns: turns, last_event_id: max(page.last_event_id || 0, id)}
   end
 
   @doc "The turns worth drawing: a prompt somebody typed, or output somebody can read."
-  @spec visible_turns(page()) :: [turn()]
-  def visible_turns(page), do: Enum.filter(page.turns, & &1.visible?)
+  @spec visible_turns(Page.t()) :: [Turn.t()]
+  def visible_turns(%Page{} = page), do: Enum.filter(page.turns, & &1.visible?)
 
   @doc "Is a turn in this page still being written? The last group, and only if unsettled."
-  @spec live?(page(), boolean()) :: boolean()
-  def live?(page, running?) do
+  @spec live?(Page.t(), boolean()) :: boolean()
+  def live?(%Page{} = page, running?) do
     case List.last(visible_turns(page)) do
       nil -> false
       turn -> running? and not turn.settled?
@@ -171,23 +170,18 @@ defmodule Ravix.Tracks.Transcript do
   # ── one turn ──────────────────────────────────────────────────────────
 
   @doc """
-  A `Ravix.Fountain.Shapes.Turn` as the page carries it.
+  A `Ravix.Fountain.Shapes.Turn` in the container the page grows.
 
-  The page's turns are maps because a turn grows `events` and `blocks` as the
-  transcript folds output into it; this is the part that comes off the wire.
-  It used to read each field as `raw["id"] || raw[:id]`, accepting either
-  spelling from a map with no shape at all. The shape is the boundary's now,
-  and this only has to change containers.
+  The wire record and the page's turn are two shapes because a turn grows
+  `events`, `blocks` and a fold as output arrives; this carries the part that
+  came off the wire across into the other. It used to read each field as
+  `raw["id"] || raw[:id]`, accepting either spelling from a map with no shape
+  at all, and then answered with an anonymous map that `add_turns/2` merged
+  over a turn. Both ends have a shape now, so this only changes containers.
   """
-  @spec turn_record(Turn.t()) :: %{
-          id: String.t(),
-          prompt: String.t() | nil,
-          origin: String.t() | nil,
-          status: String.t() | nil,
-          inserted_at: String.t() | nil
-        }
-  def turn_record(%Turn{} = turn) do
-    %{
+  @spec turn_record(Wire.t()) :: Turn.t()
+  def turn_record(%Wire{} = turn) do
+    %Turn{
       id: turn.id,
       prompt: turn.prompt,
       origin: turn.origin,
@@ -196,13 +190,9 @@ defmodule Ravix.Tracks.Transcript do
     }
   end
 
-  defp new_turn(record, runtime) do
-    %{id: nil, prompt: nil, origin: nil, status: nil, inserted_at: nil, events: [], blocks: []}
-    |> Map.merge(record)
-    |> rebuild(runtime)
-  end
+  defp new_turn(%Turn{} = record, runtime), do: rebuild(record, runtime)
 
-  defp lay_in(turn, event, runtime) do
+  defp lay_in(%Turn{} = turn, event, runtime) do
     cond do
       Enum.any?(turn.events, &(&1.id == event.id)) ->
         turn
@@ -214,7 +204,7 @@ defmodule Ravix.Tracks.Transcript do
       # which is quadratic in the length of the turn and runs inside each
       # reader's LiveView process.
       appended?(turn.events, event) ->
-        finish(%{turn | events: turn.events ++ [event]}, fold(event, runtime, acc(turn)))
+        finish(%{turn | events: turn.events ++ [event]}, fold(event, runtime, turn.fold))
 
       # Out of order: the order the blocks are in changes, so it is rebuilt.
       true ->
@@ -226,25 +216,26 @@ defmodule Ravix.Tracks.Transcript do
   defp appended?(events, event), do: List.last(events).id < event.id
 
   # Everything derived, from the events themselves.
-  defp rebuild(turn, runtime),
+  defp rebuild(%Turn{} = turn, runtime),
     do: finish(turn, Enum.reduce(turn.events, empty_acc(), &fold(&1, runtime, &2)))
 
-  # The derived fields, from a reduction over the turn's events.
-  defp finish(turn, acc) do
+  # The derived fields, from a reduction over the turn's events. `settled?`
+  # is sticky: a turn Fountain has closed stays closed even if a later
+  # rebuild sees a shorter event list.
+  defp finish(%Turn{} = turn, acc) do
     blocks = blocks_of(acc)
     visible = Enum.filter(blocks, &visible_block?/1)
 
-    turn
-    |> Map.put(:blocks, visible)
-    |> Map.put(:acc, acc)
-    |> Map.put(:settled?, turn[:settled?] == true or settled?(turn.events))
-    |> Map.put(:visible?, has_text?(turn.prompt) or visible != [])
+    %{
+      turn
+      | blocks: visible,
+        fold: acc,
+        settled?: turn.settled? or settled?(turn.events),
+        visible?: has_text?(turn.prompt) or visible != []
+    }
   end
 
-  defp acc(%{acc: acc}), do: acc
-  defp acc(_turn), do: empty_acc()
-
-  defp empty_acc, do: {[], %{}}
+  defp empty_acc, do: Turn.empty_fold()
   defp fold(event, runtime, acc), do: output(event, runtime, acc)
   defp blocks_of({blocks, _tools}), do: Enum.reverse(blocks)
 
@@ -254,7 +245,7 @@ defmodule Ravix.Tracks.Transcript do
   settled, which is the answer that makes the newest events on screen the
   live ones.
   """
-  @spec settled?([event()]) :: boolean()
+  @spec settled?([Event.t()]) :: boolean()
   def settled?(events), do: Enum.any?(events, &Event.settles?/1)
 
   @doc """
@@ -280,12 +271,13 @@ defmodule Ravix.Tracks.Transcript do
   Blocks for one turn's events: adjacent text merged, tools paired.
 
   ACP lines go through `Managoat.ACP.Blocks`, whose block vocabulary is the
-  wire contract; what is added here is the pairing of a `tool_result` onto
+  wire contract and stays the library's maps -- that is the boundary. What is
+  added here is this module's own shapes: the pairing of a `tool_result` onto
   its `tool_use`, the timestamps, and the detail the chips need. Legacy
   dialects (a runtime that never spoke ACP on this page) are shown as plain
   text lines rather than parsed four ways.
   """
-  @spec blocks_for_turn([Event.t() | map()], String.t()) :: [block()]
+  @spec blocks_for_turn([Event.t() | map()], String.t()) :: [Block.t()]
   def blocks_for_turn(events, runtime) do
     events
     |> Enum.reduce(empty_acc(), &output(Event.from(&1), runtime, &2))
@@ -304,7 +296,7 @@ defmodule Ravix.Tracks.Transcript do
   # here. Claude, codex and opencode only ever spoke ACP on this page.
   defp output(%Event{kind: :output, stream: :stdout, data: data} = event, runtime, acc)
        when is_binary(data) do
-    if acp_runtime?(runtime), do: acc, else: push_text(acc, :text, data, event.ts)
+    if acp_runtime?(runtime), do: acc, else: push_text(acc, Block.Text, data, event.ts)
   end
 
   # A stage that failed, with whatever Fountain said about it. These carried no
@@ -315,7 +307,7 @@ defmodule Ravix.Tracks.Transcript do
   # as such -- it named a billing page on the deployment that found this, which
   # is exactly the kind of sentence that must not be swallowed.
   defp output(%Event{kind: :stage, state: "failed"} = event, _runtime, acc) do
-    push(acc, %{kind: :failure, stage: event.stage, body: failure_reason(event)})
+    push(acc, %Block.Failure{stage: event.stage, body: failure_reason(event)})
   end
 
   defp output(_event, _runtime, acc), do: acc
@@ -330,7 +322,7 @@ defmodule Ravix.Tracks.Transcript do
   reason: a prompt held behind a conversation that never started should say why,
   and both places must agree on where "why" lives (#35).
   """
-  @spec failure_reason(event()) :: String.t()
+  @spec failure_reason(Event.t()) :: String.t()
   def failure_reason(%Event{data: data}) when is_binary(data) do
     case Jason.decode(data) do
       {:ok, %{"reason" => reason}} when is_binary(reason) -> String.trim(reason)
@@ -342,11 +334,11 @@ defmodule Ravix.Tracks.Transcript do
   def failure_reason(_event), do: ""
 
   @doc "A block worth drawing: any tool, a failure, or text that is not blank."
-  @spec visible_block?(block()) :: boolean()
-  def visible_block?(%{kind: :tool}), do: true
+  @spec visible_block?(Block.t()) :: boolean()
+  def visible_block?(%Block.Tool{}), do: true
   # A failed stage is worth drawing even when Fountain gave no reason: that a
   # stage failed at all is the news, and a silent turn is what #35 was.
-  def visible_block?(%{kind: :failure}), do: true
+  def visible_block?(%Block.Failure{}), do: true
   def visible_block?(%{body: body}) when is_binary(body), do: String.trim(body) != ""
   def visible_block?(_), do: false
 
@@ -362,7 +354,7 @@ defmodule Ravix.Tracks.Transcript do
         Enum.reduce(Blocks.from_update(update), acc, &apply_block(&1, update, ts, &2))
 
       {:invalid, raw} ->
-        push(acc, %{kind: :raw, body: raw})
+        push(acc, %Block.Raw{body: raw})
 
       _ ->
         acc
@@ -370,24 +362,13 @@ defmodule Ravix.Tracks.Transcript do
   end
 
   defp apply_block(%{kind: :text, body: body}, _update, ts, acc),
-    do: push_text(acc, :text, body, ts)
+    do: push_text(acc, Block.Text, body, ts)
 
   defp apply_block(%{kind: :thinking, body: body}, _update, ts, acc),
-    do: push_text(acc, :thinking, body, ts)
+    do: push_text(acc, Block.Thinking, body, ts)
 
   defp apply_block(%{kind: :tool_use} = block, update, ts, {blocks, tools}) do
-    tool = %{
-      kind: :tool,
-      id: block.id,
-      name: block.name,
-      summary: block.summary,
-      status: :running,
-      output: "",
-      started_at: ts,
-      ended_at: nil,
-      detail: detail(empty_detail(), update)
-    }
-
+    tool = Block.tool(block, ts, detail(Detail.new(), update))
     tools = if is_binary(block.id), do: Map.put(tools, block.id, length(blocks)), else: tools
     {[tool | blocks], tools}
   end
@@ -421,13 +402,15 @@ defmodule Ravix.Tracks.Transcript do
   defp apply_block(_block, _update, _ts, acc), do: acc
 
   # Adjacent chunks of the same kind are one block. The timestamps are the
-  # first and last chunk that landed in it.
-  defp push_text({[%{kind: kind} = last | rest], tools}, kind, body, ts) do
+  # first and last chunk that landed in it. `%module{}` binds the struct at
+  # the head of the list and the second argument matches against it, which is
+  # the struct-name-as-tag version of the `kind` field these blocks carried.
+  defp push_text({[%module{} = last | rest], tools}, module, body, ts) do
     {[%{last | body: last.body <> body, ended_at: ts || last.ended_at} | rest], tools}
   end
 
-  defp push_text(acc, kind, body, ts),
-    do: push(acc, %{kind: kind, body: body, started_at: ts, ended_at: ts})
+  defp push_text(acc, module, body, ts),
+    do: push(acc, struct!(module, body: body, started_at: ts, ended_at: ts))
 
   defp push({blocks, tools}, block), do: {[block | blocks], tools}
 
@@ -440,8 +423,8 @@ defmodule Ravix.Tracks.Transcript do
   `tool_call_update` carries the result, and an adapter is free to put the
   diff on either, so the two are merged rather than one being trusted.
   """
-  @spec detail(map(), map()) :: %{kind: atom(), input: map(), paths: [String.t()], edits: [map()]}
-  def detail(current, update) do
+  @spec detail(Detail.t(), map()) :: Detail.t()
+  def detail(%Detail{} = current, update) do
     kind =
       case update["kind"] do
         k when k in @tool_kinds ->
@@ -471,10 +454,8 @@ defmodule Ravix.Tracks.Transcript do
 
     paths = Enum.uniq(current.paths ++ locations(update["locations"]))
     edits = current.edits ++ edits(update["content"])
-    %{kind: kind, input: input, paths: paths, edits: edits}
+    %Detail{kind: kind, input: input, paths: paths, edits: edits}
   end
-
-  defp empty_detail, do: %{kind: :other, input: %{}, paths: [], edits: []}
 
   defp locations(raw) when is_list(raw) do
     for %{"path" => path} <- raw, is_binary(path) and path != "", do: path
@@ -500,12 +481,7 @@ defmodule Ravix.Tracks.Transcript do
   exact about what changed and only imprecise about how tightly it is
   framed, which is the right way round for something read at a glance.
   """
-  @spec edit(String.t(), String.t(), String.t()) :: %{
-          path: String.t(),
-          lines: [%{kind: :add | :del | :ctx, text: String.t()}],
-          added: non_neg_integer(),
-          removed: non_neg_integer()
-        }
+  @spec edit(String.t(), String.t(), String.t()) :: Edit.t()
   def edit(path, before, after_text) do
     old = if before == "", do: [], else: String.split(before, "\n")
     now = if after_text == "", do: [], else: String.split(after_text, "\n")
@@ -518,12 +494,15 @@ defmodule Ravix.Tracks.Transcript do
     # One line of shared context either side. More is noise on a chip; none
     # makes a one-line change impossible to place.
     lines =
-      if(head > 0, do: [%{kind: :ctx, text: Enum.at(old, head - 1)}], else: []) ++
-        Enum.map(removed, &%{kind: :del, text: &1}) ++
-        Enum.map(added, &%{kind: :add, text: &1}) ++
-        if(tail > 0, do: [%{kind: :ctx, text: Enum.at(old, length(old) - tail)}], else: [])
+      if(head > 0, do: [%Edit.Line{kind: :ctx, text: Enum.at(old, head - 1)}], else: []) ++
+        Enum.map(removed, &%Edit.Line{kind: :del, text: &1}) ++
+        Enum.map(added, &%Edit.Line{kind: :add, text: &1}) ++
+        if(tail > 0,
+          do: [%Edit.Line{kind: :ctx, text: Enum.at(old, length(old) - tail)}],
+          else: []
+        )
 
-    %{path: path, lines: lines, added: length(added), removed: length(removed)}
+    %Edit{path: path, lines: lines, added: length(added), removed: length(removed)}
   end
 
   defp common_prefix(a, b) do

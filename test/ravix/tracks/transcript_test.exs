@@ -3,7 +3,7 @@ defmodule Ravix.Tracks.TranscriptTest do
 
   alias Ravix.Fountain.Shapes
   alias Ravix.Tracks.Transcript
-  alias Ravix.Tracks.Transcript.Event
+  alias Ravix.Tracks.Transcript.{Block, Detail, Edit, Event}
 
   @ts "2026-09-09T10:00:00Z"
   @later "2026-09-09T10:00:05Z"
@@ -105,14 +105,14 @@ defmodule Ravix.Tracks.TranscriptTest do
     test "adjacent text chunks are one block, timestamped by first and last chunk" do
       events = [event(1, text_chunk("Hel")), event(2, text_chunk("lo"), ts: @later)]
 
-      assert [%{kind: :text, body: "Hello", started_at: @ts, ended_at: @later}] =
+      assert [%Block.Text{body: "Hello", started_at: @ts, ended_at: @later}] =
                Transcript.blocks_for_turn(events, "claude")
     end
 
     test "several lines in one event are parsed in order, and thinking is its own block" do
       data = Enum.join([thought("hm"), text_chunk("ok")], "\n")
 
-      assert [%{kind: :thinking, body: "hm"}, %{kind: :text, body: "ok"}] =
+      assert [%Block.Thinking{body: "hm"}, %Block.Text{body: "ok"}] =
                Transcript.blocks_for_turn([event(1, data)], "claude")
     end
 
@@ -128,10 +128,9 @@ defmodule Ravix.Tracks.TranscriptTest do
           content: [%{type: "content", content: %{type: "text", text: "line one\nline two"}}]
         })
 
-      assert [tool] =
+      assert [%Block.Tool{} = tool] =
                Transcript.blocks_for_turn([event(1, call), event(2, done, ts: @later)], "claude")
 
-      assert tool.kind == :tool
       assert tool.id == "c1"
       assert tool.name == "Read file"
       assert tool.status == :done
@@ -172,7 +171,7 @@ defmodule Ravix.Tracks.TranscriptTest do
           ]
         })
 
-      assert [%{detail: %{kind: :edit, edits: [edit]}}] =
+      assert [%Block.Tool{detail: %Detail{kind: :edit, edits: [edit]}}] =
                Transcript.blocks_for_turn([event(1, call), event(2, done)], "claude")
 
       assert edit.path == "a.txt"
@@ -180,10 +179,10 @@ defmodule Ravix.Tracks.TranscriptTest do
       assert edit.removed == 1
 
       assert edit.lines == [
-               %{kind: :ctx, text: "one"},
-               %{kind: :del, text: "two"},
-               %{kind: :add, text: "2"},
-               %{kind: :ctx, text: "three"}
+               %Edit.Line{kind: :ctx, text: "one"},
+               %Edit.Line{kind: :del, text: "two"},
+               %Edit.Line{kind: :add, text: "2"},
+               %Edit.Line{kind: :ctx, text: "three"}
              ]
     end
 
@@ -191,14 +190,14 @@ defmodule Ravix.Tracks.TranscriptTest do
       response = Jason.encode!(%{jsonrpc: "2.0", id: 4, result: %{}})
       data = Enum.join(["plain stderr noise", response], "\n")
 
-      assert [%{kind: :raw, body: "plain stderr noise"}] =
+      assert [%Block.Raw{body: "plain stderr noise"}] =
                Transcript.blocks_for_turn([event(1, data)], "claude")
     end
 
     test "a legacy runtime's stdout is shown as text; an ACP runtime's is not" do
       events = [event(1, "hello from a shell", stream: "stdout")]
 
-      assert [%{kind: :text, body: "hello from a shell"}] =
+      assert [%Block.Text{body: "hello from a shell"}] =
                Transcript.blocks_for_turn(events, "legacy")
 
       assert [] == Transcript.blocks_for_turn(events, "claude-code")
@@ -241,7 +240,7 @@ defmodule Ravix.Tracks.TranscriptTest do
       [t1, t2, pending] = page.turns
       assert t1.prompt == "first"
       assert t1.settled?
-      assert [%{kind: :text, body: "reply"}] = t1.blocks
+      assert [%Block.Text{body: "reply"}] = t1.blocks
       assert Enum.map(t1.events, & &1.id) == [1, 2]
       assert t2.origin == "user"
       refute t2.settled?
@@ -349,10 +348,18 @@ defmodule Ravix.Tracks.TranscriptTest do
 
   describe "edit/3" do
     test "an appended line and a removed file are framed with one line of context" do
-      assert %{added: 1, removed: 0, lines: [%{kind: :ctx, text: "b"}, %{kind: :add, text: "c"}]} =
+      assert %Edit{
+               added: 1,
+               removed: 0,
+               lines: [%Edit.Line{kind: :ctx, text: "b"}, %Edit.Line{kind: :add, text: "c"}]
+             } =
                Transcript.edit("f", "a\nb", "a\nb\nc")
 
-      assert %{added: 0, removed: 2, lines: [%{kind: :del, text: "a"}, %{kind: :del, text: "b"}]} =
+      assert %Edit{
+               added: 0,
+               removed: 2,
+               lines: [%Edit.Line{kind: :del, text: "a"}, %Edit.Line{kind: :del, text: "b"}]
+             } =
                Transcript.edit("f", "a\nb", "")
     end
   end
@@ -381,7 +388,7 @@ defmodule Ravix.Tracks.TranscriptTest do
         |> Transcript.add_event(failed_stage(1, "provision", @reason))
 
       assert [turn] = Transcript.visible_turns(page)
-      assert [%{kind: :failure, stage: "provision", body: body}] = turn.blocks
+      assert [%Block.Failure{stage: "provision", body: body}] = turn.blocks
       assert body =~ "Add a credit card"
     end
 
@@ -399,7 +406,7 @@ defmodule Ravix.Tracks.TranscriptTest do
         })
 
       assert [turn] = Transcript.visible_turns(page)
-      assert [%{kind: :failure, body: ""}] = turn.blocks
+      assert [%Block.Failure{body: ""}] = turn.blocks
     end
 
     test "a stage that started or finished is still not a block" do

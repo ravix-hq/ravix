@@ -93,29 +93,7 @@
                 </div>
                 <div class="agent-terminal-output">
                   <div :for={block <- turn.blocks}>
-                    <div :if={block.kind == :text} class="md">
-                      {RavixWeb.Markdown.render_safe(block.body)}
-                    </div>
-                    <details :if={block.kind == :thinking} class="workspace-thinking">
-                      <summary>Thinking</summary>
-                      <div class="md">{RavixWeb.Markdown.render_safe(block.body)}</div>
-                    </details>
-                    <pre :if={block.kind == :raw}>{block.body}</pre>
-                    <div :if={block.kind == :failure} class="workspace-failure" role="status">
-                      <strong>{block.stage} failed</strong>
-                      <pre :if={block.body != ""}>{block.body}</pre>
-                    </div>
-                    <details :if={block.kind == :tool} class="workspace-tool">
-                      <summary>
-                        <span class="chip">{block.status}</span> {block.name} {block.summary}
-                      </summary>
-                      <pre :if={block.detail.input != %{}}>{Jason.encode!(block.detail.input, pretty: true)}</pre>
-                      <p :for={path <- block.detail.paths}><code>{path}</code></p>
-                      <div :for={edit <- block.detail.edits}>
-                        <strong>{edit.path}</strong><pre><span :for={line <- edit.lines} class={"diff-#{line.kind}"}>{line.text}{"\n"}</span></pre>
-                      </div>
-                      <pre :if={block.output != ""}>{block.output}</pre>
-                    </details>
+                    <.block block={block} />
                   </div>
                 </div>
               </section>
