@@ -43,6 +43,7 @@ defmodule Ravix.Projects do
   alias Ravix.Hub
   alias Ravix.People
   alias Ravix.Projects.{Machine, MachineState, Project, Settings, Store, View}
+  alias Ravix.Projects.Machine.Provisioned
   alias Ravix.Spec
 
   @typedoc "How the caller reaches a project. See `access_of/2`."
@@ -234,7 +235,7 @@ defmodule Ravix.Projects do
   track is a worktree on a disk that is about to stop existing and a sidebar
   full of rows pointing at nothing is worse than an empty one.
   """
-  @spec rebuild(User.t(), String.t()) :: {:ok, Machine.rebuild_report()} | {:error, reason()}
+  @spec rebuild(User.t(), String.t()) :: {:ok, Machine.Rebuild.t()} | {:error, reason()}
   def rebuild(%User{} = user, id) do
     with {:ok, project} <- Ravix.Accounts.Access.project_of(user, id),
          {:ok, client} <- fountain() do
@@ -270,8 +271,7 @@ defmodule Ravix.Projects do
   end
 
   @doc "The runtime and model, reconciled with what this Fountain actually has. See `Ravix.Projects.Machine.pick_runtime/1`."
-  @spec pick_runtime(Ravix.Fountain.Shapes.Catalog.t()) ::
-          %{runtime: String.t(), model: String.t()}
+  @spec pick_runtime(Ravix.Fountain.Shapes.Catalog.t()) :: Machine.Harness.t()
   defdelegate pick_runtime(catalog), to: Machine
 
   @doc "`refresh_clone_token/2` on this deployment's Fountain client."
@@ -550,13 +550,21 @@ defmodule Ravix.Projects do
 
   # A row that will not insert is three Fountain records nobody can reach:
   # take them back before reporting the changeset.
-  defp insert_provisioned(project, ids, client) do
+  defp insert_provisioned(project, %Provisioned{} = ids, client) do
+    # Written out rather than `Map.merge/2`: `ids` is a struct now, and merging
+    # one puts `:__struct__` in the attrs for `cast/3` to ignore.
     attrs =
       project
       |> Map.take(
         ~w(id user_id name repo_full_name repo_private default_branch installation_id instructions)a
       )
-      |> Map.merge(ids)
+      |> Map.merge(%{
+        environment_id: ids.environment_id,
+        vault_id: ids.vault_id,
+        agent_id: ids.agent_id,
+        runtime: ids.runtime,
+        model: ids.model
+      })
 
     case Store.create_project(attrs) do
       {:ok, row} ->
