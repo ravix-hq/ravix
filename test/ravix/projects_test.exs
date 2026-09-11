@@ -8,6 +8,7 @@ defmodule Ravix.ProjectsTest do
   alias Ravix.Hub.Event
   alias Ravix.Projects
   alias Ravix.Projects.{Machine, MachineState, Project, Settings}
+  alias Ravix.Projects.Machine.{Harness, Rebuild}
   alias Ravix.PromptQueue.Item
 
   # As Fountain serves it: a JSON object, string keys. A fixture that answered
@@ -122,7 +123,7 @@ defmodule Ravix.ProjectsTest do
           %{"claude" => ["anthropic/claude-opus-5", "anthropic/claude-sonnet-5"]}
         )
 
-      assert Projects.pick_runtime(catalog) == %{
+      assert Projects.pick_runtime(catalog) == %Harness{
                runtime: "claude",
                model: "anthropic/claude-opus-5"
              }
@@ -138,7 +139,7 @@ defmodule Ravix.ProjectsTest do
 
     test "a Fountain without our preferred runtime falls to its first" do
       no_claude = catalog(["codex"], %{"codex" => ["openai/gpt-5"]})
-      assert Projects.pick_runtime(no_claude) == %{runtime: "codex", model: "openai/gpt-5"}
+      assert Projects.pick_runtime(no_claude) == %Harness{runtime: "codex", model: "openai/gpt-5"}
     end
 
     test "an empty catalog is not a crash" do
@@ -147,7 +148,7 @@ defmodule Ravix.ProjectsTest do
 
     test "a runtime the catalog lists with no models falls to the default model" do
       assert Projects.pick_runtime(catalog(["codex"], %{})) ==
-               %{runtime: "codex", model: "anthropic/claude-opus-5"}
+               %Harness{runtime: "codex", model: "anthropic/claude-opus-5"}
     end
   end
 
@@ -1001,9 +1002,9 @@ defmodule Ravix.ProjectsTest do
         ])
 
       assert {:ok,
-              %{
+              %Rebuild{
                 removed: ["track", "agent"],
-                failed: [%{what: "track c-stuck", why: "still busy"}]
+                failed: [%Rebuild.Failure{what: "track c-stuck", why: "still busy"}]
               }} =
                Projects.rebuild(owner, project.id)
 
@@ -1046,7 +1047,7 @@ defmodule Ravix.ProjectsTest do
           {%{method: "POST", path: "/api/agents"}, {201, [], %{data: %{id: "new-agent"}}}}
         ])
 
-      assert {:ok, %{removed: ["agent"], failed: []}} = Projects.rebuild(owner, project.id)
+      assert {:ok, %Rebuild{removed: ["agent"], failed: []}} = Projects.rebuild(owner, project.id)
 
       assert %{"runtime" => "codex", "model" => "openai/test-model"} =
                body_of(client, "POST", "/api/agents")

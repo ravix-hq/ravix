@@ -18,23 +18,11 @@ defmodule Ravix.Projects.Machine do
   alias Ravix.Hub
   alias Ravix.Ids
   alias Ravix.Projects
+  alias Ravix.Projects.Machine.Harness
+  alias Ravix.Projects.Machine.Provisioned
+  alias Ravix.Projects.Machine.Rebuild
   alias Ravix.Projects.MachineState
   alias Ravix.Projects.Project
-
-  @typedoc "What a rebuild removed, and what would not go."
-  @type rebuild_report :: %{
-          removed: [String.t()],
-          failed: [%{what: String.t(), why: String.t()}]
-        }
-
-  @typedoc "The three ids, plus the harness the agent was made with."
-  @type provisioned :: %{
-          environment_id: String.t(),
-          vault_id: String.t() | nil,
-          agent_id: String.t(),
-          runtime: String.t(),
-          model: String.t()
-        }
 
   @default_runtime "claude"
 
@@ -59,11 +47,11 @@ defmodule Ravix.Projects.Machine do
   nobody can build, so any failure unwinds what went in, in reverse, and
   reports the original failure rather than the cleanup's.
   """
-  @spec provision(Project.t(), Fountain.Client.t()) :: {:ok, provisioned()} | {:error, term()}
+  @spec provision(Project.t(), Fountain.Client.t()) :: {:ok, Provisioned.t()} | {:error, term()}
   def provision(%Project{} = project, client) do
-    state = %{environment_id: nil, vault_id: nil, agent_id: nil, runtime: nil, model: nil}
+    steps = [&environment/3, &vault/3, &clone_token/3, &agent/3]
 
-    Enum.reduce_while([&environment/3, &vault/3, &clone_token/3, &agent/3], {:ok, state}, fn
+    Enum.reduce_while(steps, {:ok, %Provisioned{}}, fn
       step, {:ok, state} ->
         case step.(client, project, state) do
           {:ok, state} ->
@@ -201,7 +189,7 @@ defmodule Ravix.Projects.Machine do
   fatal. Every open track is closed afterwards, through
   `Ravix.Tracks.close_all_for_rebuild/2`, and `tracks` is published.
   """
-  @spec rebuild(Project.t(), Fountain.Client.t()) :: {:ok, rebuild_report()} | {:error, term()}
+  @spec rebuild(Project.t(), Fountain.Client.t()) :: {:ok, Rebuild.t()} | {:error, term()}
   def rebuild(%Project{} = project, client) do
     quiesce(project)
 
@@ -216,7 +204,7 @@ defmodule Ravix.Projects.Machine do
       Ravix.MachineCache.forget_project(project.id)
       Ravix.Tracks.close_all_for_rebuild(project, :rebuild)
       Hub.publish(project.id, :tracks)
-      {:ok, %{removed: removed ++ ["agent"], failed: failed}}
+      {:ok, %Rebuild{removed: removed ++ ["agent"], failed: failed}}
     end
   end
 
@@ -260,7 +248,8 @@ defmodule Ravix.Projects.Machine do
           {removed ++ ["track"], failed}
 
         {:error, reason} ->
-          {removed, failed ++ [%{what: "track #{conversation.id}", why: why(reason)}]}
+          failure = %Rebuild.Failure{what: "track #{conversation.id}", why: why(reason)}
+          {removed, failed ++ [failure]}
       end
     end)
   end
@@ -301,20 +290,26 @@ defmodule Ravix.Projects.Machine do
     Ravix.Previews.retire_project(project.id)
   end
 
-  @doc "Take back what went in, in reverse, ignoring what will not go."
-  @spec unwind(Fountain.Client.t(), %{
-          optional(:agent_id) => String.t() | nil,
-          optional(:vault_id) => String.t() | nil,
-          optional(:environment_id) => String.t() | nil,
-          optional(atom()) => term()
-        }) :: :ok
-  def unwind(client, ids) do
-    if agent_id = Map.get(ids, :agent_id), do: Fountain.delete_agent(client, agent_id)
-    if vault_id = Map.get(ids, :vault_id), do: Fountain.delete_vault(client, vault_id)
+  @doc """
+  Take back what went in, in reverse, ignoring what will not go.
 
-    if environment_id = Map.get(ids, :environment_id),
-      do: Fountain.delete_environment(client, environment_id)
+  Two shapes, because there are two reasons to do this: a creation that
+  failed part way and has a `Ravix.Projects.Machine.Provisioned` holding
+  whatever went in, and a project being destroyed, which has its own three
+  columns. The order matters and is the same either way --- the agent names
+  the identity, so it goes first.
+  """
+  @spec unwind(Fountain.Client.t(), Provisioned.t() | Project.t()) :: :ok
+  def unwind(client, %Provisioned{} = ids),
+    do: delete_records(client, ids.agent_id, ids.vault_id, ids.environment_id)
 
+  def unwind(client, %Project{} = project),
+    do: delete_records(client, project.agent_id, project.vault_id, project.environment_id)
+
+  defp delete_records(client, agent_id, vault_id, environment_id) do
+    if agent_id, do: Fountain.delete_agent(client, agent_id)
+    if vault_id, do: Fountain.delete_vault(client, vault_id)
+    if environment_id, do: Fountain.delete_environment(client, environment_id)
     :ok
   end
 
@@ -373,7 +368,7 @@ defmodule Ravix.Projects.Machine do
   arrives as `Ravix.Fountain.Shapes.Catalog.empty/0`, which decides the same
   way, so there is no second argument shape and no nil to test for.
   """
-  @spec pick_runtime(Catalog.t()) :: %{runtime: String.t(), model: String.t()}
+  @spec pick_runtime(Catalog.t()) :: Harness.t()
   def pick_runtime(%Catalog{runtimes: runtimes} = catalog) do
     runtime =
       cond do
@@ -392,7 +387,7 @@ defmodule Ravix.Projects.Machine do
         true -> @default_model
       end
 
-    %{runtime: runtime, model: model}
+    %Harness{runtime: runtime, model: model}
   end
 
   @doc """
