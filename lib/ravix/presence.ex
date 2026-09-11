@@ -43,16 +43,12 @@ defmodule Ravix.Presence do
 
   alias Ravix.Accounts.User
   alias Ravix.Hub
+  alias Ravix.Presence.Watcher
 
   @typing_ttl_ms 3_000
 
-  @typedoc "Somebody with a track open right now, the `Presence` of `shared/api.ts`."
-  @type presence :: %{
-          login: String.t(),
-          name: String.t() | nil,
-          avatar_url: String.t() | nil,
-          typing: boolean()
-        }
+  @typedoc "Somebody with a track open right now; see `Ravix.Presence.Watcher`."
+  @type presence :: Watcher.t()
 
   @typedoc """
   What a heartbeat reports. `:watching` is the composer's timer saying the
@@ -197,7 +193,7 @@ defmodule Ravix.Presence do
   defp presences_of(presences, now) do
     presences
     |> Enum.map(fn {_key, %{metas: [first | _] = metas}} ->
-      %{
+      %Watcher{
         login: first.login,
         name: first.name,
         avatar_url: first.avatar_url,

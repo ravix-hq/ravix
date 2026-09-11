@@ -74,24 +74,24 @@ defmodule Ravix.People do
   """
 
   alias Ravix.Accounts.{Access, User}
-  alias Ravix.People.Store
+  alias Ravix.People.{Person, Profile, Store}
   alias Ravix.Projects.{Project, ProjectLink}
   alias Ravix.Tracks.{Track, TrackLink}
 
   @typedoc """
   Somebody in a people list, as a page reads it.
 
-  The shape is `Ravix.People.Store`'s, named again here because a page may
-  not mention a store -- `Ravix.Credo.Architecture` refuses it, and a
-  typespec is a mention.
+  `Ravix.People.Person` is a sibling of the store rather than inside it,
+  which is what lets a page name the shape at all: `Ravix.Credo.Architecture`
+  refuses a store from `lib/ravix_web/`, and a typespec is a mention.
   """
-  @type person :: Store.person()
+  @type person :: Person.t()
 
   @typedoc "How this person comes to be in the list; see `Ravix.People.Store.via/0`."
   @type via :: Store.via()
 
-  @typedoc "A GitHub account the invite box suggests; see `Ravix.People.Store.profile/0`."
-  @type profile :: Store.profile()
+  @typedoc "A GitHub account the invite box suggests; see `Ravix.People.Profile`."
+  @type profile :: Profile.t()
 
   @typedoc "The `InviteLink` of `shared/api.ts`. `url` is only ever present at the moment of minting."
   @type invite_link :: %{

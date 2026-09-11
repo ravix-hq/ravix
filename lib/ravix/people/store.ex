@@ -25,47 +25,29 @@ defmodule Ravix.People.Store do
   already been let in to see.
   """
 
-  @typedoc """
-  Only what GitHub already publishes about somebody, plus how they come to be
-  in this list.
+  @typedoc "How this person comes to be in the list; see `Ravix.People.Person`."
+  @type via :: Ravix.People.Person.via()
 
-  `via` is the whole reason a list is worth reading twice. `:owner` holds the
-  project and cannot be removed from anything. `:project` was let into the
-  machine and reaches every track on it, so a *track's* dialog cannot take
-  them off — that is the project's people to change. `:track` was named on
-  this one branch. `pending` is an invitation nobody has taken up yet: they
-  can read nothing until they sign in, and withdrawing it is not a removal.
+  @typedoc "A GitHub account, with no claim about access; see `Ravix.People.Profile`."
+  @type profile :: Ravix.People.Profile.t()
 
-  Every entry carries one of the four, so a page never has to infer which by
-  the absence of a key.
-  """
-  @type via :: :owner | :project | :track | :pending
+  @typedoc "Somebody in a people list; see `Ravix.People.Person`."
+  @type person :: Ravix.People.Person.t()
 
   @typedoc """
-  What GitHub publishes about somebody, with no claim about access.
+  An invitation row, as the people lists read it.
 
-  The invite box's autocomplete answers in these: a name it suggests is a
-  GitHub account, not somebody who is in anything yet.
+  A map and not a struct, deliberately: it is a projection of two columns
+  off `TrackInvite`/`ProjectInvite` that never leaves this module ---
+  `pending_person/1` three hundred lines down is its only reader --- so
+  there is no boundary here for a struct to guard.
   """
-  @type profile :: %{
-          login: String.t(),
-          name: String.t() | nil,
-          avatar_url: String.t() | nil
-        }
-
-  @type person :: %{
-          required(:login) => String.t(),
-          required(:name) => String.t() | nil,
-          required(:avatar_url) => String.t() | nil,
-          required(:via) => via()
-        }
-
-  @typedoc "An invitation row, as the people lists read it."
   @type invite :: %{github_id: String.t(), login: String.t(), avatar_url: String.t() | nil}
 
   import Ecto.Query
 
   alias Ravix.Accounts.User
+  alias Ravix.People.{Person, Profile}
   alias Ravix.Projects.{Project, ProjectInvite, ProjectLink, ProjectMember}
   alias Ravix.Projects.Store, as: Projects
   alias Ravix.Repo
@@ -710,7 +692,7 @@ defmodule Ravix.People.Store do
 
   # The half of the list that is the same for every track on a project.
   defp shared_people(owner_id, wide) do
-    owner_entry(owner_id) ++ Enum.map(wide, &Map.put(present_person(&1), :via, :project))
+    owner_entry(owner_id) ++ Enum.map(wide, &Person.new(&1, :project))
   end
 
   # Pending last, because they cannot read anything yet and the list is
@@ -719,7 +701,7 @@ defmodule Ravix.People.Store do
     narrow = Enum.reject(members, &MapSet.member?(seen, &1.id))
 
     shared ++
-      Enum.map(narrow, &Map.put(present_person(&1), :via, :track)) ++
+      Enum.map(narrow, &Person.new(&1, :track)) ++
       Enum.map(invites, &pending_person/1)
   end
 
@@ -738,25 +720,24 @@ defmodule Ravix.People.Store do
     members =
       project_id
       |> project_members_of()
-      |> Enum.map(&Map.put(present_person(&1), :via, :project))
+      |> Enum.map(&Person.new(&1, :project))
 
     pending = project_id |> project_invites_of() |> Enum.map(&pending_person/1)
     owner_entry(owner_id) ++ members ++ pending
   end
 
-  @doc "A `profile()` for a user row: login, name, avatar, nothing else."
+  @doc "A `Ravix.People.Profile` for a user row: login, name, avatar, nothing else."
   @spec present_person(User.t()) :: profile()
-  def present_person(%User{login: login, name: name, avatar_url: avatar_url}),
-    do: %{login: login, name: name, avatar_url: avatar_url}
+  defdelegate present_person(user), to: Profile, as: :from_user
 
   defp pending_person(%{login: login, avatar_url: avatar_url}),
-    do: %{login: login, name: nil, avatar_url: avatar_url, via: :pending}
+    do: Person.pending(login, avatar_url)
 
   defp owner_entry(owner_id) do
     # ownership: turning the project's `user_id` column into a name for the
     # list. Ownership is that column, never a row here.
     case Ravix.Accounts.get_user(owner_id) do
-      %User{} = owner -> [Map.put(present_person(owner), :via, :owner)]
+      %User{} = owner -> [Person.new(owner, :owner)]
       nil -> []
     end
   end
