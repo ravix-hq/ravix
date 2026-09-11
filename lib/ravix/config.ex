@@ -17,10 +17,31 @@ defmodule Ravix.Config do
   to be in (sign-in works, repositories do not, and the failure surfaces four
   screens later as an empty list). So `github/0` is `nil` unless all five
   values are present.
+
+  ## Why these are structs
+
+  Every reader that carries a credential answers with a struct that derives
+  `Inspect` without it. "Do not put credentials in logs" was a rule somebody
+  had to remember at each call site; a redacting `Inspect` makes it a
+  property of the value, so a crash report, a `Logger` line interpolating a
+  struct, or a LiveView dumping its assigns cannot print one. A bare map
+  cannot derive a protocol, which is the whole reason `sprites/0` and
+  `fountain/0` stopped returning one.
+
+  This is the same mechanism the four credential-bearing Ecto schemas use,
+  and `Ravix.Fountain.Client` hides the SDK's config for the same reason.
   """
 
   defmodule GitHubApp do
-    @moduledoc "The GitHub App registration, complete or absent."
+    @moduledoc """
+    The GitHub App registration, complete or absent.
+
+    Two of these seven fields sign things, and the `Inspect` derive is why
+    they are safe to hold in a struct that gets passed around: a crash
+    report, a `Logger` line or a `dbg/1` left in prints `...` for them
+    rather than a usable secret. See `Ravix.Config`'s note on redaction.
+    """
+    @derive {Inspect, except: [:client_secret, :private_key_pem]}
     @type t :: %__MODULE__{
             app_id: String.t(),
             slug: String.t(),
@@ -39,6 +60,33 @@ defmodule Ravix.Config do
       :api_url,
       :web_url
     ]
+  end
+
+  defmodule Sprites do
+    @moduledoc """
+    Sprites: where it is and the token every exec, service and tunnel runs on.
+
+    A struct rather than the `%{token: ..., base_url: ...}` map it was,
+    because a bare map cannot derive `Inspect` and this one is handed to
+    `Ravix.Sprites.Tunnel.open/4` and every `Ravix.Sprites` call.
+    """
+    @derive {Inspect, except: [:token]}
+    @type t :: %__MODULE__{token: String.t(), base_url: String.t()}
+    @enforce_keys [:token, :base_url]
+    defstruct [:token, :base_url]
+  end
+
+  defmodule Fountain do
+    @moduledoc """
+    Fountain: where it is, and the one account every machine is built on.
+
+    `key` is nil on a deployment without machines, which is what
+    `Ravix.Fountain.Client.new/3` turns into an unconfigured client.
+    """
+    @derive {Inspect, except: [:key]}
+    @type t :: %__MODULE__{url: String.t(), key: String.t() | nil}
+    @enforce_keys [:url, :key]
+    defstruct [:url, :key]
   end
 
   @type previews :: %{domain: String.t(), protocol: :https | :http, public_port: String.t()}
@@ -73,9 +121,9 @@ defmodule Ravix.Config do
   def secret, do: get(:secret) || raise("RAVIX_SECRET is not configured")
 
   @doc "Fountain: where it is and the account every machine is built on (nil key means no machines)."
-  @spec fountain() :: %{url: String.t(), key: String.t() | nil}
+  @spec fountain() :: Fountain.t()
   def fountain do
-    %{
+    %Fountain{
       url:
         (get(:fountain_url) |> blank_to(nil) || "https://managoat.com")
         |> String.trim_trailing("/"),
@@ -84,14 +132,14 @@ defmodule Ravix.Config do
   end
 
   @doc "Sprites, or nil: without a token the terminal, run panel and previews say so."
-  @spec sprites() :: %{token: String.t(), base_url: String.t()} | nil
+  @spec sprites() :: Sprites.t() | nil
   def sprites do
     case get(:sprites_token) |> blank_to(nil) do
       nil ->
         nil
 
       token ->
-        %{
+        %Sprites{
           token: token,
           base_url:
             (get(:sprites_url) |> blank_to(nil) || "https://api.sprites.dev")

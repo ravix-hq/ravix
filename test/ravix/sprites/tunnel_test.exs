@@ -303,7 +303,11 @@ defmodule Ravix.Sprites.TunnelTest do
     :gen_tcp.close(listener)
 
     assert {:error, %Error{status: 502, message: message}} =
-             Tunnel.open(%{token: "t", base_url: "http://127.0.0.1:#{port}"}, "sprite", app)
+             Tunnel.open(
+               %Ravix.Config.Sprites{token: "t", base_url: "http://127.0.0.1:#{port}"},
+               "sprite",
+               app
+             )
 
     assert message =~ "Could not reach Sprites"
   end
@@ -325,7 +329,7 @@ defmodule Ravix.Sprites.TunnelTest do
         Process.sleep(1_000)
       end)
 
-    cfg = %{token: "t", base_url: "http://127.0.0.1:#{port}"}
+    cfg = %Ravix.Config.Sprites{token: "t", base_url: "http://127.0.0.1:#{port}"}
 
     assert {:error, %Error{message: "Sprites tunnel acknowledgement timed out."}} =
              Tunnel.open(cfg, "sprite", app, timeout: 200)

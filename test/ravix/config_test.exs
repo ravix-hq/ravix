@@ -5,6 +5,7 @@ defmodule Ravix.ConfigTest do
 
   alias Ravix.Config
   alias Ravix.Config.GitHubApp
+  alias Ravix.Fountain.Client
 
   # Set one value for this test and put the previous one back afterwards.
   defp override(key, value) do
@@ -167,9 +168,9 @@ defmodule Ravix.ConfigTest do
   describe "fountain/0" do
     test "defaults to managoat.com with no key" do
       override_all(fountain_url: nil, fountain_api_key: nil)
-      assert Config.fountain() == %{url: "https://managoat.com", key: nil}
+      assert Config.fountain() == %Ravix.Config.Fountain{url: "https://managoat.com", key: nil}
       override_all(fountain_url: "https://fountain.test/ ", fountain_api_key: " ")
-      assert Config.fountain() == %{url: "https://fountain.test", key: nil}
+      assert Config.fountain() == %Ravix.Config.Fountain{url: "https://fountain.test", key: nil}
       override(:fountain_api_key, " fk ")
       assert Config.fountain().key == "fk"
     end
@@ -180,9 +181,64 @@ defmodule Ravix.ConfigTest do
       override_all(sprites_token: nil, sprites_url: nil)
       assert Config.sprites() == nil
       override(:sprites_token, "t")
-      assert Config.sprites() == %{token: "t", base_url: "https://api.sprites.dev"}
+
+      assert Config.sprites() ==
+               %Ravix.Config.Sprites{token: "t", base_url: "https://api.sprites.dev"}
+
       override(:sprites_url, "http://sprites.test/")
-      assert Config.sprites() == %{token: "t", base_url: "http://sprites.test"}
+
+      assert Config.sprites() == %Ravix.Config.Sprites{
+               token: "t",
+               base_url: "http://sprites.test"
+             }
+    end
+  end
+
+  describe "inspecting a credential" do
+    # Each of these is handed to something that can crash while holding it:
+    # the App to `Ravix.GitHub`, the Sprites config to every exec and to
+    # `Ravix.Sprites.Tunnel.open/4`, the client to most of `Ravix.Fountain`.
+    # A crash report, a `Logger` line or a stray `dbg/1` inspects arguments
+    # and state, so the redaction is what makes them safe to pass around.
+
+    test "the GitHub App shows its public half and hides what signs" do
+      override_all(@required ++ [github_private_key: Ravix.GitHubFake.private_key_pem()])
+      shown = inspect(Config.github())
+
+      assert shown =~ "app_id: \"1\""
+      assert shown =~ "client_id: \"Iv1.x\""
+      refute shown =~ "client_secret"
+      refute shown =~ "\"s\""
+      refute shown =~ "private_key_pem"
+      refute shown =~ "PRIVATE KEY"
+    end
+
+    test "the Sprites config shows where it points and hides the token" do
+      override_all(sprites_token: "sprites-live-token", sprites_url: "http://sprites.test")
+      shown = inspect(Config.sprites())
+
+      assert shown =~ "http://sprites.test"
+      refute shown =~ "sprites-live-token"
+      refute shown =~ "token"
+    end
+
+    test "the Fountain config shows its URL and hides the key" do
+      override_all(fountain_url: "https://fountain.test", fountain_api_key: "fountain-live-key")
+      shown = inspect(Config.fountain())
+
+      assert shown =~ "https://fountain.test"
+      refute shown =~ "fountain-live-key"
+    end
+
+    test "a Fountain client hides the SDK config the key sits inside" do
+      client = Client.new("https://fountain.test", "fountain-live-key")
+
+      # The key is three structs down (`Fountain.HTTP` holds a
+      # `Fountain.Config`, which holds `api_key`) and the SDK does not
+      # redact its own, so the whole of `:http` is excluded.
+      assert Client.configured?(client)
+      assert inspect(client) =~ "https://fountain.test"
+      refute inspect(client) =~ "fountain-live-key"
     end
   end
 

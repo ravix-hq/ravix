@@ -189,7 +189,7 @@ defmodule Ravix.AccountsTest do
     test "with no GitHub App there is nowhere to sign in and nobody is anybody" do
       stub(Ravix.Config, :github, fn -> nil end)
       stub(Ravix.Config, :sprites, fn -> nil end)
-      stub(Ravix.Config, :fountain, fn -> %{url: "https://f", key: nil} end)
+      stub(Ravix.Config, :fountain, fn -> %Ravix.Config.Fountain{url: "https://f", key: nil} end)
 
       assert Accounts.session_info(nil) == %{
                viewer: nil,
@@ -205,8 +205,12 @@ defmodule Ravix.AccountsTest do
     test "with one, the viewer's installation is asked of GitHub live" do
       app = Fake.app()
       stub(Ravix.Config, :github, fn -> app end)
-      stub(Ravix.Config, :sprites, fn -> %{token: "t", base_url: "https://s"} end)
-      stub(Ravix.Config, :fountain, fn -> %{url: "https://f", key: "k"} end)
+
+      stub(Ravix.Config, :sprites, fn ->
+        %Ravix.Config.Sprites{token: "t", base_url: "https://s"}
+      end)
+
+      stub(Ravix.Config, :fountain, fn -> %Ravix.Config.Fountain{url: "https://f", key: "k"} end)
 
       Fake.install([
         {"GET", "/user/installations",

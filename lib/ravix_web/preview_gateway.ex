@@ -185,7 +185,7 @@ defmodule RavixWeb.PreviewGateway do
   end
 
   defp open_tunnel!(backend, row) do
-    with sprites when is_map(sprites) <- backend.sprites_config(),
+    with %Ravix.Config.Sprites{} = sprites <- backend.sprites_config(),
          {:ok, tunnel} <- tunnel_module().open(sprites, row.sprite, row.port, []) do
       tunnel
     else

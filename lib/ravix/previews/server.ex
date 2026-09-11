@@ -257,7 +257,7 @@ defmodule Ravix.Previews.Server do
   defp retire(%Row{sprite: nil}, _remove?), do: :ok
 
   defp retire(%Row{} = row, remove?) do
-    with cfg when is_map(cfg) <- Sprites.config(),
+    with %Ravix.Config.Sprites{} = cfg <- Sprites.config(),
          {:ok, _} <- Sprites.service_action(cfg, row.sprite, row.service, :stop),
          :ok <- release_activity(cfg, row),
          _ = Process.delete(@hold_key),

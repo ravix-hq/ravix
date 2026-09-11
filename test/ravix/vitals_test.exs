@@ -155,7 +155,11 @@ defmodule Ravix.VitalsTest do
     test "provider reads distinguish missing machines, unsupported hosts, and transport failures" do
       owner = insert_user()
       track = insert_track(project: insert_project(user: owner))
-      stub(Ravix.Config, :sprites, fn -> %{token: "test", base_url: "http://sprites.test"} end)
+
+      stub(Ravix.Config, :sprites, fn ->
+        %Ravix.Config.Sprites{token: "test", base_url: "http://sprites.test"}
+      end)
+
       stub(Ravix.Tracks, :machine_of, fn _ -> {:ok, nil} end)
       assert {:ok, %Report{available: false, why: :no_machine}} = Vitals.report(owner, track.id)
       stub(Ravix.Tracks, :machine_of, fn _ -> {:ok, %{sandbox_id: "box"}} end)

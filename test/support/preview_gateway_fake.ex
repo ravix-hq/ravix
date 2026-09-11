@@ -355,7 +355,11 @@ defmodule Ravix.PreviewGatewayFake do
       do: %{domain: "preview.localhost", protocol: :http, public_port: ":#{Store.port()}"}
 
     @impl true
-    def sprites_config, do: %{token: "secret-provider-token", base_url: "http://127.0.0.1:1"}
+    def sprites_config,
+      do: %Ravix.Config.Sprites{
+        token: "secret-provider-token",
+        base_url: "http://127.0.0.1:1"
+      }
   end
 
   # ── the tunnel ───────────────────────────────────────────────────────

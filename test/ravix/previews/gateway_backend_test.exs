@@ -63,7 +63,9 @@ defmodule RavixWeb.PreviewGateway.RavixBackendTest do
              public_port: ":5183"
            }
 
-    assert GatewayBackend.sprites_config() == %{token: "test", base_url: "http://sprites.test"}
+    assert GatewayBackend.sprites_config() ==
+             %Ravix.Config.Sprites{token: "test", base_url: "http://sprites.test"}
+
     assert GatewayBackend.public_url() == "http://localhost:5183"
   end
 
