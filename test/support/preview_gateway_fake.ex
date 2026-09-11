@@ -20,8 +20,11 @@ defmodule Ravix.PreviewGatewayFake do
   own hostnames, sprite, users and upstream, so tests run concurrently.
   """
 
+  alias Ravix.Accounts.User
   alias Ravix.Crypto
   alias Ravix.PreviewGatewayFake.Store
+  alias Ravix.Previews.Row
+  alias Ravix.Tracks.Track
 
   @doc "Start the store and the front once per module; returns the front's port."
   @spec start_front!() :: pos_integer()
@@ -62,14 +65,14 @@ defmodule Ravix.PreviewGatewayFake do
 
     {:ok, {_, app_port}} = ThousandIsland.listener_info(upstream)
 
-    owner = %{id: "ana-#{s}"}
-    guest = %{id: "bo-#{s}"}
+    owner = %User{id: "ana-#{s}", login: "ana-#{s}"}
+    guest = %User{id: "bo-#{s}", login: "bo-#{s}"}
     project = "p-#{s}"
     t1 = "t1-#{s}"
     t2 = "t2-#{s}"
     Store.put_project(project, owner.id)
-    Store.put_track(%{id: t1, project_id: project, closed_at: nil})
-    Store.put_track(%{id: t2, project_id: project, closed_at: nil})
+    Store.put_track(%Track{id: t1, project_id: project, closed_at: nil})
+    Store.put_track(%Track{id: t2, project_id: project, closed_at: nil})
     Store.add_member(t1, guest.id)
     app_session = "app-session-#{s}"
     Store.put_session(Crypto.sha256(app_session), guest)
@@ -82,9 +85,10 @@ defmodule Ravix.PreviewGatewayFake do
       kind: :session
     })
 
-    row = %{
+    row = %Row{
       track_id: t1,
       hostname: "t-#{s}",
+      service: "sy-t-#{s}",
       sprite: "sprite-#{s}",
       port: app_port,
       desired: :running,
@@ -95,9 +99,10 @@ defmodule Ravix.PreviewGatewayFake do
 
     Store.put_row(row)
 
-    other = %{
+    other = %Row{
       track_id: t2,
       hostname: "t-#{s}-2",
+      service: "sy-t-#{s}-2",
       sprite: nil,
       port: nil,
       desired: :stopped,
@@ -330,7 +335,17 @@ defmodule Ravix.PreviewGatewayFake do
     @impl true
     def info(track_id) do
       row = Store.row(track_id)
-      %{state: row.state, error: nil, logs: "", url: nil}
+
+      %Ravix.Previews.View{
+        available: true,
+        unavailable_reason: nil,
+        config: nil,
+        override: nil,
+        state: row.state,
+        error: nil,
+        logs: "",
+        url: nil
+      }
     end
 
     @impl true
