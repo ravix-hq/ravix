@@ -19,6 +19,7 @@ defmodule RavixWeb.TrackLive do
   alias Ravix.Tracks.Transcript
   alias Ravix.Tracks.Transcript.Event, as: TranscriptEvent
   alias RavixWeb.Error
+  alias RavixWeb.Live.Form
   alias RavixWeb.Live.Guard
   alias RavixWeb.Live.Panel
   alias RavixWeb.Live.Params
@@ -42,6 +43,7 @@ defmodule RavixWeb.TrackLive do
         preview: nil,
         preview_url: nil,
         dialog: nil,
+        rename_form: Form.new(:rename_track),
         pull: nil,
         attached_images: [],
         # The monitor reference for this page's transcript follower, if it has
@@ -187,16 +189,17 @@ defmodule RavixWeb.TrackLive do
   end
 
   def handle_event("dialog", %{"name" => name}, socket) when is_map_key(@dialogs, name),
-    do: {:noreply, assign(socket, dialog: Map.fetch!(@dialogs, name))}
+    do: {:noreply, open_dialog(socket, Map.fetch!(@dialogs, name))}
 
   def handle_event("dismiss", _, socket), do: {:noreply, assign(socket, dialog: nil)}
 
-  def handle_event("rename", %{"title" => title}, socket) do
+  def handle_event("rename", %{"rename_track" => %{"title" => title} = params}, socket) do
     {:noreply,
      result(
-       socket,
+       assign(socket, rename_form: Form.new(:rename_track, params)),
        Tracks.rename(socket.assigns.current_user, socket.assigns.track_id, title),
-       fn s, _ -> s |> assign(dialog: nil) |> refresh_detail() end
+       fn s, _ -> s |> assign(dialog: nil) |> refresh_detail() end,
+       :rename_form
      )}
   end
 
@@ -221,6 +224,18 @@ defmodule RavixWeb.TrackLive do
        &assign(&1, pull: &2, dialog: nil)
      )}
   end
+
+  # Rename opens on the name the track has now, so the dialog is a correction
+  # rather than a blank box. The form is rebuilt each time it opens, which is
+  # also what discards a refusal from the last attempt.
+  defp open_dialog(socket, :rename),
+    do:
+      assign(socket,
+        dialog: :rename,
+        rename_form: Form.new(:rename_track, %{"title" => socket.assigns.track.title})
+      )
+
+  defp open_dialog(socket, dialog), do: assign(socket, dialog: dialog)
 
   @impl true
   # Ravix runs on more than one instance (ADR 0003) and a deploy is rolling,

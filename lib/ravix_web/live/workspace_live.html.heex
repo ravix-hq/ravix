@@ -399,20 +399,19 @@
           options={Enum.map(@installations, &{&1.account, &1.id})}
         />
       </form>
-      <form id="new-project-form" phx-submit="create-project" phx-change="edit">
+      <.form
+        :let={f}
+        for={@project_form}
+        id="new-project-form"
+        phx-submit="create-project"
+        phx-change="edit"
+      >
+        <.input field={f[:name]} id="project-name" label="Project name" maxlength="120" />
         <.input
-          name="name"
-          id="project-name"
-          label="Project name"
-          value={@form_data["name"] || ""}
-          maxlength="120"
-        />
-        <.input
-          name="repo"
+          field={f[:repo]}
           id="project-repo"
           label="Repository"
           type="select"
-          value={@form_data["repo"] || ""}
           options={[
             {"No repository (scratch)", ""} | Enum.map(@repos, &{&1.full_name, &1.full_name})
           ]}
@@ -421,7 +420,7 @@
         <button class="primary" disabled={@busy} phx-disable-with="Creating…">
           Create project
         </button>
-      </form>
+      </.form>
     </.dialog>
     <.dialog
       :if={@dialog == :new_track && @project}
@@ -429,14 +428,14 @@
       title="New track"
       on_close="dismiss"
     >
-      <form id="new-track-form" phx-submit="create-track" phx-change="edit">
-        <.input
-          name="title"
-          id="track-title"
-          label="Track name"
-          value={@form_data["title"] || ""}
-          maxlength="200"
-        />
+      <.form
+        :let={f}
+        for={@track_form}
+        id="new-track-form"
+        phx-submit="create-track"
+        phx-change="edit"
+      >
+        <.input field={f[:title]} id="track-title" label="Track name" maxlength="200" />
         <p :if={@origin_kind == :blank} class="hint">
           New worktree from {@project.default_branch || "the default branch"}.
         </p>
@@ -464,11 +463,10 @@
           </div>
           <.input
             :if={@origin_kind != :blank}
-            name="ref"
+            field={f[:ref]}
             id="track-ref"
             label="Start from"
             type="select"
-            value={@form_data["ref"] || ""}
             options={Enum.map(@refs, &{ref_label(&1), ref_id(&1)})}
             required
           />
@@ -480,7 +478,7 @@
         >
           Create track
         </button>
-      </form>
+      </.form>
     </.dialog>
     <.dialog
       :if={@dialog == :settings && @settings}

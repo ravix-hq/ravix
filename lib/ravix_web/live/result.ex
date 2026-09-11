@@ -13,6 +13,7 @@ defmodule RavixWeb.Live.Result do
   """
 
   alias RavixWeb.Error
+  alias RavixWeb.Live.Form
 
   @doc """
   Apply `response` to `socket`.
@@ -27,6 +28,30 @@ defmodule RavixWeb.Live.Result do
   def result(socket, :ok, fun), do: fun.(socket, nil)
   def result(socket, {:ok, value}, fun), do: fun.(socket, value)
   def result(socket, {:error, reason}, _fun), do: error(socket, reason)
+
+  @doc """
+  Apply `response`, putting a refusal on a form rather than in the flash.
+
+  `form` names the assign holding a `RavixWeb.Live.Form`. A refusal that
+  belongs to one of its fields lands there, beside the input it is about; a
+  refusal that belongs to no field --- Fountain unreachable, the repository
+  gone --- falls through to the flash, which is still the right place for
+  it. Success is exactly `result/3`.
+  """
+  @spec result(
+          Phoenix.LiveView.Socket.t(),
+          :ok | {:ok, term()} | {:error, term()},
+          function(),
+          atom()
+        ) :: Phoenix.LiveView.Socket.t()
+  def result(socket, {:error, reason} = response, fun, form) do
+    case Form.refuse(socket.assigns[form], reason) do
+      {:ok, refused} -> Phoenix.Component.assign(socket, form, refused)
+      :error -> result(socket, response, fun)
+    end
+  end
+
+  def result(socket, response, fun, _form), do: result(socket, response, fun)
 
   @doc """
   Flash the sentence `RavixWeb.Error` has for `reason`.

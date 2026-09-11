@@ -49,10 +49,13 @@ defmodule RavixWeb.WorkspaceLiveTest do
     refute render(view) =~ hidden.name
     assert has_element?(view, ".home-action[disabled]", "Open a local project")
     view |> element(".home-action", "Open a GitHub project") |> render_click()
-    view |> form("#new-project-form", name: "Abandoned name") |> render_change()
+    view |> form("#new-project-form", new_project: [name: "Abandoned name"]) |> render_change()
     render_click(view, "dismiss")
     view |> element(".home-action", "Quick start") |> render_click()
-    assert has_element?(view, "#project-name[value='']")
+    # A pristine form renders no `value` at all, which is how the field
+    # comes up empty; the point of the assertion is that the abandoned name
+    # is not still in it.
+    assert has_element?(view, "#project-name:not([value])")
     assert has_element?(view, "#project-repo option[value='']", "No repository")
     refute render(view) =~ "Abandoned name"
   end
@@ -122,7 +125,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
     assert_patch(view, "/p/#{project.id}?new=track")
     assert has_element?(view, "#new-track-form")
     refute has_element?(view, "#project-tracks-#{project.id}[hidden]")
-    view |> form("#new-track-form", title: "Keep this name") |> render_change()
+    view |> form("#new-track-form", new_track: [title: "Keep this name"]) |> render_change()
     view |> element("button", "Advanced") |> render_click()
     refute has_element?(view, "#track-advanced[hidden]")
     view |> element("button", "Hide advanced") |> render_click()
@@ -223,7 +226,11 @@ defmodule RavixWeb.WorkspaceLiveTest do
 
     {:ok, view, _} = live(log_in_user(conn, user), "/")
     view |> element(".workspace-actions button", "Add a project") |> render_click()
-    view |> form("#new-project-form", name: "New project", repo: "") |> render_submit()
+
+    view
+    |> form("#new-project-form", new_project: [name: "New project", repo: ""])
+    |> render_submit()
+
     render_async(view)
     assert has_element?(view, "a.workspace-project-name", "New project")
     assert render(view) =~ "Each track is its own worktree"

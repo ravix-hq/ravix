@@ -38,10 +38,17 @@ defmodule RavixWeb.WorkspaceManagementTest do
     render_click(ctx.view, "dialog", %{name: "new-project"})
     render_change(ctx.view, "installation", %{installation: "42"})
     render_change(ctx.view, "installation", %{installation: "bad-id"})
-    ctx.view |> form("#new-project-form", name: "Selected", repo: "acme/app") |> render_change()
-    ctx.view |> form("#new-project-form", name: "Selected", repo: "acme/app") |> render_submit()
+
+    ctx.view
+    |> form("#new-project-form", new_project: [name: "Selected", repo: "acme/app"])
+    |> render_change()
+
+    ctx.view
+    |> form("#new-project-form", new_project: [name: "Selected", repo: "acme/app"])
+    |> render_submit()
+
     assert render_async(ctx.view) =~ "Provisioning is offline"
-    assert has_element?(ctx.view, "input[name=name][value=Selected]")
+    assert has_element?(ctx.view, "input[name='new_project[name]'][value=Selected]")
     refute has_element?(ctx.view, "#new-project-form button[disabled]")
   end
 
@@ -81,7 +88,7 @@ defmodule RavixWeb.WorkspaceManagementTest do
           do: %{title: "Work", ref: to_string(ref[:number] || ref[:name])},
           else: %{title: "Work"}
 
-      ctx.view |> form("#new-track-form", params) |> render_submit()
+      ctx.view |> form("#new-track-form", new_track: params) |> render_submit()
       assert render_async(ctx.view) =~ "Machine is busy"
       refute has_element?(ctx.view, "#new-track-form button[disabled]")
     end
@@ -149,14 +156,48 @@ defmodule RavixWeb.WorkspaceManagementTest do
     end
   end
 
+  test "a refusal about a field lands on the field; one about the machine stays a toast", ctx do
+    render_click(ctx.view, "dialog", %{name: "new-project"})
+
+    # `Ravix.Projects.create/2` decides both of these, and it is still the
+    # one that decides them. What the page now does is read the code in
+    # `{:unprocessable, code, message}` --- which named a field all along
+    # and was thrown away on the way to `RavixWeb.Error` --- and put the
+    # context's own sentence beside the input it is about.
+    expect(Projects, :create, fn _, _ ->
+      {:error, {:unprocessable, "no_name", "Give the project a name."}}
+    end)
+
+    ctx.view |> form("#new-project-form", new_project: [name: ""]) |> render_submit()
+    render_async(ctx.view)
+
+    assert has_element?(
+             ctx.view,
+             "#new-project-form .field p.error",
+             "Give the project a name."
+           )
+
+    assert has_element?(ctx.view, "#new-project-dialog")
+
+    # A refusal that belongs to no field has no input to sit beside, so it
+    # is still a toast. That is the boundary `Form.refuse/2` draws.
+    expect(Projects, :create, fn _, _ ->
+      {:error, {:unavailable, "no_fountain", "Provisioning is offline."}}
+    end)
+
+    ctx.view |> form("#new-project-form", new_project: [name: "Fine"]) |> render_submit()
+    assert render_async(ctx.view) =~ "Provisioning is offline."
+    refute has_element?(ctx.view, "#new-project-form .field p.error")
+  end
+
   @tag capture_log: true
   test "a crashed provisioning task restores a usable form", ctx do
     expect(Projects, :create, fn _, _ -> raise "provider crashed" end)
     render_click(ctx.view, "dialog", %{name: "new-project"})
-    ctx.view |> form("#new-project-form", name: "Keep my work") |> render_submit()
+    ctx.view |> form("#new-project-form", new_project: [name: "Keep my work"]) |> render_submit()
     assert render_async(ctx.view) =~ "The operation could not finish"
     refute has_element?(ctx.view, "#new-project-form button[disabled]")
-    assert has_element?(ctx.view, "input[name=name][value='Keep my work']")
+    assert has_element?(ctx.view, "input[name='new_project[name]'][value='Keep my work']")
   end
 
   test "project invite links persist and revoke through the context", ctx do
