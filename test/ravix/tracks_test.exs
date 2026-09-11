@@ -8,7 +8,7 @@ defmodule Ravix.TracksTest do
   alias Ravix.Hub.Event
   alias Ravix.QueryCount
   alias Ravix.Tracks
-  alias Ravix.Tracks.{Names, Track}
+  alias Ravix.Tracks.{Diff, Files, Names, Track}
 
   @root "/home/sprite/work/kyoto"
 
@@ -59,8 +59,8 @@ defmodule Ravix.TracksTest do
       assert Tracks.summarize_diff(diff) == [
                # `+++` and `---` are file headers rather than content; counting
                # them puts a phantom line on every changed file.
-               %{path: "src/app.ts", added: 2, removed: 1, status: :modified},
-               %{path: "new.txt", added: 1, removed: 0, status: :added}
+               %Diff.Change{path: "src/app.ts", added: 2, removed: 1, status: :modified},
+               %Diff.Change{path: "new.txt", added: 1, removed: 0, status: :added}
              ]
     end
 
@@ -68,13 +68,13 @@ defmodule Ravix.TracksTest do
       deleted =
         "diff --git a/gone.ts b/gone.ts\ndeleted file mode 100644\n--- a/gone.ts\n+++ /dev/null\n-x"
 
-      assert [%{path: "gone.ts", added: 0, removed: 1, status: :deleted}] =
+      assert [%Diff.Change{path: "gone.ts", added: 0, removed: 1, status: :deleted}] =
                Tracks.summarize_diff(deleted)
 
       renamed =
         "diff --git a/old.ts b/new.ts\nsimilarity index 100%\nrename from old.ts\nrename to new.ts"
 
-      assert [%{path: "new.ts", status: :renamed}] = Tracks.summarize_diff(renamed)
+      assert [%Diff.Change{path: "new.ts", status: :renamed}] = Tracks.summarize_diff(renamed)
     end
 
     test "an empty diff is an empty list, not a phantom file" do
@@ -896,11 +896,14 @@ defmodule Ravix.TracksTest do
           }}}
       ])
 
-      assert {:ok, %{content: "x", encoding: "utf-8"}} =
+      assert {:ok, %Files.Content{content: "x", encoding: "utf-8"}} =
                Tracks.file(ctx.owner, ctx.track.id, "a.txt")
 
-      assert {:ok, %{repo_root: "/workspace/ledger", files: [%{path: "a.txt", added: 1}]}} =
-               Tracks.diff(ctx.owner, ctx.track.id)
+      assert {:ok,
+              %Diff{
+                repo_root: "/workspace/ledger",
+                changes: [%Diff.Change{path: "a.txt", added: 1}]
+              }} = Tracks.diff(ctx.owner, ctx.track.id)
     end
 
     test "no machine yet is a conflict the panel names", ctx do

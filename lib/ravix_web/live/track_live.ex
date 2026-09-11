@@ -5,7 +5,9 @@ defmodule RavixWeb.TrackLive do
 
   alias Ravix.Accounts.Access
   alias Ravix.{Crypto, Hub, Previews, PromptQueue, Tracks}
+  alias Ravix.GitHub.ChecksReport
   alias Ravix.Hub.Event
+  alias Ravix.Tracks.{Diff, Files}
   alias Ravix.Tracks.Transcript
   alias RavixWeb.Error
   alias RavixWeb.Live.Guard
@@ -338,11 +340,15 @@ defmodule RavixWeb.TrackLive do
 
   defp async_result(:transcript, {:ok, {:error, reason}}, socket), do: error(socket, reason)
 
-  defp async_result(:panel, {:ok, {:ok, data}}, socket) do
-    if socket.assigns.panel == "preview",
-      do: assign(socket, preview: data, panel_busy: false),
-      else: assign(socket, panel_data: data, panel_busy: false)
-  end
+  # Which assign the answer belongs in is a question about the answer. It used
+  # to be asked of `socket.assigns.panel` instead, so a reply that arrived
+  # after somebody switched tabs was filed under whichever panel they had
+  # moved to.
+  defp async_result(:panel, {:ok, {:ok, %Previews.View{} = preview}}, socket),
+    do: assign(socket, preview: preview, panel_busy: false)
+
+  defp async_result(:panel, {:ok, {:ok, data}}, socket),
+    do: assign(socket, panel_data: data, panel_busy: false)
 
   defp async_result(:panel, {:ok, {:error, reason}}, socket),
     do: assign(socket, panel_busy: false, panel_error: Error.from(reason).message)
@@ -435,6 +441,84 @@ defmodule RavixWeb.TrackLive do
     socket
     |> assign(panel_busy: true)
     |> start_async(:preview_action, fn -> call.(user, id, hash) end)
+  end
+
+  attr :data, :any, required: true
+  attr :file, :any, default: nil
+  attr :project, :any, required: true
+
+  # Which panel is showing is a question about the value the panel is holding,
+  # and these clauses ask it that way. The template used to ask a second
+  # assign -- `@panel == "checks" && @panel_data` -- which made the pairing of
+  # the two an invariant nothing enforced, and left the checks report being
+  # read as `@panel_data[:runs] || []`: an `Access` read that answers `nil`
+  # for a field that does not exist, so a renamed one would render an empty
+  # list rather than fail.
+  defp panel_body(%{data: %Files.Listing{}} = assigns) do
+    ~H"""
+    <div>
+      <button class="ghost" phx-click="directory" phx-value-path={Path.dirname(@data.path)}>
+        ↑ Parent
+      </button>
+      <code>{@data.path}</code>
+      <div :for={entry <- @data.entries}>
+        <button
+          class="workspace-file"
+          phx-click={if entry.type == "directory", do: "directory", else: "file"}
+          phx-value-path={Path.join(@data.path, entry.name)}
+        >
+          {if entry.type == "directory", do: "▸ ", else: ""}{entry.name}
+        </button>
+      </div>
+      <p :if={@data.truncated}>Directory listing is truncated.</p>
+      <div :if={@file}>
+        <h4>{@file.path}</h4>
+        <pre :if={@file.encoding != "base64"}>{@file.content}</pre>
+        <p :if={@file.encoding == "base64"}>Binary file ({@file.size} bytes).</p>
+        <p :if={@file.truncated}>File content is truncated.</p>
+      </div>
+    </div>
+    """
+  end
+
+  defp panel_body(%{data: %Diff{}} = assigns) do
+    ~H"""
+    <div>
+      <p :if={@data.diff == ""}>No changes yet.</p>
+      <div :for={change <- @data.changes}>
+        <code>{change.path}</code> +{change.added} −{change.removed}
+      </div>
+      <pre>{@data.diff}</pre>
+      <p :if={@data.truncated}>Diff is truncated.</p>
+    </div>
+    """
+  end
+
+  defp panel_body(%{data: %ChecksReport{}} = assigns) do
+    ~H"""
+    <div>
+      <p :if={@data.pull}>
+        <a href={@data.pull.url} target="_blank" rel="noreferrer">
+          Pull request #{@data.pull.number}: {@data.pull.title}
+        </a>
+      </p>
+      <div :for={check <- @data.runs}>
+        <a :if={check.url} href={check.url} target="_blank" rel="noreferrer">
+          {check.name}
+        </a>
+        <span :if={!check.url}>{check.name}</span>
+        <span class="chip">{check.conclusion || check.status}</span>
+      </div>
+      <button
+        :if={@project.repo}
+        class="primary"
+        phx-click={JS.push_focus() |> JS.push("dialog")}
+        phx-value-name="pull"
+      >
+        Open pull request
+      </button>
+    </div>
+    """
   end
 
   defp load_panel(socket, path \\ nil) do
