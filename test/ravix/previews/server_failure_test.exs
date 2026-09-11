@@ -61,6 +61,51 @@ defmodule Ravix.Previews.ServerFailureTest do
     refute Server.busy?(ctx.track.id)
   end
 
+  @tag capture_log: true
+  test "a caller is answered when the task running its operation is killed", ctx do
+    # The guarantee the queue-and-task shape buys. `run/2` waits `:infinity`,
+    # so an operation that dies without reporting used to be a caller blocked
+    # for the life of the process -- and, while the work ran inside
+    # `handle_call/3`, it took the server and everything queued behind it down
+    # with it.
+    configure(ctx)
+    test_pid = self()
+
+    stub(Tracks, :machine_of, fn _, _ ->
+      send(test_pid, {:in_flight, self()})
+      Process.sleep(:infinity)
+    end)
+
+    caller = Task.async(fn -> Previews.start_service(ctx.track.id) end)
+    assert_receive {:in_flight, worker}, 5_000
+
+    server = Server.ensure(ctx.track.id)
+    Process.exit(worker, :kill)
+
+    assert {:error, :preview_operation_down} = Task.await(caller, 5_000)
+
+    # The server survived it and is ready for the next operation.
+    assert Process.alive?(server)
+    refute Server.busy?(ctx.track.id)
+  end
+
+  test "a server that cannot answer in time counts as busy, so no work is queued behind it" do
+    # The reconciler's only question is whether to queue an `:ensure` behind an
+    # operation it cannot see. A server that does not answer might have been
+    # about to say yes, and "leave this track alone for fifteen seconds" is the
+    # only answer that cannot start a second operation on the same sprite.
+    #
+    # This needed a second BEAM while the answer came back over `:erpc` from
+    # the owning instance. It is a `GenServer.call/3` now, so an unanswerable
+    # one is an unanswerable one wherever the process is.
+    track_id = Ecto.UUID.generate()
+    mute = spawn(fn -> Process.sleep(:infinity) end)
+    on_exit(fn -> Process.exit(mute, :kill) end)
+
+    :yes = :global.register_name(Ravix.Cluster.name(:preview, track_id), mute)
+    assert Server.busy?(track_id)
+  end
+
   test "idle preview processes stop and can be recreated", ctx do
     pid = Server.ensure(ctx.track.id)
     send(pid, :unrelated)

@@ -3,9 +3,9 @@ defmodule Ravix.Cluster.DistributionTest do
   The parts that only a second BEAM can prove.
 
   Everything else about clustering can be tested on one node, because the
-  contended `:global` name is the same one. These four cannot: a name is only
-  interesting when the process behind it is somewhere else, `busy?/1` only takes
-  its `:erpc` path when the owner is another instance, PubSub fan-out is only
+  contended `:global` name is the same one. These cannot: a name is only
+  interesting when the process behind it is somewhere else, `busy?/1` only
+  crosses nodes when the owner is another instance, PubSub fan-out is only
   fan-*out* across nodes, and a takeover only happens when a node leaves.
 
   A peer runs the whole application, as an instance does, so the names it
@@ -67,7 +67,7 @@ defmodule Ravix.Cluster.DistributionTest do
   end
 
   describe "busy?/1 across instances" do
-    test "reads the flag from the instance that owns the server", %{node: node} do
+    test "reads the answer from the instance that owns the server", %{node: node} do
       track_id = Ecto.UUID.generate()
       server = Previews.Server.ensure(track_id)
       assert node(server) == node()
@@ -76,18 +76,10 @@ defmodule Ravix.Cluster.DistributionTest do
       # the reconciler over there is free to queue an `:ensure`.
       refute :erpc.call(node, Previews.Server, :busy?, [track_id])
 
-      hold_busy(track_id)
+      hold_busy(server)
 
       # And when it is working, the other instance is told to leave it alone.
       assert :erpc.call(node, Previews.Server, :busy?, [track_id])
-    end
-
-    test "an owner that cannot be reached counts as busy, so no work is queued behind it" do
-      # The reconciler's only question is whether to queue an `:ensure` behind
-      # an operation it cannot see. A node it cannot ask is a node whose answer
-      # might have been yes, and "leave this track alone for fifteen seconds"
-      # is the only answer that cannot start a second operation on a sprite.
-      assert Previews.Server.busy_on(:"gone@127.0.0.1", Ecto.UUID.generate())
     end
 
     test "a server whose instance left the cluster is nobody's server", ctx do
@@ -272,18 +264,17 @@ defmodule Ravix.Cluster.DistributionTest do
 
   # Holds the track's flag at `:busy` from a process that stays alive, which is
   # what an operation in flight looks like to a reader on another instance.
-  defp hold_busy(track_id) do
-    parent = self()
+  # An operation in flight, without standing one up: `busy?/1` reads
+  # `state.running`, so that is what is placed. The previous version registered
+  # a `Ravix.Previews.Registry` entry by hand, which is the same trick against
+  # the side channel that stood in for this state while the server could not
+  # answer its own mailbox.
+  defp hold_busy(server) do
+    :sys.replace_state(server, fn state ->
+      %{state | running: %{ref: make_ref(), from: {self(), make_ref()}}}
+    end)
 
-    pid =
-      spawn(fn ->
-        {:ok, _} = Registry.register(Previews.Registry, track_id, :busy)
-        send(parent, :holding)
-        Process.sleep(:infinity)
-      end)
-
-    on_exit(fn -> Process.exit(pid, :kill) end)
-    assert_receive :holding, 5_000
+    :ok
   end
 
   # Re-checks the condition rather than waiting a fixed time for it: `:global`
