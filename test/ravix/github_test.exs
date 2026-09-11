@@ -1,8 +1,9 @@
 defmodule Ravix.GitHubTest do
   use ExUnit.Case, async: true
 
+  alias Ravix.Clock
   alias Ravix.GitHub
-  alias Ravix.GitHub.{Cache, Clock, Error, Shapes}
+  alias Ravix.GitHub.{Cache, Error, Shapes}
   alias Ravix.GitHubFake, as: Fake
 
   setup do

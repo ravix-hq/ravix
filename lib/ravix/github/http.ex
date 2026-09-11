@@ -12,8 +12,9 @@ defmodule Ravix.GitHub.HTTP do
   request, which is how the tests route it through `Req.Test`.
   """
 
+  alias Ravix.Clock
   alias Ravix.Config.GitHubApp
-  alias Ravix.GitHub.{Cache, Clock, Error}
+  alias Ravix.GitHub.{Cache, Error}
 
   @user_agent "ravix (+https://app.ravix.sh)"
   @timeout_ms 20_000

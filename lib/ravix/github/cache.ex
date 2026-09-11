@@ -37,7 +37,8 @@ defmodule Ravix.GitHub.Cache do
 
   use GenServer
 
-  alias Ravix.GitHub.{Clock, Error}
+  alias Ravix.Clock
+  alias Ravix.GitHub.Error
   alias Ravix.Memo
 
   @table :ravix_github_cache

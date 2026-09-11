@@ -31,8 +31,9 @@ defmodule Ravix.Previews do
 
   alias Ravix.Accounts.Access
   alias Ravix.Accounts.User
+  alias Ravix.Clock
   alias Ravix.Crypto
-  alias Ravix.Previews.{Agent, Clock, Row, Server, Store, View}
+  alias Ravix.Previews.{Agent, Row, Server, Store, View}
   alias Ravix.Projects.Project
   alias Ravix.Projects.Store, as: Projects
   alias Ravix.Repo

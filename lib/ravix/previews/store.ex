@@ -10,13 +10,14 @@ defmodule Ravix.Previews.Store do
   unique index `preview_ports` on `(sprite, port)` decides, including
   across connections, and `allocate/3` retries when it loses that race.
 
-  Times are milliseconds since the epoch, read from `Ravix.Previews.Clock`.
+  Times are milliseconds since the epoch, read from `Ravix.Clock`.
   """
 
   import Ecto.Query
 
   alias Ravix.Accounts.Session
-  alias Ravix.Previews.{Clock, Preview, PreviewAgentGrant, PreviewDefault, PreviewGrant, Row}
+  alias Ravix.Clock
+  alias Ravix.Previews.{Preview, PreviewAgentGrant, PreviewDefault, PreviewGrant, Row}
   alias Ravix.Repo
 
   @first_port 20_000
