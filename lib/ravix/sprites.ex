@@ -62,16 +62,8 @@ defmodule Ravix.Sprites do
   @typedoc "A managed service as Sprites describes it. See `Ravix.Sprites.Shapes`."
   @type service :: Shapes.Service.t()
 
-  @typedoc "What one exec produced."
-  @type raw_exec :: %{stdout: String.t(), stderr: String.t(), code: non_neg_integer()}
-
-  @typedoc "An exec that also reports the directory the shell ended in."
-  @type shell_exec :: %{
-          stdout: String.t(),
-          stderr: String.t(),
-          code: non_neg_integer(),
-          cwd: String.t()
-        }
+  @typedoc "What one exec produced. See `Ravix.Sprites.Shapes.Exec`."
+  @type exec :: Shapes.Exec.t()
 
   @typedoc """
   Which way an activity lease is being moved: taken and renewed, or dropped.
@@ -213,7 +205,7 @@ defmodule Ravix.Sprites do
   seconds longer than that before giving up on the machine.
   """
   @spec exec(config(), String.t(), [String.t()], pos_integer()) ::
-          {:ok, raw_exec()} | {:error, error()}
+          {:ok, exec()} | {:error, error()}
   def exec(nil, _sprite, _argv, _timeout_sec), do: {:error, :unconfigured}
 
   def exec(cfg, sprite, argv, timeout_sec) when is_list(argv) do
@@ -248,7 +240,7 @@ defmodule Ravix.Sprites do
   end
 
   @doc """
-  A shell command, with its exit code and its final directory.
+  A shell command, and, beside it, the directory it ended in.
 
   The command runs under `sh -c` in `cwd`, and then the wrapper prints where
   it ended up on its own line. That last part is what makes the terminal
@@ -256,19 +248,25 @@ defmodule Ravix.Sprites do
   since each exec is a fresh process, the something is this line and the
   cwd the client sends back with the next command.
 
+  Two answers, so two values. The directory is not something the command
+  produced; it is a line the wrapper printed, which this cuts back out of
+  stdout. It used to be a fourth key on a copy of the exec type, which is
+  what made the two types look like two shapes.
+
   The marker is a random-looking sentinel rather than a newline convention
   because a command's own output is arbitrary and will eventually contain
   whatever separator you picked.
   """
   @spec shell(config(), String.t(), String.t(), String.t(), pos_integer()) ::
-          {:ok, shell_exec()} | {:error, error()}
+          {:ok, exec(), String.t()} | {:error, error()}
   def shell(cfg, sprite, command, cwd, timeout_sec) do
     script =
       "cd #{shq(cwd)} 2>/dev/null || cd /home/sprite; { #{command}\n }; __rc=$?; " <>
         "printf '\\n#{@cwd_marker}%s\\n' \"$PWD\"; exit $__rc"
 
     with {:ok, raw} <- exec(cfg, sprite, ["sh", "-lc", script], timeout_sec) do
-      {:ok, split_cwd(raw, cwd)}
+      {ran, ended_in} = split_cwd(raw, cwd)
+      {:ok, ran, ended_in}
     end
   end
 
@@ -313,11 +311,11 @@ defmodule Ravix.Sprites do
   same as a failing command, and reporting a non-zero code for one would put
   a red exit line under working output.
   """
-  @spec decode_frames(binary()) :: raw_exec()
+  @spec decode_frames(binary()) :: exec()
   def decode_frames(raw) when is_binary(raw), do: decode_frames(raw, [], [], 0)
 
   defp decode_frames(<<>>, out, err, code) do
-    %{stdout: finish(out), stderr: finish(err), code: code}
+    %Shapes.Exec{stdout: finish(out), stderr: finish(err), code: code}
   end
 
   defp decode_frames(<<@frame_exit, code, rest::binary>>, out, err, _code),
@@ -439,12 +437,15 @@ defmodule Ravix.Sprites do
 
   # ── shell bookkeeping ────────────────────────────────────────────────
 
-  defp split_cwd(%{stdout: stdout} = raw, cwd) do
+  # The exec with the wrapper's line cut back out of stdout, and the line.
+  # A command that never reached the wrapper -- killed on the timeout, say --
+  # printed no marker, and then the caller's own cwd is still the best answer.
+  defp split_cwd(%Shapes.Exec{stdout: stdout} = ran, cwd) do
     needle = "\n" <> @cwd_marker
 
     case :binary.matches(stdout, needle) do
       [] ->
-        Map.put(raw, :cwd, cwd)
+        {ran, cwd}
 
       matches ->
         {index, _length} = List.last(matches)
@@ -452,12 +453,8 @@ defmodule Ravix.Sprites do
         rest = binary_part(stdout, start, byte_size(stdout) - start)
         [line | _] = String.split(rest, "\n", parts: 2)
 
-        %{
-          stdout: binary_part(stdout, 0, index),
-          stderr: raw.stderr,
-          code: raw.code,
-          cwd: blank_to(String.trim(line), cwd)
-        }
+        {%Shapes.Exec{ran | stdout: binary_part(stdout, 0, index)},
+         blank_to(String.trim(line), cwd)}
     end
   end
 

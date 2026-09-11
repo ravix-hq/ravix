@@ -231,15 +231,17 @@ defmodule Ravix.Terminal do
       started = System.monotonic_time(:millisecond)
 
       case Sprites.shell(sprites, sprite, request.command, cwd, request.timeout_sec) do
-        {:ok, r} ->
+        {:ok, ran, ended_in} ->
           {:ok,
            %Result{
-             stdout: r.stdout,
-             stderr: r.stderr,
-             code: r.code,
-             # Where the shell actually ended up, so the next command starts there.
-             cwd: Sprites.resolve_cwd(track.workdir, r.cwd),
-             timed_out: r.code == 124,
+             stdout: ran.stdout,
+             stderr: ran.stderr,
+             code: ran.code,
+             # Where the shell actually ended up, so the next command starts
+             # there --- pinned back under the track's directory, because the
+             # box decides where it went and this decides where it may be.
+             cwd: Sprites.resolve_cwd(track.workdir, ended_in),
+             timed_out: ran.code == 124,
              duration_ms: System.monotonic_time(:millisecond) - started
            }}
 

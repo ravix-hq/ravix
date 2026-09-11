@@ -36,6 +36,39 @@ defmodule Ravix.Sprites.Shapes do
   which it matches on and closes, and `stage`, which it does not.
   """
 
+  defmodule Exec do
+    @moduledoc """
+    What one command produced: the two streams, kept apart, and its exit code.
+
+    Sprites answers an exec with a frame stream rather than plain bytes ---
+    `<id byte><payload up to the next byte < 4>`, with a two-byte exit frame
+    --- which is how stdout and stderr stay separate and how the code
+    arrives at all. `Ravix.Sprites.decode_frames/1` is the one place that is
+    read, and this is what it reads into.
+
+    It was two map types: `raw_exec` for `exec/4` and `shell_exec`, which
+    was `raw_exec` written out again with `cwd` on the end. There is one
+    shape here, not two. The directory a shell ended in is not part of what
+    a command produced --- it is a second answer, printed by the wrapper on
+    its own line and cut back out of stdout --- so `Ravix.Sprites.shell/5`
+    returns it beside this rather than inside it, the way
+    `Ravix.Accounts.open_session/1` answers `{:ok, user, expires_at}`.
+
+    A missing exit frame reads as `code: 0`. A truncated response is not the
+    same as a failing command, and reporting a non-zero code for one would
+    put a red exit line under working output.
+    """
+
+    @enforce_keys [:stdout, :stderr, :code]
+    defstruct @enforce_keys
+
+    @type t :: %__MODULE__{
+            stdout: String.t(),
+            stderr: String.t(),
+            code: non_neg_integer()
+          }
+  end
+
   defmodule Service do
     @moduledoc "A managed service, as `GET /v1/services/:name` describes it."
 
