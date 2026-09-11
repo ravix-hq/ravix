@@ -379,7 +379,7 @@ defmodule Ravix.PreviewsTest do
   end
 
   test "the supervision tree is three children, the reconciler behind a cluster singleton" do
-    assert [{Registry, _}, {DynamicSupervisor, _}, {Ravix.Cluster.Singleton, singleton}] =
+    assert [{DynamicSupervisor, _}, {Ravix.Cluster.Singleton, singleton}] =
              Previews.child_specs()
 
     # The tick must run on one instance, not on each of them (ADR 0003).

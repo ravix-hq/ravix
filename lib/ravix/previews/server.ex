@@ -5,14 +5,37 @@ defmodule Ravix.Previews.Server do
   The TypeScript kept three maps on the manager: `operations` (a promise
   chain per track, so starts, stops and reconfigurations of one preview
   never overlap), `holds` (when the Sprites activity task was last
-  refreshed) and `destinations`. Here the chain is a mailbox: every
-  operation on a track is a call into that track's server, run to
-  completion before the next, and the hold timestamp is the server's own
-  memory. The database work that changes *intent* (desired state,
-  generation, grants) is still done by the caller, in `Ravix.Previews`,
-  before the operation is queued, which is what lets a stop that arrives
-  during a sixty-second startup take effect: the startup re-reads the row at
-  every step and abandons itself when the generation moved on.
+  refreshed) and `destinations`. Here the chain is an explicit queue in this
+  server's state, the hold timestamp is a field beside it, and the work runs
+  in a supervised task under `Ravix.TaskSupervisor`. The database work that
+  changes *intent* (desired state, generation, grants) is still done by the
+  caller, in `Ravix.Previews`, before the operation is queued, which is what
+  lets a stop that arrives during a sixty-second startup take effect: the
+  startup re-reads the row at every step and abandons itself when the
+  generation moved on.
+
+  ## Why the work is not done in `handle_call/3`
+
+  It was, and that made this a mutex wearing a GenServer's clothes. An
+  operation is a startup that probes for readiness for up to sixty seconds
+  with `Clock.sleep/1` between probes, so for that whole time the process
+  could answer nothing: not `busy?/1`, not its own `@idle_ms` timeout, not a
+  `stop/1`. A Sprites call that hung hung the track's preview for the life of
+  the deployment, cluster-wide, with nothing to recover it but killing the
+  pid by hand -- and `run/2` waits `:infinity`, so every later caller queued
+  behind it forever too.
+
+  It also cost a whole second mechanism. The `:idle`/`:busy` flag lived in a
+  node-local `Ravix.Previews.Registry` for one reason, stated plainly in the
+  comment that used to be here: the server's mailbox was, when the answer
+  mattered, exactly what was blocked. A server that answers its own mailbox
+  needs no side channel, so the registry, the `:erpc` hop to the owning
+  instance and the exported `local_busy?/1` are all gone -- `busy?/1` is a
+  `GenServer.call/3`, which crosses nodes by itself.
+
+  Serialisation is unchanged and is the queue's, not the mailbox's: one
+  operation runs at a time, in arrival order, and the next starts only when
+  the task carrying the last one reports.
 
   Servers are started on demand under `Ravix.Previews.Supervisor` and named
   through `:global` (`Ravix.Cluster.via/2`), so there is one per track in the
@@ -21,11 +44,6 @@ defmodule Ravix.Previews.Server do
   nothing to do for ten minutes stops. They carry the `$callers` of whoever
   started them, so the SQL sandbox and Mimic follow a test into them.
 
-  `Ravix.Previews.Registry` stays, demoted to one job: the `:idle`/`:busy` flag
-  that `busy?/1` reads. It is node-local, on whichever instance owns the server,
-  because a `:global` name carries no value and the flag has to be readable
-  without sending the server a message -- its mailbox is, when the answer
-  matters, exactly what is blocked.
   """
 
   use GenServer, restart: :temporary
@@ -39,7 +57,6 @@ defmodule Ravix.Previews.Server do
   alias Ravix.Sprites
   alias Ravix.Sprites.Shapes
 
-  @registry Ravix.Previews.Registry
   @supervisor Ravix.Previews.Supervisor
   @start_ms 60_000
   @probe_ms 500
@@ -47,11 +64,10 @@ defmodule Ravix.Previews.Server do
   @hold_ms 30_000
   @idle_ms 10 * 60_000
   @check_timeout_sec 15
-  # Reading one flag off a sibling instance. Short on purpose: the caller is a
+  # Asking a sibling instance one question. Short on purpose: the caller is a
   # fifteen-second reconciliation tick, and a slow answer is worth less than a
   # prompt "assume busy" (see `busy?/1`).
   @busy_timeout_ms 1_000
-  @hold_key :ravix_preview_hold_at
 
   @typedoc "What a server is asked to do, in order of arrival."
   @type operation ::
@@ -60,13 +76,10 @@ defmodule Ravix.Previews.Server do
 
   @typep failure :: {:error, :stale} | {:error, term(), Row.t()}
 
-  @doc "The child specs of the registry and supervisor the servers live under."
+  @doc "The child spec of the supervisor the servers live under."
   @spec child_specs() :: [{module(), keyword()}]
   def child_specs do
-    [
-      {Registry, keys: :unique, name: @registry},
-      {DynamicSupervisor, name: @supervisor, strategy: :one_for_one}
-    ]
+    [{DynamicSupervisor, name: @supervisor, strategy: :one_for_one}]
   end
 
   @doc false
@@ -123,33 +136,28 @@ defmodule Ravix.Previews.Server do
   @doc """
   Whether an operation is in flight on a track (`operations.has` in the TypeScript).
 
-  The flag is held on the instance that owns the server, so this reads across the
-  cluster when it has to. An instance that cannot answer counts as busy: the only
-  caller is `Ravix.Previews.Reconciler`, deciding whether to queue an `:ensure`,
-  and "leave this track alone and come back in fifteen seconds" is the answer
-  that cannot start work behind an operation it could not see.
+  The server answers for itself, wherever in the cluster it is: a
+  `GenServer.call/3` to a `:global` name crosses nodes on its own, which is
+  what the node-local registry and the `:erpc` hop to its owner were standing
+  in for while the mailbox was blocked.
+
+  A track with no server is not busy, and is not given one for the asking. An
+  instance that cannot answer in time counts as busy: the only caller is
+  `Ravix.Previews.Reconciler`, deciding whether to queue an `:ensure`, and
+  "leave this track alone and come back in fifteen seconds" is the answer that
+  cannot start work behind an operation it could not see.
+
+  Asking does not keep a server alive; see `timeout/1`.
   """
   @spec busy?(String.t()) :: boolean()
   def busy?(track_id) do
     case Ravix.Cluster.whereis(:preview, track_id) do
       nil -> false
-      pid -> pid |> node() |> busy_on(track_id)
+      pid -> GenServer.call(pid, :busy?, @busy_timeout_ms)
     end
-  end
-
-  @doc false
-  @spec busy_on(node(), String.t()) :: boolean()
-  def busy_on(owner, track_id) when owner == node(), do: local_busy?(track_id)
-
-  def busy_on(owner, track_id) do
-    :erpc.call(owner, __MODULE__, :local_busy?, [track_id], @busy_timeout_ms)
   catch
     _kind, _reason -> true
   end
-
-  @doc false
-  @spec local_busy?(String.t()) :: boolean()
-  def local_busy?(track_id), do: match?([{_, :busy}], Registry.lookup(@registry, track_id))
 
   @doc "Stop a track's server if it is running (tests, and a track that is gone)."
   @spec stop(String.t()) :: :ok
@@ -164,56 +172,143 @@ defmodule Ravix.Previews.Server do
 
   # ── the process ──────────────────────────────────────────────────────
 
+  @typep running :: %{ref: reference(), from: GenServer.from()}
+
+  @typep state :: %{
+           track_id: String.t(),
+           queue: :queue.queue({GenServer.from(), operation()}),
+           running: running() | nil,
+           idle_since: integer(),
+           held_at: integer()
+         }
+
   @impl true
   def init(opts) do
     Process.put(:"$callers", Keyword.get(opts, :callers, []))
-    {:ok, %{track_id: Keyword.fetch!(opts, :track_id)}, @idle_ms}
+
+    state = %{
+      track_id: Keyword.fetch!(opts, :track_id),
+      queue: :queue.new(),
+      running: nil,
+      idle_since: monotonic_ms(),
+      held_at: 0
+    }
+
+    {:ok, state, timeout(state)}
   end
 
   @impl true
-  def handle_call({:run, operation}, _from, state) do
-    mark(state.track_id, :busy)
-
-    result =
-      try do
-        perform(operation, state.track_id)
-      rescue
-        error ->
-          Logger.error("ravix: preview operation #{state.track_id}: #{Exception.message(error)}")
-          {:error, error}
-      after
-        mark(state.track_id, :idle)
-      end
-
-    {:reply, result, state, @idle_ms}
+  # Queued, not run here. See the module documentation: an operation is up to
+  # sixty seconds of provider calls and `Clock.sleep/1`, and doing that inside
+  # the callback is what left the process unable to answer anything at all.
+  def handle_call({:run, operation}, from, state) do
+    state = advance(%{state | queue: :queue.in({from, operation}, state.queue)})
+    {:noreply, state, timeout(state)}
   end
 
-  @impl true
-  def handle_info(:timeout, state), do: {:stop, :normal, state}
-  def handle_info(_other, state), do: {:noreply, state, @idle_ms}
+  def handle_call(:busy?, _from, state),
+    do: {:reply, state.running != nil, state, timeout(state)}
 
-  # Registered on first use rather than in `init/1`. A predecessor for this
-  # track has already released its `:global` name by the time a successor can
-  # start, but `Registry` reaps its entry on a monitor message, which may not
-  # have arrived yet; an operation is late enough that it has.
-  defp mark(track_id, value) do
-    case Registry.update_value(@registry, track_id, fn _ -> value end) do
-      :error -> Registry.register(@registry, track_id, value)
-      {_new, _old} -> :ok
+  @impl true
+  # From the task, which refreshed the Sprites activity lease. Fire and forget
+  # on purpose: it only rate-limits the next refresh, so a cast that arrives
+  # after the operation ended costs one extra hold and nothing else.
+  def handle_cast({:held, at}, state),
+    do: {:noreply, %{state | held_at: at}, timeout(state)}
+
+  @impl true
+  def handle_info({ref, result}, %{running: %{ref: ref}} = state) do
+    Process.demonitor(ref, [:flush])
+    GenServer.reply(state.running.from, result)
+    settle(state)
+  end
+
+  # The task died without reporting -- killed, or taken down with its
+  # supervisor. The caller is answered rather than left on an `:infinity` call
+  # that will never return, which the old in-callback version could not do at
+  # all: an operation that took the process down took every waiter with it.
+  def handle_info({:DOWN, ref, :process, _pid, reason}, %{running: %{ref: ref}} = state) do
+    Logger.error("ravix: preview operation #{state.track_id} died: #{inspect(reason)}")
+    GenServer.reply(state.running.from, {:error, :preview_operation_down})
+    settle(state)
+  end
+
+  # Only ever reached with nothing running: `timeout/1` answers `:infinity`
+  # while an operation is in flight, and `advance/1` drains the queue on every
+  # enqueue and every settle, so an idle server is also an empty one.
+  def handle_info(:timeout, %{running: nil} = state), do: {:stop, :normal, state}
+
+  def handle_info(_other, state), do: {:noreply, state, timeout(state)}
+
+  defp settle(state) do
+    state = advance(%{state | running: nil, idle_since: monotonic_ms()})
+    {:noreply, state, timeout(state)}
+  end
+
+  # Start the next operation if one is waiting and none is running. The task is
+  # `async_nolink` so a crash inside it reaches `handle_info/2` as a message
+  # rather than taking this server -- and the queue behind it -- down.
+  @spec advance(state()) :: state()
+  defp advance(%{running: nil} = state) do
+    case :queue.out(state.queue) do
+      {{:value, {from, operation}}, queue} ->
+        owner = self()
+        track_id = state.track_id
+        held_at = state.held_at
+
+        task =
+          Task.Supervisor.async_nolink(Ravix.TaskSupervisor, fn ->
+            safely(operation, track_id, held_at, owner)
+          end)
+
+        %{state | running: %{ref: task.ref, from: from}, queue: queue}
+
+      {:empty, _queue} ->
+        state
     end
-
-    :ok
   end
 
-  defp perform({:ensure_running, generation, mode}, track_id) do
+  defp advance(state), do: state
+
+  # Idle time left before this server stops, or `:infinity` while an operation
+  # is in flight. Counted from when the last one finished rather than reset on
+  # every message, so the reconciler's fifteen-second `busy?/1` poll cannot
+  # keep an idle server alive for the life of the deployment.
+  #
+  # The monotonic clock, not `Ravix.Clock`. This is elapsed housekeeping time
+  # rather than one of the "is it later than X yet" questions that clock
+  # exists for, and reading the stubbed one here would tie a server's
+  # lifetime to a fixture that ends with the test while the server is still
+  # up.
+  @spec timeout(state()) :: timeout()
+  defp timeout(%{running: nil, idle_since: since}),
+    do: max(@idle_ms - (monotonic_ms() - since), 0)
+
+  defp timeout(_running), do: :infinity
+
+  defp monotonic_ms, do: System.monotonic_time(:millisecond)
+
+  # The rescue the callback used to hold. Kept here rather than left to the
+  # `:DOWN` clause because callers match on the exception itself, and because
+  # a provider that raises is an ordinary failure of this operation rather
+  # than of the server.
+  defp safely(operation, track_id, held_at, owner) do
+    perform(operation, track_id, held_at, owner)
+  rescue
+    error ->
+      Logger.error("ravix: preview operation #{track_id}: #{Exception.message(error)}")
+      {:error, error}
+  end
+
+  defp perform({:ensure_running, generation, mode}, track_id, held_at, owner) do
     case Store.get(track_id) do
-      %Row{generation: ^generation} -> ensure_running(track_id, mode)
+      %Row{generation: ^generation} -> ensure_running(track_id, mode, held_at, owner)
       _ -> :ok
     end
   end
 
-  defp perform({:retire, row, mode, changes}, _track_id) do
-    with :ok <- retire(row, mode), do: update(row, changes)
+  defp perform({:retire, row, mode, changes}, _track_id, _held_at, owner) do
+    with :ok <- retire(row, mode, owner), do: update(row, changes)
   end
 
   # ── shared with the caller-side operations ───────────────────────────
@@ -254,13 +349,13 @@ defmodule Ravix.Previews.Server do
 
   # Stop the service and release its activity task; delete it when the
   # track is done with it.
-  defp retire(%Row{sprite: nil}, _mode), do: :ok
+  defp retire(%Row{sprite: nil}, _mode, _owner), do: :ok
 
-  defp retire(%Row{} = row, mode) do
+  defp retire(%Row{} = row, mode, owner) do
     with %Ravix.Config.Sprites{} = cfg <- Sprites.config(),
          {:ok, _} <- Sprites.service_action(cfg, row.sprite, row.service, :stop),
          :ok <- release_activity(cfg, row),
-         _ = Process.delete(@hold_key),
+         _ = GenServer.cast(owner, {:held, 0}),
          {:ok, _} <- remove(cfg, row, mode) do
       :ok
     else
@@ -290,15 +385,20 @@ defmodule Ravix.Previews.Server do
 
   # Refresh the two-minute Sprites task while the viewing lease is held, at
   # most every thirty seconds.
-  defp hold(%Row{} = row) do
+  #
+  # `held_at` is the server's, not this process's. It was in the process
+  # dictionary of the server that ran the operation inline -- a module-scoped
+  # `let lastHold = 0` in everything but syntax, invisible to
+  # `:sys.get_state/1` and named in no state at all -- which stopped working
+  # the moment the work moved to a task with a dictionary of its own.
+  defp hold(%Row{} = row, held_at, owner) do
     now = Clock.now_ms()
-    held_at = Process.get(@hold_key, 0)
 
     if row.sprite == nil or row.lease_until <= now or held_at > now - @hold_ms do
       :ok
     else
       with :ok <- Sprites.activity(Sprites.config(), row.sprite, row.service, :hold) do
-        Process.put(@hold_key, now)
+        GenServer.cast(owner, {:held, now})
         :ok
       end
     end
@@ -306,31 +406,31 @@ defmodule Ravix.Previews.Server do
 
   # ── ensure_running ───────────────────────────────────────────────────
 
-  defp ensure_running(track_id, mode) do
+  defp ensure_running(track_id, mode, held_at, owner) do
     with %Row{} = row <- Store.get(track_id),
          true <- current?(row) do
-      case start(row, mode) do
+      case start(row, mode, held_at, owner) do
         :ok -> :ok
         {:error, :stale} -> :ok
-        {:error, reason, row} -> fail(row, reason)
+        {:error, reason, row} -> fail(row, reason, owner)
       end
     else
       _ -> :ok
     end
   end
 
-  @spec start(Row.t(), Previews.start_mode()) :: :ok | failure()
-  defp start(row, mode) do
+  @spec start(Row.t(), Previews.start_mode(), integer(), pid()) :: :ok | failure()
+  defp start(row, mode, held_at, owner) do
     with {:ok, %{track: track, project: project}} <- open(row),
          {:ok, config} <- config_for(row, project),
          {:ok, machine} <- machine(row, project),
          {:ok, sprite} <- sprite(row, machine),
          :ok <- fresh(row),
-         {:ok, row} <- replace_if_moved(row, machine, sprite),
+         {:ok, row} <- replace_if_moved(row, machine, sprite, owner),
          {:ok, row} <- allocate(row, machine, sprite),
          {:ok, row} <- define(row, track, config, mode),
          :ok <- fresh(row),
-         :ok <- sprites(hold(Store.get(row.track_id) || row), row) do
+         :ok <- sprites(hold(Store.get(row.track_id) || row, held_at, owner), row) do
       await_ready(row, project, config, Clock.now_ms() + @start_ms, @max_probes)
     end
   end
@@ -374,13 +474,13 @@ defmodule Ravix.Previews.Server do
 
   # A service on a machine that is gone is retired before a new one is
   # defined, under a new generation so nothing from before can publish.
-  defp replace_if_moved(%Row{sprite: nil} = row, _machine, _sprite), do: {:ok, row}
+  defp replace_if_moved(%Row{sprite: nil} = row, _machine, _sprite, _owner), do: {:ok, row}
 
-  defp replace_if_moved(row, machine, sprite) do
+  defp replace_if_moved(row, machine, sprite, owner) do
     if row.sprite == sprite and row.sandbox_id == machine.sandbox_id do
       {:ok, row}
     else
-      with :ok <- sprites(retire(row, :cleanup), row),
+      with :ok <- sprites(retire(row, :cleanup, owner), row),
            :ok <- fresh(row) do
         update(row,
           sprite: nil,
@@ -553,10 +653,10 @@ defmodule Ravix.Previews.Server do
 
   # Record a failed startup: keep the logs, stop the service, and stop
   # trying until somebody opens or restarts the preview again.
-  defp fail(row, reason) do
+  defp fail(row, reason, owner) do
     if current?(row) do
       logs = failure_logs(row)
-      retire_or_defer(row)
+      retire_or_defer(row, owner)
 
       update(row,
         state: :failed,
@@ -579,10 +679,10 @@ defmodule Ravix.Previews.Server do
     end
   end
 
-  defp retire_or_defer(%Row{sprite: nil}), do: :ok
+  defp retire_or_defer(%Row{sprite: nil}, _owner), do: :ok
 
-  defp retire_or_defer(row) do
-    case retire(row, :stop) do
+  defp retire_or_defer(row, owner) do
+    case retire(row, :stop, owner) do
       :ok -> :ok
       {:error, _reason} -> update(row, stop_pending: true)
     end
