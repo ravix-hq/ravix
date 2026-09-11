@@ -67,7 +67,7 @@
       <section class="track-conversation" aria-label="Conversation">
         <div id="transcript-scroll" phx-hook="TranscriptTail" class="transcript-scroll">
           <div class="track-ribbon">
-            <p :if={(@header || %{})[:copy_of]} class="track-copy">
+            <p :if={@header && @header.copy_of} class="track-copy">
               You are in a copy of {@header.copy_of} called
               <code>{Path.basename(@track.workdir)}</code>
             </p>

@@ -548,7 +548,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
 
   defp stub_track(track) do
     stub(Tracks, :get, fn _, _ ->
-      {:ok, %{track: Tracks.present(track), header: %{}, starters: []}}
+      {:ok, %{track: Tracks.present(track), header: blank_header(), starters: []}}
     end)
 
     stub(Tracks, :events, fn _, _ -> {:ok, Transcript.empty("")} end)
@@ -565,4 +565,16 @@ defmodule RavixWeb.WorkspaceLiveTest do
        }}
     end)
   end
+
+  # The ribbon a track with no repository and no setup script gets. A real
+  # `Ravix.Tracks.Header` rather than `%{}`: the template reads a field off
+  # it, and a stub that answers with an empty map is how a page renders
+  # in a test and raises in production.
+  defp blank_header,
+    do: %Ravix.Tracks.Header{
+      copy_of: nil,
+      branched_from: nil,
+      created: %{dir: "t", files: nil},
+      has_setup_script: false
+    }
 end

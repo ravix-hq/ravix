@@ -3,6 +3,7 @@ defmodule Ravix.AccountsTest do
   use Mimic
 
   alias Ravix.Accounts
+  alias Ravix.Accounts.{Capabilities, SessionInfo}
   alias Ravix.Accounts.{OAuthState, Session, User}
   alias Ravix.Crypto
   alias Ravix.GitHubFake, as: Fake
@@ -191,11 +192,11 @@ defmodule Ravix.AccountsTest do
       stub(Ravix.Config, :sprites, fn -> nil end)
       stub(Ravix.Config, :fountain, fn -> %Ravix.Config.Fountain{url: "https://f", key: nil} end)
 
-      assert Accounts.session_info(nil) == %{
+      assert Accounts.session_info(nil) == %SessionInfo{
                viewer: nil,
                sign_in_url: "",
                install_url: "",
-               capabilities: %{exec: false, github: false, vaults: false}
+               capabilities: %Capabilities{exec: false, github: false, vaults: false}
              }
 
       user = insert_user(token_enc: Crypto.encrypt("gho_x"))
