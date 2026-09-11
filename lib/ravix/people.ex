@@ -62,11 +62,21 @@ defmodule Ravix.People do
 
   ## Shape of this module
 
-  Every function here takes the signed-in `%Ravix.Accounts.User{}` and goes
-  through one of the doors in `Ravix.Accounts.Access` before touching a row.
-  There are no exceptions, and that is now something the compiler can show
-  rather than something a reader has to check: the rows themselves live in
-  `Ravix.People.Store`, which takes ids and asks nobody's permission.
+  Every function a page may call takes the signed-in
+  `%Ravix.Accounts.User{}` and goes through one of the doors in
+  `Ravix.Accounts.Access` before touching a row, and that is now something
+  the compiler can show rather than something a reader has to check: the
+  rows themselves live in `Ravix.People.Store`, which takes ids and asks
+  nobody's permission.
+
+  The two invite-link functions take no user, because an invitation is how
+  somebody arrives *before* they have any access to establish.
+  `link_target/1` says what a link opens for a browser holding one, which
+  is deliberately readable by anyone who has the token and nothing else;
+  `claim_link/2` takes a user *id* rather than a struct, because the
+  sign-in callback has only just created the row. Both are documented
+  individually below, and `Ravix.ArchitectureTest` keeps that list and this
+  paragraph agreeing.
 
   They shared this module until they did not. `drop_link/2` refused anyone
   but the owner and `drop_link/1` refused nobody, forty lines apart under a

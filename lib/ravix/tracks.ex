@@ -18,10 +18,25 @@ defmodule Ravix.Tracks do
   afterwards, and the composer stays live because Ravix saves follow-up
   prompts on the server until the conversation is ready.
 
-  Every function here takes the `%Ravix.Accounts.User{}` and goes through one
-  of the three doors in `Ravix.Accounts.Access` first. There are no
-  exceptions; the rows themselves are `Ravix.Tracks.Store`, which takes ids
-  and asks nobody.
+  Every function a *page* may call takes the `%Ravix.Accounts.User{}` and
+  goes through one of the three doors in `Ravix.Accounts.Access` first.
+  There are no exceptions to that; the rows themselves are
+  `Ravix.Tracks.Store`, which takes ids and asks nobody.
+
+  Five functions here take no user, and each takes a subject another
+  context has already been let in to. `machine_of/2`, `sprite_for/1` and
+  `close_all_for_rebuild/2` are asked by `Ravix.Previews`, `Ravix.Terminal`,
+  `Ravix.Vitals` and `Ravix.Projects` about a `%Project{}` or a sandbox id
+  they hold; `present/2` and `origin_info/1` turn a row the caller already
+  has into the shape a page reads. None is reachable from `lib/ravix_web/`
+  --- every web caller arrives through the scoped functions above --- and
+  that is the property worth checking when one is added, rather than the
+  arity.
+
+  This used to read "every function here takes the user... there are no
+  exceptions", which was the intent and not the code. A stated invariant
+  that is false is worse than none, because the next person reads it
+  instead of the call site.
   """
 
   alias Ravix.Accounts.Access
