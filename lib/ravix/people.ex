@@ -139,7 +139,7 @@ defmodule Ravix.People do
   # ── the invite box ───────────────────────────────────────────────────
 
   @doc """
-  The invite box's autocomplete (`GET /api/users?q=`).
+  The invite box's autocomplete.
 
   This searches **everyone who has ever signed in to this deployment**, and
   that is a deliberate, accepted trade rather than an oversight: it means
@@ -171,7 +171,7 @@ defmodule Ravix.People do
 
   # ── a track's people ─────────────────────────────────────────────────
 
-  @doc "Who can reach this track (`GET /api/tracks/:id/people`)."
+  @doc "Who can reach this track."
   @spec list(User.t(), String.t()) :: {:ok, [Store.person()]} | {:error, :not_found}
   def list(%User{} = user, track_id) do
     with {:ok, %{track: track, project: project}} <- Access.track_access(user, track_id) do
@@ -180,7 +180,7 @@ defmodule Ravix.People do
   end
 
   @doc """
-  Invite somebody to a track by GitHub login (`POST /api/tracks/:id/people`).
+  Invite somebody to a track by GitHub login.
 
   They need not already have signed in here: a username with no account is
   resolved against GitHub and the invitation waits on their account. What
@@ -225,8 +225,7 @@ defmodule Ravix.People do
   end
 
   @doc """
-  The owner removing somebody from a track, or somebody removing themselves
-  (`DELETE /api/tracks/:id/people/:login`).
+  The owner removing somebody from a track, or somebody removing themselves.
 
   Both are the same row and the same effect, so they are the same function.
   The difference is only who may ask, and letting a member leave without
@@ -293,9 +292,9 @@ defmodule Ravix.People do
     end
   end
 
-  # ── the same three routes, one level up ──────────────────────────────
+  # ── the same three, one level up ──────────────────────────────────────
 
-  @doc "Who can reach every track on this project (`GET /api/projects/:id/people`)."
+  @doc "Who can reach every track on this project."
   @spec list_project(User.t(), String.t()) :: {:ok, [Store.person()]} | {:error, :not_found}
   def list_project(%User{} = user, project_id) do
     with {:ok, %{project: project}} <- Access.project_access(user, project_id) do
@@ -304,7 +303,7 @@ defmodule Ravix.People do
   end
 
   @doc """
-  Invite somebody to the whole project (`POST /api/projects/:id/people`).
+  Invite somebody to the whole project.
 
   The same act as the track's, one level up, and the same two outcomes: a
   membership for somebody who has signed in here, an invitation waiting on
@@ -347,8 +346,7 @@ defmodule Ravix.People do
   end
 
   @doc """
-  The owner removing somebody from a project, or somebody leaving
-  (`DELETE /api/projects/:id/people/:login`).
+  The owner removing somebody from a project, or somebody leaving.
 
   This gives up **every track on the project**, in one go and including
   any the person was named on individually before they were let into the
@@ -501,7 +499,7 @@ defmodule Ravix.People do
 
   # ── the other way in: a link ─────────────────────────────────────────
 
-  @doc "Whether a track link is out, never the link itself (`GET /api/tracks/:id/link`). Owner-only."
+  @doc "Whether a track link is out, never the link itself. Owner-only."
   @spec link(User.t(), String.t()) :: {:ok, invite_link() | nil} | {:error, reason()}
   def link(%User{} = user, track_id) do
     with {:ok, %{track: track, role: role}} <- Access.track_access(user, track_id),
@@ -514,7 +512,7 @@ defmodule Ravix.People do
   end
 
   @doc """
-  Mint a track link, replacing whatever was out (`POST /api/tracks/:id/link`).
+  Mint a track link, replacing whatever was out.
 
   Minting is also the revoke: there is one row per track, so a new link
   silently kills the old one. That is the behaviour people expect from a
@@ -533,7 +531,7 @@ defmodule Ravix.People do
   end
 
   @doc """
-  Revoke a track link (`DELETE /api/tracks/:id/link`): nobody new gets in on it.
+  Revoke a track link: nobody new gets in on it.
 
   Deliberately not a removal: people who already came in on this link stay,
   and the owner takes them out by name if that is what they meant. A revoke
@@ -548,7 +546,7 @@ defmodule Ravix.People do
     end
   end
 
-  @doc "Whether a project link is out, never the link itself (`GET /api/projects/:id/link`). Owner-only."
+  @doc "Whether a project link is out, never the link itself. Owner-only."
   @spec project_link(User.t(), String.t()) :: {:ok, invite_link() | nil} | {:error, reason()}
   def project_link(%User{} = user, project_id) do
     with {:ok, %{project: project, role: role}} <- Access.project_access(user, project_id),
@@ -557,7 +555,7 @@ defmodule Ravix.People do
     end
   end
 
-  @doc "Mint a project link, replacing whatever was out (`POST /api/projects/:id/link`). Owner-only."
+  @doc "Mint a project link, replacing whatever was out. Owner-only."
   @spec mint_project_link(User.t(), String.t()) :: {:ok, invite_link()} | {:error, reason()}
   def mint_project_link(%User{} = user, project_id) do
     with {:ok, %{project: project, role: role}} <- Access.project_access(user, project_id),
@@ -575,7 +573,7 @@ defmodule Ravix.People do
     end
   end
 
-  @doc "Revoke a project link (`DELETE /api/projects/:id/link`): nobody new gets in on it. Owner-only."
+  @doc "Revoke a project link: nobody new gets in on it. Owner-only."
   @spec drop_project_link(User.t(), String.t()) :: :ok | {:error, reason()}
   def drop_project_link(%User{} = user, project_id) do
     with {:ok, %{project: project, role: role}} <- Access.project_access(user, project_id),

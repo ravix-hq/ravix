@@ -86,7 +86,7 @@ defmodule Ravix.Tracks do
   # ── reading ───────────────────────────────────────────────────────────
 
   @doc """
-  `GET /api/projects/:id/tracks`.
+  Every track on a project that the caller may see: the sidebar's list.
 
   The owner and anybody invited to the whole project see all of its tracks.
   Somebody invited to particular tracks sees those and is not told there
@@ -137,7 +137,7 @@ defmodule Ravix.Tracks do
   end
 
   @doc """
-  `GET /api/tracks/:id`: the track, plus the ribbon that sits above it and
+  The track, plus the ribbon that sits above it and
   the starter chips.
 
   The environment is read for one boolean: the "add a setup script" line in
@@ -198,7 +198,7 @@ defmodule Ravix.Tracks do
   # ── opening ───────────────────────────────────────────────────────────
 
   @doc """
-  `POST /api/projects/:id/tracks`: a new line off the main.
+  A new line off the main.
 
   The four ways in (blank, a branch, a pull request, an issue) differ only
   in what the opening turn is told, which is why they are one function with
@@ -309,7 +309,7 @@ defmodule Ravix.Tracks do
   end
 
   @doc """
-  `POST /api/tracks/:id/retry`: send the opening turn again.
+  Send the opening turn again.
 
   A machine at capacity is the ordinary case when two tracks are opened at
   once (the box runs one turn at a time), so an opening turn that did not
@@ -368,7 +368,7 @@ defmodule Ravix.Tracks do
   # ── talking to it ─────────────────────────────────────────────────────
 
   @doc """
-  `POST /api/tracks/:id/prompt`: accept into the database before
+  Accept into the database before
   acknowledging; `Ravix.PromptQueue` owns delivery.
 
   `payload` (string or atom keys): `prompt`, `images` (`data` base64 and
@@ -411,7 +411,7 @@ defmodule Ravix.Tracks do
   end
 
   @doc """
-  `POST /api/tracks/:id/read`: this person has seen it up to now.
+  This person has seen it up to now.
 
   Sent by the page when a track is open and settled, rather than inferred
   from the read: opening a track to glance at the branch name is not reading
@@ -428,7 +428,7 @@ defmodule Ravix.Tracks do
     end
   end
 
-  @doc "`POST /api/tracks/:id/interrupt`: stop the running turn."
+  @doc "Stop the running turn."
   @spec interrupt(User.t(), String.t()) :: :ok | {:error, reason()}
   def interrupt(%User{} = user, track_id) do
     with {:ok, %{track: track}} <- Access.track_access(user, track_id),
@@ -443,7 +443,7 @@ defmodule Ravix.Tracks do
   end
 
   @doc """
-  `POST /api/tracks/:id/presence`: I am here, and possibly typing.
+  I am here, and possibly typing.
 
   One function for both because they are one heartbeat: the page is already
   saying "still watching" and `typing` rides along rather than opening a
@@ -464,7 +464,7 @@ defmodule Ravix.Tracks do
   def leave(%User{id: user_id}, track_id), do: Ravix.Presence.leave(track_id, user_id)
 
   @doc """
-  `GET /api/tracks/:id/events`: the transcript so far, both halves of it.
+  The transcript so far, both halves of it.
 
   The prompts and the output live in two different places on Fountain and
   are joined on `turn_id`. Joining them here rather than in the page is not
@@ -496,7 +496,7 @@ defmodule Ravix.Tracks do
   end
 
   @doc """
-  `PATCH /api/tracks/:id`: rename the label, and only the label.
+  Rename the label, and only the label.
 
   A track is named before anybody knows what it is (after a pull request, a
   branch, or the yard's own list), so the name it opened with is frequently
@@ -521,7 +521,7 @@ defmodule Ravix.Tracks do
   end
 
   @doc """
-  `DELETE /api/tracks/:id`: close the track and take the worktree away.
+  Close the track and take the worktree away.
 
   The branch is left alone unless `delete_branch: true`: it may be pushed,
   it may be an open pull request, and "close this tab" is not a gesture that
@@ -587,7 +587,7 @@ defmodule Ravix.Tracks do
 
   # ── reading a track's directory ───────────────────────────────────────
 
-  @doc "`GET /api/tracks/:id/files?path=`: one directory, confined to the worktree. Free; it does not wake a parked box."
+  @doc "One directory, confined to the worktree. Free; it does not wake a parked box."
   @spec files(User.t(), String.t(), String.t() | nil) ::
           {:ok, Files.Listing.t()} | {:error, reason()}
   def files(%User{} = user, track_id, path) do
@@ -597,7 +597,7 @@ defmodule Ravix.Tracks do
     end
   end
 
-  @doc "`GET /api/tracks/:id/file?path=`: one file, confined to the worktree."
+  @doc "One file, confined to the worktree."
   @spec file(User.t(), String.t(), String.t() | nil) ::
           {:ok, Files.Content.t()} | {:error, reason()}
   def file(%User{} = user, track_id, path) do
@@ -607,7 +607,7 @@ defmodule Ravix.Tracks do
     end
   end
 
-  @doc "`GET /api/tracks/:id/diff`: `git diff` in this track's worktree, parsed per file."
+  @doc "`git diff` in this track's worktree, parsed per file."
   @spec diff(User.t(), String.t()) :: {:ok, Diff.t()} | {:error, reason()}
   def diff(%User{} = user, track_id) do
     with {:ok, track, client, sandbox_id} <- machine_read(user, track_id),
@@ -645,7 +645,7 @@ defmodule Ravix.Tracks do
   # ── GitHub, for this branch ───────────────────────────────────────────
 
   @doc """
-  `GET /api/tracks/:id/checks`: the Checks tab.
+  The Checks tab.
 
   A branch that has never been pushed is the ordinary state of a new track,
   and the report says so (`pushed: false`) rather than returning an empty
@@ -666,7 +666,7 @@ defmodule Ravix.Tracks do
   end
 
   @doc """
-  `POST /api/tracks/:id/pull`: open a pull request for this track's branch.
+  Open a pull request for this track's branch.
 
   Ravix opens it rather than asking the agent to, when the agent has no
   `gh` on the box. It is authored by the App, which is honest (a machine

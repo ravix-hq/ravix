@@ -118,7 +118,7 @@ defmodule Ravix.Vitals do
 
   defmodule Report do
     @moduledoc """
-    `GET /api/tracks/:id/vitals`: the same four answers the terminal gives.
+    The same four answers the terminal gives.
 
     Reachable but illegible is its own answer -- `readings: nil` with
     `available: true` -- and the dock renders nothing rather than a row of

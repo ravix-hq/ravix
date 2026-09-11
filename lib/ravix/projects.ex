@@ -78,7 +78,7 @@ defmodule Ravix.Projects do
   # ── reading ───────────────────────────────────────────────────────────
 
   @doc """
-  `GET /api/projects`: the caller's own projects, then the ones they were let into.
+  The caller's own projects, then the ones they were let into.
 
   A project somebody let you into shows in the rail beside your own, whether
   they let you into the whole thing or into one track of it; the alternative
@@ -118,7 +118,7 @@ defmodule Ravix.Projects do
   end
 
   @doc """
-  `GET /api/projects/:id`.
+  One project, as the header and the composer above a track read it.
 
   A member needs the project's name, repository and model to render the
   header and the composer above their track. They are given exactly that,
@@ -164,7 +164,7 @@ defmodule Ravix.Projects do
   # ── the machine ───────────────────────────────────────────────────────
 
   @doc """
-  `POST /api/projects`: a repository becomes a machine.
+  A repository becomes a machine.
 
   The repository is read as the *installation* rather than as the person, so
   a private repo resolves and its default branch is real. Reading it also
@@ -196,7 +196,7 @@ defmodule Ravix.Projects do
     end
   end
 
-  @doc "`GET /api/projects/:id/settings`. Owner only."
+  @doc "Everything the settings dialog edits. Owner only."
   @spec settings(User.t(), String.t()) :: {:ok, Settings.t()} | {:error, reason()}
   def settings(%User{} = user, id) do
     with {:ok, project} <- Ravix.Accounts.Access.project_of(user, id),
@@ -206,7 +206,7 @@ defmodule Ravix.Projects do
   end
 
   @doc """
-  `PUT /api/projects/:id/settings`: every field a mutation in place. Owner only.
+  Save the settings dialog: every field a mutation in place. Owner only.
 
   The revision is bumped whenever something Fountain injects at *session*
   start changes, which is not the same set as "things that changed". A setup
@@ -227,7 +227,7 @@ defmodule Ravix.Projects do
   end
 
   @doc """
-  `POST /api/projects/:id/rebuild`: a new machine, the same settings. Owner only.
+  A new machine, the same settings. Owner only.
 
   Retiring the *agent* is what changes the identity, and it leaves the
   environment and the vault, and therefore every repository, package and
@@ -243,7 +243,7 @@ defmodule Ravix.Projects do
     end
   end
 
-  @doc "`DELETE /api/projects/:id`: the machine, its settings and its secrets. Owner only."
+  @doc "The machine, its settings and its secrets. Owner only."
   @spec destroy(User.t(), String.t()) :: :ok | {:error, reason()}
   def destroy(%User{} = user, id) do
     with {:ok, project} <- Ravix.Accounts.Access.project_of(user, id),
@@ -304,7 +304,7 @@ defmodule Ravix.Projects do
   # ── GitHub, as the picker sees it ─────────────────────────────────────
 
   @doc """
-  `GET /api/github/repos?installation=`: the picker's list.
+  The picker's list.
 
   Read with the **user's** token, which answers "what may *you* see":
   installations, and the repositories inside them. Asking the App would list
@@ -340,7 +340,7 @@ defmodule Ravix.Projects do
   end
 
   @doc """
-  `GET /api/projects/:id/refs?kind=`: the three tabs of "create from".
+  The three tabs of "create from".
 
   One function rather than three because the picker switches tabs without
   changing what it is asking about, and three would be three places to
@@ -485,7 +485,7 @@ defmodule Ravix.Projects do
 
   defp require_repo(_project, message), do: {:error, {:conflict, "no_repo", message}}
 
-  # `POST /api/projects` body: repo (200 chars), installation_id, name (120 chars).
+  # What `create/2` takes: repo (200 chars), installation_id, name (120 chars).
   defp parse_create(attrs) do
     attrs = Map.new(attrs, fn {k, v} -> {to_string(k), v} end)
     repo = attrs |> Map.get("repo") |> str(200) |> String.trim()

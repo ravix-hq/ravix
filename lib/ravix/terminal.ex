@@ -92,7 +92,7 @@ defmodule Ravix.Terminal do
   @no_sprite "This machine does not expose a sprite, so Ravix cannot run commands on it directly."
 
   @doc """
-  `POST /api/tracks/:id/exec`: run one command in the track's worktree.
+  Run one command in the track's worktree.
 
   `request` (string or atom keys): `command` (at most 8000 characters),
   `cwd` (pinned under the workdir; the page sends back where the last
@@ -141,7 +141,7 @@ defmodule Ravix.Terminal do
   end
 
   @doc """
-  `GET /api/tracks/:id/exec`: whether the terminal will work.
+  Whether the terminal will work.
 
   Three distinct answers, and the panel renders a different empty state for
   each: no token on this deployment, no machine yet, or a machine that is
