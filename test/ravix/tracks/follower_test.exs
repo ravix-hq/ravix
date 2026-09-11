@@ -3,6 +3,7 @@ defmodule Ravix.Tracks.FollowerTest do
 
   alias Ravix.Fountain.FakeTransport
   alias Ravix.Tracks.Follower
+  alias Ravix.Tracks.Transcript.Event
 
   @stream_opts [max_retries: 0, retry_delay: 1]
 
@@ -62,10 +63,10 @@ defmodule Ravix.Tracks.FollowerTest do
        ctx do
     assert {:ok, _follower} = subscribe(ctx)
     track_id = ctx.track_id
-    assert_receive {:transcript, ^track_id, %{"id" => 1, "data" => "line 1"}}, 1_000
-    assert_receive {:transcript, ^track_id, %{"id" => 2}}, 1_000
+    assert_receive {:transcript, ^track_id, %Event{id: 1, data: "line 1"}}, 1_000
+    assert_receive {:transcript, ^track_id, %Event{id: 2}}, 1_000
     # The second connection asked for what came after 2.
-    assert_receive {:transcript, ^track_id, %{"id" => 3}}, 1_000
+    assert_receive {:transcript, ^track_id, %Event{id: 3}}, 1_000
   end
 
   test "one follower per track, shared by every subscriber", ctx do
@@ -155,7 +156,7 @@ defmodule Ravix.Tracks.FollowerTest do
              )
 
     id = track.id
-    assert_receive {:transcript, ^id, %{"id" => 1}}, 1_000
+    assert_receive {:transcript, ^id, %Event{id: 1}}, 1_000
 
     unopened = insert_track(conversation_id: nil)
     assert {:error, :not_open} = Follower.subscribe(unopened.id)

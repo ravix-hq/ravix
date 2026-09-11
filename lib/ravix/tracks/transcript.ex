@@ -38,13 +38,13 @@ defmodule Ravix.Tracks.Transcript do
 
   alias Managoat.ACP.Blocks
   alias Managoat.ACP.Protocol
+  alias Ravix.Tracks.Transcript.Event
 
   @acp_runtimes ~w(claude codex opencode)
   @tool_kinds ~w(read edit delete move search execute fetch think other)
-  @pending "pending"
 
-  @typedoc "A stored log event, string keys, as `GET /api/conversations/:id/events` serves it."
-  @type event :: %{optional(String.t()) => term()}
+  @typedoc "A parsed log event. See `Ravix.Tracks.Transcript.Event`."
+  @type event :: Event.t()
 
   @typedoc "One turn, as Fountain records it, plus its events and their blocks."
   @type turn :: %{
@@ -69,6 +69,10 @@ defmodule Ravix.Tracks.Transcript do
   @doc """
   Turns and events into one ordered page.
 
+  Events may arrive as `Ravix.Tracks.Transcript.Event` structs or as the raw
+  maps Fountain sends; `Event.from/1` is idempotent, so the public entry
+  points normalise and everything inside works on structs.
+
   Turn order comes from the turns list, because that is the order they were
   asked in and it survives an event log that arrives out of order or with a
   gap in it. Events whose `turn_id` matches no turn (which happens for the
@@ -76,7 +80,7 @@ defmodule Ravix.Tracks.Transcript do
   in a trailing group rather than dropped, so the very first thing a new
   track shows is not an empty panel.
   """
-  @spec page([map()], [event()], String.t()) :: page()
+  @spec page([map()], [Event.t() | map()], String.t()) :: page()
   def page(raw_turns, events, runtime) do
     %{turns: [], last_event_id: nil, runtime: runtime || ""}
     |> add_turns(raw_turns)
@@ -120,7 +124,7 @@ defmodule Ravix.Tracks.Transcript do
   defp ordered_at(_undated), do: {1, ""}
 
   @doc "Every event in `events`, laid into its turn. Duplicates (by id) are ignored."
-  @spec add_events(page(), [event()]) :: page()
+  @spec add_events(page(), [Event.t() | map()]) :: page()
   def add_events(page, events), do: Enum.reduce(events, page, &add_event(&2, &1))
 
   @doc """
@@ -128,10 +132,15 @@ defmodule Ravix.Tracks.Transcript do
   seen this event id already is unchanged, because a snapshot and the
   stream it was taken from overlap.
   """
-  @spec add_event(page(), event()) :: page()
-  def add_event(page, %{"id" => id} = event) when is_integer(id) do
-    turn_id = turn_id_of(event)
+  @spec add_event(page(), Event.t() | map()) :: page()
+  def add_event(page, raw) do
+    case Event.from(raw) do
+      %Event{id: id} = event when is_integer(id) -> place(page, event, id)
+      _unnumbered -> page
+    end
+  end
 
+  defp place(page, %Event{turn_id: turn_id} = event, id) do
     {turns, found?} =
       Enum.map_reduce(page.turns, false, fn turn, found? ->
         if turn.id == turn_id, do: {lay_in(turn, event, page.runtime), true}, else: {turn, found?}
@@ -144,8 +153,6 @@ defmodule Ravix.Tracks.Transcript do
 
     %{page | turns: turns, last_event_id: max(page.last_event_id || 0, id)}
   end
-
-  def add_event(page, _event), do: page
 
   @doc "The turns worth drawing: a prompt somebody typed, or output somebody can read."
   @spec visible_turns(page()) :: [turn()]
@@ -188,7 +195,7 @@ defmodule Ravix.Tracks.Transcript do
 
   defp lay_in(turn, event, runtime) do
     cond do
-      Enum.any?(turn.events, &(&1["id"] == event["id"])) ->
+      Enum.any?(turn.events, &(&1.id == event.id)) ->
         turn
 
       # The streaming case, and the only one that repeats: the event belongs
@@ -202,12 +209,12 @@ defmodule Ravix.Tracks.Transcript do
 
       # Out of order: the order the blocks are in changes, so it is rebuilt.
       true ->
-        rebuild(%{turn | events: Enum.sort_by([event | turn.events], & &1["id"])}, runtime)
+        rebuild(%{turn | events: Enum.sort_by([event | turn.events], & &1.id)}, runtime)
     end
   end
 
   defp appended?([], _event), do: true
-  defp appended?(events, event), do: List.last(events)["id"] < event["id"]
+  defp appended?(events, event), do: List.last(events).id < event.id
 
   # Everything derived, from the events themselves.
   defp rebuild(turn, runtime),
@@ -232,13 +239,6 @@ defmodule Ravix.Tracks.Transcript do
   defp fold(event, runtime, acc), do: output(event, runtime, acc)
   defp blocks_of({blocks, _tools}), do: Enum.reverse(blocks)
 
-  defp turn_id_of(event) do
-    case event["turn_id"] do
-      id when is_binary(id) and id != "" -> id
-      _ -> @pending
-    end
-  end
-
   @doc """
   Has Fountain closed this turn? `stage: "turn"` in any state other than
   `started` is the end of one. A group with no turn stage at all is not
@@ -246,11 +246,7 @@ defmodule Ravix.Tracks.Transcript do
   live ones.
   """
   @spec settled?([event()]) :: boolean()
-  def settled?(events) do
-    Enum.any?(events, fn e ->
-      e["kind"] == "stage" and e["stage"] == "turn" and e["state"] != "started"
-    end)
-  end
+  def settled?(events), do: Enum.any?(events, &Event.settles?/1)
 
   @doc """
   A turn Ravix sent itself, as one line, or nil for a person's prompt.
@@ -280,24 +276,26 @@ defmodule Ravix.Tracks.Transcript do
   dialects (a runtime that never spoke ACP on this page) are shown as plain
   text lines rather than parsed four ways.
   """
-  @spec blocks_for_turn([event()], String.t()) :: [block()]
+  @spec blocks_for_turn([Event.t() | map()], String.t()) :: [block()]
   def blocks_for_turn(events, runtime) do
-    events |> Enum.reduce(empty_acc(), &output(&1, runtime, &2)) |> blocks_of()
+    events
+    |> Enum.reduce(empty_acc(), &output(Event.from(&1), runtime, &2))
+    |> blocks_of()
   end
 
-  defp output(%{"kind" => "output", "stream" => "acp", "data" => data} = event, _runtime, acc)
+  defp output(%Event{kind: :output, stream: :acp, data: data} = event, _runtime, acc)
        when is_binary(data) do
     data
     |> String.split("\n")
     |> Enum.reject(&(String.trim(&1) == ""))
-    |> Enum.reduce(acc, &acp_line(&1, event["ts"], &2))
+    |> Enum.reduce(acc, &acp_line(&1, event.ts, &2))
   end
 
   # Legacy dialects: the text as-is rather than four vendor formats parsed
   # here. Claude, codex and opencode only ever spoke ACP on this page.
-  defp output(%{"kind" => "output", "stream" => "stdout", "data" => data} = event, runtime, acc)
+  defp output(%Event{kind: :output, stream: :stdout, data: data} = event, runtime, acc)
        when is_binary(data) do
-    if acp_runtime?(runtime), do: acc, else: push_text(acc, :text, data, event["ts"])
+    if acp_runtime?(runtime), do: acc, else: push_text(acc, :text, data, event.ts)
   end
 
   # A stage that failed, with whatever Fountain said about it. These carried no
@@ -307,8 +305,8 @@ defmodule Ravix.Tracks.Transcript do
   # the conversation had ended. The reason is Fountain's own text and is drawn
   # as such -- it named a billing page on the deployment that found this, which
   # is exactly the kind of sentence that must not be swallowed.
-  defp output(%{"kind" => "stage", "state" => "failed"} = event, _runtime, acc) do
-    push(acc, %{kind: :failure, stage: event["stage"], body: failure_reason(event)})
+  defp output(%Event{kind: :stage, state: "failed"} = event, _runtime, acc) do
+    push(acc, %{kind: :failure, stage: event.stage, body: failure_reason(event)})
   end
 
   defp output(_event, _runtime, acc), do: acc
@@ -324,7 +322,7 @@ defmodule Ravix.Tracks.Transcript do
   and both places must agree on where "why" lives (#35).
   """
   @spec failure_reason(event()) :: String.t()
-  def failure_reason(%{"data" => data}) when is_binary(data) do
+  def failure_reason(%Event{data: data}) when is_binary(data) do
     case Jason.decode(data) do
       {:ok, %{"reason" => reason}} when is_binary(reason) -> String.trim(reason)
       {:ok, %{}} -> ""
