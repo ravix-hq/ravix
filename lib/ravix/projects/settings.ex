@@ -14,8 +14,28 @@ defmodule Ravix.Projects.Settings do
   alias Ravix.Projects
   alias Ravix.Projects.Project
 
-  @typedoc "`ProjectSettings` from `shared/api.ts`."
-  @type t :: %{
+  @typedoc """
+  What the panel is given to show. `@enforce_keys` covers all of it, so a
+  field added here and forgotten in `read/2` raises where it is built.
+
+  It was `ProjectSettings` from `shared/api.ts`, a bare map, which is also
+  why `read/2` and the panel could disagree about whether `catalog` is ever
+  absent as opposed to nil.
+  """
+  @enforce_keys [
+    :name,
+    :setup_script,
+    :packages,
+    :env_keys,
+    :vault_keys,
+    :runtime,
+    :catalog,
+    :model,
+    :instructions
+  ]
+  defstruct @enforce_keys
+
+  @type t :: %__MODULE__{
           name: String.t(),
           setup_script: String.t(),
           packages: %{optional(String.t()) => [String.t()]},
@@ -26,6 +46,31 @@ defmodule Ravix.Projects.Settings do
           model: String.t(),
           instructions: String.t()
         }
+
+  @typedoc """
+  What one save may change, and the only spelling past `update/3`.
+
+  Every field is optional and *absence is the instruction*: a save that
+  does not mention `instructions` leaves the system prompt alone, which is
+  what lets the panel's several forms all arrive here. `Ecto.Changeset.cast/4`
+  is what turns the browser's strings into this --- it is the thing in
+  Elixir that takes params in whatever spelling the caller has and answers
+  a definite atom-keyed map --- so nothing below it compares a string key
+  or asks `Map.has_key?/2` about one.
+  """
+  @type change :: %{optional(atom()) => term()}
+
+  @attrs %{
+    name: :string,
+    runtime: :string,
+    model: :string,
+    instructions: :string,
+    setup_script: :string,
+    packages: :map,
+    secret: :map
+  }
+
+  @secret_attrs %{store: :string, key: :string, value: :string}
 
   @secret_key ~r/^[A-Za-z_][A-Za-z0-9_]*$/
 
@@ -40,7 +85,7 @@ defmodule Ravix.Projects.Settings do
     with {:ok, env} <-
            Projects.fountain_result(Fountain.get_environment(client, project.environment_id)) do
       {:ok,
-       %{
+       %__MODULE__{
          runtime: project.runtime,
          catalog: Projects.Machine.catalog_or_nil(client),
          name: project.name,
@@ -82,22 +127,59 @@ defmodule Ravix.Projects.Settings do
   """
   @spec update(Project.t(), map(), Fountain.Client.t()) :: {:ok, integer()} | {:error, term()}
   def update(%Project{} = project, attrs, client) do
-    attrs = Map.new(attrs, fn {k, v} -> {to_string(k), v} end)
-
-    with {:ok, bumps} <- harness(project, attrs, client),
-         :ok <- rename(project, attrs),
-         :ok <- environment(project, attrs, client),
-         {:ok, bumps} <- instructions(project, attrs, client, bumps),
-         {:ok, bumps} <- secret(project, attrs, client, bumps) do
+    with {:ok, change} <- cast_attrs(attrs),
+         {:ok, bumps} <- harness(project, change, client),
+         :ok <- rename(project, change),
+         :ok <- environment(project, change, client),
+         {:ok, bumps} <- instructions(project, change, client, bumps),
+         {:ok, bumps} <- secret(project, change, client, bumps) do
       {:ok, if(bumps, do: Projects.Store.bump_rev(project.id), else: project.rev)}
+    end
+  end
+
+  @doc """
+  The changes a settings save is asking for, or a refusal naming the field.
+
+  A field that is present but the wrong type --- `packages` as the array
+  Fountain rejects outright, say --- is refused here rather than reaching a
+  mutation that would have to decide what to do with it. A field that is
+  absent is not mentioned in the answer, which is how "leave this alone"
+  is said.
+  """
+  @spec cast_attrs(map()) :: {:ok, change()} | {:error, term()}
+  def cast_attrs(attrs), do: attrs |> cast_into(@attrs) |> apply_cast("settings")
+
+  defp cast_secret(raw), do: raw |> cast_into(@secret_attrs) |> apply_cast("secret")
+
+  # `empty_values: []` because an empty string is a value here, not an
+  # absence: clearing the harness box and saving is refused with "Choose an
+  # available harness", which is the answer, and Ecto's default would have
+  # turned it into "the caller said nothing about the harness" and kept the
+  # old one silently.
+  #
+  # `nil` is still an absence, because `cast/4` reads it as no change from
+  # the empty data map. Nothing a browser sends is nil --- a form sends
+  # strings --- so that is a statement about callers inside Ravix, and the
+  # statement is the useful one: `%{runtime: nil}` leaves the runtime alone.
+  defp cast_into(params, types),
+    do: Ecto.Changeset.cast({%{}, types}, params, Map.keys(types), empty_values: [])
+
+  defp apply_cast(changeset, what) do
+    case Ecto.Changeset.apply_action(changeset, :update) do
+      {:ok, change} ->
+        {:ok, change}
+
+      {:error, %Ecto.Changeset{errors: errors}} ->
+        field = errors |> List.first() |> elem(0)
+        {:error, {:unprocessable, "bad_#{what}", "#{field} is not the right kind of value."}}
     end
   end
 
   # ── each mutation ─────────────────────────────────────────────────────
 
-  defp harness(project, attrs, client) do
-    runtime = Map.get(attrs, "runtime", project.runtime)
-    model = Map.get(attrs, "model", project.model)
+  defp harness(project, change, client) do
+    runtime = Map.get(change, :runtime, project.runtime)
+    model = Map.get(change, :model, project.model)
 
     if runtime == project.runtime and model == project.model do
       {:ok, false}
@@ -130,28 +212,20 @@ defmodule Ravix.Projects.Settings do
       {:error,
        {:unprocessable, "invalid_model", "Choose an available harness and one of its models."}}
 
-  defp rename(project, attrs) do
-    case Map.get(attrs, "name") do
-      name when is_binary(name) ->
-        case name |> str(120) |> String.trim() do
-          "" -> :ok
-          trimmed -> Projects.Store.rename(project.id, trimmed)
-        end
-
-      _ ->
-        :ok
+  defp rename(project, %{name: name}) do
+    case name |> str(120) |> String.trim() do
+      "" -> :ok
+      trimmed -> Projects.Store.rename(project.id, trimmed)
     end
   end
 
-  defp environment(project, attrs, client) do
+  defp rename(_project, _change), do: :ok
+
+  defp environment(project, change, client) do
     patch =
       %{}
-      |> put_if(:setup_script, is_binary(attrs["setup_script"]), fn ->
-        str(attrs["setup_script"], 20_000)
-      end)
-      |> put_if(:packages, Map.has_key?(attrs, "packages"), fn ->
-        normalize_packages(attrs["packages"])
-      end)
+      |> put_if(:setup_script, change, :setup_script, &str(&1, 20_000))
+      |> put_if(:packages, change, :packages, &normalize_packages/1)
 
     if patch == %{} do
       :ok
@@ -165,10 +239,10 @@ defmodule Ravix.Projects.Settings do
     end
   end
 
-  defp instructions(project, attrs, client, bumps) do
-    case Map.get(attrs, "instructions") do
-      text when is_binary(text) ->
-        text = str(text, 20_000)
+  defp instructions(project, change, client, bumps) do
+    case change do
+      %{instructions: raw} ->
+        text = str(raw, 20_000)
 
         # Fountain first, then the row -- the same order as `harness/3` above.
         # Saved-but-not-pushed is the one state with no signal for it: the
@@ -191,24 +265,21 @@ defmodule Ravix.Projects.Settings do
     end
   end
 
-  defp secret(project, attrs, client, bumps) do
-    case Map.get(attrs, "secret") do
-      %{} = raw ->
-        raw = Map.new(raw, fn {k, v} -> {to_string(k), v} end)
-        store = if raw["store"] == "vault", do: :vaults, else: :environments
-        key = raw["key"] |> str(200) |> String.trim()
-        target = if store == :vaults, do: project.vault_id, else: project.environment_id
+  defp secret(project, %{secret: raw}, client, _bumps) do
+    with {:ok, secret} <- cast_secret(raw) do
+      store = if secret[:store] == "vault", do: :vaults, else: :environments
+      key = secret |> Map.get(:key, "") |> str(200) |> String.trim()
+      target = if store == :vaults, do: project.vault_id, else: project.environment_id
 
-        with :ok <- validate_key(key),
-             :ok <- require_target(target),
-             :ok <- write_secret(client, store, target, key, raw["value"]) do
-          {:ok, true}
-        end
-
-      _ ->
-        {:ok, bumps}
+      with :ok <- validate_key(key),
+           :ok <- require_target(target),
+           :ok <- write_secret(client, store, target, key, Map.get(secret, :value)) do
+        {:ok, true}
+      end
     end
   end
+
+  defp secret(_project, _change, _client, bumps), do: {:ok, bumps}
 
   defp validate_key(key) do
     cond do
@@ -279,8 +350,11 @@ defmodule Ravix.Projects.Settings do
     end
   end
 
-  defp put_if(map, key, true, value), do: Map.put(map, key, value.())
-  defp put_if(map, _key, false, _value), do: map
+  # A field the caller did not mention is a field the environment keeps.
+  defp put_if(patch, key, change, from, transform) when is_map_key(change, from),
+    do: Map.put(patch, key, transform.(Map.fetch!(change, from)))
+
+  defp put_if(patch, _key, _change, _from, _transform), do: patch
 
   defp str(value, max) when is_binary(value), do: String.slice(value, 0, max)
   defp str(_value, _max), do: ""

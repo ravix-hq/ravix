@@ -634,7 +634,7 @@ defmodule Ravix.ProjectsTest do
 
       assert {:ok, settings} = Projects.settings(owner, project.id)
 
-      assert settings == %{
+      assert settings == %Ravix.Projects.Settings{
                runtime: "claude",
                catalog: %{
                  "runtimes" => ["codex"],
@@ -731,7 +731,11 @@ defmodule Ravix.ProjectsTest do
             %{runtime: "codex"},
             %{model: "invented"},
             %{runtime: "unknown", model: "openai/test-model"},
-            %{runtime: nil}
+            # Clearing the harness box and saving. An empty string is a
+            # value the browser can actually send, so `cast_attrs/1` keeps
+            # it and the catalog refuses it, rather than reading it as "say
+            # nothing about the harness" and keeping the old one silently.
+            %{runtime: ""}
           ] do
         client =
           fountain([{%{method: "GET", path: "/api/catalog"}, {200, [], %{data: @catalog}}}])
@@ -744,6 +748,21 @@ defmodule Ravix.ProjectsTest do
 
       assert %Project{name: "Project", runtime: "claude", rev: 1} = Repo.get!(Project, project.id)
       refute_received {:hub, _}
+    end
+
+    test "a field nobody mentioned is a field nobody changes", %{owner: owner, project: project} do
+      client = fountain([])
+
+      # Absence is the instruction: this is what lets the settings form, the
+      # secret form and the preview defaults form all arrive at `update/3`
+      # and each change only its own half. `nil` says the same thing --- no
+      # browser sends one, so it can only come from inside Ravix, and
+      # "leave it alone" is the reading that makes the boundary explicit.
+      assert {:ok, %{rev: 1}} = Projects.update_settings(owner, project.id, %{})
+      assert {:ok, %{rev: 1}} = Projects.update_settings(owner, project.id, %{runtime: nil})
+
+      assert requests(client) == []
+      assert %Project{name: "Project", runtime: "claude", rev: 1} = Repo.get!(Project, project.id)
     end
 
     test "upstream failure preserves the saved harness and model", %{
