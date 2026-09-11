@@ -31,6 +31,7 @@ defmodule Ravix.Spec do
   """
 
   alias Ravix.Ids
+  alias Ravix.Spec.Starter
 
   @typedoc """
   How a track was started, in the words the header will use. `kind` may be
@@ -362,14 +363,14 @@ defmodule Ravix.Spec do
   why they are here in the contract module and not in a component: changing
   what a chip says changes what the agent is asked.
   """
-  @spec starters(%{has_repo: boolean()}) :: [%{label: String.t(), prompt: String.t()}]
+  @spec starters(%{has_repo: boolean()}) :: [Starter.t()]
   def starters(%{has_repo: false}) do
     [
-      %{
+      %Starter{
         label: "What is on this machine?",
         prompt: "Show me what is installed on this machine and what you can do here."
       },
-      %{
+      %Starter{
         label: "Set up a project",
         prompt:
           "Help me start a project in this directory. Ask me what I want before scaffolding anything."
@@ -379,27 +380,27 @@ defmodule Ravix.Spec do
 
   def starters(%{has_repo: true}) do
     [
-      %{
+      %Starter{
         label: "Set up live preview",
         prompt:
           "Set up a live preview for this track. Inspect the app, configure its startup command and readiness path with the Ravix preview helper, start it, and fix any startup issues until it is Ready."
       },
-      %{
+      %Starter{
         label: "Review recent PRs",
         prompt:
           "Look at the pull requests merged into this repository in the last two weeks and tell me what changed, in the order that matters."
       },
-      %{
+      %Starter{
         label: "Improve agent instructions",
         prompt:
           "Read this repository's agent instructions (CLAUDE.md, AGENTS.md, .cursorrules — whichever exist) and suggest concrete improvements based on what the code actually looks like. Show me a diff before writing anything."
       },
-      %{
+      %Starter{
         label: "Fix a TODO",
         prompt:
           "Find the most worthwhile TODO or FIXME in this repository, explain why it is the one worth doing, and fix it."
       },
-      %{
+      %Starter{
         label: "Explain the architecture",
         prompt:
           "Walk me through how this repository is put together — the entry points, the boundaries, and anything a newcomer would get wrong."

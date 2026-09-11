@@ -309,14 +309,17 @@ defmodule Ravix.TracksTest do
 
       assert presented.id == track.id
 
-      assert header == %{
+      assert header == %Ravix.Tracks.Header{
                copy_of: "ledger",
                branched_from: %{branch: "ana/kyoto", base: "main"},
                created: %{dir: "kyoto", files: nil},
                has_setup_script: true
              }
 
-      assert [%{label: _, prompt: _} | _] = starters
+      # This is still the only reader of `branched_from`, `created` and
+      # `has_setup_script`; the ribbon renders `copy_of` alone. See
+      # `Ravix.Tracks.Header`.
+      assert [%Ravix.Spec.Starter{label: _, prompt: _} | _] = starters
       assert {:error, :not_found} = Tracks.get(insert_user(), track.id)
     end
   end

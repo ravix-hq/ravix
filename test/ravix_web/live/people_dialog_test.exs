@@ -24,7 +24,7 @@ defmodule RavixWeb.Live.PeopleDialogTest do
     # does not care which, so the provider is stubbed and the rows are real.
     stub(Tracks, :get, fn _user, id ->
       row = Repo.get!(Track, id)
-      {:ok, %{track: Tracks.present(row, role: :owner), header: %{}, starters: []}}
+      {:ok, %{track: Tracks.present(row, role: :owner), header: blank_header(), starters: []}}
     end)
 
     stub(Tracks, :events, fn _, _ -> {:ok, Transcript.empty("claude")} end)
@@ -237,4 +237,16 @@ defmodule RavixWeb.Live.PeopleDialogTest do
       refute render(view) =~ "@#{member.login}"
     end
   end
+
+  # The ribbon a track with no repository and no setup script gets. A real
+  # `Ravix.Tracks.Header` rather than `%{}`: the template reads a field off
+  # it, and a stub that answers with an empty map is how a page renders
+  # in a test and raises in production.
+  defp blank_header,
+    do: %Ravix.Tracks.Header{
+      copy_of: nil,
+      branched_from: nil,
+      created: %{dir: "t", files: nil},
+      has_setup_script: false
+    }
 end

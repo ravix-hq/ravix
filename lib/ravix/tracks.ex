@@ -35,7 +35,7 @@ defmodule Ravix.Tracks do
   alias Ravix.People
   alias Ravix.Projects.Project
   alias Ravix.Spec
-  alias Ravix.Tracks.{Diff, Files, Follower, Names, Store, Track, Transcript, View}
+  alias Ravix.Tracks.{Diff, Files, Follower, Header, Names, Store, Track, Transcript, View}
 
   @image_types ~w(image/png image/jpeg image/gif image/webp)
   # base64 is four characters per three bytes; the cap is on the decoded size.
@@ -45,13 +45,8 @@ defmodule Ravix.Tracks do
   @typedoc "What the caller may do here."
   @type role :: :owner | :member
 
-  @typedoc "The ribbon at the top of a track: the four lines Conductor shows on a new thread."
-  @type header :: %{
-          copy_of: String.t() | nil,
-          branched_from: %{branch: String.t(), base: String.t()} | nil,
-          created: %{dir: String.t(), files: nil},
-          has_setup_script: boolean()
-        }
+  @typedoc "The ribbon at the top of a track; see `Ravix.Tracks.Header`."
+  @type header :: Header.t()
 
   @typedoc """
   Everything a track call can refuse with, and nothing else.
@@ -133,7 +128,8 @@ defmodule Ravix.Tracks do
   keeps appearing after you have accepted it reads as a broken app.
   """
   @spec get(User.t(), String.t()) ::
-          {:ok, %{track: View.t(), header: header(), starters: [map()]}} | {:error, reason()}
+          {:ok, %{track: View.t(), header: header(), starters: [Spec.Starter.t()]}}
+          | {:error, reason()}
   def get(%User{} = user, track_id) do
     with {:ok, %{track: track, project: project, role: role}} <-
            Access.track_access(user, track_id),
@@ -146,7 +142,7 @@ defmodule Ravix.Tracks do
           _ -> nil
         end
 
-      header = %{
+      header = %Header{
         copy_of:
           if(project.repo_full_name,
             do: project.repo_full_name |> String.split("/") |> List.last()

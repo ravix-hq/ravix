@@ -27,7 +27,7 @@ defmodule RavixWeb.TrackLiveTest do
       {:ok,
        %{
          track: Tracks.present(row, role: :owner),
-         header: %{},
+         header: blank_header(),
          starters: [%{label: "Start here", prompt: "Build it"}]
        }}
     end)
@@ -808,4 +808,16 @@ defmodule RavixWeb.TrackLiveTest do
       url: nil
     }
   end
+
+  # The ribbon a track with no repository and no setup script gets. A real
+  # `Ravix.Tracks.Header` rather than `%{}`: the template reads a field off
+  # it, and a stub that answers with an empty map is how a page renders
+  # in a test and raises in production.
+  defp blank_header,
+    do: %Ravix.Tracks.Header{
+      copy_of: nil,
+      branched_from: nil,
+      created: %{dir: "t", files: nil},
+      has_setup_script: false
+    }
 end

@@ -17,28 +17,17 @@ defmodule Ravix.Accounts do
 
   import Ecto.Query
 
-  alias Ravix.Accounts.{OAuthState, Session, User}
+  alias Ravix.Accounts.{Capabilities, OAuthState, Session, SessionInfo, User, Viewer}
   alias Ravix.{Config, Crypto, GitHub, Repo}
 
-  @typedoc "`Viewer` in `shared/api.ts`: the signed-in person as the shell sees them."
-  @type viewer :: %{
-          id: String.t(),
-          login: String.t(),
-          name: String.t() | nil,
-          avatar_url: String.t() | nil,
-          has_installation: boolean()
-        }
+  @typedoc "The signed-in person as the shell sees them; see `Ravix.Accounts.Viewer`."
+  @type viewer :: Viewer.t()
 
-  @typedoc "`Capabilities` in `shared/api.ts`: what this deployment can actually do."
-  @type capabilities :: %{exec: boolean(), github: boolean(), vaults: boolean()}
+  @typedoc "What this deployment can do; see `Ravix.Accounts.Capabilities`."
+  @type capabilities :: Capabilities.t()
 
-  @typedoc "`SessionInfo` in `shared/api.ts`: everything the shell needs before its first render."
-  @type session_info :: %{
-          viewer: viewer() | nil,
-          sign_in_url: String.t(),
-          install_url: String.t(),
-          capabilities: capabilities()
-        }
+  @typedoc "What the shell needs before its first render; see `Ravix.Accounts.SessionInfo`."
+  @type session_info :: SessionInfo.t()
 
   # How long a minted OAuth state is good for, in seconds. Fifteen minutes is
   # long enough to read GitHub's consent screen twice and short enough that a
@@ -329,7 +318,7 @@ defmodule Ravix.Accounts do
   def session_info(user_or_nil) do
     app = Config.github()
 
-    %{
+    %SessionInfo{
       viewer: viewer_of(user_or_nil, app),
       sign_in_url: if(app, do: "/auth/github", else: ""),
       install_url: if(app, do: GitHub.install_url(app), else: ""),
@@ -340,7 +329,7 @@ defmodule Ravix.Accounts do
   @doc "What is switched on here, decided by the server's environment rather than by a build flag."
   @spec capabilities() :: capabilities()
   def capabilities do
-    %{
+    %Capabilities{
       exec: Config.sprites() != nil,
       github: Config.github() != nil,
       # Settled by configuration rather than probed per request: a Fountain
@@ -352,7 +341,7 @@ defmodule Ravix.Accounts do
   defp viewer_of(nil, _app), do: nil
 
   defp viewer_of(%User{} = user, app) do
-    %{
+    %Viewer{
       id: user.github_id,
       login: user.login,
       name: user.name,
