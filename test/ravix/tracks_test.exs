@@ -11,6 +11,7 @@ defmodule Ravix.TracksTest do
   alias Ravix.QueryCount
   alias Ravix.Tracks
   alias Ravix.Tracks.{Diff, Files, Names, Track}
+  alias Ravix.Tracks.Transcript.{Block, Turn}
 
   @root "/home/sprite/work/kyoto"
 
@@ -699,7 +700,7 @@ defmodule Ravix.TracksTest do
 
       stub(Ravix.Fountain, :client, fn -> client end)
       assert {:ok, page} = Tracks.events(owner, track.id)
-      assert [%{id: "t1", prompt: "say hi", blocks: [%{kind: :text, body: "hi"}]}] = page.turns
+      assert [%Turn{id: "t1", prompt: "say hi", blocks: [%Block.Text{body: "hi"}]}] = page.turns
       assert page.last_event_id == 1
 
       unopened = insert_track(project: project, conversation_id: nil)

@@ -33,6 +33,7 @@ defmodule RavixWeb.TrackLive do
   alias Ravix.Hub.Event
   alias Ravix.Tracks.{Diff, Files}
   alias Ravix.Tracks.Transcript
+  alias Ravix.Tracks.Transcript.Block, as: TranscriptBlock
   alias Ravix.Tracks.Transcript.Event, as: TranscriptEvent
   alias RavixWeb.Error
   alias RavixWeb.Live.Form
@@ -770,6 +771,59 @@ defmodule RavixWeb.TrackLive do
 
   defp owner_or_creator?(user, track),
     do: track.role == :owner or track.created_by_login == user.login
+
+  # One head per block struct, rather than five `:if` comparisons against a
+  # `:kind` field the blocks no longer carry. A block shape added to
+  # `Ravix.Tracks.Transcript.Block` and not drawn here is a
+  # `FunctionClauseError` on the page that would have rendered it silently
+  # blank, which is the trade this conversion was for.
+  attr :block, :map, required: true
+
+  defp block(%{block: %TranscriptBlock.Text{}} = assigns) do
+    ~H"""
+    <div class="md">{RavixWeb.Markdown.render_safe(@block.body)}</div>
+    """
+  end
+
+  defp block(%{block: %TranscriptBlock.Thinking{}} = assigns) do
+    ~H"""
+    <details class="workspace-thinking">
+      <summary>Thinking</summary>
+      <div class="md">{RavixWeb.Markdown.render_safe(@block.body)}</div>
+    </details>
+    """
+  end
+
+  defp block(%{block: %TranscriptBlock.Raw{}} = assigns) do
+    ~H"""
+    <pre>{@block.body}</pre>
+    """
+  end
+
+  defp block(%{block: %TranscriptBlock.Failure{}} = assigns) do
+    ~H"""
+    <div class="workspace-failure" role="status">
+      <strong>{@block.stage} failed</strong>
+      <pre :if={@block.body != ""}>{@block.body}</pre>
+    </div>
+    """
+  end
+
+  defp block(%{block: %TranscriptBlock.Tool{}} = assigns) do
+    ~H"""
+    <details class="workspace-tool">
+      <summary>
+        <span class="chip">{@block.status}</span> {@block.name} {@block.summary}
+      </summary>
+      <pre :if={@block.detail.input != %{}}>{Jason.encode!(@block.detail.input, pretty: true)}</pre>
+      <p :for={path <- @block.detail.paths}><code>{path}</code></p>
+      <div :for={edit <- @block.detail.edits}>
+        <strong>{edit.path}</strong><pre><span :for={line <- edit.lines} class={"diff-#{line.kind}"}>{line.text}{"\n"}</span></pre>
+      </div>
+      <pre :if={@block.output != ""}>{@block.output}</pre>
+    </details>
+    """
+  end
 
   defp visible_prompt(prompt) do
     prompt = Ravix.Previews.Agent.visible_prompt(prompt)
