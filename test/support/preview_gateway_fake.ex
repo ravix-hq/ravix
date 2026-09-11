@@ -370,8 +370,13 @@ defmodule Ravix.PreviewGatewayFake do
     def public_url, do: "http://localhost:5183"
 
     @impl true
-    def previews_config,
-      do: %{domain: "preview.localhost", protocol: :http, public_port: ":#{Store.port()}"}
+    def previews_config do
+      %Ravix.Config.Previews{
+        domain: "preview.localhost",
+        protocol: :http,
+        public_port: ":#{Store.port()}"
+      }
+    end
 
     @impl true
     def sprites_config,

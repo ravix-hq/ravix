@@ -154,7 +154,7 @@ defmodule Ravix.PreviewsFixture do
     end)
 
     stub(Ravix.Config, :previews, fn ->
-      %{domain: "preview.localhost", protocol: :http, public_port: ":5183"}
+      %Ravix.Config.Previews{domain: "preview.localhost", protocol: :http, public_port: ":5183"}
     end)
 
     stub(Ravix.Config, :fountain, fn ->

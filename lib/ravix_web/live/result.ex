@@ -12,8 +12,22 @@ defmodule RavixWeb.Live.Result do
   Imported into every LiveView by `RavixWeb.live_view/0`.
   """
 
+  alias Phoenix.LiveView.Socket
   alias RavixWeb.Error
   alias RavixWeb.Live.Form
+
+  @typedoc "A context's answer, in the three shapes every one of them shares."
+  @type response :: :ok | {:ok, term()} | {:error, term()}
+
+  @typedoc """
+  The success branch: the socket and the value, or `nil` for a bare `:ok`.
+
+  Spelled out rather than left as `function()`, which said only "some
+  function" -- not its arity, not that it answers with a socket. Every caller
+  here passes a two-argument one and returns a socket; a `fn s -> s end`
+  would have type-checked and then raised at the click that used it.
+  """
+  @type on_ok :: (Socket.t(), term() -> Socket.t())
 
   @doc """
   Apply `response` to `socket`.
@@ -23,8 +37,7 @@ defmodule RavixWeb.Live.Result do
   socket is otherwise untouched, so a page that could not do the thing still
   shows what it showed before rather than a half-updated version of it.
   """
-  @spec result(Phoenix.LiveView.Socket.t(), :ok | {:ok, term()} | {:error, term()}, function()) ::
-          Phoenix.LiveView.Socket.t()
+  @spec result(Socket.t(), response(), on_ok()) :: Socket.t()
   def result(socket, :ok, fun), do: fun.(socket, nil)
   def result(socket, {:ok, value}, fun), do: fun.(socket, value)
   def result(socket, {:error, reason}, _fun), do: error(socket, reason)
@@ -38,12 +51,7 @@ defmodule RavixWeb.Live.Result do
   gone --- falls through to the flash, which is still the right place for
   it. Success is exactly `result/3`.
   """
-  @spec result(
-          Phoenix.LiveView.Socket.t(),
-          :ok | {:ok, term()} | {:error, term()},
-          function(),
-          atom()
-        ) :: Phoenix.LiveView.Socket.t()
+  @spec result(Socket.t(), response(), on_ok(), atom()) :: Socket.t()
   def result(socket, {:error, reason} = response, fun, form) do
     case Form.refuse(socket.assigns[form], reason) do
       {:ok, refused} -> Phoenix.Component.assign(socket, form, refused)
@@ -64,7 +72,7 @@ defmodule RavixWeb.Live.Result do
 
   Both pages handle `{:flash, :error, message}` for this reason.
   """
-  @spec error(Phoenix.LiveView.Socket.t(), term()) :: Phoenix.LiveView.Socket.t()
+  @spec error(Socket.t(), term()) :: Socket.t()
   def error(socket, reason) do
     message = Error.from(reason).message
 

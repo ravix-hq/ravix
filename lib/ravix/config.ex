@@ -89,7 +89,36 @@ defmodule Ravix.Config do
     defstruct [:url, :key]
   end
 
-  @type previews :: %{domain: String.t(), protocol: :https | :http, public_port: String.t()}
+  defmodule Previews do
+    @moduledoc """
+    Where track previews are served: the dedicated domain, the scheme, and
+    the `:port` suffix a local domain needs.
+
+    A struct like its three siblings above, and for the second half of the
+    same reason. Those are structs because a bare map cannot derive a
+    redacting `Inspect` and they carry credentials; this one carries none,
+    so it stayed a map -- which left the one reader in this module whose
+    answer a typo reaches silently. `@enforce_keys` is what makes a field
+    added here a build error at the two places that compose a preview host
+    rather than an `"...nil"` in a URL.
+
+    `public_port` is `""` or `":4000"`, ready to concatenate: the suffix is
+    part of the host a browser is sent to, and an integer here would be
+    formatted at each of the three call sites instead of once.
+    """
+
+    @enforce_keys [:domain, :protocol, :public_port]
+    defstruct [:domain, :protocol, :public_port]
+
+    @type t :: %__MODULE__{
+            domain: String.t(),
+            protocol: :https | :http,
+            public_port: String.t()
+          }
+  end
+
+  @typedoc "Deprecated spelling of `t:Ravix.Config.Previews.t/0`."
+  @type previews :: Previews.t()
 
   @doc "The raw configuration keyword list."
   @spec all() :: keyword()
@@ -218,7 +247,7 @@ defmodule Ravix.Config do
   `*.localhost` domains use plain HTTP on the server's own port, for local
   development only.
   """
-  @spec previews() :: previews() | nil
+  @spec previews() :: Previews.t() | nil
   def previews do
     case get(:preview_domain) |> blank_to(nil) do
       nil ->
@@ -233,9 +262,13 @@ defmodule Ravix.Config do
             raise("PREVIEW_DOMAIN must be a dedicated domain outside the Ravix application host.")
 
         if String.ends_with?(domain, ".localhost") do
-          %{domain: domain, protocol: :http, public_port: ":" <> Integer.to_string(port())}
+          %Previews{
+            domain: domain,
+            protocol: :http,
+            public_port: ":" <> Integer.to_string(port())
+          }
         else
-          %{domain: domain, protocol: :https, public_port: ""}
+          %Previews{domain: domain, protocol: :https, public_port: ""}
         end
     end
   end
