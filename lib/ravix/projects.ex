@@ -319,9 +319,9 @@ defmodule Ravix.Projects do
   @spec repos(User.t(), integer() | nil) ::
           {:ok,
            %{
-             installations: [Ravix.GitHub.Shapes.installation()],
+             installations: [Ravix.GitHub.Shapes.Installation.t()],
              selected: integer() | nil,
-             repos: [Ravix.GitHub.Shapes.repo_ref()]
+             repos: [Ravix.GitHub.Shapes.RepoRef.t()]
            }}
           | {:error, reason()}
   def repos(%User{} = user, wanted \\ nil) do

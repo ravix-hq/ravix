@@ -3,7 +3,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
   import Phoenix.LiveViewTest
   import Mimic
   alias Ravix.{Accounts, Crypto, Hub, Previews, Projects, QueryCount, Repo, Tracks}
-  alias Ravix.GitHub.ChecksReport
+  alias Ravix.GitHub.{ChecksReport, Shapes}
   alias Ravix.Hub.Event
   alias Ravix.People.Store, as: People
   alias Ravix.Tracks.{Diff, Files}
@@ -434,11 +434,13 @@ defmodule RavixWeb.WorkspaceLiveTest do
          pull: nil,
          pushed: true,
          runs: [
-           %{
+           %Shapes.CheckRun{
              name: "CI passed",
              status: "completed",
              conclusion: "success",
-             url: "https://example.test/check"
+             url: "https://example.test/check",
+             started_at: nil,
+             completed_at: nil
            }
          ]
        }}

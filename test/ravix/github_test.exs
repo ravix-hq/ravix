@@ -2,7 +2,7 @@ defmodule Ravix.GitHubTest do
   use ExUnit.Case, async: true
 
   alias Ravix.GitHub
-  alias Ravix.GitHub.{Cache, Clock, Error}
+  alias Ravix.GitHub.{Cache, Clock, Error, Shapes}
   alias Ravix.GitHubFake, as: Fake
 
   setup do
@@ -280,6 +280,61 @@ defmodule Ravix.GitHubTest do
     end
   end
 
+  # ── the boundary ─────────────────────────────────────────────────────
+
+  describe "the shapes the wire is turned into" do
+    test "are structs, so a caller can match on which one it holds" do
+      pull = Shapes.pull_ref(%{"number" => 1, "state" => "open"})
+      run = Shapes.check_run(%{"name" => "ci", "status" => "queued"})
+
+      assert match?(%Shapes.PullRef{}, pull)
+      refute match?(%Shapes.CheckRun{}, pull)
+      assert match?(%Shapes.CheckRun{}, run)
+    end
+
+    test "carry every field even when GitHub sent none of it" do
+      # The point of `@enforce_keys` at this boundary: a payload missing
+      # `html_url` produces `url: nil`, not a value with no `url` at all.
+      # Reading an absent key off a bare map also answered `nil`, which is
+      # how a field that was never populated looked exactly like one that
+      # was populated with nothing.
+      sparse = Shapes.pull_ref(%{"number" => 7})
+
+      assert sparse.url == nil
+      assert sparse.author == nil
+      assert sparse.draft == false
+      assert sparse.state == :open
+
+      assert Map.keys(sparse) --
+               [
+                 :__struct__,
+                 :number,
+                 :title,
+                 :author,
+                 :head_ref,
+                 :base_ref,
+                 :draft,
+                 :updated_at,
+                 :state,
+                 :url
+               ] == []
+    end
+
+    test "refuse to be built with a field nobody declared" do
+      assert_raise KeyError, fn ->
+        struct!(Shapes.CheckRun, %{
+          name: "ci",
+          status: "queued",
+          conclusion: nil,
+          url: nil,
+          started_at: nil,
+          completed_at: nil,
+          concluzion: "typo"
+        })
+      end
+    end
+  end
+
   # ── the three ways to start a track ──────────────────────────────────
 
   describe "branches/4, pulls/3, issues/3" do
@@ -324,7 +379,7 @@ defmodule Ravix.GitHubTest do
 
       assert {:ok, [first, second]} = GitHub.pulls(app, 1, "o/r")
 
-      assert first == %{
+      assert first == %Shapes.PullRef{
                number: 1,
                title: "PR 1",
                author: "someone",
@@ -446,7 +501,7 @@ defmodule Ravix.GitHubTest do
       assert report.pushed == true
 
       assert report.runs == [
-               %{
+               %Shapes.CheckRun{
                  name: "ci",
                  status: "completed",
                  conclusion: "success",
@@ -454,7 +509,7 @@ defmodule Ravix.GitHubTest do
                  started_at: "s",
                  completed_at: "c"
                },
-               %{
+               %Shapes.CheckRun{
                  name: "lint",
                  status: "in_progress",
                  conclusion: nil,

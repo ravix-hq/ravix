@@ -29,7 +29,7 @@ defmodule Ravix.GitHub.ChecksReport do
           ref: String.t(),
           sha: String.t() | nil,
           pushed: boolean(),
-          runs: [Shapes.check_run()],
-          pull: Shapes.pull_ref() | nil
+          runs: [Shapes.CheckRun.t()],
+          pull: Shapes.PullRef.t() | nil
         }
 end
