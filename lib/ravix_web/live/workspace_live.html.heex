@@ -363,7 +363,7 @@
         </div>
       </div>
     </main>
-    <.dialog :if={@dialog == "search"} id="search-dialog" title="Find a track" on_close="dismiss">
+    <.dialog :if={@dialog == :search} id="search-dialog" title="Find a track" on_close="dismiss">
       <form id="search-form" phx-change="search">
         <.input
           name="q"
@@ -384,7 +384,7 @@
       </div>
     </.dialog>
     <.dialog
-      :if={@dialog == "new-project"}
+      :if={@dialog == :new_project}
       id="new-project-dialog"
       title="New project"
       on_close="dismiss"
@@ -424,7 +424,7 @@
       </form>
     </.dialog>
     <.dialog
-      :if={@dialog == "new-track" && @project}
+      :if={@dialog == :new_track && @project}
       id="new-track-dialog"
       title="New track"
       on_close="dismiss"
@@ -437,7 +437,7 @@
           value={@form_data["title"] || ""}
           maxlength="200"
         />
-        <p :if={@origin_kind == "blank"} class="hint">
+        <p :if={@origin_kind == :blank} class="hint">
           New worktree from {@project.default_branch || "the default branch"}.
         </p>
         <button
@@ -453,7 +453,7 @@
           <div class="workspace-actions origin-options">
             <button
               :for={{kind, label} <- origin_choices()}
-              :if={kind == "blank" || @project.repo}
+              :if={kind == :blank || @project.repo}
               type="button"
               class={if @origin_kind == kind, do: "primary", else: "ghost"}
               phx-click="origin"
@@ -463,7 +463,7 @@
             </button>
           </div>
           <.input
-            :if={@origin_kind != "blank"}
+            :if={@origin_kind != :blank}
             name="ref"
             id="track-ref"
             label="Start from"
@@ -475,7 +475,7 @@
         </div>
         <button
           class="primary"
-          disabled={@busy || (@origin_kind != "blank" && @refs == [])}
+          disabled={@busy || (@origin_kind != :blank && @refs == [])}
           phx-disable-with="Opening…"
         >
           Create track
@@ -483,7 +483,7 @@
       </form>
     </.dialog>
     <.dialog
-      :if={@dialog == "settings" && @settings}
+      :if={@dialog == :settings && @settings}
       id="settings-dialog"
       title="Project settings"
       on_close="dismiss"
@@ -601,7 +601,7 @@
       </form>
     </.dialog>
     <.live_component
-      :if={@dialog == "people" && @project}
+      :if={@dialog == :people && @project}
       module={RavixWeb.Live.PeopleDialog}
       id="people"
       scope={:project}
