@@ -5,6 +5,9 @@ defmodule Ravix.Previews.PreviewDefault do
   One per project: the directory, the command and the readiness path a
   track's preview uses unless the track overrides them. Deleting the row is
   how defaults are cleared.
+
+  `config` is a `:map` column carrying a `Ravix.Previews.Config`, through
+  `Ravix.Previews.Config.Type`.
   """
   use Ecto.Schema
   import Ecto.Changeset
@@ -16,10 +19,10 @@ defmodule Ravix.Previews.PreviewDefault do
 
   schema "preview_defaults" do
     belongs_to :project, Ravix.Projects.Project, primary_key: true
-    field :config, :map
+    field :config, Ravix.Previews.Config.Type
   end
 
-  @doc "The defaults. `config` holds `directory`, `command` and `readinessPath`."
+  @doc "The defaults. `config` is a `Ravix.Previews.Config`."
   @spec changeset(t(), map()) :: Ecto.Changeset.t()
   def changeset(default, attrs) do
     default

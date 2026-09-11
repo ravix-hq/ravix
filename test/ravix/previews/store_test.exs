@@ -55,7 +55,18 @@ defmodule Ravix.Previews.StoreTest do
                unavailable: "why"
              } = stored
 
-      assert stored.config == %{
+      # `config` comes back as the struct, because `Ravix.Previews.Config.Type`
+      # is the column's type.
+      assert stored.config == config
+
+      # And underneath it, which is the claim that has to hold across a
+      # deploy: the type changed which code converts the column, not what is
+      # in it. A release that has not been replaced yet reads these three
+      # string keys, and `Row.fingerprint/1` hashes them.
+      assert %{rows: [[raw]]} =
+               Repo.query!("SELECT config FROM ravix.previews WHERE track_id = $1", [track.id])
+
+      assert raw == %{
                "directory" => "apps/web",
                "command" => "run",
                "readiness_path" => "/health"
@@ -237,8 +248,14 @@ defmodule Ravix.Previews.StoreTest do
     config = %Config{directory: ".", command: "run", readiness_path: "/"}
     assert :ok = Store.set_defaults(project.id, config)
     assert Store.defaults(project.id) == config
+    assert stored_default(project.id) == Config.to_stored(config)
+
+    # The second write is the `on_conflict` update, which has to dump through
+    # `Ravix.Previews.Config.Type` the same way the insert did.
     assert :ok = Store.set_defaults(project.id, %{config | command: "run2"})
     assert Store.defaults(project.id).command == "run2"
+    assert stored_default(project.id) == %{Config.to_stored(config) | "command" => "run2"}
+
     assert :ok = Store.set_defaults(project.id, nil)
     assert Store.defaults(project.id) == nil
 
@@ -250,5 +267,32 @@ defmodule Ravix.Previews.StoreTest do
              command: "npm run dev",
              readiness_path: "/"
            }
+  end
+
+  test "a document already on disk in camel case still loads" do
+    # Written around the schema, because that is the only way to make the row
+    # a release before `PreviewsIntoColumns` could have left: the helper the
+    # agent is shown spells `readinessPath`, and `Config.Type.cast/1`
+    # normalises it on the way in now, so a write through Ecto cannot produce
+    # one. `load/1` is what has to keep reading them.
+    project = insert_project()
+
+    Repo.query!(
+      "INSERT INTO ravix.preview_defaults (project_id, config) VALUES ($1, $2)",
+      [project.id, %{"directory" => "web", "command" => "dev", "readinessPath" => "/up"}]
+    )
+
+    assert Store.defaults(project.id) == %Config{
+             directory: "web",
+             command: "dev",
+             readiness_path: "/up"
+           }
+  end
+
+  defp stored_default(project_id) do
+    %{rows: [[raw]]} =
+      Repo.query!("SELECT config FROM ravix.preview_defaults WHERE project_id = $1", [project_id])
+
+    raw
   end
 end

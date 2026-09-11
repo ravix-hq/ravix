@@ -27,19 +27,18 @@ defmodule Ravix.Previews.Config do
   every validation runs, and `RavixWeb.Live.Form.refuse/2` puts each error
   on the field it is already attached to. There is no second table.
 
-  ## What is not stored here
+  ## How it is stored
 
   The `previews.config` and `preview_defaults.config` columns stay `:map`
-  and keep the three string keys they have always had. This is the working
-  struct, converted at `Ravix.Previews.Row.decode_config/1` and
-  `encode_config/1` --- the same one-boundary rule the provider shapes
-  follow --- rather than an `embeds_one`, because the app runs on more than
-  one instance (ADR 0003) and a release that has not been replaced yet is
-  still reading that column the way it always did.
+  and keep the three string keys they have always had. `from_stored/1` and
+  `to_stored/1` are that representation, and `Ravix.Previews.Config.Type`
+  is the `Ecto.Type` that applies them, so the schemas declare
+  `field :config, Config.Type` and no caller converts anything. Not an
+  `embeds_one`, and the type's own documentation says why.
 
-  `Row.fingerprint/1` encodes the same three-key map it always encoded, so
-  a deploy does not redefine every running service for want of a matching
-  `applied_config`.
+  `Ravix.Previews.Row.fingerprint/1` encodes the same three-key map it
+  always encoded, so a deploy does not redefine every running service for
+  want of a matching `applied_config`.
 
   ## Keys
 
@@ -186,6 +185,41 @@ defmodule Ravix.Previews.Config do
       true ->
         changeset
     end
+  end
+
+  @doc """
+  A stored configuration as a struct.
+
+  Read back rather than re-validated: these three came out of `changeset/1`
+  before they were written, and a row that somehow holds something else is a
+  row to notice rather than one to quietly correct on the way past. This was
+  `Ravix.Previews.Row.decode_config/1`.
+  """
+  @spec from_stored(map()) :: t()
+  def from_stored(%{} = stored) do
+    stored = Row.normalize_keys(stored)
+
+    %__MODULE__{
+      directory: stored["directory"],
+      command: stored["command"],
+      readiness_path: stored["readiness_path"]
+    }
+  end
+
+  @doc """
+  A configuration as it is stored: the three string keys, and nothing else.
+
+  `Ravix.Previews.Row.fingerprint/1` hashes this, so the key order and
+  spelling are load-bearing across a deploy. This was
+  `Ravix.Previews.Row.encode_config/1`.
+  """
+  @spec to_stored(t()) :: map()
+  def to_stored(%__MODULE__{} = config) do
+    %{
+      "directory" => config.directory,
+      "command" => config.command,
+      "readiness_path" => config.readiness_path
+    }
   end
 
   defp trim(value) when is_binary(value), do: String.trim(value)

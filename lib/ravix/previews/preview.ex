@@ -15,9 +15,10 @@ defmodule Ravix.Previews.Preview do
   `CHECK`-constrained to their sets so `Ecto.Enum` can raise on a value that
   should not exist rather than coerce it.
 
-  `config` is the one map left, and is a map because it is one value: nil, or
-  a complete `{directory, command, readiness_path}` the track overrides the
-  project default with.
+  `config` is the one map left on disk, and is a map because it is one value:
+  nil, or a complete `{directory, command, readiness_path}` the track
+  overrides the project default with. In memory it is a
+  `Ravix.Previews.Config`, through `Ravix.Previews.Config.Type`.
 
   `generation`, `last_activity`, `lease_until` and `started_at` are
   milliseconds since the epoch, which is what `Ravix.Clock` answers.
@@ -40,7 +41,7 @@ defmodule Ravix.Previews.Preview do
     field :sprite, :string
     field :port, :integer
     field :sandbox_id, :string
-    field :config, :map
+    field :config, Ravix.Previews.Config.Type
     field :applied_config, :string
     field :desired, Ecto.Enum, values: @desired, default: :stopped
     field :state, Ecto.Enum, values: @states, default: :stopped
