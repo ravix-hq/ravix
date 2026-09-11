@@ -10,7 +10,7 @@ defmodule RavixWeb.PreviewGateway.RavixBackendTest do
   import Ravix.PreviewsFixture
 
   alias Ravix.Previews
-  alias Ravix.Previews.{Row, Store}
+  alias Ravix.Previews.{Grant, Row, Store}
   alias Ravix.Tracks.Track
   alias RavixWeb.PreviewGateway.RavixBackend, as: GatewayBackend
 
@@ -31,7 +31,7 @@ defmodule RavixWeb.PreviewGateway.RavixBackendTest do
 
     row = Store.ensure(track.id)
 
-    grant = %{
+    grant = %Grant{
       hash: "grant",
       track_id: track.id,
       session_hash: session.token_hash,

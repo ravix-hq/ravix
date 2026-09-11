@@ -38,6 +38,7 @@ defmodule RavixWeb.PreviewGateway do
   import Plug.Conn
 
   alias Ravix.Crypto
+  alias Ravix.Previews.Grant
   alias RavixWeb.PreviewGateway.{Headers, Html, Relay, Watch}
 
   defmodule Error do
@@ -286,7 +287,7 @@ defmodule RavixWeb.PreviewGateway do
   defp mint_session(%Site{} = site, ticket) do
     token = Crypto.random_token()
 
-    session = %{
+    session = %Grant{
       hash: Crypto.sha256(token),
       track_id: ticket.track_id,
       session_hash: ticket.session_hash,

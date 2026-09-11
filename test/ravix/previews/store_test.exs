@@ -1,7 +1,7 @@
 defmodule Ravix.Previews.StoreTest do
   use Ravix.DataCase, async: true, group: :preview_ports
 
-  alias Ravix.Previews.{Config, Preview, Row, Store}
+  alias Ravix.Previews.{AgentGrant, Config, Grant, Preview, Row, Store}
 
   describe "rows" do
     test "ensure creates a stopped row once and get reads it back by track and by host" do
@@ -152,7 +152,7 @@ defmodule Ravix.Previews.StoreTest do
     } do
       now = System.system_time(:millisecond)
 
-      ticket = %{
+      ticket = %Grant{
         hash: "h1",
         track_id: t.id,
         session_hash: s.token_hash,
@@ -186,7 +186,7 @@ defmodule Ravix.Previews.StoreTest do
 
       for {hash, session_hash} <- [{"a", s.token_hash}, {"b", other_session.token_hash}] do
         :ok =
-          Store.grant(%{
+          Store.grant(%Grant{
             hash: hash,
             track_id: t.id,
             session_hash: session_hash,
@@ -209,7 +209,7 @@ defmodule Ravix.Previews.StoreTest do
       track = insert_track(project: insert_project(user: user), conversation_id: "c")
       now = System.system_time(:millisecond)
 
-      grant = %{
+      grant = %AgentGrant{
         hash: "g1",
         track_id: track.id,
         user_id: user.id,
@@ -235,10 +235,26 @@ defmodule Ravix.Previews.StoreTest do
       Store.revoke_agent(track.id, user.id)
       assert Store.agent_grant("g4") == nil
 
-      # The factory's camelCase document reads too.
+      # The factory's camelCase document reads too, and every field of it:
+      # a grant missing `sandbox_id` or `sprite` would pass `same_machine/2`
+      # against a machine that has neither.
       camel = insert_preview_agent_grant(insert_track(), user)
-      assert %{track_id: track_id, sandbox_id: "sandbox-" <> _} = Store.agent_grant(camel.hash)
-      assert track_id == camel.track_id
+
+      assert %AgentGrant{
+               hash: hash,
+               track_id: track_id,
+               user_id: user_id,
+               conversation_id: "conv-" <> _,
+               prompt_id: prompt_id,
+               sandbox_id: "sandbox-" <> _,
+               sprite: "sprite-" <> _,
+               expires: expires
+             } = Store.agent_grant(camel.hash)
+
+      assert {hash, track_id, user_id, expires} ==
+               {camel.hash, camel.track_id, user.id, camel.expires}
+
+      assert prompt_id == camel.row["promptId"]
     end
   end
 

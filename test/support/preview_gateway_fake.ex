@@ -23,7 +23,7 @@ defmodule Ravix.PreviewGatewayFake do
   alias Ravix.Accounts.User
   alias Ravix.Crypto
   alias Ravix.PreviewGatewayFake.Store
-  alias Ravix.Previews.Row
+  alias Ravix.Previews.{Grant, Row}
   alias Ravix.Tracks.Track
 
   @doc "Start the store and the front once per module; returns the front's port."
@@ -77,7 +77,7 @@ defmodule Ravix.PreviewGatewayFake do
     app_session = "app-session-#{s}"
     Store.put_session(Crypto.sha256(app_session), guest)
 
-    Store.put_grant(%{
+    Store.put_grant(%Grant{
       hash: Crypto.sha256("preview-session-#{s}"),
       track_id: t1,
       session_hash: Crypto.sha256(app_session),

@@ -7,6 +7,7 @@ defmodule RavixWeb.PreviewGatewayTest do
   alias Ravix.Hub
   alias Ravix.PreviewGatewayFake, as: Fake
   alias Ravix.PreviewGatewayFake.{Client, Store}
+  alias Ravix.Previews.Grant
   alias RavixWeb.PreviewGateway.{Frame, Headers, Html}
 
   @script ~s(<script src="/__ravix/activity.js" defer></script>)
@@ -602,7 +603,7 @@ defmodule RavixWeb.PreviewGatewayTest do
   defp ticket(f, secret, track_id, expires \\ Fake.now() + 60_000) do
     value = "#{secret}-#{f.row.hostname}"
 
-    Store.put_grant(%{
+    Store.put_grant(%Grant{
       hash: Crypto.sha256(value),
       track_id: track_id,
       session_hash: Crypto.sha256(f.app_session),
