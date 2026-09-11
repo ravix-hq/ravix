@@ -2,12 +2,11 @@ defmodule RavixWeb.WorkspaceLive do
   @moduledoc "The project rail, inbox, navigation, and project management forms."
   use RavixWeb, :live_view
 
-  alias Ravix.{Accounts, Hub, Previews, Projects, Tracks}
+  alias Ravix.{Accounts, Hub, Projects, Tracks}
   alias Ravix.Hub.Event
   alias Ravix.Tracks.Names
   alias RavixWeb.Live.Form
   alias RavixWeb.Live.Guard
-  alias RavixWeb.Live.Params
 
   # The four origins. One list rather than the three that had grown -- this
   # module's guard, the buttons in the template, and `Ravix.Tracks.Track`'s
@@ -58,12 +57,11 @@ defmodule RavixWeb.WorkspaceLive do
         refs: [],
         origin_kind: :blank,
         query: "",
-        busy: false,
-        settings: nil,
-        preview_defaults: nil,
-        defaults_form: Form.new(:preview_defaults),
-        secret_form: Form.new(:secret),
-        settings_form: Form.new(:settings)
+        # Creating a project and creating a track, and nothing else. The
+        # settings dialog owns its own; see `RavixWeb.Live.SettingsDialog`
+        # for why one flag for the whole page could not answer "may I press
+        # this".
+        busy: false
       )
 
     {:ok, if(socket.assigns.current_user, do: reload(socket), else: socket)}
@@ -271,77 +269,6 @@ defmodule RavixWeb.WorkspaceLive do
      |> start_async(:create_track, fn -> Tracks.open(user, id, attrs) end)}
   end
 
-  def handle_event("save-settings", %{"settings" => params}, socket) do
-    attrs = Map.take(params, ~w(name runtime model instructions setup_script))
-
-    attrs =
-      Map.put(
-        attrs,
-        "packages",
-        Map.new(~w(apt pip npm), fn key ->
-          {key, String.split(params[key] || "", ~r/[\s,]+/, trim: true)}
-        end)
-      )
-
-    {:noreply,
-     result(
-       assign(socket, settings_form: Form.new(:settings, params)),
-       Projects.update_settings(socket.assigns.current_user, project_id(socket), attrs),
-       fn s, _ ->
-         s
-         |> reload()
-         |> open_dialog(:settings)
-         |> put_flash(
-           :info,
-           "Settings saved. Open a new track to use updated instructions and secrets."
-         )
-       end,
-       :settings_form
-     )}
-  end
-
-  def handle_event("save-secret", %{"secret" => params}, socket) do
-    # The store and the key go back into the form so a refusal can be
-    # corrected. The value does not: a secret in an assign is a secret in
-    # the page's state and in its next diff, which is the one thing this
-    # form must not do, and `<.input type="password">` would render it
-    # straight back into the box.
-    kept = Map.drop(params, ["value"])
-
-    {:noreply,
-     result(
-       assign(socket, secret_form: Form.new(:secret, kept)),
-       Projects.update_settings(socket.assigns.current_user, project_id(socket), %{
-         secret: Map.take(params, ~w(store key value))
-       }),
-       fn s, _ ->
-         s |> open_dialog(:settings) |> put_flash(:info, "Secret updated.")
-       end,
-       :secret_form
-     )}
-  end
-
-  def handle_event("save-preview-defaults", params, socket) do
-    fields = Map.get(params, "preview_defaults", %{})
-    config = if Params.flag(params, "clear"), do: nil, else: fields
-
-    {:noreply,
-     result(
-       assign(socket, defaults_form: Form.new(:preview_defaults, fields)),
-       Previews.set_defaults(socket.assigns.current_user, project_id(socket), config),
-       fn s, defaults ->
-         s |> show_defaults(defaults) |> put_flash(:info, "Preview defaults saved.")
-       end,
-       :defaults_form
-     )}
-  end
-
-  def handle_event("project-danger", %{"action" => "rebuild", "confirm" => name}, socket),
-    do: {:noreply, project_danger(socket, name, &Projects.rebuild/2)}
-
-  def handle_event("project-danger", %{"action" => "delete", "confirm" => name}, socket),
-    do: {:noreply, project_danger(socket, name, &Projects.destroy/2)}
-
   @impl true
   def handle_async(:create_project, {:ok, response}, socket) do
     {:noreply,
@@ -361,13 +288,6 @@ defmodule RavixWeb.WorkspaceLive do
        fn s, t -> s |> reload() |> push_patch(to: "/p/#{t.project_id}/t/#{t.id}") end,
        :track_form
      )}
-  end
-
-  def handle_async(:project_danger, {:ok, response}, socket) do
-    {:noreply,
-     result(assign(socket, busy: false), response, fn s, _ ->
-       s |> reload() |> push_patch(to: "/")
-     end)}
   end
 
   def handle_async(_name, {:exit, _reason}, socket),
@@ -400,6 +320,16 @@ defmodule RavixWeb.WorkspaceLive do
   # sends the sentence here; see `RavixWeb.Live.Result.error/2`.
   def handle_info({:flash, kind, message}, socket),
     do: {:noreply, put_flash(socket, kind, message)}
+
+  # The settings dialog saved a project's settings, which may have renamed
+  # it. The rail on the left is showing the old name until it is re-read.
+  def handle_info(:project_settings_saved, socket), do: {:noreply, reload(socket)}
+
+  # A rebuild closed every track on the project and a delete removed it
+  # outright. Either way this is no longer somewhere to be, and a component
+  # cannot patch the URL.
+  def handle_info(:project_left_behind, socket),
+    do: {:noreply, socket |> reload() |> push_patch(to: "/")}
 
   def handle_info({:hub, %Event{name: name}}, socket) when name in [:here, :queue],
     do: {:noreply, socket}
@@ -464,78 +394,12 @@ defmodule RavixWeb.WorkspaceLive do
 
   defp open_dialog(socket, :search), do: assign(socket, dialog: :search, query: "")
 
-  defp open_dialog(socket, :settings) do
-    result(socket, Projects.settings(socket.assigns.current_user, project_id(socket)), fn s,
-                                                                                          settings ->
-      defaults =
-        case Previews.defaults(s.assigns.current_user, project_id(s)) do
-          {:ok, d} -> d
-          _ -> nil
-        end
-
-      s
-      |> assign(dialog: :settings, settings: settings, settings_form: settings_form(settings))
-      |> show_defaults(defaults)
-      # The secret form is always blank: values are write-only, so there is
-      # nothing to read back, and a key left in the box from the last save
-      # invites somebody to overwrite a secret they meant to add beside.
-      |> assign(secret_form: Form.new(:secret, %{"store" => "env"}))
-    end)
-  end
+  # The settings dialog loads and holds its own four forms, so opening it is
+  # only opening it.
+  defp open_dialog(socket, :settings), do: assign(socket, dialog: :settings)
 
   # The people dialog loads its own list, so opening it is only opening it.
   defp open_dialog(socket, :people), do: assign(socket, dialog: :people)
-
-  # The settings form opens on what is saved. The three package boxes are
-  # one space-separated line each; `Ravix.Projects.Settings` holds them as
-  # a map keyed by manager, and this is where the two spellings meet.
-  defp settings_form(settings) do
-    packages = Map.new(~w(apt pip npm), &{&1, Enum.join(settings.packages[&1] || [], " ")})
-
-    Form.new(
-      :settings,
-      Map.merge(packages, %{
-        "name" => settings.name,
-        "runtime" => settings.runtime,
-        "model" => settings.model,
-        "instructions" => settings.instructions,
-        "setup_script" => settings.setup_script
-      })
-    )
-  end
-
-  # The defaults form shows what is saved, so it is rebuilt from the answer
-  # rather than left holding what was typed --- which is also what clears a
-  # refusal once the save goes through.
-  defp show_defaults(socket, defaults) do
-    config = defaults || %{}
-
-    assign(socket,
-      preview_defaults: defaults,
-      defaults_form:
-        Form.new(:preview_defaults, %{
-          "directory" => Map.get(config, :directory, "."),
-          "command" => Map.get(config, :command, ""),
-          "readiness_path" => Map.get(config, :readiness_path, "/")
-        })
-    )
-  end
-
-  # The typed confirmation is the gate; which of the two irreversible things
-  # happens after it is decided by the clause above, not by a string compared
-  # again down here.
-  defp project_danger(socket, confirmation, call) do
-    if socket.assigns.project && confirmation == socket.assigns.project.name do
-      user = socket.assigns.current_user
-      id = project_id(socket)
-
-      socket
-      |> assign(busy: true)
-      |> start_async(:project_danger, fn -> call.(user, id) end)
-    else
-      put_flash(socket, :error, "Type the project name to confirm.")
-    end
-  end
 
   defp load_repos(socket, id) do
     if Accounts.capabilities().github do
