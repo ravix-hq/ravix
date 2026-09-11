@@ -6,7 +6,7 @@ defmodule Ravix.ProjectsTest do
   alias Ravix.GitHubFake, as: GH
   alias Ravix.Hub.Event
   alias Ravix.Projects
-  alias Ravix.Projects.{Machine, Project, Settings}
+  alias Ravix.Projects.{Machine, MachineState, Project, Settings}
   alias Ravix.PromptQueue.Item
 
   @catalog %{runtimes: ["codex"], models: %{codex: ["openai/test-model"]}}
@@ -210,7 +210,7 @@ defmodule Ravix.ProjectsTest do
       assert map.repo == "acme/widgets"
       assert map.repo_path == "/workspace/widgets"
       assert map.repo_private == true
-      assert map.machine == %{sandbox_id: nil, status: :none, sprite_name: nil}
+      assert map.machine == %MachineState{sandbox_id: nil, status: :none, sprite_name: nil}
       assert map.owner_login == "owner"
       assert map.role == :member
       assert map.access == :tracks
@@ -281,9 +281,12 @@ defmodule Ravix.ProjectsTest do
 
       assert [first, second, third] = Projects.list(me)
       assert %{name: "mine", access: :owner, role: :owner, owner_login: "me"} = first
-      assert first.machine == %{sandbox_id: "sb-1", status: :ready, sprite_name: nil}
+      assert first.machine == %MachineState{sandbox_id: "sb-1", status: :ready, sprite_name: nil}
       assert %{name: "whole", access: :project, role: :member, owner_login: "other"} = second
-      assert second.machine == %{sandbox_id: "sb-2", status: :suspended, sprite_name: nil}
+
+      assert second.machine ==
+               %MachineState{sandbox_id: "sb-2", status: :suspended, sprite_name: nil}
+
       assert %{name: "partial", access: :tracks, role: :member} = third
       assert third.machine.status == :none
     end

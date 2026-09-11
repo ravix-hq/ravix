@@ -25,11 +25,14 @@ defmodule RavixWeb.Live.MachineDock do
   alias Ravix.Terminal
   alias Ravix.Vitals
 
-  @tabs ~w(terminal run vitals)
+  # The dock's three tabs, as the buttons spell them and as this module does.
+  # `@labels` keeps the order the dock offers them in.
+  @tabs %{"terminal" => :terminal, "run" => :run, "vitals" => :vitals}
+  @labels [terminal: "Terminal", run: "Run", vitals: "Machine stats"]
 
-  @doc "The tabs the dock offers, in the order it offers them."
-  @spec tabs() :: [String.t()]
-  def tabs, do: @tabs
+  @doc "The tabs the dock offers, labelled, in the order it offers them."
+  @spec tabs() :: [{atom(), String.t()}]
+  def tabs, do: @labels
 
   # Two hundred commands of scrollback. A terminal that grows without bound
   # is a page that eventually stops rendering.
@@ -46,7 +49,7 @@ defmodule RavixWeb.Live.MachineDock do
        socket
      else
        assign(socket,
-         dock: "terminal",
+         dock: :terminal,
          dock_open: false,
          output: [],
          exec_busy: false,
@@ -57,10 +60,10 @@ defmodule RavixWeb.Live.MachineDock do
   end
 
   @impl true
-  def handle_event("dock", %{"name" => name}, socket) when name in @tabs do
-    socket = assign(socket, dock: name, dock_open: true)
+  def handle_event("dock", %{"name" => name}, socket) when is_map_key(@tabs, name) do
+    socket = assign(socket, dock: Map.fetch!(@tabs, name), dock_open: true)
 
-    if name == "vitals" do
+    if socket.assigns.dock == :vitals do
       {:noreply,
        result(
          socket,
@@ -133,18 +136,18 @@ defmodule RavixWeb.Live.MachineDock do
           <.icon name="chevron" size={13} open={@dock_open} />
         </button>
         <button
-          :for={name <- ~w(terminal run vitals)}
-          class={if @dock == name, do: "selected", else: "ghost"}
+          :for={{tab, label} <- tabs()}
+          class={if @dock == tab, do: "selected", else: "ghost"}
           phx-click="dock"
           phx-target={@myself}
-          phx-value-name={name}
+          phx-value-name={tab}
         >
-          {if name == "vitals", do: "Machine stats", else: String.capitalize(name)}
+          {label}
         </button>
       </nav>
       <div id="machine-dock" hidden={!@dock_open} class="machine-dock">
         <div
-          hidden={@dock not in ["terminal", "run"]}
+          hidden={@dock not in [:terminal, :run]}
           id="track-terminal"
           phx-hook="Terminal"
           phx-target={@myself}
@@ -176,13 +179,13 @@ defmodule RavixWeb.Live.MachineDock do
             </button>
           </div>
         </div>
-        <div :if={@dock == "vitals"} class="workspace-panel">
+        <div :if={@dock == :vitals} class="workspace-panel">
           <p :if={!@vitals}>No machine metrics available.</p>
           <p :if={@vitals && !@vitals.available}>Metrics unavailable: {@vitals.why}</p>
-          <dl :if={@vitals && @vitals[:vitals]}>
-            <div :for={{key, value} <- @vitals.vitals}>
-              <dt>{key}</dt>
-              <dd>{if is_map(value), do: Jason.encode!(value), else: to_string(value)}</dd>
+          <dl :if={@vitals && @vitals.readings}>
+            <div :for={{label, value} <- Vitals.Readings.rows(@vitals.readings)}>
+              <dt>{label}</dt>
+              <dd>{value}</dd>
             </div>
           </dl>
         </div>

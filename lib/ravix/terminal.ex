@@ -34,18 +34,45 @@ defmodule Ravix.Terminal do
   @default_timeout_sec 60
   @max_command_chars 8_000
 
-  @typedoc "One command's outcome, the `ExecResult` of `shared/api.ts`."
-  @type result :: %{
-          stdout: String.t(),
-          stderr: String.t(),
-          code: non_neg_integer(),
-          cwd: String.t(),
-          timed_out: boolean(),
-          duration_ms: non_neg_integer()
-        }
+  defmodule Result do
+    @moduledoc """
+    One command's outcome.
 
-  @typedoc "Whether the terminal will work, before the panel renders a prompt that cannot."
-  @type status :: %{available: boolean(), why: Ravix.Vitals.unreachable() | nil, cwd: String.t()}
+    `cwd` is where the shell actually ended up rather than where it was
+    asked to start, so the next command in the dock carries on from there.
+    `timed_out` is the 124 the timeout wrapper exits with, told apart from a
+    command that chose to exit 124 only in that nothing else does.
+    """
+
+    @enforce_keys [:stdout, :stderr, :code, :cwd, :timed_out, :duration_ms]
+    defstruct @enforce_keys
+
+    @type t :: %__MODULE__{
+            stdout: String.t(),
+            stderr: String.t(),
+            code: non_neg_integer(),
+            cwd: String.t(),
+            timed_out: boolean(),
+            duration_ms: non_neg_integer()
+          }
+  end
+
+  defmodule Status do
+    @moduledoc """
+    Whether the terminal will work, asked before the panel renders a prompt
+    that cannot. `cwd` is offered either way, because the dock shows where a
+    command *would* run even when it currently cannot run one.
+    """
+
+    @enforce_keys [:available, :why, :cwd]
+    defstruct @enforce_keys
+
+    @type t :: %__MODULE__{
+            available: boolean(),
+            why: Ravix.Vitals.unreachable() | nil,
+            cwd: String.t()
+          }
+  end
 
   @typedoc """
   Everything an exec call can refuse with, and nothing else.
@@ -74,7 +101,7 @@ defmodule Ravix.Terminal do
   that is not Sprites is a real and reportable state rather than a failure:
   exec is not "broken", it does not apply.
   """
-  @spec exec(User.t(), String.t(), map()) :: {:ok, result()} | {:error, reason()}
+  @spec exec(User.t(), String.t(), map()) :: {:ok, Result.t()} | {:error, reason()}
   def exec(%User{} = user, track_id, request) do
     request = stringify(request)
     command = request["command"] |> text(@max_command_chars)
@@ -94,7 +121,7 @@ defmodule Ravix.Terminal do
       case Sprites.shell(sprites, sprite, command, cwd, timeout) do
         {:ok, r} ->
           {:ok,
-           %{
+           %Result{
              stdout: r.stdout,
              stderr: r.stderr,
              code: r.code,
@@ -121,7 +148,7 @@ defmodule Ravix.Terminal do
   asleep or unreachable. Collapsing them into one "unavailable" is how
   people end up filing a bug about a feature that is off by configuration.
   """
-  @spec status(User.t(), String.t()) :: {:ok, status()} | {:error, :not_found}
+  @spec status(User.t(), String.t()) :: {:ok, Status.t()} | {:error, :not_found}
   def status(%User{} = user, track_id) do
     with {:ok, %{track: track, project: project}} <- Access.track_access(user, track_id) do
       {:ok, status_of(Sprites.config(), track, project)}
@@ -129,20 +156,20 @@ defmodule Ravix.Terminal do
   end
 
   defp status_of(nil, track, _project),
-    do: %{available: false, why: :no_token, cwd: track.workdir}
+    do: %Status{available: false, why: :no_token, cwd: track.workdir}
 
   defp status_of(sprites, track, project) do
     case sprite_of(project) do
       {:ok, sprite} ->
         if Sprites.reachable?(sprites, sprite),
-          do: %{available: true, why: nil, cwd: track.workdir},
-          else: %{available: false, why: :unreachable, cwd: track.workdir}
+          do: %Status{available: true, why: nil, cwd: track.workdir},
+          else: %Status{available: false, why: :unreachable, cwd: track.workdir}
 
       {:error, {:conflict, "no_machine", _}} ->
-        %{available: false, why: :no_machine, cwd: track.workdir}
+        %Status{available: false, why: :no_machine, cwd: track.workdir}
 
       {:error, _} ->
-        %{available: false, why: :no_sprite, cwd: track.workdir}
+        %Status{available: false, why: :no_sprite, cwd: track.workdir}
     end
   end
 

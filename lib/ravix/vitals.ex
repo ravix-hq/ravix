@@ -62,23 +62,79 @@ defmodule Ravix.Vitals do
   @typedoc "Why a machine cannot be reached over Sprites, when it cannot."
   @type unreachable :: :no_token | :no_machine | :no_sprite | :unreachable
 
-  @typedoc """
-  CPU, memory and disk on the machine a track's worktree is on. Every field
-  is nullable and independently so. These are the *machine's* figures, not
-  the track's: four tracks on one project share a box.
-  """
-  @type vitals :: %{
-          cpu_cores: number() | nil,
-          cpu_busy: number() | nil,
-          mem_used_bytes: number() | nil,
-          mem_total_bytes: number() | nil,
-          disk_used_bytes: number() | nil,
-          disk_total_bytes: number() | nil,
-          disk_mount: String.t() | nil
-        }
+  defmodule Readings do
+    @moduledoc """
+    CPU, memory and disk on the machine a track's worktree is on. Every field
+    is nullable and independently so -- a kernel missing one file must not
+    take the other six figures down with it. These are the *machine's*
+    figures, not the track's: four tracks on one project share a box.
 
-  @typedoc "`GET /api/tracks/:id/vitals`: the same four answers the terminal gives."
-  @type report :: %{available: boolean(), why: unreachable() | nil, vitals: vitals() | nil}
+    `rows/1` exists because the dock used to render this by iterating the
+    map, which put the row order at the mercy of Erlang's term ordering
+    rather than anybody's decision. The order is here, once, and reads
+    processor, then memory, then disk.
+    """
+
+    @enforce_keys [
+      :cpu_cores,
+      :cpu_busy,
+      :mem_used_bytes,
+      :mem_total_bytes,
+      :disk_used_bytes,
+      :disk_total_bytes,
+      :disk_mount
+    ]
+    defstruct @enforce_keys
+
+    @type t :: %__MODULE__{
+            cpu_cores: number() | nil,
+            cpu_busy: number() | nil,
+            mem_used_bytes: number() | nil,
+            mem_total_bytes: number() | nil,
+            disk_used_bytes: number() | nil,
+            disk_total_bytes: number() | nil,
+            disk_mount: String.t() | nil
+          }
+
+    @labels [
+      cpu_cores: "Processors",
+      cpu_busy: "CPU in use",
+      mem_used_bytes: "Memory used",
+      mem_total_bytes: "Memory total",
+      disk_used_bytes: "Disk used",
+      disk_total_bytes: "Disk total",
+      disk_mount: "Disk mount"
+    ]
+
+    @doc "The readings worth drawing, labelled, in the order the dock shows them."
+    @spec rows(t()) :: [{String.t(), term()}]
+    def rows(%__MODULE__{} = readings) do
+      for {field, label} <- @labels,
+          value = Map.fetch!(readings, field),
+          not is_nil(value),
+          do: {label, value}
+    end
+  end
+
+  defmodule Report do
+    @moduledoc """
+    `GET /api/tracks/:id/vitals`: the same four answers the terminal gives.
+
+    Reachable but illegible is its own answer -- `readings: nil` with
+    `available: true` -- and the dock renders nothing rather than a row of
+    dashes, because dashes read as a fault and this is a machine that is
+    working fine and merely quiet about it.
+    """
+
+    @enforce_keys [:available, :why, :readings]
+    defstruct @enforce_keys
+
+    @type t :: %__MODULE__{
+            available: boolean(),
+            why: Ravix.Vitals.unreachable() | nil,
+            readings: Readings.t() | nil
+          }
+  end
 
   @doc """
   The readout for a track's machine.
@@ -90,7 +146,7 @@ defmodule Ravix.Vitals do
   dashes reads as a fault and this is a machine that is working fine and
   merely private about it.
   """
-  @spec report(User.t(), String.t()) :: {:ok, report()} | {:error, :not_found}
+  @spec report(User.t(), String.t()) :: {:ok, Report.t()} | {:error, :not_found}
   def report(%User{} = user, track_id) do
     with {:ok, %{track: track, project: project}} <- Access.track_access(user, track_id) do
       {:ok, read(Sprites.config(), track, project)}
@@ -104,7 +160,7 @@ defmodule Ravix.Vitals do
          sprite when is_binary(sprite) <- Tracks.sprite_for(sandbox_id) || :no_sprite,
          {:ok, raw} <-
            Sprites.exec(sprites, sprite, ["sh", "-lc", probe(track.workdir)], @probe_timeout_sec) do
-      %{available: true, why: nil, vitals: parse_vitals(raw.stdout)}
+      %Report{available: true, why: nil, readings: parse_vitals(raw.stdout)}
     else
       :no_machine -> out(:no_machine)
       :no_sprite -> out(:no_sprite)
@@ -119,7 +175,7 @@ defmodule Ravix.Vitals do
     end
   end
 
-  defp out(why), do: %{available: false, why: why, vitals: nil}
+  defp out(why), do: %Report{available: false, why: why, readings: nil}
 
   @doc """
   The script, which prints `key=value` lines and never fails.
@@ -148,7 +204,7 @@ defmodule Ravix.Vitals do
   with six holes in it: the readout wants to know the difference so it can
   render nothing.
   """
-  @spec parse_vitals(String.t()) :: vitals() | nil
+  @spec parse_vitals(String.t()) :: Readings.t() | nil
   def parse_vitals(stdout) do
     f = fields(stdout)
 
@@ -161,7 +217,7 @@ defmodule Ravix.Vitals do
     [df_total, df_used, mount] =
       f["df"] |> words() |> Enum.concat([nil, nil, nil]) |> Enum.take(3)
 
-    v = %{
+    v = %Readings{
       cpu_cores: cpu_cores,
       cpu_busy: cpu_busy,
       mem_used_bytes: mem_used,

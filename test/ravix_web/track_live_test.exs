@@ -181,13 +181,40 @@ defmodule RavixWeb.TrackLiveTest do
   end
 
   test "vitals render both metrics and explicit unavailability", ctx do
+    # This stub used to answer `%{cpu: %{percent: 12}, memory: "32MB"}` --
+    # neither of which is a field `Vitals` has ever produced. The dock
+    # rendered it because it iterated whatever map it was handed, so the test
+    # agreed with itself about a readout that does not exist.
     expect(Vitals, :report, fn _, _ ->
-      {:ok, %{available: true, vitals: %{cpu: %{percent: 12}, memory: "32MB"}}}
+      {:ok,
+       %Vitals.Report{
+         available: true,
+         why: nil,
+         readings: %Vitals.Readings{
+           cpu_cores: 2,
+           cpu_busy: 0.12,
+           mem_used_bytes: 33_554_432,
+           mem_total_bytes: nil,
+           disk_used_bytes: nil,
+           disk_total_bytes: nil,
+           disk_mount: nil
+         }
+       }}
     end)
 
     ctx.view |> element("button[phx-click=dock][phx-value-name=vitals]") |> render_click()
-    assert render(ctx.view) =~ "32MB"
-    expect(Vitals, :report, fn _, _ -> {:ok, %{available: false, why: :no_machine}} end)
+    rendered = render(ctx.view)
+
+    assert rendered =~ "Memory used"
+    assert rendered =~ "33554432"
+    # A reading the machine could not give is left out, not drawn as a blank
+    # row: `mem_total_bytes` is nil and no "Memory total" appears.
+    refute rendered =~ "Memory total"
+
+    expect(Vitals, :report, fn _, _ ->
+      {:ok, %Vitals.Report{available: false, why: :no_machine, readings: nil}}
+    end)
+
     ctx.view |> element("button[phx-click=dock][phx-value-name=vitals]") |> render_click()
     assert render(ctx.view) =~ "no_machine"
   end

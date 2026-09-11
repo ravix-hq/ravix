@@ -43,18 +43,14 @@ defmodule Ravix.Projects do
   alias Ravix.Hub
   alias Ravix.Ids
   alias Ravix.People
-  alias Ravix.Projects.{Machine, Project, Settings, Store, View}
+  alias Ravix.Projects.{Machine, MachineState, Project, Settings, Store, View}
   alias Ravix.Spec
 
   @typedoc "How the caller reaches a project. See `access_of/2`."
   @type access :: :owner | :project | :tracks
 
-  @typedoc "`MachineState` from `shared/api.ts`. `sprite_name` is deliberately never read here."
-  @type machine :: %{
-          sandbox_id: String.t() | nil,
-          status: :none | :pending | :starting | :ready | :suspended | :terminated | :failed,
-          sprite_name: String.t() | nil
-        }
+  @typedoc "Whether a project has a machine. See `Ravix.Projects.MachineState`."
+  @type machine :: MachineState.t()
 
   @type reason ::
           :not_found
