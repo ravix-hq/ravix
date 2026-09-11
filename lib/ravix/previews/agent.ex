@@ -175,11 +175,16 @@ defmodule Ravix.Previews.Agent do
     public_url = Ravix.Config.public_url()
     domain = Ravix.Config.previews().domain
 
+    # `readiness_path`, spelled the way the column, the form and
+    # `Ravix.Previews.Config` spell it. The example said `readinessPath`
+    # because it was copied from the TypeScript, and every agent shown it
+    # dutifully sent camel case; `Config.changeset/1` still accepts that, for
+    # the turns already in flight that were told to send it.
     example =
       Jason.encode!(%{
         directory: "apps/example",
         command: ~s(npm run dev -- --host 127.0.0.1 --port "$PORT" --strictPort),
-        readinessPath: "/"
+        readiness_path: "/"
       })
 
     Enum.join(
@@ -335,7 +340,10 @@ defmodule Ravix.Previews.Agent do
   end
 
   defp perform("configure", track_id, body) do
-    with {:ok, config} <- Previews.parse_config(body["config"] || body[:config]),
+    # String keys, always: this is a JSON body off `POST
+    # /api/tracks/:id/preview/agent`. The `|| body[:config]` that used to be
+    # here could not match anything Plug produces.
+    with {:ok, config} <- Previews.parse_config(body["config"]),
          :ok <- Previews.configure(track_id, config) do
       :ok
     else

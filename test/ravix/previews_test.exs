@@ -9,7 +9,7 @@ defmodule Ravix.PreviewsTest do
   import Ravix.PreviewsFixture
 
   alias Ravix.Previews
-  alias Ravix.Previews.{Row, Store}
+  alias Ravix.Previews.{Config, Row, Store}
   alias Ravix.PreviewsFixture
   alias Ravix.Sprites.Error, as: SpritesError
   alias Ravix.Tracks.Track
@@ -46,29 +46,46 @@ defmodule Ravix.PreviewsTest do
 
   test "configuration is confined to the worktree and readiness cannot select another host" do
     for directory <- ["../other", "/etc", "a/../../b", "a\0b"] do
-      assert {:error, {:unprocessable, "preview_directory", _}} =
+      assert {:error, %Ecto.Changeset{errors: errors}} =
                Previews.parse_config(%{directory: directory, command: "run", readiness_path: "/"})
+
+      assert Keyword.has_key?(errors, :directory)
     end
 
     for path <- ["//evil", "https://evil", "/\r\n", "/#fragment"] do
-      assert {:error, {:unprocessable, "preview_readiness", _}} =
+      assert {:error, %Ecto.Changeset{errors: errors}} =
                Previews.parse_config(%{directory: ".", command: "run", readiness_path: path})
+
+      assert Keyword.has_key?(errors, :readiness_path)
     end
 
-    assert {:error, {:unprocessable, "preview_command", _}} =
+    assert {:error, %Ecto.Changeset{errors: errors}} =
              Previews.parse_config(%{directory: ".", command: "  ", readinessPath: "/"})
 
-    assert {:error, {:unprocessable, "preview_config", _}} = Previews.parse_config("nope")
+    assert Keyword.has_key?(errors, :command)
+
+    # Every field is refused at once. A `cond` answered about the first one it
+    # reached, so a form with three wrong boxes took three round trips to fix
+    # and only ever pointed at one of them.
+    assert {:error, %Ecto.Changeset{errors: errors}} =
+             Previews.parse_config(%{directory: "/etc", command: "  ", readiness_path: "nope"})
+
+    assert Enum.sort(Keyword.keys(errors)) == [:command, :directory, :readiness_path]
+
+    # Not a configuration at all: nothing to hang on a field, so the error is
+    # the changeset's own and `RavixWeb.Live.Form.refuse/2` leaves it for the
+    # flash.
+    assert {:error, %Ecto.Changeset{errors: [config: _]}} = Previews.parse_config("nope")
     assert {:ok, nil} = Previews.parse_config(nil)
 
-    assert {:ok, %{directory: ".", command: "run", readiness_path: "/"}} =
+    assert {:ok, %Config{directory: ".", command: "run", readiness_path: "/"}} =
              Previews.parse_config(%{
                "directory" => "  ",
                "command" => " run ",
                "readinessPath" => "/"
              })
 
-    assert {:ok, %{directory: "apps/web"}} =
+    assert {:ok, %Config{directory: "apps/web"}} =
              Previews.parse_config(%{
                "directory" => "apps/web",
                "command" => "run",
@@ -103,7 +120,7 @@ defmodule Ravix.PreviewsTest do
 
     assert String.ends_with?(rest, ".preview.localhost:5183")
 
-    override = %{directory: "apps/web", command: "run", readiness_path: "/"}
+    override = %Config{directory: "apps/web", command: "run", readiness_path: "/"}
     assert :ok = Previews.configure(t1.id, override)
     assert %{config: ^override, override: ^override} = Previews.info(t1.id)
 
@@ -274,12 +291,14 @@ defmodule Ravix.PreviewsTest do
     assert {:ok, %{override: %{directory: "apps/web"}}} =
              Previews.save_config(guest, t1.id, config)
 
-    assert {:error, {:unprocessable, "preview_directory", _}} =
+    assert {:error, %Ecto.Changeset{errors: errors}} =
              Previews.save_config(guest, t1.id, %{
                directory: "/etc",
                command: "x",
                readiness_path: "/"
              })
+
+    assert Keyword.has_key?(errors, :directory)
 
     assert :ok = Previews.start_service(t1.id)
     assert {:ok, %{state: :ready, logs: "startup logs"}} = Previews.status(guest, t1.id)
@@ -299,7 +318,11 @@ defmodule Ravix.PreviewsTest do
     t2: t2
   } do
     assert :ok =
-             Previews.configure(t2.id, %{directory: "own", command: "own", readiness_path: "/"})
+             Previews.configure(t2.id, %Config{
+               directory: "own",
+               command: "own",
+               readiness_path: "/"
+             })
 
     Task.await_many(
       Enum.map([t1.id, t2.id], fn id -> Task.async(fn -> Previews.start_service(id) end) end),

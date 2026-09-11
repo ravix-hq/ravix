@@ -12,7 +12,7 @@ defmodule Ravix.Previews.ReconcilerTest do
   import Ravix.PreviewsFixture
 
   alias Ravix.Previews
-  alias Ravix.Previews.{Reconciler, Row, Store}
+  alias Ravix.Previews.{Config, Reconciler, Row, Store}
   alias Ravix.QueryCount
   alias Ravix.Tracks.Track
 
@@ -144,7 +144,7 @@ defmodule Ravix.Previews.ReconcilerTest do
     starting = Task.async(fn -> Previews.start_service(t1.id) end)
     await(p, &(&1.creates == 1))
 
-    config = %{directory: "app2", command: "new command", readiness_path: "/"}
+    config = %Config{directory: "app2", command: "new command", readiness_path: "/"}
     configuring = Task.async(fn -> Previews.configure(t1.id, config) end)
     await(p, fn _ -> match?(%Row{desired: :stopped}, Store.get(t1.id)) end)
     put(p, :barrier, false)
@@ -179,7 +179,7 @@ defmodule Ravix.Previews.ReconcilerTest do
                   Previews.stop_service(track.id)
 
                 :configure ->
-                  Previews.configure(track.id, %{
+                  Previews.configure(track.id, %Config{
                     directory: "app#{index}",
                     command: "run #{index}",
                     readiness_path: "/"
@@ -235,7 +235,7 @@ defmodule Ravix.Previews.ReconcilerTest do
     command = ~s(exec new-server --port "$PORT")
 
     assert :ok =
-             Previews.configure(t1.id, %{
+             Previews.configure(t1.id, %Config{
                directory: "new-app",
                command: command,
                readiness_path: "/"

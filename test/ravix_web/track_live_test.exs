@@ -329,30 +329,30 @@ defmodule RavixWeb.TrackLiveTest do
     ctx.view |> form("#preview-config-form") |> render_submit(%{clear: "true"})
   end
 
-  test "a bad preview command is refused on the command, not over the whole page", ctx do
+  test "a bad preview configuration is refused on every box that is wrong", ctx do
     render_click(ctx.view, "panel", %{name: "preview"})
     render_async(ctx.view)
 
-    # `Ravix.Previews.parse_config/1` answers three different sentences for
-    # three different boxes. All three used to arrive as one toast at the top
-    # of the page, which said what was wrong but not where.
-    expect(Previews, :save_config, fn _, _, _ ->
-      {:error,
-       {:unprocessable, "preview_command",
-        "Supply a startup command that honors $PORT and fails if that port is occupied."}}
-    end)
+    # The real refusal, built by the real parser rather than written out here:
+    # `Ravix.Previews.Config` is the authority on which of these three boxes is
+    # wrong, and a stub that invented its own shape would keep passing after
+    # that changed.
+    fields = [directory: "/etc", command: "   ", readiness_path: "nope"]
+    {:error, changeset} = Previews.parse_config(Map.new(fields))
+    expect(Previews, :save_config, fn _, _, _ -> {:error, changeset} end)
 
-    ctx.view
-    |> form("#preview-config-form", preview_config: [command: "python -m http.server 8000"])
-    |> render_submit()
+    ctx.view |> form("#preview-config-form", preview_config: fields) |> render_submit()
 
+    # All three at once. A `cond` answered about whichever it reached first, so
+    # three wrong boxes took three round trips and only ever pointed at one.
+    assert has_element?(ctx.view, "#preview-config-form .field p.error", "relative app directory")
     assert has_element?(ctx.view, "#preview-config-form .field p.error", "honors $PORT")
+    assert has_element?(ctx.view, "#preview-config-form .field p.error", "HTTP path on this app")
 
-    # And what was typed is still there to be corrected.
-    assert has_element?(
-             ctx.view,
-             "#preview-command[value='python -m http.server 8000']"
-           )
+    # And what was typed is still there to be corrected, because the changeset
+    # kept it.
+    assert has_element?(ctx.view, "#preview-directory[value='/etc']")
+    assert has_element?(ctx.view, "#preview-path[value='nope']")
   end
 
   test "the queue panel renders what the context really returns, not a stub of it", ctx do
