@@ -103,7 +103,7 @@ defmodule Ravix.SpritesTest do
     assert {:ok, _} = Sprites.service_action(@cfg, "sprite", "sy-test", :stop)
     assert {:ok, _} = Sprites.service_action(@cfg, "sprite", "sy-test", :delete)
     assert :ok = Sprites.activity(@cfg, "sprite", "sy-test")
-    assert :ok = Sprites.activity(@cfg, "sprite", "sy-test", true)
+    assert :ok = Sprites.activity(@cfg, "sprite", "sy-test", :release)
     assert {:ok, ""} = Sprites.service_logs(@cfg, "sprite", "sy-test")
 
     assert {:ok, %Service{name: "sy-test", status: "running"}} =
@@ -168,7 +168,7 @@ defmodule Ravix.SpritesTest do
     Fake.install(fn conn, _call -> Fake.exec_response(conn, "", "no such route", 22) end)
 
     assert {:error, %Error{status: 501}} = Sprites.activity(@cfg, "sprite", "sy-test")
-    assert :ok = Sprites.activity(@cfg, "sprite", "sy-test", true)
+    assert :ok = Sprites.activity(@cfg, "sprite", "sy-test", :release)
   end
 
   test "service output is bounded to its last 32,000 bytes" do

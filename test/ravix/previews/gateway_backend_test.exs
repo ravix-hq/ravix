@@ -89,8 +89,8 @@ defmodule RavixWeb.PreviewGateway.RavixBackendTest do
     grant: grant,
     row: row
   } do
-    assert GatewayBackend.get_grant("grant", track.id, :session, false) == grant
-    assert GatewayBackend.get_grant("grant", track.id, :ticket, false) == nil
+    assert GatewayBackend.get_grant("grant", track.id, :session, :peek) == grant
+    assert GatewayBackend.get_grant("grant", track.id, :ticket, :peek) == nil
     assert %{id: id} = GatewayBackend.session_user(session.token_hash)
     assert id == guest.id
     assert GatewayBackend.session_user("nope") == nil
@@ -111,7 +111,7 @@ defmodule RavixWeb.PreviewGateway.RavixBackendTest do
     Ravix.Accounts.end_session(session.token_hash)
     refute GatewayBackend.allowed?(row, grant)
     # Ending the session cascades to the grant; a fresh session needs a fresh grant.
-    assert GatewayBackend.get_grant("grant", track.id, :session, false) == nil
+    assert GatewayBackend.get_grant("grant", track.id, :session, :peek) == nil
 
     {_token, session} = insert_session(guest)
     grant = %{grant | hash: "grant2", session_hash: session.token_hash}

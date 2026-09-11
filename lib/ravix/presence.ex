@@ -54,6 +54,14 @@ defmodule Ravix.Presence do
           typing: boolean()
         }
 
+  @typedoc """
+  What a heartbeat reports. `:watching` is the composer's timer saying the
+  page is still open; `:typing` is a keystroke. The two arrive
+  independently, which is why they are named rather than flagged: a
+  `beat(..., false)` read as cancelling a typing pulse, and it does not.
+  """
+  @type activity :: :typing | :watching
+
   @doc "How long a typing pulse stands."
   @spec typing_ttl_ms() :: pos_integer()
   def typing_ttl_ms, do: @typing_ttl_ms
@@ -71,8 +79,9 @@ defmodule Ravix.Presence do
   and the slower of the two arriving second would blink the indicator off.
   Returns who is in the room now, the caller included.
   """
-  @spec beat(String.t(), String.t(), User.t(), boolean()) :: [presence()]
-  def beat(track_id, project_id, %User{} = user, typing?) do
+  @spec beat(String.t(), String.t(), User.t(), activity()) :: [presence()]
+  def beat(track_id, project_id, %User{} = user, activity)
+      when activity in [:typing, :watching] do
     now = now_ms()
     topic = topic(track_id)
 
@@ -83,7 +92,10 @@ defmodule Ravix.Presence do
         name: user.name,
         avatar_url: user.avatar_url,
         typing_until:
-          if(typing?, do: now + @typing_ttl_ms, else: Map.get(existing, :typing_until, 0))
+          if(activity == :typing,
+            do: now + @typing_ttl_ms,
+            else: Map.get(existing, :typing_until, 0)
+          )
       }
     end
 

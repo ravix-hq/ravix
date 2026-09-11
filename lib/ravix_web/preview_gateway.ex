@@ -148,7 +148,7 @@ defmodule RavixWeb.PreviewGateway do
     hash =
       conn.req_headers |> Headers.cookie(Headers.cookie_name(cfg.protocol)) |> Crypto.sha256()
 
-    grant = backend.get_grant(hash, row.track_id, :session, false)
+    grant = backend.get_grant(hash, row.track_id, :session, :peek)
 
     if grant && backend.allowed?(row, grant),
       do: grant,
@@ -222,7 +222,7 @@ defmodule RavixWeb.PreviewGateway do
       do: raise(Error, status: 403, code: "origin", message: "Open previews from their own host.")
 
     {body, conn} = read_ticket!(conn)
-    ticket = backend.get_grant(Crypto.sha256(body), row.track_id, :ticket, true)
+    ticket = backend.get_grant(Crypto.sha256(body), row.track_id, :ticket, :consume)
     user = ticket && backend.session_user(ticket.session_hash)
     open? = user && match?({:ok, %{closed_at: nil}}, backend.track_access(user, row.track_id))
 
@@ -528,7 +528,7 @@ defmodule RavixWeb.PreviewGateway do
 
     headers =
       conn.req_headers
-      |> Headers.upstream_headers(host, true)
+      |> Headers.upstream_headers(host, :upgrade)
       |> Enum.reject(fn {name, _} ->
         name in ~w(connection upgrade sec-websocket-extensions sec-websocket-key sec-websocket-version)
       end)

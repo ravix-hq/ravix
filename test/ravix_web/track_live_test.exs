@@ -61,7 +61,7 @@ defmodule RavixWeb.TrackLiveTest do
     ctx.view |> element("button", "Start here") |> render_click()
     assert_push_event(ctx.view, "composer:insert", %{text: "Build it"})
 
-    expect(Tracks, :beat, fn user, id, true ->
+    expect(Tracks, :beat, fn user, id, :typing ->
       assert {user.id, id} == {ctx.user.id, ctx.track.id}
       :ok
     end)

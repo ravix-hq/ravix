@@ -150,19 +150,19 @@ defmodule Ravix.Previews.StoreTest do
       }
 
       assert :ok = Store.grant(ticket)
-      assert Store.get_grant("h1", t.id, :session, false) == nil
-      assert Store.get_grant("h1", "other", :ticket, false) == nil
-      assert Store.get_grant("h1", t.id, :ticket, false) == ticket
-      assert Store.get_grant("h1", t.id, :ticket, true) == ticket
-      assert Store.get_grant("h1", t.id, :ticket, false) == nil
+      assert Store.get_grant("h1", t.id, :session, :peek) == nil
+      assert Store.get_grant("h1", "other", :ticket, :peek) == nil
+      assert Store.get_grant("h1", t.id, :ticket, :peek) == ticket
+      assert Store.get_grant("h1", t.id, :ticket, :consume) == ticket
+      assert Store.get_grant("h1", t.id, :ticket, :peek) == nil
 
       session = %{ticket | hash: "h2", kind: :session}
       assert :ok = Store.grant(session)
-      assert Store.get_grant("h2", t.id, :session, false) == session
-      assert Store.get_grant("h2", t.id, :session, false) == session
+      assert Store.get_grant("h2", t.id, :session, :peek) == session
+      assert Store.get_grant("h2", t.id, :session, :peek) == session
 
       assert :ok = Store.grant(%{session | hash: "h3", expires: now - 1})
-      assert Store.get_grant("h3", t.id, :session, false) == nil
+      assert Store.get_grant("h3", t.id, :session, :peek) == nil
       # Expired grants are swept when the next one is written.
       assert :ok = Store.grant(%{session | hash: "h4"})
       assert Repo.get(Ravix.Previews.PreviewGrant, "h3") == nil
@@ -185,10 +185,10 @@ defmodule Ravix.Previews.StoreTest do
       end
 
       Store.revoke(t.id, user.id)
-      assert Store.get_grant("a", t.id, :session, false) == nil
-      assert Store.get_grant("b", t.id, :session, false) != nil
+      assert Store.get_grant("a", t.id, :session, :peek) == nil
+      assert Store.get_grant("b", t.id, :session, :peek) != nil
       Store.revoke(t.id)
-      assert Store.get_grant("b", t.id, :session, false) == nil
+      assert Store.get_grant("b", t.id, :session, :peek) == nil
     end
   end
 

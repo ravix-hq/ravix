@@ -262,7 +262,7 @@ defmodule Ravix.Previews.AgentTest do
     @tag :guest
     test "grants are revoked by track cleanup", %{t1: t1, token: token, call: call} do
       assert {:ok, _} = call.("status", nil, t1.id, token)
-      assert :ok = Previews.stop_service(t1.id, true)
+      assert :ok = Previews.stop_service(t1.id, :cleanup)
       assert {:error, {:preview_agent_auth, _}} = call.("status", nil, t1.id, token)
     end
   end

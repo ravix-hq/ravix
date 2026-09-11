@@ -454,7 +454,7 @@ defmodule RavixWeb.PreviewGatewayTest do
                {"accept-encoding", "identity"}
              ]
 
-      assert {"upgrade", "websocket"} in Headers.upstream_headers([], "h", true)
+      assert {"upgrade", "websocket"} in Headers.upstream_headers([], "h", :upgrade)
 
       refute Enum.any?(
                Headers.upstream_headers(

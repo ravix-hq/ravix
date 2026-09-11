@@ -67,7 +67,7 @@ defmodule Ravix.Previews.ReconcilerTest do
       assert state(p).creates == 1
       assert state(p).services[service_id(t1.id)] == "running"
       # The viewing lease is held, so the sprite's activity task was taken.
-      assert state(p).holds == ["#{service_id(t1.id)}/false"]
+      assert state(p).holds == ["#{service_id(t1.id)}/hold"]
 
       # Within thirty seconds the tick refreshes nothing; after, it renews the hold.
       Reconciler.tick()
@@ -92,7 +92,7 @@ defmodule Ravix.Previews.ReconcilerTest do
       assert %{state: :stopped, error: nil} = Previews.info(t1.id)
       assert %Row{desired: :stopped, lease_until: 0, stop_pending: false} = Store.get(t1.id)
       assert state(p).services[service_id(t1.id)] == "stopped"
-      assert List.last(state(p).holds) == "#{service_id(t1.id)}/true"
+      assert List.last(state(p).holds) == "#{service_id(t1.id)}/release"
 
       # Nothing more happens to a stopped preview.
       Reconciler.tick()
@@ -198,7 +198,7 @@ defmodule Ravix.Previews.ReconcilerTest do
       assert row.desired == :stopped
       assert row.state == :stopped
       refute state(p).services[service_id(track.id)] == "running"
-      assert :ok = Previews.stop_service(track.id, true)
+      assert :ok = Previews.stop_service(track.id, :cleanup)
     end
   end
 
@@ -247,7 +247,7 @@ defmodule Ravix.Previews.ReconcilerTest do
     refute logs =~ "already running"
     assert length(state(p).deletes) == 1
 
-    assert :ok = Previews.start_service(t1.id, true)
+    assert :ok = Previews.start_service(t1.id, :restart)
     assert length(state(p).deletes) == 2
     assert %{state: :ready} = Previews.info(t1.id)
     assert state(p).services[peer] == "running"
@@ -369,9 +369,9 @@ defmodule Ravix.Previews.ReconcilerTest do
     assert :ok = Previews.start_service(t1.id)
 
     parallel([
-      fn -> Previews.start_service(t1.id, true) end,
-      fn -> Previews.start_service(t1.id, true) end,
-      fn -> Previews.start_service(t1.id, true) end
+      fn -> Previews.start_service(t1.id, :restart) end,
+      fn -> Previews.start_service(t1.id, :restart) end,
+      fn -> Previews.start_service(t1.id, :restart) end
     ])
 
     assert state(p).creates >= 2
@@ -399,7 +399,7 @@ defmodule Ravix.Previews.ReconcilerTest do
   test "a cleanup that cannot reach Sprites is saved and retried by the tick", %{p: p, t1: t1} do
     assert :ok = Previews.start_service(t1.id)
     put(p, :fail_stop, true)
-    assert {:error, _} = Previews.stop_service(t1.id, true)
+    assert {:error, _} = Previews.stop_service(t1.id, :cleanup)
     assert %Row{cleanup: true, stop_pending: true, sprite: "s1"} = Store.get(t1.id)
 
     put(p, :fail_stop, false)

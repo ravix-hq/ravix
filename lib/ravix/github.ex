@@ -80,15 +80,24 @@ defmodule Ravix.GitHub do
     compact
   end
 
-  @doc "A token for one installation, good for an hour, cached until it nearly is not."
-  @spec installation_token(app(), installation_id(), boolean()) :: {:ok, String.t()} | error()
-  def installation_token(app, installation_id, force_refresh \\ false)
-  def installation_token(nil, _installation_id, _force), do: {:error, :unconfigured}
+  @typedoc """
+  Whether an installation token may come from the cache. `:fresh` mints a
+  new one, which is what a clone credential needs: it is handed to a machine
+  that will hold it, so it must not be a token already most of the way
+  through its hour.
+  """
+  @type freshness :: :cached | :fresh
 
-  def installation_token(%GitHubApp{} = app, installation_id, force_refresh) do
+  @doc "A token for one installation, good for an hour, cached until it nearly is not."
+  @spec installation_token(app(), installation_id(), freshness()) :: {:ok, String.t()} | error()
+  def installation_token(app, installation_id, freshness \\ :cached)
+  def installation_token(nil, _installation_id, _freshness), do: {:error, :unconfigured}
+
+  def installation_token(%GitHubApp{} = app, installation_id, freshness)
+      when freshness in [:cached, :fresh] do
     now = Clock.now_ms()
 
-    case if(force_refresh, do: :error, else: Cache.token(app.app_id, installation_id)) do
+    case if(freshness == :fresh, do: :error, else: Cache.token(app.app_id, installation_id)) do
       # `is_integer` is load-bearing: `expires_at_ms` is nil when the response
       # carried no parseable `expires_at`, and in Erlang term order every atom
       # sorts above every integer, so `nil > now` is true and the entry would
@@ -121,7 +130,8 @@ defmodule Ravix.GitHub do
   left. Turns longer than an hour still need renewal.
   """
   @spec mint_clone_token(app(), installation_id()) :: {:ok, String.t()} | error()
-  def mint_clone_token(app, installation_id), do: installation_token(app, installation_id, true)
+  def mint_clone_token(app, installation_id),
+    do: installation_token(app, installation_id, :fresh)
 
   # ── signing somebody in ──────────────────────────────────────────────
 

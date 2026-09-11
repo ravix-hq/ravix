@@ -62,6 +62,28 @@ defmodule Ravix.Previews do
           | {:unavailable, String.t()}
           | {:unavailable, String.t(), String.t()}
 
+  @typedoc """
+  Whether a start reuses the service already defined for this track or
+  recreates it. A word rather than a flag, because `start_service(id, true)`
+  said nothing at the call site about which of the two it meant.
+  """
+  @type start_mode :: :start | :restart
+
+  @typedoc """
+  Whether a stop leaves the service defined for the next start, or tears the
+  track's preview down for good --- the grant, the service and the port.
+  """
+  @type stop_mode :: :stop | :cleanup
+
+  @typedoc """
+  Whether reading a grant also spends it; see `Ravix.Previews.Store`.
+
+  Named again here because the gateway reads grants and lives in
+  `lib/ravix_web/`, where `Ravix.Credo.Architecture` refuses a store --- and
+  a typespec is a mention.
+  """
+  @type disposition :: Store.disposition()
+
   @doc "The lease a heartbeat renews, in milliseconds."
   @spec lease_ms() :: pos_integer()
   def lease_ms, do: @lease_ms
@@ -213,7 +235,9 @@ defmodule Ravix.Previews do
   # End existing connections and defer traffic until reconciliation has
   # retired the previous service and passed readiness on the replacement.
   defp replaced(track_id) do
-    Task.Supervisor.start_child(Ravix.TaskSupervisor, fn -> start_service(track_id, true) end)
+    Task.Supervisor.start_child(Ravix.TaskSupervisor, fn ->
+      start_service(track_id, :restart)
+    end)
 
     {:error,
      {:unavailable, "preview_replaced",
@@ -242,26 +266,28 @@ defmodule Ravix.Previews do
   # ── intent: start, stop, configure ───────────────────────────────────
 
   @doc """
-  Start (or with `restart?`, recreate) a track's service and wait until it
-  is ready, failed, or superseded. Runs for up to a minute; callers that
-  answer a request start it in a task and read `info/1`.
+  Start a track's service and wait until it is ready, failed, or superseded.
+
+  `:restart` recreates the service rather than reusing one that is already
+  defined and running. Runs for up to a minute; callers that answer a
+  request start it in a task and read `info/1`.
   """
-  @spec start_service(String.t(), boolean()) :: :ok | {:error, reason()}
-  def start_service(track_id, restart? \\ false) do
+  @spec start_service(String.t(), start_mode()) :: :ok | {:error, reason()}
+  def start_service(track_id, mode \\ :start) when mode in [:start, :restart] do
     with {:ok, _} <- assert_open(track_id),
          nil <- unavailable_error(),
          :ok <- touch(track_id) do
-      {:ok, generation} = Repo.transaction(fn -> want_running(track_id, restart?) end)
-      Server.run(track_id, {:ensure_running, generation, restart?})
+      {:ok, generation} = Repo.transaction(fn -> want_running(track_id, mode) end)
+      Server.run(track_id, {:ensure_running, generation, mode})
     end
   end
 
   # Inside a transaction: record the intent to run, under a new generation
   # unless it is already the intent, and return the generation on record.
-  defp want_running(track_id, restart?) do
+  defp want_running(track_id, mode) do
     %Row{} = row = Store.ensure(track_id)
 
-    if restart? or row.desired != :running do
+    if mode == :restart or row.desired != :running do
       Store.save!(%Row{
         row
         | desired: :running,
@@ -292,16 +318,16 @@ defmodule Ravix.Previews do
     end
   end
 
-  defp mark_stopped(nil, _track_id, _cleanup?), do: nil
+  defp mark_stopped(nil, _track_id, _mode), do: nil
 
-  defp mark_stopped(%Row{} = row, track_id, cleanup?) do
+  defp mark_stopped(%Row{} = row, track_id, mode) do
     Store.save!(%Row{
       row
       | desired: :stopped,
         state: :stopped,
         lease_until: 0,
         generation: row.generation + 1,
-        cleanup: cleanup? or row.cleanup,
+        cleanup: mode == :cleanup or row.cleanup,
         stop_pending: true
     })
 
@@ -310,9 +336,11 @@ defmodule Ravix.Previews do
   end
 
   @doc """
-  Stop a track's service. With `cleanup?`, the track is done for good: the
-  agent grant goes, the service is deleted, and the port is released. A
-  stop that cannot reach Sprites stays `stop_pending` for the reconciler.
+  Stop a track's service.
+
+  `:cleanup` says the track is done for good: the agent grant goes, the
+  service is deleted, and the port is released. A stop that cannot reach
+  Sprites stays `stop_pending` for the reconciler.
 
   `expected` is the generation the caller decided against. The reconciler
   decides from a snapshot and can be queued behind a slow startup, so by the
@@ -322,12 +350,12 @@ defmodule Ravix.Previews do
   has moved means the decision was about a preview that no longer exists, so
   it is dropped. `nil` stops whatever is current.
   """
-  @spec stop_service(String.t(), boolean(), non_neg_integer() | nil) :: :ok | {:error, reason()}
-  def stop_service(track_id, cleanup? \\ false, expected \\ nil) do
+  @spec stop_service(String.t(), stop_mode(), non_neg_integer() | nil) :: :ok | {:error, reason()}
+  def stop_service(track_id, mode \\ :stop, expected \\ nil) when mode in [:stop, :cleanup] do
     {:ok, current} =
       Repo.transaction(fn ->
-        if cleanup?, do: Store.revoke_agent(track_id)
-        track_id |> stoppable(expected) |> mark_stopped(track_id, cleanup?)
+        if mode == :cleanup, do: Store.revoke_agent(track_id)
+        track_id |> stoppable(expected) |> mark_stopped(track_id, mode)
       end)
 
     case current do
@@ -337,12 +365,12 @@ defmodule Ravix.Previews do
       row ->
         changes =
           [state: :stopped, error: nil, stop_pending: false] ++
-            if(cleanup?,
+            if(mode == :cleanup,
               do: [sprite: nil, sandbox_id: nil, port: nil, applied_config: nil],
               else: []
             )
 
-        Server.run(track_id, {:retire, row, cleanup?, changes})
+        Server.run(track_id, {:retire, row, mode, changes})
     end
   end
 
@@ -370,7 +398,7 @@ defmodule Ravix.Previews do
           next
         end)
 
-      Server.run(track_id, {:retire, next, false, [stop_pending: false]})
+      Server.run(track_id, {:retire, next, :stop, [stop_pending: false]})
     end
   end
 
@@ -434,7 +462,7 @@ defmodule Ravix.Previews do
     track_ids = track_ids_of(project_id)
 
     Ravix.TaskSupervisor
-    |> Task.Supervisor.async_stream_nolink(track_ids, &stop_service(&1, true),
+    |> Task.Supervisor.async_stream_nolink(track_ids, &stop_service(&1, :cleanup),
       ordered: false,
       timeout: :infinity
     )
@@ -464,7 +492,7 @@ defmodule Ravix.Previews do
   # is the projects context asking, and `set_defaults/3` went through
   # `Access.project_of/2`.
   defp track_ids_of(project_id) do
-    project_id |> Tracks.tracks_of(true) |> Enum.map(& &1.id)
+    project_id |> Tracks.tracks_of(:all) |> Enum.map(& &1.id)
   end
 
   # ── the preview gateway's questions ──────────────────────────────────
@@ -491,8 +519,9 @@ defmodule Ravix.Previews do
   defdelegate row(track_id), to: Store, as: :get
 
   @doc "A browser or agent grant by hash, consumed if asked. A ticket is single-use."
-  @spec grant_by_hash(String.t(), String.t(), atom(), boolean()) :: map() | nil
-  defdelegate grant_by_hash(hash, track_id, kind, consume?), to: Store, as: :get_grant
+  @spec grant_by_hash(String.t(), String.t(), :ticket | :session, disposition()) ::
+          Store.grant() | nil
+  defdelegate grant_by_hash(hash, track_id, kind, disposition), to: Store, as: :get_grant
 
   @doc "Record a browser grant against the session that opened it."
   @spec record_grant(map()) :: :ok | {:error, Ecto.Changeset.t()}
@@ -522,7 +551,7 @@ defmodule Ravix.Previews do
   """
   @spec allowed?(Row.t(), map()) :: boolean()
   def allowed?(%Row{} = row, grant) do
-    with %{} <- Store.get_grant(grant.hash, row.track_id, grant.kind, false),
+    with %{} <- Store.get_grant(grant.hash, row.track_id, grant.kind, :peek),
          %{} = user <- Ravix.Accounts.session_user(grant.session_hash),
          {:ok, %{track: %{closed_at: nil}}} <- Access.track_access(user, row.track_id) do
       not match?(%Row{cleanup: true}, Store.get(row.track_id))
@@ -550,18 +579,18 @@ defmodule Ravix.Previews do
   """
   @spec open(User.t(), String.t(), String.t() | nil) :: {:ok, View.t()} | {:error, reason()}
   def open(%User{} = user, track_id, session_hash),
-    do: launch(user, track_id, session_hash, false)
+    do: launch(user, track_id, session_hash, :start)
 
   @doc "As `open/3`, but tears the running service down first."
   @spec restart(User.t(), String.t(), String.t() | nil) :: {:ok, View.t()} | {:error, reason()}
   def restart(%User{} = user, track_id, session_hash),
-    do: launch(user, track_id, session_hash, true)
+    do: launch(user, track_id, session_hash, :restart)
 
-  defp launch(user, track_id, session_hash, restart?) do
+  defp launch(user, track_id, session_hash, mode) do
     with {:ok, _track} <- open_track(user, track_id),
          {:ok, url} <- mint_ticket(track_id, session_hash) do
       Task.Supervisor.start_child(Ravix.TaskSupervisor, fn ->
-        start_service(track_id, restart?)
+        start_service(track_id, mode)
       end)
 
       {:ok, %View{info(track_id) | open_url: url}}

@@ -130,9 +130,9 @@ defmodule Ravix.Previews.Reconciler do
   def reconcile({%Row{track_id: track_id} = row, track, project}) do
     result =
       case decide(row, track, project, Clock.now_ms()) do
-        :cleanup -> Previews.stop_service(track_id, true)
-        :stop -> Previews.stop_service(track_id, false, row.generation)
-        :ensure -> Server.run(track_id, {:ensure_running, row.generation, false})
+        :cleanup -> Previews.stop_service(track_id, :cleanup)
+        :stop -> Previews.stop_service(track_id, :stop, row.generation)
+        :ensure -> Server.run(track_id, {:ensure_running, row.generation, :start})
         :leave -> :ok
       end
 

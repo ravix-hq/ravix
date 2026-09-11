@@ -344,8 +344,14 @@ defmodule Ravix.Previews.Agent do
   end
 
   defp perform(action, track_id, _body) when action in ["start", "restart"] do
+    # The helper's word and the context's are the same word, but the
+    # conversion happens here rather than being assumed: `@actions` is the
+    # fixed table of what the agent may say, and nothing past this point
+    # compares a string.
+    mode = if action == "restart", do: :restart, else: :start
+
     Task.Supervisor.start_child(Ravix.TaskSupervisor, fn ->
-      Previews.start_service(track_id, action == "restart")
+      Previews.start_service(track_id, mode)
     end)
 
     :ok

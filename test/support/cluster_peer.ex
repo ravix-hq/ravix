@@ -59,7 +59,7 @@ defmodule Ravix.ClusterPeer do
   """
   @spec beat_and_hold(String.t(), String.t(), Ravix.Accounts.User.t()) :: no_return()
   def beat_and_hold(track_id, project_id, user) do
-    Ravix.Presence.beat(track_id, project_id, user, false)
+    Ravix.Presence.beat(track_id, project_id, user, :watching)
     Process.sleep(:infinity)
   end
 end

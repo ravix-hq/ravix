@@ -39,9 +39,12 @@ defmodule RavixWeb.PreviewGateway.Headers do
   def cookie_name(:http), do: @local_cookie
   def cookie_name(_), do: @cookie
 
+  @typedoc "Whether these headers open a plain request or a WebSocket upgrade."
+  @type kind :: :request | :upgrade
+
   @doc "The browser's request headers as the app may see them."
-  @spec upstream_headers(headers(), String.t(), boolean()) :: headers()
-  def upstream_headers(headers, host, upgrade? \\ false) do
+  @spec upstream_headers(headers(), String.t(), kind()) :: headers()
+  def upstream_headers(headers, host, kind \\ :request) when kind in [:request, :upgrade] do
     connection = connection_tokens(headers)
 
     kept =
@@ -59,7 +62,7 @@ defmodule RavixWeb.PreviewGateway.Headers do
     kept ++
       cookie_header(cookie) ++
       [{"host", host}, {"accept-encoding", "identity"}] ++
-      if(upgrade?, do: [{"connection", "Upgrade"}, {"upgrade", "websocket"}], else: [])
+      if(kind == :upgrade, do: [{"connection", "Upgrade"}, {"upgrade", "websocket"}], else: [])
   end
 
   @doc "The app's response headers as the browser may see them."

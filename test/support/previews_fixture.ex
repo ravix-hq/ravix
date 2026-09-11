@@ -191,10 +191,10 @@ defmodule Ravix.PreviewsFixture do
       {:ok, "Error: command not found"}
     end)
 
-    stub(Ravix.Sprites, :activity, fn _cfg, sprite, name, release? ->
+    stub(Ravix.Sprites, :activity, fn _cfg, sprite, name, lease ->
       Agent.update(
         pid,
-        &Map.update!(&1, :holds, fn holds -> holds ++ ["#{sprite}/#{name}/#{release?}"] end)
+        &Map.update!(&1, :holds, fn holds -> holds ++ ["#{sprite}/#{name}/#{lease}"] end)
       )
 
       # `activity/4` runs through `exec/4`, so an unreachable machine fails
