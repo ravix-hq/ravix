@@ -144,7 +144,12 @@ defmodule Ravix.PresenceTest do
         end
       end)
 
-    assert_receive {:watching, ^pid}
+    # Explicitly, rather than at the 100 ms default. The spawned process has
+    # to be scheduled and finish a whole `Presence.beat/4` --- a tracker
+    # update and a hub publish --- before it sends this, and under a loaded
+    # suite that is a slow machine reported as a page that never arrived.
+    # Every other `assert_receive` in this file already names its own bound.
+    assert_receive {:watching, ^pid}, 1_000
     pid
   end
 end

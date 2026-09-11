@@ -116,18 +116,27 @@ defmodule Ravix.Tracks.FollowerTest do
     ref = Process.monitor(pid)
     Process.exit(watcher, :kill)
 
-    # Deliberately not `assert_receive` with `:normal` in the pattern. This
-    # test fails intermittently under a loaded suite, and an unmatched pattern
-    # leaves the message in the mailbox and times out saying nothing -- so a
-    # follower that exited for the wrong reason and one that never exited
-    # looked identical from here. Take any exit, then say which it was.
+    # Deliberately not `assert_receive` with `:normal` in the pattern. An
+    # unmatched pattern leaves the message in the mailbox and times out
+    # saying nothing -- so a follower that exited for the wrong reason and
+    # one that never exited looked identical from here. Take any exit, then
+    # say which it was.
+    #
+    # The deadline is wall clock around a `linger_ms: 100` timer, and what
+    # is under test is that the follower stops *at all* once nobody is
+    # watching, not that it does so inside any particular millisecond. At
+    # 1s this still failed intermittently on a loaded suite -- twenty cases
+    # in flight, a 100 ms `send_after` and a monitor message all waiting on
+    # the same schedulers -- which is a slow machine reported as a broken
+    # follower. Five seconds is still two orders of magnitude under the
+    # three-second production linger it would take to mean anything.
     receive do
       {:DOWN, ^ref, :process, ^pid, reason} ->
         assert reason == :normal
     after
-      1_000 ->
+      5_000 ->
         flunk("""
-        The follower did not stop within 1s of its last subscriber dying.
+        The follower did not stop within 5s of its last subscriber dying.
         alive: #{Process.alive?(pid)}
         state: #{if Process.alive?(pid), do: inspect(:sys.get_state(pid), limit: 20), else: "gone"}
         """)
