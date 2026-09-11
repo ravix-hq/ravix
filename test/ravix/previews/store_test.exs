@@ -1,7 +1,7 @@
 defmodule Ravix.Previews.StoreTest do
   use Ravix.DataCase, async: true, group: :preview_ports
 
-  alias Ravix.Previews.{Preview, Row, Store}
+  alias Ravix.Previews.{Config, Preview, Row, Store}
 
   describe "rows" do
     test "ensure creates a stopped row once and get reads it back by track and by host" do
@@ -23,7 +23,7 @@ defmodule Ravix.Previews.StoreTest do
       track = insert_track()
       row = Store.ensure(track.id)
 
-      config = %{directory: "apps/web", command: "run", readiness_path: "/health"}
+      config = %Config{directory: "apps/web", command: "run", readiness_path: "/health"}
 
       saved = %{
         row
@@ -234,7 +234,7 @@ defmodule Ravix.Previews.StoreTest do
   test "defaults are per project and cleared with nil" do
     project = insert_project()
     assert Store.defaults(project.id) == nil
-    config = %{directory: ".", command: "run", readiness_path: "/"}
+    config = %Config{directory: ".", command: "run", readiness_path: "/"}
     assert :ok = Store.set_defaults(project.id, config)
     assert Store.defaults(project.id) == config
     assert :ok = Store.set_defaults(project.id, %{config | command: "run2"})
@@ -245,7 +245,7 @@ defmodule Ravix.Previews.StoreTest do
     # The factory's document reads too.
     camel = insert_preview_default(insert_project())
 
-    assert Store.defaults(camel.project_id) == %{
+    assert Store.defaults(camel.project_id) == %Config{
              directory: ".",
              command: "npm run dev",
              readiness_path: "/"

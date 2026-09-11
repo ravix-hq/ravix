@@ -33,7 +33,7 @@ defmodule Ravix.Previews do
   alias Ravix.Accounts.User
   alias Ravix.Clock
   alias Ravix.Crypto
-  alias Ravix.Previews.{Agent, Row, Server, Store, View}
+  alias Ravix.Previews.{Agent, Config, Row, Server, Store, View}
   alias Ravix.Projects.Project
   alias Ravix.Projects.Store, as: Projects
   alias Ravix.Repo
@@ -706,7 +706,7 @@ defmodule Ravix.Previews do
       # project; these are the tracks the new default reaches.
       affected =
         for track_id <- track_ids_of(project_id),
-            not match?(%Row{config: %{}}, Store.get(track_id)),
+            match?(%Row{config: nil}, Store.get(track_id)),
             do: track_id
 
       Ravix.TaskSupervisor
@@ -723,66 +723,17 @@ defmodule Ravix.Previews do
   # ── configuration ────────────────────────────────────────────────────
 
   @doc """
-  A `PreviewConfig` out of user input (`parsePreviewConfig`): a relative
-  directory inside the track, a non-empty command, and an HTTP path for
-  readiness. Keys may be strings or atoms, `readiness_path` or
-  `readinessPath`. Nil means "use the project default".
+  A `Ravix.Previews.Config` out of user input, or the changeset saying which
+  fields are wrong and why.
+
+  Every field is checked, so a form with three bad boxes is corrected once
+  rather than three times; `RavixWeb.Live.Form.refuse/2` puts each sentence
+  on the input it belongs to. `nil` means "use the level below", which is a
+  value rather than a refusal.
+
+  Keys may be strings or atoms, `readiness_path` or `readinessPath`; see
+  `Ravix.Previews.Config` for why both arrive.
   """
-  @spec parse_config(term()) :: {:ok, Row.config() | nil} | {:error, reason()}
-  def parse_config(nil), do: {:ok, nil}
-
-  def parse_config(%{} = value) do
-    value = Row.normalize_keys(value)
-    directory = value["directory"]
-    command = value["command"]
-    path = value["readiness_path"]
-
-    cond do
-      not valid_directory?(directory) ->
-        unprocessable("preview_directory", "Choose a relative app directory inside this track.")
-
-      not valid_command?(command) ->
-        unprocessable(
-          "preview_command",
-          "Supply a startup command that honors $PORT and fails if that port is occupied."
-        )
-
-      not valid_path?(path) ->
-        unprocessable(
-          "preview_readiness",
-          "Readiness must be an HTTP path on this app, such as /health."
-        )
-
-      true ->
-        directory = String.trim(directory)
-
-        {:ok,
-         %{
-           directory: if(directory == "", do: ".", else: directory),
-           command: String.trim(command),
-           readiness_path: path
-         }}
-    end
-  end
-
-  def parse_config(_other), do: unprocessable("preview_config", "Supply a preview configuration.")
-
-  defp unprocessable(code, message), do: {:error, {:unprocessable, code, message}}
-
-  defp valid_directory?(directory) do
-    is_binary(directory) and String.length(directory) <= 1000 and
-      not String.starts_with?(directory, "/") and
-      ".." not in String.split(directory, "/") and
-      not Regex.match?(~r/[\x00-\x1f]/, directory)
-  end
-
-  defp valid_command?(command) do
-    is_binary(command) and String.trim(command) != "" and String.length(command) <= 8000 and
-      not String.contains?(command, <<0>>)
-  end
-
-  defp valid_path?(path) do
-    is_binary(path) and String.starts_with?(path, "/") and not String.starts_with?(path, "//") and
-      String.length(path) <= 1000 and not Regex.match?(~r/[\x00-\x20#\\]/, path)
-  end
+  @spec parse_config(term()) :: {:ok, Config.t() | nil} | {:error, Ecto.Changeset.t()}
+  defdelegate parse_config(value), to: Config, as: :parse
 end

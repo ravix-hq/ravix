@@ -33,6 +33,12 @@ defmodule RavixWeb.Live.Form do
   `"no_title"`, `"bad_key"` name a field --- and until now it was thrown
   away on the way to `RavixWeb.Error`, which has no notion of fields.
 
+  A context that refuses with an `Ecto.Changeset` needs none of that. The
+  errors are already on the fields, and there are as many as are wrong
+  rather than as many as a `cond` reached. `Ravix.Previews.parse_config/1`
+  is the first to do it and the shape the rest should move to; see
+  `Ravix.Previews.Config`.
+
   The cost is a round trip: a blank name is refused by the server rather
   than in the browser. That is the same round trip the toast took, so
   nothing got slower; what changed is where the sentence lands.
@@ -61,16 +67,16 @@ defmodule RavixWeb.Live.Form do
 
   # A track's preview configuration and a project's default for it are the
   # same three fields refused by the same `Ravix.Previews.parse_config/1`,
-  # so they are one shape under two names. The codes it answers with ---
-  # `preview_directory`, `preview_command`, `preview_readiness` --- name
-  # their fields exactly, which is why all three sentences were arriving as
-  # a single toast that did not say which box was wrong.
-  @preview_config {%{directory: :string, command: :string, readiness_path: :string},
-                   %{
-                     "preview_directory" => :directory,
-                     "preview_command" => :command,
-                     "preview_readiness" => :readiness_path
-                   }}
+  # so they are one shape under two names.
+  #
+  # No codes, because there is nothing left to translate. `parse_config/1`
+  # refuses with a `Ravix.Previews.Config` changeset, whose errors are
+  # already on `:directory`, `:command` and `:readiness_path`, and all of
+  # them at once rather than whichever a `cond` reached first. The three
+  # codes that used to be here --- `preview_directory`, `preview_command`,
+  # `preview_readiness` --- were a second spelling of the field names, kept
+  # in step with the context by hand.
+  @preview_config {%{directory: :string, command: :string, readiness_path: :string}, %{}}
 
   @forms %{
     new_project: {%{name: :string, repo: :string}, %{"no_name" => :name}},
@@ -124,6 +130,23 @@ defmodule RavixWeb.Live.Form do
   caller should flash as before, because there is no input to attach it to.
   """
   @spec refuse(Phoenix.HTML.Form.t(), term()) :: {:ok, Phoenix.HTML.Form.t()} | :error
+  # A context that refuses with a changeset has already said which field each
+  # sentence is about, and said it for *every* field rather than the first.
+  # There is nothing for a code table to add, and a form built from the
+  # changeset keeps what was typed because the changeset does.
+  #
+  # A changeset with errors but no field to hang them on --- `parse_config/1`
+  # handed something that is not a configuration at all --- is not about an
+  # input, so it falls through to the flash like any other refusal.
+  def refuse(%Phoenix.HTML.Form{name: name}, %Ecto.Changeset{} = changeset) do
+    key = String.to_existing_atom(name)
+    fields = changeset.data |> Map.from_struct() |> Map.keys()
+
+    if Enum.any?(changeset.errors, fn {field, _} -> field in fields end),
+      do: {:ok, to_form(changeset, as: key, action: :validate)},
+      else: :error
+  end
+
   def refuse(%Phoenix.HTML.Form{name: name} = form, {:unprocessable, code, message}) do
     key = String.to_existing_atom(name)
     {_types, codes} = Map.fetch!(@forms, key)

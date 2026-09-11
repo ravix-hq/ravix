@@ -6,8 +6,8 @@ defmodule Ravix.Previews.Row do
   `Ravix.Previews.Preview`, which is one column per field:
 
     * `track_id`, `hostname`, `service` (`sy-<hostname>`, the Sprites service name)
-    * `config`: `nil` or `%{directory, command, readiness_path}`, the track's
-      override of the project default
+    * `config`: `nil` or a `Ravix.Previews.Config`, the track's override of
+      the project default
     * `applied_config`: the fingerprint the running service was defined from, or `nil`
     * `sandbox_id`, `sprite`, `port`: where the service is, once allocated
     * `desired`: `:running` or `:stopped`; `state`: `:stopped`, `:starting`,
@@ -26,12 +26,16 @@ defmodule Ravix.Previews.Row do
   release that reads the document is gone.
 
   `config` is still a map on disk, on this row and on a project's default,
-  because it is one value rather than three: nil, or all three fields.
+  because it is one value rather than three: nil, or all three fields. In
+  memory it is a `Ravix.Previews.Config`, and `decode_config/1` and
+  `encode_config/1` are the boundary between the two.
   """
+
+  alias Ravix.Previews.Config
 
   @type state :: :stopped | :starting | :ready | :failed
   @type desired :: :running | :stopped
-  @type config :: %{directory: String.t(), command: String.t(), readiness_path: String.t()}
+  @type config :: Config.t()
 
   @type t :: %__MODULE__{
           track_id: String.t(),
@@ -175,14 +179,23 @@ defmodule Ravix.Previews.Row do
     }
   end
 
-  @doc "A stored configuration (`directory`, `command`, `readiness_path`) as an atom-keyed map, or nil."
+  @doc """
+  A stored configuration as a `Ravix.Previews.Config`, or nil.
+
+  Read back rather than re-validated: these three came out of
+  `Config.changeset/1` before they were written, and a row that somehow
+  holds something else is a row to notice rather than one to quietly
+  correct on the way past.
+  """
   @spec decode_config(map() | nil) :: config() | nil
   def decode_config(nil), do: nil
+
+  def decode_config(%Config{} = config), do: config
 
   def decode_config(%{} = map) do
     map = normalize_keys(map)
 
-    %{
+    %Config{
       directory: map["directory"],
       command: map["command"],
       readiness_path: map["readiness_path"]
@@ -193,7 +206,7 @@ defmodule Ravix.Previews.Row do
   @spec encode_config(config() | nil) :: map() | nil
   def encode_config(nil), do: nil
 
-  def encode_config(%{} = config) do
+  def encode_config(%Config{} = config) do
     %{
       "directory" => config.directory,
       "command" => config.command,
