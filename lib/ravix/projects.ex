@@ -41,7 +41,6 @@ defmodule Ravix.Projects do
   alias Ravix.Accounts.User
   alias Ravix.Fountain.Client
   alias Ravix.Hub
-  alias Ravix.Ids
   alias Ravix.People
   alias Ravix.Projects.{Machine, MachineState, Project, Settings, Store, View}
   alias Ravix.Spec
@@ -262,12 +261,7 @@ defmodule Ravix.Projects do
   """
   @spec compose_system(Project.t()) :: String.t()
   def compose_system(%Project{} = project) do
-    base =
-      Spec.system_prompt(%{
-        project: project.name,
-        repo_path: project.repo_full_name && Ids.mount_path_for(project.repo_full_name),
-        default_branch: project.default_branch
-      })
+    base = Spec.system_prompt(project)
 
     case String.trim(project.instructions || "") do
       "" -> base
@@ -401,7 +395,7 @@ defmodule Ravix.Projects do
       repo: project.repo_full_name,
       repo_private: project.repo_private == true,
       default_branch: project.default_branch,
-      repo_path: project.repo_full_name && Ids.mount_path_for(project.repo_full_name),
+      repo_path: Project.repo_path(project),
       runtime: project.runtime,
       model: project.model,
       rev: project.rev,

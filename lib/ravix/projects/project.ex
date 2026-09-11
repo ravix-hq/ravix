@@ -67,4 +67,22 @@ defmodule Ravix.Projects.Project do
     |> foreign_key_constraint(:user_id)
     |> unique_constraint(:id, name: :projects_pkey)
   end
+
+  @doc """
+  Where the shared clone sits on the machine, or nil for a project with no
+  repository.
+
+  Here rather than at the three places that wanted it, which had written it
+  twice as `project.repo_full_name && Ids.mount_path_for(project.repo_full_name)`
+  and once as a private `repo_path/1` in `Ravix.Tracks` that also refused an
+  empty string. Those two are not the same function: `Ids.mount_path_for/1`
+  takes the last path segment, so the first spelling answers `"/workspace/"`
+  for a project whose repository is `""` and the second answers nil. This is
+  the second, because a project with a blank repository name has no clone.
+  """
+  @spec repo_path(t()) :: String.t() | nil
+  def repo_path(%__MODULE__{repo_full_name: repo}) when is_binary(repo) and repo != "",
+    do: Ravix.Ids.mount_path_for(repo)
+
+  def repo_path(%__MODULE__{}), do: nil
 end

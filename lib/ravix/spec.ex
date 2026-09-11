@@ -28,9 +28,18 @@ defmodule Ravix.Spec do
   This module is where that text lives. It had a TypeScript twin while the
   old server was still serving; it does not any more, because a prompt
   contract kept in two languages is a contract that can disagree with itself.
+
+  It takes the domain structs the prompts are *about* --- a
+  `Ravix.Projects.Project` and a `Ravix.Tracks.Origin` --- rather than maps
+  of the fields it reads. The maps were the TypeScript twin's argument
+  objects surviving the port: four functions took one, each built inline at
+  one call site, and the project's clone path was derived by the caller,
+  three times, two different ways. `Project.repo_path/1` is that derivation,
+  once.
   """
 
   alias Ravix.Ids
+  alias Ravix.Projects.Project
   alias Ravix.Spec.Starter
   alias Ravix.Tracks.Origin
 
@@ -39,7 +48,7 @@ defmodule Ravix.Spec do
 
   `Ravix.Tracks.Origin`, not a shape of its own. This was a map type that
   required two keys, made two optional and accepted `kind` as either the atom
-  or the string --- so `open_track_prompt/1` narrowed the kind a second time
+  or the string --- so `open_track_prompt/4` narrowed the kind a second time
   through a private `kind_of/1`, after `Ravix.Tracks.read_origin/2` had
   already done it, and `issue_lines/1` had to reach for the title through
   `origin[:title]` because the type said it might not be there. Taking the
@@ -59,17 +68,19 @@ defmodule Ravix.Spec do
   its length on that and on nothing else. Everything the app could instead
   put in a per-turn preamble is here, because a system prompt is on every
   turn including the ones a person types in a hurry.
+
+  Takes the project. The three things it reads --- the name, the shared
+  clone's path and the trunk --- are all the project's, and it was taking a
+  three-key map built at its one call site, which is a TypeScript argument
+  object rather than an Elixir argument.
   """
-  @spec system_prompt(%{
-          project: String.t(),
-          repo_path: String.t() | nil,
-          default_branch: String.t() | nil
-        }) :: String.t()
-  def system_prompt(%{project: project, repo_path: repo_path, default_branch: default_branch}) do
+  @spec system_prompt(Project.t()) :: String.t()
+  def system_prompt(%Project{name: name, default_branch: default_branch} = project) do
+    repo_path = Project.repo_path(project)
     work_root = Ids.work_root()
 
     [
-      ~s(You are the coding agent on the Ravix machine for the project "#{project}".),
+      ~s(You are the coding agent on the Ravix machine for the project "#{name}".),
       "",
       "## The one rule",
       "",
@@ -150,14 +161,20 @@ defmodule Ravix.Spec do
   badly will refuse the add. Both are ordinary, and a track that dies at
   `git worktree add` is a track a person cannot use at all, so it degrades
   to a plain directory and says which one it got.
+
+  The two shapes are a project with a clone and one without, which is the
+  `Project.repo_path/1` question rather than anything a caller has to work
+  out and pass in.
   """
-  @spec open_track_prompt(%{
-          slug: String.t(),
-          branch: String.t(),
-          repo_path: String.t() | nil,
-          origin: origin()
-        }) :: String.t()
-  def open_track_prompt(%{slug: slug, repo_path: nil}) do
+  @spec open_track_prompt(Project.t(), origin(), String.t(), String.t()) :: String.t()
+  def open_track_prompt(%Project{} = project, %Origin{} = origin, slug, branch) do
+    case Project.repo_path(project) do
+      nil -> plain_directory(slug)
+      repo_path -> worktree(repo_path, origin, slug, branch)
+    end
+  end
+
+  defp plain_directory(slug) do
     dir = Ids.workdir_for(slug)
 
     Enum.join(
@@ -174,7 +191,7 @@ defmodule Ravix.Spec do
     )
   end
 
-  def open_track_prompt(%{slug: slug, branch: branch, repo_path: repo_path, origin: origin}) do
+  defp worktree(repo_path, origin, slug, branch) do
     dir = Ids.workdir_for(slug)
 
     Enum.join(
@@ -270,14 +287,22 @@ defmodule Ravix.Spec do
   request) would be the most expensive undo in the app. When the box *is*
   ticked it goes properly, locally and on the remote, because a branch deleted
   in one place and left in the other is the worst of both.
+
+  The two decisions are options because that is what they are --- both
+  default to the safe answer and the caller ticks a box --- and they arrive
+  as a keyword list, which is what `Ravix.Tracks.close/3` already has in
+  hand. They were a map with one required key and one `optional(:delete_branch)`
+  read back out through `Map.get/2`, which is a keyword list with extra steps.
   """
-  @spec close_track_prompt(%{
-          required(:slug) => String.t(),
-          required(:repo_path) => String.t() | nil,
-          required(:force) => boolean(),
-          optional(:delete_branch) => String.t() | nil
-        }) :: String.t()
-  def close_track_prompt(%{slug: slug, repo_path: nil}) do
+  @spec close_track_prompt(Project.t(), String.t(), keyword()) :: String.t()
+  def close_track_prompt(%Project{} = project, slug, opts \\ []) do
+    case Project.repo_path(project) do
+      nil -> remove_directory(slug)
+      repo_path -> remove_worktree(repo_path, slug, opts)
+    end
+  end
+
+  defp remove_directory(slug) do
     dir = Ids.workdir_for(slug)
 
     Enum.join(
@@ -292,9 +317,10 @@ defmodule Ravix.Spec do
     )
   end
 
-  def close_track_prompt(%{slug: slug, repo_path: repo_path, force: force} = input) do
+  defp remove_worktree(repo_path, slug, opts) do
     dir = Ids.workdir_for(slug)
-    delete_branch = Map.get(input, :delete_branch)
+    force = Keyword.get(opts, :force, false)
+    delete_branch = Keyword.get(opts, :delete_branch)
 
     branch_line =
       if delete_branch do
@@ -367,9 +393,16 @@ defmodule Ravix.Spec do
   have typed, so pressing one is indistinguishable from typing it. Which is
   why they are here in the contract module and not in a component: changing
   what a chip says changes what the agent is asked.
+
+  Which set depends on whether the project has a clone, which the project
+  answers. It was `starters(%{has_repo: boolean()})` --- a map around one
+  boolean, which is a named argument in a language that does not have them,
+  and this one does: two clauses on the answer.
   """
-  @spec starters(%{has_repo: boolean()}) :: [Starter.t()]
-  def starters(%{has_repo: false}) do
+  @spec starters(Project.t()) :: [Starter.t()]
+  def starters(%Project{} = project), do: starters_for(Project.repo_path(project) != nil)
+
+  defp starters_for(false) do
     [
       %Starter{
         label: "What is on this machine?",
@@ -383,7 +416,7 @@ defmodule Ravix.Spec do
     ]
   end
 
-  def starters(%{has_repo: true}) do
+  defp starters_for(true) do
     [
       %Starter{
         label: "Set up live preview",
