@@ -5,6 +5,7 @@ defmodule RavixWeb.WorkspaceLive do
   alias Ravix.{Accounts, Hub, Previews, Projects, Tracks}
   alias Ravix.Hub.Event
   alias Ravix.Tracks.Names
+  alias RavixWeb.Live.Form
   alias RavixWeb.Live.Guard
   alias RavixWeb.Live.Params
 
@@ -49,7 +50,8 @@ defmodule RavixWeb.WorkspaceLive do
         project: nil,
         track_id: nil,
         dialog: nil,
-        form_data: %{},
+        project_form: Form.new(:new_project),
+        track_form: Form.new(:new_track),
         repos: [],
         installations: [],
         installation: nil,
@@ -185,7 +187,12 @@ defmodule RavixWeb.WorkspaceLive do
   end
 
   def handle_event("search", %{"q" => q}, socket), do: {:noreply, assign(socket, query: q)}
-  def handle_event("edit", params, socket), do: {:noreply, assign(socket, form_data: params)}
+
+  def handle_event("edit", %{"new_project" => params}, socket),
+    do: {:noreply, assign(socket, project_form: Form.new(:new_project, params))}
+
+  def handle_event("edit", %{"new_track" => params}, socket),
+    do: {:noreply, assign(socket, track_form: Form.new(:new_track, params))}
 
   def handle_event("dialog", %{"name" => name}, socket) when is_map_key(@dialogs, name),
     do: {:noreply, open_dialog(socket, Map.fetch!(@dialogs, name))}
@@ -197,7 +204,7 @@ defmodule RavixWeb.WorkspaceLive do
     end
   end
 
-  def handle_event("create-project", params, socket) do
+  def handle_event("create-project", %{"new_project" => params}, socket) do
     repo = Enum.find(socket.assigns.repos, &(&1.full_name == params["repo"]))
     attrs = Map.take(params, ["name"])
 
@@ -211,7 +218,7 @@ defmodule RavixWeb.WorkspaceLive do
 
     {:noreply,
      socket
-     |> assign(busy: true, form_data: params)
+     |> assign(busy: true, project_form: Form.new(:new_project, params))
      |> start_async(:create_project, fn -> Projects.create(user, attrs) end)}
   end
 
@@ -233,7 +240,7 @@ defmodule RavixWeb.WorkspaceLive do
     end
   end
 
-  def handle_event("create-track", params, socket) do
+  def handle_event("create-track", %{"new_track" => params}, socket) do
     kind = socket.assigns.origin_kind
     ref = Enum.find(socket.assigns.refs, &(ref_id(&1) == params["ref"]))
 
@@ -257,7 +264,7 @@ defmodule RavixWeb.WorkspaceLive do
 
     {:noreply,
      socket
-     |> assign(busy: true, form_data: params)
+     |> assign(busy: true, track_form: Form.new(:new_track, params))
      |> start_async(:create_track, fn -> Tracks.open(user, id, attrs) end)}
   end
 
@@ -327,16 +334,22 @@ defmodule RavixWeb.WorkspaceLive do
   @impl true
   def handle_async(:create_project, {:ok, response}, socket) do
     {:noreply,
-     result(assign(socket, busy: false), response, fn s, p ->
-       s |> reload() |> push_patch(to: "/p/#{p.id}")
-     end)}
+     result(
+       assign(socket, busy: false),
+       response,
+       fn s, p -> s |> reload() |> push_patch(to: "/p/#{p.id}") end,
+       :project_form
+     )}
   end
 
   def handle_async(:create_track, {:ok, response}, socket) do
     {:noreply,
-     result(assign(socket, busy: false), response, fn s, t ->
-       s |> reload() |> push_patch(to: "/p/#{t.project_id}/t/#{t.id}")
-     end)}
+     result(
+       assign(socket, busy: false),
+       response,
+       fn s, t -> s |> reload() |> push_patch(to: "/p/#{t.project_id}/t/#{t.id}") end,
+       :track_form
+     )}
   end
 
   def handle_async(:project_danger, {:ok, response}, socket) do
@@ -420,22 +433,23 @@ defmodule RavixWeb.WorkspaceLive do
   end
 
   defp open_dialog(socket, :new_project),
-    do: socket |> assign(dialog: :new_project, form_data: %{}) |> load_repos(nil)
-
-  defp open_dialog(socket, :new_track),
     do:
-      assign(socket,
-        dialog: :new_track,
-        form_data: %{
-          "title" =>
-            Names.name_track(
-              Enum.map(socket.assigns.tracks[project_id(socket)] || [], & &1.title)
-            )
-        },
-        origin_kind: :blank,
-        refs: [],
-        advanced_track: false
-      )
+      socket
+      |> assign(dialog: :new_project, project_form: Form.new(:new_project))
+      |> load_repos(nil)
+
+  defp open_dialog(socket, :new_track) do
+    suggested =
+      Names.name_track(Enum.map(socket.assigns.tracks[project_id(socket)] || [], & &1.title))
+
+    assign(socket,
+      dialog: :new_track,
+      track_form: Form.new(:new_track, %{"title" => suggested}),
+      origin_kind: :blank,
+      refs: [],
+      advanced_track: false
+    )
+  end
 
   defp open_dialog(socket, :search), do: assign(socket, dialog: :search, query: "")
 

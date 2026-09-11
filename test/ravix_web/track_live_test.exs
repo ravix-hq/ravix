@@ -71,10 +71,33 @@ defmodule RavixWeb.TrackLiveTest do
 
   test "renaming a track persists the title and updates its header", ctx do
     render_click(ctx.view, "dialog", %{name: "rename"})
-    ctx.view |> form("#rename-form", title: "A useful title") |> render_submit()
+    ctx.view |> form("#rename-form", rename_track: [title: "A useful title"]) |> render_submit()
     assert Repo.get!(Track, ctx.track.id).title == "A useful title"
     assert has_element?(ctx.view, "header button", "A useful title")
     refute has_element?(ctx.view, "#rename-dialog")
+  end
+
+  test "a refusal about the title lands on the title, not in a toast", ctx do
+    render_click(ctx.view, "dialog", %{name: "rename"})
+
+    # The dialog opens on the name the track has now, so renaming is a
+    # correction rather than a blank box.
+    assert has_element?(ctx.view, "#rename-title[value='#{ctx.track.title}']")
+
+    html = ctx.view |> form("#rename-form", rename_track: [title: "   "]) |> render_submit()
+
+    # `Ravix.Tracks.rename/3` is still the authority and still refuses; what
+    # changed is that its sentence arrives beside the input rather than as a
+    # toast at the top of the page, and the dialog stays open to be fixed.
+    assert html =~ "A track needs a name."
+    assert has_element?(ctx.view, "#rename-form .field p.error", "A track needs a name.")
+    assert has_element?(ctx.view, "#rename-dialog")
+    assert Repo.get!(Track, ctx.track.id).title == ctx.track.title
+
+    # And the error clears when the next attempt succeeds.
+    ctx.view |> form("#rename-form", rename_track: [title: "Second try"]) |> render_submit()
+    refute has_element?(ctx.view, "#rename-dialog")
+    assert Repo.get!(Track, ctx.track.id).title == "Second try"
   end
 
   test "wake and interrupt call the scoped track context and refresh state", ctx do
