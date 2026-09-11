@@ -23,7 +23,7 @@ defmodule RavixWeb.AuthHTML do
   opens; `token` goes back in the form action, since the link is the credential
   and the server holds only its hash.
   """
-  attr :target, :map, required: true
+  attr :target, Ravix.People.LinkTarget, required: true
   attr :token, :string, required: true
 
   def confirm(assigns) do

@@ -84,7 +84,7 @@ defmodule Ravix.People do
   """
 
   alias Ravix.Accounts.{Access, User}
-  alias Ravix.People.{Person, Profile, Store}
+  alias Ravix.People.{InviteLink, LinkTarget, Person, Profile, Store}
   alias Ravix.Projects.{Project, ProjectLink}
   alias Ravix.Tracks.{Track, TrackLink}
 
@@ -103,12 +103,8 @@ defmodule Ravix.People do
   @typedoc "A GitHub account the invite box suggests; see `Ravix.People.Profile`."
   @type profile :: Profile.t()
 
-  @typedoc "The `InviteLink` of `shared/api.ts`. `url` is only ever present at the moment of minting."
-  @type invite_link :: %{
-          url: String.t() | nil,
-          created_at: DateTime.t(),
-          expires_at: DateTime.t()
-        }
+  @typedoc "A track's or project's one link; see `Ravix.People.InviteLink`."
+  @type invite_link :: InviteLink.t()
 
   @type reason ::
           :not_found
@@ -585,10 +581,10 @@ defmodule Ravix.People do
   defp describe_link(nil), do: nil
 
   defp describe_link(%{created_at: created_at, expires_at: expires_at}),
-    do: %{url: nil, created_at: created_at, expires_at: expires_at}
+    do: %InviteLink{url: nil, created_at: created_at, expires_at: expires_at}
 
   defp minted(%{created_at: created_at, expires_at: expires_at}, token) do
-    %{
+    %InviteLink{
       url: "#{Ravix.Config.public_url()}/j/#{token}",
       created_at: created_at,
       expires_at: expires_at
@@ -619,13 +615,8 @@ defmodule Ravix.People do
     end
   end
 
-  @typedoc "What a link opens, for the page that asks before claiming it."
-  @type link_target :: %{
-          kind: :project | :track,
-          project: String.t(),
-          track: String.t() | nil,
-          invited_by: String.t() | nil
-        }
+  @typedoc "What a link opens, before it is claimed; see `Ravix.People.LinkTarget`."
+  @type link_target :: LinkTarget.t()
 
   @doc """
   What a link opens, without claiming it.
@@ -660,7 +651,7 @@ defmodule Ravix.People do
     case Store.live_project(track.project_id) do
       %Project{} = project ->
         {:ok,
-         %{
+         %LinkTarget{
            kind: :track,
            project: project.name,
            track: track.title,
@@ -676,7 +667,7 @@ defmodule Ravix.People do
 
   defp project_target(%Project{} = project, hash) do
     {:ok,
-     %{
+     %LinkTarget{
        kind: :project,
        project: project.name,
        track: nil,
