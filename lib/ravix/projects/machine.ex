@@ -12,6 +12,8 @@ defmodule Ravix.Projects.Machine do
 
   alias Ravix.Fountain
   alias Ravix.Fountain.Error
+  alias Ravix.Fountain.Shapes
+  alias Ravix.Fountain.Shapes.Conversation
   alias Ravix.Hub
   alias Ravix.Ids
   alias Ravix.Projects
@@ -44,8 +46,6 @@ defmodule Ravix.Projects.Machine do
   # invisible until the catalog call failed, at which point every project
   # creation would have 422'd on a field nobody was looking at.
   @default_model "anthropic/claude-opus-5"
-
-  @live ~w(pending idle running)
 
   # ── creation ──────────────────────────────────────────────────────────
 
@@ -252,14 +252,14 @@ defmodule Ravix.Projects.Machine do
 
   defp terminate_live(client, conversations) do
     conversations
-    |> Enum.filter(&(&1["status"] in @live))
+    |> Enum.filter(&Shapes.live?/1)
     |> Enum.reduce({[], []}, fn conversation, {removed, failed} ->
-      case Fountain.terminate(client, conversation["id"]) do
+      case Fountain.terminate(client, conversation.id) do
         :ok ->
           {removed ++ ["track"], failed}
 
         {:error, reason} ->
-          {removed, failed ++ [%{what: "track #{conversation["id"]}", why: why(reason)}]}
+          {removed, failed ++ [%{what: "track #{conversation.id}", why: why(reason)}]}
       end
     end)
   end
@@ -275,8 +275,8 @@ defmodule Ravix.Projects.Machine do
         _ -> []
       end
 
-    for conversation <- conversations, conversation["status"] in @live do
-      Fountain.terminate(client, conversation["id"])
+    for conversation <- conversations, Shapes.live?(conversation) do
+      Fountain.terminate(client, conversation.id)
     end
 
     unwind(client, project)
@@ -336,9 +336,8 @@ defmodule Ravix.Projects.Machine do
     with {:ok, client} <- Projects.fountain(),
          {:ok, conversations} <- Ravix.MachineCache.conversations(client, project, []) do
       conversations
-      |> Enum.filter(&is_binary(&1["sandbox_id"]))
-      |> Enum.sort_by(&to_string(&1["inserted_at"]), :desc)
-      |> List.first()
+      |> Enum.filter(&is_binary(&1.sandbox_id))
+      |> Shapes.newest()
       |> machine_from()
     else
       _ -> none()
@@ -347,10 +346,10 @@ defmodule Ravix.Projects.Machine do
 
   defp machine_from(nil), do: none()
 
-  defp machine_from(conversation) do
+  defp machine_from(%Conversation{} = conversation) do
     %MachineState{
-      sandbox_id: conversation["sandbox_id"],
-      status: if(conversation["status"] in @live, do: :ready, else: :suspended),
+      sandbox_id: conversation.sandbox_id,
+      status: if(Shapes.live?(conversation), do: :ready, else: :suspended),
       sprite_name: nil
     }
   end

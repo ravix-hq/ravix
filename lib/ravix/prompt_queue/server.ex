@@ -32,7 +32,7 @@ defmodule Ravix.PromptQueue.Server do
 
   alias Ravix.Accounts.{Access, User}
   alias Ravix.Fountain
-  alias Ravix.Fountain.{Client, Error}
+  alias Ravix.Fountain.{Client, Error, Shapes}
   alias Ravix.Hub
   alias Ravix.Projects.{Project, ProjectMember}
   alias Ravix.PromptQueue
@@ -162,14 +162,14 @@ defmodule Ravix.PromptQueue.Server do
   # that failed can safely retry on the next sweep.
   defp readiness(client, track, project) do
     case Fountain.get_conversation(client, track.conversation_id) do
-      {:ok, %{"status" => status}} when status in ["running", "pending"] ->
-        :busy
-
-      {:ok, %{"status" => status} = conversation} when status in ["failed", "terminated"] ->
-        {:ended, ended_message(client, track, conversation)}
-
-      {:ok, _conversation} ->
-        machine_readiness(client, project)
+      {:ok, conversation} ->
+        cond do
+          Shapes.busy?(conversation) -> :busy
+          Shapes.ended?(conversation) -> {:ended, ended_message(client, track, conversation)}
+          # Idle, or a status this version does not know: either way nothing
+          # is running, so whether a prompt can be sent is the machine's answer.
+          true -> machine_readiness(client, project)
+        end
 
       {:error, _reason} ->
         :unavailable
@@ -187,7 +187,7 @@ defmodule Ravix.PromptQueue.Server do
     # Only a turn count we were actually given. A missing one means Fountain did
     # not say, which is not the same as zero, and guessing "never started" for a
     # conversation that may have run for an hour would be its own wrong message.
-    if conversation["turn_count"] == 0 do
+    if conversation.turn_count == 0 do
       case failure_reason(client, track.conversation_id) do
         nil -> @never_started
         reason -> @never_started <> " " <> reason

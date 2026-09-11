@@ -4,6 +4,7 @@ defmodule Ravix.TracksTest do
   import Mimic
 
   alias Ravix.Fountain.{Client, Error, FakeTransport}
+  alias Ravix.Fountain.Shapes
   alias Ravix.Hub
   alias Ravix.Hub.Event
   alias Ravix.QueryCount
@@ -96,16 +97,25 @@ defmodule Ravix.TracksTest do
       assert %{status: :ready} = Tracks.present(track, project: project)
 
       assert %{status: :running} =
-               Tracks.present(track, project: project, live: %{"status" => "running"})
+               Tracks.present(track,
+                 project: project,
+                 live: conversation(%{"status" => "running"})
+               )
 
       assert %{status: :failed} =
-               Tracks.present(track, project: project, live: %{"status" => "failed"})
+               Tracks.present(track,
+                 project: project,
+                 live: conversation(%{"status" => "failed"})
+               )
 
       assert %{status: :opening} = Tracks.present(%{track | opened_at: nil}, project: project)
       closed = %{track | closed_at: DateTime.utc_now()}
 
       assert %{status: :closed} =
-               Tracks.present(closed, project: project, live: %{"status" => "running"})
+               Tracks.present(closed,
+                 project: project,
+                 live: conversation(%{"status" => "running"})
+               )
     end
 
     test "stale is a comparison of revisions, not a flag", %{project: project, track: track} do
@@ -118,7 +128,7 @@ defmodule Ravix.TracksTest do
       track: track
     } do
       refute Tracks.present(track, project: project).unread
-      live = %{"last_active_at" => "2026-09-09T10:00:00Z", "turn_count" => 4}
+      live = conversation(%{"last_active_at" => "2026-09-09T10:00:00Z", "turn_count" => 4})
       presented = Tracks.present(track, project: project, live: live)
       assert presented.unread
       assert presented.turn_count == 4
@@ -164,6 +174,11 @@ defmodule Ravix.TracksTest do
   end
 
   # ── the rows, and who may see them ─────────────────────────────────────
+
+  # `present/2` reads a conversation, not the JSON one arrived as. Built here
+  # by the boundary that really builds it, so this cannot claim a shape
+  # `Ravix.Fountain` does not answer with.
+  defp conversation(raw), do: Shapes.conversation(raw)
 
   defp quiet_fountain(project, conversations \\ []) do
     client =

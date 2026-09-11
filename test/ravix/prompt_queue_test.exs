@@ -6,6 +6,7 @@ defmodule Ravix.PromptQueueTest do
 
   alias Ecto.Adapters.SQL.Sandbox
   alias Ravix.Fountain.{Error, FakeTransport}
+  alias Ravix.Fountain.Shapes
   alias Ravix.Hub
   alias Ravix.Hub.Event
   alias Ravix.PromptQueue
@@ -59,6 +60,11 @@ defmodule Ravix.PromptQueueTest do
     client
   end
 
+  # A stub of `Ravix.Fountain.get_conversation/2` must answer what the real one
+  # answers, so it is built by the same function the real one builds it with.
+  # A map literal here compiles, and hides every field the delivery path reads.
+  defp conversation(raw), do: Shapes.conversation(raw)
+
   # The same, with the two calls the worker makes answered by functions
   # instead of a script: `on_read` returns the conversation's status,
   # `on_post` returns the POST's outcome. Both run inside the delivery task.
@@ -67,7 +73,7 @@ defmodule Ravix.PromptQueueTest do
     fountain([], verify: false)
 
     stub(Ravix.Fountain, :get_conversation, fn _client, id ->
-      {:ok, %{"id" => id, "status" => on_read.()}}
+      {:ok, conversation(%{"id" => id, "status" => on_read.()})}
     end)
 
     stub(Ravix.Fountain, :prompt, fn _client, id, text, images ->
@@ -361,7 +367,7 @@ defmodule Ravix.PromptQueueTest do
     fountain([], verify: false)
 
     stub(Ravix.Fountain, :get_conversation, fn _client, id ->
-      {:ok, %{"id" => id, "status" => "failed", "turn_count" => 0}}
+      {:ok, conversation(%{"id" => id, "status" => "failed", "turn_count" => 0})}
     end)
 
     stub(Ravix.Fountain, :events, fn _client, _id ->
@@ -391,7 +397,7 @@ defmodule Ravix.PromptQueueTest do
     fountain([], verify: false)
 
     stub(Ravix.Fountain, :get_conversation, fn _client, id ->
-      {:ok, %{"id" => id, "status" => "failed", "turn_count" => 0}}
+      {:ok, conversation(%{"id" => id, "status" => "failed", "turn_count" => 0})}
     end)
 
     stub(Ravix.Fountain, :events, fn _client, _id -> {:error, :unavailable} end)
@@ -408,7 +414,7 @@ defmodule Ravix.PromptQueueTest do
     fountain([], verify: false)
 
     stub(Ravix.Fountain, :get_conversation, fn _client, id ->
-      {:ok, %{"id" => id, "status" => "terminated", "turn_count" => 7}}
+      {:ok, conversation(%{"id" => id, "status" => "terminated", "turn_count" => 7})}
     end)
 
     {:ok, %Item{id: id}} = send_prompt(f.track, f.owner, "too late")
@@ -500,7 +506,7 @@ defmodule Ravix.PromptQueueTest do
     fountain([], verify: false)
 
     stub(Ravix.Fountain, :get_conversation, fn _client, id ->
-      {:ok, %{"id" => id, "status" => "idle"}}
+      {:ok, conversation(%{"id" => id, "status" => "idle"})}
     end)
 
     stub(Ravix.Fountain, :prompt, fn _client, id, text, _images ->

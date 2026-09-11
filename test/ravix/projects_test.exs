@@ -3,6 +3,7 @@ defmodule Ravix.ProjectsTest do
   use Mimic
 
   alias Ravix.Fountain.{Client, FakeTransport}
+  alias Ravix.Fountain.Shapes
   alias Ravix.GitHubFake, as: GH
   alias Ravix.Hub.Event
   alias Ravix.Projects
@@ -240,10 +241,14 @@ defmodule Ravix.ProjectsTest do
       insert_project_member(archived, me)
       _unrelated = insert_project(user: other)
 
+      # Through the real boundary: a stub that answered map literals would be
+      # claiming a shape `Ravix.Fountain` does not build.
+      conversations = &Enum.map(&1, fn raw -> Shapes.conversation(raw) end)
+
       stub(Ravix.MachineCache, :conversations, fn
         _client, %Project{id: id}, [] when id == mine.id ->
           {:ok,
-           [
+           conversations.([
              %{
                "id" => "c1",
                "sandbox_id" => "sb-old",
@@ -262,18 +267,18 @@ defmodule Ravix.ProjectsTest do
                "status" => "running",
                "inserted_at" => "2026-02-01"
              }
-           ]}
+           ])}
 
         _client, %Project{id: id}, [] when id == whole.id ->
           {:ok,
-           [
+           conversations.([
              %{
                "id" => "c4",
                "sandbox_id" => "sb-2",
                "status" => "terminated",
                "inserted_at" => "x"
              }
-           ]}
+           ])}
 
         _client, %Project{id: id}, [] when id == partial.id ->
           {:error, %Ravix.Fountain.Error{status: 500}}
