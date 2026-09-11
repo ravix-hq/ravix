@@ -93,4 +93,49 @@ defmodule Ravix.Previews.ConfigTest do
       assert {:error, %Ecto.Changeset{errors: [config: _]}} = parse(other)
     end
   end
+
+  describe "Config.Type" do
+    alias Ravix.Previews.Config.Type
+
+    @config %Config{directory: "apps/web", command: "run", readiness_path: "/health"}
+    @stored %{"directory" => "apps/web", "command" => "run", "readiness_path" => "/health"}
+
+    test "dump writes the three string keys, which is what the column has always held" do
+      assert Type.dump(@config) == {:ok, @stored}
+      assert Type.dump(nil) == {:ok, nil}
+    end
+
+    test "load reads them back, in whichever spelling the document has" do
+      assert Type.load(@stored) == {:ok, @config}
+      assert Type.load(nil) == {:ok, nil}
+
+      camel = %{"directory" => "apps/web", "command" => "run", "readinessPath" => "/health"}
+      assert Type.load(camel) == {:ok, @config}
+    end
+
+    test "cast takes the struct it is given, or a document, and refuses anything else" do
+      assert Type.cast(@config) == {:ok, @config}
+      assert Type.cast(@stored) == {:ok, @config}
+      assert Type.cast(nil) == {:ok, nil}
+
+      for other <- ["nope", 7, [], true] do
+        assert Type.cast(other) == :error
+      end
+    end
+
+    test "cast does not re-validate: that is parse/1's, at the boundary somebody typed at" do
+      # A configuration this version would refuse --- an absolute directory ---
+      # still loads and saves. A row written before the rule, or by an older
+      # release, is one to notice rather than one a stop cannot get past.
+      refused = %{"directory" => "/etc", "command" => "run", "readiness_path" => "/"}
+      assert {:error, %Ecto.Changeset{}} = parse(refused)
+      assert {:ok, %Config{directory: "/etc"}} = Type.cast(refused)
+      assert {:ok, %Config{directory: "/etc"}} = Type.load(refused)
+    end
+
+    test "a struct round-trips through the pair without changing" do
+      assert {:ok, stored} = Type.dump(@config)
+      assert Type.load(stored) == {:ok, @config}
+    end
+  end
 end

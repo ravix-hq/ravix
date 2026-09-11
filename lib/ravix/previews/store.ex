@@ -52,7 +52,7 @@ defmodule Ravix.Previews.Store do
   def defaults(project_id) do
     case Repo.get(PreviewDefault, project_id) do
       nil -> nil
-      %PreviewDefault{config: config} -> Row.decode_config(config)
+      %PreviewDefault{config: config} -> config
     end
   end
 
@@ -65,9 +65,9 @@ defmodule Ravix.Previews.Store do
 
   def set_defaults(project_id, config) do
     %PreviewDefault{}
-    |> PreviewDefault.changeset(%{project_id: project_id, config: Row.encode_config(config)})
+    |> PreviewDefault.changeset(%{project_id: project_id, config: config})
     |> Repo.insert!(
-      on_conflict: [set: [config: Row.encode_config(config)]],
+      on_conflict: [set: [config: config]],
       conflict_target: :project_id
     )
 

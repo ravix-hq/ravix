@@ -27,8 +27,10 @@ defmodule Ravix.Previews.Row do
 
   `config` is still a map on disk, on this row and on a project's default,
   because it is one value rather than three: nil, or all three fields. In
-  memory it is a `Ravix.Previews.Config`, and `decode_config/1` and
-  `encode_config/1` are the boundary between the two.
+  memory it is a `Ravix.Previews.Config`, and `Ravix.Previews.Config.Type`
+  is the boundary between the two --- which is why nothing here converts it,
+  and `encode/1` below has to, because the `row` document is a plain `:map`
+  column that Ecto applies no type to.
   """
 
   alias Ravix.Previews.Config
@@ -100,7 +102,7 @@ defmodule Ravix.Previews.Row do
     %__MODULE__{
       track_id: preview.track_id,
       hostname: preview.hostname,
-      config: decode_config(preview.config),
+      config: preview.config,
       applied_config: preview.applied_config,
       sandbox_id: preview.sandbox_id,
       sprite: preview.sprite,
@@ -130,7 +132,7 @@ defmodule Ravix.Previews.Row do
       sprite: row.sprite,
       port: row.port,
       sandbox_id: row.sandbox_id,
-      config: encode_config(row.config),
+      config: row.config,
       applied_config: row.applied_config,
       desired: row.desired,
       state: row.state,
@@ -159,7 +161,7 @@ defmodule Ravix.Previews.Row do
     %{
       "track_id" => row.track_id,
       "hostname" => row.hostname,
-      "config" => encode_config(row.config),
+      "config" => row.config && Config.to_stored(row.config),
       "applied_config" => row.applied_config,
       "sandbox_id" => row.sandbox_id,
       "sprite" => row.sprite,
@@ -179,44 +181,9 @@ defmodule Ravix.Previews.Row do
     }
   end
 
-  @doc """
-  A stored configuration as a `Ravix.Previews.Config`, or nil.
-
-  Read back rather than re-validated: these three came out of
-  `Config.changeset/1` before they were written, and a row that somehow
-  holds something else is a row to notice rather than one to quietly
-  correct on the way past.
-  """
-  @spec decode_config(map() | nil) :: config() | nil
-  def decode_config(nil), do: nil
-
-  def decode_config(%Config{} = config), do: config
-
-  def decode_config(%{} = map) do
-    map = normalize_keys(map)
-
-    %Config{
-      directory: map["directory"],
-      command: map["command"],
-      readiness_path: map["readiness_path"]
-    }
-  end
-
-  @doc "A configuration as it is stored."
-  @spec encode_config(config() | nil) :: map() | nil
-  def encode_config(nil), do: nil
-
-  def encode_config(%Config{} = config) do
-    %{
-      "directory" => config.directory,
-      "command" => config.command,
-      "readiness_path" => config.readiness_path
-    }
-  end
-
   @doc "The fingerprint of a configuration, kept as `applied_config` once a service is defined from it."
   @spec fingerprint(config()) :: String.t()
-  def fingerprint(config), do: Jason.encode!(encode_config(config))
+  def fingerprint(config), do: Jason.encode!(Config.to_stored(config))
 
   @doc "String keys, snake case, whichever spelling the document came in."
   @spec normalize_keys(map()) :: map()
