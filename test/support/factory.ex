@@ -10,7 +10,7 @@ defmodule Ravix.Factory do
   shape a context receives from a form or a JSON body.
   """
   alias Ravix.Accounts.{OAuthState, Session, User}
-  alias Ravix.Previews.{Preview, PreviewAgentGrant, PreviewDefault, PreviewGrant}
+  alias Ravix.Previews.{Preview, PreviewAgentGrant, PreviewDefault, PreviewGrant, Row}
   alias Ravix.Projects.{Project, ProjectInvite, ProjectLink, ProjectMember}
   alias Ravix.PromptQueue.Item
   alias Ravix.Repo
@@ -300,14 +300,25 @@ defmodule Ravix.Factory do
   def preview_attrs(attrs \\ []) do
     attrs = attrs |> normalize() |> take_assoc("track", "track_id")
     hostname = Map.get(attrs, "hostname", "t-" <> String.replace(Ecto.UUID.generate(), "-", ""))
+    attrs = attrs |> Map.put("hostname", hostname) |> defaults(%{"sprite" => nil, "port" => nil})
 
-    attrs = Map.put(attrs, "hostname", hostname)
+    # Built by the same two functions `Ravix.Previews.Store` writes with, so a
+    # fixture cannot describe a row the store would not produce. `row` is the
+    # expand-phase document, written alongside the columns exactly as the
+    # store writes it.
+    row = %Row{
+      track_id: attrs["track_id"],
+      hostname: hostname,
+      service: "sy-" <> hostname,
+      sprite: attrs["sprite"],
+      port: attrs["port"]
+    }
 
-    defaults(attrs, %{
-      "sprite" => nil,
-      "port" => nil,
-      "row" => preview_row(attrs)
-    })
+    row
+    |> Row.to_attrs()
+    |> Map.new(fn {key, value} -> {Atom.to_string(key), value} end)
+    |> Map.put("row", Row.encode(row))
+    |> Map.merge(attrs)
   end
 
   @doc "A preview row, on a fresh track unless one is given."
@@ -377,29 +388,6 @@ defmodule Ravix.Factory do
   end
 
   # -- plumbing -------------------------------------------------------------
-
-  defp preview_row(attrs) do
-    %{
-      "trackId" => attrs["track_id"],
-      "hostname" => attrs["hostname"],
-      "config" => nil,
-      "appliedConfig" => nil,
-      "sandboxId" => nil,
-      "sprite" => attrs["sprite"],
-      "port" => attrs["port"],
-      "service" => "sy-#{attrs["hostname"]}",
-      "desired" => "stopped",
-      "state" => "stopped",
-      "generation" => 0,
-      "lastActivity" => 0,
-      "leaseUntil" => 0,
-      "startedAt" => 0,
-      "error" => nil,
-      "logs" => "",
-      "cleanup" => false,
-      "stopPending" => false
-    }
-  end
 
   defp uniq, do: System.unique_integer([:positive, :monotonic])
 

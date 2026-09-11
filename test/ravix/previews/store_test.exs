@@ -1,7 +1,7 @@
 defmodule Ravix.Previews.StoreTest do
   use Ravix.DataCase, async: true, group: :preview_ports
 
-  alias Ravix.Previews.{Row, Store}
+  alias Ravix.Previews.{Preview, Row, Store}
 
   describe "rows" do
     test "ensure creates a stopped row once and get reads it back by track and by host" do
@@ -19,7 +19,7 @@ defmodule Ravix.Previews.StoreTest do
       assert row in Store.all()
     end
 
-    test "the document round-trips with snake_case keys and reads the TypeScript spelling too" do
+    test "a saved row round-trips through the columns" do
       track = insert_track()
       row = Store.ensure(track.id)
 
@@ -39,28 +39,71 @@ defmodule Ravix.Previews.StoreTest do
       assert :ok = Store.save(saved)
       assert Store.get(track.id) == saved
 
-      %{row: document} = Repo.get!(Ravix.Previews.Preview, track.id)
+      # The columns are the record: every field is its own, and `desired` and
+      # `state` come back as atoms because `Ecto.Enum` and a CHECK agree on
+      # the set.
+      stored = Repo.get!(Preview, track.id)
 
-      assert document["config"] == %{
+      assert %Preview{
+               desired: :running,
+               state: :ready,
+               last_activity: 5,
+               lease_until: 6,
+               stop_pending: false,
+               generation: 0,
+               logs: "",
+               unavailable: "why"
+             } = stored
+
+      assert stored.config == %{
                "directory" => "apps/web",
                "command" => "run",
                "readiness_path" => "/health"
              }
+    end
 
-      assert document["last_activity"] == 5
-      assert document["stop_pending"] == false
+    test "the expand-phase document is written alongside the columns" do
+      # Until the release that reads `previews.row` is gone, every write puts
+      # the same record in both places. The migration that drops the column
+      # takes this test with it.
+      track = insert_track()
+      row = Store.ensure(track.id)
+      assert :ok = Store.save(%{row | state: :ready, last_activity: 5})
 
-      # The factory still writes the TypeScript's camelCase document.
-      camel = insert_preview(track: insert_track())
-      assert %Row{desired: :stopped, generation: 0, last_activity: 0} = Store.get(camel.track_id)
+      stored = Repo.get!(Preview, track.id)
 
-      assert Row.decode(%{
-               "trackId" => "t",
-               "hostname" => "h",
-               "readinessPath" => "/",
-               "config" => %{"readinessPath" => "/x"}
-             }).config.readiness_path ==
-               "/x"
+      assert stored.row["state"] == "ready"
+      assert stored.row["last_activity"] == 5
+      assert stored.row["track_id"] == track.id
+      assert stored.row["service"] == stored.service
+    end
+
+    test "update writes the named fields and leaves every other one alone" do
+      # What a whole-document write could not do, and the reason for the
+      # columns: `Ravix.Previews.touch/1` used to read nineteen fields, change
+      # two, and write nineteen back, reverting whatever committed between.
+      track = insert_track()
+      row = Store.ensure(track.id)
+      assert :ok = Store.save(%{row | state: :starting, generation: 7, logs: "building"})
+
+      # Another writer publishes readiness, as `publish_ready` does.
+      assert Store.update(track.id, state: :ready) == 1
+
+      # And the lease writer sets only its own two fields, on the row as it
+      # now is rather than the one it last read.
+      assert Store.update(track.id, last_activity: 42, lease_until: 99) == 1
+
+      assert %Row{
+               state: :ready,
+               generation: 7,
+               logs: "building",
+               last_activity: 42,
+               lease_until: 99
+             } = Store.get(track.id)
+    end
+
+    test "update on a track with no row moves nothing and does not raise" do
+      assert Store.update(insert_track().id, state: :ready) == 0
     end
 
     test "allocate hands out distinct ports per sprite from 20000, keeps a held port, and the index refuses a duplicate" do
