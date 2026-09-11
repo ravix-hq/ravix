@@ -208,7 +208,7 @@ defmodule Ravix.GitHub do
   asked, and the numeric id it returns is what the invitation is stored
   against (see `track_invites`).
   """
-  @spec user_by_login(app(), String.t()) :: {:ok, Shapes.account() | nil} | error()
+  @spec user_by_login(app(), String.t()) :: {:ok, Shapes.Account.t() | nil} | error()
   def user_by_login(nil, _login), do: {:error, :unconfigured}
 
   def user_by_login(%GitHubApp{} = app, login) do
@@ -220,7 +220,7 @@ defmodule Ravix.GitHub do
   end
 
   @doc "The person a user token belongs to."
-  @spec viewer(app(), String.t()) :: {:ok, Shapes.account()} | error()
+  @spec viewer(app(), String.t()) :: {:ok, Shapes.Account.t()} | error()
   def viewer(nil, _user_token), do: {:error, :unconfigured}
 
   def viewer(%GitHubApp{} = app, user_token) do
@@ -239,7 +239,7 @@ defmodule Ravix.GitHub do
   for theirs lists only the ones they are a member of. The second question
   is the one the repository picker is actually asking.
   """
-  @spec installations_for(app(), String.t()) :: {:ok, [Shapes.installation()]} | error()
+  @spec installations_for(app(), String.t()) :: {:ok, [Shapes.Installation.t()]} | error()
   def installations_for(nil, _user_token), do: {:error, :unconfigured}
 
   def installations_for(%GitHubApp{} = app, user_token) do
@@ -259,7 +259,8 @@ defmodule Ravix.GitHub do
   has no opinion about that. Paged to a thousand: an installation with more
   repositories than that wants a search box, which the picker has.
   """
-  @spec repositories(app(), String.t(), installation_id()) :: {:ok, [Shapes.repo_ref()]} | error()
+  @spec repositories(app(), String.t(), installation_id()) ::
+          {:ok, [Shapes.RepoRef.t()]} | error()
   def repositories(nil, _user_token, _installation_id), do: {:error, :unconfigured}
 
   def repositories(%GitHubApp{} = app, user_token, installation_id) do
@@ -284,7 +285,7 @@ defmodule Ravix.GitHub do
   end
 
   @doc "One repository, read as the installation, so it works for private ones."
-  @spec repository(app(), installation_id(), String.t()) :: {:ok, Shapes.repo_ref()} | error()
+  @spec repository(app(), installation_id(), String.t()) :: {:ok, Shapes.RepoRef.t()} | error()
   def repository(nil, _installation_id, _full_name), do: {:error, :unconfigured}
 
   def repository(%GitHubApp{} = app, installation_id, full_name) do
@@ -297,7 +298,7 @@ defmodule Ravix.GitHub do
 
   @doc "The branches of a repository, the default one first, then by name."
   @spec branches(app(), installation_id(), String.t(), String.t()) ::
-          {:ok, [Shapes.branch_ref()]} | error()
+          {:ok, [Shapes.BranchRef.t()]} | error()
   def branches(nil, _installation_id, _full_name, _default_branch), do: {:error, :unconfigured}
 
   def branches(%GitHubApp{} = app, installation_id, full_name, default_branch) do
@@ -314,7 +315,7 @@ defmodule Ravix.GitHub do
   end
 
   @doc "Open pull requests, most recently updated first."
-  @spec pulls(app(), installation_id(), String.t()) :: {:ok, [Shapes.pull_ref()]} | error()
+  @spec pulls(app(), installation_id(), String.t()) :: {:ok, [Shapes.PullRef.t()]} | error()
   def pulls(nil, _installation_id, _full_name), do: {:error, :unconfigured}
 
   def pulls(%GitHubApp{} = app, installation_id, full_name) do
@@ -332,7 +333,7 @@ defmodule Ravix.GitHub do
   as the data model is concerned) and a picker with a PRs tab beside an
   Issues tab showing the same rows twice is a bug people notice immediately.
   """
-  @spec issues(app(), installation_id(), String.t()) :: {:ok, [Shapes.issue_ref()]} | error()
+  @spec issues(app(), installation_id(), String.t()) :: {:ok, [Shapes.IssueRef.t()]} | error()
   def issues(nil, _installation_id, _full_name), do: {:error, :unconfigured}
 
   def issues(%GitHubApp{} = app, installation_id, full_name) do
@@ -466,7 +467,7 @@ defmodule Ravix.GitHub do
   pull request on its next read rather than five minutes from now.
   """
   @spec open_pull(app(), installation_id(), String.t(), pull_input()) ::
-          {:ok, Shapes.pull_ref()} | error()
+          {:ok, Shapes.PullRef.t()} | error()
   def open_pull(nil, _installation_id, _full_name, _input), do: {:error, :unconfigured}
 
   def open_pull(%GitHubApp{} = app, installation_id, full_name, %{head: head} = input) do
