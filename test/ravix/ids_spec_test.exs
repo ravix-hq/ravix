@@ -2,9 +2,27 @@ defmodule Ravix.IdsSpecTest do
   use ExUnit.Case, async: true
 
   alias Ravix.{Ids, Spec}
+  alias Ravix.Tracks.Origin
 
   # The expected strings here were produced by `shared/ids.ts` and
   # `shared/spec.ts` under bun; the port is held to them exactly.
+
+  # `Ravix.Tracks.Origin` enforces all five keys, so a test that cares about
+  # two of them still has to say so. This fills in the rest.
+  #
+  # A case that used to be here and cannot be now: `open_track_prompt/1` was
+  # asserted to answer the same prompt for `kind: "pr"` as for `kind: :pr`,
+  # because `Ravix.Spec` narrowed the kind a second time through a private
+  # `kind_of/1`. No production caller ever passed the string --- the only two
+  # are `read_origin/2`, which resolves against `Track.origin_kinds/0`, and a
+  # row's `Ecto.Enum` column --- and the struct makes the string
+  # unrepresentable, so the tolerance and the test for it went together.
+  defp origin(fields) do
+    struct!(
+      %Origin{kind: :blank, base: nil, number: nil, title: nil, url: nil},
+      fields
+    )
+  end
 
   describe "Ravix.Ids" do
     test "slugify is fit for a directory, a branch and a URL at once" do
@@ -73,7 +91,7 @@ defmodule Ravix.IdsSpecTest do
           slug: "s",
           branch: "me/s-1",
           repo_path: nil,
-          origin: %{kind: :blank, base: nil}
+          origin: origin(kind: :blank)
         })
 
       assert blank =~ "  mkdir -p /home/sprite/work/s && cd /home/sprite/work/s"
@@ -83,7 +101,7 @@ defmodule Ravix.IdsSpecTest do
           slug: "s",
           branch: "me/s-1",
           repo_path: "/workspace/r",
-          origin: %{kind: :blank, base: "main"}
+          origin: origin(kind: :blank, base: "main")
         })
 
       assert fresh =~ "Cut a new branch `me/s-1` from `origin/main`:"
@@ -98,7 +116,7 @@ defmodule Ravix.IdsSpecTest do
           slug: "s",
           branch: "me/s-1",
           repo_path: "/workspace/r",
-          origin: %{kind: :branch, base: "feature/x"}
+          origin: origin(kind: :branch, base: "feature/x")
         })
 
       assert existing =~ "This track continues the existing branch `feature/x`:"
@@ -109,18 +127,10 @@ defmodule Ravix.IdsSpecTest do
           slug: "s",
           branch: "me/s-1",
           repo_path: "/workspace/r",
-          origin: %{kind: :pr, base: nil, number: 7}
+          origin: origin(kind: :pr, number: 7)
         })
 
       assert pr =~ "This track continues pull request #7."
-
-      assert pr ==
-               Spec.open_track_prompt(%{
-                 slug: "s",
-                 branch: "me/s-1",
-                 repo_path: "/workspace/r",
-                 origin: %{kind: "pr", base: nil, number: 7}
-               })
 
       assert pr =~ "  git fetch origin pull/7/head:me/s-1 2>/dev/null \\"
       assert pr =~ "    || git worktree add /home/sprite/work/s -b me/s-1 HEAD"
@@ -130,7 +140,7 @@ defmodule Ravix.IdsSpecTest do
           slug: "s",
           branch: "me/s-1",
           repo_path: "/workspace/r",
-          origin: %{kind: :issue, base: "main", number: 9, title: "Fix it"}
+          origin: origin(kind: :issue, base: "main", number: 9, title: "Fix it")
         })
 
       assert issue =~ ~s(This track exists to work on issue #9, "Fix it". Do not start)

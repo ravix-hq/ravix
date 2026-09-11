@@ -32,17 +32,21 @@ defmodule Ravix.Spec do
 
   alias Ravix.Ids
   alias Ravix.Spec.Starter
+  alias Ravix.Tracks.Origin
 
   @typedoc """
-  How a track was started, in the words the header will use. `kind` may be
-  the atom or the string the track row stores.
+  How a track was started, in the words the header will use.
+
+  `Ravix.Tracks.Origin`, not a shape of its own. This was a map type that
+  required two keys, made two optional and accepted `kind` as either the atom
+  or the string --- so `open_track_prompt/1` narrowed the kind a second time
+  through a private `kind_of/1`, after `Ravix.Tracks.read_origin/2` had
+  already done it, and `issue_lines/1` had to reach for the title through
+  `origin[:title]` because the type said it might not be there. Taking the
+  struct, both of those go: the kind is an atom because there is no way to
+  build an `Origin` holding anything else, and every field exists.
   """
-  @type origin :: %{
-          required(:kind) => :branch | :pr | :issue | :blank | String.t(),
-          required(:base) => String.t() | nil,
-          optional(:number) => integer() | nil,
-          optional(:title) => String.t() | nil
-        }
+  @type origin :: Origin.t()
 
   @doc "What the machine writes to say what it did. Read with `GET /api/sandboxes/:id/file`."
   @spec receipt_path() :: String.t()
@@ -172,7 +176,6 @@ defmodule Ravix.Spec do
 
   def open_track_prompt(%{slug: slug, branch: branch, repo_path: repo_path, origin: origin}) do
     dir = Ids.workdir_for(slug)
-    origin = %{origin | kind: kind_of(origin.kind)}
 
     Enum.join(
       [
@@ -200,7 +203,8 @@ defmodule Ravix.Spec do
     )
   end
 
-  defp cut_lines(%{kind: :pr, number: number} = origin, dir, branch) when is_integer(number) do
+  defp cut_lines(%Origin{kind: :pr, number: number} = origin, dir, branch)
+       when is_integer(number) do
     base = if origin.base, do: "origin/#{origin.base}", else: "HEAD"
 
     [
@@ -214,7 +218,8 @@ defmodule Ravix.Spec do
     ]
   end
 
-  defp cut_lines(%{kind: :branch, base: base}, dir, branch) when is_binary(base) and base != "" do
+  defp cut_lines(%Origin{kind: :branch, base: base}, dir, branch)
+       when is_binary(base) and base != "" do
     [
       "",
       "This track continues the existing branch `#{base}`:",
@@ -225,7 +230,7 @@ defmodule Ravix.Spec do
     ]
   end
 
-  defp cut_lines(%{base: base}, dir, branch) do
+  defp cut_lines(%Origin{base: base}, dir, branch) do
     from = if base, do: " from `origin/#{base}`", else: ""
     at = if base, do: " origin/#{base}", else: ""
 
@@ -239,8 +244,8 @@ defmodule Ravix.Spec do
     ]
   end
 
-  defp issue_lines(%{kind: :issue, number: number} = origin) when is_integer(number) do
-    titled = if origin[:title], do: ~s(, "#{origin[:title]}"), else: ""
+  defp issue_lines(%Origin{kind: :issue, number: number} = origin) when is_integer(number) do
+    titled = if origin.title, do: ~s(, "#{origin.title}"), else: ""
 
     [
       "",
@@ -407,12 +412,6 @@ defmodule Ravix.Spec do
       }
     ]
   end
-
-  defp kind_of(kind) when kind in [:branch, :pr, :issue, :blank], do: kind
-  defp kind_of("branch"), do: :branch
-  defp kind_of("pr"), do: :pr
-  defp kind_of("issue"), do: :issue
-  defp kind_of(_other), do: :blank
 
   defp append_if(lines, condition, extra) do
     if condition, do: lines ++ extra, else: lines

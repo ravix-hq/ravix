@@ -18,16 +18,7 @@ defmodule Ravix.Tracks.View do
   """
 
   alias Ravix.People.Person
-  alias Ravix.Tracks.Track
-
-  @typedoc "How a track was started, from its row."
-  @type origin :: %{
-          kind: Track.origin_kind(),
-          base: String.t() | nil,
-          number: integer() | nil,
-          title: String.t() | nil,
-          url: String.t() | nil
-        }
+  alias Ravix.Tracks.Origin
 
   @typedoc """
   `:opening` until the machine answers, then whatever the conversation says.
@@ -66,7 +57,7 @@ defmodule Ravix.Tracks.View do
           title: String.t(),
           branch: String.t(),
           workdir: String.t(),
-          origin: origin(),
+          origin: Origin.t(),
           status: status(),
           stale: boolean(),
           opened_at: DateTime.t() | nil,

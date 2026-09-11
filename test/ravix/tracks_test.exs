@@ -10,7 +10,7 @@ defmodule Ravix.TracksTest do
   alias Ravix.PromptQueue.Body
   alias Ravix.QueryCount
   alias Ravix.Tracks
-  alias Ravix.Tracks.{Diff, Files, Names, Track}
+  alias Ravix.Tracks.{Diff, Files, Names, Origin, Track}
   alias Ravix.Tracks.Transcript.{Block, Turn}
 
   @root "/home/sprite/work/kyoto"
@@ -387,7 +387,9 @@ defmodule Ravix.TracksTest do
       assert presented.workdir == "/home/sprite/work/kyoto"
       assert presented.conversation_id == "c-new"
       assert presented.role == :owner
-      assert presented.origin == %{kind: :blank, base: "main", number: nil, title: nil, url: nil}
+
+      assert presented.origin ==
+               %Origin{kind: :blank, base: "main", number: nil, title: nil, url: nil}
 
       [_list, create, prompt] = FakeTransport.calls(client)
       assert create.body["sandbox_id"] == "sb-1"
@@ -443,7 +445,7 @@ defmodule Ravix.TracksTest do
                  "origin" => %{"kind" => "weird", "base" => "somewhere", "number" => 9}
                })
 
-      assert presented.origin == %{
+      assert presented.origin == %Origin{
                kind: :blank,
                base: "main",
                number: nil,
@@ -467,7 +469,7 @@ defmodule Ravix.TracksTest do
       assert presented.slug == "fix-the-importer"
       assert presented.branch == "feature/x"
 
-      assert presented.origin == %{
+      assert presented.origin == %Origin{
                kind: :pr,
                base: "feature/x",
                number: 12,

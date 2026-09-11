@@ -52,7 +52,19 @@ defmodule Ravix.Tracks do
   alias Ravix.PromptQueue.Body
   alias Ravix.PromptQueue.Body.Image
   alias Ravix.Spec
-  alias Ravix.Tracks.{Diff, Files, Follower, Header, Names, Store, Track, Transcript, View}
+
+  alias Ravix.Tracks.{
+    Diff,
+    Files,
+    Follower,
+    Header,
+    Names,
+    Origin,
+    Store,
+    Track,
+    Transcript,
+    View
+  }
 
   @image_types ~w(image/png image/jpeg image/gif image/webp)
   # base64 is four characters per three bytes; the cap is on the decoded size.
@@ -293,7 +305,7 @@ defmodule Ravix.Tracks do
         origin_base: origin.base,
         origin_number: origin.number,
         origin_title: origin.title,
-        origin_url: origin_url(project, origin),
+        origin_url: origin.url,
         rev: project.rev,
         created_by_login: user.login
       }
@@ -323,7 +335,7 @@ defmodule Ravix.Tracks do
     with {:ok, %{track: track, project: project}} <- Access.track_access(user, track_id),
          {:ok, client} <- fountain(),
          :ok <- Ravix.Projects.prepare_machine(project, client) do
-      send_opening_turn(client, track, project, origin_of(track), :sync)
+      send_opening_turn(client, track, project, Origin.from_row(track), :sync)
       :ok
     end
   end
@@ -361,7 +373,7 @@ defmodule Ravix.Tracks do
       slug: slug,
       branch: branch,
       repo_path: repo_path(project),
-      origin: %{kind: origin.kind, base: origin.base, number: origin.number, title: origin.title}
+      origin: origin
     })
   end
 
@@ -776,17 +788,8 @@ defmodule Ravix.Tracks do
   end
 
   @doc "How a track was started, from its row."
-  @spec origin_info(Track.t()) :: View.origin()
-  def origin_info(%Track{} = row) do
-    %{
-      # No coercion: the column is one of four and the database enforces it.
-      kind: row.origin_kind,
-      base: row.origin_base,
-      number: row.origin_number,
-      title: row.origin_title,
-      url: row.origin_url
-    }
-  end
+  @spec origin_info(Track.t()) :: Origin.t()
+  def origin_info(%Track{} = row), do: Origin.from_row(row)
 
   defp status_of(%Track{closed_at: closed}, _live) when not is_nil(closed), do: :closed
   defp status_of(_row, %Conversation{status: :running}), do: :running
@@ -806,47 +809,58 @@ defmodule Ravix.Tracks do
   defp read_origin(raw, project) when is_map(raw) do
     kind = Enum.find(Track.origin_kinds(), :blank, &(to_string(&1) == raw["kind"]))
 
-    if kind == :blank do
-      %{kind: :blank, base: project.default_branch, number: nil, title: nil}
-    else
-      %{
-        kind: kind,
-        base: text(raw["base"], 200) |> non_empty() || project.default_branch,
-        number: number(raw["number"]),
-        title: text(raw["title"], 200) |> non_empty()
-      }
-    end
+    origin =
+      if kind == :blank do
+        %Origin{
+          kind: :blank,
+          base: project.default_branch,
+          number: nil,
+          title: nil,
+          url: nil
+        }
+      else
+        %Origin{
+          kind: kind,
+          base: text(raw["base"], 200) |> non_empty() || project.default_branch,
+          number: number(raw["number"]),
+          title: text(raw["title"], 200) |> non_empty(),
+          url: nil
+        }
+      end
+
+    %Origin{origin | url: origin_url(project, origin)}
   end
 
   defp read_origin(_raw, project), do: read_origin(%{}, project)
-
-  # The origin of a track that already exists, for the retry.
-  defp origin_of(%Track{} = row) do
-    %{
-      kind: row.origin_kind,
-      base: row.origin_base,
-      number: row.origin_number,
-      title: row.origin_title
-    }
-  end
 
   # What a track is called when nobody said. The order is deliberate: a track
   # that came from a pull request, an issue or a branch already has the best
   # name available (the one the work is called everywhere else), and
   # inventing a prettier one would break the join between the sidebar and
   # GitHub. Only a track started from nothing gets a yard name.
-  defp default_title(%{kind: :pr, number: n} = origin, _taken) when is_integer(n),
+  defp default_title(%Origin{kind: :pr, number: n} = origin, _taken) when is_integer(n),
     do: origin.title || "PR ##{n}"
 
-  defp default_title(%{kind: :issue, number: n} = origin, _taken) when is_integer(n),
+  defp default_title(%Origin{kind: :issue, number: n} = origin, _taken) when is_integer(n),
     do: origin.title || "Issue ##{n}"
 
-  defp default_title(%{kind: :branch, base: base}, _taken) when is_binary(base) and base != "",
-    do: base
+  defp default_title(%Origin{kind: :branch, base: base}, _taken)
+       when is_binary(base) and base != "",
+       do: base
 
   defp default_title(_origin, taken), do: Names.name_track(taken)
 
-  defp origin_url(%Project{repo_full_name: repo}, %{number: n} = origin)
+  # GitHub's page for the thing the track came from, decided once when the
+  # origin is built rather than at whichever call site happened to want it.
+  # A blank track has no number and so has no link; a project with no
+  # repository behind it has nowhere to link to.
+  #
+  # Kept exactly as it was, including that any non-blank kind carrying a
+  # number gets a link and everything that is not a `:pr` is spelled
+  # `issues` --- so an origin the browser sent as `{"kind": "branch",
+  # "number": 5}` is given an issue's URL. That is worth a second look, but
+  # not in a change whose whole claim is that nothing behaves differently.
+  defp origin_url(%Project{repo_full_name: repo}, %Origin{number: n} = origin)
        when is_binary(repo) and is_integer(n) do
     kind = if origin.kind == :pr, do: "pull", else: "issues"
     "https://github.com/#{repo}/#{kind}/#{n}"
