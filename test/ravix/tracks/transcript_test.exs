@@ -2,6 +2,7 @@ defmodule Ravix.Tracks.TranscriptTest do
   use ExUnit.Case, async: true
 
   alias Ravix.Tracks.Transcript
+  alias Ravix.Tracks.Transcript.Event
 
   @ts "2026-09-09T10:00:00Z"
   @later "2026-09-09T10:00:05Z"
@@ -32,6 +33,55 @@ defmodule Ravix.Tracks.TranscriptTest do
           extra
         )
       )
+
+  describe "Event.from/1" do
+    test "closes the vocabularies it matches on, without growing the atom table" do
+      assert Event.from(%{"kind" => "output", "stream" => "acp"}).kind == :output
+      assert Event.from(%{"kind" => "stage"}).kind == :stage
+
+      # A word Fountain invents must not become an atom. It becomes `:other`,
+      # which is a value Ravix already knows how to not match on.
+      before = :erlang.system_info(:atom_count)
+      assert Event.from(%{"kind" => "telepathy", "stream" => "smoke"}).kind == :other
+      assert Event.from(%{"kind" => "telepathy", "stream" => "smoke"}).stream == :other
+      assert :erlang.system_info(:atom_count) == before
+    end
+
+    test "gives an event with no turn somewhere to sit" do
+      assert Event.from(%{"id" => 1}).turn_id == Event.pending()
+      assert Event.from(%{"id" => 1, "turn_id" => ""}).turn_id == Event.pending()
+      assert Event.from(%{"id" => 1, "turn_id" => "t9"}).turn_id == "t9"
+    end
+
+    test "is idempotent, so a caller need not know whether it has parsed yet" do
+      once = Event.from(%{"id" => 3, "kind" => "stage", "stage" => "turn", "state" => "done"})
+      assert Event.from(once) == once
+    end
+
+    test "carries every field even for a payload that has none of them" do
+      bare = Event.from(%{})
+
+      assert bare.id == nil
+      assert bare.stream == nil
+      assert bare.kind == :other
+      assert Map.keys(bare) -- [:__struct__ | Map.keys(Map.from_struct(bare))] == []
+    end
+
+    test "answers the two questions three modules used to ask in string keys" do
+      turn_done = Event.from(%{"kind" => "stage", "stage" => "turn", "state" => "done"})
+      turn_open = Event.from(%{"kind" => "stage", "stage" => "turn", "state" => "started"})
+      failed = Event.from(%{"kind" => "stage", "stage" => "provision", "state" => "failed"})
+      chatter = Event.from(%{"kind" => "output", "stream" => "acp", "data" => "x"})
+
+      assert Event.settles?(turn_done)
+      refute Event.settles?(turn_open)
+      refute Event.settles?(chatter)
+
+      assert Event.failed_stage?(failed)
+      refute Event.failed_stage?(turn_done)
+      refute Event.failed_stage?(chatter)
+    end
+  end
 
   defp event(id, data, opts \\ []) do
     %{
@@ -187,7 +237,7 @@ defmodule Ravix.Tracks.TranscriptTest do
       assert t1.prompt == "first"
       assert t1.settled?
       assert [%{kind: :text, body: "reply"}] = t1.blocks
-      assert Enum.map(t1.events, & &1["id"]) == [1, 2]
+      assert Enum.map(t1.events, & &1.id) == [1, 2]
       assert t2.origin == "user"
       refute t2.settled?
       assert pending.prompt == nil
@@ -358,13 +408,14 @@ defmodule Ravix.Tracks.TranscriptTest do
     end
 
     test "failure_reason/1 survives data that is not the shape we expect" do
-      assert Transcript.failure_reason(%{"data" => Jason.encode!(%{reason: " padded "})}) ==
-               "padded"
+      reason = &Transcript.failure_reason(Event.from(&1))
+
+      assert reason.(%{"data" => Jason.encode!(%{reason: " padded "})}) == "padded"
 
       # Not JSON at all: kept as it arrived rather than dropped.
-      assert Transcript.failure_reason(%{"data" => "plain words"}) == "plain words"
-      assert Transcript.failure_reason(%{"data" => "{}"}) == ""
-      assert Transcript.failure_reason(%{}) == ""
+      assert reason.(%{"data" => "plain words"}) == "plain words"
+      assert reason.(%{"data" => "{}"}) == ""
+      assert reason.(%{}) == ""
     end
   end
 end

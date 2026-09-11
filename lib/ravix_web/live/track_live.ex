@@ -9,6 +9,7 @@ defmodule RavixWeb.TrackLive do
   alias Ravix.Hub.Event
   alias Ravix.Tracks.{Diff, Files}
   alias Ravix.Tracks.Transcript
+  alias Ravix.Tracks.Transcript.Event, as: TranscriptEvent
   alias RavixWeb.Error
   alias RavixWeb.Live.Guard
 
@@ -222,19 +223,26 @@ defmodule RavixWeb.TrackLive do
   end
 
   @impl true
-  def handle_info({:transcript, id, event}, socket) do
+  # Ravix runs on more than one instance (ADR 0003) and a deploy is rolling,
+  # so for one release a follower on an instance running the previous version
+  # is still broadcasting Fountain's raw maps onto this topic. Normalising
+  # here is the expand half of expand/contract: accept both shapes now, and
+  # drop this clause once no instance publishes the old one.
+  def handle_info({:transcript, id, %{} = raw}, socket) when not is_struct(raw),
+    do: handle_info({:transcript, id, TranscriptEvent.from(raw)}, socket)
+
+  def handle_info({:transcript, id, %TranscriptEvent{} = event}, socket) do
     if id == socket.assigns.track_id do
       page = Transcript.add_event(socket.assigns.page, event)
       socket = assign(socket, page: page)
-      turn_id = event["turn_id"] || "pending"
 
       socket =
-        case Enum.find(page.turns, &(&1.id == turn_id)) do
+        case Enum.find(page.turns, &(&1.id == event.turn_id)) do
           %{visible?: true} = turn -> stream_insert(socket, :turns, turn)
           _ -> socket
         end
 
-      if event["kind"] == "stage" do
+      if event.kind == :stage do
         Tracks.mark_read(socket.assigns.current_user, id)
         {:noreply, socket |> refresh_detail() |> refresh_queue() |> refresh_transcript()}
       else
@@ -332,7 +340,7 @@ defmodule RavixWeb.TrackLive do
     newer =
       socket.assigns.page.turns
       |> Enum.flat_map(& &1.events)
-      |> Enum.filter(&(&1["id"] > (page.last_event_id || 0)))
+      |> Enum.filter(&(&1.id > (page.last_event_id || 0)))
 
     page = Transcript.add_events(page, newer)
     socket |> assign(page: page) |> stream(:turns, Transcript.visible_turns(page), reset: true)

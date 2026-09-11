@@ -51,6 +51,7 @@ defmodule Ravix.Tracks.Follower do
   alias Ravix.Fountain.Client
   alias Ravix.Repo
   alias Ravix.Tracks.Track
+  alias Ravix.Tracks.Transcript.Event
 
   @supervisor __MODULE__.Supervisor
   @linger_ms 3_000
@@ -259,9 +260,12 @@ defmodule Ravix.Tracks.Follower do
   end
 
   # Runs in the stream task: every event to the topic, its id to the follower.
-  defp relay(event, track_id, follower) do
+  # Parsed here rather than by each subscriber, so Fountain's JSON reaches
+  # exactly one place in Ravix and every page downstream reads fields.
+  defp relay(raw, track_id, follower) do
+    event = Event.from(raw)
     Phoenix.PubSub.broadcast(Ravix.PubSub, topic(track_id), {:transcript, track_id, event})
-    if is_integer(event["id"]), do: send(follower, {:seen, event["id"]})
+    if is_integer(event.id), do: send(follower, {:seen, event.id})
     :cont
   end
 

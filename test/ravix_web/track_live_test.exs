@@ -505,6 +505,38 @@ defmodule RavixWeb.TrackLiveTest do
     assert render(ctx.view) =~ "Hello"
   end
 
+  test "a raw event from an instance running the previous release is still understood", ctx do
+    # ADR 0003: deploys are rolling, so for one release a follower on an
+    # instance running the previous version is still broadcasting Fountain's
+    # maps onto this topic rather than `Transcript.Event` structs. The page
+    # has to take both or a deploy blanks every open transcript until the
+    # last old instance goes. Both shapes must reach the same render.
+    raw = fn id, text ->
+      %{
+        "id" => id,
+        "turn_id" => "turn-old",
+        "kind" => "output",
+        "stream" => "acp",
+        "data" =>
+          Jason.encode!(%{
+            jsonrpc: "2.0",
+            method: "session/update",
+            params: %{
+              update: %{
+                sessionUpdate: "agent_message_chunk",
+                content: %{type: "text", text: text}
+              }
+            }
+          })
+      }
+    end
+
+    send(ctx.view.pid, {:transcript, ctx.track.id, raw.(31, "old shape ")})
+    send(ctx.view.pid, {:transcript, ctx.track.id, Transcript.Event.from(raw.(32, "new shape"))})
+
+    assert render(ctx.view) =~ "old shape new shape"
+  end
+
   test "a follower that goes away is replaced, from the page's own cursor", ctx do
     test_pid = self()
 

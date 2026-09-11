@@ -40,6 +40,7 @@ defmodule Ravix.PromptQueue.Server do
   alias Ravix.PromptQueue.Store
   alias Ravix.Repo
   alias Ravix.Tracks.{Track, TrackMember, Transcript}
+  alias Ravix.Tracks.Transcript.Event
 
   import Ecto.Query, only: [from: 2]
 
@@ -198,7 +199,7 @@ defmodule Ravix.PromptQueue.Server do
 
   defp failure_reason(client, conversation_id) do
     with {:ok, events} <- Fountain.events(client, conversation_id),
-         %{} = event <- Enum.find(Enum.reverse(events), &failed_stage?/1) do
+         %Event{} = event <- last_failed_stage(events) do
       case Transcript.failure_reason(event) do
         "" -> nil
         reason -> reason
@@ -212,8 +213,14 @@ defmodule Ravix.PromptQueue.Server do
     _error -> nil
   end
 
-  defp failed_stage?(event),
-    do: event["kind"] == "stage" and event["state"] == "failed"
+  # The most recent stage that failed, parsed at this boundary as everywhere
+  # else Fountain's log is read.
+  defp last_failed_stage(events) do
+    events
+    |> Enum.reverse()
+    |> Stream.map(&Event.from/1)
+    |> Enum.find(&Event.failed_stage?/1)
+  end
 
   defp machine_readiness(client, project) do
     case Ravix.Projects.prepare_machine(project, client) do
