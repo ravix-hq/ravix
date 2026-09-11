@@ -197,16 +197,30 @@ defmodule RavixWeb.TrackLiveTest do
     render_click(ctx.view, "panel", %{name: "preview"})
     render_async(ctx.view)
 
-    for action <- ~w(open restart logs stop) do
-      expect(Previews, :act, fn user, id, actual, %{session_hash: hash} ->
-        assert {user.id, id, actual} == {ctx.user.id, ctx.track.id, action}
-        assert is_binary(hash)
+    answered =
+      struct!(preview(),
+        logs: "service output",
+        open_url: "https://preview.test/__ravix/open#fresh"
+      )
 
-        {:ok,
-         Map.merge(preview(), %{
-           logs: "service output",
-           open_url: "https://preview.test/__ravix/open#fresh"
-         })}
+    # Two arities, because the two that mint a ticket are the two that need
+    # the session hash and the other two are not handed one at all. That
+    # distinction only exists once the verb is in the function name.
+    for action <- [:open, :restart] do
+      expect(Previews, action, fn user, id, hash ->
+        assert {user.id, id} == {ctx.user.id, ctx.track.id}
+        assert is_binary(hash)
+        {:ok, answered}
+      end)
+
+      ctx.view |> element("button[phx-value-action='#{action}']") |> render_click()
+      assert render_async(ctx.view) =~ "service output"
+    end
+
+    for action <- [:logs, :stop] do
+      expect(Previews, action, fn user, id ->
+        assert {user.id, id} == {ctx.user.id, ctx.track.id}
+        {:ok, answered}
       end)
 
       ctx.view |> element("button[phx-value-action='#{action}']") |> render_click()
@@ -222,13 +236,13 @@ defmodule RavixWeb.TrackLiveTest do
     render_click(ctx.view, "panel", %{name: "preview"})
     render_async(ctx.view)
 
-    expect(Previews, :act, fn _, _, "config", %{config: config} ->
+    expect(Previews, :save_config, fn _, _, config ->
       assert config["command"] == "npm start"
       {:ok, preview()}
     end)
 
     ctx.view |> form("#preview-config-form", command: "npm start") |> render_submit()
-    expect(Previews, :act, fn _, _, "config", %{config: nil} -> {:ok, preview()} end)
+    expect(Previews, :save_config, fn _, _, nil -> {:ok, preview()} end)
     ctx.view |> form("#preview-config-form") |> render_submit(%{clear: "true"})
   end
 

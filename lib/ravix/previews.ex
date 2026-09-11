@@ -537,47 +537,68 @@ defmodule Ravix.Previews do
   end
 
   @doc """
-  `POST /api/tracks/:id/preview/:action`.
+  Start the track's preview and mint the caller a way in.
 
-    * `"config"` saves `params[:config]` (a map, or nil for the default)
-    * `"stop"`, `"logs"` do what they say
-    * `"open"` and `"restart"` start the service in the background and
-      mint a ticket for `params[:session_hash]`, the caller's Ravix
-      session; the info comes back with `open_url`
-    * `"status"` (or anything else) just reads
-
-  The origin check the TypeScript did is the web layer's business here.
+  The service starts in the background, because bringing an app up on a cold
+  machine takes longer than a click should: the caller gets the info and the
+  `open_url` straight away, and the page watches the row for readiness. The
+  URL is a one-minute ticket for `session_hash`, the caller's own Ravix
+  session, so a link that leaks is a link that has already expired.
   """
-  @spec act(User.t(), String.t(), String.t(), map()) :: {:ok, View.t()} | {:error, reason()}
-  def act(%User{} = user, track_id, action, params \\ %{}) do
+  @spec open(User.t(), String.t(), String.t() | nil) :: {:ok, View.t()} | {:error, reason()}
+  def open(%User{} = user, track_id, session_hash),
+    do: launch(user, track_id, session_hash, false)
+
+  @doc "As `open/3`, but tears the running service down first."
+  @spec restart(User.t(), String.t(), String.t() | nil) :: {:ok, View.t()} | {:error, reason()}
+  def restart(%User{} = user, track_id, session_hash),
+    do: launch(user, track_id, session_hash, true)
+
+  defp launch(user, track_id, session_hash, restart?) do
     with {:ok, _track} <- open_track(user, track_id),
-         :ok <- perform(action, track_id, params),
-         {:ok, extra} <- opened(action, track_id, params) do
-      {:ok, struct!(info(track_id), extra)}
+         {:ok, url} <- mint_ticket(track_id, session_hash) do
+      Task.Supervisor.start_child(Ravix.TaskSupervisor, fn ->
+        start_service(track_id, restart?)
+      end)
+
+      {:ok, %View{info(track_id) | open_url: url}}
     end
   end
 
-  defp opened(action, track_id, params) when action in ["open", "restart"] do
-    Task.Supervisor.start_child(Ravix.TaskSupervisor, fn ->
-      start_service(track_id, action == "restart")
-    end)
-
-    with {:ok, url} <- mint_ticket(track_id, param(params, :session_hash)),
-         do: {:ok, %{open_url: url}}
+  @doc "Stop the track's preview service."
+  @spec stop(User.t(), String.t()) :: {:ok, View.t()} | {:error, reason()}
+  def stop(%User{} = user, track_id) do
+    with {:ok, _track} <- open_track(user, track_id),
+         :ok <- stop_service(track_id),
+         do: {:ok, info(track_id)}
   end
 
-  defp opened(_action, _track_id, _params), do: {:ok, %{}}
+  @doc """
+  Re-read the service's log tail.
 
-  defp perform("config", track_id, params) do
-    with {:ok, config} <- parse_config(param(params, :config)), do: configure(track_id, config)
+  Persisted failure logs remain available without waking an idle machine, so
+  this answers for a stopped preview too -- with what it last said, which is
+  the thing somebody pressing Logs after a crash is asking for.
+  """
+  @spec logs(User.t(), String.t()) :: {:ok, View.t()} | {:error, reason()}
+  def logs(%User{} = user, track_id) do
+    with {:ok, _track} <- open_track(user, track_id),
+         :ok <- refresh_logs(track_id),
+         do: {:ok, info(track_id)}
   end
 
-  defp perform("stop", track_id, _params), do: stop_service(track_id)
-  # Persisted failure logs remain available without waking an idle machine.
-  defp perform("logs", track_id, _params), do: refresh_logs(track_id)
-  defp perform(_other, _track_id, _params), do: :ok
-
-  defp param(params, key), do: Map.get(params, key, Map.get(params, Atom.to_string(key)))
+  @doc """
+  Save the track's configuration override, or `nil` to restore the project
+  default. Stops the service, since what it was running is no longer what
+  the track asks for.
+  """
+  @spec save_config(User.t(), String.t(), term()) :: {:ok, View.t()} | {:error, reason()}
+  def save_config(%User{} = user, track_id, config) do
+    with {:ok, _track} <- open_track(user, track_id),
+         {:ok, parsed} <- parse_config(config),
+         :ok <- configure(track_id, parsed),
+         do: {:ok, info(track_id)}
+  end
 
   @doc """
   A one-minute, single-use ticket for the caller's session, as the URL the
