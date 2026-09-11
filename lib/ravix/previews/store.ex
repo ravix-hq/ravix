@@ -81,7 +81,7 @@ defmodule Ravix.Previews.Store do
   def get(track_id) do
     case Repo.get(Preview, track_id) do
       nil -> nil
-      %Preview{row: row} -> Row.decode(row)
+      %Preview{} = preview -> Row.from_preview(preview)
     end
   end
 
@@ -90,14 +90,14 @@ defmodule Ravix.Previews.Store do
   def by_host(hostname) do
     case Repo.get_by(Preview, hostname: hostname) do
       nil -> nil
-      %Preview{row: row} -> Row.decode(row)
+      %Preview{} = preview -> Row.from_preview(preview)
     end
   end
 
   @doc "Every preview row; what the reconciler walks."
   @spec all() :: [Row.t()]
   def all do
-    Repo.all(from p in Preview, select: p.row) |> Enum.map(&Row.decode/1)
+    Preview |> Repo.all() |> Enum.map(&Row.from_preview/1)
   end
 
   @doc "Every row of a project's tracks, whatever their state."
@@ -109,10 +109,9 @@ defmodule Ravix.Previews.Store do
       from p in Preview,
         join: t in Ravix.Tracks.Track,
         on: t.id == p.track_id,
-        where: t.project_id == ^project_id,
-        select: p.row
+        where: t.project_id == ^project_id
     )
-    |> Enum.map(&Row.decode/1)
+    |> Enum.map(&Row.from_preview/1)
   end
 
   @doc "A track's row, created stopped when it has none."
@@ -143,8 +142,37 @@ defmodule Ravix.Previews.Store do
 
     case Repo.one(query) do
       nil -> nil
-      %Preview{row: row} -> Row.decode(row)
+      %Preview{} = preview -> Row.from_preview(preview)
     end
+  end
+
+  @doc """
+  Set named fields on a track's row, leaving every other one alone.
+
+  What a whole-record write could not do. Each writer here owns some fields
+  and not others, and the record used to be written back entire: a caller
+  that read nineteen fields, changed one, and wrote nineteen back reverted
+  whatever had committed in between. That is exactly what happened to
+  `Ravix.Previews.touch/1` -- a `publish_ready` landing between its read and
+  its write went back to `:starting`, and the gateway kept sending the reader
+  to the start page -- and the fix then was a `FOR UPDATE` read and a merge,
+  because with one jsonb document there was nothing else to do.
+
+  With columns there is: this is a single `UPDATE` of the named fields, and
+  no lock, no re-read and no window. A row that does not exist yet is not an
+  error; the answer is how many rows moved.
+
+  It does not touch `sprite` or `port`, which the unique index owns and
+  `allocate/3` is for.
+  """
+  @spec update(String.t(), keyword()) :: non_neg_integer()
+  def update(track_id, changes) when is_list(changes) and changes != [] do
+    {count, _} =
+      Preview
+      |> where([p], p.track_id == ^track_id)
+      |> Repo.update_all(set: changes)
+
+    count
   end
 
   @doc """
@@ -155,8 +183,10 @@ defmodule Ravix.Previews.Store do
   """
   @spec save(Row.t()) :: :ok | {:error, Ecto.Changeset.t()}
   def save(%Row{} = row) do
+    attrs = Row.to_attrs(row)
+
     case Repo.insert(changeset(row),
-           on_conflict: [set: [sprite: row.sprite, port: row.port, row: Row.encode(row)]],
+           on_conflict: [set: Map.to_list(attrs) ++ [row: Row.encode(row)]],
            conflict_target: :track_id
          ) do
       {:ok, _} -> :ok
@@ -177,13 +207,7 @@ defmodule Ravix.Previews.Store do
   end
 
   defp changeset(%Row{} = row) do
-    Preview.changeset(%Preview{}, %{
-      track_id: row.track_id,
-      hostname: row.hostname,
-      sprite: row.sprite,
-      port: row.port,
-      row: Row.encode(row)
-    })
+    Preview.changeset(%Preview{}, Map.put(Row.to_attrs(row), :row, Row.encode(row)))
   end
 
   @doc """

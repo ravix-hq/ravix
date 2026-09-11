@@ -171,17 +171,19 @@ defmodule Ravix.Previews do
   @spec touch(String.t()) :: :ok | {:error, reason()}
   def touch(track_id) do
     with {:ok, _} <- assert_open(track_id) do
-      Repo.transaction(fn ->
-        # Merge the two fields this owns onto a locked read rather than
-        # writing back the whole row it saw. Every other writer already works
-        # this way; writing the read-in row wholesale meant a `publish_ready`
-        # that committed in between was reverted to `:starting`, and the
-        # gateway kept sending the reader back to the start page.
-        %Row{} = row = Store.ensure(track_id)
-        %Row{} = fresh = Store.lock(track_id) || row
-        now = Clock.now_ms()
-        Store.save!(%Row{fresh | last_activity: now, lease_until: now + @lease_ms})
-      end)
+      # The two fields this owns, and nothing else. It used to read the row
+      # under `FOR UPDATE` and write all nineteen back, because the record
+      # was one jsonb document and there was no way to write part of it; a
+      # `publish_ready` that committed in between went back to `:starting`
+      # and the gateway kept sending the reader to the start page. Now the
+      # fields are columns and the update names them.
+      now = Clock.now_ms()
+
+      if Store.update(track_id, last_activity: now, lease_until: now + @lease_ms) == 0 do
+        # No row yet: make one, then set the lease on it.
+        Store.ensure(track_id)
+        Store.update(track_id, last_activity: now, lease_until: now + @lease_ms)
+      end
 
       :ok
     end

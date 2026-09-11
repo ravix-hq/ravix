@@ -180,6 +180,33 @@ defmodule Ravix.PreviewsTest do
     assert {:error, {:conflict, "closed_track", _}} = Previews.touch(t1.id)
   end
 
+  test "touch renews the lease without reverting what another writer committed", %{p: p, t1: t1} do
+    # The lost update the columns are for. `touch/1` used to read the whole
+    # record, change its two fields, and write all nineteen back; a readiness
+    # publish landing in between went back to `:starting` and the gateway kept
+    # sending the reader to the start page. Here the publish happens between
+    # the read and the write, and has to survive it.
+    Store.save!(%{Store.ensure(t1.id) | state: :starting, generation: 4, logs: "building"})
+
+    stale = Store.get(t1.id)
+    assert stale.state == :starting
+
+    Store.update(t1.id, state: :ready, error: nil)
+    assert :ok = Previews.touch(t1.id)
+
+    assert %Row{state: :ready, generation: 4, logs: "building"} = row = Store.get(t1.id)
+    assert row.last_activity == now(p)
+    assert row.lease_until == now(p) + Previews.lease_ms()
+  end
+
+  test "touch on a track whose row does not exist yet makes one and leases it", %{p: p, t2: t2} do
+    assert Store.get(t2.id) == nil
+    assert :ok = Previews.touch(t2.id)
+
+    assert %Row{last_activity: activity, lease_until: lease, state: :stopped} = Store.get(t2.id)
+    assert activity == now(p) and lease == now(p) + Previews.lease_ms()
+  end
+
   test "open mints a single-use ticket on the preview origin bound to the session and starts the service",
        %{p: p, owner: owner, owner_session: session, t1: t1} do
     assert {:ok, url} = Previews.open_ticket(owner, t1.id, session.token_hash)

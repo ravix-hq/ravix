@@ -1,24 +1,17 @@
 defmodule Ravix.Previews.Row do
   @moduledoc """
-  A track's preview record, the `PreviewRow` of `preview-store.ts`.
+  What a track's preview is meant to be doing, and where.
 
-  The whole record lives in the `row` jsonb column of `previews` and is
-  read and written as a unit; `hostname`, `sprite` and `port` are also real
-  columns so the database can enforce uniqueness. This struct is the typed
-  view of that document, and `decode/1` and `encode/1` are the only places
-  that know how it is spelled on disk.
-
-  ## The `row` keys
-
-  Snake case, one per field of this struct:
+  The working shape the previews pass around, and the typed view of
+  `Ravix.Previews.Preview`, which is one column per field:
 
     * `track_id`, `hostname`, `service` (`sy-<hostname>`, the Sprites service name)
-    * `config`: `nil` or `%{"directory", "command", "readiness_path"}`, the
-      track's override of the project default
-    * `applied_config`: the JSON the running service was defined from, or `nil`
+    * `config`: `nil` or `%{directory, command, readiness_path}`, the track's
+      override of the project default
+    * `applied_config`: the fingerprint the running service was defined from, or `nil`
     * `sandbox_id`, `sprite`, `port`: where the service is, once allocated
-    * `desired`: `"running"` or `"stopped"`; `state`: `"stopped"`,
-      `"starting"`, `"ready"` or `"failed"`
+    * `desired`: `:running` or `:stopped`; `state`: `:stopped`, `:starting`,
+      `:ready` or `:failed`
     * `generation`: bumped by every change of intent, so an operation that
       began under an older number publishes nothing
     * `last_activity`, `lease_until`, `started_at`: milliseconds since the epoch
@@ -26,7 +19,14 @@ defmodule Ravix.Previews.Row do
     * `cleanup`: the track or project is gone and the service must be deleted
     * `stop_pending`: a stop that did not reach Sprites, retried by the reconciler
 
-  Rows the TypeScript wrote (`trackId`, `readinessPath`) decode too.
+  This was the `PreviewRow` of `preview-store.ts`, and until the migration
+  `PreviewsIntoColumns` it was stored the way that file stored it: all
+  nineteen fields in one `row` jsonb document, read and written as a unit.
+  `encode/1` is what remains of that, written alongside the columns until the
+  release that reads the document is gone.
+
+  `config` is still a map on disk, on this row and on a project's default,
+  because it is one value rather than three: nil, or all three fields.
   """
 
   @type state :: :stopped | :starting | :ready | :failed
@@ -55,6 +55,8 @@ defmodule Ravix.Previews.Row do
           unavailable: String.t() | nil
         }
 
+  alias Ravix.Previews.Preview
+
   defstruct track_id: nil,
             hostname: nil,
             config: nil,
@@ -82,35 +84,72 @@ defmodule Ravix.Previews.Row do
     %__MODULE__{track_id: track_id, hostname: hostname, service: "sy-" <> hostname}
   end
 
-  @doc "The struct for a stored `row` document."
-  @spec decode(map()) :: t()
-  def decode(map) when is_map(map) do
-    map = normalize_keys(map)
+  @doc """
+  The struct for a stored row.
 
+  No defaulting: every field is a column the database guarantees. `desired`
+  and `state` arrive as atoms because `Ecto.Enum` and a `CHECK` have already
+  agreed they are one of the set.
+  """
+  @spec from_preview(Preview.t()) :: t()
+  def from_preview(%Preview{} = preview) do
     %__MODULE__{
-      track_id: map["track_id"],
-      hostname: map["hostname"],
-      config: decode_config(map["config"]),
-      applied_config: map["applied_config"],
-      sandbox_id: map["sandbox_id"],
-      sprite: map["sprite"],
-      port: map["port"],
-      service: map["service"] || "sy-" <> (map["hostname"] || ""),
-      desired: atom(map["desired"], [:running, :stopped], :stopped),
-      state: atom(map["state"], [:stopped, :starting, :ready, :failed], :stopped),
-      generation: map["generation"] || 0,
-      last_activity: map["last_activity"] || 0,
-      lease_until: map["lease_until"] || 0,
-      started_at: map["started_at"] || 0,
-      error: map["error"],
-      logs: map["logs"] || "",
-      cleanup: map["cleanup"] == true,
-      stop_pending: map["stop_pending"] == true,
-      unavailable: map["unavailable"]
+      track_id: preview.track_id,
+      hostname: preview.hostname,
+      config: decode_config(preview.config),
+      applied_config: preview.applied_config,
+      sandbox_id: preview.sandbox_id,
+      sprite: preview.sprite,
+      port: preview.port,
+      service: preview.service,
+      desired: preview.desired,
+      state: preview.state,
+      generation: preview.generation,
+      last_activity: preview.last_activity,
+      lease_until: preview.lease_until,
+      started_at: preview.started_at,
+      error: preview.error,
+      logs: preview.logs,
+      cleanup: preview.cleanup,
+      stop_pending: preview.stop_pending,
+      unavailable: preview.unavailable
     }
   end
 
-  @doc "The `row` document for a struct."
+  @doc "The columns for a struct."
+  @spec to_attrs(t()) :: map()
+  def to_attrs(%__MODULE__{} = row) do
+    %{
+      track_id: row.track_id,
+      hostname: row.hostname,
+      service: row.service,
+      sprite: row.sprite,
+      port: row.port,
+      sandbox_id: row.sandbox_id,
+      config: encode_config(row.config),
+      applied_config: row.applied_config,
+      desired: row.desired,
+      state: row.state,
+      generation: row.generation,
+      last_activity: row.last_activity,
+      lease_until: row.lease_until,
+      started_at: row.started_at,
+      error: row.error,
+      logs: row.logs,
+      cleanup: row.cleanup,
+      stop_pending: row.stop_pending,
+      unavailable: row.unavailable
+    }
+  end
+
+  @doc """
+  The `row` document for a struct.
+
+  Expand-phase only. The columns are the record now; this is written
+  alongside them so a previous release, which reads `row` and nothing else,
+  keeps working until it is gone. The migration that drops the column takes
+  this with it.
+  """
   @spec encode(t()) :: map()
   def encode(%__MODULE__{} = row) do
     %{
@@ -170,9 +209,5 @@ defmodule Ravix.Previews.Row do
   @spec normalize_keys(map()) :: map()
   def normalize_keys(map) do
     Map.new(map, fn {key, value} -> {key |> to_string() |> Macro.underscore(), value} end)
-  end
-
-  defp atom(value, allowed, default) do
-    Enum.find(allowed, default, &(Atom.to_string(&1) == value))
   end
 end
