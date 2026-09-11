@@ -178,6 +178,44 @@ defmodule Ravix.ArchitectureTest do
     assert live == ["lib/ravix/projects/store.ex"]
   end
 
+  test "a scoped context's user-less functions are the ones it names" do
+    # `Ravix.Tracks` and `Ravix.People` document themselves as taking the
+    # signed-in user and going through `Ravix.Accounts.Access` first, and
+    # the doc is what the next reader trusts instead of the call site. A
+    # handful of functions do take no user --- each is asked by another
+    # context about a subject it already holds, never by a page --- and this
+    # is what keeps that list from growing quietly.
+    #
+    # A new user-less public function in one of these is not wrong; it just
+    # has to be said out loud in the moduledoc, which is the moment to ask
+    # whether a page could reach it.
+    expected = %{
+      "lib/ravix/tracks.ex" =>
+        ~w(machine_of sprite_for close_all_for_rebuild present origin_info),
+      "lib/ravix/people.ex" => ~w(claim_link link_target)
+    }
+
+    for {path, named} <- expected do
+      source = File.read!(path)
+
+      user_less =
+        Regex.scan(~r/^  def ([a-z_]+[?!]?)\(([^)]*)/m, source)
+        |> Enum.reject(fn [_, _name, args] -> String.contains?(args, "%User{") end)
+        |> Enum.map(fn [_, name, _args] -> name end)
+        |> Enum.uniq()
+
+      assert Enum.sort(user_less) == Enum.sort(named),
+             "#{path}: user-less functions are #{inspect(Enum.sort(user_less))}, " <>
+               "but its documentation names #{inspect(Enum.sort(named))}. " <>
+               "Add it to both, or give it the user."
+
+      for name <- named do
+        assert source =~ "`#{name}/",
+               "#{path} does not mention #{name} in its documentation."
+      end
+    end
+  end
+
   test "unsupervised work cannot bypass the guard through aliases or captures" do
     for code <- [
           "Task.start(fn -> :ok end)",
