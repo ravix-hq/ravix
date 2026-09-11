@@ -34,20 +34,13 @@ defmodule Ravix.People.Store do
   @typedoc "Somebody in a people list; see `Ravix.People.Person`."
   @type person :: Ravix.People.Person.t()
 
-  @typedoc """
-  An invitation row, as the people lists read it.
-
-  A map and not a struct, deliberately: it is a projection of two columns
-  off `TrackInvite`/`ProjectInvite` that never leaves this module ---
-  `pending_person/1` three hundred lines down is its only reader --- so
-  there is no boundary here for a struct to guard.
-  """
-  @type invite :: %{github_id: String.t(), login: String.t(), avatar_url: String.t() | nil}
+  @typedoc "An invitation waiting on a track or a project; see `Ravix.People.Invite`."
+  @type invite :: Ravix.People.Invite.t()
 
   import Ecto.Query
 
   alias Ravix.Accounts.User
-  alias Ravix.People.{Person, Profile}
+  alias Ravix.People.{Invite, Person, Profile}
   alias Ravix.Projects.{Project, ProjectInvite, ProjectLink, ProjectMember}
   alias Ravix.Projects.Store, as: Projects
   alias Ravix.Repo
@@ -173,7 +166,8 @@ defmodule Ravix.People.Store do
       from(i in TrackInvite,
         where: i.track_id in ^track_ids,
         order_by: i.created_at,
-        select: {i.track_id, %{github_id: i.github_id, login: i.login, avatar_url: i.avatar_url}}
+        select:
+          {i.track_id, %Invite{github_id: i.github_id, login: i.login, avatar_url: i.avatar_url}}
       )
     )
     |> Enum.group_by(&elem(&1, 0), &elem(&1, 1))
@@ -485,7 +479,7 @@ defmodule Ravix.People.Store do
       from(i in schema,
         where: field(i, ^key) == ^id,
         order_by: i.created_at,
-        select: %{github_id: i.github_id, login: i.login, avatar_url: i.avatar_url}
+        select: %Invite{github_id: i.github_id, login: i.login, avatar_url: i.avatar_url}
       )
     )
   end
@@ -730,7 +724,7 @@ defmodule Ravix.People.Store do
   @spec present_person(User.t()) :: profile()
   defdelegate present_person(user), to: Profile, as: :from_user
 
-  defp pending_person(%{login: login, avatar_url: avatar_url}),
+  defp pending_person(%Invite{login: login, avatar_url: avatar_url}),
     do: Person.pending(login, avatar_url)
 
   defp owner_entry(owner_id) do

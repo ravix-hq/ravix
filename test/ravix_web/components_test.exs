@@ -13,6 +13,7 @@ defmodule RavixWeb.ComponentsTest do
 
   alias Phoenix.HTML.Safe
   alias Phoenix.LiveView.JS
+  alias Ravix.People.InviteLink
   alias RavixWeb.CoreComponents
   alias RavixWeb.Layouts
 
@@ -160,7 +161,7 @@ defmodule RavixWeb.ComponentsTest do
       html =
         render_component(&CoreComponents.invite_link/1,
           owner: true,
-          invite: %{url: "https://ravix.test/j/tok", created_at: nil, expires_at: nil}
+          invite: %InviteLink{url: "https://ravix.test/j/tok", created_at: nil, expires_at: nil}
         )
 
       assert html =~ ~s(<a href="https://ravix.test/j/tok">https://ravix.test/j/tok</a>)
@@ -172,7 +173,11 @@ defmodule RavixWeb.ComponentsTest do
       html =
         render_component(&CoreComponents.invite_link/1,
           owner: true,
-          invite: %{url: nil, created_at: DateTime.utc_now(), expires_at: DateTime.utc_now()}
+          invite: %InviteLink{
+            url: nil,
+            created_at: DateTime.utc_now(),
+            expires_at: DateTime.utc_now()
+          }
         )
 
       refute html =~ "<a href"

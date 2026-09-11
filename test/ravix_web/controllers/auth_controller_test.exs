@@ -260,11 +260,16 @@ defmodule RavixWeb.AuthControllerTest do
     end
 
     if Code.ensure_loaded?(Ravix.People) do
+      # Inside the guard, with the tests that need it: on a tree without
+      # `Ravix.People` there is no struct to name.
+      alias Ravix.People.LinkTarget
+
       test "somebody signed in is asked, and the GET claims nothing", %{conn: conn} do
         %{conn: conn} = register_and_log_in_user(%{conn: conn})
 
         stub(Ravix.People, :link_target, fn "link-token" ->
-          {:ok, %{kind: :track, project: "acme", track: "Fix the bug", invited_by: "ana"}}
+          {:ok,
+           %LinkTarget{kind: :track, project: "acme", track: "Fix the bug", invited_by: "ana"}}
         end)
 
         # The regression this route exists to prevent (#16). A GET carries no
@@ -290,7 +295,7 @@ defmodule RavixWeb.AuthControllerTest do
         %{conn: conn} = register_and_log_in_user(%{conn: conn})
 
         stub(Ravix.People, :link_target, fn "link-token" ->
-          {:ok, %{kind: :project, project: "acme", track: nil, invited_by: nil}}
+          {:ok, %LinkTarget{kind: :project, project: "acme", track: nil, invited_by: nil}}
         end)
 
         html = html_response(get(conn, "/j/link-token"), 200)

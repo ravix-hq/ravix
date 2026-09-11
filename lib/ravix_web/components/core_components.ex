@@ -439,15 +439,17 @@ defmodule RavixWeb.CoreComponents do
 
   The URL is shown only in the turn it was minted in: the server keeps a hash
   and genuinely cannot show it again, so a link that is out reads as absent
-  here rather than as something to be recovered.
+  here rather than as something to be recovered. `@invite.url` and not
+  `@invite[:url]`, so that a misspelling here fails instead of rendering the
+  same nothing a link-with-no-URL renders.
 
       <.invite_link owner={@track.role == :owner} invite={@invite} />
   """
   attr :owner, :boolean, required: true, doc: "only the owner may mint or revoke"
 
-  attr :invite, :map,
+  attr :invite, Ravix.People.InviteLink,
     default: nil,
-    doc: "the freshly minted link, or nil when nothing was just minted"
+    doc: "the link as `Ravix.People.link/2` reports it, or nil when none was read"
 
   attr :target, :any, default: nil, doc: "a `@myself` when the dialog is a live_component"
 
@@ -461,8 +463,8 @@ defmodule RavixWeb.CoreComponents do
         Revoke invite link
       </button>
     </div>
-    <p :if={@invite && @invite[:url]}>
-      <a href={@invite[:url]}>{@invite[:url]}</a>
+    <p :if={@invite && @invite.url}>
+      <a href={@invite.url}>{@invite.url}</a>
     </p>
     """
   end
