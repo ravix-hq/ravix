@@ -125,7 +125,7 @@ defmodule Ravix.TerminalTest do
 
       stub(Ravix.Config, :sprites, fn -> @sprites end)
 
-      assert {:error, {:unprocessable, "empty_command", _}} =
+      assert {:error, %Ecto.Changeset{errors: [command: {"Type a command.", _}]}} =
                Terminal.exec(ctx.owner, ctx.track.id, %{command: "  "})
 
       no_machine(ctx.project)

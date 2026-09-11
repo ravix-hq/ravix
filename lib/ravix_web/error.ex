@@ -177,8 +177,28 @@ defmodule RavixWeb.Error do
       end)
     end)
     |> Enum.find_value("The request is not valid.", fn
-      {field, [message | _]} -> "#{field} #{message}."
+      {field, [message | _]} -> sentence(field, message)
       _ -> nil
     end)
   end
+
+  # Ecto's own messages are fragments --- "can't be blank", "is invalid" ---
+  # and only read as English with the field in front and a stop after: "name
+  # can't be blank."
+  #
+  # A message a context wrote is already a sentence. `Ravix.Previews.Config`
+  # and `Ravix.Terminal.Request` refuse with the thing to tell somebody, and
+  # putting the field in front of one of those produced "command Type a
+  # command.." --- the field name twice over, once as a label nobody asked
+  # for, and two full stops.
+  defp sentence(field, message) do
+    if String.ends_with?(message, [".", "!", "?"]) and upper_first?(message),
+      do: message,
+      else: "#{field} #{message}."
+  end
+
+  defp upper_first?(<<first::utf8, _rest::binary>>),
+    do: String.upcase(<<first::utf8>>) == <<first::utf8>>
+
+  defp upper_first?(_), do: false
 end

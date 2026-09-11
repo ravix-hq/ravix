@@ -1,5 +1,7 @@
 defmodule RavixWeb.ErrorTest do
   use ExUnit.Case, async: true
+  alias Ravix.Previews
+  alias Ravix.Terminal.Request
   alias RavixWeb.Error
 
   test "context refusal shapes preserve their public status and code" do
@@ -43,6 +45,20 @@ defmodule RavixWeb.ErrorTest do
 
     assert Error.from(Ecto.Changeset.change({%{}, %{name: :string}})).message ==
              "The request is not valid."
+
+    # Ecto's own messages are fragments and need the field in front of them.
+    assert Error.from(changeset).message =~ ~r/^name /
+  end
+
+  test "a sentence a context wrote is not relabelled with its own field" do
+    # `Ravix.Previews.Config` and `Ravix.Terminal.Request` refuse with the
+    # thing to tell somebody. Prefixing one of those gave "command Type a
+    # command.." --- the field twice over and two full stops.
+    {:error, changeset} = Request.parse(%{command: "   "})
+    assert Error.from(changeset).message == "Type a command."
+
+    {:error, changeset} = Previews.parse_config(%{directory: "/etc", command: "x"})
+    assert Error.from(changeset).message == "Choose a relative app directory inside this track."
   end
 
   test "JSON errors halt the connection with a stable public envelope" do
