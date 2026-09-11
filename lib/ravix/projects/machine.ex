@@ -15,6 +15,7 @@ defmodule Ravix.Projects.Machine do
   alias Ravix.Hub
   alias Ravix.Ids
   alias Ravix.Projects
+  alias Ravix.Projects.MachineState
   alias Ravix.Projects.Project
 
   @typedoc "What a rebuild removed, and what would not go."
@@ -347,7 +348,7 @@ defmodule Ravix.Projects.Machine do
   defp machine_from(nil), do: none()
 
   defp machine_from(conversation) do
-    %{
+    %MachineState{
       sandbox_id: conversation["sandbox_id"],
       status: if(conversation["status"] in @live, do: :ready, else: :suspended),
       sprite_name: nil
@@ -356,7 +357,7 @@ defmodule Ravix.Projects.Machine do
 
   @doc "No machine."
   @spec none() :: Projects.machine()
-  def none, do: %{sandbox_id: nil, status: :none, sprite_name: nil}
+  def none, do: %MachineState{sandbox_id: nil, status: :none, sprite_name: nil}
 
   # ── small decisions ───────────────────────────────────────────────────
 
