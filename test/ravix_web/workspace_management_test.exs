@@ -5,6 +5,7 @@ defmodule RavixWeb.WorkspaceManagementTest do
   alias Ravix.{Accounts, People, Previews, Projects, Tracks}
   alias Ravix.Fountain.Shapes.Catalog
   alias Ravix.Hub.Event
+  alias Ravix.Projects.Machine.Rebuild
 
   setup :verify_on_exit!
 
@@ -197,7 +198,11 @@ defmodule RavixWeb.WorkspaceManagementTest do
 
       expect(Projects, if(@action == "rebuild", do: :rebuild, else: :destroy), fn user, id ->
         assert {user.id, id} == {ctx.user.id, ctx.project.id}
-        :ok
+        # The real answers: `rebuild/2` reports what it removed, `destroy/2`
+        # has nothing to report.
+        if @action == "rebuild",
+          do: {:ok, %Rebuild{removed: ["track", "agent"], failed: []}},
+          else: :ok
       end)
 
       ctx.view
@@ -304,7 +309,7 @@ defmodule RavixWeb.WorkspaceManagementTest do
       send(parent, {:rebuilding, self()})
 
       receive do
-        :finish -> :ok
+        :finish -> {:ok, %Rebuild{removed: ["agent"], failed: []}}
       after
         2_000 -> flunk("rebuild was never released")
       end
@@ -321,6 +326,50 @@ defmodule RavixWeb.WorkspaceManagementTest do
     send(rebuilding, :finish)
     render_async(ctx.view)
     assert_patch(ctx.view, "/")
+  end
+
+  test "a rebuild reports what it could not stop, rather than throwing the report away", ctx do
+    settings(ctx)
+
+    # Retiring the agent is the removal that has to work, and it did, so this
+    # is `{:ok, _}`. Terminating the live conversations first is best-effort,
+    # and a track that would not stop was reported to nobody: `handle_async/3`
+    # matched the response and discarded its value.
+    stub(Projects, :rebuild, fn _, _ ->
+      {:ok,
+       %Rebuild{
+         removed: ["agent"],
+         failed: [
+           %Rebuild.Failure{what: "track c-1", why: "Fountain said 503."},
+           %Rebuild.Failure{what: "track c-2", why: "Fountain said 503."}
+         ]
+       }}
+    end)
+
+    ctx.view
+    |> form("#project-danger-form", confirm: ctx.project.name)
+    |> render_submit(%{action: "rebuild"})
+
+    render_async(ctx.view)
+    assert_patch(ctx.view, "/")
+
+    html = render(ctx.view)
+    assert html =~ "The machine was rebuilt. 2 tracks would not stop first: Fountain said 503."
+    # The rebuild happened, so the page does not say it did not.
+    refute html =~ "could not finish"
+  end
+
+  test "a rebuild that stopped everything says nothing extra", ctx do
+    settings(ctx)
+    stub(Projects, :rebuild, fn _, _ -> {:ok, %Rebuild{removed: ["agent"], failed: []}} end)
+
+    ctx.view
+    |> form("#project-danger-form", confirm: ctx.project.name)
+    |> render_submit(%{action: "rebuild"})
+
+    render_async(ctx.view)
+    assert_patch(ctx.view, "/")
+    refute render(ctx.view) =~ "would not stop first"
   end
 
   test "a rebuild that crashes re-enables the buttons and says so", ctx do

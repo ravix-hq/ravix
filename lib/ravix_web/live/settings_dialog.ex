@@ -45,6 +45,7 @@ defmodule RavixWeb.Live.SettingsDialog do
 
   alias Ravix.Previews
   alias Ravix.Projects
+  alias Ravix.Projects.Machine.Rebuild
   alias RavixWeb.Live.Form
   alias RavixWeb.Live.Params
 
@@ -131,11 +132,11 @@ defmodule RavixWeb.Live.SettingsDialog do
   @impl true
   def handle_async(:danger, {:ok, response}, socket) do
     {:noreply,
-     result(assign(socket, busy?: false), response, fn s, _ ->
+     result(assign(socket, busy?: false), response, fn s, outcome ->
        # Both of these take you off the project: a rebuild closes every track
        # on it and a delete removes it outright.
        send(self(), :project_left_behind)
-       s
+       report(s, outcome)
      end)}
   end
 
@@ -219,6 +220,32 @@ defmodule RavixWeb.Live.SettingsDialog do
       flash(socket, :error, "Type the project name to confirm.")
     end
   end
+
+  # What `Projects.rebuild/2` could not remove, which this is the only place
+  # anybody hears about. Terminating the live conversations is best-effort by
+  # design --- retiring the agent is the removal that has to work, and it did,
+  # or there would be no `{:ok, _}` here --- so this is a report and not a
+  # refusal. The value used to be discarded along with the rest of the
+  # response, which made `failed` a list nothing in the app could observe.
+  #
+  # `destroy/2` answers `:ok` and arrives here as nil.
+  defp report(socket, %Rebuild{failed: [_ | _] = failed}) do
+    reasons =
+      failed
+      |> Enum.map(&String.trim_trailing(&1.why, "."))
+      |> Enum.uniq()
+      |> Enum.join("; ")
+
+    noun = if length(failed) == 1, do: "track", else: "tracks"
+
+    flash(
+      socket,
+      :error,
+      "The machine was rebuilt. #{length(failed)} #{noun} would not stop first: #{reasons}."
+    )
+  end
+
+  defp report(socket, _outcome), do: socket
 
   defp flash(socket, kind, message) do
     send(self(), {:flash, kind, message})
