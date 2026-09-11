@@ -62,7 +62,8 @@ defmodule RavixWeb.WorkspaceLive do
         settings: nil,
         preview_defaults: nil,
         defaults_form: Form.new(:preview_defaults),
-        secret_form: Form.new(:secret)
+        secret_form: Form.new(:secret),
+        settings_form: Form.new(:settings)
       )
 
     {:ok, if(socket.assigns.current_user, do: reload(socket), else: socket)}
@@ -270,7 +271,7 @@ defmodule RavixWeb.WorkspaceLive do
      |> start_async(:create_track, fn -> Tracks.open(user, id, attrs) end)}
   end
 
-  def handle_event("save-settings", params, socket) do
+  def handle_event("save-settings", %{"settings" => params}, socket) do
     attrs = Map.take(params, ~w(name runtime model instructions setup_script))
 
     attrs =
@@ -284,7 +285,7 @@ defmodule RavixWeb.WorkspaceLive do
 
     {:noreply,
      result(
-       socket,
+       assign(socket, settings_form: Form.new(:settings, params)),
        Projects.update_settings(socket.assigns.current_user, project_id(socket), attrs),
        fn s, _ ->
          s
@@ -294,7 +295,8 @@ defmodule RavixWeb.WorkspaceLive do
            :info,
            "Settings saved. Open a new track to use updated instructions and secrets."
          )
-       end
+       end,
+       :settings_form
      )}
   end
 
@@ -472,7 +474,7 @@ defmodule RavixWeb.WorkspaceLive do
         end
 
       s
-      |> assign(dialog: :settings, settings: settings)
+      |> assign(dialog: :settings, settings: settings, settings_form: settings_form(settings))
       |> show_defaults(defaults)
       # The secret form is always blank: values are write-only, so there is
       # nothing to read back, and a key left in the box from the last save
@@ -483,6 +485,24 @@ defmodule RavixWeb.WorkspaceLive do
 
   # The people dialog loads its own list, so opening it is only opening it.
   defp open_dialog(socket, :people), do: assign(socket, dialog: :people)
+
+  # The settings form opens on what is saved. The three package boxes are
+  # one space-separated line each; `Ravix.Projects.Settings` holds them as
+  # a map keyed by manager, and this is where the two spellings meet.
+  defp settings_form(settings) do
+    packages = Map.new(~w(apt pip npm), &{&1, Enum.join(settings.packages[&1] || [], " ")})
+
+    Form.new(
+      :settings,
+      Map.merge(packages, %{
+        "name" => settings.name,
+        "runtime" => settings.runtime,
+        "model" => settings.model,
+        "instructions" => settings.instructions,
+        "setup_script" => settings.setup_script
+      })
+    )
+  end
 
   # The defaults form shows what is saved, so it is rebuilt from the answer
   # rather than left holding what was typed --- which is also what clears a

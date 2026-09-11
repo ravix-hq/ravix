@@ -115,6 +115,33 @@ defmodule RavixWeb.WorkspaceManagementTest do
     refute render(ctx.view) =~ "private-value"
   end
 
+  test "an unavailable harness is refused on the box it is about", ctx do
+    settings(ctx)
+
+    # `validate_harness/3` answers two codes now, because they are about two
+    # inputs: a runtime the catalog does not offer makes every model wrong
+    # and is the one to report; past that the harness is fine and the model
+    # is not. One code over a two-input form said something true that
+    # pointed nowhere.
+    for {code, message, id} <- [
+          {"invalid_runtime", "Choose a harness this deployment offers.", "#settings-runtime"},
+          {"invalid_model", "Choose one of this harness's models.", "#settings-model"}
+        ] do
+      expect(Projects, :update_settings, fn _, _, _ ->
+        {:error, {:unprocessable, code, message}}
+      end)
+
+      ctx.view
+      |> form("#settings-form", settings: [runtime: "made-up", model: "also-made-up"])
+      |> render_submit()
+
+      assert has_element?(ctx.view, "#settings-form .field p.error", message)
+
+      assert has_element?(ctx.view, "#{id}[value='made-up']") or
+               has_element?(ctx.view, "#{id}[value='also-made-up']")
+    end
+  end
+
   test "a bad secret name is refused on the name, and the value never comes back", ctx do
     settings(ctx)
 

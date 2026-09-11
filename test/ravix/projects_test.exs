@@ -727,20 +727,30 @@ defmodule Ravix.ProjectsTest do
       owner: owner,
       project: project
     } do
-      for attrs <- [
-            %{runtime: "codex"},
-            %{model: "invented"},
-            %{runtime: "unknown", model: "openai/test-model"},
+      # The code says which box. A runtime the catalog does not know makes
+      # every model wrong, so that is the one to report; past that the
+      # runtime is fine and the model is not.
+      for {attrs, code} <- [
+            # A runtime the catalog offers, with the model left on this
+            # project's own, which that runtime does not have.
+            {%{runtime: "codex"}, "invalid_model"},
+            # Only the model given, so the runtime stays this project's
+            # `claude` --- which this catalog does not offer at all. The
+            # harness is the box to fix, and saying "choose one of this
+            # harness's models" about a harness that is gone would send
+            # somebody looking in the wrong list.
+            {%{model: "invented"}, "invalid_runtime"},
+            {%{runtime: "unknown", model: "openai/test-model"}, "invalid_runtime"},
             # Clearing the harness box and saving. An empty string is a
             # value the browser can actually send, so `cast_attrs/1` keeps
             # it and the catalog refuses it, rather than reading it as "say
             # nothing about the harness" and keeping the old one silently.
-            %{runtime: ""}
+            {%{runtime: ""}, "invalid_runtime"}
           ] do
         client =
           fountain([{%{method: "GET", path: "/api/catalog"}, {200, [], %{data: @catalog}}}])
 
-        assert {:error, {:unprocessable, "invalid_model", _}} =
+        assert {:error, {:unprocessable, ^code, _}} =
                  Projects.update_settings(owner, project.id, Map.put(attrs, :name, "Changed"))
 
         assert requests(client) == [{"GET", "/api/catalog"}]

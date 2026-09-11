@@ -196,21 +196,33 @@ defmodule Ravix.Projects.Settings do
     end
   end
 
+  # Two refusals rather than one, because they are about two boxes. The
+  # models offered depend on the runtime, so a runtime the catalog does not
+  # know makes every model wrong and is the one to say; past that, the
+  # runtime is fine and the model is not. One code for both said "choose an
+  # available harness and one of its models" over a form with two inputs,
+  # which is true and does not point anywhere.
   defp validate_harness(catalog, runtime, model) when is_binary(runtime) and is_binary(model) do
     runtimes = List.wrap(catalog["runtimes"])
     models = List.wrap(get_in(catalog, ["models", runtime]))
 
-    if runtime in runtimes and model in models,
-      do: :ok,
-      else: invalid_model()
+    cond do
+      runtime not in runtimes -> invalid_runtime()
+      model not in models -> invalid_model()
+      true -> :ok
+    end
   end
+
+  defp validate_harness(_catalog, runtime, _model) when not is_binary(runtime),
+    do: invalid_runtime()
 
   defp validate_harness(_catalog, _runtime, _model), do: invalid_model()
 
+  defp invalid_runtime,
+    do: {:error, {:unprocessable, "invalid_runtime", "Choose a harness this deployment offers."}}
+
   defp invalid_model,
-    do:
-      {:error,
-       {:unprocessable, "invalid_model", "Choose an available harness and one of its models."}}
+    do: {:error, {:unprocessable, "invalid_model", "Choose one of this harness's models."}}
 
   defp rename(project, %{name: name}) do
     case name |> str(120) |> String.trim() do
