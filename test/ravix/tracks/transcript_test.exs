@@ -241,7 +241,9 @@ defmodule Ravix.Tracks.TranscriptTest do
       assert t1.prompt == "first"
       assert t1.settled?
       assert [%Block.Text{body: "reply"}] = t1.blocks
-      assert Enum.map(t1.events, & &1.id) == [1, 2]
+      # Newest first: the fold's order, and the reason a live turn does not
+      # copy its whole event list per frame. See `Ravix.Tracks.Transcript.Turn`.
+      assert Enum.map(t1.events, & &1.id) == [2, 1]
       assert t2.origin == "user"
       refute t2.settled?
       assert pending.prompt == nil

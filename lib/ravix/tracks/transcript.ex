@@ -192,36 +192,59 @@ defmodule Ravix.Tracks.Transcript do
 
   defp new_turn(%Turn{} = record, runtime), do: rebuild(record, runtime)
 
+  # The streaming case is asked first, and is the only one that repeats: the
+  # event belongs after everything the turn already holds, so its blocks are
+  # the blocks already computed plus this one folded on. Re-reducing the whole
+  # turn per event costs a JSON decode of every line of every earlier event,
+  # which is quadratic in the length of the turn and runs inside each reader's
+  # LiveView process.
+  #
+  # Asked *first* because the three things this used to do per event were each
+  # a walk of every event the turn already held --- the duplicate scan below,
+  # a `++` that copied the list to put one event on the end, and `settled?/1`
+  # over the whole log --- so the fold stopped being quadratic and the
+  # bookkeeping around it stayed that way. An event numbered above everything
+  # here cannot be a duplicate, cannot be out of order, and cannot unsettle a
+  # turn, so none of those questions has to be asked of the log at all.
   defp lay_in(%Turn{} = turn, event, runtime) do
     cond do
+      appended?(turn.events, event) ->
+        finish(
+          %{
+            turn
+            | events: [event | turn.events],
+              settled?: turn.settled? or Event.settles?(event)
+          },
+          fold(event, runtime, turn.fold)
+        )
+
       Enum.any?(turn.events, &(&1.id == event.id)) ->
         turn
 
-      # The streaming case, and the only one that repeats: the event belongs
-      # after everything the turn already holds, so its blocks are the blocks
-      # already computed plus this one folded on. Re-reducing the whole turn
-      # per event costs a JSON decode of every line of every earlier event,
-      # which is quadratic in the length of the turn and runs inside each
-      # reader's LiveView process.
-      appended?(turn.events, event) ->
-        finish(%{turn | events: turn.events ++ [event]}, fold(event, runtime, turn.fold))
-
       # Out of order: the order the blocks are in changes, so it is rebuilt.
       true ->
-        rebuild(%{turn | events: Enum.sort_by([event | turn.events], & &1.id)}, runtime)
+        rebuild(%{turn | events: Enum.sort_by([event | turn.events], & &1.id, :desc)}, runtime)
     end
   end
 
   defp appended?([], _event), do: true
-  defp appended?(events, event), do: List.last(events).id < event.id
+  defp appended?([newest | _rest], event), do: newest.id < event.id
 
-  # Everything derived, from the events themselves.
-  defp rebuild(%Turn{} = turn, runtime),
-    do: finish(turn, Enum.reduce(turn.events, empty_acc(), &fold(&1, runtime, &2)))
+  # Everything derived, from the events themselves. `settled?` is sticky: a
+  # turn Fountain has closed stays closed even if a later rebuild sees a
+  # shorter event list.
+  defp rebuild(%Turn{} = turn, runtime) do
+    finish(
+      %{turn | settled?: turn.settled? or settled?(turn.events)},
+      turn.events
+      |> Enum.reverse()
+      |> Enum.reduce(empty_acc(), &fold(&1, runtime, &2))
+    )
+  end
 
-  # The derived fields, from a reduction over the turn's events. `settled?`
-  # is sticky: a turn Fountain has closed stays closed even if a later
-  # rebuild sees a shorter event list.
+  # The derived fields, from a fold that is already up to date. `settled?` is
+  # the caller's, because the two callers know it for different reasons and
+  # only one of them can afford to read the whole log for it.
   defp finish(%Turn{} = turn, acc) do
     blocks = blocks_of(acc)
     visible = Enum.filter(blocks, &visible_block?/1)
@@ -230,7 +253,6 @@ defmodule Ravix.Tracks.Transcript do
       turn
       | blocks: visible,
         fold: acc,
-        settled?: turn.settled? or settled?(turn.events),
         visible?: has_text?(turn.prompt) or visible != []
     }
   end

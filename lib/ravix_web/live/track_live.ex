@@ -27,6 +27,26 @@ defmodule RavixWeb.TrackLive do
   # what it backstops is somebody's access being revoked.
   @refresh_ms 60_000
 
+  # How long the page lets transcript events pile up before it draws them.
+  #
+  # Fountain's stream is token-granularity --- an ACP `session/update` carries
+  # a few characters of the reply, and `Ravix.Tracks.Follower` broadcasts every
+  # one of them --- so "draw what just arrived" ran tens of times a second per
+  # reader. Each of those runs re-rendered the *whole* turn: `stream_insert/4`
+  # keeps no fingerprint for a stream item (it is what makes a stream cost no
+  # server memory), so the entire rendered turn goes over the socket every
+  # time, markdown and pretty-printed tool input included. The cost of drawing
+  # one token was therefore the size of the turn so far, and a long turn spent
+  # the whole of itself paying it.
+  #
+  # A tenth of a second is under the threshold where text stops looking like
+  # it is being typed and starts looking like it is arriving in blocks, and it
+  # bounds the work at ten renders a second however fast the agent talks. The
+  # events themselves are still laid into `page` as they arrive: what is
+  # deferred is the drawing, not the reading, so nothing is lost if the page
+  # is closed mid-flush.
+  @flush_ms 100
+
   alias Ravix.Accounts.Access
   alias Ravix.{Crypto, Hub, Previews, PromptQueue, Tracks}
   alias Ravix.GitHub.ChecksReport
@@ -68,6 +88,11 @@ defmodule RavixWeb.TrackLive do
         rename_form: Form.new(:rename_track),
         pull: nil,
         attached_images: [],
+        # The turns that have taken an event since the last time the page drew,
+        # and whether any of those events ended a stage. See `absorb/2`.
+        dirty_turns: MapSet.new(),
+        stage_seen?: false,
+        flushing?: false,
         # The monitor reference for this page's transcript follower, if it has
         # one. See `follow/2`.
         follower: nil,
@@ -269,26 +294,12 @@ defmodule RavixWeb.TrackLive do
     do: handle_info({:transcript, id, TranscriptEvent.from(raw)}, socket)
 
   def handle_info({:transcript, id, %TranscriptEvent{} = event}, socket) do
-    if id == socket.assigns.track_id do
-      page = Transcript.add_event(socket.assigns.page, event)
-      socket = assign(socket, page: page)
-
-      socket =
-        case Enum.find(page.turns, &(&1.id == event.turn_id)) do
-          %{visible?: true} = turn -> stream_insert(socket, :turns, turn)
-          _ -> socket
-        end
-
-      if event.kind == :stage do
-        Tracks.mark_read(socket.assigns.current_user, id)
-        {:noreply, socket |> refresh_detail() |> refresh_queue() |> refresh_transcript()}
-      else
-        {:noreply, socket}
-      end
-    else
-      {:noreply, socket}
-    end
+    if id == socket.assigns.track_id,
+      do: {:noreply, socket |> absorb(event) |> schedule_flush()},
+      else: {:noreply, socket}
   end
+
+  def handle_info(:flush_transcript, socket), do: {:noreply, flush(socket)}
 
   # An event about a *sibling* track is not this page's business, and saying
   # so is most of what typing the hub bought. A project with several tracks
@@ -441,10 +452,14 @@ defmodule RavixWeb.TrackLive do
   defp async_result(:transcript, {:ok, {:ok, page}}, socket) do
     socket = if socket.assigns.follower, do: socket, else: follow(socket, page)
 
+    # Sorted, because these come out of the turns newest-first within each
+    # turn and the page they are about to be laid into grows cheaply only
+    # while each event is newer than the one before it.
     newer =
       socket.assigns.page.turns
       |> Enum.flat_map(& &1.events)
       |> Enum.filter(&(&1.id > (page.last_event_id || 0)))
+      |> Enum.sort_by(& &1.id)
 
     socket
     |> assign(transcript_loading: false)
@@ -575,6 +590,7 @@ defmodule RavixWeb.TrackLive do
 
     socket
     |> unfollow()
+    |> drop_pending()
     |> drop_attachments()
     |> assign(
       track_id: track.id,
@@ -626,6 +642,7 @@ defmodule RavixWeb.TrackLive do
 
     socket
     |> assign(loading: true, transcript_loading: true, page: Transcript.empty(""))
+    |> drop_pending()
     |> stream(:turns, [], reset: true)
     # A load starts the page's transcript over from nothing, so the
     # subscription it had --- taken from a cursor this page has just thrown
@@ -647,6 +664,59 @@ defmodule RavixWeb.TrackLive do
     |> refresh_queue()
     |> load_panel()
   end
+
+  # Read the event now, draw it in a moment. See `@flush_ms`.
+  #
+  # Which turns moved is remembered rather than which events arrived, because
+  # that is what the drawing needs and a burst of two hundred frames usually
+  # names one turn. A stage event is remembered as a flag for the same reason:
+  # a turn that starts, runs and ends inside one window is three reasons to
+  # re-read the track and one re-read.
+  defp absorb(socket, event) do
+    assign(socket,
+      page: Transcript.add_event(socket.assigns.page, event),
+      dirty_turns: MapSet.put(socket.assigns.dirty_turns, event.turn_id),
+      stage_seen?: socket.assigns.stage_seen? or event.kind == :stage
+    )
+  end
+
+  defp schedule_flush(%{assigns: %{flushing?: true}} = socket), do: socket
+
+  defp schedule_flush(socket) do
+    Process.send_after(self(), :flush_transcript, @flush_ms)
+    assign(socket, flushing?: true)
+  end
+
+  # Draw the turns that moved, and act once on whatever the stage events in
+  # the window meant. A turn is looked up in `page` rather than remembered
+  # from the event, so what is drawn is the turn as it stands at the end of
+  # the window and not as it was when it was first touched.
+  #
+  # An empty window is not impossible: `load/2` and `arrive/3` clear what is
+  # pending, and the timer they cannot cancel still arrives.
+  defp flush(socket) do
+    %{page: page, dirty_turns: dirty, stage_seen?: stage?} = socket.assigns
+
+    socket =
+      page.turns
+      |> Enum.filter(&(&1.visible? and MapSet.member?(dirty, &1.id)))
+      |> Enum.reduce(socket, &stream_insert(&2, :turns, &1))
+      |> assign(dirty_turns: MapSet.new(), stage_seen?: false, flushing?: false)
+
+    if stage? do
+      Tracks.mark_read(socket.assigns.current_user, socket.assigns.track_id)
+      socket |> refresh_detail() |> refresh_queue() |> refresh_transcript()
+    else
+      socket
+    end
+  end
+
+  # Forget transcript events that were waiting to be drawn. The page they were
+  # drawn into is being replaced, so drawing them would put one track's output
+  # into another's, and a stage event from the track being left is not a
+  # reason to re-read the one being arrived at.
+  defp drop_pending(socket),
+    do: assign(socket, dirty_turns: MapSet.new(), stage_seen?: false)
 
   # Subscribe to the track's live transcript from the newest event this page
   # already has, and monitor the follower that serves it. The monitor is the
