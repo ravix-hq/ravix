@@ -7,7 +7,8 @@ status: stable
 adr: "0004"
 adr_status: "Accepted"
 date: 2026-09-11
-generated: { by: claude-opus/5, at: 2026-09-11T22:20:00-04:00 }
+generated: { by: claude-opus/5, at: 2026-09-11T23:55:00-04:00 }
+verified: { by: human:jhgaylor, at: 2026-09-11T23:50:00-04:00 }
 stale_after: 2026-12-11
 ---
 
@@ -27,10 +28,32 @@ this decision is a plan:
     is not also the branch that decides it, and this caveat and `stale_after`
     come off in the PR that builds it.
 
-Nothing here has been verified against a real Honeycomb dataset yet; `verified`
-is deliberately absent. What the tests prove is that spans are produced with the
-right parents and the right attributes, read back through an in-memory exporter
-(`Ravix.TraceCase`); what they cannot prove is that Honeycomb accepts them.
+`verified` therefore covers the tracing half only, and `stale_after` stays until
+PostHog is built. What it means, since "verified" in an ADR is usually a claim
+about code, and since this one rests partly on somebody looking at a screen:
+
+  * **Traces reach Honeycomb from the deployed release** (2026-09-11,
+    https://app.ravix.sh, dataset `ravix` in team `ravix`, environment `prod`),
+    confirmed in the Honeycomb UI by the operator. That is the one thing no test
+    here could establish, and it exercises the whole path at once: OTLP over
+    HTTP/protobuf, the `x-honeycomb-team` header, the resource attributes, and
+    the release actually reading `HONEYCOMB_API_KEY` at boot rather than at
+    compile time.
+  * The ingest key was checked against Honeycomb's `/1/auth` before the deploy
+    and answered `type: ingest`, team `ravix`, environment `prod`,
+    `createDatasets: true`, on the **US** instance — which is why no
+    `HONEYCOMB_ENDPOINT` override is set. The EU endpoint rejected the same key,
+    so a future migration between instances will present as a valid key that
+    silently exports nowhere.
+  * **Not verified in production:** the parent/child structure of a trace. It is
+    proven by test instead — `RavixWeb.TrackLiveTraceTest` asserts that a click
+    on the track page and the read it starts share a trace id with the read as
+    the child, across a process boundary — but nobody has read a real waterfall
+    against that expectation. The tests read spans back through an in-memory
+    exporter (`Ravix.TraceCase`), so what they cannot show is how Honeycomb
+    renders them.
+  * **Not verified at all:** sampling below 1.0. `HONEYCOMB_SAMPLE_RATIO` has
+    only ever been exercised at its default and by a unit test of its parsing.
 
 ## Context
 
