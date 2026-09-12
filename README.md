@@ -89,6 +89,10 @@ under [#12](https://github.com/ravix-hq/ravix/issues/12).
 | `SPRITES_TOKEN`, `SPRITES_URL` | Sprites API credentials and optional origin override |
 | `PREVIEW_DOMAIN` | Wildcard preview domain routed to the same service |
 | `POOL_SIZE` | Production database pool size; defaults to 10 |
+| `HONEYCOMB_API_KEY` | Sends OpenTelemetry traces to Honeycomb; unset means no exporter and no traces leave the process (ADR 0004) |
+| `HONEYCOMB_SAMPLE_RATIO` | Fraction of traces to keep, `0.0`--`1.0`; defaults to `1.0` |
+| `HONEYCOMB_ENDPOINT`, `OTEL_SERVICE_NAME` | Optional OTLP origin and service/dataset name overrides |
+| `DEPLOY_ENV` | Names the deployment on every span; defaults to the Mix environment |
 
 The registered GitHub App callback remains `/api/auth/callback`; its setup URL
 is `/api/auth/install`. Signing in starts at `/auth/github`. Secrets belong in

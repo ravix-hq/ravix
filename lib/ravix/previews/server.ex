@@ -57,6 +57,7 @@ defmodule Ravix.Previews.Server do
   alias Ravix.Repo
   alias Ravix.Sprites
   alias Ravix.Sprites.Shapes
+  alias Ravix.Trace
 
   @supervisor Ravix.Previews.Supervisor
   @start_ms 60_000
@@ -76,6 +77,13 @@ defmodule Ravix.Previews.Server do
           | {:retire, Row.t(), Previews.stop_mode(), changes :: keyword()}
 
   @typep failure :: {:error, :stale} | {:error, term(), Row.t()}
+
+  # Which of the two operations, for the span. The tag alone: the tuples carry a
+  # generation, a mode and a whole `Row`, and a span attribute built from those
+  # would be a new value per call for no gain.
+  @spec operation_name(operation()) :: atom()
+  defp operation_name({:ensure_running, _generation, _mode}), do: :ensure_running
+  defp operation_name({:retire, _row, _mode, _changes}), do: :retire
 
   @doc "The child spec of the supervisor the servers live under."
   @spec child_specs() :: [{module(), keyword()}]
@@ -129,7 +137,12 @@ defmodule Ravix.Previews.Server do
   """
   @spec run(String.t(), operation()) :: :ok | {:error, term()}
   def run(track_id, operation) do
-    GenServer.call(ensure(track_id), {:run, operation}, :infinity)
+    # `Trace.carrier/0` is captured *here*, in the caller's process, because
+    # that is the only process that holds the trace the operation belongs to.
+    # The operation itself is data rather than a closure -- only the server
+    # knows the track, the lease and the owner to perform it with -- so the
+    # context travels beside it. See `Ravix.Trace`'s note on `carrier/0`.
+    GenServer.call(ensure(track_id), {:run, operation, Trace.carrier()}, :infinity)
   catch
     :exit, _ -> {:error, :preview_server_down}
   end
@@ -202,8 +215,8 @@ defmodule Ravix.Previews.Server do
   # Queued, not run here. See the module documentation: an operation is up to
   # sixty seconds of provider calls and `Clock.sleep/1`, and doing that inside
   # the callback is what left the process unable to answer anything at all.
-  def handle_call({:run, operation}, from, state) do
-    state = advance(%{state | queue: :queue.in({from, operation}, state.queue)})
+  def handle_call({:run, operation, carrier}, from, state) do
+    state = advance(%{state | queue: :queue.in({from, operation, carrier}, state.queue)})
     {:noreply, state, timeout(state)}
   end
 
@@ -252,14 +265,14 @@ defmodule Ravix.Previews.Server do
   @spec advance(state()) :: state()
   defp advance(%{running: nil} = state) do
     case :queue.out(state.queue) do
-      {{:value, {from, operation}}, queue} ->
+      {{:value, {from, operation, carrier}}, queue} ->
         owner = self()
         track_id = state.track_id
         held_at = state.held_at
 
         task =
           Task.Supervisor.async_nolink(Ravix.TaskSupervisor, fn ->
-            safely(operation, track_id, held_at, owner)
+            traced(carrier, operation, track_id, held_at, owner)
           end)
 
         %{state | running: %{ref: task.ref, from: from}, queue: queue}
@@ -270,6 +283,28 @@ defmodule Ravix.Previews.Server do
   end
 
   defp advance(state), do: state
+
+  # The operation, under the caller's trace (ADR 0004). The context comes from
+  # `run/2`, captured in the calling process, because this one is the server's.
+  # Without it the `sprites.exec` calls inside would be orphan traces with
+  # nothing naming the click that asked for them.
+  #
+  # The span starts here rather than in `perform/4` so that it covers the wait
+  # in the queue as well as the work. This server runs operations one at a time,
+  # so "how long did it take" and "how long did it wait" are different
+  # questions, and a span that began at the work could only answer the first.
+  defp traced(carrier, operation, track_id, held_at, owner) do
+    attributes = %{
+      "ravix.track_id" => track_id,
+      "ravix.operation" => operation_name(operation)
+    }
+
+    carrier.(fn ->
+      Trace.span("previews.operation", attributes, fn ->
+        safely(operation, track_id, held_at, owner)
+      end)
+    end)
+  end
 
   # Idle time left before this server stops, or `:infinity` while an operation
   # is in flight. Counted from when the last one finished rather than reset on

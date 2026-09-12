@@ -34,6 +34,18 @@ config :esbuild,
     env: %{"NODE_PATH" => [Path.expand("../deps", __DIR__), Mix.Project.build_path()]}
   ]
 
+# Tracing (ADR 0004). Off unless a deployment configures an exporter:
+# `config/runtime.exs` switches this to OTLP when HONEYCOMB_API_KEY is set, so
+# `mix test`, `mix phx.server` and a self-hosted deployment with no Honeycomb
+# account produce spans that go nowhere and cost a sampler check. `:none` is
+# the exporter, not the SDK -- spans are still built, which is what lets
+# `Ravix.Trace`'s own tests read them back through the in-memory exporter
+# without a second configuration path.
+config :opentelemetry,
+  span_processor: :batch,
+  traces_exporter: :none,
+  resource: [service: [name: "ravix"]]
+
 # Configure Elixir's Logger
 config :logger, :default_formatter,
   format: "$time $metadata[$level] $message\n",

@@ -86,6 +86,10 @@ defmodule RavixWeb do
       # socket changes; see `RavixWeb.Live.Result`.
       import RavixWeb.Live.Result
 
+      # `start_async/3` with the trace carried into the task; see
+      # `RavixWeb.Live.Async`.
+      import RavixWeb.Live.Async
+
       unquote(html_helpers())
     end
   end
@@ -95,6 +99,7 @@ defmodule RavixWeb do
       use Phoenix.LiveComponent
 
       import RavixWeb.Live.Result
+      import RavixWeb.Live.Async
 
       unquote(html_helpers())
     end

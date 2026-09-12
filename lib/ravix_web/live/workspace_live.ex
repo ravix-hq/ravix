@@ -262,7 +262,7 @@ defmodule RavixWeb.WorkspaceLive do
     {:noreply,
      socket
      |> assign(busy: true, project_form: Form.new(:new_project, params))
-     |> start_async(:create_project, fn -> Projects.create(user, attrs) end)}
+     |> traced_async(:create_project, fn -> Projects.create(user, attrs) end)}
   end
 
   def handle_event("origin", %{"kind" => word}, socket) when is_map_key(@form_origins, word) do
@@ -281,7 +281,7 @@ defmodule RavixWeb.WorkspaceLive do
         # already said "not yet" while this was synchronous too.
         user = socket.assigns.current_user
         id = project_id(socket)
-        {:noreply, start_async(socket, :refs, fn -> Projects.refs(user, id, refs_kind) end)}
+        {:noreply, traced_async(socket, :refs, fn -> Projects.refs(user, id, refs_kind) end)}
     end
   end
 
@@ -310,7 +310,7 @@ defmodule RavixWeb.WorkspaceLive do
     {:noreply,
      socket
      |> assign(busy: true, track_form: Form.new(:new_track, params))
-     |> start_async(:create_track, fn -> Tracks.open(user, id, attrs) end)}
+     |> traced_async(:create_track, fn -> Tracks.open(user, id, attrs) end)}
   end
 
   @impl true
@@ -464,7 +464,7 @@ defmodule RavixWeb.WorkspaceLive do
 
   defp reload_async(socket) do
     user = socket.assigns.current_user
-    start_async(socket, :reload, fn -> read_rail(user) end)
+    traced_async(socket, :reload, fn -> read_rail(user) end)
   end
 
   defp refresh_tracks(%{assigns: %{current_user: nil}} = socket, _id), do: socket
@@ -472,7 +472,7 @@ defmodule RavixWeb.WorkspaceLive do
   defp refresh_tracks(socket, project_id) do
     if Enum.any?(socket.assigns.projects, &(&1.id == project_id)) do
       user = socket.assigns.current_user
-      start_async(socket, {:tracks, project_id}, fn -> Tracks.list(user, project_id) end)
+      traced_async(socket, {:tracks, project_id}, fn -> Tracks.list(user, project_id) end)
     else
       socket
     end
@@ -553,7 +553,7 @@ defmodule RavixWeb.WorkspaceLive do
 
       socket
       |> assign(repos: [], installations: [], installation: nil)
-      |> start_async(:repos, fn -> Projects.repos(user, id) end)
+      |> traced_async(:repos, fn -> Projects.repos(user, id) end)
     else
       socket
     end

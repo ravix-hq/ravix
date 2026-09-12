@@ -134,6 +134,18 @@ projects:
               # without it they say so.
               - key: SPRITES_TOKEN
                 sync: false
+              # Tracing to Honeycomb (ADR 0004). Absent, the exporter stays
+              # `:none` and no span leaves the process, so the service runs
+              # exactly as it did -- this is the one switch, and it is safe to
+              # leave unset while a key is being arranged.
+              - key: HONEYCOMB_API_KEY
+                sync: false
+              # Names this deployment on every span. `DEPLOY_ENV` rather than
+              # reusing the Mix environment, because a preview environment and
+              # production are both `prod` to Mix and must not share a name in
+              # Honeycomb.
+              - key: DEPLOY_ENV
+                value: production
 
 
         # The service reaches it over Render's private network (connectionString is
