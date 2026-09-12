@@ -18,6 +18,7 @@ defmodule Ravix.Accounts do
   import Ecto.Query
 
   alias Ravix.Accounts.{Capabilities, OAuthState, Session, SessionInfo, User, Viewer}
+  alias Ravix.Analytics
   alias Ravix.{Config, Crypto, GitHub, Repo}
 
   @typedoc "The signed-in person as the shell sees them; see `Ravix.Accounts.Viewer`."
@@ -66,7 +67,19 @@ defmodule Ravix.Accounts do
       conflict_target: :github_id,
       returning: true
     )
+    |> signed_in()
   end
+
+  # Every sign-in, not just the first. PostHog works out new from returning
+  # itself from the person's own history, so there is no separate signup event to
+  # keep in agreement with this one -- and `$set_once` on the creation date means
+  # somebody who signed up before analytics existed still gets one.
+  defp signed_in({:ok, %User{} = user} = result) do
+    Analytics.track(user, :signed_in)
+    result
+  end
+
+  defp signed_in(result), do: result
 
   @doc "A user by id, or nil."
   @spec get_user(String.t()) :: User.t() | nil

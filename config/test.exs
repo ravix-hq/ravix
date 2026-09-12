@@ -56,3 +56,15 @@ config :opentelemetry,
   span_processor: :simple,
   traces_exporter: :none,
   sampler: {:parent_based, %{root: :always_on}}
+
+# Captured events stay in memory for assertions instead of going to PostHog.
+# `PostHog.Test` traces them back to the test that captured them through
+# `NimbleOwnership`, so async suites do not see each other's events.
+# `enable: true` undoes `config/config.exs`, because `test_mode` keeps events in
+# memory but they still travel through a real sender, and the sender lives under
+# the supervisor that `enable: false` would not start. The key is never used: in
+# test mode nothing is sent.
+config :posthog,
+  enable: true,
+  test_mode: true,
+  api_key: "phc_test_mode_never_sent"

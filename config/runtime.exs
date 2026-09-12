@@ -136,6 +136,32 @@ if honeycomb_key do
     otlp_headers: [{"x-honeycomb-team", honeycomb_key}]
 end
 
+# Product analytics and feature flags (ADR 0004). Blank counts as absent for the
+# same reason it does above: the placeholder for these lives in Infisical until
+# somebody pastes a key in, and the SDK would otherwise start enabled with no
+# credential. `api_key: ""` from `config/config.exs` stands when they are blank,
+# which is the SDK's own documented no-op mode.
+#
+# `POSTHOG_SECRET_KEY` is only for evaluating feature flags locally, against
+# definitions polled in the background, so that reading a flag is not a network
+# call on every mount. Without it the SDK starts no poller and flags fall back to
+# whatever default the call site names.
+posthog_env = fn name ->
+  case String.trim(System.get_env(name) || "") do
+    "" -> nil
+    value -> value
+  end
+end
+
+if posthog_key = posthog_env.("POSTHOG_API_KEY") do
+  config :posthog,
+    enable: true,
+    api_key: posthog_key,
+    api_host: posthog_env.("POSTHOG_HOST") || "https://us.i.posthog.com",
+    secret_key: posthog_env.("POSTHOG_SECRET_KEY"),
+    enable_error_tracking: false
+end
+
 if config_env() == :prod do
   database_url =
     System.get_env("DATABASE_URL") ||

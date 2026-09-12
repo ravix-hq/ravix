@@ -89,23 +89,6 @@ defmodule Ravix.Trace do
   """
   @type attributes :: %{optional(atom() | String.t()) => term()}
 
-  # Long enough for an id, a branch name, a provider's error string or a
-  # sanitised message; short enough that no single attribute can carry a file,
-  # a diff or a transcript into a trace by accident. A truncated value keeps a
-  # marker so a reader knows the value is not the whole of it.
-  @max_binary 256
-
-  # Dropped whatever the value looks like. `key` catches `api_key`,
-  # `private_key` and `secret_key`; `auth` catches `authorization` and
-  # `auth_token`. Over-broad on purpose: a dropped attribute costs a reader one
-  # field, and a kept one costs a credential.
-  #
-  # One case-insensitive regex rather than ten `String.contains?/2` over a
-  # downcased copy of the key: this runs per attribute on every span that
-  # records, and the list form was two thirds of the cost of `span/3`.
-  @secretish ~w(token secret key password passwd credential auth pem signature cookie)
-  @secretish_pattern ~r/#{Enum.join(@secretish, "|")}/i
-
   @doc """
   Whether anything this application traces will be recorded.
 
@@ -159,7 +142,7 @@ defmodule Ravix.Trace do
           # The reason itself, not just "it failed": `:unconfigured`,
           # `:not_found` and a provider's 502 are three different problems and
           # only one of them is worth being woken for.
-          described = reason_attribute(reason)
+          described = Ravix.Redact.reason(reason)
           Tracer.set_attribute(:"ravix.error", true)
           Tracer.set_attribute(:"ravix.error_reason", described)
           Tracer.set_status(OpenTelemetry.status(:error, to_string(described)))
@@ -296,75 +279,14 @@ defmodule Ravix.Trace do
   @doc """
   The attributes that survive being put on a span.
 
+  `Ravix.Redact.flat/1` under another name: span attributes and PostHog event
+  properties are the two ways data leaves this application for a third party, and
+  they go through one rule so that a second copy cannot drift. That module
+  documents what the rule is and why an `Inspect` does not cover it.
+
   Public because it is the security-relevant half of this module and is tested
   directly; call `span/3` or `annotate/1` rather than this.
-
-  Dropped: any value that is not a number, boolean, atom or binary (so structs,
-  maps, lists, pids, refs and functions never reach a span), any binary over
-  #{@max_binary} bytes, which is truncated rather than dropped, any key whose
-  name reads like a credential, and any key that is not an atom or a string.
-
-  Total, on purpose: this cannot raise on any map it is given. A telemetry call
-  that crashes the request it was measuring is a worse outcome than any missing
-  attribute, and `span/3` is called from every context boundary.
   """
-  @spec sanitize(attributes()) :: %{optional(atom() | String.t()) => term()}
-  def sanitize(attributes) when is_map(attributes) do
-    attributes
-    |> Enum.reject(fn {key, _value} -> secretish?(key) end)
-    |> Enum.flat_map(fn {key, value} ->
-      case value(value) do
-        {:ok, safe} -> [{key, safe}]
-        :drop -> []
-      end
-    end)
-    |> Map.new()
-  end
-
-  # `{:ok, term} | :drop`. The last clause is the one that matters: a shape
-  # this does not recognise is dropped rather than guessed at, so a value type
-  # nobody thought about here cannot reach a span by default.
-  defp value(v) when is_number(v) or is_boolean(v) or is_atom(v), do: {:ok, v}
-
-  defp value(v) when is_binary(v) do
-    # A binary that is not text is a payload, a compiled key or a serialised
-    # term. None of those belong on a span and one of them is a credential.
-    if String.valid?(v), do: {:ok, truncate(v)}, else: :drop
-  end
-
-  defp value(_other), do: :drop
-
-  defp truncate(text) do
-    if byte_size(text) > @max_binary do
-      # Sliced by bytes and then repaired, because a UTF-8 sequence cut in
-      # half is not a string the exporter can encode.
-      <<head::binary-size(@max_binary), _rest::binary>> = text
-      String.replace_invalid(head, "") <> "…"
-    else
-      text
-    end
-  end
-
-  # `true` also means "drop", so a key this cannot read is dropped rather than
-  # examined. Anything but an atom or a string is not a valid attribute key in
-  # the first place, and `to_string/1` on, say, a pid raises -- which would make
-  # a telemetry call take down the request it was measuring. Nothing observing
-  # this application may do that.
-  defp secretish?(key) when is_atom(key), do: secretish?(Atom.to_string(key))
-  defp secretish?(key) when is_binary(key), do: Regex.match?(@secretish_pattern, key)
-  defp secretish?(_key), do: true
-
-  # A tagged error's reason, as something a trace can hold and a person can
-  # group by. An atom stays an atom; anything else is described rather than
-  # inspected, because `inspect/1` on a struct that carries a credential is the
-  # leak this module exists to prevent and a reason is sometimes a struct.
-  defp reason_attribute(reason) when is_atom(reason), do: reason
-
-  defp reason_attribute(reason) when is_binary(reason), do: truncate(reason)
-
-  defp reason_attribute({tag, _detail}) when is_atom(tag), do: tag
-
-  defp reason_attribute(%module{}), do: inspect(module)
-
-  defp reason_attribute(_other), do: :unknown
+  @spec sanitize(attributes()) :: attributes()
+  defdelegate sanitize(attributes), to: Ravix.Redact, as: :flat
 end

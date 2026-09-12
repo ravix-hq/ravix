@@ -68,6 +68,11 @@ defmodule Ravix.MixProject do
       {:opentelemetry_phoenix, "~> 2.0"},
       {:opentelemetry_bandit, "~> 0.3"},
       {:opentelemetry_ecto, "~> 1.2"},
+      # Product analytics and feature flags (ADR 0004). The official SDK: batched
+      # asynchronous senders, a no-op mode on a blank key, a `test_mode` that
+      # keeps events in memory for assertions, and local flag evaluation behind a
+      # polling loader. Server-side only -- there is deliberately no `posthog-js`.
+      {:posthog, "~> 2.15"},
       {:jason, "~> 1.2"},
       {:dns_cluster, "~> 0.3.0"},
       {:bandit, "~> 1.5"},
