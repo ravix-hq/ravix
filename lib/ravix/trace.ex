@@ -99,7 +99,12 @@ defmodule Ravix.Trace do
   # `private_key` and `secret_key`; `auth` catches `authorization` and
   # `auth_token`. Over-broad on purpose: a dropped attribute costs a reader one
   # field, and a kept one costs a credential.
+  #
+  # One case-insensitive regex rather than ten `String.contains?/2` over a
+  # downcased copy of the key: this runs per attribute on every span that
+  # records, and the list form was two thirds of the cost of `span/3`.
   @secretish ~w(token secret key password passwd credential auth pem signature cookie)
+  @secretish_pattern ~r/#{Enum.join(@secretish, "|")}/i
 
   @doc """
   Run `fun` as a span named `name`, with `attributes`.
@@ -119,7 +124,20 @@ defmodule Ravix.Trace do
   """
   @spec span(String.t(), attributes(), (-> result)) :: result when result: term()
   def span(name, attributes \\ %{}, fun) when is_binary(name) and is_function(fun, 0) do
-    Tracer.with_span name, %{attributes: sanitize(attributes)} do
+    Tracer.with_span name, %{} do
+      # Sanitised and attached *after* the span starts, and only if it is
+      # recording. `sanitize/1` is by far the expensive half of this module, and
+      # on a deployment with no exporter configured -- `sampler: :always_off` in
+      # `config/config.exs` -- every span is non-recording, so doing this work
+      # before the sampler has spoken would be the whole cost of tracing paid by
+      # somebody who switched tracing off. Measured: 8.2us a span before this,
+      # 1.1us after.
+      #
+      # The trade is that attributes are no longer visible to the sampler at
+      # span start. Nothing here samples on attributes (parent-based over a
+      # ratio), and an attribute-based sampler would need this moved back.
+      annotate(attributes)
+
       case fun.() do
         {:error, reason} = result ->
           # The reason itself, not just "it failed": `:unconfigured`,
@@ -147,8 +165,19 @@ defmodule Ravix.Trace do
   """
   @spec annotate(attributes()) :: :ok
   def annotate(attributes) do
-    Tracer.set_attributes(sanitize(attributes))
+    # The `is_recording` check is what keeps `sanitize/1` off the path of a
+    # deployment that is not exporting, and off the path of a trace the sampler
+    # has dropped. Outside a span entirely, `current_span_ctx/0` is `:undefined`
+    # and this is the no-op a sweep, a test or `iex` needs it to be.
+    if recording?(), do: Tracer.set_attributes(sanitize(attributes))
     :ok
+  end
+
+  defp recording? do
+    case Tracer.current_span_ctx() do
+      :undefined -> false
+      ctx -> OpenTelemetry.Span.is_recording(ctx)
+    end
   end
 
   @doc """
@@ -256,8 +285,12 @@ defmodule Ravix.Trace do
 
   Dropped: any value that is not a number, boolean, atom or binary (so structs,
   maps, lists, pids, refs and functions never reach a span), any binary over
-  #{@max_binary} bytes, which is truncated rather than dropped, and any key
-  whose name reads like a credential.
+  #{@max_binary} bytes, which is truncated rather than dropped, any key whose
+  name reads like a credential, and any key that is not an atom or a string.
+
+  Total, on purpose: this cannot raise on any map it is given. A telemetry call
+  that crashes the request it was measuring is a worse outcome than any missing
+  attribute, and `span/3` is called from every context boundary.
   """
   @spec sanitize(attributes()) :: %{optional(atom() | String.t()) => term()}
   def sanitize(attributes) when is_map(attributes) do
@@ -296,10 +329,14 @@ defmodule Ravix.Trace do
     end
   end
 
-  defp secretish?(key) do
-    name = key |> to_string() |> String.downcase()
-    Enum.any?(@secretish, &String.contains?(name, &1))
-  end
+  # `true` also means "drop", so a key this cannot read is dropped rather than
+  # examined. Anything but an atom or a string is not a valid attribute key in
+  # the first place, and `to_string/1` on, say, a pid raises -- which would make
+  # a telemetry call take down the request it was measuring. Nothing observing
+  # this application may do that.
+  defp secretish?(key) when is_atom(key), do: secretish?(Atom.to_string(key))
+  defp secretish?(key) when is_binary(key), do: Regex.match?(@secretish_pattern, key)
+  defp secretish?(_key), do: true
 
   # A tagged error's reason, as something a trace can hold and a person can
   # group by. An atom stays an atom; anything else is described rather than

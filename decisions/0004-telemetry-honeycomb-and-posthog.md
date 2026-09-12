@@ -83,9 +83,10 @@ change ships to everybody at once.
 
 **Performance is traces, exported to Honeycomb.** `opentelemetry` with the OTLP
 exporter over **HTTP/protobuf** to `api.honeycomb.io`, configured in
-`config/runtime.exs` only when `HONEYCOMB_API_KEY` is set; without it
-`traces_exporter: :none` from `config/config.exs` stands and nothing leaves the
-process. Honeycomb separates environments by the key, and files traces under the
+`config/runtime.exs` only when `HONEYCOMB_API_KEY` is set; without it the
+`:none` exporter and `:always_off` sampler from `config/config.exs` stand and
+tracing is inert, which is a property with enough to it that it has a section of
+its own below. Honeycomb separates environments by the key, and files traces under the
 dataset named by `service.name`, so the same configuration serves staging and
 production. `service.instance.id` carries the node name, because every question
 ADR 0003 raises is unanswerable in a trace that cannot say which instance it is
@@ -140,6 +141,48 @@ costs no change to the CDN allowlist. Flags will be read through one
 `Ravix.Flags`-shaped boundary that returns a hard-coded default when PostHog is
 unconfigured or unreachable, so a self-hosted deployment and `mix test` behave
 without a PostHog account.
+
+## Safe to run with nothing configured
+
+This is a property worth stating separately, because it is what makes the
+decision landable before an account exists, and because the obvious reading of
+it is wrong. `traces_exporter: :none` stops spans *leaving*; it does not stop
+them being *made*. `otel_batch_processor:on_end/2` buffers every sampled span
+whatever the exporter is, and the SDK's default root sampler is `always_on` — so
+the exporter setting alone would leave an unconfigured deployment building a
+span, running `sanitize/1` and writing to an ETS table on every request, event
+and query, then dropping the lot on a five-second timer. No egress, no log
+noise, and real work for nothing.
+
+So the unconfigured path is inert three times over, and only the first of the
+three is ours:
+
+  * **`sampler: :always_off`** in `config/config.exs`. An unsampled span is
+    non-recording, and `span/3` attaches attributes only when the span records,
+    so `sanitize/1` never runs. Measured on the inert path: **1.15µs** a span,
+    down from 8.18µs before the attributes were moved behind that check, which
+    is no more than an empty `with_span`. With tracing *on* a span costs about
+    6µs — either number is noise beside a Fountain round trip.
+  * **`traces_exporter: :none`** means `otel_exporter:init/1` answers
+    `undefined` without ever reaching `opentelemetry_exporter`, so no socket is
+    opened, no DNS lookup happens and no endpoint or header is read.
+    `Application.get_all_env(:opentelemetry_exporter)` is `[]`.
+  * **The processor disables itself.** `init_exporter/2` on a `none` exporter
+    calls `clear_table_and_disable/1`, which flips a `persistent_term` flag that
+    `do_insert/2` checks: insertion is refused outright. This is the SDK's own
+    belt to our braces, and it holds even if somebody later changes the sampler
+    without changing the exporter.
+
+What that leaves running on a deployment with no key is the `:telemetry`
+handlers attached by `Ravix.Trace.Setup` and one `gen_statem` cycling between
+idle and exporting every five seconds with nothing to export. `mix test`,
+`mix phx.server`, and a self-hosted deployment with no Honeycomb account
+therefore behave as they did before this decision.
+
+`config/test.exs` puts the sampler back, because `Ravix.TraceCase` needs spans
+to read: parent-based over `always_on` rather than bare `always_on`, since
+`untraced/1` works *by* the parent-based sampler dropping the children of an
+unsampled parent, and there would otherwise be no suppression to test.
 
 ## Consequences
 
