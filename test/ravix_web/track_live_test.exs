@@ -156,7 +156,8 @@ defmodule RavixWeb.TrackLiveTest do
     end)
 
     render_click(ctx.view, "file", %{path: "image.png"})
-    assert render(ctx.view) =~ "Binary file (128 bytes)"
+    # A file is a Fountain round trip, and the page no longer waits it out.
+    assert render_async(ctx.view) =~ "Binary file (128 bytes)"
     refute render(ctx.view) =~ "secret-binary"
     assert render(ctx.view) =~ "File content is truncated"
   end

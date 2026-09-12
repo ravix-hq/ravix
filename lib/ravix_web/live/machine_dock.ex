@@ -52,7 +52,8 @@ defmodule RavixWeb.Live.MachineDock do
        dock_open: false,
        output: [],
        exec_busy: false,
-       vitals: nil
+       vitals: nil,
+       vitals_busy?: false
      )}
   end
 
@@ -70,13 +71,17 @@ defmodule RavixWeb.Live.MachineDock do
   def handle_event("dock", %{"name" => name}, socket) when is_map_key(@tabs, name) do
     socket = assign(socket, dock: Map.fetch!(@tabs, name), dock_open: true)
 
+    # A `live_component` runs in its parent's process, so reading the metrics
+    # here stopped the whole track page --- the transcript included --- for as
+    # long as the machine took to answer. The strip says it is reading and the
+    # page carries on.
     if socket.assigns.dock == :vitals do
+      %{current_user: user, track_id: id} = socket.assigns
+
       {:noreply,
-       result(
-         socket,
-         Vitals.report(socket.assigns.current_user, socket.assigns.track_id),
-         &assign(&1, vitals: &2)
-       )}
+       socket
+       |> assign(vitals: nil, vitals_busy?: true)
+       |> start_async(:vitals, fn -> Vitals.report(user, id) end)}
     else
       {:noreply, socket}
     end
@@ -110,6 +115,16 @@ defmodule RavixWeb.Live.MachineDock do
   def handle_event("clear", _, socket), do: {:noreply, assign(socket, output: [])}
 
   @impl true
+  def handle_async(:vitals, {:ok, response}, socket),
+    do: {:noreply, result(assign(socket, vitals_busy?: false), response, &assign(&1, vitals: &2))}
+
+  def handle_async(:vitals, {:exit, _reason}, socket),
+    do:
+      {:noreply,
+       socket
+       |> assign(vitals_busy?: false)
+       |> error({:unavailable, "The machine metrics did not arrive."})}
+
   def handle_async(:exec, {:ok, response}, socket) do
     {:noreply,
      result(assign(socket, exec_busy: false), response, fn s, output ->
@@ -187,7 +202,8 @@ defmodule RavixWeb.Live.MachineDock do
           </div>
         </div>
         <div :if={@dock == :vitals} class="workspace-panel">
-          <p :if={!@vitals}>No machine metrics available.</p>
+          <p :if={@vitals_busy?} role="status">Reading machine metrics…</p>
+          <p :if={!@vitals_busy? && !@vitals}>No machine metrics available.</p>
           <p :if={@vitals && !@vitals.available}>Metrics unavailable: {@vitals.why}</p>
           <dl :if={@vitals && @vitals.readings}>
             <div :for={{label, value} <- Vitals.Readings.rows(@vitals.readings)}>

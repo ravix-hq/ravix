@@ -269,12 +269,14 @@ defmodule RavixWeb.WorkspaceLive do
         {:noreply, socket}
 
       refs_kind ->
-        {:noreply,
-         result(
-           socket,
-           Projects.refs(socket.assigns.current_user, project_id(socket), refs_kind),
-           &assign(&1, refs: &2)
-         )}
+        # A GitHub call, and it used to be one this process waited out: the
+        # rail stopped drawing and the dialog stopped answering for as long
+        # as the repository took to list its branches. The form's own
+        # "Create track" stays disabled until the refs land, which is what
+        # already said "not yet" while this was synchronous too.
+        user = socket.assigns.current_user
+        id = project_id(socket)
+        {:noreply, start_async(socket, :refs, fn -> Projects.refs(user, id, refs_kind) end)}
     end
   end
 
@@ -325,6 +327,20 @@ defmodule RavixWeb.WorkspaceLive do
        fn s, t -> s |> reload() |> push_patch(to: "/p/#{t.project_id}/t/#{t.id}") end,
        :track_form
      )}
+  end
+
+  def handle_async(:refs, {:ok, response}, socket),
+    do: {:noreply, result(socket, response, &assign(&1, refs: &2))}
+
+  def handle_async(:repos, {:ok, response}, socket) do
+    {:noreply,
+     result(socket, response, fn s, data ->
+       assign(s,
+         repos: data.repos,
+         installations: data.installations,
+         installation: data.selected
+       )
+     end)}
   end
 
   # One project's tracks, in the place the rail keeps them. A project that has
@@ -517,15 +533,18 @@ defmodule RavixWeb.WorkspaceLive do
   # The people dialog loads its own list, so opening it is only opening it.
   defp open_dialog(socket, :people), do: assign(socket, dialog: :people)
 
+  # The repositories this person's installations can see: a GitHub call, off
+  # this process for the same reason as the refs above. What is on offer is
+  # cleared first, because the previous answer belongs to whichever
+  # installation was selected last and offering it under a new one would let
+  # somebody create a project against a repository this account cannot see.
   defp load_repos(socket, id) do
     if Accounts.capabilities().github do
-      result(socket, Projects.repos(socket.assigns.current_user, id), fn s, data ->
-        assign(s,
-          repos: data.repos,
-          installations: data.installations,
-          installation: data.selected
-        )
-      end)
+      user = socket.assigns.current_user
+
+      socket
+      |> assign(repos: [], installations: [], installation: nil)
+      |> start_async(:repos, fn -> Projects.repos(user, id) end)
     else
       socket
     end

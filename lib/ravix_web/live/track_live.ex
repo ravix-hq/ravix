@@ -196,13 +196,19 @@ defmodule RavixWeb.TrackLive do
   def handle_event("directory", %{"path" => path}, socket),
     do: {:noreply, load_panel(update_panel(socket, &Panel.close_file/1), path)}
 
+  # Reading a file is a Fountain round trip, and it used to be one this
+  # process waited out: for as long as the machine took to answer, the page
+  # drew nothing, answered no clicks and took no transcript events. Clicking
+  # a file while an agent was talking stalled the conversation beside it.
+  # The panel says it is busy and the answer arrives as `:file`.
   def handle_event("file", %{"path" => path}, socket) do
+    user = socket.assigns.current_user
+    id = socket.assigns.track_id
+
     {:noreply,
-     result(
-       socket,
-       Tracks.file(socket.assigns.current_user, socket.assigns.track_id, path),
-       &update_panel(&1, fn panel -> Panel.open_file(panel, &2) end)
-     )}
+     socket
+     |> update_panel(&%{&1 | busy?: true, error: nil})
+     |> start_async(:file, fn -> Tracks.file(user, id, path) end)}
   end
 
   # One clause per button, because the four are four different calls: two of
@@ -468,6 +474,18 @@ defmodule RavixWeb.TrackLive do
 
   defp async_result(:transcript, {:ok, {:error, reason}}, socket),
     do: socket |> assign(transcript_loading: false) |> error(reason)
+
+  # The open file lands in the panel beside whatever the tab is listing, so
+  # this clause settles the busy flag and leaves `data` where it is --- a
+  # refusal here is about the file and must not empty the directory it was
+  # picked from.
+  defp async_result(:file, {:ok, response}, socket) do
+    result(
+      update_panel(socket, &Panel.settled/1),
+      response,
+      &update_panel(&1, fn panel -> Panel.open_file(panel, &2) end)
+    )
+  end
 
   defp async_result(:panel, {:ok, {:ok, %Previews.View{} = preview}}, socket),
     do: socket |> show_preview(preview) |> update_panel(&Panel.settled/1)
