@@ -380,5 +380,35 @@ defmodule RavixWeb.ComponentsTest do
       js = File.read!(Path.expand("../../assets/js/hooks/theme.js", __DIR__))
       assert js =~ ~s(THEME_KEY = "ravix.theme")
     end
+
+    test "every static file at the root is reachable once it has been digested" do
+      # `mix phx.digest` renames a file at the root --- `theme.js` on disk is
+      # served as `theme-<digest>.js` --- and `Plug.Static` compares `:only`
+      # against the request's first segment exactly, so a digested root file
+      # is not in that list and 404s. Only production rewrites the tag, so
+      # only production asked for the name that was refused: the palette
+      # bootstrap was a 404 there and every hard load painted the default
+      # theme until LiveView connected.
+      #
+      # A directory is unaffected, and must stay out of the prefix list:
+      # `only_matching: ["assets"]` would serve anything whose first segment
+      # merely begins with it.
+      roots = Enum.filter(RavixWeb.static_paths(), &(Path.extname(&1) != ""))
+      prefixes = RavixWeb.static_prefixes()
+
+      assert roots != []
+      assert Enum.sort(prefixes) == Enum.sort(Enum.map(roots, &Path.rootname/1))
+
+      for path <- RavixWeb.static_paths() -- roots do
+        refute path in prefixes, "#{path} is a directory and needs no prefix"
+      end
+
+      # The shape `phx.digest` actually produces, against the rule
+      # `Plug.Static` actually applies to it.
+      for root <- roots do
+        digested = Path.rootname(root) <> "-" <> String.duplicate("a", 32) <> Path.extname(root)
+        assert Enum.any?(prefixes, &String.starts_with?(digested, &1)), "#{digested} is refused"
+      end
+    end
   end
 end
