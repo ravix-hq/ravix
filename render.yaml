@@ -140,6 +140,15 @@ projects:
               # leave unset while a key is being arranged.
               - key: HONEYCOMB_API_KEY
                 sync: false
+              # Declared ahead of the code that reads them (ADR 0004's second
+              # and third PRs), so the dashboard entries are there to paste into
+              # and one credential handover covers all three. Nothing reads
+              # these yet, and the SDK starts in no-op mode on a blank key, so
+              # an unset or unpopulated value is the same as their absence.
+              - key: POSTHOG_API_KEY
+                sync: false
+              - key: POSTHOG_SECRET_KEY
+                sync: false
               # Names this deployment on every span. `DEPLOY_ENV` rather than
               # reusing the Mix environment, because a preview environment and
               # production are both `prod` to Mix and must not share a name in

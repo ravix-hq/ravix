@@ -75,7 +75,20 @@ config :ravix, Ravix.Config,
 # OTLP over HTTP/protobuf rather than gRPC: both are Honeycomb endpoints, and
 # the HTTP one is one fewer long-lived connection to reason about on a platform
 # that recycles containers, with no `grpcbox` in the boot path.
-if honeycomb_key = System.get_env("HONEYCOMB_API_KEY") do
+#
+# Blank counts as absent, which is not pedantry: this variable's placeholder
+# lives in Infisical until somebody pastes a key into it, and an empty string is
+# truthy in Elixir. Left as `System.get_env/1` alone, an unpopulated placeholder
+# arriving through Render would switch the exporter *on* with no credential and
+# fail every batch against Honeycomb. `Ravix.Config` runs every other credential
+# through `blank_to(nil)` for the same reason.
+honeycomb_key =
+  case String.trim(System.get_env("HONEYCOMB_API_KEY") || "") do
+    "" -> nil
+    key -> key
+  end
+
+if honeycomb_key do
   # Honeycomb files traces under the dataset named by `service.name`, and
   # separates environments by the key's own environment -- so a staging key and
   # a production key with this same service name land in different places

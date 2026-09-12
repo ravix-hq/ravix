@@ -50,6 +50,36 @@ defmodule Ravix.TraceInertTest do
     end
   end
 
+  describe "an unpopulated HONEYCOMB_API_KEY placeholder" do
+    # The placeholder for this variable sits in Infisical until somebody pastes a
+    # key into it, and travels to Render either way. An empty string is truthy in
+    # Elixir, so without the trim in `config/runtime.exs` an unpopulated
+    # placeholder would switch the exporter *on* with no credential and fail
+    # every batch against Honeycomb -- the loudest possible outcome for the one
+    # variable that is supposed to be safe to leave alone.
+    #
+    # `config/runtime.exs` is read directly, for `:dev`, because the Honeycomb
+    # block sits outside its `config_env() == :prod` guard and `:prod` would
+    # demand a DATABASE_URL this test has no business inventing.
+    defp runtime_otel(value) do
+      System.put_env("HONEYCOMB_API_KEY", value)
+      on_exit(fn -> System.delete_env("HONEYCOMB_API_KEY") end)
+      Config.Reader.read!("config/runtime.exs", env: :dev)[:opentelemetry]
+    end
+
+    test "an empty value leaves tracing alone" do
+      refute runtime_otel("")[:traces_exporter]
+    end
+
+    test "a whitespace value leaves tracing alone" do
+      refute runtime_otel("   ")[:traces_exporter]
+    end
+
+    test "a real value turns the exporter on" do
+      assert runtime_otel("hcaik_not_a_real_key")[:traces_exporter] == :otlp
+    end
+  end
+
   describe "enabled?/0, the one switch" do
     test "is false for the configuration an unconfigured deployment gets" do
       otel = Config.Reader.read!("config/config.exs", env: :prod)[:opentelemetry]
