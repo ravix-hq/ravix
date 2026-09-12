@@ -242,8 +242,12 @@
         </button>
       </div>
       <div :if={@project && @track_id} class="workspace-track-host">
+        <%!-- A fixed id, so choosing another track moves this LiveView instead
+          of replacing it. The session is its starting point and nothing more:
+          it is read once, at mount, and every switch after that arrives as
+          `{:select_track, project, track}`. See `hand_over/3`. --%>
         {live_render(@socket, RavixWeb.TrackLive,
-          id: "track-#{@track_id}",
+          id: "track-host",
           session: %{
             "session_token" => @session_token,
             "track_id" => @track_id,

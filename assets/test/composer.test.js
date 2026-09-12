@@ -117,3 +117,23 @@ test("an empty reconnect patch restores the draft but an acknowledgement clears 
   hook.updated()
   expect(hook.el.value).toBe("")
 })
+
+test("tearing down a composer whose textarea has already left the document", () => {
+  const {hook} = mountHook(Composer, "textarea")
+  const box = document.querySelector("[data-composer-box]")
+
+  // Moving between tracks changes the textarea's id, so LiveView replaces the
+  // element rather than patching it, and calls `destroyed` on a node that has
+  // been taken out of its parent. Walking up from it to find the box again
+  // then finds nothing at all --- not the box, not the form, not a parent ---
+  // which is why the box is the one remembered at mount.
+  hook.el.remove()
+  expect(hook.el.closest("[data-composer-box]")).toBe(null)
+  expect(hook.el.form).toBe(null)
+
+  expect(() => hook.destroyed()).not.toThrow()
+  // And the listeners came off the element they went on to, not off whatever
+  // a second lookup would have returned.
+  box.dispatchEvent(new Event("dragover"))
+  expect(box.classList.contains("dragging")).toBe(false)
+})

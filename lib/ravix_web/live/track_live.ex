@@ -93,6 +93,7 @@ defmodule RavixWeb.TrackLive do
       if connected?(socket) do
         Hub.subscribe(socket.assigns.project_id)
         Process.send_after(self(), :refresh, @refresh_ms)
+        announce(socket)
       end
 
       {:ok, if(connected?(socket), do: load(socket), else: socket)}
@@ -303,6 +304,37 @@ defmodule RavixWeb.TrackLive do
     if login == socket.assigns.current_user.login,
       do: {:noreply, push_navigate(socket, to: "/")},
       else: {:noreply, socket}
+  end
+
+  # Somebody chose a different track in the rail.
+  #
+  # This page moves rather than being rebuilt, which is the whole reason
+  # `RavixWeb.WorkspaceLive` gives it a fixed DOM id: a join, an access check,
+  # `allow_upload/3` and three `attach_hook/4`s are all work whose answer is
+  # about the person, not the track, and redoing them bought nothing but a
+  # blank screen to do it in.
+  #
+  # `track` arrives from the rail, which read it for this person through
+  # `Ravix.Tracks.list/2`, so the title, branch and status can be drawn in
+  # this very patch instead of after a Fountain round trip. It is a head start
+  # and never an authority: `authorized?/1` asks the database about *this*
+  # person and *this* track before any of it renders, and the answer from
+  # `Ravix.Tracks.get/3` replaces all of it a moment later.
+  #
+  # Everything the old track owned goes: its hub subscription if the project
+  # changed too, its transcript follower, its panel, its queue, its dialog and
+  # any images half-attached to a composer that is about to belong to
+  # somewhere else.
+  def handle_info({:select_track, project, track}, socket) do
+    if track.id == socket.assigns.track_id do
+      {:noreply, socket}
+    else
+      socket = arrive(socket, project, track)
+
+      if authorized?(socket),
+        do: {:noreply, socket |> assign(track_guard: renew(socket)) |> load()},
+        else: {:noreply, redirect(socket, to: "/")}
+    end
   end
 
   # A `live_component` cannot put a flash in the page's own socket, so it
@@ -521,6 +553,55 @@ defmodule RavixWeb.TrackLive do
        Tracks.mark_read(s.assigns.current_user, s.assigns.track_id)
        s |> assign(attached_images: []) |> push_event("composer:clear", %{}) |> refresh_queue()
      end)}
+  end
+
+  # Tell the page hosting this one where it is, so that choosing another track
+  # can move it instead of replacing it. The session it mounted with is a
+  # starting point and is never read again; every switch after that arrives as
+  # `{:select_track, project, track}`. A page that is nobody's child --- there
+  # is no route that renders this LiveView on its own today --- says nothing.
+  defp announce(%{parent_pid: pid}) when is_pid(pid), do: send(pid, {:track_host, self()})
+  defp announce(_socket), do: :ok
+
+  # Hand this page over to another track, keeping only what belongs to the
+  # person looking at it: the session, the guard's hash and expiry, the upload
+  # config, the hooks, and the backstop tick. A hub subscription belongs to a
+  # project rather than a track, so it is only exchanged when the project is.
+  defp arrive(socket, project, track) do
+    if project.id != socket.assigns.project_id do
+      Hub.unsubscribe(socket.assigns.project_id)
+      Hub.subscribe(project.id)
+    end
+
+    socket
+    |> unfollow()
+    |> drop_attachments()
+    |> assign(
+      track_id: track.id,
+      project_id: project.id,
+      track: track,
+      project: project,
+      header: nil,
+      starters: [],
+      queue: [],
+      present: [],
+      panel: Panel.new(),
+      preview: nil,
+      preview_form: Form.new(:preview_config),
+      preview_url: nil,
+      dialog: nil,
+      rename_form: Form.new(:rename_track),
+      pull: nil
+    )
+  end
+
+  # An image chosen for one track's composer is not an image for the next
+  # one's. The entries are LiveView's to cancel; `attached_images` is the
+  # list this page already took delivery of.
+  defp drop_attachments(socket) do
+    socket.assigns.uploads.images.entries
+    |> Enum.reduce(socket, &cancel_upload(&2, :images, &1.ref))
+    |> assign(attached_images: [])
   end
 
   # Everything a track page opens with, started at once and rendered as each

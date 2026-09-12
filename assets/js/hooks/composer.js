@@ -123,13 +123,20 @@ export const Composer = {
       box.classList.remove("dragging")
       this.attach(e.dataTransfer.files)
     }
+    // Kept, rather than looked up again when the time comes to unbind. By
+    // then this textarea has been taken out of the document -- moving
+    // between tracks changes its id, so it is replaced rather than patched
+    // -- and `box()` walks upwards from it, which from a detached element
+    // finds nothing. Removing a listener from whatever a second lookup
+    // happens to return would be wrong even where it found something.
+    this.boundBox = box
     box.addEventListener("dragover", this.onDragOver)
     box.addEventListener("dragleave", this.onDragLeave)
     box.addEventListener("drop", this.onDrop)
 
-    const form = this.el.form
+    this.boundForm = this.el.form
     this.onSubmit = () => this.save()
-    form?.addEventListener("submit", this.onSubmit)
+    this.boundForm?.addEventListener("submit", this.onSubmit)
 
     this.handleEvent("composer:insert", ({text}) => {
       this.el.value = text
@@ -151,11 +158,10 @@ export const Composer = {
   },
 
   destroyed() {
-    const box = this.box()
-    box.removeEventListener("dragover", this.onDragOver)
-    box.removeEventListener("dragleave", this.onDragLeave)
-    box.removeEventListener("drop", this.onDrop)
-    this.el.form?.removeEventListener("submit", this.onSubmit)
+    this.boundBox?.removeEventListener("dragover", this.onDragOver)
+    this.boundBox?.removeEventListener("dragleave", this.onDragLeave)
+    this.boundBox?.removeEventListener("drop", this.onDrop)
+    this.boundForm?.removeEventListener("submit", this.onSubmit)
   },
 
   box() {

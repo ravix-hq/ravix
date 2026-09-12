@@ -52,7 +52,7 @@ defmodule RavixWeb.TrackLiveTest do
 
     conn = log_in_user(conn, user)
     {:ok, parent, _} = live(conn, "/p/#{project.id}/t/#{track.id}")
-    view = find_live_child(parent, "track-#{track.id}")
+    view = find_live_child(parent, "track-host")
     settle(view)
     %{conn: conn, parent: parent, view: view, user: user, project: project, track: track}
   end
@@ -1020,7 +1020,7 @@ defmodule RavixWeb.TrackLiveTest do
     end)
 
     {:ok, parent, _} = live(ctx.conn, "/p/#{ctx.project.id}/t/#{ctx.track.id}")
-    view = find_live_child(parent, "track-#{ctx.track.id}")
+    view = find_live_child(parent, "track-host")
 
     assert_receive {:reading_transcript, reader}, 5_000
     assert_receive :detail_applied, 5_000
@@ -1087,7 +1087,7 @@ defmodule RavixWeb.TrackLiveTest do
     end)
 
     {:ok, parent, _} = live(ctx.conn, "/p/#{ctx.project.id}/t/#{ctx.track.id}")
-    view = find_live_child(parent, "track-#{ctx.track.id}")
+    view = find_live_child(parent, "track-host")
 
     assert_receive {:reading_detail, reader}, 5_000
     send(reader, :release_detail)

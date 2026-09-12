@@ -251,6 +251,33 @@ test('project, track, streaming, image upload, reconnect, and revocation', async
   await page.goto(trackURL);
   await expect(page.locator("#transcript-turns")).toBeVisible();
   await expect(page.locator("#transcript-turns")).not.toContainText("This must never be sent");
+  // Two tracks, and moving between them. The page on the right is now one
+  // LiveView handed from track to track rather than one torn down and rebuilt
+  // for each, so everything a switch has to clear --- the transcript, the
+  // crumbs, the scroll hook's idea of where it is --- is only correct because
+  // it is cleared deliberately. A rebuild used to do all of that by accident.
+  //
+  // Last, and after the revocation above rather than before it: this section
+  // is minutes of agent work, and the guard that section turns on holds its
+  // answer for fifteen seconds, so anything inserted ahead of it moves what
+  // that test is actually measuring.
+  const firstLane = await page.locator('#transcript-scroll').getAttribute('data-track');
+  await page.locator('.crumbs').getByRole('button', { name: 'New track', exact: true }).click();
+  await expect(newTrack).toBeVisible();
+  await page.getByLabel('Track name').fill('Second lane');
+  await page.getByRole('button', { name: 'Create track', exact: true }).click();
+  await expect(page.locator('.track-crumbs')).toContainText('Second lane');
+  await expect(composer).toBeEnabled({ timeout: 30_000 });
+  await expect(page.locator('#transcript-scroll')).not.toHaveAttribute('data-track', firstLane);
+  // The track arrived at is its own; the one left behind had three turns in it.
+  await expect(page.locator('#transcript-turns')).not.toContainText('Draft survives reconnect');
+  await accessible(page);
+
+  await page.getByRole('link', { name: /Browser smoke/ }).click();
+  await expect(page.locator('.track-crumbs')).toContainText('Browser smoke');
+  await expect(page.locator('#transcript-scroll')).toHaveAttribute('data-track', firstLane);
+  await expect(page.locator('#transcript-turns')).toContainText('Draft survives reconnect');
+
   await page.screenshot({ path: test.info().outputPath("workspace.png"), fullPage: true });
   expect(errors).toEqual([]);
 });
