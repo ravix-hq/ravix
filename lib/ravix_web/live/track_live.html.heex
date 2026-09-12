@@ -173,6 +173,14 @@
           <p :for={person <- Enum.filter(@present, & &1.typing)} class="hint">
             @{person.login} is typing…
           </p>
+          <%!-- `phx-change` is what `allow_upload/3` needs to see an image
+            being chosen, and the textarea's own share of it is a round trip
+            per keystroke carrying the whole prompt --- which `handle_event`
+            for "validate" looks at and does nothing with. A long instruction
+            was sent over the socket once per character typed. `blur` is the
+            debounce that says what is true: the server has no use for this
+            box until it is submitted, and the draft is kept in the browser
+            by `assets/js/hooks/composer.js` meanwhile. --%>
           <form id="composer-form" phx-submit="send" phx-change="validate">
             <div class="composer-box" data-composer-box>
               <div class="composer-note" data-composer-note hidden></div>
@@ -181,6 +189,7 @@
                 phx-hook="Composer"
                 name="text"
                 rows="2"
+                phx-debounce="blur"
                 placeholder="Ask for a change, or a question about this branch"
                 aria-label="Message"
                 data-draft-key={"track:#{@track.id}"}

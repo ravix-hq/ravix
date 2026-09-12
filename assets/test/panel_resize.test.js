@@ -45,7 +45,12 @@ test("pointer dragging captures its pointer, ignores others, and cleans up on ca
   const width = hook.width
   hook.el.dispatchEvent(new PointerEvent("pointermove",{pointerId:7,clientX:340}))
   expect(hook.width).toBe(width+40)
+  // Where the drag ends, not on every frame of it: a pointer emits a move per
+  // frame and often several, and each one was a synchronous storage write of
+  // a width nobody reads until the next visit.
+  expect(localStorage.getItem(hook.el.dataset.key)).toBeNull()
   hook.el.dispatchEvent(new PointerEvent("pointerup",{pointerId:7}))
+  expect(localStorage.getItem(hook.el.dataset.key)).toBe(String(width+40))
   expect(captures).toEqual([7,-7])
   expect(hook.el.dataset.dragging).toBe("false")
   hook.el.dispatchEvent(new PointerEvent("pointercancel"))

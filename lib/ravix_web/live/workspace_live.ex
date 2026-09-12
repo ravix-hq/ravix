@@ -44,6 +44,11 @@ defmodule RavixWeb.WorkspaceLive do
         github_available: Accounts.capabilities().github,
         projects: [],
         tracks: %{},
+        # How many tracks across every project want somebody. Counted where
+        # the rail is read rather than in the template, which asked for it
+        # four times a render --- twice in the sidebar badge and twice in the
+        # inbox heading --- and each ask walked every track of every project.
+        attention: 0,
         expanded_projects: MapSet.new(),
         advanced_track: false,
         project: nil,
@@ -178,7 +183,7 @@ defmodule RavixWeb.WorkspaceLive do
 
     case Guard.verify(socket.assigns[:session_guard], hash) do
       {:ok, guard} -> assign(socket, session_guard: guard)
-      :error -> assign(socket, current_user: nil, projects: [], tracks: %{})
+      :error -> assign(socket, current_user: nil, projects: [], tracks: %{}, attention: 0)
     end
   end
 
@@ -346,9 +351,12 @@ defmodule RavixWeb.WorkspaceLive do
   # One project's tracks, in the place the rail keeps them. A project that has
   # gone since the read started is not put back.
   def handle_async({:tracks, id}, {:ok, {:ok, tracks}}, socket) do
-    if Enum.any?(socket.assigns.projects, &(&1.id == id)),
-      do: {:noreply, assign(socket, tracks: Map.put(socket.assigns.tracks, id, tracks))},
-      else: {:noreply, socket}
+    if Enum.any?(socket.assigns.projects, &(&1.id == id)) do
+      tracks = Map.put(socket.assigns.tracks, id, tracks)
+      {:noreply, assign(socket, tracks: tracks, attention: attention_count(tracks))}
+    else
+      {:noreply, socket}
+    end
   end
 
   def handle_async({:tracks, _id}, {:ok, {:error, _reason}}, socket), do: {:noreply, socket}
@@ -500,6 +508,7 @@ defmodule RavixWeb.WorkspaceLive do
     assign(socket,
       projects: projects,
       tracks: tracks,
+      attention: attention_count(tracks),
       expanded_projects:
         MapSet.intersection(socket.assigns.expanded_projects, MapSet.new(projects, & &1.id))
     )

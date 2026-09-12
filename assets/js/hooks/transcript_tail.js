@@ -52,10 +52,16 @@ export const TranscriptTail = {
     this.asked = false
 
     this.el.addEventListener("scroll", () => {
+      // Both measurements are taken before the class is written. A style
+      // write between two layout reads is what makes the browser lay the
+      // page out again in the middle of the handler, and this handler runs
+      // on every frame of a scroll through a transcript that can be a day's
+      // work long.
+      const top = this.el.scrollTop
       this.pinned = this.distance() < SLACK
       this.el.classList.toggle("unpinned", !this.pinned)
       if (this.pinned) this.asked = false
-      if (this.el.scrollTop < REACH) this.older()
+      if (top < REACH) this.older()
     })
     this.el.addEventListener("click", e => {
       if (e.target.closest("[data-jump-latest]")) {

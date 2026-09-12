@@ -52,9 +52,7 @@
       <div class="workspace-actions yard-nav">
         <.link patch="/inbox" class={["yard-item", @live_action in [:home, :inbox] && "on"]}>
           <.icon name="terminal" />Inbox<span class="spacer"></span>
-          <span :if={attention_count(@tracks) > 0} class="badge">
-            {attention_count(@tracks)}
-          </span>
+          <span :if={@attention > 0} class="badge">{@attention}</span>
         </.link>
         <.link patch="/home" class={["yard-item", @live_action == :projects && "on"]}>
           <.icon name="home" />Home
@@ -324,19 +322,13 @@
         <header>
           <div class="row">
             <h1>
-              Inbox
-              <span :if={attention_count(@tracks) > 0} class="badge">
-                {attention_count(@tracks)}
-              </span>
+              Inbox <span :if={@attention > 0} class="badge">{@attention}</span>
             </h1>
             <span class="spacer"></span><button class="ghost" phx-click="refresh">Refresh</button>
           </div>
           <p>Replies and failed turns across all your projects.</p>
         </header>
-        <div
-          :if={!Enum.any?(@tracks, fn {_id, tracks} -> Enum.any?(tracks, &attention?/1) end)}
-          class="inbox-empty"
-        >
+        <div :if={@attention == 0} class="inbox-empty">
           <h2>You're all caught up</h2>
           <p>When a track needs your attention, it will appear here.</p>
         </div>
@@ -369,11 +361,15 @@
     </main>
     <.dialog :if={@dialog == :search} id="search-dialog" title="Find a track" on_close="dismiss">
       <form id="search-form" phx-change="search">
+        <%!-- Every keystroke re-renders the list below it, which is every
+          track of every project this person has. A pause is what somebody
+          typing a track name actually wants filtered. --%>
         <.input
           name="q"
           id="search-query"
           value={@query}
           label="Search projects and tracks"
+          phx-debounce="150"
           autofocus
         />
       </form>
