@@ -324,6 +324,49 @@ defmodule Ravix.TracksTest do
       assert [%Ravix.Spec.Starter{label: _, prompt: _} | _] = starters
       assert {:error, :not_found} = Tracks.get(insert_user(), track.id)
     end
+
+    test "a page opening may take the memo's conversations; a refresh may not" do
+      owner = insert_user()
+      project = insert_project(user: owner)
+      track = insert_track(project: project)
+
+      client =
+        FakeTransport.client(
+          [
+            {%{method: "GET", path: "/api/conversations"}, {200, [], %{data: []}}},
+            {%{method: "GET", path: "/api/environments/#{project.environment_id}"},
+             {200, [], %{data: %{}}}},
+            {%{method: "GET", path: "/api/conversations"}, {200, [], %{data: []}}}
+          ],
+          verify: false
+        )
+
+      stub(Ravix.Fountain, :client, fn -> client end)
+
+      # The first read has nothing memoised and must list them either way.
+      assert {:ok, _} = Tracks.get(owner, track.id, fresh: false)
+
+      # The second is what a track page's first paint does, and is the round
+      # trip it no longer waits through: the memo is still inside
+      # `MachineCache.ttl_ms/0`, so nothing is asked of Fountain.
+      assert {:ok, _} = Tracks.get(owner, track.id, fresh: false)
+      assert listings(client) == 1
+
+      # A refresh runs because the hub said one of these four things changed,
+      # so the memo it would read is the answer it already knows is stale.
+      assert {:ok, _} = Tracks.get(owner, track.id, fresh: true)
+      assert listings(client) == 2
+
+      # And the default is the careful one.
+      assert {:ok, _} = Tracks.get(owner, track.id)
+      assert listings(client) == 3
+    end
+  end
+
+  defp listings(client) do
+    client
+    |> FakeTransport.calls()
+    |> Enum.count(&(&1.method == "GET" and &1.path == "/api/conversations"))
   end
 
   # ── opening ────────────────────────────────────────────────────────────

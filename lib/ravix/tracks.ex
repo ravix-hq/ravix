@@ -160,15 +160,29 @@ defmodule Ravix.Tracks do
   rather than from Fountain directly, because this function runs on every
   refresh of every open track page and the answer changes only when
   somebody saves settings --- which forgets it.
+
+  Options: `fresh` (true by default) decides whether the agent's
+  conversations are re-listed from Fountain or taken from the memo, which
+  holds them for `Ravix.MachineCache.ttl_ms/0`. That list supplies four
+  things and only four: the track's status, its turn count, when it was last
+  active, and whether it is unread.
+
+  A refresh wants them fresh --- it is running *because* something said one
+  of them changed, and re-reading the memo it just decided was wrong answers
+  nothing. A page opening does not: it is one of the round trips somebody is
+  waiting through to see anything at all, a value a few seconds old is
+  already what a page a few seconds old is showing, and the hub event that
+  corrects it arrives on its own. So the wait is the caller's to choose, and
+  the default stays the careful one.
   """
-  @spec get(User.t(), String.t()) ::
+  @spec get(User.t(), String.t(), keyword()) ::
           {:ok, %{track: View.t(), header: header(), starters: [Spec.Starter.t()]}}
           | {:error, reason()}
-  def get(%User{} = user, track_id) do
+  def get(%User{} = user, track_id, opts \\ []) do
     with {:ok, %{track: track, project: project, role: role}} <-
            Access.track_access(user, track_id),
          {:ok, client} <- fountain() do
-      live = conversations_of(project)
+      live = conversations_of(project, fresh: Keyword.get(opts, :fresh, true))
 
       environment =
         case MachineCache.environment(client, project.environment_id) do
@@ -725,9 +739,9 @@ defmodule Ravix.Tracks do
   # answer is written through, so a burst of machine reads right after it is
   # free. A Fountain that cannot be reached is an empty map: every track
   # then reads as `:ready` or `:opening` rather than nothing loading at all.
-  defp conversations_of(project) do
+  defp conversations_of(project, opts \\ [fresh: true]) do
     with {:ok, client} <- fountain(),
-         {:ok, all} <- MachineCache.conversations(client, project, fresh: true) do
+         {:ok, all} <- MachineCache.conversations(client, project, opts) do
       Map.new(all, &{&1.id, &1})
     else
       _ -> %{}

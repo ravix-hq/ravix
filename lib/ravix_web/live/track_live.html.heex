@@ -7,7 +7,23 @@
       {message}
     </.toast>
   </div>
-  <div :if={@loading} class="workspace-welcome" role="status">Loading track…</div>
+  <%!-- The wait before the track's own detail lands, drawn in the shape the
+  track itself will have rather than as a word in the middle of an empty
+  page. The two columns and the header strip are what the layout is; leaving
+  them out meant every track switch collapsed the page to one centred line
+  and then reflowed it back, which read as the whole screen reloading even
+  once the wait behind it got short. --%>
+  <div :if={@loading && is_nil(@track)} class="track-workspace-body" aria-busy="true">
+    <header class="crumbs track-crumbs"></header>
+    <div class="split">
+      <section class="track-conversation" aria-label="Conversation">
+        <div class="transcript-scroll">
+          <p class="workspace-welcome" role="status">Loading track…</p>
+        </div>
+      </section>
+      <aside class="inspector" aria-label="Track inspector"></aside>
+    </div>
+  </div>
   <div :if={!@loading && is_nil(@track)} class="workspace-welcome">
     <p>Could not load this track.</p>
     <button class="primary" phx-click="retry-load">Try again</button>
@@ -99,7 +115,15 @@
               </section>
             </article>
           </div>
-          <div :if={@page.turns == []} class="workspace-welcome">
+          <p :if={@transcript_loading} class="workspace-welcome" role="status">
+            Loading conversation…
+          </p>
+          <%!-- Only once the transcript has actually been read. An empty
+            `@page` is also what a track that is still loading one has, and
+            offering the starters for a conversation with a year of history
+            in it --- for the moment before the read answers --- is a worse
+            answer than saying nothing yet. --%>
+          <div :if={!@transcript_loading && @page.turns == []} class="workspace-welcome">
             <h2>What would you like to work on?</h2>
             <button
               :for={starter <- @starters}
