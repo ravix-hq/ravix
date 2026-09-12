@@ -21,9 +21,10 @@ defmodule Ravix.TraceInertTest do
   environment, because `config/test.exs` deliberately puts the sampler back so
   that `Ravix.TraceCase` has spans to read.
   """
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   alias Ravix.Trace
+  alias Ravix.Trace.Setup
 
   require OpenTelemetry.Tracer, as: Tracer
 
@@ -46,6 +47,56 @@ defmodule Ravix.TraceInertTest do
              builds and buffers every sampled span, and its default root sampler is
              `always_on`. See this module's documentation and ADR 0004.
              """
+    end
+  end
+
+  describe "enabled?/0, the one switch" do
+    test "is false for the configuration an unconfigured deployment gets" do
+      otel = Config.Reader.read!("config/config.exs", env: :prod)[:opentelemetry]
+
+      # Read the way `enabled?/0` reads it, against the file rather than this
+      # suite's environment.
+      assert otel[:sampler] == :always_off
+    end
+
+    test "is true in this suite, or nothing below could be tested at all" do
+      assert Trace.enabled?()
+    end
+  end
+
+  describe "the off-the-shelf instrumentation" do
+    test "is attached here, because this suite records" do
+      # `Ravix.Trace.Setup.setup/0` is idempotent enough to ask twice: it is
+      # `:telemetry.attach/4` under the hood, which replaces a handler of the
+      # same id.
+      assert Setup.setup() == :attached
+    end
+
+    test "is attached only when something would record" do
+      # The distinction that makes this decision shippable. `sampler:
+      # :always_off` makes *our* spans free, because `span/3` skips the
+      # attribute work on a span that will not record. It does nothing for
+      # `OpentelemetryBandit`, `OpentelemetryPhoenix` and `OpentelemetryEcto`,
+      # because a `:telemetry` handler runs before there is a span to sample:
+      # `handle_request_start/2` calls `Plug.Conn.get_peer_data/1`, scans
+      # headers, formats an IP and builds seven or more attributes on *every*
+      # request, and `OpentelemetryEcto` builds the statement attribute on every
+      # query. Measured at 6.2us a request and 6.6us a query, all of it thrown
+      # away.
+      #
+      # So the gate is what makes "no traces are exported" into "tracing costs
+      # nothing", and those are different claims.
+      previous = Application.get_env(:opentelemetry, :sampler)
+
+      try do
+        Application.put_env(:opentelemetry, :sampler, :always_off)
+        refute Trace.enabled?()
+        assert Setup.setup() == :skipped
+      after
+        Application.put_env(:opentelemetry, :sampler, previous)
+        # Put the handlers back for whatever runs next in this suite.
+        Setup.setup()
+      end
     end
   end
 

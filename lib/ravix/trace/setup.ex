@@ -19,6 +19,25 @@ defmodule Ravix.Trace.Setup do
     * `OpentelemetryEcto` spans queries on `[:ravix, :repo, :query]`, the same
       prefix `RavixWeb.Telemetry`'s summaries read.
 
+  ## Nothing is attached when nothing would be recorded
+
+  `Ravix.Trace.enabled?/0` gates all three, and that gate is the difference
+  between "no traces are exported" and "tracing costs nothing" -- which are not
+  the same claim, and only the second one makes this safe to ship before a
+  Honeycomb account exists.
+
+  `sampler: :always_off` makes *our* spans free, because `span/3` skips the
+  attribute work on a span that will not record. It does nothing for these three
+  libraries, because a `:telemetry` handler runs before any span exists to be
+  sampled. `OpentelemetryBandit.handle_request_start/2` calls
+  `Plug.Conn.get_peer_data/1`, scans headers, formats an IP and builds seven or
+  more attributes **on every request**; `OpentelemetryEcto` builds the statement
+  attribute on every query. All of it would be discarded, and all of it would be
+  paid for.
+
+  So an unconfigured deployment attaches no handler and is exactly the
+  application it was before this decision, rather than a slightly slower one.
+
   `db_statement: :enabled` sends the query text. It is SQL this repository
   wrote, with parameters separated out by Postgrex rather than interpolated, so
   the values are not in the statement and no user data travels with it. Worth
@@ -55,12 +74,28 @@ defmodule Ravix.Trace.Setup do
   reporter this decision does not add.
   """
 
-  @doc "Attach every trace handler. Called once, from `Ravix.Application.start/2`."
-  @spec setup() :: :ok
+  require Logger
+
+  alias Ravix.Trace
+
+  @doc """
+  Attach every trace handler, unless nothing would be recorded.
+
+  Called once, from `Ravix.Application.start/2`. Answers `:attached` or
+  `:skipped` so the boot log can say which, and so a test can assert it.
+  """
+  @spec setup() :: :attached | :skipped
   def setup do
-    OpentelemetryBandit.setup()
-    OpentelemetryPhoenix.setup(adapter: :bandit, liveview: true)
-    OpentelemetryEcto.setup([:ravix, :repo], db_statement: :enabled)
-    :ok
+    if Trace.enabled?() do
+      OpentelemetryBandit.setup()
+      OpentelemetryPhoenix.setup(adapter: :bandit, liveview: true)
+      OpentelemetryEcto.setup([:ravix, :repo], db_statement: :enabled)
+      Logger.info("ravix: tracing attached")
+      :attached
+    else
+      # Deliberately not even a debug line: a deployment that never configured
+      # tracing does not need to be told about it on every boot.
+      :skipped
+    end
   end
 end

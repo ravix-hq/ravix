@@ -154,15 +154,29 @@ span, running `sanitize/1` and writing to an ETS table on every request, event
 and query, then dropping the lot on a five-second timer. No egress, no log
 noise, and real work for nothing.
 
-So the unconfigured path is inert three times over, and only the first of the
-three is ours:
+So the unconfigured path is inert four times over, and only the first two of the
+four are ours:
 
-  * **`sampler: :always_off`** in `config/config.exs`. An unsampled span is
-    non-recording, and `span/3` attaches attributes only when the span records,
-    so `sanitize/1` never runs. Measured on the inert path: **1.15µs** a span,
-    down from 8.18µs before the attributes were moved behind that check, which
-    is no more than an empty `with_span`. With tracing *on* a span costs about
-    6µs — either number is noise beside a Fountain round trip.
+  * **Nothing is attached.** `Ravix.Trace.Setup.setup/0` asks
+    `Ravix.Trace.enabled?/0` first and attaches no handler at all when the
+    answer is no. This one is load-bearing and was missed at first: the sampler
+    cannot help the off-the-shelf instrumentation, because a `:telemetry`
+    handler runs *before* there is a span to sample.
+    `OpentelemetryBandit.handle_request_start/2` calls
+    `Plug.Conn.get_peer_data/1`, scans headers, formats an IP and builds seven
+    or more attributes on every request; `OpentelemetryEcto` builds the
+    statement attribute on every query. Measured with the sampler already off:
+    **6.17µs a request and 6.64µs a query, entirely discarded** — against
+    0.105µs and 0.039µs with nothing attached. A page load runs a request and
+    twenty-odd queries, so that is real work charged to somebody who switched
+    tracing off.
+  * **`sampler: :always_off`** in `config/config.exs`, for the spans this
+    application raises itself. An unsampled span is non-recording, and `span/3`
+    attaches attributes only when the span records, so `sanitize/1` never runs.
+    Measured on the inert path: **1.15µs** a span, down from 8.18µs before the
+    attributes were moved behind that check, which is no more than an empty
+    `with_span`. With tracing *on* a span costs about 6µs — either number is
+    noise beside a Fountain round trip.
   * **`traces_exporter: :none`** means `otel_exporter:init/1` answers
     `undefined` without ever reaching `opentelemetry_exporter`, so no socket is
     opened, no DNS lookup happens and no endpoint or header is read.
@@ -173,11 +187,15 @@ three is ours:
     belt to our braces, and it holds even if somebody later changes the sampler
     without changing the exporter.
 
-What that leaves running on a deployment with no key is the `:telemetry`
-handlers attached by `Ravix.Trace.Setup` and one `gen_statem` cycling between
-idle and exporting every five seconds with nothing to export. `mix test`,
-`mix phx.server`, and a self-hosted deployment with no Honeycomb account
-therefore behave as they did before this decision.
+What that leaves running on a deployment with no key is one `gen_statem`
+cycling between idle and exporting every five seconds with nothing to export.
+No handler is attached, so `mix phx.server` and a self-hosted deployment with
+no Honeycomb account are the application they were before this decision rather
+than slightly slower ones.
+
+`enabled?/0` reads the sampler rather than a flag of its own, so there is no
+second setting to keep in agreement: one line per environment decides both
+whether spans record and whether handlers attach.
 
 `config/test.exs` puts the sampler back, because `Ravix.TraceCase` needs spans
 to read: parent-based over `always_on` rather than bare `always_on`, since

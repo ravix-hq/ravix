@@ -107,6 +107,22 @@ defmodule Ravix.Trace do
   @secretish_pattern ~r/#{Enum.join(@secretish, "|")}/i
 
   @doc """
+  Whether anything this application traces will be recorded.
+
+  The one switch, and it is read from the sampler rather than from a flag of our
+  own, so there is no second thing to keep in agreement: `config/config.exs`
+  ships `:always_off`, `config/runtime.exs` replaces it when HONEYCOMB_API_KEY is
+  present, and `config/test.exs` replaces it so the suite has spans to read.
+
+  `Ravix.Trace.Setup` is the caller that matters. `span/3` does not consult this
+  -- an unsampled span is already cheap and checking would cost more than it
+  saves -- but the off-the-shelf instrumentation is a different matter, and
+  `Ravix.Trace.Setup` says why.
+  """
+  @spec enabled?() :: boolean()
+  def enabled?, do: Application.get_env(:opentelemetry, :sampler) != :always_off
+
+  @doc """
   Run `fun` as a span named `name`, with `attributes`.
 
   The span records an error and re-raises on an exception, and is marked
