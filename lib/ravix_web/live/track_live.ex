@@ -212,7 +212,7 @@ defmodule RavixWeb.TrackLive do
     {:noreply,
      socket
      |> update_panel(&%{&1 | busy?: true, error: nil})
-     |> start_async(:file, fn -> Tracks.file(user, id, path) end)}
+     |> traced_async(:file, fn -> Tracks.file(user, id, path) end)}
   end
 
   # One clause per button, because the four are four different calls: two of
@@ -676,7 +676,7 @@ defmodule RavixWeb.TrackLive do
     # subscription it had --- taken from a cursor this page has just thrown
     # away --- goes with it, and the read below establishes the next one.
     |> unfollow()
-    |> start_async(:load, fn ->
+    |> traced_async(:load, fn ->
       # `fresh: false` drops the last Fountain round trip standing between
       # this page and its first paint. What it costs is a status dot, a turn
       # count and an unread mark that may be up to `MachineCache.ttl_ms/0`
@@ -688,7 +688,7 @@ defmodule RavixWeb.TrackLive do
            {:ok, project} <- Ravix.Projects.get(user, project_id),
            do: {:ok, detail, project}
     end)
-    |> start_async(:transcript, fn -> Tracks.events(user, id) end)
+    |> traced_async(:transcript, fn -> Tracks.events(user, id) end)
     |> refresh_queue()
     |> load_panel()
   end
@@ -779,7 +779,7 @@ defmodule RavixWeb.TrackLive do
   defp refresh_transcript(socket) do
     user = socket.assigns.current_user
     id = socket.assigns.track_id
-    start_async(socket, :transcript, fn -> Tracks.events(user, id) end)
+    traced_async(socket, :transcript, fn -> Tracks.events(user, id) end)
   end
 
   # The four preview buttons all do the same thing to the page -- mark the
@@ -792,7 +792,7 @@ defmodule RavixWeb.TrackLive do
 
     socket
     |> update_panel(&%{&1 | busy?: true})
-    |> start_async(:preview_action, fn -> call.(user, id, hash) end)
+    |> traced_async(:preview_action, fn -> call.(user, id, hash) end)
   end
 
   attr :data, :any, required: true
@@ -880,7 +880,7 @@ defmodule RavixWeb.TrackLive do
 
     socket
     |> update_panel(&Panel.loading/1)
-    |> start_async(:panel, fn ->
+    |> traced_async(:panel, fn ->
       case tab do
         :files -> Tracks.files(user, id, path)
         :changes -> Tracks.diff(user, id)
@@ -957,13 +957,13 @@ defmodule RavixWeb.TrackLive do
   defp refresh_detail(socket) do
     user = socket.assigns.current_user
     id = socket.assigns.track_id
-    start_async(socket, :detail, fn -> Tracks.get(user, id, fresh: true) end)
+    traced_async(socket, :detail, fn -> Tracks.get(user, id, fresh: true) end)
   end
 
   defp refresh_queue(socket) do
     user = socket.assigns.current_user
     id = socket.assigns.track_id
-    start_async(socket, :queue, fn -> PromptQueue.list(user, id) end)
+    traced_async(socket, :queue, fn -> PromptQueue.list(user, id) end)
   end
 
   # Whether this person still reaches this track: read afresh, every time it

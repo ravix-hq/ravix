@@ -40,6 +40,7 @@ defmodule Ravix.Sprites do
 
   alias Ravix.Sprites.Error
   alias Ravix.Sprites.Shapes
+  alias Ravix.Trace
 
   # Sprites' exec frames its output: 1 = stdout, 2 = stderr, 3 = exit code.
   @frame_stdout 1
@@ -212,6 +213,32 @@ defmodule Ravix.Sprites do
     query = URI.encode_query(Enum.map(argv, &{"cmd", &1}))
     url = "#{cfg.base_url}/v1/sprites/#{encode(sprite)}/exec?#{query}"
 
+    # Everything that reaches a machine reaches it through here -- the terminal,
+    # `Ravix.Vitals`' probe, every preview service action -- so this is the one
+    # span worth having on Sprites.
+    #
+    # **`argv` is not on it, and must not be.** This is where the terminal panel
+    # sends what somebody typed: `shell/5` wraps an arbitrary `sh -c` command,
+    # and `Ravix.Vitals.probe/1` a script. A command line is user input that
+    # routinely contains a path, a branch, a repository's contents and
+    # occasionally an exported credential, and a span attribute leaves this
+    # deployment. The count is here because "one exec" and "an exec of forty
+    # arguments" are different shapes of call; the arguments themselves are not.
+    # `Ravix.Trace.sanitize/1` would keep a command string, being a short
+    # binary -- it defends against a leak nobody noticed, not against a
+    # deliberate one, so the judgement has to happen here.
+    Trace.span(
+      "sprites.exec",
+      %{
+        "ravix.sprite" => sprite,
+        "ravix.argv_count" => length(argv),
+        "ravix.timeout_sec" => timeout_sec
+      },
+      fn -> run_exec(cfg, url, timeout_sec) end
+    )
+  end
+
+  defp run_exec(cfg, url, timeout_sec) do
     request =
       new_request(cfg,
         method: :post,
@@ -222,7 +249,12 @@ defmodule Ravix.Sprites do
 
     case Req.request(request) do
       {:ok, %{status: status, body: body}} when status in 200..299 ->
-        {:ok, decode_frames(body)}
+        ran = decode_frames(body)
+
+        # The exit code, because a non-zero exec is not a failed span -- the
+        # request succeeded -- and is still the thing a reader is looking for.
+        Trace.annotate(%{"ravix.exit_code" => ran.code})
+        {:ok, ran}
 
       {:ok, %{status: 404}} ->
         {:error,

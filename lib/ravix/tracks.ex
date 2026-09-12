@@ -53,6 +53,7 @@ defmodule Ravix.Tracks do
   alias Ravix.PromptQueue.Body
   alias Ravix.PromptQueue.Body.Image
   alias Ravix.Spec
+  alias Ravix.Trace
 
   alias Ravix.Tracks.{
     Diff,
@@ -179,10 +180,23 @@ defmodule Ravix.Tracks do
           {:ok, %{track: View.t(), header: header(), starters: [Spec.Starter.t()]}}
           | {:error, reason()}
   def get(%User{} = user, track_id, opts \\ []) do
+    fresh = Keyword.get(opts, :fresh, true)
+
+    # Spanned because this is the call the track page waits on, on open and on
+    # every refresh, and `fresh` is the whole reason #127 exists: a refresh
+    # re-lists conversations from Fountain and an opening page reads the memo.
+    # A waterfall that cannot tell those apart cannot answer "is the page slow
+    # or is Fountain slow", which is the only question worth asking of it.
+    Trace.span("tracks.get", %{"ravix.track_id" => track_id, "ravix.fresh" => fresh}, fn ->
+      do_get(user, track_id, fresh)
+    end)
+  end
+
+  defp do_get(user, track_id, fresh) do
     with {:ok, %{track: track, project: project, role: role}} <-
            Access.track_access(user, track_id),
          {:ok, client} <- fountain() do
-      live = conversations_of(project, fresh: Keyword.get(opts, :fresh, true))
+      live = conversations_of(project, fresh: fresh)
 
       environment =
         case MachineCache.environment(client, project.environment_id) do
@@ -492,6 +506,14 @@ defmodule Ravix.Tracks do
   """
   @spec events(User.t(), String.t(), keyword()) :: {:ok, Transcript.page()} | {:error, reason()}
   def events(%User{} = user, track_id, _opts \\ []) do
+    # The call that gates the first paint of a track, so its own span rather
+    # than a share of whatever asked for it.
+    Trace.span("tracks.events", %{"ravix.track_id" => track_id}, fn ->
+      do_events(user, track_id)
+    end)
+  end
+
+  defp do_events(user, track_id) do
     with {:ok, %{track: track, project: project}} <- Access.track_access(user, track_id),
          {:ok, client} <- fountain() do
       if track.conversation_id,
@@ -508,7 +530,17 @@ defmodule Ravix.Tracks do
       end
 
     with {:ok, log} <- Fountain.events(client, conversation_id) do
-      {:ok, Transcript.page(turns, log, runtime)}
+      page = Transcript.page(turns, log, runtime)
+
+      # How much transcript came back, on the span that fetched it. A slow
+      # first paint is either Fountain being slow or a conversation being long,
+      # and a duration alone cannot say which.
+      Trace.annotate(%{
+        "ravix.turn_count" => length(turns),
+        "ravix.event_count" => length(log)
+      })
+
+      {:ok, page}
     end
   end
 

@@ -5,8 +5,14 @@ defmodule Ravix.Application do
 
   use Application
 
+  alias Ravix.Trace
+
   @impl true
   def start(_type, _args) do
+    # Before the endpoint, and before anything below can do work worth tracing:
+    # a telemetry handler attached after the first request is one that missed it.
+    Trace.Setup.setup()
+
     children =
       [
         RavixWeb.Telemetry,

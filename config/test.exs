@@ -40,3 +40,19 @@ config :ravix, :req_options, plug: {Req.Test, Ravix.ReqFake}
 
 # Background sweeps stay off under test; tests drive `tick/0` themselves.
 config :ravix, Ravix.PromptQueue.Server, interval: false
+
+# Spans are built but exported nowhere; `Ravix.TraceCase` swaps in the in-memory
+# exporter for the suites that assert on them. `:simple` rather than `:batch` so
+# a span is handed to the processor when it ends rather than on a timer, which is
+# the difference between an assertion and a sleep.
+#
+# The sampler is put back to the SDK's default, undoing `config/config.exs`'s
+# `:always_off`: under test the cost of building a span is not the concern and
+# there would otherwise be nothing to assert on. Parent-based rather than
+# `always_on`, because `Ravix.Trace.untraced/1` works *by* the parent-based
+# sampler dropping the children of a non-sampled parent -- with `always_on`
+# there would be no suppression to test.
+config :opentelemetry,
+  span_processor: :simple,
+  traces_exporter: :none,
+  sampler: {:parent_based, %{root: :always_on}}

@@ -66,6 +66,76 @@ config :ravix, Ravix.Config,
   sprites_url: env.("SPRITES_URL"),
   preview_domain: env.("PREVIEW_DOMAIN")
 
+# Tracing to Honeycomb (ADR 0004), in every environment that configures it --
+# a developer with a key and a personal environment gets the same pipeline the
+# deployment has, which is the only way the instrumentation is ever exercised
+# before it matters. No key means `traces_exporter: :none` from
+# `config/config.exs` stands and nothing leaves the process.
+#
+# OTLP over HTTP/protobuf rather than gRPC: both are Honeycomb endpoints, and
+# the HTTP one is one fewer long-lived connection to reason about on a platform
+# that recycles containers, with no `grpcbox` in the boot path.
+#
+# Blank counts as absent, which is not pedantry: this variable's placeholder
+# lives in Infisical until somebody pastes a key into it, and an empty string is
+# truthy in Elixir. Left as `System.get_env/1` alone, an unpopulated placeholder
+# arriving through Render would switch the exporter *on* with no credential and
+# fail every batch against Honeycomb. `Ravix.Config` runs every other credential
+# through `blank_to(nil)` for the same reason.
+honeycomb_key =
+  case String.trim(System.get_env("HONEYCOMB_API_KEY") || "") do
+    "" -> nil
+    key -> key
+  end
+
+if honeycomb_key do
+  # Honeycomb files traces under the dataset named by `service.name`, and
+  # separates environments by the key's own environment -- so a staging key and
+  # a production key with this same service name land in different places
+  # without this config knowing which it holds.
+  service_name = System.get_env("OTEL_SERVICE_NAME") || "ravix"
+
+  # Which instance a span came from. Every question ADR 0003 raises -- did both
+  # instances answer, did one instance hold the singleton, did a deploy move a
+  # follower -- is unanswerable in a trace that cannot say which node it is.
+  # `rel/env.sh.eex` names the node for its private IP before the release boots,
+  # so this is set by the time runtime configuration is read; it is
+  # `nonode@nohost` under `mix`, which is honest about there being one.
+  instance_id = System.get_env("RENDER_INSTANCE_ID") || to_string(node())
+
+  # Honeycomb charges per event, and a trace is many. Everything is sampled at
+  # first because the volume does not warrant otherwise and a discarded span is
+  # the one you wanted; `HONEYCOMB_SAMPLE_RATIO` is here so that turning it
+  # down is a dashboard change rather than a deploy. Parent-based, so a
+  # sampled-in trace keeps all of its spans rather than a random half of them.
+  sample_ratio =
+    case Float.parse(System.get_env("HONEYCOMB_SAMPLE_RATIO") || "1.0") do
+      {ratio, ""} when ratio >= 0.0 and ratio <= 1.0 ->
+        ratio
+
+      _ ->
+        raise "HONEYCOMB_SAMPLE_RATIO must be a number between 0.0 and 1.0"
+    end
+
+  config :opentelemetry,
+    span_processor: :batch,
+    traces_exporter: :otlp,
+    sampler: {:parent_based, %{root: {:trace_id_ratio_based, sample_ratio}}},
+    resource: [
+      service: [
+        name: service_name,
+        version: Application.spec(:ravix, :vsn) |> to_string()
+      ],
+      "service.instance.id": instance_id,
+      "deployment.environment.name": System.get_env("DEPLOY_ENV") || to_string(config_env())
+    ]
+
+  config :opentelemetry_exporter,
+    otlp_protocol: :http_protobuf,
+    otlp_endpoint: System.get_env("HONEYCOMB_ENDPOINT") || "https://api.honeycomb.io",
+    otlp_headers: [{"x-honeycomb-team", honeycomb_key}]
+end
+
 if config_env() == :prod do
   database_url =
     System.get_env("DATABASE_URL") ||

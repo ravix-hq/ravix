@@ -15,6 +15,7 @@ defmodule Ravix.GitHub.HTTP do
   alias Ravix.Clock
   alias Ravix.Config.GitHubApp
   alias Ravix.GitHub.{Cache, Error}
+  alias Ravix.Trace
 
   @user_agent "ravix (+https://app.ravix.sh)"
   @timeout_ms 20_000
@@ -38,9 +39,30 @@ defmodule Ravix.GitHub.HTTP do
   def request(%GitHubApp{} = app, method, path, opts \\ []) do
     installation_id = Keyword.get(opts, :installation_id)
 
-    with :ok <- check_rate_limit(app, installation_id),
-         {:ok, response} <- send_request(app, method, path, opts) do
-      interpret(app, installation_id, response)
+    # Every GitHub request funnels through here. The span covers the rate-limit
+    # check as well as the call, on purpose: a request answered from a
+    # remembered limit without touching the network is the interesting case, and
+    # `ravix.rate_limited` is how a trace says that is what happened rather
+    # than showing an implausibly fast 403.
+    Trace.span(
+      "github.request",
+      %{"http.request.method" => method, "url.path" => path},
+      fn -> attempt(app, installation_id, method, path, opts) end
+    )
+  end
+
+  defp attempt(app, installation_id, method, path, opts) do
+    case check_rate_limit(app, installation_id) do
+      :ok ->
+        with {:ok, response} <- send_request(app, method, path, opts),
+             do: interpret(app, installation_id, response)
+
+      # A limit GitHub gave us earlier, answered without a request. Said on the
+      # span, because the alternative is a 403 or a 429 that took no time and
+      # that no reader can tell apart from one that did.
+      {:error, _} = refused ->
+        Trace.annotate(%{"ravix.rate_limited" => true})
+        refused
     end
   end
 

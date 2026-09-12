@@ -57,6 +57,17 @@ defmodule Ravix.MixProject do
       {:esbuild, "~> 0.10", runtime: Mix.env() == :dev},
       {:telemetry_metrics, "~> 1.0"},
       {:telemetry_poller, "~> 1.0"},
+      # Tracing, to Honeycomb over OTLP (ADR 0004). `opentelemetry_phoenix`
+      # needs `opentelemetry_bandit` for the HTTP span itself; there is no
+      # `opentelemetry_req`/`_finch` here because outbound calls are spanned at
+      # Ravix's own boundaries instead, where the span can be named for the
+      # thing being asked rather than the URL it was asked over.
+      {:opentelemetry_api, "~> 1.4"},
+      {:opentelemetry, "~> 1.7"},
+      {:opentelemetry_exporter, "~> 1.10"},
+      {:opentelemetry_phoenix, "~> 2.0"},
+      {:opentelemetry_bandit, "~> 0.3"},
+      {:opentelemetry_ecto, "~> 1.2"},
       {:jason, "~> 1.2"},
       {:dns_cluster, "~> 0.3.0"},
       {:bandit, "~> 1.5"},

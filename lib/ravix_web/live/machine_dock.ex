@@ -81,7 +81,7 @@ defmodule RavixWeb.Live.MachineDock do
       {:noreply,
        socket
        |> assign(vitals: nil, vitals_busy?: true)
-       |> start_async(:vitals, fn -> Vitals.report(user, id) end)}
+       |> traced_async(:vitals, fn -> Vitals.report(user, id) end)}
     else
       {:noreply, socket}
     end
@@ -108,7 +108,9 @@ defmodule RavixWeb.Live.MachineDock do
         )
 
       {:noreply,
-       start_async(socket, :exec, fn -> Terminal.exec(user, id, %{command: command, cwd: cwd}) end)}
+       traced_async(socket, :exec, fn ->
+         Terminal.exec(user, id, %{command: command, cwd: cwd})
+       end)}
     end
   end
 

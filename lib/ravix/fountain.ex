@@ -30,6 +30,7 @@ defmodule Ravix.Fountain do
 
   alias Fountain.HTTP
   alias Ravix.Fountain.{Client, Error, Launch, Shapes}
+  alias Ravix.Trace
 
   @type id :: String.t()
   @type store :: :environments | :vaults
@@ -407,11 +408,28 @@ defmodule Ravix.Fountain do
   defp call(%Client{http: nil}, _method, _path, _fun), do: {:error, :unconfigured}
 
   defp call(%Client{http: http}, method, path, fun) do
-    case fun.(http) do
-      :ok -> :ok
-      {:ok, value} -> {:ok, value}
-      {:error, %Fountain.Error{} = error} -> {:error, fail(error, method, path)}
-    end
+    # Every Fountain request funnels through here, which is why the span is
+    # here and not on the thirty public functions above it. Deliberately *not*
+    # on `stream_events/3`: that one hands back a lazy stream rather than going
+    # through `call/4`, and `Ravix.Tracks.Follower` keeps it open for as long
+    # as anybody anywhere is looking at a transcript. A span around an
+    # hours-long stream is never exported and never ends.
+    #
+    # The path is an attribute rather than part of the span name -- it carries
+    # ids, so a name built from it would be a new name per conversation. It is
+    # the same string `fail/3` already logs, so nothing new is disclosed here:
+    # a secret's *name* can appear in a path, its value cannot.
+    Trace.span(
+      "fountain.request",
+      %{"http.request.method" => method, "url.path" => path},
+      fn ->
+        case fun.(http) do
+          :ok -> :ok
+          {:ok, value} -> {:ok, value}
+          {:error, %Fountain.Error{} = error} -> {:error, fail(error, method, path)}
+        end
+      end
+    )
   end
 
   # The path and the status, never the body we sent: it may be a secret value

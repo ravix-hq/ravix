@@ -89,10 +89,24 @@ under [#12](https://github.com/ravix-hq/ravix/issues/12).
 | `SPRITES_TOKEN`, `SPRITES_URL` | Sprites API credentials and optional origin override |
 | `PREVIEW_DOMAIN` | Wildcard preview domain routed to the same service |
 | `POOL_SIZE` | Production database pool size; defaults to 10 |
+| `HONEYCOMB_API_KEY` | Sends OpenTelemetry traces to Honeycomb; unset means no exporter and no traces leave the process (ADR 0004) |
+| `HONEYCOMB_SAMPLE_RATIO` | Fraction of traces to keep, `0.0`--`1.0`; defaults to `1.0` |
+| `HONEYCOMB_ENDPOINT`, `OTEL_SERVICE_NAME` | Optional OTLP origin and service/dataset name overrides |
+| `DEPLOY_ENV` | Names the deployment on every span; defaults to the Mix environment |
+| `POSTHOG_API_KEY`, `POSTHOG_SECRET_KEY` | Product analytics and feature flags; nothing reads them yet (ADR 0004) |
 
 The registered GitHub App callback remains `/api/auth/callback`; its setup URL
 is `/api/auth/install`. Signing in starts at `/auth/github`. Secrets belong in
 service configuration, not source control.
+
+Every variable above that `render.yaml` marks `sync: false` is a secret, is
+entered in the Render dashboard rather than the Blueprint, and is kept in the
+`ravix` project of the Infisical instance under the same name. The two lists are
+meant to match, so a new secret is added in both places. A secret that has a
+name but no value yet is stored blank on purpose: every reader treats blank as
+absent, so an unpopulated placeholder reaching the service is the same as the
+variable not being set at all --- which is the only safe way for a placeholder
+to travel.
 
 ## Database and cutover
 

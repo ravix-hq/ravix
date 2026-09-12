@@ -34,6 +34,28 @@ config :esbuild,
     env: %{"NODE_PATH" => [Path.expand("../deps", __DIR__), Mix.Project.build_path()]}
   ]
 
+# Tracing (ADR 0004). **Inert unless a deployment configures an exporter**, and
+# it takes both of these lines to mean that rather than just the first.
+#
+# `traces_exporter: :none` stops spans leaving the process, but it does not stop
+# them being made: `otel_batch_processor:on_end/2` buffers every *sampled* span
+# whatever the exporter is, and the SDK's default root sampler is `always_on`.
+# So the exporter alone would leave an unconfigured deployment building a span,
+# running `Ravix.Trace.sanitize/1` and writing to an ETS table on every request,
+# LiveView event and query -- then dropping the lot on a five-second timer. No
+# egress and no log noise, but real work for nothing.
+#
+# `sampler: :always_off` is what makes it actually nothing. An unsampled span is
+# non-recording, so no attributes are built and `on_end/2` answers `dropped`
+# before the buffer. `config/runtime.exs` replaces both lines when
+# HONEYCOMB_API_KEY is present; `config/test.exs` replaces the sampler alone, so
+# that `Ravix.TraceCase` has spans to read back.
+config :opentelemetry,
+  span_processor: :batch,
+  traces_exporter: :none,
+  sampler: :always_off,
+  resource: [service: [name: "ravix"]]
+
 # Configure Elixir's Logger
 config :logger, :default_formatter,
   format: "$time $metadata[$level] $message\n",

@@ -40,6 +40,7 @@ defmodule Ravix.PromptQueue.Server do
   alias Ravix.PromptQueue.Item
   alias Ravix.PromptQueue.Store
   alias Ravix.Repo
+  alias Ravix.Trace
   alias Ravix.Tracks.{Track, TrackMember, Transcript}
   alias Ravix.Tracks.Transcript.Event
 
@@ -103,16 +104,25 @@ defmodule Ravix.PromptQueue.Server do
   # ── the sweep ─────────────────────────────────────────────────────────
 
   defp sweep(state) do
-    # Every sweep, not once at boot. A claim can outlive the task holding it
-    # -- killed for running long, or lost between the POST and the status
-    # write -- and `:sending` is refused by both `cancel/3` and `retry/3`, so
-    # nothing else would ever take it back. `Store.recover/0` only
-    # reclaims claims older than `claim_timeout_ms/0`, so a task that is still
-    # working is left alone.
-    Store.recover()
-    client = Fountain.client()
+    # Untraced (ADR 0004). This runs every two seconds on every instance and
+    # almost always finds nothing: `Store.recover/0` and `Store.heads/0` with no
+    # parent span would be two root traces per sweep, tens of thousands of empty
+    # traces a day per instance, at Honeycomb's per-event price. Suppression
+    # covers this process only, so each `deliver/2` -- which runs in its own
+    # task under `deliver_heads/1` -- still gets the trace that is worth having.
+    Trace.untraced(fn ->
+      # Every sweep, not once at boot. A claim can outlive the task holding it
+      # -- killed for running long, or lost between the POST and the status
+      # write -- and `:sending` is refused by both `cancel/3` and `retry/3`, so
+      # nothing else would ever take it back. `Store.recover/0` only
+      # reclaims claims older than `claim_timeout_ms/0`, so a task that is still
+      # working is left alone.
+      Store.recover()
+      client = Fountain.client()
 
-    if Client.configured?(client), do: deliver_heads(client)
+      if Client.configured?(client), do: deliver_heads(client)
+    end)
+
     state
   rescue
     # Leave claims intact for explicit recovery, and retry untouched rows on
@@ -138,11 +148,30 @@ defmodule Ravix.PromptQueue.Server do
   # ── one head ──────────────────────────────────────────────────────────
 
   defp deliver(client, %Item{} = row) do
-    cond do
-      not authorized?(row) -> cancel(row)
-      row.status != :queued -> :held
-      true -> deliver_queued(client, row)
-    end
+    # A trace root: a delivery is background work that nothing clicked, and this
+    # task's context is fresh, so the sweep's suppression does not reach it. One
+    # trace per prompt actually delivered is a volume worth paying for, which
+    # the sweep itself is not.
+    Trace.span(
+      "prompt_queue.deliver",
+      %{"ravix.track_id" => row.track_id, "ravix.queue_item_status" => row.status},
+      fn ->
+        outcome =
+          cond do
+            not authorized?(row) -> cancel(row)
+            row.status != :queued -> :held
+            true -> deliver_queued(client, row)
+          end
+
+        # `:ok`, `:held`, `:waiting` or `:lost_claim` -- never a tagged error, so
+        # `span/3` cannot read it from the return value. It is the attribute
+        # somebody debugging a stuck prompt is looking for: `:waiting` and
+        # `:held` both mean the row is still queued and the next sweep will try
+        # again, which is indistinguishable from `:ok` on a duration alone.
+        Trace.annotate(%{"ravix.delivery_outcome" => outcome})
+        outcome
+      end
+    )
   end
 
   defp deliver_queued(client, row) do

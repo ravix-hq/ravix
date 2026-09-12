@@ -215,7 +215,7 @@ defmodule RavixWeb.Live.SettingsDialog do
 
       socket
       |> assign(busy?: true)
-      |> start_async(:danger, fn -> call.(user, id) end)
+      |> traced_async(:danger, fn -> call.(user, id) end)
     else
       flash(socket, :error, "Type the project name to confirm.")
     end
