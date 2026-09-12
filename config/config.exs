@@ -56,6 +56,29 @@ config :opentelemetry,
   sampler: :always_off,
   resource: [service: [name: "ravix"]]
 
+# Product analytics and feature flags (ADR 0004). `enable: false` here and
+# switched on by `config/runtime.exs` when POSTHOG_API_KEY is present, so
+# `mix phx.server` and a self-hosted deployment with no PostHog account start no
+# supervisor, no sender and no flag poller at all.
+#
+# `enable: false` rather than a blank `api_key`, which the SDK also treats as
+# no-op: a blank key is validated and warns about itself on every boot, while
+# `enable: false` short-circuits before validation. Same distinction as the
+# tracing half -- "sends nothing" and "does nothing" are different claims.
+#
+# Unlike `Ravix.Config`, which reads the environment at call time, this SDK reads
+# its configuration once in `PostHog.Application.start/2`. So a key that arrives
+# after boot does not take effect until a restart -- the same as HONEYCOMB_API_KEY,
+# and worth knowing because it is the opposite of every other setting here.
+#
+# `enable_error_tracking: false` keeps this to product analytics. The SDK can
+# attach a `:logger` handler and forward crashes, which would put exception
+# messages and `Logger` metadata through a third party -- a much larger surface
+# than ADR 0004 decided on, and the same reason Honeycomb gets no logs.
+config :posthog,
+  enable: false,
+  enable_error_tracking: false
+
 # Configure Elixir's Logger
 config :logger, :default_formatter,
   format: "$time $metadata[$level] $message\n",

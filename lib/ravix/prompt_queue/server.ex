@@ -31,6 +31,7 @@ defmodule Ravix.PromptQueue.Server do
   require Logger
 
   alias Ravix.Accounts.{Access, User}
+  alias Ravix.Analytics
   alias Ravix.Fountain
   alias Ravix.Fountain.{Client, Error, Shapes}
   alias Ravix.Hub
@@ -305,6 +306,7 @@ defmodule Ravix.PromptQueue.Server do
   defp settle(:ok, row, track, project) do
     Store.mark_delivered(row.id)
     Hub.publish(project.id, :turn, track_id: track.id)
+    delivered(row, track, project)
   end
 
   defp settle(:revoked, row, track, _project) do
@@ -325,6 +327,25 @@ defmodule Ravix.PromptQueue.Server do
 
   defp settle({:error, _reason}, row, _track, _project),
     do: Store.set_status(row.id, :unconfirmed, @unconfirmed)
+
+  # The prompt reached the agent. Attributed to whoever sent it, which the row
+  # records, and carrying the wait -- a prompt accepted while the agent was busy
+  # can sit here for minutes, and that wait is what somebody describing "the
+  # agent is slow" is usually describing.
+  #
+  # This runs in a delivery task rather than in a request, so `Accounts.get_user/1`
+  # is a read nobody is waiting on. Skipped entirely when the sender has since
+  # been deleted: a person who is gone is not a person to file an event against.
+  defp delivered(row, track, project) do
+    Analytics.track(
+      Ravix.Accounts.get_user(row.user_id),
+      :prompt_delivered,
+      track
+      |> Analytics.repo(project)
+      |> Map.merge(Analytics.waited_ms(row.created_at))
+      |> Map.put("ravix.image_count", row.image_count)
+    )
+  end
 
   defp cancel(row), do: Store.set_status(row.id, :cancelled)
 

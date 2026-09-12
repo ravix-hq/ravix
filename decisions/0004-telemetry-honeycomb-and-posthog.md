@@ -22,11 +22,15 @@ this decision is a plan:
     cross-process context carrying and its suppression of the prompt-queue
     sweep, and spans at the Fountain, Sprites, GitHub, track-read, preview-
     operation and prompt-delivery boundaries.
-  * **Not built:** every word about PostHog below. No dependency, no
-    configuration, no capture and no flag evaluation exists in the tree. The
-    decision about *shape* is recorded here so that the branch that builds it
-    is not also the branch that decides it, and this caveat and `stale_after`
-    come off in the PR that builds it.
+  * **Built since:** PostHog capture. The SDK, its configuration, `Ravix.Analytics`
+    and eight events at context boundaries. `Ravix.Redact` is now shared between
+    the two halves, because a span attribute and an event property are the same
+    hazard and had better answer to the same rule.
+  * **Not built:** feature flags. No flag is read anywhere, and
+    `POSTHOG_SECRET_KEY` -- which exists only so that reading one is not a
+    network call per mount -- is configured and unused. The `Ravix.Flags`-shaped
+    boundary described below does not exist yet, and this caveat and
+    `stale_after` come off in the PR that builds it.
 
 `verified` therefore covers the tracing half only, and `stale_after` stays until
 PostHog is built. What it means, since "verified" in an ADR is usually a claim
@@ -150,6 +154,30 @@ assertions, local flag evaluation behind a polling definition loader, and it
 redacts its own secret through a custom `Inspect` — the same convention
 `Ravix.Config` already uses. Ravix gets its own PostHog project, separate from
 Fountain's.
+
+**Eight events, all at a context boundary and all attributed to a person:** signed
+in, project created, track opened, track closed, prompt sent, prompt delivered,
+preview started, preview failed. `distinct_id` is the Ravix user id --- a UUID,
+stable across a GitHub rename --- and the person properties are the GitHub login
+and the account's creation date, never the email address.
+
+Two things are deliberately absent from that list. **Agent turn completion**,
+which is the event a funnel most wants, because a turn ends on a cluster-wide
+follower that has no user attached and attributing it to the track's creator
+would be inventing data; `prompt delivered` with its wait is the honest proxy,
+and it says whether the prompt reached the agent. And **anything from the
+browser**, for the reason below.
+
+**Repository and branch names are sent. Prompt and transcript text is not.** The
+first is a deliberate trade: "which repository was this?" is the first question of
+every support conversation, no proxy answers it, and the cost is that customers'
+private repository names travel to a third party. `Ravix.Analytics.repo/2` is the
+single place that decision is made. The second is not a trade at all --- a
+prompt's length and image count answer what its body would, and
+`Ravix.Sprites.exec/4` already carries an argument count and never the arguments.
+`Ravix.Redact.flat/1` sits under both as a backstop against a leak nobody
+noticed, not as the judgement itself: a prompt body is a short text binary and
+would survive it.
 
 **There is no browser SDK.** No `posthog-js`, no autocapture, no session
 replay. This is the one part of this decision that is about safety rather than

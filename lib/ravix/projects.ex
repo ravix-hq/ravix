@@ -39,6 +39,7 @@ defmodule Ravix.Projects do
   """
 
   alias Ravix.Accounts.User
+  alias Ravix.Analytics
   alias Ravix.Fountain.Client
   alias Ravix.Hub
   alias Ravix.People
@@ -192,6 +193,12 @@ defmodule Ravix.Projects do
          },
          {:ok, ids} <- Machine.provision(project, client),
          {:ok, project} <- insert_provisioned(project, ids, client) do
+      Analytics.track(
+        user,
+        :project_created,
+        Map.merge(Analytics.repo(nil, project), %{"ravix.repo_private" => project.repo_private})
+      )
+
       {:ok, present(project, :owner, Machine.none(), user)}
     end
   end

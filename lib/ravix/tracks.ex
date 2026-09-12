@@ -41,6 +41,7 @@ defmodule Ravix.Tracks do
 
   alias Ravix.Accounts.Access
   alias Ravix.Accounts.User
+  alias Ravix.Analytics
   alias Ravix.Fountain
   alias Ravix.Fountain.Client
   alias Ravix.Fountain.Launch
@@ -289,9 +290,24 @@ defmodule Ravix.Tracks do
       # of date the moment this returns.
       MachineCache.forget_project(project.id)
       publish_tracks(project.id, track.id)
+
+      Analytics.track(
+        user,
+        :track_opened,
+        Map.merge(Analytics.repo(track, project), %{
+          "ravix.origin" => track.origin_kind,
+          "ravix.runtime" => project.runtime
+        })
+      )
+
       {:ok, present(track, project: project, live: nil, role: role)}
     end
   end
+
+  defp lifetime_sec(%Track{created_at: nil}), do: nil
+
+  defp lifetime_sec(%Track{created_at: created_at}),
+    do: DateTime.diff(DateTime.utc_now(), created_at, :second)
 
   # Everything a new track is called, decided before anything wakes the box:
   # the conversation Fountain is asked for, and the row that will remember it.
@@ -429,6 +445,13 @@ defmodule Ravix.Tracks do
            ),
          :ok <-
            check(is_nil(track.closed_at), {:conflict, "closed_track", "This track is closed."}) do
+      # Length and image count, never the prompt itself: it is the customer's
+      # words, and `Ravix.Analytics` is where that rule is written down.
+      Analytics.track(user, :prompt_sent, %{
+        "ravix.prompt_length" => String.length(text),
+        "ravix.image_count" => length(images)
+      })
+
       # ownership: `prompt/3` opened with `Access.track_access/2` on this
       # track, and the row records who is sending on it.
       Ravix.PromptQueue.Store.enqueue(
@@ -613,6 +636,20 @@ defmodule Ravix.Tracks do
       Store.close_track(track.id)
       MachineCache.forget_project(project.id)
       publish_tracks(project.id, track.id)
+
+      Analytics.track(
+        user,
+        :track_closed,
+        Map.merge(Analytics.repo(track, project), %{
+          "ravix.forced" => Keyword.get(opts, :force, false) == true,
+          "ravix.branch_deleted" => Keyword.get(opts, :delete_branch, false) == true,
+          # How long the track lived. `turn_count` would be the better number and
+          # is not on this row -- it is computed on `Ravix.Tracks.View` from
+          # Fountain's conversation list, so reading it here would be a round
+          # trip on a close, or a `KeyError`.
+          "ravix.lifetime_sec" => lifetime_sec(track)
+        })
+      )
     end
   end
 

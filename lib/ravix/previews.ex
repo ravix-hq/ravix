@@ -31,12 +31,14 @@ defmodule Ravix.Previews do
 
   alias Ravix.Accounts.Access
   alias Ravix.Accounts.User
+  alias Ravix.Analytics
   alias Ravix.Clock
   alias Ravix.Crypto
   alias Ravix.MachineCache.Machine
   alias Ravix.Previews.{Agent, Config, Grant, Row, Server, Store, View}
   alias Ravix.Projects.Project
   alias Ravix.Projects.Store, as: Projects
+  alias Ravix.Redact
   alias Ravix.Repo
   alias Ravix.Sprites
   alias Ravix.Sprites.Tunnel
@@ -595,14 +597,36 @@ defmodule Ravix.Previews do
     do: launch(user, track_id, session_hash, :restart)
 
   defp launch(user, track_id, session_hash, mode) do
-    with {:ok, _track} <- open_track(user, track_id),
+    with {:ok, track} <- open_track(user, track_id),
          {:ok, url} <- mint_ticket(track_id, session_hash) do
       Task.Supervisor.start_child(Ravix.TaskSupervisor, fn ->
-        start_service(track_id, mode)
+        # `user` is captured deliberately. This page has already returned by the
+        # time the service answers, so the outcome is only knowable here -- and
+        # without carrying who asked, a failed preview would be an event with
+        # nobody attached to it, which is the one thing `Analytics.track/3`
+        # refuses to file.
+        report(user, track, mode, start_service(track_id, mode))
       end)
 
       {:ok, %View{info(track_id) | open_url: url}}
     end
+  end
+
+  defp report(user, track, mode, outcome) do
+    {event, extra} =
+      case outcome do
+        :ok -> {:preview_started, %{}}
+        {:error, reason} -> {:preview_failed, %{"ravix.reason" => Redact.reason(reason)}}
+      end
+
+    Analytics.track(
+      user,
+      event,
+      track
+      |> Analytics.repo(nil)
+      |> Map.merge(extra)
+      |> Map.put("ravix.mode", mode)
+    )
   end
 
   @doc "Stop the track's preview service."
