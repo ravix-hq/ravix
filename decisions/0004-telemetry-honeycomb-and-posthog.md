@@ -7,8 +7,8 @@ status: stable
 adr: "0004"
 adr_status: "Accepted"
 date: 2026-09-11
-generated: { by: claude-opus/5, at: 2026-09-11T23:55:00-04:00 }
-verified: { by: human:jhgaylor, at: 2026-09-11T23:50:00-04:00 }
+generated: { by: claude-opus/5, at: 2026-09-12T00:40:00-04:00 }
+verified: { by: human:jhgaylor, at: 2026-09-12T00:35:00-04:00 }
 stale_after: 2026-12-11
 ---
 
@@ -32,9 +32,9 @@ this decision is a plan:
     boundary described below does not exist yet, and this caveat and
     `stale_after` come off in the PR that builds it.
 
-`verified` therefore covers the tracing half only, and `stale_after` stays until
-PostHog is built. What it means, since "verified" in an ADR is usually a claim
-about code, and since this one rests partly on somebody looking at a screen:
+`verified` therefore covers both built halves, and `stale_after` stays until
+flags are. What it means, since "verified" in an ADR is usually a claim about
+code, and since this one rests on somebody looking at two screens:
 
   * **Traces reach Honeycomb from the deployed release** (2026-09-11,
     https://app.ravix.sh, dataset `ravix` in team `ravix`, environment `prod`),
@@ -43,6 +43,17 @@ about code, and since this one rests partly on somebody looking at a screen:
     HTTP/protobuf, the `x-honeycomb-team` header, the resource attributes, and
     the release actually reading `HONEYCOMB_API_KEY` at boot rather than at
     compile time.
+  * **Events reach PostHog from the deployed release** (2026-09-12, release
+    `a68bf37`), confirmed by the operator seeing `signed in` arrive in Ravix's
+    PostHog project. The same class of proof as the traces above and for the same
+    reason: the tests read events back through the SDK's `test_mode`, which shows
+    that the events and their properties are right and cannot show that PostHog
+    accepts them.
+  * Both PostHog keys were checked before the deploy, and checked *together*:
+    `/api/feature_flag/local_evaluation` accepted the project key and the `phs_`
+    secret as a pair, which is the only way to know they belong to the same
+    project. A mismatched pair is accepted individually and then returns no flags,
+    silently, which is a failure that would have surfaced only in the flags PR.
   * The ingest key was checked against Honeycomb's `/1/auth` before the deploy
     and answered `type: ingest`, team `ravix`, environment `prod`,
     `createDatasets: true`, on the **US** instance — which is why no
@@ -58,6 +69,11 @@ about code, and since this one rests partly on somebody looking at a screen:
     renders them.
   * **Not verified at all:** sampling below 1.0. `HONEYCOMB_SAMPLE_RATIO` has
     only ever been exercised at its default and by a unit test of its parsing.
+  * **Not verified either:** seven of the eight events. Only `signed in` has been
+    seen arriving; the rest are proven by test and by sharing one door with it.
+    The properties most worth a second look when somebody does check are the two
+    that were argued about --- that `ravix.repo` carries what it should, and that
+    no prompt text appears anywhere near `prompt sent`.
 
 ## Context
 
