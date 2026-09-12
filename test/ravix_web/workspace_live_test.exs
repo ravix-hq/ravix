@@ -342,7 +342,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
     end)
 
     {:ok, parent, _} = live(log_in_user(conn, user), "/p/#{project.id}/t/#{track.id}")
-    child = find_live_child(parent, "track-#{track.id}")
+    child = find_live_child(parent, "track-host")
     render_async(child)
     assert has_element?(child, "#composer-form")
     assert render(child) =~ "app.ex"
@@ -358,7 +358,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
     People.add_member(track.id, user.id, owner.id)
     stub_track(track)
     {:ok, parent, _} = live(log_in_user(conn, user), "/p/#{project.id}/t/#{track.id}")
-    child = find_live_child(parent, "track-#{track.id}")
+    child = find_live_child(parent, "track-host")
     render_async(child)
     People.remove_member(track.id, user.id)
     send(child.pid, {:transcript, track.id, %{"id" => 1, "data" => "private output"}})
@@ -473,7 +473,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
     end)
 
     {:ok, parent, _} = live(log_in_user(conn, user), "/p/#{project.id}/t/#{track.id}")
-    child = find_live_child(parent, "track-#{track.id}")
+    child = find_live_child(parent, "track-host")
     render_async(child)
     child |> element("button", "app.ex") |> render_click()
     assert render(child) =~ "hello file"
@@ -493,7 +493,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
     stub_track(track)
     expect(Tracks, :prompt, fn _, _, _ -> {:error, {:unavailable, "Please try again"}} end)
     {:ok, parent, _} = live(log_in_user(conn, user), "/p/#{project.id}/t/#{track.id}")
-    child = find_live_child(parent, "track-#{track.id}")
+    child = find_live_child(parent, "track-host")
     render_async(child)
     child |> form("#composer-form", text: "Keep this draft") |> render_submit()
     assert render(child) =~ "Please try again"
@@ -507,7 +507,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
     track = insert_track(project: project, conversation_id: "conversation-test")
     stub_track(track)
     {:ok, parent, _} = live(log_in_user(conn, user), "/p/#{project.id}/t/#{track.id}")
-    child = find_live_child(parent, "track-#{track.id}")
+    child = find_live_child(parent, "track-host")
     render_async(child)
 
     image = <<137, 80, 78, 71, 13, 10, 26, 10>>
@@ -549,6 +549,115 @@ defmodule RavixWeb.WorkspaceLiveTest do
 
     conn = conn |> log_in_user(user) |> get("/preview/track-id")
     assert redirected_to(conn) == "https://track.preview.example/__ravix/open#ticket"
+  end
+
+  describe "moving between tracks" do
+    setup %{conn: conn} do
+      user = insert_user()
+      project = insert_project(user: user)
+      one = insert_track(project: project, title: "First track", conversation_id: "c-one")
+      two = insert_track(project: project, title: "Second track", conversation_id: "c-two")
+
+      stub(Tracks, :get, fn _user, id, _opts ->
+        row = Repo.get!(Ravix.Tracks.Track, id)
+        {:ok, %{track: Tracks.present(row), header: blank_header(), starters: []}}
+      end)
+
+      stub(Tracks, :events, fn _, _ -> {:ok, Transcript.empty("")} end)
+      stub(Tracks, :follow, fn _, _, _ -> {:ok, self()} end)
+      stub(Tracks, :beat, fn _, _, _ -> :ok end)
+      stub(Tracks, :mark_read, fn _, _ -> :ok end)
+      stub(Tracks, :files, fn _, _, _ -> {:error, {:unavailable, "no machine"}} end)
+
+      {:ok, parent, _} = live(log_in_user(conn, user), "/p/#{project.id}/t/#{one.id}")
+      child = find_live_child(parent, "track-host")
+      render_async(child)
+
+      %{user: user, project: project, one: one, two: two, parent: parent, child: child}
+    end
+
+    test "the page moves to the next track rather than being rebuilt for it", ctx do
+      assert render(ctx.child) =~ "First track"
+      was = ctx.child.pid
+      test_pid = self()
+
+      # Held open so that what the page draws *before* the new track's detail
+      # answers is what the assertions below see. That is the whole point of
+      # the hand-over: the rail already knows this track's title and branch,
+      # so a switch costs no Fountain round trip before something correct is
+      # on the screen.
+      stub(Tracks, :get, fn _user, id, _opts ->
+        send(test_pid, {:reading_detail, self()})
+
+        receive do
+          :release_detail -> :ok
+        after
+          5_000 -> flunk("the detail read was never released")
+        end
+
+        row = Repo.get!(Ravix.Tracks.Track, id)
+        {:ok, %{track: Tracks.present(row), header: blank_header(), starters: []}}
+      end)
+
+      render_patch(ctx.parent, "/p/#{ctx.project.id}/t/#{ctx.two.id}")
+      assert_receive {:reading_detail, reader}, 5_000
+
+      # Same process: no join, no second access check, no `allow_upload/3`,
+      # and nothing thrown away that belonged to the person rather than the
+      # track.
+      assert find_live_child(ctx.parent, "track-host").pid == was
+
+      html = render(ctx.child)
+      assert html =~ "Second track"
+      refute html =~ "First track"
+      assert html =~ ctx.two.branch
+
+      send(reader, :release_detail)
+      render_async(ctx.child)
+      assert render(ctx.child) =~ "Second track"
+    end
+
+    test "the transcript starts over for the track arrived at", ctx do
+      # The scroll container keeps its id across a switch now, so `data-track`
+      # is what tells the hook it is somewhere new and should pin to the
+      # bottom again. Without it a reader who had scrolled up in one track
+      # would land part-way up the next.
+      assert has_element?(ctx.child, ~s{#transcript-scroll[data-track="#{ctx.one.id}"]})
+
+      render_patch(ctx.parent, "/p/#{ctx.project.id}/t/#{ctx.two.id}")
+      render_async(ctx.child)
+
+      assert has_element?(ctx.child, ~s{#transcript-scroll[data-track="#{ctx.two.id}"]})
+    end
+
+    test "a track this person cannot reach is refused before anything is read", ctx do
+      other = insert_user()
+      elsewhere = insert_project(user: other)
+      theirs = insert_track(project: elsewhere, title: "Not yours")
+      test_pid = self()
+
+      # Nothing may answer, so that the refusal can only have come from the
+      # page's own check. The `:track_async_access` hook would catch a result
+      # for a track this person lost --- that is its job --- but catching it
+      # *there* means the read was made and the hand-over's track was already
+      # assigned, which is somebody else's title, branch and worktree drawn on
+      # the screen for as long as Fountain took.
+      stub(Tracks, :get, fn _user, id, _opts ->
+        send(test_pid, {:read_attempted, id})
+        Process.sleep(:infinity)
+      end)
+
+      # Sent straight to the page, because the question is what *it* does with
+      # a hand-over it should not honour. The rail only ever offers tracks it
+      # read for this person, but a hand-over is a message like any other, and
+      # a page that took one on trust would draw whatever sent it.
+      {:ok, their_project} = Ravix.Projects.get(other, elsewhere.id)
+      send(ctx.child.pid, {:select_track, their_project, Tracks.present(theirs)})
+
+      # A nested page's redirect surfaces on the page that hosts it.
+      assert_redirect(ctx.parent, "/", 1_000)
+      refute_receive {:read_attempted, _}, 200
+    end
   end
 
   defp stub_track(track) do

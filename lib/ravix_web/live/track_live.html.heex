@@ -81,7 +81,17 @@
     </header>
     <div class="split">
       <section class="track-conversation" aria-label="Conversation">
-        <div id="transcript-scroll" phx-hook="TranscriptTail" class="transcript-scroll">
+        <%!-- `data-track` is how the scroll hook learns it is somewhere new.
+          This element keeps its id across a track switch now --- the page
+          moves rather than being rebuilt --- so without it a reader who had
+          scrolled up in one track would arrive part-way up the next one. See
+          `assets/js/hooks/transcript_tail.js`. --%>
+        <div
+          id="transcript-scroll"
+          phx-hook="TranscriptTail"
+          class="transcript-scroll"
+          data-track={@track.id}
+        >
           <div class="track-ribbon">
             <p :if={@header && @header.copy_of} class="track-copy">
               You are in a copy of {@header.copy_of} called

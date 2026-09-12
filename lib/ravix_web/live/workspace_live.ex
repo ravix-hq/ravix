@@ -48,6 +48,9 @@ defmodule RavixWeb.WorkspaceLive do
         advanced_track: false,
         project: nil,
         track_id: nil,
+        # The nested `RavixWeb.TrackLive`, once it has said where it is. See
+        # the `:track_host` clause of `handle_info/2`, and `hand_over/3`.
+        track_host: nil,
         dialog: nil,
         project_form: Form.new(:new_project),
         track_form: Form.new(:new_track),
@@ -115,7 +118,9 @@ defmodule RavixWeb.WorkspaceLive do
     expanded = if arriving?, do: MapSet.put(expanded, project.id), else: expanded
 
     socket =
-      assign(socket,
+      socket
+      |> hand_over(project, track_id)
+      |> assign(
         project: project,
         track_id: track_id,
         dialog: nil,
@@ -127,6 +132,38 @@ defmodule RavixWeb.WorkspaceLive do
     else
       socket
     end
+  end
+
+  # Move the nested track page to the track that was just chosen, rather than
+  # letting it be torn down and built again.
+  #
+  # `live_render/3` keys the child on its DOM id, so an id with the track in
+  # it meant every switch unmounted one LiveView and mounted another: a join,
+  # a fresh access check, `allow_upload/3` and the hooks all over again, and a
+  # page with nothing on it until the first read answered. The id is fixed
+  # now, and this is what moves it.
+  #
+  # The track handed over is the one already in the rail --- this page read it
+  # for the list on the left, through `Ravix.Tracks.list/2` and this person's
+  # own access --- so the child can draw the right title, branch and status in
+  # the same patch that asks for the rest. It is a head start and not an
+  # authority: `RavixWeb.TrackLive` checks the person against the new track
+  # before it renders a thing, and replaces all of it with what
+  # `Ravix.Tracks.get/3` answers.
+  #
+  # Nothing is sent when the track is not changing, because every patch comes
+  # through here --- opening a dialog, dismissing one --- and a hand-over is a
+  # reload of the page on the right.
+  defp hand_over(socket, project, track_id) do
+    track =
+      project && track_id &&
+        Enum.find(socket.assigns.tracks[project.id] || [], &(&1.id == track_id))
+
+    if track && socket.assigns.track_host && socket.assigns.track_id != track_id do
+      send(socket.assigns.track_host, {:select_track, project, track})
+    end
+
+    socket
   end
 
   # A URL patch is not a message, so no hook has run for it; this is where a
@@ -309,6 +346,15 @@ defmodule RavixWeb.WorkspaceLive do
   # of the rail's fields each event can reach, and getting that wrong shows
   # up as a status dot that is quietly a minute stale.
   @impl true
+  # The nested track page saying where it is, on its own mount.
+  #
+  # A nested LiveView has no `handle_params/3` and reads its session once, at
+  # mount, so the only way to move one that is already mounted to a different
+  # track is to tell it. It knows this process --- `socket.parent_pid` --- and
+  # this process does not know it until it says so, which is why the
+  # introduction runs this way round rather than the other.
+  def handle_info({:track_host, pid}, socket), do: {:noreply, assign(socket, track_host: pid)}
+
   # The people dialog did the removal. Either way the rail is now wrong --
   # a project you just left goes, and a project you took somebody off has a
   # different set of tracks under it -- so it is re-read and the dialog
