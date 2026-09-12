@@ -1,5 +1,6 @@
 defmodule RavixWeb.WorkspaceLiveTest do
   use RavixWeb.ConnCase, async: false
+  import Ecto.Query, only: [from: 2]
   import Phoenix.LiveViewTest
   import Mimic
   alias Ravix.{Accounts, Crypto, Hub, Previews, Projects, QueryCount, Repo, Tracks}
@@ -290,7 +291,9 @@ defmodule RavixWeb.WorkspaceLiveTest do
     refute has_element?(view, "button", "Settings")
     People.remove_project_member(project.id, user.id)
     Hub.publish(project.id, :people)
-    refute render(view) =~ project.name
+    # `:people` is one of the three that can change which projects exist at
+    # all, so it re-reads the whole rail, and that read is a task now.
+    refute render_async(view) =~ project.name
   end
 
   test "the rail ignores the two events it cannot render", %{conn: conn} do
@@ -322,10 +325,44 @@ defmodule RavixWeb.WorkspaceLiveTest do
     ignored = Enum.map([:here, :queue], cost)
     assert [guard] = Enum.uniq(ignored), "the ignored events differ: #{inspect(ignored)}"
 
-    # Everything else still reloads: a narrower rule would have to know
-    # which of the rail's fields each event can reach, and getting that
-    # wrong shows up as a status dot that is quietly a minute stale.
-    for name <- [:people, :tracks, :turn, :settings], do: assert(cost.(name) > guard)
+    # And that the guard is the whole of it: an event this page does act on
+    # reads more than that, in whichever process it reads.
+    assert cost.(:settings) == guard
+    assert render_async(view) =~ "On the rail"
+  end
+
+  test "a turn re-reads the tracks of the project it names, and no others", %{conn: conn} do
+    user = insert_user()
+    a = insert_project(user: user)
+    b = insert_project(user: user)
+    on_a = insert_track(project: a, title: "Alpha one")
+    on_b = insert_track(project: b, title: "Beta one")
+
+    {:ok, view, _} = live(log_in_user(conn, user), "/p/#{a.id}")
+    assert render(view) =~ "Alpha one"
+
+    # Renamed underneath the page, without the hub being told, so that what
+    # is on screen afterwards says which of the two lists was read again. A
+    # turn is the most frequent event the rail sees --- one at each end of
+    # everything every agent does, on every project this person can see ---
+    # and re-reading them all meant a live Fountain call per project, in this
+    # process, with the page unable to draw or answer a click meanwhile.
+    rename = fn track, title ->
+      Repo.update_all(
+        from(t in Ravix.Tracks.Track, where: t.id == ^track.id),
+        set: [title: title]
+      )
+    end
+
+    rename.(on_a, "Alpha two")
+    rename.(on_b, "Beta two")
+
+    send(view.pid, {:hub, Event.new(:turn, a.id, track_id: on_a.id)})
+    html = render_async(view)
+
+    assert html =~ "Alpha two"
+    assert html =~ "Beta one"
+    refute html =~ "Beta two"
   end
 
   test "a track loads its transcript, sends prompts, and renders its files", %{conn: conn} do

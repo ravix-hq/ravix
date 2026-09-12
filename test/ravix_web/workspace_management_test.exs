@@ -84,6 +84,9 @@ defmodule RavixWeb.WorkspaceManagementTest do
 
       render_click(ctx.view, "dialog", %{name: "new-track"})
       render_click(ctx.view, "origin", %{kind: @kind})
+      # Listing a repository's branches, pulls or issues is a GitHub call,
+      # and the form cannot be submitted against a ref that has not arrived.
+      render_async(ctx.view)
 
       params =
         if ref,

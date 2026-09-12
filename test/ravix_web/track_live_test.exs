@@ -156,7 +156,8 @@ defmodule RavixWeb.TrackLiveTest do
     end)
 
     render_click(ctx.view, "file", %{path: "image.png"})
-    assert render(ctx.view) =~ "Binary file (128 bytes)"
+    # A file is a Fountain round trip, and the page no longer waits it out.
+    assert render_async(ctx.view) =~ "Binary file (128 bytes)"
     refute render(ctx.view) =~ "secret-binary"
     assert render(ctx.view) =~ "File content is truncated"
   end
@@ -514,7 +515,7 @@ defmodule RavixWeb.TrackLiveTest do
     assert QueryCount.queries(
              fn ->
                send(ctx.view.pid, {:transcript, ctx.track.id, event})
-               render(ctx.view)
+               render(drawn(ctx.view))
              end,
              from: ctx.view.pid
            ) == 0
@@ -543,6 +544,18 @@ defmodule RavixWeb.TrackLiveTest do
   defp settle(view) do
     render_async(view)
     render_async(view)
+  end
+
+  # Close the window the page collects transcript events in, and hand the view
+  # back to be rendered. The page draws on a `:flush_transcript` it sends
+  # itself a tenth of a second after the first event of a burst (see
+  # `@flush_ms`), so a test that has just handed it one says when the window
+  # ends rather than waiting out a clock. Delivering the message the timer
+  # would have is also what the timer's own arrival finds already done: a
+  # flush with nothing pending draws nothing.
+  defp drawn(view) do
+    send(view.pid, :flush_transcript)
+    view
   end
 
   defp hub_queries(ctx, event) do
@@ -602,9 +615,9 @@ defmodule RavixWeb.TrackLiveTest do
     }
 
     send(ctx.view.pid, {:transcript, "wrong-track", event})
-    refute render(ctx.view) =~ "Hello"
+    refute render(drawn(ctx.view)) =~ "Hello"
     send(ctx.view.pid, {:transcript, ctx.track.id, event})
-    assert render(ctx.view) =~ "Hello"
+    assert render(drawn(ctx.view)) =~ "Hello"
     refute has_element?(ctx.view, "#transcript-turns script")
 
     stage = %{
@@ -617,11 +630,51 @@ defmodule RavixWeb.TrackLiveTest do
 
     send(ctx.view.pid, {:transcript, ctx.track.id, stage})
     # The stubbed snapshot is older than the streamed event; it must not erase it.
-    assert render_async(ctx.view) =~ "Hello"
+    assert render_async(drawn(ctx.view)) =~ "Hello"
     expect(Tracks, :events, fn _, _ -> {:error, {:unavailable, "Transcript offline"}} end)
     send(ctx.view.pid, :refresh)
     assert render_async(ctx.view) =~ "Transcript offline"
     assert render(ctx.view) =~ "Hello"
+  end
+
+  test "a burst of chunks is drawn once, when the window closes", ctx do
+    # The cost of drawing a turn is the size of the turn, because a stream
+    # keeps no fingerprint per item and so re-sends the whole of one on every
+    # insert. Fountain's stream is token-granularity, so "draw what arrived"
+    # made a long turn quadratic in its own length, per reader. What bounds it
+    # is the window: however many chunks land in one, they are one render.
+    chunk = fn id, text ->
+      %{
+        "id" => id,
+        "turn_id" => "burst",
+        "kind" => "output",
+        "stream" => "acp",
+        "data" =>
+          Jason.encode!(%{
+            jsonrpc: "2.0",
+            method: "session/update",
+            params: %{
+              update: %{
+                sessionUpdate: "agent_message_chunk",
+                content: %{type: "text", text: text}
+              }
+            }
+          })
+      }
+    end
+
+    ~w(ne ver mind)
+    |> Enum.with_index(1)
+    |> Enum.each(fn {text, id} ->
+      send(ctx.view.pid, {:transcript, ctx.track.id, chunk.(id, text)})
+    end)
+
+    # Read, but not yet drawn: the three chunks are in the page's transcript
+    # and the turn on screen has none of them.
+    refute render(ctx.view) =~ "nevermind"
+
+    # And then drawn as one turn, with all three in it.
+    assert render(drawn(ctx.view)) =~ "nevermind"
   end
 
   test "a raw event from an instance running the previous release is still understood", ctx do
@@ -653,7 +706,7 @@ defmodule RavixWeb.TrackLiveTest do
     send(ctx.view.pid, {:transcript, ctx.track.id, raw.(31, "old shape ")})
     send(ctx.view.pid, {:transcript, ctx.track.id, Transcript.Event.from(raw.(32, "new shape"))})
 
-    assert render(ctx.view) =~ "old shape new shape"
+    assert render(drawn(ctx.view)) =~ "old shape new shape"
   end
 
   test "a follower that goes away is replaced, from the page's own cursor", ctx do
@@ -722,7 +775,7 @@ defmodule RavixWeb.TrackLiveTest do
       }
     })
 
-    html = render(ctx.view)
+    html = render(drawn(ctx.view))
     assert html =~ "provision failed"
     assert html =~ "Add a credit card"
 

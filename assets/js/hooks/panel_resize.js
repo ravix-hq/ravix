@@ -84,6 +84,7 @@ export const PanelResize = {
       else if (e.key === "End") this.resize(this.maximum)
       else return
       e.preventDefault()
+      this.save()
     })
   },
 
@@ -110,6 +111,7 @@ export const PanelResize = {
   stop() {
     this.drag = null
     this.el.dataset.dragging = "false"
+    this.save()
   },
 
   saved() {
@@ -131,8 +133,16 @@ export const PanelResize = {
     this.set(next)
     this.width = next
     this.reflect()
+  },
+
+  // Written where a drag ends rather than where it moves. A pointer emits a
+  // move per frame and often several, and every one of them was a synchronous
+  // storage write of a width nobody would read until the next visit. Both
+  // ways of resizing end somewhere -- the pointer at `stop`, the arrow keys
+  // at the keystroke -- so nothing is lost by waiting for it.
+  save() {
     try {
-      localStorage.setItem(this.key, String(next))
+      localStorage.setItem(this.key, String(this.width))
     } catch {
       // Storage may be disabled.
     }

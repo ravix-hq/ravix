@@ -8,6 +8,17 @@ defmodule Ravix.Tracks.Transcript.Turn do
   grows: `events` and `blocks` accumulate as output arrives, and `settled?`
   and `visible?` are read off them.
 
+  ## Both accumulators are newest first
+
+  `events` is kept in the order `fold` is, which is the reverse of the order
+  the events happened in. A live turn takes one event at a time and does so
+  thousands of times, so putting each one on the end meant copying the whole
+  list per frame, and the head is also where the two questions actually asked
+  of the list live: whether this event is newer than everything already here,
+  and what the last one was. `Ravix.Tracks.Transcript` reverses once when it
+  has to rebuild the fold from scratch, which happens when events arrive out
+  of order and not otherwise.
+
   ## Why only `id` is enforced
 
   The wire fields are genuinely absent on a turn the event log named before
