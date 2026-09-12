@@ -52,6 +52,7 @@ defmodule RavixWeb.Endpoint do
     from: :ravix,
     gzip: not code_reloading?,
     only: RavixWeb.static_paths(),
+    only_matching: RavixWeb.static_prefixes(),
     raise_on_missing_only: code_reloading?
 
   # Code reloading can be explicitly enabled under the

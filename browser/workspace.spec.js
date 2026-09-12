@@ -43,6 +43,35 @@ async function chooseTheme(page, name) {
   });
 }
 
+// Record the palette on every frame, from before the page's own scripts run,
+// so a frame painted in the wrong one is evidence afterwards rather than
+// something only an eye on a hard reload catches.
+function watchPalette(page, saved) {
+  return page.addInitScript(`
+    try { localStorage.setItem("ravix.theme", ${JSON.stringify(saved)}) } catch {}
+    window.__palette = [];
+    const sample = () => {
+      const root = document.documentElement;
+      if (root) {
+        window.__palette.push({
+          at: Math.round(performance.now()),
+          theme: root.getAttribute("data-theme"),
+          bg: getComputedStyle(root).getPropertyValue("--bg").trim(),
+        });
+      }
+      requestAnimationFrame(sample);
+    };
+    requestAnimationFrame(sample);
+  `);
+}
+
+async function paintedOnly(page, theme) {
+  await page.evaluate(() => new Promise(requestAnimationFrame));
+  const frames = await page.evaluate(() => window.__palette ?? []);
+  expect(frames.length).toBeGreaterThan(0);
+  expect(frames.filter((frame) => frame.theme !== theme)).toEqual([]);
+}
+
 async function fitsViewport(page) {
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 }
@@ -280,4 +309,31 @@ test('project, track, streaming, image upload, reconnect, and revocation', async
 
   await page.screenshot({ path: test.info().outputPath("workspace.png"), fullPage: true });
   expect(errors).toEqual([]);
+});
+
+test('a hard load paints the saved palette, never the default one first', async ({ page }) => {
+  // The palette bootstrap is a blocking script in `<head>`, ahead of the
+  // stylesheet, so the first paint is already in the reader's theme. It was
+  // served as a 404 in production for a reason only a digested build can
+  // show: `mix phx.digest` renames a file at the root, `Plug.Static` matches
+  // `:only` against the request's first segment exactly, and the digested
+  // name is not in that list. Dev and test never rewrite the tag, so the
+  // page there asks for `/theme.js`, which is served. Every hard load in
+  // production painted the default theme until LiveView connected — about a
+  // fifth of a second on the signed-out page, which is the one a stranger
+  // sees first.
+  await watchPalette(page, 'hot-dog-stand');
+
+  await page.goto('/login');
+  const bootstrap = await page.locator('head script[src*="theme"]').getAttribute('src');
+  expect((await page.request.get(bootstrap)).status()).toBe(200);
+  await expect(page.locator('[data-phx-main]')).toHaveClass(/phx-connected/);
+  await paintedOnly(page, 'hot-dog-stand');
+
+  // And again on a page behind the session, which is a second render of the
+  // same layout and the one somebody reloads all day.
+  await signIn(page);
+  await page.goto('/');
+  await expect(page.locator('[data-phx-main]')).toHaveClass(/phx-connected/);
+  await paintedOnly(page, 'hot-dog-stand');
 });

@@ -17,7 +17,39 @@ defmodule RavixWeb do
   those modules here.
   """
 
+  @doc "What `Plug.Static` serves, as the undigested names on disk."
+  @spec static_paths() :: [String.t()]
   def static_paths, do: ~w(assets fonts images favicon.ico robots.txt theme.js)
+
+  @doc """
+  The root-level entries of `static_paths/0`, as prefixes.
+
+  `mix phx.digest` renames a file at the root --- `theme.js` on disk becomes
+  `theme-<digest>.js` --- and `Plug.Static`'s `:only` compares the request's
+  *first segment* against its list exactly, so the digested name is not in it
+  and the request falls through to the router, which 404s. A file inside a
+  directory is unaffected, because digesting changes the name after the
+  segment being matched; that is why this was only ever true of the three
+  files at the root.
+
+  It went unseen because it cannot happen where it would be noticed. `~p`
+  only rewrites to the digested name when a manifest exists, so in dev and in
+  test the tag says `/theme.js`, which is in `:only` and is served; and
+  `raise_on_missing_only`, which exists to catch exactly this, is on in dev,
+  where there is nothing to catch. Production served the palette bootstrap as
+  a 404 and every hard load painted the default theme until LiveView
+  connected. `browser/workspace.spec.js` is where that is now asserted,
+  because the browser suite is the one that runs a digested build.
+
+  `:only_matching` is `Plug.Static`'s own answer for this --- its docs name
+  serving digested files at the root as the case it is for.
+  """
+  @spec static_prefixes() :: [String.t()]
+  def static_prefixes do
+    static_paths()
+    |> Enum.filter(&(Path.extname(&1) != ""))
+    |> Enum.map(&Path.rootname/1)
+  end
 
   def router do
     quote do
