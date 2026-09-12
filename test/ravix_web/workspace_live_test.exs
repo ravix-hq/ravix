@@ -552,7 +552,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
   end
 
   defp stub_track(track) do
-    stub(Tracks, :get, fn _, _ ->
+    stub(Tracks, :get, fn _, _, _ ->
       {:ok, %{track: Tracks.present(track), header: blank_header(), starters: []}}
     end)
 

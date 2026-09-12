@@ -54,6 +54,10 @@ defmodule RavixWeb.TrackLive do
         starters: [],
         page: Transcript.empty(""),
         loading: true,
+        # The transcript is read separately from the rest of the track, and
+        # is the slowest of the reads, so the page says which of the two it
+        # is still waiting on rather than treating "loaded" as one moment.
+        transcript_loading: true,
         queue: [],
         present: [],
         panel: Panel.new(),
@@ -358,9 +362,7 @@ defmodule RavixWeb.TrackLive do
     end
   end
 
-  defp async_result(:load, {:ok, {:ok, detail, project, page}}, socket) do
-    socket = if detail.track.conversation_id, do: follow(socket, page), else: socket
-
+  defp async_result(:load, {:ok, {:ok, detail, project}}, socket) do
     Tracks.beat(socket.assigns.current_user, socket.assigns.track_id, :watching)
     Tracks.mark_read(socket.assigns.current_user, socket.assigns.track_id)
 
@@ -370,12 +372,18 @@ defmodule RavixWeb.TrackLive do
       project: project,
       header: detail.header,
       starters: detail.starters,
-      page: page,
       loading: false
     )
-    |> stream(:turns, Transcript.visible_turns(page), reset: true)
-    |> refresh_queue()
-    |> load_panel()
+    # This render is the one that puts `#transcript-turns` on the page, and a
+    # stream's pending inserts are consumed by whichever render comes next
+    # whether or not that render contains the container. So a transcript that
+    # answered first --- it is a separate read now, and it does sometimes win
+    # --- has already had its turns dropped into a page that had no transcript
+    # in it yet, and they are gone. Whatever `page` holds by now is written
+    # again here, into the container that finally exists. When the transcript
+    # is the one still outstanding this is an empty reset, and its own result
+    # inserts into a container that is by then real.
+    |> stream(:turns, Transcript.visible_turns(socket.assigns.page), reset: true)
   end
 
   defp async_result(:load, {:ok, {:error, reason}}, socket),
@@ -390,16 +398,29 @@ defmodule RavixWeb.TrackLive do
 
   defp async_result(:queue, {:ok, {:error, reason}}, socket), do: error(socket, reason)
 
+  # The same clause serves the read this page opens with and every repair
+  # afterwards, because the difference between them is one question --- is
+  # this page already following the track's live transcript? --- and the
+  # answer is in `follower` rather than in which call asked. A page that is
+  # not following subscribes from what it just read, which covers the first
+  # read, a follower that went down between the `:DOWN` clause's own attempt
+  # and now, and a track that had no conversation when it opened and has one
+  # by the time the backstop tick comes round.
   defp async_result(:transcript, {:ok, {:ok, page}}, socket) do
+    socket = if socket.assigns.follower, do: socket, else: follow(socket, page)
+
     newer =
       socket.assigns.page.turns
       |> Enum.flat_map(& &1.events)
       |> Enum.filter(&(&1.id > (page.last_event_id || 0)))
 
-    repair(socket, Transcript.add_events(page, newer))
+    socket
+    |> assign(transcript_loading: false)
+    |> repair(Transcript.add_events(page, newer))
   end
 
-  defp async_result(:transcript, {:ok, {:error, reason}}, socket), do: error(socket, reason)
+  defp async_result(:transcript, {:ok, {:error, reason}}, socket),
+    do: socket |> assign(transcript_loading: false) |> error(reason)
 
   defp async_result(:panel, {:ok, {:ok, %Previews.View{} = preview}}, socket),
     do: socket |> show_preview(preview) |> update_panel(&Panel.settled/1)
@@ -428,7 +449,7 @@ defmodule RavixWeb.TrackLive do
   defp async_result(_name, {:exit, _reason}, socket),
     do:
       socket
-      |> assign(loading: false, exec_busy: false)
+      |> assign(loading: false, transcript_loading: false, exec_busy: false)
       |> update_panel(&Panel.settled/1)
       |> put_flash(:error, "Could not finish loading. Please try again.")
 
@@ -502,19 +523,48 @@ defmodule RavixWeb.TrackLive do
      end)}
   end
 
+  # Everything a track page opens with, started at once and rendered as each
+  # piece lands.
+  #
+  # These used to be one `with` chain in one task, which made the page's first
+  # paint cost the sum of four Fountain round trips: two inside `Tracks.get/2`
+  # and two more inside `Tracks.events/2`, which reads the turns and the event
+  # log. Nothing rendered until the last of them answered, so switching tracks
+  # blanked the screen for as long as the slowest read took -- and the slowest
+  # read is the transcript, which is also the only part of the page somebody
+  # can wait a moment for.
+  #
+  # Split, the chrome (title, branch, ribbon, composer, panel tabs) paints
+  # after `Tracks.get/2` alone while the transcript is still arriving, and the
+  # two halves overlap instead of queueing. The queue and the panel start here
+  # too, for the same reason: neither needs anything `:load` answers.
   defp load(socket) do
     user = socket.assigns.current_user
     id = socket.assigns.track_id
     project_id = socket.assigns.project_id
 
     socket
-    |> assign(loading: true)
+    |> assign(loading: true, transcript_loading: true, page: Transcript.empty(""))
+    |> stream(:turns, [], reset: true)
+    # A load starts the page's transcript over from nothing, so the
+    # subscription it had --- taken from a cursor this page has just thrown
+    # away --- goes with it, and the read below establishes the next one.
+    |> unfollow()
     |> start_async(:load, fn ->
-      with {:ok, detail} <- Tracks.get(user, id),
+      # `fresh: false` drops the last Fountain round trip standing between
+      # this page and its first paint. What it costs is a status dot, a turn
+      # count and an unread mark that may be up to `MachineCache.ttl_ms/0`
+      # old for the moment before the hub says otherwise --- and a track that
+      # started running in the last five seconds is about to publish a `:turn`
+      # to this very page's subscription, which is what corrects it. The
+      # refresh below asks for fresh, because that one is running on the news.
+      with {:ok, detail} <- Tracks.get(user, id, fresh: false),
            {:ok, project} <- Ravix.Projects.get(user, project_id),
-           {:ok, page} <- Tracks.events(user, id),
-           do: {:ok, detail, project, page}
+           do: {:ok, detail, project}
     end)
+    |> start_async(:transcript, fn -> Tracks.events(user, id) end)
+    |> refresh_queue()
+    |> load_panel()
   end
 
   # Subscribe to the track's live transcript from the newest event this page
@@ -523,16 +573,27 @@ defmodule RavixWeb.TrackLive do
   # unaffected by a failure here, which is why an error is not surfaced -- the
   # events simply stop arriving and the fifteen-second refresh keeps working.
   defp follow(socket, page) do
-    case socket.assigns.follower do
-      nil -> :ok
-      ref -> Process.demonitor(ref, [:flush])
-    end
+    socket = unfollow(socket)
 
     case Tracks.follow(socket.assigns.current_user, socket.assigns.track_id,
            after: page.last_event_id
          ) do
       {:ok, pid} -> assign(socket, follower: Process.monitor(pid))
       {:error, _reason} -> assign(socket, follower: nil)
+    end
+  end
+
+  # Stop monitoring the follower this page had, so that `follower` says what
+  # it is documented to say: nil is a page that is not following, and the
+  # transcript read is what makes it one again.
+  defp unfollow(socket) do
+    case socket.assigns.follower do
+      nil ->
+        socket
+
+      ref ->
+        Process.demonitor(ref, [:flush])
+        assign(socket, follower: nil)
     end
   end
 
@@ -717,7 +778,7 @@ defmodule RavixWeb.TrackLive do
   defp refresh_detail(socket) do
     user = socket.assigns.current_user
     id = socket.assigns.track_id
-    start_async(socket, :detail, fn -> Tracks.get(user, id) end)
+    start_async(socket, :detail, fn -> Tracks.get(user, id, fresh: true) end)
   end
 
   defp refresh_queue(socket) do

@@ -21,7 +21,7 @@ defmodule RavixWeb.TrackLiveTest do
         created_by_login: user.login
       )
 
-    stub(Tracks, :get, fn _, id ->
+    stub(Tracks, :get, fn _, id, _opts ->
       row = Repo.get!(Track, id)
 
       {:ok,
@@ -123,7 +123,7 @@ defmodule RavixWeb.TrackLiveTest do
   end
 
   test "failed load can be retried without leaving the track", ctx do
-    expect(Tracks, :get, fn _, _ -> {:error, {:unavailable, "Offline now"}} end)
+    expect(Tracks, :get, fn _, _, _ -> {:error, {:unavailable, "Offline now"}} end)
     render_click(ctx.view, "retry-load")
     assert render_async(ctx.view) =~ "Offline now"
     render_click(ctx.view, "retry-load")
@@ -536,10 +536,10 @@ defmodule RavixWeb.TrackLiveTest do
 
   # What one hub event costs the page, in queries, once it has settled.
   # `render_async/1` waits on the async reads outstanding when it is called,
-  # and not on any the first of them starts. The page's load is exactly that
-  # shape --- it settles, and *then* reads the queue and the open panel --- so
-  # one call leaves a second generation in flight and the next thing a test
-  # measures is paying for somebody else's read.
+  # and not on any that those start in turn. A load now starts its four reads
+  # together, so one call is usually enough --- but the transcript's result
+  # can still establish a follower, and a second call costs nothing and keeps
+  # the next thing a test measures from paying for somebody else's read.
   defp settle(view) do
     render_async(view)
     render_async(view)
@@ -784,7 +784,7 @@ defmodule RavixWeb.TrackLiveTest do
     parent = self()
     detail = stub_detail(ctx)
 
-    stub(Tracks, :get, fn _, _ ->
+    stub(Tracks, :get, fn _, _, _ ->
       send(parent, {:detail_waiting, self()})
 
       receive do
@@ -808,7 +808,7 @@ defmodule RavixWeb.TrackLiveTest do
   end
 
   test "a refresh that crashes leaves the page showing what it had", ctx do
-    stub(Tracks, :get, fn _, _ -> raise "Fountain fell over" end)
+    stub(Tracks, :get, fn _, _, _ -> raise "Fountain fell over" end)
 
     ExUnit.CaptureLog.capture_log(fn ->
       send(ctx.view.pid, {:hub, Event.new(:settings, ctx.project.id)})
@@ -979,4 +979,120 @@ defmodule RavixWeb.TrackLiveTest do
       created: %{dir: "t", files: nil},
       has_setup_script: false
     }
+
+  test "the track's chrome is drawn while its transcript is still being read", ctx do
+    test_pid = self()
+
+    # `Tracks.events/2` is two Fountain round trips and the largest answer the
+    # page waits for. Held open, it stands for the slow half of a real load:
+    # everything asserted before it is released is what somebody switching
+    # tracks sees immediately rather than after the transcript arrives.
+    stub(Tracks, :events, fn _user, _id ->
+      send(test_pid, {:reading_transcript, self()})
+
+      receive do
+        :release_transcript -> :ok
+      after
+        5_000 -> flunk("the transcript read was never released")
+      end
+
+      {:ok,
+       Transcript.page(
+         Shapes.turns([%{"id" => "turn", "prompt" => "An earlier prompt"}]),
+         [
+           %{
+             "id" => 1,
+             "turn_id" => "turn",
+             "kind" => "output",
+             "stream" => "acp",
+             "data" => "hi"
+           }
+         ],
+         "claude"
+       )}
+    end)
+
+    # Sent from inside the `:load` result, so a `render/1` after it is queued
+    # behind that handler and can only see the page it left.
+    stub(Tracks, :beat, fn _user, _id, kind ->
+      if kind == :watching, do: send(test_pid, :detail_applied)
+      :ok
+    end)
+
+    {:ok, parent, _} = live(ctx.conn, "/p/#{ctx.project.id}/t/#{ctx.track.id}")
+    view = find_live_child(parent, "track-#{ctx.track.id}")
+
+    assert_receive {:reading_transcript, reader}, 5_000
+    assert_receive :detail_applied, 5_000
+
+    html = render(view)
+    assert html =~ ctx.track.title
+    assert html =~ ctx.track.branch
+    assert html =~ "Loading conversation…"
+    refute html =~ "An earlier prompt"
+    # The starters are the empty-conversation answer, and this conversation is
+    # not empty --- it is unread. Offering them here would be a wrong answer
+    # shown and then taken back.
+    refute html =~ "What would you like to work on?"
+
+    send(reader, :release_transcript)
+    html = render_async(view)
+    assert html =~ "An earlier prompt"
+    refute html =~ "Loading conversation…"
+  end
+
+  test "a transcript that answers before the track's detail is still drawn", ctx do
+    test_pid = self()
+
+    # The reverse race of the test above, and the one that actually broke:
+    # the transcript is read separately now, so it can answer while the page
+    # still has no `#transcript-turns` to put it in --- and a stream's pending
+    # inserts are spent by the next render whether or not that render has the
+    # container in it. Holding `Tracks.get/2` open forces that order every
+    # time instead of leaving it to which read Fountain answers first.
+    stub(Tracks, :get, fn _user, id, _opts ->
+      send(test_pid, {:reading_detail, self()})
+
+      receive do
+        :release_detail -> :ok
+      after
+        5_000 -> flunk("the detail read was never released")
+      end
+
+      row = Repo.get!(Track, id)
+
+      {:ok,
+       %{
+         track: Tracks.present(row, role: :owner),
+         header: blank_header(),
+         starters: [%{label: "Start here", prompt: "Build it"}]
+       }}
+    end)
+
+    stub(Tracks, :events, fn _user, _id ->
+      {:ok,
+       Transcript.page(
+         Shapes.turns([%{"id" => "turn", "prompt" => "An earlier prompt"}]),
+         [
+           %{
+             "id" => 1,
+             "turn_id" => "turn",
+             "kind" => "output",
+             "stream" => "acp",
+             "data" => "hi"
+           }
+         ],
+         "claude"
+       )}
+    end)
+
+    {:ok, parent, _} = live(ctx.conn, "/p/#{ctx.project.id}/t/#{ctx.track.id}")
+    view = find_live_child(parent, "track-#{ctx.track.id}")
+
+    assert_receive {:reading_detail, reader}, 5_000
+    send(reader, :release_detail)
+    settle(view)
+
+    assert has_element?(view, "#transcript-turns .workspace-prompt", "An earlier prompt")
+  end
 end

@@ -22,7 +22,7 @@ defmodule RavixWeb.Live.PeopleDialogTest do
 
     # The track page needs a machine to render at all; the dialog under test
     # does not care which, so the provider is stubbed and the rows are real.
-    stub(Tracks, :get, fn _user, id ->
+    stub(Tracks, :get, fn _user, id, _opts ->
       row = Repo.get!(Track, id)
       {:ok, %{track: Tracks.present(row, role: :owner), header: blank_header(), starters: []}}
     end)
