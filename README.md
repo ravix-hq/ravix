@@ -108,6 +108,77 @@ absent, so an unpopulated placeholder reaching the service is the same as the
 variable not being set at all --- which is the only safe way for a placeholder
 to travel.
 
+## Agent tooling (MCP)
+
+`.mcp.json` declares three MCP servers in the repository, so a checkout gets them
+and there is no per-machine configuration to copy. Claude Code asks for approval
+the first time it sees them --- in an interactive session only, so a fresh
+checkout needs one `claude` run before they connect; `claude mcp
+reset-project-choices` takes that approval back.
+
+**Ravix's PostHog, Render and Honeycomb accounts are not the accounts the rest of
+this machine uses**, and that is the whole reason these entries exist and are
+shaped the way they are.
+
+An MCP connection signs in as **one** account. The remote servers all default to
+OAuth, which authenticates as whoever is logged in on the machine — so an OAuth
+connection would land on the wrong PostHog organisation and the wrong Render
+workspace, and pointing it at Ravix would take it away from every other project
+here. Both providers answer this the same way: **a distinct server name and an
+API key per account.** Hence `posthog-ravix` rather than `posthog`: a global
+`posthog` and a project `posthog-ravix` coexist, one per account, and neither
+shadows the other. Same-named entries in two scopes do not.
+
+So each server takes an account-scoped key from the environment:
+
+| Variable | Key to create |
+| --- | --- |
+| `RAVIX_POSTHOG_MCP_KEY` | PostHog personal API key on the **MCP Server** preset (<https://us.posthog.com/settings/user-api-keys?preset=mcp_server>, signed in as the account that owns Ravix's project). The preset scopes the key to one project, which is what keeps this connection from wandering the way an OAuth one does. |
+| `RAVIX_RENDER_MCP_KEY` | Render API key (<https://dashboard.render.com/u/settings?add-api-key>) for the account owning the `ravix` service. Render keys cannot be scoped to one workspace: the key reaches every workspace its account belongs to. |
+| `RAVIX_HONEYCOMB_MCP_KEY` | Honeycomb **Management API key**, as the `KEY_ID:SECRET` pair joined by a colon — the id is `hcamk_`-prefixed, so the whole value looks like `hcamk_...:...`. Created under *Account > Team Settings > API Keys*, by a team owner, and the secret half is shown **only** at creation. **Not** the ingest key `HONEYCOMB_API_KEY` that the application sends traces with, which cannot read anything. |
+
+All three speak streamable HTTP natively, so none of them needs the `npx
+mcp-remote` wrapper that Honeycomb's own documentation shows --- checked by
+handshaking against each endpoint directly. One transport, no node subprocess.
+
+Nothing secret goes in `.mcp.json` itself: it is committed, and the keys reach it
+through `${VAR}` expansion, which Claude Code resolves in `command`, `args`,
+`env`, `url` and `headers`. An unset variable is reported by `claude mcp list` as
+a missing-environment-variable warning naming the variable, rather than as a
+confusing 401 from inside a provider --- so an *absent* key is easier to diagnose
+than a blank one, which is worth knowing if these are held as unpopulated
+placeholders.
+
+These are developer-tool credentials rather than anything the application reads,
+so they live in the Infisical `ravix` project's **dev** environment and not in
+`prod`, which mirrors what the deployed service runs on.
+
+Two ways to get them into the environment, because **Claude Code expands
+`${VAR}` from the process environment and does not read `.env` itself** --- a
+`.env` sitting in the directory does nothing on its own:
+
+```sh
+mix mcp.env     # writes .env (gitignored, 0600) from Infisical's ravix/dev
+direnv allow    # once; .envrc then loads .env on entering the directory
+```
+
+or with nothing on disk at all:
+
+```sh
+infisical run --projectId <ravix project id> --env=dev -- claude
+```
+
+`mix mcp.env` refuses to write unless git already ignores `.env`, since writing
+credentials to a committable path is the one way it could do harm. It also says
+which values are still blank placeholders, because a blank is worse than a
+missing one here: Claude Code names a missing variable and a blank one becomes a
+401 from inside the provider. `.env.example` lists the three names with no
+values.
+
+`render-ravix` is worth one deliberate thought before enabling: Render's MCP can
+change a service's environment variables and trigger deploys, so it is write
+access to production, not a read-only window onto it.
+
 ## Database and cutover
 
 Elixir uses the dedicated PostgreSQL schema **`ravix`**, including its migration

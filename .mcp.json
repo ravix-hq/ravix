@@ -1,0 +1,25 @@
+{
+  "mcpServers": {
+    "posthog-ravix": {
+      "type": "http",
+      "url": "https://mcp.posthog.com/mcp",
+      "headers": {
+        "Authorization": "Bearer ${RAVIX_POSTHOG_MCP_KEY}"
+      }
+    },
+    "render-ravix": {
+      "type": "http",
+      "url": "https://mcp.render.com/mcp",
+      "headers": {
+        "Authorization": "Bearer ${RAVIX_RENDER_MCP_KEY}"
+      }
+    },
+    "honeycomb-ravix": {
+      "type": "http",
+      "url": "https://mcp.honeycomb.io/mcp",
+      "headers": {
+        "Authorization": "Bearer ${RAVIX_HONEYCOMB_MCP_KEY}"
+      }
+    }
+  }
+}
