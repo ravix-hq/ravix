@@ -170,6 +170,27 @@ defmodule Ravix.TraceSpanTest do
 
       assert_receive {:span, span(name: "prompt_queue.deliver")}
     end
+
+    test "async_stream_nolink under the supervisor is not suppressed either" do
+      # The shape `Ravix.PromptQueue.Server.deliver_heads/1` actually uses.
+      # `Task.start/1` above is not the same thing: a supervised task carries
+      # `$callers` from its caller, so "a fresh process has a fresh context"
+      # has to be true of *this* spawn, not a similar one -- otherwise every
+      # prompt delivery is silently swallowed by the sweep's suppression.
+      Trace.untraced(fn ->
+        Ravix.TaskSupervisor
+        |> Task.Supervisor.async_stream_nolink([:one, :two], fn item ->
+          Trace.span("prompt_queue.deliver", %{"ravix.item" => item}, fn -> :ok end)
+        end)
+        |> Enum.to_list()
+      end)
+
+      first = await_span("prompt_queue.deliver")
+      second = await_span("prompt_queue.deliver")
+
+      assert Enum.sort([attributes(first)["ravix.item"], attributes(second)["ravix.item"]]) ==
+               [:one, :two]
+    end
   end
 
   describe "link/1 across a process boundary" do
