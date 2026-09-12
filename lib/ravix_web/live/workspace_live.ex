@@ -327,6 +327,36 @@ defmodule RavixWeb.WorkspaceLive do
      )}
   end
 
+  # One project's tracks, in the place the rail keeps them. A project that has
+  # gone since the read started is not put back.
+  def handle_async({:tracks, id}, {:ok, {:ok, tracks}}, socket) do
+    if Enum.any?(socket.assigns.projects, &(&1.id == id)),
+      do: {:noreply, assign(socket, tracks: Map.put(socket.assigns.tracks, id, tracks))},
+      else: {:noreply, socket}
+  end
+
+  def handle_async({:tracks, _id}, {:ok, {:error, _reason}}, socket), do: {:noreply, socket}
+
+  def handle_async(:reload, {:ok, rail}, socket) do
+    socket = apply_rail(socket, rail)
+
+    if socket.assigns.project &&
+         not Enum.any?(socket.assigns.projects, &(&1.id == socket.assigns.project.id)) do
+      {:noreply, push_patch(socket, to: "/")}
+    else
+      {:noreply, socket}
+    end
+  end
+
+  # A rail read that crashed leaves the rail showing what it had. The clause
+  # below belongs to the two reads somebody pressed a button for; saying "the
+  # operation could not finish" about a refresh nobody asked for is an error
+  # message for something that was not an operation.
+  def handle_async(name, {:exit, _reason}, socket)
+      when name == :reload
+      when elem(name, 0) == :tracks,
+      do: {:noreply, socket}
+
   def handle_async(_name, {:exit, _reason}, socket),
     do:
       {:noreply,
@@ -342,9 +372,23 @@ defmodule RavixWeb.WorkspaceLive do
   # cancelled, and re-listing every project's tracks for each of those was
   # the largest thing this page did for no visible reason.
   #
-  # Everything else reloads. A narrower rule here would have to know which
-  # of the rail's fields each event can reach, and getting that wrong shows
-  # up as a status dot that is quietly a minute stale.
+  # A turn is the other. It is the most frequent event left --- one at the
+  # start and one at the end of everything an agent does, on every project
+  # this person can see --- and the only thing it can move is the status,
+  # activity and unread mark of the tracks of the project it names. So it
+  # re-reads that project's tracks and nothing else. It used to re-read the
+  # whole rail, and a rail read is `Ravix.Tracks.list/2` per project, each of
+  # which asks Fountain for that project's conversations *live* (the sidebar's
+  # status dot must not lag a turn ending, so it refuses the memo). Somebody
+  # with five projects therefore paid five or more round trips, in this
+  # process, with the page unable to render or answer a click for the whole
+  # of them, every time any agent anywhere started or finished a turn.
+  #
+  # Everything else reloads the rail entire, because `:people` can change
+  # which projects exist at all and `:tracks` and `:settings` can change the
+  # project itself. A narrower rule for those would have to know which of the
+  # rail's fields each event can reach, and getting that wrong shows up as a
+  # status dot that is quietly a minute stale.
   @impl true
   # The nested track page saying where it is, on its own mount.
   #
@@ -380,36 +424,62 @@ defmodule RavixWeb.WorkspaceLive do
   def handle_info({:hub, %Event{name: name}}, socket) when name in [:here, :queue],
     do: {:noreply, socket}
 
-  def handle_info({:hub, %Event{}}, socket) do
-    socket = reload(socket)
+  def handle_info({:hub, %Event{name: :turn, project_id: id}}, socket),
+    do: {:noreply, refresh_tracks(socket, id)}
 
-    if socket.assigns.project &&
-         not Enum.any?(socket.assigns.projects, &(&1.id == socket.assigns.project.id)) do
-      {:noreply, push_patch(socket, to: "/")}
+  def handle_info({:hub, %Event{}}, socket), do: {:noreply, reload_async(socket)}
+
+  # The rail, read here and now. Mount has nothing to draw until this answers
+  # and `handle_params/3` decides whether the URL names a project this person
+  # still has, so the two of them wait; everything that arrives on its own
+  # goes through `reload_async/1` instead.
+  defp reload(%{assigns: %{current_user: nil}} = socket), do: socket
+  defp reload(socket), do: apply_rail(socket, read_rail(socket.assigns.current_user))
+
+  defp reload_async(%{assigns: %{current_user: nil}} = socket), do: socket
+
+  defp reload_async(socket) do
+    user = socket.assigns.current_user
+    start_async(socket, :reload, fn -> read_rail(user) end)
+  end
+
+  defp refresh_tracks(%{assigns: %{current_user: nil}} = socket, _id), do: socket
+
+  defp refresh_tracks(socket, project_id) do
+    if Enum.any?(socket.assigns.projects, &(&1.id == project_id)) do
+      user = socket.assigns.current_user
+      start_async(socket, {:tracks, project_id}, fn -> Tracks.list(user, project_id) end)
     else
-      {:noreply, socket}
+      socket
     end
   end
 
-  defp reload(%{assigns: %{current_user: nil}} = socket), do: socket
+  # Reads only, so that it can run in a task. A project's tracks that cannot
+  # be read are an empty group rather than a missing key, which is what keeps
+  # the rail drawing the project.
+  defp read_rail(user) do
+    projects = Projects.list(user)
 
-  defp reload(socket) do
-    projects = Projects.list(socket.assigns.current_user)
+    tracks =
+      Map.new(projects, fn p ->
+        case Tracks.list(user, p.id) do
+          {:ok, tracks} -> {p.id, tracks}
+          _ -> {p.id, []}
+        end
+      end)
 
+    {projects, tracks}
+  end
+
+  # Subscribing is this process's to do --- `Phoenix.PubSub` registers the
+  # caller --- so it happens here rather than beside the reads above.
+  defp apply_rail(socket, {projects, tracks}) do
     if connected?(socket) do
       old = MapSet.new(socket.assigns.projects, & &1.id)
       new = MapSet.new(projects, & &1.id)
       Enum.each(MapSet.difference(old, new), &Hub.unsubscribe/1)
       Enum.each(MapSet.difference(new, old), &Hub.subscribe/1)
     end
-
-    tracks =
-      Map.new(projects, fn p ->
-        case Tracks.list(socket.assigns.current_user, p.id) do
-          {:ok, tracks} -> {p.id, tracks}
-          _ -> {p.id, []}
-        end
-      end)
 
     assign(socket,
       projects: projects,
