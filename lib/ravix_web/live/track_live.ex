@@ -60,6 +60,7 @@ defmodule RavixWeb.TrackLive do
   alias RavixWeb.Live.Guard
   alias RavixWeb.Live.Panel
   alias RavixWeb.Live.Params
+  alias RavixWeb.Markdown
 
   @impl true
   def mount(_params, session, socket) do
@@ -73,6 +74,9 @@ defmodule RavixWeb.TrackLive do
         header: nil,
         starters: [],
         page: Transcript.empty(""),
+        # The markdown of every block on the page, rendered once per body.
+        # See `memoize/1`.
+        rendered: %{},
         loading: true,
         # The transcript is read separately from the rest of the track, and
         # is the slowest of the reads, so the page says which of the two it
@@ -432,6 +436,7 @@ defmodule RavixWeb.TrackLive do
     # again here, into the container that finally exists. When the transcript
     # is the one still outstanding this is an empty reset, and its own result
     # inserts into a container that is by then real.
+    |> memoize()
     |> stream(:turns, Transcript.visible_turns(socket.assigns.page), reset: true)
   end
 
@@ -537,7 +542,7 @@ defmodule RavixWeb.TrackLive do
   defp repair(socket, page) do
     was = Transcript.visible_turns(socket.assigns.page)
     now = Transcript.visible_turns(page)
-    socket = assign(socket, page: page)
+    socket = memoize(assign(socket, page: page))
 
     if appended_to?(was, now),
       do: Enum.reduce(now, socket, &insert_changed(&2, was, &1)),
@@ -659,7 +664,12 @@ defmodule RavixWeb.TrackLive do
     project_id = socket.assigns.project_id
 
     socket
-    |> assign(loading: true, transcript_loading: true, page: Transcript.empty(""))
+    |> assign(
+      loading: true,
+      transcript_loading: true,
+      page: Transcript.empty(""),
+      rendered: %{}
+    )
     |> drop_pending()
     |> stream(:turns, [], reset: true)
     # A load starts the page's transcript over from nothing, so the
@@ -718,7 +728,7 @@ defmodule RavixWeb.TrackLive do
     socket =
       page.turns
       |> Enum.filter(&(&1.visible? and MapSet.member?(dirty, &1.id)))
-      |> Enum.reduce(socket, &stream_insert(&2, :turns, &1))
+      |> Enum.reduce(memoize(socket), &stream_insert(&2, :turns, &1))
       |> assign(dirty_turns: MapSet.new(), stage_seen?: false, flushing?: false)
 
     if stage? do
@@ -1002,16 +1012,54 @@ defmodule RavixWeb.TrackLive do
   defp owner_or_creator?(user, track),
     do: track.role == :owner or track.created_by_login == user.login
 
+  # The markdown of every block on the page, rendered once per body.
+  #
+  # A text block's body only ever grows --- `push_text/4` appends the next
+  # chunk to it --- so the same body is the same HTML, and a body that has
+  # changed is a key that is not here yet. The map is rebuilt from the page
+  # rather than added to, so a turn that was re-read and came back shorter
+  # takes its old renderings away with it and nothing accumulates.
+  #
+  # What it saves is the whole of a turn on every draw of it. Inserting a
+  # turn renders all of its blocks, so a settled tool call from an hour ago
+  # was re-parsed once per window of the reply still being written
+  # underneath it, and a repair re-parsed the entire transcript to find that
+  # nothing in it had changed. `block/1` renders anything missing here for
+  # itself, so a miss is slower and never wrong.
+  defp memoize(socket) do
+    previous = socket.assigns.rendered
+
+    rendered =
+      for turn <- socket.assigns.page.turns,
+          block <- turn.blocks,
+          markdown?(block),
+          into: %{},
+          do:
+            {block.body,
+             Map.get_lazy(previous, block.body, fn -> Markdown.render_safe(block.body) end)}
+
+    assign(socket, rendered: rendered)
+  end
+
+  defp markdown?(%TranscriptBlock.Text{}), do: true
+  defp markdown?(%TranscriptBlock.Thinking{}), do: true
+  defp markdown?(_block), do: false
+
+  defp rendered(cache, %TranscriptBlock.Text{body: body}), do: Map.get(cache, body)
+  defp rendered(cache, %TranscriptBlock.Thinking{body: body}), do: Map.get(cache, body)
+  defp rendered(_cache, _block), do: nil
+
   # One head per block struct, rather than five `:if` comparisons against a
   # `:kind` field the blocks no longer carry. A block shape added to
   # `Ravix.Tracks.Transcript.Block` and not drawn here is a
   # `FunctionClauseError` on the page that would have rendered it silently
   # blank, which is the trade this conversion was for.
   attr :block, :map, required: true
+  attr :html, :any, default: nil, doc: "this body's markdown, if `memoize/1` has it"
 
   defp block(%{block: %TranscriptBlock.Text{}} = assigns) do
     ~H"""
-    <div class="md">{RavixWeb.Markdown.render_safe(@block.body)}</div>
+    <div class="md">{@html || Markdown.render_safe(@block.body)}</div>
     """
   end
 
@@ -1019,7 +1067,7 @@ defmodule RavixWeb.TrackLive do
     ~H"""
     <details class="workspace-thinking">
       <summary>Thinking</summary>
-      <div class="md">{RavixWeb.Markdown.render_safe(@block.body)}</div>
+      <div class="md">{@html || Markdown.render_safe(@block.body)}</div>
     </details>
     """
   end
