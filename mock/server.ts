@@ -93,12 +93,12 @@ const state = {
   files: new Map<string, string>(),
   /** What `git worktree list` would say, for the survey turn. */
   worktrees: new Map<string, { branch: string | null; repoPath: string | null }>(),
-  events: new Map<string, unknown[]>(),
+  events: new Map<string, Record<string, unknown>[]>(),
   /**
    * The turn records, which are a second list beside the log and not a view of
-   * it. Fountain keeps the prompt on the turn; the transcript joins the two on
-   * `turn_id`, so a mock that served only the log would leave every bubble
-   * without the words that caused it.
+   * it. Fountain keeps the prompt on the turn and serves it on the log only
+   * when asked (`?prompts=true`), on the turn's opening event; the events
+   * handler below reads it from here to do the same.
    */
   turns: new Map<string, Record<string, unknown>[]>(),
   /** sandbox id → the conversation currently holding it. One turn per box. */
@@ -267,6 +267,8 @@ const acp = (update: Record<string, unknown>) =>
   JSON.stringify({ jsonrpc: "2.0", method: "session/update", params: { update } });
 
 const text = (t: string) => acp({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: t } });
+const plan = (entries: [string, string][]) =>
+  acp({ sessionUpdate: "plan", entries: entries.map(([content, status]) => ({ content, status, priority: "medium" })) });
 const tool = (id: string, title: string) => acp({ sessionUpdate: "tool_call", toolCallId: id, title, kind: "execute" });
 const toolDone = (id: string, out: string) =>
   acp({
@@ -280,14 +282,14 @@ const toolDone = (id: string, out: string) =>
  * A turn, written into the log over about a second and a half.
  *
  * The shape is Fountain's and the transcript depends on all of it: `turn_id`
- * groups the events, the `stage`/`prompt` event carries what was asked (the
- * UI pulls the person's own words out of there rather than out of the agent's
- * reply), and the `output` events on stream `acp` carry raw ACP ndjson that
- * `blocksForTurn` parses into bubbles and tool chips. Text arrives in deltas
+ * groups the events, the `turn`/`started` event is where the events feed
+ * serves what was asked (`?blocks=true&prompts=true`; the stream never does),
+ * and the `output` events on stream `acp` carry raw ACP ndjson that
+ * `Ravix.Tracks.Transcript` parses into text, tools and plans. Text arrives in deltas
  * because it does on a real runtime, and a transcript that only ever appears
  * all at once hides every streaming bug there is.
  */
-async function runTurn(conv: Conv, prompt: string): Promise<void> {
+async function runTurn(conv: Conv, prompt: string, clientRequestId: string | null): Promise<void> {
   const turn = `turn-${state.turnSeq++}`;
   const emit = (ev: Record<string, unknown>) => push(conv.id, { turn_id: turn, ...ev });
   const say = async (body: string) => {
@@ -305,15 +307,18 @@ async function runTurn(conv: Conv, prompt: string): Promise<void> {
   const record = {
     id: turn,
     prompt,
-    // The app's own turns are marked as such, which is how the transcript can
-    // render "Opening this track" differently from something a person typed.
-    origin: prompt.startsWith("[ravix]") ? "app" : "user",
+    // Fountain's `origin` is `user` for anything sent over the API, Ravix's
+    // own `[ravix]` turns included; only a turn Fountain started itself is
+    // `autonomous`, and those get no prompt on the feed.
+    origin: "user",
     status: "running",
     inserted_at: now(),
+    // The sender's name for the prompt, copied back so it can tell which
+    // turn was its own (the prompt queue sends its row id).
+    client_request_id: clientRequestId,
   };
   state.turns.set(conv.id, [...(state.turns.get(conv.id) ?? []), record]);
 
-  emit({ kind: "stage", stage: "prompt", data: prompt });
   emit({ kind: "stage", stage: "turn", state: "started" });
   await sleep(250);
 
@@ -410,9 +415,12 @@ async function act(prompt: string, emit: Emit, say: Say, conv: Conv): Promise<vo
   const slug = parseChannel(conv.channel_id)?.trackSlug;
   const home = slug && state.worktrees.has(`${WORK_ROOT}/${slug}`) ? `${WORK_ROOT}/${slug}` : [...state.worktrees.keys()].find((d) => hasFilesUnder(d)) ?? WORK_ROOT;
   updateMockPreview(home);
+  // A checklist, as ACP reports one: the whole list every time, never a diff.
+  emit({ kind: "output", stream: "acp", data: plan([["Look for open TODOs", "in_progress"], ["Say what is worth fixing", "pending"]]) });
   emit({ kind: "output", stream: "acp", data: tool("x1", `cd ${home} && rg -n "TODO|FIXME"`) });
   await sleep(400);
   emit({ kind: "output", stream: "acp", data: toolDone("x1", "src/lib/window.ts:1:// TODO: rounding here is wrong across a DST boundary") });
+  emit({ kind: "output", stream: "acp", data: plan([["Look for open TODOs", "completed"], ["Say what is worth fixing", "in_progress"]]) });
   await say(
     `(mock) I am in ${home} and I read: ${prompt.trim().split("\n")[0]?.slice(0, 120)}\n\n` +
       "There is one TODO worth doing here — `dayOf` in `src/lib/window.ts` divides by 86400, which is an hour short twice a year. Say the word and I will fix it on this track's branch.",
@@ -434,11 +442,11 @@ function hasFilesUnder(dir: string): boolean {
  * *same* track queues behind its own turn, which is what a person typing twice
  * in a row expects.
  */
-function accept(conv: Conv, prompt: string): { error: string } | null {
+function accept(conv: Conv, prompt: string, clientRequestId: string | null = null): { error: string } | null {
   const holder = conv.sandbox_id ? state.busy.get(conv.sandbox_id) : undefined;
   if (holder && holder !== conv.id) return { error: "sandbox_at_capacity" };
   const tail = state.queues.get(conv.id) ?? Promise.resolve();
-  const next = tail.then(() => runTurn(conv, prompt)).catch((err: unknown) => {
+  const next = tail.then(() => runTurn(conv, prompt, clientRequestId)).catch((err: unknown) => {
     console.error("mock: turn blew up:", err);
   });
   state.queues.set(conv.id, next);
@@ -630,7 +638,8 @@ async function fountain(req: Request, url: URL): Promise<Response | null> {
   if (convPrompt) {
     const conv = state.conversations.find((c) => c.id === convPrompt[1]);
     if (!conv) return json({ error: "not_found" }, 404);
-    const refused = accept(conv, String((body as { prompt?: unknown }).prompt ?? ""));
+    const { prompt, client_request_id } = body as { prompt?: unknown; client_request_id?: unknown };
+    const refused = accept(conv, String(prompt ?? ""), typeof client_request_id === "string" ? client_request_id : null);
     if (refused) return json(refused, 409);
     return json({ status: "accepted" });
   }
@@ -640,12 +649,33 @@ async function fountain(req: Request, url: URL): Promise<Response | null> {
 
   const convEvents = /^\/api\/conversations\/([^/]+)\/events$/.exec(p);
   if (convEvents) {
-    const all = state.events.get(convEvents[1]!) ?? [];
-    // Oldest first, capped the way Fountain caps it. The tail is what a track
-    // that has been worked in for an hour needs — taking the *head* would show
-    // a scrollback that looks complete and is a hundred turns stale.
+    const conversationId = convEvents[1]!;
+    // Oldest first after the cursor, a page at a time, the way Fountain pages
+    // it: `next_cursor` is the last id served, and a reader follows it until
+    // `has_more` is false. That is how a track worked in for an hour reads its
+    // whole scrollback, and how the follower reads back the one event it needs.
+    const after = Number(url.searchParams.get("after") ?? 0) || 0;
     const limit = Math.min(Number(url.searchParams.get("limit") ?? 100) || 100, 1000);
-    return json({ data: all.slice(-limit), meta: { has_more: all.length > limit, next_cursor: null } });
+    const rest = (state.events.get(conversationId) ?? []).filter((ev) => (ev.id as number) > after);
+    const page = rest.slice(0, limit);
+    const blocks = url.searchParams.get("blocks") === "true";
+    const prompts = blocks && url.searchParams.get("prompts") === "true";
+    const turns = state.turns.get(conversationId) ?? [];
+    // Only what the transcript reads off `blocks`: the prompt on a turn's
+    // opening event. Fountain's own parse of every output event is not
+    // modelled, because nothing here reads it.
+    const data = blocks
+      ? page.map((ev) => {
+          const opens = ev.kind === "stage" && ev.stage === "turn" && ev.state === "started";
+          const turn = opens && prompts ? turns.find((t) => t.id === ev.turn_id) : undefined;
+          const prompt = typeof turn?.prompt === "string" && turn.prompt !== "" ? turn.prompt : null;
+          return { ...ev, blocks: prompt ? [{ kind: "prompt", body: prompt }] : [] };
+        })
+      : page;
+    return json({
+      data,
+      meta: { has_more: rest.length > limit, next_cursor: page.length ? page[page.length - 1]!.id : after || null },
+    });
   }
 
   const convTurns = /^\/api\/conversations\/([^/]+)\/turns$/.exec(p);

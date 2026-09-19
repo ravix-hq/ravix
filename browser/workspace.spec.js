@@ -237,8 +237,15 @@ test('project, track, streaming, image upload, reconnect, and revocation', async
   // once crashed the page on, which this suite caught only by accident.
   await expect(page.locator('.workspace-queue')).toContainText('Explain this project for the browser smoke test');
   await expect(page.locator('.workspace-queue .chip')).toBeVisible();
-  await expect(page.locator('#transcript-turns')).toContainText('Explain this project for the browser smoke test');
+  // The prompt's own bubble, not just the page: the mock's reply quotes the
+  // prompt back, so the transcript contains these words even when the prompt
+  // never arrived. It reaches the live page on the turn's opening event, which
+  // the follower reads back from the feed because the stream never carries it.
+  await expect(page.locator('#transcript-turns .said .workspace-prompt').filter({ hasText: 'Explain this project for the browser smoke test' })).toHaveCount(1);
   await expect(page.locator('.workspace-turn').filter({ hasText: 'Explain this project for the browser smoke test' }).locator('.md')).toContainText('There is one TODO worth doing here');
+  // The agent's checklist, as it last stood: one plan, both lines, the first done.
+  await expect(page.locator('.workspace-plan')).toHaveCount(1);
+  await expect(page.locator('.workspace-plan li.plan-completed')).toContainText('Look for open TODOs');
   await expect(composer).toHaveValue('');
   // Interrupt the actual LiveSocket connection, preserving the browser's draft.
   await composer.fill('Draft survives reconnect');

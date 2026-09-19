@@ -707,7 +707,7 @@ defmodule Ravix.TracksTest do
   end
 
   describe "events/3" do
-    test "turns and events become a page; a track with no conversation an empty one" do
+    test "one read of the feed, prompts included, is a page; a track with no conversation an empty one" do
       owner = insert_user()
       project = insert_project(user: owner, runtime: "claude")
       track = insert_track(project: project, conversation_id: "c1")
@@ -721,22 +721,33 @@ defmodule Ravix.TracksTest do
           }
         })
 
+      # No `/turns`: the script refuses any request it does not list.
       client =
         FakeTransport.client([
-          {%{method: "GET", path: "/api/conversations/c1/turns"},
-           {200, [],
-            %{data: [%{id: "t1", prompt: "say hi", inserted_at: "2026-09-09T10:00:00Z"}]}}},
-          {%{method: "GET", path: "/api/conversations/c1/events"},
+          {%{
+             method: "GET",
+             path: "/api/conversations/c1/events",
+             query: %{limit: "1000", blocks: "true", prompts: "true"}
+           },
            {200, [],
             %{
               data: [
                 %{
                   id: 1,
+                  kind: "stage",
+                  stage: "turn",
+                  state: "started",
+                  turn_id: "t1",
+                  blocks: [%{kind: "prompt", body: "say hi"}]
+                },
+                %{
+                  id: 2,
                   kind: "output",
                   stream: "acp",
                   data: line,
                   turn_id: "t1",
-                  ts: "2026-09-09T10:00:01Z"
+                  ts: "2026-09-09T10:00:01Z",
+                  blocks: [%{kind: "text", body: "hi"}]
                 }
               ],
               meta: %{has_more: false}
@@ -746,7 +757,7 @@ defmodule Ravix.TracksTest do
       stub(Ravix.Fountain, :client, fn -> client end)
       assert {:ok, page} = Tracks.events(owner, track.id)
       assert [%Turn{id: "t1", prompt: "say hi", blocks: [%Block.Text{body: "hi"}]}] = page.turns
-      assert page.last_event_id == 1
+      assert page.last_event_id == 2
 
       unopened = insert_track(project: project, conversation_id: nil)
       assert {:ok, %{turns: []}} = Tracks.events(owner, unopened.id)

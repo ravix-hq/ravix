@@ -2,7 +2,6 @@ defmodule RavixWeb.TrackLiveTest do
   use RavixWeb.ConnCase, async: false
   import Phoenix.LiveViewTest
   import Mimic
-  alias Ravix.Fountain.Shapes
   alias Ravix.Hub.Event
   alias Ravix.{People, Previews, PromptQueue, QueryCount, Repo, Terminal, Tracks, Vitals}
   alias Ravix.PromptQueue.View, as: QueuedPrompt
@@ -541,6 +540,19 @@ defmodule RavixWeb.TrackLiveTest do
   # together, so one call is usually enough --- but the transcript's result
   # can still establish a follower, and a second call costs nothing and keeps
   # the next thing a test measures from paying for somebody else's read.
+  # A turn's opening event as the feed serves it with `?prompts=true`, which is
+  # where the transcript reads what somebody asked for.
+  defp opened(id, turn, prompt) do
+    %{
+      "id" => id,
+      "turn_id" => turn,
+      "kind" => "stage",
+      "stage" => "turn",
+      "state" => "started",
+      "blocks" => [%{"kind" => "prompt", "body" => prompt}]
+    }
+  end
+
   defp settle(view) do
     render_async(view)
     render_async(view)
@@ -783,6 +795,47 @@ defmodule RavixWeb.TrackLiveTest do
     refute has_element?(ctx.view, "#transcript-turns script")
   end
 
+  test "the agent's plan is drawn as a checklist whose state reads without color", ctx do
+    plan =
+      Jason.encode!(%{
+        jsonrpc: "2.0",
+        method: "session/update",
+        params: %{
+          update: %{
+            sessionUpdate: "plan",
+            entries: [
+              %{content: "Read the code", status: "completed"},
+              %{content: "Fix <the> bug", status: "in_progress"},
+              %{content: "Open a pull request", status: "pending"}
+            ]
+          }
+        }
+      })
+
+    page =
+      Transcript.page(
+        [
+          opened(1, "turn", "Fix it"),
+          %{"id" => 2, "turn_id" => "turn", "kind" => "output", "stream" => "acp", "data" => plan}
+        ],
+        "claude"
+      )
+
+    stub(Tracks, :events, fn _, _ -> {:ok, page} end)
+    render_click(ctx.view, "retry-load")
+    render_async(ctx.view)
+
+    assert has_element?(ctx.view, ~s|.workspace-plan li.plan-completed [aria-label="done"]|)
+
+    assert has_element?(
+             ctx.view,
+             ~s|.workspace-plan li.plan-in_progress [aria-label="in progress"]|
+           )
+
+    assert has_element?(ctx.view, ~s|.workspace-plan li.plan-pending [aria-label="to do"]|)
+    assert has_element?(ctx.view, ".workspace-plan li", "Fix <the> bug")
+  end
+
   test "transcript snapshots render prompts, thinking, tools, and raw output safely", ctx do
     update = fn data ->
       Jason.encode!(%{jsonrpc: "2.0", method: "session/update", params: %{update: data}})
@@ -815,8 +868,7 @@ defmodule RavixWeb.TrackLiveTest do
         %{"id" => id, "turn_id" => "turn", "kind" => "output", "stream" => "acp", "data" => data}
       end)
 
-    turns = Shapes.turns([%{"id" => "turn", "prompt" => "User prompt"}])
-    page = Transcript.page(turns, events, "claude")
+    page = Transcript.page([opened(0, "turn", "User prompt") | events], "claude")
     stub(Tracks, :events, fn _, _ -> {:ok, page} end)
     render_click(ctx.view, "retry-load")
     html = render_async(ctx.view)
@@ -904,18 +956,18 @@ defmodule RavixWeb.TrackLiveTest do
             })
 
           {[
+             opened(next, id, id),
              %{
-               "id" => next,
+               "id" => next + 1,
                "turn_id" => id,
                "kind" => "output",
                "stream" => "acp",
                "data" => frame
              }
-           ], next + 1}
+           ], next + 2}
         end)
 
-      shapes = Shapes.turns(Enum.map(turns, fn {id, _} -> %{"id" => id, "prompt" => id} end))
-      Transcript.page(shapes, events, "claude")
+      Transcript.page(events, "claude")
     end
 
     defp repair(ctx, page) do
@@ -1051,8 +1103,8 @@ defmodule RavixWeb.TrackLiveTest do
 
       {:ok,
        Transcript.page(
-         Shapes.turns([%{"id" => "turn", "prompt" => "An earlier prompt"}]),
          [
+           opened(0, "turn", "An earlier prompt"),
            %{
              "id" => 1,
              "turn_id" => "turn",
@@ -1125,8 +1177,8 @@ defmodule RavixWeb.TrackLiveTest do
     stub(Tracks, :events, fn _user, _id ->
       {:ok,
        Transcript.page(
-         Shapes.turns([%{"id" => "turn", "prompt" => "An earlier prompt"}]),
          [
+           opened(0, "turn", "An earlier prompt"),
            %{
              "id" => 1,
              "turn_id" => "turn",
