@@ -1411,6 +1411,14 @@ input.crumb-name { width: 30ch; }
 .workspace-tool,.workspace-thinking { padding:0; border:0; margin:0; }
 .workspace-tool summary,.workspace-thinking summary { display:list-item; padding:5px 8px; color:var(--dim); overflow-wrap:anywhere; }
 .workspace-tool .chip { border-radius:3px; }
+.workspace-plan { padding:5px 8px; font-family:var(--mono); font-size:12px; }
+.workspace-plan strong { display:block; font-weight:500; color:var(--dim); margin-bottom:4px; }
+.workspace-plan ol { list-style:none; margin:0; padding:0; }
+.workspace-plan li { display:flex; gap:8px; padding:1px 0; overflow-wrap:anywhere; }
+.workspace-plan .plan-mark { flex:none; width:1em; text-align:center; color:var(--dimmer); }
+.workspace-plan .plan-in_progress .plan-mark { color:var(--accent); }
+.workspace-plan .plan-completed { color:var(--dim); }
+.workspace-plan .plan-completed .plan-mark { color:var(--ok); }
 .workspace-composer { padding:12px 20px 18px; }
 .composer-box { border-radius:var(--radius-lg); }
 .workspace-composer textarea { min-height:64px; }

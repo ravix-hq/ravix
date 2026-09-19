@@ -77,8 +77,8 @@ defmodule Ravix.MixProject do
       {:dns_cluster, "~> 0.3.0"},
       {:bandit, "~> 1.5"},
       # Fountain and its component libraries (Apache-2.0, maintained upstream).
-      {:fountain_sdk, "~> 0.1.0"},
-      {:managoat_acp, "~> 0.4.1"},
+      {:fountain_sdk, "~> 0.6.0"},
+      {:managoat_acp, "~> 0.4.3"},
       # GitHub, Sprites and the preview gateway.
       {:req, "~> 0.7.4"},
       {:jose, "~> 1.11"},

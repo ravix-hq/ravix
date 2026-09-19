@@ -520,12 +520,13 @@ defmodule Ravix.Tracks do
   @doc """
   The transcript so far, both halves of it.
 
-  The prompts and the output live in two different places on Fountain and
-  are joined on `turn_id`. Joining them here rather than in the page is not
-  tidiness: it is one round trip instead of two on the call that gates the
-  first paint of a track. A conversation too new to have turns is ordinary,
-  not an error. The page then follows the rest through
-  `Ravix.Tracks.Follower.subscribe/2` from the page's `last_event_id`.
+  The prompts and the output live in two different places on Fountain, and
+  this used to read both and join them on `turn_id`. The event log read with
+  `prompts: true` carries each turn's prompt on its opening event, so it is
+  one read, on the call that gates the first paint of a track. A
+  conversation too new to have events is ordinary, not an error. The page
+  then follows the rest through `Ravix.Tracks.Follower.subscribe/2` from the
+  page's `last_event_id`.
   """
   @spec events(User.t(), String.t(), keyword()) :: {:ok, Transcript.page()} | {:error, reason()}
   def events(%User{} = user, track_id, _opts \\ []) do
@@ -546,20 +547,14 @@ defmodule Ravix.Tracks do
   end
 
   defp read_transcript(client, conversation_id, runtime) do
-    turns =
-      case Fountain.turns(client, conversation_id) do
-        {:ok, turns} -> turns
-        _ -> []
-      end
-
-    with {:ok, log} <- Fountain.events(client, conversation_id) do
-      page = Transcript.page(turns, log, runtime)
+    with {:ok, log} <- Fountain.events(client, conversation_id, prompts: true) do
+      page = Transcript.page(log, runtime)
 
       # How much transcript came back, on the span that fetched it. A slow
       # first paint is either Fountain being slow or a conversation being long,
       # and a duration alone cannot say which.
       Trace.annotate(%{
-        "ravix.turn_count" => length(turns),
+        "ravix.turn_count" => length(page.turns),
         "ravix.event_count" => length(log)
       })
 

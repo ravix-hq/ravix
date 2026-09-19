@@ -109,7 +109,6 @@ end
 defmodule Ravix.TranscriptPropertiesTest do
   use ExUnit.Case, async: true
   use ExUnitProperties
-  alias Ravix.Fountain.Shapes
   alias Ravix.Tracks.Transcript
 
   property "overlapping snapshots and out-of-order live replay produce the same transcript once" do
@@ -118,7 +117,14 @@ defmodule Ravix.TranscriptPropertiesTest do
             weights <- list_of(integer(), length: length(chunks)),
             max_runs: 60
           ) do
-      turns = Shapes.turns([%{"id" => "turn", "prompt" => "User prompt"}])
+      opened = %{
+        "id" => 0,
+        "turn_id" => "turn",
+        "kind" => "stage",
+        "stage" => "turn",
+        "state" => "started",
+        "blocks" => [%{"kind" => "prompt", "body" => "User prompt"}]
+      }
 
       events =
         for {chunk, id} <- Enum.with_index(chunks, 1) do
@@ -142,15 +148,15 @@ defmodule Ravix.TranscriptPropertiesTest do
           }
         end
 
-      expected = Transcript.page(turns, events, "claude")
+      expected = Transcript.page([opened | events], "claude")
       shuffled = Enum.zip(weights, events) |> Enum.sort_by(&elem(&1, 0)) |> Enum.map(&elem(&1, 1))
 
       actual =
-        Transcript.page(turns, [], "claude")
+        Transcript.page([opened], "claude")
         |> Transcript.add_events(shuffled ++ events ++ shuffled)
 
       assert actual == expected
-      assert [%{blocks: [%{body: text}]}] = actual.turns
+      assert [%{prompt: "User prompt", blocks: [%{body: text}]}] = actual.turns
       assert text == Enum.join(chunks)
       assert actual.last_event_id == length(chunks)
     end

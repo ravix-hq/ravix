@@ -1,6 +1,8 @@
 defmodule Ravix.Tracks.FollowerTest do
   use Ravix.DataCase, async: true
 
+  import ExUnit.CaptureLog
+
   alias Ravix.Fountain.FakeTransport
   alias Ravix.Tracks.Follower
   alias Ravix.Tracks.Transcript.Event
@@ -67,6 +69,71 @@ defmodule Ravix.Tracks.FollowerTest do
     assert_receive {:transcript, ^track_id, %Event{id: 2}}, 1_000
     # The second connection asked for what came after 2.
     assert_receive {:transcript, ^track_id, %Event{id: 3}}, 1_000
+  end
+
+  describe "a turn's prompt" do
+    defp opening(id), do: %{id: id, turn_id: "t1", kind: "stage", stage: "turn", state: "started"}
+
+    # A stream that opens a turn at event 5 and says something at 6, and a
+    # feed that answers the one-event read of 5 with `feed`.
+    defp opening_client(conversation_id, feed) do
+      stream = "/api/conversations/#{conversation_id}/stream"
+      events = "/api/conversations/#{conversation_id}/events"
+
+      FakeTransport.client(
+        [
+          {%{method: "GET", path: stream},
+           {200, [{"content-type", "text/event-stream"}],
+            [
+              FakeTransport.frame(5, "stage", opening(5)),
+              FakeTransport.frame(6, "output", %{
+                id: 6,
+                turn_id: "t1",
+                kind: "output",
+                stream: "acp",
+                data: "x"
+              })
+            ]}},
+          {%{
+             method: "GET",
+             path: events,
+             query: %{limit: "1", after: "4", blocks: "true", prompts: "true"}
+           }, feed}
+        ],
+        verify: false
+      )
+    end
+
+    test "is read from the feed as the turn opens, and broadcast on its opening event", ctx do
+      feed =
+        {200, [],
+         %{
+           data: [Map.put(opening(5), :blocks, [%{kind: "prompt", body: "do the thing"}])],
+           meta: %{has_more: false}
+         }}
+
+      client = opening_client(ctx.conversation_id, feed)
+      assert {:ok, _follower} = subscribe(ctx, client: client)
+      track_id = ctx.track_id
+
+      assert_receive {:transcript, ^track_id, %Event{id: 5, prompt: "do the thing"}}, 1_000
+      assert_receive {:transcript, ^track_id, %Event{id: 6, prompt: nil}}, 1_000
+
+      # Once, for the opening event, and not for the output after it.
+      assert [_one] =
+               Enum.filter(FakeTransport.calls(client), &String.ends_with?(&1.path, "/events"))
+    end
+
+    test "is left off when the feed cannot answer, and the event still goes out", ctx do
+      client = opening_client(ctx.conversation_id, {503, [], %{error: "offline"}})
+      assert {:ok, _follower} = subscribe(ctx, client: client)
+      track_id = ctx.track_id
+
+      capture_log(fn ->
+        assert_receive {:transcript, ^track_id, %Event{id: 5, prompt: nil}}, 1_000
+        assert_receive {:transcript, ^track_id, %Event{id: 6}}, 1_000
+      end)
+    end
   end
 
   test "one follower per track, shared by every subscriber", ctx do

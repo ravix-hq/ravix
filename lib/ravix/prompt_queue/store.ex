@@ -225,6 +225,26 @@ defmodule Ravix.PromptQueue.Store do
   end
 
   @doc """
+  Replace the message on a row that is still `status`, and on no other.
+
+  For a finding about a row the server did not claim: something a person can
+  move at the same moment (`retry/3` turns an `:unconfirmed` row back into a
+  `:queued` one), where `set_status/3` would put the old status back over
+  theirs.
+  """
+  @spec annotate(String.t(), Item.status(), String.t()) :: :ok
+  def annotate(id, status, error) do
+    {_count, tracks} =
+      Item
+      |> where([p], p.id == ^id and p.status == ^status)
+      |> where([p], fragment("? IS DISTINCT FROM ?", p.error, ^error))
+      |> select([p], p.track_id)
+      |> Repo.update_all(set: [error: error])
+
+    Enum.each(tracks, &publish_queue/1)
+  end
+
+  @doc """
   Take a queued row for delivery. False when it was not queued any more:
   cancelled meanwhile, or claimed by another sweep.
   """

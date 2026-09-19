@@ -404,7 +404,7 @@ defmodule Ravix.FountainTest do
     end
   end
 
-  describe "prompt/4, interrupt/2, terminate/2, turns/2" do
+  describe "prompt/5, interrupt/2, terminate/2, turns/2" do
     test "prompt sends the text, and images only when there are any" do
       image = %{data: "aGVsbG8=", media_type: "image/png"}
 
@@ -421,6 +421,26 @@ defmodule Ravix.FountainTest do
 
       assert :ok = Fountain.prompt(client, "c1", "hello")
       assert :ok = Fountain.prompt(client, "c1", "look", [image])
+    end
+
+    test "prompt names the submission when asked to, and not otherwise" do
+      client =
+        fake([
+          {%{
+             method: "POST",
+             path: "/api/conversations/c1/prompts",
+             body: %{prompt: "hello", client_request_id: "row-1234567890abcdef"}
+           }, {202, [], %{data: %{ok: true}}}},
+          {%{method: "POST", path: "/api/conversations/c1/prompts", body: %{prompt: "bare"}},
+           {202, [], %{data: %{ok: true}}}}
+        ])
+
+      assert :ok =
+               Fountain.prompt(client, "c1", "hello", [],
+                 client_request_id: "row-1234567890abcdef"
+               )
+
+      assert :ok = Fountain.prompt(client, "c1", "bare", [], client_request_id: nil)
     end
 
     test "a machine at capacity is busy, and safe to retry" do
@@ -466,8 +486,10 @@ defmodule Ravix.FountainTest do
                   prompt: "hi",
                   origin: "api",
                   status: "done",
-                  inserted_at: "2026-09-09T00:00:00Z"
-                }
+                  inserted_at: "2026-09-09T00:00:00Z",
+                  client_request_id: "row-1"
+                },
+                %{id: "t2", prompt: "typed elsewhere", status: "done"}
               ]
             }}}
         ])
@@ -475,8 +497,17 @@ defmodule Ravix.FountainTest do
       assert :ok = Fountain.interrupt(client, "c1")
       assert :ok = Fountain.terminate(client, "c1")
 
-      assert {:ok, [%Turn{id: "t1", prompt: "hi", origin: "api", status: "done"}]} =
-               Fountain.turns(client, "c1")
+      assert {:ok,
+              [
+                %Turn{
+                  id: "t1",
+                  prompt: "hi",
+                  origin: "api",
+                  status: "done",
+                  client_request_id: "row-1"
+                },
+                %Turn{id: "t2", client_request_id: nil}
+              ]} = Fountain.turns(client, "c1")
     end
 
     test "terminate on a conversation that is gone is a not-found error" do
@@ -513,6 +544,20 @@ defmodule Ravix.FountainTest do
 
       assert {:ok, %{events: [], has_more: false, next_cursor: 1}} =
                Fountain.events_page(client, "c1", after: 1, limit: 50, blocks: true)
+    end
+
+    test "asking for prompts asks for blocks too, because Fountain fills one only with the other" do
+      client =
+        fake([
+          {%{
+             method: "GET",
+             path: "/api/conversations/c1/events",
+             query: %{limit: "1", after: "6", blocks: "true", prompts: "true"}
+           }, {200, [], %{data: [%{id: 7}], meta: %{has_more: false}}}}
+        ])
+
+      assert {:ok, %{events: [%{"id" => 7}]}} =
+               Fountain.events_page(client, "c1", after: 6, limit: 1, prompts: true)
     end
 
     test "reads every stored page, deduplicated and sorted by id" do

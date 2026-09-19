@@ -16,6 +16,15 @@ defmodule Ravix.PromptQueue.Server do
   instructions cannot overtake one whose outcome needs a person. Other
   tracks still advance.
 
+  Every prompt goes out with its row id as Fountain's `client_request_id`,
+  which Fountain copies onto the turn it opens. So an `:unconfirmed` head --
+  a POST whose answer never came, or a claim `Store.recover/0` took back --
+  is looked up once in the conversation's turns: found, it was delivered and
+  is recorded as such; not found, it stays `:unconfirmed` and says what was
+  looked for. It is never re-sent from here: the id is a correlation, not an
+  idempotency key, and a POST Fountain is still working on may not have made
+  its turn yet.
+
   Recovery (`Ravix.Store.recover/0`) runs at the start of the first
   sweep rather than in `init/1`, so that starting the process touches no
   database; the first sweep is one interval after start. `tick/1` runs a
@@ -60,6 +69,9 @@ defmodule Ravix.PromptQueue.Server do
   @waiting "Waiting for the machine connection. Your prompt is saved and will retry automatically."
   @refused "Delivery was refused. Check the machine and account settings, then retry this prompt."
   @unconfirmed "Delivery could not be confirmed. Check the transcript before sending this again."
+  # Only what was looked for, not a verdict: a prompt sent before rows carried
+  # their id (or by an older instance mid-deploy) has none to find.
+  @not_arrived "Fountain has no turn carrying this prompt's id. Check the transcript, then retry it if it is still needed."
 
   @type option :: {:name, GenServer.name() | nil} | {:interval, pos_integer() | false}
 
@@ -160,11 +172,13 @@ defmodule Ravix.PromptQueue.Server do
         outcome =
           cond do
             not authorized?(row) -> cancel(row)
+            unchecked?(row) -> confirm(client, row)
             row.status != :queued -> :held
             true -> deliver_queued(client, row)
           end
 
-        # `:ok`, `:held`, `:waiting` or `:lost_claim` -- never a tagged error, so
+        # `:ok`, `:held`, `:waiting`, `:lost_claim`, `:confirmed` or
+        # `:not_arrived` -- never a tagged error, so
         # `span/3` cannot read it from the return value. It is the attribute
         # somebody debugging a stuck prompt is looking for: `:waiting` and
         # `:held` both mean the row is still queued and the next sweep will try
@@ -186,6 +200,36 @@ defmodule Ravix.PromptQueue.Server do
       :busy -> :waiting
       {:ended, message} -> Store.set_status(row.id, :failed, message)
       :unavailable -> hold(row)
+    end
+  end
+
+  # An unconfirmed row nobody has looked for yet. After one look that found
+  # nothing, the message says so and the row waits for a person, so a track
+  # whose prompt was lost does not read Fountain's turns every two seconds.
+  defp unchecked?(%Item{status: :unconfirmed, error: error}), do: error != @not_arrived
+  defp unchecked?(%Item{}), do: false
+
+  # Did the POST we could not hear back from arrive? Fountain's answer, read
+  # off the turns by the id we sent. A read that fails leaves the row as it
+  # is for the next sweep.
+  defp confirm(client, row) do
+    # ownership: `authorized?/1` in `deliver/2` put the row's sender through
+    # `Access.track_access/2`. These read where the row was sent.
+    track = Repo.get!(Track, row.track_id)
+    project = Repo.get!(Project, track.project_id)
+
+    case Fountain.turns(client, track.conversation_id) do
+      {:ok, turns} ->
+        if Enum.any?(turns, &(&1.client_request_id == row.id)) do
+          settle(:ok, row, track, project)
+          :confirmed
+        else
+          Store.annotate(row.id, :unconfirmed, @not_arrived)
+          :not_arrived
+        end
+
+      {:error, _reason} ->
+        :held
     end
   end
 
@@ -297,7 +341,7 @@ defmodule Ravix.PromptQueue.Server do
 
     if authorized?(row) do
       text = compose(instructions, authored(row, track, project, body.prompt))
-      Fountain.prompt(client, track.conversation_id, text, body.images)
+      Fountain.prompt(client, track.conversation_id, text, body.images, client_request_id: row.id)
     else
       :revoked
     end

@@ -234,10 +234,20 @@ defmodule Ravix.Fountain do
   @doc """
   `POST /api/conversations/:id/prompts`: one turn, with optional images as
   `%{data: base64, media_type: ...}`.
+
+  Options: `:client_request_id`, the caller's name for this submission.
+  Fountain copies it onto the turn the prompt opens, so a caller that could
+  not tell whether the POST arrived can find out from `turns/2` afterwards.
+  It is a correlation and not an idempotency key: sending the same one twice
+  opens two turns.
   """
-  @spec prompt(Client.t(), id(), String.t(), [map()]) :: outcome()
-  def prompt(client, id, text, images \\ []) do
-    body = %{"prompt" => text} |> optional("images", if(images == [], do: nil, else: images))
+  @spec prompt(Client.t(), id(), String.t(), [map()], keyword()) :: outcome()
+  def prompt(client, id, text, images \\ [], opts \\ []) do
+    body =
+      %{"prompt" => text}
+      |> optional("images", if(images == [], do: nil, else: images))
+      |> optional("client_request_id", opts[:client_request_id])
+
     void(client, "POST", "/api/conversations/#{escape(id)}/prompts", body: body)
   end
 
@@ -273,7 +283,14 @@ defmodule Ravix.Fountain do
 
   Options: `:after` (the cursor), `:limit` (default 1000), `:blocks` (ask
   Fountain for server-parsed blocks; off by default, the transcript parses
-  ACP itself).
+  ACP itself), `:prompts` (put each turn's prompt on its `turn`/`started`
+  event as a `prompt` block).
+
+  Fountain only fills `prompts` together with `blocks`, so `:prompts` turns
+  `:blocks` on as well. That is also every output event's blocks, which
+  nothing here reads; `Ravix.Tracks.Transcript.Event.from/1` keeps the
+  prompt and drops the rest. Only this feed carries prompts: the stream
+  never does.
   """
   @spec events_page(Client.t(), id(), keyword()) :: result(events_page())
   def events_page(client, id, opts \\ []) do
@@ -282,7 +299,8 @@ defmodule Ravix.Fountain do
     query = [
       limit: Keyword.get(opts, :limit, @page_limit),
       after: opts[:after],
-      blocks: if(opts[:blocks], do: "true")
+      blocks: if(opts[:blocks] || opts[:prompts], do: "true"),
+      prompts: if(opts[:prompts], do: "true")
     ]
 
     call(client, "GET", path, fn http ->

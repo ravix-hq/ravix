@@ -1103,6 +1103,32 @@ defmodule RavixWeb.TrackLive do
     """
   end
 
+  # The checklist the agent is working from, as it last stood. The marker is
+  # a labelled image rather than a color, so the state reads without either.
+  defp block(%{block: %TranscriptBlock.Plan{}} = assigns) do
+    ~H"""
+    <div class="workspace-plan" role="group" aria-label="Plan">
+      <strong>Plan</strong>
+      <ol>
+        <li :for={entry <- @block.entries} class={"plan-#{entry.status}"}>
+          <span class="plan-mark" role="img" aria-label={plan_status(entry.status)}>
+            {plan_mark(entry.status)}
+          </span>
+          <span>{entry.content}</span>
+        </li>
+      </ol>
+    </div>
+    """
+  end
+
+  defp plan_mark(:completed), do: "✓"
+  defp plan_mark(:in_progress), do: "▸"
+  defp plan_mark(:pending), do: "○"
+
+  defp plan_status(:completed), do: "done"
+  defp plan_status(:in_progress), do: "in progress"
+  defp plan_status(:pending), do: "to do"
+
   defp visible_prompt(prompt) do
     prompt = Ravix.Previews.Agent.visible_prompt(prompt)
     Transcript.app_turn_label(prompt) || prompt
