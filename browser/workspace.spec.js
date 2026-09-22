@@ -628,7 +628,8 @@ test('shared project prefixes stay muted and truncate across every theme', async
   const name = 'Shared project with a deliberately long name for a narrow rail';
   await page.getByLabel('Project name', { exact: true }).fill(name);
   await page.getByRole('button', { name: 'Create project', exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'Pick a track' })).toBeVisible();
+  // An owner's project page opens on its plans (#158), not the track picker.
+  await expect(page.getByRole('heading', { name: 'Plans', exact: true })).toBeVisible();
   const projectPath = new URL(page.url()).pathname;
   await expect(page.locator('.workspace-project-name.selected .project-label')).toHaveText(name);
   await expect(page.locator('.workspace-project-name.selected .project-label .dim')).toHaveCount(0);
