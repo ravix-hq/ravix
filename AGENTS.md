@@ -34,7 +34,9 @@ checking who owns it. Tests use `ravix_test` and SQL Sandbox transactions.
 - `lib/ravix_web/`: HTTP boundaries, LiveViews, components, and preview gateway.
   `WorkspaceLive` owns navigation/project forms; nested `TrackLive` owns the
   selected track; `OnboardingLive` owns the first visit (`/welcome`) and is
-  never a gate. LiveView async work uses `start_async`/`handle_async`.
+  never a gate; `Live.AgentPanel` is the agent step and the workspace's
+  account dialog, one component so the two cannot drift. LiveView async work
+  uses `start_async`/`handle_async`.
 - `assets/js/hooks/`: browser-only interactions. Keep business state and provider
   credentials on the server. `assets/test/` tests actual DOM events and outcomes.
 - `test/support/`: SQL sandbox cases, real changeset factories, scoped Mimic

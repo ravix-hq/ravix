@@ -202,6 +202,17 @@ test('a first visit is walked through how it works, the agent, and GitHub', asyn
   await expect(page.getByRole('heading', { name: /Inbox/ })).toBeVisible();
 });
 
+test('the account dialog is where the agent lives after the walkthrough', async ({ page }) => {
+  await signIn(page);
+  await page.getByRole('button', { name: 'account', exact: true }).click();
+  await expect(page.getByRole('dialog', { name: 'Your account' })).toBeVisible();
+  await expect(page.getByRole('group', { name: 'Agent' })).toBeVisible();
+  await accessible(page);
+  await capture(page, 'account-dialog');
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('dialog', { name: 'Your account' })).toHaveCount(0);
+});
+
 test('home quick start creates a scratch project and recent navigation survives theme changes', async ({ page }) => {
   await signIn(page);
   await page.getByRole('link', { name: 'Home', exact: true }).first().click();

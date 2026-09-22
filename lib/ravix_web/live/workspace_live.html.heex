@@ -178,7 +178,15 @@
         <.link href="/auth/signout" method="post" class="ghost">Sign out</.link>
         <.theme_picker id="theme-picker" />
         <div class="yard-meta">
-          <span class="chip">Ravix</span><a href="/api/auth/install">repo access</a><.link navigate="/welcome/agent">agent</.link>
+          <span class="chip">Ravix</span><a href="/api/auth/install">repo access</a><button
+            type="button"
+            class="linkish"
+            phx-click={JS.push_focus() |> JS.push("dialog")}
+            phx-value-name="account"
+            id="open-account"
+          >
+            account
+          </button>
         </div>
       </div>
     </aside>
@@ -423,7 +431,14 @@
           id="new-project-no-agent"
         >
           You have not connected an agent, so this project's agent may have nothing to run on.
-          <.link navigate="/welcome/agent">Connect Claude Code or Codex</.link>
+          <button
+            type="button"
+            class="linkish"
+            phx-click={JS.push_focus() |> JS.push("dialog")}
+            phx-value-name="account"
+          >
+            Connect Claude Code or Codex
+          </button>
         </p>
         <button class="primary" disabled={@busy} phx-disable-with="Creating…">
           Create project
@@ -495,6 +510,21 @@
       project={@project}
       current_user={@current_user}
     />
+    <.dialog :if={@dialog == :account} id="account-dialog" title="Your account" on_close="dismiss">
+      <p class="lede">
+        Signed in as <strong>@{@current_user.login}</strong>. The agent below is the one your projects are built with, and its subscription or key is what pays for every turn in them, whoever is working.
+      </p>
+      <.live_component
+        module={RavixWeb.Live.AgentPanel}
+        id="agent-panel"
+        current_user={@current_user}
+        session_token={@session_token}
+      />
+      <hr />
+      <p class="hint">
+        <a href="/api/auth/install">Change which GitHub repositories Ravix may work in ↗</a>
+      </p>
+    </.dialog>
     <.live_component
       :if={@dialog == :people && @project}
       module={RavixWeb.Live.PeopleDialog}
