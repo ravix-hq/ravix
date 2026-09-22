@@ -50,6 +50,9 @@ defmodule RavixWeb.WorkspaceLive do
         # four times a render --- twice in the sidebar badge and twice in the
         # inbox heading --- and each ask walked every track of every project.
         attention: 0,
+        # Which tracks the browser has been told need somebody, or `nil`
+        # before the first rail read. See `announce/2`.
+        noticed: nil,
         expanded_projects: MapSet.new(),
         advanced_track: false,
         project: nil,
@@ -216,6 +219,24 @@ defmodule RavixWeb.WorkspaceLive do
      )}
   end
 
+  # A desktop notification was clicked. The browser asks rather than going
+  # there itself, so the track it names is checked against the rail this
+  # person can see, and `handle_params/3` checks the URL again on the way
+  # in, as it does for any link in the rail. A track that is not there ---
+  # closed since, or a share since revoked --- is nowhere to go, and so is
+  # anything that is not a track id at all.
+  def handle_event("open-notice", %{"track" => id}, socket) do
+    project_id =
+      Enum.find_value(socket.assigns.tracks, fn {project_id, rows} ->
+        Enum.any?(rows, &(&1.id == id)) && project_id
+      end)
+
+    case project_id do
+      nil -> {:noreply, socket}
+      project_id -> {:noreply, push_patch(socket, to: "/p/#{project_id}/t/#{id}")}
+    end
+  end
+
   def handle_event("toggle-project", %{"id" => id}, socket) do
     expanded = socket.assigns.expanded_projects
 
@@ -366,7 +387,11 @@ defmodule RavixWeb.WorkspaceLive do
   def handle_async({:tracks, id}, {:ok, {:ok, tracks}}, socket) do
     if Enum.any?(socket.assigns.projects, &(&1.id == id)) do
       tracks = Map.put(socket.assigns.tracks, id, tracks)
-      {:noreply, assign(socket, tracks: tracks, attention: attention_count(tracks))}
+
+      {:noreply,
+       socket
+       |> assign(tracks: tracks, attention: attention_count(tracks))
+       |> announce(tracks)}
     else
       {:noreply, socket}
     end
@@ -547,13 +572,63 @@ defmodule RavixWeb.WorkspaceLive do
       Enum.each(MapSet.difference(new, old), &Hub.subscribe/1)
     end
 
-    assign(socket,
+    socket
+    |> assign(
       projects: projects,
       tracks: tracks,
       attention: attention_count(tracks),
       expanded_projects:
         MapSet.intersection(socket.assigns.expanded_projects, MapSet.new(projects, & &1.id))
     )
+    |> announce(tracks)
+  end
+
+  # Desktop notifications: the tracks that have *come* to need somebody
+  # since the rail last looked, sent to the browser's `Notify` hook as one
+  # `notify` event. The hook decides whether to show anything --- the person
+  # switched it on, the browser allowed it, this tab is not the one being
+  # looked at --- and this page decides only what is new, because the
+  # browser cannot: every rail it is sent is complete, so a reload would
+  # announce everything already in the inbox.
+  #
+  # The first read seeds the set without a word: what was waiting when the
+  # page opened is the inbox's to show, and opening a page is not news. A
+  # track leaves the set when it stops wanting somebody (it was read, or a
+  # new turn started), so the next time it finishes it is news again; a
+  # failed one stays until it is closed, and is said once. The same
+  # predicate as the badge, so the two cannot disagree about what "needs
+  # you" means.
+  defp announce(socket, tracks) do
+    wanting =
+      for {_id, rows} <- tracks,
+          track <- rows,
+          attention?(track),
+          into: %{},
+          do: {track.id, track}
+
+    ids = MapSet.new(Map.keys(wanting))
+
+    case socket.assigns.noticed do
+      nil ->
+        assign(socket, noticed: ids)
+
+      noticed ->
+        fresh =
+          ids
+          |> MapSet.difference(noticed)
+          |> Enum.map(&notice(wanting[&1], socket.assigns.projects))
+          |> Enum.sort_by(& &1.title)
+
+        socket = assign(socket, noticed: ids)
+        if fresh == [], do: socket, else: push_event(socket, "notify", %{tracks: fresh})
+    end
+  end
+
+  # What the browser says: the title, where, and which of the two things
+  # happened. No transcript text; the notification is a knock, not the news.
+  defp notice(track, projects) do
+    project = Enum.find(projects, &(&1.id == track.project_id))
+    %{id: track.id, title: track.title, project: project && project.name, status: track.status}
   end
 
   defp agent_name(%Accounts.User{agent: :codex}), do: "Codex"

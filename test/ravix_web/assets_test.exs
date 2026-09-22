@@ -68,8 +68,8 @@ defmodule RavixWeb.AssetsTest do
     refute css =~ ~s(:root[data-theme=")
   end
 
-  test "the script registers the five hooks and nothing else", %{js: js} do
-    for hook <- ~w(Theme PanelResize TranscriptTail Composer Terminal) do
+  test "the script registers the six hooks and nothing else", %{js: js} do
+    for hook <- ~w(Theme PanelResize TranscriptTail Composer Terminal Notify) do
       assert js =~ hook
     end
 

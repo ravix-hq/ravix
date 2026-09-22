@@ -563,6 +563,17 @@ h4 { font-size: 12px; color: var(--dim); font-weight: 500; letter-spacing: 0; }
   background: linear-gradient(90deg, var(--bg) 0 50%, var(--accent) 50%);
 }
 
+/* Desktop notifications: one button under the theme picker, in the same
+   shape. The state is the browser's (see `hooks/notify.js`); the dot says
+   it at a glance and the label says it in words. */
+.notify { width: 100%; }
+.notify-dot {
+  flex: none; width: 8px; height: 8px; margin: 3px 7px; border-radius: 50%;
+  background: var(--dimmer);
+}
+.notify.on .notify-dot { background: var(--accent); }
+.notify .theme-trigger:disabled { opacity: 0.7; }
+
 /* The same picker on the sign-in screen, which has no rail to sit in. */
 .corner-theme { position: fixed; left: 14px; bottom: 14px; width: 190px; }
 

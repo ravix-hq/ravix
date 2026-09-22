@@ -96,6 +96,62 @@ defmodule RavixWeb.WorkspaceLiveTest do
     assert has_element?(view, ".inbox-empty", "You're all caught up")
   end
 
+  test "a track that comes to need somebody is announced to the browser, once", %{conn: conn} do
+    user = insert_user()
+    project = insert_project(user: user, name: "Ravix")
+    waiting = insert_track(project: project, title: "Already waiting")
+    working = insert_track(project: project, title: "Working")
+
+    [waiting, working] =
+      Enum.map([waiting, working], &Tracks.present(&1, project: project))
+
+    waiting = struct!(waiting, status: :failed, unread: true)
+    rail = fn working -> stub(Tracks, :list, fn _, _ -> {:ok, [waiting, working]} end) end
+
+    rail.(struct!(working, status: :running, unread: false))
+    {:ok, view, _} = live(log_in_user(conn, user), "/inbox")
+    turn = fn -> send(view.pid, {:hub, Event.new(:turn, project.id, track_id: working.id)}) end
+    assert has_element?(view, ".inbox-item", "Already waiting")
+    # What was waiting when the page opened is the inbox's to show, not news.
+    refute_push_event(view, "notify", %{})
+
+    rail.(struct!(working, status: :ready, unread: true))
+    turn.()
+    render_async(view)
+    id = working.id
+
+    assert_push_event(view, "notify", %{
+      tracks: [%{id: ^id, title: "Working", project: "Ravix", status: :ready}]
+    })
+
+    # Said once: the same rail read again is not news again, and the failed
+    # track, still failed, is never repeated.
+    turn.()
+    render_async(view)
+    refute_push_event(view, "notify", %{})
+
+    # Read, then finished again, is news again.
+    rail.(struct!(working, status: :ready, unread: false))
+    turn.()
+    render_async(view)
+    refute_push_event(view, "notify", %{})
+    rail.(struct!(working, status: :ready, unread: true))
+    turn.()
+    render_async(view)
+    assert_push_event(view, "notify", %{tracks: [%{id: ^id}]})
+
+    # Clicking the notification opens the track through the page, which
+    # checks it against the rail; a track this person cannot see is nowhere
+    # to go, and a made-up one is not a crash.
+    render_click(view, "open-notice", %{"track" => id})
+    assert_patch(view, "/p/#{project.id}/t/#{id}")
+    other = insert_track(project: insert_project(user: insert_user()))
+    render_click(view, "open-notice", %{"track" => other.id})
+    render_click(view, "open-notice", %{"track" => 7})
+    refute_patched(view)
+    assert has_element?(view, "#notify[phx-hook='Notify'], #notify[data-phx-hook='Notify']")
+  end
+
   test "the rail and inbox are scoped to the signed-in user", %{conn: conn} do
     user = insert_user()
     own = insert_project(user: user, name: "My project")
