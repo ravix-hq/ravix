@@ -153,7 +153,8 @@ defmodule RavixWeb.TrackLiveTest do
     stub(Tracks, :interrupt, fn _, _ -> raise "Fountain fell over" end)
     ctx.view |> element("button", "Stop") |> render_click()
 
-    html = render_async(ctx.view)
+    render_async(ctx.view)
+    html = toasted(ctx)
     assert html =~ "The operation could not finish"
     refute html =~ "Could not finish loading"
     refute has_element?(ctx.view, "button[phx-click=interrupt][disabled]")
@@ -536,8 +537,10 @@ defmodule RavixWeb.TrackLiveTest do
     assert has_element?(ctx.view, "#pull-form button[disabled]")
 
     send(opening, :finish)
-    # A refusal lands in front of the form that caused it, ready to retry.
-    assert render_async(ctx.view) =~ "GitHub is not answering."
+    # A refusal lands in front of the form that caused it, ready to retry;
+    # the sentence itself is the workspace's toast, not the track's.
+    render_async(ctx.view)
+    assert toasted(ctx) =~ "GitHub is not answering."
     assert has_element?(ctx.view, "#pull-dialog")
     refute has_element?(ctx.view, "#pull-form button[disabled]")
   end
