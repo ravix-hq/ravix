@@ -690,7 +690,7 @@ defmodule RavixWeb.WorkspaceLive do
   defp matching?(track, project, query),
     do:
       String.contains?(
-        String.downcase("#{project.name} #{track.title} #{track.branch}"),
+        String.downcase("#{project_label(project)} #{track.title} #{track.branch}"),
         String.downcase(query)
       )
 end

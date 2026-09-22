@@ -196,6 +196,27 @@ defmodule RavixWeb.WorkspaceLiveTest do
     refute has_element?(view, "a.yard-item .badge")
   end
 
+  test "shared project labels identify the owner for project and track members", %{conn: conn} do
+    owner = insert_user()
+    member = insert_user()
+    project = insert_project(user: owner, name: "Shared work")
+    track = insert_track(project: project)
+    label = "#{owner.login}/#{project.name}"
+
+    People.add_member(track.id, member.id, owner.id)
+    {:ok, shared, _} = live(log_in_user(conn, member), "/p/#{project.id}")
+    assert has_element?(shared, ".workspace-project-name", label)
+    assert has_element?(shared, "strong", label)
+
+    People.add_project_member(project.id, member.id, owner.id)
+    {:ok, project_member, _} = live(log_in_user(conn, member), "/home")
+    assert has_element?(project_member, ".home-recent a[href='/p/#{project.id}']", label)
+
+    {:ok, own, _} = live(log_in_user(conn, owner), "/p/#{project.id}")
+    assert has_element?(own, ".workspace-project-name", project.name)
+    refute has_element?(own, ".workspace-project-name", label)
+  end
+
   test "track-only members cannot open project creation through a URL", %{conn: conn} do
     owner = insert_user()
     member = insert_user()
