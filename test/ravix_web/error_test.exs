@@ -110,6 +110,20 @@ defmodule RavixWeb.ErrorTest do
       end
     end
 
+    test "a task that exited has a sentence, and it says nothing about why" do
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          error = Error.from({:async_exit, {%RuntimeError{message: "token hunter2"}, []}})
+          assert error.code == "async_exit"
+          assert error.message == "The operation could not finish. Refresh and try again."
+          refute error.message =~ "hunter2"
+        end)
+
+      # The task's own crash report already said what happened; this is not
+      # a shape nobody planned for.
+      refute log =~ "no RavixWeb.Error clause"
+    end
+
     test "a shape nobody wrote a sentence for is still hidden, but no longer silent" do
       # Hiding it is right: a refusal with no clause is one we cannot describe
       # safely. Doing it quietly is what let `:preview_server_down` read as an
@@ -178,21 +192,20 @@ defmodule RavixWeb.ErrorTest do
     }
 
     test "every refusal each context declares has a sentence, and none is the generic 500" do
-      log =
-        ExUnit.CaptureLog.capture_log(fn ->
-          for {context, reasons} <- @vocabularies, reason <- reasons do
-            error = Error.from(reason)
+      # The catch-all is the only clause that answers `internal`, so the code
+      # is the whole of the check. It used to also refute its warning in a
+      # log capture, but a capture sees every process, and the suites that
+      # deliberately reach the catch-all with shapes of their own run
+      # alongside this one.
+      for {context, reasons} <- @vocabularies, reason <- reasons do
+        error = Error.from(reason)
 
-            refute error.code == "internal",
-                   "#{inspect(context)} can return #{inspect(reason)} and it falls through to 500"
+        refute error.code == "internal",
+               "#{inspect(context)} can return #{inspect(reason)} and it falls through to 500"
 
-            assert error.message != "",
-                   "#{inspect(context)} can return #{inspect(reason)} with no sentence"
-          end
-        end)
-
-      # And nothing above reached the catch-all, which logs when it fires.
-      refute log =~ "no RavixWeb.Error clause"
+        assert error.message != "",
+               "#{inspect(context)} can return #{inspect(reason)} with no sentence"
+      end
     end
 
     test "the escape hatches are gone and stay gone" do

@@ -120,12 +120,8 @@ defmodule RavixWeb.Live.MachineDock do
   def handle_async(:vitals, {:ok, response}, socket),
     do: {:noreply, result(assign(socket, vitals_busy?: false), response, &assign(&1, vitals: &2))}
 
-  def handle_async(:vitals, {:exit, _reason}, socket),
-    do:
-      {:noreply,
-       socket
-       |> assign(vitals_busy?: false)
-       |> error({:unavailable, "The machine metrics did not arrive."})}
+  def handle_async(:vitals, {:exit, reason}, socket),
+    do: {:noreply, socket |> assign(vitals_busy?: false) |> exit(reason)}
 
   def handle_async(:exec, {:ok, response}, socket) do
     {:noreply,
@@ -137,12 +133,8 @@ defmodule RavixWeb.Live.MachineDock do
      end)}
   end
 
-  def handle_async(:exec, {:exit, _reason}, socket) do
-    {:noreply,
-     socket
-     |> assign(exec_busy: false)
-     |> error({:unavailable, "The command did not finish."})}
-  end
+  def handle_async(:exec, {:exit, reason}, socket),
+    do: {:noreply, socket |> assign(exec_busy: false) |> exit(reason)}
 
   @impl true
   def render(assigns) do
@@ -185,7 +177,7 @@ defmodule RavixWeb.Live.MachineDock do
               </span>
             </div>
           </div>
-          <p :if={@dock == "run"} class="hint">
+          <p :if={@dock == :run} class="hint">
             Run a command in this track’s worktree. For a persistent service, use Preview.
           </p>
           <p class="hint">

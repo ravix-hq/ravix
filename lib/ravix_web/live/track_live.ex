@@ -48,8 +48,8 @@ defmodule RavixWeb.TrackLive do
   @flush_ms 100
 
   alias Ravix.Accounts.Access
-  alias Ravix.{Crypto, Hub, Previews, PromptQueue, Tracks}
   alias Ravix.GitHub.ChecksReport
+  alias Ravix.{Hub, Previews, PromptQueue, Tracks}
   alias Ravix.Hub.Event
   alias Ravix.Tracks.{Diff, Files}
   alias Ravix.Tracks.Transcript
@@ -68,7 +68,6 @@ defmodule RavixWeb.TrackLive do
       assign(socket,
         track_id: session["track_id"],
         project_id: session["project_id"],
-        session_hash: Crypto.sha256(session["session_token"]),
         track: nil,
         project: nil,
         header: nil,
@@ -91,6 +90,10 @@ defmodule RavixWeb.TrackLive do
         dialog: nil,
         rename_form: Form.new(:rename_track),
         pull: nil,
+        # The ribbon's three writes that are out --- `:interrupt`, `:retry`,
+        # `:pull` --- each disabling the button that would repeat it. See
+        # `begin/3`.
+        pending: MapSet.new(),
         attached_images: [],
         # The turns that have taken an event since the last time the page drew,
         # and whether any of those events ended a stage. See `absorb/2`.
@@ -167,22 +170,14 @@ defmodule RavixWeb.TrackLive do
   def handle_event("starter", %{"prompt" => prompt}, socket),
     do: {:noreply, push_event(socket, "composer:insert", %{text: prompt})}
 
+  # Stopping and waking are Fountain round trips, and they used to be ones
+  # this process waited out, like the file read below. The button is
+  # disabled until the answer lands; see `begin/3`.
   def handle_event("interrupt", _, socket),
-    do:
-      {:noreply,
-       result(
-         socket,
-         Tracks.interrupt(socket.assigns.current_user, socket.assigns.track_id),
-         fn s, _ -> refresh_detail(s) end
-       )}
+    do: {:noreply, begin(socket, :interrupt, &Tracks.interrupt/2)}
 
   def handle_event("retry-track", _, socket),
-    do:
-      {:noreply,
-       result(socket, Tracks.retry(socket.assigns.current_user, socket.assigns.track_id), fn s,
-                                                                                             _ ->
-         load(s)
-       end)}
+    do: {:noreply, begin(socket, :retry, &Tracks.retry/2)}
 
   def handle_event("queue", %{"action" => "cancel", "id" => id}, socket),
     do: {:noreply, queued(socket, &PromptQueue.cancel/3, id)}
@@ -271,15 +266,12 @@ defmodule RavixWeb.TrackLive do
      )}
   end
 
+  # A GitHub round trip, off this process for the same reason as the two
+  # above. The dialog stays open until GitHub answers, so a refusal lands in
+  # front of the form that caused it.
   def handle_event("open-pull", params, socket) do
     attrs = Map.put(params, "draft", Params.flag(params, "draft", true))
-
-    {:noreply,
-     result(
-       socket,
-       Tracks.open_pull(socket.assigns.current_user, socket.assigns.track_id, attrs),
-       &assign(&1, pull: &2, dialog: nil)
-     )}
+    {:noreply, begin(socket, :pull, &Tracks.open_pull(&1, &2, attrs))}
   end
 
   # Rename opens on the name the track has now, so the dialog is a correction
@@ -509,6 +501,21 @@ defmodule RavixWeb.TrackLive do
     end)
   end
 
+  defp async_result(:interrupt, {:ok, response}, socket),
+    do: result(settle(socket, :interrupt), response, fn s, _ -> refresh_detail(s) end)
+
+  defp async_result(:retry, {:ok, response}, socket),
+    do: result(settle(socket, :retry), response, fn s, _ -> load(s) end)
+
+  defp async_result(:pull, {:ok, response}, socket),
+    do: result(settle(socket, :pull), response, &assign(&1, pull: &2, dialog: nil))
+
+  # One of the ribbon's writes that did not answer. Not the loading clause
+  # below: nothing was being loaded, and "could not finish loading" about a
+  # Stop that crashed would be a sentence about the wrong thing.
+  defp async_result(name, {:exit, reason}, socket) when name in [:interrupt, :retry, :pull],
+    do: socket |> settle(name) |> exit(reason)
+
   # A background refresh that crashed leaves the page showing what it had.
   # The generic clause below belongs to the reads somebody is waiting on: it
   # clears `loading` and says so, which is the wrong answer for a tick nobody
@@ -519,7 +526,7 @@ defmodule RavixWeb.TrackLive do
   defp async_result(_name, {:exit, _reason}, socket),
     do:
       socket
-      |> assign(loading: false, transcript_loading: false, exec_busy: false)
+      |> assign(loading: false, transcript_loading: false)
       |> update_panel(&Panel.settled/1)
       |> put_flash(:error, "Could not finish loading. Please try again.")
 
@@ -781,6 +788,20 @@ defmodule RavixWeb.TrackLive do
     id = socket.assigns.track_id
     traced_async(socket, :transcript, fn -> Tracks.events(user, id) end)
   end
+
+  # One of the ribbon's three writes, started off this process and named in
+  # `pending` until its answer or its exit settles it. `call` takes the
+  # person and the track, which is the shape all three share.
+  defp begin(socket, name, call) do
+    user = socket.assigns.current_user
+    id = socket.assigns.track_id
+
+    socket
+    |> update(:pending, &MapSet.put(&1, name))
+    |> traced_async(name, fn -> call.(user, id) end)
+  end
+
+  defp settle(socket, name), do: update(socket, :pending, &MapSet.delete(&1, name))
 
   # The four preview buttons all do the same thing to the page -- mark the
   # panel busy and answer later -- and differ only in which context call they

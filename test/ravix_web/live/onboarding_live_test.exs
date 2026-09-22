@@ -278,10 +278,18 @@ defmodule RavixWeb.OnboardingLiveTest do
       # The page ticks itself; here the ticks are sent by hand so the test
       # does not wait out the interval.
       send(view.pid, {:agent_panel, "agent-panel", :poll_link})
+      # The tick reaches the panel through `send_update/2`, one message
+      # later, so the poll it starts is not outstanding when `render_async/1`
+      # asks straight away; rendering once lets the page take the tick first.
+      render(view)
       html = render_async(view)
       assert html =~ "ABCD-EFGH"
 
       send(view.pid, {:agent_panel, "agent-panel", :poll_link})
+      # The tick reaches the panel through `send_update/2`, one message
+      # later, so the poll it starts is not outstanding when `render_async/1`
+      # asks straight away; rendering once lets the page take the tick first.
+      render(view)
       render_async(view)
       assert_patch(view, "/welcome/github")
       assert %User{agent: :codex, credential_kind: :subscription} = Repo.get!(User, user.id)
@@ -302,6 +310,10 @@ defmodule RavixWeb.OnboardingLiveTest do
       render_async(view)
 
       send(view.pid, {:agent_panel, "agent-panel", :poll_link})
+      # The tick reaches the panel through `send_update/2`, one message
+      # later, so the poll it starts is not outstanding when `render_async/1`
+      # asks straight away; rendering once lets the page take the tick first.
+      render(view)
       html = render_async(view)
       assert html =~ "ChatGPT refused the code."
       refute html =~ "ABCD-EFGH"
@@ -606,8 +618,8 @@ defmodule RavixWeb.OnboardingLiveTest do
       :sys.replace_state(view.pid, &age_session_guard/1)
 
       # The panel is a component, so the page's hook never sees the submit;
-      # the panel asks the guard itself and sends the whole page to sign in.
-      assert {:error, {:live_redirect, %{to: "/login"}}} =
+      # `RavixWeb.Live.Hooks` asks for it and sends the whole page to sign in.
+      assert {:error, {:redirect, %{to: "/login"}}} =
                view |> form("#credential-form", credential: [value: "k"]) |> render_submit()
     end
   end

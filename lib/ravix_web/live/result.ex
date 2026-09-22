@@ -64,23 +64,45 @@ defmodule RavixWeb.Live.Result do
   @doc """
   Flash the sentence `RavixWeb.Error` has for `reason`.
 
+  A `live_component` cannot do this itself; see `flash/3`.
+  """
+  @spec error(Socket.t(), term()) :: Socket.t()
+  def error(socket, reason), do: flash(socket, :error, Error.from(reason).message)
+
+  @doc """
+  Flash the one sentence for work that exited before it could answer.
+
+  A `handle_async/3` clause matching `{:exit, reason}` is a page whose task
+  crashed, was killed or lost the instance it ran on. It used to be five
+  clauses in five modules, four of them carrying the same string, and each
+  a chance for the next one to say it differently. The sentence is
+  `RavixWeb.Error`'s, as `{:async_exit, reason}`; the reason is the
+  refusal's payload, which `Error.from/2` never logs and the task's own
+  crash report already did.
+
+  Two arguments, because `exit/1` is `Kernel`'s.
+  """
+  @spec exit(Socket.t(), term()) :: Socket.t()
+  def exit(socket, reason), do: error(socket, {:async_exit, reason})
+
+  @doc """
+  Put `message` in the page's flash, from a page or from a component.
+
   A `live_component` cannot do this itself. `Phoenix.LiveView.put_flash/3`
   inside one changes a socket the page never renders, so the flash is
   dropped and the refusal is silent -- the person clicks, nothing happens,
   and nothing says why. So a component hands the sentence to its parent
   instead, which is the only process with a flash to put it in.
 
-  Both pages handle `{:flash, :error, message}` for this reason.
+  Every page handles `{:flash, kind, message}` for this reason.
   """
-  @spec error(Socket.t(), term()) :: Socket.t()
-  def error(socket, reason) do
-    message = Error.from(reason).message
-
+  @spec flash(Socket.t(), atom(), String.t()) :: Socket.t()
+  def flash(socket, kind, message) do
     if component?(socket) do
-      send(self(), {:flash, :error, message})
+      send(self(), {:flash, kind, message})
       socket
     else
-      Phoenix.LiveView.put_flash(socket, :error, message)
+      Phoenix.LiveView.put_flash(socket, kind, message)
     end
   end
 

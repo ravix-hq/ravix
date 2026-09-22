@@ -2,7 +2,7 @@ defmodule RavixWeb.WorkspaceManagementTest do
   use RavixWeb.ConnCase, async: false
   import Phoenix.LiveViewTest
   import Mimic
-  alias Ravix.{Accounts, People, Previews, Projects, Tracks}
+  alias Ravix.{Accounts, People, Previews, Projects, Repo, Tracks}
   alias Ravix.Fountain.Shapes.Catalog
   alias Ravix.Hub.Event
   alias Ravix.Projects.Machine.Rebuild
@@ -116,8 +116,56 @@ defmodule RavixWeb.WorkspaceManagementTest do
     |> form("#secret-form", secret: [store: "vault", key: "TOKEN", value: "private-value"])
     |> render_submit()
 
-    assert render(ctx.view) =~ "Secret updated"
-    refute render(ctx.view) =~ "private-value"
+    # The write is a Fountain round trip and runs off the page, and the
+    # dialog hands its sentence to the page one message after the answer.
+    render_async(ctx.view)
+    html = render(ctx.view)
+    assert html =~ "Secret updated"
+    refute html =~ "private-value"
+  end
+
+  test "saving settings runs off the page, with the button disabled until Fountain answers",
+       ctx do
+    settings(ctx)
+    parent = self()
+
+    stub(Projects, :update_settings, fn _, _, attrs ->
+      send(parent, {:saving, self()})
+      assert attrs["name"] == "Renamed"
+
+      receive do
+        :finish -> :ok
+      after
+        2_000 -> flunk("the save was never released")
+      end
+    end)
+
+    ctx.view |> form("#settings-form", settings: [name: "Renamed"]) |> render_submit()
+
+    assert_receive {:saving, saving}
+    assert has_element?(ctx.view, "#settings-form button[disabled]")
+    # The secret form is not the one that is out, and the page still answers.
+    refute has_element?(ctx.view, "#secret-form button[disabled]")
+    assert render_click(ctx.view, "dialog", %{name: "settings"}) =~ "settings-form"
+
+    send(saving, :finish)
+    render_async(ctx.view)
+    assert render(ctx.view) =~ "Settings saved"
+    refute has_element?(ctx.view, "#settings-form button[disabled]")
+  end
+
+  @tag capture_log: true
+  test "a save that crashes re-enables its button and says so", ctx do
+    settings(ctx)
+    stub(Projects, :update_settings, fn _, _, _ -> raise "Fountain fell over" end)
+
+    ctx.view |> form("#settings-form", settings: [name: "Renamed"]) |> render_submit()
+
+    render_async(ctx.view)
+    assert render(ctx.view) =~ "The operation could not finish"
+    refute has_element?(ctx.view, "#settings-form button[disabled]")
+    # What was typed is still there to try again with.
+    assert has_element?(ctx.view, "#settings-name[value=Renamed]")
   end
 
   test "an unavailable harness is refused on the box it is about", ctx do
@@ -140,6 +188,7 @@ defmodule RavixWeb.WorkspaceManagementTest do
       |> form("#settings-form", settings: [runtime: "made-up", model: "also-made-up"])
       |> render_submit()
 
+      render_async(ctx.view)
       assert has_element?(ctx.view, "#settings-form .field p.error", message)
 
       assert has_element?(ctx.view, "#{id}[value='made-up']") or
@@ -162,6 +211,8 @@ defmodule RavixWeb.WorkspaceManagementTest do
     ctx.view
     |> form("#secret-form", secret: [store: "env", key: "not a key", value: "private-value"])
     |> render_submit()
+
+    render_async(ctx.view)
 
     assert has_element?(
              ctx.view,
@@ -389,6 +440,48 @@ defmodule RavixWeb.WorkspaceManagementTest do
 
     assert render(ctx.view) =~ "The operation could not finish"
     refute has_element?(ctx.view, "button[value=rebuild][disabled]")
+  end
+
+  describe "a session that went without notice" do
+    # The dialog is a `live_component`, and the page's session hooks never
+    # see a component's events: without the wrapping in
+    # `RavixWeb.Live.Hooks`, a revoked session could keep saving settings
+    # and deleting projects until the page happened to receive a message.
+    setup ctx do
+      {token, session} = insert_session(ctx.user)
+      conn = Plug.Test.init_test_session(ctx.conn, session_token: token)
+      {:ok, view, _} = live(conn, "/p/#{ctx.project.id}")
+      settings(%{ctx | view: view})
+      Repo.delete!(session)
+      %{view: view}
+    end
+
+    test "cannot save settings through the dialog", ctx do
+      reject(&Projects.update_settings/3)
+
+      assert {:error, {:redirect, %{to: "/login"}}} =
+               ctx.view |> form("#settings-form", settings: [name: "Renamed"]) |> render_submit()
+    end
+
+    test "cannot save a secret through the dialog", ctx do
+      reject(&Projects.update_settings/3)
+
+      assert {:error, {:redirect, %{to: "/login"}}} =
+               ctx.view
+               |> form("#secret-form", secret: [store: "env", key: "TOKEN", value: "v"])
+               |> render_submit()
+    end
+
+    test "cannot delete the project through the dialog", ctx do
+      reject(&Projects.destroy/2)
+
+      assert {:error, {:redirect, %{to: "/login"}}} =
+               ctx.view
+               |> form("#project-danger-form", confirm: ctx.project.name)
+               |> render_submit(%{action: "delete"})
+
+      assert {:ok, _project} = Projects.get(ctx.user, ctx.project.id)
+    end
   end
 
   defp settings(ctx) do

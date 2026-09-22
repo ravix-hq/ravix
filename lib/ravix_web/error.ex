@@ -41,6 +41,8 @@ defmodule RavixWeb.Error do
       `Ravix.GitHub.Error.describe/2`; `%Ravix.Sprites.Error{}` keeps its status.
     * `%Ecto.Changeset{}` is 422 `invalid` with the first field error.
     * `:preview_server_down` is 503 `preview_unavailable`.
+    * `{:async_exit, reason}` is 500 `async_exit`: a page's task exited
+      before it could answer (`RavixWeb.Live.Result.exit/2`).
     * anything else is a logged 500.
   """
   @spec from(term(), [option()]) :: t()
@@ -65,6 +67,17 @@ defmodule RavixWeb.Error do
       status: 503,
       code: "preview_unavailable",
       message: "The preview service is not running right now. Try again in a moment."
+    }
+
+  # Work a page started off its own process --- a provider call under
+  # `start_async/3` --- exited before it answered: it raised, was killed, or
+  # the instance it ran on left. The sentence is the same whichever it was,
+  # because the person can do the same one thing about each.
+  def from({:async_exit, _reason}, _opts),
+    do: %__MODULE__{
+      status: 500,
+      code: "async_exit",
+      message: "The operation could not finish. Refresh and try again."
     }
 
   def from({:preview_agent_auth, message}, _opts),

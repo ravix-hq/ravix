@@ -36,4 +36,29 @@ defmodule RavixWeb.Live.ResultTest do
     socket = error(socket(), {:some_shape_nobody_planned_for, 42})
     assert socket.assigns.flash["error"] =~ "Something went wrong"
   end
+
+  test "work that exited says the one sentence for it, whatever it exited with" do
+    for reason <- [:killed, {%RuntimeError{message: "provider fell over"}, []}] do
+      socket = exit(socket(), reason)
+
+      assert socket.assigns.flash == %{
+               "error" => "The operation could not finish. Refresh and try again."
+             }
+    end
+  end
+
+  test "a component hands the sentence to its page rather than a socket nobody renders" do
+    component = %Phoenix.LiveView.Socket{
+      assigns: %{__changed__: %{}, flash: %{}, myself: %Phoenix.LiveComponent.CID{cid: 1}}
+    }
+
+    assert exit(component, :killed) == component
+    assert_received {:flash, :error, "The operation could not finish. Refresh and try again."}
+
+    assert flash(component, :info, "Saved.") == component
+    assert_received {:flash, :info, "Saved."}
+
+    assert error(component, :not_found) == component
+    assert_received {:flash, :error, "No such thing here."}
+  end
 end

@@ -239,6 +239,7 @@
                   type="button"
                   class="ghost"
                   phx-click="interrupt"
+                  disabled={:interrupt in @pending}
                 >
                   Stop
                 </button>
@@ -247,6 +248,7 @@
                   type="button"
                   class="ghost"
                   phx-click="retry-track"
+                  disabled={:retry in @pending}
                 >
                   Wake / retry
                 </button>
@@ -356,6 +358,7 @@
           track_id={@track_id}
           workdir={@track.workdir}
           current_user={@current_user}
+          session_hash={@session_hash}
         />
       </aside>
     </div>
@@ -389,6 +392,7 @@
       subject_id={@track_id}
       owner={@track.role == :owner}
       current_user={@current_user}
+      session_hash={@session_hash}
     />
     <.dialog :if={@dialog == :pull} id="pull-dialog" title="Open pull request" on_close="dismiss">
       <p>Commit and push your branch before opening a pull request.</p>
@@ -405,7 +409,9 @@
           type="checkbox"
           label="Draft pull request"
           value={true}
-        /><button class="primary" phx-disable-with="Opening…">Open pull request</button>
+        /><button class="primary" phx-disable-with="Opening…" disabled={:pull in @pending}>
+          Open pull request
+        </button>
       </form>
     </.dialog>
   </div>
