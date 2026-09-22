@@ -1,0 +1,379 @@
+<Layouts.app flash={@flash}>
+  <main :if={@current_user} class="centred welcome-page">
+    <div class="welcome-card">
+      <header class="welcome-head">
+        <.wordmark unit={4} />
+        <span class="spacer"></span>
+        <.link href="/auth/signout" method="post" class="ghost">Sign out</.link>
+        <button class="ghost" phx-click="skip" id="welcome-skip">Skip setup</button>
+      </header>
+
+      <nav class="welcome-steps" aria-label="Setup progress">
+        <ol>
+          <li
+            :for={{step, to} <- steps()}
+            class={[
+              step == @live_action && "on",
+              position(step) < position(@live_action) && "done"
+            ]}
+            aria-current={step == @live_action && "step"}
+          >
+            <.link
+              patch={if step == :intro, do: to <> "?from=start", else: to}
+              aria-label={"Step #{position(step)}: #{step_name(step)}"}
+            >
+              <span class="welcome-step-num" aria-hidden="true">{position(step)}</span>
+              <span>{step_name(step)}</span>
+            </.link>
+          </li>
+        </ol>
+      </nav>
+
+      <section :if={@live_action == :intro} id="welcome-intro" aria-labelledby="welcome-intro-h">
+        <h1 id="welcome-intro-h">
+          Welcome to Ravix, {@current_user.name || @current_user.login}
+        </h1>
+        <p class="lede">
+          Ravix gives a coding agent its own computer to work on your repository, so the work carries on when your laptop is closed. Four ideas cover all of it.
+        </p>
+        <ul class="welcome-ideas">
+          <li>
+            <.icon name="github" size={16} class="ico" />
+            <span>
+              <strong>A project is a repository.</strong>
+              <small>
+                You pick one repository from GitHub and that is the project. Ravix sees only the repositories you grant it, never everything your account can reach.
+              </small>
+            </span>
+          </li>
+          <li>
+            <.icon name="machine" size={16} class="ico" />
+            <span>
+              <strong>Every project has a computer.</strong>
+              <small>
+                A cloud machine with the repository already cloned. It keeps its disk between visits, sleeps when nothing is running, and wakes when you come back.
+              </small>
+            </span>
+          </li>
+          <li>
+            <.icon name="branch" size={16} class="ico" />
+            <span>
+              <strong>A project holds many conversations.</strong>
+              <small>
+                Ravix calls each one a track: its own conversation with the agent, on its own branch, in its own worktree. Several can be in flight at once without touching each other's files.
+              </small>
+            </span>
+          </li>
+          <li>
+            <.icon name="add-person" size={16} class="ico" />
+            <span>
+              <strong>Invite teammates, and you are the one billed.</strong>
+              <small>
+                Share a whole project or a single track. Everything anybody does in your project runs on your computer and on your agent subscription, so their turns count against your plan, not theirs.
+              </small>
+            </span>
+          </li>
+        </ul>
+        <div class="welcome-actions">
+          <.link patch={path(:agent)} class="landing-button landing-primary" id="welcome-start">
+            Set up your agent
+          </.link>
+        </div>
+      </section>
+
+      <section :if={@live_action == :agent} id="welcome-agent" aria-labelledby="welcome-agent-h">
+        <h1 id="welcome-agent-h">Choose your agent</h1>
+        <p class="lede">
+          The agent is the program that does the work on the machine. It runs on your own account with its maker, which is what pays for its turns. Projects you create are built with this agent; you can change it later.
+        </p>
+        <div class="welcome-choices" role="group" aria-label="Agent">
+          <button
+            :for={agent <- Ravix.Accounts.User.agents()}
+            type="button"
+            class={["welcome-choice", @agent == agent && "on"]}
+            aria-pressed={to_string(@agent == agent)}
+            phx-click="choose-agent"
+            phx-value-agent={agent}
+            id={"agent-#{agent}"}
+          >
+            <strong>{agent_name(agent)}</strong>
+            <small :if={agent == :claude}>
+              Anthropic's agent. Runs on a Claude Pro, Max or Team subscription, or an Anthropic API key.
+            </small>
+            <small :if={agent == :codex}>
+              OpenAI's agent. Runs on a ChatGPT Plus, Pro, Business or Enterprise subscription, or an OpenAI API key.
+            </small>
+          </button>
+        </div>
+
+        <div :if={@agent} class="welcome-credential">
+          <div class="workspace-actions" role="group" aria-label="How it is paid for">
+            <button
+              :for={kind <- Ravix.Accounts.Inference.kinds(@agent)}
+              type="button"
+              class={if @kind == kind, do: "primary", else: "ghost"}
+              aria-pressed={to_string(@kind == kind)}
+              phx-click="choose-kind"
+              phx-value-kind={kind}
+              id={"kind-#{kind}"}
+            >
+              {kind_name(kind)}
+            </button>
+          </div>
+
+          <p
+            :if={
+              Ravix.Accounts.Inference.connected?(@current_user) && @current_user.agent == @agent &&
+                @current_user.credential_kind == @kind
+            }
+            class="welcome-connected"
+            id="welcome-connected"
+          >
+            <.icon name="check" size={14} class="ico" />
+            <span>
+              {agent_name(@agent)} is connected with your {paid_by(@agent, @kind)}. {replace_hint(
+                @agent,
+                @kind
+              )} — but replacing it ends your open tracks, in every project you own. A conversation will not carry on with a different credential than it started with, so you would open new ones.
+            </span>
+          </p>
+
+          <ol :if={@agent == :claude && @kind == :subscription} class="welcome-howto">
+            <li>
+              On a computer where Claude Code is signed in to your subscription, run <code>claude setup-token</code>.
+            </li>
+            <li>Approve it in the browser window that opens.</li>
+            <li>Paste the token it prints. It starts with <code>sk-ant-oat01-</code>.</li>
+          </ol>
+          <ol :if={@agent == :claude && @kind == :api_key} class="welcome-howto">
+            <li>
+              Create a key in the Anthropic Console, under <strong>API keys</strong>.
+            </li>
+            <li>
+              Paste it here. It starts with <code>sk-ant-api</code>, and its usage is metered rather than part of a subscription.
+            </li>
+          </ol>
+          <ol :if={@agent == :codex && @kind == :api_key} class="welcome-howto">
+            <li>
+              Create a key on the OpenAI platform, under <strong>API keys</strong>.
+            </li>
+            <li>
+              Paste it here. It starts with <code>sk-</code>, and its usage is metered rather than part of a subscription.
+            </li>
+          </ol>
+
+          <div :if={@agent == :codex && @kind == :subscription} id="chatgpt-link">
+            <ol class="welcome-howto">
+              <li>
+                Press <strong>Connect ChatGPT</strong>. Fountain, the service that runs the machines, asks ChatGPT for a one-time code.
+              </li>
+              <li>
+                Open the page it names in a browser signed in to the ChatGPT account whose plan should pay, and type the code.
+              </li>
+              <li>This page notices the approval by itself and moves on.</li>
+            </ol>
+            <p :if={@link_error} class="error" id="link-error" role="alert">{@link_error}</p>
+            <p :if={@linking == false && is_nil(@link)} class="welcome-warning" id="linking-off">
+              <.icon name="info" size={14} class="ico" />
+              <span>
+                Linking a ChatGPT subscription is not switched on for this Ravix deployment's Fountain account. Ask whoever runs it, or use an OpenAI API key for now.
+              </span>
+            </p>
+            <div :if={@link} class="welcome-code" id="chatgpt-code" aria-live="polite">
+              <p class="welcome-code-value">
+                <span class="hint">Your code</span>
+                <strong id="chatgpt-user-code">{@link.user_code}</strong>
+              </p>
+              <p>
+                Enter it at
+                <a
+                  :if={@link.trusted?}
+                  href={@link.verification_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  id="chatgpt-verification"
+                >{@link.verification_url}</a><code :if={!@link.trusted?} id="chatgpt-verification">{@link.verification_url}</code>. Whoever types this code lets this Ravix spend their ChatGPT plan, so only type it if you started this sign-in yourself, on this page, just now. Nobody at Ravix will ever send you a code.
+              </p>
+              <p class="hint">
+                Waiting for ChatGPT… the code is good for fifteen minutes, and you can close this page and come back.
+              </p>
+              <div class="workspace-actions">
+                <button type="button" class="ghost" phx-click="cancel-link" id="chatgpt-cancel">
+                  Cancel
+                </button>
+              </div>
+            </div>
+            <div :if={is_nil(@link) && @linking != false} class="workspace-actions">
+              <button
+                type="button"
+                class="primary"
+                phx-click="begin-link"
+                disabled={@busy}
+                id="chatgpt-connect"
+              >
+                {if @busy, do: "Asking ChatGPT…", else: "Connect ChatGPT"}
+              </button>
+            </div>
+            <p class="hint">
+              Fountain keeps the sign-in and renews it. It never shows a token — not to you, not to teammates, and not to Ravix — and it cannot sign you out of ChatGPT; do that in your ChatGPT account.
+            </p>
+          </div>
+
+          <.form
+            :let={f}
+            :if={Ravix.Accounts.Inference.pasted?(@agent, @kind)}
+            for={@credential_form}
+            id="credential-form"
+            phx-submit="connect"
+            autocomplete="off"
+          >
+            <.input
+              field={f[:value]}
+              id="credential-value"
+              type="password"
+              label={if @kind == :subscription, do: "Subscription token", else: "API key"}
+              autocomplete="off"
+              required
+            />
+            <p class="hint">
+              Stored by Fountain, the service that runs the machines, and never shown again — not to you, not to teammates, and not to Ravix.
+            </p>
+            <button class="primary" disabled={@busy} phx-disable-with="Connecting…">
+              Connect {agent_name(@agent)}
+            </button>
+          </.form>
+        </div>
+
+        <div class="welcome-actions">
+          <.link patch={path(:intro) <> "?from=start"} class="ghost">Back</.link>
+          <span class="spacer"></span>
+          <.link patch={path(:github)} class="ghost" id="agent-later">
+            {if Ravix.Accounts.Inference.connected?(@current_user),
+              do: "Continue",
+              else: "I'll do this later"}
+          </.link>
+        </div>
+      </section>
+
+      <section
+        :if={@live_action == :github}
+        id="welcome-github"
+        aria-labelledby="welcome-github-h"
+      >
+        <h1 id="welcome-github-h">Connect GitHub</h1>
+        <p class="lede">
+          Signing in told Ravix who you are. Installing the Ravix GitHub App is the separate step that says which repositories it may work in. You choose them on GitHub, and you can change the list there at any time.
+        </p>
+        <p :if={!@github_available} class="error">
+          GitHub is not configured for this deployment, so there are no repositories to connect. You can still create a project with no repository.
+        </p>
+        <p :if={@github_available && is_nil(@installations)} class="hint" id="github-checking">
+          Checking what Ravix can already see…
+        </p>
+        <div :if={@github_available && @installations == []} id="github-none">
+          <a class="landing-button landing-primary gh-button" href="/api/auth/install">
+            <.icon name="github" size={17} />Install the GitHub App
+          </a>
+          <p class="hint">
+            You will leave for GitHub, pick an account and its repositories, and come back here.
+          </p>
+        </div>
+        <div :if={@github_available && @installations not in [nil, []]} id="github-connected">
+          <p class="welcome-connected">
+            <.icon name="check" size={14} class="ico" />
+            Connected to {Enum.map_join(@installations, ", ", & &1.account)}.
+          </p>
+          <p class="hint">
+            <a href="/api/auth/install">Add another account, or change which repositories ↗</a>
+          </p>
+        </div>
+        <div class="welcome-actions">
+          <.link patch={path(:agent)} class="ghost">Back</.link>
+          <span class="spacer"></span>
+          <.link
+            patch={path(:project)}
+            class={
+              if @installations not in [nil, []],
+                do: "landing-button landing-primary",
+                else: "ghost"
+            }
+            id="github-continue"
+          >
+            {if @installations not in [nil, []], do: "Continue", else: "Continue without GitHub"}
+          </.link>
+        </div>
+      </section>
+
+      <section
+        :if={@live_action == :project}
+        id="welcome-project"
+        aria-labelledby="welcome-project-h"
+      >
+        <h1 id="welcome-project-h">Create your first project</h1>
+        <p class="lede">
+          Pick the repository to work in. Ravix builds its computer, clones the repository onto it, and opens your first conversation.
+        </p>
+        <p
+          :if={!Ravix.Accounts.Inference.connected?(@current_user)}
+          class="welcome-warning"
+          id="project-no-agent"
+        >
+          <.icon name="info" size={14} class="ico" />
+          <span>
+            You have not connected an agent yet, so this project's agent will have nothing to run on. <.link patch={
+              path(:agent)
+            }>Connect one first</.link>.
+          </span>
+        </p>
+        <form
+          :if={@installations not in [nil, []]}
+          id="installation-form"
+          phx-change="installation"
+        >
+          <.input
+            name="installation"
+            id="installation"
+            label="GitHub account"
+            type="select"
+            value={@installation}
+            options={Enum.map(@installations, &{&1.account, &1.id})}
+          />
+        </form>
+        <.form
+          :let={f}
+          for={@project_form}
+          id="first-project-form"
+          phx-submit="create-project"
+          phx-change="edit"
+        >
+          <.input
+            field={f[:repo]}
+            id="project-repo"
+            label="Repository"
+            type="select"
+            options={[
+              {"No repository (scratch)", ""} | Enum.map(@repos, &{&1.full_name, &1.full_name})
+            ]}
+          />
+          <.input
+            field={f[:name]}
+            id="project-name"
+            label="Project name"
+            maxlength="120"
+            placeholder="Defaults to the repository's name"
+          />
+          <p :if={@github_available && @repos == []} class="hint">
+            No repositories to choose from. <.link patch={path(:github)}>Connect GitHub</.link>
+            to pick one, or start with a scratch machine.
+          </p>
+          <button class="primary" disabled={@busy} phx-disable-with="Building the machine…">
+            Create project
+          </button>
+        </.form>
+        <div class="welcome-actions">
+          <.link patch={path(:github)} class="ghost">Back</.link>
+        </div>
+      </section>
+    </div>
+  </main>
+</Layouts.app>

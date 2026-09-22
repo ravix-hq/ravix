@@ -33,7 +33,8 @@ checking who owns it. Tests use `ravix_test` and SQL Sandbox transactions.
   processes. Contexts return tagged results and do not depend on web code.
 - `lib/ravix_web/`: HTTP boundaries, LiveViews, components, and preview gateway.
   `WorkspaceLive` owns navigation/project forms; nested `TrackLive` owns the
-  selected track. LiveView async work uses `start_async`/`handle_async`.
+  selected track; `OnboardingLive` owns the first visit (`/welcome`) and is
+  never a gate. LiveView async work uses `start_async`/`handle_async`.
 - `assets/js/hooks/`: browser-only interactions. Keep business state and provider
   credentials on the server. `assets/test/` tests actual DOM events and outcomes.
 - `test/support/`: SQL sandbox cases, real changeset factories, scoped Mimic
@@ -52,6 +53,11 @@ comment is required of a `Repo` call that names another context's schema,
 because otherwise the unchecked path is the shorter one to write. Project
 membership and track membership differ; a track share does not grant the
 entire project.
+
+A project spends its *owner's* agent subscription whoever is working in it
+(ADR 0005). The value lives in a Fountain credential set and is never stored,
+assigned, logged or read back here; `Ravix.Accounts.Inference` is the only
+writer, and any write to a set ends the conversations already running on it.
 
 Mount-time authentication is insufficient. Connected events, messages, URL
 patches, and async results must respect session expiry and membership removal.

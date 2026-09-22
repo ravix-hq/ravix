@@ -36,6 +36,10 @@ defmodule Ravix.Projects.Project do
     field :vault_id, :string
     field :runtime, :string
     field :model, :string
+    # The owner's credential set the agent was last pointed at, or nil for an
+    # agent on the deployment's default. See
+    # `Ravix.Projects.Machine.adopt_credentials/2`.
+    field :credential_set_id, :string
     field :rev, :integer, default: 1
     field :instructions, :string, default: ""
     field :created_at, :utc_datetime_usec
@@ -49,7 +53,8 @@ defmodule Ravix.Projects.Project do
   end
 
   @fields ~w(id user_id name repo_full_name repo_private default_branch installation_id
-             agent_id environment_id vault_id runtime model rev instructions created_at archived_at)a
+             agent_id environment_id vault_id runtime model credential_set_id rev instructions
+             created_at archived_at)a
   @required ~w(id user_id name agent_id environment_id runtime model rev created_at)a
 
   @doc "A project with its three Fountain ids. Mints the id and `created_at` when absent."

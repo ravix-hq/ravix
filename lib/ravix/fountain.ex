@@ -23,7 +23,8 @@ defmodule Ravix.Fountain do
   ever addresses records by id, from whichever process is handling a request.
 
   Failures are logged with the path and the status and nothing else: the body
-  may be a secret value on its way to `/secrets`.
+  may be a secret value on its way to `/secrets`, or somebody's subscription
+  token on its way to a credential set.
   """
 
   require Logger
@@ -150,6 +151,152 @@ defmodule Ravix.Fountain do
   @spec secret_keys(Client.t(), store(), id()) :: result([record()])
   def secret_keys(client, store, id) when store in [:environments, :vaults],
     do: list(client, "/api/#{store}/#{escape(id)}/secrets")
+
+  # ── who pays for the model ────────────────────────────────────────────
+
+  @typedoc """
+  The four things a credential set can hold, in Fountain's own spelling. They
+  are a path segment, so they are a closed list here rather than a string a
+  caller composes.
+  """
+  @type provider ::
+          :claude_code_oauth_token | :anthropic_api_key | :openai_api_key | :gemini_api_key
+
+  @providers ~w(claude_code_oauth_token anthropic_api_key openai_api_key gemini_api_key)a
+
+  @doc """
+  `POST /api/account/inference-credential-sets`: an empty, named set.
+
+  Ravix is one Fountain account holding everybody's machines, so a person's
+  own subscription cannot be the *account's* credential. A set is what Fountain
+  offers instead: a named group of provider credentials on this account, which
+  an agent is pointed at with `inference_credential_id`. One per person; see
+  `Ravix.Accounts.Inference`.
+
+  Names are unique on the account, and a duplicate is a 422. Needs a
+  full-scope key, and a Fountain of v0.17 or newer: an older one answers 404.
+  """
+  @spec create_credential_set(Client.t(), String.t()) :: result(record())
+  def create_credential_set(client, name),
+    do: data(client, "POST", "/api/account/inference-credential-sets", body: %{"name" => name})
+
+  @doc "`GET /api/account/inference-credential-sets`: each with the `providers` it holds, never a value."
+  @spec credential_sets(Client.t()) :: result([record()])
+  def credential_sets(client), do: list(client, "/api/account/inference-credential-sets")
+
+  @doc """
+  Write one credential into a set.
+
+  Fountain checks the value against the provider before storing it unless told
+  not to, so a 422 here usually means the provider refused the key, and a 502
+  or 504 that the provider could not be reached to ask.
+
+  The second call in this module whose body must never be logged; the path
+  names `/credentials/`, which `fail/3` treats as it does `/secrets`.
+
+  **Any write to a set invalidates every conversation already running on it.**
+  Fountain binds a conversation to the set's revision and refuses the next
+  prompt with `inference_source_changed` rather than quietly spending a
+  different credential. The remedy is a new conversation.
+  """
+  @spec put_credential(Client.t(), id(), provider(), String.t()) :: outcome()
+  def put_credential(client, set_id, provider, value) when provider in @providers do
+    void(client, "PUT", credential_path(set_id, provider), body: %{"value" => value})
+  end
+
+  @doc "`DELETE .../credentials/:provider`. Also bumps the set's revision; see `put_credential/4`."
+  @spec delete_credential(Client.t(), id(), provider()) :: outcome()
+  def delete_credential(client, set_id, provider) when provider in @providers,
+    do: void(client, "DELETE", credential_path(set_id, provider))
+
+  defp credential_path(set_id, provider),
+    do: "/api/account/inference-credential-sets/#{escape(set_id)}/credentials/#{provider}"
+
+  # ── a ChatGPT subscription ────────────────────────────────────────────
+  #
+  # The fourth thing a set can point at is not a value anybody pastes. A
+  # person signs in to ChatGPT with a device code, Fountain keeps the tokens
+  # and renews them, and the subscription is a *grant* on this account that a
+  # set names by id. Fountain's `docs/build/chatgpt-subscriptions.md` is the
+  # contract these six functions follow.
+
+  @chatgpt "/api/account/chatgpt-subscriptions"
+
+  @doc """
+  `POST /api/account/chatgpt-subscriptions/attempts`: start a device-code
+  sign-in. `%{name: name}` links a new subscription under that name;
+  `%{grant_id: id}` reconnects one the account already holds.
+
+  The reply is the attempt: `id`, `state` (`pending`), `user_code`,
+  `verification_url`, `poll_interval` in seconds, `expires_at` (fifteen
+  minutes out). The code and the URL are shown only to the person who
+  started the attempt, and nobody else, because whoever types the code at
+  that URL links *their* ChatGPT account to *this* Fountain account.
+
+  Refusals worth telling apart: `404 chatgpt_subscriptions_not_enabled`
+  (linking is off for this account, or the Fountain predates it), `409
+  chatgpt_link_attempt_pending` with the open `attempt_id`, `409
+  chatgpt_link_attempts_exceeded`, `409 chatgpt_grant_limit_reached`, `429
+  chatgpt_link_attempts_rate_limited`, `502 chatgpt_auth_unreachable`.
+  """
+  @spec start_chatgpt_link(Client.t(), %{name: String.t()} | %{grant_id: id()}) ::
+          result(record())
+  def start_chatgpt_link(client, %{name: name}) when is_binary(name),
+    do: data(client, "POST", "#{@chatgpt}/attempts", body: %{"name" => name})
+
+  def start_chatgpt_link(client, %{grant_id: grant_id}) when is_binary(grant_id),
+    do: data(client, "POST", "#{@chatgpt}/attempts", body: %{"grant_id" => grant_id})
+
+  @doc """
+  `GET /api/account/chatgpt-subscriptions/attempts/:id`: the attempt as it
+  stands. Reads a row; Fountain is the one polling ChatGPT.
+
+  `state` moves once, from `pending` to `completed`, `cancelled`, `expired`
+  or `failed`, and stays readable afterwards. A completed attempt carries the
+  subscription's id in `result_grant_id`; a failed one carries
+  `failure.reason`.
+  """
+  @spec chatgpt_link(Client.t(), id()) :: result(record())
+  def chatgpt_link(client, attempt_id),
+    do: data(client, "GET", "#{@chatgpt}/attempts/#{escape(attempt_id)}")
+
+  @doc "`GET .../attempts`: the account's *pending* attempts, oldest first, each with its code."
+  @spec pending_chatgpt_links(Client.t()) :: result([record()])
+  def pending_chatgpt_links(client), do: list(client, "#{@chatgpt}/attempts")
+
+  @doc "`DELETE .../attempts/:id`: end a pending attempt. A code approved afterwards stores nothing."
+  @spec cancel_chatgpt_link(Client.t(), id()) :: result(record())
+  def cancel_chatgpt_link(client, attempt_id),
+    do: data(client, "DELETE", "#{@chatgpt}/attempts/#{escape(attempt_id)}")
+
+  @doc """
+  `GET /api/account/chatgpt-subscriptions`: every subscription the account
+  holds, each with `id`, `name`, `status`, `plan_type`, `account_email`,
+  `exhausted_until`. Never a token.
+  """
+  @spec chatgpt_subscriptions(Client.t()) :: result([record()])
+  def chatgpt_subscriptions(client), do: list(client, @chatgpt)
+
+  @doc """
+  `PATCH /api/account/inference-credential-sets/:id` with `chatgpt_grant_id`:
+  make `grant_id` what the set's Codex runs use, or `nil` to stop naming one.
+
+  This is the switch. A linked subscription does nothing until a set names
+  it, and once one does, Codex on that set runs on the subscription and on
+  nothing else: an unusable subscription refuses the run
+  (`chatgpt_grant_unusable`) rather than falling back to a key. Only Codex
+  reads the grant; any other OpenAI consumer still wants an `openai_api_key`.
+
+  **Naming a grant bumps the set's revision like any other write** and ends
+  the conversations already running on it; see `put_credential/4`.
+  """
+  @spec name_chatgpt_subscription(Client.t(), id(), id() | nil) :: result(record())
+  def name_chatgpt_subscription(client, set_id, grant_id)
+      when is_binary(grant_id) or is_nil(grant_id) do
+    data(client, "PATCH", "/api/account/inference-credential-sets/#{escape(set_id)}",
+      body: %{"chatgpt_grant_id" => grant_id}
+    )
+  end
 
   # ── conversations ─────────────────────────────────────────────────────
 
@@ -466,7 +613,8 @@ defmodule Ravix.Fountain do
     ours
   end
 
-  defp secret_path?(path), do: String.contains?(path, "/secrets")
+  defp secret_path?(path),
+    do: String.contains?(path, "/secrets") or String.contains?(path, "/credentials/")
 
   defp conversation(http, id), do: Fountain.Conversation.new(http, escape(id))
 
