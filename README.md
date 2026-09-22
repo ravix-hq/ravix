@@ -61,6 +61,8 @@ the corresponding Phoenix URL when launching `bun mock/server.ts` directly.
 - Project settings: harness/model, instructions, setup script, packages,
   write-only environment/vault secrets, preview defaults, and machine rebuild.
 - Project and track sharing: GitHub usernames and revocable invite links.
+- Desktop notifications, switched on from the rail: when a track finishes or
+  fails while the tab is in the background, the browser says so.
 
 The terminal runs complete shell commands; it is not an interactive TTY.
 Persistent application servers belong in Preview, whose process owns the
