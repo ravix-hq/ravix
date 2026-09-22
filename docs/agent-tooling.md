@@ -4,6 +4,9 @@ Ravix serves remote MCP at `/mcp` and A2A 1.0 JSON-RPC at `/a2a`.
 Both act as the signed-in person and preserve the browser's owner, project-member,
 and track-member permissions. Fountain credentials remain on the server.
 
+The workspace **Help** menu provides setup steps, example prompts, A2A connection
+details and troubleshooting. On narrow screens, open **Menu**, then **Help**.
+
 ## Claude Code
 
 ```sh

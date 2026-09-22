@@ -1157,3 +1157,12 @@ h4 { font-size: 12px; color: var(--dim); font-weight: 500; letter-spacing: 0; }
   .dot.running, .dot.opening { animation: none; }
   .toast, .live-disconnected, .scrim, .yard-scrim { animation: none; }
 }
+
+/* Desktop tooling instructions stay readable inside the shared dialog shell. */
+.tooling-help details { border-top: 1px solid var(--line); padding: 12px 0; }
+.tooling-help summary { cursor: pointer; font-weight: 500; }
+.tooling-help summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+.tooling-help li { margin: 8px 0; }
+.tooling-help pre { white-space: pre-wrap; overflow-wrap: anywhere; padding: 12px; background: var(--surface); border-radius: var(--radius); }
+.tooling-help code, .tooling-help dd { overflow-wrap: anywhere; }
+.tooling-help dd { margin: 4px 0 12px; }

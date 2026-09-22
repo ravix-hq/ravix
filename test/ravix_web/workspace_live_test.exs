@@ -14,6 +14,19 @@ defmodule RavixWeb.WorkspaceLiveTest do
 
   setup :verify_on_exit!
 
+  test "workspace help explains connections and returns to the workspace", %{conn: conn} do
+    user = insert_user()
+    {:ok, view, _} = live(log_in_user(conn, user), "/home")
+    view |> element("#open-help") |> render_click()
+    assert has_element?(view, "#help-dialog", "Connect Claude Code with MCP")
+    assert has_element?(view, "#help-dialog code", Ravix.Config.public_url() <> "/mcp")
+    assert has_element?(view, "#help-dialog", "SubscribeToTask")
+    assert has_element?(view, "#help-dialog a[href='/settings/connections']")
+    view |> element("#help-dialog button[aria-label='Close']") |> render_click()
+    refute has_element?(view, "#help-dialog")
+    assert has_element?(view, "#open-help")
+  end
+
   test "a signed-out browser is sent to sign in from anywhere it lands", %{conn: conn} do
     for path <- ["/", "/home", "/inbox", "/p/no-project"] do
       assert {:error, {:live_redirect, %{to: "/login"}}} = live(conn, path)
