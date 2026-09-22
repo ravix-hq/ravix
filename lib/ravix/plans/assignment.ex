@@ -132,8 +132,8 @@ defmodule Ravix.Plans.Assignment do
   end
 
   defp target(user, plan, item, _) do
+    # No name: `Tracks` derives a valid, unreserved branch from the item.
     Tracks.open(user, plan.project_id, %{
-      "title" => item.title,
       "origin" => %{
         "kind" => "plan",
         "plan_id" => plan.id,

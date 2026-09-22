@@ -75,6 +75,8 @@ defmodule Ravix.Tracks.Opening do
       slug: plan.slug,
       title: plan.title,
       branch: plan.branch,
+      # See `Ravix.Tracks` on why a PR's head branch is never reserved.
+      branch_reserved: plan.origin.kind != :pr,
       workdir: plan.workdir,
       origin_kind: plan.origin.kind,
       origin_base: plan.origin.base,

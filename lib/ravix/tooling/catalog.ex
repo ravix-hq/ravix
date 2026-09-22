@@ -55,11 +55,11 @@ defmodule Ravix.Tooling.Catalog do
       ),
       tool(
         "create_track",
-        "Open a track and its worktree on a project.",
+        "Open a track. Supply branch_name without the fixed ravix/ prefix; returns the full branch. PR origins keep their existing branch.",
         "tracks:write",
         %{
           "project_id" => string(),
-          "title" => string(200),
+          "branch_name" => string(),
           "origin" => origin(),
           "request_id" => string(100)
         },

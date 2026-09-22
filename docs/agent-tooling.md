@@ -88,7 +88,7 @@ receipt, so tool calls do not hold open the connection until an agent finishes.
 | `update_project_settings` | `project_id`, `settings`, `request_id` |
 | `list_tracks` | `project_id`; optional `after`, `limit` |
 | `get_track` | `track_id` |
-| `create_track` | `project_id`, `request_id`; optional `title`, `origin` |
+| `create_track` | `project_id`, `request_id`; optional `branch_name` (without `ravix/`), `origin` |
 | `send_prompt` | `track_id`, `prompt`, `request_id` |
 | `get_task` | `task_id` |
 | `cancel_task` | `task_id` |

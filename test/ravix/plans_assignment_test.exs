@@ -79,6 +79,38 @@ defmodule Ravix.PlansAssignmentTest do
              Assignment.assign(user, p, plan.id, assignments, "another")
   end
 
+  test "an item's prose title becomes a reserved branch, told apart from its twin", %{
+    p: p,
+    user: user,
+    project: project
+  } do
+    {:ok, plan} =
+      Plans.create(user, project.id, %{
+        "title" => "Twins",
+        "items" => [
+          %{"id" => "first-item", "title" => "Ship the API"},
+          %{"id" => "second-item", "title" => "Ship the API"}
+        ]
+      })
+
+    client =
+      FakeTransport.client([
+        {%{method: "GET", path: "/api/conversations"}, {200, [], %{data: []}}},
+        {%{method: "POST", path: "/api/conversations"}, {201, [], %{data: %{id: "conv-1"}}}},
+        {%{method: "GET", path: "/api/conversations"}, {200, [], %{data: []}}},
+        {%{method: "POST", path: "/api/conversations"}, {201, [], %{data: %{id: "conv-2"}}}}
+      ])
+
+    stub(Fountain, :client, fn -> client end)
+    assignments = [%{"item_id" => "first-item"}, %{"item_id" => "second-item"}]
+
+    assert {:ok, %{items: [one, two]}} =
+             Assignment.assign(user, p, plan.id, assignments, "twins")
+
+    assert Repo.get!(Track, one.track_id).branch == "ravix/ship-the-api"
+    assert Repo.get!(Track, two.track_id).branch == "ravix/ship-the-api-second-i"
+  end
+
   test "a member's new track uses the owner's subscription", %{
     user: owner,
     project: project,
