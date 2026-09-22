@@ -208,8 +208,15 @@ defmodule RavixWeb.WorkspaceLive do
     end
   end
 
+  # A desktop notification was clicked. The browser asks rather than going
+  # there itself, so the track and thread it names are checked afresh here,
+  # and `handle_params/3` checks the URL again on the way in. A notification
+  # shown by a bundle from before threads names no thread and means the
+  # track's default one; anything that is not an id is nowhere to go.
   @impl true
-  def handle_event("open-notice", %{"track" => id, "thread" => thread_id}, socket) do
+  def handle_event("open-notice", %{"track" => id} = params, socket) do
+    thread_id = if is_binary(params["thread"]), do: params["thread"], else: id
+
     case Ravix.Accounts.Access.thread_access(socket.assigns.current_user, id, thread_id) do
       {:ok, %{project: project, track: %{closed_at: nil}, thread: %{closed_at: nil}}} ->
         {:noreply,
@@ -772,7 +779,7 @@ defmodule RavixWeb.WorkspaceLive do
   defp matching?(track, project, query),
     do:
       String.contains?(
-        String.downcase("#{project.name} #{track.title} #{track.branch}"),
+        String.downcase("#{project_label(project)} #{track.title} #{track.branch}"),
         String.downcase(query)
       )
 end

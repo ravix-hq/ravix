@@ -214,9 +214,10 @@ defmodule Ravix.Tooling do
         :branch,
         :workdir,
         :status,
-        :created_by_login,
-        :threads
+        :created_by_login
       ])
+      # Fountain's conversation ids stay on this side, as they do for the track.
+      |> Map.put(:threads, Enum.map(v.threads, &Map.take(&1, [:id, :title, :default, :status])))
       |> Map.put(:url, Config.public_url() <> "/p/#{v.project_id}/t/#{v.id}")
 
   defp settings(v),
