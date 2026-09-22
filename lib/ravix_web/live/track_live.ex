@@ -84,6 +84,9 @@ defmodule RavixWeb.TrackLive do
         queue: [],
         present: [],
         panel: Panel.new(),
+        diff_path: nil,
+        diff_filter: "",
+        diff_show_large: false,
         preview: nil,
         preview_form: Form.new(:preview_config),
         preview_url: nil,
@@ -194,6 +197,19 @@ defmodule RavixWeb.TrackLive do
     panel = Panel.select(socket.assigns.panel, Map.fetch!(@tabs, name))
     {:noreply, socket |> assign(panel: panel) |> load_panel()}
   end
+
+  def handle_event("select-diff", %{"path" => path}, socket) do
+    {:noreply, assign(socket, diff_path: path, diff_show_large: false)}
+  end
+
+  def handle_event("close-diff", _, socket),
+    do: {:noreply, assign(socket, diff_path: nil, diff_show_large: false)}
+
+  def handle_event("filter-diff", %{"filter" => filter}, socket),
+    do: {:noreply, assign(socket, diff_filter: filter)}
+
+  def handle_event("show-large-diff", _, socket),
+    do: {:noreply, assign(socket, diff_show_large: true)}
 
   def handle_event("refresh-panel", _, socket), do: {:noreply, load_panel(socket)}
 
@@ -639,6 +655,9 @@ defmodule RavixWeb.TrackLive do
       queue: [],
       present: [],
       panel: Panel.new(),
+      diff_path: nil,
+      diff_filter: "",
+      diff_show_large: false,
       preview: nil,
       preview_form: Form.new(:preview_config),
       preview_url: nil,
@@ -838,6 +857,9 @@ defmodule RavixWeb.TrackLive do
     |> traced_async(:preview_action, fn -> call.(user, id, hash) end)
   end
 
+  attr :diff_path, :string, default: nil
+  attr :diff_filter, :string, default: ""
+  attr :diff_show_large, :boolean, default: false
   attr :data, :any, required: true
   attr :file, :any, default: nil
   attr :project, :any, required: true
@@ -877,14 +899,87 @@ defmodule RavixWeb.TrackLive do
   end
 
   defp panel_body(%{data: %Diff{}} = assigns) do
+    files = assigns.data.files
+    selected = Enum.find(files, &(&1.change.path == assigns.diff_path))
+
+    filtered =
+      Enum.filter(
+        files,
+        &String.contains?(String.downcase(&1.change.path), String.downcase(assigns.diff_filter))
+      )
+
+    assigns =
+      assign(assigns,
+        selected: selected,
+        filtered: filtered,
+        added: Enum.sum(Enum.map(assigns.data.changes, & &1.added)),
+        removed: Enum.sum(Enum.map(assigns.data.changes, & &1.removed))
+      )
+
     ~H"""
-    <div>
+    <div class="changes-panel">
       <p :if={@data.diff == ""}>No changes yet.</p>
-      <div :for={change <- @data.changes}>
-        <code>{change.path}</code> +{change.added} −{change.removed}
-      </div>
-      <pre>{@data.diff}</pre>
+      <p>
+        {length(@data.changes)} changed files <span class="diff-add">+{@added}</span>
+        <span class="diff-del">−{@removed}</span>
+      </p>
       <p :if={@data.truncated}>Diff is truncated.</p>
+      <div :if={!@selected}>
+        <form id="diff-filter-form" phx-change="filter-diff" phx-submit="filter-diff">
+          <label for="diff-filter">Filter paths</label>
+          <input id="diff-filter" name="filter" type="search" value={@diff_filter} phx-debounce="150" />
+        </form>
+        <p :if={@filtered == [] and @data.diff != ""}>No matching files.</p>
+        <button
+          :for={file <- @filtered}
+          type="button"
+          class="change-file"
+          phx-click="select-diff"
+          phx-value-path={file.change.path}
+        >
+          <span class="change-status">{diff_status(file.change.status)}</span>
+          <span class="change-path"><span :if={file.change.status == :renamed}>{file.old_path} → </span><span class="change-directory">{diff_directory(
+            file.change.path
+          )}</span><strong>{Path.basename(file.change.path)}</strong></span>
+          <span class="change-counts"><span class="diff-add">+{file.change.added}</span>
+          <span class="diff-del">−{file.change.removed}</span></span>
+          <span :if={file.partial}>Partial</span>
+        </button>
+      </div>
+      <div :if={@selected}>
+        <button type="button" phx-click="close-diff">← All changed files</button>
+        <h4 class="change-path">
+          <span :if={@selected.change.status == :renamed}>{@selected.old_path} → </span>{@selected.change.path}
+        </h4>
+        <p :if={@selected.partial}>Partial file — diff was truncated.</p>
+        <p :for={line <- @selected.metadata}>{line}</p>
+        <p :if={@selected.binary}>Binary files differ</p>
+        <%= if large_diff?(@selected) and !@diff_show_large do %>
+          <p>Large diff hidden to keep this panel responsive.</p>
+          <button type="button" phx-click="show-large-diff">Show anyway</button>
+        <% else %>
+          <div
+            :if={@selected.hunks != []}
+            class="file-diff"
+            tabindex="0"
+            role="region"
+            aria-label={"Diff for " <> @selected.change.path}
+          >
+            <div :for={hunk <- @selected.hunks} class="diff-hunk">
+              <div class="diff-hunk-header">{hunk.header}</div>
+              <div :for={line <- hunk.lines}>
+                <div class={"diff-line diff-#{line.kind}"}>
+                  <span class="diff-number" aria-label="Old line">{line.old}</span><span
+                    class="diff-number"
+                    aria-label="New line"
+                  >{line.new}</span><span class="diff-marker">{diff_marker(line.kind)}</span><code>{line.text}</code>
+                </div>
+                <div :if={line.no_newline} class="diff-no-newline">\ No newline at end of file</div>
+              </div>
+            </div>
+          </div>
+        <% end %>
+      </div>
     </div>
     """
   end
@@ -915,6 +1010,17 @@ defmodule RavixWeb.TrackLive do
     </div>
     """
   end
+
+  defp diff_status(status), do: %{added: "A", modified: "M", deleted: "D", renamed: "R"}[status]
+  defp diff_marker(kind), do: %{add: "+", del: "−", context: " "}[kind]
+
+  defp diff_directory(path),
+    do: if(Path.dirname(path) == ".", do: "", else: Path.dirname(path) <> "/")
+
+  defp large_diff?(file),
+    do:
+      Enum.reduce(file.hunks, 0, &(length(&1.lines) + &2)) > 1000 or
+        Enum.any?(file.hunks, fn hunk -> Enum.any?(hunk.lines, &(byte_size(&1.text) > 20_000)) end)
 
   defp load_panel(socket, path \\ nil) do
     user = socket.assigns.current_user

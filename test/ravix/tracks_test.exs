@@ -69,7 +69,7 @@ defmodule Ravix.TracksTest do
 
     test "a deletion and a rename are told apart" do
       deleted =
-        "diff --git a/gone.ts b/gone.ts\ndeleted file mode 100644\n--- a/gone.ts\n+++ /dev/null\n-x"
+        "diff --git a/gone.ts b/gone.ts\ndeleted file mode 100644\n--- a/gone.ts\n+++ /dev/null\n@@ -1 +0,0 @@\n-x"
 
       assert [%Diff.Change{path: "gone.ts", added: 0, removed: 1, status: :deleted}] =
                Tracks.summarize_diff(deleted)
@@ -1093,7 +1093,7 @@ defmodule Ravix.TracksTest do
     end
 
     test "a file, and the diff counted per file", ctx do
-      diff = "diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n+x"
+      diff = "diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -0,0 +1 @@\n+x"
 
       machine_fountain(ctx.project, [
         {%{

@@ -297,7 +297,15 @@
           <button class="ghost" phx-click="refresh-panel" disabled={@panel.busy?}>Refresh</button>
           <p :if={@panel.busy?} role="status">Loading…</p>
           <p :if={@panel.error} role="alert">{@panel.error}</p>
-          <.panel_body :if={@panel.data} data={@panel.data} file={@panel.file} project={@project} />
+          <.panel_body
+            :if={@panel.data}
+            data={@panel.data}
+            file={@panel.file}
+            project={@project}
+            diff_path={@diff_path}
+            diff_filter={@diff_filter}
+            diff_show_large={@diff_show_large}
+          />
           <div :if={@panel.tab == :preview && @preview}>
             <p>Status: {@preview.state}</p>
             <p :if={@preview.unavailable_reason}>{@preview.unavailable_reason}</p>
