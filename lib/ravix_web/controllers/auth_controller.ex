@@ -61,6 +61,11 @@ defmodule RavixWeb.AuthController do
 
     case Auth.callback(params, secret) do
       {:ok, %{token: token, redirect: to}} ->
+        to =
+          if map_size(RavixWeb.ToolingOAuthController.pending(conn)) > 0,
+            do: "/oauth/authorize",
+            else: to
+
         conn
         |> clear_attempt_cookie(state)
         |> configure_session(renew: true)

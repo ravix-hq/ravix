@@ -477,3 +477,31 @@ test('a hard load paints the saved palette, never the default one first', async 
   await expect(page.locator('[data-phx-main]')).toHaveClass(/phx-connected/);
   await paintedOnly(page, 'hot-dog-stand');
 });
+
+test('help explains desktop connections and stays accessible on mobile', async ({ page }) => {
+  await signIn(page);
+  const help = page.getByRole('button', { name: 'Help', exact: true });
+  await help.click();
+  const dialog = page.getByRole('dialog', { name: 'Help · AI tools' });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByText('claude mcp add --transport http ravix http://localhost:4103/mcp', { exact: true })).toBeVisible();
+  await dialog.getByText('Drive tracks with an A2A client', { exact: true }).click();
+  await expect(dialog.getByText('http://localhost:4103/.well-known/agent-card.json', { exact: true })).toBeVisible();
+  await dialog.getByText('Example JSON-RPC request', { exact: true }).click();
+  await expect(dialog.locator('pre').filter({ hasText: 'SendMessage' })).toBeVisible();
+  await accessible(page);
+  await capture(page, 'tooling-help');
+  await page.keyboard.press('Escape');
+  await expect(dialog).toHaveCount(0);
+  await expect(help).toBeFocused();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole('navigation', { name: 'Workspace navigation' }).getByRole('button', { name: 'Menu' }).click();
+  await help.click();
+  await expect(dialog).toBeVisible();
+  await dialog.getByText('Permissions, progress and disconnecting', { exact: true }).click();
+  await expect(dialog.getByRole('link', { name: 'Connected applications' })).toHaveAttribute('href', '/settings/connections');
+  await accessible(page);
+  await capture(page, 'tooling-help-mobile');
+  await dialog.getByRole('button', { name: 'Close', exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+});
