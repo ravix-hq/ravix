@@ -11,13 +11,13 @@ export default defineConfig({
   reporter: [['list'], ['html', { open: 'never' }]],
   use: {
     ...devices['Desktop Chrome'],
-    baseURL: 'http://localhost:4103',
+    baseURL: `http://localhost:${process.env.BROWSER_PORT || 4103}`,
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
   },
   webServer: {
     command: 'python3 browser/server.py',
-    url: 'http://localhost:4103/healthz',
+    url: `http://localhost:${process.env.BROWSER_PORT || 4103}/healthz`,
     reuseExistingServer: false,
     timeout: 120_000,
     gracefulShutdown: { signal: 'SIGTERM', timeout: 30_000 },

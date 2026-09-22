@@ -177,6 +177,39 @@ defmodule RavixWeb.TrackLiveTest do
              render_click(view, "select-diff", %{path: "space name.txt"})
   end
 
+  test "Send keeps its icon and accessible name through every track state", ctx do
+    for status <- [:opening, :running, :ready, :failed],
+        conversation_id <- [nil, "live-conversation"] do
+      stub(Tracks, :get, fn _, _, _ ->
+        track = %{
+          Tracks.present(ctx.track, role: :owner)
+          | status: status,
+            conversation_id: conversation_id
+        }
+
+        {:ok, %{track: track, header: blank_header(), starters: []}}
+      end)
+
+      send(ctx.view.pid, {:hub, Event.new(:tracks, ctx.project.id, track_id: ctx.track.id)})
+      settle(ctx.view)
+
+      button = "#composer-form button[aria-label='Send']"
+      assert has_element?(ctx.view, button <> "[type='submit'][title='Send']", "Send")
+      assert has_element?(ctx.view, button <> " svg[width='16'][height='16'] path")
+      refute has_element?(ctx.view, button <> "[phx-disable-with]")
+      assert has_element?(ctx.view, button <> "[disabled]") == is_nil(conversation_id)
+
+      assert has_element?(ctx.view, "#composer-form button", "Stop") ==
+               status in [:opening, :running]
+
+      assert has_element?(ctx.view, "#composer-form button", "Wake / retry") ==
+               status in [:opening, :failed]
+
+      assert has_element?(ctx.view, "#composer-form button[aria-label='Choose images'] svg")
+      assert has_element?(ctx.view, ".send-hint", "to send")
+    end
+  end
+
   test "starters and typing use the composer protocol", ctx do
     ctx.view |> element("button", "Start here") |> render_click()
     assert_push_event(ctx.view, "composer:insert", %{text: "Build it"})
