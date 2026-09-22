@@ -1008,6 +1008,15 @@ input.crumb-name { width: 30ch; }
 .agent-panel { display: flex; flex-direction: column; gap: 16px; }
 .agent-subscription { display: flex; gap: 10px; align-items: flex-start; margin: 0; font-size: 12.5px; line-height: 1.5; }
 .agent-subscription .chip { flex: none; margin-top: 1px; }
+/* What the set holds, one row each, with its own Remove. */
+.agent-held { display: flex; flex-direction: column; gap: 8px; }
+.agent-held-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: var(--radius-lg); overflow: hidden; }
+.agent-held-list li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 12px; font-size: 12.5px; }
+.agent-held-list li + li { border-top: 1px solid var(--line); }
+.agent-held-name { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; }
+.agent-held-name strong { font-weight: 500; }
+.agent-held-name .dim { color: var(--dim); }
+.agent-held .hint { margin: 0; }
 #account-dialog .lede { margin: 0 0 16px; }
 #account-dialog .agent-choices { margin-bottom: 0; }
 .yard-meta button.linkish { font-size: inherit; padding: 0; color: var(--dimmer); }

@@ -343,6 +343,17 @@ defmodule Ravix.FountainTest do
                Fountain.name_chatgpt_subscription(client, "set-1", nil)
     end
 
+    test "disconnecting a subscription posts to its route and gives back the row, never a token" do
+      client =
+        fake([
+          {%{method: "POST", path: "/api/account/chatgpt-subscriptions/g-1/disconnect"},
+           {200, [], %{data: %{id: "g-1", name: "ravix:u1", status: "disconnected"}}}}
+        ])
+
+      assert {:ok, %{"id" => "g-1", "status" => "disconnected"}} =
+               Fountain.disconnect_chatgpt_subscription(client, "g-1")
+    end
+
     test "a provider Fountain has no slot for never becomes a path" do
       assert_raise FunctionClauseError, fn ->
         Fountain.put_credential(fake([]), "set-1", :"../../agents", "v")

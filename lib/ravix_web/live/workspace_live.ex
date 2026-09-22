@@ -468,6 +468,19 @@ defmodule RavixWeb.WorkspaceLive do
      |> put_flash(:info, "#{agent_name(user)} is connected. New projects are built with it.")}
   end
 
+  # The account dialog removed something the person held. When it was what
+  # paid for their agent, the projects they own have nothing to run on until
+  # they connect another; the dialog has already said so, and stays open.
+  def handle_info({:agent_disconnected, %Accounts.User{} = user}, socket) do
+    message =
+      if Accounts.Inference.connected?(user),
+        do: "Removed.",
+        else:
+          "Removed. Projects you own have nothing to run on until you connect #{agent_name(user)} again."
+
+    {:noreply, socket |> assign(current_user: user) |> put_flash(:info, message)}
+  end
+
   # A rebuild closed every track on the project and a delete removed it
   # outright. Either way this is no longer somewhere to be, and a component
   # cannot patch the URL.

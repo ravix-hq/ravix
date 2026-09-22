@@ -17,7 +17,7 @@ defmodule Ravix.Accounts do
 
   import Ecto.Query
 
-  alias Ravix.Accounts.{Capabilities, OAuthState, Session, SessionInfo, User, Viewer}
+  alias Ravix.Accounts.{Capabilities, Inference, OAuthState, Session, SessionInfo, User, Viewer}
   alias Ravix.Analytics
   alias Ravix.{Config, Crypto, GitHub, Repo}
 
@@ -108,7 +108,7 @@ defmodule Ravix.Accounts do
     with {:ok, user} <- save_setup(user, %{onboarded_at: DateTime.utc_now()}) do
       Analytics.track(user, :onboarding_finished, %{
         "ravix.agent" => user.agent && to_string(user.agent),
-        "ravix.agent_connected" => is_binary(user.credential_set_id)
+        "ravix.agent_connected" => Inference.connected?(user)
       })
 
       {:ok, user}

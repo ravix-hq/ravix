@@ -129,6 +129,108 @@ defmodule RavixWeb.Live.AgentPanelTest do
     assert render_async(view) =~ "WXYZ-1234"
   end
 
+  test "what the set holds is read from Fountain, and each thing has its own Remove", %{
+    conn: conn
+  } do
+    user = insert_user(agent: :claude, credential_kind: :api_key, credential_set_id: "s")
+
+    # What Fountain says the set holds follows the row, as it does when every
+    # write went through the context: two things before, one after.
+    stub(Inference, :held, fn
+      %User{credential_kind: :api_key} -> {:ok, [{:claude, :api_key}, {:codex, :api_key}]}
+      %User{credential_kind: nil} -> {:ok, [{:codex, :api_key}]}
+    end)
+
+    expect(Inference, :disconnect, fn caller, :claude, :api_key ->
+      assert caller.id == user.id
+      Accounts.save_setup(caller, %{credential_kind: nil})
+    end)
+
+    view = open_account(conn, user)
+    render_async(view)
+    assert has_element?(view, "#held-claude-api_key .chip.ok", "In use")
+    assert has_element?(view, "#held-codex-api_key")
+    refute has_element?(view, "#held-codex-api_key .chip")
+    assert has_element?(view, "#remove-claude-api_key[data-confirm*='nothing to run on']")
+    assert has_element?(view, "#remove-codex-api_key[data-confirm]")
+    refute has_element?(view, "#remove-codex-api_key[data-confirm*='nothing to run on']")
+    assert render(view) =~ "ends your open tracks"
+
+    view |> element("#remove-claude-api_key") |> render_click()
+    html = render_async(view)
+
+    assert html =~
+             "Removed. Projects you own have nothing to run on until you connect Claude Code again."
+
+    refute has_element?(view, "#held-claude-api_key")
+    assert has_element?(view, "#held-codex-api_key")
+    refute has_element?(view, "#welcome-connected")
+    # The choice stays where it was, so what to connect instead is one paste away.
+    assert has_element?(view, "#agent-claude[aria-pressed=true]")
+    assert has_element?(view, "#kind-api_key[aria-pressed=true]")
+    assert has_element?(view, "#credential-form")
+
+    assert %User{agent: :claude, credential_kind: nil, credential_set_id: "s"} =
+             Repo.get!(User, user.id)
+  end
+
+  test "removing something not in use says only that it is gone", %{conn: conn} do
+    user = insert_user(agent: :claude, credential_kind: :subscription, credential_set_id: "s")
+    stub(Inference, :held, fn _ -> {:ok, [{:claude, :subscription}, {:codex, :api_key}]} end)
+    expect(Inference, :disconnect, fn caller, :codex, :api_key -> {:ok, caller} end)
+
+    view = open_account(conn, user)
+    render_async(view)
+    view |> element("#remove-codex-api_key") |> render_click()
+    render_async(view)
+    assert has_element?(view, "#flash-info", "Removed.")
+    refute has_element?(view, "#flash-info", "nothing to run on")
+    assert has_element?(view, "#welcome-connected")
+  end
+
+  test "a slot emptied outside this page is said, rather than drawn as connected", %{conn: conn} do
+    user = insert_user(agent: :claude, credential_kind: :subscription, credential_set_id: "s")
+    stub(Inference, :held, fn _ -> {:ok, []} end)
+
+    view = open_account(conn, user)
+    html = render_async(view)
+    assert has_element?(view, "#held-missing")
+    assert html =~ "Nothing is stored for Claude Code any more"
+    assert html =~ "removed outside this page"
+    refute has_element?(view, ".agent-held-list")
+  end
+
+  test "a set Fountain would not list is not drawn as empty", %{conn: conn} do
+    user = insert_user(agent: :claude, credential_kind: :subscription, credential_set_id: "s")
+
+    stub(Inference, :held, fn _ ->
+      {:error, %Ravix.Fountain.Error{status: 503, message: "down"}}
+    end)
+
+    view = open_account(conn, user)
+    render_async(view)
+    refute has_element?(view, "#agent-held")
+    refute has_element?(view, "#held-missing")
+    assert has_element?(view, "#welcome-connected")
+  end
+
+  test "a session that went without notice cannot remove through the dialog", %{conn: conn} do
+    reject(&Inference.disconnect/3)
+    user = insert_user(agent: :claude, credential_kind: :api_key, credential_set_id: "s")
+    stub(Inference, :held, fn _ -> {:ok, [{:claude, :api_key}]} end)
+    {token, session} = insert_session(user)
+    conn = Plug.Test.init_test_session(conn, session_token: token)
+    {:ok, view, _} = live(conn, "/home")
+    view |> element("#open-account") |> render_click()
+    render_async(view)
+    assert has_element?(view, "#remove-claude-api_key")
+
+    Repo.delete!(session)
+
+    assert {:error, {:live_redirect, %{to: "/login"}}} =
+             view |> element("#remove-claude-api_key") |> render_click()
+  end
+
   test "a session that went without notice cannot connect through the dialog", %{conn: conn} do
     reject(&Inference.connect/2)
     {token, session} = insert_session(insert_user())

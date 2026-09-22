@@ -1,7 +1,7 @@
 ---
 type: ADR
 title: "Each person brings their own agent subscription, and a project spends its owner's"
-description: "A person connects Claude Code (subscription token or Anthropic key) or Codex (ChatGPT subscription by device-code sign-in, or OpenAI key) once, in a first-run walkthrough; Ravix keeps it in one Fountain inference credential set per person and points every project's agent at its owner's set. Needs Fountain v0.17 or newer for the sets and the hosted Fountain of 2026-09-21 or newer, with linking switched on, for ChatGPT; the deployment runs neither yet. Fountain caps ChatGPT subscriptions per account, and Ravix is one account, so that cap is a count of people."
+description: "A person connects Claude Code (subscription token or Anthropic key) or Codex (ChatGPT subscription by device-code sign-in, or OpenAI key) once, in a first-run walkthrough, and sees, replaces or removes it on the same page without a Fountain login; Ravix keeps it in one Fountain inference credential set per person and points every project's agent at its owner's set. Needs Fountain v0.17 or newer for the sets and the hosted Fountain of 2026-09-21 or newer, with linking switched on, for ChatGPT; the Fountain Ravix talks to is v0.21.0 as of 2026-09-21. Fountain caps ChatGPT subscriptions per account, and Ravix is one account, so that cap is a count of people."
 tags: [architecture, billing, onboarding, fountain]
 status: draft
 adr: "0005"
@@ -20,10 +20,9 @@ sign-in (the same two modules, against Fountain's
 `docs/build/chatgpt-subscriptions.md`), and projects built on, rebuilt on and
 moved onto their owner's credential set (`Ravix.Projects.Machine`). **Not
 verified against a real Fountain, and the ChatGPT sign-in not against a real
-ChatGPT account.** Two things are unmet, and each is named where it matters
-below: the deployed Fountain is too old for any of this, and nothing tells a
-person *why* a track stopped after they replaced a credential or their
-subscription stopped serving.
+ChatGPT account.** One thing is unmet, and it is named where it matters
+below: nothing tells a person *why* a track stopped after they replaced or
+removed a credential or their subscription stopped serving.
 
 ## Context
 
@@ -130,6 +129,17 @@ weeks later is the same page as the first time, and shows the subscription's
 state as Fountain reports it: connected, disconnected, reconnect required, or
 spent until a time.
 
+**Nothing about a credential needs Fountain's console.** The panel lists what
+the person's set holds as Fountain reports it (`Inference.held/1`), not as the
+row remembers it, so a slot emptied on the account by hand shows as empty with
+a sentence saying so; and each thing held has its own Remove
+(`Inference.disconnect/3`), which deletes a pasted value or un-names a ChatGPT
+subscription and forgets its sign-in, and clears the row's kind when it was
+the one in use. The agent stays the person's choice and the set stays theirs.
+Fountain is named to the person only where the operator has to act on it (a
+Fountain too old for sets); everywhere else the page speaks for itself, since
+the person has no Fountain login and nowhere to go.
+
 **The walkthrough is not a gate.** `/welcome` is shown to somebody who has no
 project and has never finished or dismissed it. Every step can be skipped:
 somebody invited into a teammate's project needs no subscription, and a scratch
@@ -138,10 +148,16 @@ what they were invited to.
 
 ## Consequences
 
-- **The deployment must run Fountain v0.17.0 or newer before anybody can
-  connect.** `fountain-deploy` pins v0.16.0. Until then `connect/2` answers
-  "this Fountain is too old" and everything else behaves as it did: projects
-  are still built, on the deployment's default credentials.
+- **The Fountain must be v0.17.0 or newer before anybody can connect.** The
+  one Ravix talks to is v0.21.0 (checked 2026-09-21). Against an older one
+  `connect/2` answers "this Fountain is too old" and everything else behaves
+  as it did: projects are still built, on the deployment's default
+  credentials. That sentence is the only place the page names Fountain to a
+  person, because it is the operator who has to act on it.
+- **Removing a credential ends that person's open tracks too**, for the same
+  reason replacing one does, and the browser asks before the button acts.
+  What it does not do is sign the device out at OpenAI --- Fountain cannot ---
+  so the page says to do that in the ChatGPT account if wanted.
 - **How many people can run Codex on a subscription is a deployment-wide
   number.** Fountain caps grants *per account*, and Ravix is one account, so
   the default ceiling of five is five people. The sixth is told to ask

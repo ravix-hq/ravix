@@ -68,6 +68,16 @@ defmodule Ravix.Accounts.Inference do
   Codex therefore *clears* the grant from the set, or the key would sit there
   unused while the choice on the page said otherwise --- the same rule as
   Claude Code's two kinds, in the other direction.
+
+  ## Nothing needs the Fountain console
+
+  A person's whole dealings with their credential are on Ravix's own page:
+  `held/1` reads what their set holds from Fountain rather than trusting the
+  row, and `disconnect/3` removes any one of them --- deleting a pasted
+  value, or un-naming a subscription and forgetting its sign-in. The row is
+  the person's *choice*; the set is the credential; where the two disagree
+  (a slot emptied on the account by hand), the page says so rather than
+  drawing the row as true.
   """
 
   alias Ravix.Accounts
@@ -147,12 +157,152 @@ defmodule Ravix.Accounts.Inference do
   @spec pasted?(User.agent(), User.credential_kind()) :: boolean()
   def pasted?(agent, kind), do: is_map_key(@providers, {agent, kind})
 
-  @doc "Whether this person has connected something for an agent to run on."
+  @doc """
+  Whether this person has connected something for an agent to run on.
+
+  All three of the row's fields, because `disconnect/3` clears only the
+  kind: the set is still theirs and the agent is still their choice, but
+  nothing in the set pays for it.
+  """
   @spec connected?(User.t() | nil) :: boolean()
-  def connected?(%User{credential_set_id: id, agent: agent}),
-    do: is_binary(id) and not is_nil(agent)
+  def connected?(%User{credential_set_id: id, agent: agent, credential_kind: kind}),
+    do: is_binary(id) and not is_nil(agent) and not is_nil(kind)
 
   def connected?(nil), do: false
+
+  @typedoc "One thing a set holds, named by the choice that put it there."
+  @type credential :: {User.agent(), User.credential_kind()}
+
+  # Every choice a set can hold, in the order the page offers them.
+  @choices [
+    {:claude, :subscription},
+    {:claude, :api_key},
+    {:codex, :subscription},
+    {:codex, :api_key}
+  ]
+
+  @doc """
+  What this person's set holds, as Fountain reports it: the choices that put
+  each thing there, never a value.
+
+  The row here remembers the *choice*; the set is where the credential is.
+  The two agree when every write went through this module, and this is what
+  a page reads to show when they do not --- a slot emptied on the account by
+  hand, a subscription the set has stopped naming. Somebody with no set holds
+  nothing, and so does somebody whose set the account no longer has.
+  """
+  @spec held(User.t()) :: {:ok, [credential()]} | {:error, reason()}
+  def held(%User{credential_set_id: nil}), do: {:ok, []}
+
+  def held(%User{credential_set_id: set_id}) do
+    with {:ok, client} <- fountain(),
+         {:ok, sets} <- Fountain.credential_sets(client) do
+      case Enum.find(sets, &(is_map(&1) and &1["id"] == set_id)) do
+        %{} = set -> {:ok, held_in(set)}
+        nil -> {:ok, []}
+      end
+    end
+  end
+
+  defp held_in(set) do
+    pasted = set |> Map.get("providers") |> List.wrap() |> Enum.filter(&is_binary/1)
+    grant? = is_binary(set["chatgpt_grant_id"])
+
+    Enum.filter(@choices, fn
+      {:codex, :subscription} -> grant?
+      choice -> Atom.to_string(Map.fetch!(@providers, choice)) in pasted
+    end)
+  end
+
+  @doc """
+  Remove what pays for `agent` by `kind` from this person's set.
+
+  A pasted token or key is deleted from the set. A ChatGPT subscription is
+  un-named from it and its sign-in forgotten on Fountain, so nothing is
+  left here that could spend it; the person's grant stays, by name, for a
+  later sign-in to reconnect. When it was the one their choice named, the
+  row stops saying they are connected; the agent stays their choice and the
+  set stays theirs, holding whatever else they connected. Removing what has
+  already gone is the outcome wanted, not a refusal.
+
+  A remove is a write to the set like any other and ends the conversations
+  running on it (`Ravix.Fountain.put_credential/4`); the page says so before
+  the button is pressed.
+  """
+  @spec disconnect(User.t(), User.agent(), User.credential_kind()) ::
+          {:ok, User.t()} | {:error, reason()}
+  def disconnect(%User{credential_set_id: nil} = user, agent, kind)
+      when {agent, kind} in @choices,
+      do: forget(user, agent, kind)
+
+  def disconnect(%User{credential_set_id: set_id} = user, agent, kind)
+      when {agent, kind} in @choices do
+    with {:ok, client} <- fountain(),
+         :ok <- remove(client, set_id, user, agent, kind) do
+      forget(user, agent, kind)
+    end
+  end
+
+  defp remove(client, set_id, user, :codex, :subscription) do
+    with :ok <- unname_grant(client, set_id) do
+      case own_grant(client, user) do
+        {:ok, %{"id" => grant_id, "status" => status}} when status != "disconnected" ->
+          forget_grant(client, grant_id)
+
+        {:ok, _none_or_disconnected} ->
+          :ok
+
+        {:error, reason} ->
+          {:error, reason}
+      end
+    end
+  end
+
+  defp remove(client, set_id, _user, agent, kind) do
+    case Fountain.delete_credential(client, set_id, Map.fetch!(@providers, {agent, kind})) do
+      :ok -> :ok
+      {:error, %Error{status: 404}} -> :ok
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  # A set that has gone names nothing.
+  defp unname_grant(client, set_id) do
+    case Fountain.name_chatgpt_subscription(client, set_id, nil) do
+      {:ok, _set} -> :ok
+      {:error, %Error{status: 404}} -> :ok
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  # Gone, or disconnected already: either is what was asked for.
+  defp forget_grant(client, grant_id) do
+    case Fountain.disconnect_chatgpt_subscription(client, grant_id) do
+      {:ok, _grant} -> :ok
+      {:error, %Error{status: status}} when status in [404, 409] -> :ok
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp forget(%User{agent: agent, credential_kind: kind} = user, agent, kind) do
+    with {:ok, user} <- Accounts.save_setup(user, %{credential_kind: nil}) do
+      track_disconnected(user, agent, kind, true)
+      {:ok, user}
+    end
+  end
+
+  defp forget(%User{} = user, agent, kind) do
+    track_disconnected(user, agent, kind, false)
+    {:ok, user}
+  end
+
+  defp track_disconnected(user, agent, kind, in_use?) do
+    Analytics.track(user, :agent_disconnected, %{
+      "ravix.agent" => Atom.to_string(agent),
+      "ravix.paid_by" => Atom.to_string(kind),
+      "ravix.in_use" => in_use?
+    })
+  end
 
   @doc """
   The Fountain runtime a project of this person's is built with, or nil for
@@ -464,7 +614,7 @@ defmodule Ravix.Accounts.Inference do
     end
   end
 
-  @not_enabled "Linking a ChatGPT subscription is not switched on for this Ravix deployment's Fountain account. " <>
+  @not_enabled "Linking a ChatGPT subscription is not switched on for this Ravix deployment. " <>
                  "Ask whoever runs it; an OpenAI API key works meanwhile."
 
   # Fountain's refusals, in words that say what to do. Anything not listed
@@ -473,7 +623,7 @@ defmodule Ravix.Accounts.Inference do
     {{404, nil}, @not_enabled},
     {{403, nil}, @not_enabled},
     {{409, "chatgpt_grant_limit_reached"},
-     "This Ravix deployment's Fountain account already holds as many ChatGPT subscriptions as it may. " <>
+     "This Ravix deployment already holds as many ChatGPT subscriptions as it may. " <>
        "Ask whoever runs it to raise the limit; an OpenAI API key works meanwhile."},
     {{409, "chatgpt_link_attempt_pending"},
      "A sign-in for your subscription is already open. Reload the page to see its code."},
@@ -606,7 +756,7 @@ defmodule Ravix.Accounts.Inference do
   defp link_failure(%{"reason" => "grant_limit_reached"}),
     do:
       {:unprocessable, "link_failed",
-       "This Ravix deployment's Fountain account already holds as many ChatGPT subscriptions as it may. " <>
+       "This Ravix deployment already holds as many ChatGPT subscriptions as it may. " <>
          "Ask whoever runs it to raise the limit."}
 
   defp link_failure(%{"reason" => reason})
@@ -616,7 +766,7 @@ defmodule Ravix.Accounts.Inference do
   defp link_failure(_failure),
     do:
       {:unprocessable, "link_failed",
-       "The sign-in could not finish on Fountain's side. Start again."}
+       "The sign-in could not finish on Fountain's side, the service that runs the machines. Start again."}
 
   defp refused(message), do: {:error, {:unprocessable, "link_failed", message}}
 

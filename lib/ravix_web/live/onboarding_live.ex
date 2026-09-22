@@ -156,6 +156,10 @@ defmodule RavixWeb.OnboardingLive do
   def handle_info({:agent_connected, %User{} = user}, socket),
     do: {:noreply, socket |> assign(current_user: user) |> push_patch(to: @paths[:github])}
 
+  # The panel removed something. The step is not done by that; it stays.
+  def handle_info({:agent_disconnected, %User{} = user}, socket),
+    do: {:noreply, assign(socket, current_user: user)}
+
   # The panel cannot put a flash in the page's own socket; see
   # `RavixWeb.Live.Result.error/2`.
   def handle_info({:flash, kind, message}, socket),
