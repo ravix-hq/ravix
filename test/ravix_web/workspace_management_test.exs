@@ -229,14 +229,14 @@ defmodule RavixWeb.WorkspaceManagementTest do
       end)
 
       ctx.view
-      |> form("#settings-form", settings: [runtime: "made-up", model: "also-made-up"])
-      |> render_submit()
+      |> form("#agent-settings-form")
+      |> render_submit(%{settings: %{runtime: "made-up", model: "also-made-up"}})
 
       render_async(ctx.view)
-      assert has_element?(ctx.view, "#settings-form .field p.error", message)
+      assert has_element?(ctx.view, "#agent-settings-form .field p.error", message)
 
-      assert has_element?(ctx.view, "#{id}[value='made-up']") or
-               has_element?(ctx.view, "#{id}[value='also-made-up']")
+      assert has_element?(ctx.view, "#{id} option[value='made-up'][selected]") or
+               has_element?(ctx.view, "#{id} option[value='also-made-up'][selected]")
     end
   end
 
@@ -487,6 +487,173 @@ defmodule RavixWeb.WorkspaceManagementTest do
     refute has_element?(ctx.view, "button[value=rebuild][disabled]")
   end
 
+  for {form_id, params, expected} <- [
+        {"settings-form", %{name: "Only a name"}, %{"name" => "Only a name"}},
+        {"agent-settings-form", %{runtime: "claude", model: "model", instructions: "Be clear"},
+         %{"runtime" => "claude", "model" => "model", "instructions" => "Be clear"}},
+        {"environment-settings-form",
+         %{setup_script: "npm ci", apt: "git,curl", pip: "", npm: ""},
+         %{
+           "setup_script" => "npm ci",
+           "packages" => %{"apt" => ["git", "curl"], "pip" => [], "npm" => []}
+         }}
+      ] do
+    @form_id form_id
+    @params params
+    @expected expected
+    test "#{form_id} saves only its own fields and reports success", ctx do
+      settings(ctx)
+
+      expect(Projects, :update_settings, fn _, _, attrs ->
+        assert attrs == @expected
+        :ok
+      end)
+
+      ctx.view |> form("##{@form_id}", settings: @params) |> render_submit()
+      assert render_async(ctx.view) =~ "Saved."
+    end
+
+    test "#{form_id} retains inputs on provider failure", ctx do
+      settings(ctx)
+      expect(Projects, :update_settings, fn _, _, _ -> {:error, {:unavailable, "Try later"}} end)
+      ctx.view |> form("##{@form_id}", settings: @params) |> render_submit()
+      assert render_async(ctx.view) =~ "Could not save"
+      assert render(ctx.view) =~ "Try later"
+    end
+  end
+
+  test "danger actions require the exact project name", ctx do
+    settings(ctx)
+    assert has_element?(ctx.view, "#danger-confirm[required]")
+    reject(&Projects.destroy/2)
+
+    ctx.view
+    |> form("#project-danger-form", confirm: "wrong")
+    |> render_submit(%{action: "delete"})
+
+    assert render(ctx.view) =~ "Type the project name to confirm"
+  end
+
+  test "secret removal sends an empty value without retaining a value", ctx do
+    settings(ctx)
+
+    expect(Projects, :update_settings, fn _, _, %{secret: secret} ->
+      assert secret == %{"store" => "env", "key" => "TOKEN", "value" => ""}
+      :ok
+    end)
+
+    ctx.view
+    |> form("#secret-form", secret: [store: "env", key: "TOKEN", value: ""])
+    |> render_submit()
+
+    assert render_async(ctx.view) =~ "Secret updated"
+  end
+
+  test "a delayed settings save rechecks the session before returning data", ctx do
+    {token, session} = insert_session(ctx.user)
+
+    {:ok, view, _} =
+      live(Plug.Test.init_test_session(ctx.conn, session_token: token), "/p/#{ctx.project.id}")
+
+    settings(%{ctx | view: view})
+    parent = self()
+
+    expect(Projects, :update_settings, fn _, _, _ ->
+      send(parent, {:saving_settings, self()})
+
+      receive do
+        :finish -> :ok
+      after
+        2_000 -> flunk("save was not released")
+      end
+    end)
+
+    view |> form("#settings-form", settings: [name: "Delayed"]) |> render_submit()
+    assert_receive {:saving_settings, task}
+    Repo.delete!(session)
+    send(task, :finish)
+    assert_redirect(view, "/login")
+  end
+
+  test "stored secrets are listed by key name only, with a way to replace or remove each",
+       ctx do
+    settings(ctx, env_keys: ["API_TOKEN"], vault_keys: ["GITHUB_TOKEN"])
+
+    for {store, label, key} <- [
+          {"env", "Environment", "API_TOKEN"},
+          {"vault", "Vault", "GITHUB_TOKEN"}
+        ],
+        action <- ["replace", "remove"] do
+      assert has_element?(
+               ctx.view,
+               ~s(button[data-secret-store="#{store}"][data-secret-key="#{key}"][data-secret-action="#{action}"]),
+               String.capitalize(action)
+             )
+
+      assert has_element?(
+               ctx.view,
+               ~s(button[aria-label="#{String.capitalize(action)} #{label} secret #{key}"])
+             )
+    end
+
+    assert has_element?(ctx.view, "#secret-value[type=password]")
+    refute has_element?(ctx.view, "#secret-value[value]")
+  end
+
+  test "a settings event after the owner lost the project is refused before any write", ctx do
+    settings(ctx)
+    reject(&Projects.update_settings/3)
+
+    ctx.project
+    |> Ecto.Changeset.change(archived_at: DateTime.utc_now())
+    |> Repo.update!()
+
+    ctx.view
+    |> form("#secret-form", secret: [store: "env", key: "TOKEN", value: "never-sent"])
+    |> render_submit()
+
+    html = render(ctx.view)
+    assert html =~ "No such thing here."
+    refute html =~ "never-sent"
+    refute html =~ "Secret updated"
+  end
+
+  test "a second section's save is not started while the first is still out", ctx do
+    settings(ctx)
+    parent = self()
+
+    expect(Projects, :update_settings, 1, fn _, _, attrs ->
+      send(parent, {:saving, self()})
+      assert attrs == %{"name" => "First"}
+
+      receive do
+        :finish -> :ok
+      after
+        2_000 -> flunk("the save was never released")
+      end
+    end)
+
+    ctx.view |> form("#settings-form", settings: [name: "First"]) |> render_submit()
+    assert_receive {:saving, saving}
+
+    ctx.view
+    |> form("#agent-settings-form", settings: [instructions: "Second"])
+    |> render_submit()
+
+    # The second form keeps what was typed, so nothing is lost by waiting.
+    assert has_element?(ctx.view, "#settings-instructions", "Second")
+    send(saving, :finish)
+    assert render_async(ctx.view) =~ "Saved."
+  end
+
+  test "preview defaults that cannot be read open on the usual starting values", ctx do
+    stub(Previews, :defaults, fn _, _ -> {:error, {:unavailable, "Try later"}} end)
+    settings(ctx)
+
+    assert has_element?(ctx.view, "#default-directory[value='.']")
+    assert has_element?(ctx.view, "#default-readiness[value='/']")
+  end
+
   describe "a session that went without notice" do
     # The dialog is a `live_component`, and the page's session hooks never
     # see a component's events: without the wrapping in
@@ -506,6 +673,25 @@ defmodule RavixWeb.WorkspaceManagementTest do
 
       assert {:error, {:redirect, %{to: "/login"}}} =
                ctx.view |> form("#settings-form", settings: [name: "Renamed"]) |> render_submit()
+    end
+
+    for id <- ["agent-settings-form", "environment-settings-form", "preview-defaults-form"] do
+      @id id
+      test "revoked session cannot submit #{id}", ctx do
+        reject(&Projects.update_settings/3)
+
+        assert {:error, {:redirect, %{to: "/login"}}} =
+                 ctx.view |> form("##{@id}") |> render_submit()
+      end
+    end
+
+    test "revoked session cannot rebuild", ctx do
+      reject(&Projects.rebuild/2)
+
+      assert {:error, {:redirect, %{to: "/login"}}} =
+               ctx.view
+               |> form("#project-danger-form", confirm: ctx.project.name)
+               |> render_submit(%{action: "rebuild"})
     end
 
     test "cannot save a secret through the dialog", ctx do
@@ -529,10 +715,10 @@ defmodule RavixWeb.WorkspaceManagementTest do
     end
   end
 
-  defp settings(ctx) do
+  defp settings(ctx, overrides \\ []) do
     stub(Projects, :settings, fn _, _ ->
       {:ok,
-       %{
+       Enum.into(overrides, %{
          name: ctx.project.name,
          runtime: "claude",
          model: "model",
@@ -542,7 +728,7 @@ defmodule RavixWeb.WorkspaceManagementTest do
          env_keys: [],
          vault_keys: [],
          catalog: Catalog.empty()
-       }}
+       })}
     end)
 
     render_click(ctx.view, "dialog", %{name: "settings"})

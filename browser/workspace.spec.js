@@ -367,6 +367,7 @@ test('project, track, streaming, image upload, reconnect, and revocation', async
   await page.locator('.crumbs').getByRole('button', { name: 'Settings', exact: true }).click();
   const settings = page.getByRole('dialog', { name: 'Project settings', exact: true });
   await expect(settings).toBeVisible();
+  await settings.getByRole('button', { name: 'Danger zone', exact: true }).click();
   const removeProject = settings.getByRole('button', { name: 'Delete project', exact: true });
   await removeProject.scrollIntoViewIfNeeded();
   await expect(removeProject).toBeInViewport();
@@ -529,6 +530,54 @@ test('help explains desktop connections and stays accessible on mobile', async (
   await expect(dialog).toHaveCount(0);
 });
 
+test('project settings navigate, warn before discarding, and save sections accessibly', async ({ page }) => {
+  await signIn(page);
+  await page.getByRole('button', { name: 'Add a project', exact: true }).first().click();
+  const create = page.getByRole('dialog', { name: 'New project' });
+  await create.getByLabel('Project name', { exact: true }).fill('Settings browser');
+  await create.getByRole('button', { name: 'Create project', exact: true }).click();
+  await expect(create).not.toBeVisible();
+  await page.locator('.crumbs').getByRole('button', { name: 'Settings', exact: true }).click();
+  const settings = page.getByRole('dialog', { name: 'Project settings', exact: true });
+  await settings.getByLabel('Name', { exact: true }).fill('Unsaved name');
+  await expect(settings.getByRole('status')).toHaveText('Unsaved changes');
+  page.once('dialog', dialog => dialog.dismiss());
+  await settings.getByRole('button', { name: 'Agent', exact: true }).click();
+  await expect(settings.getByLabel('Name', { exact: true })).toBeVisible();
+  page.once('dialog', dialog => dialog.accept());
+  await settings.getByRole('button', { name: 'Agent', exact: true }).click();
+  await expect(settings.getByRole('heading', { name: 'Agent', exact: true })).toBeFocused();
+  await settings.getByLabel('Instructions', { exact: true }).fill('Explain changes and run focused tests.');
+  await settings.getByRole('button', { name: 'Save agent', exact: true }).click();
+  await expect(settings.getByRole('status')).toHaveText('Saved.');
+  await accessible(page);
+  await settings.getByRole('button', { name: 'General', exact: true }).click();
+  await expect(settings.getByLabel('Name', { exact: true })).toHaveValue('Settings browser');
+  await settings.getByLabel('Name', { exact: true }).fill('Settings organized');
+  await settings.getByRole('button', { name: 'Save general', exact: true }).click();
+  await expect(settings.getByRole('status')).toHaveText('Saved.');
+  await settings.getByRole('button', { name: 'Previews', exact: true }).click();
+  await settings.getByLabel('Command (must honor $PORT)', { exact: true }).fill('npm run dev -- --port "$PORT" --strictPort');
+  // A readiness path must be an absolute HTTP path; the refusal lands on its field.
+  await settings.getByLabel('Readiness path', { exact: true }).fill('health');
+  await settings.getByRole('button', { name: 'Save defaults', exact: true }).click();
+  await expect(settings.locator('.field p.error')).toContainText('Readiness must be an HTTP path');
+  await expect(settings.getByRole('status')).toContainText('Could not save');
+  await settings.getByLabel('Readiness path', { exact: true }).fill('/health');
+  await settings.getByRole('button', { name: 'Save defaults', exact: true }).click();
+  await expect(settings.getByRole('status')).toHaveText('Saved.');
+  for (const section of ['Environment', 'Secrets', 'Danger zone']) {
+    await settings.getByRole('button', { name: section, exact: true }).click();
+    await accessible(page);
+  }
+  await page.setViewportSize({ width: 390, height: 844 });
+  await settings.getByRole('button', { name: 'Agent', exact: true }).click();
+  await expect(settings.getByLabel('Instructions', { exact: true })).toHaveValue('Explain changes and run focused tests.');
+  await accessible(page);
+  await capture(page, 'settings-mobile');
+  await page.keyboard.press('Escape');
+  await expect(settings).not.toBeVisible();
+});
 
 test('composer Send stays compact and keeps its arrow after repeated submissions in every theme', async ({ page, request }) => {
   // Five states x 22 palettes x 2 widths runs in ~30s locally; allow CI headroom.
