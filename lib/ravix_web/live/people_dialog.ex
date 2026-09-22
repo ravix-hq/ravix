@@ -151,6 +151,7 @@ defmodule RavixWeb.Live.PeopleDialog do
     ~H"""
     <div>
       <.dialog id={"#{@id}-dialog"} title={title(@scope)} on_close="dismiss">
+        <p><.project_name project={@project} /></p>
         <p :if={@scope == :project}>
           Project members can open tracks and work in every track on this machine.
         </p>

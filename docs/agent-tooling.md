@@ -81,12 +81,12 @@ receipt, so tool calls do not hold open the connection until an agent finishes.
 
 | Tool | Inputs |
 | --- | --- |
-| `list_projects` | Optional `after`, `limit` |
+| `list_projects` | Optional `after`, `limit`. Each item includes the project owner’s GitHub `owner_login`; `name` stays bare. |
 | `list_repositories` | Optional `installation_id`, `after`, `limit` |
 | `create_project` | `request_id`; `name` for a blank project, or `repo` and `installation_id` |
 | `get_project_settings` | `project_id` |
 | `update_project_settings` | `project_id`, `settings`, `request_id` |
-| `list_tracks` | `project_id`; optional `after`, `limit` |
+| `list_tracks` | `project_id`; optional `after`, `limit`. Each item includes the project owner’s `owner_login` (distinct from the track creator). |
 | `get_track` | `track_id` |
 | `create_track` | `project_id`, `request_id`; optional `branch_name` (without `ravix/`), `origin` |
 | `send_prompt` | `track_id`, `prompt`, `request_id` |

@@ -2,7 +2,10 @@ defmodule Ravix.Projects.View do
   @moduledoc """
   A project as a page shows it: the row, its owner's login, and the machine.
 
-  Three things the row cannot answer are folded in here rather than stored.
+  `name` stays bare for edits and tooling; `display_name` prefixes the owner's
+  GitHub login only when the viewer is not the owner.
+
+  Things the row cannot answer are folded in here rather than stored.
   `owner_login` is a second read, because the row holds a user id and a
   ribbon needs a name. `machine` is derived from Fountain's conversation
   list, never persisted -- see `Ravix.MachineCache` for why. `role` and
@@ -24,6 +27,7 @@ defmodule Ravix.Projects.View do
   @enforce_keys [
     :id,
     :name,
+    :display_name,
     :repo,
     :repo_private,
     :default_branch,
@@ -43,6 +47,7 @@ defmodule Ravix.Projects.View do
   @type t :: %__MODULE__{
           id: String.t(),
           name: String.t(),
+          display_name: String.t(),
           repo: String.t() | nil,
           repo_private: boolean(),
           default_branch: String.t() | nil,

@@ -16,6 +16,36 @@ defmodule RavixWeb.ToolingControllerTest do
     %{user: user, project: project, track: track}
   end
 
+  test "MCP serializes project ownership for a track-only guest", %{
+    user: owner,
+    project: project,
+    track: track
+  } do
+    guest = insert_user()
+    insert_track_member(track, guest)
+    {_, token, _} = principal(guest)
+
+    projects =
+      json_response(request(token, "/mcp", tool("list_projects")), 200)["result"][
+        "structuredContent"
+      ]["items"]
+
+    assert [%{"name" => name, "owner_login" => login}] = projects
+    assert name == project.name
+    assert login == owner.login
+
+    result =
+      json_response(
+        request(token, "/mcp", tool("list_tracks", %{"project_id" => project.id})),
+        200
+      )
+
+    assert [%{"owner_login" => ^login, "id" => id}] =
+             result["result"]["structuredContent"]["items"]
+
+    assert id == track.id
+  end
+
   test "MCP rejects absent tokens, other audiences and untrusted origins", %{user: user} do
     assert response = post(build_conn(), "/mcp", rpc("initialize"))
     assert json_response(response, 401)["error"] == "invalid_token"

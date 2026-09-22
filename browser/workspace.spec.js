@@ -45,7 +45,7 @@ async function signIn(page) {
 async function chooseTheme(page, name) {
   await page.locator('[data-theme-toggle]').click();
   await page.getByRole('menuitemradio', { name, exact: true }).click({ timeout: 15_000 });
-  await expect(page.locator('html')).toHaveAttribute('data-theme', name.toLowerCase());
+  await expect(page.locator('html')).toHaveAttribute('data-theme', name.toLowerCase().replaceAll(' ', '-'));
   // Measure the selected palette after its CSS transitions, not a mixed frame.
   await page.evaluate(async () => {
     await new Promise(requestAnimationFrame);
@@ -664,5 +664,69 @@ test('composer Send stays compact and keeps its arrow after repeated submissions
         if (theme === 'bubblegum') await page.screenshot({ path: test.info().outputPath(`send-${status}-${connected}-${width}.png`), fullPage: true });
       }
     }
+  }
+});
+
+test('shared project prefixes stay muted and truncate across every theme', async ({ page, browser }) => {
+  test.setTimeout(120_000);
+  await signIn(page);
+  await page.getByRole('link', { name: 'Home', exact: true }).first().click();
+  await page.getByRole('button', { name: /^Quick start/ }).click();
+  const name = 'Shared project with a deliberately long name for a narrow rail';
+  await page.getByLabel('Project name', { exact: true }).fill(name);
+  await page.getByRole('button', { name: 'Create project', exact: true }).click();
+  // An owner's project page opens on its plans (#158), not the track picker.
+  await expect(page.getByRole('heading', { name: 'Plans', exact: true })).toBeVisible();
+  const projectPath = new URL(page.url()).pathname;
+  await expect(page.locator('.workspace-project-name.selected .project-label')).toHaveText(name);
+  await expect(page.locator('.workspace-project-name.selected .project-label .dim')).toHaveCount(0);
+  await page.locator('#workspace-stage').getByRole('button', { name: 'People', exact: true }).click();
+  await page.getByLabel('GitHub username', { exact: true }).fill('eli');
+  await page.getByRole('button', { name: 'Invite', exact: true }).click();
+  await expect(page.locator('#people-dialog')).toContainText('@eli');
+
+  const memberContext = await browser.newContext({ baseURL: new URL(page.url()).origin });
+  try {
+    const member = await memberContext.newPage();
+    await member.goto('/login');
+    await member.getByRole('link', { name: 'Sign in with GitHub', exact: true }).click();
+    await member.getByRole('link', { name: 'Sign in as @eli', exact: true }).click();
+    await member.goto(projectPath);
+    await expect(member.locator('[data-phx-main]')).toHaveClass(/phx-connected/);
+    const label = member.locator('.workspace-project-name.selected .project-label');
+    await expect(label).toHaveText(`mockuser / ${name}`);
+    await expect(member).toHaveTitle(`mockuser / ${name} · Ravix`);
+    const railWidth = member.getByRole('separator', { name: 'Sidebar width' });
+    await railWidth.focus();
+    await railWidth.press('Home');
+    // The menu supplies every supported theme's display name.
+    const names = await member.getByRole('menuitemradio', { includeHidden: true }).evaluateAll(nodes => nodes.map(node => node.getAttribute('data-theme-name')));
+    expect(names.length).toBeGreaterThan(2);
+    for (const theme of names) {
+      await chooseTheme(member, theme);
+      const measured = await label.evaluate(node => {
+        const prefix = node.querySelector('.dim');
+        const style = getComputedStyle(node);
+        const probe = document.createElement('span');
+        probe.style.color = 'var(--dim)';
+        node.append(probe);
+        const dim = getComputedStyle(probe).color;
+        probe.remove();
+        return {
+          prefix: getComputedStyle(prefix).color,
+          dim,
+          ellipsis: style.textOverflow,
+          clipped: node.scrollWidth > node.clientWidth,
+          fits: node.getBoundingClientRect().right <= node.closest('.workspace-project-name').getBoundingClientRect().right,
+        };
+      });
+      expect(measured).toMatchObject({ prefix: measured.dim, ellipsis: 'ellipsis', clipped: true, fits: true });
+    }
+    for (const theme of ['Ravix', 'Daylight']) {
+      await chooseTheme(member, theme);
+      await capture(member, `shared-project-${theme}`);
+    }
+  } finally {
+    await memberContext.close();
   }
 });
