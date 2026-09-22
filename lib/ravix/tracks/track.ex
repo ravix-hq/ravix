@@ -15,7 +15,7 @@ defmodule Ravix.Tracks.Track do
   it over rows whose `closed_at` is null.
 
   `rev` is the project rev this track opened at. A lower one means older
-  settings. `origin_kind` is one of four and the database says so, so the
+  settings. `origin_kind` is one the database allows and this schema loads, so the
   read side can trust it rather than coercing anything it does not know into
   `blank`; the other `origin_*` columns describe what the track was created
   from.
@@ -28,8 +28,14 @@ defmodule Ravix.Tracks.Track do
 
   @origin_kinds ~w(blank branch pr issue)a
 
+  # Kinds this release can read but not yet start. A release that starts a
+  # new kind is deployed while the previous one still serves, and that one
+  # has to load the rows the new one writes: so a kind is readable one
+  # release before anything writes it (ADR 0003, expand before contract).
+  @readable_only_kinds ~w(plan)a
+
   @typedoc "What a track was started from."
-  @type origin_kind :: :blank | :branch | :pr | :issue
+  @type origin_kind :: :blank | :branch | :pr | :issue | :plan
 
   @type t :: %__MODULE__{}
 
@@ -41,7 +47,7 @@ defmodule Ravix.Tracks.Track do
     field :branch, :string
     field :branch_reserved, :boolean, default: true
     field :workdir, :string
-    field :origin_kind, Ecto.Enum, values: @origin_kinds
+    field :origin_kind, Ecto.Enum, values: @origin_kinds ++ @readable_only_kinds
     field :origin_base, :string
     field :origin_number, :integer
     field :origin_title, :string
