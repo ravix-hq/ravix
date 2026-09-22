@@ -178,7 +178,7 @@ defmodule Ravix.PromptQueue.Store do
   `DISTINCT ON (thread_id) ... ORDER BY thread_id, sequence` wants. It used to
   be a `min(sequence) GROUP BY track_id` subquery, which read every row of
   the table -- delivered ones included, and they are nearly all of it -- on
-  every instance, every two seconds. The rows come back grouped by track
+  every instance, on every sweep. The rows come back grouped by track
   rather than oldest first; the sweep delivers tracks in parallel and in no
   order, so nothing read the order.
   """
@@ -244,7 +244,7 @@ defmodule Ravix.PromptQueue.Store do
       Item
       |> where([p], p.id == ^id and p.status not in ^@done)
       # Nothing to tell anyone when the row already says this. The queue
-      # server re-parks its head every two seconds while a machine is waking
+      # server re-parks its head on every sweep while a machine is waking
       # or Fountain is unreachable, and every publish makes each open track
       # page re-read its transcript from Fountain -- so an unguarded write
       # turns a 15-second poll into a 2-second one against a dependency that
