@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
+import { composerFixture } from './composer-fixture.js';
 
 async function accessible(page) {
   // Settle first. Axe computes contrast against *composited* colour, so an
@@ -484,9 +485,9 @@ test('help explains desktop connections and stays accessible on mobile', async (
   await help.click();
   const dialog = page.getByRole('dialog', { name: 'Help · AI tools' });
   await expect(dialog).toBeVisible();
-  await expect(dialog.getByText('claude mcp add --transport http ravix http://localhost:4103/mcp', { exact: true })).toBeVisible();
+  await expect(dialog.getByText(`claude mcp add --transport http ravix http://localhost:${process.env.BROWSER_PORT || 4103}/mcp`, { exact: true })).toBeVisible();
   await dialog.getByText('Drive tracks with an A2A client', { exact: true }).click();
-  await expect(dialog.getByText('http://localhost:4103/.well-known/agent-card.json', { exact: true })).toBeVisible();
+  await expect(dialog.getByText(`http://localhost:${process.env.BROWSER_PORT || 4103}/.well-known/agent-card.json`, { exact: true })).toBeVisible();
   await dialog.getByText('Example JSON-RPC request', { exact: true }).click();
   await expect(dialog.locator('pre').filter({ hasText: 'SendMessage' })).toBeVisible();
   await accessible(page);
@@ -504,4 +505,87 @@ test('help explains desktop connections and stays accessible on mobile', async (
   await capture(page, 'tooling-help-mobile');
   await dialog.getByRole('button', { name: 'Close', exact: true }).click();
   await expect(dialog).toHaveCount(0);
+});
+
+
+test('composer Send stays compact and keeps its arrow after repeated submissions in every theme', async ({ page, request }) => {
+  test.setTimeout(300_000);
+  await signIn(page);
+  await page.getByRole('button', { name: 'Add a project', exact: true }).first().click();
+  await page.getByLabel('Project name', { exact: true }).fill('Send regression');
+  await page.getByRole('button', { name: 'Create project', exact: true }).click();
+  await page.locator('.crumbs').getByRole('button', { name: 'New track', exact: true }).click();
+  await page.getByLabel('Track name').fill('Compact send');
+  await page.getByRole('button', { name: 'Create track', exact: true }).click();
+  const composer = page.getByRole('textbox', { name: 'Message', exact: true });
+  const send = page.getByRole('button', { name: 'Send', exact: true });
+  await expect(composer).toBeEnabled({ timeout: 30_000 });
+  const checkSend = async () => {
+    await expect(send).toBeVisible();
+    const box = await send.boundingBox();
+    expect(box.width).toBeLessThanOrEqual(80);
+    expect(box.height).toBeLessThanOrEqual(44);
+    expect(box.width).toBeGreaterThanOrEqual(32);
+    expect(box.height).toBeGreaterThanOrEqual(32);
+    await expect(send).toHaveText('Send');
+    const svg = send.locator('svg');
+    await expect(svg).toBeVisible();
+    await expect(svg).toHaveAttribute('viewBox', '0 0 24 24');
+    await expect(svg.locator('path')).toHaveAttribute('d', 'M12 19V5M6 11l6-6 6 6');
+    expect(await svg.evaluate(el => el.namespaceURI)).toBe('http://www.w3.org/2000/svg');
+    const colors = await send.evaluate(el => {
+      const style = getComputedStyle(el);
+      return { ink: style.color, background: style.backgroundColor, opacity: Number(style.opacity), stroke: getComputedStyle(el.querySelector('svg')).stroke };
+    });
+    expect(colors.ink).not.toBe(colors.background);
+    expect(colors.stroke).toBe(colors.ink);
+    expect(colors.opacity).toBeGreaterThanOrEqual(0.6);
+    await expect(page.getByRole('button', { name: 'Choose images', exact: true }).locator('svg')).toBeVisible();
+    await expect(page.locator('.send-hint')).toContainText('Enter');
+    await fitsViewport(page);
+  };
+  await chooseTheme(page, 'Bubblegum');
+  // Sending previously destroyed the SVG. Exercise both mouse and Enter, and
+  // inspect during the LiveView acknowledgement window as well as afterwards.
+  await page.evaluate(() => window.liveSocket.enableLatencySim(200));
+  for (const method of ['click', 'Enter']) {
+    await composer.fill(`Send regression ${method}`);
+    if (method === 'click') await send.click();
+    else await composer.press('Enter');
+    await expect(page.locator('#composer-form')).toHaveClass(/phx-submit-loading/);
+    await checkSend();
+    await expect(composer).toHaveValue('');
+    await expect(send).toBeEnabled();
+    await checkSend();
+  }
+  await page.evaluate(() => window.liveSocket.disableLatencySim());
+  await expect(page.locator('#transcript-turns')).toContainText('Send regression Enter');
+  await expect(page.locator('#composer-form').getByRole('button', { name: 'Stop', exact: true })).toHaveCount(0, { timeout: 30_000 });
+  const fixture = composerFixture(new URL(page.url()).pathname.split('/').pop());
+  const palettes = await page.locator('[data-theme-choice]').evaluateAll(els => [...new Set(els.map(el => el.dataset.themeChoice))]);
+  expect(palettes).toHaveLength(22);
+  for (const [status, connected] of [['opening', false], ['opening', true], ['running', true], ['ready', true], ['failed', true]]) {
+    await fixture.state(request, status, connected);
+    await page.reload();
+    await expect(page.locator('[data-phx-main]')).toHaveClass(/phx-connected/);
+    await expect(send).toBeVisible();
+    if (connected) await expect(send).toBeEnabled();
+    else await expect(send).toBeDisabled();
+    await expect(page.locator('#composer-form').getByRole('button', { name: 'Stop', exact: true })).toHaveCount(['opening', 'running'].includes(status) ? 1 : 0);
+    await expect(page.locator('#composer-form').getByRole('button', { name: 'Wake / retry', exact: true })).toHaveCount(['opening', 'failed'].includes(status) ? 1 : 0);
+    for (const theme of palettes) {
+      // The picker is hidden behind Menu on phones; set its public palette
+      // attribute directly so the matrix measures the same CSS in both sizes.
+      await page.locator('html').evaluate((el, theme) => el.dataset.theme = theme, theme);
+      for (const width of [1280, 390]) {
+        await page.setViewportSize({ width, height: 900 });
+        await page.evaluate(async () => {
+          await new Promise(requestAnimationFrame);
+          await Promise.all(document.getAnimations().filter(a => a instanceof CSSTransition).map(a => a.finished.catch(() => {})));
+        });
+        await test.step(`${status}, connected=${connected}, ${theme}, ${width}px`, checkSend);
+        if (theme === 'bubblegum') await page.screenshot({ path: test.info().outputPath(`send-${status}-${connected}-${width}.png`), fullPage: true });
+      }
+    }
+  }
 });

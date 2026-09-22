@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 import { createHash, randomBytes } from 'node:crypto';
 import { createServer } from 'node:http';
 
-const base = 'http://localhost:4103';
+const base = `http://localhost:${process.env.BROWSER_PORT || 4103}`;
 let callback;
 let callbackServer;
 
@@ -37,7 +37,7 @@ async function connect(page, request, resource, name) {
     code_challenge: createHash('sha256').update(verifier).digest('base64url'),
   });
   await page.goto(`/oauth/authorize?${params}`);
-  if (new URL(page.url()).port === '8893') {
+  if (new URL(page.url()).port === (process.env.MOCK_PORT || '8893')) {
     await page.getByRole('link', { name: 'Sign in as @dana', exact: true }).click();
   }
   const heading = page.getByRole('heading', { name: `Connect ${name} to Ravix` });
