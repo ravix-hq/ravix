@@ -13,14 +13,7 @@ defmodule RavixWeb.PreviewGatewayTest do
   @script ~s(<script src="/__ravix/activity.js" defer></script>)
 
   setup_all do
-    port = Fake.start_front!()
-
-    on_exit(fn ->
-      Application.delete_env(:ravix, :preview_backend)
-      Application.delete_env(:ravix, :tunnel_module)
-    end)
-
-    %{port: port}
+    %{port: Fake.start_front!()}
   end
 
   setup %{port: port}, do: %{f: Fake.fixture(port)}

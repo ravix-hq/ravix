@@ -40,8 +40,10 @@ defmodule Ravix.PreviewGatewayFake do
 
     {:ok, {_, port}} = ThousandIsland.listener_info(front)
     __MODULE__.Store.set_port(port)
-    Application.put_env(:ravix, :preview_backend, __MODULE__.Backend)
-    Application.put_env(:ravix, :tunnel_module, __MODULE__.Tunnel)
+    # Started last so it stops first: the backend is global, and every other
+    # async test's request passes through the gateway plug, so it must be
+    # unset before the store it reads from goes away.
+    ExUnit.Callbacks.start_supervised!(__MODULE__.Wiring)
     port
   end
 
@@ -138,6 +140,28 @@ defmodule Ravix.PreviewGatewayFake do
   @doc "Milliseconds since the epoch, as grants are stamped."
   @spec now() :: integer()
   def now, do: System.system_time(:millisecond)
+
+  defmodule Wiring do
+    @moduledoc false
+    # Points the app at this fake for as long as it lives.
+    use GenServer
+
+    def start_link(_opts), do: GenServer.start_link(__MODULE__, nil)
+
+    @impl true
+    def init(nil) do
+      Process.flag(:trap_exit, true)
+      Application.put_env(:ravix, :preview_backend, Ravix.PreviewGatewayFake.Backend)
+      Application.put_env(:ravix, :tunnel_module, Ravix.PreviewGatewayFake.Tunnel)
+      {:ok, nil}
+    end
+
+    @impl true
+    def terminate(_reason, _state) do
+      Application.delete_env(:ravix, :preview_backend)
+      Application.delete_env(:ravix, :tunnel_module)
+    end
+  end
 
   # ── the database ─────────────────────────────────────────────────────
 
