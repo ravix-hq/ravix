@@ -1,5 +1,5 @@
 defmodule RavixWeb.WorkspaceLiveTest do
-  use RavixWeb.ConnCase, async: false
+  use RavixWeb.ConnCase, async: true
   import Ecto.Query, only: [from: 2]
   import Phoenix.LiveViewTest
   import Mimic

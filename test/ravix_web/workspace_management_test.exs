@@ -1,5 +1,5 @@
 defmodule RavixWeb.WorkspaceManagementTest do
-  use RavixWeb.ConnCase, async: false
+  use RavixWeb.ConnCase, async: true
   import Phoenix.LiveViewTest
   import Mimic
   alias Ravix.{Accounts, People, Previews, Projects, Tracks}

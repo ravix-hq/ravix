@@ -5,7 +5,7 @@ defmodule RavixWeb.Live.AgentPanelTest do
   panel (`RavixWeb.OnboardingLiveTest`) holds here too, since it is the same
   component; these tests are about what the *workspace* does around it.
   """
-  use RavixWeb.ConnCase, async: false
+  use RavixWeb.ConnCase, async: true
   import Phoenix.LiveViewTest
   import Mimic
 

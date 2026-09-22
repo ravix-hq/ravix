@@ -5,7 +5,7 @@ defmodule RavixWeb.Live.PeopleDialogTest do
   what leaving each does to the page you are on, and who is offered the
   controls at all.
   """
-  use RavixWeb.ConnCase, async: false
+  use RavixWeb.ConnCase, async: true
 
   import Mimic
   import Phoenix.LiveViewTest
