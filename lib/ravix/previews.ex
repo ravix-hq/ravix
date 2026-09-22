@@ -158,9 +158,10 @@ defmodule Ravix.Previews do
   def present(%Row{} = row) do
     why = unavailable() || row.unavailable
 
-    # ownership: the preview row names this track, and the caller reached
-    # the row by resolving a preview it was already allowed onto. Read only
-    # to find the project whose defaults apply.
+    # ownership: every path here was already let onto this preview: the scoped
+    # calls below through `Access.track_access/2`, the gateway and the helper's
+    # agent through grant checks that re-ask it. Read only to find the project
+    # whose defaults apply.
     defaults =
       case Tracks.get_track(row.track_id) do
         %Track{project_id: project_id} -> Store.defaults(project_id)
@@ -183,9 +184,10 @@ defmodule Ravix.Previews do
   @spec assert_open(String.t()) ::
           {:ok, %{track: Track.t(), project: Project.t()}} | {:error, reason()}
   def assert_open(track_id) do
-    # ownership: this *is* the door for the preview flow -- it answers whether
-    # there is a live track and project behind a preview at all, and every
-    # caller of it goes on to check the person separately.
+    # ownership: no door here -- this *is* the preview flow's first check. It
+    # answers whether there is a live track and project behind a preview at
+    # all, and every caller goes on to check the person: the scoped calls
+    # through `Access.track_access/2`, the gateway through `allowed?/2`.
     track = Tracks.get_track(track_id)
     project = track && Projects.live_project(track.project_id)
 

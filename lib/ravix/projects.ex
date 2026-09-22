@@ -102,7 +102,7 @@ defmodule Ravix.Projects do
 
     # ownership: these two *are* how this caller's access is established --
     # `list/1` is "every project this person may see", and a membership row is
-    # what makes one of them visible. There is no earlier door to go through.
+    # what makes one of them visible. There is no door earlier than this one.
     whole = People.Store.member_projects(user.id)
     tracks = People.Store.member_tracks(user.id)
 

@@ -433,9 +433,12 @@ defmodule Ravix.PromptQueue.Store do
   # The panel re-reads a track's queue on this. Publishing is by project,
   # which the row does not carry; one read of the track finds it.
   defp publish_queue(track_id) do
-    # ownership: every caller reached this queue through
-    # `Access.track_access/2` on this very track; the read only finds which
-    # project's hub to tell.
+    # ownership: no door here, on purpose. Every writer in this store ends by
+    # telling the page, and not every writer has a person behind it: enqueue,
+    # cancel and retry went through `Access.track_access/2`, but the server's
+    # own status moves, `recover/0` and `cancel_track/1` have no user at all.
+    # The read decides nothing -- the row is already written, and this only
+    # turns its track id into the project whose hub is told.
     case Tracks.get_track(track_id) do
       %Track{project_id: project_id} -> Hub.publish(project_id, :queue, track_id: track_id)
       nil -> :ok

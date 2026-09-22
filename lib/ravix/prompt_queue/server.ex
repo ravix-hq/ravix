@@ -407,9 +407,10 @@ defmodule Ravix.PromptQueue.Server do
       else: prompt
   end
 
-  # ownership: whether anybody besides the owner can see this track, which
-  # decides only whether the agent is told who is speaking. Not an access
-  # decision; `authorized?/1` is.
+  # ownership: `authorized?/1` in `deliver/2` put the row's sender through
+  # `Access.track_access/2` before this is asked. It reads whether anybody
+  # besides the owner can see the track, which decides only whether the agent
+  # is told who is speaking -- not an access decision; `authorized?/1` is.
   defp shared?(track, project) do
     Repo.exists?(from(m in TrackMember, where: m.track_id == ^track.id)) or
       Repo.exists?(from(m in ProjectMember, where: m.project_id == ^project.id))
