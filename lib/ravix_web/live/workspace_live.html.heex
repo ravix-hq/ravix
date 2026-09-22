@@ -354,7 +354,8 @@
               <span class="project-mark" aria-hidden="true">
                 {String.first(project.name) |> String.upcase()}
               </span>
-              <span>{project_label(project)}</span><span class="meta mono">{project.repo || "no repository"}</span>
+              <span>{project_label(project)}</span><span class="meta mono">{project.repo ||
+                "no repository"}</span>
             </.link>
           </section>
         </div>
