@@ -433,7 +433,7 @@ defmodule Ravix.Projects do
 
   # ownership: the project's own `user_id`, read to show a member who owns
   # what they are looking at. `list/1` and `get/2` established the caller's
-  # seat on the project with `access_of/2` before asking.
+  # seat on the project with `Access.access_of/3` before asking.
   defp owner_of(%Project{user_id: user_id}, %User{id: user_id} = user), do: user
 
   defp owner_of(%Project{user_id: user_id}, user),
@@ -446,6 +446,9 @@ defmodule Ravix.Projects do
   defp owners_of([], _user), do: %{}
 
   defp owners_of(projects, %User{} = user) do
+    # ownership: the same door as `owner_of/2` -- these are the guest
+    # projects `list/1` puts through `Access.access_of/3`, and their own
+    # `user_id` columns are what is read.
     ids = projects |> Enum.map(& &1.user_id) |> Enum.uniq() |> Enum.reject(&(&1 == user.id))
     Map.new(Ravix.Accounts.Store.get_users(ids), &{&1.id, &1})
   end

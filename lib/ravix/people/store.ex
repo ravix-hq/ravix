@@ -72,8 +72,9 @@ defmodule Ravix.People.Store do
   """
   @spec remove_member(String.t(), String.t()) :: :ok
   def remove_member(track_id, user_id) do
-    # ownership: the seat being deleted below names this track and this
-    # person, and their preview grants on it are part of what the seat gave.
+    # ownership: `Ravix.People.remove/3` admitted the caller through
+    # `Access.track_access/2`. The seat being deleted below names this track
+    # and this person, and their preview grants on it are part of what it gave.
     Ravix.Previews.Store.revoke(track_id, user_id)
     Ravix.Previews.Store.revoke_agent(track_id, user_id)
 
@@ -352,8 +353,9 @@ defmodule Ravix.People.Store do
     # `open_tracks/1` is the projects context's own read of that list.
     tracks = Projects.open_tracks(project_id)
 
-    # ownership: the seat being deleted below is what let this person onto
-    # every one of those tracks, so their grants on each go with it.
+    # ownership: the same `Access.project_access/2` door. The seat being
+    # deleted below is what let this person onto every one of those tracks,
+    # so their grants on each go with it.
     Enum.each(tracks, &Ravix.Previews.Store.revoke(&1.id, user_id))
     Enum.each(tracks, &Ravix.Previews.Store.revoke_agent(&1.id, user_id))
 
@@ -612,9 +614,10 @@ defmodule Ravix.People.Store do
   """
   @spec minted_by(module(), atom(), String.t(), String.t()) :: String.t() | nil
   def minted_by(schema, key, id, hash) do
-    # ownership: the link hash is the authorization, and it has just been
-    # matched against this row. The user read turns a stored id into the login
-    # a page shows, and nothing else.
+    # ownership: no door -- a link is read before anybody is signed in, and
+    # the hash is the authorization, matched against this row right here. The
+    # user read turns the stored `created_by` into the login a page shows, and
+    # nothing else is decided by it.
     with %{created_by: user_id} <- Repo.get_by(schema, [{key, id}, {:token_hash, hash}]),
          %User{login: login} <- Ravix.Accounts.Store.get_user(user_id) do
       login
@@ -753,7 +756,8 @@ defmodule Ravix.People.Store do
 
   defp owner_entry(owner_id) do
     # ownership: turning the project's `user_id` column into a name for the
-    # list. Ownership is that column, never a row here.
+    # list, whose callers in `Ravix.People` went through `Access.track_access/2`
+    # or `Access.project_access/2`. Ownership is that column, never a row here.
     case Ravix.Accounts.Store.get_user(owner_id) do
       %User{} = owner -> [Person.new(owner, :owner)]
       nil -> []

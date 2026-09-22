@@ -359,9 +359,9 @@ defmodule Ravix.PromptQueue.Server do
 
   defp settle(:revoked, row, track, _project) do
     cancel(row)
-    # ownership: `authorized?/1` just found the sender no longer has this
-    # track, and the helper grant minted for their turn must not outlive it.
-    # Whoever holds it, hence the explicit nil.
+    # ownership: `access/1` just re-asked `Access.track_access/2` for the
+    # sender and was refused, and the helper grant minted for their turn must
+    # not outlive their seat. Whoever holds it, hence the explicit nil.
     Ravix.Previews.Store.revoke_agent(track.id, nil)
   end
 
@@ -428,9 +428,10 @@ defmodule Ravix.PromptQueue.Server do
   # decide, and they are what delivery needs next, so delivery is handed them
   # rather than reading the same two rows again.
   defp access(row) do
-    # ownership: this *is* the door. A queued prompt outlives the request that
-    # made it, so who sent it is re-established here rather than trusted from
-    # whenever it was accepted.
+    # ownership: no door before this one -- it is the door. A queued prompt
+    # outlives the request that made it, so who sent it is re-established
+    # here rather than trusted from whenever it was accepted: the row's own
+    # `user_id` becomes the person `Access.track_access/2` is asked about.
     with %User{} = user <- Ravix.Accounts.Store.get_user(row.user_id),
          {:ok, %{track: track, project: project}} <- Access.track_access(user, row.track_id),
          true <- open?(track) do

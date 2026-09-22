@@ -129,7 +129,8 @@ defmodule Ravix.ArchitectureTest do
 
     assert [] =
              issues(
-               "# ownership: the project's own user_id\nRavix.Accounts.Store.get_user(id)",
+               "# ownership: Access.project_of/2 admitted the caller; the project's own user_id\n" <>
+                 "Ravix.Accounts.Store.get_user(id)",
                "lib/ravix/projects.ex"
              )
 

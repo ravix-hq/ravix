@@ -381,8 +381,8 @@ defmodule Ravix.Projects.Machine do
       &Ravix.PromptQueue.Store.cancel_track(&1.id)
     )
 
-    # ownership: the same door; every preview on the project is retired with
-    # the machine its services were defined on.
+    # ownership: the same `Access.project_of/2` door; every preview on the
+    # project is retired with the machine its services were defined on.
     Lifecycle.retire_project(project.id)
   end
 

@@ -156,8 +156,9 @@ defmodule Ravix.People do
     if q == "" do
       []
     else
-      # ownership: the person in hand is the one asking, and their own id is
-      # passed only to leave them out of a list that is about everybody else.
+      # ownership: no door -- the person in hand is the caller, whose session
+      # is the whole of what this needs, and their own id is passed only to
+      # leave them out of a list about everybody else.
       q
       |> String.slice(0, 60)
       |> Ravix.Accounts.Store.search_users(user.id)
@@ -444,7 +445,8 @@ defmodule Ravix.People do
 
   defp refuse_owner(%{github_id: github_id}, %Project{user_id: owner_id}, message) do
     # ownership: the project's own `user_id`, compared with the person being
-    # invited; `add/3` and `add_project/3` hold `project` from `Access` already.
+    # invited; `add/3` holds `project` from `Access.track_access/2` and
+    # `add_project/3` from `Access.project_access/2`.
     case Ravix.Accounts.Store.get_user(owner_id) do
       %User{github_id: ^github_id} -> {:error, {:unprocessable, "already_owner", message}}
       _ -> :ok
@@ -474,9 +476,10 @@ defmodule Ravix.People do
   end
 
   defp find_person(login) do
-    # ownership: a login typed by somebody removing a person, who reached the
-    # track or project through `Access` in `remove/3` or `remove_project/3`.
-    # Nil for an ambiguous login, so nobody is removed on a guess.
+    # ownership: a login typed by somebody removing a person, who came
+    # through `Access.track_access/2` in `remove/3` or `Access.project_access/2`
+    # in `remove_project/3`. Nil for an ambiguous login, so nobody is removed
+    # on a guess.
     case Ravix.Accounts.Store.user_by_login(login) do
       %User{} = user -> {:ok, user}
       nil -> {:error, :not_found}

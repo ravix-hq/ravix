@@ -704,6 +704,9 @@ defmodule Ravix.Tracks do
   # the row is already closed and nobody is waiting on this. Nothing here is
   # a credential -- the client carries Fountain's key and is not logged.
   defp tear_down(client, %Track{} = track, %Project{} = project, opts) do
+    # ownership: `close/3` admitted the caller through `Access.track_access/2`
+    # and closed the row before handing this task the track; its preview
+    # service, grants and port go with it.
     discard(
       Lifecycle.stop_service(track.id, :cleanup),
       "preview of closed track #{track.id} did not stop"

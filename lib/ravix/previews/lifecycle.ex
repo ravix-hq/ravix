@@ -50,9 +50,11 @@ defmodule Ravix.Previews.Lifecycle do
   def present(%Row{} = row) do
     why = Previews.unavailable() || row.unavailable
 
-    # ownership: the preview row names this track, and the caller reached
-    # the row by resolving a preview it was already allowed onto. Read only
-    # to find the project whose defaults apply.
+    # ownership: the preview row names this track, and whoever handed it in
+    # already decided about it -- the panel through `Access.track_access/2`,
+    # the gateway by a grant `allowed?/2` re-checks on every request, the
+    # server by the row it is carrying out. Read only to find the project
+    # whose defaults apply.
     defaults =
       case Tracks.get_track(row.track_id) do
         %Track{project_id: project_id} -> Store.defaults(project_id)
@@ -75,9 +77,10 @@ defmodule Ravix.Previews.Lifecycle do
   @spec assert_open(String.t()) ::
           {:ok, %{track: Track.t(), project: Project.t()}} | {:error, Previews.reason()}
   def assert_open(track_id) do
-    # ownership: this *is* the door for the preview flow -- it answers whether
-    # there is a live track and project behind a preview at all, and every
-    # caller of it goes on to check the person separately.
+    # ownership: no door before this one -- it is the door for the preview
+    # flow. It answers whether there is a live track and project behind a
+    # preview at all, and every caller goes on to check the person
+    # separately (`Access.track_access/2`, or a grant bound to a session).
     track = Tracks.get_track(track_id)
     project = track && Projects.live_project(track.project_id)
 
@@ -362,10 +365,10 @@ defmodule Ravix.Previews.Lifecycle do
   @doc "A project is being rebuilt or archived: remove every track's service (failures retry)."
   @spec retire_project(String.t()) :: :ok
   def retire_project(project_id) do
-    # ownership: the projects context is retiring this project and asked for
-    # its previews to go with it; naming its tracks, open or closed, is how
-    # they are found -- a preview outlives its track being closed until
-    # something retires it.
+    # ownership: `Ravix.Projects.Machine.quiesce/1` is retiring this project
+    # behind `Access.project_of/2` and asked for its previews to go with it;
+    # naming its tracks, open or closed, is how they are found -- a preview
+    # outlives its track being closed until something retires it.
     track_ids = project_id |> Tracks.tracks_of(:all) |> Enum.map(& &1.id)
 
     Ravix.TaskSupervisor
