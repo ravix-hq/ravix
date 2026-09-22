@@ -226,6 +226,13 @@
           >
             Help
           </button>
+          <button
+            type="button"
+            class="linkish"
+            phx-click="dialog"
+            phx-value-name="changes"
+            aria-label="What's new"
+          >What's new<span :if={@changes_unseen > 0} class="chip">{@changes_unseen}</span></button>
         </div>
       </div>
     </aside>
@@ -599,7 +606,21 @@
       current_user={@current_user}
       session_hash={@session_hash}
     />
+    <.dialog :if={@dialog == :changes} id="changes-dialog" title="What's new" on_close="dismiss">
+      <p class="lede">Changes in Ravix since you last checked.</p>
+      <button type="button" class="secondary" phx-click="mark-changes-seen">Mark all as read</button>
+      <div class="changes-list">
+        <article :for={entry <- @changes} class="change-entry">
+          <small>{entry.date} · {entry.kind}</small><h3>{entry.title}</h3>
+          <p>{Phoenix.HTML.raw(RavixWeb.Markdown.render_safe(entry.body))}</p>
+        </article>
+      </div>
+    </.dialog>
     <.dialog :if={@dialog == :help} id="help-dialog" title="Help · AI tools" on_close="dismiss">
+      <button type="button" class="secondary" phx-click="dialog" phx-value-name="changes">What's new<span
+        :if={@changes_unseen > 0}
+        class="chip"
+      >{@changes_unseen}</span></button>
       <RavixWeb.HelpComponents.agent_tooling />
     </.dialog>
     <.dialog :if={@dialog == :account} id="account-dialog" title="Your account" on_close="dismiss">

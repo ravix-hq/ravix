@@ -137,9 +137,37 @@ defmodule RavixWeb.WorkspaceLiveTest do
     assert has_element?(view, "#help-dialog code", Ravix.Config.public_url() <> "/mcp")
     assert has_element?(view, "#help-dialog", "SubscribeToTask")
     assert has_element?(view, "#help-dialog a[href='/settings/connections']")
-    view |> element("#help-dialog button[aria-label='Close']") |> render_click()
+    view |> element("#help-dialog button", "What's new") |> render_click()
+    assert has_element?(view, "#changes-dialog", "Changes in Ravix since you last checked.")
+    refute has_element?(view, "#changes-dialog .chip")
+    view |> element("#changes-dialog button", "Mark all as read") |> render_click()
+    view |> element("#changes-dialog button[aria-label='Close']") |> render_click()
     refute has_element?(view, "#help-dialog")
     assert has_element?(view, "#open-help")
+  end
+
+  test "what is new counts what shipped since somebody arrived, then stops", %{conn: conn} do
+    [entry | _] = Ravix.Changelog.all()
+    # Somebody who was here before the newest change has it to read; somebody
+    # who arrived after it never missed it. Neither has opened the panel, so
+    # this is the mark that stands in until they do.
+    early = insert_user(created_at: DateTime.add(Ravix.Changelog.at(entry), -1, :day))
+    late = insert_user(created_at: DateTime.add(Ravix.Changelog.at(entry), 1, :day))
+
+    {:ok, view, _} = live(log_in_user(conn, early), "/home")
+    assert has_element?(view, "button[phx-value-name=changes] .chip")
+    render_click(view, "dialog", %{name: "changes"})
+    assert has_element?(view, "#changes-dialog", entry.title)
+    # Opening it is the acknowledgement: the count goes, and stays gone.
+    refute has_element?(view, "button[phx-value-name=changes] .chip")
+    assert Repo.get!(Ravix.Accounts.User, early.id).changes_seen_at
+    {:ok, again, _} = live(log_in_user(conn, early), "/home")
+    refute has_element?(again, "button[phx-value-name=changes] .chip")
+
+    {:ok, fresh, _} = live(log_in_user(conn, late), "/home")
+    refute has_element?(fresh, "button[phx-value-name=changes] .chip")
+    render_click(fresh, "dialog", %{name: "changes"})
+    refute has_element?(fresh, "#changes-dialog", entry.title)
   end
 
   test "a signed-out browser is sent to sign in from anywhere it lands", %{conn: conn} do
