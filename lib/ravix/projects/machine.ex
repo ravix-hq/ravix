@@ -19,6 +19,7 @@ defmodule Ravix.Projects.Machine do
   alias Ravix.Fountain.Shapes.Conversation
   alias Ravix.Hub
   alias Ravix.Ids
+  alias Ravix.Previews.Lifecycle
   alias Ravix.Projects
   alias Ravix.Projects.Machine.Harness
   alias Ravix.Projects.Machine.Provisioned
@@ -98,7 +99,7 @@ defmodule Ravix.Projects.Machine do
 
     body = %{name: label(project), repositories: repositories, packages: %{}, setup_script: ""}
 
-    with {:ok, env} <- Projects.fountain_result(Fountain.create_environment(client, body)) do
+    with {:ok, env} <- Fountain.create_environment(client, body) do
       {:ok, %{state | environment_id: env["id"]}}
     end
   end
@@ -106,7 +107,7 @@ defmodule Ravix.Projects.Machine do
   # Created up front even though nothing needs it yet, precisely because
   # attaching one later would change the identity and cost the disk.
   defp vault(client, project, state) do
-    case Projects.fountain_result(Fountain.create_vault(client, %{name: label(project)})) do
+    case Fountain.create_vault(client, %{name: label(project)}) do
       {:ok, vault} -> {:ok, %{state | vault_id: vault["id"]}}
       {:error, %Error{status: status}} when status in [403, 404, 501] -> {:ok, state}
       {:error, reason} -> {:error, reason}
@@ -167,7 +168,7 @@ defmodule Ravix.Projects.Machine do
       |> with_vault(state.vault_id)
       |> with_credentials(owner.credential_set_id)
 
-    with {:ok, agent} <- Projects.fountain_result(Fountain.create_agent(client, body)) do
+    with {:ok, agent} <- Fountain.create_agent(client, body) do
       {:ok,
        %{
          state
@@ -198,12 +199,9 @@ defmodule Ravix.Projects.Machine do
         ) ::
           :ok | {:error, term()}
   def refresh_clone_token(%{vault_id: vault_id, installation_id: installation_id}, client) do
-    with {:ok, app} <- Projects.github(),
-         {:ok, token} <-
-           Projects.github_result(Ravix.GitHub.mint_clone_token(app, installation_id)) do
-      Projects.fountain_result(
-        Fountain.put_secret(client, :vaults, vault_id, Projects.clone_secret_key(), token)
-      )
+    with {:ok, app} <- Ravix.Providers.github(),
+         {:ok, token} <- Ravix.GitHub.mint_clone_token(app, installation_id) do
+      Fountain.put_secret(client, :vaults, vault_id, Projects.clone_secret_key(), token)
     end
   end
 
@@ -254,8 +252,7 @@ defmodule Ravix.Projects.Machine do
       set_id ->
         body = with_credentials(%{}, set_id)
 
-        with {:ok, _agent} <-
-               Projects.fountain_result(Fountain.update_agent(client, project.agent_id, body)) do
+        with {:ok, _agent} <- Fountain.update_agent(client, project.agent_id, body) do
           Projects.Store.set_credential_set(project.id, set_id)
         end
     end
@@ -265,7 +262,7 @@ defmodule Ravix.Projects.Machine do
   # is already through `Access.project_of/2` or `Access.project_access/2`, and
   # what is read is which set pays, which is the owner's whoever is asking.
   defp owner_set(%Project{user_id: user_id}) do
-    case Ravix.Accounts.get_user(user_id) do
+    case Ravix.Accounts.Store.get_user(user_id) do
       %User{credential_set_id: id} when is_binary(id) -> id
       _ -> nil
     end
@@ -287,8 +284,7 @@ defmodule Ravix.Projects.Machine do
   def rebuild(%Project{} = project, client) do
     quiesce(project)
 
-    with {:ok, conversations} <-
-           Projects.fountain_result(Fountain.list_conversations(client, project.agent_id)),
+    with {:ok, conversations} <- Fountain.list_conversations(client, project.agent_id),
          {removed, failed} = terminate_live(client, conversations),
          :ok <- delete_old_agent(client, project.agent_id),
          set_id = owner_set(project),
@@ -312,7 +308,7 @@ defmodule Ravix.Projects.Machine do
   # stops on the 404 and the project can never be rebuilt again, only
   # destroyed.
   defp delete_old_agent(client, agent_id) do
-    case Projects.fountain_result(Fountain.delete_agent(client, agent_id)) do
+    case Fountain.delete_agent(client, agent_id) do
       {:error, %Error{status: 404}} -> :ok
       other -> other
     end
@@ -334,7 +330,7 @@ defmodule Ravix.Projects.Machine do
       |> with_vault(project.vault_id)
       |> with_credentials(set_id)
 
-    Projects.fountain_result(Fountain.create_agent(client, body))
+    Fountain.create_agent(client, body)
   end
 
   defp terminate_live(client, conversations) do
@@ -385,7 +381,9 @@ defmodule Ravix.Projects.Machine do
       &Ravix.PromptQueue.Store.cancel_track(&1.id)
     )
 
-    Ravix.Previews.retire_project(project.id)
+    # ownership: the same `Access.project_of/2` door; every preview on the
+    # project is retired with the machine its services were defined on.
+    Lifecycle.retire_project(project.id)
   end
 
   @doc """
@@ -427,7 +425,7 @@ defmodule Ravix.Projects.Machine do
   """
   @spec state(Project.t()) :: Projects.machine()
   def state(%Project{} = project) do
-    with {:ok, client} <- Projects.fountain(),
+    with {:ok, client} <- Ravix.Providers.fountain(),
          {:ok, conversations} <- Ravix.MachineCache.conversations(client, project, []) do
       conversations
       |> Enum.filter(&is_binary(&1.sandbox_id))
@@ -535,5 +533,5 @@ defmodule Ravix.Projects.Machine do
   defp blank_or(value, _fallback), do: value
 
   defp why(%Error{message: message}), do: message
-  defp why(:unconfigured), do: "Fountain is not configured"
+  defp why({:unconfigured, :fountain}), do: "Fountain is not configured"
 end

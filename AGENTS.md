@@ -16,7 +16,8 @@ mix test test/ravix/tracks_test.exs       # focused server checks
 mix test test/ravix_web/track_live_test.exs # focused LiveView checks
 bun test                               # browser hooks and repository guard fixtures
 mix test --cover                       # production-only coverage groups + HTML
-mix precommit                          # local analysis, tests, guard probes, release
+mix precommit                          # local analysis, tests, guard probes
+mix precommit.release                  # production assets and release, as CI's release job
 bunx playwright install chromium       # once per Playwright upgrade
 bun run test:browser                    # real Chromium + isolated app/providers/DB
 python3 scripts/secrets.py git .        # redacted history scan
@@ -52,7 +53,9 @@ in a `Ravix.<Context>.Store`, never beside the scoped functions: a page may
 not name one at all, and a context reaching into another's writes a
 `# ownership:` comment naming the door it already went through. The same
 comment is required of a `Repo` call that names another context's schema,
-because otherwise the unchecked path is the shorter one to write. Project
+because otherwise the unchecked path is the shorter one to write. Id-only
+process orchestration that is not row access (`Ravix.Previews.Lifecycle`)
+is held to the same two rules as a `Store`. Project
 membership and track membership differ; a track share does not grant the
 entire project.
 
@@ -131,6 +134,8 @@ Cluster behavior that only a second BEAM can show lives in
 the whole application; peer-side code goes in `test/support` because a test
 module's beam never reaches a peer. Keep to one peer at a time and wait for it to
 leave `Node.list/0`, or `:global` starts disconnecting nodes to protect itself.
+The file is tagged `:distributed` and a plain `mix test` leaves it out; CI and
+`mix precommit` pass `--include distributed`, as a focused run of it must.
 
 Browser tests use production configuration and create/drop only a generated
 `ravix_browser_*` database. Ports 4103/8893/8894 must be free; no existing server

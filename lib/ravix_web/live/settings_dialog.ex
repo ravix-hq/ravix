@@ -16,7 +16,10 @@ defmodule RavixWeb.Live.SettingsDialog do
   while somebody was creating a *project* in a different one, and re-enabled
   by whichever of the two finished first. A flag that means "this page is
   doing something" cannot answer "may I press this", because the page is
-  always doing something on behalf of somebody.
+  always doing something on behalf of somebody. `pending` is this dialog's
+  own, and names which of its three writes is out --- the settings, a
+  secret, or one of the irreversible two --- so each button is disabled by
+  exactly the write it would repeat.
 
   ## What stays with the page
 
@@ -24,7 +27,7 @@ defmodule RavixWeb.Live.SettingsDialog do
 
     * **The flash.** `Phoenix.LiveView.put_flash/3` inside a component
       changes a socket nobody renders. The sentence is sent instead; see
-      `RavixWeb.Live.Result.error/2`.
+      `RavixWeb.Live.Result.flash/3`, which is the `flash/3` used here.
     * **The rail.** Saving settings renames the project, so the list on the
       left is wrong until it is re-read. This dialog says so and the page
       decides what to do about it.
@@ -39,7 +42,9 @@ defmodule RavixWeb.Live.SettingsDialog do
   process --- but it is worth naming: it blocks the page while the dialog
   opens. Unlike the refreshes fixed in #102 it happens on a click rather
   than on a message nobody asked for, which is why it is a note here and not
-  part of this change.
+  part of this change. The writes are not: saving the settings or a secret
+  is `Ravix.Projects.update_settings/3`, a Fountain round trip, and it runs
+  off this process like the rebuild and the delete already did.
   """
   use RavixWeb, :live_component
 
@@ -50,6 +55,9 @@ defmodule RavixWeb.Live.SettingsDialog do
   alias RavixWeb.Live.Params
 
   @packages ~w(apt pip npm)
+
+  @impl true
+  def mount(socket), do: {:ok, assign(socket, pending: MapSet.new())}
 
   @impl true
   def update(assigns, socket) do
@@ -65,25 +73,13 @@ defmodule RavixWeb.Live.SettingsDialog do
       |> Map.take(~w(name runtime model instructions setup_script))
       |> Map.put("packages", packages_from(params))
 
-    {:noreply,
-     result(
-       assign(socket, settings_form: Form.new(:settings, params)),
-       Projects.update_settings(user(socket), project_id(socket), attrs),
-       fn s, _ ->
-         # The name may have changed, so the rail is wrong until the page
-         # re-reads it. Saying so is this dialog's part; what to re-read is
-         # the page's.
-         send(self(), :project_settings_saved)
+    user = user(socket)
+    id = project_id(socket)
 
-         s
-         |> load()
-         |> flash(
-           :info,
-           "Settings saved. Open a new track to use updated instructions and secrets."
-         )
-       end,
-       :settings_form
-     )}
+    {:noreply,
+     socket
+     |> assign(settings_form: Form.new(:settings, params))
+     |> begin(:settings, fn -> Projects.update_settings(user, id, attrs) end)}
   end
 
   def handle_event("save-secret", %{"secret" => params}, socket) do
@@ -91,18 +87,16 @@ defmodule RavixWeb.Live.SettingsDialog do
     # corrected. The value does not: a secret in an assign is a secret in the
     # page's state and in its next diff, which is the one thing this form
     # must not do, and `<.input type="password">` would render it straight
-    # back into the box.
+    # back into the box. It goes to Fountain inside the task and nowhere else.
     kept = Map.drop(params, ["value"])
+    secret = Map.take(params, ~w(store key value))
+    user = user(socket)
+    id = project_id(socket)
 
     {:noreply,
-     result(
-       assign(socket, secret_form: Form.new(:secret, kept)),
-       Projects.update_settings(user(socket), project_id(socket), %{
-         secret: Map.take(params, ~w(store key value))
-       }),
-       fn s, _ -> s |> load() |> flash(:info, "Secret updated.") end,
-       :secret_form
-     )}
+     socket
+     |> assign(secret_form: Form.new(:secret, kept))
+     |> begin(:secret, fn -> Projects.update_settings(user, id, %{secret: secret}) end)}
   end
 
   def handle_event("save-preview-defaults", params, socket) do
@@ -130,9 +124,41 @@ defmodule RavixWeb.Live.SettingsDialog do
     do: {:noreply, danger(socket, name, &Projects.destroy/2)}
 
   @impl true
+  def handle_async(:settings, {:ok, response}, socket) do
+    {:noreply,
+     result(
+       settle(socket, :settings),
+       response,
+       fn s, _ ->
+         # The name may have changed, so the rail is wrong until the page
+         # re-reads it. Saying so is this dialog's part; what to re-read is
+         # the page's.
+         send(self(), :project_settings_saved)
+
+         s
+         |> load()
+         |> flash(
+           :info,
+           "Settings saved. Open a new track to use updated instructions and secrets."
+         )
+       end,
+       :settings_form
+     )}
+  end
+
+  def handle_async(:secret, {:ok, response}, socket) do
+    {:noreply,
+     result(
+       settle(socket, :secret),
+       response,
+       fn s, _ -> s |> load() |> flash(:info, "Secret updated.") end,
+       :secret_form
+     )}
+  end
+
   def handle_async(:danger, {:ok, response}, socket) do
     {:noreply,
-     result(assign(socket, busy?: false), response, fn s, outcome ->
+     result(settle(socket, :danger), response, fn s, outcome ->
        # Both of these take you off the project: a rebuild closes every track
        # on it and a delete removes it outright.
        send(self(), :project_left_behind)
@@ -140,12 +166,20 @@ defmodule RavixWeb.Live.SettingsDialog do
      end)}
   end
 
-  def handle_async(:danger, {:exit, _reason}, socket),
-    do:
-      {:noreply,
-       socket
-       |> assign(busy?: false)
-       |> flash(:error, "The operation could not finish. Refresh and try again.")}
+  def handle_async(name, {:exit, reason}, socket),
+    do: {:noreply, socket |> settle(name) |> exit(reason)}
+
+  # ── what is out ───────────────────────────────────────────────────────
+
+  # One of the dialog's three writes, started off this process and named in
+  # `pending` until its answer or its exit settles it.
+  defp begin(socket, name, call) do
+    socket
+    |> update(:pending, &MapSet.put(&1, name))
+    |> traced_async(name, call)
+  end
+
+  defp settle(socket, name), do: update(socket, :pending, &MapSet.delete(&1, name))
 
   # ── loading ───────────────────────────────────────────────────────────
 
@@ -158,7 +192,7 @@ defmodule RavixWeb.Live.SettingsDialog do
         end
 
       s
-      |> assign(settings: settings, settings_form: settings_form(settings), busy?: false)
+      |> assign(settings: settings, settings_form: settings_form(settings))
       |> show_defaults(defaults)
       # The secret form is always blank: values are write-only, so there is
       # nothing to read back, and a key left in the box from the last save
@@ -212,10 +246,7 @@ defmodule RavixWeb.Live.SettingsDialog do
     if confirmation == socket.assigns.project.name do
       user = user(socket)
       id = project_id(socket)
-
-      socket
-      |> assign(busy?: true)
-      |> traced_async(:danger, fn -> call.(user, id) end)
+      begin(socket, :danger, fn -> call.(user, id) end)
     else
       flash(socket, :error, "Type the project name to confirm.")
     end
@@ -246,11 +277,6 @@ defmodule RavixWeb.Live.SettingsDialog do
   end
 
   defp report(socket, _outcome), do: socket
-
-  defp flash(socket, kind, message) do
-    send(self(), {:flash, kind, message})
-    socket
-  end
 
   defp user(socket), do: socket.assigns.current_user
   defp project_id(socket), do: socket.assigns.project.id
@@ -306,7 +332,9 @@ defmodule RavixWeb.Live.SettingsDialog do
             id={"packages-#{kind}"}
             label={"#{kind} packages"}
           />
-          <button class="primary" phx-disable-with="Saving…">Save settings</button>
+          <button class="primary" phx-disable-with="Saving…" disabled={:settings in @pending}>
+            Save settings
+          </button>
         </.form>
         <hr />
         <h3>Secrets</h3>
@@ -335,7 +363,9 @@ defmodule RavixWeb.Live.SettingsDialog do
             label="Value"
             autocomplete="new-password"
           />
-          <button class="primary" phx-disable-with="Saving…">Update secret</button>
+          <button class="primary" phx-disable-with="Saving…" disabled={:secret in @pending}>
+            Update secret
+          </button>
         </.form>
         <hr />
         <h3>Preview defaults</h3>
@@ -368,10 +398,10 @@ defmodule RavixWeb.Live.SettingsDialog do
             value=""
             required
           />
-          <button name="action" value="rebuild" class="ghost" disabled={@busy?}>
+          <button name="action" value="rebuild" class="ghost" disabled={:danger in @pending}>
             Rebuild machine
           </button>
-          <button name="action" value="delete" class="danger" disabled={@busy?}>
+          <button name="action" value="delete" class="danger" disabled={:danger in @pending}>
             Delete project
           </button>
         </form>

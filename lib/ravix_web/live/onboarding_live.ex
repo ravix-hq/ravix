@@ -58,10 +58,9 @@ defmodule RavixWeb.OnboardingLive do
   def steps, do: Enum.map(@steps, &{&1, @paths[&1]})
 
   @impl true
-  def mount(_params, session, socket) do
+  def mount(_params, _session, socket) do
     {:ok,
      assign(socket,
-       session_token: session["session_token"],
        github_available: Accounts.capabilities().github,
        project_form: Form.new(:new_project),
        # `nil` until GitHub has answered, which is not the same as "none": the
@@ -102,9 +101,7 @@ defmodule RavixWeb.OnboardingLive do
   defp validate_session(%{assigns: %{current_user: nil}} = socket), do: socket
 
   defp validate_session(socket) do
-    hash = Ravix.Crypto.sha256(socket.assigns.session_token)
-
-    case Guard.verify(socket.assigns[:session_guard], hash) do
+    case Guard.verify(socket.assigns[:session_guard], socket.assigns.session_hash) do
       {:ok, guard} -> assign(socket, session_guard: guard)
       :error -> assign(socket, current_user: nil)
     end
@@ -161,9 +158,12 @@ defmodule RavixWeb.OnboardingLive do
     do: {:noreply, assign(socket, current_user: user)}
 
   # The panel cannot put a flash in the page's own socket; see
-  # `RavixWeb.Live.Result.error/2`.
+  # `RavixWeb.Live.Result.flash/3`. The clear is its timer for a notice.
   def handle_info({:flash, kind, message}, socket),
-    do: {:noreply, put_flash(socket, kind, message)}
+    do: {:noreply, flash(socket, kind, message)}
+
+  def handle_info({:clear_flash, kind, message}, socket),
+    do: {:noreply, clear_notice(socket, kind, message)}
 
   @impl true
   def handle_async(:create_project, {:ok, response}, socket) do
@@ -192,12 +192,8 @@ defmodule RavixWeb.OnboardingLive do
   def handle_async(:repos, _other, socket),
     do: {:noreply, assign(socket, repos: [], installations: [], installation: nil)}
 
-  def handle_async(_name, {:exit, _reason}, socket),
-    do:
-      {:noreply,
-       socket
-       |> assign(busy: false)
-       |> put_flash(:error, "The operation could not finish. Refresh and try again.")}
+  def handle_async(_name, {:exit, reason}, socket),
+    do: {:noreply, socket |> assign(busy: false) |> exit(reason)}
 
   defp finish(socket) do
     case Accounts.finish_onboarding(socket.assigns.current_user) do

@@ -129,6 +129,7 @@ defmodule Ravix.Accounts.Inference do
   @type reason ::
           {:unprocessable, String.t(), String.t()}
           | {:unavailable, String.t()}
+          | {:unconfigured, :fountain}
           | Error.t()
           | Ecto.Changeset.t()
 
@@ -370,16 +371,10 @@ defmodule Ravix.Accounts.Inference do
   defp too_long,
     do: {:error, {:unprocessable, "bad_credential", "That is too long to be a token or a key."}}
 
-  defp fountain do
-    client = Fountain.client()
-
-    if Fountain.Client.configured?(client),
-      do: {:ok, client},
-      else:
-        {:error,
-         {:unavailable,
-          "This Ravix deployment has no Fountain account configured, so there is nowhere to keep a credential."}}
-  end
+  # A deployment with no Fountain has nowhere to keep a credential. That is
+  # `Ravix.Providers`' refusal and `RavixWeb.Error`'s sentence, not a third
+  # wording of it here.
+  defp fountain, do: Ravix.Providers.fountain()
 
   # ── the set ───────────────────────────────────────────────────────────
 

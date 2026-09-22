@@ -1,5 +1,5 @@
 defmodule RavixWeb.OnboardingLiveTest do
-  use RavixWeb.ConnCase, async: false
+  use RavixWeb.ConnCase, async: true
   import Phoenix.LiveViewTest
   import Mimic
 
@@ -235,6 +235,7 @@ defmodule RavixWeb.OnboardingLiveTest do
       github([])
       linking()
       {:ok, polls} = Agent.start_link(fn -> 0 end)
+      test = self()
 
       expect(Inference, :begin_link, fn caller ->
         assert caller.id == user.id
@@ -243,8 +244,10 @@ defmodule RavixWeb.OnboardingLiveTest do
 
       stub(Inference, :poll_link, fn caller, %Inference.Link{attempt_id: "att-1"} ->
         assert caller.id == user.id
+        poll = Agent.get_and_update(polls, &{&1 + 1, &1 + 1})
+        send(test, {:polled, poll})
 
-        case Agent.get_and_update(polls, &{&1 + 1, &1 + 1}) do
+        case poll do
           1 ->
             {:ok, :pending}
 
@@ -276,12 +279,17 @@ defmodule RavixWeb.OnboardingLiveTest do
       refute has_element?(view, "#chatgpt-connect")
 
       # The page ticks itself; here the ticks are sent by hand so the test
-      # does not wait out the interval.
+      # does not wait out the interval. Each tick reaches the panel through
+      # `send_update/2`, one hop behind the message, so the poll is not pending
+      # when `render_async/1` asked straight away looks; the poll's own call is
+      # what says it is, and is waited for before the render.
       send(view.pid, {:agent_panel, "agent-panel", :poll_link})
+      assert_receive {:polled, 1}
       html = render_async(view)
       assert html =~ "ABCD-EFGH"
 
       send(view.pid, {:agent_panel, "agent-panel", :poll_link})
+      assert_receive {:polled, 2}
       render_async(view)
       assert_patch(view, "/welcome/github")
       assert %User{agent: :codex, credential_kind: :subscription} = Repo.get!(User, user.id)
@@ -290,8 +298,10 @@ defmodule RavixWeb.OnboardingLiveTest do
     test "a sign-in that ends badly says why, and the button comes back", %{conn: conn} do
       linking()
       expect(Inference, :begin_link, fn _user -> {:ok, chatgpt_link()} end)
+      test = self()
 
       expect(Inference, :poll_link, fn _user, _link ->
+        send(test, :polled)
         {:error, {:unprocessable, "link_failed", "ChatGPT refused the code."}}
       end)
 
@@ -301,7 +311,12 @@ defmodule RavixWeb.OnboardingLiveTest do
       view |> element("#chatgpt-connect") |> render_click()
       render_async(view)
 
+      # The tick reaches the panel through `send_update/2`, one hop behind the
+      # message itself, so `render_async/1` asked straight away finds no poll
+      # pending yet and renders the code. The poll's own call is the moment it
+      # is pending, which is what to wait for.
       send(view.pid, {:agent_panel, "agent-panel", :poll_link})
+      assert_receive :polled
       html = render_async(view)
       assert html =~ "ChatGPT refused the code."
       refute html =~ "ABCD-EFGH"
@@ -606,8 +621,8 @@ defmodule RavixWeb.OnboardingLiveTest do
       :sys.replace_state(view.pid, &age_session_guard/1)
 
       # The panel is a component, so the page's hook never sees the submit;
-      # the panel asks the guard itself and sends the whole page to sign in.
-      assert {:error, {:live_redirect, %{to: "/login"}}} =
+      # `RavixWeb.Live.Hooks` asks for it and sends the whole page to sign in.
+      assert {:error, {:redirect, %{to: "/login"}}} =
                view |> form("#credential-form", credential: [value: "k"]) |> render_submit()
     end
   end

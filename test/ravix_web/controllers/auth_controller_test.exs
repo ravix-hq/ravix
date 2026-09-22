@@ -10,7 +10,9 @@ defmodule RavixWeb.AuthControllerTest do
   alias RavixWeb.Live.Hooks
   alias RavixWeb.Plugs.CurrentUser
 
-  @no_github "This Ravix deployment has no GitHub App configured, so it cannot see repositories."
+  # The one sentence for a deployment with no GitHub App lives in
+  # `RavixWeb.Error`; the controller answers it under its stable code.
+  @no_github RavixWeb.Error.from({:unconfigured, :github}).message
 
   setup do
     app = Fake.app()
@@ -69,7 +71,7 @@ defmodule RavixWeb.AuthControllerTest do
     test "is a 503 in the TypeScript's words when there is no GitHub App", %{conn: conn} do
       stub(Ravix.Config, :github, fn -> nil end)
       response = get(conn, "/auth/github")
-      assert json_response(response, 503) == %{"error" => "unavailable", "message" => @no_github}
+      assert json_response(response, 503) == %{"error" => "no_github", "message" => @no_github}
     end
   end
 
@@ -160,7 +162,7 @@ defmodule RavixWeb.AuthControllerTest do
     test "answers 503 when there is no GitHub App", %{conn: conn} do
       stub(Ravix.Config, :github, fn -> nil end)
       response = get(conn, "/api/auth/callback?code=c&state=s")
-      assert %{"error" => "unavailable"} = json_response(response, 503)
+      assert %{"error" => "no_github"} = json_response(response, 503)
     end
   end
 
@@ -208,7 +210,7 @@ defmodule RavixWeb.AuthControllerTest do
 
     test "is a 503 without a GitHub App, before asking who is here", %{conn: conn} do
       stub(Ravix.Config, :github, fn -> nil end)
-      assert %{"error" => "unavailable"} = json_response(get(conn, "/api/auth/install"), 503)
+      assert %{"error" => "no_github"} = json_response(get(conn, "/api/auth/install"), 503)
     end
   end
 
@@ -256,7 +258,7 @@ defmodule RavixWeb.AuthControllerTest do
 
     test "a stranger with no GitHub App to go to gets the 503", %{conn: conn} do
       stub(Ravix.Config, :github, fn -> nil end)
-      assert %{"error" => "unavailable"} = json_response(get(conn, "/j/link-token"), 503)
+      assert %{"error" => "no_github"} = json_response(get(conn, "/j/link-token"), 503)
     end
 
     if Code.ensure_loaded?(Ravix.People) do

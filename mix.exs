@@ -33,7 +33,7 @@ defmodule Ravix.MixProject do
 
   def cli do
     [
-      preferred_envs: [precommit: :test]
+      preferred_envs: [precommit: :test, "precommit.release": :prod]
     ]
   end
 
@@ -113,6 +113,12 @@ defmodule Ravix.MixProject do
         "esbuild ravix --minify",
         "phx.digest"
       ],
+      # The local gate, in the test build: analysis, the suite with the
+      # cluster tests that a plain `mix test` leaves out, the hook tests and
+      # the guard probes. Dialyzer runs in dev on purpose: dialyxir names its
+      # PLT after the build env and fills it from that env's runtime deps, so
+      # a test PLT (mimic, lazy_html, no esbuild, `test/support` analysed)
+      # would not be the one CI's static job checks.
       precommit: [
         "compile --warnings-as-errors",
         "deps.unlock --unused",
@@ -121,12 +127,14 @@ defmodule Ravix.MixProject do
         "sobelow --config",
         "cmd mix hex.audit",
         "cmd env MIX_ENV=dev mix dialyzer",
-        "test --cover",
+        "test --cover --include distributed",
         "cmd bun test",
-        "cmd python3 scripts/coverage-self-test.py",
-        "cmd env MIX_ENV=prod mix assets.deploy",
-        "cmd env MIX_ENV=prod mix release --overwrite"
-      ]
+        "cmd python3 scripts/coverage-self-test.py"
+      ],
+      # The third compile, on its own: what CI's release job does, for a
+      # change to configuration, the release, or the assets. `precommit`
+      # does not include it.
+      "precommit.release": ["assets.setup", "assets.deploy", "release --overwrite"]
     ]
   end
 end

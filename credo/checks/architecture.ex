@@ -24,6 +24,25 @@ defmodule Ravix.Credo.Architecture do
   @spawn ~w(spawn spawn_link spawn_monitor spawn_opt)a
   @task ~w(start start_link async async_stream)a
 
+  # What an `# ownership:` comment has to contain to count. "The caller
+  # checked" is what every unchecked path would say too, so the comment must
+  # either name the door -- a function of `Ravix.Accounts.Access` -- or say
+  # in as many words that there is `no door` on this path, and why that is
+  # safe. The comment is read whole, because the door is often named on its
+  # second line.
+  @door ~r/Access\.[a-z_]+/
+  @no_door ~r/no door/i
+  @doorless "This # ownership: comment names no door. Say which `Access.` function " <>
+              "this caller already went through, or write `no door` and why this " <>
+              "user-less path is safe."
+
+  # The module names that take ids and establish nobody's access. A `Store`
+  # holds a context's rows; a `Lifecycle` (`Ravix.Previews.Lifecycle`) drives
+  # a context's processes by id -- start, stop, retire -- and is kept out of
+  # the store because it is not row access. Neither asks who is calling, so
+  # both are judged the same way below.
+  @unscoped ~w(Store Lifecycle)a
+
   @impl true
   def run(source, params) do
     path = Path.relative_to_cwd(source.filename)
@@ -70,17 +89,16 @@ defmodule Ravix.Credo.Architecture do
 
   defp inspect_node({{:., _, [_mod, fun]}, meta, args} = node, found, _path, lines)
        when is_atom(fun) and is_list(args) do
-    cond do
-      String.starts_with?(Atom.to_string(fun), "_unsafe_") and not ownership?(lines, meta[:line]) ->
-        {node,
-         [
-           {meta[:line],
-            "Remote _unsafe_ call needs a nearby # ownership: comment naming its scoped fetch or internal owner."}
-           | found
-         ]}
-
-      true ->
-        {node, found}
+    if String.starts_with?(Atom.to_string(fun), "_unsafe_") do
+      {node,
+       explain(
+         found,
+         meta,
+         lines,
+         "Remote _unsafe_ call needs a nearby # ownership: comment naming its scoped fetch or internal owner."
+       )}
+    else
+      {node, found}
     end
   end
 
@@ -165,10 +183,15 @@ defmodule Ravix.Credo.Architecture do
          lines
        )
        when is_atom(fun) and is_list(args) do
-    if resolve(parts, aliases) == [:Ravix, :Repo] and not ownership?(lines, meta[:line]) do
-      {node, args |> foreign_in(aliases, path) |> Enum.reduce(found, &flag_foreign(&1, &2, meta))}
+    with true <- resolve(parts, aliases) == [:Ravix, :Repo],
+         [_ | _] = foreign <- foreign_in(args, aliases, path) do
+      case ownership(lines, meta[:line]) do
+        :ok -> {node, found}
+        :missing -> {node, Enum.reduce(foreign, found, &flag_foreign(&1, &2, meta))}
+        :doorless -> {node, [{meta[:line], @doorless} | found]}
+      end
     else
-      {node, found}
+      _ -> {node, found}
     end
   end
 
@@ -207,15 +230,17 @@ defmodule Ravix.Credo.Architecture do
 
   # ── the row layer ─────────────────────────────────────────────────────
   #
-  # A `Ravix.<Context>.Store` takes ids and establishes nobody's access. Two
-  # rules, and the first has no exception: a page may not reach one. Pages
-  # have a user in hand and `Ravix.Accounts.Access` to spend it at, so a page
-  # calling a store is a page that decided not to ask.
+  # A `Ravix.<Context>.Store` takes ids and establishes nobody's access, and
+  # so does a `Ravix.<Context>.Lifecycle` (see `@unscoped`). Two rules, and
+  # the first has no exception: a page may not reach one. Pages have a user
+  # in hand and `Ravix.Accounts.Access` to spend it at, so a page calling a
+  # store is a page that decided not to ask.
   #
   # The second is for contexts, which legitimately hold ids they were let in
   # to. Reaching into *another* context's store is allowed and has to say so:
-  # the `# ownership:` comment names the door the caller already went through.
-  # Its own store needs no comment, because the module around it is the door.
+  # the `# ownership:` comment names the door the caller already went through
+  # (an `Access.` function), or says there is `no door` and why. Its own
+  # store needs no comment, because the module around it is the door.
 
   defp stores({:defdelegate, meta, [_fun, opts]} = node, found, aliases, path, lines)
        when is_list(opts) do
@@ -249,24 +274,27 @@ defmodule Ravix.Credo.Architecture do
   defp store_finding(parts, meta, found, aliases, path, lines) do
     parts = resolve(parts, aliases)
 
-    with true <- List.last(parts) == :Store,
+    with true <- List.last(parts) in @unscoped,
          [:Ravix, context | _] <- parts do
+      kind = List.last(parts)
+
       cond do
         web?(path) ->
           [
             {meta[:line],
-             "The web layer must not reach a row store; go through the context and " <>
-               "`Ravix.Accounts.Access`."}
+             "The web layer must not reach a #{kind}, which takes ids and asks nobody; " <>
+               "go through the context and `Ravix.Accounts.Access`."}
             | found
           ]
 
-        context != context_of(path) and not ownership?(lines, meta[:line]) ->
-          [
-            {meta[:line],
-             "Reaching another context's Store needs a nearby # ownership: comment " <>
-               "naming the door this caller already went through."}
-            | found
-          ]
+        context != context_of(path) ->
+          explain(
+            found,
+            meta,
+            lines,
+            "Reaching another context's #{kind} needs a nearby # ownership: comment " <>
+              "naming the door this caller already went through."
+          )
 
         true ->
           found
@@ -293,9 +321,36 @@ defmodule Ravix.Credo.Architecture do
 
   defp context_of(_), do: nil
 
-  defp ownership?(lines, line) do
-    Enum.any?(max(1, line - 6)..line, fn n ->
-      Regex.match?(~r/^\s*#\s*ownership:\s*\S.+/i, Map.get(lines, n, ""))
-    end)
+  # Nothing to add when the comment is there and names a door; the caller's
+  # own message when it is missing; one message for every rule when it is
+  # there but says nothing checkable.
+  defp explain(found, meta, lines, missing) do
+    case ownership(lines, meta[:line]) do
+      :ok -> found
+      :missing -> [{meta[:line], missing} | found]
+      :doorless -> [{meta[:line], @doorless} | found]
+    end
+  end
+
+  # The `# ownership:` comment within six lines above the call, read together
+  # with the comment lines that continue it, and judged against `@door` and
+  # `@no_door`. A line that is not a comment ends the block: a door named in
+  # some later comment is not this comment naming it.
+  defp ownership(lines, line) do
+    window = max(1, line - 6)..line
+
+    case Enum.find(window, &Regex.match?(~r/^\s*#\s*ownership:\s*\S.+/i, Map.get(lines, &1, ""))) do
+      nil ->
+        :missing
+
+      start ->
+        text =
+          start..line//1
+          |> Enum.map(&Map.get(lines, &1, ""))
+          |> Enum.take_while(&Regex.match?(~r/^\s*#/, &1))
+          |> Enum.join("\n")
+
+        if Regex.match?(@door, text) or Regex.match?(@no_door, text), do: :ok, else: :doorless
+    end
   end
 end

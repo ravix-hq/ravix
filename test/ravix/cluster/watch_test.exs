@@ -3,6 +3,9 @@ defmodule Ravix.Cluster.WatchTest do
   The log lines are the interface here — they are the only way to see cluster
   membership on a deployment with shell access turned off — so they are what
   these assert on, wording included.
+
+  Not async: `setup` moves the global `Logger` level, and `capture_log/1`
+  would collect every concurrent test's lines with it.
   """
   use ExUnit.Case, async: false
 

@@ -40,7 +40,19 @@
     </div>
   </main>
   <div :if={@current_user} class="app">
-    <aside class="yard" aria-label="Projects and tracks">
+    <%!-- On a phone the yard is gone and "Menu" in the mobile nav brings it
+      back over the page (`forced`); the scrim behind it, a tap on the x,
+      Escape, and any navigation close it again. See `yard_open`. --%>
+    <div
+      :if={@yard_open}
+      class="yard-scrim"
+      phx-click="yard-close"
+      phx-window-keydown="yard-close"
+      phx-key="escape"
+      aria-hidden="true"
+    >
+    </div>
+    <aside id="yard" class={["yard", @yard_open && "forced"]} aria-label="Projects and tracks">
       <div class="yard-top">
         <span class="avatar workspace-avatar" aria-hidden="true">
           {String.first(@current_user.login) |> String.upcase()}
@@ -48,6 +60,9 @@
         <div class="yard-who">
           <strong>{@current_user.name || @current_user.login}</strong><small>@{@current_user.login}</small>
         </div>
+        <button type="button" class="x yard-close" phx-click="yard-close" aria-label="Close menu">
+          <.icon name="x" size={16} />
+        </button>
       </div>
       <div class="workspace-actions yard-nav">
         <.link patch="/inbox" class={["yard-item", @live_action in [:home, :inbox] && "on"]}>
@@ -192,6 +207,15 @@
     </aside>
     <main class="stage" id="workspace-stage">
       <nav class="workspace-mobile-nav" aria-label="Workspace navigation">
+        <button
+          type="button"
+          class="ghost yard-menu"
+          phx-click="yard"
+          aria-expanded={to_string(@yard_open)}
+          aria-controls="yard"
+        >
+          <.icon name="chevron" size={13} open={@yard_open} class="ico" />Menu
+        </button>
         <.link patch="/home">Home</.link><.link patch="/inbox">Inbox</.link><button
           class="ghost"
           phx-click={JS.push_focus() |> JS.push("dialog")}
@@ -509,6 +533,7 @@
       id="settings-dialog-panel"
       project={@project}
       current_user={@current_user}
+      session_hash={@session_hash}
     />
     <.dialog :if={@dialog == :account} id="account-dialog" title="Your account" on_close="dismiss">
       <p class="lede">
@@ -518,7 +543,7 @@
         module={RavixWeb.Live.AgentPanel}
         id="agent-panel"
         current_user={@current_user}
-        session_token={@session_token}
+        session_hash={@session_hash}
       />
       <hr />
       <p class="hint">
@@ -533,6 +558,7 @@
       subject_id={@project.id}
       owner={@project.role == :owner}
       current_user={@current_user}
+      session_hash={@session_hash}
     />
   </div>
 </Layouts.app>

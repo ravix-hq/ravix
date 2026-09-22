@@ -57,6 +57,12 @@ defmodule RavixWeb.WorkspaceLive do
         # The nested `RavixWeb.TrackLive`, once it has said where it is. See
         # the `:track_host` clause of `handle_info/2`, and `hand_over/3`.
         track_host: nil,
+        # Whether the yard is open over the page. Only the phone layout asks:
+        # under `--bp-narrow` the rail is gone and the "Menu" button in the
+        # mobile nav is what brings it back. Held here rather than in the
+        # browser so a patch --- which is what every link in the yard does
+        # --- finds it and closes it; see `handle_params/3`.
+        yard_open: false,
         dialog: nil,
         project_form: Form.new(:new_project),
         track_form: Form.new(:new_track),
@@ -78,7 +84,8 @@ defmodule RavixWeb.WorkspaceLive do
 
   @impl true
   def handle_params(params, _uri, socket) do
-    socket = validate_session(socket)
+    # Every link in the yard patches, so arriving anywhere is leaving it.
+    socket = socket |> validate_session() |> assign(yard_open: false)
 
     case wrong_page(socket) do
       nil -> {:noreply, open_url(socket, params)}
@@ -192,16 +199,14 @@ defmodule RavixWeb.WorkspaceLive do
   defp validate_session(%{assigns: %{current_user: nil}} = socket), do: socket
 
   defp validate_session(socket) do
-    hash = Ravix.Crypto.sha256(socket.assigns.session_token)
-
-    case Guard.verify(socket.assigns[:session_guard], hash) do
+    case Guard.verify(socket.assigns[:session_guard], socket.assigns.session_hash) do
       {:ok, guard} -> assign(socket, session_guard: guard)
       :error -> assign(socket, current_user: nil, projects: [], tracks: %{}, attention: 0)
     end
   end
 
   @impl true
-  def handle_event("refresh", _, socket), do: {:noreply, reload(socket)}
+  def handle_event("refresh", _, socket), do: {:noreply, reload_async(socket)}
 
   def handle_event("dismiss", _, socket) do
     socket = assign(socket, dialog: nil)
@@ -215,6 +220,11 @@ defmodule RavixWeb.WorkspaceLive do
        else: socket
      )}
   end
+
+  def handle_event("yard", _, socket),
+    do: {:noreply, assign(socket, yard_open: !socket.assigns.yard_open)}
+
+  def handle_event("yard-close", _, socket), do: {:noreply, assign(socket, yard_open: false)}
 
   def handle_event("toggle-project", %{"id" => id}, socket) do
     expanded = socket.assigns.expanded_projects
@@ -275,7 +285,7 @@ defmodule RavixWeb.WorkspaceLive do
     {:noreply,
      socket
      |> assign(busy: true, project_form: Form.new(:new_project, params))
-     |> traced_async(:create_project, fn -> Projects.create(user, attrs) end)}
+     |> traced_async(:create_project, fn -> created(Projects.create(user, attrs), user) end)}
   end
 
   def handle_event("origin", %{"kind" => word}, socket) when is_map_key(@form_origins, word) do
@@ -323,7 +333,7 @@ defmodule RavixWeb.WorkspaceLive do
     {:noreply,
      socket
      |> assign(busy: true, track_form: Form.new(:new_track, params))
-     |> traced_async(:create_track, fn -> Tracks.open(user, id, attrs) end)}
+     |> traced_async(:create_track, fn -> created(Tracks.open(user, id, attrs), user) end)}
   end
 
   @impl true
@@ -332,7 +342,7 @@ defmodule RavixWeb.WorkspaceLive do
      result(
        assign(socket, busy: false),
        response,
-       fn s, p -> s |> reload() |> push_patch(to: "/p/#{p.id}") end,
+       fn s, {p, rail} -> s |> apply_rail(rail) |> push_patch(to: "/p/#{p.id}") end,
        :project_form
      )}
   end
@@ -342,7 +352,9 @@ defmodule RavixWeb.WorkspaceLive do
      result(
        assign(socket, busy: false),
        response,
-       fn s, t -> s |> reload() |> push_patch(to: "/p/#{t.project_id}/t/#{t.id}") end,
+       fn s, {t, rail} ->
+         s |> apply_rail(rail) |> push_patch(to: "/p/#{t.project_id}/t/#{t.id}")
+       end,
        :track_form
      )}
   end
@@ -374,14 +386,24 @@ defmodule RavixWeb.WorkspaceLive do
 
   def handle_async({:tracks, _id}, {:ok, {:error, _reason}}, socket), do: {:noreply, socket}
 
+  # The rail is what `handle_params/3` decides from, and a rail that arrived
+  # on its own has no patch coming to decide again. So the two decisions a
+  # patch would make are made here: a project that is open and no longer
+  # listed is left, and a person whose last project just went is sent to the
+  # walkthrough exactly as a mount would send them.
   def handle_async(:reload, {:ok, rail}, socket) do
     socket = apply_rail(socket, rail)
 
-    if socket.assigns.project &&
-         not Enum.any?(socket.assigns.projects, &(&1.id == socket.assigns.project.id)) do
-      {:noreply, push_patch(socket, to: "/")}
-    else
-      {:noreply, socket}
+    cond do
+      socket.assigns.project &&
+          not Enum.any?(socket.assigns.projects, &(&1.id == socket.assigns.project.id)) ->
+        {:noreply, push_patch(socket, to: "/")}
+
+      to = wrong_page(socket) ->
+        {:noreply, push_navigate(socket, to: to)}
+
+      true ->
+        {:noreply, socket}
     end
   end
 
@@ -394,12 +416,8 @@ defmodule RavixWeb.WorkspaceLive do
       when elem(name, 0) == :tracks,
       do: {:noreply, socket}
 
-  def handle_async(_name, {:exit, _reason}, socket),
-    do:
-      {:noreply,
-       socket
-       |> assign(busy: false)
-       |> put_flash(:error, "The operation could not finish. Refresh and try again.")}
+  def handle_async(_name, {:exit, reason}, socket),
+    do: {:noreply, socket |> assign(busy: false) |> exit(reason)}
 
   # The rail shows a track's title, branch, status and last activity, and
   # which projects exist at all. Two events cannot move any of that and are
@@ -421,6 +439,10 @@ defmodule RavixWeb.WorkspaceLive do
   # process, with the page unable to render or answer a click for the whole
   # of them, every time any agent anywhere started or finished a turn.
   #
+  # A read mark is the third thing handled narrowly: it names the reader and
+  # the track, and that is the whole of what it can change, so the rail
+  # clears one dot from the event itself. See `:read` below.
+  #
   # Everything else reloads the rail entire, because `:people` can change
   # which projects exist at all and `:tracks` and `:settings` can change the
   # project itself. A narrower rule for those would have to know which of the
@@ -441,16 +463,21 @@ defmodule RavixWeb.WorkspaceLive do
   # different set of tracks under it -- so it is re-read and the dialog
   # closes behind it.
   def handle_info({:person_removed, :project, _login}, socket),
-    do: {:noreply, socket |> reload() |> push_patch(to: "/")}
+    do: {:noreply, socket |> reload_async() |> push_patch(to: "/")}
 
-  # A `live_component` cannot put a flash in the page's own socket, so it
-  # sends the sentence here; see `RavixWeb.Live.Result.error/2`.
+  # A `live_component` cannot put a flash in the page's own socket, and the
+  # nested track page has no toasts of its own, so both send the sentence
+  # here; see `RavixWeb.Live.Result.flash/3`. The clear is that function's
+  # timer for a notice, coming due.
   def handle_info({:flash, kind, message}, socket),
-    do: {:noreply, put_flash(socket, kind, message)}
+    do: {:noreply, flash(socket, kind, message)}
+
+  def handle_info({:clear_flash, kind, message}, socket),
+    do: {:noreply, clear_notice(socket, kind, message)}
 
   # The settings dialog saved a project's settings, which may have renamed
   # it. The rail on the left is showing the old name until it is re-read.
-  def handle_info(:project_settings_saved, socket), do: {:noreply, reload(socket)}
+  def handle_info(:project_settings_saved, socket), do: {:noreply, reload_async(socket)}
 
   # The agent panel's clock; see `RavixWeb.Live.AgentPanel`.
   def handle_info({:agent_panel, id, tick}, socket) do
@@ -465,7 +492,7 @@ defmodule RavixWeb.WorkspaceLive do
     {:noreply,
      socket
      |> assign(current_user: user)
-     |> put_flash(:info, "#{agent_name(user)} is connected. New projects are built with it.")}
+     |> flash(:info, "#{agent_name(user)} is connected. New projects are built with it.")}
   end
 
   # The account dialog removed something the person held. When it was what
@@ -478,14 +505,14 @@ defmodule RavixWeb.WorkspaceLive do
         else:
           "Removed. Projects you own have nothing to run on until you connect #{agent_name(user)} again."
 
-    {:noreply, socket |> assign(current_user: user) |> put_flash(:info, message)}
+    {:noreply, socket |> assign(current_user: user) |> flash(:info, message)}
   end
 
   # A rebuild closed every track on the project and a delete removed it
   # outright. Either way this is no longer somewhere to be, and a component
   # cannot patch the URL.
   def handle_info(:project_left_behind, socket),
-    do: {:noreply, socket |> reload() |> push_patch(to: "/")}
+    do: {:noreply, socket |> reload_async() |> push_patch(to: "/")}
 
   def handle_info({:hub, %Event{name: name}}, socket) when name in [:here, :queue],
     do: {:noreply, socket}
@@ -493,12 +520,43 @@ defmodule RavixWeb.WorkspaceLive do
   def handle_info({:hub, %Event{name: :turn, project_id: id}}, socket),
     do: {:noreply, refresh_tracks(socket, id)}
 
+  # A read mark is one person's own, and the only thing on this page it can
+  # move is that person's unread dot on the track it names. So it is applied
+  # to the rail in hand and reads nothing: not Fountain, not the database.
+  # Every tab this person has open hears it, which is why it comes over the
+  # hub rather than from the nested track page directly; everybody else's
+  # rail hears it and has nothing to do. It used to arrive as `:tracks` and
+  # re-read the whole rail, live, in every rail on the project, whenever
+  # anybody opened a track.
+  def handle_info({:hub, %Event{name: :read} = event}, socket),
+    do: {:noreply, clear_unread(socket, event)}
+
   def handle_info({:hub, %Event{}}, socket), do: {:noreply, reload_async(socket)}
+
+  defp clear_unread(
+         %{assigns: %{current_user: %Accounts.User{id: user_id}, tracks: tracks}} = socket,
+         %Event{user_id: user_id, project_id: project_id, track_id: track_id}
+       )
+       when is_binary(track_id) do
+    case Map.fetch(tracks, project_id) do
+      {:ok, rows} ->
+        rows = Enum.map(rows, &if(&1.id == track_id, do: %{&1 | unread: false}, else: &1))
+        tracks = Map.put(tracks, project_id, rows)
+        assign(socket, tracks: tracks, attention: attention_count(tracks))
+
+      :error ->
+        socket
+    end
+  end
+
+  defp clear_unread(socket, _somebody_elses), do: socket
 
   # The rail, read here and now. Mount has nothing to draw until this answers
   # and `handle_params/3` decides whether the URL names a project this person
-  # still has, so the two of them wait; everything that arrives on its own
-  # goes through `reload_async/1` instead.
+  # still has, so it waits, and it is the only caller that does. A button
+  # pressed, a dialog closing behind a change it made, a hub event: every
+  # rail read after mount goes through `reload_async/1`, because a rail read
+  # is every project's tracks and the page is drawing nothing while it runs.
   defp reload(%{assigns: %{current_user: nil}} = socket), do: socket
   defp reload(socket), do: apply_rail(socket, read_rail(socket.assigns.current_user))
 
@@ -508,6 +566,15 @@ defmodule RavixWeb.WorkspaceLive do
     user = socket.assigns.current_user
     traced_async(socket, :reload, fn -> read_rail(user) end)
   end
+
+  # The two creates, once they have something to show. The page patches to
+  # what was created, and `handle_params/3` will only open a project that is
+  # in the rail, so the rail is read here, in the task that did the creating,
+  # and arrives in the same answer. Off this process, as every rail read after
+  # mount is, and in hand before the patch, which a `reload_async/1` could
+  # not promise.
+  defp created({:ok, value}, user), do: {:ok, {value, read_rail(user)}}
+  defp created(response, _user), do: response
 
   defp refresh_tracks(%{assigns: %{current_user: nil}} = socket, _id), do: socket
 
