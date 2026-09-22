@@ -472,7 +472,7 @@ defmodule RavixWeb.TrackLiveTest do
     render(ctx.view)
 
     counts =
-      for name <- [:people, :tracks, :turn, :queue] do
+      for name <- [:people, :tracks, :turn, :queue, :read] do
         hub_queries(ctx, Event.new(name, ctx.project.id, track_id: sibling.id))
       end
 
@@ -568,6 +568,21 @@ defmodule RavixWeb.TrackLiveTest do
   defp drawn(view) do
     send(view.pid, :flush_transcript)
     view
+  end
+
+  test "a read mark on this track costs the guards and nothing more", ctx do
+    render(ctx.view)
+    sibling = insert_track(project: ctx.project, slug: "elsewhere")
+
+    # The guards' own cost, measured on an event this page provably drops.
+    guards = hub_queries(ctx, Event.new(:queue, ctx.project.id, track_id: sibling.id))
+
+    # This page is where a read mark comes from --- on every load, stage and
+    # send --- and the dot it clears is the rail's, not this page's. It used
+    # to arrive as `:tracks` and re-read the detail, two Fountain round
+    # trips, in every other page open on the track each time anybody looked.
+    read = Event.new(:read, ctx.project.id, track_id: ctx.track.id, user_id: ctx.user.id)
+    assert hub_queries(ctx, read) == guards
   end
 
   defp hub_queries(ctx, event) do
