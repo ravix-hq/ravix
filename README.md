@@ -213,12 +213,16 @@ requires a session-bound ticket for access.
 
 ```sh
 mix precommit
+mix precommit.release   # after a change to configuration, assets, or the release
 ```
 
-This checks compilation with warnings treated as errors, unused lock entries,
-formatting, Credo, Sobelow, Hex retirement audit, Dialyzer, ExUnit, browser-hook
-DOM tests, and production release assembly. Run `bun install --frozen-lockfile`
-once after cloning to install the development-only hook test dependencies.
+`mix precommit` checks compilation with warnings treated as errors, unused lock
+entries, formatting, Credo, Sobelow, Hex retirement audit, Dialyzer, ExUnit
+(including the `:distributed` cluster tests a plain `mix test` skips), and the
+browser-hook DOM tests. `mix precommit.release` is the production build on its
+own: assets and release assembly, the way CI's release job does them. Run
+`bun install --frozen-lockfile` once after cloning to install the
+development-only hook test dependencies.
 
 Coverage counts production source only, excluding test fixtures. The total floor
 is 90%; separate floors require server 92%, web 90%, workspace LiveView 92%, and

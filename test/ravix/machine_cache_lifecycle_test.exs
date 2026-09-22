@@ -1,4 +1,6 @@
 defmodule Ravix.MachineCacheLifecycleTest do
+  # Not async: `MachineCache.reset/0` clears the application's one named
+  # `Ravix.MachineCache`, under every other test reading through it.
   use ExUnit.Case, async: false
   alias Ravix.{Fountain.FakeTransport, MachineCache}
 
