@@ -40,7 +40,7 @@ defmodule RavixWeb.Tooling.MCP do
      %{
        tools:
          Catalog.tools()
-         |> Enum.filter(&(&1.scope in p.grant.scopes))
+         |> Enum.filter(&Catalog.allowed?(&1, p.grant.scopes))
          |> Enum.map(&Catalog.public/1)
      }}
   end

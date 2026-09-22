@@ -1185,6 +1185,16 @@ h4 { font-size: 12px; color: var(--dim); font-weight: 500; letter-spacing: 0; }
 .tooling-help code, .tooling-help dd { overflow-wrap: anywhere; }
 .tooling-help dd { margin: 4px 0 12px; }
 
+.plans-panel { padding: 1.25rem; overflow: auto; min-width: 0; width: 100%; }
+.plans-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: .65rem; margin-bottom: .8rem; }
+.plans-toolbar h2, .plans-toolbar h3, .plans-toolbar h4 { margin: 0; }
+.plans-list { display: grid; gap: .8rem; padding-left: 1.25rem; }
+.plan-item, .plan-editor-item { border: 1px solid var(--line); border-radius: .5rem; padding: 1rem; margin: 1rem 0; min-width: 0; overflow-wrap: anywhere; }
+.plans-panel textarea, .plans-panel input:not([type=checkbox]), .plans-panel select { max-width: 100%; }
+#plan-editor > input, #plan-editor > textarea, .plan-editor-item > input, .plan-editor-item > textarea, .plan-editor-item > select, .plan-note textarea { display: block; width: 100%; margin: .35rem 0 1rem; }
+.plan-note { margin-top: 1rem; }
+@media (max-width: 600px) { .plans-panel { padding: .75rem; } .plan-item, .plan-editor-item { padding: .75rem; } .plans-toolbar select { width: 100%; } }
+
 /* Changes inspector shares transcript diff colors and contains wide source lines. */
 .changes-panel { min-width: 0; max-width: 100%; }
 .changes-panel input { width: 100%; min-width: 0; }
