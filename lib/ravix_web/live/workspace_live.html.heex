@@ -105,7 +105,7 @@
               phx-value-id={project.id}
               aria-expanded={to_string(MapSet.member?(@expanded_projects, project.id))}
               aria-controls={"project-tracks-#{project.id}"}
-              aria-label={"#{if MapSet.member?(@expanded_projects, project.id), do: "Collapse", else: "Expand"} #{project.name}"}
+              aria-label={"#{if MapSet.member?(@expanded_projects, project.id), do: "Collapse", else: "Expand"} #{project_label(project)}"}
             >
               <.icon
                 name="chevron"
@@ -123,13 +123,13 @@
               <span class="project-mark" aria-hidden="true">
                 {String.first(project.name) |> String.upcase()}
               </span>
-              <span class="truncate">{project.name}</span>
+              <span class="truncate">{project_label(project)}</span>
             </.link>
             <.link
               :if={project.access != :tracks}
               patch={"/p/#{project.id}?new=track"}
               class="project-add"
-              aria-label={"New track in #{project.name}"}
+              aria-label={"New track in #{project_label(project)}"}
             >
               <.icon name="plus" size={13} />
             </.link>
@@ -192,6 +192,20 @@
       <div class="workspace-account">
         <.link href="/auth/signout" method="post" class="ghost">Sign out</.link>
         <.theme_picker id="theme-picker" />
+        <div id="notify" phx-hook="Notify" class="notify">
+          <button
+            type="button"
+            class="theme-trigger"
+            data-notify-toggle
+            aria-pressed="false"
+            title="Say so from the desktop when a track needs you and this tab is in the background"
+          >
+            <span class="notify-dot" data-notify-dot></span><span class="col"><small>Desktop notifications</small><span
+              class="truncate"
+              data-notify-state
+            >Off</span></span>
+          </button>
+        </div>
         <div class="yard-meta">
           <span class="chip">Ravix</span><a href="/api/auth/install">repo access</a><button
             type="button"
@@ -254,7 +268,7 @@
         <span class="project-mark" aria-hidden="true">
           {String.first(@project.name) |> String.upcase()}
         </span>
-        <strong>{@project.name}</strong><span :if={@project.repo} class="chip mono">{@project.repo}</span><span class="spacer"></span>
+        <strong>{project_label(@project)}</strong><span :if={@project.repo} class="chip mono">{@project.repo}</span><span class="spacer"></span>
         <button
           :if={@project.access != :tracks}
           class="ghost"
@@ -354,7 +368,8 @@
               <span class="project-mark" aria-hidden="true">
                 {String.first(project.name) |> String.upcase()}
               </span>
-              <span>{project.name}</span><span class="meta mono">{project.repo || "no repository"}</span>
+              <span>{project_label(project)}</span><span class="meta mono">{project.repo ||
+                "no repository"}</span>
             </.link>
           </section>
         </div>
@@ -384,7 +399,7 @@
                 <span class="chip">
                   {if track.status == :failed, do: "Failed turn", else: "Unread reply"}
                 </span>
-                <span class="dim">{project.name}</span><span class="spacer"></span><time
+                <span class="dim">{project_label(project)}</span><span class="spacer"></span><time
                   :if={track.last_active_at}
                   datetime={DateTime.to_iso8601(track.last_active_at)}
                 >{Calendar.strftime(track.last_active_at, "%b %-d, %H:%M UTC")}</time>
@@ -420,7 +435,7 @@
           patch={"/p/#{project.id}/t/#{track.id}"}
           class="workspace-track"
         >
-          {project.name} / {track.title}
+          {project_label(project)} / {track.title}
         </.link>
       </div>
     </.dialog>
@@ -491,7 +506,30 @@
         phx-submit="create-track"
         phx-change="edit"
       >
-        <.input field={f[:title]} id="track-title" label="Track name" maxlength="200" />
+        <div :if={@origin_kind != :pr}>
+          <label for="track-title">Branch name</label>
+          <div class="workspace-actions">
+            <span id="branch-prefix">ravix/</span>
+            <.input
+              field={f[:title]}
+              id="track-title"
+              aria-describedby="branch-prefix branch-hint"
+            />
+          </div>
+          <p id="branch-hint" class="hint">
+            Leave empty for a suggested name (for example, ravix/crewe), or an issue's number and title.
+          </p>
+        </div>
+        <p :if={@origin_kind == :pr} class="hint">
+          The track uses the pull request's existing branch and name.
+        </p>
+        <p
+          :for={{message, _opts} <- f[:title].errors}
+          :if={@origin_kind == :pr}
+          class="error fine"
+        >
+          {message}
+        </p>
         <p :if={@origin_kind == :blank} class="hint">
           New worktree from {@project.default_branch || "the default branch"}.
         </p>

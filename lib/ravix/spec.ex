@@ -220,18 +220,24 @@ defmodule Ravix.Spec do
     )
   end
 
+  # Git allows shell metacharacters in refs. Keep readable ordinary names,
+  # but quote everything else before suggesting an executable command.
+  defp shell_ref(ref) do
+    if Regex.match?(~r/\A[a-zA-Z0-9_\/.+-]+\z/, ref), do: ref, else: Ravix.Sprites.shq(ref)
+  end
+
   defp cut_lines(%Origin{kind: :pr, number: number} = origin, dir, branch)
        when is_integer(number) do
-    base = if origin.base, do: "origin/#{origin.base}", else: "HEAD"
+    base = if origin.base, do: shell_ref("origin/#{origin.base}"), else: "HEAD"
 
     [
       "",
       "This track continues pull request ##{number}. Check out its head rather than",
       "cutting a new branch — the work belongs on the branch the PR is already for:",
       "",
-      "  git fetch origin pull/#{number}/head:#{branch} 2>/dev/null \\",
-      "    && git worktree add #{dir} #{branch} \\",
-      "    || git worktree add #{dir} -b #{branch} #{base}"
+      "  git fetch origin #{shell_ref("pull/#{number}/head:#{branch}")} 2>/dev/null \\",
+      "    && git worktree add #{dir} #{shell_ref(branch)} \\",
+      "    || git worktree add #{dir} -b #{shell_ref(branch)} #{base}"
     ]
   end
 
@@ -239,24 +245,23 @@ defmodule Ravix.Spec do
        when is_binary(base) and base != "" do
     [
       "",
-      "This track continues the existing branch `#{base}`:",
+      "Cut a new branch `#{branch}` from `origin/#{base}`:",
       "",
-      "  git worktree add #{dir} -b #{branch} origin/#{base} 2>/dev/null \\",
-      "    || git worktree add #{dir} #{base} 2>/dev/null \\",
-      "    || git worktree add #{dir} -b #{branch}"
+      "  git worktree add #{dir} -b #{shell_ref(branch)} #{shell_ref("origin/#{base}")} 2>/dev/null \\",
+      "    || mkdir -p #{dir}"
     ]
   end
 
   defp cut_lines(%Origin{base: base}, dir, branch) do
     from = if base, do: " from `origin/#{base}`", else: ""
-    at = if base, do: " origin/#{base}", else: ""
+    at = if base, do: " #{shell_ref("origin/#{base}")}", else: ""
 
     [
       "",
       "Cut a new branch `#{branch}`#{from}:",
       "",
-      "  git worktree add #{dir} -b #{branch}#{at} 2>/dev/null \\",
-      "    || git worktree add #{dir} -b #{branch} \\",
+      "  git worktree add #{dir} -b #{shell_ref(branch)}#{at} 2>/dev/null \\",
+      "    || git worktree add #{dir} -b #{shell_ref(branch)} \\",
       "    || mkdir -p #{dir}"
     ]
   end
@@ -325,8 +330,8 @@ defmodule Ravix.Spec do
     branch_line =
       if delete_branch do
         "Then delete the branch `#{delete_branch}` — this close was asked for with the branch, so:\n\n" <>
-          "  git branch -D #{delete_branch}\n" <>
-          "  git push origin --delete #{delete_branch} 2>/dev/null || true\n\n" <>
+          "  git branch -D #{shell_ref(delete_branch)}\n" <>
+          "  git push origin --delete #{shell_ref(delete_branch)} 2>/dev/null || true\n\n" <>
           "The push may fail because the branch was never pushed; that is fine and not worth reporting as an error."
       else
         "Leave the branch alone — it may be pushed, and it is not this turn's business."

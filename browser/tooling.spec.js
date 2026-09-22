@@ -78,7 +78,7 @@ test('browser consent connects MCP and A2A, work survives reconnect, and disconn
   expect(initialized.capabilities.tools).toBeDefined();
   const key = randomBytes(12).toString('hex');
   const project = await tool(request, mcp, 'create_project', { name: `Tooling ${key}`, request_id: key });
-  const track = await tool(request, mcp, 'create_track', { project_id: project.id, title: 'Desktop work', request_id: key });
+  const track = await tool(request, mcp, 'create_track', { project_id: project.id, branch_name: 'desktop-work', request_id: key });
   const a2a = await connect(page, request, 'a2a', 'A2A browser test');
   const submitted = await rpc(request, a2a, 'a2a', 'SendMessage', {
     message: { messageId: key, role: 'ROLE_USER', contextId: track.id, parts: [{ text: 'Say hello.' }] },
