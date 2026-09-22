@@ -457,7 +457,8 @@ defmodule RavixWeb.TrackLiveTest do
     end)
 
     ctx.view |> element("button[phx-click=dock][phx-value-name=vitals]") |> render_click()
-    rendered = render(ctx.view)
+    # The dock reads vitals under `start_async`; the readout exists once it lands.
+    rendered = render_async(ctx.view)
 
     assert rendered =~ "Memory used"
     assert rendered =~ "33554432"
@@ -470,7 +471,7 @@ defmodule RavixWeb.TrackLiveTest do
     end)
 
     ctx.view |> element("button[phx-click=dock][phx-value-name=vitals]") |> render_click()
-    assert render(ctx.view) =~ "no_machine"
+    assert render_async(ctx.view) =~ "no_machine"
   end
 
   test "a tab or dialog name nobody declared is refused, not shown", ctx do
