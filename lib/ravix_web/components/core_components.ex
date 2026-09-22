@@ -20,6 +20,11 @@ defmodule RavixWeb.CoreComponents do
   alias Phoenix.HTML.Form
   alias Phoenix.LiveView.JS
 
+  @doc "The project label, qualified by its owner for people it is shared with."
+  def project_label(%{role: :owner, name: name}), do: name
+  def project_label(%{owner_login: "", name: name}), do: name
+  def project_label(%{owner_login: owner, name: name}), do: "#{owner}/#{name}"
+
   @doc """
   A toast: one line, bottom right, with a dismiss.
 
