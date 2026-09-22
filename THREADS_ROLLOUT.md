@@ -35,6 +35,5 @@ and database constraints; the default ID convention is part of the API.
 
 No individual thread rename/close controls or summary handoff are included.
 Closing a track cancels all its queued prompts and terminates all conversations.
-Desktop notifications reuse the implementation from
-`f0d0aa11937cdbe3577e06cd98ff65d5259b8dc4`, which was not in this branch's main
-ancestor; their identities and click authorization now include the thread.
+Desktop notifications retain their existing event flow; notification identities
+and click authorization now include the thread.
