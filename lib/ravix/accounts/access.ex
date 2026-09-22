@@ -187,8 +187,8 @@ defmodule Ravix.Accounts.Access do
   defp in_project?(project_id, user_id, nil), do: project_member?(project_id, user_id)
   defp in_project?(project_id, _user_id, %MapSet{} = ids), do: MapSet.member?(ids, project_id)
 
-  # ownership: the door itself, as `member?/2` -- this is the third of the
-  # three questions `access_of/3` exists to answer, not a read behind one.
+  # ownership: no door -- this *is* a door, as `member?/2` is: the third of
+  # the three questions `access_of/3` exists to answer, not a read behind one.
   defp on_tracks?(project_id, user_id, nil), do: People.track_member_of?(project_id, user_id)
   defp on_tracks?(project_id, _user_id, %MapSet{} = ids), do: MapSet.member?(ids, project_id)
 
