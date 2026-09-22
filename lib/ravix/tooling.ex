@@ -2,14 +2,14 @@ defmodule Ravix.Tooling do
   @moduledoc "Scoped operations shared by MCP and A2A. External output is explicitly selected."
   alias Ravix.Accounts.Access
   alias Ravix.{Config, Fountain, Projects, Tracks}
-  alias Ravix.Tooling.{Catalog, OAuth, Receipt, Store, Tasks}
+  alias Ravix.Tooling.{Catalog, Mutations, OAuth, PlanTools, Tasks}
 
   def call(principal, name, args) do
     with %{} = tool <- Catalog.find(name),
          true <- Catalog.validate(args, tool.inputSchema),
-         {:ok, principal} <- OAuth.check(principal, tool.scope),
+         {:ok, principal} <- check_scopes(principal, tool),
          {:ok, result} <- execute(principal, name, args),
-         {:ok, principal} <- OAuth.check(principal, tool.scope),
+         {:ok, principal} <- check_scopes(principal, tool),
          :ok <- recheck(principal, name, args, result) do
       {:ok, result}
     else
@@ -25,6 +25,18 @@ defmodule Ravix.Tooling do
     end
   end
 
+  defp check_scopes(principal, tool) do
+    Enum.reduce_while(Catalog.scopes(tool), {:ok, principal}, fn scope, {:ok, p} ->
+      case OAuth.check(p, scope) do
+        {:ok, fresh} -> {:cont, {:ok, fresh}}
+        error -> {:halt, error}
+      end
+    end)
+  end
+
+  @plan_tools ~w(create_plan get_plan list_plans update_plan assign_items note_item)
+  defp execute(p, name, a) when name in @plan_tools, do: PlanTools.execute(p, name, a)
+
   defp execute(p, "list_projects", a),
     do: {:ok, page(Enum.map(Projects.list(p.user), &project/1), a)}
 
@@ -38,8 +50,12 @@ defmodule Ravix.Tooling do
         &page(Enum.map(&1, fn v -> track(v) end), a)
       )
 
-  defp execute(p, "get_track", a),
-    do: map_result(Tracks.get(p.user, a["track_id"]), &track(&1.track))
+  defp execute(p, "get_track", a) do
+    with {:ok, detail} <- Tracks.get(p.user, a["track_id"]),
+         {:ok, items} <- Ravix.Plans.track_items(p.user, a["track_id"]) do
+      {:ok, Map.put(track(detail.track), :plan_items, items)}
+    end
+  end
 
   defp execute(p, "get_project_settings", a),
     do: map_result(Projects.settings(p.user, a["project_id"]), &settings/1)
@@ -56,7 +72,7 @@ defmodule Ravix.Tooling do
 
   defp execute(p, name, a) do
     with :ok <- mutation_access(p, name, a) do
-      receipt(p, name, a, fn -> mutate(p, name, a) end)
+      Mutations.run(p, name, a, fn -> mutate(p, name, a) end)
     end
   end
 
@@ -85,44 +101,6 @@ defmodule Ravix.Tooling do
     case Projects.update_settings(p.user, a["project_id"], a["settings"]) do
       {:ok, _} -> {:ok, %{updated: true}}
       error -> error
-    end
-  end
-
-  # A committed claim precedes external side effects. If the process dies after
-  # provider acceptance, retries report uncertainty rather than provisioning twice.
-  defp receipt(p, name, args, fun) do
-    id = Tasks.digest({p.user.id, p.grant.client_id, name, args["request_id"]})
-    fingerprint = Tasks.digest(args)
-
-    row = %Receipt{
-      id: id,
-      user_id: p.user.id,
-      client_id: p.grant.client_id,
-      operation: name,
-      fingerprint: fingerprint
-    }
-
-    case Store.claim_receipt(row) do
-      {:new, saved} ->
-        case fun.() do
-          {:ok, result} ->
-            Store.update(saved, result: json_map(result))
-            {:ok, result}
-
-          error ->
-            error
-        end
-
-      {:existing, %Receipt{fingerprint: ^fingerprint, result: result}} when is_map(result) ->
-        {:ok, result}
-
-      {:existing, %Receipt{fingerprint: ^fingerprint}} ->
-        {:error,
-         {:conflict, "operation_unconfirmed",
-          "This operation is in progress or its outcome is unconfirmed. Inspect the project before retrying with a new ID."}}
-
-      _ ->
-        {:error, {:conflict, "request_id_used", "This request ID already names different work."}}
     end
   end
 
@@ -170,6 +148,9 @@ defmodule Ravix.Tooling do
         public
     end
   end
+
+  defp recheck(p, name, args, result) when name in @plan_tools,
+    do: PlanTools.recheck(p, name, args, result)
 
   defp recheck(p, "list_projects", _, result),
     do: all_access(result.items, &Projects.get(p.user, &1.id))
@@ -235,5 +216,4 @@ defmodule Ravix.Tooling do
 
   defp map_result({:ok, value}, fun), do: {:ok, fun.(value)}
   defp map_result(error, _), do: error
-  defp json_map(value), do: value |> Jason.encode!() |> Jason.decode!()
 end

@@ -1,0 +1,167 @@
+<section class="plans-panel" id="plans-panel" aria-label="Project plans">
+  <header class="plans-toolbar">
+    <h2>Plans</h2>
+    <.link patch={"/p/#{@project.id}"}>All plans</.link>
+    <button phx-click="new-plan" phx-target={@myself} disabled={@busy}>New plan</button>
+    <button phx-click="refresh-plans" phx-target={@myself} disabled={@busy}>Refresh status</button>
+  </header>
+  <p :if={@error} class="error" role="alert">{@error}</p>
+  <p :if={@busy} role="status">Loading…</p>
+  <ul :if={!@plan_id && !@draft} class="plans-list">
+    <li :for={plan <- @plans}>
+      <.link patch={"/p/#{@project.id}?plan=#{plan.id}"}>{plan.title}</.link>
+      <span :if={plan.archived} class="chip">Archived</span>
+    </li>
+  </ul>
+  <p :if={@plans == [] && !@draft}>Write the plan once, then assign its items to tracks.</p>
+  <.form
+    :if={@draft}
+    for={%{}}
+    id="plan-editor"
+    phx-change="edit-draft"
+    phx-submit="save-plan"
+    phx-target={@myself}
+  >
+    <label for="plan-title">Title</label>
+    <input id="plan-title" name="plan[title]" value={@draft["title"]} required maxlength="200" />
+    <label for="plan-summary">Summary and rationale (Markdown)</label>
+    <textarea id="plan-summary" name="plan[summary]" rows="5">{@draft["summary"]}</textarea>
+    <fieldset :for={item <- @draft["items"]} class="plan-editor-item">
+      <legend>Plan item</legend>
+      <label for={"edit-title-#{item["id"]}"}>Item title</label>
+      <input
+        id={"edit-title-#{item["id"]}"}
+        name={"plan[items][#{item["id"]}][title]"}
+        value={item["title"]}
+        required
+        maxlength="200"
+      />
+      <label for={"edit-brief-#{item["id"]}"}>Brief</label>
+      <textarea
+        id={"edit-brief-#{item["id"]}"}
+        name={"plan[items][#{item["id"]}][brief]"}
+        rows="3"
+      >{item["brief"]}</textarea>
+      <label for={"edit-acceptance-#{item["id"]}"}>Acceptance notes</label>
+      <textarea
+        id={"edit-acceptance-#{item["id"]}"}
+        name={"plan[items][#{item["id"]}][acceptance]"}
+        rows="2"
+      >{item["acceptance"]}</textarea>
+      <label for={"edit-deps-#{item["id"]}"}>Depends on</label>
+      <input type="hidden" name={"plan[items][#{item["id"]}][dependencies][]"} value="" />
+      <select
+        id={"edit-deps-#{item["id"]}"}
+        name={"plan[items][#{item["id"]}][dependencies][]"}
+        multiple
+      >
+        <option
+          :for={sibling <- @draft["items"]}
+          :if={sibling["id"] != item["id"]}
+          value={sibling["id"]}
+          selected={sibling["id"] in item["dependencies"]}
+        >
+          {sibling["title"]}
+        </option>
+      </select>
+      <div class="plans-toolbar">
+        <button
+          type="button"
+          phx-click="move-item"
+          phx-value-id={item["id"]}
+          phx-value-direction="up"
+          phx-target={@myself}
+        >Move up</button>
+        <button
+          type="button"
+          phx-click="move-item"
+          phx-value-id={item["id"]}
+          phx-value-direction="down"
+          phx-target={@myself}
+        >Move down</button>
+        <button
+          type="button"
+          phx-click="remove-item"
+          phx-value-id={item["id"]}
+          phx-target={@myself}
+        >Remove item</button>
+      </div>
+    </fieldset>
+    <p>Assigned items must remain unchanged. Add notes to record new observations.</p>
+    <div class="plans-toolbar">
+      <button type="button" phx-click="add-item" phx-target={@myself}>Add item</button>
+      <button type="submit" class="primary">Save plan</button>
+      <button type="button" phx-click="cancel-edit" phx-target={@myself}>Cancel</button>
+    </div>
+  </.form>
+  <div :if={@detail && !@draft}>
+    <header class="plans-toolbar">
+      <h3>{@detail.plan.title}</h3><span class="chip">Version {@detail.plan.version}</span>
+      <button phx-click="edit-plan" phx-target={@myself} disabled={@busy}>Edit plan</button>
+      <button phx-click="archive-plan" phx-target={@myself} disabled={@busy}>{if @detail.plan.archived,
+        do: "Restore plan",
+        else: "Archive plan"}</button>
+    </header>
+    <div class="md">{md(@detail.plan.summary)}</div>
+    <p class="hint">Created by {@detail.plan.created_by_login}</p>
+    <.form for={%{}} id="plan-assign" phx-submit="assign-items" phx-target={@myself}>
+      <p>
+        Assigning prompts agents and spends this project's owner's subscription. Completed dependencies become ready here; assignment is always your choice.
+      </p>
+      <article :for={item <- @detail.items} id={"item-#{item.id}"} class="plan-item">
+        <header class="plans-toolbar">
+          <h4>{item.title}</h4><span class="chip">{status_label(item.status)}</span>
+        </header>
+        <p :if={!item.status_available} role="status">
+          GitHub status is temporarily unavailable.
+        </p>
+        <div class="md">{md(item.brief)}</div>
+        <details :if={item.acceptance != ""}>
+          <summary>Acceptance notes</summary><div class="md">{md(item.acceptance)}</div>
+        </details>
+        <p :if={item.dependencies != []}>
+          Depends on: {Enum.map_join(
+            item.dependencies,
+            ", ",
+            &dependency_title(@detail.items, &1)
+          )}
+        </p>
+        <.link :if={item.track_url} navigate={item.track_url}>Open track: {item.track_title}</.link>
+        <div :if={!item.track_id && !@detail.plan.archived} class="plans-toolbar">
+          <label><input
+            type="checkbox"
+            name="selected[]"
+            value={item.id}
+            disabled={item.status == :blocked || @busy}
+          /> Assign {item.title}</label>
+          <label for={"target-#{item.id}"}>Track</label>
+          <select
+            id={"target-#{item.id}"}
+            name={"targets[#{item.id}]"}
+            disabled={item.status == :blocked || @busy}
+          >
+            <option value="">New track</option>
+            <option :for={track <- @tracks} :if={track.status != :closed} value={track.id}>
+              {track.title}
+            </option>
+          </select>
+        </div>
+        <ul :if={item.notes != []}>
+          <li :for={note <- item.notes}>
+            <strong>{note.created_by_login}</strong><span :if={note.created_by_track_id}> (agent)</span>: {note.body}
+          </li>
+        </ul>
+      </article>
+      <button :if={!@detail.plan.archived} class="primary" type="submit" disabled={@busy}>Assign selected items</button>
+    </.form>
+    <details :for={item <- @detail.items} class="plan-note">
+      <summary>Add a note to {item.title}</summary>
+      <.form for={%{}} id={"note-#{item.id}"} phx-submit="note-item" phx-target={@myself}>
+        <input type="hidden" name="item_id" value={item.id} />
+        <label for={"note-body-#{item.id}"}>Note</label>
+        <textarea id={"note-body-#{item.id}"} name="body" required maxlength="10000"></textarea>
+        <button type="submit">Add note</button>
+      </.form>
+    </details>
+  </div>
+</section>

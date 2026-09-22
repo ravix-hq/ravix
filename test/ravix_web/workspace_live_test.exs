@@ -327,7 +327,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
 
     render_async(view)
     assert has_element?(view, "a.workspace-project-name", "New project")
-    assert render(view) =~ "Each track is its own worktree"
+    assert has_element?(view, "#plans-panel")
   end
 
   test "signing out somewhere else takes this page with it, without being poked", %{conn: conn} do

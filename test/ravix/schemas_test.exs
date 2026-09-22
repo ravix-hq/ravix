@@ -716,10 +716,11 @@ defmodule Ravix.SchemasTest do
     test "the walk found the whole graph, so a green run is not an empty one" do
       found = declared_associations()
 
-      assert length(found) == 34
+      assert length(found) == 37
       assert {Track, :project} in found
       assert {Project, :tracks} in found
       assert {Preview, :track} in found
+      assert {Ravix.Plans.Item, :notes} in found
     end
 
     defp declared_associations do

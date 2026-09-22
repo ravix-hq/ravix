@@ -30,13 +30,15 @@ defmodule Ravix.Tracks.Origin do
   alias Ravix.Tracks.Track
 
   @enforce_keys [:kind, :base, :number, :title, :url]
-  defstruct @enforce_keys
+  defstruct @enforce_keys ++ [plan_id: nil, item_id: nil]
 
   @type t :: %__MODULE__{
           kind: Track.origin_kind(),
           base: String.t() | nil,
           number: integer() | nil,
           title: String.t() | nil,
+          plan_id: String.t() | nil,
+          item_id: String.t() | nil,
           url: String.t() | nil
         }
 
@@ -55,7 +57,9 @@ defmodule Ravix.Tracks.Origin do
       base: row.origin_base,
       number: row.origin_number,
       title: row.origin_title,
-      url: row.origin_url
+      url: row.origin_url,
+      plan_id: row.origin_plan_id,
+      item_id: row.origin_item_id
     }
   end
 end
