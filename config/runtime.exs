@@ -4,7 +4,7 @@ config :ravix,
        :threads_enabled,
        System.get_env(
          "RAVIX_THREADS_ENABLED",
-         if(config_env() == :prod, do: "false", else: "true")
+         "true"
        ) == "true"
 
 # config/runtime.exs is executed for all environments, including
