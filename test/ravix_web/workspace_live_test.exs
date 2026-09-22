@@ -174,6 +174,27 @@ defmodule RavixWeb.WorkspaceLiveTest do
     assert has_element?(view, ".inbox-empty", "You're all caught up")
   end
 
+  test "desktop notifications use each viewer's project label", %{conn: conn} do
+    owner = insert_user(login: "notice-owner")
+    project = insert_project(user: owner, name: "ravix")
+    row = insert_track(project: project)
+    member = insert_user()
+    guest = insert_user()
+    insert_project_member(project, member)
+    insert_track_member(row, guest)
+    track = Tracks.present(row, project: project)
+
+    for user <- [owner, member, guest] do
+      stub(Tracks, :list, fn _, _ -> {:ok, [struct!(track, status: :running, unread: false)]} end)
+      {:ok, view, _} = live(log_in_user(conn, user), "/inbox")
+      stub(Tracks, :list, fn _, _ -> {:ok, [struct!(track, status: :ready, unread: true)]} end)
+      send(view.pid, {:hub, Event.new(:turn, project.id, track_id: row.id)})
+      render_async(view)
+      label = if user == owner, do: "ravix", else: "notice-owner / ravix"
+      assert_push_event(view, "notify", %{tracks: [%{project: ^label}]})
+    end
+  end
+
   test "a track that comes to need somebody is announced to the browser, once", %{conn: conn} do
     user = insert_user()
     project = insert_project(user: user, name: "Ravix")

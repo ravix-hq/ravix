@@ -390,7 +390,8 @@ defmodule Ravix.Projects do
   @spec present(Project.t(), access(), machine()) :: View.t()
   # ownership: the project's own `user_id` column, turned into the owner's
   # login for the view. The caller holds `project` because it reached it
-  # through `access_of/2` or `Access.project_of/2`; nothing is decided here.
+  # through `access_of/2`, `Access.project_of/2`, or a verified invite hash
+  # in `People.link_target/2`; nothing is decided here.
   def present(%Project{} = project, access, machine),
     do: present(project, access, machine, Ravix.Accounts.Store.get_user(project.user_id))
 

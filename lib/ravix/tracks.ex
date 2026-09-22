@@ -961,7 +961,8 @@ defmodule Ravix.Tracks do
 
   Options: `project` (required for `stale`), `live` (the conversation as
   Fountain lists it, or nil), `people`, `role` (`:owner` by
-  default) and `last_read` (a `DateTime`). The revision is in the channel id
+  default), `owner_login` (otherwise taken from `people`), and `last_read`
+  (a `DateTime`). The revision is in the channel id
   the conversation already carries, so "is this track behind?" is a
   comparison rather than a stored flag. A track nobody has opened is unread
   the moment the machine says anything; one whose last activity predates

@@ -695,7 +695,13 @@ defmodule RavixWeb.WorkspaceLive do
   # happened. No transcript text; the notification is a knock, not the news.
   defp notice(track, projects) do
     project = Enum.find(projects, &(&1.id == track.project_id))
-    %{id: track.id, title: track.title, project: project && project.name, status: track.status}
+
+    %{
+      id: track.id,
+      title: track.title,
+      project: project && project.display_name,
+      status: track.status
+    }
   end
 
   defp agent_name(%Accounts.User{agent: :codex}), do: "Codex"

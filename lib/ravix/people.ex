@@ -633,10 +633,14 @@ defmodule Ravix.People do
   same answer `claim_link/2` gives for each, so what the page says cannot tell
   a bad token from a good one.
 
+  The optional viewer affects only the project label: its owner sees the bare
+  name; everyone else sees the owner prefix. The hash still authorizes the read.
+
   `invited_by` is whoever minted the link, by login. Worth naming: an invitation
   is a claim about who is asking, and the one piece of it a stranger cannot
   forge is the account that actually holds the project.
   """
+  @spec link_target(String.t()) :: {:ok, link_target()} | :error
   @spec link_target(String.t(), User.t() | nil) :: {:ok, link_target()} | :error
   def link_target(token, user \\ nil) do
     hash = Ravix.Crypto.sha256(token)

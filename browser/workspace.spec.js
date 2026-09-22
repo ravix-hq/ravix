@@ -519,7 +519,7 @@ test('shared project prefixes stay muted and truncate across every theme', async
   const projectPath = new URL(page.url()).pathname;
   await expect(page.locator('.workspace-project-name.selected .project-label')).toHaveText(name);
   await expect(page.locator('.workspace-project-name.selected .project-label .dim')).toHaveCount(0);
-  await page.getByRole('button', { name: 'People', exact: true }).click();
+  await page.locator('#workspace-stage').getByRole('button', { name: 'People', exact: true }).click();
   await page.getByLabel('GitHub username', { exact: true }).fill('eli');
   await page.getByRole('button', { name: 'Invite', exact: true }).click();
   await expect(page.locator('#people-dialog')).toContainText('@eli');
@@ -538,7 +538,7 @@ test('shared project prefixes stay muted and truncate across every theme', async
     const railWidth = member.getByRole('separator', { name: 'Sidebar width' });
     await railWidth.focus();
     await railWidth.press('Home');
-    // The menu's accessible labels, unlike swatch text, are stable theme names.
+    // The menu supplies every supported theme's display name.
     const names = await member.getByRole('menuitemradio', { includeHidden: true }).evaluateAll(nodes => nodes.map(node => node.getAttribute('data-theme-name')));
     expect(names.length).toBeGreaterThan(2);
     for (const theme of names) {
