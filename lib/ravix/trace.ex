@@ -238,7 +238,7 @@ defmodule Ravix.Trace do
   Run `fun` with tracing off: no span inside it is recorded or exported.
 
   For recurring background work that is almost always a no-op. The prompt
-  queue's sweep is the case this exists for: it runs every two seconds on
+  queue's sweep is the case this exists for: it runs on a timer on
   *every* instance (ADR 0003 keeps it there deliberately, because it is
   idempotent and merely cheaper once), and almost every run finds nothing to
   do. Two Ecto queries with no parent span are two root traces, so left alone

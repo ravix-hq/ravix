@@ -2,19 +2,30 @@ defmodule Ravix.PromptQueue.Server do
   @moduledoc """
   One worker for this deployment, delivering saved prompts to Fountain.
 
-  No browser connection participates in delivery. Every two seconds the
-  server takes the first live row of every track, checks the sender still
-  has access, asks Fountain whether the conversation is idle, refreshes the
-  clone credential, and only then claims the row and POSTs it. A claim is
-  taken immediately before the POST; after a crash or an ambiguous response
-  the payload is retained but never replayed blindly.
+  No browser connection participates in delivery. A sweep takes the first
+  live row of every thread, checks the sender still has access, asks
+  Fountain whether the conversation is idle, refreshes the clone credential,
+  and only then claims the row and POSTs it. A claim is taken immediately
+  before the POST; after a crash or an ambiguous response the payload is
+  retained but never replayed blindly.
 
-  Tracks are delivered in parallel, one task each under
-  `Ravix.TaskSupervisor`, so a track whose Fountain call is slow does not
+  Sweeps are on a timer -- every thirty seconds while nothing waits, every
+  two while something does, because an idle deployment sweeping a nearly
+  always empty index on every instance is the common case and the one worth
+  spending nothing on -- and out of turn whenever a thread with a waiting
+  prompt says a turn has settled. A prompt held back by a busy agent
+  therefore goes out as that turn ends rather than on the next tick, and the
+  timer remains the backstop for every case an event cannot cover: nobody is
+  following the thread, the broadcast was missed, or the instance that heard
+  it left. Both paths run the same idempotent sweep, and `Store.claim/1`
+  decides which instance actually sends.
+
+  Threads are delivered in parallel, one task each under
+  `Ravix.TaskSupervisor`, so a thread whose Fountain call is slow does not
   hold the others; a task that crashes leaves its row for the next sweep.
-  A failed or unconfirmed head is not delivered and holds its track: later
+  A failed or unconfirmed head is not delivered and holds its thread: later
   instructions cannot overtake one whose outcome needs a person. Other
-  tracks still advance.
+  threads still advance.
 
   Every prompt goes out with its row id as Fountain's `client_request_id`,
   which Fountain copies onto the turn it opens. So an `:unconfirmed` head --
@@ -32,7 +43,10 @@ defmodule Ravix.PromptQueue.Server do
   of waiting on the timer.
 
   Options to `start_link/1`: `:name` (default this module), `:interval`
-  in milliseconds (default 2000; `false` for no timer at all, for tests).
+  in milliseconds between sweeps that find nothing waiting (default 30000;
+  `false` for no timer at all, for tests), and `:busy_interval`, the shorter
+  gap used while a prompt waits (default 2000, and never longer than
+  `:interval`).
   """
 
   use GenServer
@@ -51,12 +65,18 @@ defmodule Ravix.PromptQueue.Server do
   alias Ravix.PromptQueue.Store
   alias Ravix.Repo
   alias Ravix.Trace
-  alias Ravix.Tracks.{TrackMember, Transcript}
+  alias Ravix.Tracks.{Follower, TrackMember, Transcript}
   alias Ravix.Tracks.Transcript.Event
 
   import Ecto.Query, only: [from: 2]
 
-  @interval 2_000
+  @interval 30_000
+  # While a prompt is actually waiting. The wake below is what usually gets
+  # there first, but only a thread somebody is following broadcasts at all --
+  # a prompt sent through the MCP server to a track no page has open is the
+  # case this interval is for -- so the gap while something waits stays what
+  # it was before the wake existed.
+  @busy_interval 2_000
   # A backstop only: the Fountain client times out well inside this.
   @delivery_timeout 5 * 60_000
 
@@ -73,7 +93,10 @@ defmodule Ravix.PromptQueue.Server do
   # their id (or by an older instance mid-deploy) has none to find.
   @not_arrived "Fountain has no turn carrying this prompt's id. Check the transcript, then retry it if it is still needed."
 
-  @type option :: {:name, GenServer.name() | nil} | {:interval, pos_integer() | false}
+  @type option ::
+          {:name, GenServer.name() | nil}
+          | {:interval, pos_integer() | false}
+          | {:busy_interval, pos_integer()}
 
   @doc "Start the worker. See the module for the options."
   @spec start_link([option()]) :: GenServer.on_start()
@@ -97,8 +120,18 @@ defmodule Ravix.PromptQueue.Server do
 
   @impl true
   def init(opts) do
-    interval = Keyword.get(opts, :interval, @interval)
-    {:ok, schedule(%{interval: interval})}
+    state = %{
+      interval: Keyword.get(opts, :interval, @interval),
+      busy_interval: Keyword.get(opts, :busy_interval, @busy_interval),
+      following: MapSet.new(),
+      # Nothing is known until the first sweep, and a restart is exactly when
+      # something may be waiting: a prompt the instance that went away had
+      # queued, or a claim `Store.recover/0` has to take back. So the first
+      # sweep is the near one, and what it finds decides the next.
+      waiting?: true
+    }
+
+    {:ok, schedule(state)}
   end
 
   @impl true
@@ -107,22 +140,37 @@ defmodule Ravix.PromptQueue.Server do
   @impl true
   def handle_info(:tick, state), do: {:noreply, state |> sweep() |> schedule()}
 
+  # A followed thread's transcript. A settled turn is the moment its
+  # conversation can take the next prompt, so sweep then rather than wait out
+  # the timer; every other event on the topic is somebody else's business.
+  # Sweeping rather than delivering this one thread keeps one delivery path:
+  # the sweep is idempotent and already claims each row before it sends, so a
+  # broadcast both instances hear still sends once.
+  def handle_info({:transcript, _thread_id, %Event{} = event}, state) do
+    if Event.settles?(event), do: {:noreply, sweep(state)}, else: {:noreply, state}
+  end
+
+  # A topic this server has just left can still have a message in flight, and
+  # the sweep covers anything an event would have.
+  def handle_info(_message, state), do: {:noreply, state}
+
   defp schedule(%{interval: false} = state), do: state
 
-  defp schedule(%{interval: interval} = state) do
-    Process.send_after(self(), :tick, interval)
+  defp schedule(%{interval: interval, waiting?: waiting?} = state) do
+    delay = if waiting?, do: min(interval, state.busy_interval), else: interval
+    Process.send_after(self(), :tick, delay)
     state
   end
 
   # ── the sweep ─────────────────────────────────────────────────────────
 
   defp sweep(state) do
-    # Untraced (ADR 0004). This runs every two seconds on every instance and
-    # almost always finds nothing: `Store.recover/0` and `Store.heads/0` with no
+    # Untraced (ADR 0004). This runs on every instance and almost always finds
+    # nothing: `Store.recover/0` and `Store.heads/0` with no
     # parent span would be two root traces per sweep, tens of thousands of empty
     # traces a day per instance, at Honeycomb's per-event price. Suppression
     # covers this process only, so each `deliver/2` -- which runs in its own
-    # task under `deliver_heads/1` -- still gets the trace that is worth having.
+    # task under `deliver_heads/2` -- still gets the trace that is worth having.
     Trace.untraced(fn ->
       # Every sweep, not once at boot. A claim can outlive the task holding it
       # -- killed for running long, or lost between the POST and the status
@@ -133,10 +181,8 @@ defmodule Ravix.PromptQueue.Server do
       Store.recover()
       client = Fountain.client()
 
-      if Client.configured?(client), do: deliver_heads(client)
+      if Client.configured?(client), do: deliver_heads(client, state), else: state
     end)
-
-    state
   rescue
     # Leave claims intact for explicit recovery, and retry untouched rows on
     # the next sweep. Never log prompt bodies or manufacture a successful send.
@@ -145,9 +191,16 @@ defmodule Ravix.PromptQueue.Server do
       state
   end
 
-  defp deliver_heads(client) do
+  defp deliver_heads(client, state) do
+    heads = Store.heads()
+    # Before delivering, not after: a turn that settles while this sweep is
+    # asking Fountain whether the conversation is busy would otherwise be
+    # broadcast into a topic nobody here had joined yet, and the prompt would
+    # wait out the timer for a turn that had already ended.
+    state = follow(state, heads)
+
     Ravix.TaskSupervisor
-    |> Task.Supervisor.async_stream_nolink(Store.heads(), &deliver(client, &1),
+    |> Task.Supervisor.async_stream_nolink(heads, &deliver(client, &1),
       ordered: false,
       timeout: @delivery_timeout,
       on_timeout: :kill_task
@@ -156,7 +209,39 @@ defmodule Ravix.PromptQueue.Server do
       {:ok, _outcome} -> :ok
       {:exit, reason} -> Logger.error("ravix: prompt delivery crashed: #{inspect(reason)}")
     end)
+
+    state
   end
+
+  # Which threads this server listens to, and whether anything is waiting at
+  # all. A follower broadcasts a thread's events on `Follower.topic/1` keyed by
+  # the *thread*, not the track it belongs to, so a second thread's turn is a
+  # different topic from its track's first; joining a track's would hear
+  # nothing after #164.
+  #
+  # Joining is not idempotent -- `Phoenix.PubSub` registers one subscription
+  # per call, so joining again each sweep would deliver every event of every
+  # such thread once per sweep that ever ran, forever -- so the topics joined
+  # are what this holds, and each is joined once and left when its thread's
+  # head is gone.
+  #
+  # Only a `:queued` head is worth either: a failed or unconfirmed head waits
+  # for a person, and waking on a turn (or sweeping twice as often) does not
+  # make a person answer sooner.
+  defp follow(state, heads) do
+    wanted = for %Item{status: :queued} = row <- heads, into: MapSet.new(), do: row.thread_id
+
+    Enum.each(MapSet.difference(wanted, state.following), &join/1)
+    Enum.each(MapSet.difference(state.following, wanted), &leave/1)
+
+    %{state | following: wanted, waiting?: not Enum.empty?(wanted)}
+  end
+
+  defp join(thread_id),
+    do: Phoenix.PubSub.subscribe(Ravix.PubSub, Follower.topic(thread_id))
+
+  defp leave(thread_id),
+    do: Phoenix.PubSub.unsubscribe(Ravix.PubSub, Follower.topic(thread_id))
 
   # ── one head ──────────────────────────────────────────────────────────
 
@@ -213,7 +298,7 @@ defmodule Ravix.PromptQueue.Server do
 
   # An unconfirmed row nobody has looked for yet. After one look that found
   # nothing, the message says so and the row waits for a person, so a track
-  # whose prompt was lost does not read Fountain's turns every two seconds.
+  # whose prompt was lost does not read Fountain's turns on every sweep.
   defp unchecked?(%Item{status: :unconfirmed, error: error}), do: error != @not_arrived
   defp unchecked?(%Item{}), do: false
 
