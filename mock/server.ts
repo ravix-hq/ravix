@@ -82,6 +82,37 @@ const state = {
   vaults: [] as Record<string, unknown>[],
   /** `${parent}:${id}` → key → value. Values go in and never come back out. */
   secrets: new Map<string, Map<string, string>>(),
+  /**
+   * Inference credential sets: one per Ravix person, plus the empty default
+   * Ravix reserves. `providers` is which slots hold something; the values are
+   * not kept at all, because nothing may ever read one back.
+   */
+  credentialSets: [] as {
+    id: string;
+    name: string;
+    is_default: boolean;
+    providers: string[];
+    chatgpt_grant_id: string | null;
+  }[],
+  /**
+   * ChatGPT subscriptions (Fountain's grants) and the device-code sign-ins
+   * that link them. A sign-in here is approved by being read: the third
+   * poll of a pending attempt completes it, which is as much of ChatGPT as
+   * the walkthrough needs. A name containing "refused" is a sign-in ChatGPT
+   * turns down, so that the refusal can be seen without a real account.
+   */
+  chatgptGrants: [] as { id: string; name: string; status: string; plan_type: string; account_email: string }[],
+  chatgptAttempts: [] as {
+    id: string;
+    kind: "link" | "reconnect";
+    name: string | null;
+    grant_id: string | null;
+    state: string;
+    polls: number;
+    result_grant_id: string | null;
+    failure: { reason: string } | null;
+    expires_at: string;
+  }[],
   conversations: [] as Conv[],
   /**
    * One box per agent, not one per account. Ravix's projects each get
@@ -93,12 +124,12 @@ const state = {
   files: new Map<string, string>(),
   /** What `git worktree list` would say, for the survey turn. */
   worktrees: new Map<string, { branch: string | null; repoPath: string | null }>(),
-  events: new Map<string, unknown[]>(),
+  events: new Map<string, Record<string, unknown>[]>(),
   /**
    * The turn records, which are a second list beside the log and not a view of
-   * it. Fountain keeps the prompt on the turn; the transcript joins the two on
-   * `turn_id`, so a mock that served only the log would leave every bubble
-   * without the words that caused it.
+   * it. Fountain keeps the prompt on the turn and serves it on the log only
+   * when asked (`?prompts=true`), on the turn's opening event; the events
+   * handler below reads it from here to do the same.
    */
   turns: new Map<string, Record<string, unknown>[]>(),
   /** sandbox id → the conversation currently holding it. One turn per box. */
@@ -267,6 +298,8 @@ const acp = (update: Record<string, unknown>) =>
   JSON.stringify({ jsonrpc: "2.0", method: "session/update", params: { update } });
 
 const text = (t: string) => acp({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: t } });
+const plan = (entries: [string, string][]) =>
+  acp({ sessionUpdate: "plan", entries: entries.map(([content, status]) => ({ content, status, priority: "medium" })) });
 const tool = (id: string, title: string) => acp({ sessionUpdate: "tool_call", toolCallId: id, title, kind: "execute" });
 const toolDone = (id: string, out: string) =>
   acp({
@@ -280,14 +313,14 @@ const toolDone = (id: string, out: string) =>
  * A turn, written into the log over about a second and a half.
  *
  * The shape is Fountain's and the transcript depends on all of it: `turn_id`
- * groups the events, the `stage`/`prompt` event carries what was asked (the
- * UI pulls the person's own words out of there rather than out of the agent's
- * reply), and the `output` events on stream `acp` carry raw ACP ndjson that
- * `blocksForTurn` parses into bubbles and tool chips. Text arrives in deltas
+ * groups the events, the `turn`/`started` event is where the events feed
+ * serves what was asked (`?blocks=true&prompts=true`; the stream never does),
+ * and the `output` events on stream `acp` carry raw ACP ndjson that
+ * `Ravix.Tracks.Transcript` parses into text, tools and plans. Text arrives in deltas
  * because it does on a real runtime, and a transcript that only ever appears
  * all at once hides every streaming bug there is.
  */
-async function runTurn(conv: Conv, prompt: string): Promise<void> {
+async function runTurn(conv: Conv, prompt: string, clientRequestId: string | null): Promise<void> {
   const turn = `turn-${state.turnSeq++}`;
   const emit = (ev: Record<string, unknown>) => push(conv.id, { turn_id: turn, ...ev });
   const say = async (body: string) => {
@@ -305,15 +338,18 @@ async function runTurn(conv: Conv, prompt: string): Promise<void> {
   const record = {
     id: turn,
     prompt,
-    // The app's own turns are marked as such, which is how the transcript can
-    // render "Opening this track" differently from something a person typed.
-    origin: prompt.startsWith("[ravix]") ? "app" : "user",
+    // Fountain's `origin` is `user` for anything sent over the API, Ravix's
+    // own `[ravix]` turns included; only a turn Fountain started itself is
+    // `autonomous`, and those get no prompt on the feed.
+    origin: "user",
     status: "running",
     inserted_at: now(),
+    // The sender's name for the prompt, copied back so it can tell which
+    // turn was its own (the prompt queue sends its row id).
+    client_request_id: clientRequestId,
   };
   state.turns.set(conv.id, [...(state.turns.get(conv.id) ?? []), record]);
 
-  emit({ kind: "stage", stage: "prompt", data: prompt });
   emit({ kind: "stage", stage: "turn", state: "started" });
   await sleep(250);
 
@@ -410,9 +446,12 @@ async function act(prompt: string, emit: Emit, say: Say, conv: Conv): Promise<vo
   const slug = parseChannel(conv.channel_id)?.trackSlug;
   const home = slug && state.worktrees.has(`${WORK_ROOT}/${slug}`) ? `${WORK_ROOT}/${slug}` : [...state.worktrees.keys()].find((d) => hasFilesUnder(d)) ?? WORK_ROOT;
   updateMockPreview(home);
+  // A checklist, as ACP reports one: the whole list every time, never a diff.
+  emit({ kind: "output", stream: "acp", data: plan([["Look for open TODOs", "in_progress"], ["Say what is worth fixing", "pending"]]) });
   emit({ kind: "output", stream: "acp", data: tool("x1", `cd ${home} && rg -n "TODO|FIXME"`) });
   await sleep(400);
   emit({ kind: "output", stream: "acp", data: toolDone("x1", "src/lib/window.ts:1:// TODO: rounding here is wrong across a DST boundary") });
+  emit({ kind: "output", stream: "acp", data: plan([["Look for open TODOs", "completed"], ["Say what is worth fixing", "in_progress"]]) });
   await say(
     `(mock) I am in ${home} and I read: ${prompt.trim().split("\n")[0]?.slice(0, 120)}\n\n` +
       "There is one TODO worth doing here — `dayOf` in `src/lib/window.ts` divides by 86400, which is an hour short twice a year. Say the word and I will fix it on this track's branch.",
@@ -434,11 +473,11 @@ function hasFilesUnder(dir: string): boolean {
  * *same* track queues behind its own turn, which is what a person typing twice
  * in a row expects.
  */
-function accept(conv: Conv, prompt: string): { error: string } | null {
+function accept(conv: Conv, prompt: string, clientRequestId: string | null = null): { error: string } | null {
   const holder = conv.sandbox_id ? state.busy.get(conv.sandbox_id) : undefined;
   if (holder && holder !== conv.id) return { error: "sandbox_at_capacity" };
   const tail = state.queues.get(conv.id) ?? Promise.resolve();
-  const next = tail.then(() => runTurn(conv, prompt)).catch((err: unknown) => {
+  const next = tail.then(() => runTurn(conv, prompt, clientRequestId)).catch((err: unknown) => {
     console.error("mock: turn blew up:", err);
   });
   state.queues.set(conv.id, next);
@@ -472,19 +511,204 @@ async function fountain(req: Request, url: URL): Promise<Response | null> {
   // The bearer token is read and ignored on purpose: ravix holds exactly
   // one Fountain key for everybody, and rejecting a wrong one here would only
   // ever catch a typo in the dev command line.
-  const body = method === "POST" || method === "PUT" ? ((await req.json().catch(() => ({}))) as Record<string, unknown>) : {};
+  const body = method === "POST" || method === "PUT" || method === "PATCH" ? ((await req.json().catch(() => ({}))) as Record<string, unknown>) : {};
 
-  if (p === "/api/auth/me") return json({ data: { id: "u-mock", email: "ravix@example.com" } });
+  if (p === "/api/auth/me") {
+    return json({ data: { id: "u-mock", email: "ravix@example.com", chatgpt_subscriptions_enabled: true } });
+  }
 
   if (p === "/api/catalog") {
     return json({
       data: {
-        runtimes: ["claude"],
-        models: { claude: ["claude-opus-5", "claude-sonnet-5"] },
+        runtimes: ["claude", "codex"],
+        models: {
+          claude: ["anthropic/claude-opus-5", "anthropic/claude-sonnet-5"],
+          codex: ["openai/gpt-6-astra", "openai/gpt-5.5"],
+        },
         package_managers: ["apt", "npm"],
         mcp_servers: [],
       },
     });
+  }
+
+  // ── who pays for the model ───────────────────────────────────────────
+
+  const SETS = "/api/account/inference-credential-sets";
+  if (p === SETS) {
+    // Default first, then by name, which is the order Ravix relies on to see
+    // whether the account has a default at all.
+    const listed = [...state.credentialSets].sort(
+      (a, b) => Number(b.is_default) - Number(a.is_default) || a.name.localeCompare(b.name),
+    );
+    if (method === "GET") return json({ data: listed });
+    if (method === "POST") {
+      const name = String(body.name ?? "").trim();
+      if (!name) return json({ error: "validation_failed", errors: { name: ["can't be blank"] } }, 422);
+      if (state.credentialSets.some((set) => set.name === name)) {
+        return json(
+          { error: "validation_failed", errors: { name: ["already names a credential set on this account"] } },
+          422,
+        );
+      }
+      // The first set an account makes is its default. That is Fountain's
+      // rule and the reason Ravix makes an empty one of its own first.
+      const set = {
+        id: `set${state.credentialSets.length + 1}-${Math.random().toString(36).slice(2, 8)}`,
+        name,
+        is_default: state.credentialSets.length === 0,
+        providers: [] as string[],
+        chatgpt_grant_id: null,
+      };
+      state.credentialSets.push(set);
+      return json({ data: set }, 201);
+    }
+  }
+  const setOne = new RegExp(`^${SETS}/([^/]+)$`).exec(p);
+  if (setOne && method === "PATCH") {
+    const set = state.credentialSets.find((s) => s.id === setOne[1]);
+    if (!set) return json({ error: "not_found" }, 404);
+    // Naming a subscription is the switch that makes Codex run on it, and
+    // `null` turns it off. Fountain refuses a subscription the account does
+    // not hold, and one that is disconnected.
+    if ("chatgpt_grant_id" in body) {
+      const wanted = body.chatgpt_grant_id;
+      if (wanted !== null) {
+        const grant = state.chatgptGrants.find((g) => g.id === wanted);
+        if (!grant || grant.status !== "active") {
+          return json({ error: "validation_failed", errors: { chatgpt_grant_id: ["is not a usable subscription"] } }, 422);
+        }
+      }
+      set.chatgpt_grant_id = typeof wanted === "string" ? wanted : null;
+    }
+    const grant = state.chatgptGrants.find((g) => g.id === set.chatgpt_grant_id);
+    return json({ data: { ...set, chatgpt_grant: grant ? { id: grant.id, name: grant.name, status: grant.status } : null } });
+  }
+
+  // ── ChatGPT subscriptions ────────────────────────────────────────────
+
+  const CHATGPT = "/api/account/chatgpt-subscriptions";
+  const attemptView = (a: (typeof state.chatgptAttempts)[number]) => ({
+    id: a.id,
+    kind: a.kind,
+    name: a.name,
+    grant_id: a.grant_id,
+    state: a.state,
+    user_code: a.state === "pending" ? "MOCK-CODE" : null,
+    verification_url: a.state === "pending" ? "https://auth.openai.com/codex/device" : null,
+    poll_interval: 1,
+    auth_unreachable: false,
+    expires_at: a.expires_at,
+    result_grant_id: a.result_grant_id,
+    failure: a.failure,
+  });
+  if (p === CHATGPT && method === "GET") {
+    return json({ data: state.chatgptGrants, count: state.chatgptGrants.length, limit: 5, linking_enabled: true });
+  }
+  if (p === `${CHATGPT}/attempts` && method === "GET") {
+    return json({ data: state.chatgptAttempts.filter((a) => a.state === "pending").map(attemptView) });
+  }
+  if (p === `${CHATGPT}/attempts` && method === "POST") {
+    const name = typeof body.name === "string" ? body.name.trim() : null;
+    const grantId = typeof body.grant_id === "string" ? body.grant_id : null;
+    if ((name && grantId) || (!name && !grantId)) {
+      return json({ error: "validation_failed", errors: { name: ["give a name for a new subscription, or a grant_id to reconnect one"] } }, 422);
+    }
+    if (grantId && !state.chatgptGrants.some((g) => g.id === grantId)) return json({ error: "not_found" }, 404);
+    if (name && state.chatgptGrants.some((g) => g.name === name)) {
+      return json({ error: "validation_failed", errors: { name: ["already names a subscription"] } }, 422);
+    }
+    const open = state.chatgptAttempts.filter((a) => a.state === "pending");
+    const same = open.find((a) => (name ? a.name === name : a.grant_id === grantId));
+    if (same) return json({ error: "chatgpt_link_attempt_pending", attempt_id: same.id }, 409);
+    if (open.length >= 3) return json({ error: "chatgpt_link_attempts_exceeded" }, 409);
+    if (name && state.chatgptGrants.length >= 5) {
+      return json({ error: "chatgpt_grant_limit_reached", count: state.chatgptGrants.length, limit: 5 }, 409);
+    }
+    const attempt = {
+      id: `att${state.chatgptAttempts.length + 1}-${Math.random().toString(36).slice(2, 8)}`,
+      kind: grantId ? ("reconnect" as const) : ("link" as const),
+      name,
+      grant_id: grantId,
+      state: "pending",
+      polls: 0,
+      result_grant_id: null,
+      failure: null,
+      expires_at: new Date(Date.now() + 15 * 60_000).toISOString(),
+    };
+    state.chatgptAttempts.push(attempt);
+    return json({ data: attemptView(attempt) }, 201);
+  }
+  const attemptOne = new RegExp(`^${CHATGPT}/attempts/([^/]+)$`).exec(p);
+  if (attemptOne) {
+    const attempt = state.chatgptAttempts.find((a) => a.id === attemptOne[1]);
+    if (!attempt) return json({ error: "not_found" }, 404);
+    if (method === "DELETE") {
+      if (attempt.state !== "pending" && attempt.state !== "cancelled") {
+        return json({ error: "chatgpt_link_attempt_not_pending", state: attempt.state }, 409);
+      }
+      attempt.state = "cancelled";
+      return json({ data: attemptView(attempt) });
+    }
+    if (method === "GET") {
+      if (attempt.state === "pending" && ++attempt.polls >= 3) {
+        if (attempt.name?.includes("refused")) {
+          attempt.state = "failed";
+          attempt.failure = { reason: "invalid_sign_in" };
+        } else if (attempt.grant_id) {
+          const grant = state.chatgptGrants.find((g) => g.id === attempt.grant_id)!;
+          grant.status = "active";
+          attempt.state = "completed";
+          attempt.result_grant_id = grant.id;
+        } else {
+          const grant = {
+            id: `grant${state.chatgptGrants.length + 1}-${Math.random().toString(36).slice(2, 8)}`,
+            name: attempt.name!,
+            status: "active",
+            plan_type: "plus",
+            account_email: "mockuser@example.com",
+          };
+          state.chatgptGrants.push(grant);
+          attempt.state = "completed";
+          attempt.result_grant_id = grant.id;
+        }
+      }
+      return json({ data: attemptView(attempt) });
+    }
+  }
+  const grantDisconnect = new RegExp(`^${CHATGPT}/([^/]+)/disconnect$`).exec(p);
+  if (grantDisconnect && method === "POST") {
+    const grant = state.chatgptGrants.find((g) => g.id === grantDisconnect[1]);
+    if (!grant) return json({ error: "not_found" }, 404);
+    grant.status = "disconnected";
+    return json({ data: grant });
+  }
+  const credential = new RegExp(`^${SETS}/([^/]+)/credentials/([a-z_]+)$`).exec(p);
+  if (credential) {
+    const set = state.credentialSets.find((s) => s.id === credential[1]);
+    const provider = credential[2]!;
+    if (!set) return json({ error: "not_found" }, 404);
+    if (!["anthropic_api_key", "claude_code_oauth_token", "openai_api_key", "gemini_api_key"].includes(provider)) {
+      return json({ error: "validation_failed" }, 422);
+    }
+    if (method === "DELETE") {
+      set.providers = set.providers.filter((held) => held !== provider);
+      return new Response(null, { status: 204 });
+    }
+    if (method === "PUT") {
+      const value = String(body.value ?? "").trim();
+      if (!value) return json({ error: "value is required", reason: "empty_value" }, 422);
+      // Fountain asks the provider whether the value works. Here, anything
+      // containing "invalid" does not, so the refusal can be seen in
+      // development without a real key to revoke.
+      if (value.includes("invalid")) {
+        return json(
+          { error: "the provider rejected this credential (HTTP 401)", reason: "invalid", provider_status: 401 },
+          422,
+        );
+      }
+      if (!set.providers.includes(provider)) set.providers = [...set.providers, provider].sort();
+      return json({ data: { provider, set: true } });
+    }
   }
 
   // ── the three records a project is ───────────────────────────────────
@@ -630,7 +854,8 @@ async function fountain(req: Request, url: URL): Promise<Response | null> {
   if (convPrompt) {
     const conv = state.conversations.find((c) => c.id === convPrompt[1]);
     if (!conv) return json({ error: "not_found" }, 404);
-    const refused = accept(conv, String((body as { prompt?: unknown }).prompt ?? ""));
+    const { prompt, client_request_id } = body as { prompt?: unknown; client_request_id?: unknown };
+    const refused = accept(conv, String(prompt ?? ""), typeof client_request_id === "string" ? client_request_id : null);
     if (refused) return json(refused, 409);
     return json({ status: "accepted" });
   }
@@ -640,12 +865,33 @@ async function fountain(req: Request, url: URL): Promise<Response | null> {
 
   const convEvents = /^\/api\/conversations\/([^/]+)\/events$/.exec(p);
   if (convEvents) {
-    const all = state.events.get(convEvents[1]!) ?? [];
-    // Oldest first, capped the way Fountain caps it. The tail is what a track
-    // that has been worked in for an hour needs — taking the *head* would show
-    // a scrollback that looks complete and is a hundred turns stale.
+    const conversationId = convEvents[1]!;
+    // Oldest first after the cursor, a page at a time, the way Fountain pages
+    // it: `next_cursor` is the last id served, and a reader follows it until
+    // `has_more` is false. That is how a track worked in for an hour reads its
+    // whole scrollback, and how the follower reads back the one event it needs.
+    const after = Number(url.searchParams.get("after") ?? 0) || 0;
     const limit = Math.min(Number(url.searchParams.get("limit") ?? 100) || 100, 1000);
-    return json({ data: all.slice(-limit), meta: { has_more: all.length > limit, next_cursor: null } });
+    const rest = (state.events.get(conversationId) ?? []).filter((ev) => (ev.id as number) > after);
+    const page = rest.slice(0, limit);
+    const blocks = url.searchParams.get("blocks") === "true";
+    const prompts = blocks && url.searchParams.get("prompts") === "true";
+    const turns = state.turns.get(conversationId) ?? [];
+    // Only what the transcript reads off `blocks`: the prompt on a turn's
+    // opening event. Fountain's own parse of every output event is not
+    // modelled, because nothing here reads it.
+    const data = blocks
+      ? page.map((ev) => {
+          const opens = ev.kind === "stage" && ev.stage === "turn" && ev.state === "started";
+          const turn = opens && prompts ? turns.find((t) => t.id === ev.turn_id) : undefined;
+          const prompt = typeof turn?.prompt === "string" && turn.prompt !== "" ? turn.prompt : null;
+          return { ...ev, blocks: prompt ? [{ kind: "prompt", body: prompt }] : [] };
+        })
+      : page;
+    return json({
+      data,
+      meta: { has_more: rest.length > limit, next_cursor: page.length ? page[page.length - 1]!.id : after || null },
+    });
   }
 
   const convTurns = /^\/api\/conversations\/([^/]+)\/turns$/.exec(p);

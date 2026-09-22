@@ -11,6 +11,7 @@ defmodule Ravix.PromptQueueTest do
   alias Ravix.Hub.Event
   alias Ravix.PromptQueue
   alias Ravix.PromptQueue.{Item, Server}
+  alias Ravix.QueryCount
   alias Ravix.Tracks.TrackMember
 
   # ── fixture ───────────────────────────────────────────────────────────
@@ -49,7 +50,10 @@ defmodule Ravix.PromptQueueTest do
 
     pid = start_supervised!(spec)
     Sandbox.allow(Repo, self(), pid)
-    for mod <- [Ravix.Fountain, Ravix.Projects, Ravix.Previews], do: allow(mod, self(), pid)
+
+    for mod <- [Ravix.Fountain, Ravix.Projects, Ravix.Previews, Ravix.Previews.Store],
+        do: allow(mod, self(), pid)
+
     pid
   end
 
@@ -76,7 +80,7 @@ defmodule Ravix.PromptQueueTest do
       {:ok, conversation(%{"id" => id, "status" => on_read.()})}
     end)
 
-    stub(Ravix.Fountain, :prompt, fn _client, id, text, images ->
+    stub(Ravix.Fountain, :prompt, fn _client, id, text, images, _opts ->
       send(test, {:posted, id, %{"prompt" => text, "images" => images}})
       on_post.()
     end)
@@ -93,6 +97,18 @@ defmodule Ravix.PromptQueueTest do
   defp accept,
     do:
       {%{method: "POST", path: "/api/conversations/c1/prompts"}, {202, [], %{data: %{ok: true}}}}
+
+  # `GET /turns`, with a turn for each `client_request_id` given.
+  defp turns(request_ids) do
+    turns =
+      request_ids
+      |> Enum.with_index(1)
+      |> Enum.map(fn {id, n} ->
+        %{id: "t#{n}", prompt: "p", status: "completed", client_request_id: id}
+      end)
+
+    {%{method: "GET", path: "/api/conversations/c1/turns"}, {200, [], %{data: turns}}}
+  end
 
   defp refuse(status, code),
     do: {%{method: "POST", path: "/api/conversations/c1/prompts"}, {status, [], %{error: code}}}
@@ -127,7 +143,7 @@ defmodule Ravix.PromptQueueTest do
     test = self()
     stub(Ravix.Previews, :prepare_agent_preview, fun)
 
-    stub(Ravix.Previews, :revoke_agent, fn track_id, _user_id ->
+    stub(Ravix.Previews.Store, :revoke_agent, fn track_id, _user_id ->
       send(test, {:revoked_agent, track_id})
       :ok
     end)
@@ -151,8 +167,10 @@ defmodule Ravix.PromptQueueTest do
     client =
       fountain([read("running"), read("idle"), accept(), read("running"), read("idle"), accept()])
 
-    assert {:ok, %Item{status: :queued}} = send_prompt(f.track, f.owner, "first", images: [image])
-    assert {:ok, %Item{}} = send_prompt(f.track, f.owner, "second")
+    assert {:ok, %Item{id: first, status: :queued}} =
+             send_prompt(f.track, f.owner, "first", images: [image])
+
+    assert {:ok, %Item{id: second}} = send_prompt(f.track, f.owner, "second")
 
     Server.tick(f.server)
     assert posted(client) == []
@@ -160,13 +178,16 @@ defmodule Ravix.PromptQueueTest do
     # The server restarts: a new worker, recovering before its first sweep.
     restarted = start_server()
     Server.tick(restarted)
-    assert posted(client) == [%{"prompt" => "first", "images" => [image]}]
+    # Each carries its row id, which Fountain copies onto the turn it opens.
+    assert posted(client) == [
+             %{"prompt" => "first", "images" => [image], "client_request_id" => first}
+           ]
 
     Server.tick(restarted)
     assert length(posted(client)) == 1
 
     Server.tick(restarted)
-    assert [_first, %{"prompt" => "second"}] = posted(client)
+    assert [_first, %{"prompt" => "second", "client_request_id" => ^second}] = posted(client)
     assert PromptQueue.Store.queued_prompts() == []
   end
 
@@ -309,6 +330,7 @@ defmodule Ravix.PromptQueueTest do
         refuse(409, "sandbox_at_capacity"),
         read("idle"),
         refuse(502, "bad_gateway"),
+        turns(["somebody-elses-prompt"]),
         read("idle"),
         accept()
       ])
@@ -325,7 +347,16 @@ defmodule Ravix.PromptQueueTest do
     assert %Item{status: :unconfirmed, error: "Delivery could not be confirmed." <> _} =
              PromptQueue.Store.get(id)
 
+    # Looked for once on Fountain's turns, not found, and still not sent.
     count = length(posted(client))
+    Server.tick(f.server)
+    assert length(posted(client)) == count
+
+    assert %Item{status: :unconfirmed, error: "Fountain has no turn carrying" <> _} =
+             PromptQueue.Store.get(id)
+
+    # Once: the next sweep does not read the turns again (the script would
+    # refuse the request).
     Server.tick(f.server)
     assert length(posted(client)) == count
 
@@ -434,13 +465,69 @@ defmodule Ravix.PromptQueueTest do
     age_claim(id, PromptQueue.Store.claim_timeout_ms() + 1_000)
 
     PromptQueue.Store.recover()
-    Server.tick(start_server())
-    assert posted(client) == []
 
     assert %Item{status: :unconfirmed, error: "The server restarted during delivery." <> _} =
              PromptQueue.Store.get(id)
 
+    FakeTransport.expect(
+      client,
+      %{method: "GET", path: "/api/conversations/c1/turns"},
+      {200, [], %{data: []}}
+    )
+
+    Server.tick(start_server())
+    assert posted(client) == []
+
+    assert %Item{status: :unconfirmed, error: "Fountain has no turn carrying" <> _} =
+             PromptQueue.Store.get(id)
+
     assert PromptQueue.Store.get(id).payload != ""
+  end
+
+  test "an unconfirmed prompt Fountain has a turn for is recorded as delivered, not re-sent", f do
+    {:ok, %Item{id: id}} = send_prompt(f.track, f.owner, "did this arrive?")
+    client = fountain([turns(["somebody-elses-prompt", id])])
+    PromptQueue.Store.set_status(id, :unconfirmed, "Delivery could not be confirmed.")
+    Hub.subscribe(f.project.id)
+
+    Server.tick(f.server)
+
+    assert %Item{status: :sent, error: nil, payload: ""} = PromptQueue.Store.get(id)
+    assert posted(client) == []
+    assert_receive {:hub, %Event{name: :turn}}
+  end
+
+  test "a turns read that fails leaves an unconfirmed prompt for the next sweep", f do
+    fountain([
+      {%{method: "GET", path: "/api/conversations/c1/turns"}, {503, [], %{error: "offline"}}},
+      turns([])
+    ])
+
+    {:ok, %Item{id: id}} = send_prompt(f.track, f.owner, "unknown")
+    PromptQueue.Store.set_status(id, :unconfirmed, "Delivery could not be confirmed.")
+
+    capture_log(fn -> Server.tick(f.server) end)
+
+    assert %Item{status: :unconfirmed, error: "Delivery could not be confirmed."} =
+             PromptQueue.Store.get(id)
+
+    Server.tick(f.server)
+
+    assert %Item{status: :unconfirmed, error: "Fountain has no turn carrying" <> _} =
+             PromptQueue.Store.get(id)
+  end
+
+  test "annotating an unconfirmed row does not undo a retry that got there first", f do
+    {:ok, %Item{id: id}} = send_prompt(f.track, f.owner, "retried")
+    PromptQueue.Store.set_status(id, :unconfirmed, "Delivery could not be confirmed.")
+    assert :ok = PromptQueue.retry(f.owner, f.track.id, id)
+
+    PromptQueue.Store.annotate(id, :unconfirmed, "too late")
+    assert %Item{status: :queued, error: nil} = PromptQueue.Store.get(id)
+
+    PromptQueue.Store.set_status(id, :unconfirmed, "Delivery could not be confirmed.")
+    PromptQueue.Store.annotate(id, :unconfirmed, "found nothing")
+    assert %Item{status: :unconfirmed, error: "found nothing"} = PromptQueue.Store.get(id)
   end
 
   test "a fresh claim is left to the task still holding it", f do
@@ -500,6 +587,84 @@ defmodule Ravix.PromptQueueTest do
     end
   end
 
+  test "a sweep reads a busy conversation once, however many prompts wait on it", f do
+    # One expectation, so a second read would be a request nothing scripted:
+    # the fake answers it with an error and fails the test at exit.
+    client = fountain([read("running")])
+    for n <- 1..5, do: send_prompt(f.track, f.owner, "waiting #{n}")
+
+    Server.tick(f.server)
+
+    assert [%{method: "GET", path: "/api/conversations/c1"}] = FakeTransport.calls(client)
+
+    waiting = PromptQueue.Store.queued_prompts(f.track.id)
+    assert length(waiting) == 5
+    assert Enum.all?(waiting, &(&1.status == :queued))
+  end
+
+  test "delivering a head reads its track and project only where access is decided", f do
+    fountain_hooks(fn -> "idle" end, fn -> :ok end)
+    {:ok, %Item{id: id}} = send_prompt(f.track, f.owner, "counted")
+
+    # The sweep hands each head to a task of its own, so the count follows
+    # the server into them rather than watching the caller of `tick/1`.
+    {_result, queries} =
+      QueryCount.count(fn -> Server.tick(f.server) end, from: {:callers, f.server})
+
+    assert status_of(id) == :sent
+
+    # Who may send is established three times, on purpose: the door, then
+    # again just before the claim and just before the POST, because
+    # membership and cancellation can change during the network calls in
+    # between. Each is `Access.track_access/2`, which is the track and the
+    # project once. Delivery itself used to read both a fourth time, having
+    # been handed neither. The two further reads of `tracks` are the
+    # publishes: `Store.claim/1` and `Store.mark_delivered/1` each tell the
+    # project's hub, and find the project through the track.
+    assert Enum.count(queries, &(&1 == "projects")) == 3
+    assert Enum.count(queries, &(&1 == "tracks")) == 3 + 2
+  end
+
+  test "the sweep's two reads are answered from the indexes made for them" do
+    # Without the two partial indexes both of these read the whole table, and
+    # the whole table is nearly all delivered rows. A plan is the only thing
+    # that can show they are used: the seq scan is switched off for this
+    # transaction so that a table this small does not hide the choice. An
+    # index is named in a plan only when it is scanned; whether as an ordered
+    # scan or a bitmap one is the planner's call on the statistics of the
+    # moment, and either reads only the rows the index holds.
+    Repo.query!("SET LOCAL enable_seqscan = off")
+
+    assert plan(fn -> PromptQueue.Store.heads() end) =~ "prompt_queue_live_heads"
+    assert plan(fn -> PromptQueue.Store.recover() end) =~ "prompt_queue_sending_claims"
+  end
+
+  # The plan Postgres has for the first query `fun` runs, with its parameters.
+  defp plan(fun) do
+    id = {__MODULE__, make_ref()}
+    test = self()
+
+    :telemetry.attach(
+      id,
+      [:ravix, :repo, :query],
+      fn _event, _measure, meta, _config ->
+        if self() == test, do: send(test, {id, meta.query, meta.params})
+      end,
+      nil
+    )
+
+    try do
+      fun.()
+    after
+      :telemetry.detach(id)
+    end
+
+    assert_receive {^id, sql, params}
+
+    %{rows: rows} = Repo.query!("EXPLAIN " <> sql, params)
+    Enum.map_join(rows, "\n", &List.first/1)
+  end
+
   test "one track needing attention does not block another track", f do
     other = insert_track(project: f.project, conversation_id: "c2")
     test = self()
@@ -509,7 +674,7 @@ defmodule Ravix.PromptQueueTest do
       {:ok, conversation(%{"id" => id, "status" => "idle"})}
     end)
 
-    stub(Ravix.Fountain, :prompt, fn _client, id, text, _images ->
+    stub(Ravix.Fountain, :prompt, fn _client, id, text, _images, _opts ->
       send(test, {:posted, id, text})
       :ok
     end)

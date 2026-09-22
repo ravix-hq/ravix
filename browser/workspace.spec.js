@@ -30,6 +30,15 @@ async function signIn(page) {
   await page.getByRole('link', { name: 'Sign in as @mockuser', exact: true }).click();
   await expect(page.getByRole('link', { name: 'Sign out' })).toBeVisible();
   await expect(page.locator('[data-phx-main]')).toHaveClass(/phx-connected/);
+  // Whoever signs in first, with no project yet, is shown the walkthrough. The
+  // test below is about that; every other test is about the workspace, and
+  // must reach it whether or not it is the first to run.
+  if (new URL(page.url()).pathname.startsWith('/welcome')) {
+    await page.getByRole('button', { name: 'Skip setup', exact: true }).click();
+    await expect(page).toHaveURL(/\/home$/);
+    await page.goto('/');
+    await expect(page.locator('[data-phx-main]')).toHaveClass(/phx-connected/);
+  }
 }
 
 async function chooseTheme(page, name) {
@@ -112,6 +121,98 @@ test('public design loads local Plex fonts and works in dark, light, and narrow 
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'daylight');
 });
 
+test('a first visit is walked through how it works, the agent, and GitHub', async ({ page }) => {
+  test.setTimeout(120_000);
+  await page.goto('/');
+  await page.getByRole('link', { name: 'Sign in with GitHub', exact: true }).click();
+  await page.getByRole('link', { name: 'Sign in as @mockuser', exact: true }).click();
+
+  // Nobody chose to be here, so this is where a first visit lands.
+  await expect(page).toHaveURL(/\/welcome$/);
+  await expect(page.locator('[data-phx-main]')).toHaveClass(/phx-connected/);
+  await expect(page.getByRole('heading', { name: /^Welcome to Ravix/ })).toBeVisible();
+  for (const idea of ['A project is a repository.', 'Every project has a computer.', 'A project holds many conversations.', 'Invite teammates, and you are the one billed.']) {
+    await expect(page.getByText(idea, { exact: true })).toBeVisible();
+  }
+  await accessible(page);
+  await capture(page, 'welcome-intro');
+
+  await page.getByRole('link', { name: 'Set up your agent', exact: true }).click();
+  await expect(page).toHaveURL(/\/welcome\/agent$/);
+
+  // Codex on a ChatGPT subscription is a sign-in, not a paste: the page shows
+  // the code the mock Fountain hands out and notices the approval by itself
+  // (the mock approves on the third poll). Nothing here is ever a token.
+  await page.getByRole('button', { name: /^Codex/ }).click();
+  await expect(page.getByRole('button', { name: 'Subscription', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByLabel('API key', { exact: true })).toHaveCount(0);
+  await accessible(page);
+  await page.getByRole('button', { name: 'Connect ChatGPT', exact: true }).click();
+  await expect(page.locator('#chatgpt-user-code')).toHaveText('MOCK-CODE');
+  await expect(page.getByRole('link', { name: 'https://auth.openai.com/codex/device' })).toHaveAttribute('target', '_blank');
+  await accessible(page);
+  await capture(page, 'welcome-chatgpt');
+  await expect(page).toHaveURL(/\/welcome\/github$/, { timeout: 15_000 });
+  expect(await page.content()).not.toContain('MOCK-CODE');
+
+  // Back to the agent step by hand: Claude Code takes a pasted token.
+  await page.goto('/welcome/agent');
+  await expect(page.locator('[data-phx-main]')).toHaveClass(/phx-connected/);
+  await expect(page.getByText('Codex is connected with your ChatGPT subscription')).toBeVisible();
+  await page.getByRole('button', { name: /^Claude Code/ }).click();
+  await expect(page.getByText('claude setup-token')).toBeVisible();
+  await accessible(page);
+  await capture(page, 'welcome-agent');
+
+  // The mock refuses anything containing "invalid", the way Fountain refuses
+  // a token its provider rejects. The refusal lands on the field and the value
+  // is not given back.
+  await page.getByLabel('Subscription token', { exact: true }).fill('sk-ant-oat01-invalid');
+  await page.getByRole('button', { name: 'Connect Claude Code', exact: true }).click();
+  await expect(page.getByText(/Anthropic did not accept that/)).toBeVisible();
+  await expect(page.getByLabel('Subscription token', { exact: true })).toHaveValue('');
+  await accessible(page);
+
+  await page.getByLabel('Subscription token', { exact: true }).fill('sk-ant-oat01-mock');
+  await page.getByRole('button', { name: 'Connect Claude Code', exact: true }).click();
+  await expect(page).toHaveURL(/\/welcome\/github$/);
+  expect(await page.content()).not.toContain('sk-ant-oat01-mock');
+  await expect(page.getByRole('heading', { name: 'Connect GitHub' })).toBeVisible();
+  await expect(page.locator('#github-connected, #github-none')).toBeVisible();
+  await accessible(page);
+  await capture(page, 'welcome-github');
+
+  // Coming back part way through carries on from here, not from the top.
+  await page.goto('/');
+  await expect(page).toHaveURL(/\/welcome\/github$/);
+
+  await page.locator('#github-continue').click();
+  await expect(page).toHaveURL(/\/welcome\/project$/);
+  await expect(page.getByRole('heading', { name: 'Create your first project' })).toBeVisible();
+  await accessible(page);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await accessible(page);
+  await capture(page, 'welcome-project-mobile');
+
+  // Leaving is finishing: the workspace stops sending this person back, and
+  // the tests after this one start from an empty workspace as they always did.
+  await page.getByRole('button', { name: 'Skip setup', exact: true }).click();
+  await expect(page).toHaveURL(/\/home$/);
+  await page.goto('/');
+  await expect(page.getByRole('heading', { name: /Inbox/ })).toBeVisible();
+});
+
+test('the account dialog is where the agent lives after the walkthrough', async ({ page }) => {
+  await signIn(page);
+  await page.getByRole('button', { name: 'account', exact: true }).click();
+  await expect(page.getByRole('dialog', { name: 'Your account' })).toBeVisible();
+  await expect(page.getByRole('group', { name: 'Agent' })).toBeVisible();
+  await accessible(page);
+  await capture(page, 'account-dialog');
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('dialog', { name: 'Your account' })).toHaveCount(0);
+});
+
 test('home quick start creates a scratch project and recent navigation survives theme changes', async ({ page }) => {
   await signIn(page);
   await page.getByRole('link', { name: 'Home', exact: true }).first().click();
@@ -145,9 +246,29 @@ test('home quick start creates a scratch project and recent navigation survives 
   await accessible(page);
   await capture(page, 'inbox-Daylight');
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.getByRole('navigation', { name: 'Workspace navigation' }).getByRole('link', { name: 'Home' }).click();
+  const mobileNav = page.getByRole('navigation', { name: 'Workspace navigation' });
+  await mobileNav.getByRole('link', { name: 'Home' }).click();
   await accessible(page);
   await capture(page, 'home-mobile');
+  // The rail is gone at this width, and everything in it --- signing out,
+  // the theme picker, the account --- was unreachable until Menu brought it
+  // back over the page. Following a link in it closes it again.
+  const menu = mobileNav.getByRole('button', { name: 'Menu' });
+  await expect(page.getByRole('link', { name: 'Sign out' })).toBeHidden();
+  await expect(menu).toHaveAttribute('aria-expanded', 'false');
+  await menu.click();
+  await expect(menu).toHaveAttribute('aria-expanded', 'true');
+  await expect(page.getByRole('link', { name: 'Sign out' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Close menu' })).toBeVisible();
+  await accessible(page);
+  await capture(page, 'home-mobile-menu');
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('link', { name: 'Sign out' })).toBeHidden();
+  await menu.click();
+  await page.getByRole('complementary', { name: 'Projects and tracks' }).getByRole('link', { name: 'Inbox' }).click();
+  await expect(page.getByRole('heading', { name: "You're all caught up" })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Sign out' })).toBeHidden();
+  await expect(menu).toHaveAttribute('aria-expanded', 'false');
 });
 
 test('keyboard users can resize panels and close dialogs with focus restored', async ({ page }) => {
@@ -237,8 +358,15 @@ test('project, track, streaming, image upload, reconnect, and revocation', async
   // once crashed the page on, which this suite caught only by accident.
   await expect(page.locator('.workspace-queue')).toContainText('Explain this project for the browser smoke test');
   await expect(page.locator('.workspace-queue .chip')).toBeVisible();
-  await expect(page.locator('#transcript-turns')).toContainText('Explain this project for the browser smoke test');
+  // The prompt's own bubble, not just the page: the mock's reply quotes the
+  // prompt back, so the transcript contains these words even when the prompt
+  // never arrived. It reaches the live page on the turn's opening event, which
+  // the follower reads back from the feed because the stream never carries it.
+  await expect(page.locator('#transcript-turns .said .workspace-prompt').filter({ hasText: 'Explain this project for the browser smoke test' })).toHaveCount(1);
   await expect(page.locator('.workspace-turn').filter({ hasText: 'Explain this project for the browser smoke test' }).locator('.md')).toContainText('There is one TODO worth doing here');
+  // The agent's checklist, as it last stood: one plan, both lines, the first done.
+  await expect(page.locator('.workspace-plan')).toHaveCount(1);
+  await expect(page.locator('.workspace-plan li.plan-completed')).toContainText('Look for open TODOs');
   await expect(composer).toHaveValue('');
   // Interrupt the actual LiveSocket connection, preserving the browser's draft.
   await composer.fill('Draft survives reconnect');
@@ -266,6 +394,18 @@ test('project, track, streaming, image upload, reconnect, and revocation', async
   await page.setViewportSize({ width: 390, height: 844 });
   await accessible(page);
   await capture(page, 'track-mobile');
+  // On a phone the project's own controls live in the yard, and the yard is
+  // behind Menu. The owner's "Project settings" is the one worth proving
+  // reachable, because nothing else on the page offers it at this width.
+  const trackMenu = page.getByRole('navigation', { name: 'Workspace navigation' }).getByRole('button', { name: 'Menu' });
+  await expect(page.getByRole('button', { name: 'Project settings' })).toBeHidden();
+  await trackMenu.click();
+  await expect(page.getByRole('button', { name: 'Project settings' })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Sign out' })).toBeVisible();
+  await accessible(page);
+  await capture(page, 'track-mobile-menu');
+  await page.getByRole('button', { name: 'Close menu' }).click();
+  await expect(page.getByRole('button', { name: 'Project settings' })).toBeHidden();
   await page.setViewportSize({ width: 1280, height: 720 });
   // The same session is revoked from a second tab while the first remains connected.
   const trackURL = page.url();
@@ -336,4 +476,32 @@ test('a hard load paints the saved palette, never the default one first', async 
   await page.goto('/');
   await expect(page.locator('[data-phx-main]')).toHaveClass(/phx-connected/);
   await paintedOnly(page, 'hot-dog-stand');
+});
+
+test('help explains desktop connections and stays accessible on mobile', async ({ page }) => {
+  await signIn(page);
+  const help = page.getByRole('button', { name: 'Help', exact: true });
+  await help.click();
+  const dialog = page.getByRole('dialog', { name: 'Help · AI tools' });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByText('claude mcp add --transport http ravix http://localhost:4103/mcp', { exact: true })).toBeVisible();
+  await dialog.getByText('Drive tracks with an A2A client', { exact: true }).click();
+  await expect(dialog.getByText('http://localhost:4103/.well-known/agent-card.json', { exact: true })).toBeVisible();
+  await dialog.getByText('Example JSON-RPC request', { exact: true }).click();
+  await expect(dialog.locator('pre').filter({ hasText: 'SendMessage' })).toBeVisible();
+  await accessible(page);
+  await capture(page, 'tooling-help');
+  await page.keyboard.press('Escape');
+  await expect(dialog).toHaveCount(0);
+  await expect(help).toBeFocused();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole('navigation', { name: 'Workspace navigation' }).getByRole('button', { name: 'Menu' }).click();
+  await help.click();
+  await expect(dialog).toBeVisible();
+  await dialog.getByText('Permissions, progress and disconnecting', { exact: true }).click();
+  await expect(dialog.getByRole('link', { name: 'Connected applications' })).toHaveAttribute('href', '/settings/connections');
+  await accessible(page);
+  await capture(page, 'tooling-help-mobile');
+  await dialog.getByRole('button', { name: 'Close', exact: true }).click();
+  await expect(dialog).toHaveCount(0);
 });

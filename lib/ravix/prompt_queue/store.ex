@@ -50,6 +50,21 @@ defmodule Ravix.PromptQueue.Store do
 
   @done [:sent, :cancelled]
 
+  # The other four, spelled out rather than derived, because they are also
+  # spelled out in the migration that indexes them
+  # (`prompt_queue_live_heads`), and a query only gets that index when
+  # Postgres can prove its predicate from the query's. `status NOT IN
+  # ('sent', 'cancelled')` is the same set to a reader and not to the
+  # planner, which does not know the column's domain; `status IN (these
+  # four)` is a clause it can match. The check below keeps the two lists one
+  # set.
+  @live ~w(queued sending failed unconfirmed)a
+
+  if Enum.sort(@live ++ @done) != Enum.sort(Item.statuses()) do
+    raise CompileError,
+      description: "Ravix.PromptQueue.Store: @live and @done must cover Item.statuses/0 exactly"
+  end
+
   @claim_timeout_ms 6 * 60_000
 
   @restart_error "The server restarted during delivery. Check the transcript before sending this again."
@@ -150,17 +165,25 @@ defmodule Ravix.PromptQueue.Store do
   track can be delivered, and its bytes are loaded just before the POST. A
   failed or unconfirmed head is returned too, so that later instructions
   cannot overtake one whose outcome needs a person.
+
+  One pass over `prompt_queue_live_heads`, the partial index on
+  `(track_id, sequence)` over live rows, which is in exactly the order
+  `DISTINCT ON (track_id) ... ORDER BY track_id, sequence` wants. It used to
+  be a `min(sequence) GROUP BY track_id` subquery, which read every row of
+  the table -- delivered ones included, and they are nearly all of it -- on
+  every instance, every two seconds. The rows come back grouped by track
+  rather than oldest first; the sweep delivers tracks in parallel and in no
+  order, so nothing read the order.
   """
   @spec heads() :: [Item.t()]
   def heads do
-    first = live() |> group_by([p], p.track_id) |> select([p], min(p.sequence))
     # Neither the parsed body nor its JSON string: the head is read every two
     # seconds per track and the attachments are loaded once, just before the
     # POST.
     fields = Item.__schema__(:fields) -- [:body, :payload]
 
-    Item
-    |> where([p], p.sequence in subquery(first))
+    live()
+    |> distinct([p], p.track_id)
     |> order_by([p], p.sequence)
     |> select([p], struct(p, ^fields))
     |> Repo.all()
@@ -225,6 +248,26 @@ defmodule Ravix.PromptQueue.Store do
   end
 
   @doc """
+  Replace the message on a row that is still `status`, and on no other.
+
+  For a finding about a row the server did not claim: something a person can
+  move at the same moment (`retry/3` turns an `:unconfirmed` row back into a
+  `:queued` one), where `set_status/3` would put the old status back over
+  theirs.
+  """
+  @spec annotate(String.t(), Item.status(), String.t()) :: :ok
+  def annotate(id, status, error) do
+    {_count, tracks} =
+      Item
+      |> where([p], p.id == ^id and p.status == ^status)
+      |> where([p], fragment("? IS DISTINCT FROM ?", p.error, ^error))
+      |> select([p], p.track_id)
+      |> Repo.update_all(set: [error: error])
+
+    Enum.each(tracks, &publish_queue/1)
+  end
+
+  @doc """
   Take a queued row for delivery. False when it was not queued any more:
   cancelled meanwhile, or claimed by another sweep.
   """
@@ -256,6 +299,11 @@ defmodule Ravix.PromptQueue.Store do
 
   A row with no `claimed_at` was claimed before this column existed and is
   treated as stale.
+
+  `status = 'sending'` is written first and on its own so that the query
+  matches `prompt_queue_sending_claims`, the partial index over only those
+  rows: there are seldom any, and this runs on every instance every two
+  seconds.
   """
   @spec recover() :: :ok
   def recover do
@@ -378,15 +426,19 @@ defmodule Ravix.PromptQueue.Store do
     |> Repo.insert!()
   end
 
-  defp live, do: where(Item, [p], p.status not in ^@done)
+  # Literal, not a parameter: see `@live`.
+  defp live, do: where(Item, [p], p.status in @live)
   defp maybe_on_track(query, nil), do: query
   defp maybe_on_track(query, track_id), do: where(query, [p], p.track_id == ^track_id)
   # The panel re-reads a track's queue on this. Publishing is by project,
   # which the row does not carry; one read of the track finds it.
   defp publish_queue(track_id) do
-    # ownership: every caller reached this queue through
-    # `Access.track_access/2` on this very track; the read only finds which
-    # project's hub to tell.
+    # ownership: no door here, on purpose. Every writer in this store ends by
+    # telling the page, and not every writer has a person behind it: enqueue,
+    # cancel and retry went through `Access.track_access/2`, but the server's
+    # own status moves, `recover/0` and `cancel_track/1` have no user at all.
+    # The read decides nothing -- the row is already written, and this only
+    # turns its track id into the project whose hub is told.
     case Tracks.get_track(track_id) do
       %Track{project_id: project_id} -> Hub.publish(project_id, :queue, track_id: track_id)
       nil -> :ok

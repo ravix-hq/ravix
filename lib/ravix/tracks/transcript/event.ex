@@ -23,10 +23,19 @@ defmodule Ravix.Tracks.Transcript.Event do
   `stage` and `state` stay strings. Those are Fountain's stage names and
   their lifecycles -- an open vocabulary Ravix reports rather than branches
   on, apart from asking whether a state is `"started"` or `"failed"`.
+
+  ## The prompt
+
+  `prompt` is what somebody asked for, on the one event that can carry it: a
+  turn's `turn`/`started` stage, read with `?blocks=true&prompts=true`, has
+  a single `prompt` block and nothing else. Every other block Fountain puts
+  on an event is its own parse of `data`, which `Ravix.Tracks.Transcript`
+  does itself, so those are not kept. The stream never carries prompts; see
+  `Ravix.Tracks.Follower` for how a live turn gets its own.
   """
 
   @enforce_keys [:id, :turn_id, :kind, :stage, :state, :stream, :data, :ts]
-  defstruct @enforce_keys
+  defstruct @enforce_keys ++ [prompt: nil]
 
   @pending "pending"
 
@@ -44,7 +53,8 @@ defmodule Ravix.Tracks.Transcript.Event do
           state: String.t() | nil,
           stream: stream(),
           data: String.t() | nil,
-          ts: term()
+          ts: term(),
+          prompt: String.t() | nil
         }
 
   @doc """
@@ -71,9 +81,18 @@ defmodule Ravix.Tracks.Transcript.Event do
       state: raw["state"],
       stream: raw["stream"] && Map.get(@streams, raw["stream"], :other),
       data: raw["data"],
-      ts: raw["ts"]
+      ts: raw["ts"],
+      prompt: prompt(raw["blocks"])
     }
   end
+
+  @doc """
+  Does this event open a turn? The `turn`/`started` stage, which is the one
+  event a turn's prompt is served on.
+  """
+  @spec starts_turn?(t()) :: boolean()
+  def starts_turn?(%__MODULE__{kind: :stage, stage: "turn", state: "started"}), do: true
+  def starts_turn?(%__MODULE__{}), do: false
 
   @doc "The id events with no turn of their own are grouped under."
   @spec pending() :: String.t()
@@ -88,6 +107,15 @@ defmodule Ravix.Tracks.Transcript.Event do
   @spec failed_stage?(t()) :: boolean()
   def failed_stage?(%__MODULE__{kind: :stage, state: "failed"}), do: true
   def failed_stage?(%__MODULE__{}), do: false
+
+  defp prompt(blocks) when is_list(blocks) do
+    Enum.find_value(blocks, fn
+      %{"kind" => "prompt", "body" => body} when is_binary(body) and body != "" -> body
+      _other -> nil
+    end)
+  end
+
+  defp prompt(_absent), do: nil
 
   defp turn_id(id) when is_binary(id) and id != "", do: id
   defp turn_id(_absent), do: @pending

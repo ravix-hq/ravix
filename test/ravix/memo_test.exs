@@ -129,6 +129,173 @@ defmodule Ravix.MemoTest do
     end
   end
 
+  describe "newer_than: a refresh joins rather than forgets" do
+    # A load that says when it starts and waits to be released, so that what
+    # happens while it is in flight is arranged rather than raced.
+    defp held(me, result) do
+      fn ->
+        send(me, {:started, self()})
+
+        receive do
+          :go -> result
+        after
+          1_000 -> flunk("the load was never released")
+        end
+      end
+    end
+
+    # Wait for `n` callers to be parked under `key` in `field`. Polled from
+    # the server's state, because a caller parks by sending the server a
+    # message and nothing else can say when that message has been taken.
+    defp parked(memo, key, field, n) do
+      Enum.reduce_while(1..400, :timeout, fn _, _ ->
+        case :sys.get_state(memo).loads[key] do
+          %{^field => list} when length(list) == n -> {:halt, :ok}
+          _ -> Process.sleep(5) && {:cont, :timeout}
+        end
+      end)
+      |> case do
+        :ok -> :ok
+        :timeout -> flunk("#{n} #{field} never parked under #{inspect(key)}")
+      end
+    end
+
+    test "two refreshes arriving together share one load", %{memo: memo} do
+      me = self()
+      opts = [now_ms: 1_000, newer_than: 1_000]
+
+      a = Task.async(fn -> Memo.fetch(memo, :k, held(me, :value), keep(60_000), opts) end)
+      assert_receive {:started, loader}, 1_000
+
+      # The second arrives while the first's load is running, asking for a
+      # value no older than the moment that load started: it joins it.
+      b = Task.async(fn -> Memo.fetch(memo, :k, held(me, :value), keep(60_000), opts) end)
+      parked(memo, :k, :waiters, 2)
+      refute_received {:started, _}
+
+      send(loader, :go)
+      assert Task.await(a) == :value
+      assert Task.await(b) == :value
+      refute_received {:started, _}
+    end
+
+    test "a refresh after a completed load loads again, and stands for the next", %{memo: memo} do
+      assert Memo.fetch(memo, :k, fn -> 1 end, keep(60_000), now_ms: 1_000) == 1
+
+      # Loaded at 1_000, which is before 1_001: not good enough.
+      assert Memo.fetch(memo, :k, fn -> 2 end, keep(60_000), now_ms: 1_001, newer_than: 1_001) ==
+               2
+
+      # Loaded at 1_001, which is good enough for 1_001 and for anything
+      # earlier, and not for a moment after it.
+      assert Memo.fetch(memo, :k, fn -> 3 end, keep(60_000), now_ms: 1_002, newer_than: 1_001) ==
+               2
+
+      assert Memo.fetch(memo, :k, fn -> 3 end, keep(60_000), now_ms: 1_002, newer_than: 500) == 2
+      assert Memo.peek(memo, :k, 1_002, 1_001) == {:ok, 2}
+      assert Memo.peek(memo, :k, 1_002, 1_002) == :miss
+      assert Memo.peek(memo, :k, 1_002) == {:ok, 2}
+    end
+
+    test "refreshes arriving during an older load share the one load that follows it", %{
+      memo: memo
+    } do
+      me = self()
+
+      a = Task.async(fn -> Memo.fetch(memo, :k, held(me, :old), keep(60_000), now_ms: 1_000) end)
+      assert_receive {:started, first}, 1_000
+
+      # Two pages hearing the same news a moment after the load began. What
+      # is running may have asked the provider before the news happened, so
+      # neither joins it -- and neither starts one beside it.
+      b =
+        Task.async(fn ->
+          Memo.fetch(memo, :k, held(me, :new), keep(60_000), now_ms: 1_001, newer_than: 1_001)
+        end)
+
+      c =
+        Task.async(fn ->
+          Memo.fetch(memo, :k, held(me, :new), keep(60_000), now_ms: 1_002, newer_than: 1_002)
+        end)
+
+      parked(memo, :k, :followers, 2)
+      refute_received {:started, _}
+
+      send(first, :go)
+      assert Task.await(a) == :old
+
+      # The one load promised to both starts only now, and there is one.
+      assert_receive {:started, second}, 1_000
+      refute_received {:started, _}
+      send(second, :go)
+      assert Task.await(b) == :new
+      assert Task.await(c) == :new
+
+      # Stamped with the latest follower's clock: good for 1_002 and not
+      # claimed to be any newer than that.
+      assert Memo.peek(memo, :k, 1_003, 1_002) == {:ok, :new}
+      assert Memo.peek(memo, :k, 1_003, 1_003) == :miss
+    end
+
+    test "a forget during the older load leaves the follow-up's answer standing", %{memo: memo} do
+      me = self()
+
+      a = Task.async(fn -> Memo.fetch(memo, :k, held(me, :old), keep(60_000), now_ms: 1_000) end)
+      assert_receive {:started, first}, 1_000
+
+      b =
+        Task.async(fn ->
+          Memo.fetch(memo, :k, held(me, :new), keep(60_000), now_ms: 1_001, newer_than: 1_001)
+        end)
+
+      parked(memo, :k, :followers, 1)
+      :ok = Memo.forget(memo, :k)
+      send(first, :go)
+
+      # The forgotten load answers its own waiter and writes nothing.
+      assert Task.await(a) == :old
+      assert Memo.peek(memo, :k, 1_001) == :miss
+
+      # The follow-up began after the forget, so it is not the load the
+      # forget was about: its answer is kept.
+      assert_receive {:started, second}, 1_000
+      send(second, :go)
+      assert Task.await(b) == :new
+      assert Memo.peek(memo, :k, 1_001) == {:ok, :new}
+    end
+
+    test "run: :caller hands the follow-up to a follower to run itself", %{memo: memo} do
+      me = self()
+
+      a =
+        Task.async(fn ->
+          Memo.fetch(memo, :k, held(me, :old), keep(60_000), now_ms: 1_000, run: :caller)
+        end)
+
+      assert_receive {:started, first}, 1_000
+      assert first == a.pid
+
+      b =
+        Task.async(fn ->
+          Memo.fetch(memo, :k, held(me, :new), keep(60_000),
+            now_ms: 1_001,
+            newer_than: 1_001,
+            run: :caller
+          )
+        end)
+
+      parked(memo, :k, :followers, 1)
+      send(first, :go)
+      assert Task.await(a) == :old
+
+      assert_receive {:started, second}, 1_000
+      assert second == b.pid
+      send(second, :go)
+      assert Task.await(b) == :new
+      assert Memo.peek(memo, :k, 1_001, 1_001) == {:ok, :new}
+    end
+  end
+
   describe "a crash is an answer" do
     test "a load that raises answers every waiter and is not remembered", %{memo: memo} do
       boom = fn -> raise "no" end

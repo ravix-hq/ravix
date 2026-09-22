@@ -114,10 +114,12 @@ defmodule Ravix.Fountain.Shapes do
     Turns live apart from the output: the events carry what the machine said,
     and this carries what it was asked and whether the asking finished.
     `status` and `origin` stay strings -- Fountain's own vocabularies, which
-    the transcript reports rather than branches on.
+    Ravix reports rather than branches on. `client_request_id` is the name the
+    sender gave the prompt that opened the turn, if it gave one; the prompt
+    queue sends its row id there.
     """
 
-    @enforce_keys [:id, :prompt, :origin, :status, :inserted_at]
+    @enforce_keys [:id, :prompt, :origin, :status, :inserted_at, :client_request_id]
     defstruct @enforce_keys
 
     @type t :: %__MODULE__{
@@ -125,7 +127,8 @@ defmodule Ravix.Fountain.Shapes do
             prompt: String.t() | nil,
             origin: String.t() | nil,
             status: String.t() | nil,
-            inserted_at: String.t() | nil
+            inserted_at: String.t() | nil,
+            client_request_id: String.t() | nil
           }
   end
 
@@ -229,7 +232,8 @@ defmodule Ravix.Fountain.Shapes do
       prompt: string_or_nil(raw["prompt"]),
       origin: string_or_nil(raw["origin"]),
       status: string_or_nil(raw["status"]),
-      inserted_at: string_or_nil(raw["inserted_at"])
+      inserted_at: string_or_nil(raw["inserted_at"]),
+      client_request_id: string_or_nil(raw["client_request_id"])
     }
   end
 

@@ -41,6 +41,14 @@ defmodule Ravix.Tracks.Follower do
   a replacement anywhere. Nothing else can recover from that, because the only
   cursor that survives is the reader's own: `RavixWeb.TrackLive` re-subscribes
   with the newest event id it holds. Hence the `{:ok, pid}`.
+
+  **A turn's prompt is fetched as the turn opens.** The stream carries only
+  what the machine wrote; the prompt is served on the paged feed alone, on
+  the turn's `turn`/`started` event (`?prompts=true`). So when that event
+  arrives here without one, the follower reads that single event back from
+  the feed and broadcasts the copy that has it. One small read per turn,
+  once for everybody following, and only when Fountain could not answer is
+  the bare event sent on: the next full read of the transcript fills it in.
   """
 
   use GenServer, restart: :temporary
@@ -253,7 +261,12 @@ defmodule Ravix.Tracks.Follower do
 
     task =
       Task.Supervisor.async_nolink(Ravix.TaskSupervisor, fn ->
-        Fountain.each_event(client, conversation_id, &relay(&1, track_id, follower), opts)
+        Fountain.each_event(
+          client,
+          conversation_id,
+          &relay(&1, client, conversation_id, track_id, follower),
+          opts
+        )
       end)
 
     %{state | task: task}
@@ -262,12 +275,29 @@ defmodule Ravix.Tracks.Follower do
   # Runs in the stream task: every event to the topic, its id to the follower.
   # Parsed here rather than by each subscriber, so Fountain's JSON reaches
   # exactly one place in Ravix and every page downstream reads fields.
-  defp relay(raw, track_id, follower) do
-    event = Event.from(raw)
+  defp relay(raw, client, conversation_id, track_id, follower) do
+    event = raw |> Event.from() |> with_prompt(client, conversation_id)
     Phoenix.PubSub.broadcast(Ravix.PubSub, topic(track_id), {:transcript, track_id, event})
     if is_integer(event.id), do: send(follower, {:seen, event.id})
     :cont
   end
+
+  # The one event a prompt is served on, read back from the feed. `after` is
+  # exclusive, so the event before this one's id is the cursor that answers
+  # exactly this one.
+  defp with_prompt(%Event{id: id, prompt: nil} = event, client, conversation_id)
+       when is_integer(id) and id > 0 do
+    if Event.starts_turn?(event) do
+      case Fountain.events_page(client, conversation_id, after: id - 1, limit: 1, prompts: true) do
+        {:ok, %{events: [%{"id" => ^id} = raw | _]}} -> Event.from(raw)
+        _unanswered -> event
+      end
+    else
+      event
+    end
+  end
+
+  defp with_prompt(event, _client, _conversation_id), do: event
 
   defp reopen_later(state, result) do
     case result do

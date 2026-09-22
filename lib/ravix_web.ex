@@ -98,6 +98,11 @@ defmodule RavixWeb do
     quote do
       use Phoenix.LiveComponent
 
+      # A component's events never pass through the page's session hooks, so
+      # `handle_event/3` is wrapped here; see the moduledoc of
+      # `RavixWeb.Live.Hooks`. The page must pass `session_hash`.
+      @before_compile RavixWeb.Live.Hooks
+
       import RavixWeb.Live.Result
       import RavixWeb.Live.Async
 

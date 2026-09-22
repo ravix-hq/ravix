@@ -171,7 +171,7 @@ defmodule Ravix.PreviewsFixture do
     stub(Ravix.Tracks, :machine_of, fn _project, _opts -> machine(pid) end)
     stub(Ravix.Tracks, :sprite_for, fn sandbox_id -> sandbox_id end)
 
-    stub(Ravix.Previews, :ready?, fn _row, _path ->
+    stub(Ravix.Previews.Lifecycle, :ready?, fn _row, _path ->
       case state(pid).ready do
         fun when is_function(fun, 0) -> fun.()
         answer -> answer

@@ -22,10 +22,46 @@ defmodule RavixWeb.Live.Hooks do
 
   The token is looked up once per mount through `assign_new/3`, so a
   `live_session` that lists both hooks does not read the database twice.
+  Both also assign `:session_hash`, the SHA-256 of the token, which is what
+  every later question about the session is asked with --- by the page's own
+  hooks below, and by the components it renders.
+
+  ## Components
+
+  `attach_hook/4` reaches a LiveView's callbacks and nothing else: an event
+  sent to a `live_component` (`phx-target={@myself}`) arrives at the
+  component's own `handle_event/3`, and the page's session hooks never see
+  it. Left alone, that meant a revoked session could still save a project's
+  settings, invite somebody or run a terminal command for as long as the
+  page went without a message of its own.
+
+  So `use RavixWeb, :live_component` registers this module's
+  `__before_compile__/1`, which wraps the component's `handle_event/3` in
+  `component/2`. A component therefore needs a `session_hash` assign from
+  its page and nothing else; the wrapping is not a per-component act of
+  discipline, and a component that is not given the hash fails loudly on
+  its first event rather than answering it.
+
+  The check reads the session row rather than holding a `RavixWeb.Live.Guard`
+  of its own: a copy of the page's would age on its own clock and could
+  outlive the page's answer. That is one read per event on components that
+  get a handful of them, and it is exact --- a session that has gone is
+  refused on the next event, not after a backstop. It sends the browser to
+  sign in the way the page's own hook does.
+
+  A component's `handle_async/3` is not wrapped. What arrives there is the
+  answer to a context call that established access when it started, and
+  everything it can do beyond the component's own state --- a flash, a
+  changed person, a place to go --- is a message to the page, which the
+  page's hooks check. Reading the row there too would sit in front of
+  every one of those messages and buy at most the fifteen seconds
+  `RavixWeb.Live.Guard` already allows a notice to go missing for.
   """
 
   import Phoenix.Component, only: [assign: 2, assign_new: 3]
   import Phoenix.LiveView, only: [connected?: 1, redirect: 2, attach_hook: 4]
+
+  alias Phoenix.LiveView.Socket
 
   alias Ravix.{Accounts, Crypto}
   alias RavixWeb.Live.Guard
@@ -87,6 +123,41 @@ defmodule RavixWeb.Live.Hooks do
   defp observed(message, socket),
     do: assign(socket, session_guard: Guard.observe(message, socket.assigns[:session_guard]))
 
+  @doc """
+  Run a `live_component`'s event only while the session behind its page
+  still stands; otherwise send the whole page to sign in, which is what the
+  page's own hook would have done.
+
+  `fun` is the event's body and answers as it would; the socket is the
+  component's, and must carry `:session_hash`. Applied to every component
+  by `__before_compile__/1`; see the moduledoc.
+  """
+  @spec component(Socket.t(), (-> {:noreply, Socket.t()})) :: {:noreply, Socket.t()}
+  def component(socket, fun) when is_function(fun, 0) do
+    case Guard.verify(nil, Map.fetch!(socket.assigns, :session_hash)) do
+      {:ok, _guard} -> fun.()
+      :error -> {:noreply, redirect(socket, to: "/login")}
+    end
+  end
+
+  # Wraps a component's `handle_event/3` in `component/2`, when it has one.
+  # Registered by `RavixWeb.live_component/0`. The component's own clauses
+  # stay its own: `super/3` is what runs once the session has been asked
+  # about.
+  @doc false
+  defmacro __before_compile__(env) do
+    if Module.defines?(env.module, {:handle_event, 3}) do
+      quote do
+        defoverridable handle_event: 3
+
+        @impl true
+        def handle_event(event, params, socket) do
+          unquote(__MODULE__).component(socket, fn -> super(event, params, socket) end)
+        end
+      end
+    end
+  end
+
   # One read of the session at mount, for both the person and the guard that
   # will be asked about them on every message afterwards. `assign_new` keeps
   # a `live_session` listing both hooks from reading it twice.
@@ -94,7 +165,9 @@ defmodule RavixWeb.Live.Hooks do
     hash = hash_of(session)
 
     socket =
-      assign_new(socket, :session_guard, fn ->
+      socket
+      |> assign_new(:session_hash, fn -> hash end)
+      |> assign_new(:session_guard, fn ->
         case hash && Accounts.open_session(hash) do
           {:ok, _user, expires_at} -> Guard.new(hash, expires_at)
           _ -> Guard.new(hash, nil)

@@ -49,9 +49,11 @@ defmodule Ravix.Tracks.Store do
 
   @doc "The open tracks of one project this person was named on, oldest first."
   @spec member_tracks_of(String.t(), String.t()) :: [Track.t()]
-  # ownership: `track_members` is the people context's table, joined here
-  # because the question is about tracks: which of this project's tracks may
-  # this person see. `Ravix.People.Store` answers the mirror of it.
+  # ownership: no door before this one. `track_members` is the people
+  # context's table, joined here because the question is about tracks: which
+  # of this project's tracks may this person see, which is what
+  # `Ravix.Tracks.list/2` decides with it. `Ravix.People.Store` answers the
+  # mirror of it.
   def member_tracks_of(user_id, project_id) do
     Repo.all(
       from(t in Track,

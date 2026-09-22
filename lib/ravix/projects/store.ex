@@ -51,6 +51,18 @@ defmodule Ravix.Projects.Store do
   def get_project(id) when is_binary(id), do: Repo.get(Project, id)
   def get_project(_id), do: nil
 
+  @doc """
+  Several projects by id, archived or not, in no particular order.
+
+  For a list that already holds the ids -- the rail, which has this person's
+  track memberships in hand -- and would otherwise read them one at a time.
+  Unscoped, as `get_project/1` is: the caller established how it came by
+  each id. An id with no project behind it is simply absent.
+  """
+  @spec get_projects([String.t()]) :: [Project.t()]
+  def get_projects([]), do: []
+  def get_projects(ids) when is_list(ids), do: Repo.all(from(p in Project, where: p.id in ^ids))
+
   @doc "The live projects a person owns, oldest first."
   @spec projects_of(String.t()) :: [Project.t()]
   def projects_of(user_id) do
@@ -100,15 +112,29 @@ defmodule Ravix.Projects.Store do
   distinction rather than a slower delete. Every track of the old disk is
   closed by the caller in the same breath: a track is a worktree, and that
   worktree is about to stop existing.
+
+  `credential_set_id` is the set the *new* agent was built on, which moves
+  with it for the reason `set_credential_set/2` exists at all.
   """
-  @spec rebind_agent(String.t(), String.t()) :: :ok
-  def rebind_agent(id, agent_id), do: update_fields(id, agent_id: agent_id)
+  @spec rebind_agent(String.t(), String.t(), String.t() | nil) :: :ok
+  def rebind_agent(id, agent_id, credential_set_id),
+    do: update_fields(id, agent_id: agent_id, credential_set_id: credential_set_id)
+
+  @doc """
+  Record which of its owner's credential sets the project's agent now points
+  at. Fountain is told first, by the caller; this is what lets the next wake
+  see there is nothing to do. See `Ravix.Projects.Machine.adopt_credentials/2`.
+  """
+  @spec set_credential_set(String.t(), String.t()) :: :ok
+  def set_credential_set(id, credential_set_id),
+    do: update_fields(id, credential_set_id: credential_set_id)
 
   @doc "Archive a project, cancelling whatever its open tracks still had queued."
   @spec archive(String.t()) :: :ok
   def archive(id) do
-    # ownership: the project is being archived, which takes its tracks with
-    # it; prompts queued for them have nowhere left to be delivered.
+    # ownership: `Ravix.Projects.destroy/2` admitted the owner through
+    # `Access.project_of/2` before retiring this project. Archiving it takes
+    # its tracks with it, and prompts queued for them have nowhere left to go.
     Enum.each(open_tracks(id), &Ravix.PromptQueue.Store.cancel_track(&1.id))
     update_fields(id, archived_at: DateTime.utc_now())
   end

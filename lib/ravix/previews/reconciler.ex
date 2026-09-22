@@ -32,7 +32,7 @@ defmodule Ravix.Previews.Reconciler do
 
   alias Ravix.Clock
   alias Ravix.Previews
-  alias Ravix.Previews.{Row, Server, Store}
+  alias Ravix.Previews.{Lifecycle, Row, Server, Store}
   alias Ravix.Projects.Project
   alias Ravix.Repo
   alias Ravix.Tracks.Track
@@ -79,7 +79,7 @@ defmodule Ravix.Previews.Reconciler do
     tracks =
       rows
       |> Enum.map(& &1.track_id)
-      # ownership: the reconciler is a sweep, not a request -- it has no caller
+      # ownership: no door -- the reconciler is a sweep, not a request, with no caller
       # to establish anything for. These are the tracks behind the preview rows
       # it just read, named so their project's machine can be checked.
       |> then(&Repo.all(from t in Track, where: t.id in ^&1))
@@ -90,7 +90,7 @@ defmodule Ravix.Previews.Reconciler do
       |> Map.values()
       |> Enum.map(& &1.project_id)
       |> Enum.uniq()
-      # ownership: as above -- a sweep with no caller, reading the projects
+      # ownership: no door, as above -- a sweep with no caller, reading the projects
       # those tracks sit on so each preview can be checked against its machine.
       |> then(&Repo.all(from p in Project, where: p.id in ^&1))
       |> Map.new(&{&1.id, &1})
@@ -130,8 +130,8 @@ defmodule Ravix.Previews.Reconciler do
   def reconcile({%Row{track_id: track_id} = row, track, project}) do
     result =
       case decide(row, track, project, Clock.now_ms()) do
-        :cleanup -> Previews.stop_service(track_id, :cleanup)
-        :stop -> Previews.stop_service(track_id, :stop, row.generation)
+        :cleanup -> Lifecycle.stop_service(track_id, :cleanup)
+        :stop -> Lifecycle.stop_service(track_id, :stop, row.generation)
         :ensure -> Server.run(track_id, {:ensure_running, row.generation, :start})
         :leave -> :ok
       end

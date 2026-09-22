@@ -16,6 +16,10 @@ defmodule RavixWeb.Live.Result do
   alias RavixWeb.Error
   alias RavixWeb.Live.Form
 
+  # Six seconds: long enough to read a sentence, short enough that a toast
+  # nobody dismissed is not still there an hour later.
+  @notice_ms 6_000
+
   @typedoc "A context's answer, in the three shapes every one of them shares."
   @type response :: :ok | {:ok, term()} | {:error, term()}
 
@@ -64,24 +68,86 @@ defmodule RavixWeb.Live.Result do
   @doc """
   Flash the sentence `RavixWeb.Error` has for `reason`.
 
+  See `flash/3` for where the sentence ends up.
+  """
+  @spec error(Socket.t(), term()) :: Socket.t()
+  def error(socket, reason), do: flash(socket, :error, Error.from(reason).message)
+
+  @doc """
+  Flash the one sentence for work that exited before it could answer.
+
+  A `handle_async/3` clause matching `{:exit, reason}` is a page whose task
+  crashed, was killed or lost the instance it ran on. It used to be five
+  clauses in five modules, four of them carrying the same string, and each
+  a chance for the next one to say it differently. The sentence is
+  `RavixWeb.Error`'s, as `{:async_exit, reason}`; the reason is the
+  refusal's payload, which `Error.from/2` never logs and the task's own
+  crash report already did.
+
+  Two arguments, because `exit/1` is `Kernel`'s.
+  """
+  @spec exit(Socket.t(), term()) :: Socket.t()
+  def exit(socket, reason), do: error(socket, {:async_exit, reason})
+
+  @doc """
+  Put `message` in the flash that is actually rendered.
+
   A `live_component` cannot do this itself. `Phoenix.LiveView.put_flash/3`
   inside one changes a socket the page never renders, so the flash is
   dropped and the refusal is silent -- the person clicks, nothing happens,
   and nothing says why. So a component hands the sentence to its parent
   instead, which is the only process with a flash to put it in.
 
-  Both pages handle `{:flash, :error, message}` for this reason.
-  """
-  @spec error(Socket.t(), term()) :: Socket.t()
-  def error(socket, reason) do
-    message = Error.from(reason).message
+  A nested LiveView is in the same position for a different reason: its
+  flash is its own, and the page's `Layouts.app` never sees it. The track
+  page used to draw a second toast stack of its own for exactly this, at
+  the same corner as the workspace's, so two toasts could land on top of
+  one another and the nested one said nothing to a screen reader. The
+  sentence goes up to `socket.parent_pid` instead, and there is one stack.
 
-    if component?(socket) do
-      send(self(), {:flash, :error, message})
-      socket
-    else
-      Phoenix.LiveView.put_flash(socket, :error, message)
+  Every page handles `{:flash, kind, message}` for both reasons.
+
+  A notice (`:info`) is news, not a fault, so the page that renders it lets
+  it go after `notice_ms/0` (`after:` names another delay): a
+  `{:clear_flash, :info, message}` is sent to that process, and
+  `clear_notice/3` drops the flash only if it still says the same thing. An
+  error stays until somebody dismisses it.
+  """
+  @spec flash(Socket.t(), :info | :error, String.t(), after: non_neg_integer()) :: Socket.t()
+  def flash(socket, kind, message, opts \\ []) when kind in [:info, :error] do
+    cond do
+      component?(socket) ->
+        send(self(), {:flash, kind, message})
+        socket
+
+      is_pid(socket.parent_pid) ->
+        send(socket.parent_pid, {:flash, kind, message})
+        socket
+
+      kind == :info ->
+        delay = Keyword.get(opts, :after, notice_ms())
+        Process.send_after(self(), {:clear_flash, :info, message}, delay)
+        Phoenix.LiveView.put_flash(socket, :info, message)
+
+      true ->
+        Phoenix.LiveView.put_flash(socket, :error, message)
     end
+  end
+
+  @doc "How long a notice stays before `flash/3` lets it go."
+  @spec notice_ms() :: pos_integer()
+  def notice_ms, do: @notice_ms
+
+  @doc """
+  The timer from `flash/3` arriving. The flash goes only if it still holds
+  `message`: a newer notice has its own timer, and must not be cut short by
+  the one that belonged to the notice it replaced.
+  """
+  @spec clear_notice(Socket.t(), :info | :error, String.t()) :: Socket.t()
+  def clear_notice(socket, kind, message) do
+    if Phoenix.Flash.get(socket.assigns.flash, kind) == message,
+      do: Phoenix.LiveView.clear_flash(socket, kind),
+      else: socket
   end
 
   # `@myself` is assigned only inside a `live_component`.

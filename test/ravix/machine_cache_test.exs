@@ -72,6 +72,62 @@ defmodule Ravix.MachineCacheTest do
     assert length(FakeTransport.calls(client)) == 2
   end
 
+  test "fresh reads arriving during a fresh read share it rather than restarting it", %{
+    project: project
+  } do
+    me = self()
+
+    # Fountain answers when told to, so that the second and third readers
+    # provably arrive while the first read is in flight.
+    client =
+      FakeTransport.client([
+        {%{method: "GET", path: "/api/conversations"},
+         fn _call ->
+           send(me, {:asked, self()})
+
+           receive do
+             :answer -> {200, [], %{data: [@row]}}
+           after
+             1_000 -> {500, [], %{error: "never released"}}
+           end
+         end}
+      ])
+
+    opts = [now_ms: 0, fresh: true]
+    first = Task.async(fn -> MachineCache.conversations(client, project, opts) end)
+    assert_receive {:asked, fountain}, 1_000
+
+    # A `:turn` on the hub reaches every open page on the project and each
+    # asks for the list afresh. Deleting the key on each ask, as this used
+    # to, disowned the read in flight and started one per page.
+    rest =
+      for _ <- 1..2, do: Task.async(fn -> MachineCache.conversations(client, project, opts) end)
+
+    parked_on_the_first(client, project)
+
+    send(fountain, :answer)
+    assert Task.await(first) == {:ok, [@conversation]}
+    assert Task.await_many(rest) == [{:ok, [@conversation]}, {:ok, [@conversation]}]
+    assert length(FakeTransport.calls(client)) == 1
+  end
+
+  # Wait for the two later readers to be parked behind the first's load,
+  # which they do by messaging the memo and which nothing else reports.
+  defp parked_on_the_first(client, project) do
+    key = {client.base_url, :conversations, project.id, project.agent_id}
+
+    Enum.reduce_while(1..400, :timeout, fn _, _ ->
+      case :sys.get_state(MachineCache).loads[key] do
+        %{waiters: waiters} when length(waiters) == 3 -> {:halt, :ok}
+        _ -> Process.sleep(5) && {:cont, :timeout}
+      end
+    end)
+    |> case do
+      :ok -> :ok
+      :timeout -> flunk("the later readers never joined the first read")
+    end
+  end
+
   test "forgetting a project drops its memo and nobody else's", %{project: project} do
     other = %Project{id: project.id <> "-other", agent_id: project.agent_id <> "-other"}
 

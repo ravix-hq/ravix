@@ -1,7 +1,7 @@
 defmodule Ravix.Tracks.Transcript.Block do
   @moduledoc """
   One drawn thing in a turn: the five shapes `src/components/Transcript.tsx`
-  renders, one struct each.
+  rendered, one struct each, and the agent's plan, which it never did.
 
   These were a `@type block :: map()` -- which is to say `any` -- carrying a
   `:kind` field to say which of the five a given map was. That is a
@@ -99,8 +99,60 @@ defmodule Ravix.Tracks.Transcript.Block do
     @type t :: %__MODULE__{stage: String.t() | nil, body: String.t()}
   end
 
-  @typedoc "Any of the five. Matched by struct, never by a tag field."
-  @type t :: Text.t() | Thinking.t() | Tool.t() | Raw.t() | Failure.t()
+  defmodule Plan do
+    @moduledoc """
+    The agent's checklist, as it last stood in this turn.
+
+    Every plan the agent reports is the whole list rather than a change to
+    it (`Managoat.ACP.Blocks`: an ACP `plan` update, or a `TodoWrite` /
+    `update_plan` call the library reconstructs one from), so a turn keeps
+    only the newest and draws it where that one arrived. A cleared list
+    removes the block rather than drawing an empty one.
+
+    `status` is closed over the three ACP names, with anything else read as
+    `:pending`: an entry the agent has not said it finished is not finished.
+    """
+
+    defmodule Entry do
+      @moduledoc "One line of a plan."
+
+      @enforce_keys [:content, :status]
+      defstruct [:content, :status]
+
+      @type t :: %__MODULE__{content: String.t(), status: :pending | :in_progress | :completed}
+    end
+
+    @enforce_keys [:entries]
+    defstruct [:entries]
+
+    @type t :: %__MODULE__{entries: [Entry.t()]}
+
+    @statuses %{"pending" => :pending, "in_progress" => :in_progress, "completed" => :completed}
+
+    @doc """
+    A plan from the library's entries, or nil when none of them has any text.
+
+    Entries are ACP's, string-keyed: `content`, `status`, and an optional
+    `priority` this does not draw. An entry without a string `content` is
+    dropped rather than drawn as a blank line.
+    """
+    @spec from_entries(term()) :: t() | nil
+    def from_entries(entries) when is_list(entries) do
+      case for(
+             %{"content" => content} = entry <- entries,
+             is_binary(content) and String.trim(content) != "",
+             do: %Entry{content: content, status: Map.get(@statuses, entry["status"], :pending)}
+           ) do
+        [] -> nil
+        kept -> %__MODULE__{entries: kept}
+      end
+    end
+
+    def from_entries(_entries), do: nil
+  end
+
+  @typedoc "Any of the six. Matched by struct, never by a tag field."
+  @type t :: Text.t() | Thinking.t() | Tool.t() | Raw.t() | Failure.t() | Plan.t()
 
   @doc "A tool call as it starts, before any result has been paired onto it."
   @spec tool(map(), String.t() | nil, Detail.t()) :: Tool.t()
