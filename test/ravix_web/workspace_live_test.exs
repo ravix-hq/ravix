@@ -529,7 +529,8 @@ defmodule RavixWeb.WorkspaceLiveTest do
     |> form("#settings-form", settings: [instructions: "Be precise", apt: "git curl"])
     |> render_submit()
 
-    assert render(view) =~ "Settings saved"
+    # The save runs under `start_async`; the flash only exists once it lands.
+    assert render_async(view) =~ "Settings saved"
   end
 
   test "file, diff, check, and preview panels consume their context shapes", %{
