@@ -412,6 +412,10 @@ h4 { font-size: 12px; color: var(--dim); font-weight: 500; letter-spacing: 0; }
 .col { display: flex; flex-direction: column; gap: 8px; }
 .truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .offscreen { display: none; }
+/* Off the screen but not out of the tree: for a live region a screen reader
+   should hear and nobody needs to see. `.offscreen` is `display: none`, which
+   removes it from both. */
+.sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; border: 0; }
 
 /* A row of controls, wherever a form or a toolbar needs one. The sections
    that own a particular row (the yard's nav, the composer's foot) tighten it
@@ -455,6 +459,10 @@ h4 { font-size: 12px; color: var(--dim); font-weight: 500; letter-spacing: 0; }
 .yard-who { min-width: 0; display: flex; flex-direction: column; line-height: 1.2; }
 .yard-who strong { font-size: 13px; font-weight: 600; }
 .yard-who small { color: var(--dimmer); font-size: 11px; }
+/* The x in the yard's corner and the scrim behind it exist only when the
+   yard has been forced over the page, which only `narrow` does. */
+.yard-close { display: none; margin-left: auto; }
+.yard-scrim { display: none; }
 
 /* The nav is a `.workspace-actions` row stood on end, so it is written after
    that rule and takes its metrics back. */
@@ -1063,16 +1071,17 @@ h4 { font-size: 12px; color: var(--dim); font-weight: 500; letter-spacing: 0; }
    hook toggles `.unpinned` on the scroller it is mounted on (today that is
    `.transcript-scroll`; `.scroll` is the name the hook's own docs use); the
    button sits over the scroller's bottom edge so it is in the eye line
-   without covering the last line said. The markup is not yet rendered. */
+   without covering the last line said. */
 .scroll { flex: 1; min-height: 0; overflow-y: auto; position: relative; }
 .jump-latest {
-  position: sticky; bottom: 12px; align-self: center; margin-top: 8px;
+  position: sticky; bottom: 12px; width: max-content; margin: 8px auto 0;
   display: none; align-items: center; gap: 6px; padding: 6px 12px;
   border-radius: var(--radius); font-size: 12px; background: var(--panel);
   border: 1px solid var(--line-strong); box-shadow: 0 8px 24px var(--shadow);
   z-index: 5;
 }
-.scroll.unpinned .jump-latest, .transcript-scroll.unpinned .jump-latest { display: inline-flex; }
+.jump-latest .ico { color: var(--dim); }
+.scroll.unpinned .jump-latest, .transcript-scroll.unpinned .jump-latest { display: flex; }
 
 /* The mobile nav only exists once the rail is gone; see `narrow`. */
 .workspace-mobile-nav { display: none; }
@@ -1107,7 +1116,10 @@ h4 { font-size: 12px; color: var(--dim); font-weight: 500; letter-spacing: 0; }
   .panel-resize-handle { display: none; }
   .app { grid-template-columns: 1fr; }
   .yard { display: none; }
-  .yard.forced { display: flex; position: fixed; inset: 0 auto 0 0; width: var(--rail); z-index: 30; }
+  .yard.forced { display: flex; position: fixed; inset: 0 auto 0 0; width: var(--rail); z-index: 30; box-shadow: 0 12px 40px var(--shadow); }
+  .yard.forced .yard-close { display: inline-flex; }
+  .yard-scrim { display: block; position: fixed; inset: 0; z-index: 29; background: var(--scrim); animation: fade 120ms ease; }
+  .workspace-mobile-nav .yard-menu { display: inline-flex; align-items: center; gap: 4px; }
   .workspace-mobile-nav { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; padding: 10px; border-bottom: 1px solid var(--line); }
   .workspace-mobile-nav a { color: var(--ink); }
   .crumbs { flex-wrap: wrap; row-gap: 6px; height: auto; min-height: 44px; padding: 8px 12px; }
@@ -1143,4 +1155,5 @@ h4 { font-size: 12px; color: var(--dim); font-weight: 500; letter-spacing: 0; }
 
 @media (prefers-reduced-motion: reduce) {
   .dot.running, .dot.opening { animation: none; }
+  .toast, .live-disconnected, .scrim, .yard-scrim { animation: none; }
 }

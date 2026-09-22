@@ -27,7 +27,7 @@ defmodule RavixWeb.Live.SettingsDialog do
 
     * **The flash.** `Phoenix.LiveView.put_flash/3` inside a component
       changes a socket nobody renders. The sentence is sent instead; see
-      `RavixWeb.Live.Result.error/2`.
+      `RavixWeb.Live.Result.flash/3`, which is the `flash/3` used here.
     * **The rail.** Saving settings renames the project, so the list on the
       left is wrong until it is re-read. This dialog says so and the page
       decides what to do about it.

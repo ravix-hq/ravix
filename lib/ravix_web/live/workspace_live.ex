@@ -57,6 +57,12 @@ defmodule RavixWeb.WorkspaceLive do
         # The nested `RavixWeb.TrackLive`, once it has said where it is. See
         # the `:track_host` clause of `handle_info/2`, and `hand_over/3`.
         track_host: nil,
+        # Whether the yard is open over the page. Only the phone layout asks:
+        # under `--bp-narrow` the rail is gone and the "Menu" button in the
+        # mobile nav is what brings it back. Held here rather than in the
+        # browser so a patch --- which is what every link in the yard does
+        # --- finds it and closes it; see `handle_params/3`.
+        yard_open: false,
         dialog: nil,
         project_form: Form.new(:new_project),
         track_form: Form.new(:new_track),
@@ -78,7 +84,8 @@ defmodule RavixWeb.WorkspaceLive do
 
   @impl true
   def handle_params(params, _uri, socket) do
-    socket = validate_session(socket)
+    # Every link in the yard patches, so arriving anywhere is leaving it.
+    socket = socket |> validate_session() |> assign(yard_open: false)
 
     case wrong_page(socket) do
       nil -> {:noreply, open_url(socket, params)}
@@ -213,6 +220,11 @@ defmodule RavixWeb.WorkspaceLive do
        else: socket
      )}
   end
+
+  def handle_event("yard", _, socket),
+    do: {:noreply, assign(socket, yard_open: !socket.assigns.yard_open)}
+
+  def handle_event("yard-close", _, socket), do: {:noreply, assign(socket, yard_open: false)}
 
   def handle_event("toggle-project", %{"id" => id}, socket) do
     expanded = socket.assigns.expanded_projects
@@ -453,10 +465,15 @@ defmodule RavixWeb.WorkspaceLive do
   def handle_info({:person_removed, :project, _login}, socket),
     do: {:noreply, socket |> reload_async() |> push_patch(to: "/")}
 
-  # A `live_component` cannot put a flash in the page's own socket, so it
-  # sends the sentence here; see `RavixWeb.Live.Result.error/2`.
+  # A `live_component` cannot put a flash in the page's own socket, and the
+  # nested track page has no toasts of its own, so both send the sentence
+  # here; see `RavixWeb.Live.Result.flash/3`. The clear is that function's
+  # timer for a notice, coming due.
   def handle_info({:flash, kind, message}, socket),
-    do: {:noreply, put_flash(socket, kind, message)}
+    do: {:noreply, flash(socket, kind, message)}
+
+  def handle_info({:clear_flash, kind, message}, socket),
+    do: {:noreply, clear_notice(socket, kind, message)}
 
   # The settings dialog saved a project's settings, which may have renamed
   # it. The rail on the left is showing the old name until it is re-read.
@@ -475,7 +492,7 @@ defmodule RavixWeb.WorkspaceLive do
     {:noreply,
      socket
      |> assign(current_user: user)
-     |> put_flash(:info, "#{agent_name(user)} is connected. New projects are built with it.")}
+     |> flash(:info, "#{agent_name(user)} is connected. New projects are built with it.")}
   end
 
   # The account dialog removed something the person held. When it was what
@@ -488,7 +505,7 @@ defmodule RavixWeb.WorkspaceLive do
         else:
           "Removed. Projects you own have nothing to run on until you connect #{agent_name(user)} again."
 
-    {:noreply, socket |> assign(current_user: user) |> put_flash(:info, message)}
+    {:noreply, socket |> assign(current_user: user) |> flash(:info, message)}
   end
 
   # A rebuild closed every track on the project and a delete removed it

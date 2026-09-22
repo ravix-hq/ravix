@@ -162,7 +162,7 @@ defmodule RavixWeb.TrackLiveTest do
   test "failed load can be retried without leaving the track", ctx do
     expect(Tracks, :get, fn _, _, _ -> {:error, {:unavailable, "Offline now"}} end)
     render_click(ctx.view, "retry-load")
-    assert render_async(ctx.view) =~ "Offline now"
+    assert toasted(ctx) =~ "Offline now"
     render_click(ctx.view, "retry-load")
     assert render_async(ctx.view) =~ "Start here"
   end
@@ -171,7 +171,7 @@ defmodule RavixWeb.TrackLiveTest do
   test "a crashed panel reports a recoverable error", ctx do
     expect(Tracks, :files, fn _, _, _ -> raise "remote died" end)
     render_click(ctx.view, "refresh-panel")
-    assert render_async(ctx.view) =~ "Could not finish loading"
+    assert toasted(ctx) =~ "Could not finish loading"
     render_click(ctx.view, "refresh-panel")
     assert render_async(ctx.view) =~ "src"
   end
@@ -228,7 +228,7 @@ defmodule RavixWeb.TrackLiveTest do
   test "terminal errors restore command entry and remain visible", ctx do
     expect(Terminal, :exec, fn _, _, _ -> {:error, {:unavailable, "Machine asleep"}} end)
     ctx.view |> element("#track-terminal") |> render_hook("exec", %{command: "pwd"})
-    assert render_async(ctx.view) =~ "Machine asleep"
+    assert toasted(ctx) =~ "Machine asleep"
     refute has_element?(ctx.view, "input[data-terminal-input][disabled]")
   end
 
@@ -269,8 +269,10 @@ defmodule RavixWeb.TrackLiveTest do
     # person clicks, nothing happens, and nothing says why.
     expect(Terminal, :exec, fn _, _, _ -> {:error, {:unavailable, "Machine asleep"}} end)
     ctx.view |> element("#track-terminal") |> render_hook("exec", %{command: "pwd"})
-    render_async(ctx.view)
-    assert render(ctx.view) =~ "Machine asleep"
+    # The sentence goes up twice: the dock hands it to the track page, which
+    # has no toasts of its own and hands it on to the workspace. One stack.
+    assert toasted(ctx) =~ "Machine asleep"
+    refute render(ctx.view) =~ "Machine asleep"
 
     # And the scrollback is the component's, not the page's: the dock
     # re-renders around it while the transcript beside it does not.
@@ -655,6 +657,15 @@ defmodule RavixWeb.TrackLiveTest do
     render_async(view)
   end
 
+  # The track page's flash, which is the workspace's: the nested page has no
+  # toasts of its own and hands every sentence up to the page that draws the
+  # one stack (see `RavixWeb.Live.Result.flash/3`). Settling the child first
+  # is what puts the message in the parent's mailbox before this asks it.
+  defp toasted(ctx) do
+    render_async(ctx.view)
+    render(ctx.parent)
+  end
+
   # Close the window the page collects transcript events in, and hand the view
   # back to be rendered. The page draws on a `:flush_transcript` it sends
   # itself a tenth of a second after the first event of a burst (see
@@ -757,7 +768,7 @@ defmodule RavixWeb.TrackLiveTest do
     assert render_async(drawn(ctx.view)) =~ "Hello"
     expect(Tracks, :events, fn _, _ -> {:error, {:unavailable, "Transcript offline"}} end)
     send(ctx.view.pid, :refresh)
-    assert render_async(ctx.view) =~ "Transcript offline"
+    assert toasted(ctx) =~ "Transcript offline"
     assert render(ctx.view) =~ "Hello"
   end
 
@@ -1036,7 +1047,65 @@ defmodule RavixWeb.TrackLiveTest do
     # read nobody asked for. That message belongs to the reads somebody is
     # waiting on.
     assert render(ctx.view) =~ ctx.track.title
-    refute render(ctx.view) =~ "Could not finish loading"
+    refute render(ctx.parent) =~ "Could not finish loading"
+  end
+
+  test "the run tab says what it is for, and the atom is the one the dock keeps", ctx do
+    # `@dock` is an atom from the moment the browser's word crosses `@tabs`;
+    # this hint compared it with the string and so was never drawn.
+    refute render(ctx.view) =~ "Run a command in this track"
+    ctx.view |> element("button[phx-click=dock][phx-value-name=run]") |> render_click()
+    assert render(ctx.view) =~ "Run a command in this track"
+    ctx.view |> element("button[phx-click=dock][phx-value-name=terminal]") |> render_click()
+    refute render(ctx.view) =~ "Run a command in this track"
+  end
+
+  test "the live region says when a turn ends, and only then", ctx do
+    # Tokens streaming in say nothing: a reader who is not looking --- a
+    # screen reader, or somebody scrolled up --- would be interrupted on
+    # every chunk. The one moment worth a word is a turn ending.
+    region = "#transcript-status[role=status][aria-live=polite]"
+    assert has_element?(ctx.view, region)
+    refute has_element?(ctx.view, region, "Agent replied")
+
+    send(ctx.view.pid, {:transcript, ctx.track.id, opened(1, "turn-one", "Say hello")})
+
+    send(
+      ctx.view.pid,
+      {:transcript, ctx.track.id,
+       %{
+         "id" => 2,
+         "turn_id" => "turn-one",
+         "kind" => "output",
+         "stream" => "acp",
+         "data" => "Hi"
+       }}
+    )
+
+    render(drawn(ctx.view))
+    refute has_element?(ctx.view, region, "Agent replied")
+
+    settled = %{"id" => 3, "turn_id" => "turn-one", "kind" => "stage", "stage" => "turn"}
+    send(ctx.view.pid, {:transcript, ctx.track.id, Map.put(settled, "state", "completed")})
+    render_async(drawn(ctx.view))
+    assert has_element?(ctx.view, region, "Agent replied")
+
+    # The next turn starting clears it, so the next ending is a change the
+    # region announces rather than the same sentence left standing.
+    send(ctx.view.pid, {:transcript, ctx.track.id, opened(4, "turn-two", "Again")})
+    render(drawn(ctx.view))
+    refute has_element?(ctx.view, region, "Agent replied")
+
+    failed = %{settled | "id" => 5, "turn_id" => "turn-two"}
+    send(ctx.view.pid, {:transcript, ctx.track.id, Map.put(failed, "state", "failed")})
+    render_async(drawn(ctx.view))
+    assert has_element?(ctx.view, region, "Turn failed")
+
+    # The affordance for a reader who has scrolled up is in the scroller the
+    # hook is mounted on, where the stylesheet shows it under `.unpinned`.
+    assert has_element?(ctx.view, "#transcript-scroll > button.jump-latest[data-jump-latest]")
+    assert has_element?(ctx.view, "[data-composer-note][role=status]")
+    refute has_element?(ctx.view, ".toasts")
   end
 
   defp stub_detail(ctx) do

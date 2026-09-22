@@ -26,6 +26,51 @@ test("older pages preserve scroll position and requests coalesce until their pat
   expect(hook.el.classList.contains("unpinned")).toBe(false)
 })
 
+test("scrolling up shows the way back on the scroller itself, and taking it re-pins", () => {
+  // The button is drawn hidden and the stylesheet shows it only under the
+  // class this hook toggles on the scroller it is mounted on --- so the
+  // class has to land on the element that carries `.transcript-scroll`, not
+  // on a child, and the button has to be inside it.
+  document.body.innerHTML = `<div id="transcript-scroll" class="transcript-scroll" data-track="one">
+    <div class="track-ribbon">created</div>
+    <div id="transcript-turns">turns</div>
+    <button type="button" class="jump-latest" data-jump-latest>Jump to latest</button>
+  </div>`
+  const el = document.querySelector("#transcript-scroll")
+  dimensions(el, {scrollHeight: 1000, clientHeight: 200})
+  const {hook, events} = mountHook(TranscriptTail, "#transcript-scroll")
+  expect(el.scrollTop).toBe(1000)
+  expect(el.matches(".transcript-scroll.unpinned")).toBe(false)
+
+  el.scrollTop = 300
+  el.dispatchEvent(new Event("scroll"))
+  expect(el.matches(".transcript-scroll.unpinned")).toBe(true)
+  expect(document.querySelector(".transcript-scroll.unpinned .jump-latest")).toBe(el.querySelector("[data-jump-latest]"))
+  // No paging is asked for: the scroller carries no `data-older-event`.
+  expect(events).toEqual([])
+
+  // Output landing while unpinned does not move the reader.
+  hook.beforeUpdate()
+  dimensions(el, {scrollHeight: 1400})
+  hook.updated()
+  expect(el.scrollTop).toBe(700)
+  expect(el.matches(".unpinned")).toBe(true)
+
+  el.querySelector("[data-jump-latest]").click()
+  expect(el.scrollTop).toBe(1400)
+  expect(el.matches(".unpinned")).toBe(false)
+  // And pinned again: the next patch follows the bottom.
+  hook.beforeUpdate()
+  dimensions(el, {scrollHeight: 1800})
+  hook.updated()
+  expect(el.scrollTop).toBe(1800)
+
+  // Back within reach of the bottom by scrolling counts as pinned too.
+  el.scrollTop = 1700
+  el.dispatchEvent(new Event("scroll"))
+  expect(el.matches(".unpinned")).toBe(false)
+})
+
 test("track changes repin and text selection is never dragged away", () => {
   const {hook} = mountHook(TranscriptTail,"#transcript")
   hook.el.scrollTop = 100

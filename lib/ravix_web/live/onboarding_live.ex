@@ -158,9 +158,12 @@ defmodule RavixWeb.OnboardingLive do
     do: {:noreply, assign(socket, current_user: user)}
 
   # The panel cannot put a flash in the page's own socket; see
-  # `RavixWeb.Live.Result.error/2`.
+  # `RavixWeb.Live.Result.flash/3`. The clear is its timer for a notice.
   def handle_info({:flash, kind, message}, socket),
-    do: {:noreply, put_flash(socket, kind, message)}
+    do: {:noreply, flash(socket, kind, message)}
+
+  def handle_info({:clear_flash, kind, message}, socket),
+    do: {:noreply, clear_notice(socket, kind, message)}
 
   @impl true
   def handle_async(:create_project, {:ok, response}, socket) do
