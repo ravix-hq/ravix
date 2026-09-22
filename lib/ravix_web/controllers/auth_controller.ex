@@ -144,8 +144,8 @@ defmodule RavixWeb.AuthController do
           {:error, reason} -> Error.send_json(conn, reason)
         end
 
-      _user ->
-        case link_target(token) do
+      user ->
+        case link_target(token, user) do
           {:ok, target} -> render(conn, :confirm, target: target, token: token)
           :error -> conn |> put_status(:see_other) |> redirect(to: "/?error=bad_invite")
         end
@@ -184,8 +184,8 @@ defmodule RavixWeb.AuthController do
     if people_exports?(:claim_link, 2), do: @people.claim_link(user_id, token), else: :error
   end
 
-  defp link_target(token) do
-    if people_exports?(:link_target, 1), do: @people.link_target(token), else: :error
+  defp link_target(token, user) do
+    if people_exports?(:link_target, 2), do: @people.link_target(token, user), else: :error
   end
 
   defp people_exports?(fun, arity),

@@ -183,7 +183,17 @@ defmodule Ravix.Tooling do
 
   defp project(v),
     do:
-      Map.take(v, [:id, :name, :repo, :default_branch, :runtime, :model, :role, :access])
+      Map.take(v, [
+        :id,
+        :name,
+        :owner_login,
+        :repo,
+        :default_branch,
+        :runtime,
+        :model,
+        :role,
+        :access
+      ])
       |> Map.put(:url, Config.public_url() <> "/p/" <> v.id)
 
   defp track(v),
@@ -191,6 +201,7 @@ defmodule Ravix.Tooling do
       Map.take(v, [
         :id,
         :project_id,
+        :owner_login,
         :title,
         :branch,
         :workdir,

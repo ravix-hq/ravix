@@ -105,7 +105,7 @@
               phx-value-id={project.id}
               aria-expanded={to_string(MapSet.member?(@expanded_projects, project.id))}
               aria-controls={"project-tracks-#{project.id}"}
-              aria-label={"#{if MapSet.member?(@expanded_projects, project.id), do: "Collapse", else: "Expand"} #{project_label(project)}"}
+              aria-label={"#{if MapSet.member?(@expanded_projects, project.id), do: "Collapse", else: "Expand"} #{project.display_name}"}
             >
               <.icon
                 name="chevron"
@@ -123,13 +123,13 @@
               <span class="project-mark" aria-hidden="true">
                 {String.first(project.name) |> String.upcase()}
               </span>
-              <span class="truncate">{project_label(project)}</span>
+              <span class="truncate"><.project_name project={project} /></span>
             </.link>
             <.link
               :if={project.access != :tracks}
               patch={"/p/#{project.id}?new=track"}
               class="project-add"
-              aria-label={"New track in #{project_label(project)}"}
+              aria-label={"New track in #{project.display_name}"}
             >
               <.icon name="plus" size={13} />
             </.link>
@@ -269,7 +269,10 @@
         <span class="project-mark" aria-hidden="true">
           {String.first(@project.name) |> String.upcase()}
         </span>
-        <strong>{project_label(@project)}</strong><span :if={@project.repo} class="chip mono">{@project.repo}</span><span class="spacer"></span>
+        <strong><.project_name project={@project} /></strong><span
+          :if={@project.repo}
+          class="chip mono"
+        >{@project.repo}</span><span class="spacer"></span>
         <button
           :if={@project.access != :tracks}
           class="ghost"
@@ -382,7 +385,7 @@
               <span class="project-mark" aria-hidden="true">
                 {String.first(project.name) |> String.upcase()}
               </span>
-              <span>{project_label(project)}</span><span class="meta mono">{project.repo ||
+              <.project_name project={project} /><span class="meta mono">{project.repo ||
                 "no repository"}</span>
             </.link>
           </section>
@@ -413,7 +416,7 @@
                 <span class="chip">
                   {if track.status == :failed, do: "Failed turn", else: "Unread reply"}
                 </span>
-                <span class="dim">{project_label(project)}</span><span class="spacer"></span><time
+                <span class="dim"><.project_name project={project} /></span><span class="spacer"></span><time
                   :if={track.last_active_at}
                   datetime={DateTime.to_iso8601(track.last_active_at)}
                 >{Calendar.strftime(track.last_active_at, "%b %-d, %H:%M UTC")}</time>
@@ -449,7 +452,7 @@
           patch={"/p/#{project.id}/t/#{track.id}"}
           class="workspace-track"
         >
-          {project_label(project)} / {track.title}
+          <.project_name project={project} /> / {track.title}
         </.link>
       </div>
     </.dialog>
@@ -620,6 +623,7 @@
       module={RavixWeb.Live.PeopleDialog}
       id="people"
       scope={:project}
+      project={@project}
       subject_id={@project.id}
       owner={@project.role == :owner}
       current_user={@current_user}

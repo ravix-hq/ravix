@@ -41,6 +41,26 @@ defmodule RavixWeb.Live.PeopleDialogTest do
     %{conn: conn, owner: owner, project: project, track: track}
   end
 
+  test "track headers and people labels are relative to each viewer", ctx do
+    member = insert_user()
+    guest = insert_user()
+    insert_project_member(ctx.project, member)
+    insert_track_member(ctx.track, guest)
+
+    for user <- [ctx.owner, member, guest] do
+      label =
+        if user == ctx.owner,
+          do: ctx.project.name,
+          else: "#{ctx.owner.login} / #{ctx.project.name}"
+
+      view = track_page(ctx.conn, user, ctx.project, ctx.track)
+      assert has_element?(view, ".project-crumb .project-label", label)
+      assert has_element?(view, ".project-crumb .dim") == (user != ctx.owner)
+      open_people(view)
+      assert has_element?(view, "#track-people-dialog .project-label", label)
+    end
+  end
+
   defp open_people(view) do
     render_click(view, "dialog", %{name: "people"})
     view

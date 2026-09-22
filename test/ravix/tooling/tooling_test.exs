@@ -49,6 +49,46 @@ defmodule Ravix.ToolingTest do
              Tooling.call(p, "read_track", %{"track_id" => track.id, "thread_id" => foreign.id})
   end
 
+  test "project and track listings identify the owner without renaming or leaking rows", %{
+    user: owner,
+    p: owner_principal
+  } do
+    project = insert_project(user: owner, name: "ravix")
+    track = insert_track(project: project)
+    sibling = insert_track(project: project)
+    member = insert_user()
+    guest = insert_user()
+    insert_project_member(project, member)
+    insert_track_member(track, guest)
+    hidden = insert_project(user: insert_user(), name: "ravix")
+    stub(Ravix.MachineCache, :conversations, fn _, _, _ -> {:ok, []} end)
+
+    for {user, ids} <- [
+          {owner, [track.id, sibling.id]},
+          {member, [track.id, sibling.id]},
+          {guest, [track.id]}
+        ] do
+      {p, _, _} = principal(user)
+      assert {:ok, %{items: [listed]}} = Tooling.call(p, "list_projects", %{})
+      assert listed.id == project.id
+      assert listed.name == "ravix"
+      assert listed.owner_login == owner.login
+
+      assert {:ok, %{items: tracks}} =
+               Tooling.call(p, "list_tracks", %{"project_id" => project.id})
+
+      assert Enum.sort(Enum.map(tracks, & &1.id)) == Enum.sort(ids)
+      assert Enum.all?(tracks, &(&1.owner_login == owner.login))
+      assert {:error, :not_found} = Tooling.call(p, "list_tracks", %{"project_id" => hidden.id})
+    end
+
+    assert {:ok, %{items: []}} =
+             Tooling.call(elem(principal(insert_user()), 0), "list_projects", %{})
+
+    assert {:ok, %{items: [%{name: "ravix"}]}} =
+             Tooling.call(owner_principal, "list_projects", %{})
+  end
+
   test "project creation returns a public receipt and repeated calls do not provision twice", %{
     p: p
   } do
