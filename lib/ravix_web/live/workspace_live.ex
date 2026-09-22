@@ -151,6 +151,7 @@ defmodule RavixWeb.WorkspaceLive do
       |> hand_over(project, track_id)
       |> assign(
         project: project,
+        page_title: if(project, do: project.display_name <> " · Ravix", else: "Ravix"),
         selected_plan_id: params["plan"],
         track_id: track_id,
         dialog: nil,
@@ -651,8 +652,12 @@ defmodule RavixWeb.WorkspaceLive do
       Enum.each(MapSet.difference(new, old), &Hub.subscribe/1)
     end
 
+    project = socket.assigns.project && Enum.find(projects, &(&1.id == socket.assigns.project.id))
+
     socket
     |> assign(
+      project: project || socket.assigns.project,
+      page_title: if(project, do: project.display_name <> " · Ravix", else: "Ravix"),
       projects: projects,
       tracks: tracks,
       attention: attention_count(tracks),
@@ -707,7 +712,13 @@ defmodule RavixWeb.WorkspaceLive do
   # happened. No transcript text; the notification is a knock, not the news.
   defp notice(track, projects) do
     project = Enum.find(projects, &(&1.id == track.project_id))
-    %{id: track.id, title: track.title, project: project && project.name, status: track.status}
+
+    %{
+      id: track.id,
+      title: track.title,
+      project: project && project.display_name,
+      status: track.status
+    }
   end
 
   defp agent_name(%Accounts.User{agent: :codex}), do: "Codex"
@@ -775,7 +786,7 @@ defmodule RavixWeb.WorkspaceLive do
   defp matching?(track, project, query),
     do:
       String.contains?(
-        String.downcase("#{project_label(project)} #{track.title} #{track.branch}"),
+        String.downcase("#{project.owner_login} #{project.name} #{track.title} #{track.branch}"),
         String.downcase(query)
       )
 end

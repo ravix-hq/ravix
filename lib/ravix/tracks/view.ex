@@ -2,6 +2,9 @@ defmodule Ravix.Tracks.View do
   @moduledoc """
   A track as a page shows it: the row, plus what had to be asked elsewhere.
 
+  `owner_login` identifies the project owner, independently of who created
+  the track. It is taken from the already-scoped people list.
+
   Deliberately not the `Ravix.Tracks.Track` schema with extra fields on it.
   That schema argues against exactly that in its own documentation -- status,
   turn count and whether the machine is up are read live because "caching
@@ -29,6 +32,7 @@ defmodule Ravix.Tracks.View do
   @enforce_keys [
     :id,
     :project_id,
+    :owner_login,
     :conversation_id,
     :slug,
     :title,
@@ -52,6 +56,7 @@ defmodule Ravix.Tracks.View do
   @type t :: %__MODULE__{
           id: String.t(),
           project_id: String.t(),
+          owner_login: String.t(),
           conversation_id: String.t() | nil,
           slug: String.t(),
           title: String.t(),

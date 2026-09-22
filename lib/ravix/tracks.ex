@@ -298,7 +298,13 @@ defmodule Ravix.Tracks do
         })
       )
 
-      {:ok, present(track, project: project, live: nil, role: role)}
+      {:ok,
+       present(track,
+         project: project,
+         live: nil,
+         role: role,
+         owner_login: project_owner_login(project, user)
+       )}
     end
   end
 
@@ -956,7 +962,8 @@ defmodule Ravix.Tracks do
 
   Options: `project` (required for `stale`), `live` (the conversation as
   Fountain lists it, or nil), `people`, `role` (`:owner` by
-  default) and `last_read` (a `DateTime`). The revision is in the channel id
+  default), `owner_login` (otherwise taken from `people`), and `last_read`
+  (a `DateTime`). The revision is in the channel id
   the conversation already carries, so "is this track behind?" is a
   comparison rather than a stored flag. A track nobody has opened is unread
   the moment the machine says anything; one whose last activity predates
@@ -972,6 +979,8 @@ defmodule Ravix.Tracks do
     %View{
       id: row.id,
       project_id: row.project_id,
+      owner_login:
+        Keyword.get_lazy(opts, :owner_login, fn -> owner_login(Keyword.get(opts, :people, [])) end),
       conversation_id: row.conversation_id,
       slug: row.slug,
       title: row.title,
@@ -989,6 +998,20 @@ defmodule Ravix.Tracks do
       role: Keyword.get(opts, :role, :owner),
       unread: unread?(last_active, Keyword.get(opts, :last_read))
     }
+  end
+
+  # ownership: `open/4` went through `Access.project_access/2` before presenting
+  # the new track. Members need its project owner's login, not their own.
+  defp project_owner_login(%Project{user_id: id}, %User{id: id, login: login}), do: login
+
+  defp project_owner_login(project, _user),
+    do: Ravix.Accounts.Store.get_user(project.user_id).login
+
+  defp owner_login(people) do
+    case Enum.find(people, &(&1.via == :owner)) do
+      nil -> ""
+      owner -> owner.login
+    end
   end
 
   @doc "How a track was started, from its row."
