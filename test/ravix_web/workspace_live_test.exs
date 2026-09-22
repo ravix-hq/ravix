@@ -354,7 +354,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
     member = insert_user()
     project = insert_project(user: owner, name: "Shared work")
     track = insert_track(project: project)
-    label = "#{owner.login}/#{project.name}"
+    label = "#{owner.login} / #{project.name}"
 
     People.add_member(track.id, member.id, owner.id)
     {:ok, shared, _} = live(log_in_user(conn, member), "/p/#{project.id}")

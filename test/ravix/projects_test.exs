@@ -320,6 +320,11 @@ defmodule Ravix.ProjectsTest do
 
       assert %{role: :owner, access: :owner, owner_login: "owner"} =
                Projects.present(project, :owner, Machine.none())
+
+      # An owner with no account to name leaves the bare name, not " / name".
+      orphan = Projects.present(project, :project, Machine.none(), nil)
+      assert orphan.owner_login == ""
+      assert orphan.display_name == project.name
     end
   end
 

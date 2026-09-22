@@ -402,14 +402,12 @@ defmodule Ravix.Projects do
   """
   @spec present(Project.t(), access(), machine(), User.t() | nil) :: View.t()
   def present(%Project{} = project, access, machine, owner) do
+    owner_login = (owner && owner.login) || ""
+
     %View{
       id: project.id,
       name: project.name,
-      display_name:
-        if(access == :owner,
-          do: project.name,
-          else: "#{(owner && owner.login) || ""} / #{project.name}"
-        ),
+      display_name: display_name(project.name, access, owner_login),
       repo: project.repo_full_name,
       repo_private: project.repo_private == true,
       default_branch: project.default_branch,
@@ -419,11 +417,18 @@ defmodule Ravix.Projects do
       rev: project.rev,
       machine: machine,
       created_at: project.created_at,
-      owner_login: (owner && owner.login) || "",
+      owner_login: owner_login,
       role: if(access == :owner, do: :owner, else: :member),
       access: access
     }
   end
+
+  # The owner reads the bare name; anyone it is shared with reads whose it is.
+  # An owner whose account is gone has no login to show, so the name stands
+  # alone rather than behind an empty prefix.
+  defp display_name(name, :owner, _owner_login), do: name
+  defp display_name(name, _access, ""), do: name
+  defp display_name(name, _access, owner_login), do: "#{owner_login} / #{name}"
 
   # ── plumbing ──────────────────────────────────────────────────────────
 

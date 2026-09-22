@@ -26,7 +26,7 @@ defmodule RavixWeb.CoreComponents do
   def project_name(assigns) do
     ~H"""
     <span class="project-label" title={@project.display_name}><span
-      :if={@project.role != :owner}
+      :if={@project.display_name != @project.name}
       class="dim"
     >{@project.owner_login} / </span>{@project.name}</span>
     """
