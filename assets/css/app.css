@@ -1185,6 +1185,26 @@ h4 { font-size: 12px; color: var(--dim); font-weight: 500; letter-spacing: 0; }
 .tooling-help code, .tooling-help dd { overflow-wrap: anywhere; }
 .tooling-help dd { margin: 4px 0 12px; }
 
+/* Settings keeps its own navigation inside the workspace dialog. */
+#settings-sections { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 24px; }
+.settings-nav { display: flex; flex-direction: column; gap: 4px; align-self: start; }
+.settings-nav button { text-align: left; }
+.settings-nav button[aria-current="true"] { background: var(--accent-soft); color: var(--accent-ink); }
+.settings-nav button:last-child { margin-top: 20px; color: var(--bad); }
+.settings-content { min-width: 0; }
+.settings-content [hidden] { display: none; }
+.settings-content h3 { margin: 0 0 12px; }
+.settings-help { color: var(--dim); line-height: 1.6; margin: 8px 0 20px; }
+.settings-help code { overflow-wrap: anywhere; }
+.settings-feedback { color: var(--ink); min-height: 1.5em; margin: 0 0 20px; }
+.settings-danger { border: 1px solid var(--bad); border-radius: var(--radius); padding: 16px; }
+.settings-danger h3 { color: var(--bad); }
+@media (max-width: 600px) {
+  #settings-sections { grid-template-columns: minmax(0, 1fr); gap: 20px; }
+  .settings-nav { flex-direction: row; flex-wrap: wrap; border-bottom: 1px solid var(--line); padding-bottom: 12px; }
+  .settings-nav button:last-child { margin-top: 0; }
+}
+
 .plans-panel { padding: 1.25rem; overflow: auto; min-width: 0; width: 100%; }
 .plans-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: .65rem; margin-bottom: .8rem; }
 .plans-toolbar h2, .plans-toolbar h3, .plans-toolbar h4 { margin: 0; }
