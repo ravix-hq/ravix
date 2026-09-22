@@ -509,14 +509,20 @@ test('help explains desktop connections and stays accessible on mobile', async (
 
 
 test('composer Send stays compact and keeps its arrow after repeated submissions in every theme', async ({ page, request }) => {
-  test.setTimeout(300_000);
+  // Five states x 22 palettes x 2 widths runs in ~30s locally; allow CI headroom.
+  test.setTimeout(120_000);
   await signIn(page);
   await page.getByRole('button', { name: 'Add a project', exact: true }).first().click();
-  await page.getByLabel('Project name', { exact: true }).fill('Send regression');
-  await page.getByRole('button', { name: 'Create project', exact: true }).click();
+  const projectDialog = page.getByRole('dialog', { name: 'New project', exact: true });
+  await projectDialog.getByLabel('Project name', { exact: true }).fill('Send regression');
+  await projectDialog.getByRole('button', { name: 'Create project', exact: true }).click();
+  await expect(projectDialog).toHaveCount(0);
   await page.locator('.crumbs').getByRole('button', { name: 'New track', exact: true }).click();
-  await page.getByLabel('Track name').fill('Compact send');
-  await page.getByRole('button', { name: 'Create track', exact: true }).click();
+  // New tracks are named after their reserved ravix/ branch (#154).
+  const newTrack = page.getByRole('dialog', { name: 'New track', exact: true });
+  await newTrack.getByLabel('Branch name', { exact: true }).fill('compact-send');
+  await newTrack.getByRole('button', { name: 'Create track', exact: true }).click();
+  await expect(page.locator('.track-crumbs')).toContainText('compact-send');
   const composer = page.getByRole('textbox', { name: 'Message', exact: true });
   const send = page.getByRole('button', { name: 'Send', exact: true });
   await expect(composer).toBeEnabled({ timeout: 30_000 });
