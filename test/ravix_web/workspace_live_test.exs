@@ -137,7 +137,11 @@ defmodule RavixWeb.WorkspaceLiveTest do
     assert has_element?(view, "#help-dialog code", Ravix.Config.public_url() <> "/mcp")
     assert has_element?(view, "#help-dialog", "SubscribeToTask")
     assert has_element?(view, "#help-dialog a[href='/settings/connections']")
-    view |> element("#help-dialog button[aria-label='Close']") |> render_click()
+    view |> element("#help-dialog button", "What's new") |> render_click()
+    assert has_element?(view, "#changes-dialog", "Changes in Ravix since you last checked.")
+    refute has_element?(view, "#changes-dialog .chip")
+    view |> element("#changes-dialog button", "Mark all as read") |> render_click()
+    view |> element("#changes-dialog button[aria-label='Close']") |> render_click()
     refute has_element?(view, "#help-dialog")
     assert has_element?(view, "#open-help")
   end

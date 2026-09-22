@@ -58,7 +58,7 @@ defmodule Ravix.Accounts do
   Keyed on GitHub's numeric id, never the login: logins are renameable, and a
   login freed by a deleted account can be taken by somebody else. `login`,
   `name`, `avatar_url` and the encrypted token are overwritten on every
-  sign-in and `last_seen_at` is bumped.
+  sign-in and `last_seen_at` is bumped. New users start with no unseen changes.
   """
   @spec upsert_user(%{
           required(:github_id) => String.t(),
@@ -95,6 +95,19 @@ defmodule Ravix.Accounts do
   end
 
   defp signed_in(result), do: result
+
+  @doc "Changes shipped since this person last opened the panel."
+  def unseen_changes(%User{changes_seen_at: seen}), do: Ravix.Changelog.since(seen)
+
+  @doc "Mark the newest change shown as seen; an older marker never wins."
+  def mark_changes_seen(%User{} = user, %DateTime{} = marker) do
+    marker =
+      if user.changes_seen_at && DateTime.compare(user.changes_seen_at, marker) == :gt,
+        do: user.changes_seen_at,
+        else: marker
+
+    user |> Ecto.Changeset.change(changes_seen_at: marker) |> Repo.update()
+  end
 
   # ── what a person set up ──────────────────────────────────────────────
 

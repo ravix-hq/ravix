@@ -30,7 +30,8 @@ defmodule RavixWeb.WorkspaceLive do
     "settings" => :settings,
     "people" => :people,
     "account" => :account,
-    "help" => :help
+    "help" => :help,
+    "changes" => :changes
   }
 
   @doc "The origin buttons on the new-track form, in the order they are offered."
@@ -67,6 +68,8 @@ defmodule RavixWeb.WorkspaceLive do
         # --- finds it and closes it; see `handle_params/3`.
         yard_open: false,
         dialog: nil,
+        changes: [],
+        changes_unseen: 0,
         project_form: Form.new(:new_project),
         track_form: Form.new(:new_track),
         repos: [],
@@ -82,7 +85,17 @@ defmodule RavixWeb.WorkspaceLive do
         busy: false
       )
 
-    {:ok, if(socket.assigns.current_user, do: reload(socket), else: socket)}
+    {:ok,
+     if(socket.assigns.current_user,
+       do:
+         socket
+         |> assign(
+           changes: Accounts.unseen_changes(socket.assigns.current_user),
+           changes_unseen: length(Accounts.unseen_changes(socket.assigns.current_user))
+         )
+         |> reload(),
+       else: socket
+     )}
   end
 
   @impl true
@@ -286,8 +299,13 @@ defmodule RavixWeb.WorkspaceLive do
   def handle_event("edit", %{"new_track" => params}, socket),
     do: {:noreply, assign(socket, track_form: Form.new(:new_track, params))}
 
-  def handle_event("dialog", %{"name" => name}, socket) when is_map_key(@dialogs, name),
-    do: {:noreply, open_dialog(socket, Map.fetch!(@dialogs, name))}
+  def handle_event("dialog", %{"name" => name}, socket) when is_map_key(@dialogs, name) do
+    dialog = Map.fetch!(@dialogs, name)
+    socket = open_dialog(socket, dialog)
+    if dialog == :changes, do: {:noreply, mark_changes(socket)}, else: {:noreply, socket}
+  end
+
+  def handle_event("mark-changes-seen", _, socket), do: {:noreply, mark_changes(socket)}
 
   def handle_event("installation", %{"installation" => id}, socket) do
     case Integer.parse(id) do
@@ -762,6 +780,25 @@ defmodule RavixWeb.WorkspaceLive do
   # The account dialog is the agent panel, which holds its own state too.
   defp open_dialog(socket, :account), do: assign(socket, dialog: :account)
   defp open_dialog(socket, :help), do: assign(socket, dialog: :help)
+  defp open_dialog(socket, :changes), do: assign(socket, dialog: :changes)
+
+  defp mark_changes(socket) do
+    entries = socket.assigns.changes
+
+    case Ravix.Changelog.newest(entries) do
+      nil ->
+        socket
+
+      entry ->
+        {:ok, user} =
+          Accounts.mark_changes_seen(
+            socket.assigns.current_user,
+            DateTime.new!(entry.date, ~T[00:00:00], "Etc/UTC")
+          )
+
+        assign(socket, current_user: user, changes_unseen: 0)
+    end
+  end
 
   # The repositories this person's installations can see: a GitHub call, off
   # this process for the same reason as the refs above. What is on offer is
