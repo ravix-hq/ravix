@@ -316,6 +316,28 @@ test('project, track, streaming, image upload, reconnect, and revocation', async
   await page.getByRole('button', { name: 'Create track', exact: true }).click();
   const composer = page.getByRole('textbox', { name: 'Message', exact: true });
   await expect(composer).toBeEnabled({ timeout: 30_000 });
+  // The composer enables once the conversation exists, before the opening
+  // turn has made the worktree. A diff read then is honestly empty and the
+  // panel does not poll, so wait for the turn to settle first.
+  await expect(page.locator('#transcript-status')).toHaveText('Agent replied', { timeout: 30_000 });
+  await page.getByRole('button', { name: 'Changes', exact: true }).click();
+  await expect(page.locator('.change-file')).toHaveCount(2);
+  await page.getByLabel('Filter paths').fill('window');
+  await expect(page.locator('.change-file')).toHaveCount(1);
+  await page.locator('.change-file').press('Enter');
+  await expect(page.getByRole('region', { name: 'Diff for src/lib/window.ts' })).toBeVisible();
+  await expect(page.locator('.diff-line.diff-add')).not.toHaveCount(0);
+  await accessible(page);
+  await capture(page, 'changes-diff');
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.locator('.file-diff')).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await capture(page, 'changes-diff-mobile');
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await page.getByRole('button', { name: '← All changed files' }).click();
+  await expect(page.getByLabel('Filter paths')).toHaveValue('window');
+  await page.getByRole('button', { name: 'All files', exact: true }).click();
+
   await accessible(page);
   await expect(page.locator('.crumbs')).toHaveCount(1);
   const collapseProject = page.getByRole('button', { name: 'Collapse Browser quality', exact: true });

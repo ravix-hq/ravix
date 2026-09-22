@@ -826,6 +826,7 @@ defmodule Ravix.Tracks do
     with {:ok, track, client, sandbox_id} <- machine_read(user, track_id),
          {:ok, raw} <- Fountain.diff(client, sandbox_id, track.workdir) do
       diff = raw["diff"] || ""
+      files = Diff.parse(diff, raw["truncated"] == true)
 
       {:ok,
        %Diff{
@@ -833,7 +834,8 @@ defmodule Ravix.Tracks do
          repo_root: raw["repo_root"],
          diff: diff,
          truncated: raw["truncated"] == true,
-         changes: summarize_diff(diff)
+         changes: Enum.map(files, & &1.change),
+         files: files
        }}
     end
   end

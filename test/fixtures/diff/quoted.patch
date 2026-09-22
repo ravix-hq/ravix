@@ -1,0 +1,35 @@
+diff --git "a/back\\slash" "b/back\\slash"
+index 90be1f3..294186e 100644
+--- "a/back\\slash"
++++ "b/back\\slash"
+@@ -1 +1 @@
+-before
++after
+diff --git "a/caf\303\251.txt" "b/caf\303\251.txt"
+index 90be1f3..294186e 100644
+--- "a/caf\303\251.txt"
++++ "b/caf\303\251.txt"
+@@ -1 +1 @@
+-before
++after
+diff --git "a/carriage\rreturn" "b/carriage\rreturn"
+index 90be1f3..294186e 100644
+--- "a/carriage\rreturn"
++++ "b/carriage\rreturn"
+@@ -1 +1 @@
+-before
++after
+diff --git "a/line\nbreak" "b/line\nbreak"
+index 90be1f3..294186e 100644
+--- "a/line\nbreak"
++++ "b/line\nbreak"
+@@ -1 +1 @@
+-before
++after
+diff --git "a/quoted\"" "b/quoted\""
+index 90be1f3..294186e 100644
+--- "a/quoted\""
++++ "b/quoted\""
+@@ -1 +1 @@
+-before
++after
