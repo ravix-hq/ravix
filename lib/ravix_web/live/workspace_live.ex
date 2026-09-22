@@ -23,13 +23,14 @@ defmodule RavixWeb.WorkspaceLive do
   @origin_labels %{blank: "Blank", branch: "Branch", pr: "Pull request", issue: "Issue"}
   @origin_refs %{branch: :branches, pr: :pulls, issue: :issues}
 
-  # The five dialogs, as the buttons spell them and as this module does.
+  # The six dialogs, as the buttons spell them and as this module does.
   @dialogs %{
     "search" => :search,
     "new-project" => :new_project,
     "new-track" => :new_track,
     "settings" => :settings,
-    "people" => :people
+    "people" => :people,
+    "account" => :account
   }
 
   @doc "The origin buttons on the new-track form, in the order they are offered."
@@ -451,6 +452,22 @@ defmodule RavixWeb.WorkspaceLive do
   # it. The rail on the left is showing the old name until it is re-read.
   def handle_info(:project_settings_saved, socket), do: {:noreply, reload(socket)}
 
+  # The agent panel's clock; see `RavixWeb.Live.AgentPanel`.
+  def handle_info({:agent_panel, id, tick}, socket) do
+    send_update(RavixWeb.Live.AgentPanel, id: id, tick: tick)
+    {:noreply, socket}
+  end
+
+  # The account dialog connected or replaced what pays for this person's
+  # agent. The person on the page is now out of date, and the dialog has
+  # already said what replacing it means for open tracks.
+  def handle_info({:agent_connected, %Accounts.User{} = user}, socket) do
+    {:noreply,
+     socket
+     |> assign(current_user: user)
+     |> put_flash(:info, "#{agent_name(user)} is connected. New projects are built with it.")}
+  end
+
   # A rebuild closed every track on the project and a delete removed it
   # outright. Either way this is no longer somewhere to be, and a component
   # cannot patch the URL.
@@ -526,6 +543,9 @@ defmodule RavixWeb.WorkspaceLive do
     )
   end
 
+  defp agent_name(%Accounts.User{agent: :codex}), do: "Codex"
+  defp agent_name(%Accounts.User{}), do: "Claude Code"
+
   defp open_dialog(socket, :new_project),
     do:
       socket
@@ -553,6 +573,9 @@ defmodule RavixWeb.WorkspaceLive do
 
   # The people dialog loads its own list, so opening it is only opening it.
   defp open_dialog(socket, :people), do: assign(socket, dialog: :people)
+
+  # The account dialog is the agent panel, which holds its own state too.
+  defp open_dialog(socket, :account), do: assign(socket, dialog: :account)
 
   # The repositories this person's installations can see: a GitHub call, off
   # this process for the same reason as the refs above. What is on offer is

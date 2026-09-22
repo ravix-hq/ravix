@@ -126,6 +126,48 @@ defmodule Ravix.Accounts.InferenceTest do
     end
   end
 
+  describe "subscription/1" do
+    test "is this person's grant as Fountain describes it, never a token, or nil for nobody's" do
+      me = insert_user(agent: :codex, credential_kind: :subscription, credential_set_id: "s")
+
+      fountain([
+        {%{method: "GET", path: @chatgpt},
+         {200, [],
+          %{
+            data: [
+              %{id: "g-9", name: "ravix:other", status: "active"},
+              %{
+                id: "g-me",
+                name: "ravix:#{me.id}",
+                status: "active",
+                plan_type: "plus",
+                account_email: "me@example.com",
+                exhausted_until: nil,
+                refreshable: true
+              }
+            ]
+          }}}
+      ])
+
+      assert {:ok,
+              %{
+                id: "g-me",
+                status: "active",
+                plan_type: "plus",
+                account_email: "me@example.com",
+                exhausted_until: nil
+              } = sub} = Inference.subscription(me)
+
+      refute Map.has_key?(sub, :refreshable)
+
+      fountain([{%{method: "GET", path: @chatgpt}, {200, [], %{data: []}}}])
+      assert {:ok, nil} = Inference.subscription(me)
+
+      fountain([{%{method: "GET", path: @chatgpt}, {404, [], %{error: "not_found"}}}])
+      assert {:ok, nil} = Inference.subscription(me)
+    end
+  end
+
   describe "begin_link/1" do
     test "makes the person's set, then starts a sign-in named like it; nothing about them changes yet" do
       me = insert_user()

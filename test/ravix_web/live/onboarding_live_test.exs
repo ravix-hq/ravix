@@ -189,8 +189,9 @@ defmodule RavixWeb.OnboardingLiveTest do
     test "a word the form never offered names no agent and no atom", %{conn: conn} do
       {:ok, view, _} = live(log_in_user(conn, fresh()), "/welcome/agent")
 
-      render_click(view, "choose-agent", %{agent: "gemini"})
-      render_click(view, "choose-kind", %{kind: "gift_card"})
+      panel = with_target(view, "#agent-panel")
+      render_click(panel, "choose-agent", %{agent: "gemini"})
+      render_click(panel, "choose-kind", %{kind: "gift_card"})
       refute has_element?(view, "#credential-form")
       refute has_element?(view, "[aria-pressed=true]")
     end
@@ -252,11 +253,11 @@ defmodule RavixWeb.OnboardingLiveTest do
 
       # The page ticks itself; here the ticks are sent by hand so the test
       # does not wait out the interval.
-      send(view.pid, :poll_link)
+      send(view.pid, {:agent_panel, "agent-panel", :poll_link})
       html = render_async(view)
       assert html =~ "ABCD-EFGH"
 
-      send(view.pid, :poll_link)
+      send(view.pid, {:agent_panel, "agent-panel", :poll_link})
       render_async(view)
       assert_patch(view, "/welcome/github")
       assert %User{agent: :codex, credential_kind: :subscription} = Repo.get!(User, user.id)
@@ -276,7 +277,7 @@ defmodule RavixWeb.OnboardingLiveTest do
       view |> element("#chatgpt-connect") |> render_click()
       render_async(view)
 
-      send(view.pid, :poll_link)
+      send(view.pid, {:agent_panel, "agent-panel", :poll_link})
       html = render_async(view)
       assert html =~ "ChatGPT refused the code."
       refute html =~ "ABCD-EFGH"
@@ -344,7 +345,7 @@ defmodule RavixWeb.OnboardingLiveTest do
       refute html =~ "ABCD-EFGH"
       render_async(view)
       # The tick the page scheduled for the cancelled sign-in polls nothing.
-      send(view.pid, :poll_link)
+      send(view.pid, {:agent_panel, "agent-panel", :poll_link})
       assert has_element?(view, "#chatgpt-connect")
     end
 
@@ -387,7 +388,7 @@ defmodule RavixWeb.OnboardingLiveTest do
       Repo.delete!(session)
       :sys.replace_state(view.pid, &age_session_guard/1)
 
-      send(view.pid, :poll_link)
+      send(view.pid, {:agent_panel, "agent-panel", :poll_link})
       assert_redirect(view, "/login")
     end
   end
@@ -580,7 +581,9 @@ defmodule RavixWeb.OnboardingLiveTest do
 
       :sys.replace_state(view.pid, &age_session_guard/1)
 
-      assert {:error, {:redirect, %{to: "/login"}}} =
+      # The panel is a component, so the page's hook never sees the submit;
+      # the panel asks the guard itself and sends the whole page to sign in.
+      assert {:error, {:live_redirect, %{to: "/login"}}} =
                view |> form("#credential-form", credential: [value: "k"]) |> render_submit()
     end
   end

@@ -122,6 +122,14 @@ account ever creates its default, which is what an agent with no set runs on.
 On a fresh deployment that would be the first person to connect, paying for
 everybody who had not. An empty `ravix:house` set is made first.
 
+**The agent step is also the account dialog.** `RavixWeb.Live.AgentPanel`
+is one component rendered by the walkthrough and by the workspace's account
+dialog (the "account" link in the rail, and the new-project form's nudge), so
+changing the agent, replacing a credential or reconnecting a subscription
+weeks later is the same page as the first time, and shows the subscription's
+state as Fountain reports it: connected, disconnected, reconnect required, or
+spent until a time.
+
 **The walkthrough is not a gate.** `/welcome` is shown to somebody who has no
 project and has never finished or dismissed it. Every step can be skipped:
 somebody invited into a teammate's project needs no subscription, and a scratch

@@ -390,6 +390,39 @@ defmodule Ravix.Accounts.Inference do
 
   defp mine?(_attempt, _client, _user), do: false
 
+  @typedoc "A person's ChatGPT subscription as Fountain reports it. Never a token."
+  @type subscription :: %{
+          id: String.t(),
+          status: String.t() | nil,
+          plan_type: String.t() | nil,
+          account_email: String.t() | nil,
+          exhausted_until: String.t() | nil
+        }
+
+  @doc """
+  This person's ChatGPT subscription as Fountain sees it, or nil for somebody
+  who has none: whether it is connected, on what plan and for which account,
+  and until when it is spent. What the page shows beside "connected", and
+  the reason a Codex run was refused, in words.
+  """
+  @spec subscription(User.t()) :: {:ok, subscription() | nil} | {:error, reason()}
+  def subscription(%User{} = user) do
+    with {:ok, client} <- fountain(),
+         {:ok, grant} <- own_grant(client, user) do
+      {:ok, grant && subscription_of(grant)}
+    end
+  end
+
+  defp subscription_of(grant) do
+    %{
+      id: grant["id"],
+      status: grant["status"],
+      plan_type: grant["plan_type"],
+      account_email: grant["account_email"],
+      exhausted_until: grant["exhausted_until"]
+    }
+  end
+
   @doc """
   Start a ChatGPT sign-in for this person: the code to type and where.
 
