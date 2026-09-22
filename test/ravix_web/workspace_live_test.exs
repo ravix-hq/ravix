@@ -45,7 +45,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
     id = row.id
 
     assert_push_event(view, "notify", %{
-      tracks: [%{id: ^id, thread_id: ^id, title: "Work · Default"}]
+      tracks: [%{id: ^id, thread_id: ^id, title: "Work"}]
     })
 
     second = %{second | status: :failed, unread: true}

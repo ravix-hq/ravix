@@ -702,7 +702,7 @@ defmodule RavixWeb.WorkspaceLive do
     %{
       id: track.id,
       thread_id: thread.id,
-      title: "#{track.title} · #{thread.title}",
+      title: if(thread.id == track.id, do: track.title, else: "#{track.title} · #{thread.title}"),
       project: project && project.name,
       status: thread.status
     }
