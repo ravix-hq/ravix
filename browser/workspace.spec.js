@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import { composerFixture } from './composer-fixture.js';
+import { signIn as signInAs } from './sign-in.js';
 
 async function accessible(page) {
   // Settle first. Axe computes contrast against *composited* colour, so an
@@ -24,23 +25,10 @@ async function accessible(page) {
   expect(result.violations).toEqual([]);
 }
 
-async function signIn(page) {
-  // `/` has nothing for a browser with no session and sends it here itself.
-  await page.goto('/');
-  await page.getByRole('link', { name: 'Sign in with GitHub', exact: true }).click();
-  await page.getByRole('link', { name: 'Sign in as @mockuser', exact: true }).click();
-  await expect(page.getByRole('link', { name: 'Sign out' })).toBeVisible();
-  await expect(page.locator('[data-phx-main]')).toHaveClass(/phx-connected/);
-  // Whoever signs in first, with no project yet, is shown the walkthrough. The
-  // test below is about that; every other test is about the workspace, and
-  // must reach it whether or not it is the first to run.
-  if (new URL(page.url()).pathname.startsWith('/welcome')) {
-    await page.getByRole('button', { name: 'Skip setup', exact: true }).click();
-    await expect(page).toHaveURL(/\/home$/);
-    await page.goto('/');
-    await expect(page.locator('[data-phx-main]')).toHaveClass(/phx-connected/);
-  }
-}
+// The walkthrough test below signs in by hand, because walking it is what it
+// is about. Everything else takes the shared helper, whose waits explain
+// themselves in `sign-in.js`.
+const signIn = (page) => signInAs(page, 'mockuser');
 
 async function chooseTheme(page, name) {
   await page.locator('[data-theme-toggle]').click();
@@ -239,6 +227,7 @@ test('home quick start creates a scratch project and recent navigation survives 
   await page.reload();
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'daylight');
   await recent.getByRole('link', { name: /Quick start quality/ }).click();
+  await expect(page).toHaveURL(/\/p\//);
   await expect(page.getByRole('heading', { name: 'Plans', exact: true })).toBeVisible();
   await expect(page.locator('.crumbs')).toContainText('Quick start quality');
   // Exact: an empty inbox must not put a "0" badge in the link's name.
@@ -377,11 +366,17 @@ test('project, track, streaming, image upload, reconnect, and revocation', async
   await expect(composer).toHaveValue('A draft while opening workspace dialogs');
   await composer.fill('Explain this project for the browser smoke test');
   await composer.press('Enter');
-  // The saved-prompts panel is not checked here: an idle machine can take
-  // the prompt before the panel ever renders, so waiting for it was a race.
-  // Its rendering from a real queue row is covered by "the queue panel
-  // renders what the context really returns, not a stub of it" in
-  // test/ravix_web/track_live_test.exs; delivery is what this checks next.
+  // A second prompt while the first one still holds the track: that one has to
+  // wait behind it, so the saved-prompts panel is certain to be drawn rather
+  // than racing a machine that took the prompt immediately. Both rows sit in
+  // the panel, so the row is named by its own text and not by the panel alone.
+  await composer.fill('Explain the queued project for the browser smoke test');
+  await composer.press('Enter');
+  const queued = page.locator('.workspace-queue > div')
+    .filter({ hasText: 'Explain the queued project for the browser smoke test' });
+  await expect(queued).toHaveCount(1);
+  // The status chip is what makes this the queue rather than the transcript.
+  await expect(queued.locator('.chip')).toHaveCount(1);
   // The prompt's own bubble, not just the page: the mock's reply quotes the
   // prompt back, so the transcript contains these words even when the prompt
   // never arrived. It reaches the live page on the turn's opening event, which
@@ -455,7 +450,16 @@ test('project, track, streaming, image upload, reconnect, and revocation', async
   await other.goto('/home');
   await other.getByRole('link', { name: 'Sign out' }).click();
   await expect(other.getByRole('heading', { name: 'Sign in to Ravix' })).toBeVisible();
-  await page.evaluate(() => document.querySelector("#composer-form")?.requestSubmit());
+  // Submitting on a revoked session is refused by sending this browser to
+  // sign in, and that navigation destroys the context this call is evaluated
+  // in --- which Playwright reports as an error rather than a result, often
+  // enough to fail a run. The refusal is what the assertions below read; the
+  // call's own return value was never wanted. Any other error still fails.
+  await page
+    .evaluate(() => document.querySelector("#composer-form")?.requestSubmit())
+    .catch((error) => {
+      if (!/Execution context was destroyed/.test(error.message)) throw error;
+    });
   await expect(page.getByRole('heading', { name: 'Sign in to Ravix' })).toBeVisible();
   await signIn(page);
   await page.goto(trackURL);
