@@ -37,12 +37,13 @@ defmodule Ravix.Accounts.User do
     field :onboarded_at, :utc_datetime_usec
     field :created_at, :utc_datetime_usec
     field :last_seen_at, :utc_datetime_usec
+    field :changes_seen_at, :utc_datetime_usec
 
     has_many :sessions, Ravix.Accounts.Session
     has_many :projects, Ravix.Projects.Project
   end
 
-  @fields ~w(id github_id login name avatar_url token_enc created_at last_seen_at)a
+  @fields ~w(id github_id login name avatar_url token_enc created_at last_seen_at changes_seen_at)a
 
   @typedoc "The two agents a person can bring a subscription for."
   @type agent :: :claude | :codex
