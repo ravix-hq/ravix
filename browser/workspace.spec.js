@@ -227,6 +227,7 @@ test('home quick start creates a scratch project and recent navigation survives 
   await page.reload();
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'daylight');
   await recent.getByRole('link', { name: /Quick start quality/ }).click();
+  await expect(page).toHaveURL(/\/p\//);
   await expect(page.getByRole('heading', { name: 'Plans', exact: true })).toBeVisible();
   await expect(page.locator('.crumbs')).toContainText('Quick start quality');
   // Exact: an empty inbox must not put a "0" badge in the link's name.
@@ -365,11 +366,17 @@ test('project, track, streaming, image upload, reconnect, and revocation', async
   await expect(composer).toHaveValue('A draft while opening workspace dialogs');
   await composer.fill('Explain this project for the browser smoke test');
   await composer.press('Enter');
-  // The saved-prompts panel is not checked here: an idle machine can take
-  // the prompt before the panel ever renders, so waiting for it was a race.
-  // Its rendering from a real queue row is covered by "the queue panel
-  // renders what the context really returns, not a stub of it" in
-  // test/ravix_web/track_live_test.exs; delivery is what this checks next.
+  // A second prompt while the first one still holds the track: that one has to
+  // wait behind it, so the saved-prompts panel is certain to be drawn rather
+  // than racing a machine that took the prompt immediately. Both rows sit in
+  // the panel, so the row is named by its own text and not by the panel alone.
+  await composer.fill('Explain the queued project for the browser smoke test');
+  await composer.press('Enter');
+  const queued = page.locator('.workspace-queue > div')
+    .filter({ hasText: 'Explain the queued project for the browser smoke test' });
+  await expect(queued).toHaveCount(1);
+  // The status chip is what makes this the queue rather than the transcript.
+  await expect(queued.locator('.chip')).toHaveCount(1);
   // The prompt's own bubble, not just the page: the mock's reply quotes the
   // prompt back, so the transcript contains these words even when the prompt
   // never arrived. It reaches the live page on the turn's opening event, which
