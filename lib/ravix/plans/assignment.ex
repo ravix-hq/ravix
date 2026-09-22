@@ -31,7 +31,7 @@ defmodule Ravix.Plans.Assignment do
       results =
         Enum.map(assignments, fn assignment ->
           item = Enum.find(items, &(&1.id == assignment["item_id"]))
-          {item, open(principal, plan, item, assignment)}
+          {item, open_or_release(principal, plan, item, assignment, request_id)}
         end)
 
       siblings = Store.items(plan.id)
@@ -104,6 +104,12 @@ defmodule Ravix.Plans.Assignment do
     end
   end
 
+  defp open_or_release(principal, plan, item, assignment, request_id) do
+    result = open(principal, plan, item, assignment)
+    if refused?(result), do: release(plan, item, request_id)
+    result
+  end
+
   defp open(principal, plan, item, assignment) do
     with {:ok, _} <- Authorization.check(principal, "tracks:write"),
          {:ok, _, _} <- Plans.access(principal.user, plan.id),
@@ -141,6 +147,49 @@ defmodule Ravix.Plans.Assignment do
         "title" => item.title
       }
     })
+  end
+
+  # A reservation outlives a failure only while the failure leaves open
+  # whether a conversation now exists: Fountain unreachable, timed out or
+  # erring on its side. The same request ID then replays this answer rather
+  # than provisioning twice. Everything else was refused before anything was
+  # made (access, a missing or closed target, a taken or invalid branch,
+  # Fountain unconfigured or answering 4xx, GitHub refusing the machine's
+  # preparation, a track row that would not save and whose conversation was
+  # unwound), so holding the item would only stop anyone assigning, editing,
+  # reordering or removing it again.
+  defp refused?({:error, reason}), do: definite?(reason)
+  defp refused?(_), do: false
+
+  defp definite?(reason)
+       when reason in [:not_found, :unauthenticated] or
+              (is_tuple(reason) and elem(reason, 0) in [:forbidden, :unconfigured]),
+       do: true
+
+  defp definite?({kind, _code, _message}) when kind in [:conflict, :unprocessable], do: true
+  defp definite?(%Ravix.Fountain.Error{} = error), do: Ravix.Fountain.Error.rejected?(error)
+  defp definite?(%Ravix.GitHub.Error{}), do: true
+  defp definite?(_), do: false
+
+  # Only this request's own reservation, and only while nothing attached. Like
+  # reserving, releasing changes the plan, so it moves the version on.
+  defp release(plan, item, request_id) do
+    Store.transaction(fn ->
+      current = Store.lock(plan.id)
+
+      case Store.item(item.id) do
+        %{assignment_request: ^request_id, track_id: nil} = row ->
+          row |> Ecto.Changeset.change(assignment_request: nil) |> Store.update() |> saved()
+
+          current
+          |> Ecto.Changeset.change(version: current.version + 1)
+          |> Store.update()
+          |> saved()
+
+        _ ->
+          :ok
+      end
+    end)
   end
 
   defp submit(principal, plan, item, siblings, {:ok, track}, request_id) do

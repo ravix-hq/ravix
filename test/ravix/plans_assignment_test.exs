@@ -234,14 +234,87 @@ defmodule Ravix.PlansAssignmentTest do
     assert {:ok, _} = Plans.update(user, plan.id, 3, %{"archived" => false})
     stub(Fountain, :client, fn -> Client.new("https://fountain.test", nil) end)
 
+    # Fountain unconfigured: nothing was sent, so nothing holds the item.
     assert {:ok, %{items: [%{error: "assignment_unconfirmed"}]}} =
              Assignment.assign(user, p, plan.id, [%{"item_id" => "api"}], "failure")
 
-    assert Repo.get!(Item, "api").assignment_request == "failure"
-    assert {:ok, _} = Assignment.assign(user, p, plan.id, [%{"item_id" => "api"}], "failure")
+    assert Repo.get!(Item, "api").assignment_request == nil
+
+    assert {:ok, %{items: [%{error: "assignment_unconfirmed"}]}} =
+             Assignment.assign(user, p, plan.id, [%{"item_id" => "api"}], "failure-again")
 
     assert {:error, {:conflict, "operation_unconfirmed", _}} =
              Assignment.assign(user, p, plan.id, [%{"item_id" => "ui"}], "blocked")
+  end
+
+  test "a refused opening frees the item; an unknown outcome keeps it reserved", %{
+    user: user,
+    p: p,
+    plan: plan
+  } do
+    listing = {%{method: "GET", path: "/api/conversations"}, {200, [], %{data: []}}}
+    create = %{method: "POST", path: "/api/conversations"}
+
+    refusing =
+      FakeTransport.client([
+        listing,
+        {create, {422, [], %{code: "invalid_request", message: "No."}}}
+      ])
+
+    stub(Fountain, :client, fn -> refusing end)
+
+    assert {:ok, %{items: [%{error: "assignment_unconfirmed"}]}} =
+             Assignment.assign(user, p, plan.id, [%{"item_id" => "api"}], "refused")
+
+    # Fountain said no, so no conversation exists: the item is free to edit
+    # and to assign again under a fresh request ID.
+    assert Repo.get!(Item, "api").assignment_request == nil
+    assert {:ok, %{plan: %{version: version}}} = Plans.get(user, plan.id)
+
+    assert {:ok, _} =
+             Plans.update(user, plan.id, version, %{
+               "items" => [
+                 %{"id" => "api", "title" => "API, edited"},
+                 %{"id" => "ui", "title" => "UI"}
+               ]
+             })
+
+    opening =
+      FakeTransport.client([
+        listing,
+        {create, {201, [], %{data: %{id: "conv-api"}}}}
+      ])
+
+    stub(Fountain, :client, fn -> opening end)
+
+    assert {:ok, %{items: [%{track_id: track_id}]}} =
+             Assignment.assign(user, p, plan.id, [%{"item_id" => "api"}], "fresh")
+
+    assert %{track_id: ^track_id, assignment_request: "fresh"} = Repo.get!(Item, "api")
+
+    # A transport failure may have created the conversation: the reservation
+    # stays, a fresh ID is refused, and the same ID replays without a call.
+    lost = FakeTransport.client([listing, {create, {:error, :timeout}}])
+    stub(Fountain, :client, fn -> lost end)
+
+    assert {:ok, %{items: [%{error: "assignment_unconfirmed"}]}} =
+             Assignment.assign(user, p, plan.id, [%{"item_id" => "ui"}], "lost")
+
+    assert Repo.get!(Item, "ui").assignment_request == "lost"
+    calls = length(FakeTransport.calls(lost))
+
+    assert {:ok, %{"items" => [%{"error" => "assignment_unconfirmed"}]}} =
+             Assignment.assign(user, p, plan.id, [%{"item_id" => "ui"}], "lost")
+
+    assert length(FakeTransport.calls(lost)) == calls
+
+    assert {:error, {:conflict, "item_assigned", _}} =
+             Assignment.assign(user, p, plan.id, [%{"item_id" => "ui"}], "another")
+
+    assert {:ok, %{plan: %{version: version}}} = Plans.get(user, plan.id)
+
+    assert {:error, {:conflict, "item_assigned", _}} =
+             Plans.update(user, plan.id, version, %{"items" => []})
   end
 
   test "MCP plan tools enforce both scopes and current membership and revocation", %{
