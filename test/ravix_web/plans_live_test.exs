@@ -69,6 +69,41 @@ defmodule RavixWeb.PlansLiveTest do
     assert has_element?(view, "#plan-assign button", "Assign selected items")
   end
 
+  test "a refused assignment does not spend the page's next request ID", %{
+    conn: conn,
+    user: user,
+    project: project
+  } do
+    track = insert_track(project: project, conversation_id: "existing")
+
+    {:ok, plan} =
+      Plans.create(user, project.id, %{
+        "title" => "Ordered",
+        "items" => [
+          %{"id" => "a", "title" => "A"},
+          %{"id" => "b", "title" => "B", "dependencies" => ["a"]}
+        ]
+      })
+
+    {:ok, view, _} = live(log_in_user(conn, user), "/p/#{project.id}?plan=#{plan.id}")
+    render_async(view, 5_000)
+
+    # The page offers no checkbox for a blocked item; a crafted event still arrives.
+    view
+    |> element("#plan-assign")
+    |> render_submit(%{"selected" => ["b"], "targets" => %{"b" => track.id}})
+
+    assert render_async(view, 5_000) =~ "Complete dependencies"
+
+    view
+    |> form("#plan-assign", %{"selected" => ["a"], "targets" => %{"a" => track.id}})
+    |> render_submit()
+
+    render_async(view, 5_000)
+    assert {:ok, %{items: [%{id: "a", track_id: id}, _]}} = Plans.get(user, plan.id)
+    assert id == track.id
+  end
+
   test "explicit multi-select assigns existing tracks and renders derived state", %{
     conn: conn,
     user: user,

@@ -97,6 +97,19 @@ defmodule Ravix.PlansTest do
     assert {:error, :not_found} = Plans.get(user, "missing")
     assert {:error, :not_found} = Plans.note(user, "missing", "hello")
 
+    # An item id another plan already holds is refused, not raised.
+    {:ok, _} =
+      Plans.create(user, project.id, %{
+        "title" => "One",
+        "items" => [%{"id" => "x", "title" => "X"}]
+      })
+
+    assert {:error, %Ecto.Changeset{errors: [id: _]}} =
+             Plans.create(user, project.id, %{
+               "title" => "Two",
+               "items" => [%{"id" => "x", "title" => "X"}]
+             })
+
     assert {:error, {:unprocessable, _, _}} =
              Graph.validate([%Item{id: "a", dependencies: []}, %Item{id: "a", dependencies: []}])
   end

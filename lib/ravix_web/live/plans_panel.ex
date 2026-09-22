@@ -221,6 +221,14 @@ defmodule RavixWeb.Live.PlansPanel do
      socket |> assign(error: error, busy: false, request_id: Ecto.UUID.generate()) |> load()}
   end
 
+  # A refused assignment claimed its request ID without a result, so the same
+  # ID would only ever answer "unconfirmed" again. Items that did get
+  # reserved stay reserved, which is what stops a fresh ID provisioning twice.
+  defp settled(:assign, {:ok, {:error, reason}}, socket),
+    do:
+      {:noreply,
+       assign(socket, busy: false, error: message(reason), request_id: Ecto.UUID.generate())}
+
   defp settled(_, {:ok, {:error, reason}}, socket),
     do: {:noreply, assign(socket, busy: false, error: message(reason))}
 

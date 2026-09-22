@@ -29,6 +29,6 @@ defmodule Ravix.Plans.Item do
     |> validate_length(:acceptance, max: 10_000)
     |> validate_length(:dependencies, max: 100)
     |> validate_number(:position, greater_than_or_equal_to: 0)
-    |> unique_constraint(:id)
+    |> unique_constraint(:id, name: :plan_items_pkey)
   end
 end
