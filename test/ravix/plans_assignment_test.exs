@@ -100,7 +100,7 @@ defmodule Ravix.PlansAssignmentTest do
 
     expect(Fountain, :update_agent, fn _, agent_id, body ->
       assert agent_id == project.agent_id
-      assert body["inference_credential_id"] == "owner-set"
+      assert body[:inference_credential_id] == "owner-set"
       {:ok, %{}}
     end)
 
