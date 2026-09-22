@@ -57,7 +57,7 @@ defmodule RavixWeb.Live.SettingsDialog do
   @packages ~w(apt pip npm)
 
   @impl true
-  def mount(socket), do: {:ok, assign(socket, pending: MapSet.new())}
+  def mount(socket), do: {:ok, assign(socket, settings: nil, pending: MapSet.new())}
 
   @impl true
   def update(assigns, socket) do
