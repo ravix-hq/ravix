@@ -242,8 +242,22 @@ defmodule Ravix.Tracks.Follower do
 
   def handle_info(:reopen, state), do: {:noreply, open_stream(state)}
 
-  def handle_info(:stop, %{subscribers: subs} = state) when map_size(subs) == 0,
-    do: {:stop, :normal, state}
+  def handle_info(:stop, %{subscribers: subs} = state) when map_size(subs) == 0 do
+    queued? =
+      try do
+        # ownership: no door; this user-less lifecycle read decides only
+        # whether the queued row's lifetime reason still exists.
+        Ravix.PromptQueue.Store.queued_prompts(state.track_id) != []
+      rescue
+        _ -> false
+      end
+
+    if queued? do
+      {:noreply, schedule_stop(%{state | stop_timer: nil})}
+    else
+      {:stop, :normal, state}
+    end
+  end
 
   def handle_info(_message, state), do: {:noreply, state}
 

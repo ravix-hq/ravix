@@ -56,7 +56,7 @@ defmodule Ravix.PromptQueue.Server do
 
   import Ecto.Query, only: [from: 2]
 
-  @interval 2_000
+  @interval 30_000
   # A backstop only: the Fountain client times out well inside this.
   @delivery_timeout 5 * 60_000
 
@@ -107,6 +107,13 @@ defmodule Ravix.PromptQueue.Server do
   @impl true
   def handle_info(:tick, state), do: {:noreply, state |> sweep() |> schedule()}
 
+  # Followers fan turn events into this topic as well as the track topic.  A
+  # missed event is harmless: the ordinary sweep remains the backstop.
+  def handle_info({:transcript, track_id, %Event{} = event}, state) do
+    if Event.settles?(event), do: deliver_track(track_id)
+    {:noreply, state}
+  end
+
   defp schedule(%{interval: false} = state), do: state
 
   defp schedule(%{interval: interval} = state) do
@@ -146,8 +153,14 @@ defmodule Ravix.PromptQueue.Server do
   end
 
   defp deliver_heads(client) do
+    heads = Store.heads()
+
+    Enum.each(heads, fn row ->
+      Phoenix.PubSub.subscribe(Ravix.PubSub, "track:" <> row.track_id)
+    end)
+
     Ravix.TaskSupervisor
-    |> Task.Supervisor.async_stream_nolink(Store.heads(), &deliver(client, &1),
+    |> Task.Supervisor.async_stream_nolink(heads, &deliver(client, &1),
       ordered: false,
       timeout: @delivery_timeout,
       on_timeout: :kill_task
@@ -156,6 +169,20 @@ defmodule Ravix.PromptQueue.Server do
       {:ok, _outcome} -> :ok
       {:exit, reason} -> Logger.error("ravix: prompt delivery crashed: #{inspect(reason)}")
     end)
+  end
+
+  defp deliver_track(track_id) do
+    case Fountain.client() do
+      client when is_struct(client, Client) ->
+        Store.heads()
+        |> Enum.filter(&(&1.track_id == track_id))
+        |> Enum.each(&deliver(client, &1))
+
+      _ ->
+        :ok
+    end
+  rescue
+    error -> Logger.error("ravix: prompt delivery wake failed: #{Exception.message(error)}")
   end
 
   # ── one head ──────────────────────────────────────────────────────────
