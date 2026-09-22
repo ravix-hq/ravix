@@ -1,0 +1,245 @@
+defmodule Ravix.Plans.Assignment do
+  @moduledoc "Explicit person-authorized assignment, with committed reservations before provider effects."
+  alias Ravix.Accounts.Access
+  alias Ravix.{Plans, Tracks}
+  alias Ravix.Plans.{Prompt, Store}
+  alias Ravix.Tooling.{Authorization, Mutations, Tasks}
+
+  def assign(user, principal, plan_id, assignments, request_id) do
+    args = %{"plan_id" => plan_id, "assignments" => assignments, "request_id" => request_id}
+
+    with true <- user.id == principal.user.id,
+         :ok <- Authorization.person(principal),
+         {:ok, principal} <- Authorization.check(principal, "plans:write"),
+         {:ok, principal} <- Authorization.check(principal, "tracks:write"),
+         {:ok, plan, _} <- Plans.access(user, plan_id),
+         :ok <- valid(assignments, request_id),
+         :ok <- targets(user, plan.project_id, assignments) do
+      Mutations.run(principal, "assign_items", args, fn ->
+        run(principal, plan, assignments, request_id)
+      end)
+    else
+      false -> {:error, :unauthenticated}
+      error -> error
+    end
+  end
+
+  defp run(principal, plan, assignments, request_id) do
+    with {:ok, %{items: statuses}} <- Plans.get(principal.user, plan.id),
+         :ok <- prompt_size(plan, Store.items(plan.id), assignments),
+         {:ok, items} <- reserve(plan, assignments, statuses, request_id) do
+      results =
+        Enum.map(assignments, fn assignment ->
+          item = Enum.find(items, &(&1.id == assignment["item_id"]))
+          {item, open_or_release(principal, plan, item, assignment, request_id)}
+        end)
+
+      siblings = Store.items(plan.id)
+
+      receipts =
+        Enum.map(results, fn {item, result} ->
+          submit(principal, plan, item, siblings, result, request_id)
+        end)
+
+      {:ok, %{items: receipts}}
+    end
+  end
+
+  defp prompt_size(plan, items, assignments) do
+    ids = MapSet.new(assignments, & &1["item_id"])
+    selected = Enum.filter(items, &MapSet.member?(ids, &1.id))
+
+    if Enum.all?(selected, &(String.length(Prompt.build(plan, &1, items)) <= 95_000)),
+      do: :ok,
+      else:
+        {:error,
+         {:unprocessable, "plan_prompt_too_large",
+          "Shorten this plan's prompt material before assigning it."}}
+  end
+
+  defp reserve(plan, assignments, statuses, request_id) do
+    ids = Enum.map(assignments, & &1["item_id"])
+
+    Store.transaction(fn ->
+      current = Store.lock(plan.id)
+
+      if current.version != plan.version,
+        do:
+          Store.rollback(
+            {:conflict, "stale_version", "This plan changed. Refresh before assigning."}
+          )
+
+      if current.archived,
+        do:
+          Store.rollback({:conflict, "plan_archived", "Restore this plan before assigning work."})
+
+      items = Store.items(plan.id)
+      selected = Enum.filter(items, &(&1.id in ids))
+      if length(selected) != length(ids), do: Store.rollback(:not_found)
+
+      Enum.each(selected, &reserve_item(&1, statuses, request_id))
+
+      current |> Ecto.Changeset.change(version: current.version + 1) |> Store.update() |> saved()
+      selected
+    end)
+  end
+
+  defp reserve_item(item, statuses, request_id) do
+    status = Enum.find(statuses, &(&1.id == item.id))
+
+    cond do
+      item.track_id || item.assignment_request ->
+        Store.rollback(
+          {:conflict, "item_assigned",
+           "This item is already assigned or has an unconfirmed assignment."}
+        )
+
+      is_nil(status) or status.status == :blocked ->
+        Store.rollback(
+          {:conflict, "item_blocked", "Complete dependencies before assigning this item."}
+        )
+
+      true ->
+        item |> Ecto.Changeset.change(assignment_request: request_id) |> Store.update() |> saved()
+    end
+  end
+
+  defp open_or_release(principal, plan, item, assignment, request_id) do
+    result = open(principal, plan, item, assignment)
+    if refused?(result), do: release(plan, item, request_id)
+    result
+  end
+
+  defp open(principal, plan, item, assignment) do
+    with {:ok, _} <- Authorization.check(principal, "tracks:write"),
+         {:ok, _, _} <- Plans.access(principal.user, plan.id),
+         {:ok, track} <- target(principal.user, plan, item, assignment) do
+      # Reservation is durable before the provider call; attachment is durable before prompting.
+      Store.transaction(fn ->
+        Store.lock(plan.id)
+
+        Store.item(item.id)
+        |> Ecto.Changeset.change(track_id: track.id)
+        |> Store.update()
+        |> saved()
+      end)
+
+      {:ok, track}
+    end
+  end
+
+  defp target(user, plan, _item, %{"track_id" => id}) when is_binary(id) do
+    with {:ok, %{track: track}} <- Access.track_access(user, id),
+         true <- track.project_id == plan.project_id and is_nil(track.closed_at) do
+      {:ok, track}
+    else
+      _ -> {:error, :not_found}
+    end
+  end
+
+  defp target(user, plan, item, _) do
+    # No name: `Tracks` derives a valid, unreserved branch from the item.
+    Tracks.open(user, plan.project_id, %{
+      "origin" => %{
+        "kind" => "plan",
+        "plan_id" => plan.id,
+        "item_id" => item.id,
+        "title" => item.title
+      }
+    })
+  end
+
+  # A reservation outlives a failure only while the failure leaves open
+  # whether a conversation now exists: Fountain unreachable, timed out or
+  # erring on its side. The same request ID then replays this answer rather
+  # than provisioning twice. Everything else was refused before anything was
+  # made (access, a missing or closed target, a taken or invalid branch,
+  # Fountain unconfigured or answering 4xx, GitHub refusing the machine's
+  # preparation, a track row that would not save and whose conversation was
+  # unwound), so holding the item would only stop anyone assigning, editing,
+  # reordering or removing it again.
+  defp refused?({:error, reason}), do: definite?(reason)
+  defp refused?(_), do: false
+
+  defp definite?(reason)
+       when reason in [:not_found, :unauthenticated] or
+              (is_tuple(reason) and elem(reason, 0) in [:forbidden, :unconfigured]),
+       do: true
+
+  defp definite?({kind, _code, _message}) when kind in [:conflict, :unprocessable], do: true
+  defp definite?(%Ravix.Fountain.Error{} = error), do: Ravix.Fountain.Error.rejected?(error)
+  defp definite?(%Ravix.GitHub.Error{}), do: true
+  defp definite?(_), do: false
+
+  # Only this request's own reservation, and only while nothing attached. Like
+  # reserving, releasing changes the plan, so it moves the version on.
+  defp release(plan, item, request_id) do
+    Store.transaction(fn ->
+      current = Store.lock(plan.id)
+
+      case Store.item(item.id) do
+        %{assignment_request: ^request_id, track_id: nil} = row ->
+          row |> Ecto.Changeset.change(assignment_request: nil) |> Store.update() |> saved()
+
+          current
+          |> Ecto.Changeset.change(version: current.version + 1)
+          |> Store.update()
+          |> saved()
+
+        _ ->
+          :ok
+      end
+    end)
+  end
+
+  # An item is assigned to a track, not to one of its threads: the prompt goes
+  # to the default thread, whose ID is the track's, new track or existing.
+  defp submit(principal, plan, item, siblings, {:ok, track}, request_id) do
+    case Tasks.send(
+           principal,
+           track.id,
+           Prompt.build(plan, item, siblings),
+           "plan:#{request_id}:#{item.id}",
+           track.id
+         ) do
+      {:ok, task} -> %{item_id: item.id, track_id: track.id, task: Tasks.present(task)}
+      {:error, _} -> %{item_id: item.id, track_id: track.id, error: "prompt_unconfirmed"}
+    end
+  end
+
+  defp submit(_, _, item, _, {:error, _}, _),
+    do: %{item_id: item.id, error: "assignment_unconfirmed"}
+
+  defp targets(user, project_id, assignments) do
+    if Enum.all?(assignments, &valid_target?(user, project_id, &1)),
+      do: :ok,
+      else: {:error, :not_found}
+  end
+
+  defp valid_target?(user, project_id, %{"track_id" => id}) do
+    case Access.track_access(user, id) do
+      {:ok, %{track: track}} -> track.project_id == project_id and is_nil(track.closed_at)
+      _ -> false
+    end
+  end
+
+  defp valid_target?(_, _, _), do: true
+
+  defp valid(assignments, request_id)
+       when is_list(assignments) and length(assignments) in 1..100 and is_binary(request_id) and
+              byte_size(request_id) in 1..100 do
+    ids = Enum.map(assignments, fn a -> if is_map(a), do: a["item_id"] end)
+
+    if Enum.all?(ids, &is_binary/1) and length(Enum.uniq(ids)) == length(ids),
+      do: :ok,
+      else: invalid()
+  end
+
+  defp valid(_, _), do: invalid()
+
+  defp invalid,
+    do: {:error, {:unprocessable, "invalid_assignment", "Choose unique items and a request ID."}}
+
+  defp saved({:ok, row}), do: row
+  defp saved({:error, reason}), do: Store.rollback(reason)
+end

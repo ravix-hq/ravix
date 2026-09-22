@@ -72,5 +72,11 @@ defmodule RavixWeb.ToolingOAuthHTML do
   defp description("tracks:write"),
     do: "Create tracks and send prompts that run code using the project's agent subscription."
 
+  defp description("plans:read"), do: "Read plans in projects you belong to."
+
+  defp description("plans:write"),
+    do:
+      "Create and edit plans and append notes. With tracks:write, explicitly assign work using the project owner's subscription."
+
   defp description("tracks:cancel"), do: "Cancel this client's queued tasks."
 end

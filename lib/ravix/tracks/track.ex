@@ -15,8 +15,8 @@ defmodule Ravix.Tracks.Track do
   it over rows whose `closed_at` is null.
 
   `rev` is the project rev this track opened at. A lower one means older
-  settings. `origin_kind` is one the database allows and this schema loads, so the
-  read side can trust it rather than coercing anything it does not know into
+  settings. `origin_kind` is one the database allows and this schema loads,
+  so the read side can trust it rather than coercing anything it does not know into
   `blank`; the other `origin_*` columns describe what the track was created
   from.
   """
@@ -26,13 +26,14 @@ defmodule Ravix.Tracks.Track do
   @primary_key {:id, :string, autogenerate: false}
   @foreign_key_type :string
 
-  @origin_kinds ~w(blank branch pr issue)a
+  @origin_kinds ~w(blank branch pr issue plan)a
 
   # Kinds this release can read but not yet start. A release that starts a
   # new kind is deployed while the previous one still serves, and that one
   # has to load the rows the new one writes: so a kind is readable one
   # release before anything writes it (ADR 0003, expand before contract).
-  @readable_only_kinds ~w(plan)a
+  # `plan` passed through here and is now startable; none is waiting.
+  @readable_only_kinds []
 
   @typedoc "What a track was started from."
   @type origin_kind :: :blank | :branch | :pr | :issue | :plan
@@ -52,6 +53,8 @@ defmodule Ravix.Tracks.Track do
     field :origin_number, :integer
     field :origin_title, :string
     field :origin_url, :string
+    field :origin_plan_id, :string
+    field :origin_item_id, :string
     field :rev, :integer, default: 1
     field :opened_at, :utc_datetime_usec
     field :closed_at, :utc_datetime_usec
@@ -68,7 +71,7 @@ defmodule Ravix.Tracks.Track do
   end
 
   @fields ~w(id project_id conversation_id slug title branch branch_reserved workdir origin_kind origin_base
-             origin_number origin_title origin_url rev opened_at closed_at created_at created_by_login)a
+             origin_number origin_title origin_url origin_plan_id origin_item_id rev opened_at closed_at created_at created_by_login)a
   @required ~w(id project_id slug title branch workdir origin_kind rev created_at created_by_login)a
 
   @doc "The four things a track can be started from."

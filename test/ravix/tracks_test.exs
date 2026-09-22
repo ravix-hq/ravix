@@ -167,18 +167,18 @@ defmodule Ravix.TracksTest do
                }
              } = Tracks.present(pr, project: project)
 
-      # There is no longer a fifth kind to coerce here: the column is one of
-      # four, and a row carrying anything else cannot be written. See
+      # There is nothing left to coerce here: the column is one of the
+      # startable kinds, and a row carrying anything else cannot be written. See
       # `Ravix.SchemasTest` for the refusal and `open/4` for the boundary
-      # where a browser's word becomes one of the four.
-      assert Tracks.Track.origin_kinds() == [:blank, :branch, :pr, :issue]
+      # where a browser's word becomes one of them.
+      assert Tracks.Track.origin_kinds() == [:blank, :branch, :pr, :issue, :plan]
     end
 
-    test "a plan track the next release writes still loads and presents here",
+    test "a plan track loads and presents, and plan is now a kind that starts",
          %{project: project, track: track} do
-      # The release after this one starts plan tracks while this one is still
-      # serving, so this one must read them: the database word loads, and the
-      # row presents with its kind rather than raising.
+      # The release before this one could read plan tracks without starting
+      # them (expand); this one starts them (contract). The database word
+      # still loads, and the row presents with its kind rather than raising.
       type = Tracks.Track.__schema__(:type, :origin_kind)
       assert Ecto.Type.load(type, "plan") == {:ok, :plan}
 
@@ -187,8 +187,10 @@ defmodule Ravix.TracksTest do
       assert %{origin: %{kind: :plan, title: "Ship the API"}} =
                Tracks.present(plan, project: project)
 
-      # Nothing here starts one yet: it is not a kind a browser can ask for.
-      refute :plan in Tracks.Track.origin_kinds()
+      # Startable now, and read-only kinds are empty again: the enum is
+      # exactly the startable kinds, with nothing loaded that cannot start.
+      assert :plan in Tracks.Track.origin_kinds()
+      assert Ecto.Enum.values(Tracks.Track, :origin_kind) == Tracks.Track.origin_kinds()
     end
   end
 

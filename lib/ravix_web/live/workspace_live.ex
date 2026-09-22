@@ -17,7 +17,7 @@ defmodule RavixWeb.WorkspaceLive do
   # handler, mapped back with `%{"branch" => :branches, ...}`. The strings
   # existed only because the buttons send strings, which is one boundary and
   # is `@form_origins`' whole job.
-  @origin_kinds Ravix.Tracks.Track.origin_kinds()
+  @origin_kinds Ravix.Tracks.Track.origin_kinds() -- [:plan]
   @form_origins Map.new(@origin_kinds, &{to_string(&1), &1})
   @origin_labels %{blank: "Blank", branch: "Branch", pr: "Pull request", issue: "Issue"}
   @origin_refs %{branch: :branches, pr: :pulls, issue: :issues}
@@ -55,6 +55,7 @@ defmodule RavixWeb.WorkspaceLive do
         expanded_projects: MapSet.new(),
         advanced_track: false,
         project: nil,
+        selected_plan_id: nil,
         track_id: nil,
         # The nested `RavixWeb.TrackLive`, once it has said where it is. See
         # the `:track_host` clause of `handle_info/2`, and `hand_over/3`.
@@ -150,6 +151,7 @@ defmodule RavixWeb.WorkspaceLive do
       |> select_notice_thread(track_id)
       |> assign(
         project: project,
+        selected_plan_id: params["plan"],
         track_id: track_id,
         dialog: nil,
         expanded_projects: expanded
@@ -539,6 +541,16 @@ defmodule RavixWeb.WorkspaceLive do
   # A rebuild closed every track on the project and a delete removed it
   # outright. Either way this is no longer somewhere to be, and a component
   # cannot patch the URL.
+  def handle_info({:plan_saved, project_id, plan_id}, socket) do
+    case Ravix.Plans.access(socket.assigns.current_user, plan_id) do
+      {:ok, %{project_id: ^project_id}, _} ->
+        {:noreply, push_patch(socket, to: "/p/#{project_id}?plan=#{plan_id}")}
+
+      _ ->
+        {:noreply, reload_async(socket)}
+    end
+  end
+
   def handle_info(:project_left_behind, socket),
     do: {:noreply, socket |> reload_async() |> push_patch(to: "/")}
 
