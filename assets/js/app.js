@@ -7,15 +7,16 @@
 // live in `hooks/`, one file each, and this file registers them. There is
 // nothing else: no framework, no state, no packages beyond Phoenix's own.
 //
-// The five hooks, and what they are for:
+// The six hooks, and what they are for:
 //
 //   Theme           the palette picker (reads and writes `ravix.theme`)
 //   PanelResize     the drag handle between the rail, the stage and the inspector
 //   TranscriptTail  a scrollback that follows new output while you are at the bottom
 //   Composer        the prompt box: Enter sends, pasted images become uploads
 //   Terminal        the shell panel: history, Ctrl+L, output that follows itself
+//   Notify          desktop notifications when a track needs you and you are not looking
 //
-// Adding a sixth is a product decision, not a convenience. Say why in its
+// Adding a seventh is a product decision, not a convenience. Say why in its
 // file's header, and list it here.
 import "../css/app.css"
 import "phoenix_html"
@@ -26,8 +27,9 @@ import {PanelResize} from "./hooks/panel_resize"
 import {TranscriptTail} from "./hooks/transcript_tail"
 import {Composer} from "./hooks/composer"
 import {Terminal} from "./hooks/terminal"
+import {Notify} from "./hooks/notify"
 
-const hooks = {Theme, PanelResize, TranscriptTail, Composer, Terminal}
+const hooks = {Theme, PanelResize, TranscriptTail, Composer, Terminal, Notify}
 
 const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
 const liveSocket = new LiveSocket("/live", Socket, {
