@@ -612,6 +612,31 @@ defmodule Ravix.TracksTest do
       assert create.body["prompt"] =~ "pull request #12"
     end
 
+    test "a pull request can be picked up again once its earlier track closes", ctx do
+      insert_track(
+        project: ctx.project,
+        branch: "feature/x",
+        branch_reserved: false,
+        closed_at: DateTime.utc_now()
+      )
+
+      opening_fountain(ctx.project, false)
+      origin = %{"kind" => "pr", "base" => "feature/x", "number" => 12}
+
+      assert {:ok, track} = Tracks.open(ctx.owner, ctx.project.id, %{"origin" => origin})
+      assert track.branch == "feature/x"
+      refute Repo.get!(Track, track.id).branch_reserved
+    end
+
+    test "a pull request's branch is refused while another open track has it", ctx do
+      insert_track(project: ctx.project, branch: "feature/x", branch_reserved: false)
+      quiet_fountain(ctx.project)
+      origin = %{"kind" => "pr", "base" => "feature/x", "number" => 12}
+
+      assert {:error, {:unprocessable, "branch_taken", _}} =
+               Tracks.open(ctx.owner, ctx.project.id, %{"origin" => origin})
+    end
+
     test "branch origins cut a new named branch from the selected base", ctx do
       client = opening_fountain(ctx.project, false)
 

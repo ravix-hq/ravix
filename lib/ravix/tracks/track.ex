@@ -60,7 +60,7 @@ defmodule Ravix.Tracks.Track do
     has_one :preview, Ravix.Previews.Preview
   end
 
-  @fields ~w(id project_id conversation_id slug title branch workdir origin_kind origin_base
+  @fields ~w(id project_id conversation_id slug title branch branch_reserved workdir origin_kind origin_base
              origin_number origin_title origin_url rev opened_at closed_at created_at created_by_login)a
   @required ~w(id project_id slug title branch workdir origin_kind rev created_at created_by_login)a
 
@@ -70,7 +70,8 @@ defmodule Ravix.Tracks.Track do
 
   @doc """
   A track. The opening plan usually brings the id; one is minted otherwise.
-  New rows reserve their branch across open and closed tracks.
+  New rows reserve their branch across open and closed tracks, except a pull
+  request's head branch, which belongs to the PR.
   """
   @spec changeset(t(), map()) :: Ecto.Changeset.t()
   def changeset(track, attrs) do

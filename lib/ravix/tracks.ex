@@ -327,7 +327,7 @@ defmodule Ravix.Tracks do
 
     with :ok <- validate_name(origin, name),
          branch = if(origin.kind == :pr, do: origin.base, else: Ids.branch_for(name)),
-         :ok <- available_branch(rows, branch) do
+         :ok <- available_branch(origin, rows, branch) do
       slug = free_slug(open_slugs, if(origin.kind == :pr, do: branch, else: name))
       {:ok, build_plan(user, project, machine, id, origin, slug, branch)}
     end
@@ -344,7 +344,17 @@ defmodule Ravix.Tracks do
           "Use a valid Git branch name: no spaces, control characters, .., ~ ^ : ? * [ or backslash; no leading - or dot components, trailing dot, .lock or slash."}}
   end
 
-  defp available_branch(rows, branch) do
+  # A pull request's head branch is the PR's, not a name handed out here, so
+  # it is never reserved: it is only in the way while another open track has
+  # it checked out (git will not put one branch in two worktrees). Closing
+  # that track lets the same PR be picked up again.
+  defp available_branch(%Origin{kind: :pr}, rows, branch) do
+    if Enum.any?(rows, &(is_nil(&1.closed_at) and &1.branch == branch)),
+      do: {:error, branch_taken()},
+      else: :ok
+  end
+
+  defp available_branch(_origin, rows, branch) do
     if Enum.any?(rows, &(&1.branch == branch)),
       do: {:error, branch_taken()},
       else: :ok
