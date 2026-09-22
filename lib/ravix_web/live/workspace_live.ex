@@ -433,6 +433,10 @@ defmodule RavixWeb.WorkspaceLive do
   # process, with the page unable to render or answer a click for the whole
   # of them, every time any agent anywhere started or finished a turn.
   #
+  # A read mark is the third thing handled narrowly: it names the reader and
+  # the track, and that is the whole of what it can change, so the rail
+  # clears one dot from the event itself. See `:read` below.
+  #
   # Everything else reloads the rail entire, because `:people` can change
   # which projects exist at all and `:tracks` and `:settings` can change the
   # project itself. A narrower rule for those would have to know which of the
@@ -505,7 +509,36 @@ defmodule RavixWeb.WorkspaceLive do
   def handle_info({:hub, %Event{name: :turn, project_id: id}}, socket),
     do: {:noreply, refresh_tracks(socket, id)}
 
+  # A read mark is one person's own, and the only thing on this page it can
+  # move is that person's unread dot on the track it names. So it is applied
+  # to the rail in hand and reads nothing: not Fountain, not the database.
+  # Every tab this person has open hears it, which is why it comes over the
+  # hub rather than from the nested track page directly; everybody else's
+  # rail hears it and has nothing to do. It used to arrive as `:tracks` and
+  # re-read the whole rail, live, in every rail on the project, whenever
+  # anybody opened a track.
+  def handle_info({:hub, %Event{name: :read} = event}, socket),
+    do: {:noreply, clear_unread(socket, event)}
+
   def handle_info({:hub, %Event{}}, socket), do: {:noreply, reload_async(socket)}
+
+  defp clear_unread(
+         %{assigns: %{current_user: %Accounts.User{id: user_id}, tracks: tracks}} = socket,
+         %Event{user_id: user_id, project_id: project_id, track_id: track_id}
+       )
+       when is_binary(track_id) do
+    case Map.fetch(tracks, project_id) do
+      {:ok, rows} ->
+        rows = Enum.map(rows, &if(&1.id == track_id, do: %{&1 | unread: false}, else: &1))
+        tracks = Map.put(tracks, project_id, rows)
+        assign(socket, tracks: tracks, attention: attention_count(tracks))
+
+      :error ->
+        socket
+    end
+  end
+
+  defp clear_unread(socket, _somebody_elses), do: socket
 
   # The rail, read here and now. Mount has nothing to draw until this answers
   # and `handle_params/3` decides whether the URL names a project this person

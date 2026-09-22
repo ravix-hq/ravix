@@ -367,6 +367,61 @@ defmodule RavixWeb.WorkspaceLiveTest do
     refute html =~ "Beta two"
   end
 
+  test "a read mark clears the reader's own dot in every tab and re-reads nothing", %{
+    conn: conn
+  } do
+    owner = insert_user()
+    member = insert_user()
+    project = insert_project(user: owner)
+    People.add_project_member(project.id, member.id, owner.id)
+    track = insert_track(project: project, title: "Unread here")
+    test_pid = self()
+
+    # The rail's list is the Fountain read this page makes, so this is where
+    # a read is counted. Every rail starts with the track wanting attention.
+    stub(Tracks, :list, fn user, project_id ->
+      send(test_pid, {:listed, user.id})
+      assert project_id == project.id
+      {:ok, [track |> Tracks.present(project: project) |> struct!(status: :ready, unread: true)]}
+    end)
+
+    {:ok, tab_a, _} = live(log_in_user(conn, owner), "/p/#{project.id}")
+    {:ok, tab_b, _} = live(log_in_user(conn, owner), "/p/#{project.id}")
+    {:ok, theirs, _} = live(log_in_user(conn, member), "/p/#{project.id}")
+
+    for view <- [tab_a, tab_b, theirs] do
+      assert has_element?(view, ".track-attention")
+      assert has_element?(view, ".badge", "1")
+    end
+
+    # The mounts' reads (a page is rendered once over HTTP and once on its
+    # socket), accounted for; what follows must add none.
+    for view <- [tab_a, tab_b, theirs], do: render_async(view)
+    drain = fn drain -> receive(do: ({:listed, _} -> drain.(drain)), after: (0 -> :ok)) end
+    drain.(drain)
+
+    assert :ok = Tracks.mark_read(owner, track.id)
+
+    # `render_async/1` waits out any rail read the event might have started
+    # in each page before the stub's message is looked for, so an absent
+    # message is an absent read rather than a slow one.
+    for view <- [tab_a, tab_b, theirs], do: render_async(view)
+
+    # Both of the reader's tabs cleared the dot from the event alone...
+    refute has_element?(tab_a, ".track-attention")
+    refute has_element?(tab_b, ".track-attention")
+    refute has_element?(tab_a, ".badge")
+
+    # ...somebody else's rail kept its own mark, which the event says nothing
+    # about...
+    assert has_element?(theirs, ".track-attention")
+
+    # ...and nobody went back to Fountain. This used to be a `:tracks` event
+    # that re-read every rail on the project, live, whenever anybody opened
+    # a track.
+    refute_received {:listed, _}
+  end
+
   test "a track loads its transcript, sends prompts, and renders its files", %{conn: conn} do
     user = insert_user()
     project = insert_project(user: user)

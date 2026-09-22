@@ -508,6 +508,14 @@ defmodule Ravix.Tracks do
   from the read: opening a track to glance at the branch name is not reading
   three turns of output, and a read mark set by the fetch would clear the
   dot before anybody looked.
+
+  Published as `:read`, naming the reader, rather than as `:tracks`. A
+  `:tracks` event says something about the track moved and every rail on
+  the project re-lists its conversations from Fountain to find out what;
+  this moved one person's private mark, which the rail of that person can
+  clear from the event alone and nobody else's rail shows. Every open track
+  page called this on each load, stage and send, so the old shape cost the
+  whole project a Fountain round trip per reader each time anybody looked.
   """
   @spec mark_read(User.t(), String.t()) :: :ok | {:error, reason()}
   def mark_read(%User{} = user, track_id) do
@@ -515,7 +523,7 @@ defmodule Ravix.Tracks do
       # ownership: `Access.track_access/2` on the line above; a person may
       # always mark their own read position on a track they may open.
       People.Store.mark_read(track.id, user.id, DateTime.utc_now())
-      publish_tracks(project.id, track.id)
+      Hub.publish(project.id, :read, track_id: track.id, user_id: user.id)
     end
   end
 

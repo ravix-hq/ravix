@@ -921,6 +921,12 @@ defmodule RavixWeb.TrackLive do
   defp hub(%Event{name: name}, socket) when name in [:people, :tracks, :settings],
     do: refresh_detail(socket)
 
+  # Somebody's read mark moved. This page is the one that moves it, and it
+  # draws nothing from it: the unread dot is the rail's, and the rail clears
+  # its own. Not a reason to re-read the detail, which is two Fountain round
+  # trips, on every load, stage and send of every other page on this track.
+  defp hub(%Event{name: :read}, socket), do: socket
+
   # The configuration form always shows what would actually be used --- the
   # track's override if it has one, the project's default otherwise --- so
   # it is rebuilt whenever the preview is, rather than being a box somebody

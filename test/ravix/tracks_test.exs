@@ -744,12 +744,25 @@ defmodule Ravix.TracksTest do
       {:ok, owner: owner, project: project, track: track}
     end
 
-    test "a read mark is this person's, and the rail is told", ctx do
+    test "a read mark is this person's, and the rail is told whose it is", ctx do
       assert :ok = Tracks.mark_read(ctx.owner, ctx.track.id)
       assert %DateTime{} = Ravix.People.Store.last_read_of(ctx.track.id, ctx.owner.id)
       project_id = ctx.project.id
       track_id = ctx.track.id
-      assert_receive {:hub, %Event{name: :tracks, project_id: ^project_id, track_id: ^track_id}}
+      user_id = ctx.owner.id
+
+      # Named with the reader as well as the track, so that a rail can clear
+      # one dot from the event alone. Not a `:tracks`: that sends every rail
+      # on the project back to Fountain for a fact Fountain never held.
+      assert_receive {:hub,
+                      %Event{
+                        name: :read,
+                        project_id: ^project_id,
+                        track_id: ^track_id,
+                        user_id: ^user_id
+                      }}
+
+      refute_received {:hub, %Event{name: :tracks}}
     end
 
     test "interrupt reaches the conversation", ctx do

@@ -24,16 +24,25 @@ defmodule Ravix.HubTest do
 
       assert %Event{name: :here, present: [%{login: "ana"}]} =
                Event.new(:here, "p1", track_id: "t1", present: [%{login: "ana"}])
+
+      # A read mark names its reader, so a rail can tell its own from
+      # everybody else's without asking anything.
+      assert %Event{name: :read, track_id: "t1", user_id: "u1"} =
+               Event.new(:read, "p1", track_id: "t1", user_id: "u1")
+
+      assert %Event{user_id: nil} = Event.new(:tracks, "p1", track_id: "t1")
     end
 
-    test "refuses a name that is not one of the six" do
+    test "refuses a name that is not one of the seven" do
       # The set is closed on purpose: these are written here and never
       # received from outside, so a typo should not become a live event
       # nobody handles.
       assert_raise FunctionClauseError, fn -> Event.new(:peple, "p1") end
       assert_raise FunctionClauseError, fn -> Event.new("people", "p1") end
       assert_raise FunctionClauseError, fn -> Event.new(:people, nil) end
-      assert Enum.sort(Event.names()) == [:here, :people, :queue, :settings, :tracks, :turn]
+
+      assert Enum.sort(Event.names()) ==
+               [:here, :people, :queue, :read, :settings, :tracks, :turn]
     end
   end
 

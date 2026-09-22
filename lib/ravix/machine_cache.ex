@@ -21,9 +21,14 @@ defmodule Ravix.MachineCache do
       (which may provision the machine), closing one, rebuilding or
       destroying the project: each calls `forget_project/1`.
     - **Refreshed by whoever needs it fresh.** The sidebar's status dot must
-      not lag a turn ending, so `Ravix.Tracks.list/2` and `get/2` read live
-      and write the result through; everything that only needs the machine's
-      identity reads from the memo.
+      not lag a turn ending, so `Ravix.Tracks.list/2` and `get/2` ask for a
+      list no older than the moment they asked, and the result is written
+      through; everything that only needs the machine's identity reads from
+      the memo. A refresh is not a forget: it joins a load already in
+      flight if that load started late enough, and otherwise the one
+      load that follows it, so a hub event reaching every open page costs
+      one or two Fountain calls rather than one per page. See
+      `Ravix.Memo` for the rule.
 
   The sprite behind a sandbox never changes for a given sandbox id, so that
   lookup is memoised for longer; a "not a sprite" answer only briefly, since
@@ -76,18 +81,16 @@ defmodule Ravix.MachineCache do
 
   @doc """
   The project's agent's conversations: from the memo while fresh, unless
-  `fresh: true`, in which case Fountain is asked and the memo refreshed.
-  Narrowed to the project's agent, never the whole account. A failed read is
-  nobody's answer: the next caller retries.
+  `fresh: true`, in which case only a list read no earlier than now will
+  do -- the load in flight if it is that new, else one more -- and the memo
+  is refreshed with it. Narrowed to the project's agent, never the whole
+  account. A failed read is nobody's answer: the next caller retries.
   """
   @spec conversations(Client.t(), Project.t(), opts()) ::
           {:ok, [conversation()]} | {:error, Fountain.failure()}
   def conversations(%Client{} = client, %Project{} = project, opts \\ []) do
-    key = list_key(client, project)
-    if opts[:fresh], do: forget(key)
-
     memo(
-      key,
+      list_key(client, project),
       fn -> Fountain.list_conversations(client, project.agent_id) end,
       fn _ -> @ttl_ms end,
       opts
@@ -213,9 +216,15 @@ defmodule Ravix.MachineCache do
     end
   end
 
+  # `fresh: true` is "nothing loaded before now", on the caller's clock.
+  # Deleting the key instead, as this used to, disowned the load in flight
+  # and started another for every caller that arrived during it: a `:turn`
+  # on the hub reaches every open page on the project, and each one asked
+  # for the same list afresh.
   defp memo_opts(opts) do
-    now = Keyword.take(opts, [:now_ms])
-    [on_crash: &crashed/1] ++ now
+    now = Keyword.get_lazy(opts, :now_ms, &Ravix.Clock.now_ms/0)
+    fresh = if opts[:fresh], do: [newer_than: now], else: []
+    [on_crash: &crashed/1, now_ms: now] ++ fresh
   end
 
   defp crashed(reason) do
@@ -230,8 +239,6 @@ defmodule Ravix.MachineCache do
 
   defp message(%{__exception__: true} = error), do: Exception.message(error)
   defp message(reason), do: inspect(reason)
-
-  defp forget(key), do: Memo.forget(@memo, key)
 
   defp list_key(client, project),
     do: {client_id(client), :conversations, project.id, project.agent_id}
