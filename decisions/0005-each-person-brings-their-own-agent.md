@@ -1,7 +1,7 @@
 ---
 type: ADR
 title: "Each person brings their own agent subscription, and a project spends its owner's"
-description: "A person connects Claude Code (subscription token or Anthropic key) or Codex (ChatGPT subscription by device-code sign-in, or OpenAI key) once, in a first-run walkthrough, and sees, replaces or removes it on the same page without a Fountain login; Ravix keeps it in one Fountain inference credential set per person and points every project's agent at its owner's set. Needs Fountain v0.17 or newer for the sets and the hosted Fountain of 2026-09-21 or newer, with linking switched on, for ChatGPT; the Fountain Ravix talks to is v0.21.0 as of 2026-09-21. Fountain caps ChatGPT subscriptions per account, and Ravix is one account, so that cap is a count of people."
+description: "A person connects Claude Code (subscription token or Anthropic key) or Codex (ChatGPT subscription by device-code sign-in, or OpenAI key) once, in a first-run walkthrough, and sees, replaces or removes it on the same page without a Fountain login; Ravix keeps it in one Fountain inference credential set per person and points every project's agent at its owner's set. Needs Fountain v0.17 or newer for the sets and the hosted Fountain of 2026-09-21 or newer, with linking switched on, for ChatGPT; since 2026-09-21 Ravix talks to that hosted Fountain, managoat.com, on a dedicated account, rather than its own instance on Render, which could not run the broker the link needs. Fountain caps ChatGPT subscriptions per account, and Ravix is one account, so that cap is a count of people."
 tags: [architecture, billing, onboarding, fountain]
 status: draft
 adr: "0005"
@@ -149,7 +149,13 @@ what they were invited to.
 ## Consequences
 
 - **The Fountain must be v0.17.0 or newer before anybody can connect.** The
-  one Ravix talks to is v0.21.0 (checked 2026-09-21). Against an older one
+  one Ravix talks to is the hosted managoat.com, on upstream main past
+  v0.21.0 (image `sha-530f0587`, checked 2026-09-21), on an account of its
+  own there (`jake+ravix@ravi.id`) rather than a person's, so that the
+  account's default set, its grant ceiling and its one-ChatGPT-account rule
+  are Ravix's alone. It ran on its own Render instance until then; that
+  instance cannot run the egress broker the ChatGPT link is gated on
+  (ravix-hq/fountain-deploy#10). Against an older one
   `connect/2` answers "this Fountain is too old" and everything else behaves
   as it did: projects are still built, on the deployment's default
   credentials. That sentence is the only place the page names Fountain to a
