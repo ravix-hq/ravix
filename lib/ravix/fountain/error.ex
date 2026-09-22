@@ -67,17 +67,12 @@ defmodule Ravix.Fountain.Error do
   rather than a 401 that would send them to sign in again. Capacity and identity
   conflicts are 409s with codes the browser knows. Everything else keeps its
   status, except that Fountain's 5xx becomes our 502: it was upstream that failed.
-  """
-  @spec as_http(t() | :unconfigured, String.t()) :: http()
-  def as_http(:unconfigured, _what_for) do
-    %{
-      status: 503,
-      code: "no_fountain",
-      message:
-        "This Ravix deployment has no Fountain account configured, so it cannot build machines."
-    }
-  end
 
+  A deployment with no Fountain at all is not a Fountain failure and is not
+  here: that is `{:unconfigured, :fountain}`, and `RavixWeb.Error` holds its
+  one sentence beside the other two providers'.
+  """
+  @spec as_http(t(), String.t()) :: http()
   def as_http(%__MODULE__{status: status}, _what_for) when status in [401, 403] do
     %{
       status: 502,

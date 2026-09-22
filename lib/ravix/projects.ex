@@ -32,10 +32,10 @@ defmodule Ravix.Projects do
   Every route-shaped function takes the `%Ravix.Accounts.User{}` first and
   answers `{:ok, value} | {:error, reason}`, where `reason` is one of
   `:not_found`, `{:not_found, code, message}`, `{:unprocessable, code, message}`,
-  `{:conflict, code, message}`, `{:unavailable, message}` (a missing
-  integration), `{:reauthenticate, message}` (the person's GitHub token is
-  gone), or a `%Ravix.Fountain.Error{}` / `%Ravix.GitHub.Error{}` passed
-  through from the client that produced it.
+  `{:conflict, code, message}`, `{:unconfigured, provider}` (a missing
+  integration, as `Ravix.Providers` names it), `{:reauthenticate, message}`
+  (the person's GitHub token is gone), or a `%Ravix.Fountain.Error{}` /
+  `%Ravix.GitHub.Error{}` passed through from the client that produced it.
   """
 
   alias Ravix.Accounts.User
@@ -58,7 +58,7 @@ defmodule Ravix.Projects do
           | {:not_found, String.t(), String.t()}
           | {:unprocessable, String.t(), String.t()}
           | {:conflict, String.t(), String.t()}
-          | {:unavailable, String.t()}
+          | {:unconfigured, :fountain | :github}
           | {:reauthenticate, String.t()}
           | Ravix.Fountain.Error.t()
           | Ravix.GitHub.Error.t()
@@ -378,7 +378,6 @@ defmodule Ravix.Projects do
             project.default_branch || "main"
           )
       end
-      |> github_result()
     end
   end
 
@@ -414,51 +413,17 @@ defmodule Ravix.Projects do
     }
   end
 
-  # ── the integrations, or a refusal that says what is missing ──────────
-
-  @doc """
-  The Fountain client, or a refusal that says what is missing.
-
-  A deployment with no `FOUNTAIN_API_KEY` can still sign people in and show
-  them their repositories, which is enough of the app working to be
-  confusing. So the failure is named rather than generic: this is the one
-  variable without which ravix has no machines at all.
-  """
-  @spec fountain() :: {:ok, Client.t()} | {:error, {:unavailable, String.t()}}
-  def fountain do
-    client = Ravix.Fountain.client()
-
-    if Client.configured?(client),
-      do: {:ok, client},
-      else: {:error, {:unavailable, no_fountain()}}
-  end
-
-  @doc "The GitHub App, or a refusal that says it is not configured."
-  @spec github() :: {:ok, Ravix.Config.GitHubApp.t()} | {:error, {:unavailable, String.t()}}
-  def github do
-    case Ravix.Config.github() do
-      nil -> {:error, {:unavailable, no_github()}}
-      app -> {:ok, app}
-    end
-  end
-
-  @doc "A Fountain result with `:unconfigured` named as the missing integration it is."
-  @spec fountain_result(term()) :: term()
-  def fountain_result({:error, :unconfigured}), do: {:error, {:unavailable, no_fountain()}}
-  def fountain_result(other), do: other
-
-  @doc "A GitHub result with `:unconfigured` named as the missing integration it is."
-  @spec github_result(term()) :: term()
-  def github_result({:error, :unconfigured}), do: {:error, {:unavailable, no_github()}}
-  def github_result(other), do: other
-
   # ── plumbing ──────────────────────────────────────────────────────────
 
-  defp no_fountain,
-    do: "This Ravix deployment has no Fountain account configured, so it cannot build machines."
-
-  defp no_github,
-    do: "This Ravix deployment has no GitHub App configured, so it cannot see repositories."
+  # The two integrations, by the names the functions above use. A
+  # deployment with no `FOUNTAIN_API_KEY` can still sign people in and show
+  # them their repositories, which is enough of the app working to be
+  # confusing, so the refusal names what is missing -- but it is
+  # `Ravix.Providers`' refusal, passed up as it is, and the sentence for it
+  # is `RavixWeb.Error`'s. `Ravix.Projects.Machine` and `.Settings` take the
+  # client as an argument and reach `Ravix.Providers` themselves.
+  defp fountain, do: Ravix.Providers.fountain()
+  defp github, do: Ravix.Providers.github()
 
   defp owner_of(%Project{user_id: user_id}, %User{id: user_id} = user), do: user
   defp owner_of(%Project{user_id: user_id}, user), do: Ravix.Accounts.get_user(user_id) || user
@@ -479,7 +444,7 @@ defmodule Ravix.Projects do
       "Your GitHub sign-in has expired or was revoked. Sign in again to load your repositories."}}
   end
 
-  defp reauth_on_401(result), do: github_result(result)
+  defp reauth_on_401(result), do: result
 
   defp require_repo(%Project{repo_full_name: repo, installation_id: id} = project, _message)
        when is_binary(repo) and repo != "" and is_integer(id),
@@ -521,8 +486,7 @@ defmodule Ravix.Projects do
   defp resolve_repo(user, input) do
     with {:ok, app} <- github(),
          {:ok, token} <- user_token(user),
-         {:ok, repos} <-
-           github_result(Ravix.GitHub.repositories(app, token, input.installation_id)),
+         {:ok, repos} <- Ravix.GitHub.repositories(app, token, input.installation_id),
          {:ok, repo} <- find_repo(repos, input.repo) do
       # GitHub's own spelling of the name, not the caller's: the match is
       # case-insensitive, and the mount path and clone URL come from this.

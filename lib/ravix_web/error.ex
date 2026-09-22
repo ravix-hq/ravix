@@ -35,10 +35,13 @@ defmodule RavixWeb.Error do
     * `{:forbidden, message}` is 403 `owner_only`.
     * `{:conflict, code, message}` is 409; `{:unprocessable, code, message}` is 422.
     * `{:unavailable, message}` is 503 `unavailable`; `{:unavailable, code, message}`
-      keeps its code (`no_github`, `no_fountain`).
-    * `%Ravix.Fountain.Error{}` and `:unconfigured` go through
-      `Ravix.Fountain.Error.as_http/2`; `%Ravix.GitHub.Error{}` through
-      `Ravix.GitHub.Error.describe/2`; `%Ravix.Sprites.Error{}` keeps its status.
+      keeps its code (`no_exec`, `preview_replaced`).
+    * `{:unconfigured, provider}` is 503 `no_fountain`, `no_github` or
+      `no_sprites`, with the one sentence for that provider being missing
+      from this deployment. `Ravix.Providers` is where the shape comes from.
+    * `%Ravix.Fountain.Error{}` goes through `Ravix.Fountain.Error.as_http/2`;
+      `%Ravix.GitHub.Error{}` through `Ravix.GitHub.Error.describe/2`;
+      `%Ravix.Sprites.Error{}` keeps its status.
     * `%Ecto.Changeset{}` is 422 `invalid` with the first field error.
     * `:preview_server_down` is 503 `preview_unavailable`.
     * anything else is a logged 500.
@@ -101,8 +104,13 @@ defmodule RavixWeb.Error do
   def from({:unavailable, code, message}, _opts),
     do: %__MODULE__{status: 503, code: to_string(code), message: message}
 
+  # One clause and one sentence per provider, and nowhere else: this used to
+  # be said in four shapes by five modules, and which code a page got for the
+  # same missing key depended on which of them it had asked.
+  def from({:unconfigured, provider}, _opts) when provider in [:fountain, :github, :sprites],
+    do: %__MODULE__{status: 503, code: "no_#{provider}", message: unconfigured(provider)}
+
   def from(%FountainError{} = error, opts), do: fountain(error, opts)
-  def from(:unconfigured, opts), do: fountain(:unconfigured, opts)
 
   def from(%GitHubError{} = error, opts) do
     {status, code, message} = GitHubError.describe(error, what_for(opts))
@@ -146,6 +154,15 @@ defmodule RavixWeb.Error do
     %{status: status, code: code, message: message} = FountainError.as_http(error, what_for(opts))
     %__MODULE__{status: status, code: code, message: message}
   end
+
+  defp unconfigured(:fountain),
+    do: "This Ravix deployment has no Fountain account configured, so it cannot build machines."
+
+  defp unconfigured(:github),
+    do: "This Ravix deployment has no GitHub App configured, so it cannot see repositories."
+
+  defp unconfigured(:sprites),
+    do: "This Ravix deployment has no Sprites token, so it cannot reach the machine directly."
 
   # The shape, never the payload. What a missing clause needs is the tag and
   # the arity; the values beside it are whatever the refusal was carrying,

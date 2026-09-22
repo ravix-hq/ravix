@@ -111,7 +111,7 @@ defmodule Ravix.People do
           | {:forbidden, String.t()}
           | {:conflict, String.t(), String.t()}
           | {:unprocessable, String.t(), String.t()}
-          | {:unavailable, String.t()}
+          | {:unconfigured, :github}
           | Ravix.GitHub.Error.t()
 
   # How long a link lasts.
@@ -129,8 +129,6 @@ defmodule Ravix.People do
   # old one stay.
   @link_ttl_ms 7 * 24 * 60 * 60 * 1000
   @project_link_ttl_ms 2 * 24 * 60 * 60 * 1000
-
-  @no_github "This Ravix deployment has no GitHub App configured, so it cannot see repositories."
 
   # ── the invite box ───────────────────────────────────────────────────
 
@@ -420,7 +418,7 @@ defmodule Ravix.People do
   end
 
   defp lookup_on_github(login) do
-    with {:ok, app} <- require_github(),
+    with {:ok, app} <- Ravix.Providers.github(),
          {:ok, account} <- Ravix.GitHub.user_by_login(app, login) do
       case account do
         nil ->
@@ -435,16 +433,6 @@ defmodule Ravix.People do
              avatar_url: account.avatar_url
            }}
       end
-    else
-      {:error, :unconfigured} -> {:error, {:unavailable, @no_github}}
-      {:error, _} = error -> error
-    end
-  end
-
-  defp require_github do
-    case Ravix.Config.github() do
-      nil -> {:error, :unconfigured}
-      app -> {:ok, app}
     end
   end
 

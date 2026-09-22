@@ -13,7 +13,8 @@ defmodule Ravix.Fountain do
   first (`client/0` builds it from `Ravix.Config.fountain/0`; tests build one
   on the fake transport) and answers `{:ok, value}`, `:ok`, or
   `{:error, %Ravix.Fountain.Error{}}`. A deployment with no key answers
-  `{:error, :unconfigured}` from every call and never crashes.
+  `{:error, {:unconfigured, :fountain}}` from every call and never crashes;
+  `Ravix.Providers` says why that shape and why no context rewrites it.
 
   Over `fountain_sdk`: `Fountain.HTTP` carries the bearer header, the JSON
   encoding and the error structs; `Fountain.Conversation` the per-conversation
@@ -36,7 +37,7 @@ defmodule Ravix.Fountain do
   @type id :: String.t()
   @type store :: :environments | :vaults
   @type record :: %{optional(String.t()) => term()}
-  @type failure :: Error.t() | :unconfigured
+  @type failure :: Error.t() | {:unconfigured, :fountain}
   @type result(value) :: {:ok, value} | {:error, failure()}
   @type outcome :: :ok | {:error, failure()}
   @type events_page :: %{events: [record()], next_cursor: integer() | nil, has_more: boolean()}
@@ -480,7 +481,7 @@ defmodule Ravix.Fountain do
   def events(client, id, opts \\ []) do
     if Client.configured?(client),
       do: collect_events(client, id, Keyword.delete(opts, :after), nil, %{}),
-      else: {:error, :unconfigured}
+      else: {:error, {:unconfigured, :fountain}}
   end
 
   @doc """
@@ -501,9 +502,9 @@ defmodule Ravix.Fountain do
   `:idle_timeout`, `:streams`, `:blocks`, `:wait`).
   """
   @spec stream_events(Client.t(), id(), keyword()) ::
-          {:ok, Enumerable.t()} | {:error, :unconfigured}
+          {:ok, Enumerable.t()} | {:error, {:unconfigured, :fountain}}
   def stream_events(client, id, opts \\ [])
-  def stream_events(%Client{http: nil}, _id, _opts), do: {:error, :unconfigured}
+  def stream_events(%Client{http: nil}, _id, _opts), do: {:error, {:unconfigured, :fountain}}
 
   def stream_events(%Client{http: http}, id, opts),
     do: {:ok, Fountain.SSE.stream_events(http, escape(id), Keyword.put_new(opts, :blocks, false))}
@@ -584,7 +585,7 @@ defmodule Ravix.Fountain do
     end)
   end
 
-  defp call(%Client{http: nil}, _method, _path, _fun), do: {:error, :unconfigured}
+  defp call(%Client{http: nil}, _method, _path, _fun), do: {:error, {:unconfigured, :fountain}}
 
   defp call(%Client{http: http}, method, path, fun) do
     # Every Fountain request funnels through here, which is why the span is

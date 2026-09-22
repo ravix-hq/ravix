@@ -696,7 +696,7 @@ defmodule Ravix.Accounts.InferenceTest do
     test "a deployment with no Fountain has nowhere to keep one" do
       stub(Ravix.Fountain, :client, fn -> Client.new("https://fountain.test", nil) end)
 
-      assert {:error, {:unavailable, _}} =
+      assert {:error, {:unconfigured, :fountain}} =
                Inference.connect(insert_user(), %{agent: :claude, kind: :api_key, value: "k"})
     end
   end
