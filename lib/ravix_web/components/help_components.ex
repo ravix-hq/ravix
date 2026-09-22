@@ -38,6 +38,23 @@ defmodule RavixWeb.HelpComponents do
         </p>
       </details>
       <details>
+        <summary>Plan work across tracks</summary>
+        <p>Open a project to create a plan with a Markdown rationale, ordered items, briefs,
+          acceptance notes and dependencies. Select items and choose new or existing tracks,
+          then press Assign selected items. Assignment spends the project owner's subscription.</p>
+        <p>MCP tools: create_plan, get_plan, list_plans, update_plan, assign_items and note_item.
+          Request plans:read and plans:write; assignment also requires tracks:write.
+          Edits carry expected_version. Retry assignments with the same request_id and arguments.</p>
+        <p>
+          Project members can read and edit whole plans. Track guests only have their assigned
+          items. Notes do not set status: GitHub PRs determine review and completion.
+          Refresh status to see completed dependencies become ready; Ravix never auto-assigns them.
+        </p>
+        <p>Only people assign in v1, including MCP clients acting as a person. Agents may prepare
+          plans and add notes. Assignment prompts ask tracks to stay in scope, rebase,
+          push and open draft PRs, and never merge.</p>
+      </details>
+      <details>
         <summary>Drive tracks with an A2A client</summary>
         <p>
           A2A lets another agent submit work to a Ravix track and follow its result.

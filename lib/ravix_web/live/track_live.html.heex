@@ -40,6 +40,12 @@
         {@track.title}
       </button>
       <strong :if={!owner_or_creator?(@current_user, @track)}>{@track.title}</strong>
+      <.link
+        :if={@track.origin.kind == :plan && @project.access != :tracks}
+        navigate={@track.origin.url}
+        class="chip"
+      >Plan: {@track.origin.title}</.link>
+      <span :if={@track.origin.kind == :plan && @project.access == :tracks} class="chip">Plan item: {@track.origin.title}</span>
       <span class="chip mono track-branch" title={@track.branch}>{@track.branch}</span>
       <span class="spacer"></span><button
         class="ghost"
@@ -75,6 +81,13 @@
     </header>
     <div class="split">
       <section class="track-conversation" aria-label="Conversation">
+        <.live_component
+          module={RavixWeb.Live.TrackPlanItems}
+          id={"track-plan-items-#{@track.id}"}
+          current_user={@current_user}
+          session_hash={@session_hash}
+          track_id={@track.id}
+        />
         <%!-- `data-track` is how the scroll hook learns it is somewhere new.
           This element keeps its id across a track switch now --- the page
           moves rather than being rebuilt --- so without it a reader who had

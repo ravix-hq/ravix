@@ -165,6 +165,7 @@
                 {index}
               </span>
               <span class="track-title">{track.title}</span>
+              <span :if={track.origin.kind == :plan} class="chip" title="From a project plan">Plan</span>
             </.link>
             <div
               :if={@project && @project.id == project.id && project.access != :tracks}
@@ -311,7 +312,20 @@
           }
         )}
       </div>
-      <div :if={@project && is_nil(@track_id)} class="workspace-project-empty">
+      <.live_component
+        :if={@project && is_nil(@track_id) && @project.access != :tracks}
+        module={RavixWeb.Live.PlansPanel}
+        id={"plans-#{@project.id}"}
+        current_user={@current_user}
+        session_hash={@session_hash}
+        project={@project}
+        plan_id={@selected_plan_id}
+        tracks={@tracks[@project.id] || []}
+      />
+      <div
+        :if={@project && is_nil(@track_id) && @project.access == :tracks}
+        class="workspace-project-empty"
+      >
         <span class="empty-icon"><.icon name="machine" size={20} /></span>
         <h2>Pick a track</h2>
         <p>

@@ -64,8 +64,8 @@ defmodule Ravix.Tracks do
     Follower,
     Header,
     Names,
+    Opening,
     Origin,
-    Plan,
     Store,
     Track,
     Transcript,
@@ -265,6 +265,7 @@ defmodule Ravix.Tracks do
     attrs = stringify(attrs)
 
     with {:ok, %{project: project, role: role}} <- Access.project_access(user, project_id),
+         :ok <- plan_origin_access(user, project_id, attrs["origin"]),
          {:ok, client} <- fountain(),
          :ok <- Ravix.Projects.prepare_machine(project, client),
          {:ok, machine} <- MachineCache.machine_of(client, project),
@@ -314,9 +315,9 @@ defmodule Ravix.Tracks do
 
   # Everything a new track is called, decided before anything wakes the box:
   # the conversation Fountain is asked for, and the row that will remember it.
-  # See `Ravix.Tracks.Plan`.
+  # See `Ravix.Tracks.Opening`.
   @spec plan(User.t(), Project.t(), map(), MachineCache.machine()) ::
-          {:ok, Plan.t()} | {:error, reason()}
+          {:ok, Opening.t()} | {:error, reason()}
   defp plan(user, project, attrs, machine) do
     id = Ecto.UUID.generate()
     origin = read_origin(attrs["origin"], project)
@@ -374,7 +375,7 @@ defmodule Ravix.Tracks do
   defp build_plan(user, project, machine, id, origin, slug, branch) do
     title = branch
 
-    %Plan{
+    %Opening{
       id: id,
       project_id: project.id,
       rev: project.rev,
@@ -406,10 +407,10 @@ defmodule Ravix.Tracks do
   # is ended before the refusal is reported -- the same shape as
   # `Ravix.Projects` unwinding a machine whose row did not save. Best effort:
   # a terminate that fails is logged, and the refusal is reported either way.
-  defp cut(client, %Plan{} = plan) do
+  defp cut(client, %Opening{} = plan) do
     with {:ok, %Conversation{id: conversation_id}} <-
            Fountain.create_conversation(client, plan.conversation) do
-      case Store.create_track(Plan.track_attrs(plan, conversation_id)) do
+      case Store.create_track(Opening.track_attrs(plan, conversation_id)) do
         {:ok, track} ->
           {:ok, track}
 
@@ -1032,6 +1033,12 @@ defmodule Ravix.Tracks do
   # The browser's word for the kind, which is a string and may be anything,
   # against the four there are. This is the boundary: past it the kind is one
   # of `Track.origin_kinds/0` and nothing downstream re-checks it.
+  defp plan_origin_access(user, project_id, %{"kind" => "plan"} = raw) do
+    Ravix.Plans.origin_access(user, project_id, raw["plan_id"], raw["item_id"])
+  end
+
+  defp plan_origin_access(_, _, _), do: :ok
+
   defp read_origin(raw, project) when is_map(raw) do
     raw = stringify(raw)
     kind = Enum.find(Track.origin_kinds(), :blank, &(to_string(&1) == raw["kind"]))
@@ -1051,6 +1058,8 @@ defmodule Ravix.Tracks do
           base: text(raw["base"], 200) |> non_empty() || project.default_branch,
           number: number(raw["number"]),
           title: text(raw["title"], 200) |> non_empty(),
+          plan_id: if(kind == :plan, do: raw["plan_id"]),
+          item_id: if(kind == :plan, do: raw["item_id"]),
           url: nil
         }
       end
@@ -1065,6 +1074,18 @@ defmodule Ravix.Tracks do
   defp default_title(%Origin{kind: :issue, number: n} = origin, _taken) when is_integer(n),
     do: Ids.slugify("#{n}-#{origin.title}")
 
+  # A plan item's title is prose, not a branch name, and two items (or two
+  # plans) may share one; the item id's head tells them apart before falling
+  # back to a generated name. Branch names stay reserved once closed.
+  defp default_title(%Origin{kind: :plan, title: title, item_id: item_id}, taken)
+       when is_binary(title) do
+    base = Ids.slugify(title)
+    suffix = Ids.slugify(String.slice(item_id || "", 0, 8), "item")
+
+    Enum.find([base, "#{base}-#{suffix}"], &(&1 not in taken)) ||
+      taken |> Names.name_track() |> Ids.slugify()
+  end
+
   defp default_title(_origin, taken), do: taken |> Names.name_track() |> Ids.slugify()
 
   # GitHub's page for the thing the track came from, decided once when the
@@ -1077,6 +1098,9 @@ defmodule Ravix.Tracks do
   # `issues` --- so an origin the browser sent as `{"kind": "branch",
   # "number": 5}` is given an issue's URL. That is worth a second look, but
   # not in a change whose whole claim is that nothing behaves differently.
+  defp origin_url(%Project{id: id}, %Origin{kind: :plan, plan_id: plan_id, item_id: item_id}),
+    do: "/p/#{id}?plan=#{plan_id}#item-#{item_id}"
+
   defp origin_url(%Project{repo_full_name: repo}, %Origin{number: n} = origin)
        when is_binary(repo) and is_integer(n) do
     kind = if origin.kind == :pr, do: "pull", else: "issues"
