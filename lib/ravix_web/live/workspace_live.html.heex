@@ -506,7 +506,30 @@
         phx-submit="create-track"
         phx-change="edit"
       >
-        <.input field={f[:title]} id="track-title" label="Track name" maxlength="200" />
+        <div :if={@origin_kind != :pr}>
+          <label for="track-title">Branch name</label>
+          <div class="workspace-actions">
+            <span id="branch-prefix">ravix/</span>
+            <.input
+              field={f[:title]}
+              id="track-title"
+              aria-describedby="branch-prefix branch-hint"
+            />
+          </div>
+          <p id="branch-hint" class="hint">
+            Leave empty for a suggested name (for example, ravix/crewe), or an issue's number and title.
+          </p>
+        </div>
+        <p :if={@origin_kind == :pr} class="hint">
+          The track uses the pull request's existing branch and name.
+        </p>
+        <p
+          :for={{message, _opts} <- f[:title].errors}
+          :if={@origin_kind == :pr}
+          class="error fine"
+        >
+          {message}
+        </p>
         <p :if={@origin_kind == :blank} class="hint">
           New worktree from {@project.default_branch || "the default branch"}.
         </p>
