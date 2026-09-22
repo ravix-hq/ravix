@@ -24,6 +24,13 @@ defmodule Ravix.Credo.Architecture do
   @spawn ~w(spawn spawn_link spawn_monitor spawn_opt)a
   @task ~w(start start_link async async_stream)a
 
+  # The module names that take ids and establish nobody's access. A `Store`
+  # holds a context's rows; a `Lifecycle` (`Ravix.Previews.Lifecycle`) drives
+  # a context's processes by id -- start, stop, retire -- and is kept out of
+  # the store because it is not row access. Neither asks who is calling, so
+  # both are judged the same way below.
+  @unscoped ~w(Store Lifecycle)a
+
   @impl true
   def run(source, params) do
     path = Path.relative_to_cwd(source.filename)
@@ -207,10 +214,11 @@ defmodule Ravix.Credo.Architecture do
 
   # ── the row layer ─────────────────────────────────────────────────────
   #
-  # A `Ravix.<Context>.Store` takes ids and establishes nobody's access. Two
-  # rules, and the first has no exception: a page may not reach one. Pages
-  # have a user in hand and `Ravix.Accounts.Access` to spend it at, so a page
-  # calling a store is a page that decided not to ask.
+  # A `Ravix.<Context>.Store` takes ids and establishes nobody's access, and
+  # so does a `Ravix.<Context>.Lifecycle` (see `@unscoped`). Two rules, and
+  # the first has no exception: a page may not reach one. Pages have a user
+  # in hand and `Ravix.Accounts.Access` to spend it at, so a page calling a
+  # store is a page that decided not to ask.
   #
   # The second is for contexts, which legitimately hold ids they were let in
   # to. Reaching into *another* context's store is allowed and has to say so:
@@ -249,21 +257,23 @@ defmodule Ravix.Credo.Architecture do
   defp store_finding(parts, meta, found, aliases, path, lines) do
     parts = resolve(parts, aliases)
 
-    with true <- List.last(parts) == :Store,
+    with true <- List.last(parts) in @unscoped,
          [:Ravix, context | _] <- parts do
+      kind = List.last(parts)
+
       cond do
         web?(path) ->
           [
             {meta[:line],
-             "The web layer must not reach a row store; go through the context and " <>
-               "`Ravix.Accounts.Access`."}
+             "The web layer must not reach a #{kind}, which takes ids and asks nobody; " <>
+               "go through the context and `Ravix.Accounts.Access`."}
             | found
           ]
 
         context != context_of(path) and not ownership?(lines, meta[:line]) ->
           [
             {meta[:line],
-             "Reaching another context's Store needs a nearby # ownership: comment " <>
+             "Reaching another context's #{kind} needs a nearby # ownership: comment " <>
                "naming the door this caller already went through."}
             | found
           ]

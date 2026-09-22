@@ -355,7 +355,10 @@ defmodule Ravix.PromptQueue.Server do
 
   defp settle(:revoked, row, track, _project) do
     cancel(row)
-    Ravix.Previews.revoke_agent(track.id, nil)
+    # ownership: `authorized?/1` just found the sender no longer has this
+    # track, and the helper grant minted for their turn must not outlive it.
+    # Whoever holds it, hence the explicit nil.
+    Ravix.Previews.Store.revoke_agent(track.id, nil)
   end
 
   # Fountain can reject an idle-looking track because another turn took the
@@ -377,12 +380,15 @@ defmodule Ravix.PromptQueue.Server do
   # can sit here for minutes, and that wait is what somebody describing "the
   # agent is slow" is usually describing.
   #
-  # This runs in a delivery task rather than in a request, so `Accounts.get_user/1`
-  # is a read nobody is waiting on. Skipped entirely when the sender has since
-  # been deleted: a person who is gone is not a person to file an event against.
+  # This runs in a delivery task rather than in a request, so the user read is
+  # one nobody is waiting on. Skipped entirely when the sender has since been
+  # deleted: a person who is gone is not a person to file an event against.
   defp delivered(row, track, project) do
+    # ownership: the row's own `user_id`, and `authorized?/1` put this person
+    # through `Access.track_access/2` for this track before the prompt was
+    # sent. Read again only to say whose event this is.
     Analytics.track(
-      Ravix.Accounts.get_user(row.user_id),
+      Ravix.Accounts.Store.get_user(row.user_id),
       :prompt_delivered,
       track
       |> Analytics.repo(project)
@@ -417,7 +423,7 @@ defmodule Ravix.PromptQueue.Server do
     # ownership: this *is* the door. A queued prompt outlives the request that
     # made it, so who sent it is re-established here rather than trusted from
     # whenever it was accepted.
-    with %User{} = user <- Ravix.Accounts.get_user(row.user_id),
+    with %User{} = user <- Ravix.Accounts.Store.get_user(row.user_id),
          {:ok, %{track: track}} <- Access.track_access(user, row.track_id) do
       is_nil(track.closed_at) and is_binary(track.conversation_id) and track.conversation_id != ""
     else

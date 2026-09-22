@@ -72,8 +72,10 @@ defmodule Ravix.People.Store do
   """
   @spec remove_member(String.t(), String.t()) :: :ok
   def remove_member(track_id, user_id) do
-    Ravix.Previews.revoke(track_id, user_id)
-    Ravix.Previews.revoke_agent(track_id, user_id)
+    # ownership: the seat being deleted below names this track and this
+    # person, and their preview grants on it are part of what the seat gave.
+    Ravix.Previews.Store.revoke(track_id, user_id)
+    Ravix.Previews.Store.revoke_agent(track_id, user_id)
 
     Repo.delete_all(
       from(m in TrackMember, where: m.track_id == ^track_id and m.user_id == ^user_id)
@@ -330,8 +332,10 @@ defmodule Ravix.People.Store do
     # is the projects context's own read of that list.
     tracks = Projects.open_tracks(project_id)
 
-    Enum.each(tracks, &Ravix.Previews.revoke(&1.id, user_id))
-    Enum.each(tracks, &Ravix.Previews.revoke_agent(&1.id, user_id))
+    # ownership: the seat being deleted below is what let this person onto
+    # every one of those tracks, so their grants on each go with it.
+    Enum.each(tracks, &Ravix.Previews.Store.revoke(&1.id, user_id))
+    Enum.each(tracks, &Ravix.Previews.Store.revoke_agent(&1.id, user_id))
 
     Repo.delete_all(
       from(m in ProjectMember, where: m.project_id == ^project_id and m.user_id == ^user_id)
@@ -592,7 +596,7 @@ defmodule Ravix.People.Store do
     # matched against this row. The user read turns a stored id into the login
     # a page shows, and nothing else.
     with %{created_by: user_id} <- Repo.get_by(schema, [{key, id}, {:token_hash, hash}]),
-         %User{login: login} <- Ravix.Accounts.get_user(user_id) do
+         %User{login: login} <- Ravix.Accounts.Store.get_user(user_id) do
       login
     else
       _ -> nil
@@ -730,7 +734,7 @@ defmodule Ravix.People.Store do
   defp owner_entry(owner_id) do
     # ownership: turning the project's `user_id` column into a name for the
     # list. Ownership is that column, never a row here.
-    case Ravix.Accounts.get_user(owner_id) do
+    case Ravix.Accounts.Store.get_user(owner_id) do
       %User{} = owner -> [Person.new(owner, :owner)]
       nil -> []
     end

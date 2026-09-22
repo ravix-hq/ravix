@@ -821,7 +821,7 @@ defmodule Ravix.TracksTest do
         )
 
       stub(Ravix.PromptQueue.Store, :cancel_track, fn _track_id -> :ok end)
-      stub(Ravix.Previews, :stop_service, fn _track_id, :cleanup -> :ok end)
+      stub(Ravix.Previews.Lifecycle, :stop_service, fn _track_id, :cleanup -> :ok end)
       Hub.subscribe(project.id)
       {:ok, owner: owner, project: project, track: track}
     end

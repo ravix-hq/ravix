@@ -50,6 +50,7 @@ defmodule Ravix.Tracks do
   alias Ravix.Ids
   alias Ravix.MachineCache
   alias Ravix.People
+  alias Ravix.Previews.Lifecycle
   alias Ravix.Projects.Project
   alias Ravix.PromptQueue.Body
   alias Ravix.PromptQueue.Body.Image
@@ -613,9 +614,10 @@ defmodule Ravix.Tracks do
          :ok <- Access.require_owner_or_cutter(role, user, track, "close a track"),
          {:ok, client} <- fountain() do
       # ownership: the track was just closed through `Access.track_access/2`;
-      # prompts waiting to be delivered to it have nowhere to go.
+      # prompts waiting to be delivered to it have nowhere to go, and its
+      # preview service, grants and port go with it.
       Ravix.PromptQueue.Store.cancel_track(track.id)
-      Ravix.Previews.stop_service(track.id, :cleanup)
+      Lifecycle.stop_service(track.id, :cleanup)
 
       if track.conversation_id do
         prompt =

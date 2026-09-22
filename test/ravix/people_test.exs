@@ -28,11 +28,12 @@ defmodule Ravix.PeopleTest do
 
   setup :verify_on_exit!
 
-  # Removing somebody revokes their preview grants through `Ravix.Previews`;
-  # that context is stood in for here, and named tests `expect` the calls.
+  # Removing somebody revokes their preview grants through
+  # `Ravix.Previews.Store`; that store is stood in for here, and named tests
+  # `expect` the calls.
   setup do
-    stub(Ravix.Previews, :revoke, fn _track_id, _user_id -> :ok end)
-    stub(Ravix.Previews, :revoke_agent, fn _track_id, _user_id -> :ok end)
+    stub(Ravix.Previews.Store, :revoke, fn _track_id, _user_id -> :ok end)
+    stub(Ravix.Previews.Store, :revoke_agent, fn _track_id, _user_id -> :ok end)
     :ok
   end
 
@@ -109,8 +110,8 @@ defmodule Ravix.PeopleTest do
       %{id: guest_id} = ctx.guest
       People.Store.add_member(track_id, guest_id, "owner")
 
-      expect(Ravix.Previews, :revoke, fn ^track_id, ^guest_id -> :ok end)
-      expect(Ravix.Previews, :revoke_agent, fn ^track_id, ^guest_id -> :ok end)
+      expect(Ravix.Previews.Store, :revoke, fn ^track_id, ^guest_id -> :ok end)
+      expect(Ravix.Previews.Store, :revoke_agent, fn ^track_id, ^guest_id -> :ok end)
       People.Store.remove_member(track_id, guest_id)
     end
 
@@ -349,9 +350,11 @@ defmodule Ravix.PeopleTest do
 
       revoked = :ets.new(:revoked, [:public, :bag])
 
-      expect(Ravix.Previews, :revoke, 2, fn t, ^guest_id -> :ets.insert(revoked, {:revoke, t}) end)
+      expect(Ravix.Previews.Store, :revoke, 2, fn t, ^guest_id ->
+        :ets.insert(revoked, {:revoke, t})
+      end)
 
-      expect(Ravix.Previews, :revoke_agent, 2, fn t, ^guest_id ->
+      expect(Ravix.Previews.Store, :revoke_agent, 2, fn t, ^guest_id ->
         :ets.insert(revoked, {:agent, t})
       end)
 
@@ -875,8 +878,8 @@ defmodule Ravix.PeopleTest do
       People.Store.add_member(track_id, guest_id, "owner")
       People.Store.add_member(track_id, ctx.other.id, "owner")
 
-      expect(Ravix.Previews, :revoke, fn ^track_id, ^guest_id -> :ok end)
-      expect(Ravix.Previews, :revoke_agent, fn ^track_id, ^guest_id -> :ok end)
+      expect(Ravix.Previews.Store, :revoke, fn ^track_id, ^guest_id -> :ok end)
+      expect(Ravix.Previews.Store, :revoke_agent, fn ^track_id, ^guest_id -> :ok end)
 
       assert {:ok, people} = People.remove(ctx.owner, track_id, "@BO")
       assert logins(people) == ["ana", "cy"]
@@ -1012,8 +1015,8 @@ defmodule Ravix.PeopleTest do
       People.Store.add_project_member(ctx.project.id, guest_id, "owner")
       Ravix.Hub.subscribe(ctx.project.id)
 
-      expect(Ravix.Previews, :revoke, 2, fn _track, ^guest_id -> :ok end)
-      expect(Ravix.Previews, :revoke_agent, 2, fn _track, ^guest_id -> :ok end)
+      expect(Ravix.Previews.Store, :revoke, 2, fn _track, ^guest_id -> :ok end)
+      expect(Ravix.Previews.Store, :revoke_agent, 2, fn _track, ^guest_id -> :ok end)
 
       assert {:ok, people} = People.remove_project(ctx.owner, ctx.project.id, "@Bo")
       assert logins(people) == ["ana"]

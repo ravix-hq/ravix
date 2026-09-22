@@ -49,7 +49,10 @@ defmodule Ravix.PromptQueueTest do
 
     pid = start_supervised!(spec)
     Sandbox.allow(Repo, self(), pid)
-    for mod <- [Ravix.Fountain, Ravix.Projects, Ravix.Previews], do: allow(mod, self(), pid)
+
+    for mod <- [Ravix.Fountain, Ravix.Projects, Ravix.Previews, Ravix.Previews.Store],
+        do: allow(mod, self(), pid)
+
     pid
   end
 
@@ -139,7 +142,7 @@ defmodule Ravix.PromptQueueTest do
     test = self()
     stub(Ravix.Previews, :prepare_agent_preview, fun)
 
-    stub(Ravix.Previews, :revoke_agent, fn track_id, _user_id ->
+    stub(Ravix.Previews.Store, :revoke_agent, fn track_id, _user_id ->
       send(test, {:revoked_agent, track_id})
       :ok
     end)

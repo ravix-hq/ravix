@@ -386,8 +386,11 @@ defmodule Ravix.Projects do
 
   @doc "The `Project` map for a row, looking up the owner's login."
   @spec present(Project.t(), access(), machine()) :: View.t()
+  # ownership: the project's own `user_id` column, turned into the owner's
+  # login for the view. The caller holds `project` because it reached it
+  # through `access_of/2` or `Access.project_of/2`; nothing is decided here.
   def present(%Project{} = project, access, machine),
-    do: present(project, access, machine, Ravix.Accounts.get_user(project.user_id))
+    do: present(project, access, machine, Ravix.Accounts.Store.get_user(project.user_id))
 
   @doc """
   The `Project` map for a row. `role` is the owner/not-owner question almost
@@ -460,8 +463,13 @@ defmodule Ravix.Projects do
   defp no_github,
     do: "This Ravix deployment has no GitHub App configured, so it cannot see repositories."
 
+  # ownership: the project's own `user_id`, read to show a member who owns
+  # what they are looking at. `list/1` and `get/2` established the caller's
+  # seat on the project with `access_of/2` before asking.
   defp owner_of(%Project{user_id: user_id}, %User{id: user_id} = user), do: user
-  defp owner_of(%Project{user_id: user_id}, user), do: Ravix.Accounts.get_user(user_id) || user
+
+  defp owner_of(%Project{user_id: user_id}, user),
+    do: Ravix.Accounts.Store.get_user(user_id) || user
 
   # The user's GitHub OAuth token, decrypted. Used for anything read as *them*.
   defp user_token(user) do
