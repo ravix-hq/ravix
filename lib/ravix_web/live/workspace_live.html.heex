@@ -536,6 +536,7 @@
       session_hash={@session_hash}
     />
     <.dialog :if={@dialog == :account} id="account-dialog" title="Your account" on_close="dismiss">
+      <a href="/settings/connections">Connected applications</a>
       <p class="lede">
         Signed in as <strong>@{@current_user.login}</strong>. The agent below is the one your projects are built with, and its subscription or key is what pays for every turn in them, whoever is working.
       </p>

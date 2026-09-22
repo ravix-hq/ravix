@@ -2,12 +2,9 @@ defmodule RavixWeb.Router do
   @moduledoc """
   The routes.
 
-  Much shorter than `server/app.ts`, and for one reason: the JSON API
-  retired with the SPA. What is left over HTTP is what a browser follows
-  rather than fetches (the sign-in round trips, invite links, the health
-  check) and the pages, which are one `live_session`. Everything the API
-  routes did is now a context function a LiveView calls, behind the same
-  three doors (`Ravix.Accounts.Access`).
+  Browser pages use scoped contexts behind the three access doors in
+  `Ravix.Accounts.Access`. MCP and A2A expose the same operations through
+  resource-bound OAuth grants; browser sessions handle consent and revocation.
   """
 
   use RavixWeb, :router
@@ -31,6 +28,20 @@ defmodule RavixWeb.Router do
     plug :accepts, ["json"]
   end
 
+  scope "/", RavixWeb do
+    pipe_through :api
+    get "/.well-known/oauth-authorization-server", ToolingOAuthController, :metadata
+    get "/.well-known/oauth-protected-resource/:resource", ToolingOAuthController, :resource
+    post "/oauth/register", ToolingOAuthController, :register
+    post "/oauth/token", ToolingOAuthController, :token
+    post "/oauth/revoke", ToolingOAuthController, :revoke
+    get "/.well-known/agent-card.json", ToolingController, :card
+    post "/mcp", ToolingController, :mcp
+    get "/mcp", ToolingController, :unsupported
+    delete "/mcp", ToolingController, :end_session
+    post "/a2a", ToolingController, :a2a
+  end
+
   # Not pages, and not behind the session. `/readyz` is what Render's health
   # check reads and so what gates the rotation; `/healthz` only says the process
   # is up. See `RavixWeb.HealthController`.
@@ -44,6 +55,11 @@ defmodule RavixWeb.Router do
 
   scope "/", RavixWeb do
     pipe_through :browser
+
+    get "/oauth/authorize", ToolingOAuthController, :authorize
+    post "/oauth/authorize", ToolingOAuthController, :consent
+    get "/settings/connections", ToolingOAuthController, :connections
+    post "/settings/connections/:id/revoke", ToolingOAuthController, :disconnect
 
     # Signing in is two round trips to GitHub (see `Ravix.Accounts.Auth`).
     # `/api/auth/callback` keeps its exact path: it is the callback URL
