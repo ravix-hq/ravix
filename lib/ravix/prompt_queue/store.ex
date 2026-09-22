@@ -50,6 +50,21 @@ defmodule Ravix.PromptQueue.Store do
 
   @done [:sent, :cancelled]
 
+  # The other four, spelled out rather than derived, because they are also
+  # spelled out in the migration that indexes them
+  # (`prompt_queue_live_heads`), and a query only gets that index when
+  # Postgres can prove its predicate from the query's. `status NOT IN
+  # ('sent', 'cancelled')` is the same set to a reader and not to the
+  # planner, which does not know the column's domain; `status IN (these
+  # four)` is a clause it can match. The check below keeps the two lists one
+  # set.
+  @live ~w(queued sending failed unconfirmed)a
+
+  if Enum.sort(@live ++ @done) != Enum.sort(Item.statuses()) do
+    raise CompileError,
+      description: "Ravix.PromptQueue.Store: @live and @done must cover Item.statuses/0 exactly"
+  end
+
   @claim_timeout_ms 6 * 60_000
 
   @restart_error "The server restarted during delivery. Check the transcript before sending this again."
@@ -150,17 +165,25 @@ defmodule Ravix.PromptQueue.Store do
   track can be delivered, and its bytes are loaded just before the POST. A
   failed or unconfirmed head is returned too, so that later instructions
   cannot overtake one whose outcome needs a person.
+
+  One pass over `prompt_queue_live_heads`, the partial index on
+  `(track_id, sequence)` over live rows, which is in exactly the order
+  `DISTINCT ON (track_id) ... ORDER BY track_id, sequence` wants. It used to
+  be a `min(sequence) GROUP BY track_id` subquery, which read every row of
+  the table -- delivered ones included, and they are nearly all of it -- on
+  every instance, every two seconds. The rows come back grouped by track
+  rather than oldest first; the sweep delivers tracks in parallel and in no
+  order, so nothing read the order.
   """
   @spec heads() :: [Item.t()]
   def heads do
-    first = live() |> group_by([p], p.track_id) |> select([p], min(p.sequence))
     # Neither the parsed body nor its JSON string: the head is read every two
     # seconds per track and the attachments are loaded once, just before the
     # POST.
     fields = Item.__schema__(:fields) -- [:body, :payload]
 
-    Item
-    |> where([p], p.sequence in subquery(first))
+    live()
+    |> distinct([p], p.track_id)
     |> order_by([p], p.sequence)
     |> select([p], struct(p, ^fields))
     |> Repo.all()
@@ -276,6 +299,11 @@ defmodule Ravix.PromptQueue.Store do
 
   A row with no `claimed_at` was claimed before this column existed and is
   treated as stale.
+
+  `status = 'sending'` is written first and on its own so that the query
+  matches `prompt_queue_sending_claims`, the partial index over only those
+  rows: there are seldom any, and this runs on every instance every two
+  seconds.
   """
   @spec recover() :: :ok
   def recover do
@@ -398,7 +426,8 @@ defmodule Ravix.PromptQueue.Store do
     |> Repo.insert!()
   end
 
-  defp live, do: where(Item, [p], p.status not in ^@done)
+  # Literal, not a parameter: see `@live`.
+  defp live, do: where(Item, [p], p.status in @live)
   defp maybe_on_track(query, nil), do: query
   defp maybe_on_track(query, track_id), do: where(query, [p], p.track_id == ^track_id)
   # The panel re-reads a track's queue on this. Publishing is by project,
