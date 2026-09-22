@@ -305,13 +305,13 @@ test('project, track, streaming, image upload, reconnect, and revocation', async
   await expect(projectDialog).not.toBeVisible();
   await page.locator('.crumbs').getByRole('button', { name: 'New track', exact: true }).click();
   const newTrack = page.getByRole('dialog', { name: 'New track', exact: true });
-  await expect(newTrack.getByLabel('Track name')).not.toHaveValue('');
+  await expect(newTrack.getByLabel('Branch name')).toHaveValue('');
   await newTrack.getByRole('button', { name: 'Advanced', exact: true }).click();
   await expect(newTrack.getByRole('button', { name: 'Branch', exact: true })).toBeVisible();
   await newTrack.getByRole('button', { name: 'Hide advanced', exact: true }).click();
   await expect(newTrack.getByRole('button', { name: 'Branch', exact: true })).not.toBeVisible();
   await capture(page, 'new-track');
-  await page.getByLabel('Track name').fill('Browser smoke');
+  await page.getByLabel('Branch name').fill('browser-smoke');
   await page.getByRole('button', { name: 'Create track', exact: true }).click();
   const composer = page.getByRole('textbox', { name: 'Message', exact: true });
   await expect(composer).toBeEnabled({ timeout: 30_000 });
@@ -337,9 +337,9 @@ test('project, track, streaming, image upload, reconnect, and revocation', async
   await expect(page.locator('.crumbs')).toHaveCount(1);
   const collapseProject = page.getByRole('button', { name: 'Collapse Browser quality', exact: true });
   await collapseProject.click();
-  await expect(page.getByRole('link', { name: /Browser smoke/ })).not.toBeVisible();
+  await expect(page.getByRole('link', { name: /browser-smoke/ })).not.toBeVisible();
   await page.getByRole('button', { name: 'Expand Browser quality', exact: true }).click();
-  await expect(page.getByRole('link', { name: /Browser smoke/ })).toBeVisible();
+  await expect(page.getByRole('link', { name: /browser-smoke/ })).toBeVisible();
   await expect(page.getByLabel('Command', { exact: true })).not.toBeVisible();
   await page.getByRole('button', { name: 'Terminal', exact: true }).click();
   await page.getByLabel('Command', { exact: true }).fill('echo draft');
@@ -451,17 +451,17 @@ test('project, track, streaming, image upload, reconnect, and revocation', async
   const firstLane = await page.locator('#transcript-scroll').getAttribute('data-track');
   await page.locator('.crumbs').getByRole('button', { name: 'New track', exact: true }).click();
   await expect(newTrack).toBeVisible();
-  await page.getByLabel('Track name').fill('Second lane');
+  await page.getByLabel('Branch name').fill('second-lane');
   await page.getByRole('button', { name: 'Create track', exact: true }).click();
-  await expect(page.locator('.track-crumbs')).toContainText('Second lane');
+  await expect(page.locator('.track-crumbs')).toContainText('second-lane');
   await expect(composer).toBeEnabled({ timeout: 30_000 });
   await expect(page.locator('#transcript-scroll')).not.toHaveAttribute('data-track', firstLane);
   // The track arrived at is its own; the one left behind had three turns in it.
   await expect(page.locator('#transcript-turns')).not.toContainText('Draft survives reconnect');
   await accessible(page);
 
-  await page.getByRole('link', { name: /Browser smoke/ }).click();
-  await expect(page.locator('.track-crumbs')).toContainText('Browser smoke');
+  await page.getByRole('link', { name: /browser-smoke/ }).click();
+  await expect(page.locator('.track-crumbs')).toContainText('browser-smoke');
   await expect(page.locator('#transcript-scroll')).toHaveAttribute('data-track', firstLane);
   await expect(page.locator('#transcript-turns')).toContainText('Draft survives reconnect');
 

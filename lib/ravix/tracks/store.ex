@@ -20,7 +20,7 @@ defmodule Ravix.Tracks.Store do
   alias Ravix.Repo
   alias Ravix.Tracks.{Track, TrackMember}
 
-  @doc "A track row. The caller brings the id, since the branch name carries it."
+  @doc "A track row. The caller brings the id decided in the opening plan."
   @spec create_track(map()) :: {:ok, Track.t()} | {:error, Ecto.Changeset.t()}
   def create_track(attrs), do: %Track{} |> Track.changeset(attrs) |> Repo.insert()
 
