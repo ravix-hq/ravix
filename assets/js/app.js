@@ -27,7 +27,10 @@ import {TranscriptTail} from "./hooks/transcript_tail"
 import {Composer} from "./hooks/composer"
 import {Terminal} from "./hooks/terminal"
 
-const hooks = {Theme, PanelResize, TranscriptTail, Composer, Terminal}
+import {SettingsSections} from "./hooks/settings_sections"
+
+// SettingsSections: section navigation and warnings before discarding unsaved inputs.
+const hooks = {Theme, PanelResize, TranscriptTail, Composer, Terminal, SettingsSections}
 
 const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
 const liveSocket = new LiveSocket("/live", Socket, {

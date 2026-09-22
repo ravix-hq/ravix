@@ -497,7 +497,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
       assert actual_user.id == user.id
       assert id == project.id
       assert attrs["packages"]["apt"] == ["git", "curl"]
-      assert attrs["instructions"] == "Be precise"
+      refute Map.has_key?(attrs, "instructions")
       {:ok, %{rev: 2}}
     end)
 
@@ -505,10 +505,10 @@ defmodule RavixWeb.WorkspaceLiveTest do
     view |> element("button", "Settings") |> render_click()
 
     view
-    |> form("#settings-form", settings: [instructions: "Be precise", apt: "git curl"])
+    |> form("#environment-settings-form", settings: [apt: "git curl"])
     |> render_submit()
 
-    assert render(view) =~ "Settings saved"
+    assert render_async(view) =~ "Settings saved"
   end
 
   test "file, diff, check, and preview panels consume their context shapes", %{
