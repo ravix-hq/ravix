@@ -377,13 +377,11 @@ test('project, track, streaming, image upload, reconnect, and revocation', async
   await expect(composer).toHaveValue('A draft while opening workspace dialogs');
   await composer.fill('Explain this project for the browser smoke test');
   await composer.press('Enter');
-  // The saved-prompts panel exists for exactly this window: accepted, and
-  // waiting while the machine works. It is also the panel a template bug
-  // once crashed the page on, which this suite caught only by accident.
-  // One locator for the prompt and its status chip: the panel leaves as soon
-  // as the machine takes the prompt, so two separate checks can each see a
-  // different render and the second one finds nothing.
-  await expect(page.locator('.workspace-queue > div', { has: page.locator('.chip') })).toContainText('Explain this project for the browser smoke test');
+  // The saved-prompts panel is not checked here: an idle machine can take
+  // the prompt before the panel ever renders, so waiting for it was a race.
+  // Its rendering from a real queue row is covered by "the queue panel
+  // renders what the context really returns, not a stub of it" in
+  // test/ravix_web/track_live_test.exs; delivery is what this checks next.
   // The prompt's own bubble, not just the page: the mock's reply quotes the
   // prompt back, so the transcript contains these words even when the prompt
   // never arrived. It reaches the live page on the turn's opening event, which
