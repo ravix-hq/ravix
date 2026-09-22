@@ -23,14 +23,15 @@ defmodule RavixWeb.WorkspaceLive do
   @origin_labels %{blank: "Blank", branch: "Branch", pr: "Pull request", issue: "Issue"}
   @origin_refs %{branch: :branches, pr: :pulls, issue: :issues}
 
-  # The six dialogs, as the buttons spell them and as this module does.
+  # The workspace dialogs, as the buttons spell them and as this module does.
   @dialogs %{
     "search" => :search,
     "new-project" => :new_project,
     "new-track" => :new_track,
     "settings" => :settings,
     "people" => :people,
-    "account" => :account
+    "account" => :account,
+    "help" => :help
   }
 
   @doc "The origin buttons on the new-track form, in the order they are offered."
@@ -656,6 +657,7 @@ defmodule RavixWeb.WorkspaceLive do
 
   # The account dialog is the agent panel, which holds its own state too.
   defp open_dialog(socket, :account), do: assign(socket, dialog: :account)
+  defp open_dialog(socket, :help), do: assign(socket, dialog: :help)
 
   # The repositories this person's installations can see: a GitHub call, off
   # this process for the same reason as the refs above. What is on offer is
