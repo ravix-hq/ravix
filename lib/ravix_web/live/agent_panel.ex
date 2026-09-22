@@ -1,7 +1,13 @@
 defmodule RavixWeb.Live.AgentPanel do
   @moduledoc """
   Which agent this person runs, and what pays for it: chosen, connected,
-  replaced, reconnected.
+  replaced, reconnected, removed.
+
+  The whole of a person's dealings with their credential happen here. What
+  their set holds is read from Fountain (`Ravix.Accounts.Inference.held/1`)
+  rather than taken from the row, so a slot emptied anywhere else shows as
+  empty, and each thing held has its own Remove; nobody is sent to another
+  console for any of it.
 
   Rendered in two places that must not drift: the walkthrough's agent step
   (`RavixWeb.OnboardingLive`), and the account dialog in the workspace
@@ -70,7 +76,9 @@ defmodule RavixWeb.Live.AgentPanel do
        link: nil,
        linking: nil,
        link_error: nil,
-       subscription: nil
+       subscription: nil,
+       # What the set holds, as Fountain reports it: nil until it has answered.
+       held: nil
      )}
   end
 
@@ -98,6 +106,7 @@ defmodule RavixWeb.Live.AgentPanel do
           |> assign(agent: user.agent, kind: user.credential_kind || :subscription)
           |> read_link_status()
           |> read_subscription()
+          |> read_held()
 
     {:ok, socket}
   end
@@ -136,9 +145,23 @@ defmodule RavixWeb.Live.AgentPanel do
       else: {:noreply, socket}
   end
 
+  # Remove one thing the set holds. Which one comes from the button and is
+  # narrowed through the same two tables as a choice; the person is not asked
+  # to confirm here because the browser already did (`data-confirm`).
+  defp event("disconnect", %{"agent" => a, "kind" => k}, %{assigns: %{busy: false}} = socket)
+       when is_map_key(@agents, a) and is_map_key(@kinds, k) do
+    user = socket.assigns.current_user
+    {agent, kind} = {Map.fetch!(@agents, a), Map.fetch!(@kinds, k)}
+
+    {:noreply,
+     socket
+     |> assign(busy: true)
+     |> traced_async(:disconnect, fn -> Inference.disconnect(user, agent, kind) end)}
+  end
+
   # A word neither table holds is a browser saying something the form never
   # offered. Nothing to do and nothing to say.
-  defp event(event, _params, socket) when event in ["choose-agent", "choose-kind"],
+  defp event(event, _params, socket) when event in ["choose-agent", "choose-kind", "disconnect"],
     do: {:noreply, socket}
 
   defp event("connect", %{"credential" => %{"value" => value}}, socket) when is_binary(value) do
@@ -227,6 +250,19 @@ defmodule RavixWeb.Live.AgentPanel do
   # Nothing to say about a subscription Fountain would not describe.
   def handle_async(:subscription, _other, socket), do: {:noreply, socket}
 
+  def handle_async(:held, {:ok, {:ok, held}}, socket) when is_list(held),
+    do: {:noreply, assign(socket, held: held)}
+
+  # A set Fountain would not list is not drawn as empty: empty is a claim.
+  def handle_async(:held, _other, socket), do: {:noreply, socket}
+
+  def handle_async(:disconnect, {:ok, response}, socket) do
+    {:noreply,
+     result(assign(socket, busy: false), response, fn s, %User{} = user ->
+       disconnected(s, user)
+     end)}
+  end
+
   def handle_async(_name, {:exit, _reason}, socket) do
     send(self(), {:flash, :error, "The operation could not finish. Refresh and try again."})
     {:noreply, assign(socket, busy: false)}
@@ -240,6 +276,27 @@ defmodule RavixWeb.Live.AgentPanel do
     socket
     |> assign(current_user: user, agent: user.agent, kind: user.credential_kind)
     |> read_subscription()
+    |> read_held()
+  end
+
+  # Something the person held has gone. The choice on the page stays where it
+  # was, so what to connect instead is one paste away; the page is told, since
+  # projects they own may now have nothing to run on.
+  defp disconnected(socket, %User{} = user) do
+    send(self(), {:agent_disconnected, user})
+
+    socket
+    |> assign(current_user: user, credential_form: Form.new(:credential))
+    |> read_subscription()
+    |> read_held()
+  end
+
+  # What the set holds, asked of Fountain off this process. The list is kept
+  # while it is asked again, so a remove does not blank the section and
+  # redraw it.
+  defp read_held(socket) do
+    user = socket.assigns.current_user
+    traced_async(socket, :held, fn -> Inference.held(user) end)
   end
 
   # Only Codex on a subscription has a sign-in to look for. Asked off this
@@ -291,6 +348,29 @@ defmodule RavixWeb.Live.AgentPanel do
     if Inference.pasted?(agent, kind),
       do: "Paste a new one to replace it",
       else: "Sign in again to reconnect it"
+  end
+
+  # Whether this held thing is the one the person's choice names.
+  defp in_use?(%User{agent: agent, credential_kind: kind}, agent, kind), do: true
+  defp in_use?(%User{}, _agent, _kind), do: false
+
+  # The row says something pays for the agent; the set, read from Fountain,
+  # says it does not. Said only once the set has answered.
+  defp missing?(%User{} = user, held) when is_list(held),
+    do: Inference.connected?(user) and {user.agent, user.credential_kind} not in held
+
+  defp missing?(_user, _held), do: false
+
+  defp remove_confirm(agent, kind, in_use?) do
+    what = "#{agent_name(agent)}'s #{paid_by(agent, kind)}"
+
+    tracks =
+      if in_use?,
+        do:
+          " This ends your open tracks in every project you own, and those projects have nothing to run on until you connect something again.",
+        else: " This ends your open tracks in every project you own."
+
+    "Remove #{what} from Ravix?#{tracks} The #{paid_by(agent, kind)} itself is untouched."
   end
 
   # The subscription's state in a word, as a chip, and the rest in a line.
@@ -345,6 +425,48 @@ defmodule RavixWeb.Live.AgentPanel do
           </small>
         </button>
       </div>
+
+      <section
+        :if={is_list(@held) and (@held != [] or missing?(@current_user, @held))}
+        class="agent-held"
+        id="agent-held"
+        aria-label="What you have connected"
+      >
+        <p :if={missing?(@current_user, @held)} class="welcome-warning" id="held-missing">
+          <.icon name="info" size={14} class="ico" />
+          <span>
+            Nothing is stored for {agent_name(@current_user.agent)} any more: its {paid_by(
+              @current_user.agent,
+              @current_user.credential_kind
+            )} was removed outside this page. Projects you own have nothing to run on until you connect one again below.
+          </span>
+        </p>
+        <ul :if={@held != []} class="agent-held-list">
+          <li :for={{agent, kind} <- @held} id={"held-#{agent}-#{kind}"}>
+            <span class="agent-held-name">
+              <strong>{agent_name(agent)}</strong>
+              <span class="dim">{paid_by(agent, kind)}</span>
+              <span :if={in_use?(@current_user, agent, kind)} class="chip ok">In use</span>
+            </span>
+            <button
+              type="button"
+              class="ghost"
+              phx-click="disconnect"
+              phx-target={@myself}
+              phx-value-agent={agent}
+              phx-value-kind={kind}
+              data-confirm={remove_confirm(agent, kind, in_use?(@current_user, agent, kind))}
+              disabled={@busy}
+              id={"remove-#{agent}-#{kind}"}
+            >
+              Remove
+            </button>
+          </li>
+        </ul>
+        <p :if={@held != []} class="hint">
+          Removing one forgets it here; the subscription or key itself is untouched, and you can paste it or sign in again. Like replacing one, it ends your open tracks in every project you own.
+        </p>
+      </section>
 
       <div :if={@agent} class="agent-credential">
         <div class="workspace-actions" role="group" aria-label="How it is paid for">
@@ -411,7 +533,7 @@ defmodule RavixWeb.Live.AgentPanel do
         <div :if={@agent == :codex && @kind == :subscription} id="chatgpt-link">
           <ol class="agent-howto">
             <li>
-              Press <strong>Connect ChatGPT</strong>. Fountain, the service that runs the machines, asks ChatGPT for a one-time code.
+              Press <strong>Connect ChatGPT</strong>. Ravix asks ChatGPT for a one-time code.
             </li>
             <li>
               Open the page it names in a browser signed in to the ChatGPT account whose plan should pay, and type the code.
@@ -422,7 +544,7 @@ defmodule RavixWeb.Live.AgentPanel do
           <p :if={@linking == false && is_nil(@link)} class="welcome-warning" id="linking-off">
             <.icon name="info" size={14} class="ico" />
             <span>
-              Linking a ChatGPT subscription is not switched on for this Ravix deployment's Fountain account. Ask whoever runs it, or use an OpenAI API key for now.
+              Linking a ChatGPT subscription is not switched on for this Ravix deployment. Ask whoever runs it, or use an OpenAI API key for now.
             </span>
           </p>
           <div :if={@link} class="agent-code" id="chatgpt-code" aria-live="polite">
@@ -468,7 +590,7 @@ defmodule RavixWeb.Live.AgentPanel do
             </button>
           </div>
           <p class="hint">
-            Fountain keeps the sign-in and renews it. It never shows a token — not to you, not to teammates, and not to Ravix — and it cannot sign you out of ChatGPT; do that in your ChatGPT account.
+            The sign-in is kept encrypted with the machines that run your agent and renewed for you. No token is ever shown — not to you, not to teammates, and not on this page. Removing it above forgets it here; it cannot sign you out of ChatGPT, so do that in your ChatGPT account if you want to.
           </p>
         </div>
 
@@ -490,7 +612,7 @@ defmodule RavixWeb.Live.AgentPanel do
             required
           />
           <p class="hint">
-            Stored by Fountain, the service that runs the machines, and never shown again — not to you, not to teammates, and not to Ravix.
+            Stored encrypted with the machines that run your agent and never shown again — not to you, not to teammates, and not on this page. You can remove it here whenever you like.
           </p>
           <button class="primary" disabled={@busy} phx-disable-with="Connecting…">
             Connect {agent_name(@agent)}

@@ -201,6 +201,30 @@ defmodule RavixWeb.OnboardingLiveTest do
       assert html =~ "Claude Code is connected with your subscription"
       assert html =~ "open tracks"
     end
+
+    test "removing what is connected stays on the step, with the form ready for what comes next",
+         %{conn: conn} do
+      user = connected()
+
+      stub(Inference, :held, fn
+        %User{credential_kind: :subscription} -> {:ok, [{:claude, :subscription}]}
+        %User{credential_kind: nil} -> {:ok, []}
+      end)
+
+      expect(Inference, :disconnect, fn caller, :claude, :subscription ->
+        Accounts.save_setup(caller, %{credential_kind: nil})
+      end)
+
+      {:ok, view, _} = live(log_in_user(conn, user), "/welcome/agent")
+      render_async(view)
+      view |> element("#remove-claude-subscription") |> render_click()
+      html = render_async(view)
+
+      refute html =~ "Claude Code is connected with your subscription"
+      assert has_element?(view, "#credential-form")
+      refute has_element?(view, "#held-missing")
+      assert %User{credential_kind: nil} = Repo.get!(User, user.id)
+    end
   end
 
   describe "connecting ChatGPT" do

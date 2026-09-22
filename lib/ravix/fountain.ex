@@ -278,6 +278,20 @@ defmodule Ravix.Fountain do
   def chatgpt_subscriptions(client), do: list(client, @chatgpt)
 
   @doc """
+  `POST /api/account/chatgpt-subscriptions/:id/disconnect`: forget the
+  sign-in's tokens and keep the row.
+
+  Every set that names the subscription starts refusing Codex runs on it
+  (`chatgpt_grant_unusable`, `disconnected`), and a later sign-in for the
+  same `grant_id` reconnects it rather than making a second. Fountain cannot
+  sign the device out at OpenAI; the person does that in their ChatGPT
+  account. A subscription that is already disconnected is a `409`.
+  """
+  @spec disconnect_chatgpt_subscription(Client.t(), id()) :: result(record())
+  def disconnect_chatgpt_subscription(client, grant_id),
+    do: data(client, "POST", "#{@chatgpt}/#{escape(grant_id)}/disconnect")
+
+  @doc """
   `PATCH /api/account/inference-credential-sets/:id` with `chatgpt_grant_id`:
   make `grant_id` what the set's Codex runs use, or `nil` to stop naming one.
 

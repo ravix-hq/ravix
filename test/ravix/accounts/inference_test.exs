@@ -701,6 +701,175 @@ defmodule Ravix.Accounts.InferenceTest do
     end
   end
 
+  describe "held/1" do
+    test "is what this person's set holds as Fountain lists it, as the choices that put each thing there" do
+      me = insert_user(agent: :claude, credential_kind: :api_key, credential_set_id: "set-me")
+
+      fountain([
+        {%{method: "GET", path: @sets},
+         {200, [],
+          %{
+            data: [
+              house_default(),
+              %{
+                id: "set-other",
+                name: "ravix:other",
+                providers: ["claude_code_oauth_token"],
+                chatgpt_grant_id: nil
+              },
+              %{
+                id: "set-me",
+                name: "ravix:#{me.id}",
+                providers: ["openai_api_key", "anthropic_api_key", "gemini_api_key"],
+                chatgpt_grant_id: "g-me"
+              }
+            ]
+          }}}
+      ])
+
+      # In the order the page offers them; a slot Ravix never writes is not one.
+      assert {:ok, [{:claude, :api_key}, {:codex, :subscription}, {:codex, :api_key}]} =
+               Inference.held(me)
+    end
+
+    test "somebody with no set holds nothing, and so does somebody whose set has gone; a set Fountain will not list is an error, not empty" do
+      client = fountain([])
+      assert {:ok, []} = Inference.held(insert_user())
+      assert requests(client) == []
+
+      gone = insert_user(credential_set_id: "set-gone")
+      fountain([{%{method: "GET", path: @sets}, {200, [], %{data: [house_default()]}}}])
+      assert {:ok, []} = Inference.held(gone)
+
+      fountain([{%{method: "GET", path: @sets}, {500, [], %{error: "down"}}}])
+      assert {:error, %Ravix.Fountain.Error{status: 500}} = Inference.held(gone)
+    end
+  end
+
+  describe "disconnect/3" do
+    test "removes a pasted credential from the set and, when it was the one in use, the row stops saying connected" do
+      me = insert_user(agent: :claude, credential_kind: :api_key, credential_set_id: "set-me")
+
+      client =
+        fountain([
+          {%{method: "DELETE", path: "#{@sets}/set-me/credentials/anthropic_api_key"},
+           {204, [], nil}}
+        ])
+
+      assert {:ok,
+              %User{agent: :claude, credential_kind: nil, credential_set_id: "set-me"} = after_} =
+               Inference.disconnect(me, :claude, :api_key)
+
+      refute Inference.connected?(after_)
+      # The agent is still their choice, and the set is still theirs.
+      assert %User{agent: :claude, credential_set_id: "set-me"} = Repo.get!(User, me.id)
+      assert [{"DELETE", _}] = requests(client)
+    end
+
+    test "removing something other than what is in use changes nothing about the person" do
+      me = insert_user(agent: :claude, credential_kind: :subscription, credential_set_id: "s")
+
+      fountain([
+        {%{method: "DELETE", path: "#{@sets}/s/credentials/openai_api_key"}, {204, [], nil}}
+      ])
+
+      assert {:ok, %User{credential_kind: :subscription}} =
+               Inference.disconnect(me, :codex, :api_key)
+
+      assert %User{credential_kind: :subscription} = Repo.get!(User, me.id)
+    end
+
+    test "a ChatGPT subscription is un-named from the set and its sign-in forgotten, and the grant stays for a later reconnect" do
+      me = insert_user(agent: :codex, credential_kind: :subscription, credential_set_id: "s")
+
+      client =
+        fountain([
+          {%{method: "PATCH", path: "#{@sets}/s", body: %{chatgpt_grant_id: nil}},
+           {200, [], %{data: %{id: "s", chatgpt_grant: nil}}}},
+          {%{method: "GET", path: @chatgpt},
+           {200, [],
+            %{
+              data: [
+                %{id: "g-9", name: "ravix:other", status: "active"},
+                %{id: "g-me", name: "ravix:#{me.id}", status: "active"}
+              ]
+            }}},
+          {%{method: "POST", path: "#{@chatgpt}/g-me/disconnect"},
+           {200, [], %{data: %{id: "g-me", status: "disconnected"}}}}
+        ])
+
+      assert {:ok, %User{credential_kind: nil}} = Inference.disconnect(me, :codex, :subscription)
+
+      assert [{"PATCH", _}, {"GET", _}, {"POST", "#{@chatgpt}/g-me/disconnect"}] =
+               requests(client)
+
+      refute {"DELETE", "#{@chatgpt}/g-me"} in requests(client)
+    end
+
+    test "a subscription already disconnected, or none, is not disconnected again" do
+      me = insert_user(agent: :codex, credential_kind: :subscription, credential_set_id: "s")
+      patch = {%{method: "PATCH", path: "#{@sets}/s"}, {200, [], %{data: %{id: "s"}}}}
+
+      client =
+        fountain([
+          patch,
+          {%{method: "GET", path: @chatgpt},
+           {200, [], %{data: [%{id: "g-me", name: "ravix:#{me.id}", status: "disconnected"}]}}}
+        ])
+
+      assert {:ok, %User{credential_kind: nil}} = Inference.disconnect(me, :codex, :subscription)
+      assert [{"PATCH", _}, {"GET", _}] = requests(client)
+
+      client = fountain([patch, {%{method: "GET", path: @chatgpt}, {200, [], %{data: []}}}])
+      assert {:ok, %User{}} = Inference.disconnect(Repo.get!(User, me.id), :codex, :subscription)
+      assert [{"PATCH", _}, {"GET", _}] = requests(client)
+    end
+
+    test "what has already gone is the outcome wanted; what cannot be reached is a refusal with nothing changed" do
+      me = insert_user(agent: :claude, credential_kind: :subscription, credential_set_id: "s")
+
+      fountain([
+        {%{method: "DELETE", path: "#{@sets}/s/credentials/claude_code_oauth_token"},
+         {404, [], %{error: "not_found"}}}
+      ])
+
+      assert {:ok, %User{credential_kind: nil}} = Inference.disconnect(me, :claude, :subscription)
+
+      other = insert_user(agent: :codex, credential_kind: :subscription, credential_set_id: "s2")
+
+      fountain([
+        {%{method: "PATCH", path: "#{@sets}/s2"}, {404, [], %{error: "not_found"}}},
+        {%{method: "GET", path: @chatgpt},
+         {200, [], %{data: [%{id: "g-o", name: "ravix:#{other.id}", status: "active"}]}}},
+        {%{method: "POST", path: "#{@chatgpt}/g-o/disconnect"},
+         {409, [], %{error: "chatgpt_grant_already_disconnected"}}}
+      ])
+
+      assert {:ok, %User{credential_kind: nil}} =
+               Inference.disconnect(other, :codex, :subscription)
+
+      down = insert_user(agent: :claude, credential_kind: :api_key, credential_set_id: "s3")
+
+      fountain([
+        {%{method: "DELETE", path: "#{@sets}/s3/credentials/anthropic_api_key"},
+         {503, [], %{error: "down"}}}
+      ])
+
+      assert {:error, %Ravix.Fountain.Error{status: 503}} =
+               Inference.disconnect(down, :claude, :api_key)
+
+      assert %User{credential_kind: :api_key} = Repo.get!(User, down.id)
+    end
+
+    test "somebody with no set has nothing to remove and Fountain is not asked" do
+      me = insert_user(agent: :claude, credential_kind: :api_key)
+      client = fountain([])
+
+      assert {:ok, %User{credential_kind: nil}} = Inference.disconnect(me, :claude, :api_key)
+      assert requests(client) == []
+    end
+  end
+
   describe "the walkthrough" do
     test "is for somebody who has never finished it and has nowhere to be" do
       fresh = insert_user(onboarded_at: nil)
