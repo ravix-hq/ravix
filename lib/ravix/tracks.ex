@@ -242,17 +242,17 @@ defmodule Ravix.Tracks do
 
   The four ways in (blank, a branch, a pull request, an issue) differ only
   in what the opening turn is told, which is why they are one function with
-  an `origin` rather than four. The slug is derived from whatever the origin
-  names (a PR's title, a branch's name) because a person naming a directory
-  before they have started work is a question with no good answer.
+  an `origin` rather than four. New branches are `ravix/<branch_name>`;
+  PR tracks retain their existing branch. The initial title is the full
+  branch, and the workdir slug derives from the supplied name.
 
   Open to project members as well as to the owner. Cutting a track is the
   work rather than the machine (it makes a directory and a branch, and
   changes nothing about what is installed or what the box holds), so it sits
-  on the `project_access` side of the line. The branch carries the
-  *cutter's* login, not the owner's, so the yard reads as who did what.
+  on the `project_access` side of the line.
 
-  `attrs` (string or atom keys): `title`, `slug`, and `origin` with `kind`,
+  `attrs` (string or atom keys): `branch_name` (`title` is a compatibility
+  alias), and `origin` with `kind`,
   `base`, `number`, `title`. The opening turn is sent in the background
   when the machine already exists (it is a turn on a machine that may still
   be booting, so it can take a minute, and the page is already watching the
@@ -268,7 +268,7 @@ defmodule Ravix.Tracks do
          {:ok, client} <- fountain(),
          :ok <- Ravix.Projects.prepare_machine(project, client),
          {:ok, machine} <- MachineCache.machine_of(client, project),
-         plan = plan(user, project, attrs, machine),
+         {:ok, plan} <- plan(user, project, attrs, machine),
          {:ok, track} <- cut(client, plan) do
       if machine,
         do:
@@ -309,7 +309,8 @@ defmodule Ravix.Tracks do
   # Everything a new track is called, decided before anything wakes the box:
   # the conversation Fountain is asked for, and the row that will remember it.
   # See `Ravix.Tracks.Plan`.
-  @spec plan(User.t(), Project.t(), map(), MachineCache.machine()) :: Plan.t()
+  @spec plan(User.t(), Project.t(), map(), MachineCache.machine()) ::
+          {:ok, Plan.t()} | {:error, reason()}
   defp plan(user, project, attrs, machine) do
     id = Ecto.UUID.generate()
     origin = read_origin(attrs["origin"], project)
@@ -319,15 +320,43 @@ defmodule Ravix.Tracks do
     # what clashes, and a closed track's is gone), so the same read answers
     # both questions and `free_slug/2` asks the database nothing more.
     rows = Store.tracks_of(project.id, :all)
-    taken = Enum.map(rows, & &1.slug)
+    taken = Enum.flat_map(rows, &[&1.slug, String.replace_prefix(&1.branch, "ravix/", "")])
     open_slugs = for %Track{closed_at: nil, slug: slug} <- rows, into: MapSet.new(), do: slug
-    title = text(attrs["title"], 200) |> non_empty() || default_title(origin, taken)
-    slug = free_slug(open_slugs, text(attrs["slug"], 60) |> non_empty() || title)
+    name = attrs["branch_name"] || attrs["title"] || ""
+    name = if name == "", do: default_title(origin, taken), else: name
 
-    branch =
-      if origin.kind == :pr and origin.base,
-        do: origin.base,
-        else: Ids.branch_for(user.login, slug, id)
+    with :ok <- validate_name(origin, name),
+         branch = if(origin.kind == :pr, do: origin.base, else: Ids.branch_for(name)),
+         :ok <- available_branch(rows, branch) do
+      slug = free_slug(open_slugs, if(origin.kind == :pr, do: branch, else: name))
+      {:ok, build_plan(user, project, machine, id, origin, slug, branch)}
+    end
+  end
+
+  defp validate_name(%Origin{kind: :pr}, _name), do: :ok
+
+  defp validate_name(_origin, name) do
+    if Ids.valid_branch_name?(name),
+      do: :ok,
+      else:
+        {:error,
+         {:unprocessable, "invalid_branch",
+          "Use a valid Git branch name: no spaces, control characters, .., ~ ^ : ? * [ or backslash; no leading - or dot components, trailing dot, .lock or slash."}}
+  end
+
+  defp available_branch(rows, branch) do
+    if Enum.any?(rows, &(&1.branch == branch)),
+      do: {:error, branch_taken()},
+      else: :ok
+  end
+
+  defp branch_taken,
+    do:
+      {:unprocessable, "branch_taken",
+       "That branch name is already used in this project, including closed tracks. Choose another name."}
+
+  defp build_plan(user, project, machine, id, origin, slug, branch) do
+    title = branch
 
     %Plan{
       id: id,
@@ -385,9 +414,13 @@ defmodule Ravix.Tracks do
   # The one failure `plan/4` cannot rule out is the race it checked for a
   # moment earlier: somebody opening a track with the same name between the
   # read and the insert, which the partial unique index on open slugs
-  # refuses. Anything else is a row the changeset would not take.
+  # refuses. The branch reservation index also covers closed tracks.
+  # Anything else is a row the changeset would not take.
   defp refusal(%Ecto.Changeset{errors: errors}) do
     case errors do
+      [{:branch, _} | _] ->
+        branch_taken()
+
       [{:slug, _} | _] ->
         {:conflict, "slug_taken", "Somebody just opened a track with that name; try again."}
 
@@ -965,6 +998,7 @@ defmodule Ravix.Tracks do
   # against the four there are. This is the boundary: past it the kind is one
   # of `Track.origin_kinds/0` and nothing downstream re-checks it.
   defp read_origin(raw, project) when is_map(raw) do
+    raw = stringify(raw)
     kind = Enum.find(Track.origin_kinds(), :blank, &(to_string(&1) == raw["kind"]))
 
     origin =
@@ -991,22 +1025,12 @@ defmodule Ravix.Tracks do
 
   defp read_origin(_raw, project), do: read_origin(%{}, project)
 
-  # What a track is called when nobody said. The order is deliberate: a track
-  # that came from a pull request, an issue or a branch already has the best
-  # name available (the one the work is called everywhere else), and
-  # inventing a prettier one would break the join between the sidebar and
-  # GitHub. Only a track started from nothing gets a yard name.
-  defp default_title(%Origin{kind: :pr, number: n} = origin, _taken) when is_integer(n),
-    do: origin.title || "PR ##{n}"
-
+  # Issue defaults describe the work. Blank and branch origins get a yard
+  # suggestion; a PR uses its existing head branch in plan/4.
   defp default_title(%Origin{kind: :issue, number: n} = origin, _taken) when is_integer(n),
-    do: origin.title || "Issue ##{n}"
+    do: Ids.slugify("#{n}-#{origin.title}")
 
-  defp default_title(%Origin{kind: :branch, base: base}, _taken)
-       when is_binary(base) and base != "",
-       do: base
-
-  defp default_title(_origin, taken), do: Names.name_track(taken)
+  defp default_title(_origin, taken), do: taken |> Names.name_track() |> Ids.slugify()
 
   # GitHub's page for the thing the track came from, decided once when the
   # origin is built rather than at whichever call site happened to want it.

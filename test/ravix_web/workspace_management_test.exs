@@ -3,6 +3,7 @@ defmodule RavixWeb.WorkspaceManagementTest do
   import Phoenix.LiveViewTest
   import Mimic
   alias Ravix.{Accounts, People, Previews, Projects, Repo, Tracks}
+  alias Ravix.Fountain.Client
   alias Ravix.Fountain.Shapes.Catalog
   alias Ravix.Hub.Event
   alias Ravix.Projects.Machine.Rebuild
@@ -57,8 +58,8 @@ defmodule RavixWeb.WorkspaceManagementTest do
   for {kind, refs_kind, ref, expected} <- [
         {"blank", nil, nil, %{kind: "blank"}},
         {"branch", :branches, %{name: "release"}, %{kind: "branch", base: "release"}},
-        {"pr", :pulls, %{number: 12, title: "Fix", base_ref: "main"},
-         %{kind: "pr", number: 12, title: "Fix", base: "main"}},
+        {"pr", :pulls, %{number: 12, title: "Fix", head_ref: "feature/fix"},
+         %{kind: "pr", number: 12, title: "Fix", base: "feature/fix"}},
         {"issue", :issues, %{number: 34, title: "Bug"},
          %{kind: "issue", number: 34, title: "Bug"}}
       ] do
@@ -78,7 +79,7 @@ defmodule RavixWeb.WorkspaceManagementTest do
 
       expect(Tracks, :open, fn user, id, attrs ->
         assert {user.id, id} == {ctx.user.id, ctx.project.id}
-        assert attrs == %{title: "Work", origin: @expected}
+        assert attrs == %{title: if(@kind == "pr", do: nil, else: "Work"), origin: @expected}
         {:error, {:conflict, "busy", "Machine is busy"}}
       end)
 
@@ -93,10 +94,53 @@ defmodule RavixWeb.WorkspaceManagementTest do
           do: %{title: "Work", ref: to_string(ref[:number] || ref[:name])},
           else: %{title: "Work"}
 
+      params = if @kind == "pr", do: Map.delete(params, :title), else: params
       ctx.view |> form("#new-track-form", new_track: params) |> render_submit()
       assert render_async(ctx.view) =~ "Machine is busy"
       refute has_element?(ctx.view, "#new-track-form button[disabled]")
     end
+  end
+
+  test "branch validation errors keep the entered name beside the fixed prefix", ctx do
+    stub(Ravix.Fountain, :client, fn ->
+      Client.new("https://fountain.test", "key")
+    end)
+
+    stub(Ravix.Projects, :prepare_machine, fn _, _ -> :ok end)
+    stub(Ravix.MachineCache, :machine_of, fn _, _ -> {:ok, nil} end)
+    insert_track(project: ctx.project, branch: "ravix/spent", closed_at: DateTime.utc_now())
+    render_click(ctx.view, "dialog", %{name: "new-track"})
+    assert has_element?(ctx.view, "#branch-prefix", "ravix/")
+
+    for {name, message} <- [
+          {"two words", "Use a valid Git branch name"},
+          {"spent", "including closed tracks"}
+        ] do
+      ctx.view |> form("#new-track-form", new_track: [title: name]) |> render_submit()
+      render_async(ctx.view)
+      assert has_element?(ctx.view, "#new-track-form .field p.error", message)
+      assert has_element?(ctx.view, "#track-title[value='#{name}']")
+      refute has_element?(ctx.view, "#new-track-form button[disabled]")
+    end
+  end
+
+  test "a duplicate PR branch has a visible error without an editable branch field", ctx do
+    expect(Projects, :refs, fn _, _, :pulls ->
+      {:ok, [%{number: 12, title: "Fix", head_ref: "feature/fix"}]}
+    end)
+
+    expect(Tracks, :open, fn _, _, %{origin: %{base: "feature/fix"}} ->
+      {:error,
+       {:unprocessable, "branch_taken", "That branch name is already used in this project."}}
+    end)
+
+    render_click(ctx.view, "dialog", %{name: "new-track"})
+    render_click(ctx.view, "origin", %{kind: "pr"})
+    render_async(ctx.view)
+    refute has_element?(ctx.view, "#track-title")
+    ctx.view |> form("#new-track-form", new_track: [ref: "12"]) |> render_submit()
+    render_async(ctx.view)
+    assert has_element?(ctx.view, "#new-track-form p.error", "That branch name is already used")
   end
 
   test "secrets are scoped and values are absent from the rendered page", ctx do

@@ -39,6 +39,7 @@ defmodule Ravix.Tracks.Track do
     field :slug, :string
     field :title, :string
     field :branch, :string
+    field :branch_reserved, :boolean, default: true
     field :workdir, :string
     field :origin_kind, Ecto.Enum, values: @origin_kinds
     field :origin_base, :string
@@ -68,8 +69,8 @@ defmodule Ravix.Tracks.Track do
   def origin_kinds, do: @origin_kinds
 
   @doc """
-  A track. The caller usually brings the id, since the branch name is
-  derived from it; one is minted otherwise.
+  A track. The opening plan usually brings the id; one is minted otherwise.
+  New rows reserve their branch across open and closed tracks.
   """
   @spec changeset(t(), map()) :: Ecto.Changeset.t()
   def changeset(track, attrs) do
@@ -80,6 +81,7 @@ defmodule Ravix.Tracks.Track do
     |> validate_required(@required)
     |> validate_number(:rev, greater_than_or_equal_to: 1)
     |> foreign_key_constraint(:project_id)
+    |> unique_constraint([:project_id, :branch], name: :tracks_branch, error_key: :branch)
     |> unique_constraint(:id, name: :tracks_pkey)
     |> check_constraint(:origin_kind, name: :tracks_origin_kind)
     |> unique_constraint([:project_id, :slug],
