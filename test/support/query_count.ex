@@ -21,12 +21,20 @@ defmodule Ravix.QueryCount do
   Concurrent tests share a database but not a pid, so this is what keeps one
   test's count out of another's. The handler is attached and detached around
   `fun` under an id unique to the call.
+
+  `from: {:callers, pid}` widens that to the processes working on `pid`'s
+  behalf -- those naming it in `$callers`, as the tasks a sweep hands its
+  rows to do -- and is still one test's own: the sandbox and Mimic follow the
+  same list, so a process this counts is one the test already owns.
   """
 
   @event [:ravix, :repo, :query]
 
-  @typedoc "`:from` is the process whose queries to count; the caller's by default."
-  @type option :: {:from, pid()}
+  @typedoc """
+  `:from` is the process whose queries to count, the caller's by default;
+  `{:callers, pid}` also counts every process that lists `pid` in `$callers`.
+  """
+  @type option :: {:from, pid() | {:callers, pid()}}
 
   @doc "Run `fun`, counting the queries it makes. Returns `{result, sources}`."
   @spec count((-> result), [option()]) :: {result, [String.t() | nil]} when result: term()
@@ -42,7 +50,7 @@ defmodule Ravix.QueryCount do
         # The handler runs in whichever process made the query. The sandbox
         # means another test's connection may well be busy on the same table
         # at the same moment, so the pid is the filter, not the table.
-        if self() == watched, do: send(owner, {id, meta[:source]})
+        if watched?(watched), do: send(owner, {id, meta[:source]})
       end,
       nil
     )
@@ -58,6 +66,11 @@ defmodule Ravix.QueryCount do
   @doc "Just the count, for a test that does not need the answer."
   @spec queries((-> term()), [option()]) :: non_neg_integer()
   def queries(fun, opts \\ []), do: fun |> count(opts) |> elem(1) |> length()
+
+  defp watched?(pid) when is_pid(pid), do: self() == pid
+
+  defp watched?({:callers, pid}),
+    do: self() == pid or pid in List.wrap(Process.get(:"$callers"))
 
   defp drain(id, acc) do
     receive do
