@@ -574,7 +574,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
       assert actual_user.id == user.id
       assert id == project.id
       assert attrs["packages"]["apt"] == ["git", "curl"]
-      assert attrs["instructions"] == "Be precise"
+      refute Map.has_key?(attrs, "instructions")
       {:ok, %{rev: 2}}
     end)
 
@@ -582,7 +582,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
     view |> element("button", "Settings") |> render_click()
 
     view
-    |> form("#settings-form", settings: [instructions: "Be precise", apt: "git curl"])
+    |> form("#environment-settings-form", settings: [apt: "git curl"])
     |> render_submit()
 
     # The save runs under `start_async`; the flash only exists once it lands.
