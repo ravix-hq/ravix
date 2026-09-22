@@ -85,17 +85,7 @@ defmodule RavixWeb.WorkspaceLive do
         busy: false
       )
 
-    {:ok,
-     if(socket.assigns.current_user,
-       do:
-         socket
-         |> assign(
-           changes: Accounts.unseen_changes(socket.assigns.current_user),
-           changes_unseen: length(Accounts.unseen_changes(socket.assigns.current_user))
-         )
-         |> reload(),
-       else: socket
-     )}
+    {:ok, if(socket.assigns.current_user, do: socket |> unseen() |> reload(), else: socket)}
   end
 
   @impl true
@@ -782,6 +772,11 @@ defmodule RavixWeb.WorkspaceLive do
   defp open_dialog(socket, :help), do: assign(socket, dialog: :help)
   defp open_dialog(socket, :changes), do: assign(socket, dialog: :changes)
 
+  defp unseen(socket) do
+    changes = Accounts.unseen_changes(socket.assigns.current_user)
+    assign(socket, changes: changes, changes_unseen: length(changes))
+  end
+
   defp mark_changes(socket) do
     entries = socket.assigns.changes
 
@@ -791,10 +786,7 @@ defmodule RavixWeb.WorkspaceLive do
 
       entry ->
         {:ok, user} =
-          Accounts.mark_changes_seen(
-            socket.assigns.current_user,
-            DateTime.new!(entry.date, ~T[00:00:00], "Etc/UTC")
-          )
+          Accounts.mark_changes_seen(socket.assigns.current_user, Ravix.Changelog.at(entry))
 
         assign(socket, current_user: user, changes_unseen: 0)
     end

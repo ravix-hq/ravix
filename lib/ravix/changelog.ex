@@ -68,14 +68,20 @@ defmodule Ravix.Changelog do
   def since(nil), do: []
 
   def since(%DateTime{} = seen),
-    do:
-      Enum.filter(
-        @entries,
-        &(DateTime.compare(DateTime.new!(&1.date, ~T[00:00:00], "Etc/UTC"), seen) == :gt)
-      )
+    do: Enum.filter(@entries, &(DateTime.compare(at(&1), seen) == :gt))
 
   def newest([]), do: nil
   def newest(entries), do: Enum.max_by(entries, & &1.date)
+
+  @doc """
+  The moment an entry counts as shipped, in the precision the column holds.
+
+  A date alone is second-precision, which `:utc_datetime_usec` refuses, so
+  every comparison and every marker is built here rather than at each caller.
+  """
+  @spec at(map() | Date.t()) :: DateTime.t()
+  def at(%{date: date}), do: at(date)
+  def at(%Date{} = date), do: DateTime.new!(date, ~T[00:00:00.000000], "Etc/UTC")
 
   def validate do
     Enum.each(@entries, fn e ->

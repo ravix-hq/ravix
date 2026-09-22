@@ -96,8 +96,16 @@ defmodule Ravix.Accounts do
 
   defp signed_in(result), do: result
 
-  @doc "Changes shipped since this person last opened the panel."
-  def unseen_changes(%User{changes_seen_at: seen}), do: Ravix.Changelog.since(seen)
+  @doc """
+  Changes shipped since this person last opened the panel.
+
+  Nobody has a marker until they open it once, so until then the mark is the
+  day they arrived: what shipped while they were here and they have not seen.
+  Somebody who joined today is not shown a backlog of what they never missed.
+  """
+  @spec unseen_changes(User.t()) :: [map()]
+  def unseen_changes(%User{changes_seen_at: seen, created_at: created}),
+    do: Ravix.Changelog.since(seen || created)
 
   @doc "Mark the newest change shown as seen; an older marker never wins."
   def mark_changes_seen(%User{} = user, %DateTime{} = marker) do
