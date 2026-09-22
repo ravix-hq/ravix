@@ -97,6 +97,11 @@ defmodule RavixWeb.TrackLive do
         dirty_turns: MapSet.new(),
         stage_seen?: false,
         flushing?: false,
+        # What the polite live region under the transcript says. A reader who
+        # is not looking --- a screen reader, or somebody scrolled up in a long
+        # transcript --- hears nothing from tokens streaming in, so the one
+        # moment worth a word is a turn ending. See `absorb/2`.
+        announcement: nil,
         # The monitor reference for this page's transcript follower, if it has
         # one. See `follow/2`.
         follower: nil,
@@ -151,13 +156,13 @@ defmodule RavixWeb.TrackLive do
 
     cond do
       pending != [] ->
-        {:noreply, put_flash(socket, :error, "Wait for the images to finish uploading.")}
+        {:noreply, flash(socket, :error, "Wait for the images to finish uploading.")}
 
       length(complete) + length(socket.assigns.attached_images) > 6 ->
-        {:noreply, put_flash(socket, :error, "Attach at most six images.")}
+        {:noreply, flash(socket, :error, "Attach at most six images.")}
 
       upload_errors(socket.assigns.uploads.images) != [] ->
-        {:noreply, put_flash(socket, :error, "Remove invalid images before sending.")}
+        {:noreply, flash(socket, :error, "Remove invalid images before sending.")}
 
       true ->
         send_prompt(socket, text)
@@ -359,9 +364,11 @@ defmodule RavixWeb.TrackLive do
   end
 
   # A `live_component` cannot put a flash in the page's own socket, so it
-  # sends the sentence here; see `RavixWeb.Live.Result.error/2`.
+  # sends the sentence here --- and this page has no toasts of its own
+  # either, so `flash/3` sends it on up to the workspace, which draws the
+  # one stack. See `RavixWeb.Live.Result.flash/3`.
   def handle_info({:flash, kind, message}, socket),
-    do: {:noreply, put_flash(socket, kind, message)}
+    do: {:noreply, flash(socket, kind, message)}
 
   def handle_info({:hub, %Event{} = event}, socket) do
     if Event.concerns?(event, socket.assigns.track_id) do
@@ -521,7 +528,7 @@ defmodule RavixWeb.TrackLive do
       socket
       |> assign(loading: false, transcript_loading: false, exec_busy: false)
       |> update_panel(&Panel.settled/1)
-      |> put_flash(:error, "Could not finish loading. Please try again.")
+      |> flash(:error, "Could not finish loading. Please try again.")
 
   # The repair read, rendered as what actually differs.
   #
@@ -704,8 +711,23 @@ defmodule RavixWeb.TrackLive do
     assign(socket,
       page: Transcript.add_event(socket.assigns.page, event),
       dirty_turns: MapSet.put(socket.assigns.dirty_turns, event.turn_id),
-      stage_seen?: socket.assigns.stage_seen? or event.kind == :stage
+      stage_seen?: socket.assigns.stage_seen? or event.kind == :stage,
+      announcement: announce_turn(event, socket.assigns.announcement)
     )
+  end
+
+  # The sentence for the live region, if this event is worth one. A turn
+  # ending is; a turn starting clears the last one, so that two replies in a
+  # row are two changes to the region and not one sentence left standing,
+  # which a screen reader would read once. Everything else --- every token
+  # of output --- leaves it alone.
+  defp announce_turn(%TranscriptEvent{} = event, current) do
+    cond do
+      TranscriptEvent.starts_turn?(event) -> nil
+      not TranscriptEvent.settles?(event) -> current
+      TranscriptEvent.failed_stage?(event) -> "Turn failed"
+      true -> "Agent replied"
+    end
   end
 
   defp schedule_flush(%{assigns: %{flushing?: true}} = socket), do: socket
@@ -744,7 +766,7 @@ defmodule RavixWeb.TrackLive do
   # into another's, and a stage event from the track being left is not a
   # reason to re-read the one being arrived at.
   defp drop_pending(socket),
-    do: assign(socket, dirty_turns: MapSet.new(), stage_seen?: false)
+    do: assign(socket, dirty_turns: MapSet.new(), stage_seen?: false, announcement: nil)
 
   # Subscribe to the track's live transcript from the newest event this page
   # already has, and monitor the follower that serves it. The monitor is the

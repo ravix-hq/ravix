@@ -1,12 +1,6 @@
 <div class="track-workspace">
-  <div class="toasts">
-    <.toast :if={message = Phoenix.Flash.get(@flash, :error)} id="track-error" kind={:error}>
-      {message}
-    </.toast>
-    <.toast :if={message = Phoenix.Flash.get(@flash, :info)} id="track-info" kind={:info}>
-      {message}
-    </.toast>
-  </div>
+  <%!-- No toasts here: this page's flash goes up to the workspace, which
+    draws the one stack for the whole page. See `RavixWeb.Live.Result.flash/3`. --%>
   <%!-- The wait before the track's own detail lands, drawn in the shape the
   track itself will have rather than as a word in the middle of an empty
   page. The two columns and the header strip are what the layout is; leaving
@@ -125,6 +119,12 @@
               </section>
             </article>
           </div>
+          <%!-- Shown by `assets/js/hooks/transcript_tail.js` once the reader
+            has scrolled up: it toggles `unpinned` on the scroller, and the
+            stylesheet shows this only under that class. A click re-pins. --%>
+          <button type="button" class="jump-latest" data-jump-latest>
+            <.icon name="arrow-up" size={12} class="ico" />Jump to latest
+          </button>
           <p :if={@transcript_loading} class="workspace-welcome" role="status">
             Loading conversation…
           </p>
@@ -169,6 +169,12 @@
             </button>
           </div>
         </div>
+        <%!-- The one thing a reader who is not looking should hear: a turn
+          ended. Polite, so it waits for whatever is being read; visually
+          hidden, because the transcript already shows it. --%>
+        <div id="transcript-status" class="sr-only" role="status" aria-live="polite">
+          {@announcement}
+        </div>
         <div class="workspace-composer">
           <p :for={person <- Enum.filter(@present, & &1.typing)} class="hint">
             @{person.login} is typing…
@@ -183,7 +189,7 @@
             by `assets/js/hooks/composer.js` meanwhile. --%>
           <form id="composer-form" phx-submit="send" phx-change="validate">
             <div class="composer-box" data-composer-box>
-              <div class="composer-note" data-composer-note hidden></div>
+              <div class="composer-note" role="status" data-composer-note hidden></div>
               <textarea
                 id={"composer-#{@track.id}"}
                 phx-hook="Composer"

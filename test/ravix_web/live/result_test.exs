@@ -36,4 +36,41 @@ defmodule RavixWeb.Live.ResultTest do
     socket = error(socket(), {:some_shape_nobody_planned_for, 42})
     assert socket.assigns.flash["error"] =~ "Something went wrong"
   end
+
+  describe "where a flash goes" do
+    test "a component hands the sentence to its own process, and puts nothing itself" do
+      component = %{
+        socket()
+        | assigns: Map.put(socket().assigns, :myself, %Phoenix.LiveComponent.CID{cid: 1})
+      }
+
+      assert flash(component, :error, "No.").assigns.flash == %{}
+      assert_receive {:flash, :error, "No."}
+      refute_receive {:clear_flash, _, _}, 10
+    end
+
+    test "a nested LiveView hands it to the page above, whatever the kind" do
+      nested = %{socket() | parent_pid: self()}
+      assert flash(nested, :info, "Saved.").assigns.flash == %{}
+      assert_receive {:flash, :info, "Saved."}
+      refute_receive {:clear_flash, _, _}, 10
+    end
+
+    test "a page puts a notice and arranges to let it go; an error it keeps" do
+      socket = flash(socket(), :info, "Saved.", after: 0)
+      assert socket.assigns.flash == %{"info" => "Saved."}
+      assert_receive {:clear_flash, :info, "Saved."}
+
+      socket = flash(socket(), :error, "Could not save.", after: 0)
+      assert socket.assigns.flash == %{"error" => "Could not save."}
+      refute_receive {:clear_flash, _, _}, 10
+      assert notice_ms() == 6_000
+    end
+
+    test "the clear takes only the sentence it was set for" do
+      socket = flash(socket(), :info, "Second.", after: 0)
+      assert clear_notice(socket, :info, "First.").assigns.flash == %{"info" => "Second."}
+      assert clear_notice(socket, :info, "Second.").assigns.flash == %{}
+    end
+  end
 end

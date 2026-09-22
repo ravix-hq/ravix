@@ -246,9 +246,29 @@ test('home quick start creates a scratch project and recent navigation survives 
   await accessible(page);
   await capture(page, 'inbox-Daylight');
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.getByRole('navigation', { name: 'Workspace navigation' }).getByRole('link', { name: 'Home' }).click();
+  const mobileNav = page.getByRole('navigation', { name: 'Workspace navigation' });
+  await mobileNav.getByRole('link', { name: 'Home' }).click();
   await accessible(page);
   await capture(page, 'home-mobile');
+  // The rail is gone at this width, and everything in it --- signing out,
+  // the theme picker, the account --- was unreachable until Menu brought it
+  // back over the page. Following a link in it closes it again.
+  const menu = mobileNav.getByRole('button', { name: 'Menu' });
+  await expect(page.getByRole('link', { name: 'Sign out' })).toBeHidden();
+  await expect(menu).toHaveAttribute('aria-expanded', 'false');
+  await menu.click();
+  await expect(menu).toHaveAttribute('aria-expanded', 'true');
+  await expect(page.getByRole('link', { name: 'Sign out' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Close menu' })).toBeVisible();
+  await accessible(page);
+  await capture(page, 'home-mobile-menu');
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('link', { name: 'Sign out' })).toBeHidden();
+  await menu.click();
+  await page.getByRole('complementary', { name: 'Projects and tracks' }).getByRole('link', { name: 'Inbox' }).click();
+  await expect(page.getByRole('heading', { name: "You're all caught up" })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Sign out' })).toBeHidden();
+  await expect(menu).toHaveAttribute('aria-expanded', 'false');
 });
 
 test('keyboard users can resize panels and close dialogs with focus restored', async ({ page }) => {
@@ -374,6 +394,18 @@ test('project, track, streaming, image upload, reconnect, and revocation', async
   await page.setViewportSize({ width: 390, height: 844 });
   await accessible(page);
   await capture(page, 'track-mobile');
+  // On a phone the project's own controls live in the yard, and the yard is
+  // behind Menu. The owner's "Project settings" is the one worth proving
+  // reachable, because nothing else on the page offers it at this width.
+  const trackMenu = page.getByRole('navigation', { name: 'Workspace navigation' }).getByRole('button', { name: 'Menu' });
+  await expect(page.getByRole('button', { name: 'Project settings' })).toBeHidden();
+  await trackMenu.click();
+  await expect(page.getByRole('button', { name: 'Project settings' })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Sign out' })).toBeVisible();
+  await accessible(page);
+  await capture(page, 'track-mobile-menu');
+  await page.getByRole('button', { name: 'Close menu' }).click();
+  await expect(page.getByRole('button', { name: 'Project settings' })).toBeHidden();
   await page.setViewportSize({ width: 1280, height: 720 });
   // The same session is revoked from a second tab while the first remains connected.
   const trackURL = page.url();

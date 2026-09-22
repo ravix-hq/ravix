@@ -185,7 +185,7 @@ defmodule RavixWeb.Live.MachineDock do
               </span>
             </div>
           </div>
-          <p :if={@dock == "run"} class="hint">
+          <p :if={@dock == :run} class="hint">
             Run a command in this track’s worktree. For a persistent service, use Preview.
           </p>
           <p class="hint">
