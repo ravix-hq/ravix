@@ -84,7 +84,9 @@ defmodule RavixWeb.Live.Form do
     # its value: see `RavixWeb.OnboardingLive`.
     credential: {%{value: :string}, %{"bad_credential" => :value, "no_credential" => :value}},
     new_project: {%{name: :string, repo: :string}, %{"no_name" => :name}},
-    new_track: {%{title: :string, ref: :string}, %{"no_title" => :title}},
+    new_track:
+      {%{title: :string, ref: :string},
+       %{"no_title" => :title, "invalid_branch" => :title, "branch_taken" => :title}},
     rename_track: {%{title: :string}, %{"no_title" => :title}},
     preview_config: @preview_config,
     preview_defaults: @preview_config,
