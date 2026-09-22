@@ -10,6 +10,8 @@ defmodule Ravix.ProjectsTest do
   alias Ravix.Projects.{Machine, MachineState, Project, Settings}
   alias Ravix.Projects.Machine.{Harness, Rebuild}
   alias Ravix.PromptQueue.Item
+  alias Ravix.QueryCount
+  alias Ravix.Tracks
 
   # As Fountain serves it: a JSON object, string keys. A fixture that answered
   # atoms would be a shape no Fountain sends (see `Ravix.Fountain.Shapes`).
@@ -260,6 +262,43 @@ defmodule Ravix.ProjectsTest do
       assert Projects.access_of(person("stranger").id, project) == nil
     end
 
+    test "the rail, the project page and the sidebar agree on how each person gets in" do
+      # These three used to resolve access separately -- `Projects.list/1`,
+      # `Projects.get/2` and `Tracks.list/2` each with a copy of the same
+      # three questions -- and the copies had drifted in how they asked the
+      # third. One answer now, and this is the assertion that the three
+      # surfaces a person sees it on cannot disagree.
+      quiet_peers()
+      no_fountain()
+      owner = person("owner")
+      project = insert_project(user: owner, name: "shared")
+      mine = insert_track(project: project, title: "theirs")
+      other = insert_track(project: project, title: "not theirs")
+      member = person("member")
+      insert_project_member(project, member)
+      guest = person("guest")
+      insert_track_member(mine, guest)
+      stranger = person("stranger")
+
+      for {user, access, role, titles} <- [
+            {owner, :owner, :owner, ["theirs", "not theirs"]},
+            {member, :project, :member, ["theirs", "not theirs"]},
+            {guest, :tracks, :member, ["theirs"]}
+          ] do
+        assert [%{id: id, access: ^access, role: ^role}] = Projects.list(user)
+        assert id == project.id
+        assert {:ok, %{access: ^access, role: ^role}} = Projects.get(user, project.id)
+        assert {:ok, tracks} = Tracks.list(user, project.id)
+        assert Enum.map(tracks, & &1.title) == titles
+        assert Enum.all?(tracks, &(&1.role == role))
+      end
+
+      assert Projects.list(stranger) == []
+      assert Projects.get(stranger, project.id) == {:error, :not_found}
+      assert Tracks.list(stranger, project.id) == {:error, :not_found}
+      _ = other
+    end
+
     test "the Project map, with the mount path and the two role questions" do
       owner = person("owner")
       project = insert_project(user: owner, repo_full_name: "acme/widgets", repo_private: true)
@@ -353,6 +392,61 @@ defmodule Ravix.ProjectsTest do
 
       assert %{name: "partial", access: :tracks, role: :member} = third
       assert third.machine.status == :none
+    end
+
+    test "the rail costs the same whether a person helps on one track or across a team" do
+      no_fountain()
+      me = person("me")
+      insert_project(user: me, name: "mine")
+      other = person("other")
+      whole = insert_project(user: other, name: "whole")
+      insert_project_member(whole, me)
+      partial = insert_project(user: other, name: "partial")
+      insert_track_member(insert_track(project: partial), me)
+
+      assert [%{name: "mine"}, %{name: "whole"}, %{name: "partial"}] = Projects.list(me)
+      small = QueryCount.queries(fn -> Projects.list(me) end)
+
+      # Two more whole projects, and four more shared tracks across three
+      # projects, two of them under owners the rail has not seen before.
+      third = person("third")
+
+      for name <- ["whole 2", "whole 3"],
+          do: insert_project_member(insert_project(user: third, name: name), me)
+
+      insert_track_member(insert_track(project: partial), me)
+      partial_2 = insert_project(user: other, name: "partial 2")
+      insert_track_member(insert_track(project: partial_2), me)
+      insert_track_member(insert_track(project: partial_2), me)
+      partial_3 = insert_project(user: person("fourth"), name: "partial 3")
+      insert_track_member(insert_track(project: partial_3), me)
+
+      {listed, queries} = QueryCount.count(fn -> Projects.list(me) end)
+
+      assert Enum.map(listed, & &1.name) ==
+               ["mine", "whole", "whole 2", "whole 3", "partial", "partial 2", "partial 3"]
+
+      assert Enum.map(listed, & &1.access) == [
+               :owner,
+               :project,
+               :project,
+               :project,
+               :tracks,
+               :tracks,
+               :tracks
+             ]
+
+      assert Enum.map(listed, & &1.owner_login) == ~w(me other third third other other fourth)
+
+      # Was one project read per shared track, then two or three more per
+      # guest project for its membership and its owner: nine queries for the
+      # small rail and twenty-three for this one. Five now, however long it is.
+      assert length(queries) == small
+      assert length(queries) == 5
+      assert Enum.count(queries, &(&1 == "projects")) == 2
+      assert Enum.count(queries, &(&1 == "project_members")) == 1
+      assert Enum.count(queries, &(&1 == "track_members")) == 1
+      assert Enum.count(queries, &(&1 == "users")) == 1
     end
 
     test "with no Fountain there are no machines, and no calls" do

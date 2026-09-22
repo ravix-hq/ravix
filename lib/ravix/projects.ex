@@ -47,8 +47,8 @@ defmodule Ravix.Projects do
   alias Ravix.Projects.Machine.Provisioned
   alias Ravix.Spec
 
-  @typedoc "How the caller reaches a project. See `access_of/2`."
-  @type access :: :owner | :project | :tracks
+  @typedoc "How the caller reaches a project. See `Ravix.Accounts.Access.access_of/3`."
+  @type access :: Ravix.Accounts.Access.access()
 
   @typedoc "Whether a project has a machine. See `Ravix.Projects.MachineState`."
   @type machine :: MachineState.t()
@@ -87,21 +87,35 @@ defmodule Ravix.Projects do
   controls the rail draws; the functions behind them refuse the rest
   regardless. Each project carries its machine state, one memoised Fountain
   list per project through `Ravix.MachineCache.conversations/3`.
+
+  Five reads however long the rail is. The memberships are read once each,
+  the projects behind the track memberships in one query, the owners of
+  every guest project in another, and how the caller reaches each project
+  is answered from the memberships already in hand rather than asked of the
+  database again per row. It was one project read per shared track and
+  three more per guest project before, which for a person helping across a
+  team's projects was the largest thing the page did.
   """
   @spec list(User.t()) :: [View.t()]
   def list(%User{} = user) do
     mine = Store.projects_of(user.id)
-    seen = MapSet.new(mine, & &1.id)
 
     # ownership: these two *are* how this caller's access is established --
     # `list/1` is "every project this person may see", and a membership row is
     # what makes one of them visible. There is no earlier door to go through.
-    guests =
-      People.Store.member_projects(user.id) ++
-        Enum.map(People.Store.member_tracks(user.id), &Store.get_project(&1.project_id))
+    whole = People.Store.member_projects(user.id)
+    tracks = People.Store.member_tracks(user.id)
+
+    # The projects behind the track memberships, in the order the tracks were
+    # cut: the order the rail has always drawn them in, kept through the map.
+    track_project_ids = tracks |> Enum.map(& &1.project_id) |> Enum.uniq()
+    by_id = Map.new(Store.get_projects(track_project_ids), &{&1.id, &1})
+    partial = Enum.map(track_project_ids, &Map.get(by_id, &1))
+
+    seen = MapSet.new(mine, & &1.id)
 
     {guest, _seen} =
-      Enum.reduce(guests, {[], seen}, fn
+      Enum.reduce(whole ++ partial, {[], seen}, fn
         %Project{archived_at: nil} = project, {acc, seen} ->
           if MapSet.member?(seen, project.id),
             do: {acc, seen},
@@ -111,10 +125,13 @@ defmodule Ravix.Projects do
           state
       end)
 
-    for project <- mine ++ Enum.reverse(guest) do
-      owner = owner_of(project, user)
-      access = access_of(user.id, project) || :tracks
-      present(project, access, Machine.state(project), owner)
+    guest = Enum.reverse(guest)
+    owners = owners_of(guest, user)
+    known = [projects: MapSet.new(whole, & &1.id), tracks: MapSet.new(tracks, & &1.project_id)]
+
+    for project <- mine ++ guest do
+      access = access_of(user.id, project, known)
+      present(project, access, Machine.state(project), Map.get(owners, project.user_id, user))
     end
   end
 
@@ -140,27 +157,13 @@ defmodule Ravix.Projects do
   @doc """
   How the caller reaches a project, or nil when they do not.
 
-  Three sources, widest first, and the order is what makes the answer
-  stable: somebody who owns a project *and* somehow holds rows in it is
-  still its owner, and somebody in the whole project who is also named on
-  one track is still in the whole project. The narrowest answer is the one
-  that has to be checked last or it wins over facts that grant more.
-
-  One function rather than the same three-line union written out in `list`,
-  `get` and the stream's gate, which is where it was drifting.
+  `Ravix.Accounts.Access.access_of/3`, which is where the answer lives now
+  that `Ravix.Tracks` asks the same question of the same project; this is
+  the name `list/1` and `get/2` already knew it by.
   """
-  @spec access_of(String.t(), Project.t()) :: access() | nil
-  def access_of(user_id, %Project{} = project) do
-    cond do
-      project.user_id == user_id -> :owner
-      Ravix.Accounts.Access.project_member?(project.id, user_id) -> :project
-      # ownership: same as `list/1` -- this function answers "what access does
-      # this person have", so the membership rows are the answer, not a
-      # shortcut past one.
-      Enum.any?(People.Store.member_tracks(user_id), &(&1.project_id == project.id)) -> :tracks
-      true -> nil
-    end
-  end
+  @spec access_of(String.t(), Project.t(), Ravix.Accounts.Access.known()) :: access() | nil
+  def access_of(user_id, %Project{} = project, known \\ []),
+    do: Ravix.Accounts.Access.access_of(user_id, project, known)
 
   # ── the machine ───────────────────────────────────────────────────────
 
@@ -462,6 +465,17 @@ defmodule Ravix.Projects do
 
   defp owner_of(%Project{user_id: user_id}, %User{id: user_id} = user), do: user
   defp owner_of(%Project{user_id: user_id}, user), do: Ravix.Accounts.get_user(user_id) || user
+
+  # `owner_of/2` for the whole rail: one read for every owner the guest
+  # projects have between them, keyed by id. The caller is not read again
+  # for their own projects, and an owner who cannot be found falls back to
+  # the caller at the lookup, as `owner_of/2` does.
+  defp owners_of([], _user), do: %{}
+
+  defp owners_of(projects, %User{} = user) do
+    ids = projects |> Enum.map(& &1.user_id) |> Enum.uniq() |> Enum.reject(&(&1 == user.id))
+    Map.new(Ravix.Accounts.get_users(ids), &{&1.id, &1})
+  end
 
   # The user's GitHub OAuth token, decrypted. Used for anything read as *them*.
   defp user_token(user) do
