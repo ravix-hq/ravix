@@ -57,8 +57,8 @@ defmodule Ravix.Tracks.Follower do
 
   alias Ravix.Fountain
   alias Ravix.Fountain.Client
-  alias Ravix.Repo
-  alias Ravix.Tracks.Track
+  alias Ravix.Tracks.Store
+  alias Ravix.Tracks.Thread
   alias Ravix.Tracks.Transcript.Event
 
   @supervisor __MODULE__.Supervisor
@@ -154,8 +154,9 @@ defmodule Ravix.Tracks.Follower do
         {:ok, id}
 
       _ ->
-        case Repo.get(Track, track_id) do
-          %Track{conversation_id: id} when is_binary(id) and id != "" -> {:ok, id}
+        # ownership: the subscriber passed Access.thread_access before following this ID.
+        case Store.get_thread(track_id) do
+          %Thread{conversation_id: id} when is_binary(id) and id != "" -> {:ok, id}
           _ -> {:error, :not_open}
         end
     end

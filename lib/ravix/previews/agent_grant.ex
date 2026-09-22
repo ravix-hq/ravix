@@ -2,7 +2,7 @@ defmodule Ravix.Previews.AgentGrant do
   @moduledoc """
   The helper script's admission, for one delivered turn.
 
-  One per track. The agent on the machine presents it as a bearer token to
+  One per thread; the preview service still belongs to the track. The agent on the machine presents it as a bearer token to
   `RavixWeb.Api.PreviewController`, and every field here is re-asked before
   the request is served: the turn is still delivered (`conversation_id`,
   `prompt_id`), the person still has the track (`user_id`), and the machine
@@ -38,11 +38,12 @@ defmodule Ravix.Previews.AgentGrant do
     :sprite,
     :expires
   ]
-  defstruct @enforce_keys
+  defstruct @enforce_keys ++ [thread_id: nil]
 
   @type t :: %__MODULE__{
           hash: String.t(),
           track_id: String.t(),
+          thread_id: String.t() | nil,
           user_id: String.t(),
           conversation_id: String.t() | nil,
           prompt_id: String.t(),
@@ -54,7 +55,9 @@ defmodule Ravix.Previews.AgentGrant do
   @doc "The `row` document for a grant."
   @spec encode(t()) :: map()
   def encode(%__MODULE__{} = grant) do
-    Map.new(@enforce_keys, fn key -> {Atom.to_string(key), Map.fetch!(grant, key)} end)
+    Map.new(@enforce_keys ++ [:thread_id], fn key ->
+      {Atom.to_string(key), Map.fetch!(grant, key)}
+    end)
   end
 
   @doc """
@@ -66,6 +69,10 @@ defmodule Ravix.Previews.AgentGrant do
   @spec decode(map()) :: t()
   def decode(row) do
     row = Row.normalize_keys(row)
-    struct!(__MODULE__, Map.new(@enforce_keys, fn key -> {key, row[Atom.to_string(key)]} end))
+
+    struct!(
+      __MODULE__,
+      Map.new(@enforce_keys ++ [:thread_id], fn key -> {key, row[Atom.to_string(key)]} end)
+    )
   end
 end

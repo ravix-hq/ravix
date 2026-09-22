@@ -235,6 +235,16 @@ defmodule Ravix.Previews.StoreTest do
       Store.revoke_agent(track.id, user.id)
       assert Store.agent_grant("g4") == nil
 
+      # A helper for a sibling thread neither replaces nor revokes this one.
+      sibling = %{grant | hash: "sibling", thread_id: Ecto.UUID.generate()}
+      assert :ok = Store.grant_agent(grant)
+      assert :ok = Store.grant_agent(sibling)
+      assert Store.agent_grant(grant.hash) == grant
+      assert Store.agent_grant(sibling.hash) == sibling
+      Store.revoke_agent_hash(sibling.hash)
+      assert Store.agent_grant(sibling.hash) == nil
+      assert Store.agent_grant(grant.hash) == grant
+
       # The factory's camelCase document reads too, and every field of it:
       # a grant missing `sandbox_id` or `sprite` would pass `same_machine/2`
       # against a machine that has neither.

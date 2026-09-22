@@ -51,7 +51,7 @@ defmodule RavixWeb.TrackLive do
   alias Ravix.GitHub.ChecksReport
   alias Ravix.{Hub, Previews, PromptQueue, Tracks}
   alias Ravix.Hub.Event
-  alias Ravix.Tracks.{Diff, Files}
+  alias Ravix.Tracks.{Diff, Files, Follower}
   alias Ravix.Tracks.Transcript
   alias Ravix.Tracks.Transcript.Block, as: TranscriptBlock
   alias Ravix.Tracks.Transcript.Event, as: TranscriptEvent
@@ -67,6 +67,9 @@ defmodule RavixWeb.TrackLive do
     socket =
       assign(socket,
         track_id: session["track_id"],
+        thread_id: session["track_id"],
+        thread_generation: 0,
+        threads: [],
         project_id: session["project_id"],
         track: nil,
         project: nil,
@@ -140,6 +143,19 @@ defmodule RavixWeb.TrackLive do
   end
 
   @impl true
+  def handle_event("select-thread", %{"thread_id" => id}, socket) do
+    case Access.thread_access(socket.assigns.current_user, socket.assigns.track_id, id) do
+      {:ok, _} -> {:noreply, switch_thread(socket, id)}
+      {:error, reason} -> {:noreply, error(socket, reason)}
+    end
+  end
+
+  def handle_event("add-thread", _, socket) do
+    if MapSet.member?(socket.assigns.pending, :add_thread),
+      do: {:noreply, socket},
+      else: {:noreply, begin(socket, :add_thread, &Tracks.add_thread/2)}
+  end
+
   def handle_event("retry-load", _, socket), do: {:noreply, load(socket)}
   def handle_event("validate", _, socket), do: {:noreply, socket}
 
@@ -178,8 +194,10 @@ defmodule RavixWeb.TrackLive do
   # Stopping and waking are Fountain round trips, and they used to be ones
   # this process waited out, like the file read below. The button is
   # disabled until the answer lands; see `begin/3`.
-  def handle_event("interrupt", _, socket),
-    do: {:noreply, begin(socket, :interrupt, &Tracks.interrupt/2)}
+  def handle_event("interrupt", _, socket) do
+    thread_id = socket.assigns.thread_id
+    {:noreply, begin(socket, :interrupt, &Tracks.interrupt(&1, &2, thread_id))}
+  end
 
   def handle_event("retry-track", _, socket),
     do: {:noreply, begin(socket, :retry, &Tracks.retry/2)}
@@ -297,11 +315,18 @@ defmodule RavixWeb.TrackLive do
   # is still broadcasting Fountain's raw maps onto this topic. Normalising
   # here is the expand half of expand/contract: accept both shapes now, and
   # drop this clause once no instance publishes the old one.
+  def handle_info({:select_thread, track_id, thread_id}, socket) do
+    if track_id == socket.assigns.track_id and
+         match?({:ok, _}, Access.thread_access(socket.assigns.current_user, track_id, thread_id)),
+       do: {:noreply, switch_thread(socket, thread_id)},
+       else: {:noreply, socket}
+  end
+
   def handle_info({:transcript, id, %{} = raw}, socket) when not is_struct(raw),
     do: handle_info({:transcript, id, TranscriptEvent.from(raw)}, socket)
 
   def handle_info({:transcript, id, %TranscriptEvent{} = event}, socket) do
-    if id == socket.assigns.track_id,
+    if id == socket.assigns.thread_id,
       do: {:noreply, socket |> absorb(event) |> schedule_flush()},
       else: {:noreply, socket}
   end
@@ -414,13 +439,30 @@ defmodule RavixWeb.TrackLive do
     end
   end
 
+  defp async_result(:add_thread, {:ok, {:ok, thread}}, socket) do
+    socket = settle(socket, :add_thread)
+
+    if thread.track_id == socket.assigns.track_id,
+      do: switch_thread(socket, thread.id),
+      else: socket
+  end
+
+  defp async_result(:add_thread, {:ok, {:error, reason}}, socket),
+    do: socket |> settle(:add_thread) |> error(reason)
+
   defp async_result(:load, {:ok, {:ok, detail, project}}, socket) do
     Tracks.beat(socket.assigns.current_user, socket.assigns.track_id, :watching)
-    Tracks.mark_read(socket.assigns.current_user, socket.assigns.track_id)
+
+    Tracks.mark_read(
+      socket.assigns.current_user,
+      socket.assigns.track_id,
+      socket.assigns.thread_id
+    )
 
     socket
     |> assign(
       track: detail.track,
+      threads: detail.threads,
       project: project,
       header: detail.header,
       starters: detail.starters,
@@ -442,8 +484,14 @@ defmodule RavixWeb.TrackLive do
   defp async_result(:load, {:ok, {:error, reason}}, socket),
     do: socket |> assign(loading: false) |> error(reason)
 
+  defp async_result({:detail, thread_id, generation}, response, socket) do
+    if thread_id == socket.assigns.thread_id and generation == socket.assigns.thread_generation,
+      do: async_result(:detail, response, socket),
+      else: socket
+  end
+
   defp async_result(:detail, {:ok, {:ok, detail}}, socket),
-    do: assign(socket, track: detail.track, header: detail.header)
+    do: assign(socket, track: detail.track, header: detail.header, threads: detail.threads)
 
   defp async_result(:detail, {:ok, {:error, reason}}, socket), do: error(socket, reason)
 
@@ -520,8 +568,9 @@ defmodule RavixWeb.TrackLive do
   # One of the ribbon's writes that did not answer. Not the loading clause
   # below: nothing was being loaded, and "could not finish loading" about a
   # Stop that crashed would be a sentence about the wrong thing.
-  defp async_result(name, {:exit, reason}, socket) when name in [:interrupt, :retry, :pull],
-    do: socket |> settle(name) |> exit(reason)
+  defp async_result(name, {:exit, reason}, socket)
+       when name in [:interrupt, :retry, :pull, :add_thread],
+       do: socket |> settle(name) |> exit(reason)
 
   # A background refresh that crashed leaves the page showing what it had.
   # The generic clause below belongs to the reads somebody is waiting on: it
@@ -595,6 +644,7 @@ defmodule RavixWeb.TrackLive do
 
     response =
       Tracks.prompt(socket.assigns.current_user, socket.assigns.track_id, %{
+        thread_id: socket.assigns.thread_id,
         prompt: text,
         images: images,
         request_id: Ecto.UUID.generate()
@@ -602,7 +652,7 @@ defmodule RavixWeb.TrackLive do
 
     {:noreply,
      result(socket, response, fn s, _ ->
-       Tracks.mark_read(s.assigns.current_user, s.assigns.track_id)
+       Tracks.mark_read(s.assigns.current_user, s.assigns.track_id, s.assigns.thread_id)
        s |> assign(attached_images: []) |> push_event("composer:clear", %{}) |> refresh_queue()
      end)}
   end
@@ -619,6 +669,15 @@ defmodule RavixWeb.TrackLive do
   # person looking at it: the session, the guard's hash and expiry, the upload
   # config, the hooks, and the backstop tick. A hub subscription belongs to a
   # project rather than a track, so it is only exchanged when the project is.
+  defp switch_thread(socket, id) do
+    socket
+    |> unfollow()
+    |> drop_attachments()
+    |> update(:thread_generation, &(&1 + 1))
+    |> assign(thread_id: id)
+    |> load()
+  end
+
   defp arrive(socket, project, track) do
     if project.id != socket.assigns.project_id do
       Hub.unsubscribe(socket.assigns.project_id)
@@ -631,6 +690,9 @@ defmodule RavixWeb.TrackLive do
     |> drop_attachments()
     |> assign(
       track_id: track.id,
+      thread_id: track.id,
+      thread_generation: socket.assigns.thread_generation + 1,
+      threads: [],
       project_id: project.id,
       track: track,
       project: project,
@@ -675,6 +737,7 @@ defmodule RavixWeb.TrackLive do
   defp load(socket) do
     user = socket.assigns.current_user
     id = socket.assigns.track_id
+    thread_id = socket.assigns.thread_id
     project_id = socket.assigns.project_id
 
     socket
@@ -698,11 +761,11 @@ defmodule RavixWeb.TrackLive do
       # started running in the last five seconds is about to publish a `:turn`
       # to this very page's subscription, which is what corrects it. The
       # refresh below asks for fresh, because that one is running on the news.
-      with {:ok, detail} <- Tracks.get(user, id, fresh: false),
+      with {:ok, detail} <- Tracks.get(user, id, fresh: false, thread_id: thread_id),
            {:ok, project} <- Ravix.Projects.get(user, project_id),
            do: {:ok, detail, project}
     end)
-    |> traced_async(:transcript, fn -> Tracks.events(user, id) end)
+    |> traced_async(:transcript, fn -> Tracks.events(user, id, thread_id: thread_id) end)
     |> refresh_queue()
     |> load_panel()
   end
@@ -761,7 +824,12 @@ defmodule RavixWeb.TrackLive do
       |> assign(dirty_turns: MapSet.new(), stage_seen?: false, flushing?: false)
 
     if stage? do
-      Tracks.mark_read(socket.assigns.current_user, socket.assigns.track_id)
+      Tracks.mark_read(
+        socket.assigns.current_user,
+        socket.assigns.track_id,
+        socket.assigns.thread_id
+      )
+
       socket |> refresh_detail() |> refresh_queue() |> refresh_transcript()
     else
       socket
@@ -784,6 +852,7 @@ defmodule RavixWeb.TrackLive do
     socket = unfollow(socket)
 
     case Tracks.follow(socket.assigns.current_user, socket.assigns.track_id,
+           thread_id: socket.assigns.thread_id,
            after: page.last_event_id
          ) do
       {:ok, pid} -> assign(socket, follower: Process.monitor(pid))
@@ -795,6 +864,8 @@ defmodule RavixWeb.TrackLive do
   # it is documented to say: nil is a page that is not following, and the
   # transcript read is what makes it one again.
   defp unfollow(socket) do
+    Follower.unsubscribe(socket.assigns.thread_id)
+
     case socket.assigns.follower do
       nil ->
         socket
@@ -808,7 +879,8 @@ defmodule RavixWeb.TrackLive do
   defp refresh_transcript(socket) do
     user = socket.assigns.current_user
     id = socket.assigns.track_id
-    traced_async(socket, :transcript, fn -> Tracks.events(user, id) end)
+    thread_id = socket.assigns.thread_id
+    traced_async(socket, :transcript, fn -> Tracks.events(user, id, thread_id: thread_id) end)
   end
 
   # One of the ribbon's three writes, started off this process and named in
@@ -1006,13 +1078,20 @@ defmodule RavixWeb.TrackLive do
   defp refresh_detail(socket) do
     user = socket.assigns.current_user
     id = socket.assigns.track_id
-    traced_async(socket, :detail, fn -> Tracks.get(user, id, fresh: true) end)
+    thread_id = socket.assigns.thread_id
+
+    generation = socket.assigns.thread_generation
+
+    traced_async(socket, {:detail, thread_id, generation}, fn ->
+      Tracks.get(user, id, fresh: true, thread_id: thread_id)
+    end)
   end
 
   defp refresh_queue(socket) do
     user = socket.assigns.current_user
     id = socket.assigns.track_id
-    traced_async(socket, :queue, fn -> PromptQueue.list(user, id) end)
+    thread_id = socket.assigns.thread_id
+    traced_async(socket, :queue, fn -> PromptQueue.list(user, id, thread_id) end)
   end
 
   # Whether this person still reaches this track: read afresh, every time it

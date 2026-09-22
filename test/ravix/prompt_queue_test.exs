@@ -635,7 +635,7 @@ defmodule Ravix.PromptQueueTest do
     # moment, and either reads only the rows the index holds.
     Repo.query!("SET LOCAL enable_seqscan = off")
 
-    assert plan(fn -> PromptQueue.Store.heads() end) =~ "prompt_queue_live_heads"
+    assert plan(fn -> PromptQueue.Store.heads() end) =~ "prompt_queue_thread_heads"
     assert plan(fn -> PromptQueue.Store.recover() end) =~ "prompt_queue_sending_claims"
   end
 

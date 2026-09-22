@@ -65,12 +65,13 @@ defmodule Ravix.Hub.Event do
           name: name(),
           project_id: String.t(),
           track_id: String.t() | nil,
+          thread_id: String.t() | nil,
           present: [map()],
           user_id: String.t() | nil
         }
 
   @enforce_keys [:name, :project_id]
-  defstruct [:name, :project_id, :track_id, :user_id, present: []]
+  defstruct [:name, :project_id, :track_id, :thread_id, :user_id, present: []]
 
   @doc "Every event name, for a reader that wants to be exhaustive."
   @spec names() :: [name()]
@@ -91,6 +92,7 @@ defmodule Ravix.Hub.Event do
       name: name,
       project_id: project_id,
       track_id: Keyword.get(opts, :track_id),
+      thread_id: Keyword.get(opts, :thread_id),
       user_id: Keyword.get(opts, :user_id),
       present: Keyword.get(opts, :present, [])
     }

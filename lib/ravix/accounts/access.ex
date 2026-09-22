@@ -61,6 +61,19 @@ defmodule Ravix.Accounts.Access do
   @typedoc "What `track_access/2` answers. See `Ravix.Accounts.TrackAccess`."
   @type track_access :: TrackAccess.t()
 
+  @doc "A thread is reached only through membership of its specified track."
+  @spec thread_access(User.t(), String.t(), String.t() | nil) ::
+          {:ok, map()} | {:error, :not_found}
+  def thread_access(user, track_id, thread_id \\ nil) do
+    with {:ok, access} <- track_access(user, track_id),
+         # ownership: Access.track_access above admitted this user to this exact track.
+         %Ravix.Tracks.Thread{} = thread <- Ravix.Tracks.Store.thread(track_id, thread_id) do
+      {:ok, %{track: access.track, project: access.project, role: access.role, thread: thread}}
+    else
+      _ -> {:error, :not_found}
+    end
+  end
+
   @doc """
   A project the caller **owns**. Not found for anyone else's.
 

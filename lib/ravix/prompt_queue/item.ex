@@ -27,6 +27,7 @@ defmodule Ravix.PromptQueue.Item do
   schema "prompt_queue" do
     field :id, :string
     belongs_to :track, Ravix.Tracks.Track
+    belongs_to :thread, Ravix.Tracks.Thread
     belongs_to :user, Ravix.Accounts.User
     field :author_login, :string
     field :body, :map
@@ -38,7 +39,7 @@ defmodule Ravix.PromptQueue.Item do
     field :claimed_at, :utc_datetime_usec
   end
 
-  @fields ~w(id track_id user_id author_login body image_count payload created_at status error
+  @fields ~w(id thread_id track_id user_id author_login body image_count payload created_at status error
              claimed_at)a
 
   @doc "The six statuses, in the order the TypeScript declared them."

@@ -2,7 +2,7 @@ defmodule Ravix.Previews.PreviewAgentGrant do
   @moduledoc """
   The agent's leave to drive a track's preview for one turn.
 
-  One per track (the unique index on `track_id`): granting again replaces
+  One per thread (the unique index on track and thread identity): granting again replaces
   the last grant. `row` is the whole grant as a JSON document (the hash,
   track, user, conversation, prompt, sandbox and sprite it was minted for);
   `expires` is milliseconds since the epoch, and a row past it is dead even
@@ -37,6 +37,6 @@ defmodule Ravix.Previews.PreviewAgentGrant do
     |> foreign_key_constraint(:track_id)
     |> foreign_key_constraint(:user_id)
     |> unique_constraint(:hash, name: :preview_agent_grants_pkey)
-    |> unique_constraint(:track_id)
+    |> unique_constraint(:track_id, name: :preview_agent_grants_thread)
   end
 end

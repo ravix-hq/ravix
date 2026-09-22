@@ -23,13 +23,20 @@ defmodule RavixWeb.Live.PeopleDialogTest do
     # does not care which, so the provider is stubbed and the rows are real.
     stub(Tracks, :get, fn _user, id, _opts ->
       row = Repo.get!(Track, id)
-      {:ok, %{track: Tracks.present(row, role: :owner), header: blank_header(), starters: []}}
+
+      {:ok,
+       %{
+         track: Tracks.present(row, role: :owner),
+         header: blank_header(),
+         threads: [],
+         starters: []
+       }}
     end)
 
-    stub(Tracks, :events, fn _, _ -> {:ok, Transcript.empty("claude")} end)
+    stub(Tracks, :events, fn _, _, _thread_opts -> {:ok, Transcript.empty("claude")} end)
     stub(Tracks, :follow, fn _, _, _ -> {:ok, self()} end)
     stub(Tracks, :beat, fn _, _, _ -> :ok end)
-    stub(Tracks, :mark_read, fn _, _ -> :ok end)
+    stub(Tracks, :mark_read, fn _, _, _thread_opts -> :ok end)
 
     %{conn: conn, owner: owner, project: project, track: track}
   end

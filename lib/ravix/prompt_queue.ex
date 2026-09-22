@@ -34,10 +34,10 @@ defmodule Ravix.PromptQueue do
   # ── the person's side ─────────────────────────────────────────────────
 
   @doc "The waiting prompts on a track, as the saved-prompts panel shows them."
-  @spec list(User.t(), String.t()) :: {:ok, [View.t()]} | {:error, reason()}
-  def list(%User{} = user, track_id) do
-    with {:ok, %{role: role}} <- Access.track_access(user, track_id) do
-      {:ok, track_id |> Store.summaries() |> Enum.map(&present(&1, role, user))}
+  @spec list(User.t(), String.t(), String.t() | nil) :: {:ok, [View.t()]} | {:error, reason()}
+  def list(%User{} = user, track_id, thread_id \\ nil) do
+    with {:ok, %{role: role, thread: thread}} <- Access.thread_access(user, track_id, thread_id) do
+      {:ok, Store.summaries(track_id, thread.id) |> Enum.map(&present(&1, role, user))}
     end
   end
 

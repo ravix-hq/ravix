@@ -2,6 +2,7 @@ defmodule RavixWeb.TrackLiveTest do
   use RavixWeb.ConnCase, async: true
   import Phoenix.LiveViewTest
   import Mimic
+  alias Ravix.Fountain.{FakeTransport, Shapes}
   alias Ravix.Hub.Event
   alias Ravix.{People, Previews, PromptQueue, QueryCount, Repo, Terminal, Tracks, Vitals}
   alias Ravix.PromptQueue.View, as: QueuedPrompt
@@ -27,18 +28,19 @@ defmodule RavixWeb.TrackLiveTest do
        %{
          track: Tracks.present(row, role: :owner),
          header: blank_header(),
+         threads: thread_options(id),
          starters: [%{label: "Start here", prompt: "Build it"}]
        }}
     end)
 
-    stub(Tracks, :events, fn _, _ -> {:ok, Transcript.empty("claude")} end)
+    stub(Tracks, :events, fn _, _, _thread_opts -> {:ok, Transcript.empty("claude")} end)
     # `follow/3` hands back the follower to monitor. The caller's own pid stands
     # in for one that stays alive: monitoring yourself is legal and never fires,
     # so no test sees a spurious recovery. The tests that exercise the recovery
     # itself return a process they can kill.
     stub(Tracks, :follow, fn _, _, _ -> {:ok, self()} end)
     stub(Tracks, :beat, fn _, _, _ -> :ok end)
-    stub(Tracks, :mark_read, fn _, _ -> :ok end)
+    stub(Tracks, :mark_read, fn _, _, _thread_opts -> :ok end)
 
     stub(Tracks, :files, fn _, _, path ->
       {:ok,
@@ -54,6 +56,91 @@ defmodule RavixWeb.TrackLiveTest do
     view = find_live_child(parent, "track-host")
     settle(view)
     %{conn: conn, parent: parent, view: view, user: user, project: project, track: track}
+  end
+
+  test "switching threads changes transcript, composer, and delivery without changing tracks",
+       ctx do
+    client = FakeTransport.client([], verify: false)
+    stub(Ravix.Fountain, :client, fn -> client end)
+
+    {:ok, thread} =
+      Tracks.Store.create_thread(%{
+        track_id: ctx.track.id,
+        title: "Next",
+        conversation_id: "next"
+      })
+
+    expect(Tracks, :events, fn user, track_id, opts ->
+      assert user.id == ctx.user.id
+      assert track_id == ctx.track.id
+      assert opts[:thread_id] == thread.id
+      {:ok, Transcript.empty("claude")}
+    end)
+
+    render_hook(ctx.view, "select-thread", %{thread_id: thread.id})
+    render_async(ctx.view, 1_000)
+    assert has_element?(ctx.view, "#composer-#{thread.id}")
+    assert has_element?(ctx.view, "#selected-thread option[value='#{thread.id}'][selected]")
+    ctx.view |> form("#composer-form", %{text: "continue"}) |> render_submit()
+    assert [%{thread_id: id}] = PromptQueue.Store.queued_prompts(ctx.track.id)
+    assert id == thread.id
+    render_hook(ctx.view, "select-thread", %{thread_id: ctx.track.id})
+    render_async(ctx.view, 1_000)
+    assert has_element?(ctx.view, "#composer-#{ctx.track.id}")
+  end
+
+  test "adding a thread persists and selects it", ctx do
+    client = FakeTransport.client([], verify: false)
+    stub(Ravix.Fountain, :client, fn -> client end)
+
+    stub(Ravix.Fountain, :get_conversation, fn _, _ ->
+      {:ok,
+       Shapes.conversation(%{
+         "id" => "live-conversation",
+         "sandbox_id" => "sandbox"
+       })}
+    end)
+
+    expect(Ravix.Fountain, :create_conversation, fn _, launch ->
+      assert launch.sandbox_id == "sandbox"
+      {:ok, Shapes.conversation(%{"id" => "added"})}
+    end)
+
+    ctx.view |> element("button", "Add thread") |> render_click()
+    render_async(ctx.view, 2_000)
+    render_async(ctx.view, 2_000)
+    [_, thread] = Tracks.Store.threads_of(ctx.track.id)
+    assert thread.conversation_id == "added"
+    assert has_element?(ctx.view, "#composer-#{thread.id}")
+  end
+
+  test "a forged thread ID cannot switch the page", ctx do
+    foreign = insert_track()
+    render_hook(ctx.view, "select-thread", %{thread_id: foreign.id})
+    assert has_element?(ctx.view, "#composer-#{ctx.track.id}")
+    refute has_element?(ctx.view, "#composer-#{foreign.id}")
+  end
+
+  for event <- ["select-thread", "add-thread"] do
+    @thread_event event
+    test "revoked session rejects #{event}", ctx do
+      token = Plug.Conn.get_session(ctx.conn, :session_token)
+      session = Repo.get_by!(Ravix.Accounts.Session, token_hash: Ravix.Crypto.sha256(token))
+      Repo.delete!(session)
+
+      :sys.replace_state(ctx.view.pid, fn state ->
+        update_in(state.socket.assigns.session_guard, &%{&1 | stale?: true})
+      end)
+
+      assert {:error, {:redirect, %{to: "/login"}}} =
+               render_hook(ctx.view, @thread_event, %{thread_id: ctx.track.id})
+
+      assert length(Tracks.Store.threads_of(ctx.track.id)) == 1
+    end
+  end
+
+  defp thread_options(id) do
+    Enum.map(Tracks.Store.threads_of(id), &%{id: &1.id, title: &1.title, unread: false})
   end
 
   test "starters and typing use the composer protocol", ctx do
@@ -110,7 +197,7 @@ defmodule RavixWeb.TrackLiveTest do
       :ok
     end)
 
-    expect(Tracks, :interrupt, fn user, id ->
+    expect(Tracks, :interrupt, fn user, id, _thread_opts ->
       assert {user.id, id} == {ctx.user.id, ctx.track.id}
       :ok
     end)
@@ -126,7 +213,7 @@ defmodule RavixWeb.TrackLiveTest do
   test "stopping runs off the page, with the button disabled until Fountain answers", ctx do
     parent = self()
 
-    stub(Tracks, :interrupt, fn _, _ ->
+    stub(Tracks, :interrupt, fn _, _, _thread_opts ->
       send(parent, {:stopping, self()})
 
       receive do
@@ -150,7 +237,7 @@ defmodule RavixWeb.TrackLiveTest do
 
   @tag capture_log: true
   test "a stop that crashes says so, and not that something failed to load", ctx do
-    stub(Tracks, :interrupt, fn _, _ -> raise "Fountain fell over" end)
+    stub(Tracks, :interrupt, fn _, _, _thread_opts -> raise "Fountain fell over" end)
     ctx.view |> element("button", "Stop") |> render_click()
 
     render_async(ctx.view)
@@ -453,7 +540,7 @@ defmodule RavixWeb.TrackLiveTest do
   end
 
   test "queue cancellation and retry preserve the selected prompt id", ctx do
-    stub(PromptQueue, :list, fn _, _ ->
+    stub(PromptQueue, :list, fn _, _, _ ->
       {:ok,
        [
          %QueuedPrompt{
@@ -769,7 +856,11 @@ defmodule RavixWeb.TrackLiveTest do
     send(ctx.view.pid, {:transcript, ctx.track.id, stage})
     # The stubbed snapshot is older than the streamed event; it must not erase it.
     assert render_async(drawn(ctx.view)) =~ "Hello"
-    expect(Tracks, :events, fn _, _ -> {:error, {:unavailable, "Transcript offline"}} end)
+
+    expect(Tracks, :events, fn _, _, _thread_opts ->
+      {:error, {:unavailable, "Transcript offline"}}
+    end)
+
     send(ctx.view.pid, :refresh)
     assert toasted(ctx) =~ "Transcript offline"
     assert render(ctx.view) =~ "Hello"
@@ -877,7 +968,7 @@ defmodule RavixWeb.TrackLiveTest do
       {:ok, self()}
     end)
 
-    expect(Tracks, :events, fn _user, _id ->
+    expect(Tracks, :events, fn _user, _id, _thread_opts ->
       send(test_pid, :transcript_reread)
       {:ok, Transcript.empty("claude")}
     end)
@@ -947,7 +1038,7 @@ defmodule RavixWeb.TrackLiveTest do
         "claude"
       )
 
-    stub(Tracks, :events, fn _, _ -> {:ok, page} end)
+    stub(Tracks, :events, fn _, _, _thread_opts -> {:ok, page} end)
     render_click(ctx.view, "retry-load")
     render_async(ctx.view)
 
@@ -979,7 +1070,7 @@ defmodule RavixWeb.TrackLiveTest do
         "claude"
       )
 
-    stub(Tracks, :events, fn _, _ -> {:ok, page} end)
+    stub(Tracks, :events, fn _, _, _thread_opts -> {:ok, page} end)
     render_click(ctx.view, "retry-load")
     render_async(ctx.view)
 
@@ -1037,7 +1128,7 @@ defmodule RavixWeb.TrackLiveTest do
       end)
 
     page = Transcript.page([opened(0, "turn", "User prompt") | events], "claude")
-    stub(Tracks, :events, fn _, _ -> {:ok, page} end)
+    stub(Tracks, :events, fn _, _, _thread_opts -> {:ok, page} end)
     render_click(ctx.view, "retry-load")
     html = render_async(ctx.view)
     assert html =~ "User prompt"
@@ -1158,6 +1249,7 @@ defmodule RavixWeb.TrackLiveTest do
      %{
        track: Tracks.present(Repo.get!(Track, ctx.track.id), role: :owner),
        header: blank_header(),
+       threads: [],
        starters: []
      }}
   end
@@ -1197,7 +1289,7 @@ defmodule RavixWeb.TrackLiveTest do
     end
 
     defp repair(ctx, page) do
-      stub(Tracks, :events, fn _, _ -> {:ok, page} end)
+      stub(Tracks, :events, fn _, _, _thread_opts -> {:ok, page} end)
       send(ctx.view.pid, {:hub, Event.new(:turn, ctx.project.id, track_id: ctx.track.id)})
       render_async(ctx.view)
     end
@@ -1318,7 +1410,7 @@ defmodule RavixWeb.TrackLiveTest do
     # page waits for. Held open, it stands for the slow half of a real load:
     # everything asserted before it is released is what somebody switching
     # tracks sees immediately rather than after the transcript arrives.
-    stub(Tracks, :events, fn _user, _id ->
+    stub(Tracks, :events, fn _user, _id, _thread_opts ->
       send(test_pid, {:reading_transcript, self()})
 
       receive do
@@ -1396,11 +1488,12 @@ defmodule RavixWeb.TrackLiveTest do
        %{
          track: Tracks.present(row, role: :owner),
          header: blank_header(),
+         threads: [],
          starters: [%{label: "Start here", prompt: "Build it"}]
        }}
     end)
 
-    stub(Tracks, :events, fn _user, _id ->
+    stub(Tracks, :events, fn _user, _id, _thread_opts ->
       {:ok,
        Transcript.page(
          [

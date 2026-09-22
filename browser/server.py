@@ -31,7 +31,7 @@ for port in (4103, 8893, 8894):
 
 env = dict(os.environ, MIX_ENV="prod", PORT="4103", PHX_SERVER="true",
            PUBLIC_URL="http://localhost:4103", RAVIX_URL="http://localhost:4103",
-           MOCK_PORT="8893", MOCK_SPRITES_PORT="8894",
+           MOCK_PORT="8893", MOCK_SPRITES_PORT="8894", RAVIX_THREADS_ENABLED="true",
            RAVIX_SECRET="browser-test-only-secret-never-used-outside-this-process")
 # Only a generated database name is ever created/dropped. Credentials can differ locally.
 base = os.environ.get("BROWSER_DATABASE_SERVER", "postgres://postgres:postgres@localhost:5432")

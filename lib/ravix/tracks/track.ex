@@ -51,6 +51,7 @@ defmodule Ravix.Tracks.Track do
     field :created_at, :utc_datetime_usec
     field :created_by_login, :string
 
+    has_many :threads, Ravix.Tracks.Thread
     has_many :prompts, Ravix.PromptQueue.Item
     has_many :members, Ravix.Tracks.TrackMember
     has_many :invites, Ravix.Tracks.TrackInvite

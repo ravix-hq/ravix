@@ -60,7 +60,7 @@ defmodule Ravix.PromptQueue.Server do
   # A backstop only: the Fountain client times out well inside this.
   @delivery_timeout 5 * 60_000
 
-  @ended "This conversation has ended. Start a new track and copy this prompt there."
+  @ended "This conversation has ended. Add a new thread and copy this prompt there."
   # For a conversation that failed before it ever ran a turn. `@ended` tells
   # somebody to start a new track and copy the prompt there, which is right for
   # a conversation that finished and wrong -- circular, even -- for one whose
@@ -203,7 +203,7 @@ defmodule Ravix.PromptQueue.Server do
   # `track` and `project` are the rows `access/1` loaded to decide the sender
   # may send: what to send it to, without a second read of either.
   defp deliver_queued(client, row, track, project) do
-    case readiness(client, track, project) do
+    case readiness(client, track, project, row) do
       :ready -> claim_and_send(client, row, track, project)
       :busy -> :waiting
       {:ended, message} -> Store.set_status(row.id, :failed, message)
@@ -239,11 +239,11 @@ defmodule Ravix.PromptQueue.Server do
 
   # Nothing has been sent yet at this point. A read or credential refresh
   # that failed can safely retry on the next sweep.
-  defp readiness(client, track, project) do
+  defp readiness(client, track, project, row) do
     case Fountain.get_conversation(client, track.conversation_id) do
       {:ok, conversation} ->
         cond do
-          Shapes.busy?(conversation) -> :busy
+          Shapes.busy?(conversation) and not blank_thread?(client, row, conversation) -> :busy
           Shapes.ended?(conversation) -> {:ended, ended_message(client, track, conversation)}
           # Idle, or a status this version does not know: either way nothing
           # is running, so whether a prompt can be sent is the machine's answer.
@@ -254,6 +254,19 @@ defmodule Ravix.PromptQueue.Server do
         :unavailable
     end
   end
+
+  # An attached thread has no launch prompt. Fountain can call it pending
+  # until its first turn, which is different from a pending turn already owed.
+  defp blank_thread?(client, %{thread_id: thread_id, track_id: track_id}, %Shapes.Conversation{
+         status: :pending,
+         turn_count: 0,
+         id: id
+       })
+       when thread_id != track_id do
+    match?({:ok, []}, Fountain.turns(client, id))
+  end
+
+  defp blank_thread?(_client, _row, _conversation), do: false
 
   # Why it ended, in Fountain's own words when it has any.
   #
@@ -344,7 +357,8 @@ defmodule Ravix.PromptQueue.Server do
     instructions = Ravix.Previews.prepare_agent_preview(row)
 
     if authorized?(row) do
-      text = compose(instructions, authored(row, track, project, body.prompt))
+      prompt = Body.in_thread(body.prompt, row, track)
+      text = compose(instructions, authored(row, track, project, prompt))
       Fountain.prompt(client, track.conversation_id, text, body.images, client_request_id: row.id)
     else
       :revoked
@@ -353,7 +367,7 @@ defmodule Ravix.PromptQueue.Server do
 
   defp settle(:ok, row, track, project) do
     Store.mark_delivered(row.id)
-    Hub.publish(project.id, :turn, track_id: track.id)
+    Hub.publish(project.id, :turn, track_id: track.id, thread_id: row.thread_id)
     delivered(row, track, project)
   end
 
@@ -433,7 +447,10 @@ defmodule Ravix.PromptQueue.Server do
     # here rather than trusted from whenever it was accepted: the row's own
     # `user_id` becomes the person `Access.track_access/2` is asked about.
     with %User{} = user <- Ravix.Accounts.Store.get_user(row.user_id),
-         {:ok, %{track: track, project: project}} <- Access.track_access(user, row.track_id),
+         {:ok, %{track: track, project: project, thread: thread}} <-
+           Access.thread_access(user, row.track_id, row.thread_id),
+         true <- is_nil(thread.closed_at),
+         track = %{track | conversation_id: thread.conversation_id},
          true <- open?(track) do
       {:ok, track, project}
     else

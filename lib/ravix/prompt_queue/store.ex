@@ -52,7 +52,7 @@ defmodule Ravix.PromptQueue.Store do
 
   # The other four, spelled out rather than derived, because they are also
   # spelled out in the migration that indexes them
-  # (`prompt_queue_live_heads`), and a query only gets that index when
+  # (`prompt_queue_thread_heads`), and a query only gets that index when
   # Postgres can prove its predicate from the query's. `status NOT IN
   # ('sent', 'cancelled')` is the same set to a reader and not to the
   # planner, which does not know the column's domain; `status IN (these
@@ -82,14 +82,16 @@ defmodule Ravix.PromptQueue.Store do
   `Ravix.PromptQueue.Body.decode/1` can read as one; it is stored as `jsonb`
   and refused above 12 MiB.
   """
-  @spec enqueue(String.t(), String.t(), String.t(), term(), Body.t() | map()) ::
+  @spec enqueue(String.t(), String.t(), String.t(), term(), Body.t() | map(), String.t() | nil) ::
           {:ok, Item.t()} | {:error, PromptQueue.reason()}
-  def enqueue(track_id, user_id, author_login, id, body) do
+  def enqueue(track_id, user_id, author_login, id, body, thread_id \\ nil) do
+    thread_id = thread_id || track_id
+
     with :ok <- validate_request_id(id),
          {:ok, encoded} <- encode(body),
          {:ok, {item, inserted?}} <-
            Repo.transaction(fn ->
-             enqueue_locked(track_id, user_id, author_login, id, encoded)
+             enqueue_locked(track_id, user_id, author_login, id, encoded, thread_id)
            end) do
       if inserted?, do: publish_queue(track_id)
       {:ok, item}
@@ -109,13 +111,13 @@ defmodule Ravix.PromptQueue.Store do
   # which touches no row and had no business ending a transaction. Encoding
   # happens before this opens now, so a prompt too large to store is refused
   # without taking a lock it was never going to use.
-  defp enqueue_locked(track_id, user_id, author_login, id, encoded) do
+  defp enqueue_locked(track_id, user_id, author_login, id, encoded, thread_id) do
     with {:ok, _track} <- lock_track(track_id),
-         {:ok, existing} <- receipt(id, track_id, user_id),
-         {:ok, _room} <- room(existing, track_id) do
+         {:ok, existing} <- receipt(id, track_id, user_id, thread_id),
+         {:ok, _room} <- room(existing, thread_id) do
       case existing do
         %Item{} -> {existing, false}
-        nil -> {insert(track_id, user_id, author_login, id, encoded), true}
+        nil -> {insert(track_id, user_id, author_login, id, encoded, thread_id), true}
       end
     else
       {:error, reason} -> Repo.rollback(reason)
@@ -125,11 +127,16 @@ defmodule Ravix.PromptQueue.Store do
   # The same request id twice is the same prompt, even after it was
   # delivered; the same id on somebody else's track or from somebody else is
   # a collision and must not answer with their row.
-  defp receipt(id, track_id, user_id) do
+  defp receipt(id, track_id, user_id, thread_id) do
     case get(id) do
-      %Item{track_id: ^track_id, user_id: ^user_id} = existing -> {:ok, existing}
-      %Item{} -> {:error, {:conflict, "request_id_used", "Use a new request id."}}
-      nil -> {:ok, nil}
+      %Item{track_id: ^track_id, user_id: ^user_id, thread_id: ^thread_id} = existing ->
+        {:ok, existing}
+
+      %Item{} ->
+        {:error, {:conflict, "request_id_used", "Use a new request id."}}
+
+      nil ->
+        {:ok, nil}
     end
   end
 
@@ -166,9 +173,9 @@ defmodule Ravix.PromptQueue.Store do
   failed or unconfirmed head is returned too, so that later instructions
   cannot overtake one whose outcome needs a person.
 
-  One pass over `prompt_queue_live_heads`, the partial index on
-  `(track_id, sequence)` over live rows, which is in exactly the order
-  `DISTINCT ON (track_id) ... ORDER BY track_id, sequence` wants. It used to
+  One pass over `prompt_queue_thread_heads`, the partial index on
+  `(thread_id, sequence)` over live rows, which is in exactly the order
+  `DISTINCT ON (thread_id) ... ORDER BY thread_id, sequence` wants. It used to
   be a `min(sequence) GROUP BY track_id` subquery, which read every row of
   the table -- delivered ones included, and they are nearly all of it -- on
   every instance, every two seconds. The rows come back grouped by track
@@ -183,7 +190,7 @@ defmodule Ravix.PromptQueue.Store do
     fields = Item.__schema__(:fields) -- [:body, :payload]
 
     live()
-    |> distinct([p], p.track_id)
+    |> distinct([p], p.thread_id)
     |> order_by([p], p.sequence)
     |> select([p], struct(p, ^fields))
     |> Repo.all()
@@ -198,10 +205,12 @@ defmodule Ravix.PromptQueue.Store do
   string a released payload was set to. `body` is `jsonb` and `image_count`
   is a column, so neither cast nor sentinel is needed.
   """
-  @spec summaries(String.t()) :: [summary()]
-  def summaries(track_id) do
+  @spec summaries(String.t(), String.t() | nil) :: [summary()]
+  def summaries(track_id, thread_id \\ nil) do
+    thread_id = thread_id || track_id
+
     live()
-    |> where([p], p.track_id == ^track_id)
+    |> where([p], p.track_id == ^track_id and p.thread_id == ^thread_id)
     |> order_by([p], p.sequence)
     |> select([p], %{
       sequence: p.sequence,
@@ -387,7 +396,7 @@ defmodule Ravix.PromptQueue.Store do
   end
 
   defp waiting_count(track_id),
-    do: live() |> where([p], p.track_id == ^track_id) |> Repo.aggregate(:count)
+    do: live() |> where([p], p.thread_id == ^track_id) |> Repo.aggregate(:count)
 
   # The stored document, plus the JSON string of it for the release that
   # still reads `payload`. The size is measured on the encoded bytes because
@@ -412,11 +421,12 @@ defmodule Ravix.PromptQueue.Store do
     end
   end
 
-  defp insert(track_id, user_id, author_login, id, {document, encoded}) do
+  defp insert(track_id, user_id, author_login, id, {document, encoded}, thread_id) do
     %Item{}
     |> Item.changeset(%{
       id: id,
       track_id: track_id,
+      thread_id: thread_id,
       user_id: user_id,
       author_login: author_login,
       body: document,

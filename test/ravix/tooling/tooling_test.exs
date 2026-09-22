@@ -15,6 +15,40 @@ defmodule Ravix.ToolingTest do
     %{user: user, p: p}
   end
 
+  test "MCP thread arguments scope both reads and sends", %{p: p, user: user} do
+    track = insert_track(project: insert_project(user: user), conversation_id: "default")
+
+    {:ok, thread} =
+      Ravix.Tracks.Store.create_thread(%{
+        track_id: track.id,
+        title: "Next",
+        conversation_id: "next"
+      })
+
+    fountain([])
+
+    expect(Fountain, :events_page, fn _, "next", _ ->
+      {:ok, %{events: [], next_cursor: nil, has_more: false}}
+    end)
+
+    assert {:ok, %{events: []}} =
+             Tooling.call(p, "read_track", %{"track_id" => track.id, "thread_id" => thread.id})
+
+    assert {:ok, task} =
+             Tooling.call(p, "send_prompt", %{
+               "track_id" => track.id,
+               "thread_id" => thread.id,
+               "prompt" => "continue",
+               "request_id" => "request"
+             })
+
+    assert Ravix.PromptQueue.Store.get(task.id).thread_id == thread.id
+    foreign = insert_track()
+
+    assert {:error, :not_found} =
+             Tooling.call(p, "read_track", %{"track_id" => track.id, "thread_id" => foreign.id})
+  end
+
   test "project creation returns a public receipt and repeated calls do not provision twice", %{
     p: p
   } do

@@ -45,8 +45,8 @@ function button(hook) {
   return hook.el.querySelector("[data-notify-toggle]")
 }
 
-const finished = {id: "t1", title: "Fix the build", project: "Ravix", status: "ready"}
-const failed = {id: "t2", title: "Rename things", project: null, status: "failed"}
+const finished = {id: "t1", thread_id: "th1", title: "Fix the build", project: "Ravix", status: "ready"}
+const failed = {id: "t2", thread_id: "th2", title: "Rename things", project: null, status: "failed"}
 
 beforeEach(() => {
   FakeNotification.permission = "default"
@@ -130,7 +130,7 @@ test("news is shown only when on, allowed and looked away from, once per track",
   dimensions(document, {hidden: false, hasFocus: () => false})
   receive("notify", {tracks: [finished, failed]})
   expect(FakeNotification.shown.map(n => n.title)).toEqual(["Fix the build", "Rename things"])
-  expect(FakeNotification.shown[0].options).toEqual({body: "The agent finished in Ravix.", tag: "ravix-track-t1"})
+  expect(FakeNotification.shown[0].options).toEqual({body: "The agent finished in Ravix.", tag: "ravix-thread-th1"})
   expect(FakeNotification.shown[1].options.body).toBe("The agent hit a problem.")
 
   // Clicking one asks the page to open the track, and closes itself.
@@ -138,7 +138,7 @@ test("news is shown only when on, allowed and looked away from, once per track",
   dimensions(window, {focus: () => (focused += 1)})
   FakeNotification.shown[0].onclick()
   expect(focused).toBe(1)
-  expect(events).toEqual([{name: "open-notice", payload: {track: "t1"}}])
+  expect(events).toEqual([{name: "open-notice", payload: {track: "t1", thread: "th1"}}])
   expect(FakeNotification.shown[0].closed).toBe(true)
 
   // Off means off, whatever arrives, and an empty event is nothing.

@@ -47,7 +47,11 @@ defmodule Ravix.Tooling do
   defp execute(p, "read_track", a), do: events(p, a)
 
   defp execute(p, "send_prompt", a),
-    do: map_result(Tasks.send(p, a["track_id"], a["prompt"], a["request_id"]), &Tasks.present/1)
+    do:
+      map_result(
+        Tasks.send(p, a["track_id"], a["prompt"], a["request_id"], a["thread_id"]),
+        &Tasks.present/1
+      )
 
   defp execute(p, "get_task", a), do: map_result(Tasks.get(p, a["task_id"]), &Tasks.present/1)
 
@@ -127,10 +131,11 @@ defmodule Ravix.Tooling do
   end
 
   defp events(p, args) do
-    with {:ok, %{track: track}} <- Access.track_access(p.user, args["track_id"]),
+    with {:ok, %{track: track, thread: thread}} <-
+           Access.thread_access(p.user, args["track_id"], args["thread_id"]),
          {:ok, client} <- Ravix.Providers.fountain(),
          {:ok, page} <-
-           Fountain.events_page(client, track.conversation_id,
+           Fountain.events_page(client, thread.conversation_id,
              after: args["after"],
              limit: Map.get(args, "limit", 50)
            ),
@@ -202,7 +207,16 @@ defmodule Ravix.Tooling do
 
   defp track(v),
     do:
-      Map.take(v, [:id, :project_id, :title, :branch, :workdir, :status, :created_by_login])
+      Map.take(v, [
+        :id,
+        :project_id,
+        :title,
+        :branch,
+        :workdir,
+        :status,
+        :created_by_login,
+        :threads
+      ])
       |> Map.put(:url, Config.public_url() <> "/p/#{v.project_id}/t/#{v.id}")
 
   defp settings(v),

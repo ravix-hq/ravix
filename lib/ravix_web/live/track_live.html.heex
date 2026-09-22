@@ -172,6 +172,20 @@
         <div id="transcript-status" class="sr-only" role="status" aria-live="polite">
           {@announcement}
         </div>
+        <form id="thread-switcher" phx-change="select-thread">
+          <label for="selected-thread">Thread</label>
+          <select id="selected-thread" name="thread_id" value={@thread_id}>
+            <option :for={thread <- @threads} value={thread.id} selected={thread.id == @thread_id}>
+              {thread.title}{if thread.unread && thread.id != @thread_id, do: " •", else: ""}
+            </option>
+          </select>
+          <button
+            :if={Ravix.Config.threads_enabled?()}
+            type="button"
+            phx-click="add-thread"
+            disabled={MapSet.member?(@pending, :add_thread)}
+          >Add thread</button>
+        </form>
         <div class="workspace-composer">
           <p :for={person <- Enum.filter(@present, & &1.typing)} class="hint">
             @{person.login} is typing…
@@ -188,14 +202,14 @@
             <div class="composer-box" data-composer-box>
               <div class="composer-note" role="status" data-composer-note hidden></div>
               <textarea
-                id={"composer-#{@track.id}"}
+                id={"composer-#{@thread_id}"}
                 phx-hook="Composer"
                 name="text"
                 rows="2"
                 phx-debounce="blur"
                 placeholder="Ask for a change, or a question about this branch"
                 aria-label="Message"
-                data-draft-key={"track:#{@track.id}"}
+                data-draft-key={"track:#{@track.id}:thread:#{@thread_id}"}
                 data-typing-event="typing"
                 disabled={is_nil(@track.conversation_id)}
               ></textarea>

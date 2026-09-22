@@ -130,9 +130,9 @@ export const Notify = {
     for (const track of tracks) {
       let notification
       try {
-        // One per track: a second tab announcing the same track replaces
+        // One per thread: a second tab announcing the same track replaces
         // this one rather than stacking beside it.
-        notification = new Notification(track.title, {body: body(track), tag: `ravix-track-${track.id}`})
+        notification = new Notification(track.title, {body: body(track), tag: `ravix-thread-${track.thread_id}`})
       } catch {
         // Some mobile browsers only notify through a service worker and
         // throw here. There is nothing to show, and nothing to say about it.
@@ -140,7 +140,7 @@ export const Notify = {
       }
       notification.onclick = () => {
         window.focus()
-        this.pushEvent("open-notice", {track: track.id})
+        this.pushEvent("open-notice", {track: track.id, thread: track.thread_id})
         notification.close()
       }
     }

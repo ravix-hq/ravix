@@ -21,12 +21,13 @@ export const WORK_ROOT = "/home/sprite/work";
 export const RECEIPT_PATH = "/home/sprite/.ravix/tracks.json";
 
 /** `Ravix.Ids.channel_pattern/0` — the shape of a track's `channel_id`. */
-export const CHANNEL_PATTERN = /^ravix:([^:@]+):([^:@]+)@r(\d+)$/;
+export const CHANNEL_PATTERN = /^ravix:([^:@]+):([^:@]+)@r(\d+)(?::([^:@]+))?$/;
 
 export interface ParsedChannel {
   projectId: string;
   trackSlug: string;
   rev: number;
+  threadId?: string;
 }
 
 /** `Ravix.Ids.parse_channel/1`. Null for anything that is not one of ours. */
@@ -34,5 +35,5 @@ export function parseChannel(channelId: string | null | undefined): ParsedChanne
   if (!channelId) return null;
   const m = CHANNEL_PATTERN.exec(channelId);
   if (!m) return null;
-  return { projectId: m[1]!, trackSlug: m[2]!, rev: Number(m[3]) };
+  return { projectId: m[1]!, trackSlug: m[2]!, rev: Number(m[3]), ...(m[4] ? { threadId: m[4] } : {}) };
 }

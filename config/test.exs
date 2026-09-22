@@ -1,4 +1,5 @@
 import Config
+config :ravix, :threads_enabled, true
 
 # Configure your database
 #

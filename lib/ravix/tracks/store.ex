@@ -18,11 +18,85 @@ defmodule Ravix.Tracks.Store do
   import Ecto.Query
 
   alias Ravix.Repo
-  alias Ravix.Tracks.{Track, TrackMember}
+  alias Ravix.Tracks.{Thread, ThreadRead, Track, TrackMember}
 
   @doc "A track row. The caller brings the id, since the branch name carries it."
   @spec create_track(map()) :: {:ok, Track.t()} | {:error, Ecto.Changeset.t()}
   def create_track(attrs), do: %Track{} |> Track.changeset(attrs) |> Repo.insert()
+
+  @doc "A thread on this track; nil selects its stable default."
+  def thread(track_id, thread_id \\ nil)
+
+  def thread(track_id, thread_id)
+      when is_binary(track_id) and (is_binary(thread_id) or is_nil(thread_id)),
+      do: Repo.get_by(Thread, id: thread_id || track_id, track_id: track_id)
+
+  def thread(_track_id, _thread_id), do: nil
+
+  def get_thread(id), do: Repo.get(Thread, id)
+
+  def threads_of(track_id),
+    do:
+      Repo.all(
+        from(t in Thread,
+          where: t.track_id == ^track_id,
+          order_by: [asc: t.created_at, asc: t.id]
+        )
+      )
+
+  def threads_by_track(track_ids) do
+    Repo.all(
+      from(t in Thread,
+        where: t.track_id in ^track_ids,
+        order_by: [asc: t.created_at, asc: t.id]
+      )
+    )
+    |> Enum.group_by(& &1.track_id)
+  end
+
+  def create_thread(attrs) do
+    changeset = Thread.changeset(%Thread{}, attrs)
+
+    if changeset.valid?,
+      do: Repo.transaction(fn -> insert_thread_locked(changeset) end),
+      else: {:error, changeset}
+  end
+
+  defp insert_thread_locked(changeset) do
+    track_id = Ecto.Changeset.get_field(changeset, :track_id)
+
+    with %Track{closed_at: nil} <-
+           Repo.one(from(t in Track, where: t.id == ^track_id, lock: "FOR UPDATE")),
+         {:ok, thread} <- Repo.insert(changeset) do
+      thread
+    else
+      {:error, reason} -> Repo.rollback(reason)
+      _ -> Repo.rollback(:not_found)
+    end
+  end
+
+  def mark_thread_read(thread_id, user_id, at) do
+    Repo.insert!(%ThreadRead{thread_id: thread_id, user_id: user_id, seen_at: at},
+      on_conflict: {:replace, [:seen_at]},
+      conflict_target: [:thread_id, :user_id]
+    )
+
+    :ok
+  end
+
+  def thread_reads(user_id, project_id) do
+    Repo.all(
+      from(r in ThreadRead,
+        join: th in Thread,
+        on: th.id == r.thread_id,
+        join: t in Track,
+        on: t.id == th.track_id,
+        where: r.user_id == ^user_id and t.project_id == ^project_id,
+        select: {r.thread_id, r.seen_at}
+      )
+    )
+    |> Map.new()
+  end
 
   @doc "One track by id, closed or not."
   @spec get_track(String.t()) :: Track.t() | nil
@@ -32,7 +106,14 @@ defmodule Ravix.Tracks.Store do
   @doc "The track a conversation belongs to."
   @spec track_by_conversation(String.t()) :: Track.t() | nil
   def track_by_conversation(conversation_id) when is_binary(conversation_id),
-    do: Repo.get_by(Track, conversation_id: conversation_id)
+    do:
+      Repo.one(
+        from(t in Track,
+          join: th in Thread,
+          on: th.track_id == t.id,
+          where: th.conversation_id == ^conversation_id
+        )
+      )
 
   def track_by_conversation(_), do: nil
 
@@ -76,9 +157,17 @@ defmodule Ravix.Tracks.Store do
   end
 
   @doc "Give a track its conversation, in the instant between the two."
-  @spec attach_conversation(String.t(), String.t()) :: :ok
-  def attach_conversation(track_id, conversation_id) do
-    update_track(track_id, conversation_id: conversation_id)
+  @spec attach_conversation(String.t(), String.t(), String.t() | nil) :: :ok
+  def attach_conversation(track_id, conversation_id, thread_id \\ nil) do
+    if is_nil(thread_id) or thread_id == track_id do
+      update_track(track_id, conversation_id: conversation_id)
+    else
+      Repo.update_all(from(t in Thread, where: t.id == ^thread_id and t.track_id == ^track_id),
+        set: [conversation_id: conversation_id]
+      )
+
+      :ok
+    end
   end
 
   @doc "The opening turn reported back. Idempotent: the first time stands."
@@ -98,9 +187,18 @@ defmodule Ravix.Tracks.Store do
   @doc "Close the row. Waiting prompts are cancelled by the caller through `Ravix.PromptQueue.Store.cancel_track/1`."
   @spec close_track(String.t()) :: :ok
   def close_track(track_id) do
-    Repo.update_all(from(t in Track, where: t.id == ^track_id and is_nil(t.closed_at)),
-      set: [closed_at: DateTime.utc_now()]
-    )
+    {:ok, :ok} =
+      Repo.transaction(fn ->
+        Repo.update_all(from(t in Track, where: t.id == ^track_id and is_nil(t.closed_at)),
+          set: [closed_at: DateTime.utc_now()]
+        )
+
+        Repo.update_all(from(t in Thread, where: t.track_id == ^track_id and is_nil(t.closed_at)),
+          set: [closed_at: DateTime.utc_now()]
+        )
+
+        :ok
+      end)
 
     :ok
   end

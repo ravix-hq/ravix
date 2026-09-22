@@ -56,14 +56,15 @@ defmodule RavixWeb.TrackLiveTraceTest do
            created: %{dir: "t", files: nil},
            has_setup_script: false
          },
+         threads: [],
          starters: []
        }}
     end)
 
-    stub(Tracks, :events, fn _, _ -> {:ok, Transcript.empty("claude")} end)
+    stub(Tracks, :events, fn _, _, _thread_opts -> {:ok, Transcript.empty("claude")} end)
     stub(Tracks, :follow, fn _, _, _ -> {:ok, self()} end)
     stub(Tracks, :beat, fn _, _, _ -> :ok end)
-    stub(Tracks, :mark_read, fn _, _ -> :ok end)
+    stub(Tracks, :mark_read, fn _, _, _thread_opts -> :ok end)
 
     # The one read this test follows. Spanned inside the stub, standing in for
     # any instrumented context call; the shape is the real one.

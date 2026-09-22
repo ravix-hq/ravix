@@ -16,6 +16,32 @@ defmodule Ravix.Tooling.TasksTest do
     %{user: user, p: p, project: project, track: track}
   end
 
+  test "explicit thread delivery and polling stay in that conversation", %{p: p, track: track} do
+    {:ok, thread} =
+      Ravix.Tracks.Store.create_thread(%{
+        track_id: track.id,
+        title: "Next",
+        conversation_id: "next"
+      })
+
+    assert {:ok, task} = Tasks.send(p, track.id, "hello", "request", thread.id)
+    assert QueueStore.get(task.id).thread_id == thread.id
+
+    assert {:error, {:conflict, "request_id_used", _}} =
+             Tasks.send(p, track.id, "hello", "request")
+
+    foreign = insert_track()
+    assert {:error, :not_found} = Tasks.send(p, track.id, "hello", "other", foreign.id)
+    QueueStore.mark_delivered(task.id)
+    expect(Fountain, :turns, fn _, "next" -> {:ok, [turn(task.id, "mine", "completed")]} end)
+
+    expect(Fountain, :events_page, fn _, "next", _ ->
+      {:ok, %{events: [event(1, "mine", "Answer")], next_cursor: 1, has_more: false}}
+    end)
+
+    assert {:ok, %{state: "TASK_STATE_COMPLETED", result: "Answer"}} = Tasks.get(p, task.id)
+  end
+
   test "submission is durable, retries return the same task, conflicting arguments fail", %{
     p: p,
     track: track

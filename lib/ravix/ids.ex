@@ -14,7 +14,12 @@ defmodule Ravix.Ids do
   """
 
   @typedoc "What a track's `channel_id` says about it."
-  @type parsed_channel :: %{project_id: String.t(), track_slug: String.t(), rev: integer()}
+  @type parsed_channel :: %{
+          required(:project_id) => String.t(),
+          required(:track_slug) => String.t(),
+          required(:rev) => integer(),
+          optional(:thread_id) => String.t()
+        }
 
   @doc "Every conversation ravix owns starts with this."
   @spec channel_prefix() :: String.t()
@@ -72,6 +77,10 @@ defmodule Ravix.Ids do
   def track_channel(project_id, track_slug, rev),
     do: "#{channel_prefix()}:#{project_id}:#{track_slug}@r#{rev}"
 
+  @spec track_channel(String.t(), String.t(), integer(), String.t()) :: String.t()
+  def track_channel(project_id, track_slug, rev, thread_id),
+    do: "#{track_channel(project_id, track_slug, rev)}:#{thread_id}"
+
   @doc """
   The shape of a track's `channel_id`.
 
@@ -79,7 +88,7 @@ defmodule Ravix.Ids do
   be held to this one by test.
   """
   @spec channel_pattern() :: Regex.t()
-  def channel_pattern, do: ~r/^ravix:([^:@]+):([^:@]+)@r(\d+)$/
+  def channel_pattern, do: ~r/^ravix:([^:@]+):([^:@]+)@r(\d+)(?::([^:@]+))?$/
 
   @doc "The inverse. Nil for anything that is not one of ours."
   @spec parse_channel(String.t() | nil) :: parsed_channel() | nil
@@ -87,6 +96,14 @@ defmodule Ravix.Ids do
 
   def parse_channel(channel_id) when is_binary(channel_id) do
     case Regex.run(channel_pattern(), channel_id) do
+      [_, project_id, slug, rev, thread_id] ->
+        %{
+          project_id: project_id,
+          track_slug: slug,
+          rev: String.to_integer(rev),
+          thread_id: thread_id
+        }
+
       [_, project_id, slug, rev] ->
         %{project_id: project_id, track_slug: slug, rev: String.to_integer(rev)}
 
