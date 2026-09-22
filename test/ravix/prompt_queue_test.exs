@@ -635,7 +635,11 @@ defmodule Ravix.PromptQueueTest do
     # moment, and either reads only the rows the index holds.
     Repo.query!("SET LOCAL enable_seqscan = off")
 
-    assert plan(fn -> PromptQueue.Store.heads() end) =~ "prompt_queue_thread_heads"
+    # Either partial head index answers this read: the pre-threads
+    # `prompt_queue_live_heads` is kept until the contract release, and which
+    # of the two the planner picks is a matter of the statistics of the
+    # moment. What the plan must not show is the whole table.
+    assert plan(fn -> PromptQueue.Store.heads() end) =~ ~r/prompt_queue_(thread|live)_heads/
     assert plan(fn -> PromptQueue.Store.recover() end) =~ "prompt_queue_sending_claims"
   end
 

@@ -13,7 +13,7 @@ track's directory and branch; summary handoff is a possible follow-up.
    markers. Triggers mirror old-release track inserts, conversation attaches,
    read markers, and queue inserts into the new representation. Existing channel
    IDs remain readable. New channels include a thread ID.
-2. Deploy with `RAVIX_THREADS_ENABLED=false` (the production default). The
+2. Deploy with `RAVIX_THREADS_ENABLED=false` for the staged migration. The
    previous release still reads and writes `tracks.conversation_id`, and old
    queue workers cannot route additional threads safely.
 3. Drain every previous-release web instance and queue worker, then enable
