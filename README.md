@@ -299,3 +299,7 @@ CI also enforces architecture rules, secret/dependency scans, agent-guide and
 version consistency, generated lifecycle invariants, and negative fixtures for
 the guards themselves. See [engineering quality](docs/engineering-quality.md)
 for the required checks, local commands, and the boundaries each guard proves.
+
+### User-facing changelog
+
+When a change is visible to people using Ravix, add a reviewed entry to `Ravix.Changelog` in `lib/ravix/changelog.ex`. Entries use a plain-language title and body, a date, and one of `new`, `improved`, or `fixed`; keep them concise and include an action when it helps someone try the change.
