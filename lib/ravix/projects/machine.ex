@@ -19,6 +19,7 @@ defmodule Ravix.Projects.Machine do
   alias Ravix.Fountain.Shapes.Conversation
   alias Ravix.Hub
   alias Ravix.Ids
+  alias Ravix.Previews.Lifecycle
   alias Ravix.Projects
   alias Ravix.Projects.Machine.Harness
   alias Ravix.Projects.Machine.Provisioned
@@ -261,7 +262,7 @@ defmodule Ravix.Projects.Machine do
   # is already through `Access.project_of/2` or `Access.project_access/2`, and
   # what is read is which set pays, which is the owner's whoever is asking.
   defp owner_set(%Project{user_id: user_id}) do
-    case Ravix.Accounts.get_user(user_id) do
+    case Ravix.Accounts.Store.get_user(user_id) do
       %User{credential_set_id: id} when is_binary(id) -> id
       _ -> nil
     end
@@ -380,7 +381,9 @@ defmodule Ravix.Projects.Machine do
       &Ravix.PromptQueue.Store.cancel_track(&1.id)
     )
 
-    Ravix.Previews.retire_project(project.id)
+    # ownership: the same door; every preview on the project is retired with
+    # the machine its services were defined on.
+    Lifecycle.retire_project(project.id)
   end
 
   @doc """

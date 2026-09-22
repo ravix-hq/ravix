@@ -20,8 +20,7 @@ defmodule Ravix.Previews.Agent do
   alias Ravix.Crypto
   alias Ravix.Ids
   alias Ravix.Previews
-  alias Ravix.Previews.AgentGrant
-  alias Ravix.Previews.Store
+  alias Ravix.Previews.{AgentGrant, Lifecycle, Store}
   alias Ravix.Projects.Project
   alias Ravix.PromptQueue.Item
   alias Ravix.Repo
@@ -226,7 +225,7 @@ defmodule Ravix.Previews.Agent do
          :ok <- turn_still_on(track_id, grant),
          :ok <- perform(action, track_id, body) do
       track_url = "#{Ravix.Config.public_url()}/p/#{project.id}/t/#{track_id}"
-      {:ok, answer(Previews.info(track_id), track_url)}
+      {:ok, answer(Lifecycle.info(track_id), track_url)}
     end
   end
 
@@ -260,7 +259,10 @@ defmodule Ravix.Previews.Agent do
   end
 
   defp grant_user(grant) do
-    case Accounts.get_user(grant.user_id) do
+    # ownership: the grant is the door -- the bearer token the helper just
+    # presented was matched to it in `bearer_grant/2` -- and this turns its
+    # `user_id` into the person `Access.track_access/2` is asked about next.
+    case Accounts.Store.get_user(grant.user_id) do
       nil -> auth_error("Preview access ended.")
       user -> {:ok, user}
     end
@@ -274,7 +276,7 @@ defmodule Ravix.Previews.Agent do
   end
 
   defp open(track_id) do
-    case Previews.assert_open(track_id) do
+    case Lifecycle.assert_open(track_id) do
       {:ok, _} -> :ok
       {:error, reason} -> {:error, reason}
     end
@@ -345,7 +347,7 @@ defmodule Ravix.Previews.Agent do
     # /api/tracks/:id/preview/agent`. The `|| body[:config]` that used to be
     # here could not match anything Plug produces.
     with {:ok, config} <- Previews.parse_config(body["config"]),
-         :ok <- Previews.configure(track_id, config) do
+         :ok <- Lifecycle.configure(track_id, config) do
       :ok
     else
       {:error, reason} -> {:error, reason}
@@ -360,14 +362,14 @@ defmodule Ravix.Previews.Agent do
     mode = if action == "restart", do: :restart, else: :start
 
     Task.Supervisor.start_child(Ravix.TaskSupervisor, fn ->
-      Previews.start_service(track_id, mode)
+      Lifecycle.start_service(track_id, mode)
     end)
 
     :ok
   end
 
-  defp perform("stop", track_id, _body), do: wrap(Previews.stop_service(track_id))
-  defp perform("logs", track_id, _body), do: wrap(Previews.refresh_logs(track_id))
+  defp perform("stop", track_id, _body), do: wrap(Lifecycle.stop_service(track_id))
+  defp perform("logs", track_id, _body), do: wrap(Lifecycle.refresh_logs(track_id))
   defp perform(_status, _track_id, _body), do: :ok
 
   defp wrap(:ok), do: :ok

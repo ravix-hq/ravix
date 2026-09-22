@@ -14,6 +14,8 @@ for mod <- [
       Ravix.People.Store,
       Ravix.Previews,
       Ravix.Previews.Agent,
+      Ravix.Previews.Lifecycle,
+      Ravix.Previews.Store,
       Ravix.Tracks,
       Ravix.Projects,
       Ravix.PromptQueue,

@@ -134,7 +134,7 @@ defmodule Ravix.Previews.Store do
   and not others, and the record used to be written back entire: a caller
   that read nineteen fields, changed one, and wrote nineteen back reverted
   whatever had committed in between. That is exactly what happened to
-  `Ravix.Previews.touch/1` -- a `publish_ready` landing between its read and
+  `Ravix.Previews.Lifecycle.touch/1` -- a `publish_ready` landing between its read and
   its write went back to `:starting`, and the gateway kept sending the reader
   to the start page -- and the fix then was a `FOR UPDATE` read and a merge,
   because with one jsonb document there was nothing else to do.

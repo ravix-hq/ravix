@@ -44,7 +44,7 @@ defmodule Ravix.ProjectsTest do
   defp quiet_peers do
     stub(Ravix.MachineCache, :conversations, fn _client, _project, _opts -> {:ok, []} end)
     stub(Ravix.Tracks, :close_all_for_rebuild, fn _project, _reason -> :ok end)
-    stub(Ravix.Previews, :retire_project, fn _id -> :ok end)
+    stub(Ravix.Previews.Lifecycle, :retire_project, fn _id -> :ok end)
     stub(Ravix.MachineCache, :forget_project, fn _id -> :ok end)
   end
 
@@ -483,7 +483,7 @@ defmodule Ravix.ProjectsTest do
       assert {:error, :not_found} = Projects.get(person("stranger"), project.id)
 
       gone = insert_project(archived_at: DateTime.utc_now())
-      owner = Ravix.Accounts.get_user(gone.user_id)
+      owner = Ravix.Accounts.Store.get_user(gone.user_id)
       assert {:error, :not_found} = Projects.get(owner, gone.id)
       assert {:error, :not_found} = Projects.get(owner, "nope")
     end
@@ -1213,7 +1213,7 @@ defmodule Ravix.ProjectsTest do
       %{owner: owner, project: project, prompt: prompt} = ctx
       test_pid = self()
 
-      stub(Ravix.Previews, :retire_project, fn id -> send(test_pid, {:retired, id}) end)
+      stub(Ravix.Previews.Lifecycle, :retire_project, fn id -> send(test_pid, {:retired, id}) end)
       stub(Ravix.MachineCache, :forget_project, fn id -> send(test_pid, {:forgot, id}) end)
 
       stub(Ravix.Tracks, :close_all_for_rebuild, fn %Project{id: id}, reason ->

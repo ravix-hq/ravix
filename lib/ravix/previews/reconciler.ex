@@ -32,7 +32,7 @@ defmodule Ravix.Previews.Reconciler do
 
   alias Ravix.Clock
   alias Ravix.Previews
-  alias Ravix.Previews.{Row, Server, Store}
+  alias Ravix.Previews.{Lifecycle, Row, Server, Store}
   alias Ravix.Projects.Project
   alias Ravix.Repo
   alias Ravix.Tracks.Track
@@ -130,8 +130,8 @@ defmodule Ravix.Previews.Reconciler do
   def reconcile({%Row{track_id: track_id} = row, track, project}) do
     result =
       case decide(row, track, project, Clock.now_ms()) do
-        :cleanup -> Previews.stop_service(track_id, :cleanup)
-        :stop -> Previews.stop_service(track_id, :stop, row.generation)
+        :cleanup -> Lifecycle.stop_service(track_id, :cleanup)
+        :stop -> Lifecycle.stop_service(track_id, :stop, row.generation)
         :ensure -> Server.run(track_id, {:ensure_running, row.generation, :start})
         :leave -> :ok
       end

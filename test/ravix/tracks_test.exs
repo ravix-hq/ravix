@@ -903,7 +903,7 @@ defmodule Ravix.TracksTest do
         )
 
       stub(Ravix.PromptQueue.Store, :cancel_track, fn _track_id -> :ok end)
-      stub(Ravix.Previews, :stop_service, fn _track_id, :cleanup -> :ok end)
+      stub(Ravix.Previews.Lifecycle, :stop_service, fn _track_id, :cleanup -> :ok end)
       Hub.subscribe(project.id)
       {:ok, owner: owner, project: project, track: track}
     end
@@ -947,7 +947,7 @@ defmodule Ravix.TracksTest do
 
       # The preview stop is the first thing the teardown does and the slowest
       # in production, so it stands in for the machine: held until released.
-      stub(Ravix.Previews, :stop_service, fn track_id, :cleanup ->
+      stub(Ravix.Previews.Lifecycle, :stop_service, fn track_id, :cleanup ->
         send(test, {:stopping, track_id, self()})
 
         receive do
@@ -992,7 +992,7 @@ defmodule Ravix.TracksTest do
         terminate: {:error, :econnrefused}
       )
 
-      stub(Ravix.Previews, :stop_service, fn _track_id, :cleanup ->
+      stub(Ravix.Previews.Lifecycle, :stop_service, fn _track_id, :cleanup ->
         {:error, {:unavailable, "sprites", "down"}}
       end)
 

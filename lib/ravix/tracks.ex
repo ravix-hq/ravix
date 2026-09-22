@@ -49,6 +49,7 @@ defmodule Ravix.Tracks do
   alias Ravix.Ids
   alias Ravix.MachineCache
   alias Ravix.People
+  alias Ravix.Previews.Lifecycle
   alias Ravix.Projects.Project
   alias Ravix.PromptQueue.Body
   alias Ravix.PromptQueue.Body.Image
@@ -704,7 +705,7 @@ defmodule Ravix.Tracks do
   # a credential -- the client carries Fountain's key and is not logged.
   defp tear_down(client, %Track{} = track, %Project{} = project, opts) do
     discard(
-      Ravix.Previews.stop_service(track.id, :cleanup),
+      Lifecycle.stop_service(track.id, :cleanup),
       "preview of closed track #{track.id} did not stop"
     )
 

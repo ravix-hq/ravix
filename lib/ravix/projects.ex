@@ -388,8 +388,11 @@ defmodule Ravix.Projects do
 
   @doc "The `Project` map for a row, looking up the owner's login."
   @spec present(Project.t(), access(), machine()) :: View.t()
+  # ownership: the project's own `user_id` column, turned into the owner's
+  # login for the view. The caller holds `project` because it reached it
+  # through `access_of/2` or `Access.project_of/2`; nothing is decided here.
   def present(%Project{} = project, access, machine),
-    do: present(project, access, machine, Ravix.Accounts.get_user(project.user_id))
+    do: present(project, access, machine, Ravix.Accounts.Store.get_user(project.user_id))
 
   @doc """
   The `Project` map for a row. `role` is the owner/not-owner question almost
@@ -428,8 +431,13 @@ defmodule Ravix.Projects do
   defp fountain, do: Ravix.Providers.fountain()
   defp github, do: Ravix.Providers.github()
 
+  # ownership: the project's own `user_id`, read to show a member who owns
+  # what they are looking at. `list/1` and `get/2` established the caller's
+  # seat on the project with `access_of/2` before asking.
   defp owner_of(%Project{user_id: user_id}, %User{id: user_id} = user), do: user
-  defp owner_of(%Project{user_id: user_id}, user), do: Ravix.Accounts.get_user(user_id) || user
+
+  defp owner_of(%Project{user_id: user_id}, user),
+    do: Ravix.Accounts.Store.get_user(user_id) || user
 
   # `owner_of/2` for the whole rail: one read for every owner the guest
   # projects have between them, keyed by id. The caller is not read again
@@ -439,7 +447,7 @@ defmodule Ravix.Projects do
 
   defp owners_of(projects, %User{} = user) do
     ids = projects |> Enum.map(& &1.user_id) |> Enum.uniq() |> Enum.reject(&(&1 == user.id))
-    Map.new(Ravix.Accounts.get_users(ids), &{&1.id, &1})
+    Map.new(Ravix.Accounts.Store.get_users(ids), &{&1.id, &1})
   end
 
   # The user's GitHub OAuth token, decrypted. Used for anything read as *them*.
