@@ -962,6 +962,48 @@ defmodule RavixWeb.TrackLiveTest do
     assert has_element?(ctx.view, ".workspace-plan li", "Fix <the> bug")
   end
 
+  test "shared transcript messages name their senders in snapshots and live updates", ctx do
+    page =
+      Transcript.page(
+        [
+          opened(1, "mine", PromptQueue.with_author(ctx.user.login, "My message")),
+          opened(
+            2,
+            "theirs",
+            "[ravix preview tools for this turn]\nhidden tools\n[/ravix preview tools]\n\n" <>
+              PromptQueue.with_author("teammate", "Their message\nSecond line")
+          ),
+          opened(3, "legacy", "A message without author metadata"),
+          opened(4, "system", "[ravix] Open this track.\nInternal instructions")
+        ],
+        "claude"
+      )
+
+    stub(Tracks, :events, fn _, _ -> {:ok, page} end)
+    render_click(ctx.view, "retry-load")
+    render_async(ctx.view)
+
+    assert has_element?(ctx.view, "#turns-mine .speaker", "@#{ctx.user.login}")
+    assert has_element?(ctx.view, "#turns-theirs .speaker", "@teammate")
+    assert has_element?(ctx.view, "#turns-theirs .workspace-prompt", "Their message Second line")
+    assert has_element?(ctx.view, "#turns-legacy .speaker", "User")
+    assert has_element?(ctx.view, "#turns-system .speaker", "Ravix")
+    assert has_element?(ctx.view, "#turns-system .workspace-prompt", "Open this track.")
+    refute render(ctx.view) =~ "hidden tools"
+    refute render(ctx.view) =~ "[from @"
+
+    send(
+      ctx.view.pid,
+      {:transcript, ctx.track.id,
+       opened(5, "live", PromptQueue.with_author("another-person", "<script>alert(1)</script>"))}
+    )
+
+    drawn(ctx.view)
+    assert has_element?(ctx.view, "#turns-live .speaker", "@another-person")
+    assert has_element?(ctx.view, "#turns-live .workspace-prompt", "<script>alert(1)</script>")
+    refute has_element?(ctx.view, "#transcript-turns script")
+  end
+
   test "transcript snapshots render prompts, thinking, tools, and raw output safely", ctx do
     update = fn data ->
       Jason.encode!(%{jsonrpc: "2.0", method: "session/update", params: %{update: data}})
