@@ -150,6 +150,7 @@ defmodule RavixWeb.WorkspaceLive do
       |> hand_over(project, track_id)
       |> assign(
         project: project,
+        page_title: if(project, do: project.display_name <> " · Ravix", else: "Ravix"),
         track_id: track_id,
         dialog: nil,
         expanded_projects: expanded
@@ -639,8 +640,12 @@ defmodule RavixWeb.WorkspaceLive do
       Enum.each(MapSet.difference(new, old), &Hub.subscribe/1)
     end
 
+    project = socket.assigns.project && Enum.find(projects, &(&1.id == socket.assigns.project.id))
+
     socket
     |> assign(
+      project: project || socket.assigns.project,
+      page_title: if(project, do: project.display_name <> " · Ravix", else: "Ravix"),
       projects: projects,
       tracks: tracks,
       attention: attention_count(tracks),
@@ -769,7 +774,7 @@ defmodule RavixWeb.WorkspaceLive do
   defp matching?(track, project, query),
     do:
       String.contains?(
-        String.downcase("#{project_label(project)} #{track.title} #{track.branch}"),
+        String.downcase("#{project.display_name} #{track.title} #{track.branch}"),
         String.downcase(query)
       )
 end
