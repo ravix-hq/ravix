@@ -386,6 +386,13 @@ defmodule RavixWeb.OnboardingLive do
 
   defp position(step), do: Enum.find_index(@steps, &(&1 == step)) + 1
 
+  # Also the link's accessible name: a narrow screen hides the word and shows
+  # the number, and the number is decoration.
+  defp step_name(:intro), do: "How it works"
+  defp step_name(:agent), do: "Your agent"
+  defp step_name(:github), do: "GitHub"
+  defp step_name(:project), do: "First project"
+
   defp agent_name(:claude), do: "Claude Code"
   defp agent_name(:codex), do: "Codex"
 

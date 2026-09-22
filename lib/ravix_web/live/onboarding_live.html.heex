@@ -18,16 +18,12 @@
             ]}
             aria-current={step == @live_action && "step"}
           >
-            <.link patch={if step == :intro, do: to <> "?from=start", else: to}>
+            <.link
+              patch={if step == :intro, do: to <> "?from=start", else: to}
+              aria-label={"Step #{position(step)}: #{step_name(step)}"}
+            >
               <span class="welcome-step-num" aria-hidden="true">{position(step)}</span>
-              <span>
-                {case step do
-                  :intro -> "How it works"
-                  :agent -> "Your agent"
-                  :github -> "GitHub"
-                  :project -> "First project"
-                end}
-              </span>
+              <span>{step_name(step)}</span>
             </.link>
           </li>
         </ol>
