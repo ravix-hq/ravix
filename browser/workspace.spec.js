@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import { composerFixture } from './composer-fixture.js';
+import { signIn as signInAs } from './sign-in.js';
 
 async function accessible(page) {
   // Settle first. Axe computes contrast against *composited* colour, so an
@@ -24,23 +25,10 @@ async function accessible(page) {
   expect(result.violations).toEqual([]);
 }
 
-async function signIn(page) {
-  // `/` has nothing for a browser with no session and sends it here itself.
-  await page.goto('/');
-  await page.getByRole('link', { name: 'Sign in with GitHub', exact: true }).click();
-  await page.getByRole('link', { name: 'Sign in as @mockuser', exact: true }).click();
-  await expect(page.getByRole('link', { name: 'Sign out' })).toBeVisible();
-  await expect(page.locator('[data-phx-main]')).toHaveClass(/phx-connected/);
-  // Whoever signs in first, with no project yet, is shown the walkthrough. The
-  // test below is about that; every other test is about the workspace, and
-  // must reach it whether or not it is the first to run.
-  if (new URL(page.url()).pathname.startsWith('/welcome')) {
-    await page.getByRole('button', { name: 'Skip setup', exact: true }).click();
-    await expect(page).toHaveURL(/\/home$/);
-    await page.goto('/');
-    await expect(page.locator('[data-phx-main]')).toHaveClass(/phx-connected/);
-  }
-}
+// The walkthrough test below signs in by hand, because walking it is what it
+// is about. Everything else takes the shared helper, whose waits explain
+// themselves in `sign-in.js`.
+const signIn = (page) => signInAs(page, 'mockuser');
 
 async function chooseTheme(page, name) {
   await page.locator('[data-theme-toggle]').click();
@@ -455,7 +443,16 @@ test('project, track, streaming, image upload, reconnect, and revocation', async
   await other.goto('/home');
   await other.getByRole('link', { name: 'Sign out' }).click();
   await expect(other.getByRole('heading', { name: 'Sign in to Ravix' })).toBeVisible();
-  await page.evaluate(() => document.querySelector("#composer-form")?.requestSubmit());
+  // Submitting on a revoked session is refused by sending this browser to
+  // sign in, and that navigation destroys the context this call is evaluated
+  // in --- which Playwright reports as an error rather than a result, often
+  // enough to fail a run. The refusal is what the assertions below read; the
+  // call's own return value was never wanted. Any other error still fails.
+  await page
+    .evaluate(() => document.querySelector("#composer-form")?.requestSubmit())
+    .catch((error) => {
+      if (!/Execution context was destroyed/.test(error.message)) throw error;
+    });
   await expect(page.getByRole('heading', { name: 'Sign in to Ravix' })).toBeVisible();
   await signIn(page);
   await page.goto(trackURL);

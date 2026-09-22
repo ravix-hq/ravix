@@ -1,17 +1,12 @@
 import { test, expect } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
+import { signIn } from './sign-in.js';
 
 test('a project plan assigns coordinated tracks and works at phone width', async ({ page }) => {
-  await page.goto('/');
-  await page.getByRole('link', { name: 'Sign in with GitHub', exact: true }).click();
   // Not @mockuser: this file runs before workspace.spec.js, whose first-visit
   // walkthrough and empty inbox need that person untouched. @dana is
   // tooling.spec.js's, so plans get @eli.
-  await page.getByRole('link', { name: 'Sign in as @eli', exact: true }).click();
-  if (new URL(page.url()).pathname.startsWith('/welcome')) {
-    await page.getByRole('button', { name: 'Skip setup', exact: true }).click();
-  }
-  await page.goto('/home');
+  await signIn(page, 'eli', '/home');
   await page.getByRole('button', { name: /^Quick start/ }).click();
   await page.getByLabel('Project name', { exact: true }).fill('Planned release');
   await page.getByRole('button', { name: 'Create project', exact: true }).click();
