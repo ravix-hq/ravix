@@ -4,7 +4,6 @@ defmodule RavixWeb.WorkspaceLive do
 
   alias Ravix.{Accounts, Hub, Projects, Tracks}
   alias Ravix.Hub.Event
-  alias Ravix.Tracks.Names
   alias RavixWeb.Live.Form
   alias RavixWeb.Live.Guard
 
@@ -343,7 +342,7 @@ defmodule RavixWeb.WorkspaceLive do
     origin =
       case {kind, ref} do
         {:branch, %{} = r} -> %{kind: word, base: r.name}
-        {:pr, %{} = r} -> %{kind: word, number: r.number, title: r.title, base: r.base_ref}
+        {:pr, %{} = r} -> %{kind: word, number: r.number, title: r.title, base: r.head_ref}
         {:issue, %{} = r} -> %{kind: word, number: r.number, title: r.title}
         _ -> %{kind: "blank"}
       end
@@ -709,12 +708,9 @@ defmodule RavixWeb.WorkspaceLive do
       |> load_repos(nil)
 
   defp open_dialog(socket, :new_track) do
-    suggested =
-      Names.name_track(Enum.map(socket.assigns.tracks[project_id(socket)] || [], & &1.title))
-
     assign(socket,
       dialog: :new_track,
-      track_form: Form.new(:new_track, %{"title" => suggested}),
+      track_form: Form.new(:new_track),
       origin_kind: :blank,
       refs: [],
       advanced_track: false

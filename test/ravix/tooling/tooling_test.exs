@@ -66,9 +66,15 @@ defmodule Ravix.ToolingTest do
          {201, [], %{data: %{id: "new-conversation"}}}}
       ])
 
-    args = %{"project_id" => project.id, "title" => "Desktop task", "request_id" => "open-track"}
+    args = %{
+      "project_id" => project.id,
+      "branch_name" => "desktop-task",
+      "request_id" => "open-track"
+    }
+
     assert {:ok, result} = Tooling.call(p, "create_track", args)
-    assert Repo.get!(Track, result.id).title == "Desktop task"
+    assert Repo.get!(Track, result.id).title == "ravix/desktop-task"
+    assert result.branch == "ravix/desktop-task"
     assert {:ok, retry} = Tooling.call(p, "create_track", args)
     assert retry["id"] == result.id
     assert length(FakeTransport.calls(client)) == 2
@@ -84,6 +90,23 @@ defmodule Ravix.ToolingTest do
                "settings" => %{},
                "request_id" => "x"
              })
+  end
+
+  test "MCP creation rejects invalid and closed-track branch names", %{p: p, user: user} do
+    project = insert_project(user: user)
+    insert_track(project: project, branch: "ravix/spent", closed_at: DateTime.utc_now())
+    stub(Fountain, :client, fn -> Client.new("https://fountain.test", "key") end)
+    stub(Ravix.Projects, :prepare_machine, fn _, _ -> :ok end)
+    stub(Ravix.MachineCache, :machine_of, fn _, _ -> {:ok, nil} end)
+
+    for {name, code} <- [{"two words", "invalid_branch"}, {"spent", "branch_taken"}] do
+      assert {:error, {:unprocessable, ^code, _}} =
+               Tooling.call(p, "create_track", %{
+                 "project_id" => project.id,
+                 "branch_name" => name,
+                 "request_id" => name
+               })
+    end
   end
 
   test "settings return keys without secret values and updates persist through owner access", %{
