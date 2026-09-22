@@ -167,11 +167,30 @@ defmodule Ravix.TracksTest do
                }
              } = Tracks.present(pr, project: project)
 
-      # There is no longer a fifth kind to coerce here: the column is one of
-      # four, and a row carrying anything else cannot be written. See
+      # There is nothing left to coerce here: the column is one of the
+      # startable kinds, and a row carrying anything else cannot be written. See
       # `Ravix.SchemasTest` for the refusal and `open/4` for the boundary
-      # where a browser's word becomes one of the four.
+      # where a browser's word becomes one of them.
       assert Tracks.Track.origin_kinds() == [:blank, :branch, :pr, :issue, :plan]
+    end
+
+    test "a plan track loads and presents, and plan is now a kind that starts",
+         %{project: project, track: track} do
+      # The release before this one could read plan tracks without starting
+      # them (expand); this one starts them (contract). The database word
+      # still loads, and the row presents with its kind rather than raising.
+      type = Tracks.Track.__schema__(:type, :origin_kind)
+      assert Ecto.Type.load(type, "plan") == {:ok, :plan}
+
+      plan = %{track | origin_kind: :plan, origin_title: "Ship the API"}
+
+      assert %{origin: %{kind: :plan, title: "Ship the API"}} =
+               Tracks.present(plan, project: project)
+
+      # Startable now, and read-only kinds are empty again: the enum is
+      # exactly the startable kinds, with nothing loaded that cannot start.
+      assert :plan in Tracks.Track.origin_kinds()
+      assert Ecto.Enum.values(Tracks.Track, :origin_kind) == Tracks.Track.origin_kinds()
     end
   end
 
