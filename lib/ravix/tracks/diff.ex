@@ -29,8 +29,11 @@ defmodule Ravix.Tracks.Diff do
           }
   end
 
-  @enforce_keys [:path, :repo_root, :diff, :truncated, :changes]
-  defstruct @enforce_keys ++ [files: []]
+  # `files` is enforced like the rest: a `Diff` built without it renders as
+  # "0 changed files" beside a non-empty `diff`, indistinguishable from a
+  # real empty one.
+  @enforce_keys [:path, :repo_root, :diff, :truncated, :changes, :files]
+  defstruct @enforce_keys
 
   @typedoc """
   A track's working diff. `diff` is the unified text as `git` produced it and
@@ -105,6 +108,9 @@ defmodule Ravix.Tracks.Diff do
     path
     |> String.slice(1..-2//1)
     |> then(&Regex.replace(~r/\\([0-7]{3}|.)/s, &1, fn _, escape -> unescape(escape) end))
+    # Octal escapes are raw bytes, and git quotes a name precisely when those
+    # bytes may not be UTF-8. An invalid binary cannot be sent to the page.
+    |> String.replace_invalid()
   end
 
   defp decode_path(path), do: path

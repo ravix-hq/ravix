@@ -969,10 +969,14 @@ defmodule RavixWeb.TrackLive do
               <div class="diff-hunk-header">{hunk.header}</div>
               <div :for={line <- hunk.lines}>
                 <div class={"diff-line diff-#{line.kind}"}>
-                  <span class="diff-number" aria-label="Old line">{line.old}</span><span
+                  <%!-- The gutter is visual; a screen reader hears one phrase instead. --%>
+                  <span class="sr-only">{diff_line_label(line)}</span><span
                     class="diff-number"
-                    aria-label="New line"
-                  >{line.new}</span><span class="diff-marker">{diff_marker(line.kind)}</span><code>{line.text}</code>
+                    aria-hidden="true"
+                  >{line.old}</span><span class="diff-number" aria-hidden="true">{line.new}</span><span
+                    class="diff-marker"
+                    aria-hidden="true"
+                  >{diff_marker(line.kind)}</span><code>{line.text}</code>
                 </div>
                 <div :if={line.no_newline} class="diff-no-newline">\ No newline at end of file</div>
               </div>
@@ -1013,6 +1017,10 @@ defmodule RavixWeb.TrackLive do
 
   defp diff_status(status), do: %{added: "A", modified: "M", deleted: "D", renamed: "R"}[status]
   defp diff_marker(kind), do: %{add: "+", del: "−", context: " "}[kind]
+
+  defp diff_line_label(%{kind: :add, new: new}), do: "Added line #{new}: "
+  defp diff_line_label(%{kind: :del, old: old}), do: "Removed line #{old}: "
+  defp diff_line_label(%{new: new}), do: "Line #{new}: "
 
   defp diff_directory(path),
     do: if(Path.dirname(path) == ".", do: "", else: Path.dirname(path) <> "/")

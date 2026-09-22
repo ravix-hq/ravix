@@ -36,6 +36,12 @@ defmodule Ravix.Tracks.DiffTest do
              Enum.sort(["café.txt", "quoted\"", "back\\slash", "line\nbreak", "carriage\rreturn"])
   end
 
+  test "a quoted name whose bytes are not UTF-8 still decodes to a valid string" do
+    [file] = Diff.parse(~S(diff --git "a/\377.bin" "b/\377.bin") <> "\nBinary files differ\n")
+    assert String.valid?(file.change.path)
+    assert file.change.path == "�.bin"
+  end
+
   test "truncation marks only the last available section and retains partial lines" do
     patch = @patch |> String.split("+<script>") |> hd()
     files = Diff.parse(patch <> "+cut off", true)
