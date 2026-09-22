@@ -559,10 +559,12 @@ test('project settings navigate, warn before discarding, and save sections acces
   await settings.getByRole('button', { name: 'Save general', exact: true }).click();
   await expect(settings.getByRole('status')).toHaveText('Saved.');
   await settings.getByRole('button', { name: 'Previews', exact: true }).click();
-  await settings.getByLabel('Command (must honor $PORT)', { exact: true }).fill('npm run dev');
-  await settings.getByRole('button', { name: 'Save defaults', exact: true }).click();
-  await expect(settings.locator('.field p.error')).toBeVisible();
   await settings.getByLabel('Command (must honor $PORT)', { exact: true }).fill('npm run dev -- --port "$PORT" --strictPort');
+  // A readiness path must be an absolute HTTP path; the refusal lands on its field.
+  await settings.getByLabel('Readiness path', { exact: true }).fill('health');
+  await settings.getByRole('button', { name: 'Save defaults', exact: true }).click();
+  await expect(settings.locator('.field p.error')).toContainText('Readiness must be an HTTP path');
+  await expect(settings.getByRole('status')).toContainText('Could not save');
   await settings.getByLabel('Readiness path', { exact: true }).fill('/health');
   await settings.getByRole('button', { name: 'Save defaults', exact: true }).click();
   await expect(settings.getByRole('status')).toHaveText('Saved.');

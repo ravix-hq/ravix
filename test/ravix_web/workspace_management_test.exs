@@ -575,6 +575,85 @@ defmodule RavixWeb.WorkspaceManagementTest do
     assert_redirect(view, "/login")
   end
 
+  test "stored secrets are listed by key name only, with a way to replace or remove each",
+       ctx do
+    settings(ctx, env_keys: ["API_TOKEN"], vault_keys: ["GITHUB_TOKEN"])
+
+    for {store, label, key} <- [
+          {"env", "Environment", "API_TOKEN"},
+          {"vault", "Vault", "GITHUB_TOKEN"}
+        ],
+        action <- ["replace", "remove"] do
+      assert has_element?(
+               ctx.view,
+               ~s(button[data-secret-store="#{store}"][data-secret-key="#{key}"][data-secret-action="#{action}"]),
+               String.capitalize(action)
+             )
+
+      assert has_element?(
+               ctx.view,
+               ~s(button[aria-label="#{String.capitalize(action)} #{label} secret #{key}"])
+             )
+    end
+
+    assert has_element?(ctx.view, "#secret-value[type=password]")
+    refute has_element?(ctx.view, "#secret-value[value]")
+  end
+
+  test "a settings event after the owner lost the project is refused before any write", ctx do
+    settings(ctx)
+    reject(&Projects.update_settings/3)
+
+    ctx.project
+    |> Ecto.Changeset.change(archived_at: DateTime.utc_now())
+    |> Repo.update!()
+
+    ctx.view
+    |> form("#secret-form", secret: [store: "env", key: "TOKEN", value: "never-sent"])
+    |> render_submit()
+
+    html = render(ctx.view)
+    assert html =~ "No such thing here."
+    refute html =~ "never-sent"
+    refute html =~ "Secret updated"
+  end
+
+  test "a second section's save is not started while the first is still out", ctx do
+    settings(ctx)
+    parent = self()
+
+    expect(Projects, :update_settings, 1, fn _, _, attrs ->
+      send(parent, {:saving, self()})
+      assert attrs == %{"name" => "First"}
+
+      receive do
+        :finish -> :ok
+      after
+        2_000 -> flunk("the save was never released")
+      end
+    end)
+
+    ctx.view |> form("#settings-form", settings: [name: "First"]) |> render_submit()
+    assert_receive {:saving, saving}
+
+    ctx.view
+    |> form("#agent-settings-form", settings: [instructions: "Second"])
+    |> render_submit()
+
+    # The second form keeps what was typed, so nothing is lost by waiting.
+    assert has_element?(ctx.view, "#settings-instructions", "Second")
+    send(saving, :finish)
+    assert render_async(ctx.view) =~ "Saved."
+  end
+
+  test "preview defaults that cannot be read open on the usual starting values", ctx do
+    stub(Previews, :defaults, fn _, _ -> {:error, {:unavailable, "Try later"}} end)
+    settings(ctx)
+
+    assert has_element?(ctx.view, "#default-directory[value='.']")
+    assert has_element?(ctx.view, "#default-readiness[value='/']")
+  end
+
   describe "a session that went without notice" do
     # The dialog is a `live_component`, and the page's session hooks never
     # see a component's events: without the wrapping in
@@ -636,10 +715,10 @@ defmodule RavixWeb.WorkspaceManagementTest do
     end
   end
 
-  defp settings(ctx) do
+  defp settings(ctx, overrides \\ []) do
     stub(Projects, :settings, fn _, _ ->
       {:ok,
-       %{
+       Enum.into(overrides, %{
          name: ctx.project.name,
          runtime: "claude",
          model: "model",
@@ -649,7 +728,7 @@ defmodule RavixWeb.WorkspaceManagementTest do
          env_keys: [],
          vault_keys: [],
          catalog: Catalog.empty()
-       }}
+       })}
     end)
 
     render_click(ctx.view, "dialog", %{name: "settings"})
