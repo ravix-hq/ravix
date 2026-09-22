@@ -45,9 +45,7 @@ defmodule Ravix.Accounts.Auth do
              joined: %{tracks: [map()], projects: [map()]}
            }}
           | {:redirect, String.t()}
-          | {:error, {:unavailable, String.t()} | term()}
-
-  @no_github "This Ravix deployment has no GitHub App configured, so it cannot see repositories."
+          | {:error, {:unconfigured, :github} | term()}
 
   # How long the per-attempt cookie lives, in seconds. Matches the state row.
   @cookie_max_age_s 15 * 60
@@ -63,14 +61,9 @@ defmodule Ravix.Accounts.Auth do
   @spec callback_url() :: String.t()
   def callback_url, do: Config.public_url() <> "/api/auth/callback"
 
-  @doc "The GitHub App, or the refusal that says what is missing."
-  @spec github() :: {:ok, Config.GitHubApp.t()} | {:error, {:unavailable, String.t()}}
-  def github do
-    case Config.github() do
-      nil -> {:error, {:unavailable, @no_github}}
-      app -> {:ok, app}
-    end
-  end
+  @doc "The GitHub App, or `Ravix.Providers`' refusal that says it is missing."
+  @spec github() :: {:ok, Config.GitHubApp.t()} | {:error, {:unconfigured, :github}}
+  def github, do: Ravix.Providers.github()
 
   @doc """
   Begin a round trip of `kind` (`:signin`, `:install`, `:join`) that
@@ -80,7 +73,7 @@ defmodule Ravix.Accounts.Auth do
   controller puts in the attempt's cookie (see `cookie_name/1`).
   """
   @spec begin(OAuthState.kind(), String.t() | nil) ::
-          {:ok, attempt()} | {:error, {:unavailable, String.t()}}
+          {:ok, attempt()} | {:error, {:unconfigured, :github}}
   def begin(kind, redirect) do
     with {:ok, _app} <- github() do
       state = Crypto.random_token(18)
@@ -112,13 +105,13 @@ defmodule Ravix.Accounts.Auth do
   def valid_state?(_), do: false
 
   @doc "Where a browser goes to sign in, carrying `state`."
-  @spec authorize_url(String.t()) :: {:ok, String.t()} | {:error, {:unavailable, String.t()}}
+  @spec authorize_url(String.t()) :: {:ok, String.t()} | {:error, {:unconfigured, :github}}
   def authorize_url(state) do
     with {:ok, app} <- github(), do: {:ok, GitHub.authorize_url(app, callback_url(), state)}
   end
 
   @doc "Where a browser goes to install the App, carrying `state` so the return trip is recognisable."
-  @spec install_url(String.t() | nil) :: {:ok, String.t()} | {:error, {:unavailable, String.t()}}
+  @spec install_url(String.t() | nil) :: {:ok, String.t()} | {:error, {:unconfigured, :github}}
   def install_url(state) do
     with {:ok, app} <- github(), do: {:ok, GitHub.install_url(app, state)}
   end
@@ -195,8 +188,10 @@ defmodule Ravix.Accounts.Auth do
       {:error, %GitHubError{status: status}} ->
         {:redirect, "/?error=" <> URI.encode_www_form("github_#{status || 0}")}
 
-      {:error, :unconfigured} ->
-        {:error, {:unavailable, @no_github}}
+      # Unreachable with the App in hand, but it is in `Ravix.GitHub`'s type
+      # and this `else` must stay total.
+      {:error, {:unconfigured, :github}} = refused ->
+        refused
     end
   end
 

@@ -5,7 +5,7 @@ defmodule Ravix.Fountain.Client do
 
   Built from `Ravix.Config.fountain/0` by `Ravix.Fountain.client/0`, or by a
   test with the fake transport. A deployment without a key still gets a client,
-  one with `http: nil`, so that every call answers `{:error, :unconfigured}`
+  one with `http: nil`, so that every call answers `{:error, {:unconfigured, :fountain}}`
   instead of crashing; the pages say "no machines" and nothing else breaks.
 
   The SDK's own `Fountain.new/1` is deliberately not used: it falls back to

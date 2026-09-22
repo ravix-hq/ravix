@@ -1,6 +1,8 @@
 defmodule RavixWeb.Endpoint do
   use Phoenix.Endpoint, otp_app: :ravix
 
+  alias RavixWeb.Tooling.RPC
+
   # The session is stored in the cookie and signed, so its contents can be
   # read but not tampered with. It carries the session token, so `Secure`
   # matters: without it the browser sends the token in the clear on a first
@@ -67,15 +69,41 @@ defmodule RavixWeb.Endpoint do
   plug Plug.RequestId
   plug Plug.Telemetry, event_prefix: [:phoenix, :endpoint]
 
-  plug Plug.Parsers,
-    parsers: [:urlencoded, :multipart, :json],
-    pass: ["*/*"],
-    json_decoder: Phoenix.json_library()
+  plug :parse_body
 
   plug Plug.MethodOverride
   plug Plug.Head
   plug :session
   plug RavixWeb.Router
+
+  # Protocol clients need a JSON-RPC parse error, not an HTML error page.
+  # Other request bodies keep Phoenix's existing parser/error behavior.
+  defp parse_body(conn, _opts) do
+    opts = [
+      parsers: [:urlencoded, :multipart, :json],
+      pass: ["*/*"],
+      json_decoder: Phoenix.json_library()
+    ]
+
+    opts =
+      if conn.request_path in ["/mcp", "/a2a"],
+        do: Keyword.put(opts, :length, 1_048_576),
+        else: opts
+
+    Plug.Parsers.call(conn, Plug.Parsers.init(opts))
+  rescue
+    error in Plug.Parsers.ParseError ->
+      if conn.request_path in ["/mcp", "/a2a"] do
+        body = Jason.encode!(RPC.error(nil, -32_700, "Invalid JSON payload"))
+
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.send_resp(400, body)
+        |> Plug.Conn.halt()
+      else
+        reraise error, __STACKTRACE__
+      end
+  end
 
   # `session_options/0` reads runtime configuration, so the plug is built on
   # first use and kept rather than baked in at compile time.

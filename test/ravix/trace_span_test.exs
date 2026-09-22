@@ -8,6 +8,8 @@ defmodule Ravix.TraceSpanTest do
   """
   use Ravix.TraceCase, async: false
 
+  alias Ravix.GitHub.Error, as: GitHubError
+  alias Ravix.Sprites.Error, as: SpritesError
   alias Ravix.Trace
 
   describe "span/3" do
@@ -40,8 +42,8 @@ defmodule Ravix.TraceSpanTest do
     test "a tagged error marks the span, with the reason" do
       # Contexts return tagged results, so a trace that only reddens on a raise
       # would show every one of this application's real failures as a success.
-      assert Trace.span("fountain.get", %{}, fn -> {:error, :unconfigured} end) ==
-               {:error, :unconfigured}
+      assert Trace.span("fountain.get", %{}, fn -> {:error, {:unconfigured, :fountain}} end) ==
+               {:error, {:unconfigured, :fountain}}
 
       assert_receive {:span, recorded = span(name: "fountain.get", status: recorded_status)}
       assert attributes(recorded)[:"ravix.error"] == true
@@ -101,6 +103,74 @@ defmodule Ravix.TraceSpanTest do
       end
 
       assert_receive {:span, span(name: "previews.start")}
+    end
+  end
+
+  describe "the adapters' one request each" do
+    # Every call an adapter makes goes out through one private request, and
+    # that is where its span is. These two used to step around it: the OAuth
+    # code exchange built its own `Req` call, and the Sprites service
+    # operations had a request beside `exec/4`'s. A sign-in GitHub was slow to
+    # answer, or a preview Sprites refused to start, was then the one request
+    # to that provider a trace could not see.
+
+    test "the OAuth code exchange is a github.request span with the funnel's error" do
+      app = Ravix.GitHubFake.app(client_secret: "shh-client-secret")
+
+      Ravix.GitHubFake.install([
+        {"POST", "/login/oauth/access_token",
+         fn conn -> Req.Test.transport_error(conn, :timeout) end}
+      ])
+
+      assert {:error, %GitHubError{status: nil, message: "Could not reach GitHub: " <> _}} =
+               Ravix.GitHub.exchange_code(app, "c0de", "http://localhost/cb")
+
+      recorded = await_span("github.request")
+      assert attributes(recorded)["http.request.method"] == :post
+      assert attributes(recorded)["url.path"] =~ "/login/oauth/access_token"
+      assert attributes(recorded)[:"ravix.error"] == true
+      refute inspect(recorded) =~ "c0de"
+      refute inspect(recorded) =~ "shh-client-secret"
+
+      Ravix.GitHubFake.install([{"POST", "/login/oauth/access_token", {500, %{message: "down"}}}])
+
+      assert {:error, %GitHubError{status: 500, message: "down"}} =
+               Ravix.GitHub.exchange_code(app, "c0de", "http://localhost/cb")
+
+      assert attributes(await_span("github.request"))[:"ravix.error"] == true
+    end
+
+    test "a service operation is a sprites.service span with the same error an exec gives" do
+      cfg = Ravix.SpritesFake.config()
+
+      Ravix.SpritesFake.install(fn conn, _call -> Plug.Conn.send_resp(conn, 500, "boom") end)
+
+      assert {:error, %SpritesError{status: 500, message: "Sprites said 500. boom"}} =
+               Ravix.Sprites.service_action(cfg, "sprite", "sy-1", :start)
+
+      recorded = await_span("sprites.service")
+      assert attributes(recorded)["ravix.sprite"] == "sprite"
+      assert attributes(recorded)["http.request.method"] == :post
+      assert attributes(recorded)["url.path"] == "/services/sy-1/start?duration=1s"
+      assert attributes(recorded)[:"ravix.error"] == true
+      refute inspect(recorded) =~ cfg.token
+
+      Ravix.SpritesFake.install(fn conn, _call -> Req.Test.transport_error(conn, :timeout) end)
+
+      assert {:error, %SpritesError{status: 502, message: "The machine did not answer in time."}} =
+               Ravix.Sprites.define_service(cfg, "sprite", "sy-1", "/w", "npm start", 3000)
+
+      recorded = await_span("sprites.service")
+      assert attributes(recorded)["http.request.method"] == :put
+      assert attributes(recorded)[:"ravix.error"] == true
+
+      # And a service's logs go through the exec, which keeps its own span.
+      Ravix.SpritesFake.install(fn conn, _call ->
+        Ravix.SpritesFake.exec_response(conn, "line\n")
+      end)
+
+      assert {:ok, "line\n"} = Ravix.Sprites.service_logs(cfg, "sprite", "sy-1")
+      assert attributes(await_span("sprites.exec"))["ravix.exit_code"] == 0
     end
   end
 

@@ -44,14 +44,14 @@ defmodule Ravix.PromptQueue.Server do
   alias Ravix.Fountain
   alias Ravix.Fountain.{Client, Error, Shapes}
   alias Ravix.Hub
-  alias Ravix.Projects.{Project, ProjectMember}
+  alias Ravix.Projects.ProjectMember
   alias Ravix.PromptQueue
   alias Ravix.PromptQueue.Body
   alias Ravix.PromptQueue.Item
   alias Ravix.PromptQueue.Store
   alias Ravix.Repo
   alias Ravix.Trace
-  alias Ravix.Tracks.{Track, TrackMember, Transcript}
+  alias Ravix.Tracks.{TrackMember, Transcript}
   alias Ravix.Tracks.Transcript.Event
 
   import Ecto.Query, only: [from: 2]
@@ -169,13 +169,7 @@ defmodule Ravix.PromptQueue.Server do
       "prompt_queue.deliver",
       %{"ravix.track_id" => row.track_id, "ravix.queue_item_status" => row.status},
       fn ->
-        outcome =
-          cond do
-            not authorized?(row) -> cancel(row)
-            unchecked?(row) -> confirm(client, row)
-            row.status != :queued -> :held
-            true -> deliver_queued(client, row)
-          end
+        outcome = outcome(client, row)
 
         # `:ok`, `:held`, `:waiting`, `:lost_claim`, `:confirmed` or
         # `:not_arrived` -- never a tagged error, so
@@ -189,12 +183,26 @@ defmodule Ravix.PromptQueue.Server do
     )
   end
 
-  defp deliver_queued(client, row) do
-    # ownership: `authorized?/1` below ran first and put the row's sender
-    # through `Access.track_access/2`. These read what to send it to.
-    track = Repo.get!(Track, row.track_id)
-    project = Repo.get!(Project, track.project_id)
+  # Cancelled when the sender may not send any more; otherwise what the row's
+  # status calls for, on the track and project the access check loaded.
+  defp outcome(client, row) do
+    case access(row) do
+      :revoked -> cancel(row)
+      {:ok, track, project} -> deliver(client, row, track, project)
+    end
+  end
 
+  defp deliver(client, row, track, project) do
+    cond do
+      unchecked?(row) -> confirm(client, row, track, project)
+      row.status != :queued -> :held
+      true -> deliver_queued(client, row, track, project)
+    end
+  end
+
+  # `track` and `project` are the rows `access/1` loaded to decide the sender
+  # may send: what to send it to, without a second read of either.
+  defp deliver_queued(client, row, track, project) do
     case readiness(client, track, project) do
       :ready -> claim_and_send(client, row, track, project)
       :busy -> :waiting
@@ -211,13 +219,9 @@ defmodule Ravix.PromptQueue.Server do
 
   # Did the POST we could not hear back from arrive? Fountain's answer, read
   # off the turns by the id we sent. A read that fails leaves the row as it
-  # is for the next sweep.
-  defp confirm(client, row) do
-    # ownership: `authorized?/1` in `deliver/2` put the row's sender through
-    # `Access.track_access/2`. These read where the row was sent.
-    track = Repo.get!(Track, row.track_id)
-    project = Repo.get!(Project, track.project_id)
-
+  # is for the next sweep. `track` and `project` are the rows `access/1`
+  # loaded: where the row was sent, without reading either again.
+  defp confirm(client, row, track, project) do
     case Fountain.turns(client, track.conversation_id) do
       {:ok, turns} ->
         if Enum.any?(turns, &(&1.client_request_id == row.id)) do
@@ -355,7 +359,10 @@ defmodule Ravix.PromptQueue.Server do
 
   defp settle(:revoked, row, track, _project) do
     cancel(row)
-    Ravix.Previews.revoke_agent(track.id, nil)
+    # ownership: `access/1` just re-asked `Access.track_access/2` for the
+    # sender and was refused, and the helper grant minted for their turn must
+    # not outlive their seat. Whoever holds it, hence the explicit nil.
+    Ravix.Previews.Store.revoke_agent(track.id, nil)
   end
 
   # Fountain can reject an idle-looking track because another turn took the
@@ -377,12 +384,15 @@ defmodule Ravix.PromptQueue.Server do
   # can sit here for minutes, and that wait is what somebody describing "the
   # agent is slow" is usually describing.
   #
-  # This runs in a delivery task rather than in a request, so `Accounts.get_user/1`
-  # is a read nobody is waiting on. Skipped entirely when the sender has since
-  # been deleted: a person who is gone is not a person to file an event against.
+  # This runs in a delivery task rather than in a request, so the user read is
+  # one nobody is waiting on. Skipped entirely when the sender has since been
+  # deleted: a person who is gone is not a person to file an event against.
   defp delivered(row, track, project) do
+    # ownership: the row's own `user_id`, and `authorized?/1` put this person
+    # through `Access.track_access/2` for this track before the prompt was
+    # sent. Read again only to say whose event this is.
     Analytics.track(
-      Ravix.Accounts.get_user(row.user_id),
+      Ravix.Accounts.Store.get_user(row.user_id),
       :prompt_delivered,
       track
       |> Analytics.repo(project)
@@ -403,25 +413,42 @@ defmodule Ravix.PromptQueue.Server do
       else: prompt
   end
 
-  # ownership: whether anybody besides the owner can see this track, which
-  # decides only whether the agent is told who is speaking. Not an access
-  # decision; `authorized?/1` is.
+  # ownership: `authorized?/1` in `deliver/2` put the row's sender through
+  # `Access.track_access/2` before this is asked. It reads whether anybody
+  # besides the owner can see the track, which decides only whether the agent
+  # is told who is speaking -- not an access decision; `authorized?/1` is.
   defp shared?(track, project) do
     Repo.exists?(from(m in TrackMember, where: m.track_id == ^track.id)) or
       Repo.exists?(from(m in ProjectMember, where: m.project_id == ^project.id))
   end
 
   # The sender still exists, still has the track, and the track is open with
-  # a conversation to deliver into.
-  defp authorized?(row) do
-    # ownership: this *is* the door. A queued prompt outlives the request that
-    # made it, so who sent it is re-established here rather than trusted from
-    # whenever it was accepted.
-    with %User{} = user <- Ravix.Accounts.get_user(row.user_id),
-         {:ok, %{track: track}} <- Access.track_access(user, row.track_id) do
-      is_nil(track.closed_at) and is_binary(track.conversation_id) and track.conversation_id != ""
+  # a conversation to deliver into. The track and the project that decided it
+  # come back with the answer: `Access.track_access/2` had to load both to
+  # decide, and they are what delivery needs next, so delivery is handed them
+  # rather than reading the same two rows again.
+  defp access(row) do
+    # ownership: no door before this one -- it is the door. A queued prompt
+    # outlives the request that made it, so who sent it is re-established
+    # here rather than trusted from whenever it was accepted: the row's own
+    # `user_id` becomes the person `Access.track_access/2` is asked about.
+    with %User{} = user <- Ravix.Accounts.Store.get_user(row.user_id),
+         {:ok, %{track: track, project: project}} <- Access.track_access(user, row.track_id),
+         true <- open?(track) do
+      {:ok, track, project}
     else
-      _ -> false
+      _ -> :revoked
     end
   end
+
+  defp open?(track),
+    do:
+      is_nil(track.closed_at) and is_binary(track.conversation_id) and track.conversation_id != ""
+
+  # The same question asked again, where only the answer matters: membership
+  # and cancellation may change during the network calls, so it is asked once
+  # more before the claim and once more before the POST. The rows those
+  # steps use are the ones `access/1` loaded; a change to either since then
+  # is a change to who may send, which this is what catches.
+  defp authorized?(row), do: match?({:ok, _track, _project}, access(row))
 end

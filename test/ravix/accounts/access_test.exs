@@ -2,6 +2,8 @@ defmodule Ravix.Accounts.AccessTest do
   use Ravix.DataCase, async: true
 
   alias Ravix.Accounts.Access
+  alias Ravix.QueryCount
+  alias Ravix.Tracks.Store, as: TrackStore
 
   setup do
     owner = insert_user(login: "owner")
@@ -103,6 +105,56 @@ defmodule Ravix.Accounts.AccessTest do
       archive(ctx.project)
       assert {:error, :not_found} = Access.track_access(ctx.owner, ctx.track.id)
       assert {:error, :not_found} = Access.track_access(ctx.guest, ctx.track.id)
+    end
+  end
+
+  describe "access_of/3" do
+    test "owner, whole project, one track, or nothing, widest first", ctx do
+      member = insert_user(login: "member")
+      insert_project_member(ctx.project, member)
+      insert_track_member(ctx.track, ctx.guest)
+      both = insert_user(login: "both")
+      insert_project_member(ctx.project, both)
+      insert_track_member(ctx.track, both)
+
+      assert Access.access_of(ctx.owner.id, ctx.project) == :owner
+      assert Access.access_of(member.id, ctx.project) == :project
+      assert Access.access_of(ctx.guest.id, ctx.project) == :tracks
+      assert Access.access_of(both.id, ctx.project) == :project
+      assert Access.access_of(ctx.stranger.id, ctx.project) == nil
+    end
+
+    test "a closed track no longer counts as a way in", ctx do
+      insert_track_member(ctx.track, ctx.guest)
+      assert Access.access_of(ctx.guest.id, ctx.project) == :tracks
+      TrackStore.close_track(ctx.track.id)
+      assert Access.access_of(ctx.guest.id, ctx.project) == nil
+    end
+
+    test "memberships already in hand answer without a read, and answer the same", ctx do
+      member = insert_user(login: "member")
+      insert_project_member(ctx.project, member)
+      insert_track_member(ctx.track, ctx.guest)
+
+      # Each person's memberships as the rail would hold them: the project
+      # ids they were let into whole, and the open tracks they were named on.
+      people = [
+        {ctx.owner, [projects: MapSet.new(), tracks: MapSet.new()], :owner},
+        {member, [projects: MapSet.new([ctx.project.id]), tracks: MapSet.new()], :project},
+        {ctx.guest, [projects: MapSet.new(), tracks: [ctx.track]], :tracks},
+        {ctx.stranger, [projects: MapSet.new(), tracks: MapSet.new()], nil}
+      ]
+
+      {answers, queries} =
+        QueryCount.count(fn ->
+          for {user, known, _} <- people, do: Access.access_of(user.id, ctx.project, known)
+        end)
+
+      assert queries == []
+      assert answers == Enum.map(people, &elem(&1, 2))
+
+      assert answers ==
+               Enum.map(people, fn {user, _, _} -> Access.access_of(user.id, ctx.project) end)
     end
   end
 

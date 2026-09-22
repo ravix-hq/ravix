@@ -1,5 +1,5 @@
 defmodule RavixWeb.TrackLiveTest do
-  use RavixWeb.ConnCase, async: false
+  use RavixWeb.ConnCase, async: true
   import Phoenix.LiveViewTest
   import Mimic
   alias Ravix.Hub.Event
@@ -118,13 +118,52 @@ defmodule RavixWeb.TrackLiveTest do
     ctx.view |> element("button", "Wake / retry") |> render_click()
     render_async(ctx.view)
     ctx.view |> element("button", "Stop") |> render_click()
+    # Both are Fountain round trips and run off the page.
+    render_async(ctx.view)
     assert has_element?(ctx.view, "#composer-form")
+  end
+
+  test "stopping runs off the page, with the button disabled until Fountain answers", ctx do
+    parent = self()
+
+    stub(Tracks, :interrupt, fn _, _ ->
+      send(parent, {:stopping, self()})
+
+      receive do
+        :finish -> :ok
+      after
+        2_000 -> flunk("the interrupt was never released")
+      end
+    end)
+
+    ctx.view |> element("button", "Stop") |> render_click()
+
+    assert_receive {:stopping, stopping}
+    assert has_element?(ctx.view, "button[phx-click=interrupt][disabled]")
+    # Still a page: a dialog opens while the interrupt is out.
+    assert render_click(ctx.view, "dialog", %{name: "rename"}) =~ "rename-form"
+
+    send(stopping, :finish)
+    render_async(ctx.view)
+    refute has_element?(ctx.view, "button[phx-click=interrupt][disabled]")
+  end
+
+  @tag capture_log: true
+  test "a stop that crashes says so, and not that something failed to load", ctx do
+    stub(Tracks, :interrupt, fn _, _ -> raise "Fountain fell over" end)
+    ctx.view |> element("button", "Stop") |> render_click()
+
+    render_async(ctx.view)
+    html = toasted(ctx)
+    assert html =~ "The operation could not finish"
+    refute html =~ "Could not finish loading"
+    refute has_element?(ctx.view, "button[phx-click=interrupt][disabled]")
   end
 
   test "failed load can be retried without leaving the track", ctx do
     expect(Tracks, :get, fn _, _, _ -> {:error, {:unavailable, "Offline now"}} end)
     render_click(ctx.view, "retry-load")
-    assert render_async(ctx.view) =~ "Offline now"
+    assert toasted(ctx) =~ "Offline now"
     render_click(ctx.view, "retry-load")
     assert render_async(ctx.view) =~ "Start here"
   end
@@ -133,7 +172,7 @@ defmodule RavixWeb.TrackLiveTest do
   test "a crashed panel reports a recoverable error", ctx do
     expect(Tracks, :files, fn _, _, _ -> raise "remote died" end)
     render_click(ctx.view, "refresh-panel")
-    assert render_async(ctx.view) =~ "Could not finish loading"
+    assert toasted(ctx) =~ "Could not finish loading"
     render_click(ctx.view, "refresh-panel")
     assert render_async(ctx.view) =~ "src"
   end
@@ -190,8 +229,38 @@ defmodule RavixWeb.TrackLiveTest do
   test "terminal errors restore command entry and remain visible", ctx do
     expect(Terminal, :exec, fn _, _, _ -> {:error, {:unavailable, "Machine asleep"}} end)
     ctx.view |> element("#track-terminal") |> render_hook("exec", %{command: "pwd"})
-    assert render_async(ctx.view) =~ "Machine asleep"
+    assert toasted(ctx) =~ "Machine asleep"
     refute has_element?(ctx.view, "input[data-terminal-input][disabled]")
+  end
+
+  test "the Run tab explains itself and the Terminal tab does not", ctx do
+    hint = "Run a command in this track’s worktree"
+    refute render(ctx.view) =~ hint
+
+    ctx.view |> element("button[phx-click=dock][phx-value-name=run]") |> render_click()
+    assert has_element?(ctx.view, "#track-terminal p.hint", hint)
+
+    ctx.view |> element("button[phx-click=dock][phx-value-name=terminal]") |> render_click()
+    refute render(ctx.view) =~ hint
+  end
+
+  test "a session that went without notice cannot run a command through the dock", ctx do
+    # The dock is a `live_component`, and the page's session hooks never see
+    # a component's events; see `RavixWeb.Live.Hooks`. The redirect answers
+    # the event itself, so it is the child's to assert, not the root's.
+    reject(&Terminal.exec/3)
+    {token, session} = insert_session(ctx.user)
+    conn = Plug.Test.init_test_session(build_conn(), session_token: token)
+    {:ok, parent, _} = live(conn, "/p/#{ctx.project.id}/t/#{ctx.track.id}")
+    view = find_live_child(parent, "track-host")
+    settle(view)
+
+    Repo.delete!(session)
+
+    assert {:error, {:redirect, %{to: "/login"}}} =
+             view |> element("#track-terminal") |> render_hook("exec", %{command: "pwd"})
+
+    assert_redirect(view, "/login")
   end
 
   test "the dock keeps its own state and its refusals still reach the page", ctx do
@@ -201,8 +270,10 @@ defmodule RavixWeb.TrackLiveTest do
     # person clicks, nothing happens, and nothing says why.
     expect(Terminal, :exec, fn _, _, _ -> {:error, {:unavailable, "Machine asleep"}} end)
     ctx.view |> element("#track-terminal") |> render_hook("exec", %{command: "pwd"})
-    render_async(ctx.view)
-    assert render(ctx.view) =~ "Machine asleep"
+    # The sentence goes up twice: the dock hands it to the track page, which
+    # has no toasts of its own and hands it on to the workspace. One stack.
+    assert toasted(ctx) =~ "Machine asleep"
+    refute render(ctx.view) =~ "Machine asleep"
 
     # And the scrollback is the component's, not the page's: the dock
     # re-renders around it while the transcript beside it does not.
@@ -440,7 +511,38 @@ defmodule RavixWeb.TrackLiveTest do
 
     render_click(ctx.view, "dialog", %{name: "pull"})
     ctx.view |> form("#pull-form", title: "Fix", body: "Details") |> render_submit()
+    # A GitHub round trip, off the page.
+    render_async(ctx.view)
     assert has_element?(ctx.view, "a[href='https://github.test/pull/1']")
+    refute has_element?(ctx.view, "#pull-dialog")
+  end
+
+  test "opening a pull request disables its button until GitHub answers", ctx do
+    parent = self()
+
+    stub(Tracks, :open_pull, fn _, _, _ ->
+      send(parent, {:opening, self()})
+
+      receive do
+        :finish -> {:error, {:unavailable, "GitHub is not answering."}}
+      after
+        2_000 -> flunk("the pull request was never released")
+      end
+    end)
+
+    render_click(ctx.view, "dialog", %{name: "pull"})
+    ctx.view |> form("#pull-form", title: "Fix") |> render_submit()
+
+    assert_receive {:opening, opening}
+    assert has_element?(ctx.view, "#pull-form button[disabled]")
+
+    send(opening, :finish)
+    # A refusal lands in front of the form that caused it, ready to retry;
+    # the sentence itself is the workspace's toast, not the track's.
+    render_async(ctx.view)
+    assert toasted(ctx) =~ "GitHub is not answering."
+    assert has_element?(ctx.view, "#pull-dialog")
+    refute has_element?(ctx.view, "#pull-form button[disabled]")
   end
 
   test "closing a track passes the explicit force flag and returns to its project", ctx do
@@ -472,7 +574,7 @@ defmodule RavixWeb.TrackLiveTest do
     render(ctx.view)
 
     counts =
-      for name <- [:people, :tracks, :turn, :queue] do
+      for name <- [:people, :tracks, :turn, :queue, :read] do
         hub_queries(ctx, Event.new(name, ctx.project.id, track_id: sibling.id))
       end
 
@@ -558,6 +660,15 @@ defmodule RavixWeb.TrackLiveTest do
     render_async(view)
   end
 
+  # The track page's flash, which is the workspace's: the nested page has no
+  # toasts of its own and hands every sentence up to the page that draws the
+  # one stack (see `RavixWeb.Live.Result.flash/3`). Settling the child first
+  # is what puts the message in the parent's mailbox before this asks it.
+  defp toasted(ctx) do
+    render_async(ctx.view)
+    render(ctx.parent)
+  end
+
   # Close the window the page collects transcript events in, and hand the view
   # back to be rendered. The page draws on a `:flush_transcript` it sends
   # itself a tenth of a second after the first event of a burst (see
@@ -568,6 +679,21 @@ defmodule RavixWeb.TrackLiveTest do
   defp drawn(view) do
     send(view.pid, :flush_transcript)
     view
+  end
+
+  test "a read mark on this track costs the guards and nothing more", ctx do
+    render(ctx.view)
+    sibling = insert_track(project: ctx.project, slug: "elsewhere")
+
+    # The guards' own cost, measured on an event this page provably drops.
+    guards = hub_queries(ctx, Event.new(:queue, ctx.project.id, track_id: sibling.id))
+
+    # This page is where a read mark comes from --- on every load, stage and
+    # send --- and the dot it clears is the rail's, not this page's. It used
+    # to arrive as `:tracks` and re-read the detail, two Fountain round
+    # trips, in every other page open on the track each time anybody looked.
+    read = Event.new(:read, ctx.project.id, track_id: ctx.track.id, user_id: ctx.user.id)
+    assert hub_queries(ctx, read) == guards
   end
 
   defp hub_queries(ctx, event) do
@@ -645,7 +771,7 @@ defmodule RavixWeb.TrackLiveTest do
     assert render_async(drawn(ctx.view)) =~ "Hello"
     expect(Tracks, :events, fn _, _ -> {:error, {:unavailable, "Transcript offline"}} end)
     send(ctx.view.pid, :refresh)
-    assert render_async(ctx.view) =~ "Transcript offline"
+    assert toasted(ctx) =~ "Transcript offline"
     assert render(ctx.view) =~ "Hello"
   end
 
@@ -836,6 +962,48 @@ defmodule RavixWeb.TrackLiveTest do
     assert has_element?(ctx.view, ".workspace-plan li", "Fix <the> bug")
   end
 
+  test "shared transcript messages name their senders in snapshots and live updates", ctx do
+    page =
+      Transcript.page(
+        [
+          opened(1, "mine", PromptQueue.with_author(ctx.user.login, "My message")),
+          opened(
+            2,
+            "theirs",
+            "[ravix preview tools for this turn]\nhidden tools\n[/ravix preview tools]\n\n" <>
+              PromptQueue.with_author("teammate", "Their message\nSecond line")
+          ),
+          opened(3, "legacy", "A message without author metadata"),
+          opened(4, "system", "[ravix] Open this track.\nInternal instructions")
+        ],
+        "claude"
+      )
+
+    stub(Tracks, :events, fn _, _ -> {:ok, page} end)
+    render_click(ctx.view, "retry-load")
+    render_async(ctx.view)
+
+    assert has_element?(ctx.view, "#turns-mine .speaker", "@#{ctx.user.login}")
+    assert has_element?(ctx.view, "#turns-theirs .speaker", "@teammate")
+    assert has_element?(ctx.view, "#turns-theirs .workspace-prompt", "Their message Second line")
+    assert has_element?(ctx.view, "#turns-legacy .speaker", "User")
+    assert has_element?(ctx.view, "#turns-system .speaker", "Ravix")
+    assert has_element?(ctx.view, "#turns-system .workspace-prompt", "Open this track.")
+    refute render(ctx.view) =~ "hidden tools"
+    refute render(ctx.view) =~ "[from @"
+
+    send(
+      ctx.view.pid,
+      {:transcript, ctx.track.id,
+       opened(5, "live", PromptQueue.with_author("another-person", "<script>alert(1)</script>"))}
+    )
+
+    drawn(ctx.view)
+    assert has_element?(ctx.view, "#turns-live .speaker", "@another-person")
+    assert has_element?(ctx.view, "#turns-live .workspace-prompt", "<script>alert(1)</script>")
+    refute has_element?(ctx.view, "#transcript-turns script")
+  end
+
   test "transcript snapshots render prompts, thinking, tools, and raw output safely", ctx do
     update = fn data ->
       Jason.encode!(%{jsonrpc: "2.0", method: "session/update", params: %{update: data}})
@@ -924,7 +1092,65 @@ defmodule RavixWeb.TrackLiveTest do
     # read nobody asked for. That message belongs to the reads somebody is
     # waiting on.
     assert render(ctx.view) =~ ctx.track.title
-    refute render(ctx.view) =~ "Could not finish loading"
+    refute render(ctx.parent) =~ "Could not finish loading"
+  end
+
+  test "the run tab says what it is for, and the atom is the one the dock keeps", ctx do
+    # `@dock` is an atom from the moment the browser's word crosses `@tabs`;
+    # this hint compared it with the string and so was never drawn.
+    refute render(ctx.view) =~ "Run a command in this track"
+    ctx.view |> element("button[phx-click=dock][phx-value-name=run]") |> render_click()
+    assert render(ctx.view) =~ "Run a command in this track"
+    ctx.view |> element("button[phx-click=dock][phx-value-name=terminal]") |> render_click()
+    refute render(ctx.view) =~ "Run a command in this track"
+  end
+
+  test "the live region says when a turn ends, and only then", ctx do
+    # Tokens streaming in say nothing: a reader who is not looking --- a
+    # screen reader, or somebody scrolled up --- would be interrupted on
+    # every chunk. The one moment worth a word is a turn ending.
+    region = "#transcript-status[role=status][aria-live=polite]"
+    assert has_element?(ctx.view, region)
+    refute has_element?(ctx.view, region, "Agent replied")
+
+    send(ctx.view.pid, {:transcript, ctx.track.id, opened(1, "turn-one", "Say hello")})
+
+    send(
+      ctx.view.pid,
+      {:transcript, ctx.track.id,
+       %{
+         "id" => 2,
+         "turn_id" => "turn-one",
+         "kind" => "output",
+         "stream" => "acp",
+         "data" => "Hi"
+       }}
+    )
+
+    render(drawn(ctx.view))
+    refute has_element?(ctx.view, region, "Agent replied")
+
+    settled = %{"id" => 3, "turn_id" => "turn-one", "kind" => "stage", "stage" => "turn"}
+    send(ctx.view.pid, {:transcript, ctx.track.id, Map.put(settled, "state", "completed")})
+    render_async(drawn(ctx.view))
+    assert has_element?(ctx.view, region, "Agent replied")
+
+    # The next turn starting clears it, so the next ending is a change the
+    # region announces rather than the same sentence left standing.
+    send(ctx.view.pid, {:transcript, ctx.track.id, opened(4, "turn-two", "Again")})
+    render(drawn(ctx.view))
+    refute has_element?(ctx.view, region, "Agent replied")
+
+    failed = %{settled | "id" => 5, "turn_id" => "turn-two"}
+    send(ctx.view.pid, {:transcript, ctx.track.id, Map.put(failed, "state", "failed")})
+    render_async(drawn(ctx.view))
+    assert has_element?(ctx.view, region, "Turn failed")
+
+    # The affordance for a reader who has scrolled up is in the scroller the
+    # hook is mounted on, where the stylesheet shows it under `.unpinned`.
+    assert has_element?(ctx.view, "#transcript-scroll > button.jump-latest[data-jump-latest]")
+    assert has_element?(ctx.view, "[data-composer-note][role=status]")
+    refute has_element?(ctx.view, ".toasts")
   end
 
   defp stub_detail(ctx) do

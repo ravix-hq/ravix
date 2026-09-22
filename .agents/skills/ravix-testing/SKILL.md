@@ -35,8 +35,9 @@ the test and inherited by supervised async work via caller tracking. Keep
 `verify_on_exit!`; avoid global stubs. Test support must not inflate coverage.
 
 After a regression is demonstrated, fix the cause and verify the focused test.
-Finish with `mix precommit` and the container smoke test if release/configuration
-changed. Raise sustainable coverage floors, retaining failure-path assertions.
+Finish with `mix precommit`, and with `mix precommit.release` and the container
+smoke test if release/configuration changed. Raise sustainable coverage floors,
+retaining failure-path assertions.
 Document real-browser checks separately from DOM and LiveView tests; no single
 coverage percentage proves integration or visual parity.
 

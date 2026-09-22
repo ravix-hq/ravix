@@ -32,10 +32,10 @@ defmodule Ravix.Projects do
   Every route-shaped function takes the `%Ravix.Accounts.User{}` first and
   answers `{:ok, value} | {:error, reason}`, where `reason` is one of
   `:not_found`, `{:not_found, code, message}`, `{:unprocessable, code, message}`,
-  `{:conflict, code, message}`, `{:unavailable, message}` (a missing
-  integration), `{:reauthenticate, message}` (the person's GitHub token is
-  gone), or a `%Ravix.Fountain.Error{}` / `%Ravix.GitHub.Error{}` passed
-  through from the client that produced it.
+  `{:conflict, code, message}`, `{:unconfigured, provider}` (a missing
+  integration, as `Ravix.Providers` names it), `{:reauthenticate, message}`
+  (the person's GitHub token is gone), or a `%Ravix.Fountain.Error{}` /
+  `%Ravix.GitHub.Error{}` passed through from the client that produced it.
   """
 
   alias Ravix.Accounts.User
@@ -47,8 +47,8 @@ defmodule Ravix.Projects do
   alias Ravix.Projects.Machine.Provisioned
   alias Ravix.Spec
 
-  @typedoc "How the caller reaches a project. See `access_of/2`."
-  @type access :: :owner | :project | :tracks
+  @typedoc "How the caller reaches a project. See `Ravix.Accounts.Access.access_of/3`."
+  @type access :: Ravix.Accounts.Access.access()
 
   @typedoc "Whether a project has a machine. See `Ravix.Projects.MachineState`."
   @type machine :: MachineState.t()
@@ -58,7 +58,7 @@ defmodule Ravix.Projects do
           | {:not_found, String.t(), String.t()}
           | {:unprocessable, String.t(), String.t()}
           | {:conflict, String.t(), String.t()}
-          | {:unavailable, String.t()}
+          | {:unconfigured, :fountain | :github}
           | {:reauthenticate, String.t()}
           | Ravix.Fountain.Error.t()
           | Ravix.GitHub.Error.t()
@@ -87,21 +87,35 @@ defmodule Ravix.Projects do
   controls the rail draws; the functions behind them refuse the rest
   regardless. Each project carries its machine state, one memoised Fountain
   list per project through `Ravix.MachineCache.conversations/3`.
+
+  Five reads however long the rail is. The memberships are read once each,
+  the projects behind the track memberships in one query, the owners of
+  every guest project in another, and how the caller reaches each project
+  is answered from the memberships already in hand rather than asked of the
+  database again per row. It was one project read per shared track and
+  three more per guest project before, which for a person helping across a
+  team's projects was the largest thing the page did.
   """
   @spec list(User.t()) :: [View.t()]
   def list(%User{} = user) do
     mine = Store.projects_of(user.id)
-    seen = MapSet.new(mine, & &1.id)
 
     # ownership: these two *are* how this caller's access is established --
     # `list/1` is "every project this person may see", and a membership row is
-    # what makes one of them visible. There is no earlier door to go through.
-    guests =
-      People.Store.member_projects(user.id) ++
-        Enum.map(People.Store.member_tracks(user.id), &Store.get_project(&1.project_id))
+    # what makes one of them visible. There is no door earlier than this one.
+    whole = People.Store.member_projects(user.id)
+    tracks = People.Store.member_tracks(user.id)
+
+    # The projects behind the track memberships, in the order the tracks were
+    # cut: the order the rail has always drawn them in, kept through the map.
+    track_project_ids = tracks |> Enum.map(& &1.project_id) |> Enum.uniq()
+    by_id = Map.new(Store.get_projects(track_project_ids), &{&1.id, &1})
+    partial = Enum.map(track_project_ids, &Map.get(by_id, &1))
+
+    seen = MapSet.new(mine, & &1.id)
 
     {guest, _seen} =
-      Enum.reduce(guests, {[], seen}, fn
+      Enum.reduce(whole ++ partial, {[], seen}, fn
         %Project{archived_at: nil} = project, {acc, seen} ->
           if MapSet.member?(seen, project.id),
             do: {acc, seen},
@@ -111,10 +125,13 @@ defmodule Ravix.Projects do
           state
       end)
 
-    for project <- mine ++ Enum.reverse(guest) do
-      owner = owner_of(project, user)
-      access = access_of(user.id, project) || :tracks
-      present(project, access, Machine.state(project), owner)
+    guest = Enum.reverse(guest)
+    owners = owners_of(guest, user)
+    known = [projects: MapSet.new(whole, & &1.id), tracks: MapSet.new(tracks, & &1.project_id)]
+
+    for project <- mine ++ guest do
+      access = access_of(user.id, project, known)
+      present(project, access, Machine.state(project), Map.get(owners, project.user_id, user))
     end
   end
 
@@ -140,27 +157,13 @@ defmodule Ravix.Projects do
   @doc """
   How the caller reaches a project, or nil when they do not.
 
-  Three sources, widest first, and the order is what makes the answer
-  stable: somebody who owns a project *and* somehow holds rows in it is
-  still its owner, and somebody in the whole project who is also named on
-  one track is still in the whole project. The narrowest answer is the one
-  that has to be checked last or it wins over facts that grant more.
-
-  One function rather than the same three-line union written out in `list`,
-  `get` and the stream's gate, which is where it was drifting.
+  `Ravix.Accounts.Access.access_of/3`, which is where the answer lives now
+  that `Ravix.Tracks` asks the same question of the same project; this is
+  the name `list/1` and `get/2` already knew it by.
   """
-  @spec access_of(String.t(), Project.t()) :: access() | nil
-  def access_of(user_id, %Project{} = project) do
-    cond do
-      project.user_id == user_id -> :owner
-      Ravix.Accounts.Access.project_member?(project.id, user_id) -> :project
-      # ownership: same as `list/1` -- this function answers "what access does
-      # this person have", so the membership rows are the answer, not a
-      # shortcut past one.
-      Enum.any?(People.Store.member_tracks(user_id), &(&1.project_id == project.id)) -> :tracks
-      true -> nil
-    end
-  end
+  @spec access_of(String.t(), Project.t(), Ravix.Accounts.Access.known()) :: access() | nil
+  def access_of(user_id, %Project{} = project, known \\ []),
+    do: Ravix.Accounts.Access.access_of(user_id, project, known)
 
   # ── the machine ───────────────────────────────────────────────────────
 
@@ -378,7 +381,6 @@ defmodule Ravix.Projects do
             project.default_branch || "main"
           )
       end
-      |> github_result()
     end
   end
 
@@ -386,8 +388,11 @@ defmodule Ravix.Projects do
 
   @doc "The `Project` map for a row, looking up the owner's login."
   @spec present(Project.t(), access(), machine()) :: View.t()
+  # ownership: the project's own `user_id` column, turned into the owner's
+  # login for the view. The caller holds `project` because it reached it
+  # through `access_of/2` or `Access.project_of/2`; nothing is decided here.
   def present(%Project{} = project, access, machine),
-    do: present(project, access, machine, Ravix.Accounts.get_user(project.user_id))
+    do: present(project, access, machine, Ravix.Accounts.Store.get_user(project.user_id))
 
   @doc """
   The `Project` map for a row. `role` is the owner/not-owner question almost
@@ -414,54 +419,39 @@ defmodule Ravix.Projects do
     }
   end
 
-  # ── the integrations, or a refusal that says what is missing ──────────
-
-  @doc """
-  The Fountain client, or a refusal that says what is missing.
-
-  A deployment with no `FOUNTAIN_API_KEY` can still sign people in and show
-  them their repositories, which is enough of the app working to be
-  confusing. So the failure is named rather than generic: this is the one
-  variable without which ravix has no machines at all.
-  """
-  @spec fountain() :: {:ok, Client.t()} | {:error, {:unavailable, String.t()}}
-  def fountain do
-    client = Ravix.Fountain.client()
-
-    if Client.configured?(client),
-      do: {:ok, client},
-      else: {:error, {:unavailable, no_fountain()}}
-  end
-
-  @doc "The GitHub App, or a refusal that says it is not configured."
-  @spec github() :: {:ok, Ravix.Config.GitHubApp.t()} | {:error, {:unavailable, String.t()}}
-  def github do
-    case Ravix.Config.github() do
-      nil -> {:error, {:unavailable, no_github()}}
-      app -> {:ok, app}
-    end
-  end
-
-  @doc "A Fountain result with `:unconfigured` named as the missing integration it is."
-  @spec fountain_result(term()) :: term()
-  def fountain_result({:error, :unconfigured}), do: {:error, {:unavailable, no_fountain()}}
-  def fountain_result(other), do: other
-
-  @doc "A GitHub result with `:unconfigured` named as the missing integration it is."
-  @spec github_result(term()) :: term()
-  def github_result({:error, :unconfigured}), do: {:error, {:unavailable, no_github()}}
-  def github_result(other), do: other
-
   # ── plumbing ──────────────────────────────────────────────────────────
 
-  defp no_fountain,
-    do: "This Ravix deployment has no Fountain account configured, so it cannot build machines."
+  # The two integrations, by the names the functions above use. A
+  # deployment with no `FOUNTAIN_API_KEY` can still sign people in and show
+  # them their repositories, which is enough of the app working to be
+  # confusing, so the refusal names what is missing -- but it is
+  # `Ravix.Providers`' refusal, passed up as it is, and the sentence for it
+  # is `RavixWeb.Error`'s. `Ravix.Projects.Machine` and `.Settings` take the
+  # client as an argument and reach `Ravix.Providers` themselves.
+  defp fountain, do: Ravix.Providers.fountain()
+  defp github, do: Ravix.Providers.github()
 
-  defp no_github,
-    do: "This Ravix deployment has no GitHub App configured, so it cannot see repositories."
-
+  # ownership: the project's own `user_id`, read to show a member who owns
+  # what they are looking at. `list/1` and `get/2` established the caller's
+  # seat on the project with `Access.access_of/3` before asking.
   defp owner_of(%Project{user_id: user_id}, %User{id: user_id} = user), do: user
-  defp owner_of(%Project{user_id: user_id}, user), do: Ravix.Accounts.get_user(user_id) || user
+
+  defp owner_of(%Project{user_id: user_id}, user),
+    do: Ravix.Accounts.Store.get_user(user_id) || user
+
+  # `owner_of/2` for the whole rail: one read for every owner the guest
+  # projects have between them, keyed by id. The caller is not read again
+  # for their own projects, and an owner who cannot be found falls back to
+  # the caller at the lookup, as `owner_of/2` does.
+  defp owners_of([], _user), do: %{}
+
+  defp owners_of(projects, %User{} = user) do
+    # ownership: the same door as `owner_of/2` -- these are the guest
+    # projects `list/1` puts through `Access.access_of/3`, and their own
+    # `user_id` columns are what is read.
+    ids = projects |> Enum.map(& &1.user_id) |> Enum.uniq() |> Enum.reject(&(&1 == user.id))
+    Map.new(Ravix.Accounts.Store.get_users(ids), &{&1.id, &1})
+  end
 
   # The user's GitHub OAuth token, decrypted. Used for anything read as *them*.
   defp user_token(user) do
@@ -479,7 +469,7 @@ defmodule Ravix.Projects do
       "Your GitHub sign-in has expired or was revoked. Sign in again to load your repositories."}}
   end
 
-  defp reauth_on_401(result), do: github_result(result)
+  defp reauth_on_401(result), do: result
 
   defp require_repo(%Project{repo_full_name: repo, installation_id: id} = project, _message)
        when is_binary(repo) and repo != "" and is_integer(id),
@@ -521,8 +511,7 @@ defmodule Ravix.Projects do
   defp resolve_repo(user, input) do
     with {:ok, app} <- github(),
          {:ok, token} <- user_token(user),
-         {:ok, repos} <-
-           github_result(Ravix.GitHub.repositories(app, token, input.installation_id)),
+         {:ok, repos} <- Ravix.GitHub.repositories(app, token, input.installation_id),
          {:ok, repo} <- find_repo(repos, input.repo) do
       # GitHub's own spelling of the name, not the caller's: the match is
       # case-insensitive, and the mount path and clone URL come from this.

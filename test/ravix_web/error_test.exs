@@ -31,8 +31,40 @@ defmodule RavixWeb.ErrorTest do
     assert Error.from({:secret_failure, "password"}) == %Error{}
     assert Error.from(%Ravix.Sprites.Error{status: 0, message: "offline"}).status == 502
     assert Error.from(%Ravix.Sprites.Error{status: 404, message: "missing"}).status == 404
-    assert Error.from(:unconfigured).status == 503
     assert Error.from(%Ravix.GitHub.Error{status: 403, message: "denied"}).status >= 400
+  end
+
+  describe "a missing integration" do
+    test "is one code and one sentence per provider, whichever context handed it over" do
+      # `Ravix.Providers` and the three adapters all answer this one shape,
+      # and this is the only place the sentence for it is written. It used to
+      # be four shapes from five modules, and the same missing key was
+      # `unavailable` from one page and `no_fountain` from the next.
+      for {provider, code, words} <- [
+            {:fountain, "no_fountain", "no Fountain account"},
+            {:github, "no_github", "no GitHub App"},
+            {:sprites, "no_sprites", "no Sprites token"}
+          ] do
+        error = Error.from({:unconfigured, provider})
+        assert error.status == 503
+        assert error.code == code
+        assert error.message =~ words
+        assert error.message =~ "This Ravix deployment"
+      end
+    end
+
+    test "a provider nobody declared is not guessed at" do
+      # The atom is bounded at the boundary that produces it, and this clause
+      # keeps it so: an unknown provider is the logged 500, not `no_whatever`.
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          assert %Error{status: 500, code: "internal"} = Error.from({:unconfigured, :whatever})
+          assert %Error{status: 500, code: "internal"} = Error.from(:unconfigured)
+        end)
+
+      assert log =~ "{:unconfigured, _}"
+      assert log =~ ":unconfigured"
+    end
   end
 
   test "changeset errors interpolate validation bounds without exposing submitted values" do
@@ -89,13 +121,15 @@ defmodule RavixWeb.ErrorTest do
         :session_ended,
         :reauthenticate,
         :no_token,
-        :unconfigured,
         :preview_server_down,
+        {:unconfigured, :fountain},
+        {:unconfigured, :github},
+        {:unconfigured, :sprites},
         {:forbidden, "Only the owner can do that."},
         {:conflict, "closed_track", "That track is closed."},
         {:unprocessable, "bad_config", "That configuration is not valid."},
         {:unavailable, "The machine is not up."},
-        {:unavailable, "no_github", "No GitHub App is configured."},
+        {:unavailable, "no_exec", "No Sprites token."},
         {:preview_agent_auth, "no"},
         {:preview_unavailable, "no"}
       ]
@@ -108,6 +142,20 @@ defmodule RavixWeb.ErrorTest do
 
         refute error.code == "internal", "#{inspect(reason)} falls through to the generic 500"
       end
+    end
+
+    test "a task that exited has a sentence, and it says nothing about why" do
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          error = Error.from({:async_exit, {%RuntimeError{message: "token hunter2"}, []}})
+          assert error.code == "async_exit"
+          assert error.message == "The operation could not finish. Refresh and try again."
+          refute error.message =~ "hunter2"
+        end)
+
+      # The task's own crash report already said what happened; this is not
+      # a shape nobody planned for.
+      refute log =~ "no RavixWeb.Error clause"
     end
 
     test "a shape nobody wrote a sentence for is still hidden, but no longer silent" do
@@ -167,38 +215,46 @@ defmodule RavixWeb.ErrorTest do
       ],
       Ravix.Tracks => [
         :not_found,
-        :unconfigured,
         {:forbidden, "Only the owner can do that."},
         {:conflict, "closed_track", "That track is closed."},
         {:unprocessable, "bad_origin", "That origin is not one of the four."},
-        {:unavailable, "no_fountain", "No Fountain account is configured."},
+        {:unconfigured, :fountain},
+        {:unconfigured, :github},
         %Ravix.Fountain.Error{status: 502, code: "bad_gateway", message: "no", kind: :http},
         %Ravix.GitHub.Error{status: 403, message: "denied"}
+      ],
+      Ravix.People => [
+        :not_found,
+        {:forbidden, "Only the owner can do that."},
+        {:conflict, "already_member", "Already in."},
+        {:unprocessable, "no_such_user", "There is no GitHub user called @x."},
+        {:unconfigured, :github},
+        %Ravix.GitHub.Error{status: 401, message: "denied"}
       ]
     }
 
     test "every refusal each context declares has a sentence, and none is the generic 500" do
-      log =
-        ExUnit.CaptureLog.capture_log(fn ->
-          for {context, reasons} <- @vocabularies, reason <- reasons do
-            error = Error.from(reason)
+      # The catch-all is the only clause that answers `internal`, so the code
+      # is the whole of the check. It used to also refute its warning in a
+      # log capture, but a capture sees every process, and the suites that
+      # deliberately reach the catch-all with shapes of their own run
+      # alongside this one.
+      for {context, reasons} <- @vocabularies, reason <- reasons do
+        error = Error.from(reason)
 
-            refute error.code == "internal",
-                   "#{inspect(context)} can return #{inspect(reason)} and it falls through to 500"
+        refute error.code == "internal",
+               "#{inspect(context)} can return #{inspect(reason)} and it falls through to 500"
 
-            assert error.message != "",
-                   "#{inspect(context)} can return #{inspect(reason)} with no sentence"
-          end
-        end)
-
-      # And nothing above reached the catch-all, which logs when it fires.
-      refute log =~ "no RavixWeb.Error clause"
+        assert error.message != "",
+               "#{inspect(context)} can return #{inspect(reason)} with no sentence"
+      end
     end
 
     test "the escape hatches are gone and stay gone" do
       # The point of the exercise: a context cannot quietly widen its refusals
       # again without this failing.
-      for path <- ~w(lib/ravix/previews.ex lib/ravix/terminal.ex lib/ravix/tracks.ex) do
+      for path <-
+            ~w(lib/ravix/previews.ex lib/ravix/terminal.ex lib/ravix/tracks.ex lib/ravix/people.ex) do
         source = File.read!(path)
         [_, reason_type] = Regex.run(~r/@type reason ::(.*?)\n\n/s, source)
 

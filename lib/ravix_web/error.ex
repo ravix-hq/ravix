@@ -35,12 +35,17 @@ defmodule RavixWeb.Error do
     * `{:forbidden, message}` is 403 `owner_only`.
     * `{:conflict, code, message}` is 409; `{:unprocessable, code, message}` is 422.
     * `{:unavailable, message}` is 503 `unavailable`; `{:unavailable, code, message}`
-      keeps its code (`no_github`, `no_fountain`).
-    * `%Ravix.Fountain.Error{}` and `:unconfigured` go through
-      `Ravix.Fountain.Error.as_http/2`; `%Ravix.GitHub.Error{}` through
-      `Ravix.GitHub.Error.describe/2`; `%Ravix.Sprites.Error{}` keeps its status.
+      keeps its code (`no_exec`, `preview_replaced`).
+    * `{:unconfigured, provider}` is 503 `no_fountain`, `no_github` or
+      `no_sprites`, with the one sentence for that provider being missing
+      from this deployment. `Ravix.Providers` is where the shape comes from.
+    * `%Ravix.Fountain.Error{}` goes through `Ravix.Fountain.Error.as_http/2`;
+      `%Ravix.GitHub.Error{}` through `Ravix.GitHub.Error.describe/2`;
+      `%Ravix.Sprites.Error{}` keeps its status.
     * `%Ecto.Changeset{}` is 422 `invalid` with the first field error.
     * `:preview_server_down` is 503 `preview_unavailable`.
+    * `{:async_exit, reason}` is 500 `async_exit`: a page's task exited
+      before it could answer (`RavixWeb.Live.Result.exit/2`).
     * anything else is a logged 500.
   """
   @spec from(term(), [option()]) :: t()
@@ -65,6 +70,17 @@ defmodule RavixWeb.Error do
       status: 503,
       code: "preview_unavailable",
       message: "The preview service is not running right now. Try again in a moment."
+    }
+
+  # Work a page started off its own process --- a provider call under
+  # `start_async/3` --- exited before it answered: it raised, was killed, or
+  # the instance it ran on left. The sentence is the same whichever it was,
+  # because the person can do the same one thing about each.
+  def from({:async_exit, _reason}, _opts),
+    do: %__MODULE__{
+      status: 500,
+      code: "async_exit",
+      message: "The operation could not finish. Refresh and try again."
     }
 
   def from({:preview_agent_auth, message}, _opts),
@@ -101,8 +117,13 @@ defmodule RavixWeb.Error do
   def from({:unavailable, code, message}, _opts),
     do: %__MODULE__{status: 503, code: to_string(code), message: message}
 
+  # One clause and one sentence per provider, and nowhere else: this used to
+  # be said in four shapes by five modules, and which code a page got for the
+  # same missing key depended on which of them it had asked.
+  def from({:unconfigured, provider}, _opts) when provider in [:fountain, :github, :sprites],
+    do: %__MODULE__{status: 503, code: "no_#{provider}", message: unconfigured(provider)}
+
   def from(%FountainError{} = error, opts), do: fountain(error, opts)
-  def from(:unconfigured, opts), do: fountain(:unconfigured, opts)
 
   def from(%GitHubError{} = error, opts) do
     {status, code, message} = GitHubError.describe(error, what_for(opts))
@@ -146,6 +167,15 @@ defmodule RavixWeb.Error do
     %{status: status, code: code, message: message} = FountainError.as_http(error, what_for(opts))
     %__MODULE__{status: status, code: code, message: message}
   end
+
+  defp unconfigured(:fountain),
+    do: "This Ravix deployment has no Fountain account configured, so it cannot build machines."
+
+  defp unconfigured(:github),
+    do: "This Ravix deployment has no GitHub App configured, so it cannot see repositories."
+
+  defp unconfigured(:sprites),
+    do: "This Ravix deployment has no Sprites token, so it cannot reach the machine directly."
 
   # The shape, never the payload. What a missing clause needs is the tag and
   # the arity; the values beside it are whatever the refusal was carrying,

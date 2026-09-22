@@ -10,7 +10,7 @@ defmodule Ravix.Previews.AgentTest do
   import Ravix.PreviewsFixture
 
   alias Ravix.Previews
-  alias Ravix.Previews.{Agent, Store}
+  alias Ravix.Previews.{Agent, Lifecycle, Store}
   alias Ravix.PromptQueue.Item
   alias Ravix.Tracks.Track
 
@@ -200,7 +200,7 @@ defmodule Ravix.Previews.AgentTest do
 
       # Removal revokes; reinvitation does not resurrect.
       Repo.delete_all(from m in Ravix.Tracks.TrackMember, where: m.track_id == ^t1.id)
-      Previews.revoke_agent(t1.id, guest.id)
+      Store.revoke_agent(t1.id, guest.id)
       insert_track_member(t1, guest)
       assert {:error, {:preview_agent_auth, _}} = call.("configure", nil, t1.id, token)
 
@@ -262,7 +262,7 @@ defmodule Ravix.Previews.AgentTest do
     @tag :guest
     test "grants are revoked by track cleanup", %{t1: t1, token: token, call: call} do
       assert {:ok, _} = call.("status", nil, t1.id, token)
-      assert :ok = Previews.stop_service(t1.id, :cleanup)
+      assert :ok = Lifecycle.stop_service(t1.id, :cleanup)
       assert {:error, {:preview_agent_auth, _}} = call.("status", nil, t1.id, token)
     end
   end

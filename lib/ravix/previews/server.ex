@@ -9,7 +9,7 @@ defmodule Ravix.Previews.Server do
   server's state, the hold timestamp is a field beside it, and the work runs
   in a supervised task under `Ravix.TaskSupervisor`. The database work that
   changes *intent* (desired state, generation, grants) is still done by the
-  caller, in `Ravix.Previews`, before the operation is queued, which is what
+  caller, in `Ravix.Previews.Lifecycle`, before the operation is queued, which is what
   lets a stop that arrives during a sixty-second startup take effect: the
   startup re-reads the row at every step and abandons itself when the
   generation moved on.
@@ -53,7 +53,7 @@ defmodule Ravix.Previews.Server do
   alias Ravix.Clock
   alias Ravix.MachineCache.Machine
   alias Ravix.Previews
-  alias Ravix.Previews.{Row, Store}
+  alias Ravix.Previews.{Lifecycle, Row, Store}
   alias Ravix.Repo
   alias Ravix.Sprites
   alias Ravix.Sprites.Shapes
@@ -475,7 +475,7 @@ defmodule Ravix.Previews.Server do
   defp fresh(row), do: if(current?(row), do: :ok, else: {:error, :stale})
 
   defp open(row) do
-    case Previews.assert_open(row.track_id) do
+    case Lifecycle.assert_open(row.track_id) do
       {:ok, found} -> {:ok, found}
       {:error, {:conflict, _code, message}} -> {:error, message, row}
     end
@@ -646,7 +646,7 @@ defmodule Ravix.Previews.Server do
     with :ok <- fresh(row),
          {:ok, actual} <- sprites(Sprites.service(Sprites.config(), row.sprite, row.service), row),
          :ok <- not_crashed(actual, row),
-         false <- Shapes.running?(actual) and Previews.ready?(row, config.readiness_path) do
+         false <- Shapes.running?(actual) and Lifecycle.ready?(row, config.readiness_path) do
       Clock.sleep(@probe_ms)
 
       if Clock.now_ms() < deadline,
@@ -732,7 +732,10 @@ defmodule Ravix.Previews.Server do
   @spec message_of(term()) :: String.t()
   def message_of(message) when is_binary(message), do: message
   def message_of(%Sprites.Error{message: message}), do: message
-  def message_of(:unconfigured), do: "Previews unavailable: SPRITES_TOKEN is not configured."
+
+  def message_of({:unconfigured, :sprites}),
+    do: "Previews unavailable: SPRITES_TOKEN is not configured."
+
   def message_of({:unavailable, message}), do: message
   def message_of({:conflict, _code, message}), do: message
   def message_of(%{__exception__: true} = error), do: Exception.message(error)

@@ -169,8 +169,8 @@ defmodule Ravix.TraceInertTest do
       Trace.untraced(fn ->
         assert Trace.span("tracks.get", %{}, fn -> {:ok, :detail} end) == {:ok, :detail}
 
-        assert Trace.span("tracks.get", %{}, fn -> {:error, :unconfigured} end) ==
-                 {:error, :unconfigured}
+        assert Trace.span("tracks.get", %{}, fn -> {:error, {:unconfigured, :fountain}} end) ==
+                 {:error, {:unconfigured, :fountain}}
 
         assert Trace.span("tracks.mark_read", %{}, fn -> :ok end) == :ok
       end)

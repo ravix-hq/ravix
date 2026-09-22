@@ -51,6 +51,18 @@ defmodule Ravix.Projects.Store do
   def get_project(id) when is_binary(id), do: Repo.get(Project, id)
   def get_project(_id), do: nil
 
+  @doc """
+  Several projects by id, archived or not, in no particular order.
+
+  For a list that already holds the ids -- the rail, which has this person's
+  track memberships in hand -- and would otherwise read them one at a time.
+  Unscoped, as `get_project/1` is: the caller established how it came by
+  each id. An id with no project behind it is simply absent.
+  """
+  @spec get_projects([String.t()]) :: [Project.t()]
+  def get_projects([]), do: []
+  def get_projects(ids) when is_list(ids), do: Repo.all(from(p in Project, where: p.id in ^ids))
+
   @doc "The live projects a person owns, oldest first."
   @spec projects_of(String.t()) :: [Project.t()]
   def projects_of(user_id) do
@@ -120,8 +132,9 @@ defmodule Ravix.Projects.Store do
   @doc "Archive a project, cancelling whatever its open tracks still had queued."
   @spec archive(String.t()) :: :ok
   def archive(id) do
-    # ownership: the project is being archived, which takes its tracks with
-    # it; prompts queued for them have nowhere left to be delivered.
+    # ownership: `Ravix.Projects.destroy/2` admitted the owner through
+    # `Access.project_of/2` before retiring this project. Archiving it takes
+    # its tracks with it, and prompts queued for them have nowhere left to go.
     Enum.each(open_tracks(id), &Ravix.PromptQueue.Store.cancel_track(&1.id))
     update_fields(id, archived_at: DateTime.utc_now())
   end

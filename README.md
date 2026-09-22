@@ -110,7 +110,16 @@ absent, so an unpopulated placeholder reaching the service is the same as the
 variable not being set at all --- which is the only safe way for a placeholder
 to travel.
 
-## Agent tooling (MCP)
+## Remote AI clients
+
+Ravix exposes authenticated MCP at `/mcp` and A2A 1.0 at `/a2a`. Connect Claude
+Code with `claude mcp add --transport http ravix https://app.ravix.sh/mcp`, then
+use `/mcp` to sign in and approve access. Tools configure projects, open tracks,
+submit prompts and read results. Revoke clients from **Connected applications**
+in the account dialog. See [remote agent tooling](docs/agent-tooling.md) for
+scopes, idempotency, A2A task behavior and current limits.
+
+## Developer tooling (MCP)
 
 `.mcp.json` declares three MCP servers in the repository, so a checkout gets them
 and there is no per-machine configuration to copy. Claude Code asks for approval
@@ -215,12 +224,16 @@ requires a session-bound ticket for access.
 
 ```sh
 mix precommit
+mix precommit.release   # after a change to configuration, assets, or the release
 ```
 
-This checks compilation with warnings treated as errors, unused lock entries,
-formatting, Credo, Sobelow, Hex retirement audit, Dialyzer, ExUnit, browser-hook
-DOM tests, and production release assembly. Run `bun install --frozen-lockfile`
-once after cloning to install the development-only hook test dependencies.
+`mix precommit` checks compilation with warnings treated as errors, unused lock
+entries, formatting, Credo, Sobelow, Hex retirement audit, Dialyzer, ExUnit
+(including the `:distributed` cluster tests a plain `mix test` skips), and the
+browser-hook DOM tests. `mix precommit.release` is the production build on its
+own: assets and release assembly, the way CI's release job does them. Run
+`bun install --frozen-lockfile` once after cloning to install the
+development-only hook test dependencies.
 
 Coverage counts production source only, excluding test fixtures. The total floor
 is 90%; separate floors require server 92%, web 90%, workspace LiveView 92%, and

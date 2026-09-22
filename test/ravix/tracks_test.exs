@@ -474,7 +474,74 @@ defmodule Ravix.TracksTest do
       insert_track(project: ctx.project, slug: "kyoto")
       insert_track(project: ctx.project, slug: "kyoto-2", closed_at: DateTime.utc_now())
       opening_fountain(ctx.project, false)
-      assert {:ok, %{slug: "kyoto-2"}} = Tracks.open(ctx.owner, ctx.project.id, %{title: "Kyoto"})
+
+      # The slugs in use were read with the names, so a popular name costs no
+      # query per candidate: the project, every track once, the insert, and
+      # the row marked opened.
+      {result, queries} =
+        QueryCount.count(fn -> Tracks.open(ctx.owner, ctx.project.id, %{title: "Kyoto"}) end)
+
+      assert {:ok, %{slug: "kyoto-2"}} = result
+      assert queries == ["projects", "tracks", "tracks", "tracks"]
+    end
+
+    # The one refusal `plan/4` cannot rule out: somebody opening a track with
+    # the same name between the read and the insert. Reproduced at the exact
+    # moment -- while Fountain is making the conversation -- so the partial
+    # unique index on open slugs is what refuses, as it would in production.
+    defp race_for_the_slug(project) do
+      expect(Ravix.Fountain, :create_conversation, fn client, launch ->
+        insert_track(project: project, slug: "kyoto")
+        Mimic.call_original(Ravix.Fountain, :create_conversation, [client, launch])
+      end)
+    end
+
+    test "a row that will not insert ends the conversation it was cut for", ctx do
+      client = opening_fountain(ctx.project, false)
+
+      FakeTransport.expect(
+        client,
+        %{method: "POST", path: "/api/conversations/c-new/terminate"},
+        {200, [], %{}}
+      )
+
+      race_for_the_slug(ctx.project)
+
+      assert {:error, {:conflict, "slug_taken", message}} =
+               Tracks.open(ctx.owner, ctx.project.id, %{title: "Kyoto"})
+
+      assert message =~ "that name"
+
+      [_list, create, terminate] = FakeTransport.calls(client)
+      assert create.path == "/api/conversations"
+      assert terminate.path == "/api/conversations/c-new/terminate"
+
+      # Only the winner's row exists, and nobody was told a track opened.
+      assert [%Track{slug: "kyoto", conversation_id: nil}] =
+               Tracks.Store.tracks_of(ctx.project.id)
+
+      refute_received {:hub, %Event{name: :tracks}}
+    end
+
+    test "a terminate that fails is logged, and the refusal is reported anyway", ctx do
+      client = opening_fountain(ctx.project, false)
+
+      FakeTransport.expect(
+        client,
+        %{method: "POST", path: "/api/conversations/c-new/terminate"},
+        {:error, :econnrefused}
+      )
+
+      race_for_the_slug(ctx.project)
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          assert {:error, {:conflict, "slug_taken", _}} =
+                   Tracks.open(ctx.owner, ctx.project.id, %{title: "Kyoto"})
+        end)
+
+      assert log =~ "conversation c-new of a track that did not save was not terminated"
+      assert [_list, _create, _terminate] = FakeTransport.calls(client)
     end
 
     test "an origin the browser made up opens a blank track", ctx do
@@ -592,7 +659,9 @@ defmodule Ravix.TracksTest do
     test "without a Fountain key there are no machines", ctx do
       client = Client.new("https://managoat.com", nil)
       stub(Ravix.Fountain, :client, fn -> client end)
-      assert {:error, :unconfigured} = Tracks.open(ctx.owner, ctx.project.id, %{title: "Kyoto"})
+
+      assert {:error, {:unconfigured, :fountain}} =
+               Tracks.open(ctx.owner, ctx.project.id, %{title: "Kyoto"})
     end
   end
 
@@ -677,12 +746,25 @@ defmodule Ravix.TracksTest do
       {:ok, owner: owner, project: project, track: track}
     end
 
-    test "a read mark is this person's, and the rail is told", ctx do
+    test "a read mark is this person's, and the rail is told whose it is", ctx do
       assert :ok = Tracks.mark_read(ctx.owner, ctx.track.id)
       assert %DateTime{} = Ravix.People.Store.last_read_of(ctx.track.id, ctx.owner.id)
       project_id = ctx.project.id
       track_id = ctx.track.id
-      assert_receive {:hub, %Event{name: :tracks, project_id: ^project_id, track_id: ^track_id}}
+      user_id = ctx.owner.id
+
+      # Named with the reader as well as the track, so that a rail can clear
+      # one dot from the event alone. Not a `:tracks`: that sends every rail
+      # on the project back to Fountain for a fact Fountain never held.
+      assert_receive {:hub,
+                      %Event{
+                        name: :read,
+                        project_id: ^project_id,
+                        track_id: ^track_id,
+                        user_id: ^user_id
+                      }}
+
+      refute_received {:hub, %Event{name: :tracks}}
     end
 
     test "interrupt reaches the conversation", ctx do
@@ -821,7 +903,7 @@ defmodule Ravix.TracksTest do
         )
 
       stub(Ravix.PromptQueue.Store, :cancel_track, fn _track_id -> :ok end)
-      stub(Ravix.Previews, :stop_service, fn _track_id, :cleanup -> :ok end)
+      stub(Ravix.Previews.Lifecycle, :stop_service, fn _track_id, :cleanup -> :ok end)
       Hub.subscribe(project.id)
       {:ok, owner: owner, project: project, track: track}
     end
@@ -839,23 +921,66 @@ defmodule Ravix.TracksTest do
       client
     end
 
-    test "the worktree is removed by a turn, the conversation ended, the row closed", ctx do
+    # The teardown runs under `Ravix.TaskSupervisor` after `close/3` returns.
+    # `start_child/2` returns once the child exists, so by then it is either
+    # still listed with this test among its callers, or already finished;
+    # either way a monitor on what is listed is proof it settled, and no
+    # sleep is needed.
+    defp await_teardown do
+      me = self()
+
+      Ravix.TaskSupervisor
+      |> Task.Supervisor.children()
+      |> Enum.filter(fn pid ->
+        case Process.info(pid, :dictionary) do
+          {:dictionary, dictionary} -> me in Keyword.get(dictionary, :"$callers", [])
+          nil -> false
+        end
+      end)
+      |> Enum.map(&Process.monitor/1)
+      |> Enum.each(fn ref -> assert_receive {:DOWN, ^ref, :process, _pid, _reason}, 5_000 end)
+    end
+
+    test "the row closes at once; the worktree and conversation go afterwards", ctx do
       client = closing_fountain([])
+      test = self()
+
+      # The preview stop is the first thing the teardown does and the slowest
+      # in production, so it stands in for the machine: held until released.
+      stub(Ravix.Previews.Lifecycle, :stop_service, fn track_id, :cleanup ->
+        send(test, {:stopping, track_id, self()})
+
+        receive do
+          :released -> :ok
+        end
+      end)
+
       assert :ok = Tracks.close(ctx.owner, ctx.track.id)
-      [prompt, _terminate] = FakeTransport.calls(client)
-      assert prompt.body["prompt"] =~ "[ravix] Close this track"
-      assert prompt.body["prompt"] =~ "git worktree remove /home/sprite/work/kyoto"
-      refute prompt.body["prompt"] =~ "--force"
-      refute prompt.body["prompt"] =~ "git branch -D"
+
+      # The row and the page's news do not wait for the machine.
       assert Repo.get!(Track, ctx.track.id).closed_at
       project_id = ctx.project.id
       track_id = ctx.track.id
       assert_receive {:hub, %Event{name: :tracks, project_id: ^project_id, track_id: ^track_id}}
+      assert_receive {:stopping, ^track_id, teardown}
+      assert FakeTransport.calls(client) == []
+
+      ref = Process.monitor(teardown)
+      send(teardown, :released)
+      assert_receive {:DOWN, ^ref, :process, ^teardown, :normal}, 5_000
+
+      [prompt, terminate] = FakeTransport.calls(client)
+      assert prompt.body["prompt"] =~ "[ravix] Close this track"
+      assert prompt.body["prompt"] =~ "git worktree remove /home/sprite/work/kyoto"
+      refute prompt.body["prompt"] =~ "--force"
+      refute prompt.body["prompt"] =~ "git branch -D"
+      assert terminate.path == "/api/conversations/c1/terminate"
     end
 
     test "force and the branch go in the turn only when asked", ctx do
       client = closing_fountain([])
       assert :ok = Tracks.close(ctx.owner, ctx.track.id, force: true, delete_branch: true)
+      await_teardown()
       [prompt, _] = FakeTransport.calls(client)
       assert prompt.body["prompt"] =~ "git worktree remove --force /home/sprite/work/kyoto"
       assert prompt.body["prompt"] =~ "git branch -D ana/kyoto-1"
@@ -867,11 +992,34 @@ defmodule Ravix.TracksTest do
         terminate: {:error, :econnrefused}
       )
 
-      ExUnit.CaptureLog.capture_log(fn ->
-        assert :ok = Tracks.close(ctx.owner, ctx.track.id)
+      stub(Ravix.Previews.Lifecycle, :stop_service, fn _track_id, :cleanup ->
+        {:error, {:unavailable, "sprites", "down"}}
       end)
 
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          assert :ok = Tracks.close(ctx.owner, ctx.track.id)
+          await_teardown()
+        end)
+
       assert Repo.get!(Track, ctx.track.id).closed_at
+      # Each refusal is logged on its own, and none stops the next.
+      assert log =~ "preview of closed track #{ctx.track.id} did not stop"
+      assert log =~ "close turn for track #{ctx.track.id} did not send"
+      assert log =~ "conversation of closed track #{ctx.track.id} was not terminated"
+      refute log =~ "fake-key"
+    end
+
+    test "a track with no conversation is closed without a turn", ctx do
+      track = insert_track(project: ctx.project, slug: "quiet", conversation_id: nil)
+      client = closing_fountain([])
+      assert :ok = Tracks.close(ctx.owner, track.id)
+      await_teardown()
+      assert Repo.get!(Track, track.id).closed_at
+      # The script for c1 is untouched: nothing was sent for a track with no conversation.
+      assert FakeTransport.calls(client) == []
+      assert :ok = Tracks.close(ctx.owner, ctx.track.id)
+      await_teardown()
     end
 
     test "the cutter may close; a member invited to help may not", ctx do
@@ -882,6 +1030,7 @@ defmodule Ravix.TracksTest do
       insert_track_member(ctx.track, guest)
       assert {:error, {:forbidden, _}} = Tracks.close(guest, ctx.track.id)
       assert :ok = Tracks.close(cutter, ctx.track.id)
+      await_teardown()
     end
 
     test "a rebuild closes every open row without touching the machine", ctx do
@@ -1058,8 +1207,7 @@ defmodule Ravix.TracksTest do
       assert {:error, {:conflict, "no_repo", _}} = Tracks.checks(ctx.owner, bare.id)
       stub(Ravix.Config, :github, fn -> nil end)
 
-      assert {:error, {:unavailable, "no_github", _}} =
-               Tracks.open_pull(ctx.owner, ctx.track.id, %{})
+      assert {:error, {:unconfigured, :github}} = Tracks.open_pull(ctx.owner, ctx.track.id, %{})
     end
   end
 end

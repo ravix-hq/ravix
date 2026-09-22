@@ -11,6 +11,7 @@ defmodule Ravix.PromptQueueTest do
   alias Ravix.Hub.Event
   alias Ravix.PromptQueue
   alias Ravix.PromptQueue.{Item, Server}
+  alias Ravix.QueryCount
   alias Ravix.Tracks.TrackMember
 
   # ── fixture ───────────────────────────────────────────────────────────
@@ -49,7 +50,10 @@ defmodule Ravix.PromptQueueTest do
 
     pid = start_supervised!(spec)
     Sandbox.allow(Repo, self(), pid)
-    for mod <- [Ravix.Fountain, Ravix.Projects, Ravix.Previews], do: allow(mod, self(), pid)
+
+    for mod <- [Ravix.Fountain, Ravix.Projects, Ravix.Previews, Ravix.Previews.Store],
+        do: allow(mod, self(), pid)
+
     pid
   end
 
@@ -139,7 +143,7 @@ defmodule Ravix.PromptQueueTest do
     test = self()
     stub(Ravix.Previews, :prepare_agent_preview, fun)
 
-    stub(Ravix.Previews, :revoke_agent, fn track_id, _user_id ->
+    stub(Ravix.Previews.Store, :revoke_agent, fn track_id, _user_id ->
       send(test, {:revoked_agent, track_id})
       :ok
     end)
@@ -581,6 +585,84 @@ defmodule Ravix.PromptQueueTest do
         Process.sleep(10)
         wait_until(fun, deadline)
     end
+  end
+
+  test "a sweep reads a busy conversation once, however many prompts wait on it", f do
+    # One expectation, so a second read would be a request nothing scripted:
+    # the fake answers it with an error and fails the test at exit.
+    client = fountain([read("running")])
+    for n <- 1..5, do: send_prompt(f.track, f.owner, "waiting #{n}")
+
+    Server.tick(f.server)
+
+    assert [%{method: "GET", path: "/api/conversations/c1"}] = FakeTransport.calls(client)
+
+    waiting = PromptQueue.Store.queued_prompts(f.track.id)
+    assert length(waiting) == 5
+    assert Enum.all?(waiting, &(&1.status == :queued))
+  end
+
+  test "delivering a head reads its track and project only where access is decided", f do
+    fountain_hooks(fn -> "idle" end, fn -> :ok end)
+    {:ok, %Item{id: id}} = send_prompt(f.track, f.owner, "counted")
+
+    # The sweep hands each head to a task of its own, so the count follows
+    # the server into them rather than watching the caller of `tick/1`.
+    {_result, queries} =
+      QueryCount.count(fn -> Server.tick(f.server) end, from: {:callers, f.server})
+
+    assert status_of(id) == :sent
+
+    # Who may send is established three times, on purpose: the door, then
+    # again just before the claim and just before the POST, because
+    # membership and cancellation can change during the network calls in
+    # between. Each is `Access.track_access/2`, which is the track and the
+    # project once. Delivery itself used to read both a fourth time, having
+    # been handed neither. The two further reads of `tracks` are the
+    # publishes: `Store.claim/1` and `Store.mark_delivered/1` each tell the
+    # project's hub, and find the project through the track.
+    assert Enum.count(queries, &(&1 == "projects")) == 3
+    assert Enum.count(queries, &(&1 == "tracks")) == 3 + 2
+  end
+
+  test "the sweep's two reads are answered from the indexes made for them" do
+    # Without the two partial indexes both of these read the whole table, and
+    # the whole table is nearly all delivered rows. A plan is the only thing
+    # that can show they are used: the seq scan is switched off for this
+    # transaction so that a table this small does not hide the choice. An
+    # index is named in a plan only when it is scanned; whether as an ordered
+    # scan or a bitmap one is the planner's call on the statistics of the
+    # moment, and either reads only the rows the index holds.
+    Repo.query!("SET LOCAL enable_seqscan = off")
+
+    assert plan(fn -> PromptQueue.Store.heads() end) =~ "prompt_queue_live_heads"
+    assert plan(fn -> PromptQueue.Store.recover() end) =~ "prompt_queue_sending_claims"
+  end
+
+  # The plan Postgres has for the first query `fun` runs, with its parameters.
+  defp plan(fun) do
+    id = {__MODULE__, make_ref()}
+    test = self()
+
+    :telemetry.attach(
+      id,
+      [:ravix, :repo, :query],
+      fn _event, _measure, meta, _config ->
+        if self() == test, do: send(test, {id, meta.query, meta.params})
+      end,
+      nil
+    )
+
+    try do
+      fun.()
+    after
+      :telemetry.detach(id)
+    end
+
+    assert_receive {^id, sql, params}
+
+    %{rows: rows} = Repo.query!("EXPLAIN " <> sql, params)
+    Enum.map_join(rows, "\n", &List.first/1)
   end
 
   test "one track needing attention does not block another track", f do

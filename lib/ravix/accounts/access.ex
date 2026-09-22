@@ -12,6 +12,10 @@ defmodule Ravix.Accounts.Access do
       project_access/2  every branch on a machine, because you were named on it
       project_of/2      the machine itself, because you own it
 
+  and one question beside them, `access_of/3`, which says *which* of the
+  three a person would get through for a project already in hand: what the
+  rail marks each project with.
+
   All three are enforced by lookup rather than by a check, and all three
   answer *not found* rather than refusing: the existence of somebody else's
   project is not the caller's to learn. Every context function that touches
@@ -34,6 +38,22 @@ defmodule Ravix.Accounts.Access do
 
   @typedoc "Owner, or somebody invited to the track or the project in question."
   @type role :: :owner | :member
+
+  @typedoc "Which of the three ways in reaches a project. See `access_of/3`."
+  @type access :: :owner | :project | :tracks
+
+  @typedoc """
+  Membership a caller has already read, so `access_of/3` need not read it again.
+
+  `:projects` is the set of project ids this person was let into whole;
+  `:tracks` is the set of project ids they hold an open track on, or the
+  track rows themselves. A key left out is read from the database for the
+  one project asked about.
+  """
+  @type known :: [
+          {:projects, MapSet.t(String.t())}
+          | {:tracks, MapSet.t(String.t()) | [Track.t()]}
+        ]
 
   @typedoc "What `project_access/2` answers. See `Ravix.Accounts.ProjectAccess`."
   @type project_access :: ProjectAccess.t()
@@ -131,6 +151,50 @@ defmodule Ravix.Accounts.Access do
     end
   end
 
+  @doc """
+  How `user_id` reaches `project`, or nil when they do not.
+
+  The three ways in, widest first, and the order is what makes the answer
+  stable: somebody who owns a project *and* somehow holds rows in it is
+  still its owner, and somebody in the whole project who is also named on
+  one track is still in the whole project. The narrowest answer has to be
+  checked last or it wins over facts that grant more.
+
+  The answer the rail draws its controls from, so it is finer than the
+  `role` the doors above return: `:tracks` and `:project` are both
+  `:member` at `track_access/2`, and both may not open the settings, but
+  only one of them may cut a track. It used to be written out in
+  `Ravix.Projects` and again in `Ravix.Tracks`, and the two had already
+  drifted in how they asked the third question.
+
+  `known` is for a caller with several projects to ask about. The rail has
+  this person's memberships in hand from listing them; passing them here is
+  what keeps "how do I reach this one" from costing two reads per project.
+  Nothing about the project itself is trusted from it: `%Project{}` is
+  whatever the caller was handed, and an archived one is the caller's to
+  have excluded, exactly as with `Ravix.Projects.Store.get_project/1`.
+  """
+  @spec access_of(String.t(), Project.t(), known()) :: access() | nil
+  def access_of(user_id, %Project{} = project, known \\ []) do
+    cond do
+      project.user_id == user_id -> :owner
+      in_project?(project.id, user_id, known[:projects]) -> :project
+      on_tracks?(project.id, user_id, known[:tracks]) -> :tracks
+      true -> nil
+    end
+  end
+
+  defp in_project?(project_id, user_id, nil), do: project_member?(project_id, user_id)
+  defp in_project?(project_id, _user_id, %MapSet{} = ids), do: MapSet.member?(ids, project_id)
+
+  # ownership: no door -- this *is* a door, as `member?/2` is: the third of
+  # the three questions `access_of/3` exists to answer, not a read behind one.
+  defp on_tracks?(project_id, user_id, nil), do: People.track_member_of?(project_id, user_id)
+  defp on_tracks?(project_id, _user_id, %MapSet{} = ids), do: MapSet.member?(ids, project_id)
+
+  defp on_tracks?(project_id, _user_id, tracks) when is_list(tracks),
+    do: Enum.any?(tracks, &(&1.project_id == project_id))
+
   @doc "Owner-only operations on a track somebody else may also be in."
   @spec require_owner(role(), String.t()) :: :ok | {:error, {:forbidden, String.t()}}
   def require_owner(:owner, _what), do: :ok
@@ -168,7 +232,7 @@ defmodule Ravix.Accounts.Access do
   @doc """
   Whether `user_id` was named on `track_id`.
 
-  # ownership: this is a door, not something behind one. The question "was
+  # ownership: no door before this one -- it is the door. The question "was
   this person named on this track" has no earlier authorization to establish,
   because it *is* the authorization every other caller establishes.
   """
@@ -178,7 +242,7 @@ defmodule Ravix.Accounts.Access do
   @doc """
   Whether `user_id` was let into the whole of `project_id`.
 
-  # ownership: as `member?/2` -- the door itself.
+  # ownership: as `member?/2` -- no door before this one; it is the door.
   """
   @spec project_member?(String.t(), String.t()) :: boolean()
   defdelegate project_member?(project_id, user_id), to: People
@@ -186,13 +250,14 @@ defmodule Ravix.Accounts.Access do
   # A project that exists and has not been archived. Every door starts here:
   # an archived project is gone for everybody, its owner included.
   #
-  # ownership: `Ravix.Projects.Store.live_project/1` is that read, and lives
-  # there so this module and `Ravix.People` cannot come to differ about what
-  # "archived" means.
+  # ownership: no door before this one -- every door starts with this read.
+  # `Ravix.Projects.Store.live_project/1` is that read, and lives there so this
+  # module and `Ravix.People` cannot come to differ about what "archived" means.
   defp live_project(project_id), do: Projects.live_project(project_id)
 
-  # ownership: a door again. Whether the track exists at all is the first
-  # thing `track_access/2` has to know, before there is anyone to check.
+  # ownership: a door again, with no door before it. Whether the track exists
+  # at all is the first thing `track_access/2` has to know, before there is
+  # anyone to check.
   defp get_track(track_id) when is_binary(track_id), do: Repo.get(Track, track_id)
   defp get_track(_), do: nil
 end
