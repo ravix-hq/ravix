@@ -223,7 +223,7 @@ test('home quick start creates a scratch project and recent navigation survives 
   await page.getByLabel('Project name', { exact: true }).fill('Quick start quality');
   await expect(page.getByLabel('Repository', { exact: true })).toHaveValue('');
   await page.getByRole('button', { name: 'Create project', exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'Pick a track' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Plans', exact: true })).toBeVisible();
   await expect(page.locator('.crumbs')).toContainText('Quick start quality');
   await capture(page, 'project-empty');
   await page.getByRole('link', { name: 'Home', exact: true }).first().click();
@@ -238,7 +238,7 @@ test('home quick start creates a scratch project and recent navigation survives 
   await page.reload();
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'daylight');
   await recent.getByRole('link', { name: /Quick start quality/ }).click();
-  await expect(page.getByRole('heading', { name: 'Pick a track' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Plans', exact: true })).toBeVisible();
   await expect(page.locator('.crumbs')).toContainText('Quick start quality');
   // Exact: an empty inbox must not put a "0" badge in the link's name.
   await page.getByRole('link', { name: 'Inbox', exact: true }).first().click();

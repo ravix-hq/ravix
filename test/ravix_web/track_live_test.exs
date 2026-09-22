@@ -56,6 +56,40 @@ defmodule RavixWeb.TrackLiveTest do
     %{conn: conn, parent: parent, view: view, user: user, project: project, track: track}
   end
 
+  test "a track guest reads assigned material and notes without plan or sibling metadata", ctx do
+    {:ok, plan} =
+      Ravix.Plans.create(ctx.user, ctx.project.id, %{
+        "title" => "Private project plan",
+        "summary" => "Private rationale",
+        "items" => [
+          %{"id" => "allowed", "title" => "Allowed work", "brief" => "Implement the endpoint"},
+          %{"id" => "hidden", "title" => "Hidden sibling"}
+        ]
+      })
+
+    Repo.get!(Ravix.Plans.Item, "allowed")
+    |> Ecto.Changeset.change(track_id: ctx.track.id)
+    |> Repo.update!()
+
+    guest = insert_user()
+    insert_track_member(ctx.track, guest)
+
+    {:ok, parent, _} =
+      live(log_in_user(build_conn(), guest), "/p/#{ctx.project.id}/t/#{ctx.track.id}")
+
+    view = find_live_child(parent, "track-host")
+    settle(view)
+    assert has_element?(view, "summary", "Assigned item: Allowed work")
+    refute render(view) =~ plan.title
+    refute render(view) =~ "Private rationale"
+    refute render(view) =~ "Hidden sibling"
+    view |> form("#track-note-allowed", %{body: "Verified endpoint"}) |> render_submit()
+    assert has_element?(view, "li", "Verified endpoint")
+    Repo.delete_all(Ravix.Tracks.TrackMember)
+    view |> form("#track-note-allowed", %{body: "revoked"}) |> render_submit()
+    refute has_element?(view, "#track-note-allowed")
+  end
+
   test "starters and typing use the composer protocol", ctx do
     ctx.view |> element("button", "Start here") |> render_click()
     assert_push_event(ctx.view, "composer:insert", %{text: "Build it"})
