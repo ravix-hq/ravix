@@ -1,4 +1,4 @@
-defmodule Ravix.Tracks.Plan do
+defmodule Ravix.Tracks.Opening do
   @moduledoc """
   Everything a new track is called, decided before anything wakes the box.
 

@@ -65,7 +65,7 @@ defmodule Ravix.Tracks do
     Header,
     Names,
     Origin,
-    Plan,
+    Opening,
     Store,
     Track,
     Transcript,
@@ -308,8 +308,8 @@ defmodule Ravix.Tracks do
 
   # Everything a new track is called, decided before anything wakes the box:
   # the conversation Fountain is asked for, and the row that will remember it.
-  # See `Ravix.Tracks.Plan`.
-  @spec plan(User.t(), Project.t(), map(), MachineCache.machine()) :: Plan.t()
+  # See `Ravix.Tracks.Opening`.
+  @spec plan(User.t(), Project.t(), map(), MachineCache.machine()) :: Opening.t()
   defp plan(user, project, attrs, machine) do
     id = Ecto.UUID.generate()
     origin = read_origin(attrs["origin"], project)
@@ -329,7 +329,7 @@ defmodule Ravix.Tracks do
         do: origin.base,
         else: Ids.branch_for(user.login, slug, id)
 
-    %Plan{
+    %Opening{
       id: id,
       project_id: project.id,
       rev: project.rev,
@@ -361,10 +361,10 @@ defmodule Ravix.Tracks do
   # is ended before the refusal is reported -- the same shape as
   # `Ravix.Projects` unwinding a machine whose row did not save. Best effort:
   # a terminate that fails is logged, and the refusal is reported either way.
-  defp cut(client, %Plan{} = plan) do
+  defp cut(client, %Opening{} = plan) do
     with {:ok, %Conversation{id: conversation_id}} <-
            Fountain.create_conversation(client, plan.conversation) do
-      case Store.create_track(Plan.track_attrs(plan, conversation_id)) do
+      case Store.create_track(Opening.track_attrs(plan, conversation_id)) do
         {:ok, track} ->
           {:ok, track}
 
