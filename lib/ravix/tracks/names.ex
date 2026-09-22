@@ -47,9 +47,8 @@ defmodule Ravix.Tracks.Names do
   Closed tracks count, and that is the point of passing them in. A closed
   track's slug is free as far as the database is concerned (the unique index
   only covers open ones) but its *branch* still exists on GitHub, and
-  `git worktree add -b jhgaylor/crewe` a second time fails. The opening turn
-  recovers from that, so reusing a name is survivable rather than broken; it
-  is just needlessly confusing, and there are fifty other names.
+  `git worktree add -b ravix/crewe` a second time fails. New tracks reserve
+  their branch even after closing; suggestions skip historical names too.
 
   The walk starts at a random index and goes round once, so the common case
   is one comparison and the list is exhausted in order only when it nearly
