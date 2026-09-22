@@ -236,10 +236,16 @@ defmodule RavixWeb.WorkspaceLiveTest do
     insert_track_member(row, guest)
     track = Tracks.present(row, project: project)
 
+    # What is announced is a thread's change, so the default thread carries it.
+    at = fn status, unread ->
+      default = %{id: track.id, title: "Default", status: status, unread: unread}
+      struct!(track, status: status, unread: unread, threads: [default])
+    end
+
     for user <- [owner, member, guest] do
-      stub(Tracks, :list, fn _, _ -> {:ok, [struct!(track, status: :running, unread: false)]} end)
+      stub(Tracks, :list, fn _, _ -> {:ok, [at.(:running, false)]} end)
       {:ok, view, _} = live(log_in_user(conn, user), "/inbox")
-      stub(Tracks, :list, fn _, _ -> {:ok, [struct!(track, status: :ready, unread: true)]} end)
+      stub(Tracks, :list, fn _, _ -> {:ok, [at.(:ready, true)]} end)
       send(view.pid, {:hub, Event.new(:turn, project.id, track_id: row.id)})
       render_async(view)
       label = if user == owner, do: "ravix", else: "notice-owner / ravix"
