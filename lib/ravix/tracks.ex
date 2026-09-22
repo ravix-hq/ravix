@@ -64,8 +64,8 @@ defmodule Ravix.Tracks do
     Follower,
     Header,
     Names,
-    Origin,
     Opening,
+    Origin,
     Store,
     Track,
     Transcript,
@@ -265,6 +265,7 @@ defmodule Ravix.Tracks do
     attrs = stringify(attrs)
 
     with {:ok, %{project: project, role: role}} <- Access.project_access(user, project_id),
+         :ok <- plan_origin_access(user, project_id, attrs["origin"]),
          {:ok, client} <- fountain(),
          :ok <- Ravix.Projects.prepare_machine(project, client),
          {:ok, machine} <- MachineCache.machine_of(client, project),
@@ -964,6 +965,12 @@ defmodule Ravix.Tracks do
   # The browser's word for the kind, which is a string and may be anything,
   # against the four there are. This is the boundary: past it the kind is one
   # of `Track.origin_kinds/0` and nothing downstream re-checks it.
+  defp plan_origin_access(user, project_id, %{"kind" => "plan"} = raw) do
+    Ravix.Plans.origin_access(user, project_id, raw["plan_id"], raw["item_id"])
+  end
+
+  defp plan_origin_access(_, _, _), do: :ok
+
   defp read_origin(raw, project) when is_map(raw) do
     kind = Enum.find(Track.origin_kinds(), :blank, &(to_string(&1) == raw["kind"]))
 
@@ -982,6 +989,8 @@ defmodule Ravix.Tracks do
           base: text(raw["base"], 200) |> non_empty() || project.default_branch,
           number: number(raw["number"]),
           title: text(raw["title"], 200) |> non_empty(),
+          plan_id: if(kind == :plan, do: raw["plan_id"]),
+          item_id: if(kind == :plan, do: raw["item_id"]),
           url: nil
         }
       end
@@ -1018,6 +1027,9 @@ defmodule Ravix.Tracks do
   # `issues` --- so an origin the browser sent as `{"kind": "branch",
   # "number": 5}` is given an issue's URL. That is worth a second look, but
   # not in a change whose whole claim is that nothing behaves differently.
+  defp origin_url(%Project{id: id}, %Origin{kind: :plan, plan_id: plan_id, item_id: item_id}),
+    do: "/p/#{id}?plan=#{plan_id}#item-#{item_id}"
+
   defp origin_url(%Project{repo_full_name: repo}, %Origin{number: n} = origin)
        when is_binary(repo) and is_integer(n) do
     kind = if origin.kind == :pr, do: "pull", else: "issues"

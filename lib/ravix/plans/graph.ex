@@ -31,13 +31,17 @@ defmodule Ravix.Plans.Graph do
         done
 
       true ->
-        Enum.reduce_while(graph[id], MapSet.put(done, id), fn child, seen ->
-          case visit(graph, child, MapSet.put(path, id), seen) do
-            :cycle -> {:halt, :cycle}
-            visited -> {:cont, visited}
-          end
-        end)
+        visit_children(graph, id, path, done)
     end
+  end
+
+  defp visit_children(graph, id, path, done) do
+    Enum.reduce_while(graph[id], MapSet.put(done, id), fn child, seen ->
+      case visit(graph, child, MapSet.put(path, id), seen) do
+        :cycle -> {:halt, :cycle}
+        visited -> {:cont, visited}
+      end
+    end)
   end
 
   defp invalid(message), do: {:error, {:unprocessable, "invalid_dependencies", message}}

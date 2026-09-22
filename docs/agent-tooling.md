@@ -62,6 +62,8 @@ grants for both resources. `/oauth/revoke` accepts `token` and `client_id`.
 | `projects:write` | Create projects; read/update owned project settings |
 | `tracks:read` | Read accessible tracks and transcripts; read this client's tasks |
 | `tracks:write` | Create tracks and submit prompts |
+| `plans:read` | Read project plans |
+| `plans:write` | Create/edit plans and append item notes; assignment also needs `tracks:write` |
 | `tracks:cancel` | Cancel this client's queued tasks |
 
 Scopes restrict existing membership; they never create membership. A track guest
@@ -111,6 +113,58 @@ receipt before calling providers. If a process dies during that call, the receip
 reports `operation_unconfirmed` instead of provisioning again. Inspect the
 project before deciding to submit a new request ID. Definitive failures also
 retain their claim; a corrected operation uses a new ID.
+
+## Project plans
+
+Open a project in the workspace to create a durable plan, then select items and
+explicitly assign them to new or existing open tracks. Assignment spends the
+**project owner's subscription**. Creating or editing a plan does not start work.
+Only people assign in v1, including OAuth MCP clients acting as a person.
+Per-track agent authentication and spawn caps are a separate feature; authenticated
+agent actors can plug into plan creation, editing and notes, but assignment rejects them.
+
+| Tool | Inputs |
+| --- | --- |
+| `create_plan` | `project_id`, `title`, `items`; optional `summary` |
+| `get_plan` | `plan_id` |
+| `list_plans` | `project_id` (includes archived plans) |
+| `update_plan` | `plan_id`, `expected_version`; optional `title`, `summary`, `archived`, `items` |
+| `assign_items` | `plan_id`, `request_id`, `assignments: [{item_id, track_id?}]` |
+| `note_item` | `item_id`, `body` |
+
+Items have an optional client-selected `id` (letters, digits, hyphens and underscores),
+`title`, `brief`, `acceptance` and `dependencies` (item IDs in the same plan).
+Supply IDs when defining dependencies in the same creation call. Plans accept up to
+100 items. `update_plan.items` replaces the ordered list; omitted items are removed.
+Assigned or reserved items must remain unchanged, including position. Add notes to
+record observations. `stale_version` refuses an edit made against an older version;
+reload and reconcile, rather than silently overwriting somebody else's work.
+
+`plans:read` permits reads; `plans:write` permits edits and notes. `assign_items`
+also requires `tracks:write` and is hidden from the catalog unless both are granted.
+Project members read and write the whole plan. Track guests cannot read the plan
+or list its siblings; the scoped track-item context returns only assigned item
+material and notes, without summary or dependency IDs.
+
+Status is derived at read time: independent items start **unassigned**, unmet
+prerequisites are **blocked**, and completing all prerequisites makes a dependent
+item **ready**. Assigned open tracks are **in progress**; their branch's open PR
+means **in review**, a merged PR means **done**, and an unmerged closed PR or track
+means **closed without merge**. Notes cannot change status. GitHub reports share
+the existing five-minute cache and are fetched in bounded batches; unavailable
+reports are flagged. Refresh the workspace panel to check dependencies again.
+There is no automatic assignment.
+
+Assignment first commits a mutation claim and item reservations, opens all tracks,
+then queues prompts containing the plan rationale, acceptance notes and sibling
+scope with assigned track IDs. The prompts require scope discipline, rebasing,
+pushing and a draft PR, and forbid merging. Existing tracks keep their original
+origin. Each successful result includes `item_id`, `track_id` and a task receipt.
+Retry the same request ID and arguments to retrieve the same results. Partial
+failures return per-item `assignment_unconfirmed` or `prompt_unconfirmed`; inspect
+those tracks before starting more work. A crash between acceptance and receipt
+completion returns `operation_unconfirmed`, and reservations prevent duplicate
+provisioning. There is no automatic release of ambiguous reservations in v1.
 
 ## A2A
 

@@ -25,12 +25,19 @@ defmodule Ravix.Plans.Status do
   end
 
   def derive(item, track, report, completed) do
+    case pull_state(report) do
+      :merged -> :done
+      :closed -> :closed_without_merge
+      :open -> :in_review
+      _ -> track_status(item, track, completed)
+    end
+  end
+
+  defp track_status(_item, %{closed_at: at}, _) when not is_nil(at), do: :closed_without_merge
+  defp track_status(_item, %{}, _), do: :in_progress
+
+  defp track_status(item, nil, completed) do
     cond do
-      pull_state(report) == :merged -> :done
-      pull_state(report) == :closed -> :closed_without_merge
-      pull_state(report) == :open -> :in_review
-      track && track.closed_at -> :closed_without_merge
-      track -> :in_progress
       Enum.any?(item.dependencies, &(not MapSet.member?(completed, &1))) -> :blocked
       item.dependencies != [] -> :ready
       true -> :unassigned

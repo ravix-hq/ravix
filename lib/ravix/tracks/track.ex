@@ -26,10 +26,10 @@ defmodule Ravix.Tracks.Track do
   @primary_key {:id, :string, autogenerate: false}
   @foreign_key_type :string
 
-  @origin_kinds ~w(blank branch pr issue)a
+  @origin_kinds ~w(blank branch pr issue plan)a
 
   @typedoc "What a track was started from."
-  @type origin_kind :: :blank | :branch | :pr | :issue
+  @type origin_kind :: :blank | :branch | :pr | :issue | :plan
 
   @type t :: %__MODULE__{}
 
@@ -45,6 +45,8 @@ defmodule Ravix.Tracks.Track do
     field :origin_number, :integer
     field :origin_title, :string
     field :origin_url, :string
+    field :origin_plan_id, :string
+    field :origin_item_id, :string
     field :rev, :integer, default: 1
     field :opened_at, :utc_datetime_usec
     field :closed_at, :utc_datetime_usec
@@ -60,7 +62,7 @@ defmodule Ravix.Tracks.Track do
   end
 
   @fields ~w(id project_id conversation_id slug title branch workdir origin_kind origin_base
-             origin_number origin_title origin_url rev opened_at closed_at created_at created_by_login)a
+             origin_number origin_title origin_url origin_plan_id origin_item_id rev opened_at closed_at created_at created_by_login)a
   @required ~w(id project_id slug title branch workdir origin_kind rev created_at created_by_login)a
 
   @doc "The four things a track can be started from."

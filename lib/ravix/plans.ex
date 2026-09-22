@@ -57,23 +57,39 @@ defmodule Ravix.Plans do
   def update(user, id, expected_version, attrs, actor \\ :person) do
     with {:ok, plan, _} <- access(user, id),
          {:ok, _} <- actor_track(user, plan.project_id, actor) do
-      Store.transaction(fn ->
-        current = Store.lock(id)
+      Store.transaction(fn -> edit(id, expected_version, attrs) end)
+    end
+  end
 
-        if current.version != expected_version,
-          do:
-            Store.rollback(
-              {:conflict, "stale_version", "This plan changed. Reload before editing."}
-            )
+  defp edit(id, expected_version, attrs) do
+    current = Store.lock(id)
 
-        if Map.has_key?(attrs, "items"), do: replace_items(current, attrs["items"])
+    if current.version != expected_version,
+      do:
+        Store.rollback({:conflict, "stale_version", "This plan changed. Reload before editing."})
 
-        current
-        |> Plan.changeset(attrs)
-        |> Ecto.Changeset.put_change(:version, current.version + 1)
-        |> Store.update()
-        |> save()
-      end)
+    if Map.has_key?(attrs, "items"), do: replace_items(current, attrs["items"])
+
+    current
+    |> Plan.changeset(attrs)
+    |> Ecto.Changeset.put_change(:version, current.version + 1)
+    |> Store.update()
+    |> save()
+  end
+
+  def check_item(user, id) do
+    case item_access(user, id) do
+      {:ok, _, _} -> :ok
+      error -> error
+    end
+  end
+
+  def origin_access(user, project_id, plan_id, item_id) do
+    with {:ok, %{project_id: ^project_id}, _} <- access(user, plan_id),
+         %Item{plan_id: ^plan_id} <- Store.item(item_id) do
+      :ok
+    else
+      _ -> {:error, :not_found}
     end
   end
 
@@ -86,7 +102,7 @@ defmodule Ravix.Plans do
     end
   end
 
-  def item_access(user, id) do
+  defp item_access(user, id) do
     with %Item{} = item <- Store.item(id), %Plan{} = plan <- Store.get(item.plan_id) do
       case Access.project_access(user, plan.project_id) do
         {:ok, _} -> {:ok, item, plan}
@@ -108,9 +124,10 @@ defmodule Ravix.Plans do
   defp actor_track(_, _, :person), do: {:ok, nil}
 
   defp actor_track(user, project_id, {:track_agent, track_id}) do
-    with {:ok, %{track: %{project_id: ^project_id}}} <- Access.track_access(user, track_id),
-         do: {:ok, track_id},
-         else: (_ -> {:error, :not_found})
+    case Access.track_access(user, track_id) do
+      {:ok, %{track: %{project_id: ^project_id}}} -> {:ok, track_id}
+      _ -> {:error, :not_found}
+    end
   end
 
   def public_plan(plan),
@@ -183,18 +200,19 @@ defmodule Ravix.Plans do
   defp protect_assigned(existing, items) do
     fields = [:id, :position, :title, :brief, :acceptance, :dependencies]
 
-    Enum.each(existing, fn row ->
-      if row.track_id || row.assignment_request do
-        replacement = Enum.find(items, &(&1.id == row.id))
+    Enum.each(existing, &protect_item(&1, items, fields))
+  end
 
-        if is_nil(replacement) or Map.take(row, fields) != Map.take(replacement, fields),
-          do:
-            Store.rollback(
-              {:conflict, "item_assigned",
-               "Assigned items cannot be edited, reordered or removed."}
-            )
-      end
-    end)
+  defp protect_item(row, items, fields) do
+    if row.track_id || row.assignment_request do
+      replacement = Enum.find(items, &(&1.id == row.id))
+
+      if is_nil(replacement) or Map.take(row, fields) != Map.take(replacement, fields),
+        do:
+          Store.rollback(
+            {:conflict, "item_assigned", "Assigned items cannot be edited, reordered or removed."}
+          )
+    end
   end
 
   defp save({:ok, row}), do: row

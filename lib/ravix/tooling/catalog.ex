@@ -1,6 +1,8 @@
 defmodule Ravix.Tooling.Catalog do
   @moduledoc "The external tool schemas and their required scopes."
 
+  alias Ravix.Tooling.PlanCatalog
+
   def tools do
     [
       tool("list_projects", "List projects you can access.", "projects:read", pagination(), []),
@@ -95,7 +97,7 @@ defmodule Ravix.Tooling.Catalog do
         },
         ["track_id"]
       )
-    ]
+    ] ++ PlanCatalog.tools()
   end
 
   def find(name), do: Enum.find(tools(), &(&1.name == name))
@@ -119,7 +121,17 @@ defmodule Ravix.Tooling.Catalog do
       value >= Map.get(schema, "minimum", 0) and
         value <= Map.get(schema, "maximum", 9_007_199_254_740_991)
 
+  def validate(value, %{"type" => "boolean"}) when is_boolean(value), do: true
+
+  def validate(value, %{"type" => "array", "items" => item} = schema) when is_list(value),
+    do:
+      length(value) <= Map.get(schema, "maxItems", 100) and Enum.all?(value, &validate(&1, item))
+
   def validate(_, _), do: false
+
+  def scopes(%{name: "assign_items"}), do: ["plans:write", "tracks:write"]
+  def scopes(tool), do: [tool.scope]
+  def allowed?(tool, scopes), do: Enum.all?(scopes(tool), &(&1 in scopes))
 
   defp enum?(value, %{"enum" => values}), do: value in values
   defp enum?(_, _), do: true

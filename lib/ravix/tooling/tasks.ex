@@ -2,7 +2,7 @@ defmodule Ravix.Tooling.Tasks do
   @moduledoc "Durable delegated prompts. Completion comes only from the correlated Fountain turn."
   alias Ravix.Accounts.Access
   alias Ravix.{Fountain, PromptQueue, Tracks}
-  alias Ravix.Tooling.{OAuth, Store, Task, TaskPage}
+  alias Ravix.Tooling.{Authorization, Store, Task, TaskPage}
   alias Ravix.Tracks.Transcript
   alias Ravix.Tracks.Transcript.Block
 
@@ -10,7 +10,7 @@ defmodule Ravix.Tooling.Tasks do
   def terminal?(task), do: task.state in @terminal
 
   def send(principal, track_id, prompt, request_id) do
-    with {:ok, principal} <- OAuth.check(principal, "tracks:write"),
+    with {:ok, principal} <- Authorization.check(principal, "tracks:write"),
          {:ok, _} <- Access.track_access(principal.user, track_id) do
       id = id(principal, request_id)
       fingerprint = digest({track_id, prompt})
@@ -56,17 +56,17 @@ defmodule Ravix.Tooling.Tasks do
   end
 
   def get(principal, id) do
-    with {:ok, principal} <- OAuth.check(principal, "tracks:read"),
+    with {:ok, principal} <- Authorization.check(principal, "tracks:read"),
          {:ok, task, access} <- accessible(principal, id),
          {:ok, task} <- refresh(task, access),
-         {:ok, _} <- OAuth.check(principal, "tracks:read"),
+         {:ok, _} <- Authorization.check(principal, "tracks:read"),
          {:ok, _, _} <- accessible(principal, id) do
       {:ok, task}
     end
   end
 
   def cancel(principal, id) do
-    with {:ok, principal} <- OAuth.check(principal, "tracks:cancel"),
+    with {:ok, principal} <- Authorization.check(principal, "tracks:cancel"),
          {:ok, task, _} <- accessible(principal, id),
          :ok <- cancel_queue(principal, task) do
       {:ok, Store.update(task, state: "TASK_STATE_CANCELED")}
@@ -98,7 +98,7 @@ defmodule Ravix.Tooling.Tasks do
   end
 
   def list(principal, params) do
-    with {:ok, principal} <- OAuth.check(principal, "tracks:read"),
+    with {:ok, principal} <- Authorization.check(principal, "tracks:read"),
          {:ok, opts} <- TaskPage.parse(params) do
       {rows, total} = Store.tasks(principal.user.id, principal.grant.client_id, opts)
       page = Enum.take(rows, opts.limit)

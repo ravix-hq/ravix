@@ -1,8 +1,8 @@
 defmodule Ravix.Plans.Store do
   @moduledoc "Row access behind Plans' project and item access doors."
   import Ecto.Query
-  alias Ravix.Repo
   alias Ravix.Plans.{Item, Plan}
+  alias Ravix.Repo
 
   def get(id) when is_binary(id), do: Repo.get(Plan, id)
   def get(_), do: nil
@@ -31,7 +31,6 @@ defmodule Ravix.Plans.Store do
   def insert(changeset), do: Repo.insert(changeset)
   def update(changeset), do: Repo.update(changeset)
   def delete(row), do: Repo.delete(row)
-  def preload_notes(row), do: Repo.preload(row, :notes)
 
   # ownership: Plans established Access.project_access before loading its assigned
   # tracks, including closed ones which project members must still see in history.

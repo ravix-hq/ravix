@@ -81,6 +81,8 @@ defmodule Ravix.Tracks.Opening do
       origin_number: plan.origin.number,
       origin_title: plan.origin.title,
       origin_url: plan.origin.url,
+      origin_plan_id: plan.origin.plan_id,
+      origin_item_id: plan.origin.item_id,
       rev: plan.rev,
       created_by_login: plan.created_by_login
     }

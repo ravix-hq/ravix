@@ -171,7 +171,7 @@ defmodule Ravix.TracksTest do
       # four, and a row carrying anything else cannot be written. See
       # `Ravix.SchemasTest` for the refusal and `open/4` for the boundary
       # where a browser's word becomes one of the four.
-      assert Tracks.Track.origin_kinds() == [:blank, :branch, :pr, :issue]
+      assert Tracks.Track.origin_kinds() == [:blank, :branch, :pr, :issue, :plan]
     end
   end
 
