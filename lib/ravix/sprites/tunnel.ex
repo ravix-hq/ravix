@@ -57,13 +57,13 @@ defmodule Ravix.Sprites.Tunnel do
   `opts[:timeout]` milliseconds (default fifteen seconds) for each of the
   HTTP upgrade and the acknowledgement. Every failure is a
   `Ravix.Sprites.Error` with a message written to be shown, or
-  `:unconfigured` when there is no Sprites token.
+  `{:unconfigured, :sprites}` when there is no Sprites token.
   """
   @spec open(Ravix.Sprites.config(), String.t(), pos_integer(), keyword()) ::
-          {:ok, t()} | {:error, Error.t() | :unconfigured}
+          {:ok, t()} | {:error, Error.t() | {:unconfigured, :sprites}}
   def open(cfg, sprite, port, opts \\ [])
 
-  def open(nil, _sprite, _port, _opts), do: {:error, :unconfigured}
+  def open(nil, _sprite, _port, _opts), do: {:error, {:unconfigured, :sprites}}
 
   def open(cfg, sprite, port, opts) when is_binary(sprite) and is_integer(port) do
     owner = Keyword.get(opts, :owner, self())

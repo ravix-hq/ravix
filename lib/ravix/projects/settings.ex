@@ -85,8 +85,7 @@ defmodule Ravix.Projects.Settings do
   """
   @spec read(Project.t(), Fountain.Client.t()) :: {:ok, t()} | {:error, term()}
   def read(%Project{} = project, client) do
-    with {:ok, env} <-
-           Projects.fountain_result(Fountain.get_environment(client, project.environment_id)) do
+    with {:ok, env} <- Fountain.get_environment(client, project.environment_id) do
       {:ok,
        %__MODULE__{
          runtime: project.runtime,
@@ -187,12 +186,10 @@ defmodule Ravix.Projects.Settings do
     if runtime == project.runtime and model == project.model do
       {:ok, false}
     else
-      with {:ok, catalog} <- Projects.fountain_result(Fountain.catalog(client)),
+      with {:ok, catalog} <- Fountain.catalog(client),
            :ok <- validate_harness(catalog, runtime, model),
            {:ok, _agent} <-
-             Projects.fountain_result(
-               Fountain.update_agent(client, project.agent_id, %{runtime: runtime, model: model})
-             ) do
+             Fountain.update_agent(client, project.agent_id, %{runtime: runtime, model: model}) do
         Projects.Store.set_harness(project.id, runtime, model)
         {:ok, true}
       end
@@ -243,10 +240,7 @@ defmodule Ravix.Projects.Settings do
     if patch == %{} do
       :ok
     else
-      with {:ok, _env} <-
-             Projects.fountain_result(
-               Fountain.update_environment(client, project.environment_id, patch)
-             ) do
+      with {:ok, _env} <- Fountain.update_environment(client, project.environment_id, patch) do
         # The track ribbon's "add a setup script" offer is read from the
         # memoised environment, so the answer this just changed has to be
         # dropped or the offer keeps appearing for another minute.
@@ -268,11 +262,9 @@ defmodule Ravix.Projects.Settings do
         # that would badge open tracks as stale never happens because this
         # failure stops it.
         with {:ok, _agent} <-
-               Projects.fountain_result(
-                 Fountain.update_agent(client, project.agent_id, %{
-                   system: Projects.compose_system(%{project | instructions: text})
-                 })
-               ) do
+               Fountain.update_agent(client, project.agent_id, %{
+                 system: Projects.compose_system(%{project | instructions: text})
+               }) do
           Projects.Store.set_instructions(project.id, text)
           {:ok, true}
         end
@@ -322,10 +314,10 @@ defmodule Ravix.Projects.Settings do
   defp require_target(_target), do: :ok
 
   defp write_secret(client, store, target, key, value) when is_binary(value) and value != "",
-    do: Projects.fountain_result(Fountain.put_secret(client, store, target, key, value))
+    do: Fountain.put_secret(client, store, target, key, value)
 
   defp write_secret(client, store, target, key, _value),
-    do: Projects.fountain_result(Fountain.delete_secret(client, store, target, key))
+    do: Fountain.delete_secret(client, store, target, key)
 
   # ── shapes ────────────────────────────────────────────────────────────
 

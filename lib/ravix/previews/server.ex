@@ -732,7 +732,10 @@ defmodule Ravix.Previews.Server do
   @spec message_of(term()) :: String.t()
   def message_of(message) when is_binary(message), do: message
   def message_of(%Sprites.Error{message: message}), do: message
-  def message_of(:unconfigured), do: "Previews unavailable: SPRITES_TOKEN is not configured."
+
+  def message_of({:unconfigured, :sprites}),
+    do: "Previews unavailable: SPRITES_TOKEN is not configured."
+
   def message_of({:unavailable, message}), do: message
   def message_of({:conflict, _code, message}), do: message
   def message_of(%{__exception__: true} = error), do: Exception.message(error)

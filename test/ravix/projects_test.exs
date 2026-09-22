@@ -494,8 +494,7 @@ defmodule Ravix.ProjectsTest do
   describe "create/2" do
     test "without Fountain there are no machines" do
       no_fountain()
-      assert {:error, {:unavailable, message}} = Projects.create(person("me"), %{name: "x"})
-      assert message =~ "no Fountain account"
+      assert {:error, {:unconfigured, :fountain}} = Projects.create(person("me"), %{name: "x"})
     end
 
     test "blank projects reject installation credentials before creating upstream records" do
@@ -873,15 +872,15 @@ defmodule Ravix.ProjectsTest do
       no_github()
       client = fountain()
       project = blank_project(person("owner"), repo_full_name: "owner/repo", installation_id: 1)
-      assert {:error, {:unavailable, _}} = Projects.prepare_machine(project, client)
+      assert {:error, {:unconfigured, :github}} = Projects.prepare_machine(project, client)
     end
 
     test "the one-argument forms use this deployment's client, or say there is none" do
       project = blank_project(person("owner"), repo_full_name: "owner/repo", installation_id: 1)
       no_fountain()
-      assert {:error, {:unavailable, _}} = Projects.prepare_machine(project)
+      assert {:error, {:unconfigured, :fountain}} = Projects.prepare_machine(project)
 
-      assert {:error, {:unavailable, _}} =
+      assert {:error, {:unconfigured, :fountain}} =
                Projects.refresh_clone_token(%{vault_id: "v", installation_id: 1})
 
       app = github()
@@ -1193,7 +1192,7 @@ defmodule Ravix.ProjectsTest do
     test "without Fountain nothing can be saved", %{owner: owner, project: project} do
       no_fountain()
 
-      assert {:error, {:unavailable, _}} =
+      assert {:error, {:unconfigured, :fountain}} =
                Projects.update_settings(owner, project.id, %{name: "x"})
     end
   end
@@ -1466,7 +1465,7 @@ defmodule Ravix.ProjectsTest do
       assert {:error, {:reauthenticate, _}} = Projects.repos(person("me"))
 
       no_github()
-      assert {:error, {:unavailable, _}} = Projects.repos(person("me", "t"))
+      assert {:error, {:unconfigured, :github}} = Projects.repos(person("me", "t"))
     end
   end
 
@@ -1534,7 +1533,7 @@ defmodule Ravix.ProjectsTest do
       assert {:error, {:conflict, "no_repo", _}} = Projects.refs(owner, blank.id, :branches)
 
       no_github()
-      assert {:error, {:unavailable, _}} = Projects.refs(owner, project.id, :branches)
+      assert {:error, {:unconfigured, :github}} = Projects.refs(owner, project.id, :branches)
     end
   end
 

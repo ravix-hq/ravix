@@ -44,7 +44,7 @@ defmodule Ravix.FountainTest do
       client = Fountain.client()
       assert %Client{http: nil, base_url: "https://fountain.example"} = client
       refute Client.configured?(client)
-      assert {:error, :unconfigured} = Fountain.catalog(client)
+      assert {:error, {:unconfigured, :fountain}} = Fountain.catalog(client)
 
       Ravix.Config.put(:fountain_api_key, "key-1")
       client = Fountain.client()
@@ -55,41 +55,52 @@ defmodule Ravix.FountainTest do
       assert client.http.timeout == 60_000
     end
 
-    test "every call on an unconfigured client answers {:error, :unconfigured}" do
+    test "every call on an unconfigured client answers {:error, {:unconfigured, :fountain}}" do
       client = Client.new("https://fountain.example", nil)
 
-      assert {:error, :unconfigured} = Fountain.catalog(client)
-      assert {:error, :unconfigured} = Fountain.me(client)
-      assert {:error, :unconfigured} = Fountain.create_environment(client, %{name: "x"})
-      assert {:error, :unconfigured} = Fountain.get_environment(client, "e")
-      assert {:error, :unconfigured} = Fountain.update_environment(client, "e", %{})
-      assert {:error, :unconfigured} = Fountain.delete_environment(client, "e")
-      assert {:error, :unconfigured} = Fountain.create_vault(client, %{name: "x"})
-      assert {:error, :unconfigured} = Fountain.delete_vault(client, "v")
-      assert {:error, :unconfigured} = Fountain.create_agent(client, %{})
-      assert {:error, :unconfigured} = Fountain.get_agent(client, "a")
-      assert {:error, :unconfigured} = Fountain.update_agent(client, "a", %{})
-      assert {:error, :unconfigured} = Fountain.delete_agent(client, "a")
-      assert {:error, :unconfigured} = Fountain.put_secret(client, :vaults, "v", "K", "v")
-      assert {:error, :unconfigured} = Fountain.delete_secret(client, :vaults, "v", "K")
-      assert {:error, :unconfigured} = Fountain.secret_keys(client, :vaults, "v")
-      assert {:error, :unconfigured} = Fountain.list_conversations(client)
-      assert {:error, :unconfigured} = Fountain.get_conversation(client, "c")
+      assert {:error, {:unconfigured, :fountain}} = Fountain.catalog(client)
+      assert {:error, {:unconfigured, :fountain}} = Fountain.me(client)
 
-      assert {:error, :unconfigured} = Fountain.create_conversation(client, launch())
+      assert {:error, {:unconfigured, :fountain}} =
+               Fountain.create_environment(client, %{name: "x"})
 
-      assert {:error, :unconfigured} = Fountain.prompt(client, "c", "hi")
-      assert {:error, :unconfigured} = Fountain.interrupt(client, "c")
-      assert {:error, :unconfigured} = Fountain.terminate(client, "c")
-      assert {:error, :unconfigured} = Fountain.turns(client, "c")
-      assert {:error, :unconfigured} = Fountain.events(client, "c")
-      assert {:error, :unconfigured} = Fountain.events_page(client, "c")
-      assert {:error, :unconfigured} = Fountain.stream_events(client, "c")
-      assert {:error, :unconfigured} = Fountain.each_event(client, "c", fn _ -> :halt end)
-      assert {:error, :unconfigured} = Fountain.sandbox(client, "s")
-      assert {:error, :unconfigured} = Fountain.listing(client, "s", "/")
-      assert {:error, :unconfigured} = Fountain.file(client, "s", "/a")
-      assert {:error, :unconfigured} = Fountain.diff(client, "s", "/a")
+      assert {:error, {:unconfigured, :fountain}} = Fountain.get_environment(client, "e")
+      assert {:error, {:unconfigured, :fountain}} = Fountain.update_environment(client, "e", %{})
+      assert {:error, {:unconfigured, :fountain}} = Fountain.delete_environment(client, "e")
+      assert {:error, {:unconfigured, :fountain}} = Fountain.create_vault(client, %{name: "x"})
+      assert {:error, {:unconfigured, :fountain}} = Fountain.delete_vault(client, "v")
+      assert {:error, {:unconfigured, :fountain}} = Fountain.create_agent(client, %{})
+      assert {:error, {:unconfigured, :fountain}} = Fountain.get_agent(client, "a")
+      assert {:error, {:unconfigured, :fountain}} = Fountain.update_agent(client, "a", %{})
+      assert {:error, {:unconfigured, :fountain}} = Fountain.delete_agent(client, "a")
+
+      assert {:error, {:unconfigured, :fountain}} =
+               Fountain.put_secret(client, :vaults, "v", "K", "v")
+
+      assert {:error, {:unconfigured, :fountain}} =
+               Fountain.delete_secret(client, :vaults, "v", "K")
+
+      assert {:error, {:unconfigured, :fountain}} = Fountain.secret_keys(client, :vaults, "v")
+      assert {:error, {:unconfigured, :fountain}} = Fountain.list_conversations(client)
+      assert {:error, {:unconfigured, :fountain}} = Fountain.get_conversation(client, "c")
+
+      assert {:error, {:unconfigured, :fountain}} = Fountain.create_conversation(client, launch())
+
+      assert {:error, {:unconfigured, :fountain}} = Fountain.prompt(client, "c", "hi")
+      assert {:error, {:unconfigured, :fountain}} = Fountain.interrupt(client, "c")
+      assert {:error, {:unconfigured, :fountain}} = Fountain.terminate(client, "c")
+      assert {:error, {:unconfigured, :fountain}} = Fountain.turns(client, "c")
+      assert {:error, {:unconfigured, :fountain}} = Fountain.events(client, "c")
+      assert {:error, {:unconfigured, :fountain}} = Fountain.events_page(client, "c")
+      assert {:error, {:unconfigured, :fountain}} = Fountain.stream_events(client, "c")
+
+      assert {:error, {:unconfigured, :fountain}} =
+               Fountain.each_event(client, "c", fn _ -> :halt end)
+
+      assert {:error, {:unconfigured, :fountain}} = Fountain.sandbox(client, "s")
+      assert {:error, {:unconfigured, :fountain}} = Fountain.listing(client, "s", "/")
+      assert {:error, {:unconfigured, :fountain}} = Fountain.file(client, "s", "/a")
+      assert {:error, {:unconfigured, :fountain}} = Fountain.diff(client, "s", "/a")
     end
 
     test "an empty key is no key" do
@@ -930,7 +941,11 @@ defmodule Ravix.FountainTest do
     end
 
     test "as_http mirrors asHttpError" do
-      assert %{status: 503, code: "no_fountain"} = Error.as_http(:unconfigured, "x")
+      # A deployment with no Fountain is not a Fountain failure: that is
+      # `{:unconfigured, :fountain}`, sentenced once in `RavixWeb.Error`.
+      assert %{status: 503, code: "no_fountain"} =
+               Map.from_struct(RavixWeb.Error.from({:unconfigured, :fountain}))
+
       assert %{status: 502, code: "fountain_rejected"} = Error.as_http(%Error{status: 401}, "x")
 
       assert %{status: 502, code: "fountain_rejected"} =

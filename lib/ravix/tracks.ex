@@ -43,7 +43,6 @@ defmodule Ravix.Tracks do
   alias Ravix.Accounts.User
   alias Ravix.Analytics
   alias Ravix.Fountain
-  alias Ravix.Fountain.Client
   alias Ravix.Fountain.Launch
   alias Ravix.Fountain.Shapes.Conversation
   alias Ravix.Hub
@@ -88,16 +87,16 @@ defmodule Ravix.Tracks do
 
   Two providers show through here rather than being flattened: a `Fountain`
   failure is the machine's, a `GitHub` one is the repository's, and
-  `RavixWeb.Error` has a different sentence for each. `:unconfigured` is
-  either of them not being set up on this deployment at all.
+  `RavixWeb.Error` has a different sentence for each. `{:unconfigured, _}`
+  names which of them is not set up on this deployment at all; it comes from
+  `Ravix.Providers` or the adapter and is passed through as it is.
   """
   @type reason ::
           :not_found
-          | :unconfigured
           | {:forbidden, String.t()}
           | {:conflict, String.t(), String.t()}
           | {:unprocessable, String.t(), String.t()}
-          | {:unavailable, String.t(), String.t()}
+          | {:unconfigured, :fountain | :github}
           | Fountain.Error.t()
           | Ravix.GitHub.Error.t()
 
@@ -1094,22 +1093,11 @@ defmodule Ravix.Tracks do
   defp publish_tracks(project_id, track_id),
     do: Hub.publish(project_id, :tracks, track_id: track_id)
 
-  defp fountain do
-    client = Fountain.client()
-    if Client.configured?(client), do: {:ok, client}, else: {:error, :unconfigured}
-  end
-
-  defp github do
-    case Ravix.Config.github() do
-      nil ->
-        {:error,
-         {:unavailable, "no_github",
-          "This Ravix deployment has no GitHub App configured, so it cannot see repositories."}}
-
-      app ->
-        {:ok, app}
-    end
-  end
+  # The two integrations, by the names the functions above use. The refusal
+  # is `Ravix.Providers`' and is passed up as it is; nothing here says a
+  # sentence about a missing provider.
+  defp fountain, do: Ravix.Providers.fountain()
+  defp github, do: Ravix.Providers.github()
 
   defp require_repo(%Project{repo_full_name: repo, installation_id: installation}, _message)
        when is_binary(repo) and repo != "" and is_integer(installation),

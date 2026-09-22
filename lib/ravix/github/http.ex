@@ -2,11 +2,18 @@ defmodule Ravix.GitHub.HTTP do
   @moduledoc """
   The one request.
 
-  Every call to the GitHub API goes through `request/4`: the headers GitHub
-  wants, a twenty-second budget, the body as JSON in and out, and an error
+  Every call to GitHub goes through `request/4`: the headers GitHub wants, a
+  twenty-second budget, the body as JSON in and out, the span, and an error
   that keeps GitHub's own message. Rate limits are remembered per
   installation in `Ravix.GitHub.Cache`, so once GitHub says stop, nothing
   else for that installation is even sent until the reset.
+
+  That includes the one call that is not to the API host: the OAuth code
+  exchange at `web_url/login/oauth/access_token`, which authenticates by the
+  client secret in its body rather than a header. It used to build its own
+  `Req` call beside this one, with no span and a second copy of the
+  transport error, so a sign-in that GitHub was slow to answer was the one
+  request to GitHub a trace could not see.
 
   `Application.get_env(:ravix, :req_options, [])` is merged into every
   request, which is how the tests route it through `Req.Test`.
@@ -30,9 +37,12 @@ defmodule Ravix.GitHub.HTTP do
   One request to GitHub.
 
   `path` is relative to the App's API URL unless it is absolute. `:auth` is
-  the whole Authorization header value. `:json` is a body to send. With
-  `:installation_id`, a rate limit GitHub answers with is remembered against
-  that installation, and a remembered one is answered without a request.
+  the whole Authorization header value, and is left out only by the OAuth
+  exchange, whose credential travels in the body. `:json` is a body to send;
+  `:accept` replaces the API's media type for a host that speaks plain JSON.
+  With `:installation_id`, a rate limit GitHub answers with is remembered
+  against that installation, and a remembered one is answered without a
+  request.
   """
   @spec request(GitHubApp.t(), :get | :post, String.t(), [option()]) ::
           {:ok, term()} | {:error, Error.t()}
@@ -66,16 +76,6 @@ defmodule Ravix.GitHub.HTTP do
     end
   end
 
-  @doc "The user agent every request identifies itself with."
-  @spec user_agent() :: String.t()
-  def user_agent, do: @user_agent
-
-  @doc "The options every Req call is built on, with the test overrides merged in."
-  @spec req_options(keyword()) :: keyword()
-  def req_options(opts) do
-    Keyword.merge(opts, Application.get_env(:ravix, :req_options, []))
-  end
-
   # ── the request ────────────────────────────────────────────────────
 
   defp check_rate_limit(_app, nil), do: :ok
@@ -97,12 +97,12 @@ defmodule Ravix.GitHub.HTTP do
   defp send_request(app, method, path, opts) do
     url = if String.starts_with?(path, "http"), do: path, else: app.api_url <> path
 
-    headers = [
-      {"accept", Keyword.get(opts, :accept, "application/vnd.github+json")},
-      {"authorization", Keyword.fetch!(opts, :auth)},
-      {"user-agent", @user_agent},
-      {"x-github-api-version", "2022-11-28"}
-    ]
+    headers =
+      [
+        {"accept", Keyword.get(opts, :accept, "application/vnd.github+json")},
+        {"user-agent", @user_agent},
+        {"x-github-api-version", "2022-11-28"}
+      ] ++ auth_header(opts)
 
     base = [
       method: method,
@@ -127,6 +127,16 @@ defmodule Ravix.GitHub.HTTP do
         {:error, %Error{status: nil, message: "Could not reach GitHub: " <> describe(exception)}}
     end
   end
+
+  defp auth_header(opts) do
+    case Keyword.fetch(opts, :auth) do
+      {:ok, auth} -> [{"authorization", auth}]
+      :error -> []
+    end
+  end
+
+  # The options every Req call is built on, with the test overrides merged in.
+  defp req_options(opts), do: Keyword.merge(opts, Application.get_env(:ravix, :req_options, []))
 
   defp describe(%{__exception__: true} = exception), do: Exception.message(exception)
 

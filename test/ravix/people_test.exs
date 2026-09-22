@@ -819,7 +819,7 @@ defmodule Ravix.PeopleTest do
 
     test "without a GitHub App nobody new can be looked up, but accounts here still join", ctx do
       stub(Ravix.Config, :github, fn -> nil end)
-      assert {:error, {:unavailable, _}} = People.add(ctx.owner, ctx.shared.id, "dana")
+      assert {:error, {:unconfigured, :github}} = People.add(ctx.owner, ctx.shared.id, "dana")
       assert {:ok, _} = People.add(ctx.owner, ctx.shared.id, "bo")
     end
 

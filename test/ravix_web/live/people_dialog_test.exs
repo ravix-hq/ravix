@@ -200,7 +200,7 @@ defmodule RavixWeb.Live.PeopleDialogTest do
       # dropped on the floor. Assert the sentence itself.
       # This deployment has no GitHub App, so that is the refusal. Whichever
       # it is, the point is that a sentence arrives at all.
-      assert html =~ "no GitHub App configured"
+      assert html =~ RavixWeb.Error.from({:unconfigured, :github}).message
       assert has_element?(view, "#people-dialog")
     end
   end

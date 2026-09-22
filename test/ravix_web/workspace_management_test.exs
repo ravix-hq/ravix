@@ -248,12 +248,10 @@ defmodule RavixWeb.WorkspaceManagementTest do
 
     # A refusal that belongs to no field has no input to sit beside, so it
     # is still a toast. That is the boundary `Form.refuse/2` draws.
-    expect(Projects, :create, fn _, _ ->
-      {:error, {:unavailable, "no_fountain", "Provisioning is offline."}}
-    end)
+    expect(Projects, :create, fn _, _ -> {:error, {:unconfigured, :fountain}} end)
 
     ctx.view |> form("#new-project-form", new_project: [name: "Fine"]) |> render_submit()
-    assert render_async(ctx.view) =~ "Provisioning is offline."
+    assert render_async(ctx.view) =~ RavixWeb.Error.from({:unconfigured, :fountain}).message
     refute has_element?(ctx.view, "#new-project-form .field p.error")
   end
 

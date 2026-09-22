@@ -20,7 +20,8 @@ defmodule Ravix.Sprites do
        works completely, because everything else goes through Fountain. The
        panels render a designed empty state naming the missing variable. In
        code that is a `nil` config, and every function here answers
-       `{:error, :unconfigured}` to one.
+       `{:error, {:unconfigured, :sprites}}` to one, the shape
+       `Ravix.Providers` gives every missing integration.
     2. **It is not a PTY.** Sprites' exec is one HTTP request in, a
        multiplexed byte stream out, and then it is over. `ls`, `git status`
        and `npm test` are exactly right. `vim` and `top` are not, and the
@@ -71,7 +72,7 @@ defmodule Ravix.Sprites do
   """
   @type lease :: :hold | :release
 
-  @type error :: Error.t() | :unconfigured
+  @type error :: Error.t() | {:unconfigured, :sprites}
 
   @doc "The configured client, or nil without a `SPRITES_TOKEN`."
   @spec config() :: config()
@@ -79,7 +80,7 @@ defmodule Ravix.Sprites do
 
   @doc "One managed service, or nil when Sprites has no service by that name."
   @spec service(config(), String.t(), String.t()) :: {:ok, service() | nil} | {:error, error()}
-  def service(nil, _sprite, _name), do: {:error, :unconfigured}
+  def service(nil, _sprite, _name), do: {:error, {:unconfigured, :sprites}}
 
   def service(cfg, sprite, name) do
     case service_request(cfg, sprite, name, :get, nil, missing_ok: true) do
@@ -100,7 +101,7 @@ defmodule Ravix.Sprites do
   @spec define_service(config(), String.t(), String.t(), String.t(), String.t(), pos_integer()) ::
           {:ok, String.t()} | {:error, error()}
   def define_service(nil, _sprite, _name, _directory, _command, _port),
-    do: {:error, :unconfigured}
+    do: {:error, {:unconfigured, :sprites}}
 
   def define_service(cfg, sprite, name, directory, command, port) do
     body = %{
@@ -126,7 +127,7 @@ defmodule Ravix.Sprites do
   """
   @spec service_action(config(), String.t(), String.t(), :start | :stop | :delete) ::
           {:ok, String.t()} | {:error, error()}
-  def service_action(nil, _sprite, _name, _action), do: {:error, :unconfigured}
+  def service_action(nil, _sprite, _name, _action), do: {:error, {:unconfigured, :sprites}}
 
   def service_action(cfg, sprite, name, action) when action in [:start, :stop, :delete] do
     {path, method} =
@@ -207,15 +208,16 @@ defmodule Ravix.Sprites do
   """
   @spec exec(config(), String.t(), [String.t()], pos_integer()) ::
           {:ok, exec()} | {:error, error()}
-  def exec(nil, _sprite, _argv, _timeout_sec), do: {:error, :unconfigured}
+  def exec(nil, _sprite, _argv, _timeout_sec), do: {:error, {:unconfigured, :sprites}}
 
   def exec(cfg, sprite, argv, timeout_sec) when is_list(argv) do
     query = URI.encode_query(Enum.map(argv, &{"cmd", &1}))
     url = "#{cfg.base_url}/v1/sprites/#{encode(sprite)}/exec?#{query}"
 
-    # Everything that reaches a machine reaches it through here -- the terminal,
-    # `Ravix.Vitals`' probe, every preview service action -- so this is the one
-    # span worth having on Sprites.
+    # Everything that runs *on* a machine runs through here -- the terminal,
+    # `Ravix.Vitals`' probe, a service's logs and its activity lease -- and the
+    # service operations have a span of their own in `service_request/6`; both
+    # go out through `request/5` below.
     #
     # **`argv` is not on it, and must not be.** This is where the terminal panel
     # sends what somebody typed: `shell/5` wraps an arbitrary `sh -c` command,
@@ -227,49 +229,42 @@ defmodule Ravix.Sprites do
     # `Ravix.Trace.sanitize/1` would keep a command string, being a short
     # binary -- it defends against a leak nobody noticed, not against a
     # deliberate one, so the judgement has to happen here.
-    Trace.span(
+    request(
       "sprites.exec",
       %{
         "ravix.sprite" => sprite,
         "ravix.argv_count" => length(argv),
         "ravix.timeout_sec" => timeout_sec
       },
-      fn -> run_exec(cfg, url, timeout_sec) end
-    )
-  end
-
-  defp run_exec(cfg, url, timeout_sec) do
-    request =
-      new_request(cfg,
+      cfg,
+      [
         method: :post,
         url: url,
         headers: [{"content-type", "application/octet-stream"}],
         receive_timeout: timeout_sec * 1000 + 15_000
-      )
-
-    case Req.request(request) do
-      {:ok, %{status: status, body: body}} when status in 200..299 ->
-        ran = decode_frames(body)
-
-        # The exit code, because a non-zero exec is not a failed span -- the
-        # request succeeded -- and is still the thing a reader is looking for.
-        Trace.annotate(%{"ravix.exit_code" => ran.code})
-        {:ok, ran}
-
-      {:ok, %{status: 404}} ->
-        {:error,
-         Error.new(
-           404,
-           "This machine is not reachable over Sprites. It may be asleep, or built somewhere this token cannot see."
-         )}
-
-      {:ok, %{status: status, body: body}} ->
-        {:error, Error.new(status, String.trim("Sprites said #{status}. #{detail(body)}"))}
-
-      {:error, reason} ->
-        {:error, transport_error(reason)}
-    end
+      ],
+      &ran/1
+    )
   end
+
+  defp ran(%Req.Response{status: status, body: body}) when status in 200..299 do
+    ran = decode_frames(body)
+
+    # The exit code, because a non-zero exec is not a failed span -- the
+    # request succeeded -- and is still the thing a reader is looking for.
+    Trace.annotate(%{"ravix.exit_code" => ran.code})
+    {:ok, ran}
+  end
+
+  defp ran(%Req.Response{status: 404}) do
+    {:error,
+     Error.new(
+       404,
+       "This machine is not reachable over Sprites. It may be asleep, or built somewhere this token cannot see."
+     )}
+  end
+
+  defp ran(%Req.Response{} = response), do: refused(response)
 
   @doc """
   A shell command, and, beside it, the directory it ended in.
@@ -383,49 +378,75 @@ defmodule Ravix.Sprites do
 
   # ── the service API ──────────────────────────────────────────────────
 
+  # `path` is the service's name plus the operation and its query
+  # (`sy-1/start?duration=1s`), which is what the span carries: a service is
+  # named after its track, and the operation is the thing a reader of the
+  # trace is looking for.
   defp service_request(cfg, sprite, path, method, body, opts \\ []) do
     missing_ok = Keyword.get(opts, :missing_ok, false)
     stopped_ok = Keyword.get(opts, :stopped_ok, false)
 
-    request =
-      new_request(cfg,
+    request(
+      "sprites.service",
+      %{
+        "ravix.sprite" => sprite,
+        "http.request.method" => method,
+        "url.path" => "/services/" <> path
+      },
+      cfg,
+      [
         method: method,
         url: "#{cfg.base_url}/v1/sprites/#{encode(sprite)}/services/#{path}",
         headers: [{"content-type", "application/json"}],
         body: if(body, do: Jason.encode!(body)),
         receive_timeout: @service_timeout
-      )
+      ],
+      fn
+        %Req.Response{status: status} = resp when status in 200..299 ->
+          {:ok, resp}
 
-    case Req.request(request) do
-      {:ok, %{status: status} = resp} when status in 200..299 ->
-        {:ok, resp}
+        %Req.Response{status: 404} = resp when missing_ok ->
+          {:ok, resp}
 
-      {:ok, %{status: 404} = resp} when missing_ok ->
-        {:ok, resp}
+        %Req.Response{status: 409, body: body} = resp when stopped_ok and is_binary(body) ->
+          # A stopped process may be reported as failed (SIGTERM/exit 143).
+          # Sprites answers a repeated stop with this specific conflict instead
+          # of 2xx. Its desired outcome is already satisfied; other conflicts,
+          # including start conflicts, must still be surfaced and retried.
+          if String.trim(body) == "service is not running",
+            do: {:ok, %Req.Response{status: 204, body: ""}},
+            else: refused(resp)
 
-      {:ok, %{status: 409, body: body}} when stopped_ok and is_binary(body) ->
-        # A stopped process may be reported as failed (SIGTERM/exit 143).
-        # Sprites answers a repeated stop with this specific conflict instead
-        # of 2xx. Its desired outcome is already satisfied; other conflicts,
-        # including start conflicts, must still be surfaced and retried.
-        if String.trim(body) == "service is not running",
-          do: {:ok, %Req.Response{status: 204, body: ""}},
-          else: {:error, service_error(409)}
-
-      {:ok, %{status: status}} ->
-        {:error, service_error(status)}
-
-      {:error, reason} ->
-        {:error, transport_error(reason)}
-    end
-  end
-
-  defp service_error(status) do
-    Error.new(
-      status,
-      "Sprites service operation failed (#{status}). Check service support and the deployment token."
+        %Req.Response{} = resp ->
+          refused(resp)
+      end
     )
   end
+
+  # ── one request ──────────────────────────────────────────────────────
+
+  # Every request to Sprites, an exec or a service operation, goes out
+  # through here, so the span, the transport failure and the shape of
+  # "Sprites said <status>" exist once. `interpret` is only what an answer
+  # means to that caller: which statuses are success, and what a 404 is.
+  #
+  # The exec used to be the one span on Sprites while the service
+  # operations -- define, start, stop, delete, each a request of its own --
+  # had none and their own status mapping, so a preview that would not start
+  # was invisible to a trace at exactly the request that refused it.
+  defp request(name, attributes, cfg, options, interpret) do
+    Trace.span(name, attributes, fn ->
+      case Req.request(new_request(cfg, options)) do
+        {:ok, %Req.Response{} = response} -> interpret.(response)
+        {:error, reason} -> {:error, transport_error(reason)}
+      end
+    end)
+  end
+
+  # Any answer a caller did not claim as success: the status, and the first
+  # 200 bytes of whatever Sprites said about it.
+  defp refused(%Req.Response{status: status, body: body}),
+    do: {:error, Error.new(status, String.trim("Sprites said #{status}. #{detail(body)}"))}
 
   defp decode_service(body) when is_binary(body) do
     case Jason.decode(body) do

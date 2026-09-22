@@ -659,7 +659,9 @@ defmodule Ravix.TracksTest do
     test "without a Fountain key there are no machines", ctx do
       client = Client.new("https://managoat.com", nil)
       stub(Ravix.Fountain, :client, fn -> client end)
-      assert {:error, :unconfigured} = Tracks.open(ctx.owner, ctx.project.id, %{title: "Kyoto"})
+
+      assert {:error, {:unconfigured, :fountain}} =
+               Tracks.open(ctx.owner, ctx.project.id, %{title: "Kyoto"})
     end
   end
 
@@ -1205,8 +1207,7 @@ defmodule Ravix.TracksTest do
       assert {:error, {:conflict, "no_repo", _}} = Tracks.checks(ctx.owner, bare.id)
       stub(Ravix.Config, :github, fn -> nil end)
 
-      assert {:error, {:unavailable, "no_github", _}} =
-               Tracks.open_pull(ctx.owner, ctx.track.id, %{})
+      assert {:error, {:unconfigured, :github}} = Tracks.open_pull(ctx.owner, ctx.track.id, %{})
     end
   end
 end
