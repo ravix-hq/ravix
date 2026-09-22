@@ -4,7 +4,10 @@ import AxeBuilder from '@axe-core/playwright';
 test('a project plan assigns coordinated tracks and works at phone width', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('link', { name: 'Sign in with GitHub', exact: true }).click();
-  await page.getByRole('link', { name: 'Sign in as @mockuser', exact: true }).click();
+  // Not @mockuser: this file runs before workspace.spec.js, whose first-visit
+  // walkthrough and empty inbox need that person untouched. @dana is
+  // tooling.spec.js's, so plans get @eli.
+  await page.getByRole('link', { name: 'Sign in as @eli', exact: true }).click();
   if (new URL(page.url()).pathname.startsWith('/welcome')) {
     await page.getByRole('button', { name: 'Skip setup', exact: true }).click();
   }
@@ -29,8 +32,9 @@ test('a project plan assigns coordinated tracks and works at phone width', async
   await panel.getByLabel('Assign Build API', { exact: true }).check();
   await panel.getByLabel('Assign Build UI', { exact: true }).check();
   await panel.getByRole('button', { name: 'Assign selected items' }).click();
-  await expect(panel.getByRole('link', { name: 'Open track: Build API' })).toBeVisible();
-  await expect(panel.getByRole('link', { name: 'Open track: Build UI' })).toBeVisible();
+  // A track is named after its reserved branch (#154); the item keeps its title.
+  await expect(panel.getByRole('link', { name: 'Open track: ravix/build-api' })).toBeVisible();
+  await expect(panel.getByRole('link', { name: 'Open track: ravix/build-ui' })).toBeVisible();
   await expect(panel.locator('.chip', { hasText: 'in progress' })).toHaveCount(2);
   const result = await new AxeBuilder({ page }).include('#plans-panel').withTags(['wcag2a', 'wcag2aa']).analyze();
   expect(result.violations).toEqual([]);
@@ -38,6 +42,6 @@ test('a project plan assigns coordinated tracks and works at phone width', async
   await expect(panel).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await page.screenshot({ path: 'test-results/plans-phone.png', fullPage: true });
-  await panel.getByRole('link', { name: 'Open track: Build API' }).click();
+  await panel.getByRole('link', { name: 'Open track: ravix/build-api' }).click();
   await expect(page.getByRole('link', { name: 'Plan: Build API' })).toBeVisible();
 });
