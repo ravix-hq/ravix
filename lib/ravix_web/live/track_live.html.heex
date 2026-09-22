@@ -243,12 +243,14 @@
                 <span class="composer-model mono">{@project.model}</span><span class="send-hint"><kbd>Enter</kbd>
                 to send</span><span class="spacer"></span>
                 <button
-                  class="primary"
+                  type="submit"
+                  class="primary composer-send"
                   aria-label="Send"
-                  phx-disable-with="Sending…"
+                  title="Send"
                   disabled={is_nil(@track.conversation_id)}
                 >
                   <.icon name="arrow-up" size={16} />
+                  <span>Send</span>
                 </button>
                 <button
                   :if={@track.status in [:running, :opening]}
@@ -310,7 +312,15 @@
           <button class="ghost" phx-click="refresh-panel" disabled={@panel.busy?}>Refresh</button>
           <p :if={@panel.busy?} role="status">Loading…</p>
           <p :if={@panel.error} role="alert">{@panel.error}</p>
-          <.panel_body :if={@panel.data} data={@panel.data} file={@panel.file} project={@project} />
+          <.panel_body
+            :if={@panel.data}
+            data={@panel.data}
+            file={@panel.file}
+            project={@project}
+            diff_path={@diff_path}
+            diff_filter={@diff_filter}
+            diff_show_large={@diff_show_large}
+          />
           <div :if={@panel.tab == :preview && @preview}>
             <p>Status: {@preview.state}</p>
             <p :if={@preview.unavailable_reason}>{@preview.unavailable_reason}</p>

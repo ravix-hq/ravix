@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
+import { composerFixture } from './composer-fixture.js';
 
 async function accessible(page) {
   // Settle first. Axe computes contrast against *composited* colour, so an
@@ -315,6 +316,28 @@ test('project, track, streaming, image upload, reconnect, and revocation', async
   await page.getByRole('button', { name: 'Create track', exact: true }).click();
   const composer = page.getByRole('textbox', { name: 'Message', exact: true });
   await expect(composer).toBeEnabled({ timeout: 30_000 });
+  // The composer enables once the conversation exists, before the opening
+  // turn has made the worktree. A diff read then is honestly empty and the
+  // panel does not poll, so wait for the turn to settle first.
+  await expect(page.locator('#transcript-status')).toHaveText('Agent replied', { timeout: 30_000 });
+  await page.getByRole('button', { name: 'Changes', exact: true }).click();
+  await expect(page.locator('.change-file')).toHaveCount(2);
+  await page.getByLabel('Filter paths').fill('window');
+  await expect(page.locator('.change-file')).toHaveCount(1);
+  await page.locator('.change-file').press('Enter');
+  await expect(page.getByRole('region', { name: 'Diff for src/lib/window.ts' })).toBeVisible();
+  await expect(page.locator('.diff-line.diff-add')).not.toHaveCount(0);
+  await accessible(page);
+  await capture(page, 'changes-diff');
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.locator('.file-diff')).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await capture(page, 'changes-diff-mobile');
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await page.getByRole('button', { name: '← All changed files' }).click();
+  await expect(page.getByLabel('Filter paths')).toHaveValue('window');
+  await page.getByRole('button', { name: 'All files', exact: true }).click();
+
   await accessible(page);
   await expect(page.locator('.crumbs')).toHaveCount(1);
   const collapseProject = page.getByRole('button', { name: 'Collapse Browser quality', exact: true });
@@ -356,8 +379,10 @@ test('project, track, streaming, image upload, reconnect, and revocation', async
   // The saved-prompts panel exists for exactly this window: accepted, and
   // waiting while the machine works. It is also the panel a template bug
   // once crashed the page on, which this suite caught only by accident.
-  await expect(page.locator('.workspace-queue')).toContainText('Explain this project for the browser smoke test');
-  await expect(page.locator('.workspace-queue .chip')).toBeVisible();
+  // One locator for the prompt and its status chip: the panel leaves as soon
+  // as the machine takes the prompt, so two separate checks can each see a
+  // different render and the second one finds nothing.
+  await expect(page.locator('.workspace-queue > div', { has: page.locator('.chip') })).toContainText('Explain this project for the browser smoke test');
   // The prompt's own bubble, not just the page: the mock's reply quotes the
   // prompt back, so the transcript contains these words even when the prompt
   // never arrived. It reaches the live page on the turn's opening event, which
@@ -484,9 +509,9 @@ test('help explains desktop connections and stays accessible on mobile', async (
   await help.click();
   const dialog = page.getByRole('dialog', { name: 'Help · AI tools' });
   await expect(dialog).toBeVisible();
-  await expect(dialog.getByText('claude mcp add --transport http ravix http://localhost:4103/mcp', { exact: true })).toBeVisible();
+  await expect(dialog.getByText(`claude mcp add --transport http ravix http://localhost:${process.env.BROWSER_PORT || 4103}/mcp`, { exact: true })).toBeVisible();
   await dialog.getByText('Drive tracks with an A2A client', { exact: true }).click();
-  await expect(dialog.getByText('http://localhost:4103/.well-known/agent-card.json', { exact: true })).toBeVisible();
+  await expect(dialog.getByText(`http://localhost:${process.env.BROWSER_PORT || 4103}/.well-known/agent-card.json`, { exact: true })).toBeVisible();
   await dialog.getByText('Example JSON-RPC request', { exact: true }).click();
   await expect(dialog.locator('pre').filter({ hasText: 'SendMessage' })).toBeVisible();
   await accessible(page);
@@ -504,4 +529,93 @@ test('help explains desktop connections and stays accessible on mobile', async (
   await capture(page, 'tooling-help-mobile');
   await dialog.getByRole('button', { name: 'Close', exact: true }).click();
   await expect(dialog).toHaveCount(0);
+});
+
+
+test('composer Send stays compact and keeps its arrow after repeated submissions in every theme', async ({ page, request }) => {
+  // Five states x 22 palettes x 2 widths runs in ~30s locally; allow CI headroom.
+  test.setTimeout(120_000);
+  await signIn(page);
+  await page.getByRole('button', { name: 'Add a project', exact: true }).first().click();
+  const projectDialog = page.getByRole('dialog', { name: 'New project', exact: true });
+  await projectDialog.getByLabel('Project name', { exact: true }).fill('Send regression');
+  await projectDialog.getByRole('button', { name: 'Create project', exact: true }).click();
+  await expect(projectDialog).toHaveCount(0);
+  await page.locator('.crumbs').getByRole('button', { name: 'New track', exact: true }).click();
+  // New tracks are named after their reserved ravix/ branch (#154).
+  const newTrack = page.getByRole('dialog', { name: 'New track', exact: true });
+  await newTrack.getByLabel('Branch name', { exact: true }).fill('compact-send');
+  await newTrack.getByRole('button', { name: 'Create track', exact: true }).click();
+  await expect(page.locator('.track-crumbs')).toContainText('compact-send');
+  const composer = page.getByRole('textbox', { name: 'Message', exact: true });
+  const send = page.getByRole('button', { name: 'Send', exact: true });
+  await expect(composer).toBeEnabled({ timeout: 30_000 });
+  const checkSend = async () => {
+    await expect(send).toBeVisible();
+    const box = await send.boundingBox();
+    expect(box.width).toBeLessThanOrEqual(80);
+    expect(box.height).toBeLessThanOrEqual(44);
+    expect(box.width).toBeGreaterThanOrEqual(32);
+    expect(box.height).toBeGreaterThanOrEqual(32);
+    await expect(send).toHaveText('Send');
+    const svg = send.locator('svg');
+    await expect(svg).toBeVisible();
+    await expect(svg).toHaveAttribute('viewBox', '0 0 24 24');
+    await expect(svg.locator('path')).toHaveAttribute('d', 'M12 19V5M6 11l6-6 6 6');
+    expect(await svg.evaluate(el => el.namespaceURI)).toBe('http://www.w3.org/2000/svg');
+    const colors = await send.evaluate(el => {
+      const style = getComputedStyle(el);
+      return { ink: style.color, background: style.backgroundColor, opacity: Number(style.opacity), stroke: getComputedStyle(el.querySelector('svg')).stroke };
+    });
+    expect(colors.ink).not.toBe(colors.background);
+    expect(colors.stroke).toBe(colors.ink);
+    expect(colors.opacity).toBeGreaterThanOrEqual(0.6);
+    await expect(page.getByRole('button', { name: 'Choose images', exact: true }).locator('svg')).toBeVisible();
+    await expect(page.locator('.send-hint')).toContainText('Enter');
+    await fitsViewport(page);
+  };
+  await chooseTheme(page, 'Bubblegum');
+  // Sending previously destroyed the SVG. Exercise both mouse and Enter, and
+  // inspect during the LiveView acknowledgement window as well as afterwards.
+  await page.evaluate(() => window.liveSocket.enableLatencySim(200));
+  for (const method of ['click', 'Enter']) {
+    await composer.fill(`Send regression ${method}`);
+    if (method === 'click') await send.click();
+    else await composer.press('Enter');
+    await expect(page.locator('#composer-form')).toHaveClass(/phx-submit-loading/);
+    await checkSend();
+    await expect(composer).toHaveValue('');
+    await expect(send).toBeEnabled();
+    await checkSend();
+  }
+  await page.evaluate(() => window.liveSocket.disableLatencySim());
+  await expect(page.locator('#transcript-turns')).toContainText('Send regression Enter');
+  await expect(page.locator('#composer-form').getByRole('button', { name: 'Stop', exact: true })).toHaveCount(0, { timeout: 30_000 });
+  const fixture = composerFixture(new URL(page.url()).pathname.split('/').pop());
+  const palettes = await page.locator('[data-theme-choice]').evaluateAll(els => [...new Set(els.map(el => el.dataset.themeChoice))]);
+  expect(palettes).toHaveLength(22);
+  for (const [status, connected] of [['opening', false], ['opening', true], ['running', true], ['ready', true], ['failed', true]]) {
+    await fixture.state(request, status, connected);
+    await page.reload();
+    await expect(page.locator('[data-phx-main]')).toHaveClass(/phx-connected/);
+    await expect(send).toBeVisible();
+    if (connected) await expect(send).toBeEnabled();
+    else await expect(send).toBeDisabled();
+    await expect(page.locator('#composer-form').getByRole('button', { name: 'Stop', exact: true })).toHaveCount(['opening', 'running'].includes(status) ? 1 : 0);
+    await expect(page.locator('#composer-form').getByRole('button', { name: 'Wake / retry', exact: true })).toHaveCount(['opening', 'failed'].includes(status) ? 1 : 0);
+    for (const theme of palettes) {
+      // The picker is hidden behind Menu on phones; set its public palette
+      // attribute directly so the matrix measures the same CSS in both sizes.
+      await page.locator('html').evaluate((el, theme) => el.dataset.theme = theme, theme);
+      for (const width of [1280, 390]) {
+        await page.setViewportSize({ width, height: 900 });
+        await page.evaluate(async () => {
+          await new Promise(requestAnimationFrame);
+          await Promise.all(document.getAnimations().filter(a => a instanceof CSSTransition).map(a => a.finished.catch(() => {})));
+        });
+        await test.step(`${status}, connected=${connected}, ${theme}, ${width}px`, checkSend);
+        if (theme === 'bubblegum') await page.screenshot({ path: test.info().outputPath(`send-${status}-${connected}-${width}.png`), fullPage: true });
+      }
+    }
+  }
 });
