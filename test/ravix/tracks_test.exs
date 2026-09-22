@@ -192,6 +192,23 @@ defmodule Ravix.TracksTest do
       assert :plan in Tracks.Track.origin_kinds()
       assert Ecto.Enum.values(Tracks.Track, :origin_kind) == Tracks.Track.origin_kinds()
     end
+
+    test "a plan track the next release writes still loads and presents here",
+         %{project: project, track: track} do
+      # The release after this one starts plan tracks while this one is still
+      # serving, so this one must read them: the database word loads, and the
+      # row presents with its kind rather than raising.
+      type = Tracks.Track.__schema__(:type, :origin_kind)
+      assert Ecto.Type.load(type, "plan") == {:ok, :plan}
+
+      plan = %{track | origin_kind: :plan, origin_title: "Ship the API"}
+
+      assert %{origin: %{kind: :plan, title: "Ship the API"}} =
+               Tracks.present(plan, project: project)
+
+      # Nothing here starts one yet: it is not a kind a browser can ask for.
+      refute :plan in Tracks.Track.origin_kinds()
+    end
   end
 
   # ── the rows, and who may see them ─────────────────────────────────────
