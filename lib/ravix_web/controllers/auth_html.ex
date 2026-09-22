@@ -40,9 +40,9 @@ defmodule RavixWeb.AuthHTML do
 
         <p class="landing-intro">
           <%= if @target.kind == :track do %>
-            <strong>{@target.track}</strong>, a track on <strong>{@target.project}</strong>.
+            <strong>{@target.track}</strong>, a track on <strong><.project_name project={@target.project_view} /></strong>.
           <% else %>
-            <strong>{@target.project}</strong>, and every track on it.
+            <strong><.project_name project={@target.project_view} /></strong>, and every track on it.
           <% end %>
         </p>
 

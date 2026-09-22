@@ -269,9 +269,20 @@ defmodule RavixWeb.AuthControllerTest do
       test "somebody signed in is asked, and the GET claims nothing", %{conn: conn} do
         %{conn: conn} = register_and_log_in_user(%{conn: conn})
 
-        stub(Ravix.People, :link_target, fn "link-token" ->
+        stub(Ravix.People, :link_target, fn "link-token", _user ->
           {:ok,
-           %LinkTarget{kind: :track, project: "acme", track: "Fix the bug", invited_by: "ana"}}
+           %LinkTarget{
+             kind: :track,
+             project: "acme",
+             project_view: %{
+               name: "acme",
+               display_name: "ana / acme",
+               owner_login: "ana",
+               role: :member
+             },
+             track: "Fix the bug",
+             invited_by: "ana"
+           }}
         end)
 
         # The regression this route exists to prevent (#16). A GET carries no
@@ -296,8 +307,20 @@ defmodule RavixWeb.AuthControllerTest do
       test "a project link says so, without a track", %{conn: conn} do
         %{conn: conn} = register_and_log_in_user(%{conn: conn})
 
-        stub(Ravix.People, :link_target, fn "link-token" ->
-          {:ok, %LinkTarget{kind: :project, project: "acme", track: nil, invited_by: nil}}
+        stub(Ravix.People, :link_target, fn "link-token", _user ->
+          {:ok,
+           %LinkTarget{
+             kind: :project,
+             project: "acme",
+             project_view: %{
+               name: "acme",
+               display_name: "ana / acme",
+               owner_login: "ana",
+               role: :member
+             },
+             track: nil,
+             invited_by: nil
+           }}
         end)
 
         html = html_response(get(conn, "/j/link-token"), 200)
@@ -308,7 +331,7 @@ defmodule RavixWeb.AuthControllerTest do
 
       test "a link that is gone lands on the error", %{conn: conn} do
         %{conn: conn} = register_and_log_in_user(%{conn: conn})
-        stub(Ravix.People, :link_target, fn "gone" -> :error end)
+        stub(Ravix.People, :link_target, fn "gone", _user -> :error end)
         assert redirected_to(get(conn, "/j/gone"), 303) == "/?error=bad_invite"
       end
     else

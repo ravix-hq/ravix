@@ -404,6 +404,11 @@ defmodule Ravix.Projects do
     %View{
       id: project.id,
       name: project.name,
+      display_name:
+        if(access == :owner,
+          do: project.name,
+          else: "#{(owner && owner.login) || ""} / #{project.name}"
+        ),
       repo: project.repo_full_name,
       repo_private: project.repo_private == true,
       default_branch: project.default_branch,

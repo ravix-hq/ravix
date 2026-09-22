@@ -14,6 +14,69 @@ defmodule RavixWeb.WorkspaceLiveTest do
 
   setup :verify_on_exit!
 
+  test "project labels distinguish owners for project and track guests", %{conn: conn} do
+    owner = insert_user(login: "project-owner")
+    project = insert_project(user: owner, name: "ravix")
+    track = insert_track(project: project, title: "Visible track")
+    hidden_track = insert_track(project: project, title: "Private sibling")
+    member = insert_user()
+    guest = insert_user()
+    insert_project_member(project, member)
+    insert_track_member(track, guest)
+    hidden = insert_project(user: insert_user(login: "hidden-owner"), name: "Secret project")
+
+    for {user, label} <- [
+          {owner, "ravix"},
+          {member, "project-owner / ravix"},
+          {guest, "project-owner / ravix"}
+        ] do
+      {:ok, view, _} = live(log_in_user(conn, user), "/home")
+      selector = ".workspace-project-name[href='/p/#{project.id}'] .project-label"
+      assert has_element?(view, selector, label)
+      assert has_element?(view, ".home-recent .project-label", label)
+      assert has_element?(view, selector <> " .dim") == (user != owner)
+      refute render(view) =~ hidden.name
+      refute render(view) =~ "hidden-owner"
+      render_patch(view, "/p/#{project.id}")
+      assert page_title(view) == label <> " · Ravix"
+      if user == guest, do: refute(render(view) =~ hidden_track.title)
+
+      render_click(view, "dialog", %{name: "search"})
+      render_change(view, "search", %{q: "PROJECT-OWNER"})
+      assert has_element?(view, "#search-dialog a", label <> " / Visible track")
+      if user == guest, do: refute(has_element?(view, "#search-dialog a", hidden_track.title))
+      render_click(view, "dismiss")
+
+      if user != guest do
+        render_click(view, "dialog", %{name: "people"})
+        assert has_element?(view, "#people-dialog .project-label", label)
+      end
+    end
+
+    assert {:ok, stranger, _} = live(log_in_user(conn, insert_user()), "/home")
+    refute render(stranger) =~ "project-owner"
+  end
+
+  test "shared labels escape project text and revoked sessions cannot search them", %{conn: conn} do
+    owner = insert_user(login: "label-owner")
+    project = insert_project(user: owner, name: "<img src=x onerror=alert(1)>")
+    guest = insert_user()
+    insert_project_member(project, guest)
+    insert_track(project: project)
+    {token, session} = insert_session(guest)
+
+    {:ok, view, html} =
+      live(Plug.Test.init_test_session(conn, session_token: token), "/p/#{project.id}")
+
+    assert html =~ "&lt;img"
+    refute has_element?(view, ".project-label img")
+    Repo.delete!(session)
+    :sys.replace_state(view.pid, &age_session_guard/1)
+
+    assert {:error, {:redirect, %{to: "/login"}}} =
+             render_click(view, "dialog", %{name: "search"})
+  end
+
   test "workspace help explains connections and returns to the workspace", %{conn: conn} do
     user = insert_user()
     {:ok, view, _} = live(log_in_user(conn, user), "/home")

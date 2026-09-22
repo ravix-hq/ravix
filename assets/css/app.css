@@ -410,6 +410,7 @@ h4 { font-size: 12px; color: var(--dim); font-weight: 500; letter-spacing: 0; }
 .spacer { flex: 1; }
 .row { display: flex; align-items: center; gap: 8px; }
 .col { display: flex; flex-direction: column; gap: 8px; }
+.project-label { display: inline-block; vertical-align: bottom; max-width: 100%; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .offscreen { display: none; }
 /* Off the screen but not out of the tree: for a live region a screen reader
@@ -603,7 +604,8 @@ h4 { font-size: 12px; color: var(--dim); font-weight: 500; letter-spacing: 0; }
 }
 .crumbs strong { font-size: 13px; font-weight: 500; }
 .crumbs button, .project-crumb { display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; }
-.project-crumb { color: var(--ink); text-decoration: none; }
+.crumbs > strong, .project-crumb > strong { min-width: 0; }
+.project-crumb { min-width: 0; max-width: 40%; color: var(--ink); text-decoration: none; }
 /* The title and the branch each get a share of the strip, so a long one
    cannot push the buttons off the right end. The branch chip's own share is
    written after the general chip's so it wins on the element carrying both. */

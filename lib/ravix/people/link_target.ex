@@ -8,7 +8,9 @@ defmodule Ravix.People.LinkTarget do
   decision between them. This is the half the confirmation page needs ---
   `RavixWeb.AuthHTML.confirm/1` --- and it is the only thing an
   unauthenticated-but-signed-in browser learns about a project it has not
-  joined, which is why it is four named fields and not the rows.
+  joined, which is why it returns named presentation fields rather than rows.
+  `project_view` supplies the viewer-relative project label; `project` keeps
+  the bare name for callers that already use it.
 
   `kind` decides the whole page: the heading, the sentence, and the button.
   `track` is `nil` exactly when `kind` is `:project`, and the template
@@ -24,12 +26,13 @@ defmodule Ravix.People.LinkTarget do
   @typedoc "A link opens one track, or a project and every track on it."
   @type kind :: :project | :track
 
-  @enforce_keys [:kind, :project, :track, :invited_by]
+  @enforce_keys [:kind, :project, :project_view, :track, :invited_by]
   defstruct @enforce_keys
 
   @type t :: %__MODULE__{
           kind: kind(),
           project: String.t(),
+          project_view: Ravix.Projects.View.t(),
           track: String.t() | nil,
           invited_by: String.t() | nil
         }

@@ -1093,6 +1093,12 @@ defmodule Ravix.PeopleTest do
       token = url |> String.split("/j/") |> List.last()
 
       assert {:ok, target} = People.link_target(token)
+
+      assert target.project_view.display_name ==
+               "#{target.project_view.owner_login} / #{target.project}"
+
+      assert {:ok, owner_target} = People.link_target(token, ctx.owner)
+      assert owner_target.project_view.display_name == target.project
       assert target.kind == :track
       assert target.track == Repo.get!(Ravix.Tracks.Track, track_id).title
       assert target.project == ctx.project.name

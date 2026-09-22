@@ -85,7 +85,7 @@ defmodule Ravix.People do
 
   alias Ravix.Accounts.{Access, User}
   alias Ravix.People.{InviteLink, LinkTarget, Person, Profile, Store}
-  alias Ravix.Projects.{Project, ProjectLink}
+  alias Ravix.Projects.{Machine, Project, ProjectLink}
   alias Ravix.Tracks.{Track, TrackLink}
 
   @typedoc """
@@ -637,17 +637,17 @@ defmodule Ravix.People do
   is a claim about who is asking, and the one piece of it a stranger cannot
   forge is the account that actually holds the project.
   """
-  @spec link_target(String.t()) :: {:ok, link_target()} | :error
-  def link_target(token) do
+  @spec link_target(String.t(), User.t() | nil) :: {:ok, link_target()} | :error
+  def link_target(token, user \\ nil) do
     hash = Ravix.Crypto.sha256(token)
 
     case Store.track_for_link(hash) do
-      %Track{} = track -> track_target(track, hash)
-      nil -> project_target(Store.project_for_link(hash), hash)
+      %Track{} = track -> track_target(track, hash, user)
+      nil -> project_target(Store.project_for_link(hash), hash, user)
     end
   end
 
-  defp track_target(%Track{} = track, hash) do
+  defp track_target(%Track{} = track, hash, user) do
     # ownership: the link's hash is the authorization here, and it was just
     # matched against this track's row.
     case Store.live_project(track.project_id) do
@@ -656,6 +656,7 @@ defmodule Ravix.People do
          %LinkTarget{
            kind: :track,
            project: project.name,
+           project_view: invite_project(project, user),
            track: track.title,
            invited_by: Store.minted_by(TrackLink, :track_id, track.id, hash)
          }}
@@ -665,16 +666,24 @@ defmodule Ravix.People do
     end
   end
 
-  defp project_target(nil, _hash), do: :error
+  defp project_target(nil, _hash, _user), do: :error
 
-  defp project_target(%Project{} = project, hash) do
+  defp project_target(%Project{} = project, hash, user) do
     {:ok,
      %LinkTarget{
        kind: :project,
        project: project.name,
+       project_view: invite_project(project, user),
        track: nil,
        invited_by: Store.minted_by(ProjectLink, :project_id, project.id, hash)
      }}
+  end
+
+  # ownership: the invite hash matched the live project or one of its tracks
+  # in `link_target/2`. It authorizes this label before membership is claimed.
+  defp invite_project(project, user) do
+    access = if user && user.id == project.user_id, do: :owner, else: nil
+    Ravix.Projects.present(project, access, Machine.none())
   end
 
   defp redeem_track(user_id, %Track{} = track) do

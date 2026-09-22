@@ -287,10 +287,13 @@ defmodule Ravix.ProjectsTest do
           ] do
         assert [%{id: id, access: ^access, role: ^role}] = Projects.list(user)
         assert id == project.id
-        assert {:ok, %{access: ^access, role: ^role}} = Projects.get(user, project.id)
+        assert {:ok, %{access: ^access, role: ^role} = view} = Projects.get(user, project.id)
+        assert view.name == "shared"
+        assert view.display_name == if(role == :owner, do: "shared", else: "owner / shared")
+        assert hd(Projects.list(user)).display_name == view.display_name
         assert {:ok, tracks} = Tracks.list(user, project.id)
         assert Enum.map(tracks, & &1.title) == titles
-        assert Enum.all?(tracks, &(&1.role == role))
+        assert Enum.all?(tracks, &(&1.role == role and &1.owner_login == "owner"))
       end
 
       assert Projects.list(stranger) == []
