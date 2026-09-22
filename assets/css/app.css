@@ -986,8 +986,14 @@ input.crumb-name { width: 30ch; }
 .welcome-connected .ico { flex: none; color: var(--ok); margin-top: 2px; }
 .welcome-warning { background: var(--warn-soft); color: var(--ink); margin-bottom: 16px; }
 .welcome-warning .ico { flex: none; color: var(--warn); margin-top: 2px; }
+/* Text on the accent-soft background is drawn in ink: the dim greys fall
+   under 4.5:1 against it, which Axe counts as unreadable. */
+.welcome-choice.on small, .welcome-code, .welcome-code .hint { color: var(--ink); }
 .welcome-code { display: flex; flex-direction: column; gap: 10px; padding: 14px; border: 1px solid var(--accent-line); border-radius: var(--radius-lg); background: var(--accent-soft); font-size: 12.5px; line-height: 1.55; }
 .welcome-code p { margin: 0; }
+/* A link inside a sentence is told apart from the sentence by more than its
+   colour, which the page's colours alone do not manage. */
+.welcome-card p a, #new-project-no-agent a { text-decoration: underline; text-underline-offset: 2px; }
 .welcome-code-value { display: flex; flex-direction: column; gap: 2px; }
 .welcome-code-value strong { font-family: var(--mono); font-size: 24px; letter-spacing: 0.08em; font-weight: 500; user-select: all; }
 .welcome-code .workspace-actions { padding: 0; }
