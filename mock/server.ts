@@ -1319,6 +1319,15 @@ Bun.serve({
       });
     }
 
+    // Deterministic provider states for the real-browser composer matrix.
+    if (p === "/__browser/conversation-state" && req.method === "POST" && process.env.RAVIX_BROWSER_TEST === "1") {
+      const { id, status } = await req.json() as { id: string; status: string };
+      const conv = state.conversations.find(c => c.id === id);
+      if (!conv || !["idle", "running", "failed"].includes(status)) return json({ error: "invalid_fixture" }, 400);
+      conv.status = status;
+      return json({ status: "ok" });
+    }
+
     let res: Response | null = null;
     if (p.startsWith("/api/")) res = await fountain(req, url);
     else if (p.startsWith("/gh/")) {

@@ -230,12 +230,14 @@
                 <span class="composer-model mono">{@project.model}</span><span class="send-hint"><kbd>Enter</kbd>
                 to send</span><span class="spacer"></span>
                 <button
-                  class="primary"
+                  type="submit"
+                  class="primary composer-send"
                   aria-label="Send"
-                  phx-disable-with="Sending…"
+                  title="Send"
                   disabled={is_nil(@track.conversation_id)}
                 >
                   <.icon name="arrow-up" size={16} />
+                  <span>Send</span>
                 </button>
                 <button
                   :if={@track.status in [:running, :opening]}

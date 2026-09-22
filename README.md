@@ -287,6 +287,10 @@ code they describe lives in Git history.
 
 `bun run test:browser` runs Chromium against a disposable production-mode app,
 provider mocks, and a generated PostgreSQL database (ports 4103/8893/8894).
+On a shared machine, set `BROWSER_PORT`, `MOCK_PORT`, and `MOCK_SPRITES_PORT`
+to three unused ports; the harness still refuses collisions. Composer state
+fixtures use `psql` against only the harness's generated database and a
+browser-only mock endpoint. Failure traces remain under `test-results/`.
 Install Chromium once with `bunx playwright install chromium`, and build assets
 with `MIX_ENV=prod mix assets.deploy` first. Node is pinned alongside Elixir/OTP
 and Bun in `.tool-versions`.
