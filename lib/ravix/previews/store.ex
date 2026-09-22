@@ -167,7 +167,7 @@ defmodule Ravix.Previews.Store do
     attrs = Row.to_attrs(row)
 
     case Repo.insert(changeset(row),
-           on_conflict: [set: Map.to_list(attrs) ++ [row: Row.encode(row)]],
+           on_conflict: [set: Map.to_list(attrs)],
            conflict_target: :track_id
          ) do
       {:ok, _} -> :ok
@@ -188,7 +188,7 @@ defmodule Ravix.Previews.Store do
   end
 
   defp changeset(%Row{} = row) do
-    Preview.changeset(%Preview{}, Map.put(Row.to_attrs(row), :row, Row.encode(row)))
+    Preview.changeset(%Preview{}, Row.to_attrs(row))
   end
 
   @doc """
@@ -340,7 +340,7 @@ defmodule Ravix.Previews.Store do
         where:
           g.expires <= ^now or
             (g.track_id == ^track_id and
-               fragment("COALESCE(?->>'thread_id', ?)", g.row, g.track_id) == ^thread_id)
+               g.thread_id == ^thread_id)
     )
 
     attrs = %{
@@ -348,6 +348,7 @@ defmodule Ravix.Previews.Store do
       track_id: track_id,
       user_id: grant.user_id,
       expires: grant.expires,
+      thread_id: thread_id,
       row: AgentGrant.encode(grant)
     }
 

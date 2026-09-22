@@ -83,10 +83,10 @@ defmodule Ravix.Previews.StoreTest do
 
       stored = Repo.get!(Preview, track.id)
 
-      assert stored.row["state"] == "ready"
-      assert stored.row["last_activity"] == 5
-      assert stored.row["track_id"] == track.id
-      assert stored.row["service"] == stored.service
+      assert stored.state == :ready
+      assert stored.last_activity == 5
+      assert stored.track_id == track.id
+      assert stored.service == stored.service
     end
 
     test "update writes the named fields and leaves every other one alone" do
@@ -264,7 +264,7 @@ defmodule Ravix.Previews.StoreTest do
       assert {hash, track_id, user_id, expires} ==
                {camel.hash, camel.track_id, user.id, camel.expires}
 
-      assert prompt_id == camel.row["promptId"]
+      assert prompt_id == Ravix.Previews.AgentGrant.decode(camel.row).prompt_id
     end
   end
 

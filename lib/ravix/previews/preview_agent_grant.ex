@@ -23,10 +23,11 @@ defmodule Ravix.Previews.PreviewAgentGrant do
     belongs_to :track, Ravix.Tracks.Track
     belongs_to :user, Ravix.Accounts.User
     field :expires, :integer
+    field :thread_id, :string
     field :row, :map
   end
 
-  @fields ~w(hash track_id user_id expires row)a
+  @fields ~w(hash track_id user_id expires thread_id row)a
 
   @doc "An agent grant. Every field is required."
   @spec changeset(t(), map()) :: Ecto.Changeset.t()

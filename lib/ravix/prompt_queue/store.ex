@@ -30,7 +30,7 @@ defmodule Ravix.PromptQueue.Store do
   alias Ravix.Tracks.Store, as: Tracks
   alias Ravix.Tracks.Track
 
-  @typedoc "A row without its payload, plus what the payload said, for the panel."
+  @typedoc "A row without its body, plus what the body said, for the panel."
   @type summary :: %{
           sequence: integer(),
           id: String.t(),
@@ -152,7 +152,7 @@ defmodule Ravix.PromptQueue.Store do
     end
   end
 
-  @doc "One row by its request id, payload included, whatever its status."
+  @doc "One row by its request id, body included, whatever its status."
   @spec get(String.t()) :: Item.t() | nil
   def get(id), do: Repo.get_by(Item, id: id)
 
@@ -187,7 +187,7 @@ defmodule Ravix.PromptQueue.Store do
     # Neither the parsed body nor its JSON string: the head is read every two
     # seconds per track and the attachments are loaded once, just before the
     # POST.
-    fields = Item.__schema__(:fields) -- [:body, :payload]
+    fields = Item.__schema__(:fields) -- [:body]
 
     live()
     |> distinct([p], p.thread_id)
@@ -238,7 +238,7 @@ defmodule Ravix.PromptQueue.Store do
   """
   @spec set_status(String.t(), Item.status(), String.t() | nil) :: :ok
   def set_status(id, status, error \\ nil) do
-    released = if status in @done, do: [body: nil, payload: ""], else: []
+    released = if status in @done, do: [body: nil], else: []
 
     {_count, tracks} =
       Item
@@ -347,7 +347,7 @@ defmodule Ravix.PromptQueue.Store do
       Item
       |> where([p], p.id == ^id and p.status != :sent)
       |> select([p], p.track_id)
-      |> Repo.update_all(set: [status: :sent, error: nil, body: nil, payload: ""])
+      |> Repo.update_all(set: [status: :sent, error: nil, body: nil])
 
     Enum.each(tracks, &publish_queue/1)
   end
@@ -365,7 +365,7 @@ defmodule Ravix.PromptQueue.Store do
   def cancel_track(track_id) do
     Item
     |> where([p], p.track_id == ^track_id and p.status != :sent)
-    |> Repo.update_all(set: [status: :cancelled, body: nil, payload: "", error: nil])
+    |> Repo.update_all(set: [status: :cancelled, body: nil, error: nil])
 
     publish_queue(track_id)
   end
@@ -398,16 +398,14 @@ defmodule Ravix.PromptQueue.Store do
   defp waiting_count(track_id),
     do: live() |> where([p], p.thread_id == ^track_id) |> Repo.aggregate(:count)
 
-  # The stored document, plus the JSON string of it for the release that
-  # still reads `payload`. The size is measured on the encoded bytes because
+  # The stored document is encoded once for the size check. The size is measured on the encoded bytes because
   # that is what goes over the wire and onto the disk, whatever the struct
   # costs in memory.
   #
   # Either spelling still enqueues, which the test named "string keys are
   # accepted" is about. What changed is that the tolerance is
   # `Body.decode/1`'s, in one place, rather than a pair of
-  # `Map.get(payload, :prompt) || Map.get(payload, "prompt")` written out
-  # here and nowhere near the `payload["images"]` that read it back.
+  # Body decoding accepts both atom and string keys in one place.
   defp encode(body) do
     document = body |> Body.decode() |> Body.encode()
     encoded = Jason.encode!(document)
@@ -421,7 +419,7 @@ defmodule Ravix.PromptQueue.Store do
     end
   end
 
-  defp insert(track_id, user_id, author_login, id, {document, encoded}, thread_id) do
+  defp insert(track_id, user_id, author_login, id, {document, _encoded}, thread_id) do
     %Item{}
     |> Item.changeset(%{
       id: id,
@@ -430,8 +428,7 @@ defmodule Ravix.PromptQueue.Store do
       user_id: user_id,
       author_login: author_login,
       body: document,
-      image_count: length(document["images"]),
-      payload: encoded
+      image_count: length(document["images"])
     })
     |> Repo.insert!()
   end
