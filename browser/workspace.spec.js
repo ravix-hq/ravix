@@ -357,8 +357,10 @@ test('project, track, streaming, image upload, reconnect, and revocation', async
   // The saved-prompts panel exists for exactly this window: accepted, and
   // waiting while the machine works. It is also the panel a template bug
   // once crashed the page on, which this suite caught only by accident.
-  await expect(page.locator('.workspace-queue')).toContainText('Explain this project for the browser smoke test');
-  await expect(page.locator('.workspace-queue .chip')).toBeVisible();
+  // One locator for the prompt and its status chip: the panel leaves as soon
+  // as the machine takes the prompt, so two separate checks can each see a
+  // different render and the second one finds nothing.
+  await expect(page.locator('.workspace-queue > div', { has: page.locator('.chip') })).toContainText('Explain this project for the browser smoke test');
   // The prompt's own bubble, not just the page: the mock's reply quotes the
   // prompt back, so the transcript contains these words even when the prompt
   // never arrived. It reaches the live page on the turn's opening event, which
