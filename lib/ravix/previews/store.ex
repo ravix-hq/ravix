@@ -95,20 +95,6 @@ defmodule Ravix.Previews.Store do
     Preview |> Repo.all() |> Enum.map(&Row.from_preview/1)
   end
 
-  @doc "Every row of a project's tracks, whatever their state."
-  @spec of_project(String.t()) :: [Row.t()]
-  def of_project(project_id) do
-    # ownership: a store, and the join is on the track column its own rows
-    # carry. The caller established the project before asking.
-    Repo.all(
-      from p in Preview,
-        join: t in Ravix.Tracks.Track,
-        on: t.id == p.track_id,
-        where: t.project_id == ^project_id
-    )
-    |> Enum.map(&Row.from_preview/1)
-  end
-
   @doc "A track's row, created stopped when it has none."
   @spec ensure(String.t()) :: Row.t()
   def ensure(track_id) do

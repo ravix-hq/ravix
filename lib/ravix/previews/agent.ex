@@ -281,7 +281,7 @@ defmodule Ravix.Previews.Agent do
   end
 
   defp delivered_turn(track, grant, user) do
-    # ownership: this is a door, not something behind one. The helper presents
+    # ownership: no door but the grant -- this is the door. The helper presents
     # a bearer grant and this is what decides whether the turn that minted it
     # really was this person's, on this track, and actually delivered.
     prompt = Repo.get_by(Item, id: grant.prompt_id)
@@ -328,9 +328,9 @@ defmodule Ravix.Previews.Agent do
   end
 
   defp turn_still_on(track_id, grant) do
-    # ownership: the same door as `delivered_turn/3`, re-asked at the end of
-    # the request: a grant stops working the moment its turn does, so this is
-    # read again rather than trusted from a moment ago.
+    # ownership: the same door as `delivered_turn/3` (no door but the grant),
+    # re-asked at the end of the request: a grant stops working the moment its
+    # turn does, so this is read again rather than trusted from a moment ago.
     prompt = Repo.get_by(Item, id: grant.prompt_id)
     track = Tracks.get_track(track_id)
 

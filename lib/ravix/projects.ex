@@ -95,7 +95,7 @@ defmodule Ravix.Projects do
 
     # ownership: these two *are* how this caller's access is established --
     # `list/1` is "every project this person may see", and a membership row is
-    # what makes one of them visible. There is no earlier door to go through.
+    # what makes one of them visible. There is no door earlier than this one.
     guests =
       People.Store.member_projects(user.id) ++
         Enum.map(People.Store.member_tracks(user.id), &Store.get_project(&1.project_id))
@@ -154,9 +154,9 @@ defmodule Ravix.Projects do
     cond do
       project.user_id == user_id -> :owner
       Ravix.Accounts.Access.project_member?(project.id, user_id) -> :project
-      # ownership: same as `list/1` -- this function answers "what access does
-      # this person have", so the membership rows are the answer, not a
-      # shortcut past one.
+      # ownership: same as `list/1`, with no door before it -- this function
+      # answers "what access does this person have", so the membership rows are
+      # the answer, not a shortcut past one.
       Enum.any?(People.Store.member_tracks(user_id), &(&1.project_id == project.id)) -> :tracks
       true -> nil
     end

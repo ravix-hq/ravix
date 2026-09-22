@@ -168,7 +168,7 @@ defmodule Ravix.Accounts.Access do
   @doc """
   Whether `user_id` was named on `track_id`.
 
-  # ownership: this is a door, not something behind one. The question "was
+  # ownership: no door before this one -- it is the door. The question "was
   this person named on this track" has no earlier authorization to establish,
   because it *is* the authorization every other caller establishes.
   """
@@ -178,7 +178,7 @@ defmodule Ravix.Accounts.Access do
   @doc """
   Whether `user_id` was let into the whole of `project_id`.
 
-  # ownership: as `member?/2` -- the door itself.
+  # ownership: as `member?/2` -- no door before this one; it is the door.
   """
   @spec project_member?(String.t(), String.t()) :: boolean()
   defdelegate project_member?(project_id, user_id), to: People
@@ -186,13 +186,14 @@ defmodule Ravix.Accounts.Access do
   # A project that exists and has not been archived. Every door starts here:
   # an archived project is gone for everybody, its owner included.
   #
-  # ownership: `Ravix.Projects.Store.live_project/1` is that read, and lives
-  # there so this module and `Ravix.People` cannot come to differ about what
-  # "archived" means.
+  # ownership: no door before this one -- every door starts with this read.
+  # `Ravix.Projects.Store.live_project/1` is that read, and lives there so this
+  # module and `Ravix.People` cannot come to differ about what "archived" means.
   defp live_project(project_id), do: Projects.live_project(project_id)
 
-  # ownership: a door again. Whether the track exists at all is the first
-  # thing `track_access/2` has to know, before there is anyone to check.
+  # ownership: a door again, with no door before it. Whether the track exists
+  # at all is the first thing `track_access/2` has to know, before there is
+  # anyone to check.
   defp get_track(track_id) when is_binary(track_id), do: Repo.get(Track, track_id)
   defp get_track(_), do: nil
 end
