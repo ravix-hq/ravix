@@ -63,8 +63,46 @@ defmodule Ravix.IdsSpecTest do
       assert Ids.project_channel("p1") == "ravix:p1"
     end
 
+    test "branch names follow Git ref rules without changing spelling" do
+      for name <- ["fix", "Fix-123", "feature/import", "éclair", "a+b", "a'b", "$HOME"] do
+        assert Ids.valid_branch_name?(name), name
+        assert {_, 0} = System.cmd("git", ["check-ref-format", "--branch", "ravix/#{name}"])
+      end
+
+      for name <- [
+            "",
+            "@",
+            "-fix",
+            "two words",
+            "a..b",
+            "a~b",
+            "a^b",
+            "a:b",
+            "a?b",
+            "a*b",
+            "a[b",
+            "a\\b",
+            ".hidden",
+            "a/.hidden",
+            "a.lock",
+            "a.lock/b",
+            "a/",
+            "/a",
+            "a//b",
+            "a.",
+            "a@{b",
+            "a\n",
+            "a\t",
+            <<127>>,
+            nil,
+            123
+          ] do
+        refute Ids.valid_branch_name?(name), inspect(name)
+      end
+    end
+
     test "branches, workdirs and mount paths" do
-      assert Ids.branch_for("Jake Gaylor", "kyoto", "abc") == "jake-gaylor/kyoto-abc"
+      assert Ids.branch_for("kyoto") == "ravix/kyoto"
       assert Ids.workdir_for("kyoto") == "/home/sprite/work/kyoto"
       assert Ids.mount_path_for("acme/widgets") == "/workspace/widgets"
       assert Ids.mount_path_for("plain") == "/workspace/plain"
@@ -104,6 +142,18 @@ defmodule Ravix.IdsSpecTest do
       assert String.ends_with?(blank, "back verbatim.")
     end
 
+    test "opening commands quote Git names containing shell metacharacters" do
+      prompt =
+        Spec.open_track_prompt(
+          project(repo_full_name: "acme/r"),
+          origin(kind: :blank),
+          "safe",
+          "ravix/$HOME"
+        )
+
+      assert prompt =~ "-b 'ravix/$HOME'"
+    end
+
     test "the opening turn cuts a worktree from the origin, or a plain directory" do
       blank = Spec.open_track_prompt(project(), origin(kind: :blank), "s", "me/s-1")
 
@@ -132,8 +182,8 @@ defmodule Ravix.IdsSpecTest do
           "me/s-1"
         )
 
-      assert existing =~ "This track continues the existing branch `feature/x`:"
-      assert existing =~ "    || git worktree add /home/sprite/work/s feature/x 2>/dev/null \\"
+      assert existing =~ "Cut a new branch `me/s-1` from `origin/feature/x`:"
+      refute existing =~ "git worktree add /home/sprite/work/s feature/x"
 
       pr =
         Spec.open_track_prompt(
@@ -145,7 +195,7 @@ defmodule Ravix.IdsSpecTest do
 
       assert pr =~ "This track continues pull request #7."
 
-      assert pr =~ "  git fetch origin pull/7/head:me/s-1 2>/dev/null \\"
+      assert pr =~ "  git fetch origin 'pull/7/head:me/s-1' 2>/dev/null \\"
       assert pr =~ "    || git worktree add /home/sprite/work/s -b me/s-1 HEAD"
 
       issue =
