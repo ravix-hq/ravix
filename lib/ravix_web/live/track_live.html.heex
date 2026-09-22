@@ -28,7 +28,7 @@
         <span class="project-mark" aria-hidden="true">
           {String.first(@project.name) |> String.upcase()}
         </span>
-        <strong>{@project.name}</strong>
+        <strong>{project_label(@project)}</strong>
       </.link>
       <span class="dimmer" aria-hidden="true">›</span>
       <button
