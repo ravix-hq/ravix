@@ -4,7 +4,7 @@ defmodule Ravix.Tooling.OAuth do
   alias Ravix.{Config, Crypto}
   alias Ravix.Tooling.{Client, Credential, Grant, Store}
 
-  @scopes ~w(projects:read projects:write tracks:read tracks:write tracks:cancel)
+  @scopes ~w(projects:read projects:write tracks:read tracks:write tracks:cancel plans:read plans:write)
   def scopes, do: @scopes
   def resource(name) when name in ["mcp", "a2a"], do: Config.public_url() <> "/" <> name
 
