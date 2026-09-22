@@ -335,19 +335,26 @@ defmodule Ravix.Previews.Store do
     track_id = grant.track_id
     thread_id = grant.thread_id || track_id
 
+    # Expand phase: a grant is replaced whether the instance that wrote it named
+    # the thread in the new column or only inside the document, so the previous
+    # release's grants are still swept while the deploy rolls.
     Repo.delete_all(
       from g in PreviewAgentGrant,
         where:
           g.expires <= ^now or
             (g.track_id == ^track_id and
-               fragment("COALESCE(?->>'thread_id', ?)", g.row, g.track_id) == ^thread_id)
+               fragment("COALESCE(?, ?->>'thread_id', ?)", g.thread_id, g.row, g.track_id) ==
+                 ^thread_id)
     )
 
+    # Both representations are written: the column the next release reads and
+    # the document the release still serving beside this one reads.
     attrs = %{
       hash: grant.hash,
       track_id: track_id,
       user_id: grant.user_id,
       expires: grant.expires,
+      thread_id: thread_id,
       row: AgentGrant.encode(grant)
     }
 
