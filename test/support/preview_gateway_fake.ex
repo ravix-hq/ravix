@@ -1001,8 +1001,16 @@ defmodule Ravix.PreviewGatewayFake do
           chunks = for {:data, _, data} <- responses, do: data
           ws_recv(decode_buffered(%{ws | conn: conn}, chunks), timeout)
 
-        {:error, conn, _reason, _} ->
-          {:closed, %{ws | conn: conn}}
+        # A close frame and the TCP close can arrive in the same read; Mint
+        # hands back what it read before the error, and dropping it turned a
+        # clean close into a bare disconnect.
+        {:error, conn, _reason, responses} ->
+          chunks = for {:data, _, data} <- responses, do: data
+
+          case decode_buffered(%{ws | conn: conn}, chunks) do
+            %{frames: [frame | rest]} = ws -> {:ok, frame, %{ws | frames: rest}}
+            ws -> {:closed, ws}
+          end
       end
     end
 
