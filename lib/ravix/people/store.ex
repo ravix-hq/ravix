@@ -131,6 +131,25 @@ defmodule Ravix.People.Store do
     )
   end
 
+  @doc """
+  Whether `user_id` was named on any open track of `project_id`.
+
+  The third of the three ways into a project (see
+  `Ravix.Accounts.Access.access_of/3`), asked as one `EXISTS` rather than
+  by listing the person's tracks across every project and looking for this
+  one in the answer. A closed track does not count, for the reason it does
+  not count in `member_tracks/1`: there is no surface left on it to share.
+  """
+  @spec track_member_of?(String.t(), String.t()) :: boolean()
+  def track_member_of?(project_id, user_id) do
+    Repo.exists?(
+      from(m in TrackMember,
+        join: t in assoc(m, :track),
+        where: m.user_id == ^user_id and t.project_id == ^project_id and is_nil(t.closed_at)
+      )
+    )
+  end
+
   # ── invitations to somebody who is not here yet ────────────────
 
   @doc """

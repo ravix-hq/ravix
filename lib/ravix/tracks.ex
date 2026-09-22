@@ -114,18 +114,13 @@ defmodule Ravix.Tracks do
   @spec list(User.t(), String.t()) :: {:ok, [View.t()]} | {:error, :not_found}
   def list(%User{} = user, project_id) do
     with %Project{} = project <- live_project(project_id),
-         {:ok, access} <- access_of(user.id, project) do
-      wide = access in [:owner, :project]
-
+         access when access != nil <- Access.access_of(user.id, project) do
       rows =
-        if wide,
-          do: Store.tracks_of(project.id),
-          else: Store.member_tracks_of(user.id, project.id)
+        if access == :tracks,
+          do: Store.member_tracks_of(user.id, project.id),
+          else: Store.tracks_of(project.id)
 
-      if not wide and rows == [],
-        do: {:error, :not_found},
-        else:
-          {:ok, present_all(rows, project, user, if(access == :owner, do: :owner, else: :member))}
+      {:ok, present_all(rows, project, user, if(access == :owner, do: :owner, else: :member))}
     else
       _ -> {:error, :not_found}
     end
@@ -988,18 +983,6 @@ defmodule Ravix.Tracks do
   end
 
   defp read_images(_raw), do: {:ok, []}
-
-  # The three ways in: owner, whole project, or particular tracks. The port
-  # of `accessOf` in projects.ts, kept here so the list does not depend on
-  # `Ravix.Projects` for four lines.
-  defp access_of(user_id, %Project{} = project) do
-    cond do
-      project.user_id == user_id -> {:ok, :owner}
-      Access.project_member?(project.id, user_id) -> {:ok, :project}
-      Store.member_tracks_of(user_id, project.id) != [] -> {:ok, :tracks}
-      true -> {:error, :not_found}
-    end
-  end
 
   # ownership: the read every door in `Ravix.Accounts.Access` starts with, and
   # the same one, so this module cannot come to disagree with the doors about

@@ -51,6 +51,18 @@ defmodule Ravix.Projects.Store do
   def get_project(id) when is_binary(id), do: Repo.get(Project, id)
   def get_project(_id), do: nil
 
+  @doc """
+  Several projects by id, archived or not, in no particular order.
+
+  For a list that already holds the ids -- the rail, which has this person's
+  track memberships in hand -- and would otherwise read them one at a time.
+  Unscoped, as `get_project/1` is: the caller established how it came by
+  each id. An id with no project behind it is simply absent.
+  """
+  @spec get_projects([String.t()]) :: [Project.t()]
+  def get_projects([]), do: []
+  def get_projects(ids) when is_list(ids), do: Repo.all(from(p in Project, where: p.id in ^ids))
+
   @doc "The live projects a person owns, oldest first."
   @spec projects_of(String.t()) :: [Project.t()]
   def projects_of(user_id) do

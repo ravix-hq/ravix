@@ -92,6 +92,8 @@ defmodule RavixWeb.WorkspaceLiveTest do
     end)
 
     view |> element("button", "Refresh") |> render_click()
+    # The refresh re-reads the rail in a task; the inbox is drawn from it.
+    render_async(view)
     refute has_element?(view, ".inbox-item")
     assert has_element?(view, ".inbox-empty", "You're all caught up")
   end

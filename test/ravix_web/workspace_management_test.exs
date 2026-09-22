@@ -289,6 +289,9 @@ defmodule RavixWeb.WorkspaceManagementTest do
     # These rows are visible through real scoped context reads.
     track = insert_track(project: ctx.project, title: "Searchable work", error: "Needs help")
     render_click(ctx.view, "refresh")
+    # The refresh re-reads the rail in a task now, and the search reads the
+    # rail, so it has to have landed first.
+    render_async(ctx.view)
     render_click(ctx.view, "dialog", %{name: "search"})
     render_change(ctx.view, "search", %{q: "SEARCHABLE"})
     assert has_element?(ctx.view, "a[href='/p/#{ctx.project.id}/t/#{track.id}']")

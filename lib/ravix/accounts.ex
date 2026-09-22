@@ -86,6 +86,11 @@ defmodule Ravix.Accounts do
   def get_user(id) when is_binary(id), do: Repo.get(User, id)
   def get_user(_), do: nil
 
+  @doc "Several users by id, in no particular order. An unknown id is simply absent."
+  @spec get_users([String.t()]) :: [User.t()]
+  def get_users([]), do: []
+  def get_users(ids) when is_list(ids), do: Repo.all(from(u in User, where: u.id in ^ids))
+
   # ── what a person set up ──────────────────────────────────────────────
 
   @doc """
