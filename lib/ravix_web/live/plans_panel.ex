@@ -248,8 +248,18 @@ defmodule RavixWeb.Live.PlansPanel do
 
   defp load_detail(socket, _, nil), do: socket
 
-  defp load_detail(socket, user, id),
-    do: socket |> assign(busy: true) |> start_async(:detail, fn -> Plans.get(user, id) end)
+  defp load_detail(socket, user, id) do
+    project_id = socket.assigns.project.id
+
+    socket
+    |> assign(busy: true)
+    |> start_async(:detail, fn ->
+      case Plans.get(user, id) do
+        {:ok, %{plan: %{project_id: ^project_id}}} = result -> result
+        _ -> {:error, :not_found}
+      end
+    end)
+  end
 
   defp draft(current, params) do
     rows = Map.get(params, "items", %{})
@@ -283,5 +293,5 @@ defmodule RavixWeb.Live.PlansPanel do
   defp message(reason), do: RavixWeb.Error.from(reason).message
   defp status_label(status), do: status |> to_string() |> String.replace("_", " ")
   defp dependency_title(items, id), do: (Enum.find(items, &(&1.id == id)) || %{title: id}).title
-  defp md(text), do: text |> RavixWeb.Markdown.render() |> Phoenix.HTML.raw()
+  defp md(text), do: RavixWeb.Markdown.render_safe(text)
 end

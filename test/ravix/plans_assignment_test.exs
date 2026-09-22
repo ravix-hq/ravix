@@ -79,6 +79,37 @@ defmodule Ravix.PlansAssignmentTest do
              Assignment.assign(user, p, plan.id, assignments, "another")
   end
 
+  test "a member's new track uses the owner's subscription", %{
+    user: owner,
+    project: project,
+    plan: plan
+  } do
+    Repo.update!(Ecto.Changeset.change(owner, credential_set_id: "owner-set"))
+    member = insert_user(credential_set_id: "member-set")
+    insert_project_member(project, member)
+    {principal, _, _} = principal(member)
+
+    client =
+      FakeTransport.client([
+        {%{method: "GET", path: "/api/conversations"}, {200, [], %{data: []}}},
+        {%{method: "POST", path: "/api/conversations"},
+         {201, [], %{data: %{id: "member-conversation"}}}}
+      ])
+
+    stub(Fountain, :client, fn -> client end)
+
+    expect(Fountain, :update_agent, fn _, agent_id, body ->
+      assert agent_id == project.agent_id
+      assert body["inference_credential_id"] == "owner-set"
+      {:ok, %{}}
+    end)
+
+    assert {:ok, %{items: [%{track_id: id}]}} =
+             Assignment.assign(member, principal, plan.id, [%{"item_id" => "api"}], "member")
+
+    assert Repo.get!(Track, id).created_by_login == member.login
+  end
+
   test "existing open tracks must belong to the same project; browser receipts require a live session",
        %{user: user, project: project, plan: plan, p: p} do
     track = insert_track(project: project, conversation_id: "existing")

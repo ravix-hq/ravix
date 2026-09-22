@@ -436,7 +436,8 @@ defmodule RavixWeb.TrackLiveTest do
 
   test "a bad preview configuration is refused on every box that is wrong", ctx do
     render_click(ctx.view, "panel", %{name: "preview"})
-    render_async(ctx.view)
+    # Shared CI/database load can exceed LiveViewTest's 100ms default.
+    render_async(ctx.view, 5_000)
 
     # The real refusal, built by the real parser rather than written out here:
     # `Ravix.Previews.Config` is the authority on which of these three boxes is

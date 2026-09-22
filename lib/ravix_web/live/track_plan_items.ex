@@ -31,7 +31,7 @@ defmodule RavixWeb.Live.TrackPlanItems do
       <p :if={@error} role="alert">{@error}</p>
       <details :for={item <- @items} class="plan-item">
         <summary>Assigned item: {item.title}</summary>
-        <div class="md">{Phoenix.HTML.raw(RavixWeb.Markdown.render(item.brief))}</div>
+        <div class="md">{RavixWeb.Markdown.render_safe(item.brief)}</div>
         <p>Acceptance: {item.acceptance}</p>
         <ul>
           <li :for={note <- item.notes}>{note.created_by_login}: {note.body}</li>
