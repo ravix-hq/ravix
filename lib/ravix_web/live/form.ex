@@ -57,6 +57,7 @@ defmodule RavixWeb.Live.Form do
           | :preview_defaults
           | :secret
           | :settings
+          | :credential
 
   @typedoc """
   A form's shape: the field types to cast, and which field each refusal
@@ -79,6 +80,9 @@ defmodule RavixWeb.Live.Form do
   @preview_config {%{directory: :string, command: :string, readiness_path: :string}, %{}}
 
   @forms %{
+    # What pays for a person's agent. One field, and it is never given back
+    # its value: see `RavixWeb.OnboardingLive`.
+    credential: {%{value: :string}, %{"bad_credential" => :value, "no_credential" => :value}},
     new_project: {%{name: :string, repo: :string}, %{"no_name" => :name}},
     new_track: {%{title: :string, ref: :string}, %{"no_title" => :title}},
     rename_track: {%{title: :string}, %{"no_title" => :title}},

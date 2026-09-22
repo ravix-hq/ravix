@@ -20,8 +20,16 @@ defmodule Ravix.Memo do
     * **A crash is an answer.** If the load raises, or the process running it
       dies, every waiter is replied to. Nothing here may leave a caller
       blocked on a `GenServer.call/3` that will never return.
+    * **A refresh is not a forget.** A caller that wants a value no older
+      than a moment says so with `:newer_than` and is answered by a load
+      that started at or after it: the held value if it is that new, the
+      load in flight if *it* is, and otherwise the one load that starts
+      when the in-flight one settles. `Ravix.MachineCache` used to forget
+      the key first and then fetch, which disowned whatever load was
+      running and started another; a hub event that reached twenty pages
+      cost twenty loads of the same list instead of one or two.
 
-  Getting all four right once is worth doing; getting them right twice, and
+  Getting all five right once is worth doing; getting them right twice, and
   keeping them right in two places as they change, is not.
 
   ## What the two callers did differently
@@ -42,6 +50,21 @@ defmodule Ravix.Memo do
   rate limit's reset, say) can ignore the argument. Returning `nil` means
   "answer the waiters but remember nothing", which is how a failed read
   stays unremembered.
+
+  ## When a load started
+
+  Every entry remembers the millisecond its load started, on the caller's
+  clock, and `:newer_than` is compared against that. A caller arriving with
+  `:newer_than` later than the running load's start does not join it -- that
+  load may have asked the provider before whatever the caller has just
+  heard about happened -- and does not start a second one beside it either.
+  It is parked as a *follower*: when the running load settles, one load
+  starts for every follower at once, so a burst of refreshes costs at most
+  the load in flight and one more, however many pages are refreshing. The
+  follow-up is stamped with the latest follower's clock, which is at or
+  before the moment it actually starts: an entry may under-claim its age
+  and be re-read a little early, but never over-claim it and be trusted
+  late.
   """
 
   use GenServer
@@ -53,12 +76,15 @@ defmodule Ravix.Memo do
   Options for `fetch/5`.
 
     * `:now_ms` -- the caller's clock, so tests can move it.
+    * `:newer_than` -- accept no value whose load started before this
+      millisecond; see "When a load started" above.
     * `:run` -- `:task` (default) or `:caller`; see the module documentation.
     * `:on_crash` -- called with the exit reason or exception, and must
       return the result every waiter gets. Defaults to `{:error, reason}`.
   """
   @type option ::
           {:now_ms, integer()}
+          | {:newer_than, integer() | nil}
           | {:run, :task | :caller}
           | {:on_crash, (term() -> result())}
 
@@ -95,20 +121,22 @@ defmodule Ravix.Memo do
         ) :: result()
   def fetch(server, key, load, expires_at, opts \\ []) when is_function(load, 0) do
     now = Keyword.get_lazy(opts, :now_ms, &now_ms/0)
+    newer_than = Keyword.get(opts, :newer_than)
 
-    case peek(server, key, now) do
+    case peek(server, key, now, newer_than) do
       {:ok, value} -> value
-      :miss -> miss(server, key, load, expires_at, now, opts)
+      :miss -> miss(server, key, load, expires_at, now, newer_than, opts)
     end
   end
 
-  @doc "The fresh value under `key` without loading one, for a caller that can do without."
-  @spec peek(GenServer.server(), key(), integer()) :: {:ok, result()} | :miss
-  def peek(server, key, now \\ now_ms()) do
-    case :ets.lookup(table(server), key) do
-      [{^key, value, expires_at}] when expires_at > now -> {:ok, value}
-      _ -> :miss
-    end
+  @doc """
+  The fresh value under `key` without loading one, for a caller that can do
+  without. With `newer_than`, only a value whose load started at or after
+  that millisecond.
+  """
+  @spec peek(GenServer.server(), key(), integer(), integer() | nil) :: {:ok, result()} | :miss
+  def peek(server, key, now \\ now_ms(), newer_than \\ nil) do
+    hit(table(server), key, now, newer_than)
   catch
     :error, :badarg -> :miss
   end
@@ -129,7 +157,7 @@ defmodule Ravix.Memo do
     keys =
       server
       |> table()
-      |> :ets.select([{{:"$1", :_, :_}, [], [:"$1"]}])
+      |> :ets.select([{{:"$1", :_, :_, :_}, [], [:"$1"]}])
       |> Enum.filter(matches?)
 
     GenServer.call(server, {:forget, keys, matches?})
@@ -139,24 +167,31 @@ defmodule Ravix.Memo do
   @spec reset(GenServer.server()) :: :ok
   def reset(server), do: GenServer.call(server, :reset)
 
-  defp miss(server, key, load, expires_at, now, opts) do
+  defp miss(server, key, load, expires_at, now, newer_than, opts) do
     case Keyword.get(opts, :run, :task) do
       :task ->
-        GenServer.call(server, {:load, key, load, expires_at, now, on_crash(opts)}, @call_timeout)
+        GenServer.call(
+          server,
+          {:load, key, load, expires_at, now, newer_than, on_crash(opts)},
+          @call_timeout
+        )
 
       :caller ->
-        run_here(server, key, load, expires_at, now, opts)
+        run_here(server, key, load, expires_at, now, newer_than, opts)
     end
   end
 
   # The caller runs the load itself, so the server hands out the right to do
-  # so and parks everyone else. `:claimed` is not a value: it is permission.
-  defp run_here(server, key, load, expires_at, now, opts) do
-    case GenServer.call(server, {:claim, key, now, on_crash(opts)}, @call_timeout) do
+  # so and parks everyone else. `:claimed` is not a value: it is permission,
+  # stamped with the millisecond the load counts as having started -- the
+  # caller's own clock, unless it was a follower handed the next load, in
+  # which case the latest follower's.
+  defp run_here(server, key, load, expires_at, now, newer_than, opts) do
+    case GenServer.call(server, {:claim, key, now, newer_than, on_crash(opts)}, @call_timeout) do
       {:answered, result} ->
         result
 
-      :claimed ->
+      {:claimed, started} ->
         result =
           try do
             load.()
@@ -166,7 +201,7 @@ defmodule Ravix.Memo do
               :erlang.raise(kind, reason, __STACKTRACE__)
           end
 
-        GenServer.call(server, {:done, key, result, expires_at.(result, now)})
+        GenServer.call(server, {:done, key, result, expires_at.(result, started)})
         result
     end
   end
@@ -177,7 +212,21 @@ defmodule Ravix.Memo do
   # hit must not need a message to find one.
   defp table(server) when is_atom(server), do: server
 
-  defp now_ms, do: System.system_time(:millisecond)
+  defp now_ms, do: Ravix.Clock.now_ms()
+
+  # An entry is `{key, value, expires_at, started}`: good until `expires_at`,
+  # and good *enough* for a caller that asked for `newer_than` only if its
+  # load started no earlier than that.
+  defp hit(table, key, now, newer_than) do
+    case :ets.lookup(table, key) do
+      [{^key, value, expires_at, started}]
+      when expires_at > now and (is_nil(newer_than) or started >= newer_than) ->
+        {:ok, value}
+
+      _ ->
+        :miss
+    end
+  end
 
   # ── the server ────────────────────────────────────────────────────────
 
@@ -190,41 +239,46 @@ defmodule Ravix.Memo do
 
   @impl true
   # A task runs the load. The caller waits here.
-  def handle_call({:load, key, load, expires_at, now, on_crash}, from, state) do
-    case fresh(state.table, key, now) do
+  def handle_call({:load, key, load, expires_at, now, newer_than, on_crash}, from, state) do
+    case hit(state.table, key, now, newer_than) do
       {:ok, value} ->
         {:reply, value, state}
 
       :miss ->
-        {:noreply, join_or_start(state, key, load, expires_at, now, on_crash, from)}
+        caller = %{
+          from: from,
+          wrap: :bare,
+          run: :task,
+          load: load,
+          expires_at: expires_at,
+          now: now,
+          newer_than: newer_than,
+          on_crash: on_crash
+        }
+
+        {:noreply, join_or_start(state, key, [caller])}
     end
   end
 
   # The caller runs the load. It gets permission, or somebody else's answer.
-  def handle_call({:claim, key, now, on_crash}, from, state) do
-    case fresh(state.table, key, now) do
+  def handle_call({:claim, key, now, newer_than, on_crash}, from, state) do
+    case hit(state.table, key, now, newer_than) do
       {:ok, value} ->
         {:reply, {:answered, value}, state}
 
       :miss ->
-        case Map.fetch(state.loads, key) do
-          {:ok, running} ->
-            {:noreply, put_in(state.loads[key], park(running, from, :answered))}
+        caller = %{
+          from: from,
+          wrap: :answered,
+          run: :caller,
+          load: nil,
+          expires_at: nil,
+          now: now,
+          newer_than: newer_than,
+          on_crash: on_crash
+        }
 
-          :error ->
-            {pid, _} = from
-            ref = Process.monitor(pid)
-
-            load = %{
-              ref: ref,
-              waiters: [],
-              expires_at: fn _result, _now -> nil end,
-              now: now,
-              on_crash: on_crash
-            }
-
-            {:reply, :claimed, put_in(state.loads[key], load)}
-        end
+        {:noreply, join_or_start(state, key, [caller])}
     end
   end
 
@@ -274,40 +328,62 @@ defmodule Ravix.Memo do
     end
   end
 
-  defp fresh(table, key, now) do
-    case :ets.lookup(table, key) do
-      [{^key, value, expires_at}] when expires_at > now -> {:ok, value}
-      _ -> :miss
-    end
-  end
-
-  defp join_or_start(state, key, load, expires_at, now, on_crash, from) do
+  # Put `callers` -- one, or the followers of a load that just settled --
+  # behind `key`. A load already running takes each of them as a waiter if
+  # it started late enough for them, and as a follower otherwise; with no
+  # load running, one starts for all of them.
+  defp join_or_start(state, key, callers) do
     case Map.fetch(state.loads, key) do
       {:ok, running} ->
-        put_in(state.loads[key], park(running, from, :bare))
-
-      :error ->
-        task =
-          Task.Supervisor.async_nolink(Ravix.TaskSupervisor, fn -> safely(load, on_crash) end)
+        {join, follow} = Enum.split_with(callers, &joinable?(running, &1))
 
         put_in(
           state.loads[key],
-          %{
-            ref: task.ref,
-            waiters: [{from, :bare}],
-            expires_at: expires_at,
-            now: now,
-            on_crash: on_crash
-          }
+          %{running | waiters: join ++ running.waiters, followers: running.followers ++ follow}
         )
+
+      :error ->
+        start(state, key, callers)
     end
   end
 
-  # A waiter carries how it is to be answered. A caller that asked to *run*
-  # the load matches on `{:answered, result}`, because for it the alternative
-  # reply is permission rather than a value; a caller waiting on a task is
-  # handed the result itself.
-  defp park(load, from, wrap), do: %{load | waiters: [{from, wrap} | load.waiters]}
+  defp joinable?(_running, %{newer_than: nil}), do: true
+  defp joinable?(running, %{newer_than: newer_than}), do: running.now >= newer_than
+
+  # One load for every caller in the list. The first of them says how it
+  # runs; the load counts as started at the latest of their clocks, which is
+  # the caller's own when there is one and never later than the truth.
+  defp start(state, key, [lead | _] = callers) do
+    started = callers |> Enum.map(& &1.now) |> Enum.max()
+
+    {ref, waiters} =
+      case lead.run do
+        :task ->
+          task =
+            Task.Supervisor.async_nolink(Ravix.TaskSupervisor, fn ->
+              safely(lead.load, lead.on_crash)
+            end)
+
+          {task.ref, callers}
+
+        :caller ->
+          {pid, _} = lead.from
+          ref = Process.monitor(pid)
+          GenServer.reply(lead.from, {:claimed, started})
+          {ref, tl(callers)}
+      end
+
+    load = %{
+      ref: ref,
+      waiters: waiters,
+      followers: [],
+      expires_at: lead.expires_at || fn _result, _now -> nil end,
+      now: started,
+      on_crash: lead.on_crash
+    }
+
+    put_in(state.loads[key], load)
+  end
 
   # Tagged, so `settle/4` can tell a result the load returned from one it
   # raised. `expires_at` is the caller's rule for good answers and is not
@@ -319,9 +395,10 @@ defmodule Ravix.Memo do
   end
 
   # Answer everybody waiting on `key`, remember the value if it may be
-  # remembered, and stop watching whoever produced it. A key that was
-  # forgotten while this ran is held under `{:forgotten, ...}`: its waiters
-  # are here, and `expires_at` is nil, so nothing is written.
+  # remembered, stop watching whoever produced it, and start the load the
+  # followers were promised. A key that was forgotten while this ran is held
+  # under `{:forgotten, ...}`: its waiters are here, and `expires_at` is nil,
+  # so nothing is written.
   defp settle(state, key, result, expires_at) do
     {load, loads} = Map.pop(state.loads, key)
 
@@ -330,18 +407,26 @@ defmodule Ravix.Memo do
       # began, so its answer is already out of date. The waiters still get it,
       # because it is the best answer that exists; the table does not.
       if expires_at && not forgotten?(key),
-        do: :ets.insert(state.table, {key, result, expires_at})
+        do: :ets.insert(state.table, {key, result, expires_at, load.now})
 
       Enum.each(load.waiters, fn
-        {from, :answered} -> GenServer.reply(from, {:answered, result})
-        {from, :bare} -> GenServer.reply(from, result)
+        %{from: from, wrap: :answered} -> GenServer.reply(from, {:answered, result})
+        %{from: from, wrap: :bare} -> GenServer.reply(from, result)
       end)
 
       Process.demonitor(load.ref, [:flush])
-    end
 
-    %{state | loads: loads}
+      # The followers asked for something newer than this load, and it is
+      # over, so theirs starts now -- under the real key, because a load that
+      # begins after a forget is not the one the forget was about.
+      follow_up(%{state | loads: loads}, real_key(key), load.followers)
+    else
+      %{state | loads: loads}
+    end
   end
+
+  defp follow_up(state, _key, []), do: state
+  defp follow_up(state, key, followers), do: join_or_start(state, key, followers)
 
   # A forgotten load. Its waiters still deserve an answer, so the record
   # moves to a key no reader asks for and stays there until it reports.
@@ -356,4 +441,7 @@ defmodule Ravix.Memo do
 
   defp forgotten?({:forgotten, _key, _ref}), do: true
   defp forgotten?(_key), do: false
+
+  defp real_key({:forgotten, key, _ref}), do: key
+  defp real_key(key), do: key
 end

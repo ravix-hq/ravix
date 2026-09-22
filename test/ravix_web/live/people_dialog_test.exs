@@ -5,14 +5,13 @@ defmodule RavixWeb.Live.PeopleDialogTest do
   what leaving each does to the page you are on, and who is offered the
   controls at all.
   """
-  use RavixWeb.ConnCase, async: false
+  use RavixWeb.ConnCase, async: true
 
   import Mimic
   import Phoenix.LiveViewTest
 
   alias Ravix.Accounts.Access
-  alias Ravix.Repo
-  alias Ravix.Tracks
+  alias Ravix.{People, Projects, Repo, Tracks}
   alias Ravix.Tracks.{Track, Transcript}
 
   setup %{conn: conn} do
@@ -188,9 +187,11 @@ defmodule RavixWeb.Live.PeopleDialogTest do
       |> element("#people-invite-form")
       |> render_submit(%{"login" => "nobody-here-by-that-name"})
 
-      # The component hands the sentence to the page, which puts it in the
-      # flash on its next message, so the page is re-read rather than the
-      # submit's own return being inspected.
+      # Inviting asks GitHub and runs off the page, and the component hands
+      # the sentence to the page, which puts it in the flash on its next
+      # message, so the page is re-read rather than the submit's own return
+      # being inspected.
+      render_async(view)
       html = render(view)
 
       # A `live_component` cannot put a flash in the page's own socket -- it
@@ -200,8 +201,86 @@ defmodule RavixWeb.Live.PeopleDialogTest do
       # dropped on the floor. Assert the sentence itself.
       # This deployment has no GitHub App, so that is the refusal. Whichever
       # it is, the point is that a sentence arrives at all.
-      assert html =~ "no GitHub App configured"
+      assert html =~ RavixWeb.Error.from({:unconfigured, :github}).message
       assert has_element?(view, "#people-dialog")
+    end
+  end
+
+  describe "inviting somebody asks GitHub off the page" do
+    test "the button is disabled until GitHub answers, and the page still answers", ctx do
+      {:ok, view, _} = live(log_in_user(ctx.conn, ctx.owner), "/p/#{ctx.project.id}")
+      view = open_people(view)
+      parent = self()
+
+      stub(People, :add_project, fn user, id, "dana" ->
+        send(parent, {:adding, self()})
+
+        receive do
+          :finish -> People.list_project(user, id)
+        after
+          2_000 -> flunk("the invite was never released")
+        end
+      end)
+
+      view |> element("#people-invite-form") |> render_submit(%{"login" => "dana"})
+
+      assert_receive {:adding, adding}
+      assert has_element?(view, "#people-invite-form button[disabled]")
+      assert render(view) =~ "Project people"
+
+      send(adding, :finish)
+      render_async(view)
+      refute has_element?(view, "#people-invite-form button[disabled]")
+    end
+
+    @tag capture_log: true
+    test "an invite that crashes re-enables the button and says so", ctx do
+      {:ok, view, _} = live(log_in_user(ctx.conn, ctx.owner), "/p/#{ctx.project.id}")
+      view = open_people(view)
+      stub(People, :add_project, fn _, _, _ -> raise "GitHub fell over" end)
+
+      view |> element("#people-invite-form") |> render_submit(%{"login" => "dana"})
+
+      render_async(view)
+      assert render(view) =~ "The operation could not finish"
+      refute has_element?(view, "#people-invite-form button[disabled]")
+    end
+  end
+
+  describe "a session that went without notice" do
+    # The dialog is a `live_component`, and the page's session hooks never
+    # see a component's events; see `RavixWeb.Live.Hooks`.
+    setup ctx do
+      {token, session} = insert_session(ctx.owner)
+      conn = Plug.Test.init_test_session(ctx.conn, session_token: token)
+      {:ok, view, _} = live(conn, "/p/#{ctx.project.id}")
+      open_people(view)
+      %{view: view, session: session}
+    end
+
+    test "cannot invite through the dialog", ctx do
+      reject(&People.add_project/3)
+      Repo.delete!(ctx.session)
+
+      assert {:error, {:redirect, %{to: "/login"}}} =
+               ctx.view |> element("#people-invite-form") |> render_submit(%{"login" => "dana"})
+    end
+
+    test "cannot remove somebody through the dialog", ctx do
+      member = insert_user()
+      insert_project_member(ctx.project, member)
+      # Re-opened so the list holds the new member; the setup's dialog was
+      # read before they were added.
+      render_click(ctx.view, "dismiss")
+      open_people(ctx.view)
+      assert has_element?(ctx.view, "button[phx-value-login='#{member.login}']")
+
+      Repo.delete!(ctx.session)
+
+      assert {:error, {:redirect, %{to: "/login"}}} =
+               ctx.view |> element("button[phx-value-login='#{member.login}']") |> render_click()
+
+      assert {:ok, _project} = Projects.get(member, ctx.project.id)
     end
   end
 

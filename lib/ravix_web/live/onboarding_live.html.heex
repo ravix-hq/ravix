@@ -1,0 +1,228 @@
+<Layouts.app flash={@flash}>
+  <main :if={@current_user} class="centred welcome-page">
+    <div class="welcome-card">
+      <header class="welcome-head">
+        <.wordmark unit={4} />
+        <span class="spacer"></span>
+        <.link href="/auth/signout" method="post" class="ghost">Sign out</.link>
+        <button class="ghost" phx-click="skip" id="welcome-skip">Skip setup</button>
+      </header>
+
+      <nav class="welcome-steps" aria-label="Setup progress">
+        <ol>
+          <li
+            :for={{step, to} <- steps()}
+            class={[
+              step == @live_action && "on",
+              position(step) < position(@live_action) && "done"
+            ]}
+            aria-current={step == @live_action && "step"}
+          >
+            <.link
+              patch={if step == :intro, do: to <> "?from=start", else: to}
+              aria-label={"Step #{position(step)}: #{step_name(step)}"}
+            >
+              <span class="welcome-step-num" aria-hidden="true">{position(step)}</span>
+              <span>{step_name(step)}</span>
+            </.link>
+          </li>
+        </ol>
+      </nav>
+
+      <section :if={@live_action == :intro} id="welcome-intro" aria-labelledby="welcome-intro-h">
+        <h1 id="welcome-intro-h">
+          Welcome to Ravix, {@current_user.name || @current_user.login}
+        </h1>
+        <p class="lede">
+          Ravix gives a coding agent its own computer to work on your repository, so the work carries on when your laptop is closed. Four ideas cover all of it.
+        </p>
+        <ul class="welcome-ideas">
+          <li>
+            <.icon name="github" size={16} class="ico" />
+            <span>
+              <strong>A project is a repository.</strong>
+              <small>
+                You pick one repository from GitHub and that is the project. Ravix sees only the repositories you grant it, never everything your account can reach.
+              </small>
+            </span>
+          </li>
+          <li>
+            <.icon name="machine" size={16} class="ico" />
+            <span>
+              <strong>Every project has a computer.</strong>
+              <small>
+                A cloud machine with the repository already cloned. It keeps its disk between visits, sleeps when nothing is running, and wakes when you come back.
+              </small>
+            </span>
+          </li>
+          <li>
+            <.icon name="branch" size={16} class="ico" />
+            <span>
+              <strong>A project holds many conversations.</strong>
+              <small>
+                Ravix calls each one a track: its own conversation with the agent, on its own branch, in its own worktree. Several can be in flight at once without touching each other's files.
+              </small>
+            </span>
+          </li>
+          <li>
+            <.icon name="add-person" size={16} class="ico" />
+            <span>
+              <strong>Invite teammates, and you are the one billed.</strong>
+              <small>
+                Share a whole project or a single track. Everything anybody does in your project runs on your computer and on your agent subscription, so their turns count against your plan, not theirs.
+              </small>
+            </span>
+          </li>
+        </ul>
+        <div class="welcome-actions">
+          <.link patch={path(:agent)} class="landing-button landing-primary" id="welcome-start">
+            Set up your agent
+          </.link>
+        </div>
+      </section>
+
+      <section :if={@live_action == :agent} id="welcome-agent" aria-labelledby="welcome-agent-h">
+        <h1 id="welcome-agent-h">Choose your agent</h1>
+        <p class="lede">
+          The agent is the program that does the work on the machine. It runs on your own account with its maker, which is what pays for its turns. Projects you create are built with this agent; you can change it later.
+        </p>
+        <.live_component
+          module={RavixWeb.Live.AgentPanel}
+          id="agent-panel"
+          current_user={@current_user}
+          session_hash={@session_hash}
+        />
+
+        <div class="welcome-actions">
+          <.link patch={path(:intro) <> "?from=start"} class="ghost">Back</.link>
+          <span class="spacer"></span>
+          <.link patch={path(:github)} class="ghost" id="agent-later">
+            {if Inference.connected?(@current_user),
+              do: "Continue",
+              else: "I'll do this later"}
+          </.link>
+        </div>
+      </section>
+
+      <section
+        :if={@live_action == :github}
+        id="welcome-github"
+        aria-labelledby="welcome-github-h"
+      >
+        <h1 id="welcome-github-h">Connect GitHub</h1>
+        <p class="lede">
+          Signing in told Ravix who you are. Installing the Ravix GitHub App is the separate step that says which repositories it may work in. You choose them on GitHub, and you can change the list there at any time.
+        </p>
+        <p :if={!@github_available} class="error">
+          GitHub is not configured for this deployment, so there are no repositories to connect. You can still create a project with no repository.
+        </p>
+        <p :if={@github_available && is_nil(@installations)} class="hint" id="github-checking">
+          Checking what Ravix can already see…
+        </p>
+        <div :if={@github_available && @installations == []} id="github-none">
+          <a class="landing-button landing-primary gh-button" href="/api/auth/install">
+            <.icon name="github" size={17} />Install the GitHub App
+          </a>
+          <p class="hint">
+            You will leave for GitHub, pick an account and its repositories, and come back here.
+          </p>
+        </div>
+        <div :if={@github_available && @installations not in [nil, []]} id="github-connected">
+          <p class="welcome-connected">
+            <.icon name="check" size={14} class="ico" />
+            Connected to {Enum.map_join(@installations, ", ", & &1.account)}.
+          </p>
+          <p class="hint">
+            <a href="/api/auth/install">Add another account, or change which repositories ↗</a>
+          </p>
+        </div>
+        <div class="welcome-actions">
+          <.link patch={path(:agent)} class="ghost">Back</.link>
+          <span class="spacer"></span>
+          <.link
+            patch={path(:project)}
+            class={
+              if @installations not in [nil, []],
+                do: "landing-button landing-primary",
+                else: "ghost"
+            }
+            id="github-continue"
+          >
+            {if @installations not in [nil, []], do: "Continue", else: "Continue without GitHub"}
+          </.link>
+        </div>
+      </section>
+
+      <section
+        :if={@live_action == :project}
+        id="welcome-project"
+        aria-labelledby="welcome-project-h"
+      >
+        <h1 id="welcome-project-h">Create your first project</h1>
+        <p class="lede">
+          Pick the repository to work in. Ravix builds its computer, clones the repository onto it, and opens your first conversation.
+        </p>
+        <p
+          :if={!Inference.connected?(@current_user)}
+          class="welcome-warning"
+          id="project-no-agent"
+        >
+          <.icon name="info" size={14} class="ico" />
+          <span>
+            You have not connected an agent yet, so this project's agent will have nothing to run on. <.link patch={
+              path(:agent)
+            }>Connect one first</.link>.
+          </span>
+        </p>
+        <form
+          :if={@installations not in [nil, []]}
+          id="installation-form"
+          phx-change="installation"
+        >
+          <.input
+            name="installation"
+            id="installation"
+            label="GitHub account"
+            type="select"
+            value={@installation}
+            options={Enum.map(@installations, &{&1.account, &1.id})}
+          />
+        </form>
+        <.form
+          :let={f}
+          for={@project_form}
+          id="first-project-form"
+          phx-submit="create-project"
+          phx-change="edit"
+        >
+          <.input
+            field={f[:repo]}
+            id="project-repo"
+            label="Repository"
+            type="select"
+            options={[
+              {"No repository (scratch)", ""} | Enum.map(@repos, &{&1.full_name, &1.full_name})
+            ]}
+          />
+          <.input
+            field={f[:name]}
+            id="project-name"
+            label="Project name"
+            maxlength="120"
+            placeholder="Defaults to the repository's name"
+          />
+          <p :if={@github_available && @repos == []} class="hint">
+            No repositories to choose from. <.link patch={path(:github)}>Connect GitHub</.link>
+            to pick one, or start with a scratch machine.
+          </p>
+          <button class="primary" disabled={@busy} phx-disable-with="Building the machine…">
+            Create project
+          </button>
+        </.form>
+        <div class="welcome-actions">
+          <.link patch={path(:github)} class="ghost">Back</.link>
+        </div>
+      </section>
+    </div>
+  </main>
+</Layouts.app>

@@ -72,16 +72,19 @@ defmodule Ravix.People.Store do
   """
   @spec remove_member(String.t(), String.t()) :: :ok
   def remove_member(track_id, user_id) do
-    Ravix.Previews.revoke(track_id, user_id)
-    Ravix.Previews.revoke_agent(track_id, user_id)
+    # ownership: `Ravix.People.remove/3` admitted the caller through
+    # `Access.track_access/2`. The seat being deleted below names this track
+    # and this person, and their preview grants on it are part of what it gave.
+    Ravix.Previews.Store.revoke(track_id, user_id)
+    Ravix.Previews.Store.revoke_agent(track_id, user_id)
 
     Repo.delete_all(
       from(m in TrackMember, where: m.track_id == ^track_id and m.user_id == ^user_id)
     )
 
-    # ownership: the seat this just deleted named the track, so the row is
-    # already this caller's business. Read only to learn which project's hub
-    # to tell.
+    # ownership: `Ravix.People.remove/3` admitted the caller through
+    # `Access.track_access/2` on this track before taking the seat away, and
+    # the seat named the track. Read only to learn which project's hub to tell.
     case Tracks.get_track(track_id) do
       %Track{project_id: project_id} -> Ravix.Hub.publish(project_id, :people, track_id: track_id)
       nil -> :ok
@@ -127,6 +130,25 @@ defmodule Ravix.People.Store do
         where: m.user_id == ^user_id and is_nil(t.closed_at),
         order_by: t.created_at,
         select: t
+      )
+    )
+  end
+
+  @doc """
+  Whether `user_id` was named on any open track of `project_id`.
+
+  The third of the three ways into a project (see
+  `Ravix.Accounts.Access.access_of/3`), asked as one `EXISTS` rather than
+  by listing the person's tracks across every project and looking for this
+  one in the answer. A closed track does not count, for the reason it does
+  not count in `member_tracks/1`: there is no surface left on it to share.
+  """
+  @spec track_member_of?(String.t(), String.t()) :: boolean()
+  def track_member_of?(project_id, user_id) do
+    Repo.exists?(
+      from(m in TrackMember,
+        join: t in assoc(m, :track),
+        where: m.user_id == ^user_id and t.project_id == ^project_id and is_nil(t.closed_at)
       )
     )
   end
@@ -268,8 +290,8 @@ defmodule Ravix.People.Store do
   def track_for_link(token_hash) do
     with %TrackLink{} = link <- Repo.get_by(TrackLink, token_hash: token_hash),
          true <- live?(link.expires_at),
-         # ownership: holding the link is the authorization, and the row it
-         # matched names this track.
+         # ownership: no door but the link: holding it is the authorization,
+         # and the row it matched names this track.
          %Track{closed_at: nil} = track <- Tracks.get_track(link.track_id) do
       track
     else
@@ -325,13 +347,17 @@ defmodule Ravix.People.Store do
   """
   @spec remove_project_member(String.t(), String.t()) :: :ok
   def remove_project_member(project_id, user_id) do
-    # ownership: taking somebody off a project takes away every track on it,
-    # so the open ones have to be named to revoke their previews. `open_tracks/1`
-    # is the projects context's own read of that list.
+    # ownership: `Ravix.People.remove_project/3` admitted the caller through
+    # `Access.project_access/2`. Taking somebody off a project takes away every
+    # track on it, so the open ones have to be named to revoke their previews;
+    # `open_tracks/1` is the projects context's own read of that list.
     tracks = Projects.open_tracks(project_id)
 
-    Enum.each(tracks, &Ravix.Previews.revoke(&1.id, user_id))
-    Enum.each(tracks, &Ravix.Previews.revoke_agent(&1.id, user_id))
+    # ownership: the same `Access.project_access/2` door. The seat being
+    # deleted below is what let this person onto every one of those tracks,
+    # so their grants on each go with it.
+    Enum.each(tracks, &Ravix.Previews.Store.revoke(&1.id, user_id))
+    Enum.each(tracks, &Ravix.Previews.Store.revoke_agent(&1.id, user_id))
 
     Repo.delete_all(
       from(m in ProjectMember, where: m.project_id == ^project_id and m.user_id == ^user_id)
@@ -431,8 +457,8 @@ defmodule Ravix.People.Store do
   def project_for_link(token_hash) do
     with %ProjectLink{} = link <- Repo.get_by(ProjectLink, token_hash: token_hash),
          true <- live?(link.expires_at),
-         # ownership: holding the link is the authorization, and the row it
-         # matched names this project.
+         # ownership: no door but the link: holding it is the authorization,
+         # and the row it matched names this project.
          %Project{} = project <- Projects.live_project(link.project_id) do
       project
     else
@@ -588,11 +614,12 @@ defmodule Ravix.People.Store do
   """
   @spec minted_by(module(), atom(), String.t(), String.t()) :: String.t() | nil
   def minted_by(schema, key, id, hash) do
-    # ownership: the link hash is the authorization, and it has just been
-    # matched against this row. The user read turns a stored id into the login
-    # a page shows, and nothing else.
+    # ownership: no door -- a link is read before anybody is signed in, and
+    # the hash is the authorization, matched against this row right here. The
+    # user read turns the stored `created_by` into the login a page shows, and
+    # nothing else is decided by it.
     with %{created_by: user_id} <- Repo.get_by(schema, [{key, id}, {:token_hash, hash}]),
-         %User{login: login} <- Ravix.Accounts.get_user(user_id) do
+         %User{login: login} <- Ravix.Accounts.Store.get_user(user_id) do
       login
     else
       _ -> nil
@@ -606,8 +633,8 @@ defmodule Ravix.People.Store do
   second opinion about what "archived" means. A link to a track on an
   archived project opens nothing.
   """
-  # ownership: another context's rows, reached because a link that has already
-  # matched a track row names the project that track is on.
+  # ownership: no door but the link -- another context's rows, reached because
+  # a link that has already matched a track row names the project it is on.
   @spec live_project(String.t()) :: Ravix.Projects.Project.t() | nil
   defdelegate live_project(project_id), to: Projects
 
@@ -729,8 +756,9 @@ defmodule Ravix.People.Store do
 
   defp owner_entry(owner_id) do
     # ownership: turning the project's `user_id` column into a name for the
-    # list. Ownership is that column, never a row here.
-    case Ravix.Accounts.get_user(owner_id) do
+    # list, whose callers in `Ravix.People` went through `Access.track_access/2`
+    # or `Access.project_access/2`. Ownership is that column, never a row here.
+    case Ravix.Accounts.Store.get_user(owner_id) do
       %User{} = owner -> [Person.new(owner, :owner)]
       nil -> []
     end

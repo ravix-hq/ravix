@@ -336,7 +336,7 @@ defmodule Ravix.Sprites.TunnelTest do
   end
 
   test "without a token there is no tunnel", %{app: app} do
-    assert {:error, :unconfigured} = Tunnel.open(nil, "sprite", app)
+    assert {:error, {:unconfigured, :sprites}} = Tunnel.open(nil, "sprite", app)
   end
 
   # ── helpers ────────────────────────────────────────────────────────────

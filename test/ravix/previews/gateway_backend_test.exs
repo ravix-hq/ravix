@@ -123,7 +123,7 @@ defmodule RavixWeb.PreviewGateway.RavixBackendTest do
     insert_track_member(track, guest)
     assert GatewayBackend.allowed?(row, grant)
 
-    Previews.revoke(track.id, guest.id)
+    Store.revoke(track.id, guest.id)
     refute GatewayBackend.allowed?(row, grant)
     assert :ok = GatewayBackend.grant_session(grant)
     assert GatewayBackend.allowed?(row, grant)

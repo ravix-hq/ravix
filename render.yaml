@@ -95,12 +95,21 @@ projects:
               # Explicit because it is now multiplied: two instances hold two pools.
               - key: POOL_SIZE
                 value: "10"
-              # Ravix's own Fountain, not the hosted one. Pointing at managoat.com with
-              # a key minted here fails as `fountain_rejected` -- "Fountain rejected
-              # this deployment's key" -- which reads like a bad key and is a bad
-              # address. The same key answers 200 here and 401 there.
+              # The hosted Fountain, since 2026-09-21. Ravix ran on its own instance
+              # (ravix-hq/fountain-deploy, ravix-fountain.onrender.com) until ADR
+              # 0005 needed the ChatGPT-subscription link, which is gated on the
+              # egress broker, and Render cannot run the broker's TCP edge
+              # (fountain-deploy #10). The hosted platform runs both. The key is
+              # minted on a dedicated account there (jake+ravix@ravi.id), not on
+              # a person's; the URL and the key move together, because a key
+              # answers 200 on the instance that minted it and 401 everywhere
+              # else, and that 401 reads as `fountain_rejected` -- "Fountain
+              # rejected this deployment's key" -- which looks like a bad key
+              # and is a bad address. SPRITES_TOKEN moved with them: Ravix
+              # reaches a machine's sprite with its own token, so that token
+              # has to belong to the Sprites org the Fountain builds on.
               - key: FOUNTAIN_URL
-                value: https://ravix-fountain.onrender.com
+                value: https://managoat.com
               # Where GitHub sends a browser back to, and what the App's callback and
               # setup URLs are registered as. Load-bearing: a mismatch here is the one
               # failure that looks like "sign-in is broken".

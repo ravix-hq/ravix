@@ -7,7 +7,7 @@ defmodule Ravix.Accounts.AuthTest do
   alias Ravix.Crypto
   alias Ravix.GitHubFake, as: Fake
 
-  @no_github "This Ravix deployment has no GitHub App configured, so it cannot see repositories."
+  @no_github {:unconfigured, :github}
 
   setup do
     app = Fake.app()
@@ -63,10 +63,10 @@ defmodule Ravix.Accounts.AuthTest do
 
     test "without a GitHub App there is nothing to begin" do
       stub(Ravix.Config, :github, fn -> nil end)
-      assert {:error, {:unavailable, @no_github}} = Auth.begin("signin", nil)
-      assert {:error, {:unavailable, @no_github}} = Auth.authorize_url("x")
-      assert {:error, {:unavailable, @no_github}} = Auth.install_url(nil)
-      assert {:error, {:unavailable, @no_github}} = Auth.callback(%{"code" => "c"}, "s")
+      assert {:error, @no_github} = Auth.begin("signin", nil)
+      assert {:error, @no_github} = Auth.authorize_url("x")
+      assert {:error, @no_github} = Auth.install_url(nil)
+      assert {:error, @no_github} = Auth.callback(%{"code" => "c"}, "s")
     end
 
     test "valid_state?/1 is exactly eighteen random bytes as base64url" do

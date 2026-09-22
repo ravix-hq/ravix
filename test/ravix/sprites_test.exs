@@ -171,6 +171,32 @@ defmodule Ravix.SpritesTest do
     assert :ok = Sprites.activity(@cfg, "sprite", "sy-test", :release)
   end
 
+  test "a service operation that fails or does not answer is the error an exec gives" do
+    # The service operations used to have a request and a status mapping of
+    # their own beside `exec/4`'s. They go out through the same private
+    # request now, so a 500 carries the status and what Sprites said, and a
+    # timeout is the 502 that says which.
+    Fake.install(fn conn, _call -> send_resp(conn, 500, "no service runtime") end)
+
+    assert {:error, %Error{status: 500, message: "Sprites said 500. no service runtime"}} =
+             Sprites.service_action(@cfg, "sprite", "sy-test", :start)
+
+    assert {:error, %Error{status: 500}} =
+             Sprites.define_service(@cfg, "sprite", "sy", "/w", "npm start", 1)
+
+    assert {:error, %Error{status: 500}} = Sprites.service(@cfg, "sprite", "sy")
+
+    Fake.install(fn conn, _call -> Req.Test.transport_error(conn, :timeout) end)
+
+    assert {:error, %Error{status: 502, message: "The machine did not answer in time."}} =
+             Sprites.service_action(@cfg, "sprite", "sy-test", :stop)
+
+    Fake.install(fn conn, _call -> Req.Test.transport_error(conn, :econnrefused) end)
+
+    assert {:error, %Error{status: 502, message: "Could not reach the machine."}} =
+             Sprites.service(@cfg, "sprite", "sy-test")
+  end
+
   test "service output is bounded to its last 32,000 bytes" do
     long = String.duplicate("x", 40_000) <> "END"
     Fake.install(fn conn, _call -> send_resp(conn, 200, long) end)
@@ -254,14 +280,15 @@ defmodule Ravix.SpritesTest do
     refute Sprites.reachable?(@cfg, "s")
   end
 
-  test "without a token every call says so instead of trying" do
-    assert {:error, :unconfigured} = Sprites.exec(nil, "s", ["true"], 5)
-    assert {:error, :unconfigured} = Sprites.shell(nil, "s", "ls", "/", 5)
-    assert {:error, :unconfigured} = Sprites.service(nil, "s", "sy")
-    assert {:error, :unconfigured} = Sprites.define_service(nil, "s", "sy", "/w", "npm start", 1)
-    assert {:error, :unconfigured} = Sprites.service_action(nil, "s", "sy", :stop)
-    assert {:error, :unconfigured} = Sprites.service_logs(nil, "s", "sy")
-    assert {:error, :unconfigured} = Sprites.activity(nil, "s", "sy")
+  test "without a token every call names Sprites as the missing integration instead of trying" do
+    refused = {:error, {:unconfigured, :sprites}}
+    assert refused == Sprites.exec(nil, "s", ["true"], 5)
+    assert refused == Sprites.shell(nil, "s", "ls", "/", 5)
+    assert refused == Sprites.service(nil, "s", "sy")
+    assert refused == Sprites.define_service(nil, "s", "sy", "/w", "npm start", 1)
+    assert refused == Sprites.service_action(nil, "s", "sy", :stop)
+    assert refused == Sprites.service_logs(nil, "s", "sy")
+    assert refused == Sprites.activity(nil, "s", "sy")
     refute Sprites.reachable?(nil, "s")
   end
 end

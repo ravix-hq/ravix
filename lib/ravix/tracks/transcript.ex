@@ -2,11 +2,17 @@ defmodule Ravix.Tracks.Transcript do
   @moduledoc """
   The scrollback, as the page draws it.
 
-  Two sources, joined on `turn_id`, and the join is the whole of this
-  module's structure. Fountain keeps *turns* (what somebody asked for)
-  separately from the *event log* (the bytes the machine produced answering).
-  A transcript built from the events alone renders an agent talking to
-  itself; one built from the turns alone renders questions with no answers.
+  One source: the event log, read with Fountain's `?prompts=true`. Fountain
+  keeps *turns* (what somebody asked for) apart from the *events* (the bytes
+  the machine produced answering), and this module used to fetch both and
+  join them on `turn_id`. A transcript built from the events alone rendered
+  an agent talking to itself. Fountain now puts each turn's prompt on that
+  turn's `turn`/`started` event, so the log alone has both halves, in order,
+  and the page needs one read instead of two. `Ravix.Tracks.Transcript.Event`
+  carries the prompt as `prompt`, and `lay_in/3` hands it to its turn.
+
+  A turn Fountain started on its own (`origin: autonomous`) has no prompt on
+  the feed, because nobody typed one; it shows only its output.
 
   The browser used to do this parse itself, on every frame, with
   `blocksForTurn` from `packages/fountain-app/src/acp.ts`. Here the server
@@ -15,7 +21,7 @@ defmodule Ravix.Tracks.Transcript do
 
   Every shape this module builds is a struct: `Ravix.Tracks.Transcript.Page`
   holds `Ravix.Tracks.Transcript.Turn`s, each of which holds
-  `Ravix.Tracks.Transcript.Block`s -- five of those, one per drawn thing,
+  `Ravix.Tracks.Transcript.Block`s -- six of those, one per drawn thing,
   matched by struct rather than by a `:kind` field. They were anonymous maps
   translated from `src/components/Transcript.tsx`, which is why a turn
   carried an `:acc` key named in no type and `block` was declared as
@@ -32,7 +38,6 @@ defmodule Ravix.Tracks.Transcript do
 
   alias Managoat.ACP.Blocks
   alias Managoat.ACP.Protocol
-  alias Ravix.Fountain.Shapes.Turn, as: Wire
   alias Ravix.Tracks.Transcript.{Block, Detail, Edit, Event, Page, Turn}
 
   @acp_runtimes ~w(claude codex opencode)
@@ -53,75 +58,26 @@ defmodule Ravix.Tracks.Transcript do
   # ── the page ──────────────────────────────────────────────────────────
 
   @doc """
-  Turns and events into one ordered page.
+  Events into one ordered page.
 
   Events may arrive as `Ravix.Tracks.Transcript.Event` structs or as the raw
   maps Fountain sends; `Event.from/1` is idempotent, so the public entry
   points normalise and everything inside works on structs.
 
-  Turn order comes from the turns list, because that is the order they were
-  asked in and it survives an event log that arrives out of order or with a
-  gap in it. Events whose `turn_id` matches no turn (which happens for the
-  first few frames of a turn Fountain has not finished recording) are kept
-  in a trailing group rather than dropped, so the very first thing a new
-  track shows is not an empty panel.
+  Turns are in the order their first event arrived, which is the order they
+  were asked in: a turn's `started` event comes before any of its output.
+  Events with no `turn_id` (the first few frames of a turn Fountain has not
+  finished recording) are grouped under `Event.pending/0` rather than
+  dropped, so the very first thing a new track shows is not an empty panel.
   """
-  @spec page([Wire.t()], [Event.t() | map()], String.t()) :: Page.t()
-  def page(raw_turns, events, runtime) do
-    %Page{turns: [], last_event_id: nil, runtime: runtime || ""}
-    |> add_turns(raw_turns)
-    |> add_events(events)
+  @spec page([Event.t() | map()], String.t()) :: Page.t()
+  def page(events, runtime) do
+    add_events(%Page{turns: [], last_event_id: nil, runtime: runtime || ""}, events)
   end
 
   @doc "An empty page for a track with no conversation yet."
   @spec empty(String.t()) :: Page.t()
-  def empty(runtime), do: page([], [], runtime)
-
-  @doc """
-  Merge a fresh turns list in. A turn already on the page keeps its events;
-  a new one is placed by `inserted_at` among the recorded turns, ahead of the
-  groups that only exist because events named them.
-  """
-  @spec add_turns(Page.t(), [Wire.t()]) :: Page.t()
-  def add_turns(%Page{} = page, raw_turns) do
-    records = Enum.map(raw_turns, &turn_record/1)
-    by_id = Map.new(page.turns, &{&1.id, &1})
-
-    merged =
-      Enum.map(records, fn record ->
-        case Map.fetch(by_id, record.id) do
-          # Only the wire fields are refreshed, named one by one: this was a
-          # `Map.merge/2` of the whole record over the whole turn, which
-          # worked only because the record happened to hold no key the turn
-          # derives. Naming them is what keeps the events and the fold the
-          # turn has already accumulated out of reach of a fresh turns list.
-          {:ok, existing} ->
-            %{
-              existing
-              | prompt: record.prompt,
-                origin: record.origin,
-                status: record.status,
-                inserted_at: record.inserted_at
-            }
-
-          :error ->
-            new_turn(record, page.runtime)
-        end
-      end)
-
-    known = MapSet.new(records, & &1.id)
-    orphans = Enum.reject(page.turns, &MapSet.member?(known, &1.id))
-    sorted = Enum.sort_by(merged, &ordered_at/1)
-
-    %{page | turns: Enum.map(sorted ++ orphans, &rebuild(&1, page.runtime))}
-  end
-
-  # A turn Fountain sent without a usable timestamp belongs at the end, where a
-  # just-created turn actually is. Treating a missing one as the empty string
-  # made it the earliest thing in the transcript, so the newest turn rendered
-  # above the entire history.
-  defp ordered_at(%Turn{inserted_at: at}) when is_binary(at), do: {0, at}
-  defp ordered_at(%Turn{}), do: {1, ""}
+  def empty(runtime), do: page([], runtime)
 
   @doc "Every event in `events`, laid into its turn. Duplicates (by id) are ignored."
   @spec add_events(Page.t(), [Event.t() | map()]) :: Page.t()
@@ -169,27 +125,6 @@ defmodule Ravix.Tracks.Transcript do
 
   # ── one turn ──────────────────────────────────────────────────────────
 
-  @doc """
-  A `Ravix.Fountain.Shapes.Turn` in the container the page grows.
-
-  The wire record and the page's turn are two shapes because a turn grows
-  `events`, `blocks` and a fold as output arrives; this carries the part that
-  came off the wire across into the other. It used to read each field as
-  `raw["id"] || raw[:id]`, accepting either spelling from a map with no shape
-  at all, and then answered with an anonymous map that `add_turns/2` merged
-  over a turn. Both ends have a shape now, so this only changes containers.
-  """
-  @spec turn_record(Wire.t()) :: Turn.t()
-  def turn_record(%Wire{} = turn) do
-    %Turn{
-      id: turn.id,
-      prompt: turn.prompt,
-      origin: turn.origin,
-      status: turn.status,
-      inserted_at: turn.inserted_at
-    }
-  end
-
   defp new_turn(%Turn{} = record, runtime), do: rebuild(record, runtime)
 
   # The streaming case is asked first, and is the only one that repeats: the
@@ -206,7 +141,13 @@ defmodule Ravix.Tracks.Transcript do
   # bookkeeping around it stayed that way. An event numbered above everything
   # here cannot be a duplicate, cannot be out of order, and cannot unsettle a
   # turn, so none of those questions has to be asked of the log at all.
+  #
+  # The prompt is taken before any of that, whichever branch follows. It only
+  # arrives on the event that opens the turn, and only when the feed was read
+  # with prompts; a copy of that event without one leaves the prompt alone.
   defp lay_in(%Turn{} = turn, event, runtime) do
+    turn = if event.prompt, do: %{turn | prompt: event.prompt}, else: turn
+
     cond do
       appended?(turn.events, event) ->
         finish(
@@ -219,7 +160,7 @@ defmodule Ravix.Tracks.Transcript do
         )
 
       Enum.any?(turn.events, &(&1.id == event.id)) ->
-        turn
+        finish(turn, turn.fold)
 
       # Out of order: the order the blocks are in changes, so it is rebuilt.
       true ->
@@ -361,6 +302,7 @@ defmodule Ravix.Tracks.Transcript do
   # A failed stage is worth drawing even when Fountain gave no reason: that a
   # stage failed at all is the news, and a silent turn is what #35 was.
   def visible_block?(%Block.Failure{}), do: true
+  def visible_block?(%Block.Plan{}), do: true
   def visible_block?(%{body: body}) when is_binary(body), do: String.trim(body) != ""
   def visible_block?(_), do: false
 
@@ -405,6 +347,17 @@ defmodule Ravix.Tracks.Transcript do
   defp apply_block(%{kind: :tool_result, tool_id: id} = block, update, ts, blocks)
        when is_binary(id),
        do: pair_result(blocks, id, block, update, ts)
+
+  # The newest plan replaces any earlier one in the turn, wherever that was;
+  # an empty or unreadable one just takes the old one away.
+  defp apply_block(%{kind: :plan, body: entries}, _update, _ts, acc) do
+    acc = Enum.reject(acc, &match?(%Block.Plan{}, &1))
+
+    case Block.Plan.from_entries(entries) do
+      nil -> acc
+      plan -> [plan | acc]
+    end
+  end
 
   # Permission requests and anything the ACP library adds later have no
   # rendering in the transcript yet; they are dropped rather than drawn as

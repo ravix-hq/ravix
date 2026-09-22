@@ -7,13 +7,17 @@
 // read gets a "jump to latest" affordance instead of a shove. What the hook
 // expects, on the scroll container:
 //
-//   <div phx-hook="TranscriptTail" id="transcript" class="scroll log"
+//   <div phx-hook="TranscriptTail" id="transcript-scroll" class="transcript-scroll"
 //        data-track={@track.id} data-older-event="older">
 //     <div>… anything above the turns …</div>
-//     <div>… the turns …
-//       <button type="button" class="jump-latest" data-jump-latest>Jump to latest</button>
-//     </div>
+//     <div id="transcript-turns" phx-update="stream">… the turns …</div>
+//     <button type="button" class="jump-latest" data-jump-latest>Jump to latest</button>
 //   </div>
+//
+//   The button sits after the turns, as a child of the scroller rather than
+//   of the stream container (a stream owns its children). The stylesheet
+//   shows it only under `.transcript-scroll.unpinned` (or `.scroll.unpinned`),
+//   which is the class this hook toggles.
 //
 //   data-track        changes when the reader is somewhere new, which re-pins
 //                     the panel to the bottom whatever they had scrolled to

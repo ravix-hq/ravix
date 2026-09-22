@@ -1,12 +1,12 @@
 defmodule Ravix.Tracks.Transcript.Turn do
   @moduledoc """
-  One turn as the page carries it: what Fountain recorded, plus the events
-  that answered it and the blocks they fold into.
+  One turn as the page carries it: the prompt that opened it, the events
+  that answered it, and the blocks they fold into.
 
-  Distinct from `Ravix.Fountain.Shapes.Turn`, which is only the part that
-  comes off the wire. This is that record in the container the transcript
-  grows: `events` and `blocks` accumulate as output arrives, and `settled?`
-  and `visible?` are read off them.
+  Built from the event log alone (see `Ravix.Tracks.Transcript`), so it is
+  not `Ravix.Fountain.Shapes.Turn`, the `/turns` record: `prompt` comes off
+  the turn's `started` event, `events` and `blocks` accumulate as output
+  arrives, and `settled?` and `visible?` are read off them.
 
   ## Both accumulators are newest first
 
@@ -21,10 +21,11 @@ defmodule Ravix.Tracks.Transcript.Turn do
 
   ## Why only `id` is enforced
 
-  The wire fields are genuinely absent on a turn the event log named before
-  Fountain finished recording it -- `place/3` builds one from a `turn_id`
-  alone so the first frames of a new turn are not dropped -- so enforcing
-  `prompt` would make a real case unrepresentable. The derived fields are
+  `prompt` is genuinely absent on a turn nobody typed (Fountain's autonomous
+  ones), and on the events grouped under `Event.pending/0` before Fountain
+  finished recording a turn -- `place/3` builds a turn from a `turn_id` alone
+  so those first frames are not dropped -- so enforcing it would make a real
+  case unrepresentable. The derived fields are
   never passed in: `Ravix.Tracks.Transcript.finish/2` computes all four on
   every rebuild, so a default here is the value before the first fold rather
   than a field somebody may forget.
@@ -54,9 +55,6 @@ defmodule Ravix.Tracks.Transcript.Turn do
   defstruct [
     :id,
     :prompt,
-    :origin,
-    :status,
-    :inserted_at,
     events: [],
     blocks: [],
     settled?: false,
@@ -67,9 +65,6 @@ defmodule Ravix.Tracks.Transcript.Turn do
   @type t :: %__MODULE__{
           id: String.t() | nil,
           prompt: String.t() | nil,
-          origin: String.t() | nil,
-          status: String.t() | nil,
-          inserted_at: String.t() | nil,
           events: [Event.t()],
           blocks: [Block.t()],
           settled?: boolean(),

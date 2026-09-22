@@ -3,7 +3,7 @@ defmodule Ravix.Previews.ServerFailureTest do
   use Mimic
   import Ravix.PreviewsFixture
   alias Ravix.{Previews, Tracks}
-  alias Ravix.Previews.Server
+  alias Ravix.Previews.{Lifecycle, Server}
 
   setup do
     provider = start_provider()
@@ -15,24 +15,24 @@ defmodule Ravix.Previews.ServerFailureTest do
   end
 
   test "a missing configuration fails visibly and remains retryable", ctx do
-    assert :ok = Previews.start_service(ctx.track.id)
-    assert %{state: :failed, error: message} = Previews.info(ctx.track.id)
+    assert :ok = Lifecycle.start_service(ctx.track.id)
+    assert %{state: :failed, error: message} = Lifecycle.info(ctx.track.id)
     assert message =~ "Save a preview startup command"
   end
 
   test "a missing machine explains how to recover", ctx do
     configure(ctx)
     stub(Tracks, :machine_of, fn _, _ -> {:ok, nil} end)
-    assert :ok = Previews.start_service(ctx.track.id)
-    assert %{state: :failed, error: message} = Previews.info(ctx.track.id)
+    assert :ok = Lifecycle.start_service(ctx.track.id)
+    assert %{state: :failed, error: message} = Lifecycle.info(ctx.track.id)
     assert message =~ "Open a track first"
   end
 
   test "provider errors settle startup instead of leaving the preview starting", ctx do
     configure(ctx)
     stub(Tracks, :machine_of, fn _, _ -> {:error, {:unavailable, "Fountain is offline"}} end)
-    assert :ok = Previews.start_service(ctx.track.id)
-    assert %{state: :failed, error: "Fountain is offline"} = Previews.info(ctx.track.id)
+    assert :ok = Lifecycle.start_service(ctx.track.id)
+    assert %{state: :failed, error: "Fountain is offline"} = Lifecycle.info(ctx.track.id)
     refute Server.busy?(ctx.track.id)
   end
 
@@ -46,7 +46,7 @@ defmodule Ravix.Previews.ServerFailureTest do
       {:error, {:unavailable, "Fountain is offline"}}
     end)
 
-    task = Task.async(fn -> Previews.start_service(ctx.track.id) end)
+    task = Task.async(fn -> Lifecycle.start_service(ctx.track.id) end)
     assert_receive {:in_flight, worker}, 5_000
 
     # The flag `Ravix.Previews.Reconciler` reads before queueing an `:ensure`
@@ -76,7 +76,7 @@ defmodule Ravix.Previews.ServerFailureTest do
       Process.sleep(:infinity)
     end)
 
-    caller = Task.async(fn -> Previews.start_service(ctx.track.id) end)
+    caller = Task.async(fn -> Lifecycle.start_service(ctx.track.id) end)
     assert_receive {:in_flight, worker}, 5_000
 
     server = Server.ensure(ctx.track.id)
@@ -126,7 +126,7 @@ defmodule Ravix.Previews.ServerFailureTest do
     stub(Tracks, :machine_of, fn _, _ -> raise "unexpected failure" end)
 
     assert {:error, %RuntimeError{message: "unexpected failure"}} =
-             Previews.start_service(ctx.track.id)
+             Lifecycle.start_service(ctx.track.id)
 
     refute Server.busy?(ctx.track.id)
   end

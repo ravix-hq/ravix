@@ -1,16 +1,11 @@
 defmodule Ravix.Tracks.TranscriptTest do
   use ExUnit.Case, async: true
 
-  alias Ravix.Fountain.Shapes
   alias Ravix.Tracks.Transcript
   alias Ravix.Tracks.Transcript.{Block, Detail, Edit, Event}
 
   @ts "2026-09-09T10:00:00Z"
   @later "2026-09-09T10:00:05Z"
-
-  # The JSON Fountain serves, through the boundary that really decodes it.
-  # `Transcript.page/3` takes turns, not the maps they arrived as.
-  defp wire_turns(raw), do: Shapes.turns(raw)
 
   defp update(params),
     do: Jason.encode!(%{jsonrpc: "2.0", method: "session/update", params: %{update: params}})
@@ -46,10 +41,20 @@ defmodule Ravix.Tracks.TranscriptTest do
 
       # A word Fountain invents must not become an atom. It becomes `:other`,
       # which is a value Ravix already knows how to not match on.
-      before = :erlang.system_info(:atom_count)
-      assert Event.from(%{"kind" => "telepathy", "stream" => "smoke"}).kind == :other
-      assert Event.from(%{"kind" => "telepathy", "stream" => "smoke"}).stream == :other
-      assert :erlang.system_info(:atom_count) == before
+      #
+      # Asked of these two words rather than of `:erlang.system_info(:atom_count)`,
+      # which is the whole VM's: this module runs beside every other async test,
+      # any of which may make an atom (a module loading, a Mimic copy) between a
+      # before and an after, and the count then fails a parse that made none.
+      n = System.unique_integer([:positive])
+      kind = "telepathy-#{n}"
+      stream = "smoke-#{n}"
+
+      assert %Event{kind: :other, stream: :other} =
+               Event.from(%{"kind" => kind, "stream" => stream})
+
+      assert_raise ArgumentError, fn -> String.to_existing_atom(kind) end
+      assert_raise ArgumentError, fn -> String.to_existing_atom(stream) end
     end
 
     test "gives an event with no turn somewhere to sit" do
@@ -70,6 +75,25 @@ defmodule Ravix.Tracks.TranscriptTest do
       assert bare.stream == nil
       assert bare.kind == :other
       assert Map.keys(bare) -- [:__struct__ | Map.keys(Map.from_struct(bare))] == []
+    end
+
+    test "keeps the prompt block Fountain puts on a turn's opening event, and no other" do
+      opening = %{"kind" => "stage", "stage" => "turn", "state" => "started"}
+
+      assert Event.from(Map.put(opening, "blocks", [%{"kind" => "prompt", "body" => "do x"}])).prompt ==
+               "do x"
+
+      # Fountain's own parse of an output event is not kept: the transcript
+      # parses `data` itself, and a `text` block is not somebody's prompt.
+      assert Event.from(%{"kind" => "output", "blocks" => [%{"kind" => "text", "body" => "hi"}]}).prompt ==
+               nil
+
+      for blocks <- [nil, [], [%{"kind" => "prompt", "body" => ""}], [%{"kind" => "prompt"}], "x"],
+          do: assert(Event.from(Map.put(opening, "blocks", blocks)).prompt == nil)
+
+      assert Event.starts_turn?(Event.from(opening))
+      refute Event.starts_turn?(Event.from(%{opening | "state" => "completed"}))
+      refute Event.starts_turn?(Event.from(%{"kind" => "output"}))
     end
 
     test "answers the two questions three modules used to ask in string keys" do
@@ -107,6 +131,54 @@ defmodule Ravix.Tracks.TranscriptTest do
 
       assert [%Block.Text{body: "Hello", started_at: @ts, ended_at: @later}] =
                Transcript.blocks_for_turn(events, "claude")
+    end
+
+    test "a plan is the newest checklist, drawn where it arrived; a cleared one is removed" do
+      plan = fn entries -> update(%{sessionUpdate: "plan", entries: entries}) end
+
+      first =
+        plan.([
+          %{content: "Read the code", status: "in_progress", priority: "high"},
+          %{content: "Fix it", status: "pending"}
+        ])
+
+      second =
+        plan.([
+          %{content: "Read the code", status: "completed"},
+          %{content: "Fix it", status: "in_progress"},
+          # Not a word ACP has: read as not done yet, never as done.
+          %{content: "Ship it", status: "shipped"},
+          # Nothing to draw.
+          %{content: "  ", status: "pending"},
+          %{status: "pending"}
+        ])
+
+      events = [
+        event(1, first),
+        event(2, text_chunk("Looking.")),
+        event(3, second)
+      ]
+
+      assert [%Block.Text{body: "Looking."}, %Block.Plan{entries: entries}] =
+               Transcript.blocks_for_turn(events, "claude")
+
+      assert entries == [
+               %Block.Plan.Entry{content: "Read the code", status: :completed},
+               %Block.Plan.Entry{content: "Fix it", status: :in_progress},
+               %Block.Plan.Entry{content: "Ship it", status: :pending}
+             ]
+
+      assert [%Block.Text{}] =
+               Transcript.blocks_for_turn(events ++ [event(4, plan.([]))], "claude")
+    end
+
+    test "a plan counts as something to show" do
+      events = [
+        event(1, update(%{sessionUpdate: "plan", entries: [%{content: "x", status: "pending"}]}))
+      ]
+
+      assert [%{visible?: true, blocks: [%Block.Plan{}]}] =
+               Transcript.page(events, "claude").turns
     end
 
     test "several lines in one event are parsed in order, and thinking is its own block" do
@@ -213,29 +285,28 @@ defmodule Ravix.Tracks.TranscriptTest do
     end
   end
 
-  describe "page/3" do
-    test "turns keep their order and their events; orphan events form a trailing group" do
-      turns = [
-        %{
-          "id" => "t2",
-          "prompt" => "second",
-          "inserted_at" => "2026-09-09T10:01:00Z",
-          "origin" => "user",
-          "status" => "done"
-        },
-        %{"id" => "t1", "prompt" => "first", "inserted_at" => "2026-09-09T10:00:00Z"}
-      ]
+  # A turn's `started` event as the feed serves it with `?prompts=true`: the
+  # one event that carries what somebody asked for.
+  defp opened(id, turn, prompt) do
+    id
+    |> event(nil, turn: turn, kind: "stage", stage: "turn", state: "started")
+    |> Map.put("blocks", if(prompt, do: [%{"kind" => "prompt", "body" => prompt}], else: []))
+  end
 
+  describe "page/2" do
+    test "turns are in the order they opened, with their prompts; orphan events trail" do
       events = [
-        event(3, text_chunk("later"), turn: "t2"),
-        event(1, text_chunk("reply"), turn: "t1"),
-        event(2, nil, turn: "t1", kind: "stage", stage: "turn", state: "done"),
-        event(4, text_chunk("new"), turn: nil)
+        opened(1, "t1", "first"),
+        event(2, text_chunk("reply"), turn: "t1"),
+        event(3, nil, turn: "t1", kind: "stage", stage: "turn", state: "done"),
+        opened(4, "t2", "second"),
+        event(5, text_chunk("later"), turn: "t2"),
+        event(6, text_chunk("new"), turn: nil)
       ]
 
-      page = Transcript.page(wire_turns(turns), events, "claude")
+      page = Transcript.page(events, "claude")
       assert Enum.map(page.turns, & &1.id) == ["t1", "t2", "pending"]
-      assert page.last_event_id == 4
+      assert page.last_event_id == 6
 
       [t1, t2, pending] = page.turns
       assert t1.prompt == "first"
@@ -243,17 +314,18 @@ defmodule Ravix.Tracks.TranscriptTest do
       assert [%Block.Text{body: "reply"}] = t1.blocks
       # Newest first: the fold's order, and the reason a live turn does not
       # copy its whole event list per frame. See `Ravix.Tracks.Transcript.Turn`.
-      assert Enum.map(t1.events, & &1.id) == [2, 1]
-      assert t2.origin == "user"
+      assert Enum.map(t1.events, & &1.id) == [3, 2, 1]
+      assert t2.prompt == "second"
       refute t2.settled?
       assert pending.prompt == nil
       assert [%{body: "new"}] = pending.blocks
     end
 
     test "a turn with nothing to show is not visible; lifecycle-only turns stay out of the page" do
-      turns = [%{"id" => "t1", "prompt" => "  "}, %{"id" => "t2", "prompt" => "say hi"}]
-      events = [event(1, nil, turn: "t1", kind: "stage", stage: "turn", state: "started")]
-      page = Transcript.page(wire_turns(turns), events, "claude")
+      # An autonomous turn: Fountain serves its opening event with no prompt,
+      # because nobody typed one, and it produced nothing.
+      events = [opened(1, "t1", nil), opened(2, "t2", "say hi")]
+      page = Transcript.page(events, "claude")
       assert Enum.map(Transcript.visible_turns(page), & &1.id) == ["t2"]
     end
 
@@ -262,33 +334,34 @@ defmodule Ravix.Tracks.TranscriptTest do
     end
   end
 
-  describe "add_event/2 and add_turns/2" do
+  describe "add_event/2" do
     test "a live event lands in its turn and is not counted twice" do
-      page = Transcript.page(wire_turns([%{"id" => "t1", "prompt" => "hi"}]), [], "claude")
+      page = Transcript.page([opened(1, "t1", "hi")], "claude")
       page = Transcript.add_event(page, event(7, text_chunk("a")))
       page = Transcript.add_event(page, event(7, text_chunk("a")))
       page = Transcript.add_event(page, event(8, text_chunk("b")))
-      assert [%{id: "t1", blocks: [%{body: "ab"}]}] = page.turns
+      assert [%{id: "t1", prompt: "hi", blocks: [%{body: "ab"}]}] = page.turns
       assert page.last_event_id == 8
     end
 
-    test "events for a turn Fountain has not recorded yet get their prompt when the turns arrive" do
-      page = Transcript.page([], [event(1, text_chunk("x"), turn: "t9")], "claude")
-      assert [%{id: "t9", prompt: nil}] = page.turns
+    test "a prompt that arrives on a copy of an event already here is still taken" do
+      # The stream never carries prompts. If a page holds the bare opening
+      # event and then sees the feed's copy of it, the copy's prompt counts
+      # even though the event itself is a duplicate.
+      page = Transcript.page([opened(1, "t1", nil)], "claude")
+      assert Transcript.visible_turns(page) == []
 
-      page =
-        Transcript.add_turns(
-          page,
-          wire_turns([
-            %{"id" => "t9", "prompt" => "do x", "inserted_at" => "2026-09-09T10:00:00Z"}
-          ])
-        )
+      page = Transcript.add_event(page, opened(1, "t1", "hello"))
+      assert [%{id: "t1", prompt: "hello", visible?: true}] = page.turns
+      assert page.last_event_id == 1
 
-      assert [%{id: "t9", prompt: "do x", blocks: [%{body: "x"}]}] = page.turns
+      # And a later bare copy does not take it away again.
+      page = Transcript.add_event(page, opened(1, "t1", nil))
+      assert [%{prompt: "hello"}] = page.turns
     end
 
     test "out-of-order events still read in id order" do
-      page = Transcript.page(wire_turns([%{"id" => "t1", "prompt" => "hi"}]), [], "claude")
+      page = Transcript.page([opened(1, "t1", "hi")], "claude")
 
       # The blocks are folded incrementally while events arrive in order; one
       # that lands out of order has to put the turn back together.
@@ -296,40 +369,18 @@ defmodule Ravix.Tracks.TranscriptTest do
       page = Transcript.add_event(page, event(7, text_chunk("a")))
       page = Transcript.add_event(page, event(8, text_chunk("b")))
 
-      assert [%{blocks: [%{body: "abc"}]}] = page.turns
+      assert [%{prompt: "hi", blocks: [%{body: "abc"}]}] = page.turns
       assert page.last_event_id == 9
     end
 
-    test "a turn with no timestamp sorts to the end, not the top" do
-      page =
-        Transcript.add_turns(
-          Transcript.page([], [], "claude"),
-          wire_turns([
-            %{"id" => "old", "prompt" => "first", "inserted_at" => @ts},
-            %{"id" => "new", "prompt" => "just now"},
-            %{"id" => "mid", "prompt" => "second", "inserted_at" => @later}
-          ])
-        )
-
-      # Treating a missing timestamp as the empty string made it the earliest
-      # thing in the transcript, so a just-created turn rendered above the
-      # entire history.
-      assert Enum.map(page.turns, & &1.id) == ["old", "mid", "new"]
-    end
-
     test "live?/2 is true only for a running, unsettled last turn" do
-      page =
-        Transcript.page(
-          wire_turns([%{"id" => "t1", "prompt" => "hi"}]),
-          [event(1, text_chunk("a"))],
-          "claude"
-        )
+      page = Transcript.page([opened(1, "t1", "hi"), event(2, text_chunk("a"))], "claude")
 
       assert Transcript.live?(page, true)
       refute Transcript.live?(page, false)
 
       settled =
-        Transcript.add_event(page, event(2, nil, kind: "stage", stage: "turn", state: "done"))
+        Transcript.add_event(page, event(3, nil, kind: "stage", stage: "turn", state: "done"))
 
       refute Transcript.live?(settled, true)
     end

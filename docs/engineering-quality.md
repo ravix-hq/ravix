@@ -44,8 +44,9 @@ boundary because a DOM fixture has no rendering engine.
 
 The CI jobs upload both coverage reports, including on failure. `mix precommit`
 runs the Elixir and hook gates together with compile, format, Credo, Sobelow,
-Hex retirement audit, Dialyzer, assets, and release assembly. It needs `bun install
---frozen-lockfile` once after cloning. Versions are pinned in `.tool-versions`.
+Hex retirement audit, and Dialyzer; `mix precommit.release` builds the assets
+and assembles the release. It needs `bun install --frozen-lockfile` once after
+cloning. Versions are pinned in `.tool-versions`.
 
 ## Tests and fixes
 

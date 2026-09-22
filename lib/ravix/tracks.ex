@@ -43,18 +43,20 @@ defmodule Ravix.Tracks do
   alias Ravix.Accounts.User
   alias Ravix.Analytics
   alias Ravix.Fountain
-  alias Ravix.Fountain.Client
   alias Ravix.Fountain.Launch
   alias Ravix.Fountain.Shapes.Conversation
   alias Ravix.Hub
   alias Ravix.Ids
   alias Ravix.MachineCache
   alias Ravix.People
+  alias Ravix.Previews.Lifecycle
   alias Ravix.Projects.Project
   alias Ravix.PromptQueue.Body
   alias Ravix.PromptQueue.Body.Image
   alias Ravix.Spec
   alias Ravix.Trace
+
+  require Logger
 
   alias Ravix.Tracks.{
     Diff,
@@ -86,16 +88,16 @@ defmodule Ravix.Tracks do
 
   Two providers show through here rather than being flattened: a `Fountain`
   failure is the machine's, a `GitHub` one is the repository's, and
-  `RavixWeb.Error` has a different sentence for each. `:unconfigured` is
-  either of them not being set up on this deployment at all.
+  `RavixWeb.Error` has a different sentence for each. `{:unconfigured, _}`
+  names which of them is not set up on this deployment at all; it comes from
+  `Ravix.Providers` or the adapter and is passed through as it is.
   """
   @type reason ::
           :not_found
-          | :unconfigured
           | {:forbidden, String.t()}
           | {:conflict, String.t(), String.t()}
           | {:unprocessable, String.t(), String.t()}
-          | {:unavailable, String.t(), String.t()}
+          | {:unconfigured, :fountain | :github}
           | Fountain.Error.t()
           | Ravix.GitHub.Error.t()
 
@@ -114,18 +116,13 @@ defmodule Ravix.Tracks do
   @spec list(User.t(), String.t()) :: {:ok, [View.t()]} | {:error, :not_found}
   def list(%User{} = user, project_id) do
     with %Project{} = project <- live_project(project_id),
-         {:ok, access} <- access_of(user.id, project) do
-      wide = access in [:owner, :project]
-
+         access when access != nil <- Access.access_of(user.id, project) do
       rows =
-        if wide,
-          do: Store.tracks_of(project.id),
-          else: Store.member_tracks_of(user.id, project.id)
+        if access == :tracks,
+          do: Store.member_tracks_of(user.id, project.id),
+          else: Store.tracks_of(project.id)
 
-      if not wide and rows == [],
-        do: {:error, :not_found},
-        else:
-          {:ok, present_all(rows, project, user, if(access == :owner, do: :owner, else: :member))}
+      {:ok, present_all(rows, project, user, if(access == :owner, do: :owner, else: :member))}
     else
       _ -> {:error, :not_found}
     end
@@ -317,10 +314,15 @@ defmodule Ravix.Tracks do
     id = Ecto.UUID.generate()
     origin = read_origin(attrs["origin"], project)
     # Every track this project has ever had, closed ones included; see
-    # `Ravix.Tracks.Names.name_track/2` for why a closed track's name is still spent.
-    taken = project.id |> Store.tracks_of(:all) |> Enum.map(& &1.slug)
+    # `Ravix.Tracks.Names.name_track/2` for why a closed track's name is still
+    # spent. A *slug* is only spent while the track is open (the worktree is
+    # what clashes, and a closed track's is gone), so the same read answers
+    # both questions and `free_slug/2` asks the database nothing more.
+    rows = Store.tracks_of(project.id, :all)
+    taken = Enum.map(rows, & &1.slug)
+    open_slugs = for %Track{closed_at: nil, slug: slug} <- rows, into: MapSet.new(), do: slug
     title = text(attrs["title"], 200) |> non_empty() || default_title(origin, taken)
-    slug = free_slug(project.id, text(attrs["slug"], 60) |> non_empty() || title)
+    slug = free_slug(open_slugs, text(attrs["slug"], 60) |> non_empty() || title)
 
     branch =
       if origin.kind == :pr and origin.base,
@@ -354,10 +356,46 @@ defmodule Ravix.Tracks do
   end
 
   # The conversation on Fountain, then the row that remembers it.
+  #
+  # A row that will not insert leaves a conversation nobody can reach, so it
+  # is ended before the refusal is reported -- the same shape as
+  # `Ravix.Projects` unwinding a machine whose row did not save. Best effort:
+  # a terminate that fails is logged, and the refusal is reported either way.
   defp cut(client, %Plan{} = plan) do
     with {:ok, %Conversation{id: conversation_id}} <-
            Fountain.create_conversation(client, plan.conversation) do
-      Store.create_track(Plan.track_attrs(plan, conversation_id))
+      case Store.create_track(Plan.track_attrs(plan, conversation_id)) do
+        {:ok, track} ->
+          {:ok, track}
+
+        {:error, %Ecto.Changeset{} = changeset} ->
+          unwind_conversation(client, conversation_id)
+          {:error, refusal(changeset)}
+      end
+    end
+  end
+
+  defp unwind_conversation(client, conversation_id) do
+    discard(
+      Fountain.terminate(client, conversation_id),
+      "conversation #{conversation_id} of a track that did not save was not terminated"
+    )
+  end
+
+  # The one failure `plan/4` cannot rule out is the race it checked for a
+  # moment earlier: somebody opening a track with the same name between the
+  # read and the insert, which the partial unique index on open slugs
+  # refuses. Anything else is a row the changeset would not take.
+  defp refusal(%Ecto.Changeset{errors: errors}) do
+    case errors do
+      [{:slug, _} | _] ->
+        {:conflict, "slug_taken", "Somebody just opened a track with that name; try again."}
+
+      [{field, {message, _}} | _] ->
+        {:unprocessable, "invalid_track", "That track could not be saved: #{field} #{message}."}
+
+      [] ->
+        {:unprocessable, "invalid_track", "That track could not be saved."}
     end
   end
 
@@ -401,7 +439,6 @@ defmodule Ravix.Tracks do
         Hub.publish(project.id, :turn, track_id: track.id)
 
       {:error, reason} ->
-        require Logger
         Logger.error("ravix: opening turn for track #{track.id} did not send: #{inspect(reason)}")
         Hub.publish(project.id, :turn, track_id: track.id)
     end
@@ -471,6 +508,14 @@ defmodule Ravix.Tracks do
   from the read: opening a track to glance at the branch name is not reading
   three turns of output, and a read mark set by the fetch would clear the
   dot before anybody looked.
+
+  Published as `:read`, naming the reader, rather than as `:tracks`. A
+  `:tracks` event says something about the track moved and every rail on
+  the project re-lists its conversations from Fountain to find out what;
+  this moved one person's private mark, which the rail of that person can
+  clear from the event alone and nobody else's rail shows. Every open track
+  page called this on each load, stage and send, so the old shape cost the
+  whole project a Fountain round trip per reader each time anybody looked.
   """
   @spec mark_read(User.t(), String.t()) :: :ok | {:error, reason()}
   def mark_read(%User{} = user, track_id) do
@@ -478,7 +523,7 @@ defmodule Ravix.Tracks do
       # ownership: `Access.track_access/2` on the line above; a person may
       # always mark their own read position on a track they may open.
       People.Store.mark_read(track.id, user.id, DateTime.utc_now())
-      publish_tracks(project.id, track.id)
+      Hub.publish(project.id, :read, track_id: track.id, user_id: user.id)
     end
   end
 
@@ -520,12 +565,13 @@ defmodule Ravix.Tracks do
   @doc """
   The transcript so far, both halves of it.
 
-  The prompts and the output live in two different places on Fountain and
-  are joined on `turn_id`. Joining them here rather than in the page is not
-  tidiness: it is one round trip instead of two on the call that gates the
-  first paint of a track. A conversation too new to have turns is ordinary,
-  not an error. The page then follows the rest through
-  `Ravix.Tracks.Follower.subscribe/2` from the page's `last_event_id`.
+  The prompts and the output live in two different places on Fountain, and
+  this used to read both and join them on `turn_id`. The event log read with
+  `prompts: true` carries each turn's prompt on its opening event, so it is
+  one read, on the call that gates the first paint of a track. A
+  conversation too new to have events is ordinary, not an error. The page
+  then follows the rest through `Ravix.Tracks.Follower.subscribe/2` from the
+  page's `last_event_id`.
   """
   @spec events(User.t(), String.t(), keyword()) :: {:ok, Transcript.page()} | {:error, reason()}
   def events(%User{} = user, track_id, _opts \\ []) do
@@ -546,20 +592,14 @@ defmodule Ravix.Tracks do
   end
 
   defp read_transcript(client, conversation_id, runtime) do
-    turns =
-      case Fountain.turns(client, conversation_id) do
-        {:ok, turns} -> turns
-        _ -> []
-      end
-
-    with {:ok, log} <- Fountain.events(client, conversation_id) do
-      page = Transcript.page(turns, log, runtime)
+    with {:ok, log} <- Fountain.events(client, conversation_id, prompts: true) do
+      page = Transcript.page(log, runtime)
 
       # How much transcript came back, on the span that fetched it. A slow
       # first paint is either Fountain being slow or a conversation being long,
       # and a duration alone cannot say which.
       Trace.annotate(%{
-        "ravix.turn_count" => length(turns),
+        "ravix.turn_count" => length(page.turns),
         "ravix.event_count" => length(log)
       })
 
@@ -609,6 +649,15 @@ defmodule Ravix.Tracks do
   Ravix's, and the worktree is tidied on the next survey if this turn never
   lands. Closing ends the track for everybody in it, so it is the owner's
   call, or the cutter's own; for anybody else the way out is to leave.
+
+  The row is closed before this returns; the teardown is not. Stopping the
+  preview, sending the close turn and ending the conversation are three
+  provider calls, each of which can take as long as a machine takes to
+  answer, and the page that asked is a LiveView socket that must not wait
+  minutes for a button. So they run afterwards under `Ravix.TaskSupervisor`,
+  and a provider that refuses is logged rather than reported: the track is
+  closed for everybody the moment this returns `:ok`, and nothing the
+  teardown learns could reopen it.
   """
   @spec close(User.t(), String.t(), force: boolean(), delete_branch: boolean()) ::
           :ok | {:error, reason()}
@@ -617,25 +666,18 @@ defmodule Ravix.Tracks do
            Access.track_access(user, track_id),
          :ok <- Access.require_owner_or_cutter(role, user, track, "close a track"),
          {:ok, client} <- fountain() do
-      # ownership: the track was just closed through `Access.track_access/2`;
-      # prompts waiting to be delivered to it have nowhere to go.
+      # ownership: `Access.track_access/2` above admitted this caller to the
+      # track being closed; prompts waiting to be delivered to it have nowhere
+      # to go.
       Ravix.PromptQueue.Store.cancel_track(track.id)
-      Ravix.Previews.stop_service(track.id, :cleanup)
-
-      if track.conversation_id do
-        prompt =
-          Spec.close_track_prompt(project, track.slug,
-            force: Keyword.get(opts, :force, false) == true,
-            delete_branch: if(Keyword.get(opts, :delete_branch, false) == true, do: track.branch)
-          )
-
-        Fountain.prompt(client, track.conversation_id, prompt)
-        Fountain.terminate(client, track.conversation_id)
-      end
-
       Store.close_track(track.id)
       MachineCache.forget_project(project.id)
       publish_tracks(project.id, track.id)
+
+      {:ok, _pid} =
+        Task.Supervisor.start_child(Ravix.TaskSupervisor, fn ->
+          tear_down(client, track, project, opts)
+        end)
 
       Analytics.track(
         user,
@@ -650,8 +692,49 @@ defmodule Ravix.Tracks do
           "ravix.lifetime_sec" => lifetime_sec(track)
         })
       )
+
+      :ok
     end
   end
+
+  # What a closed track leaves behind on the providers: the preview service,
+  # the worktree (removed by a last turn) and the conversation. Each call is
+  # made whether or not the one before it succeeded, because they are three
+  # separate things to tidy, and a refusal is logged rather than returned:
+  # the row is already closed and nobody is waiting on this. Nothing here is
+  # a credential -- the client carries Fountain's key and is not logged.
+  defp tear_down(client, %Track{} = track, %Project{} = project, opts) do
+    # ownership: `close/3` admitted the caller through `Access.track_access/2`
+    # and closed the row before handing this task the track; its preview
+    # service, grants and port go with it.
+    discard(
+      Lifecycle.stop_service(track.id, :cleanup),
+      "preview of closed track #{track.id} did not stop"
+    )
+
+    if track.conversation_id do
+      prompt =
+        Spec.close_track_prompt(project, track.slug,
+          force: Keyword.get(opts, :force, false) == true,
+          delete_branch: if(Keyword.get(opts, :delete_branch, false) == true, do: track.branch)
+        )
+
+      discard(
+        Fountain.prompt(client, track.conversation_id, prompt),
+        "close turn for track #{track.id} did not send"
+      )
+
+      discard(
+        Fountain.terminate(client, track.conversation_id),
+        "conversation of closed track #{track.id} was not terminated"
+      )
+    end
+
+    :ok
+  end
+
+  defp discard(:ok, _what), do: :ok
+  defp discard({:error, reason}, what), do: Logger.warning("ravix: #{what}: #{inspect(reason)}")
 
   @doc """
   Every open track of a project, closed in the database, because the disk
@@ -662,8 +745,11 @@ defmodule Ravix.Tracks do
   @spec close_all_for_rebuild(Project.t(), atom()) :: :ok
   def close_all_for_rebuild(%Project{id: project_id}, _reason) do
     Enum.each(Store.tracks_of(project_id), fn track ->
-      # ownership: the track was just closed through `Access.track_access/2`;
-      # prompts waiting to be delivered to it have nowhere to go.
+      # ownership: this takes no user because its callers are
+      # `Ravix.Projects.rebuild/2` and `destroy/2`, which admitted the owner
+      # through `Access.project_of/2` on this project before retiring its
+      # machine; every track on it is that project's, and prompts waiting to
+      # be delivered to them have nowhere to go.
       Ravix.PromptQueue.Store.cancel_track(track.id)
       Store.close_track(track.id)
     end)
@@ -945,16 +1031,21 @@ defmodule Ravix.Tracks do
   # worktree. Suffixing is better than refusing: somebody opening a second
   # track from the same pull request means it, and being told "that name is
   # taken" about a name they never chose is a dead end.
-  defp free_slug(project_id, from) do
+  #
+  # `open_slugs` is every open track's slug, read once by `plan/4`: this used
+  # to ask the database per candidate, up to ninety-nine times for a name
+  # that was popular. The read is a moment old either way, and the partial
+  # unique index is what actually decides; see `cut/2` for the refusal.
+  defp free_slug(%MapSet{} = open_slugs, from) do
     base = Ids.slugify(from)
 
-    if Store.slug_taken?(project_id, base), do: suffixed_slug(project_id, base), else: base
+    if MapSet.member?(open_slugs, base), do: suffixed_slug(open_slugs, base), else: base
   end
 
-  defp suffixed_slug(project_id, base) do
+  defp suffixed_slug(open_slugs, base) do
     Enum.find_value(2..99, fn n ->
       candidate = "#{base}-#{n}"
-      unless Store.slug_taken?(project_id, candidate), do: candidate
+      unless MapSet.member?(open_slugs, candidate), do: candidate
     end) ||
       "#{base}-#{Integer.to_string(System.system_time(:millisecond), 36) |> String.downcase()}"
   end
@@ -994,21 +1085,9 @@ defmodule Ravix.Tracks do
 
   defp read_images(_raw), do: {:ok, []}
 
-  # The three ways in: owner, whole project, or particular tracks. The port
-  # of `accessOf` in projects.ts, kept here so the list does not depend on
-  # `Ravix.Projects` for four lines.
-  defp access_of(user_id, %Project{} = project) do
-    cond do
-      project.user_id == user_id -> {:ok, :owner}
-      Access.project_member?(project.id, user_id) -> {:ok, :project}
-      Store.member_tracks_of(user_id, project.id) != [] -> {:ok, :tracks}
-      true -> {:error, :not_found}
-    end
-  end
-
-  # ownership: the read every door in `Ravix.Accounts.Access` starts with, and
-  # the same one, so this module cannot come to disagree with the doors about
-  # what an archived project is.
+  # ownership: no door yet -- this is the read every door in
+  # `Ravix.Accounts.Access` starts with, and the same one, so this module
+  # cannot come to disagree with the doors about what an archived project is.
   defp live_project(project_id), do: Ravix.Projects.Store.live_project(project_id)
 
   # Named with the track it is about, so a page showing a *different* track
@@ -1018,22 +1097,11 @@ defmodule Ravix.Tracks do
   defp publish_tracks(project_id, track_id),
     do: Hub.publish(project_id, :tracks, track_id: track_id)
 
-  defp fountain do
-    client = Fountain.client()
-    if Client.configured?(client), do: {:ok, client}, else: {:error, :unconfigured}
-  end
-
-  defp github do
-    case Ravix.Config.github() do
-      nil ->
-        {:error,
-         {:unavailable, "no_github",
-          "This Ravix deployment has no GitHub App configured, so it cannot see repositories."}}
-
-      app ->
-        {:ok, app}
-    end
-  end
+  # The two integrations, by the names the functions above use. The refusal
+  # is `Ravix.Providers`' and is passed up as it is; nothing here says a
+  # sentence about a missing provider.
+  defp fountain, do: Ravix.Providers.fountain()
+  defp github, do: Ravix.Providers.github()
 
   defp require_repo(%Project{repo_full_name: repo, installation_id: installation}, _message)
        when is_binary(repo) and repo != "" and is_integer(installation),

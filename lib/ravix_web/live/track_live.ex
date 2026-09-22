@@ -48,8 +48,8 @@ defmodule RavixWeb.TrackLive do
   @flush_ms 100
 
   alias Ravix.Accounts.Access
-  alias Ravix.{Crypto, Hub, Previews, PromptQueue, Tracks}
   alias Ravix.GitHub.ChecksReport
+  alias Ravix.{Hub, Previews, PromptQueue, Tracks}
   alias Ravix.Hub.Event
   alias Ravix.Tracks.{Diff, Files}
   alias Ravix.Tracks.Transcript
@@ -68,7 +68,6 @@ defmodule RavixWeb.TrackLive do
       assign(socket,
         track_id: session["track_id"],
         project_id: session["project_id"],
-        session_hash: Crypto.sha256(session["session_token"]),
         track: nil,
         project: nil,
         header: nil,
@@ -91,12 +90,21 @@ defmodule RavixWeb.TrackLive do
         dialog: nil,
         rename_form: Form.new(:rename_track),
         pull: nil,
+        # The ribbon's three writes that are out --- `:interrupt`, `:retry`,
+        # `:pull` --- each disabling the button that would repeat it. See
+        # `begin/3`.
+        pending: MapSet.new(),
         attached_images: [],
         # The turns that have taken an event since the last time the page drew,
         # and whether any of those events ended a stage. See `absorb/2`.
         dirty_turns: MapSet.new(),
         stage_seen?: false,
         flushing?: false,
+        # What the polite live region under the transcript says. A reader who
+        # is not looking --- a screen reader, or somebody scrolled up in a long
+        # transcript --- hears nothing from tokens streaming in, so the one
+        # moment worth a word is a turn ending. See `absorb/2`.
+        announcement: nil,
         # The monitor reference for this page's transcript follower, if it has
         # one. See `follow/2`.
         follower: nil,
@@ -151,13 +159,13 @@ defmodule RavixWeb.TrackLive do
 
     cond do
       pending != [] ->
-        {:noreply, put_flash(socket, :error, "Wait for the images to finish uploading.")}
+        {:noreply, flash(socket, :error, "Wait for the images to finish uploading.")}
 
       length(complete) + length(socket.assigns.attached_images) > 6 ->
-        {:noreply, put_flash(socket, :error, "Attach at most six images.")}
+        {:noreply, flash(socket, :error, "Attach at most six images.")}
 
       upload_errors(socket.assigns.uploads.images) != [] ->
-        {:noreply, put_flash(socket, :error, "Remove invalid images before sending.")}
+        {:noreply, flash(socket, :error, "Remove invalid images before sending.")}
 
       true ->
         send_prompt(socket, text)
@@ -167,22 +175,14 @@ defmodule RavixWeb.TrackLive do
   def handle_event("starter", %{"prompt" => prompt}, socket),
     do: {:noreply, push_event(socket, "composer:insert", %{text: prompt})}
 
+  # Stopping and waking are Fountain round trips, and they used to be ones
+  # this process waited out, like the file read below. The button is
+  # disabled until the answer lands; see `begin/3`.
   def handle_event("interrupt", _, socket),
-    do:
-      {:noreply,
-       result(
-         socket,
-         Tracks.interrupt(socket.assigns.current_user, socket.assigns.track_id),
-         fn s, _ -> refresh_detail(s) end
-       )}
+    do: {:noreply, begin(socket, :interrupt, &Tracks.interrupt/2)}
 
   def handle_event("retry-track", _, socket),
-    do:
-      {:noreply,
-       result(socket, Tracks.retry(socket.assigns.current_user, socket.assigns.track_id), fn s,
-                                                                                             _ ->
-         load(s)
-       end)}
+    do: {:noreply, begin(socket, :retry, &Tracks.retry/2)}
 
   def handle_event("queue", %{"action" => "cancel", "id" => id}, socket),
     do: {:noreply, queued(socket, &PromptQueue.cancel/3, id)}
@@ -271,15 +271,12 @@ defmodule RavixWeb.TrackLive do
      )}
   end
 
+  # A GitHub round trip, off this process for the same reason as the two
+  # above. The dialog stays open until GitHub answers, so a refusal lands in
+  # front of the form that caused it.
   def handle_event("open-pull", params, socket) do
     attrs = Map.put(params, "draft", Params.flag(params, "draft", true))
-
-    {:noreply,
-     result(
-       socket,
-       Tracks.open_pull(socket.assigns.current_user, socket.assigns.track_id, attrs),
-       &assign(&1, pull: &2, dialog: nil)
-     )}
+    {:noreply, begin(socket, :pull, &Tracks.open_pull(&1, &2, attrs))}
   end
 
   # Rename opens on the name the track has now, so the dialog is a correction
@@ -359,9 +356,11 @@ defmodule RavixWeb.TrackLive do
   end
 
   # A `live_component` cannot put a flash in the page's own socket, so it
-  # sends the sentence here; see `RavixWeb.Live.Result.error/2`.
+  # sends the sentence here --- and this page has no toasts of its own
+  # either, so `flash/3` sends it on up to the workspace, which draws the
+  # one stack. See `RavixWeb.Live.Result.flash/3`.
   def handle_info({:flash, kind, message}, socket),
-    do: {:noreply, put_flash(socket, kind, message)}
+    do: {:noreply, flash(socket, kind, message)}
 
   def handle_info({:hub, %Event{} = event}, socket) do
     if Event.concerns?(event, socket.assigns.track_id) do
@@ -509,6 +508,21 @@ defmodule RavixWeb.TrackLive do
     end)
   end
 
+  defp async_result(:interrupt, {:ok, response}, socket),
+    do: result(settle(socket, :interrupt), response, fn s, _ -> refresh_detail(s) end)
+
+  defp async_result(:retry, {:ok, response}, socket),
+    do: result(settle(socket, :retry), response, fn s, _ -> load(s) end)
+
+  defp async_result(:pull, {:ok, response}, socket),
+    do: result(settle(socket, :pull), response, &assign(&1, pull: &2, dialog: nil))
+
+  # One of the ribbon's writes that did not answer. Not the loading clause
+  # below: nothing was being loaded, and "could not finish loading" about a
+  # Stop that crashed would be a sentence about the wrong thing.
+  defp async_result(name, {:exit, reason}, socket) when name in [:interrupt, :retry, :pull],
+    do: socket |> settle(name) |> exit(reason)
+
   # A background refresh that crashed leaves the page showing what it had.
   # The generic clause below belongs to the reads somebody is waiting on: it
   # clears `loading` and says so, which is the wrong answer for a tick nobody
@@ -519,9 +533,9 @@ defmodule RavixWeb.TrackLive do
   defp async_result(_name, {:exit, _reason}, socket),
     do:
       socket
-      |> assign(loading: false, transcript_loading: false, exec_busy: false)
+      |> assign(loading: false, transcript_loading: false)
       |> update_panel(&Panel.settled/1)
-      |> put_flash(:error, "Could not finish loading. Please try again.")
+      |> flash(:error, "Could not finish loading. Please try again.")
 
   # The repair read, rendered as what actually differs.
   #
@@ -704,8 +718,23 @@ defmodule RavixWeb.TrackLive do
     assign(socket,
       page: Transcript.add_event(socket.assigns.page, event),
       dirty_turns: MapSet.put(socket.assigns.dirty_turns, event.turn_id),
-      stage_seen?: socket.assigns.stage_seen? or event.kind == :stage
+      stage_seen?: socket.assigns.stage_seen? or event.kind == :stage,
+      announcement: announce_turn(event, socket.assigns.announcement)
     )
+  end
+
+  # The sentence for the live region, if this event is worth one. A turn
+  # ending is; a turn starting clears the last one, so that two replies in a
+  # row are two changes to the region and not one sentence left standing,
+  # which a screen reader would read once. Everything else --- every token
+  # of output --- leaves it alone.
+  defp announce_turn(%TranscriptEvent{} = event, current) do
+    cond do
+      TranscriptEvent.starts_turn?(event) -> nil
+      not TranscriptEvent.settles?(event) -> current
+      TranscriptEvent.failed_stage?(event) -> "Turn failed"
+      true -> "Agent replied"
+    end
   end
 
   defp schedule_flush(%{assigns: %{flushing?: true}} = socket), do: socket
@@ -744,7 +773,7 @@ defmodule RavixWeb.TrackLive do
   # into another's, and a stage event from the track being left is not a
   # reason to re-read the one being arrived at.
   defp drop_pending(socket),
-    do: assign(socket, dirty_turns: MapSet.new(), stage_seen?: false)
+    do: assign(socket, dirty_turns: MapSet.new(), stage_seen?: false, announcement: nil)
 
   # Subscribe to the track's live transcript from the newest event this page
   # already has, and monitor the follower that serves it. The monitor is the
@@ -781,6 +810,20 @@ defmodule RavixWeb.TrackLive do
     id = socket.assigns.track_id
     traced_async(socket, :transcript, fn -> Tracks.events(user, id) end)
   end
+
+  # One of the ribbon's three writes, started off this process and named in
+  # `pending` until its answer or its exit settles it. `call` takes the
+  # person and the track, which is the shape all three share.
+  defp begin(socket, name, call) do
+    user = socket.assigns.current_user
+    id = socket.assigns.track_id
+
+    socket
+    |> update(:pending, &MapSet.put(&1, name))
+    |> traced_async(name, fn -> call.(user, id) end)
+  end
+
+  defp settle(socket, name), do: update(socket, :pending, &MapSet.delete(&1, name))
 
   # The four preview buttons all do the same thing to the page -- mark the
   # panel busy and answer later -- and differ only in which context call they
@@ -920,6 +963,12 @@ defmodule RavixWeb.TrackLive do
 
   defp hub(%Event{name: name}, socket) when name in [:people, :tracks, :settings],
     do: refresh_detail(socket)
+
+  # Somebody's read mark moved. This page is the one that moves it, and it
+  # draws nothing from it: the unread dot is the rail's, and the rail clears
+  # its own. Not a reason to re-read the detail, which is two Fountain round
+  # trips, on every load, stage and send of every other page on this track.
+  defp hub(%Event{name: :read}, socket), do: socket
 
   # The configuration form always shows what would actually be used --- the
   # track's override if it has one, the project's default otherwise --- so
@@ -1103,9 +1152,61 @@ defmodule RavixWeb.TrackLive do
     """
   end
 
-  defp visible_prompt(prompt) do
-    prompt = Ravix.Previews.Agent.visible_prompt(prompt)
-    Transcript.app_turn_label(prompt) || prompt
+  # The checklist the agent is working from, as it last stood. The marker is
+  # a labelled image rather than a color, so the state reads without either.
+  defp block(%{block: %TranscriptBlock.Plan{}} = assigns) do
+    ~H"""
+    <div class="workspace-plan" role="group" aria-label="Plan">
+      <strong>Plan</strong>
+      <ol>
+        <li :for={entry <- @block.entries} class={"plan-#{entry.status}"}>
+          <span class="plan-mark" role="img" aria-label={plan_status(entry.status)}>
+            {plan_mark(entry.status)}
+          </span>
+          <span>{entry.content}</span>
+        </li>
+      </ol>
+    </div>
+    """
+  end
+
+  defp plan_mark(:completed), do: "✓"
+  defp plan_mark(:in_progress), do: "▸"
+  defp plan_mark(:pending), do: "○"
+
+  defp plan_status(:completed), do: "done"
+  defp plan_status(:in_progress), do: "in progress"
+  defp plan_status(:pending), do: "to do"
+
+  attr :prompt, :string, required: true
+
+  defp prompt_message(assigns) do
+    prompt = Ravix.Previews.Agent.visible_prompt(assigns.prompt)
+    {speaker, body} = prompt_author(prompt)
+    assigns = assign(assigns, speaker: speaker, body: body)
+
+    ~H"""
+    <div class="said">
+      <span class="speaker">{@speaker}</span>
+      <div class="workspace-prompt">{@body}</div>
+    </div>
+    """
+  end
+
+  # Shared prompts carry PromptQueue.with_author/2's marker after the preview
+  # instructions. Never infer an old, untagged message's author from its viewer.
+  defp prompt_author(prompt) do
+    case Regex.run(~r/\A\[from @([a-zA-Z0-9-]+)\] (.*)\z/s, prompt) do
+      [_, login, body] -> {"@" <> login, body}
+      nil -> app_or_unattributed_prompt(prompt)
+    end
+  end
+
+  defp app_or_unattributed_prompt(prompt) do
+    case Transcript.app_turn_label(prompt) do
+      nil -> {"User", prompt}
+      label -> {"Ravix", label}
+    end
   end
 
   defp upload_error(:too_large), do: "Image is larger than 8 MB."

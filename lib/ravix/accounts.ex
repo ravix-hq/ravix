@@ -13,11 +13,26 @@ defmodule Ravix.Accounts do
   `server/db.ts` plus `session` from `server/auth.ts`. The doors (who may
   touch which project or track) live in `Ravix.Accounts.Access`; the sign-in
   round trips in `Ravix.Accounts.Auth`.
+
+  Everything here is presented a credential -- a session token, a GitHub
+  profile, a one-use state -- and answers with the person it proves. The
+  reads that start from a stored id or a typed login instead, with nobody's
+  access established, are in `Ravix.Accounts.Store`.
   """
 
   import Ecto.Query
 
-  alias Ravix.Accounts.{Capabilities, OAuthState, Session, SessionInfo, User, Viewer}
+  alias Ravix.Accounts.{
+    Capabilities,
+    Inference,
+    OAuthState,
+    Session,
+    SessionInfo,
+    Store,
+    User,
+    Viewer
+  }
+
   alias Ravix.Analytics
   alias Ravix.{Config, Crypto, GitHub, Repo}
 
@@ -81,70 +96,44 @@ defmodule Ravix.Accounts do
 
   defp signed_in(result), do: result
 
-  @doc "A user by id, or nil."
-  @spec get_user(String.t()) :: User.t() | nil
-  def get_user(id) when is_binary(id), do: Repo.get(User, id)
-  def get_user(_), do: nil
+  # ── what a person set up ──────────────────────────────────────────────
 
   @doc """
-  A user by GitHub login, case-insensitively, or nil.
+  Whether to show this person the first-run walkthrough, given how many
+  projects they can already see.
 
-  Nil for an *ambiguous* login as much as an unknown one, and the difference
-  is worth naming. `login` has no unique index and cannot have one: GitHub
-  frees a name the moment somebody renames, and a row here is allowed to be
-  stale until they next sign in, so a stale `dana` and the new owner of
-  `dana` can both exist. Both callers are consequential -- one grants access
-  to a track, the other takes it away -- and answering either with a guess is
-  how "remove @dana" silently revokes the wrong account. The invite path
-  falls through to GitHub, which answers by numeric id; the removal path
-  refuses rather than picking.
+  Two questions, because either answers it. Somebody who finished or dismissed
+  the walkthrough is never shown it again. Somebody who already has a project
+  --- their own from before the walkthrough existed, or a teammate's they were
+  invited into --- has somewhere to be, and interrupting that to explain what a
+  project is would be the app talking over the person who invited them.
   """
-  @spec user_by_login(String.t()) :: User.t() | nil
-  def user_by_login(login) when is_binary(login) do
-    lowered = String.downcase(login)
+  @spec needs_onboarding?(User.t(), non_neg_integer()) :: boolean()
+  def needs_onboarding?(%User{onboarded_at: nil}, 0), do: true
+  def needs_onboarding?(%User{}, _projects), do: false
 
-    case Repo.all(from u in User, where: fragment("lower(?)", u.login) == ^lowered, limit: 2) do
-      [%User{} = user] -> user
-      _none_or_ambiguous -> nil
+  @doc "The walkthrough is over for this person, finished or dismissed. Idempotent."
+  @spec finish_onboarding(User.t()) :: {:ok, User.t()} | {:error, Ecto.Changeset.t()}
+  def finish_onboarding(%User{onboarded_at: nil} = user) do
+    with {:ok, user} <- save_setup(user, %{onboarded_at: DateTime.utc_now()}) do
+      Analytics.track(user, :onboarding_finished, %{
+        "ravix.agent" => user.agent && to_string(user.agent),
+        "ravix.agent_connected" => Inference.connected?(user)
+      })
+
+      {:ok, user}
     end
   end
 
+  def finish_onboarding(%User{} = user), do: {:ok, user}
+
   @doc """
-  People who have signed in here whose login or name contains `q`, for the
-  invite box. Never the caller.
-
-  This does mean the box will tell you who has signed in here, which is a
-  trade this deployment has accepted. Confirming one login at a time is the
-  whole of that trade, so the term's own `%` and `_` are escaped rather than
-  left live: `People.search/2` refuses an empty query precisely so nobody can
-  ask for the whole userbase, and a bare `%` walked straight past it into
-  `ILIKE '%%%'`, which matches every row. Ordered so a prefix match beats a
-  contains match, because somebody typing `ana` means `ana` before `joana`.
+  Write what a person chose: `agent`, `credential_set_id`, `credential_kind`,
+  `onboarded_at`. The row is the caller's own, which is the whole of the
+  authorization: there is no function here that takes somebody else's id.
   """
-  @spec search_users(String.t(), String.t(), pos_integer()) :: [User.t()]
-  def search_users(q, exclude_user_id, limit \\ 8) do
-    escaped = escape_like(q)
-    like = "%#{escaped}%"
-    prefix = "#{escaped}%"
-
-    Repo.all(
-      from u in User,
-        where: u.id != ^exclude_user_id and (ilike(u.login, ^like) or ilike(u.name, ^like)),
-        order_by: [
-          asc: fragment("CASE WHEN ? ILIKE ? THEN 0 ELSE 1 END", u.login, ^prefix),
-          asc: u.login
-        ],
-        limit: ^limit
-    )
-  end
-
-  # `\\` first, or it would escape the escapes added after it.
-  defp escape_like(q) do
-    q
-    |> String.replace("\\", "\\\\")
-    |> String.replace("%", "\\%")
-    |> String.replace("_", "\\_")
-  end
+  @spec save_setup(User.t(), map()) :: {:ok, User.t()} | {:error, Ecto.Changeset.t()}
+  def save_setup(%User{} = user, attrs), do: user |> User.setup_changeset(attrs) |> Repo.update()
 
   @doc """
   The user's GitHub OAuth token, decrypted. Used for anything read as *them*.
@@ -208,7 +197,7 @@ defmodule Ravix.Accounts do
   def open_session(token_hash) when is_binary(token_hash) do
     with %Session{} = session <- Repo.get(Session, token_hash),
          %Session{} = session <- live_session(session),
-         %User{} = user <- get_user(session.user_id) do
+         %User{} = user <- Store.get_user(session.user_id) do
       {:ok, user, session.expires_at}
     else
       _ -> :error

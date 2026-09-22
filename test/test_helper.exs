@@ -9,10 +9,13 @@ for mod <- [
       Ravix.Sprites,
       Ravix.Accounts.Access,
       Ravix.Accounts,
+      Ravix.Accounts.Inference,
       Ravix.People,
       Ravix.People.Store,
       Ravix.Previews,
       Ravix.Previews.Agent,
+      Ravix.Previews.Lifecycle,
+      Ravix.Previews.Store,
       Ravix.Tracks,
       Ravix.Projects,
       Ravix.PromptQueue,
@@ -25,5 +28,8 @@ for mod <- [
     ],
     do: Mimic.copy(mod)
 
-ExUnit.start()
+# `test/ravix/cluster/distribution_test.exs` boots a second BEAM per test, so
+# a plain `mix test` leaves it out; CI and `mix precommit` pass
+# `--include distributed`, as a focused run of that file must.
+ExUnit.start(exclude: [:distributed])
 Ecto.Adapters.SQL.Sandbox.mode(Ravix.Repo, :manual)

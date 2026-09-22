@@ -44,7 +44,7 @@ defmodule Ravix.FountainTest do
       client = Fountain.client()
       assert %Client{http: nil, base_url: "https://fountain.example"} = client
       refute Client.configured?(client)
-      assert {:error, :unconfigured} = Fountain.catalog(client)
+      assert {:error, {:unconfigured, :fountain}} = Fountain.catalog(client)
 
       Ravix.Config.put(:fountain_api_key, "key-1")
       client = Fountain.client()
@@ -55,41 +55,52 @@ defmodule Ravix.FountainTest do
       assert client.http.timeout == 60_000
     end
 
-    test "every call on an unconfigured client answers {:error, :unconfigured}" do
+    test "every call on an unconfigured client answers {:error, {:unconfigured, :fountain}}" do
       client = Client.new("https://fountain.example", nil)
 
-      assert {:error, :unconfigured} = Fountain.catalog(client)
-      assert {:error, :unconfigured} = Fountain.me(client)
-      assert {:error, :unconfigured} = Fountain.create_environment(client, %{name: "x"})
-      assert {:error, :unconfigured} = Fountain.get_environment(client, "e")
-      assert {:error, :unconfigured} = Fountain.update_environment(client, "e", %{})
-      assert {:error, :unconfigured} = Fountain.delete_environment(client, "e")
-      assert {:error, :unconfigured} = Fountain.create_vault(client, %{name: "x"})
-      assert {:error, :unconfigured} = Fountain.delete_vault(client, "v")
-      assert {:error, :unconfigured} = Fountain.create_agent(client, %{})
-      assert {:error, :unconfigured} = Fountain.get_agent(client, "a")
-      assert {:error, :unconfigured} = Fountain.update_agent(client, "a", %{})
-      assert {:error, :unconfigured} = Fountain.delete_agent(client, "a")
-      assert {:error, :unconfigured} = Fountain.put_secret(client, :vaults, "v", "K", "v")
-      assert {:error, :unconfigured} = Fountain.delete_secret(client, :vaults, "v", "K")
-      assert {:error, :unconfigured} = Fountain.secret_keys(client, :vaults, "v")
-      assert {:error, :unconfigured} = Fountain.list_conversations(client)
-      assert {:error, :unconfigured} = Fountain.get_conversation(client, "c")
+      assert {:error, {:unconfigured, :fountain}} = Fountain.catalog(client)
+      assert {:error, {:unconfigured, :fountain}} = Fountain.me(client)
 
-      assert {:error, :unconfigured} = Fountain.create_conversation(client, launch())
+      assert {:error, {:unconfigured, :fountain}} =
+               Fountain.create_environment(client, %{name: "x"})
 
-      assert {:error, :unconfigured} = Fountain.prompt(client, "c", "hi")
-      assert {:error, :unconfigured} = Fountain.interrupt(client, "c")
-      assert {:error, :unconfigured} = Fountain.terminate(client, "c")
-      assert {:error, :unconfigured} = Fountain.turns(client, "c")
-      assert {:error, :unconfigured} = Fountain.events(client, "c")
-      assert {:error, :unconfigured} = Fountain.events_page(client, "c")
-      assert {:error, :unconfigured} = Fountain.stream_events(client, "c")
-      assert {:error, :unconfigured} = Fountain.each_event(client, "c", fn _ -> :halt end)
-      assert {:error, :unconfigured} = Fountain.sandbox(client, "s")
-      assert {:error, :unconfigured} = Fountain.listing(client, "s", "/")
-      assert {:error, :unconfigured} = Fountain.file(client, "s", "/a")
-      assert {:error, :unconfigured} = Fountain.diff(client, "s", "/a")
+      assert {:error, {:unconfigured, :fountain}} = Fountain.get_environment(client, "e")
+      assert {:error, {:unconfigured, :fountain}} = Fountain.update_environment(client, "e", %{})
+      assert {:error, {:unconfigured, :fountain}} = Fountain.delete_environment(client, "e")
+      assert {:error, {:unconfigured, :fountain}} = Fountain.create_vault(client, %{name: "x"})
+      assert {:error, {:unconfigured, :fountain}} = Fountain.delete_vault(client, "v")
+      assert {:error, {:unconfigured, :fountain}} = Fountain.create_agent(client, %{})
+      assert {:error, {:unconfigured, :fountain}} = Fountain.get_agent(client, "a")
+      assert {:error, {:unconfigured, :fountain}} = Fountain.update_agent(client, "a", %{})
+      assert {:error, {:unconfigured, :fountain}} = Fountain.delete_agent(client, "a")
+
+      assert {:error, {:unconfigured, :fountain}} =
+               Fountain.put_secret(client, :vaults, "v", "K", "v")
+
+      assert {:error, {:unconfigured, :fountain}} =
+               Fountain.delete_secret(client, :vaults, "v", "K")
+
+      assert {:error, {:unconfigured, :fountain}} = Fountain.secret_keys(client, :vaults, "v")
+      assert {:error, {:unconfigured, :fountain}} = Fountain.list_conversations(client)
+      assert {:error, {:unconfigured, :fountain}} = Fountain.get_conversation(client, "c")
+
+      assert {:error, {:unconfigured, :fountain}} = Fountain.create_conversation(client, launch())
+
+      assert {:error, {:unconfigured, :fountain}} = Fountain.prompt(client, "c", "hi")
+      assert {:error, {:unconfigured, :fountain}} = Fountain.interrupt(client, "c")
+      assert {:error, {:unconfigured, :fountain}} = Fountain.terminate(client, "c")
+      assert {:error, {:unconfigured, :fountain}} = Fountain.turns(client, "c")
+      assert {:error, {:unconfigured, :fountain}} = Fountain.events(client, "c")
+      assert {:error, {:unconfigured, :fountain}} = Fountain.events_page(client, "c")
+      assert {:error, {:unconfigured, :fountain}} = Fountain.stream_events(client, "c")
+
+      assert {:error, {:unconfigured, :fountain}} =
+               Fountain.each_event(client, "c", fn _ -> :halt end)
+
+      assert {:error, {:unconfigured, :fountain}} = Fountain.sandbox(client, "s")
+      assert {:error, {:unconfigured, :fountain}} = Fountain.listing(client, "s", "/")
+      assert {:error, {:unconfigured, :fountain}} = Fountain.file(client, "s", "/a")
+      assert {:error, {:unconfigured, :fountain}} = Fountain.diff(client, "s", "/a")
     end
 
     test "an empty key is no key" do
@@ -272,6 +283,121 @@ defmodule Ravix.FountainTest do
       refute log =~ "super-secret-value"
     end
 
+    test "credential sets: made by name, listed with what they hold, written and cleared by provider" do
+      client =
+        fake([
+          {%{
+             method: "POST",
+             path: "/api/account/inference-credential-sets",
+             body: %{name: "ravix:u1"}
+           }, {201, [], %{data: %{id: "set-1", name: "ravix:u1", providers: []}}}},
+          {%{method: "GET", path: "/api/account/inference-credential-sets"},
+           {200, [], %{data: [%{id: "set-1", name: "ravix:u1", is_default: true, providers: []}]}}},
+          {%{
+             method: "PUT",
+             path: "/api/account/inference-credential-sets/set-1/credentials/openai_api_key",
+             body: %{value: "sk-live"}
+           }, {200, [], %{data: %{provider: "openai_api_key", set: true}}}},
+          {%{
+             method: "DELETE",
+             path: "/api/account/inference-credential-sets/set-1/credentials/anthropic_api_key"
+           }, {204, [], nil}}
+        ])
+
+      assert {:ok, %{"id" => "set-1"}} = Fountain.create_credential_set(client, "ravix:u1")
+      assert {:ok, [%{"is_default" => true}]} = Fountain.credential_sets(client)
+      assert :ok = Fountain.put_credential(client, "set-1", :openai_api_key, "sk-live")
+      assert :ok = Fountain.delete_credential(client, "set-1", :anthropic_api_key)
+    end
+
+    test "ChatGPT subscriptions: a sign-in started by name or by grant, read, cancelled, and named on a set" do
+      attempts = "/api/account/chatgpt-subscriptions/attempts"
+
+      client =
+        fake([
+          {%{method: "POST", path: attempts, body: %{name: "ravix:u1"}},
+           {201, [], %{data: %{id: "att-1", state: "pending", user_code: "AB-CD"}}}},
+          {%{method: "POST", path: attempts, body: %{grant_id: "g-1"}},
+           {201, [], %{data: %{id: "att-2", state: "pending"}}}},
+          {%{method: "GET", path: "#{attempts}/att-1"},
+           {200, [], %{data: %{id: "att-1", state: "completed", result_grant_id: "g-1"}}}},
+          {%{method: "GET", path: attempts}, {200, [], %{data: [%{id: "att-2"}]}}},
+          {%{method: "DELETE", path: "#{attempts}/att-2"},
+           {200, [], %{data: %{id: "att-2", state: "cancelled"}}}},
+          {%{method: "GET", path: "/api/account/chatgpt-subscriptions"},
+           {200, [], %{data: [%{id: "g-1", name: "ravix:u1", status: "active"}], count: 1}}},
+          {%{
+             method: "PATCH",
+             path: "/api/account/inference-credential-sets/set-1",
+             body: %{chatgpt_grant_id: "g-1"}
+           }, {200, [], %{data: %{id: "set-1", chatgpt_grant: %{id: "g-1"}}}}},
+          {%{
+             method: "PATCH",
+             path: "/api/account/inference-credential-sets/set-1",
+             body: %{chatgpt_grant_id: nil}
+           }, {200, [], %{data: %{id: "set-1", chatgpt_grant: nil}}}}
+        ])
+
+      assert {:ok, %{"id" => "att-1", "user_code" => "AB-CD"}} =
+               Fountain.start_chatgpt_link(client, %{name: "ravix:u1"})
+
+      assert {:ok, %{"id" => "att-2"}} = Fountain.start_chatgpt_link(client, %{grant_id: "g-1"})
+      assert {:ok, %{"state" => "completed"}} = Fountain.chatgpt_link(client, "att-1")
+      assert {:ok, [%{"id" => "att-2"}]} = Fountain.pending_chatgpt_links(client)
+      assert {:ok, %{"state" => "cancelled"}} = Fountain.cancel_chatgpt_link(client, "att-2")
+      assert {:ok, [%{"name" => "ravix:u1"}]} = Fountain.chatgpt_subscriptions(client)
+
+      assert {:ok, %{"chatgpt_grant" => %{"id" => "g-1"}}} =
+               Fountain.name_chatgpt_subscription(client, "set-1", "g-1")
+
+      assert {:ok, %{"chatgpt_grant" => nil}} =
+               Fountain.name_chatgpt_subscription(client, "set-1", nil)
+    end
+
+    test "disconnecting a subscription posts to its route and gives back the row, never a token" do
+      client =
+        fake([
+          {%{method: "POST", path: "/api/account/chatgpt-subscriptions/g-1/disconnect"},
+           {200, [], %{data: %{id: "g-1", name: "ravix:u1", status: "disconnected"}}}}
+        ])
+
+      assert {:ok, %{"id" => "g-1", "status" => "disconnected"}} =
+               Fountain.disconnect_chatgpt_subscription(client, "g-1")
+    end
+
+    test "a provider Fountain has no slot for never becomes a path" do
+      assert_raise FunctionClauseError, fn ->
+        Fountain.put_credential(fake([]), "set-1", :"../../agents", "v")
+      end
+    end
+
+    test "a refused credential logs the path and the status, never the value or the reply" do
+      path = "/api/account/inference-credential-sets/set-1/credentials/claude_code_oauth_token"
+
+      client =
+        fake([
+          {%{method: "PUT", path: path},
+           {422, [],
+            %{error: "the provider rejected sk-ant-oat01-echoed (HTTP 401)", reason: "invalid"}}}
+        ])
+
+      log =
+        capture_log(fn ->
+          assert {:error, %Error{status: 422}} =
+                   Fountain.put_credential(
+                     client,
+                     "set-1",
+                     :claude_code_oauth_token,
+                     "sk-ant-oat01-echoed"
+                   )
+        end)
+
+      assert log =~ "fountain 422 on PUT #{path}"
+      # The reply to a request whose body was a credential is not logged
+      # either: it is where an API would echo one.
+      refute log =~ "sk-ant-oat01-echoed"
+    end
+
     test "delete escapes the key; keys lists what is stored, never values" do
       client =
         fake([
@@ -404,7 +530,7 @@ defmodule Ravix.FountainTest do
     end
   end
 
-  describe "prompt/4, interrupt/2, terminate/2, turns/2" do
+  describe "prompt/5, interrupt/2, terminate/2, turns/2" do
     test "prompt sends the text, and images only when there are any" do
       image = %{data: "aGVsbG8=", media_type: "image/png"}
 
@@ -421,6 +547,26 @@ defmodule Ravix.FountainTest do
 
       assert :ok = Fountain.prompt(client, "c1", "hello")
       assert :ok = Fountain.prompt(client, "c1", "look", [image])
+    end
+
+    test "prompt names the submission when asked to, and not otherwise" do
+      client =
+        fake([
+          {%{
+             method: "POST",
+             path: "/api/conversations/c1/prompts",
+             body: %{prompt: "hello", client_request_id: "row-1234567890abcdef"}
+           }, {202, [], %{data: %{ok: true}}}},
+          {%{method: "POST", path: "/api/conversations/c1/prompts", body: %{prompt: "bare"}},
+           {202, [], %{data: %{ok: true}}}}
+        ])
+
+      assert :ok =
+               Fountain.prompt(client, "c1", "hello", [],
+                 client_request_id: "row-1234567890abcdef"
+               )
+
+      assert :ok = Fountain.prompt(client, "c1", "bare", [], client_request_id: nil)
     end
 
     test "a machine at capacity is busy, and safe to retry" do
@@ -466,8 +612,10 @@ defmodule Ravix.FountainTest do
                   prompt: "hi",
                   origin: "api",
                   status: "done",
-                  inserted_at: "2026-09-09T00:00:00Z"
-                }
+                  inserted_at: "2026-09-09T00:00:00Z",
+                  client_request_id: "row-1"
+                },
+                %{id: "t2", prompt: "typed elsewhere", status: "done"}
               ]
             }}}
         ])
@@ -475,8 +623,17 @@ defmodule Ravix.FountainTest do
       assert :ok = Fountain.interrupt(client, "c1")
       assert :ok = Fountain.terminate(client, "c1")
 
-      assert {:ok, [%Turn{id: "t1", prompt: "hi", origin: "api", status: "done"}]} =
-               Fountain.turns(client, "c1")
+      assert {:ok,
+              [
+                %Turn{
+                  id: "t1",
+                  prompt: "hi",
+                  origin: "api",
+                  status: "done",
+                  client_request_id: "row-1"
+                },
+                %Turn{id: "t2", client_request_id: nil}
+              ]} = Fountain.turns(client, "c1")
     end
 
     test "terminate on a conversation that is gone is a not-found error" do
@@ -513,6 +670,20 @@ defmodule Ravix.FountainTest do
 
       assert {:ok, %{events: [], has_more: false, next_cursor: 1}} =
                Fountain.events_page(client, "c1", after: 1, limit: 50, blocks: true)
+    end
+
+    test "asking for prompts asks for blocks too, because Fountain fills one only with the other" do
+      client =
+        fake([
+          {%{
+             method: "GET",
+             path: "/api/conversations/c1/events",
+             query: %{limit: "1", after: "6", blocks: "true", prompts: "true"}
+           }, {200, [], %{data: [%{id: 7}], meta: %{has_more: false}}}}
+        ])
+
+      assert {:ok, %{events: [%{"id" => 7}]}} =
+               Fountain.events_page(client, "c1", after: 6, limit: 1, prompts: true)
     end
 
     test "reads every stored page, deduplicated and sorted by id" do
@@ -770,7 +941,11 @@ defmodule Ravix.FountainTest do
     end
 
     test "as_http mirrors asHttpError" do
-      assert %{status: 503, code: "no_fountain"} = Error.as_http(:unconfigured, "x")
+      # A deployment with no Fountain is not a Fountain failure: that is
+      # `{:unconfigured, :fountain}`, sentenced once in `RavixWeb.Error`.
+      assert %{status: 503, code: "no_fountain"} =
+               Map.from_struct(RavixWeb.Error.from({:unconfigured, :fountain}))
+
       assert %{status: 502, code: "fountain_rejected"} = Error.as_http(%Error{status: 401}, "x")
 
       assert %{status: 502, code: "fountain_rejected"} =

@@ -151,10 +151,46 @@ defmodule Ravix.GitHubTest do
     end
 
     test "a body without a token or a reason gets the default message", %{app: app} do
-      Fake.install([{"POST", "/login/oauth/access_token", {502, "nope"}}])
+      Fake.install([{"POST", "/login/oauth/access_token", %{token_type: "bearer"}}])
 
       assert {:error, %Error{status: 400, message: "GitHub would not exchange that code."}} =
                GitHub.exchange_code(app, "x", "http://localhost/cb")
+    end
+
+    test "a GitHub that fails or does not answer is the same error every other call gives",
+         %{app: app} do
+      # The exchange used to build its own request beside `Ravix.GitHub.HTTP`
+      # with a second copy of the transport error and a 400 for whatever came
+      # back. Through the funnel, a 5xx keeps its status and no answer at all
+      # has none, exactly as `viewer/2` reports them.
+      Fake.install([{"POST", "/login/oauth/access_token", {502, %{message: "nope"}}}])
+
+      assert {:error, %Error{status: 502, message: "nope"}} =
+               GitHub.exchange_code(app, "x", "http://localhost/cb")
+
+      Fake.install([
+        {"POST", "/login/oauth/access_token",
+         fn conn -> Req.Test.transport_error(conn, :timeout) end}
+      ])
+
+      assert {:error, %Error{status: nil, message: "Could not reach GitHub: " <> _}} =
+               GitHub.exchange_code(app, "x", "http://localhost/cb")
+    end
+
+    test "sends no Authorization header: the client secret in the body is the credential",
+         %{app: app} do
+      owner = self()
+
+      Fake.install([
+        {"POST", "/login/oauth/access_token",
+         fn conn ->
+           send(owner, {:auth_header, Plug.Conn.get_req_header(conn, "authorization")})
+           Req.Test.json(conn, %{access_token: "gho_abc"})
+         end}
+      ])
+
+      assert {:ok, "gho_abc"} = GitHub.exchange_code(app, "c0de", "http://localhost/cb")
+      assert_received {:auth_header, []}
     end
   end
 
@@ -852,20 +888,23 @@ defmodule Ravix.GitHubTest do
   # ── errors ───────────────────────────────────────────────────────────
 
   describe "errors" do
-    test "every call answers :unconfigured without an App" do
-      assert {:error, :unconfigured} = GitHub.installation_token(nil, 1)
-      assert {:error, :unconfigured} = GitHub.mint_clone_token(nil, 1)
-      assert {:error, :unconfigured} = GitHub.exchange_code(nil, "c", "r")
-      assert {:error, :unconfigured} = GitHub.user_by_login(nil, "x")
-      assert {:error, :unconfigured} = GitHub.viewer(nil, "t")
-      assert {:error, :unconfigured} = GitHub.installations_for(nil, "t")
-      assert {:error, :unconfigured} = GitHub.repositories(nil, "t", 1)
-      assert {:error, :unconfigured} = GitHub.repository(nil, 1, "o/r")
-      assert {:error, :unconfigured} = GitHub.branches(nil, 1, "o/r", "main")
-      assert {:error, :unconfigured} = GitHub.pulls(nil, 1, "o/r")
-      assert {:error, :unconfigured} = GitHub.issues(nil, 1, "o/r")
-      assert {:error, :unconfigured} = GitHub.checks(nil, 1, "o/r", "x")
-      assert {:error, :unconfigured} = GitHub.open_pull(nil, 1, "o/r", %{head: "h"})
+    test "every call names GitHub as the missing integration without an App" do
+      # The shape `Ravix.Providers` gives every missing integration, so a
+      # context passes it through and `RavixWeb.Error` says which one.
+      refused = {:error, {:unconfigured, :github}}
+      assert refused == GitHub.installation_token(nil, 1)
+      assert refused == GitHub.mint_clone_token(nil, 1)
+      assert refused == GitHub.exchange_code(nil, "c", "r")
+      assert refused == GitHub.user_by_login(nil, "x")
+      assert refused == GitHub.viewer(nil, "t")
+      assert refused == GitHub.installations_for(nil, "t")
+      assert refused == GitHub.repositories(nil, "t", 1)
+      assert refused == GitHub.repository(nil, 1, "o/r")
+      assert refused == GitHub.branches(nil, 1, "o/r", "main")
+      assert refused == GitHub.pulls(nil, 1, "o/r")
+      assert refused == GitHub.issues(nil, 1, "o/r")
+      assert refused == GitHub.checks(nil, 1, "o/r", "x")
+      assert refused == GitHub.open_pull(nil, 1, "o/r", %{head: "h"})
     end
 
     test "GitHub's message and first detail are kept; a non-JSON body keeps the status", %{
@@ -925,7 +964,7 @@ defmodule Ravix.GitHubTest do
       assert {502, "github_unreachable", "Could not reach GitHub to open a pull request."} =
                Error.describe(%Error{status: nil, message: "timeout"}, "open a pull request")
 
-      assert {502, "github_unreachable", _} = Error.describe(:unconfigured, "x")
+      assert {502, "github_unreachable", _} = Error.describe(:no_answer, "x")
     end
   end
 

@@ -191,9 +191,10 @@ defmodule Ravix.Terminal do
   @typedoc """
   Everything an exec call can refuse with, and nothing else.
 
-  Notably not `:unconfigured`: a deployment with no Sprites token is turned
-  into the `no_exec` sentence here, because "the terminal is not available on
-  this Ravix" is a thing the panel can say and a bare atom is not.
+  Notably not `{:unconfigured, :sprites}`: a deployment with no Sprites token
+  is turned into the `no_exec` sentence here, because "the terminal is not
+  available on this Ravix" is a thing the panel can say and the generic
+  sentence for a missing provider is not.
   """
   @type reason ::
           :not_found
@@ -245,7 +246,7 @@ defmodule Ravix.Terminal do
              duration_ms: System.monotonic_time(:millisecond) - started
            }}
 
-        {:error, :unconfigured} ->
+        {:error, {:unconfigured, :sprites}} ->
           {:error, {:unavailable, "no_exec", @no_exec}}
 
         {:error, error} ->
@@ -303,9 +304,9 @@ defmodule Ravix.Terminal do
   end
 
   defp sprites do
-    case Sprites.config() do
-      nil -> {:error, {:unavailable, "no_exec", @no_exec}}
-      config -> {:ok, config}
+    case Ravix.Providers.sprites() do
+      {:ok, config} -> {:ok, config}
+      {:error, {:unconfigured, :sprites}} -> {:error, {:unavailable, "no_exec", @no_exec}}
     end
   end
 end

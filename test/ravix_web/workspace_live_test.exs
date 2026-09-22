@@ -1,5 +1,5 @@
 defmodule RavixWeb.WorkspaceLiveTest do
-  use RavixWeb.ConnCase, async: false
+  use RavixWeb.ConnCase, async: true
   import Ecto.Query, only: [from: 2]
   import Phoenix.LiveViewTest
   import Mimic
@@ -13,6 +13,19 @@ defmodule RavixWeb.WorkspaceLiveTest do
   alias RavixWeb.Live.Guard
 
   setup :verify_on_exit!
+
+  test "workspace help explains connections and returns to the workspace", %{conn: conn} do
+    user = insert_user()
+    {:ok, view, _} = live(log_in_user(conn, user), "/home")
+    view |> element("#open-help") |> render_click()
+    assert has_element?(view, "#help-dialog", "Connect Claude Code with MCP")
+    assert has_element?(view, "#help-dialog code", Ravix.Config.public_url() <> "/mcp")
+    assert has_element?(view, "#help-dialog", "SubscribeToTask")
+    assert has_element?(view, "#help-dialog a[href='/settings/connections']")
+    view |> element("#help-dialog button[aria-label='Close']") |> render_click()
+    refute has_element?(view, "#help-dialog")
+    assert has_element?(view, "#open-help")
+  end
 
   test "a signed-out browser is sent to sign in from anywhere it lands", %{conn: conn} do
     for path <- ["/", "/home", "/inbox", "/p/no-project"] do
@@ -92,6 +105,8 @@ defmodule RavixWeb.WorkspaceLiveTest do
     end)
 
     view |> element("button", "Refresh") |> render_click()
+    # The refresh re-reads the rail in a task; the inbox is drawn from it.
+    render_async(view)
     refute has_element?(view, ".inbox-item")
     assert has_element?(view, ".inbox-empty", "You're all caught up")
   end
@@ -365,6 +380,61 @@ defmodule RavixWeb.WorkspaceLiveTest do
     refute html =~ "Beta two"
   end
 
+  test "a read mark clears the reader's own dot in every tab and re-reads nothing", %{
+    conn: conn
+  } do
+    owner = insert_user()
+    member = insert_user()
+    project = insert_project(user: owner)
+    People.add_project_member(project.id, member.id, owner.id)
+    track = insert_track(project: project, title: "Unread here")
+    test_pid = self()
+
+    # The rail's list is the Fountain read this page makes, so this is where
+    # a read is counted. Every rail starts with the track wanting attention.
+    stub(Tracks, :list, fn user, project_id ->
+      send(test_pid, {:listed, user.id})
+      assert project_id == project.id
+      {:ok, [track |> Tracks.present(project: project) |> struct!(status: :ready, unread: true)]}
+    end)
+
+    {:ok, tab_a, _} = live(log_in_user(conn, owner), "/p/#{project.id}")
+    {:ok, tab_b, _} = live(log_in_user(conn, owner), "/p/#{project.id}")
+    {:ok, theirs, _} = live(log_in_user(conn, member), "/p/#{project.id}")
+
+    for view <- [tab_a, tab_b, theirs] do
+      assert has_element?(view, ".track-attention")
+      assert has_element?(view, ".badge", "1")
+    end
+
+    # The mounts' reads (a page is rendered once over HTTP and once on its
+    # socket), accounted for; what follows must add none.
+    for view <- [tab_a, tab_b, theirs], do: render_async(view)
+    drain = fn drain -> receive(do: ({:listed, _} -> drain.(drain)), after: (0 -> :ok)) end
+    drain.(drain)
+
+    assert :ok = Tracks.mark_read(owner, track.id)
+
+    # `render_async/1` waits out any rail read the event might have started
+    # in each page before the stub's message is looked for, so an absent
+    # message is an absent read rather than a slow one.
+    for view <- [tab_a, tab_b, theirs], do: render_async(view)
+
+    # Both of the reader's tabs cleared the dot from the event alone...
+    refute has_element?(tab_a, ".track-attention")
+    refute has_element?(tab_b, ".track-attention")
+    refute has_element?(tab_a, ".badge")
+
+    # ...somebody else's rail kept its own mark, which the event says nothing
+    # about...
+    assert has_element?(theirs, ".track-attention")
+
+    # ...and nobody went back to Fountain. This used to be a `:tracks` event
+    # that re-read every rail on the project, live, whenever anybody opened
+    # a track.
+    refute_received {:listed, _}
+  end
+
   test "a track loads its transcript, sends prompts, and renders its files", %{conn: conn} do
     user = insert_user()
     project = insert_project(user: user)
@@ -533,7 +603,11 @@ defmodule RavixWeb.WorkspaceLiveTest do
     child = find_live_child(parent, "track-host")
     render_async(child)
     child |> form("#composer-form", text: "Keep this draft") |> render_submit()
-    assert render(child) =~ "Please try again"
+    # The refusal is a toast, and the toasts are the workspace's: the nested
+    # page hands its flash up rather than drawing a second stack.
+    render(child)
+    assert has_element?(parent, "#flash-group[aria-live=polite] #flash-error", "Please try again")
+    refute render(child) =~ "Please try again"
     assert has_element?(child, "#composer-form")
     refute_push_event(child, "composer:clear", %{}, 50)
   end
@@ -694,6 +768,97 @@ defmodule RavixWeb.WorkspaceLiveTest do
       # A nested page's redirect surfaces on the page that hosts it.
       assert_redirect(ctx.parent, "/", 1_000)
       refute_receive {:read_attempted, _}, 200
+    end
+  end
+
+  describe "the yard on a phone" do
+    setup %{conn: conn} do
+      user = insert_user()
+      project = insert_project(user: user, name: "Pocket work")
+      {:ok, view, _} = live(log_in_user(conn, user), "/p/#{project.id}")
+      %{view: view, project: project}
+    end
+
+    test "the menu opens it over the page and says so to assistive technology", ctx do
+      menu = "nav.workspace-mobile-nav button[aria-controls=yard]"
+      refute has_element?(ctx.view, "aside#yard.forced")
+      assert has_element?(ctx.view, "#{menu}[aria-expanded=false]")
+      refute has_element?(ctx.view, ".yard-scrim")
+
+      ctx.view |> element(menu) |> render_click()
+      assert has_element?(ctx.view, "aside#yard.forced")
+      assert has_element?(ctx.view, "#{menu}[aria-expanded=true]")
+      # Everything the yard holds is now reachable on a phone, which it was
+      # not: the rail was `display: none` under the breakpoint and nothing
+      # set the class that shows it.
+      assert has_element?(ctx.view, "#yard.forced a[href='/auth/signout']", "Sign out")
+      assert has_element?(ctx.view, "#yard.forced button", "Project settings")
+      assert has_element?(ctx.view, "#yard.forced button.yard-close[aria-label='Close menu']")
+
+      # And the same button closes it again.
+      ctx.view |> element(menu) |> render_click()
+      refute has_element?(ctx.view, "aside#yard.forced")
+    end
+
+    test "the x, Escape and the scrim each close it", ctx do
+      for close <- [
+            fn v -> v |> element("#yard button.yard-close") |> render_click() end,
+            fn v -> v |> element(".yard-scrim") |> render_keydown(%{"key" => "Escape"}) end,
+            fn v -> v |> element(".yard-scrim") |> render_click() end
+          ] do
+        render_click(ctx.view, "yard")
+        assert has_element?(ctx.view, "aside#yard.forced")
+        close.(ctx.view)
+        refute has_element?(ctx.view, "aside#yard.forced")
+        # Escape is only listened for while the yard is open; the listener
+        # is on the scrim, and the scrim only exists then.
+        refute has_element?(ctx.view, "[phx-window-keydown=yard-close]")
+      end
+    end
+
+    test "following a link in it closes it, because every link is a patch", ctx do
+      render_click(ctx.view, "yard")
+      assert has_element?(ctx.view, "aside#yard.forced")
+      render_patch(ctx.view, "/inbox")
+      refute has_element?(ctx.view, "aside#yard.forced")
+      assert has_element?(ctx.view, "button[aria-controls=yard][aria-expanded=false]")
+    end
+  end
+
+  describe "notices" do
+    setup %{conn: conn} do
+      user = insert_user()
+      insert_project(user: user)
+      {:ok, view, _} = live(log_in_user(conn, user), "/home")
+      %{view: view}
+    end
+
+    test "a notice lets itself go; an error waits to be dismissed", ctx do
+      # The timer is a message to this process, so the test delivers the
+      # message rather than waiting out six seconds.
+      send(ctx.view.pid, {:flash, :info, "Saved."})
+      assert has_element?(ctx.view, "#flash-info", "Saved.")
+      send(ctx.view.pid, {:clear_flash, :info, "Saved."})
+      refute has_element?(ctx.view, "#flash-info")
+
+      send(ctx.view.pid, {:flash, :error, "Could not save."})
+      assert has_element?(ctx.view, "#flash-error", "Could not save.")
+      send(ctx.view.pid, {:clear_flash, :error, "Could not save."})
+      # No timer is ever set for an error; and even a stray clear would only
+      # take a flash that still says what the clear names.
+      refute has_element?(ctx.view, "#flash-error")
+      send(ctx.view.pid, {:flash, :error, "Could not save."})
+      send(ctx.view.pid, {:clear_flash, :error, "Something else"})
+      assert has_element?(ctx.view, "#flash-error", "Could not save.")
+    end
+
+    test "a stale clear does not cut a newer notice short", ctx do
+      send(ctx.view.pid, {:flash, :info, "First."})
+      send(ctx.view.pid, {:flash, :info, "Second."})
+      send(ctx.view.pid, {:clear_flash, :info, "First."})
+      assert has_element?(ctx.view, "#flash-info", "Second.")
+      send(ctx.view.pid, {:clear_flash, :info, "Second."})
+      refute has_element?(ctx.view, "#flash-info")
     end
   end
 

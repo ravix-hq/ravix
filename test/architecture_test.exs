@@ -60,6 +60,22 @@ defmodule Ravix.ArchitectureTest do
              )
 
     assert [] = issues("Ravix.People.list(user, id)", "lib/ravix_web/live/track_live.ex")
+
+    # A `Lifecycle` takes ids and asks nobody, exactly as a store does, and a
+    # page may not name one either -- comment or no comment. The gateway
+    # reaches what it needs through the delegates `Ravix.Previews` keeps.
+    for code <- [
+          "Ravix.Previews.Lifecycle.stop_service(id, :cleanup)",
+          "alias Ravix.Previews.Lifecycle",
+          "alias Ravix.Previews.{Lifecycle, Row}\nLifecycle.info(id)",
+          "&Ravix.Previews.Lifecycle.start_service/1",
+          "# ownership: the page checked\nRavix.Previews.Lifecycle.info(id)"
+        ] do
+      assert [_ | _] = issues(code, "lib/ravix_web/preview_gateway/ravix_backend.ex")
+    end
+
+    assert [] =
+             issues("Ravix.Previews.info(id)", "lib/ravix_web/preview_gateway/ravix_backend.ex")
   end
 
   test "a context reaches its own store freely and another's with an explanation" do
@@ -82,15 +98,96 @@ defmodule Ravix.ArchitectureTest do
 
     assert [] =
              issues(
-               "# ownership: the door itself\ndefdelegate member?(t, u), to: Ravix.People.Store",
+               "# ownership: no door before this one -- it is the door\n" <>
+                 "defdelegate member?(t, u), to: Ravix.People.Store",
                other
              )
 
     # An underscored context name still resolves to its own store.
     assert [] = issues("Ravix.PromptQueue.Store.claim(id)", "lib/ravix/prompt_queue/server.ex")
 
-    # Nothing else called Store is implicated.
+    # A `Lifecycle` is judged the same way: its own context reaches it
+    # freely, another says which door it came through.
+    for code <- [
+          "Ravix.Previews.Lifecycle.stop_service(id, :cleanup)",
+          "alias Ravix.Previews.{Lifecycle, Store}\nLifecycle.retire_project(id)",
+          "&Ravix.Previews.Lifecycle.stop_service/1"
+        ] do
+      assert [] = issues(code, "lib/ravix/previews.ex")
+      assert [] = issues(code, "lib/ravix/previews/agent.ex")
+      assert [_] = issues(code, other)
+      assert [_] = issues(code, "lib/ravix/projects/machine.ex")
+      assert [] = issues("# ownership: Access.track_access/2 above\n" <> code, other)
+    end
+
+    # The identity context's store is a store like any other: `Accounts`
+    # reaches it freely, and a context turning a stored `user_id` into a row
+    # says which door gave it that id.
+    assert [] = issues("Ravix.Accounts.Store.get_user(id)", "lib/ravix/accounts.ex")
+    assert [] = issues("Ravix.Accounts.Store.get_user(id)", "lib/ravix/accounts/access.ex")
+    assert [_] = issues("Ravix.Accounts.Store.get_user(id)", "lib/ravix/projects.ex")
+
+    assert [] =
+             issues(
+               "# ownership: Access.project_of/2 admitted the caller; the project's own user_id\n" <>
+                 "Ravix.Accounts.Store.get_user(id)",
+               "lib/ravix/projects.ex"
+             )
+
+    # Nothing else called Store or Lifecycle is implicated.
     assert [] = issues("SomeLibrary.Store.get(k)", other)
+    assert [] = issues("Phoenix.LiveView.Lifecycle.attach_hook(s, :x, :m, f)", other)
+  end
+
+  test "an ownership comment must name an Access door, or say there is none" do
+    other = "lib/ravix/tracks.ex"
+    store = "Ravix.People.Store.member?(t, u)"
+    rows = "alias Ravix.Repo\nRepo.get(Ravix.Tracks.Track, id)"
+    unsafe = "Tracks._unsafe_get_track(id)"
+
+    # Each of the three rules that ask for the comment reads it the same way.
+    for {code, path} <- [{store, other}, {rows, "lib/ravix/previews.ex"}, {unsafe, other}] do
+      # Naming the door, on the first line or the second.
+      assert [] = issues("# ownership: `Access.track_access/2` above\n" <> code, path)
+
+      assert [] =
+               issues(
+                 "# ownership: `list/1` admitted this caller through\n" <>
+                   "# `Access.project_access/2` on this project.\n" <> code,
+                 path
+               )
+
+      # Saying plainly that there is none, and why.
+      assert [] =
+               issues("# ownership: no door -- a sweep with no caller to check.\n" <> code, path)
+
+      assert [] = issues("# ownership: No Door yet; this runs during sign-in.\n" <> code, path)
+
+      # A comment that only asserts somebody checked is what every unchecked
+      # path would say too, and is refused with its own message.
+      for comment <- [
+            "# ownership: the caller checked\n",
+            "# ownership: the door itself\n",
+            "# ownership: Access above\n",
+            "# ownership: through Ravix.Accounts.Access\n"
+          ] do
+        assert [issue] = issues(comment <> code, path)
+        assert issue.message =~ "names no door"
+      end
+
+      # A door named in a later, separate comment is not this comment naming it.
+      assert [issue] =
+               issues(
+                 "# ownership: the caller checked\nfoo()\n# `Access.track_access/2`\n" <> code,
+                 path
+               )
+
+      assert issue.message =~ "names no door"
+
+      # And a missing comment still gets the rule's own message, not the door's.
+      assert [issue] = issues(code, path)
+      refute issue.message =~ "names no door"
+    end
   end
 
   # The prefix this rule was written for is gone: `Ravix.Tracks.Store` is the
@@ -145,8 +242,8 @@ defmodule Ravix.ArchitectureTest do
     assert length(lib) > 50
 
     for path <- lib, String.starts_with?(path, "lib/ravix_web/") do
-      refute File.read!(path) =~ ~r/\bRavix\.\w+\.Store\b/,
-             "#{path} names a row store; pages go through the context and Access."
+      refute File.read!(path) =~ ~r/\bRavix\.\w+\.(Store|Lifecycle)\b/,
+             "#{path} names a row store or a lifecycle; pages go through the context and Access."
     end
 
     for path <- lib do
@@ -167,7 +264,8 @@ defmodule Ravix.ArchitectureTest do
     # Every context with unscoped row access has somewhere to put it. The
     # scoped modules keep the doors; the stores keep the rows.
     stores = Path.wildcard("lib/ravix/*/store.ex")
-    assert length(stores) >= 5
+    assert length(stores) >= 6
+    assert "lib/ravix/accounts/store.ex" in stores
 
     for path <- ["lib/ravix/people.ex", "lib/ravix/tracks.ex", "lib/ravix/projects.ex"] do
       refute File.read!(path) =~ ~r/\bRepo\./, "#{path} still reads rows itself"
@@ -192,7 +290,9 @@ defmodule Ravix.ArchitectureTest do
     expected = %{
       "lib/ravix/tracks.ex" =>
         ~w(machine_of sprite_for close_all_for_rebuild present origin_info),
-      "lib/ravix/people.ex" => ~w(claim_link link_target)
+      "lib/ravix/people.ex" => ~w(claim_link link_target),
+      # The gateway's three; everything else by id is in `Store` or `Lifecycle`.
+      "lib/ravix/previews.ex" => ~w(origin by_host allowed?)
     }
 
     for {path, named} <- expected do

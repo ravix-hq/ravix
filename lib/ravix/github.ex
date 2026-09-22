@@ -22,7 +22,8 @@ defmodule Ravix.GitHub do
 
   Every function takes the `%Ravix.Config.GitHubApp{}` first, as
   `Ravix.Config.github/0` returns it; `nil` there means the App is not
-  configured and every call answers `{:error, :unconfigured}`. Where GitHub
+  configured and every call answers `{:error, {:unconfigured, :github}}`,
+  the shape `Ravix.Providers` gives every missing integration. Where GitHub
   is (`api_url`, `web_url`) is configurable only so the mock stack can stand
   in for both hosts and the whole app runs offline. In every real deployment
   they are the defaults and nothing sets them.
@@ -33,7 +34,7 @@ defmodule Ravix.GitHub do
   alias Ravix.GitHub.{Cache, ChecksReport, Error, HTTP, Shapes}
 
   @type app :: GitHubApp.t() | nil
-  @type error :: {:error, Error.t() | :unconfigured}
+  @type error :: {:error, Error.t() | {:unconfigured, :github}}
   @type installation_id :: integer()
 
   @typedoc "The Checks tab: what GitHub thinks of a branch. See `Ravix.GitHub.ChecksReport`."
@@ -91,7 +92,9 @@ defmodule Ravix.GitHub do
   @doc "A token for one installation, good for an hour, cached until it nearly is not."
   @spec installation_token(app(), installation_id(), freshness()) :: {:ok, String.t()} | error()
   def installation_token(app, installation_id, freshness \\ :cached)
-  def installation_token(nil, _installation_id, _freshness), do: {:error, :unconfigured}
+
+  def installation_token(nil, _installation_id, _freshness),
+    do: {:error, {:unconfigured, :github}}
 
   def installation_token(%GitHubApp{} = app, installation_id, freshness)
       when freshness in [:cached, :fresh] do
@@ -168,44 +171,45 @@ defmodule Ravix.GitHub do
   GitHub answers 200 with an error body here, so the status is not the
   check. `bad_verification_code` is the ordinary one: a reloaded callback,
   or a code already spent.
+
+  The one request to `web_url` rather than `api_url`, and it still goes
+  through `Ravix.GitHub.HTTP.request/4`: an absolute path is sent as it is,
+  the endpoint speaks plain JSON rather than the API's media type, and the
+  credential is the client secret in the body, so no `:auth`. A status that
+  is not 2xx, and a GitHub that does not answer, are then the same
+  `%Ravix.GitHub.Error{}` every other call produces.
   """
   @spec exchange_code(app(), String.t(), String.t()) :: {:ok, String.t()} | error()
-  def exchange_code(nil, _code, _redirect_uri), do: {:error, :unconfigured}
+  def exchange_code(nil, _code, _redirect_uri), do: {:error, {:unconfigured, :github}}
 
   def exchange_code(%GitHubApp{} = app, code, redirect_uri) do
-    request =
-      HTTP.req_options(
-        method: :post,
-        url: "#{app.web_url}/login/oauth/access_token",
-        headers: [{"accept", "application/json"}, {"user-agent", HTTP.user_agent()}],
-        json: %{
-          client_id: app.client_id,
-          client_secret: app.client_secret,
-          code: code,
-          redirect_uri: redirect_uri
-        },
-        receive_timeout: 20_000,
-        retry: false,
-        decode_body: false
-      )
+    body = %{
+      client_id: app.client_id,
+      client_secret: app.client_secret,
+      code: code,
+      redirect_uri: redirect_uri
+    }
 
-    case Req.request(request) do
-      {:ok, %Req.Response{status: status, body: raw}} ->
-        body = lenient_json(raw)
-
-        if status in 200..299 and is_binary(body["access_token"]) do
-          {:ok, body["access_token"]}
-        else
-          message =
-            body["error_description"] || body["error"] || "GitHub would not exchange that code."
-
-          {:error, %Error{status: 400, message: message}}
-        end
-
-      {:error, exception} ->
-        {:error,
-         %Error{status: nil, message: "Could not reach GitHub: " <> Exception.message(exception)}}
+    with {:ok, answer} <-
+           HTTP.request(app, :post, "#{app.web_url}/login/oauth/access_token",
+             accept: "application/json",
+             json: body
+           ) do
+      exchanged(answer)
     end
+  end
+
+  defp exchanged(%{"access_token" => token}) when is_binary(token), do: {:ok, token}
+
+  defp exchanged(answer) do
+    message =
+      case answer do
+        %{"error_description" => why} when is_binary(why) -> why
+        %{"error" => why} when is_binary(why) -> why
+        _ -> "GitHub would not exchange that code."
+      end
+
+    {:error, %Error{status: 400, message: message}}
   end
 
   @doc """
@@ -220,7 +224,7 @@ defmodule Ravix.GitHub do
   against (see `track_invites`).
   """
   @spec user_by_login(app(), String.t()) :: {:ok, Shapes.Account.t() | nil} | error()
-  def user_by_login(nil, _login), do: {:error, :unconfigured}
+  def user_by_login(nil, _login), do: {:error, {:unconfigured, :github}}
 
   def user_by_login(%GitHubApp{} = app, login) do
     case HTTP.request(app, :get, "/users/#{encode(login)}", auth: "Bearer " <> app_jwt(app)) do
@@ -232,7 +236,7 @@ defmodule Ravix.GitHub do
 
   @doc "The person a user token belongs to."
   @spec viewer(app(), String.t()) :: {:ok, Shapes.Account.t()} | error()
-  def viewer(nil, _user_token), do: {:error, :unconfigured}
+  def viewer(nil, _user_token), do: {:error, {:unconfigured, :github}}
 
   def viewer(%GitHubApp{} = app, user_token) do
     with {:ok, raw} <- HTTP.request(app, :get, "/user", auth: "Bearer " <> user_token) do
@@ -251,7 +255,7 @@ defmodule Ravix.GitHub do
   is the one the repository picker is actually asking.
   """
   @spec installations_for(app(), String.t()) :: {:ok, [Shapes.Installation.t()]} | error()
-  def installations_for(nil, _user_token), do: {:error, :unconfigured}
+  def installations_for(nil, _user_token), do: {:error, {:unconfigured, :github}}
 
   def installations_for(%GitHubApp{} = app, user_token) do
     with {:ok, body} <-
@@ -272,7 +276,7 @@ defmodule Ravix.GitHub do
   """
   @spec repositories(app(), String.t(), installation_id()) ::
           {:ok, [Shapes.RepoRef.t()]} | error()
-  def repositories(nil, _user_token, _installation_id), do: {:error, :unconfigured}
+  def repositories(nil, _user_token, _installation_id), do: {:error, {:unconfigured, :github}}
 
   def repositories(%GitHubApp{} = app, user_token, installation_id) do
     with {:ok, repos} <- repository_pages(app, user_token, installation_id, 1, []) do
@@ -297,7 +301,7 @@ defmodule Ravix.GitHub do
 
   @doc "One repository, read as the installation, so it works for private ones."
   @spec repository(app(), installation_id(), String.t()) :: {:ok, Shapes.RepoRef.t()} | error()
-  def repository(nil, _installation_id, _full_name), do: {:error, :unconfigured}
+  def repository(nil, _installation_id, _full_name), do: {:error, {:unconfigured, :github}}
 
   def repository(%GitHubApp{} = app, installation_id, full_name) do
     with {:ok, raw} <- as_installation(app, installation_id, :get, "/repos/#{full_name}") do
@@ -310,7 +314,8 @@ defmodule Ravix.GitHub do
   @doc "The branches of a repository, the default one first, then by name."
   @spec branches(app(), installation_id(), String.t(), String.t()) ::
           {:ok, [Shapes.BranchRef.t()]} | error()
-  def branches(nil, _installation_id, _full_name, _default_branch), do: {:error, :unconfigured}
+  def branches(nil, _installation_id, _full_name, _default_branch),
+    do: {:error, {:unconfigured, :github}}
 
   def branches(%GitHubApp{} = app, installation_id, full_name, default_branch) do
     path = "/repos/#{full_name}/branches?per_page=100"
@@ -327,7 +332,7 @@ defmodule Ravix.GitHub do
 
   @doc "Open pull requests, most recently updated first."
   @spec pulls(app(), installation_id(), String.t()) :: {:ok, [Shapes.PullRef.t()]} | error()
-  def pulls(nil, _installation_id, _full_name), do: {:error, :unconfigured}
+  def pulls(nil, _installation_id, _full_name), do: {:error, {:unconfigured, :github}}
 
   def pulls(%GitHubApp{} = app, installation_id, full_name) do
     path = "/repos/#{full_name}/pulls?state=open&sort=updated&direction=desc&per_page=50"
@@ -345,7 +350,7 @@ defmodule Ravix.GitHub do
   Issues tab showing the same rows twice is a bug people notice immediately.
   """
   @spec issues(app(), installation_id(), String.t()) :: {:ok, [Shapes.IssueRef.t()]} | error()
-  def issues(nil, _installation_id, _full_name), do: {:error, :unconfigured}
+  def issues(nil, _installation_id, _full_name), do: {:error, {:unconfigured, :github}}
 
   def issues(%GitHubApp{} = app, installation_id, full_name) do
     path = "/repos/#{full_name}/issues?state=open&sort=updated&direction=desc&per_page=50"
@@ -371,7 +376,9 @@ defmodule Ravix.GitHub do
   @spec checks(app(), installation_id(), String.t(), String.t(), track() | nil) ::
           {:ok, checks_report()} | error()
   def checks(app, installation_id, full_name, ref, track \\ nil)
-  def checks(nil, _installation_id, _full_name, _ref, _track), do: {:error, :unconfigured}
+
+  def checks(nil, _installation_id, _full_name, _ref, _track),
+    do: {:error, {:unconfigured, :github}}
 
   def checks(%GitHubApp{} = app, installation_id, full_name, ref, track) do
     created_at_ms = if track, do: to_ms(track.created_at)
@@ -479,7 +486,7 @@ defmodule Ravix.GitHub do
   """
   @spec open_pull(app(), installation_id(), String.t(), pull_input()) ::
           {:ok, Shapes.PullRef.t()} | error()
-  def open_pull(nil, _installation_id, _full_name, _input), do: {:error, :unconfigured}
+  def open_pull(nil, _installation_id, _full_name, _input), do: {:error, {:unconfigured, :github}}
 
   def open_pull(%GitHubApp{} = app, installation_id, full_name, %{head: head} = input) do
     body = Map.take(input, [:head, :base, :title, :body, :draft])
@@ -531,13 +538,4 @@ defmodule Ravix.GitHub do
   end
 
   defp iso_to_ms(_), do: nil
-
-  defp lenient_json(raw) when is_binary(raw) do
-    case Jason.decode(raw) do
-      {:ok, %{} = map} -> map
-      _ -> %{}
-    end
-  end
-
-  defp lenient_json(_), do: %{}
 end

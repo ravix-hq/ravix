@@ -25,6 +25,10 @@ defmodule Ravix.Hub.Event do
       track ignores an event naming a different one; `nil` it must not
       ignore.
     * `present` -- who is looking, for `:here` and nothing else.
+    * `user_id` -- whose read mark moved, for `:read` and nothing else. A
+      read mark is one person's own, and the reader routes on it the way
+      it routes on `track_id`: a rail belonging to anybody else has nothing
+      to do.
 
   What is deliberately *not* here is `turn`'s status and `settings`'s
   revision. No reader ever took them, and a reader that wanted either would
@@ -35,30 +39,38 @@ defmodule Ravix.Hub.Event do
   ## The names
 
     * `:people` -- who can reach a track (`track_id`) or the project (`nil`)
-    * `:tracks` -- a track opened, closed, was renamed or was read
-      (`track_id`), or every track on the project changed at once (`nil`,
-      from a rebuild or a delete)
+    * `:tracks` -- a track opened, closed or was renamed (`track_id`), or
+      every track on the project changed at once (`nil`, from a rebuild or
+      a delete)
     * `:turn` -- a track's machine started or failed to start a turn
     * `:queue` -- a track's queued prompts changed
     * `:settings` -- the project's settings moved, so every track's `stale`
       may have changed
     * `:here` -- who is looking at a track right now, with `present`
+    * `:read` -- `user_id` has seen `track_id` up to now. Its own name
+      rather than a `:tracks`, because nothing on Fountain moved: the one
+      thing a reader may do with it is clear that person's own unread mark
+      on that track, and a re-read of the project's conversations for it
+      -- which every rail on the project used to make, whenever anybody
+      opened a track -- was a Fountain round trip per reader for a fact the
+      event already carries.
   """
 
-  @names [:people, :tracks, :turn, :queue, :settings, :here]
+  @names [:people, :tracks, :turn, :queue, :settings, :here, :read]
 
-  @typedoc "Which of the six things happened."
-  @type name :: :people | :tracks | :turn | :queue | :settings | :here
+  @typedoc "Which of the seven things happened."
+  @type name :: :people | :tracks | :turn | :queue | :settings | :here | :read
 
   @type t :: %__MODULE__{
           name: name(),
           project_id: String.t(),
           track_id: String.t() | nil,
-          present: [map()]
+          present: [map()],
+          user_id: String.t() | nil
         }
 
   @enforce_keys [:name, :project_id]
-  defstruct [:name, :project_id, :track_id, present: []]
+  defstruct [:name, :project_id, :track_id, :user_id, present: []]
 
   @doc "Every event name, for a reader that wants to be exhaustive."
   @spec names() :: [name()]
@@ -67,11 +79,11 @@ defmodule Ravix.Hub.Event do
   @doc """
   An event on `project_id`.
 
-  Options are the struct's own optional fields: `:track_id` and, for
-  `:here`, `:present`. Leaving `:track_id` out says the event is the whole
-  project's, which is a wider claim than naming a track and never the
-  lazier one to make: a reader takes it as "this may concern you whatever
-  you are showing".
+  Options are the struct's own optional fields: `:track_id`, for `:here`
+  `:present`, and for `:read` `:user_id`. Leaving `:track_id` out says the
+  event is the whole project's, which is a wider claim than naming a track
+  and never the lazier one to make: a reader takes it as "this may concern
+  you whatever you are showing".
   """
   @spec new(name(), String.t(), keyword()) :: t()
   def new(name, project_id, opts \\ []) when name in @names and is_binary(project_id) do
@@ -79,6 +91,7 @@ defmodule Ravix.Hub.Event do
       name: name,
       project_id: project_id,
       track_id: Keyword.get(opts, :track_id),
+      user_id: Keyword.get(opts, :user_id),
       present: Keyword.get(opts, :present, [])
     }
   end
