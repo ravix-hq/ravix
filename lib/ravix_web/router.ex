@@ -75,6 +75,13 @@ defmodule RavixWeb.Router do
       live "/inbox", WorkspaceLive, :inbox
       live "/p/:project", WorkspaceLive, :project
       live "/p/:project/t/:track", WorkspaceLive, :track
+
+      # The first visit. The same `live_session`, so the workspace can send
+      # somebody here and be sent back without a page load in between.
+      live "/welcome", OnboardingLive, :intro
+      live "/welcome/agent", OnboardingLive, :agent
+      live "/welcome/github", OnboardingLive, :github
+      live "/welcome/project", OnboardingLive, :project
     end
   end
 end

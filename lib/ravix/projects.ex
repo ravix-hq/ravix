@@ -191,7 +191,7 @@ defmodule Ravix.Projects do
            installation_id: input.installation_id,
            instructions: ""
          },
-         {:ok, ids} <- Machine.provision(project, client),
+         {:ok, ids} <- Machine.provision(project, user, client),
          {:ok, project} <- insert_provisioned(project, ids, client) do
       Analytics.track(
         user,
@@ -278,8 +278,8 @@ defmodule Ravix.Projects do
   end
 
   @doc "The runtime and model, reconciled with what this Fountain actually has. See `Ravix.Projects.Machine.pick_runtime/1`."
-  @spec pick_runtime(Ravix.Fountain.Shapes.Catalog.t()) :: Machine.Harness.t()
-  defdelegate pick_runtime(catalog), to: Machine
+  @spec pick_runtime(Ravix.Fountain.Shapes.Catalog.t(), String.t() | nil) :: Machine.Harness.t()
+  defdelegate pick_runtime(catalog, wanted \\ nil), to: Machine
 
   @doc "`refresh_clone_token/2` on this deployment's Fountain client."
   @spec refresh_clone_token(%{vault_id: String.t(), installation_id: integer()}) ::
@@ -570,7 +570,8 @@ defmodule Ravix.Projects do
         vault_id: ids.vault_id,
         agent_id: ids.agent_id,
         runtime: ids.runtime,
-        model: ids.model
+        model: ids.model,
+        credential_set_id: ids.credential_set_id
       })
 
     case Store.create_project(attrs) do

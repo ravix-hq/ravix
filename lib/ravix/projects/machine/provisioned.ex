@@ -26,8 +26,14 @@ defmodule Ravix.Projects.Machine.Provisioned do
           vault_id: String.t() | nil,
           agent_id: String.t() | nil,
           runtime: String.t() | nil,
-          model: String.t() | nil
+          model: String.t() | nil,
+          credential_set_id: String.t() | nil
         }
 
-  defstruct environment_id: nil, vault_id: nil, agent_id: nil, runtime: nil, model: nil
+  defstruct environment_id: nil,
+            vault_id: nil,
+            agent_id: nil,
+            runtime: nil,
+            model: nil,
+            credential_set_id: nil
 end

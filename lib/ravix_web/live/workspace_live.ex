@@ -89,9 +89,21 @@ defmodule RavixWeb.WorkspaceLive do
   # it named. There is no marketing page: the domain is the product. A stranger
   # is sent to sign in from wherever they landed, and somebody already signed in
   # never sees `/login`, because the workspace is what they came back for.
+  #
+  # The third page is the first-run walkthrough, and only the three places
+  # somebody lands without having chosen anything send them to it. A URL that
+  # names a project is somewhere to be already; see
+  # `Ravix.Accounts.needs_onboarding?/2` for who is left alone.
   defp wrong_page(%{assigns: %{current_user: nil, live_action: :login}}), do: nil
   defp wrong_page(%{assigns: %{current_user: nil}}), do: "/login"
   defp wrong_page(%{assigns: %{live_action: :login}}), do: "/"
+
+  defp wrong_page(%{assigns: %{live_action: action} = assigns})
+       when action in [:home, :projects, :inbox] do
+    if Accounts.needs_onboarding?(assigns.current_user, length(assigns.projects)),
+      do: "/welcome"
+  end
+
   defp wrong_page(_socket), do: nil
 
   defp open_url(socket, params) do

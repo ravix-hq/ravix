@@ -9,6 +9,7 @@ for mod <- [
       Ravix.Sprites,
       Ravix.Accounts.Access,
       Ravix.Accounts,
+      Ravix.Accounts.Inference,
       Ravix.People,
       Ravix.People.Store,
       Ravix.Previews,

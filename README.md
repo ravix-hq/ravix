@@ -81,7 +81,7 @@ under [#12](https://github.com/ravix-hq/ravix/issues/12).
 | `RAVIX_SECRET` | Encrypts stored GitHub tokens and seeds cookie signing |
 | `SECRET_KEY_BASE` | Optional explicit Phoenix cookie signing key |
 | `FOUNTAIN_URL` | Fountain origin |
-| `FOUNTAIN_API_KEY` | Server-owned Fountain account key |
+| `FOUNTAIN_API_KEY` | Server-owned Fountain account key. Full scope, and Fountain v0.17 or newer, for each person to connect their own Claude or Codex credential; a ChatGPT subscription also needs linking switched on for the account, and Fountain caps how many one account holds (ADR 0005) |
 | `GITHUB_APP_ID`, `GITHUB_APP_SLUG` | GitHub App identity |
 | `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` | GitHub App OAuth credentials |
 | `GITHUB_PRIVATE_KEY` | GitHub App PEM key for installation-token requests |

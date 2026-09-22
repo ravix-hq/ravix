@@ -86,6 +86,45 @@ defmodule Ravix.Accounts do
   def get_user(id) when is_binary(id), do: Repo.get(User, id)
   def get_user(_), do: nil
 
+  # ── what a person set up ──────────────────────────────────────────────
+
+  @doc """
+  Whether to show this person the first-run walkthrough, given how many
+  projects they can already see.
+
+  Two questions, because either answers it. Somebody who finished or dismissed
+  the walkthrough is never shown it again. Somebody who already has a project
+  --- their own from before the walkthrough existed, or a teammate's they were
+  invited into --- has somewhere to be, and interrupting that to explain what a
+  project is would be the app talking over the person who invited them.
+  """
+  @spec needs_onboarding?(User.t(), non_neg_integer()) :: boolean()
+  def needs_onboarding?(%User{onboarded_at: nil}, 0), do: true
+  def needs_onboarding?(%User{}, _projects), do: false
+
+  @doc "The walkthrough is over for this person, finished or dismissed. Idempotent."
+  @spec finish_onboarding(User.t()) :: {:ok, User.t()} | {:error, Ecto.Changeset.t()}
+  def finish_onboarding(%User{onboarded_at: nil} = user) do
+    with {:ok, user} <- save_setup(user, %{onboarded_at: DateTime.utc_now()}) do
+      Analytics.track(user, :onboarding_finished, %{
+        "ravix.agent" => user.agent && to_string(user.agent),
+        "ravix.agent_connected" => is_binary(user.credential_set_id)
+      })
+
+      {:ok, user}
+    end
+  end
+
+  def finish_onboarding(%User{} = user), do: {:ok, user}
+
+  @doc """
+  Write what a person chose: `agent`, `credential_set_id`, `credential_kind`,
+  `onboarded_at`. The row is the caller's own, which is the whole of the
+  authorization: there is no function here that takes somebody else's id.
+  """
+  @spec save_setup(User.t(), map()) :: {:ok, User.t()} | {:error, Ecto.Changeset.t()}
+  def save_setup(%User{} = user, attrs), do: user |> User.setup_changeset(attrs) |> Repo.update()
+
   @doc """
   A user by GitHub login, case-insensitively, or nil.
 

@@ -10,6 +10,8 @@ defmodule Ravix.Projects.Machine do
   track routes already keep warm.
   """
 
+  alias Ravix.Accounts.Inference
+  alias Ravix.Accounts.User
   alias Ravix.Fountain
   alias Ravix.Fountain.Error
   alias Ravix.Fountain.Shapes
@@ -34,7 +36,16 @@ defmodule Ravix.Projects.Machine do
   # "whatever in the catalog has opus in the name", so the wrong constant was
   # invisible until the catalog call failed, at which point every project
   # creation would have 422'd on a field nobody was looking at.
+  #
+  # Opus and not the newest model in the catalog, for a second reason now:
+  # Fountain knowingly refuses `claude-fable-5-1` on a subscription's token, and
+  # a subscription is what most people connect.
   @default_model "anthropic/claude-opus-5"
+
+  # What a runtime falls to when the catalog lists it without any models. Only
+  # the runtimes a person can choose (`Ravix.Accounts.User.agents/0`) need one:
+  # `anthropic/...` on a Codex agent is a project that fails its first turn.
+  @default_models %{"claude" => @default_model, "codex" => "openai/gpt-6-astra"}
 
   # ── creation ──────────────────────────────────────────────────────────
 
@@ -42,14 +53,18 @@ defmodule Ravix.Projects.Machine do
   The three records, in the only order that works.
 
   Takes the project as it will be inserted (name, repository, branch,
-  installation) and returns the ids to insert it with. A half-made project
+  installation) and its owner, and returns the ids to insert it with. The
+  owner is here for two things they chose: which agent the machine runs, and
+  the credential set that pays for it (`Ravix.Accounts.Inference`). Both are
+  the *owner's* whoever goes on to work in the project. A half-made project
   is three orphaned Fountain records and a row that points at a machine
   nobody can build, so any failure unwinds what went in, in reverse, and
   reports the original failure rather than the cleanup's.
   """
-  @spec provision(Project.t(), Fountain.Client.t()) :: {:ok, Provisioned.t()} | {:error, term()}
-  def provision(%Project{} = project, client) do
-    steps = [&environment/3, &vault/3, &clone_token/3, &agent/3]
+  @spec provision(Project.t(), User.t(), Fountain.Client.t()) ::
+          {:ok, Provisioned.t()} | {:error, term()}
+  def provision(%Project{} = project, %User{} = owner, client) do
+    steps = [&environment/3, &vault/3, &clone_token/3, &agent(&1, &2, &3, owner)]
 
     Enum.reduce_while(steps, {:ok, %Provisioned{}}, fn
       step, {:ok, state} ->
@@ -110,9 +125,28 @@ defmodule Ravix.Projects.Machine do
 
   defp clone_token(_client, _project, state), do: {:ok, state}
 
-  defp agent(client, project, state) do
-    choice = pick_runtime(catalog(client))
+  defp agent(client, project, state, owner) do
+    with {:ok, choice} <- harness_for(catalog(client), Inference.runtime(owner)) do
+      create_agent(client, project, state, choice, owner)
+    end
+  end
 
+  # The owner's agent, when this Fountain runs it. A catalog that *lists*
+  # runtimes and leaves theirs out is refused rather than quietly built on
+  # another: the machine would come up on Claude Code with an OpenAI key to
+  # spend, and say so only when the first turn failed. A catalog that could
+  # not be read lists nothing and refuses nothing.
+  defp harness_for(%Catalog{runtimes: runtimes} = catalog, wanted) do
+    if is_binary(wanted) and runtimes != [] and wanted not in runtimes do
+      {:error,
+       {:conflict, "agent_unavailable",
+        "This deployment's Fountain does not run the agent you chose. Choose the other one, or ask whoever runs this deployment."}}
+    else
+      {:ok, pick_runtime(catalog, wanted)}
+    end
+  end
+
+  defp create_agent(client, project, state, choice, owner) do
     body =
       %{
         name: label(project),
@@ -131,9 +165,17 @@ defmodule Ravix.Projects.Machine do
         metadata: %{ravix: %{project: project.id}}
       }
       |> with_vault(state.vault_id)
+      |> with_credentials(owner.credential_set_id)
 
     with {:ok, agent} <- Projects.fountain_result(Fountain.create_agent(client, body)) do
-      {:ok, %{state | agent_id: agent["id"], runtime: choice.runtime, model: choice.model}}
+      {:ok,
+       %{
+         state
+         | agent_id: agent["id"],
+           runtime: choice.runtime,
+           model: choice.model,
+           credential_set_id: owner.credential_set_id
+       }}
     end
   end
 
@@ -167,15 +209,67 @@ defmodule Ravix.Projects.Machine do
 
   @doc "Everything a project needs before its machine is woken."
   @spec prepare_machine(Project.t(), Fountain.Client.t()) :: :ok | {:error, term()}
-  def prepare_machine(
-        %Project{repo_full_name: repo, vault_id: vault_id, installation_id: installation_id},
-        client
-      )
-      when is_binary(repo) and repo != "" and is_binary(vault_id) and is_integer(installation_id) do
+  def prepare_machine(%Project{} = project, client) do
+    with :ok <- adopt_credentials(project, client), do: fresh_clone_token(project, client)
+  end
+
+  defp fresh_clone_token(
+         %Project{repo_full_name: repo, vault_id: vault_id, installation_id: installation_id},
+         client
+       )
+       when is_binary(repo) and repo != "" and is_binary(vault_id) and is_integer(installation_id) do
     refresh_clone_token(%{vault_id: vault_id, installation_id: installation_id}, client)
   end
 
-  def prepare_machine(%Project{}, _client), do: :ok
+  defp fresh_clone_token(%Project{}, _client), do: :ok
+
+  @doc """
+  Point the project's agent at its owner's credential set, when it is not
+  already.
+
+  A project made before its owner connected anything --- every project that
+  predates `Ravix.Accounts.Inference`, and any made by somebody who skipped
+  that step --- has an agent with no set, which runs on the deployment's
+  default. Connecting afterwards has to reach those projects, and this is
+  where it does: on the way to waking the machine, which every track opened
+  and every queued prompt passes through, so it needs no job of its own and
+  nothing to hand over when an instance leaves (ADR 0003). The row records
+  which set the agent was last pointed at, so the usual answer is a
+  comparison and no call.
+
+  Changing it is safe for what is already running. Fountain binds a
+  conversation to the source it started on, so open tracks carry on spending
+  what they were spending and only new ones spend the owner's. An owner who
+  has connected nothing is left exactly as they were.
+  """
+  @spec adopt_credentials(Project.t(), Fountain.Client.t()) :: :ok | {:error, term()}
+  def adopt_credentials(%Project{credential_set_id: current} = project, client) do
+    case owner_set(project) do
+      nil ->
+        :ok
+
+      ^current ->
+        :ok
+
+      set_id ->
+        body = with_credentials(%{}, set_id)
+
+        with {:ok, _agent} <-
+               Projects.fountain_result(Fountain.update_agent(client, project.agent_id, body)) do
+          Projects.Store.set_credential_set(project.id, set_id)
+        end
+    end
+  end
+
+  # ownership: the owner's row, read by the project's own `user_id`. The caller
+  # is already through `Access.project_of/2` or `Access.project_access/2`, and
+  # what is read is which set pays, which is the owner's whoever is asking.
+  defp owner_set(%Project{user_id: user_id}) do
+    case Ravix.Accounts.get_user(user_id) do
+      %User{credential_set_id: id} when is_binary(id) -> id
+      _ -> nil
+    end
+  end
 
   # ── rebuild and destroy ───────────────────────────────────────────────
 
@@ -197,10 +291,13 @@ defmodule Ravix.Projects.Machine do
            Projects.fountain_result(Fountain.list_conversations(client, project.agent_id)),
          {removed, failed} = terminate_live(client, conversations),
          :ok <- delete_old_agent(client, project.agent_id),
-         {:ok, agent} <- create_replacement(project, client) do
+         set_id = owner_set(project),
+         {:ok, agent} <- create_replacement(project, set_id, client) do
       # The agent id is the identity, so it is the one column that ever moves,
-      # and when it moves, every track on the old disk is gone.
-      Projects.Store.rebind_agent(project.id, agent["id"])
+      # and when it moves, every track on the old disk is gone. What pays for
+      # it moves with it: the new agent was built on the owner's set as it is
+      # today.
+      Projects.Store.rebind_agent(project.id, agent["id"], set_id)
       Ravix.MachineCache.forget_project(project.id)
       Ravix.Tracks.close_all_for_rebuild(project, :rebuild)
       Hub.publish(project.id, :tracks)
@@ -221,7 +318,7 @@ defmodule Ravix.Projects.Machine do
     end
   end
 
-  defp create_replacement(project, client) do
+  defp create_replacement(project, set_id, client) do
     choice = pick_runtime(catalog(client))
 
     body =
@@ -235,6 +332,7 @@ defmodule Ravix.Projects.Machine do
         metadata: %{ravix: %{project: project.id}}
       }
       |> with_vault(project.vault_id)
+      |> with_credentials(set_id)
 
     Projects.fountain_result(Fountain.create_agent(client, body))
   end
@@ -368,26 +466,36 @@ defmodule Ravix.Projects.Machine do
   arrives as `Ravix.Fountain.Shapes.Catalog.empty/0`, which decides the same
   way, so there is no second argument shape and no nil to test for.
   """
-  @spec pick_runtime(Catalog.t()) :: Harness.t()
-  def pick_runtime(%Catalog{runtimes: runtimes} = catalog) do
-    runtime =
-      cond do
-        @default_runtime in runtimes -> @default_runtime
-        runtimes != [] -> hd(runtimes)
-        true -> @default_runtime
-      end
+  @spec pick_runtime(Catalog.t(), String.t() | nil) :: Harness.t()
+  def pick_runtime(%Catalog{runtimes: runtimes} = catalog, wanted \\ nil) do
+    runtime = runtime_from(runtimes, wanted)
+    default = Map.get(@default_models, runtime, @default_model)
+    %Harness{runtime: runtime, model: model_from(Catalog.models_for(catalog, runtime), default)}
+  end
 
-    models = Catalog.models_for(catalog, runtime)
+  # `wanted` is the agent the owner chose at sign-up, which is the one question
+  # the paragraph above does let the app ask: it decides whose subscription is
+  # spent, so it cannot be answered identically by everyone. A catalog that
+  # lists nothing could not be read, and does not overrule them.
+  defp runtime_from(runtimes, wanted) when is_binary(wanted) do
+    if wanted in runtimes or runtimes == [], do: wanted, else: runtime_from(runtimes, nil)
+  end
 
-    model =
-      cond do
-        @default_model in models -> @default_model
-        opus = Enum.find(models, &String.contains?(&1, "opus")) -> opus
-        models != [] -> hd(models)
-        true -> @default_model
-      end
+  defp runtime_from(runtimes, nil) do
+    cond do
+      @default_runtime in runtimes -> @default_runtime
+      runtimes != [] -> hd(runtimes)
+      true -> @default_runtime
+    end
+  end
 
-    %Harness{runtime: runtime, model: model}
+  defp model_from(models, default) do
+    cond do
+      default in models -> default
+      opus = Enum.find(models, &String.contains?(&1, "opus")) -> opus
+      models != [] -> hd(models)
+      true -> default
+    end
   end
 
   @doc """
@@ -411,6 +519,16 @@ defmodule Ravix.Projects.Machine do
   defp with_vault(body, nil), do: body
   defp with_vault(body, ""), do: body
   defp with_vault(body, vault_id), do: Map.put(body, :vault_id, vault_id)
+
+  # `[]` rather than leaving the allowlist open: no launch may name a
+  # different set, so nothing can move a project's spending off its owner.
+  defp with_credentials(body, nil), do: body
+
+  defp with_credentials(body, set_id) do
+    body
+    |> Map.put(:inference_credential_id, set_id)
+    |> Map.put(:allowed_inference_credential_ids, [])
+  end
 
   defp blank_or(nil, fallback), do: fallback
   defp blank_or("", fallback), do: fallback

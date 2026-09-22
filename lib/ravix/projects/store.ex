@@ -100,9 +100,22 @@ defmodule Ravix.Projects.Store do
   distinction rather than a slower delete. Every track of the old disk is
   closed by the caller in the same breath: a track is a worktree, and that
   worktree is about to stop existing.
+
+  `credential_set_id` is the set the *new* agent was built on, which moves
+  with it for the reason `set_credential_set/2` exists at all.
   """
-  @spec rebind_agent(String.t(), String.t()) :: :ok
-  def rebind_agent(id, agent_id), do: update_fields(id, agent_id: agent_id)
+  @spec rebind_agent(String.t(), String.t(), String.t() | nil) :: :ok
+  def rebind_agent(id, agent_id, credential_set_id),
+    do: update_fields(id, agent_id: agent_id, credential_set_id: credential_set_id)
+
+  @doc """
+  Record which of its owner's credential sets the project's agent now points
+  at. Fountain is told first, by the caller; this is what lets the next wake
+  see there is nothing to do. See `Ravix.Projects.Machine.adopt_credentials/2`.
+  """
+  @spec set_credential_set(String.t(), String.t()) :: :ok
+  def set_credential_set(id, credential_set_id),
+    do: update_fields(id, credential_set_id: credential_set_id)
 
   @doc "Archive a project, cancelling whatever its open tracks still had queued."
   @spec archive(String.t()) :: :ok

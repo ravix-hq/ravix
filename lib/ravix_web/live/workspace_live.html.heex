@@ -33,7 +33,7 @@
         <li>
           <.icon name="sparkle" size={14} class="ico" />
           <span>
-            The Fountain account every machine runs on belongs to this deployment, not to you — so there is no key to paste, and the turns are on the house.
+            The agent is Claude Code or Codex, running on your own subscription or API key. Teammates you invite work on your plan, so they need nothing of their own.
           </span>
         </li>
       </ul>
@@ -178,7 +178,7 @@
         <.link href="/auth/signout" method="post" class="ghost">Sign out</.link>
         <.theme_picker id="theme-picker" />
         <div class="yard-meta">
-          <span class="chip">Ravix</span><a href="/api/auth/install">repo access</a>
+          <span class="chip">Ravix</span><a href="/api/auth/install">repo access</a><.link navigate="/welcome/agent">agent</.link>
         </div>
       </div>
     </aside>
@@ -417,6 +417,14 @@
           ]}
         />
         <p><a href="/api/auth/install">Connect or manage GitHub repositories ↗</a></p>
+        <p
+          :if={!Ravix.Accounts.Inference.connected?(@current_user)}
+          class="hint"
+          id="new-project-no-agent"
+        >
+          You have not connected an agent, so this project's agent may have nothing to run on.
+          <.link navigate="/welcome/agent">Connect Claude Code or Codex</.link>
+        </p>
         <button class="primary" disabled={@busy} phx-disable-with="Creating…">
           Create project
         </button>

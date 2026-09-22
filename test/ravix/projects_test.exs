@@ -146,9 +146,29 @@ defmodule Ravix.ProjectsTest do
       assert Projects.pick_runtime(Shapes.Catalog.empty()).runtime == "claude"
     end
 
-    test "a runtime the catalog lists with no models falls to the default model" do
+    test "a runtime the catalog lists with no models falls to that runtime's default model" do
+      # It used to fall to the one default there was, which handed a Codex agent
+      # an Anthropic model: a project that builds and then fails its first turn.
       assert Projects.pick_runtime(catalog(["codex"], %{})) ==
-               %Harness{runtime: "codex", model: "anthropic/claude-opus-5"}
+               %Harness{runtime: "codex", model: "openai/gpt-6-astra"}
+    end
+
+    test "the agent the owner chose wins over the default when this Fountain runs it" do
+      both =
+        catalog(["claude", "codex"], %{
+          "claude" => ["anthropic/claude-opus-5"],
+          "codex" => ["openai/gpt-6-astra", "openai/gpt-5.5"]
+        })
+
+      assert Projects.pick_runtime(both, "codex") ==
+               %Harness{runtime: "codex", model: "openai/gpt-6-astra"}
+
+      assert Projects.pick_runtime(both, nil).runtime == "claude"
+    end
+
+    test "a catalog that could not be read does not overrule the owner's choice" do
+      assert Projects.pick_runtime(Shapes.Catalog.empty(), "codex") ==
+               %Harness{runtime: "codex", model: "openai/gpt-6-astra"}
     end
   end
 
@@ -539,6 +559,80 @@ defmodule Ravix.ProjectsTest do
       assert GH.request_count("access_tokens") == 0
     end
 
+    test "the machine is built with the owner's agent and pointed at the owner's credential set" do
+      client =
+        fountain([
+          {%{method: "POST", path: "/api/environments"}, {201, [], %{data: %{id: "new-env"}}}},
+          {%{method: "POST", path: "/api/vaults"}, {201, [], %{data: %{id: "new-vault"}}}},
+          {%{method: "GET", path: "/api/catalog"},
+           {200, [],
+            %{
+              data: %{
+                runtimes: ["claude", "codex"],
+                models: %{
+                  "claude" => ["anthropic/claude-opus-5"],
+                  "codex" => ["openai/gpt-6-astra"]
+                }
+              }
+            }}},
+          {%{method: "POST", path: "/api/agents"}, {201, [], %{data: %{id: "new-agent"}}}}
+        ])
+
+      no_github()
+      me = insert_user(agent: :codex, credential_kind: :api_key, credential_set_id: "set-me")
+
+      assert {:ok, project} = Projects.create(me, %{name: "Scratch"})
+
+      agent = body_of(client, "POST", "/api/agents")
+      assert agent["runtime"] == "codex"
+      assert agent["model"] == "openai/gpt-6-astra"
+      assert agent["inference_credential_id"] == "set-me"
+      # Closed, so no launch can name a set that is not the owner's.
+      assert agent["allowed_inference_credential_ids"] == []
+
+      assert %Project{runtime: "codex", credential_set_id: "set-me"} =
+               Repo.get!(Project, project.id)
+    end
+
+    test "somebody who connected nothing gets the agent this app always built" do
+      client =
+        fountain([
+          {%{method: "POST", path: "/api/environments"}, {201, [], %{data: %{id: "new-env"}}}},
+          {%{method: "POST", path: "/api/vaults"}, {201, [], %{data: %{id: "new-vault"}}}},
+          {%{method: "GET", path: "/api/catalog"}, {500, [], "boom"}},
+          {%{method: "POST", path: "/api/agents"}, {201, [], %{data: %{id: "new-agent"}}}}
+        ])
+
+      no_github()
+      assert {:ok, project} = Projects.create(person("me"), %{name: "Scratch"})
+
+      agent = body_of(client, "POST", "/api/agents")
+      refute Map.has_key?(agent, "inference_credential_id")
+      refute Map.has_key?(agent, "allowed_inference_credential_ids")
+      assert %Project{runtime: "claude", credential_set_id: nil} = Repo.get!(Project, project.id)
+    end
+
+    test "an agent this Fountain does not run is refused, and nothing is left behind" do
+      client =
+        fountain([
+          {%{method: "POST", path: "/api/environments"}, {201, [], %{data: %{id: "new-env"}}}},
+          {%{method: "POST", path: "/api/vaults"}, {201, [], %{data: %{id: "new-vault"}}}},
+          {%{method: "GET", path: "/api/catalog"},
+           {200, [], %{data: %{runtimes: ["claude"], models: %{}}}}},
+          {%{method: "DELETE", path: "/api/vaults/new-vault"}, {204, [], nil}},
+          {%{method: "DELETE", path: "/api/environments/new-env"}, {204, [], nil}}
+        ])
+
+      no_github()
+      me = insert_user(agent: :codex, credential_kind: :api_key, credential_set_id: "set-me")
+
+      assert {:error, {:conflict, "agent_unavailable", _}} =
+               Projects.create(me, %{name: "Scratch"})
+
+      refute {"POST", "/api/agents"} in requests(client)
+      assert Repo.aggregate(Project, :count) == 0
+    end
+
     test "a failure unwinds what went in, in reverse, and reports the original error" do
       client =
         fountain([
@@ -586,6 +680,59 @@ defmodule Ravix.ProjectsTest do
   end
 
   # ── prepare_machine ───────────────────────────────────────────────────
+
+  describe "prepare_machine/2 adopting the owner's credential set" do
+    test "a project made before its owner connected is moved onto their set, once" do
+      client =
+        fountain([{%{method: "PUT", path: "/api/agents/a"}, {200, [], %{data: %{id: "a"}}}}])
+
+      owner = insert_user(agent: :claude, credential_kind: :subscription, credential_set_id: "s1")
+      project = blank_project(owner)
+
+      assert :ok = Projects.prepare_machine(project, client)
+
+      assert body_of(client, "PUT", "/api/agents/a") == %{
+               "inference_credential_id" => "s1",
+               "allowed_inference_credential_ids" => []
+             }
+
+      # The row remembers, so the next wake is a comparison and not a call: the
+      # script above holds one PUT and a second would fail this test.
+      adopted = Repo.get!(Project, project.id)
+      assert adopted.credential_set_id == "s1"
+      assert :ok = Projects.prepare_machine(adopted, client)
+    end
+
+    test "it is the owner's set whoever wakes the machine" do
+      client =
+        fountain([{%{method: "PUT", path: "/api/agents/a"}, {200, [], %{data: %{id: "a"}}}}])
+
+      owner = insert_user(agent: :claude, credential_kind: :api_key, credential_set_id: "owners")
+      _guest = insert_user(agent: :codex, credential_kind: :api_key, credential_set_id: "guests")
+
+      assert :ok = Projects.prepare_machine(blank_project(owner), client)
+      assert body_of(client, "PUT", "/api/agents/a")["inference_credential_id"] == "owners"
+    end
+
+    test "an owner who connected nothing leaves the agent where it was" do
+      client = fountain()
+      assert :ok = Projects.prepare_machine(blank_project(person("owner")), client)
+      assert requests(client) == []
+    end
+
+    test "a Fountain that will not move the agent stops the wake and records nothing" do
+      client =
+        fountain([{%{method: "PUT", path: "/api/agents/a"}, {500, [], %{error: "nope"}}}])
+
+      owner = insert_user(agent: :claude, credential_kind: :subscription, credential_set_id: "s1")
+      project = blank_project(owner)
+
+      assert {:error, %Ravix.Fountain.Error{status: 500}} =
+               Projects.prepare_machine(project, client)
+
+      assert Repo.get!(Project, project.id).credential_set_id == nil
+    end
+  end
 
   describe "prepare_machine/2 and refresh_clone_token/2" do
     test "legacy blank projects do not refresh an unverified installation" do
@@ -1032,6 +1179,37 @@ defmodule Ravix.ProjectsTest do
       assert_received {:hub, %Event{name: :tracks, project_id: "p"}}
     end
 
+    test "the replacement agent is built on the owner's credential set as it is today", ctx do
+      quiet_peers()
+      %{owner: owner, project: project} = ctx
+
+      # Connected after the project was made, so the row still says nothing.
+      {:ok, owner} =
+        Ravix.Accounts.save_setup(owner, %{
+          agent: :claude,
+          credential_kind: :subscription,
+          credential_set_id: "owners-set"
+        })
+
+      client =
+        fountain([
+          {%{method: "GET", path: "/api/conversations", query: %{agent_id: "a"}},
+           {200, [], %{data: []}}},
+          {%{method: "DELETE", path: "/api/agents/a"}, {204, [], nil}},
+          {%{method: "GET", path: "/api/catalog"}, {200, [], %{data: @catalog}}},
+          {%{method: "POST", path: "/api/agents"}, {201, [], %{data: %{id: "new-agent"}}}}
+        ])
+
+      assert {:ok, %Rebuild{}} = Projects.rebuild(owner, project.id)
+
+      agent = body_of(client, "POST", "/api/agents")
+      assert agent["inference_credential_id"] == "owners-set"
+      assert agent["allowed_inference_credential_ids"] == []
+
+      assert %Project{agent_id: "new-agent", credential_set_id: "owners-set"} =
+               Repo.get!(Project, project.id)
+    end
+
     test "the catalog fills in a project with no harness of its own", %{
       owner: owner,
       project: project
@@ -1269,19 +1447,20 @@ defmodule Ravix.ProjectsTest do
   # ── the rows ──────────────────────────────────────────────────────────
 
   describe "the rows" do
-    test "bump_rev returns the new revision; rebind moves only the agent" do
+    test "bump_rev returns the new revision; rebind moves the agent and what pays for it" do
       project = insert_project()
       assert Projects.Store.bump_rev(project.id) == 2
       assert Projects.Store.bump_rev(project.id) == 3
       assert Projects.Store.bump_rev("missing") == 1
 
-      assert :ok = Projects.Store.rebind_agent(project.id, "agent-2")
+      assert :ok = Projects.Store.rebind_agent(project.id, "agent-2", "set-2")
       assert :ok = Projects.Store.set_harness(project.id, "codex", "openai/x")
       assert :ok = Projects.Store.set_instructions(project.id, "hi")
       assert :ok = Projects.Store.rename(project.id, "new name")
 
       assert %Project{
                agent_id: "agent-2",
+               credential_set_id: "set-2",
                runtime: "codex",
                model: "openai/x",
                instructions: "hi",

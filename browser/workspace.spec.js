@@ -30,6 +30,15 @@ async function signIn(page) {
   await page.getByRole('link', { name: 'Sign in as @mockuser', exact: true }).click();
   await expect(page.getByRole('link', { name: 'Sign out' })).toBeVisible();
   await expect(page.locator('[data-phx-main]')).toHaveClass(/phx-connected/);
+  // Whoever signs in first, with no project yet, is shown the walkthrough. The
+  // test below is about that; every other test is about the workspace, and
+  // must reach it whether or not it is the first to run.
+  if (new URL(page.url()).pathname.startsWith('/welcome')) {
+    await page.getByRole('button', { name: 'Skip setup', exact: true }).click();
+    await expect(page).toHaveURL(/\/home$/);
+    await page.goto('/');
+    await expect(page.locator('[data-phx-main]')).toHaveClass(/phx-connected/);
+  }
 }
 
 async function chooseTheme(page, name) {
@@ -110,6 +119,87 @@ test('public design loads local Plex fonts and works in dark, light, and narrow 
   // The chosen theme is the browser's, so it survives the redirect back here.
   await page.goto('/');
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'daylight');
+});
+
+test('a first visit is walked through how it works, the agent, and GitHub', async ({ page }) => {
+  test.setTimeout(120_000);
+  await page.goto('/');
+  await page.getByRole('link', { name: 'Sign in with GitHub', exact: true }).click();
+  await page.getByRole('link', { name: 'Sign in as @mockuser', exact: true }).click();
+
+  // Nobody chose to be here, so this is where a first visit lands.
+  await expect(page).toHaveURL(/\/welcome$/);
+  await expect(page.locator('[data-phx-main]')).toHaveClass(/phx-connected/);
+  await expect(page.getByRole('heading', { name: /^Welcome to Ravix/ })).toBeVisible();
+  for (const idea of ['A project is a repository.', 'Every project has a computer.', 'A project holds many conversations.', 'Invite teammates, and you are the one billed.']) {
+    await expect(page.getByText(idea, { exact: true })).toBeVisible();
+  }
+  await accessible(page);
+  await capture(page, 'welcome-intro');
+
+  await page.getByRole('link', { name: 'Set up your agent', exact: true }).click();
+  await expect(page).toHaveURL(/\/welcome\/agent$/);
+
+  // Codex on a ChatGPT subscription is a sign-in, not a paste: the page shows
+  // the code the mock Fountain hands out and notices the approval by itself
+  // (the mock approves on the third poll). Nothing here is ever a token.
+  await page.getByRole('button', { name: /^Codex/ }).click();
+  await expect(page.getByRole('button', { name: 'Subscription', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByLabel('API key', { exact: true })).toHaveCount(0);
+  await accessible(page);
+  await page.getByRole('button', { name: 'Connect ChatGPT', exact: true }).click();
+  await expect(page.locator('#chatgpt-user-code')).toHaveText('MOCK-CODE');
+  await expect(page.getByRole('link', { name: 'https://auth.openai.com/codex/device' })).toHaveAttribute('target', '_blank');
+  await accessible(page);
+  await capture(page, 'welcome-chatgpt');
+  await expect(page).toHaveURL(/\/welcome\/github$/, { timeout: 15_000 });
+  expect(await page.content()).not.toContain('MOCK-CODE');
+
+  // Back to the agent step by hand: Claude Code takes a pasted token.
+  await page.goto('/welcome/agent');
+  await expect(page.locator('[data-phx-main]')).toHaveClass(/phx-connected/);
+  await expect(page.getByText('Codex is connected with your ChatGPT subscription')).toBeVisible();
+  await page.getByRole('button', { name: /^Claude Code/ }).click();
+  await expect(page.getByText('claude setup-token')).toBeVisible();
+  await accessible(page);
+  await capture(page, 'welcome-agent');
+
+  // The mock refuses anything containing "invalid", the way Fountain refuses
+  // a token its provider rejects. The refusal lands on the field and the value
+  // is not given back.
+  await page.getByLabel('Subscription token', { exact: true }).fill('sk-ant-oat01-invalid');
+  await page.getByRole('button', { name: 'Connect Claude Code', exact: true }).click();
+  await expect(page.getByText(/Anthropic did not accept that/)).toBeVisible();
+  await expect(page.getByLabel('Subscription token', { exact: true })).toHaveValue('');
+  await accessible(page);
+
+  await page.getByLabel('Subscription token', { exact: true }).fill('sk-ant-oat01-mock');
+  await page.getByRole('button', { name: 'Connect Claude Code', exact: true }).click();
+  await expect(page).toHaveURL(/\/welcome\/github$/);
+  expect(await page.content()).not.toContain('sk-ant-oat01-mock');
+  await expect(page.getByRole('heading', { name: 'Connect GitHub' })).toBeVisible();
+  await expect(page.locator('#github-connected, #github-none')).toBeVisible();
+  await accessible(page);
+  await capture(page, 'welcome-github');
+
+  // Coming back part way through carries on from here, not from the top.
+  await page.goto('/');
+  await expect(page).toHaveURL(/\/welcome\/github$/);
+
+  await page.locator('#github-continue').click();
+  await expect(page).toHaveURL(/\/welcome\/project$/);
+  await expect(page.getByRole('heading', { name: 'Create your first project' })).toBeVisible();
+  await accessible(page);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await accessible(page);
+  await capture(page, 'welcome-project-mobile');
+
+  // Leaving is finishing: the workspace stops sending this person back, and
+  // the tests after this one start from an empty workspace as they always did.
+  await page.getByRole('button', { name: 'Skip setup', exact: true }).click();
+  await expect(page).toHaveURL(/\/home$/);
+  await page.goto('/');
+  await expect(page.getByRole('heading', { name: /Inbox/ })).toBeVisible();
 });
 
 test('home quick start creates a scratch project and recent navigation survives theme changes', async ({ page }) => {

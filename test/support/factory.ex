@@ -30,14 +30,24 @@ defmodule Ravix.Factory do
       "login" => "user#{n}",
       "name" => "User #{n}",
       "avatar_url" => "https://avatars.example/#{n}.png",
-      "token_enc" => nil
+      "token_enc" => nil,
+      # Somebody who has been here before, because that is who nearly every
+      # test is about. Pass `onboarded_at: nil` for a first visit, and `agent`,
+      # `credential_kind` and `credential_set_id` for somebody who connected one.
+      "onboarded_at" => DateTime.utc_now()
     })
   end
 
-  @doc "A user."
+  @doc "A user. What they set up goes through `User.setup_changeset/2`, as it does in the app."
   @spec insert_user(attrs()) :: User.t()
   def insert_user(attrs \\ []) do
-    attrs |> user_attrs() |> then(&User.changeset(%User{}, &1)) |> Repo.insert!()
+    attrs = user_attrs(attrs)
+
+    %User{}
+    |> User.changeset(attrs)
+    |> Repo.insert!()
+    |> User.setup_changeset(attrs)
+    |> Repo.update!()
   end
 
   @doc "Attributes for a session. Brings a `token_hash` for a random token unless given."
