@@ -7,6 +7,13 @@ defmodule Ravix.Previews.PreviewAgentGrant do
   track, user, conversation, prompt, sandbox and sprite it was minted for);
   `expires` is milliseconds since the epoch, and a row past it is dead even
   before it is swept.
+
+  Expand phase. `thread_id` is the column the thread is moving into. It is
+  nullable and not required, because the release still serving beside this one
+  inserts grants without it; readers take
+  `COALESCE(thread_id, row->>'thread_id', track_id)` so a grant written by
+  either release is found. The release that stops writing `row` makes the
+  column required here and NOT NULL in the database.
   """
   use Ecto.Schema
   import Ecto.Changeset
@@ -28,13 +35,14 @@ defmodule Ravix.Previews.PreviewAgentGrant do
   end
 
   @fields ~w(hash track_id user_id expires thread_id row)a
+  @required ~w(hash track_id user_id expires row)a
 
-  @doc "An agent grant. Every field is required."
+  @doc "An agent grant. Every field but the expanding `thread_id` is required."
   @spec changeset(t(), map()) :: Ecto.Changeset.t()
   def changeset(grant, attrs) do
     grant
     |> cast(attrs, @fields)
-    |> validate_required(@fields)
+    |> validate_required(@required)
     |> foreign_key_constraint(:track_id)
     |> foreign_key_constraint(:user_id)
     |> unique_constraint(:hash, name: :preview_agent_grants_pkey)

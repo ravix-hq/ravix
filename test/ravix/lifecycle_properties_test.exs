@@ -102,7 +102,7 @@ defmodule Ravix.QueuePropertiesTest do
             PromptQueue.Store.set_status(id, status)
         end
 
-        assert %{status: ^terminal, body: nil} = PromptQueue.Store.get(id)
+        assert %{status: ^terminal, payload: ""} = PromptQueue.Store.get(id)
       end
     end
   end

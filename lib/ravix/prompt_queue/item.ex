@@ -5,9 +5,9 @@ defmodule Ravix.PromptQueue.Item do
   Work Ravix owes the caller, which must outlive the browser that submitted
   it. `sequence` is the delivery order and the database assigns it; `id` is
   the caller's idempotency key and stays behind as a receipt for retried
-  HTTP requests after the row is done. `body` is the JSON the client sent
-  (`prompt` and `images`); it is cleared once the row is `sent` or `cancelled`
-  so large attachments are released while the receipt stays.
+  HTTP requests after the row is done. `payload` is the JSON the client
+  sent (`prompt` and `images`); it is emptied once the row is `sent` or
+  `cancelled` so large attachments are released while the receipt stays.
 
   Status moves `queued -> sending -> sent`, or to `failed`, or to
   `unconfirmed` when the server restarted mid-delivery and cannot say
@@ -32,13 +32,14 @@ defmodule Ravix.PromptQueue.Item do
     field :author_login, :string
     field :body, :map
     field :image_count, :integer, default: 0
+    field :payload, :string
     field :created_at, :utc_datetime_usec
     field :status, Ecto.Enum, values: @statuses, default: :queued
     field :error, :string
     field :claimed_at, :utc_datetime_usec
   end
 
-  @fields ~w(id thread_id track_id user_id author_login body image_count created_at status error
+  @fields ~w(id thread_id track_id user_id author_login body image_count payload created_at status error
              claimed_at)a
 
   @doc "The six statuses, in the order the TypeScript declared them."

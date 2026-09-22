@@ -254,7 +254,7 @@ defmodule Ravix.PromptQueueTest do
     Server.tick(f.server)
 
     assert length(posted(client)) == 1
-    assert PromptQueue.Store.get(id).body == nil
+    assert PromptQueue.Store.get(id).payload == ""
   end
 
   test "cancellation survives restart and does not block the next prompt", f do
@@ -264,7 +264,7 @@ defmodule Ravix.PromptQueueTest do
     send_prompt(f.track, f.owner, "keep me")
 
     assert :ok = PromptQueue.cancel(f.owner, f.track.id, id)
-    assert PromptQueue.Store.get(id).body == nil
+    assert PromptQueue.Store.get(id).payload == ""
 
     PromptQueue.Store.recover()
     Server.tick(start_server())
@@ -481,7 +481,7 @@ defmodule Ravix.PromptQueueTest do
     assert %Item{status: :unconfirmed, error: "Fountain has no turn carrying" <> _} =
              PromptQueue.Store.get(id)
 
-    assert PromptQueue.Store.get(id).body != ""
+    assert PromptQueue.Store.get(id).payload != ""
   end
 
   test "an unconfirmed prompt Fountain has a turn for is recorded as delivered, not re-sent", f do
@@ -492,7 +492,7 @@ defmodule Ravix.PromptQueueTest do
 
     Server.tick(f.server)
 
-    assert %Item{status: :sent, error: nil, body: nil} = PromptQueue.Store.get(id)
+    assert %Item{status: :sent, error: nil, payload: ""} = PromptQueue.Store.get(id)
     assert posted(client) == []
     assert_receive {:hub, %Event{name: :turn}}
   end
@@ -703,7 +703,7 @@ defmodule Ravix.PromptQueueTest do
     end)
 
     Server.tick(f.server)
-    assert %Item{status: :cancelled, body: nil} = PromptQueue.Store.get(id)
+    assert %Item{status: :cancelled, payload: ""} = PromptQueue.Store.get(id)
   end
 
   test "credential failures hold the prompt until the machine can be prepared", f do
@@ -865,7 +865,7 @@ defmodule Ravix.PromptQueueTest do
     # The head carries neither the parsed body nor its JSON string: it is read
     # every two seconds per track, and the attachments are loaded once, just
     # before the POST.
-    assert [%Item{id: ^id, body: nil}] = PromptQueue.Store.heads()
+    assert [%Item{id: ^id, body: nil, payload: nil}] = PromptQueue.Store.heads()
   end
 
   test "a delivered row releases its bytes and keeps its count", f do

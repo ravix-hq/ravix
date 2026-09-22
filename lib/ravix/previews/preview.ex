@@ -54,11 +54,17 @@ defmodule Ravix.Previews.Preview do
     field :cleanup, :boolean, default: false
     field :stop_pending, :boolean, default: false
     field :unavailable, :string
+
+    # Expand phase. The columns above are the record; this is the document
+    # they came out of, still written so a release that reads it keeps
+    # working until it is gone. The migration that drops the column takes
+    # this field with it.
+    field :row, :map
   end
 
   @fields ~w(track_id hostname service sprite port sandbox_id config applied_config
              desired state generation last_activity lease_until started_at error logs
-             cleanup stop_pending unavailable)a
+             cleanup stop_pending unavailable row)a
 
   @doc "The two words `desired` may be, in the order the reconciler reads them."
   @spec desired_states() :: [atom()]

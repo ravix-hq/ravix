@@ -167,7 +167,7 @@ defmodule Ravix.Previews.Store do
     attrs = Row.to_attrs(row)
 
     case Repo.insert(changeset(row),
-           on_conflict: [set: Map.to_list(attrs)],
+           on_conflict: [set: Map.to_list(attrs) ++ [row: Row.encode(row)]],
            conflict_target: :track_id
          ) do
       {:ok, _} -> :ok
@@ -188,7 +188,7 @@ defmodule Ravix.Previews.Store do
   end
 
   defp changeset(%Row{} = row) do
-    Preview.changeset(%Preview{}, Row.to_attrs(row))
+    Preview.changeset(%Preview{}, Map.put(Row.to_attrs(row), :row, Row.encode(row)))
   end
 
   @doc """
@@ -335,14 +335,20 @@ defmodule Ravix.Previews.Store do
     track_id = grant.track_id
     thread_id = grant.thread_id || track_id
 
+    # Expand phase: a grant is replaced whether the instance that wrote it named
+    # the thread in the new column or only inside the document, so the previous
+    # release's grants are still swept while the deploy rolls.
     Repo.delete_all(
       from g in PreviewAgentGrant,
         where:
           g.expires <= ^now or
             (g.track_id == ^track_id and
-               g.thread_id == ^thread_id)
+               fragment("COALESCE(?, ?->>'thread_id', ?)", g.thread_id, g.row, g.track_id) ==
+                 ^thread_id)
     )
 
+    # Both representations are written: the column the next release reads and
+    # the document the release still serving beside this one reads.
     attrs = %{
       hash: grant.hash,
       track_id: track_id,

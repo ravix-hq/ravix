@@ -286,6 +286,7 @@ defmodule Ravix.Factory do
       "author_login" => "user",
       "body" => body,
       "image_count" => length(body["images"]),
+      "payload" => Jason.encode!(body),
       "status" => "queued",
       "error" => nil
     })
@@ -332,6 +333,7 @@ defmodule Ravix.Factory do
     row
     |> Row.to_attrs()
     |> Map.new(fn {key, value} -> {Atom.to_string(key), value} end)
+    |> Map.put("row", Row.encode(row))
     |> Map.merge(attrs)
   end
 

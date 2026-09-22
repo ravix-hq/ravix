@@ -1,7 +1,7 @@
 defmodule Ravix.Previews.StoreTest do
   use Ravix.DataCase, async: true, group: :preview_ports
 
-  alias Ravix.Previews.{AgentGrant, Config, Grant, Preview, Row, Store}
+  alias Ravix.Previews.{AgentGrant, Config, Grant, Preview, PreviewAgentGrant, Row, Store}
 
   describe "rows" do
     test "ensure creates a stopped row once and get reads it back by track and by host" do
@@ -83,10 +83,10 @@ defmodule Ravix.Previews.StoreTest do
 
       stored = Repo.get!(Preview, track.id)
 
-      assert stored.state == :ready
-      assert stored.last_activity == 5
-      assert stored.track_id == track.id
-      assert stored.service == stored.service
+      assert stored.row["state"] == "ready"
+      assert stored.row["last_activity"] == 5
+      assert stored.row["track_id"] == track.id
+      assert stored.row["service"] == stored.service
     end
 
     test "update writes the named fields and leaves every other one alone" do
@@ -264,7 +264,73 @@ defmodule Ravix.Previews.StoreTest do
       assert {hash, track_id, user_id, expires} ==
                {camel.hash, camel.track_id, user.id, camel.expires}
 
-      assert prompt_id == Ravix.Previews.AgentGrant.decode(camel.row).prompt_id
+      assert prompt_id == camel.row["promptId"]
+    end
+
+    test "both shapes of stored grant are found, replaced and revoked" do
+      user = insert_user()
+      track = insert_track(project: insert_project(user: user), conversation_id: "c")
+      thread = Ecto.UUID.generate()
+      now = System.system_time(:millisecond)
+
+      grant = fn hash, thread_id ->
+        %AgentGrant{
+          hash: hash,
+          track_id: track.id,
+          user_id: user.id,
+          conversation_id: "c",
+          prompt_id: "p",
+          sandbox_id: "sb",
+          sprite: "sp",
+          thread_id: thread_id,
+          expires: now + 1000
+        }
+      end
+
+      # Written the way the release still serving beside this one writes it:
+      # the thread named only inside the document, the column left unset.
+      old = grant.("old", thread)
+
+      %PreviewAgentGrant{}
+      |> PreviewAgentGrant.changeset(%{
+        hash: old.hash,
+        track_id: track.id,
+        user_id: user.id,
+        expires: old.expires,
+        row: AgentGrant.encode(old)
+      })
+      |> Repo.insert!()
+
+      assert Repo.get!(PreviewAgentGrant, old.hash).thread_id == nil
+      assert Store.agent_grant(old.hash) == old
+
+      # This release writes both, and replacing that thread's grant has to
+      # find the old row through the document or it stays behind, invisible.
+      fresh = grant.("fresh", thread)
+      assert :ok = Store.grant_agent(fresh)
+      assert Store.agent_grant(old.hash) == nil
+      assert Store.agent_grant(fresh.hash) == fresh
+
+      stored = Repo.get!(PreviewAgentGrant, fresh.hash)
+      assert stored.thread_id == thread
+      assert stored.row["thread_id"] == thread
+
+      # A row written the new way is replaced through the column just as well.
+      newer = grant.("newer", thread)
+      assert :ok = Store.grant_agent(newer)
+      assert Store.agent_grant(fresh.hash) == nil
+      assert Store.agent_grant(newer.hash) == newer
+
+      # The track's default thread is a separate grant under either shape,
+      # and revoking the track takes both.
+      default = grant.("default", nil)
+      assert :ok = Store.grant_agent(default)
+      assert Repo.get!(PreviewAgentGrant, default.hash).thread_id == track.id
+      assert Store.agent_grant(newer.hash) == newer
+
+      Store.revoke_agent(track.id)
+      assert Store.agent_grant(newer.hash) == nil
+      assert Store.agent_grant(default.hash) == nil
     end
   end
 

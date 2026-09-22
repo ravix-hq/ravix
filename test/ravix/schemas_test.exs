@@ -406,7 +406,7 @@ defmodule Ravix.SchemasTest do
       assert second.sequence > first.sequence
       assert first.status == :queued
       assert is_nil(first.error)
-      assert Jason.decode!(Jason.encode!(first.body))["images"] == []
+      assert Jason.decode!(first.payload)["images"] == []
     end
 
     test "validates the status enum" do
@@ -463,9 +463,9 @@ defmodule Ravix.SchemasTest do
       track = insert_track()
       preview = insert_preview(track: track)
       assert String.starts_with?(preview.hostname, "t-")
-      assert preview.state == :stopped
-      assert preview.service == "sy-#{preview.hostname}"
-      assert %Preview{desired: :stopped} = Repo.get!(Preview, track.id)
+      assert preview.row["state"] == "stopped"
+      assert preview.row["service"] == "sy-#{preview.hostname}"
+      assert %Preview{row: %{"desired" => "stopped"}} = Repo.get!(Preview, track.id)
     end
 
     test "hostname is unique" do
