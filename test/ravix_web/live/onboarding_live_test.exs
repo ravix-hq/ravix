@@ -621,8 +621,8 @@ defmodule RavixWeb.OnboardingLiveTest do
       :sys.replace_state(view.pid, &age_session_guard/1)
 
       # The panel is a component, so the page's hook never sees the submit;
-      # the panel asks the guard itself and sends the whole page to sign in.
-      assert {:error, {:live_redirect, %{to: "/login"}}} =
+      # `RavixWeb.Live.Hooks` asks for it and sends the whole page to sign in.
+      assert {:error, {:redirect, %{to: "/login"}}} =
                view |> form("#credential-form", credential: [value: "k"]) |> render_submit()
     end
   end

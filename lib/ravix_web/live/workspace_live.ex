@@ -192,9 +192,7 @@ defmodule RavixWeb.WorkspaceLive do
   defp validate_session(%{assigns: %{current_user: nil}} = socket), do: socket
 
   defp validate_session(socket) do
-    hash = Ravix.Crypto.sha256(socket.assigns.session_token)
-
-    case Guard.verify(socket.assigns[:session_guard], hash) do
+    case Guard.verify(socket.assigns[:session_guard], socket.assigns.session_hash) do
       {:ok, guard} -> assign(socket, session_guard: guard)
       :error -> assign(socket, current_user: nil, projects: [], tracks: %{}, attention: 0)
     end
@@ -406,12 +404,8 @@ defmodule RavixWeb.WorkspaceLive do
       when elem(name, 0) == :tracks,
       do: {:noreply, socket}
 
-  def handle_async(_name, {:exit, _reason}, socket),
-    do:
-      {:noreply,
-       socket
-       |> assign(busy: false)
-       |> put_flash(:error, "The operation could not finish. Refresh and try again.")}
+  def handle_async(_name, {:exit, reason}, socket),
+    do: {:noreply, socket |> assign(busy: false) |> exit(reason)}
 
   # The rail shows a track's title, branch, status and last activity, and
   # which projects exist at all. Two events cannot move any of that and are

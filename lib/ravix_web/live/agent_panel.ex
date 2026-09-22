@@ -34,14 +34,11 @@ defmodule RavixWeb.Live.AgentPanel do
 
   ## The session
 
-  A component's events do not pass through the page's `handle_event` hook,
-  so the panel asks before each one itself. It holds no `RavixWeb.Live.Guard`
-  of its own: a copy of the page's would age on its own clock and could
-  outlive the page's answer, so each event reads the session row instead.
-  That is one read per click on a panel that gets a handful of clicks, and
-  it is exact --- a session that has gone is refused on the next event, not
-  after a backstop. It sends the whole page to sign in, which is what the
-  page's own hook would have done.
+  A component's events do not pass through the page's session hooks, so
+  every `live_component`'s `handle_event/3` is wrapped by
+  `RavixWeb.Live.Hooks` and asks before each event itself, with the
+  `session_hash` its page passes in. See that module for why it reads the
+  row rather than holding a `RavixWeb.Live.Guard` of its own.
 
   ## The credential
 
@@ -56,7 +53,6 @@ defmodule RavixWeb.Live.AgentPanel do
 
   alias Ravix.Accounts.{Inference, User}
   alias RavixWeb.Live.Form
-  alias RavixWeb.Live.Guard
 
   # What the buttons send, as the atoms this module and the context use. Two
   # fixed tables rather than `String.to_existing_atom/1`: a browser must not be
@@ -112,17 +108,7 @@ defmodule RavixWeb.Live.AgentPanel do
   end
 
   @impl true
-  def handle_event(event, params, socket) do
-    # See the moduledoc: the page's hook does not see a component's events.
-    hash = Ravix.Crypto.sha256(socket.assigns.session_token)
-
-    case Guard.verify(nil, hash) do
-      {:ok, _guard} -> event(event, params, socket)
-      :error -> {:noreply, push_navigate(socket, to: "/login")}
-    end
-  end
-
-  defp event("choose-agent", %{"agent" => word}, socket) when is_map_key(@agents, word) do
+  def handle_event("choose-agent", %{"agent" => word}, socket) when is_map_key(@agents, word) do
     agent = Map.fetch!(@agents, word)
     kinds = Inference.kinds(agent)
     kind = if socket.assigns.kind in kinds, do: socket.assigns.kind, else: hd(kinds)
@@ -133,7 +119,7 @@ defmodule RavixWeb.Live.AgentPanel do
      |> read_link_status()}
   end
 
-  defp event("choose-kind", %{"kind" => word}, socket) when is_map_key(@kinds, word) do
+  def handle_event("choose-kind", %{"kind" => word}, socket) when is_map_key(@kinds, word) do
     kind = Map.fetch!(@kinds, word)
 
     if socket.assigns.agent && kind in Inference.kinds(socket.assigns.agent),
@@ -148,8 +134,12 @@ defmodule RavixWeb.Live.AgentPanel do
   # Remove one thing the set holds. Which one comes from the button and is
   # narrowed through the same two tables as a choice; the person is not asked
   # to confirm here because the browser already did (`data-confirm`).
-  defp event("disconnect", %{"agent" => a, "kind" => k}, %{assigns: %{busy: false}} = socket)
-       when is_map_key(@agents, a) and is_map_key(@kinds, k) do
+  def handle_event(
+        "disconnect",
+        %{"agent" => a, "kind" => k},
+        %{assigns: %{busy: false}} = socket
+      )
+      when is_map_key(@agents, a) and is_map_key(@kinds, k) do
     user = socket.assigns.current_user
     {agent, kind} = {Map.fetch!(@agents, a), Map.fetch!(@kinds, k)}
 
@@ -161,10 +151,12 @@ defmodule RavixWeb.Live.AgentPanel do
 
   # A word neither table holds is a browser saying something the form never
   # offered. Nothing to do and nothing to say.
-  defp event(event, _params, socket) when event in ["choose-agent", "choose-kind", "disconnect"],
-    do: {:noreply, socket}
+  def handle_event(event, _params, socket)
+      when event in ["choose-agent", "choose-kind", "disconnect"],
+      do: {:noreply, socket}
 
-  defp event("connect", %{"credential" => %{"value" => value}}, socket) when is_binary(value) do
+  def handle_event("connect", %{"credential" => %{"value" => value}}, socket)
+      when is_binary(value) do
     %{current_user: user, agent: agent, kind: kind} = socket.assigns
     attrs = %{agent: agent, kind: kind, value: value}
 
@@ -176,7 +168,7 @@ defmodule RavixWeb.Live.AgentPanel do
      |> traced_async(:connect, fn -> Inference.connect(user, attrs) end)}
   end
 
-  defp event("begin-link", _params, %{assigns: %{link: nil, busy: false}} = socket) do
+  def handle_event("begin-link", _params, %{assigns: %{link: nil, busy: false}} = socket) do
     user = socket.assigns.current_user
 
     {:noreply,
@@ -185,9 +177,9 @@ defmodule RavixWeb.Live.AgentPanel do
      |> traced_async(:begin_link, fn -> Inference.begin_link(user) end)}
   end
 
-  defp event("begin-link", _params, socket), do: {:noreply, socket}
+  def handle_event("begin-link", _params, socket), do: {:noreply, socket}
 
-  defp event("cancel-link", _params, %{assigns: %{link: %Inference.Link{} = link}} = socket) do
+  def handle_event("cancel-link", _params, %{assigns: %{link: %Inference.Link{} = link}} = socket) do
     user = socket.assigns.current_user
 
     # Forgotten here first: a poll already in flight for it answers to a
@@ -198,7 +190,7 @@ defmodule RavixWeb.Live.AgentPanel do
      |> traced_async(:cancel_link, fn -> Inference.cancel_link(user, link) end)}
   end
 
-  defp event("cancel-link", _params, socket), do: {:noreply, socket}
+  def handle_event("cancel-link", _params, socket), do: {:noreply, socket}
 
   @impl true
   def handle_async(:connect, {:ok, response}, socket) do
@@ -263,10 +255,8 @@ defmodule RavixWeb.Live.AgentPanel do
      end)}
   end
 
-  def handle_async(_name, {:exit, _reason}, socket) do
-    send(self(), {:flash, :error, "The operation could not finish. Refresh and try again."})
-    {:noreply, assign(socket, busy: false)}
-  end
+  def handle_async(_name, {:exit, reason}, socket),
+    do: {:noreply, socket |> assign(busy: false) |> exit(reason)}
 
   # The person changed. The panel shows what they now have, and the page is
   # told, since it is the page that holds them.

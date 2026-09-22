@@ -509,6 +509,7 @@
       id="settings-dialog-panel"
       project={@project}
       current_user={@current_user}
+      session_hash={@session_hash}
     />
     <.dialog :if={@dialog == :account} id="account-dialog" title="Your account" on_close="dismiss">
       <p class="lede">
@@ -518,7 +519,7 @@
         module={RavixWeb.Live.AgentPanel}
         id="agent-panel"
         current_user={@current_user}
-        session_token={@session_token}
+        session_hash={@session_hash}
       />
       <hr />
       <p class="hint">
@@ -533,6 +534,7 @@
       subject_id={@project.id}
       owner={@project.role == :owner}
       current_user={@current_user}
+      session_hash={@session_hash}
     />
   </div>
 </Layouts.app>

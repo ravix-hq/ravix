@@ -126,6 +126,10 @@ defmodule RavixWeb.Live.AgentPanelTest do
     assert render_async(view) =~ "WXYZ-1234"
 
     send(view.pid, {:agent_panel, "agent-panel", :poll_link})
+    # The tick reaches the panel through `send_update/2`, one message
+    # later, so the poll it starts is not outstanding when `render_async/1`
+    # asks straight away; rendering once lets the page take the tick first.
+    render(view)
     assert render_async(view) =~ "WXYZ-1234"
   end
 
@@ -227,7 +231,7 @@ defmodule RavixWeb.Live.AgentPanelTest do
 
     Repo.delete!(session)
 
-    assert {:error, {:live_redirect, %{to: "/login"}}} =
+    assert {:error, {:redirect, %{to: "/login"}}} =
              view |> element("#remove-claude-api_key") |> render_click()
   end
 
@@ -241,7 +245,7 @@ defmodule RavixWeb.Live.AgentPanelTest do
 
     Repo.delete!(session)
 
-    assert {:error, {:live_redirect, %{to: "/login"}}} =
+    assert {:error, {:redirect, %{to: "/login"}}} =
              view |> form("#credential-form", credential: [value: "k"]) |> render_submit()
   end
 end

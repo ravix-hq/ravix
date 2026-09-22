@@ -118,7 +118,45 @@ defmodule RavixWeb.TrackLiveTest do
     ctx.view |> element("button", "Wake / retry") |> render_click()
     render_async(ctx.view)
     ctx.view |> element("button", "Stop") |> render_click()
+    # Both are Fountain round trips and run off the page.
+    render_async(ctx.view)
     assert has_element?(ctx.view, "#composer-form")
+  end
+
+  test "stopping runs off the page, with the button disabled until Fountain answers", ctx do
+    parent = self()
+
+    stub(Tracks, :interrupt, fn _, _ ->
+      send(parent, {:stopping, self()})
+
+      receive do
+        :finish -> :ok
+      after
+        2_000 -> flunk("the interrupt was never released")
+      end
+    end)
+
+    ctx.view |> element("button", "Stop") |> render_click()
+
+    assert_receive {:stopping, stopping}
+    assert has_element?(ctx.view, "button[phx-click=interrupt][disabled]")
+    # Still a page: a dialog opens while the interrupt is out.
+    assert render_click(ctx.view, "dialog", %{name: "rename"}) =~ "rename-form"
+
+    send(stopping, :finish)
+    render_async(ctx.view)
+    refute has_element?(ctx.view, "button[phx-click=interrupt][disabled]")
+  end
+
+  @tag capture_log: true
+  test "a stop that crashes says so, and not that something failed to load", ctx do
+    stub(Tracks, :interrupt, fn _, _ -> raise "Fountain fell over" end)
+    ctx.view |> element("button", "Stop") |> render_click()
+
+    html = render_async(ctx.view)
+    assert html =~ "The operation could not finish"
+    refute html =~ "Could not finish loading"
+    refute has_element?(ctx.view, "button[phx-click=interrupt][disabled]")
   end
 
   test "failed load can be retried without leaving the track", ctx do
@@ -192,6 +230,36 @@ defmodule RavixWeb.TrackLiveTest do
     ctx.view |> element("#track-terminal") |> render_hook("exec", %{command: "pwd"})
     assert render_async(ctx.view) =~ "Machine asleep"
     refute has_element?(ctx.view, "input[data-terminal-input][disabled]")
+  end
+
+  test "the Run tab explains itself and the Terminal tab does not", ctx do
+    hint = "Run a command in this track’s worktree"
+    refute render(ctx.view) =~ hint
+
+    ctx.view |> element("button[phx-click=dock][phx-value-name=run]") |> render_click()
+    assert has_element?(ctx.view, "#track-terminal p.hint", hint)
+
+    ctx.view |> element("button[phx-click=dock][phx-value-name=terminal]") |> render_click()
+    refute render(ctx.view) =~ hint
+  end
+
+  test "a session that went without notice cannot run a command through the dock", ctx do
+    # The dock is a `live_component`, and the page's session hooks never see
+    # a component's events; see `RavixWeb.Live.Hooks`. The redirect answers
+    # the event itself, so it is the child's to assert, not the root's.
+    reject(&Terminal.exec/3)
+    {token, session} = insert_session(ctx.user)
+    conn = Plug.Test.init_test_session(build_conn(), session_token: token)
+    {:ok, parent, _} = live(conn, "/p/#{ctx.project.id}/t/#{ctx.track.id}")
+    view = find_live_child(parent, "track-host")
+    settle(view)
+
+    Repo.delete!(session)
+
+    assert {:error, {:redirect, %{to: "/login"}}} =
+             view |> element("#track-terminal") |> render_hook("exec", %{command: "pwd"})
+
+    assert_redirect(view, "/login")
   end
 
   test "the dock keeps its own state and its refusals still reach the page", ctx do
@@ -440,7 +508,36 @@ defmodule RavixWeb.TrackLiveTest do
 
     render_click(ctx.view, "dialog", %{name: "pull"})
     ctx.view |> form("#pull-form", title: "Fix", body: "Details") |> render_submit()
+    # A GitHub round trip, off the page.
+    render_async(ctx.view)
     assert has_element?(ctx.view, "a[href='https://github.test/pull/1']")
+    refute has_element?(ctx.view, "#pull-dialog")
+  end
+
+  test "opening a pull request disables its button until GitHub answers", ctx do
+    parent = self()
+
+    stub(Tracks, :open_pull, fn _, _, _ ->
+      send(parent, {:opening, self()})
+
+      receive do
+        :finish -> {:error, {:unavailable, "GitHub is not answering."}}
+      after
+        2_000 -> flunk("the pull request was never released")
+      end
+    end)
+
+    render_click(ctx.view, "dialog", %{name: "pull"})
+    ctx.view |> form("#pull-form", title: "Fix") |> render_submit()
+
+    assert_receive {:opening, opening}
+    assert has_element?(ctx.view, "#pull-form button[disabled]")
+
+    send(opening, :finish)
+    # A refusal lands in front of the form that caused it, ready to retry.
+    assert render_async(ctx.view) =~ "GitHub is not answering."
+    assert has_element?(ctx.view, "#pull-dialog")
+    refute has_element?(ctx.view, "#pull-form button[disabled]")
   end
 
   test "closing a track passes the explicit force flag and returns to its project", ctx do

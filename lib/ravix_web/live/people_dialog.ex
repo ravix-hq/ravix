@@ -30,7 +30,7 @@ defmodule RavixWeb.Live.PeopleDialog do
   def scopes, do: [:track, :project]
 
   @impl true
-  def mount(socket), do: {:ok, assign(socket, invite: nil)}
+  def mount(socket), do: {:ok, assign(socket, invite: nil, inviting?: false)}
 
   @impl true
   def update(assigns, socket) do
@@ -45,14 +45,18 @@ defmodule RavixWeb.Live.PeopleDialog do
     {:ok, if(socket.assigns[:people], do: socket, else: load(socket))}
   end
 
+  # Inviting somebody asks GitHub who they are, and a component runs in its
+  # page's process, so the page stopped drawing and answering for as long as
+  # GitHub took. The button is disabled until the answer lands, which is
+  # also what stops a second Enter inviting them twice.
   @impl true
   def handle_event("invite-person", %{"login" => login}, socket) do
     %{scope: scope, subject_id: id, current_user: user} = socket.assigns
 
     {:noreply,
-     result(socket, add(scope, user, id, login), fn s, people ->
-       assign(s, people: people)
-     end)}
+     socket
+     |> assign(inviting?: true)
+     |> traced_async(:invite, fn -> add(scope, user, id, login) end)}
   end
 
   def handle_event("remove-person", %{"login" => login}, socket) do
@@ -79,6 +83,13 @@ defmodule RavixWeb.Live.PeopleDialog do
        assign(s, invite: if(minting?, do: value, else: nil))
      end)}
   end
+
+  @impl true
+  def handle_async(:invite, {:ok, response}, socket),
+    do: {:noreply, result(assign(socket, inviting?: false), response, &assign(&1, people: &2))}
+
+  def handle_async(:invite, {:exit, reason}, socket),
+    do: {:noreply, socket |> assign(inviting?: false) |> exit(reason)}
 
   defp load(socket) do
     %{scope: scope, subject_id: id, current_user: user} = socket.assigns
@@ -160,7 +171,7 @@ defmodule RavixWeb.Live.PeopleDialog do
         </div>
         <form :if={@owner} id={"#{@id}-invite-form"} phx-submit="invite-person" phx-target={@myself}>
           <.input name="login" id={"#{@id}-invite-login"} label="GitHub username" value="" required />
-          <button class="primary">Invite</button>
+          <button class="primary" phx-disable-with="Inviting…" disabled={@inviting?}>Invite</button>
         </form>
         <.invite_link owner={@owner} invite={@invite} target={@myself} />
       </.dialog>
