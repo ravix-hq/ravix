@@ -125,16 +125,24 @@ defmodule Ravix.Ids do
   @spec workdir_for(String.t()) :: String.t()
   def workdir_for(slug), do: "#{work_root()}/#{slug}"
 
-  @doc """
-  A track's branch.
+  @doc "A newly cut track branch, under Ravix's fixed namespace."
+  @spec branch_for(String.t()) :: String.t()
+  def branch_for(name), do: "ravix/#{name}"
 
-  Namespaced under the person who asked for it, the way a human would name a
-  branch they intend to push: `jhgaylor/kyoto-<track-id>`. The login comes
-  from GitHub, so it is the same name that will appear on the pull request.
-  Names can outlive the local branch and even the project database on GitHub.
-  """
-  @spec branch_for(String.t(), String.t(), String.t()) :: String.t()
-  def branch_for(login, slug, track_id), do: "#{slugify(login, "sy")}/#{slug}-#{track_id}"
+  @doc "Validate the name supplied after ravix/, without silently changing it."
+  @spec valid_branch_name?(term()) :: boolean()
+  def valid_branch_name?(name) when is_binary(name) do
+    name != "" and name != "@" and not String.starts_with?(name, "-") and
+      not String.ends_with?(name, ".") and
+      not String.contains?(name, ["..", "@{", "//"]) and
+      not Regex.match?(~r/[\x00-\x20\x7f~^:?*\[\\]/u, name) and
+      Enum.all?(String.split(name, "/"), fn part ->
+        part != "" and not String.starts_with?(part, ".") and
+          not String.ends_with?(part, ".lock")
+      end)
+  end
+
+  def valid_branch_name?(_name), do: false
 
   @doc "`/workspace/<name>` for `owner/name`."
   @spec mount_path_for(String.t()) :: String.t()

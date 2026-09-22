@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Own a production-mode app, provider mocks, and a disposable browser database."""
 import os
+import json
 from pathlib import Path
 import signal
 import socket
@@ -25,19 +26,26 @@ def start(args, env):
     return process
 
 # Never attach to another developer's server or database.
-for port in (4103, 8893, 8894):
+ports = tuple(int(os.environ.get(key, default)) for key, default in
+              (("BROWSER_PORT", "4103"), ("MOCK_PORT", "8893"), ("MOCK_SPRITES_PORT", "8894")))
+for port in ports:
     with socket.socket() as probe:
         probe.bind(("127.0.0.1", port))
 
-env = dict(os.environ, MIX_ENV="prod", PORT="4103", PHX_SERVER="true",
-           PUBLIC_URL="http://localhost:4103", RAVIX_URL="http://localhost:4103",
-           MOCK_PORT="8893", MOCK_SPRITES_PORT="8894", RAVIX_THREADS_ENABLED="true",
-           RAVIX_SECRET="browser-test-only-secret-never-used-outside-this-process")
+env = dict(os.environ, MIX_ENV="prod", PORT=str(ports[0]), PHX_SERVER="true",
+           PUBLIC_URL=f"http://localhost:{ports[0]}", RAVIX_URL=f"http://localhost:{ports[0]}",
+           MOCK_PORT=str(ports[1]), MOCK_SPRITES_PORT=str(ports[2]),
+           RAVIX_SECRET="browser-test-only-secret-never-used-outside-this-process",
+           RAVIX_BROWSER_TEST="1", RAVIX_THREADS_ENABLED="true")
 # Only a generated database name is ever created/dropped. Credentials can differ locally.
 base = os.environ.get("BROWSER_DATABASE_SERVER", "postgres://postgres:postgres@localhost:5432")
 if "/" in base.split("://", 1)[-1]:
     raise SystemExit("BROWSER_DATABASE_SERVER must contain only scheme, credentials, host and port")
 env["DATABASE_URL"] = base + "/ravix_browser_" + uuid.uuid4().hex
+# Browser fixtures may alter only this harness-owned disposable database.
+manifest = ROOT / "tmp" / f"browser-{ports[0]}.json"
+manifest.parent.mkdir(exist_ok=True)
+manifest.write_text(json.dumps({"database": env["DATABASE_URL"].rsplit("/", 1)[1]}))
 created = False
 with tempfile.TemporaryDirectory(prefix="ravix-browser-") as tmp:
     env["MOCK_KEY_PATH"] = str(Path(tmp) / "key.pem")
@@ -67,5 +75,6 @@ with tempfile.TemporaryDirectory(prefix="ravix-browser-") as tmp:
                 except subprocess.TimeoutExpired:
                     os.killpg(process.pid, signal.SIGKILL)
                     process.wait()
+        manifest.unlink(missing_ok=True)
         if created:
             subprocess.run(["mix", "ecto.drop", "--force"], env=env, check=True)

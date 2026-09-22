@@ -39,6 +39,7 @@ defmodule Ravix.Tracks.Track do
     field :slug, :string
     field :title, :string
     field :branch, :string
+    field :branch_reserved, :boolean, default: true
     field :workdir, :string
     field :origin_kind, Ecto.Enum, values: @origin_kinds
     field :origin_base, :string
@@ -60,7 +61,7 @@ defmodule Ravix.Tracks.Track do
     has_one :preview, Ravix.Previews.Preview
   end
 
-  @fields ~w(id project_id conversation_id slug title branch workdir origin_kind origin_base
+  @fields ~w(id project_id conversation_id slug title branch branch_reserved workdir origin_kind origin_base
              origin_number origin_title origin_url rev opened_at closed_at created_at created_by_login)a
   @required ~w(id project_id slug title branch workdir origin_kind rev created_at created_by_login)a
 
@@ -69,8 +70,9 @@ defmodule Ravix.Tracks.Track do
   def origin_kinds, do: @origin_kinds
 
   @doc """
-  A track. The caller usually brings the id, since the branch name is
-  derived from it; one is minted otherwise.
+  A track. The opening plan usually brings the id; one is minted otherwise.
+  New rows reserve their branch across open and closed tracks, except a pull
+  request's head branch, which belongs to the PR.
   """
   @spec changeset(t(), map()) :: Ecto.Changeset.t()
   def changeset(track, attrs) do
@@ -81,6 +83,7 @@ defmodule Ravix.Tracks.Track do
     |> validate_required(@required)
     |> validate_number(:rev, greater_than_or_equal_to: 1)
     |> foreign_key_constraint(:project_id)
+    |> unique_constraint([:project_id, :branch], name: :tracks_branch, error_key: :branch)
     |> unique_constraint(:id, name: :tracks_pkey)
     |> check_constraint(:origin_kind, name: :tracks_origin_kind)
     |> unique_constraint([:project_id, :slug],

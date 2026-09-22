@@ -2,11 +2,13 @@ defmodule RavixWeb.TrackLiveTest do
   use RavixWeb.ConnCase, async: true
   import Phoenix.LiveViewTest
   import Mimic
+  alias Ravix.Accounts.Session
   alias Ravix.Fountain.{FakeTransport, Shapes}
   alias Ravix.Hub.Event
   alias Ravix.{People, Previews, PromptQueue, QueryCount, Repo, Terminal, Tracks, Vitals}
   alias Ravix.PromptQueue.View, as: QueuedPrompt
-  alias Ravix.Tracks.{Files, Track, Transcript}
+  alias Ravix.Tracks.{Diff, Files, Track, TrackMember, Transcript}
+  alias RavixWeb.Live.Guard
 
   setup :verify_on_exit!
 
@@ -125,7 +127,7 @@ defmodule RavixWeb.TrackLiveTest do
     @thread_event event
     test "revoked session rejects #{event}", ctx do
       token = Plug.Conn.get_session(ctx.conn, :session_token)
-      session = Repo.get_by!(Ravix.Accounts.Session, token_hash: Ravix.Crypto.sha256(token))
+      session = Repo.get_by!(Session, token_hash: Ravix.Crypto.sha256(token))
       Repo.delete!(session)
 
       :sys.replace_state(ctx.view.pid, fn state ->
@@ -141,6 +143,164 @@ defmodule RavixWeb.TrackLiveTest do
 
   defp thread_options(id) do
     Enum.map(Tracks.Store.threads_of(id), &%{id: &1.id, title: &1.title, unread: false})
+  end
+
+  defp changes_fixture(truncated \\ false) do
+    patch = File.read!("test/fixtures/diff/files.patch")
+
+    %Diff{
+      path: "/",
+      repo_root: "/",
+      diff: patch,
+      truncated: truncated,
+      changes: Diff.summarize(patch),
+      files: Diff.parse(patch, truncated)
+    }
+  end
+
+  test "changes list filters, opens escaped numbered hunks and keeps selection on refresh", ctx do
+    expect(Tracks, :diff, 2, fn _, _ -> {:ok, changes_fixture(true)} end)
+    render_click(ctx.view, "panel", %{name: "changes"})
+    render_async(ctx.view, 1_000)
+    assert has_element?(ctx.view, ".change-file", "space name.txt")
+    assert has_element?(ctx.view, ".changes-panel", "Diff is truncated.")
+    ctx.view |> form(".changes-panel form", %{filter: "space"}) |> render_change()
+    refute has_element?(ctx.view, ".change-file", "added.txt")
+    ctx.view |> element(".change-file", "space name.txt") |> render_click()
+    assert has_element?(ctx.view, ".diff-line.diff-add code", "<script>alert(1)</script>")
+    refute has_element?(ctx.view, ".file-diff script")
+    assert has_element?(ctx.view, ".diff-number[aria-hidden=true]", "2")
+    assert has_element?(ctx.view, ".diff-add .sr-only", "Added line 2:")
+    assert has_element?(ctx.view, ".diff-del .sr-only", "Removed line 2:")
+    assert has_element?(ctx.view, ".changes-panel", "Partial file")
+    render_click(ctx.view, "refresh-panel")
+    render_async(ctx.view, 1_000)
+    assert has_element?(ctx.view, ".file-diff")
+    ctx.view |> element("button", "All changed files") |> render_click()
+    assert has_element?(ctx.view, "#diff-filter[value=space]")
+    render_change(ctx.view, "filter-diff", %{filter: "missing"})
+    assert has_element?(ctx.view, ".changes-panel", "No matching files")
+  end
+
+  test "large diffs require an explicit show action and empty diffs retain their message", ctx do
+    patch =
+      "diff --git a/large b/large\n@@ -0,0 +1,1001 @@\n" <> String.duplicate("+line\n", 1001)
+
+    diff = %{
+      changes_fixture()
+      | diff: patch,
+        changes: Diff.summarize(patch),
+        files: Diff.parse(patch)
+    }
+
+    expect(Tracks, :diff, fn _, _ -> {:ok, diff} end)
+    render_click(ctx.view, "panel", %{name: "changes"})
+    render_async(ctx.view, 1_000)
+    render_click(ctx.view, "select-diff", %{path: "large"})
+    refute has_element?(ctx.view, ".file-diff")
+    ctx.view |> element("button", "Show anyway") |> render_click()
+    assert has_element?(ctx.view, ".file-diff")
+    expect(Tracks, :diff, fn _, _ -> {:ok, %{diff | diff: "", changes: [], files: []}} end)
+    render_click(ctx.view, "refresh-panel")
+    render_async(ctx.view, 1_000)
+    assert has_element?(ctx.view, ".changes-panel", "No changes yet.")
+  end
+
+  test "selecting a diff respects session revocation", ctx do
+    expect(Tracks, :diff, fn _, _ -> {:ok, changes_fixture()} end)
+    render_click(ctx.view, "panel", %{name: "changes"})
+    render_async(ctx.view, 1_000)
+    token = Plug.Conn.get_session(ctx.conn, :session_token)
+    Repo.get!(Session, Ravix.Crypto.sha256(token)) |> Repo.delete!()
+
+    :sys.replace_state(ctx.view.pid, fn state ->
+      update_in(
+        state.socket.assigns.session_guard,
+        &%{&1 | verified_at_ms: &1.verified_at_ms - Guard.ttl_ms() - 1}
+      )
+    end)
+
+    assert {:error, {:redirect, %{to: "/login"}}} =
+             render_click(ctx.view, "select-diff", %{path: "space name.txt"})
+  end
+
+  test "diff selection only opens loaded paths and presents metadata", ctx do
+    expect(Tracks, :diff, fn _, _ -> {:ok, changes_fixture()} end)
+    render_click(ctx.view, "panel", %{name: "changes"})
+    render_async(ctx.view, 1_000)
+    render_click(ctx.view, "select-diff", %{path: "../../private"})
+    refute has_element?(ctx.view, ".file-diff")
+    assert has_element?(ctx.view, ".change-file")
+
+    for {path, text} <- [
+          {"binary.dat", "Binary files differ"},
+          {"mode.sh", "new mode 100755"},
+          {"new name.txt", "old name.txt →"},
+          {"nonewline.txt", "No newline at end of file"}
+        ] do
+      render_click(ctx.view, "select-diff", %{path: path})
+      assert has_element?(ctx.view, ".changes-panel", text)
+    end
+  end
+
+  test "diff selection refuses a removed track member even if the notice was lost", ctx do
+    owner = insert_user()
+    project = insert_project(user: owner)
+    track = insert_track(project: project, conversation_id: "shared-diff")
+    People.Store.add_member(track.id, ctx.user.id, owner.id)
+    {:ok, parent, _} = live(ctx.conn, "/p/#{project.id}/t/#{track.id}")
+    view = find_live_child(parent, "track-host")
+    settle(view)
+    expect(Tracks, :diff, fn _, _ -> {:ok, changes_fixture()} end)
+    render_click(view, "panel", %{name: "changes"})
+    render_async(view, 1_000)
+    Repo.get_by!(TrackMember, track_id: track.id, user_id: ctx.user.id) |> Repo.delete!()
+
+    :sys.replace_state(view.pid, fn state ->
+      update_in(state.socket.assigns.track_guard, &%{&1 | stale?: true})
+    end)
+
+    assert {:error, {:redirect, %{to: "/"}}} =
+             render_click(view, "select-diff", %{path: "space name.txt"})
+  end
+
+  test "Send keeps its icon and accessible name through every track state", ctx do
+    for status <- [:opening, :running, :ready, :failed],
+        conversation_id <- [nil, "live-conversation"] do
+      stub(Tracks, :get, fn _, _, _ ->
+        track = %{
+          Tracks.present(ctx.track, role: :owner)
+          | status: status,
+            conversation_id: conversation_id
+        }
+
+        {:ok,
+         %{
+           track: track,
+           header: blank_header(),
+           starters: [],
+           threads: thread_options(ctx.track.id)
+         }}
+      end)
+
+      send(ctx.view.pid, {:hub, Event.new(:tracks, ctx.project.id, track_id: ctx.track.id)})
+      settle(ctx.view)
+
+      button = "#composer-form button[aria-label='Send']"
+      assert has_element?(ctx.view, button <> "[type='submit'][title='Send']", "Send")
+      assert has_element?(ctx.view, button <> " svg[width='16'][height='16'] path")
+      refute has_element?(ctx.view, button <> "[phx-disable-with]")
+      assert has_element?(ctx.view, button <> "[disabled]") == is_nil(conversation_id)
+
+      assert has_element?(ctx.view, "#composer-form button", "Stop") ==
+               status in [:opening, :running]
+
+      assert has_element?(ctx.view, "#composer-form button", "Wake / retry") ==
+               status in [:opening, :failed]
+
+      assert has_element?(ctx.view, "#composer-form button[aria-label='Choose images'] svg")
+      assert has_element?(ctx.view, ".send-hint", "to send")
+    end
   end
 
   test "starters and typing use the composer protocol", ctx do
@@ -390,7 +550,8 @@ defmodule RavixWeb.TrackLiveTest do
     end)
 
     ctx.view |> element("button[phx-click=dock][phx-value-name=vitals]") |> render_click()
-    rendered = render(ctx.view)
+    # The dock reads vitals under `start_async`; the readout exists once it lands.
+    rendered = render_async(ctx.view)
 
     assert rendered =~ "Memory used"
     assert rendered =~ "33554432"
@@ -403,7 +564,7 @@ defmodule RavixWeb.TrackLiveTest do
     end)
 
     ctx.view |> element("button[phx-click=dock][phx-value-name=vitals]") |> render_click()
-    assert render(ctx.view) =~ "no_machine"
+    assert render_async(ctx.view) =~ "no_machine"
   end
 
   test "a tab or dialog name nobody declared is refused, not shown", ctx do
@@ -489,7 +650,7 @@ defmodule RavixWeb.TrackLiveTest do
 
   test "a bad preview configuration is refused on every box that is wrong", ctx do
     render_click(ctx.view, "panel", %{name: "preview"})
-    render_async(ctx.view)
+    render_async(ctx.view, 1_000)
 
     # The real refusal, built by the real parser rather than written out here:
     # `Ravix.Previews.Config` is the authority on which of these three boxes is

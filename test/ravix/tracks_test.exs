@@ -69,7 +69,7 @@ defmodule Ravix.TracksTest do
 
     test "a deletion and a rename are told apart" do
       deleted =
-        "diff --git a/gone.ts b/gone.ts\ndeleted file mode 100644\n--- a/gone.ts\n+++ /dev/null\n-x"
+        "diff --git a/gone.ts b/gone.ts\ndeleted file mode 100644\n--- a/gone.ts\n+++ /dev/null\n@@ -1 +0,0 @@\n-x"
 
       assert [%Diff.Change{path: "gone.ts", added: 0, removed: 1, status: :deleted}] =
                Tracks.summarize_diff(deleted)
@@ -425,8 +425,8 @@ defmodule Ravix.TracksTest do
                Tracks.open(ctx.owner, ctx.project.id, %{"title" => "Kyoto"}, opening_turn: :sync)
 
       assert presented.slug == "kyoto"
-      assert presented.title == "Kyoto"
-      assert presented.branch == "ana/kyoto-#{presented.id}"
+      assert presented.title == "ravix/Kyoto"
+      assert presented.branch == "ravix/Kyoto"
       assert presented.workdir == "/home/sprite/work/kyoto"
       assert presented.conversation_id == "c-new"
       assert presented.role == :owner
@@ -445,7 +445,7 @@ defmodule Ravix.TracksTest do
       assert prompt.body["prompt"] =~ "[ravix] Open this track"
 
       assert prompt.body["prompt"] =~
-               "git worktree add /home/sprite/work/kyoto -b ana/kyoto-#{presented.id} origin/main"
+               "git worktree add /home/sprite/work/kyoto -b ravix/Kyoto origin/main"
 
       row = Repo.get!(Track, presented.id)
       assert row.opened_at
@@ -523,6 +523,27 @@ defmodule Ravix.TracksTest do
       refute_received {:hub, %Event{name: :tracks}}
     end
 
+    test "a concurrent branch reservation unwinds the losing conversation", ctx do
+      client = opening_fountain(ctx.project, false)
+
+      FakeTransport.expect(
+        client,
+        %{method: "POST", path: "/api/conversations/c-new/terminate"},
+        {200, [], %{}}
+      )
+
+      expect(Ravix.Fountain, :create_conversation, fn client, launch ->
+        insert_track(project: ctx.project, slug: "other-dir", branch: "ravix/race")
+        Mimic.call_original(Ravix.Fountain, :create_conversation, [client, launch])
+      end)
+
+      assert {:error, {:unprocessable, "branch_taken", _}} =
+               Tracks.open(ctx.owner, ctx.project.id, %{branch_name: "race"})
+
+      assert [_list, _create, %{path: "/api/conversations/c-new/terminate"}] =
+               FakeTransport.calls(client)
+    end
+
     test "a terminate that fails is logged, and the refusal is reported anyway", ctx do
       client = opening_fountain(ctx.project, false)
 
@@ -575,8 +596,8 @@ defmodule Ravix.TracksTest do
       }
 
       assert {:ok, presented} = Tracks.open(ctx.owner, ctx.project.id, %{"origin" => origin})
-      assert presented.title == "Fix the importer"
-      assert presented.slug == "fix-the-importer"
+      assert presented.title == "feature/x"
+      assert presented.slug == "feature-x"
       assert presented.branch == "feature/x"
 
       assert presented.origin == %Origin{
@@ -591,11 +612,120 @@ defmodule Ravix.TracksTest do
       assert create.body["prompt"] =~ "pull request #12"
     end
 
+    test "a pull request can be picked up again once its earlier track closes", ctx do
+      insert_track(
+        project: ctx.project,
+        branch: "feature/x",
+        branch_reserved: false,
+        closed_at: DateTime.utc_now()
+      )
+
+      opening_fountain(ctx.project, false)
+      origin = %{"kind" => "pr", "base" => "feature/x", "number" => 12}
+
+      assert {:ok, track} = Tracks.open(ctx.owner, ctx.project.id, %{"origin" => origin})
+      assert track.branch == "feature/x"
+      refute Repo.get!(Track, track.id).branch_reserved
+    end
+
+    test "a pull request's branch is refused while another open track has it", ctx do
+      insert_track(project: ctx.project, branch: "feature/x", branch_reserved: false)
+      quiet_fountain(ctx.project)
+      origin = %{"kind" => "pr", "base" => "feature/x", "number" => 12}
+
+      assert {:error, {:unprocessable, "branch_taken", _}} =
+               Tracks.open(ctx.owner, ctx.project.id, %{"origin" => origin})
+    end
+
+    test "branch origins cut a new named branch from the selected base", ctx do
+      client = opening_fountain(ctx.project, false)
+
+      assert {:ok, track} =
+               Tracks.open(ctx.owner, ctx.project.id, %{
+                 branch_name: "feature/import",
+                 origin: %{kind: "branch", base: "release"}
+               })
+
+      assert track.title == "ravix/feature/import"
+      assert track.branch == track.title
+      assert track.slug == "feature-import"
+      [_list, create] = FakeTransport.calls(client)
+      assert create.body["prompt"] =~ "-b ravix/feature/import origin/release"
+      refute create.body["prompt"] =~ "worktree add #{track.workdir} release"
+    end
+
+    test "issue origins default to the issue number and slugified title", ctx do
+      opening_fountain(ctx.project, false)
+
+      assert {:ok, track} =
+               Tracks.open(ctx.owner, ctx.project.id, %{
+                 origin: %{kind: "issue", number: 42, title: "Fix the importer!"}
+               })
+
+      assert track.branch == "ravix/42-fix-the-importer"
+      assert track.title == track.branch
+    end
+
+    test "invalid names and historical branch reuse are refused before conversation creation",
+         ctx do
+      quiet_fountain(ctx.project)
+      insert_track(project: ctx.project, branch: "ravix/spent", closed_at: DateTime.utc_now())
+
+      for name <- ["two words", "bad..name", "-option", "x.lock", %{}] do
+        assert {:error, {:unprocessable, "invalid_branch", _}} =
+                 Tracks.open(ctx.owner, ctx.project.id, %{branch_name: name})
+      end
+
+      assert {:error, {:unprocessable, "branch_taken", _}} =
+               Tracks.open(ctx.owner, ctx.project.id, %{branch_name: "spent"})
+    end
+
+    test "legacy tracks retain branches and still reserve names without the new flag", ctx do
+      legacy =
+        insert_track(project: ctx.project, branch: "ravix/legacy", closed_at: DateTime.utc_now())
+
+      Repo.update_all(from(t in Track, where: t.id == ^legacy.id), set: [branch_reserved: false])
+      quiet_fountain(ctx.project)
+
+      assert {:error, {:unprocessable, "branch_taken", _}} =
+               Tracks.open(ctx.owner, ctx.project.id, %{branch_name: "legacy"})
+
+      assert Repo.get!(Track, legacy.id).branch == "ravix/legacy"
+    end
+
+    test "the database reserves branches even after a track closes", ctx do
+      track =
+        insert_track(
+          project: ctx.project,
+          branch: "ravix/reserved",
+          closed_at: DateTime.utc_now()
+        )
+
+      attrs = track |> Map.from_struct() |> Map.drop([:id, :slug]) |> Map.put(:slug, "different")
+      assert {:error, changeset} = Ravix.Tracks.Store.create_track(attrs)
+      assert {_, _} = Keyword.fetch!(changeset.errors, :branch)
+    end
+
+    test "suggestions skip historical branches even when their workdir has another name", ctx do
+      for {yard, index} <- Enum.with_index(Names.yards()) do
+        insert_track(
+          project: ctx.project,
+          slug: "old-pr-#{index}",
+          branch: "ravix/" <> Ravix.Ids.slugify(yard),
+          closed_at: DateTime.utc_now()
+        )
+      end
+
+      opening_fountain(ctx.project, false)
+      assert {:ok, track} = Tracks.open(ctx.owner, ctx.project.id, %{})
+      assert String.ends_with?(track.branch, "-2")
+    end
+
     test "a blank track with no name gets a yard name", ctx do
       opening_fountain(ctx.project, false)
       assert {:ok, presented} = Tracks.open(ctx.owner, ctx.project.id, %{})
-      assert presented.title in Names.yards()
-      assert presented.slug == Ravix.Ids.slugify(presented.title)
+      assert presented.title in Enum.map(Names.yards(), &("ravix/" <> Ravix.Ids.slugify(&1)))
+      assert presented.branch == "ravix/" <> presented.slug
     end
 
     test "a machine that refuses leaves no row behind", ctx do
@@ -1098,7 +1228,7 @@ defmodule Ravix.TracksTest do
     end
 
     test "a file, and the diff counted per file", ctx do
-      diff = "diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n+x"
+      diff = "diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -0,0 +1 @@\n+x"
 
       machine_fountain(ctx.project, [
         {%{

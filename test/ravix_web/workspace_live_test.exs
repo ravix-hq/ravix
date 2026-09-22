@@ -172,8 +172,21 @@ defmodule RavixWeb.WorkspaceLiveTest do
     [waiting, working] =
       Enum.map([waiting, working], &Tracks.present(&1, project: project))
 
-    waiting = struct!(waiting, status: :failed, unread: true)
-    rail = fn working -> stub(Tracks, :list, fn _, _ -> {:ok, [waiting, working]} end) end
+    # Each row carries its default thread, which is what is announced.
+    default = fn view ->
+      %{
+        view
+        | threads: [
+            %{id: view.id, title: "Default", status: view.status, unread: view.unread}
+          ]
+      }
+    end
+
+    waiting = default.(struct!(waiting, status: :failed, unread: true))
+
+    rail = fn working ->
+      stub(Tracks, :list, fn _, _ -> {:ok, [waiting, default.(working)]} end)
+    end
 
     rail.(struct!(working, status: :running, unread: false))
     {:ok, view, _} = live(log_in_user(conn, user), "/inbox")
@@ -664,13 +677,19 @@ defmodule RavixWeb.WorkspaceLiveTest do
        }}
     end)
 
+    patch =
+      "diff --git a/app.ex b/app.ex\n--- a/app.ex\n+++ b/app.ex\n@@ -0,0 +1 @@\n+hello change\n"
+
+    files = Diff.parse(patch)
+
     stub(Tracks, :diff, fn _, _ ->
       {:ok,
        %Diff{
          path: "/workspace/app",
          repo_root: "/workspace/app",
-         changes: [%Diff.Change{path: "app.ex", added: 1, removed: 0, status: :modified}],
-         diff: "+hello change",
+         changes: Enum.map(files, & &1.change),
+         files: files,
+         diff: patch,
          truncated: false
        }}
     end)
@@ -715,7 +734,9 @@ defmodule RavixWeb.WorkspaceLiveTest do
     child |> element("button", "app.ex") |> render_click()
     assert render(child) =~ "hello file"
     child |> element("button", "Changes") |> render_click()
-    assert render_async(child) =~ "+hello change"
+    render_async(child)
+    child |> element(".change-file", "app.ex") |> render_click()
+    assert has_element?(child, ".diff-line.diff-add code", "hello change")
     child |> element("button", "Checks") |> render_click()
     assert render_async(child) =~ "CI passed"
     child |> element("button", "Preview") |> render_click()
