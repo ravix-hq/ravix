@@ -12,7 +12,10 @@ defmodule Ravix.PromptQueueTest do
   alias Ravix.PromptQueue
   alias Ravix.PromptQueue.{Item, Server}
   alias Ravix.QueryCount
+  alias Ravix.Tracks
+  alias Ravix.Tracks.Follower
   alias Ravix.Tracks.TrackMember
+  alias Ravix.Tracks.Transcript.Event, as: TranscriptEvent
 
   # ── fixture ───────────────────────────────────────────────────────────
 
@@ -131,7 +134,16 @@ defmodule Ravix.PromptQueueTest do
   defp send_prompt(track, user, text, opts \\ []) do
     id = Keyword.get(opts, :id, request_id())
     images = Keyword.get(opts, :images, [])
-    PromptQueue.Store.enqueue(track.id, user.id, user.login, id, %{prompt: text, images: images})
+    thread_id = Keyword.get(opts, :thread)
+
+    PromptQueue.Store.enqueue(
+      track.id,
+      user.id,
+      user.login,
+      id,
+      %{prompt: text, images: images},
+      thread_id
+    )
   end
 
   defp close(track) do
@@ -600,6 +612,165 @@ defmodule Ravix.PromptQueueTest do
     waiting = PromptQueue.Store.queued_prompts(f.track.id)
     assert length(waiting) == 5
     assert Enum.all?(waiting, &(&1.status == :queued))
+  end
+
+  describe "waking on a settled turn" do
+    # A follower broadcasts on its *thread's* topic, which is the track's only
+    # for the first thread. A prompt waiting on a second thread is the case a
+    # track-keyed subscription hears nothing about.
+    test "a second thread's turn settling delivers that thread's prompt", f do
+      thread = thread(f.track, "c2")
+      {:ok, state} = Agent.start_link(fn -> "running" end)
+      fountain_hooks(fn -> Agent.get(state, & &1) end, fn -> :ok end)
+      {:ok, %Item{id: id}} = send_prompt(f.track, f.owner, "after this turn", thread: thread.id)
+
+      # The sweep finds the agent busy and joins the thread it is waiting on.
+      Server.tick(f.server)
+      assert status_of(id) == :queued
+
+      Agent.update(state, fn _ -> "idle" end)
+      settle_turn(thread.id)
+
+      assert_receive {:posted, "c2", %{"prompt" => prompt}}, 1_000
+      assert String.ends_with?(prompt, "after this turn")
+      assert delivered?(id)
+    end
+
+    test "a thread is joined once, however many sweeps find it waiting", f do
+      test = self()
+
+      fountain_hooks(
+        fn ->
+          send(test, :read)
+          "running"
+        end,
+        fn -> :ok end
+      )
+
+      send_prompt(f.track, f.owner, "still waiting")
+
+      for _ <- 1..3 do
+        Server.tick(f.server)
+        assert_receive :read
+      end
+
+      settle_turn(f.track.id)
+
+      # One sweep, not one per sweep that has run: joining a topic again
+      # would have the broadcast arrive once per subscription.
+      assert_receive :read, 1_000
+      refute_receive :read, 200
+    end
+
+    test "an event that is not a turn settling is left to the timer", f do
+      test = self()
+
+      fountain_hooks(
+        fn ->
+          send(test, :read)
+          "running"
+        end,
+        fn -> :ok end
+      )
+
+      send_prompt(f.track, f.owner, "mid-turn output")
+
+      Server.tick(f.server)
+      assert_receive :read
+
+      broadcast(f.track.id, %{"id" => 8, "kind" => "output", "stream" => "acp", "data" => "x"})
+
+      broadcast(f.track.id, %{
+        "id" => 9,
+        "kind" => "stage",
+        "stage" => "turn",
+        "state" => "started"
+      })
+
+      refute_receive :read, 200
+    end
+
+    test "a prompt nobody is following still goes out on the timer, which relaxes after", f do
+      test = self()
+      {:ok, state} = Agent.start_link(fn -> "running" end)
+
+      fountain_hooks(
+        fn ->
+          send(test, :read)
+          Agent.get(state, & &1)
+        end,
+        fn -> :ok end
+      )
+
+      {:ok, %Item{id: id}} = send_prompt(f.track, f.owner, "no page open")
+
+      # Nothing follows this thread, so no event will ever arrive: the timer
+      # is the whole of the guarantee, and it is the near one while a prompt
+      # waits rather than the idle one.
+      start_server(interval: 60_000, busy_interval: 20)
+
+      assert_receive :read, 1_000
+      assert_receive :read, 1_000
+      Agent.update(state, fn _ -> "idle" end)
+
+      assert_receive {:posted, "c1", %{"prompt" => "no page open"}}, 1_000
+      assert delivered?(id)
+      drain_reads()
+
+      # Delivered, so the next sweep is one minute away, not twenty
+      # milliseconds: the near interval belongs to a prompt that is waiting.
+      refute_receive :read, 300
+    end
+
+    # The sweeps before the one that delivered each reported their read, and
+    # what matters next is whether any sweep follows this one at all.
+    defp drain_reads do
+      receive do
+        :read -> drain_reads()
+      after
+        0 -> :ok
+      end
+    end
+
+    # The POST is reported from inside the delivery task, which writes the
+    # row's status after it returns: the message is the send, this is the
+    # record of it.
+    defp delivered?(id) do
+      wait_until(fn -> status_of(id) == :sent end, System.monotonic_time(:millisecond) + 1_000)
+      status_of(id) == :sent
+    end
+
+    defp thread(track, conversation_id) do
+      {:ok, thread} =
+        Tracks.Store.create_thread(%{
+          track_id: track.id,
+          conversation_id: conversation_id,
+          title: "Second"
+        })
+
+      thread
+    end
+
+    defp settle_turn(thread_id),
+      do:
+        broadcast(thread_id, %{
+          "id" => 7,
+          "turn_id" => "t1",
+          "kind" => "stage",
+          "stage" => "turn",
+          "state" => "completed"
+        })
+
+    # What a follower of that thread broadcasts, parsed as it parses it.
+    defp broadcast(thread_id, raw) do
+      event = TranscriptEvent.from(raw)
+
+      Phoenix.PubSub.broadcast(
+        Ravix.PubSub,
+        Follower.topic(thread_id),
+        {:transcript, thread_id, event}
+      )
+    end
   end
 
   test "delivering a head reads its track and project only where access is decided", f do
