@@ -28,7 +28,7 @@
         <span class="project-mark" aria-hidden="true">
           {String.first(@project.name) |> String.upcase()}
         </span>
-        <strong>{@project.name}</strong>
+        <strong>{project_label(@project)}</strong>
       </.link>
       <span class="dimmer" aria-hidden="true">›</span>
       <button
@@ -230,12 +230,14 @@
                 <span class="composer-model mono">{@project.model}</span><span class="send-hint"><kbd>Enter</kbd>
                 to send</span><span class="spacer"></span>
                 <button
-                  class="primary"
+                  type="submit"
+                  class="primary composer-send"
                   aria-label="Send"
-                  phx-disable-with="Sending…"
+                  title="Send"
                   disabled={is_nil(@track.conversation_id)}
                 >
                   <.icon name="arrow-up" size={16} />
+                  <span>Send</span>
                 </button>
                 <button
                   :if={@track.status in [:running, :opening]}
@@ -297,7 +299,15 @@
           <button class="ghost" phx-click="refresh-panel" disabled={@panel.busy?}>Refresh</button>
           <p :if={@panel.busy?} role="status">Loading…</p>
           <p :if={@panel.error} role="alert">{@panel.error}</p>
-          <.panel_body :if={@panel.data} data={@panel.data} file={@panel.file} project={@project} />
+          <.panel_body
+            :if={@panel.data}
+            data={@panel.data}
+            file={@panel.file}
+            project={@project}
+            diff_path={@diff_path}
+            diff_filter={@diff_filter}
+            diff_show_large={@diff_show_large}
+          />
           <div :if={@panel.tab == :preview && @preview}>
             <p>Status: {@preview.state}</p>
             <p :if={@preview.unavailable_reason}>{@preview.unavailable_reason}</p>
@@ -366,8 +376,9 @@
       </aside>
     </div>
     <.dialog :if={@dialog == :rename} id="rename-dialog" title="Rename track" on_close="dismiss">
+      <p class="hint">Changes only the display title. The Git branch stays fixed.</p>
       <.form :let={f} for={@rename_form} id="rename-form" phx-submit="rename">
-        <.input field={f[:title]} id="rename-title" label="Title" required />
+        <.input field={f[:title]} id="rename-title" label="Display title" required />
         <button class="primary">
           Save
         </button>

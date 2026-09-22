@@ -111,6 +111,62 @@ defmodule RavixWeb.WorkspaceLiveTest do
     assert has_element?(view, ".inbox-empty", "You're all caught up")
   end
 
+  test "a track that comes to need somebody is announced to the browser, once", %{conn: conn} do
+    user = insert_user()
+    project = insert_project(user: user, name: "Ravix")
+    waiting = insert_track(project: project, title: "Already waiting")
+    working = insert_track(project: project, title: "Working")
+
+    [waiting, working] =
+      Enum.map([waiting, working], &Tracks.present(&1, project: project))
+
+    waiting = struct!(waiting, status: :failed, unread: true)
+    rail = fn working -> stub(Tracks, :list, fn _, _ -> {:ok, [waiting, working]} end) end
+
+    rail.(struct!(working, status: :running, unread: false))
+    {:ok, view, _} = live(log_in_user(conn, user), "/inbox")
+    turn = fn -> send(view.pid, {:hub, Event.new(:turn, project.id, track_id: working.id)}) end
+    assert has_element?(view, ".inbox-item", "Already waiting")
+    # What was waiting when the page opened is the inbox's to show, not news.
+    refute_push_event(view, "notify", %{})
+
+    rail.(struct!(working, status: :ready, unread: true))
+    turn.()
+    render_async(view)
+    id = working.id
+
+    assert_push_event(view, "notify", %{
+      tracks: [%{id: ^id, title: "Working", project: "Ravix", status: :ready}]
+    })
+
+    # Said once: the same rail read again is not news again, and the failed
+    # track, still failed, is never repeated.
+    turn.()
+    render_async(view)
+    refute_push_event(view, "notify", %{})
+
+    # Read, then finished again, is news again.
+    rail.(struct!(working, status: :ready, unread: false))
+    turn.()
+    render_async(view)
+    refute_push_event(view, "notify", %{})
+    rail.(struct!(working, status: :ready, unread: true))
+    turn.()
+    render_async(view)
+    assert_push_event(view, "notify", %{tracks: [%{id: ^id}]})
+
+    # Clicking the notification opens the track through the page, which
+    # checks it against the rail; a track this person cannot see is nowhere
+    # to go, and a made-up one is not a crash.
+    render_click(view, "open-notice", %{"track" => id})
+    assert_patch(view, "/p/#{project.id}/t/#{id}")
+    other = insert_track(project: insert_project(user: insert_user()))
+    render_click(view, "open-notice", %{"track" => other.id})
+    render_click(view, "open-notice", %{"track" => 7})
+    refute_patched(view)
+    assert has_element?(view, "#notify[phx-hook='Notify'], #notify[data-phx-hook='Notify']")
+  end
+
   test "the rail and inbox are scoped to the signed-in user", %{conn: conn} do
     user = insert_user()
     own = insert_project(user: user, name: "My project")
@@ -207,6 +263,27 @@ defmodule RavixWeb.WorkspaceLiveTest do
 
     assert render(view) =~ "You&#39;re all caught up"
     refute has_element?(view, "a.yard-item .badge")
+  end
+
+  test "shared project labels identify the owner for project and track members", %{conn: conn} do
+    owner = insert_user()
+    member = insert_user()
+    project = insert_project(user: owner, name: "Shared work")
+    track = insert_track(project: project)
+    label = "#{owner.login}/#{project.name}"
+
+    People.add_member(track.id, member.id, owner.id)
+    {:ok, shared, _} = live(log_in_user(conn, member), "/p/#{project.id}")
+    assert has_element?(shared, ".workspace-project-name", label)
+    assert has_element?(shared, "strong", label)
+
+    People.add_project_member(project.id, member.id, owner.id)
+    {:ok, project_member, _} = live(log_in_user(conn, member), "/home")
+    assert has_element?(project_member, ".home-recent a[href='/p/#{project.id}']", label)
+
+    {:ok, own, _} = live(log_in_user(conn, owner), "/p/#{project.id}")
+    assert has_element?(own, ".workspace-project-name", project.name)
+    refute has_element?(own, ".workspace-project-name", label)
   end
 
   test "track-only members cannot open project creation through a URL", %{conn: conn} do
@@ -508,6 +585,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
     |> form("#environment-settings-form", settings: [apt: "git curl"])
     |> render_submit()
 
+    # The save runs under `start_async`; the flash only exists once it lands.
     assert render_async(view) =~ "Settings saved"
   end
 
@@ -534,13 +612,19 @@ defmodule RavixWeb.WorkspaceLiveTest do
        }}
     end)
 
+    patch =
+      "diff --git a/app.ex b/app.ex\n--- a/app.ex\n+++ b/app.ex\n@@ -0,0 +1 @@\n+hello change\n"
+
+    files = Diff.parse(patch)
+
     stub(Tracks, :diff, fn _, _ ->
       {:ok,
        %Diff{
          path: "/workspace/app",
          repo_root: "/workspace/app",
-         changes: [%Diff.Change{path: "app.ex", added: 1, removed: 0, status: :modified}],
-         diff: "+hello change",
+         changes: Enum.map(files, & &1.change),
+         files: files,
+         diff: patch,
          truncated: false
        }}
     end)
@@ -585,7 +669,9 @@ defmodule RavixWeb.WorkspaceLiveTest do
     child |> element("button", "app.ex") |> render_click()
     assert render(child) =~ "hello file"
     child |> element("button", "Changes") |> render_click()
-    assert render_async(child) =~ "+hello change"
+    render_async(child)
+    child |> element(".change-file", "app.ex") |> render_click()
+    assert has_element?(child, ".diff-line.diff-add code", "hello change")
     child |> element("button", "Checks") |> render_click()
     assert render_async(child) =~ "CI passed"
     child |> element("button", "Preview") |> render_click()

@@ -61,6 +61,8 @@ the corresponding Phoenix URL when launching `bun mock/server.ts` directly.
 - Project settings: harness/model, instructions, setup script, packages,
   write-only environment/vault secrets, preview defaults, and machine rebuild.
 - Project and track sharing: GitHub usernames and revocable invite links.
+- Desktop notifications, switched on from the rail: when a track finishes or
+  fails while the tab is in the background, the browser says so.
 
 The terminal runs complete shell commands; it is not an interactive TTY.
 Persistent application servers belong in Preview, whose process owns the
@@ -285,6 +287,10 @@ code they describe lives in Git history.
 
 `bun run test:browser` runs Chromium against a disposable production-mode app,
 provider mocks, and a generated PostgreSQL database (ports 4103/8893/8894).
+On a shared machine, set `BROWSER_PORT`, `MOCK_PORT`, and `MOCK_SPRITES_PORT`
+to three unused ports; the harness still refuses collisions. Composer state
+fixtures use `psql` against only the harness's generated database and a
+browser-only mock endpoint. Failure traces remain under `test-results/`.
 Install Chromium once with `bunx playwright install chromium`, and build assets
 with `MIX_ENV=prod mix assets.deploy` first. Node is pinned alongside Elixir/OTP
 and Bun in `.tool-versions`.
