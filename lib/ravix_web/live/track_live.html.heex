@@ -103,10 +103,7 @@
           </div>
           <div id="transcript-turns" phx-update="stream">
             <article :for={{dom_id, turn} <- @streams.turns} id={dom_id} class="workspace-turn">
-              <div :if={turn.prompt} class="said">
-                <span class="speaker">You</span>
-                <div class="workspace-prompt">{visible_prompt(turn.prompt)}</div>
-              </div>
+              <.prompt_message :if={turn.prompt} prompt={turn.prompt} />
               <section :if={turn.blocks != []} class="agent-terminal" aria-label="Agent output">
                 <div class="agent-terminal-label">
                   <.icon name="terminal" size={12} /><span>agent</span>

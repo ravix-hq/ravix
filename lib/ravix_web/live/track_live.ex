@@ -1178,9 +1178,35 @@ defmodule RavixWeb.TrackLive do
   defp plan_status(:in_progress), do: "in progress"
   defp plan_status(:pending), do: "to do"
 
-  defp visible_prompt(prompt) do
-    prompt = Ravix.Previews.Agent.visible_prompt(prompt)
-    Transcript.app_turn_label(prompt) || prompt
+  attr :prompt, :string, required: true
+
+  defp prompt_message(assigns) do
+    prompt = Ravix.Previews.Agent.visible_prompt(assigns.prompt)
+    {speaker, body} = prompt_author(prompt)
+    assigns = assign(assigns, speaker: speaker, body: body)
+
+    ~H"""
+    <div class="said">
+      <span class="speaker">{@speaker}</span>
+      <div class="workspace-prompt">{@body}</div>
+    </div>
+    """
+  end
+
+  # Shared prompts carry PromptQueue.with_author/2's marker after the preview
+  # instructions. Never infer an old, untagged message's author from its viewer.
+  defp prompt_author(prompt) do
+    case Regex.run(~r/\A\[from @([a-zA-Z0-9-]+)\] (.*)\z/s, prompt) do
+      [_, login, body] -> {"@" <> login, body}
+      nil -> app_or_unattributed_prompt(prompt)
+    end
+  end
+
+  defp app_or_unattributed_prompt(prompt) do
+    case Transcript.app_turn_label(prompt) do
+      nil -> {"User", prompt}
+      label -> {"Ravix", label}
+    end
   end
 
   defp upload_error(:too_large), do: "Image is larger than 8 MB."

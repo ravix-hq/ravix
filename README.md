@@ -108,7 +108,16 @@ absent, so an unpopulated placeholder reaching the service is the same as the
 variable not being set at all --- which is the only safe way for a placeholder
 to travel.
 
-## Agent tooling (MCP)
+## Remote AI clients
+
+Ravix exposes authenticated MCP at `/mcp` and A2A 1.0 at `/a2a`. Connect Claude
+Code with `claude mcp add --transport http ravix https://app.ravix.sh/mcp`, then
+use `/mcp` to sign in and approve access. Tools configure projects, open tracks,
+submit prompts and read results. Revoke clients from **Connected applications**
+in the account dialog. See [remote agent tooling](docs/agent-tooling.md) for
+scopes, idempotency, A2A task behavior and current limits.
+
+## Developer tooling (MCP)
 
 `.mcp.json` declares three MCP servers in the repository, so a checkout gets them
 and there is no per-machine configuration to copy. Claude Code asks for approval

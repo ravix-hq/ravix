@@ -202,6 +202,15 @@
           >
             account
           </button>
+          <button
+            type="button"
+            class="linkish"
+            phx-click={JS.push_focus() |> JS.push("dialog")}
+            phx-value-name="help"
+            id="open-help"
+          >
+            Help
+          </button>
         </div>
       </div>
     </aside>
@@ -535,7 +544,11 @@
       current_user={@current_user}
       session_hash={@session_hash}
     />
+    <.dialog :if={@dialog == :help} id="help-dialog" title="Help · AI tools" on_close="dismiss">
+      <RavixWeb.HelpComponents.agent_tooling />
+    </.dialog>
     <.dialog :if={@dialog == :account} id="account-dialog" title="Your account" on_close="dismiss">
+      <a href="/settings/connections">Connected applications</a>
       <p class="lede">
         Signed in as <strong>@{@current_user.login}</strong>. The agent below is the one your projects are built with, and its subscription or key is what pays for every turn in them, whoever is working.
       </p>
