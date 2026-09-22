@@ -14,6 +14,58 @@ defmodule RavixWeb.WorkspaceLiveTest do
 
   setup :verify_on_exit!
 
+  test "notifications are independent for two threads on one track", %{conn: conn} do
+    user = insert_user()
+    project = insert_project(user: user, name: "Ravix")
+    row = insert_track(project: project, title: "Work")
+
+    {:ok, other} =
+      Tracks.Store.create_thread(%{track_id: row.id, title: "Next", conversation_id: "next"})
+
+    view_row = Tracks.present(row)
+    first = %{id: row.id, title: "Default", status: :running, unread: false}
+    second = %{id: other.id, title: "Next", status: :running, unread: false}
+
+    rail = fn a, b ->
+      stub(Tracks, :list, fn _, _ -> {:ok, [%{view_row | threads: [a, b]}]} end)
+    end
+
+    rail.(first, second)
+    {:ok, view, _} = live(log_in_user(conn, user), "/inbox")
+    refute_push_event(view, "notify", %{})
+
+    refresh = fn ->
+      send(view.pid, {:hub, Event.new(:turn, project.id, track_id: row.id)})
+      render_async(view, 1_000)
+    end
+
+    first = %{first | status: :ready, unread: true}
+    rail.(first, second)
+    refresh.()
+    id = row.id
+
+    assert_push_event(view, "notify", %{
+      tracks: [%{id: ^id, thread_id: ^id, title: "Work"}]
+    })
+
+    second = %{second | status: :failed, unread: true}
+    rail.(first, second)
+    refresh.()
+    thread_id = other.id
+
+    assert_push_event(view, "notify", %{
+      tracks: [%{id: ^id, thread_id: ^thread_id, status: :failed}]
+    })
+
+    refresh.()
+    refute_push_event(view, "notify", %{})
+    render_click(view, "open-notice", %{track: row.id, thread: other.id})
+    assert_patch(view, "/p/#{project.id}/t/#{row.id}")
+    foreign = insert_track()
+    render_click(view, "open-notice", %{track: row.id, thread: foreign.id})
+    refute_patched(view)
+  end
+
   test "project labels distinguish owners for project and track guests", %{conn: conn} do
     owner = insert_user(login: "project-owner")
     project = insert_project(user: owner, name: "ravix")
@@ -184,10 +236,16 @@ defmodule RavixWeb.WorkspaceLiveTest do
     insert_track_member(row, guest)
     track = Tracks.present(row, project: project)
 
+    # What is announced is a thread's change, so the default thread carries it.
+    at = fn status, unread ->
+      default = %{id: track.id, title: "Default", status: status, unread: unread}
+      struct!(track, status: status, unread: unread, threads: [default])
+    end
+
     for user <- [owner, member, guest] do
-      stub(Tracks, :list, fn _, _ -> {:ok, [struct!(track, status: :running, unread: false)]} end)
+      stub(Tracks, :list, fn _, _ -> {:ok, [at.(:running, false)]} end)
       {:ok, view, _} = live(log_in_user(conn, user), "/inbox")
-      stub(Tracks, :list, fn _, _ -> {:ok, [struct!(track, status: :ready, unread: true)]} end)
+      stub(Tracks, :list, fn _, _ -> {:ok, [at.(:ready, true)]} end)
       send(view.pid, {:hub, Event.new(:turn, project.id, track_id: row.id)})
       render_async(view)
       label = if user == owner, do: "ravix", else: "notice-owner / ravix"
@@ -204,8 +262,21 @@ defmodule RavixWeb.WorkspaceLiveTest do
     [waiting, working] =
       Enum.map([waiting, working], &Tracks.present(&1, project: project))
 
-    waiting = struct!(waiting, status: :failed, unread: true)
-    rail = fn working -> stub(Tracks, :list, fn _, _ -> {:ok, [waiting, working]} end) end
+    # Each row carries its default thread, which is what is announced.
+    default = fn view ->
+      %{
+        view
+        | threads: [
+            %{id: view.id, title: "Default", status: view.status, unread: view.unread}
+          ]
+      }
+    end
+
+    waiting = default.(struct!(waiting, status: :failed, unread: true))
+
+    rail = fn working ->
+      stub(Tracks, :list, fn _, _ -> {:ok, [waiting, default.(working)]} end)
+    end
 
     rail.(struct!(working, status: :running, unread: false))
     {:ok, view, _} = live(log_in_user(conn, user), "/inbox")
@@ -841,13 +912,13 @@ defmodule RavixWeb.WorkspaceLiveTest do
 
       stub(Tracks, :get, fn _user, id, _opts ->
         row = Repo.get!(Ravix.Tracks.Track, id)
-        {:ok, %{track: Tracks.present(row), header: blank_header(), starters: []}}
+        {:ok, %{track: Tracks.present(row), header: blank_header(), threads: [], starters: []}}
       end)
 
-      stub(Tracks, :events, fn _, _ -> {:ok, Transcript.empty("")} end)
+      stub(Tracks, :events, fn _, _, _thread_opts -> {:ok, Transcript.empty("")} end)
       stub(Tracks, :follow, fn _, _, _ -> {:ok, self()} end)
       stub(Tracks, :beat, fn _, _, _ -> :ok end)
-      stub(Tracks, :mark_read, fn _, _ -> :ok end)
+      stub(Tracks, :mark_read, fn _, _, _thread_opts -> :ok end)
       stub(Tracks, :files, fn _, _, _ -> {:error, {:unavailable, "no machine"}} end)
 
       {:ok, parent, _} = live(log_in_user(conn, user), "/p/#{project.id}/t/#{one.id}")
@@ -877,7 +948,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
         end
 
         row = Repo.get!(Ravix.Tracks.Track, id)
-        {:ok, %{track: Tracks.present(row), header: blank_header(), starters: []}}
+        {:ok, %{track: Tracks.present(row), header: blank_header(), threads: [], starters: []}}
       end)
 
       render_patch(ctx.parent, "/p/#{ctx.project.id}/t/#{ctx.two.id}")
@@ -1034,13 +1105,13 @@ defmodule RavixWeb.WorkspaceLiveTest do
 
   defp stub_track(track) do
     stub(Tracks, :get, fn _, _, _ ->
-      {:ok, %{track: Tracks.present(track), header: blank_header(), starters: []}}
+      {:ok, %{track: Tracks.present(track), header: blank_header(), threads: [], starters: []}}
     end)
 
-    stub(Tracks, :events, fn _, _ -> {:ok, Transcript.empty("")} end)
+    stub(Tracks, :events, fn _, _, _thread_opts -> {:ok, Transcript.empty("")} end)
     stub(Tracks, :follow, fn _, _, _ -> {:ok, self()} end)
     stub(Tracks, :beat, fn _, _, _ -> :ok end)
-    stub(Tracks, :mark_read, fn _, _ -> :ok end)
+    stub(Tracks, :mark_read, fn _, _, _thread_opts -> :ok end)
 
     stub(Tracks, :files, fn _, _, _ ->
       {:ok,

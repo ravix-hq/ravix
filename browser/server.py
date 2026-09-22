@@ -36,7 +36,7 @@ env = dict(os.environ, MIX_ENV="prod", PORT=str(ports[0]), PHX_SERVER="true",
            PUBLIC_URL=f"http://localhost:{ports[0]}", RAVIX_URL=f"http://localhost:{ports[0]}",
            MOCK_PORT=str(ports[1]), MOCK_SPRITES_PORT=str(ports[2]),
            RAVIX_SECRET="browser-test-only-secret-never-used-outside-this-process",
-           RAVIX_BROWSER_TEST="1")
+           RAVIX_BROWSER_TEST="1", RAVIX_THREADS_ENABLED="true")
 # Only a generated database name is ever created/dropped. Credentials can differ locally.
 base = os.environ.get("BROWSER_DATABASE_SERVER", "postgres://postgres:postgres@localhost:5432")
 if "/" in base.split("://", 1)[-1]:

@@ -51,7 +51,7 @@ defmodule Ravix.Tracks.View do
     :unread
   ]
 
-  defstruct @enforce_keys
+  defstruct @enforce_keys ++ [threads: []]
 
   @type t :: %__MODULE__{
           id: String.t(),
@@ -72,6 +72,7 @@ defmodule Ravix.Tracks.View do
           created_by_login: String.t(),
           people: [Person.t()],
           role: :owner | :member,
-          unread: boolean()
+          unread: boolean(),
+          threads: [map()]
         }
 end

@@ -89,6 +89,16 @@ defmodule Ravix.PromptQueue.Body do
 
   @type t :: %__MODULE__{prompt: String.t(), images: [Image.t()]}
 
+  @doc "Supply working-directory identity to a blank additional conversation."
+  def in_thread(prompt, %{thread_id: thread_id, track_id: track_id}, track)
+      when is_binary(thread_id) and thread_id != track_id do
+    "[ravix] This conversation shares track #{track.id}. Your working directory is " <>
+      "#{track.workdir} and its branch is #{track.branch}. Work only in this directory. " <>
+      "The track is already open; do not create another worktree or branch.\n\n" <> prompt
+  end
+
+  def in_thread(prompt, _row, _track), do: prompt
+
   @doc "An empty body: no text, no attachments."
   @spec empty() :: t()
   def empty, do: %__MODULE__{prompt: "", images: []}

@@ -1,4 +1,7 @@
 defmodule Ravix.Config do
+  @doc "Enable new threads only after old queue workers have drained."
+  def threads_enabled?, do: Application.get_env(:ravix, :threads_enabled, false)
+
   @moduledoc """
   The server's configuration, from the environment.
 

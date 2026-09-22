@@ -1,5 +1,12 @@
 import Config
 
+config :ravix,
+       :threads_enabled,
+       System.get_env(
+         "RAVIX_THREADS_ENABLED",
+         if(config_env() == :prod, do: "false", else: "true")
+       ) == "true"
+
 # config/runtime.exs is executed for all environments, including
 # during releases. It is executed after compilation and before the
 # system starts, so it is typically used to load production configuration

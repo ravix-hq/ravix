@@ -69,7 +69,12 @@ defmodule Ravix.Tooling.Catalog do
         "send_prompt",
         "Queue a prompt durably. Reuse request_id only to retry the same prompt; poll get_task for completion.",
         "tracks:write",
-        %{"track_id" => string(), "prompt" => string(100_000), "request_id" => string(100)},
+        %{
+          "thread_id" => string(),
+          "track_id" => string(),
+          "prompt" => string(100_000),
+          "request_id" => string(100)
+        },
         ["track_id", "prompt", "request_id"]
       ),
       tool(
@@ -92,6 +97,7 @@ defmodule Ravix.Tooling.Catalog do
         "tracks:read",
         %{
           "track_id" => string(),
+          "thread_id" => string(),
           "after" => integer(),
           "limit" => %{"type" => "integer", "minimum" => 1, "maximum" => 100}
         },

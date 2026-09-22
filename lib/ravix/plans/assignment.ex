@@ -192,12 +192,15 @@ defmodule Ravix.Plans.Assignment do
     end)
   end
 
+  # An item is assigned to a track, not to one of its threads: the prompt goes
+  # to the default thread, whose ID is the track's, new track or existing.
   defp submit(principal, plan, item, siblings, {:ok, track}, request_id) do
     case Tasks.send(
            principal,
            track.id,
            Prompt.build(plan, item, siblings),
-           "plan:#{request_id}:#{item.id}"
+           "plan:#{request_id}:#{item.id}",
+           track.id
          ) do
       {:ok, task} -> %{item_id: item.id, track_id: track.id, task: Tasks.present(task)}
       {:error, _} -> %{item_id: item.id, track_id: track.id, error: "prompt_unconfirmed"}

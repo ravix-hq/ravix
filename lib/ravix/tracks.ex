@@ -1,6 +1,6 @@
 defmodule Ravix.Tracks do
   @moduledoc """
-  Tracks: a worktree, and a conversation about it.
+  Tracks: a worktree shared by one or more conversations.
 
   Everything difficult about this app is in `open/4` below, and it comes
   down to one asymmetry. Making a *conversation* is an API call and takes a
@@ -138,14 +138,27 @@ defmodule Ravix.Tracks do
     # per-row reads made its cost grow with the project.
     people = People.Store.people_by_track(Enum.map(rows, & &1.id), project.user_id, project.id)
 
+    thread_rows = Store.threads_by_track(Enum.map(rows, & &1.id))
+    thread_reads = Store.thread_reads(user.id, project.id)
+
     Enum.map(rows, fn row ->
-      present(row,
-        project: project,
-        live: live[row.conversation_id],
-        people: Map.fetch!(people, row.id),
-        role: role,
-        last_read: reads[row.id]
-      )
+      threads = thread_views(row.id, Map.get(thread_rows, row.id, []), thread_reads, live)
+      conversations = Enum.map(threads, &live[&1.conversation_id]) |> Enum.reject(&is_nil/1)
+
+      active =
+        Enum.find(conversations, &(&1.status == :running)) ||
+          Enum.find(conversations, &(&1.status == :failed)) || live[row.conversation_id]
+
+      view =
+        present(row,
+          project: project,
+          live: active,
+          people: Map.fetch!(people, row.id),
+          role: role,
+          last_read: reads[row.id]
+        )
+
+      %{view | threads: threads, unread: Enum.any?(threads, & &1.unread)}
     end)
   end
 
@@ -175,7 +188,8 @@ defmodule Ravix.Tracks do
   the default stays the careful one.
   """
   @spec get(User.t(), String.t(), keyword()) ::
-          {:ok, %{track: View.t(), header: header(), starters: [Spec.Starter.t()]}}
+          {:ok,
+           %{track: View.t(), header: header(), starters: [Spec.Starter.t()], threads: [map()]}}
           | {:error, reason()}
   def get(%User{} = user, track_id, opts \\ []) do
     fresh = Keyword.get(opts, :fresh, true)
@@ -186,15 +200,17 @@ defmodule Ravix.Tracks do
     # A waterfall that cannot tell those apart cannot answer "is the page slow
     # or is Fountain slow", which is the only question worth asking of it.
     Trace.span("tracks.get", %{"ravix.track_id" => track_id, "ravix.fresh" => fresh}, fn ->
-      do_get(user, track_id, fresh)
+      do_get(user, track_id, fresh, Keyword.get(opts, :thread_id))
     end)
   end
 
-  defp do_get(user, track_id, fresh) do
-    with {:ok, %{track: track, project: project, role: role}} <-
-           Access.track_access(user, track_id),
+  defp do_get(user, track_id, fresh, thread_id) do
+    with {:ok, %{track: track, project: project, role: role, thread: thread}} <-
+           Access.thread_access(user, track_id, thread_id),
          {:ok, client} <- fountain() do
       live = conversations_of(project, fresh: fresh)
+      reads = Store.thread_reads(user.id, project.id)
+      threads = thread_views(track_id, Store.threads_of(track_id), reads, live)
 
       environment =
         case MachineCache.environment(client, project.environment_id) do
@@ -220,18 +236,113 @@ defmodule Ravix.Tracks do
       {:ok,
        %{
          track:
-           present(track,
+           present(%{track | conversation_id: thread.conversation_id},
              project: project,
-             live: live[track.conversation_id],
+             live: live[thread.conversation_id],
+             threads: threads,
              # ownership: `get/2` opened with `Access.track_access/2` on this
              # very track; both of these are that caller's own view of it.
              people: People.Store.people_of(track.id, project.user_id, project.id),
              role: role,
-             last_read: People.Store.last_read_of(track.id, user.id)
+             last_read: reads[thread.id]
            ),
+         threads: threads,
          header: header,
          starters: Spec.starters(project)
        }}
+    end
+  end
+
+  @doc "The conversations on a track, with this person's unread state."
+  def threads(%User{} = user, track_id) do
+    with {:ok, %{project: project}} <- Access.track_access(user, track_id) do
+      {:ok, thread_views(track_id, user, project, conversations_of(project))}
+    end
+  end
+
+  defp thread_views(track_id, %User{} = user, project, live),
+    do:
+      thread_views(
+        track_id,
+        Store.threads_of(track_id),
+        Store.thread_reads(user.id, project.id),
+        live
+      )
+
+  defp thread_views(track_id, threads, reads, live) do
+    Enum.map(threads, fn thread ->
+      conversation = live[thread.conversation_id]
+
+      %{
+        id: thread.id,
+        title: thread.title,
+        default: thread.id == track_id,
+        conversation_id: thread.conversation_id,
+        status:
+          if(conversation && conversation.status in [:running, :failed],
+            do: conversation.status,
+            else: :ready
+          ),
+        unread: unread?(conversation && conversation.last_active_at, reads[thread.id])
+      }
+    end)
+  end
+
+  @doc "Attach a blank conversation to the track's existing sandbox."
+  def add_thread(%User{} = user, track_id) do
+    with {:ok, %{track: track, project: project}} <- Access.track_access(user, track_id),
+         :ok <-
+           check(
+             Ravix.Config.threads_enabled?(),
+             {:conflict, "threads_disabled", "Threads are not enabled yet."}
+           ),
+         :ok <-
+           check(is_nil(track.closed_at), {:conflict, "closed_track", "This track is closed."}),
+         {:ok, client} <- fountain(),
+         {:ok, %{sandbox_id: sandbox_id}} when is_binary(sandbox_id) <-
+           Fountain.get_conversation(client, track.conversation_id) do
+      launch_thread(user, track, project, client, sandbox_id)
+    else
+      {:ok, _} -> {:error, {:conflict, "not_open", "The track's machine is not ready."}}
+      error -> error
+    end
+  end
+
+  defp launch_thread(user, track, project, client, sandbox_id) do
+    id = Ecto.UUID.generate()
+    title = "Thread #{length(Store.threads_of(track.id)) + 1}"
+
+    launch = %Launch{
+      agent_id: project.agent_id,
+      environment_id: project.environment_id,
+      vault_id: project.vault_id,
+      sandbox_id: sandbox_id,
+      title: title,
+      channel_id: Ids.track_channel(project.id, track.slug, track.rev, id),
+      prompt: nil
+    }
+
+    with {:ok, %Conversation{id: conversation_id}} <- Fountain.create_conversation(client, launch) do
+      result =
+        with {:ok, %{track: %{closed_at: nil}}} <- Access.track_access(user, track.id),
+             do:
+               Store.create_thread(%{
+                 id: id,
+                 track_id: track.id,
+                 conversation_id: conversation_id,
+                 title: title
+               })
+
+      case result do
+        {:ok, %Ravix.Tracks.Thread{} = thread} ->
+          MachineCache.forget_project(project.id)
+          publish_tracks(project.id, track.id)
+          {:ok, thread}
+
+        _ ->
+          unwind_conversation(client, conversation_id)
+          {:error, :not_found}
+      end
     end
   end
 
@@ -391,7 +502,7 @@ defmodule Ravix.Tracks do
         vault_id: project.vault_id,
         sandbox_id: machine && machine.sandbox_id,
         title: title,
-        channel_id: Ids.track_channel(project.id, slug, project.rev),
+        channel_id: Ids.track_channel(project.id, slug, project.rev, id),
         # On the launch that *provisions* the machine the opening turn rides
         # along, because a fresh conversation with no prompt is what made
         # provisioning start answering 422. On an attach it is sent separately
@@ -516,7 +627,8 @@ defmodule Ravix.Tracks do
   def prompt(%User{} = user, track_id, payload) do
     payload = stringify(payload)
 
-    with {:ok, %{track: track}} <- Access.track_access(user, track_id),
+    with {:ok, %{track: track, thread: thread}} <-
+           Access.thread_access(user, track_id, payload["thread_id"]),
          {:ok, _client} <- fountain(),
          {:ok, images} <- read_images(payload["images"]),
          text = text(payload["prompt"], 100_000),
@@ -527,7 +639,7 @@ defmodule Ravix.Tracks do
            ),
          :ok <-
            check(
-             track.conversation_id,
+             thread.conversation_id,
              {:conflict, "not_open", "This track has no conversation yet."}
            ),
          :ok <-
@@ -546,7 +658,8 @@ defmodule Ravix.Tracks do
         user.id,
         user.login,
         payload["request_id"],
-        %Body{prompt: text, images: images}
+        %Body{prompt: text, images: images},
+        thread.id
       )
     end
   end
@@ -567,27 +680,28 @@ defmodule Ravix.Tracks do
   page called this on each load, stage and send, so the old shape cost the
   whole project a Fountain round trip per reader each time anybody looked.
   """
-  @spec mark_read(User.t(), String.t()) :: :ok | {:error, reason()}
-  def mark_read(%User{} = user, track_id) do
-    with {:ok, %{track: track, project: project}} <- Access.track_access(user, track_id) do
-      # ownership: `Access.track_access/2` on the line above; a person may
-      # always mark their own read position on a track they may open.
-      People.Store.mark_read(track.id, user.id, DateTime.utc_now())
-      Hub.publish(project.id, :read, track_id: track.id, user_id: user.id)
+  @spec mark_read(User.t(), String.t(), String.t() | nil) :: :ok | {:error, reason()}
+  def mark_read(%User{} = user, track_id, thread_id \\ nil) do
+    with {:ok, %{track: track, project: project, thread: thread}} <-
+           Access.thread_access(user, track_id, thread_id) do
+      Store.mark_thread_read(thread.id, user.id, DateTime.utc_now())
+      # ownership: Access.thread_access above admits this reader to the default thread.
+      if thread.id == track.id, do: People.Store.mark_read(track.id, user.id, DateTime.utc_now())
+      Hub.publish(project.id, :read, track_id: track.id, thread_id: thread.id, user_id: user.id)
     end
   end
 
   @doc "Stop the running turn."
-  @spec interrupt(User.t(), String.t()) :: :ok | {:error, reason()}
-  def interrupt(%User{} = user, track_id) do
-    with {:ok, %{track: track}} <- Access.track_access(user, track_id),
+  @spec interrupt(User.t(), String.t(), String.t() | nil) :: :ok | {:error, reason()}
+  def interrupt(%User{} = user, track_id, thread_id \\ nil) do
+    with {:ok, %{thread: thread}} <- Access.thread_access(user, track_id, thread_id),
          {:ok, client} <- fountain(),
          :ok <-
            check(
-             track.conversation_id,
+             thread.conversation_id,
              {:conflict, "not_open", "This track has no conversation yet."}
            ) do
-      Fountain.interrupt(client, track.conversation_id)
+      Fountain.interrupt(client, thread.conversation_id)
     end
   end
 
@@ -624,19 +738,20 @@ defmodule Ravix.Tracks do
   page's `last_event_id`.
   """
   @spec events(User.t(), String.t(), keyword()) :: {:ok, Transcript.page()} | {:error, reason()}
-  def events(%User{} = user, track_id, _opts \\ []) do
+  def events(%User{} = user, track_id, opts \\ []) do
     # The call that gates the first paint of a track, so its own span rather
     # than a share of whatever asked for it.
     Trace.span("tracks.events", %{"ravix.track_id" => track_id}, fn ->
-      do_events(user, track_id)
+      do_events(user, track_id, Keyword.get(opts, :thread_id))
     end)
   end
 
-  defp do_events(user, track_id) do
-    with {:ok, %{track: track, project: project}} <- Access.track_access(user, track_id),
+  defp do_events(user, track_id, thread_id) do
+    with {:ok, %{thread: thread, project: project}} <-
+           Access.thread_access(user, track_id, thread_id),
          {:ok, client} <- fountain() do
-      if track.conversation_id,
-        do: read_transcript(client, track.conversation_id, project.runtime),
+      if thread.conversation_id,
+        do: read_transcript(client, thread.conversation_id, project.runtime),
         else: {:ok, Transcript.empty(project.runtime)}
     end
   end
@@ -724,9 +839,11 @@ defmodule Ravix.Tracks do
       MachineCache.forget_project(project.id)
       publish_tracks(project.id, track.id)
 
+      threads = Store.threads_of(track.id)
+
       {:ok, _pid} =
         Task.Supervisor.start_child(Ravix.TaskSupervisor, fn ->
-          tear_down(client, track, project, opts)
+          tear_down(client, track, project, opts, threads)
         end)
 
       Analytics.track(
@@ -753,7 +870,7 @@ defmodule Ravix.Tracks do
   # separate things to tidy, and a refusal is logged rather than returned:
   # the row is already closed and nobody is waiting on this. Nothing here is
   # a credential -- the client carries Fountain's key and is not logged.
-  defp tear_down(client, %Track{} = track, %Project{} = project, opts) do
+  defp tear_down(client, %Track{} = track, %Project{} = project, opts, threads) do
     # ownership: `close/3` admitted the caller through `Access.track_access/2`
     # and closed the row before handing this task the track; its preview
     # service, grants and port go with it.
@@ -777,6 +894,13 @@ defmodule Ravix.Tracks do
       discard(
         Fountain.terminate(client, track.conversation_id),
         "conversation of closed track #{track.id} was not terminated"
+      )
+    end
+
+    for thread <- threads, thread.id != track.id, thread.conversation_id do
+      discard(
+        Fountain.terminate(client, thread.conversation_id),
+        "thread #{thread.id} was not terminated"
       )
     end
 
@@ -995,6 +1119,7 @@ defmodule Ravix.Tracks do
       created_at: row.created_at,
       created_by_login: row.created_by_login,
       people: Keyword.get(opts, :people, []),
+      threads: Keyword.get(opts, :threads, []),
       role: Keyword.get(opts, :role, :owner),
       unread: unread?(last_active, Keyword.get(opts, :last_read))
     }
@@ -1225,13 +1350,14 @@ defmodule Ravix.Tracks do
   """
   @spec follow(User.t(), String.t(), keyword()) :: {:ok, pid()} | {:error, reason()}
   def follow(%User{} = user, track_id, opts \\ []) do
-    with {:ok, %{track: track}} <- Access.track_access(user, track_id),
+    with {:ok, %{thread: thread}} <-
+           Access.thread_access(user, track_id, Keyword.get(opts, :thread_id)),
          :ok <-
            check(
-             track.conversation_id,
+             thread.conversation_id,
              {:conflict, "not_open", "This track has no conversation yet."}
            ) do
-      Follower.subscribe(track.id, Keyword.put(opts, :conversation_id, track.conversation_id))
+      Follower.subscribe(thread.id, Keyword.put(opts, :conversation_id, thread.conversation_id))
     end
   end
 end

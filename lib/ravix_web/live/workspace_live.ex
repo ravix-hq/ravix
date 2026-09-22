@@ -50,9 +50,8 @@ defmodule RavixWeb.WorkspaceLive do
         # four times a render --- twice in the sidebar badge and twice in the
         # inbox heading --- and each ask walked every track of every project.
         attention: 0,
-        # Which tracks the browser has been told need somebody, or `nil`
-        # before the first rail read. See `announce/2`.
         noticed: nil,
+        notice_thread: nil,
         expanded_projects: MapSet.new(),
         advanced_track: false,
         project: nil,
@@ -149,6 +148,7 @@ defmodule RavixWeb.WorkspaceLive do
     socket =
       socket
       |> hand_over(project, track_id)
+      |> select_notice_thread(track_id)
       |> assign(
         project: project,
         page_title: if(project, do: project.display_name <> " · Ravix", else: "Ravix"),
@@ -211,7 +211,27 @@ defmodule RavixWeb.WorkspaceLive do
     end
   end
 
+  # A desktop notification was clicked. The browser asks rather than going
+  # there itself, so the track and thread it names are checked afresh here,
+  # and `handle_params/3` checks the URL again on the way in. A notification
+  # shown by a bundle from before threads names no thread and means the
+  # track's default one; anything that is not an id is nowhere to go.
   @impl true
+  def handle_event("open-notice", %{"track" => id} = params, socket) do
+    thread_id = if is_binary(params["thread"]), do: params["thread"], else: id
+
+    case Ravix.Accounts.Access.thread_access(socket.assigns.current_user, id, thread_id) do
+      {:ok, %{project: project, track: %{closed_at: nil}, thread: %{closed_at: nil}}} ->
+        {:noreply,
+         socket
+         |> assign(notice_thread: {id, thread_id})
+         |> push_patch(to: "/p/#{project.id}/t/#{id}")}
+
+      _ ->
+        {:noreply, socket}
+    end
+  end
+
   def handle_event("refresh", _, socket), do: {:noreply, reload_async(socket)}
 
   def handle_event("dismiss", _, socket) do
@@ -225,24 +245,6 @@ defmodule RavixWeb.WorkspaceLive do
          ),
        else: socket
      )}
-  end
-
-  # A desktop notification was clicked. The browser asks rather than going
-  # there itself, so the track it names is checked against the rail this
-  # person can see, and `handle_params/3` checks the URL again on the way
-  # in, as it does for any link in the rail. A track that is not there ---
-  # closed since, or a share since revoked --- is nowhere to go, and so is
-  # anything that is not a track id at all.
-  def handle_event("open-notice", %{"track" => id}, socket) do
-    project_id =
-      Enum.find_value(socket.assigns.tracks, fn {project_id, rows} ->
-        Enum.any?(rows, &(&1.id == id)) && project_id
-      end)
-
-    case project_id do
-      nil -> {:noreply, socket}
-      project_id -> {:noreply, push_patch(socket, to: "/p/#{project_id}/t/#{id}")}
-    end
   end
 
   def handle_event("yard", _, socket),
@@ -404,9 +406,7 @@ defmodule RavixWeb.WorkspaceLive do
       tracks = Map.put(socket.assigns.tracks, id, tracks)
 
       {:noreply,
-       socket
-       |> assign(tracks: tracks, attention: attention_count(tracks))
-       |> announce(tracks)}
+       socket |> assign(tracks: tracks, attention: attention_count(tracks)) |> announce(tracks)}
     else
       {:noreply, socket}
     end
@@ -484,7 +484,10 @@ defmodule RavixWeb.WorkspaceLive do
   # track is to tell it. It knows this process --- `socket.parent_pid` --- and
   # this process does not know it until it says so, which is why the
   # introduction runs this way round rather than the other.
-  def handle_info({:track_host, pid}, socket), do: {:noreply, assign(socket, track_host: pid)}
+  def handle_info({:track_host, pid}, socket),
+    do:
+      {:noreply,
+       socket |> assign(track_host: pid) |> select_notice_thread(socket.assigns.track_id)}
 
   # The people dialog did the removal. Either way the rail is now wrong --
   # a project you just left goes, and a project you took somebody off has a
@@ -573,14 +576,20 @@ defmodule RavixWeb.WorkspaceLive do
 
   defp clear_unread(
          %{assigns: %{current_user: %Accounts.User{id: user_id}, tracks: tracks}} = socket,
-         %Event{user_id: user_id, project_id: project_id, track_id: track_id}
+         %Event{
+           user_id: user_id,
+           project_id: project_id,
+           track_id: track_id,
+           thread_id: thread_id
+         }
        )
        when is_binary(track_id) do
     case Map.fetch(tracks, project_id) do
       {:ok, rows} ->
-        rows = Enum.map(rows, &if(&1.id == track_id, do: %{&1 | unread: false}, else: &1))
+        rows = Enum.map(rows, &clear_thread_unread(&1, track_id, thread_id || track_id))
+
         tracks = Map.put(tracks, project_id, rows)
-        assign(socket, tracks: tracks, attention: attention_count(tracks))
+        socket |> assign(tracks: tracks, attention: attention_count(tracks)) |> announce(tracks)
 
       :error ->
         socket
@@ -588,6 +597,13 @@ defmodule RavixWeb.WorkspaceLive do
   end
 
   defp clear_unread(socket, _somebody_elses), do: socket
+
+  defp clear_thread_unread(%{id: id} = row, id, thread_id) do
+    threads = Enum.map(row.threads, &if(&1.id == thread_id, do: %{&1 | unread: false}, else: &1))
+    %{row | threads: threads, unread: Enum.any?(threads, & &1.unread)}
+  end
+
+  defp clear_thread_unread(row, _track_id, _thread_id), do: row
 
   # The rail, read here and now. Mount has nothing to draw until this answers
   # and `handle_params/3` decides whether the URL names a project this person
@@ -667,28 +683,26 @@ defmodule RavixWeb.WorkspaceLive do
     |> announce(tracks)
   end
 
-  # Desktop notifications: the tracks that have *come* to need somebody
-  # since the rail last looked, sent to the browser's `Notify` hook as one
-  # `notify` event. The hook decides whether to show anything --- the person
-  # switched it on, the browser allowed it, this tab is not the one being
-  # looked at --- and this page decides only what is new, because the
-  # browser cannot: every rail it is sent is complete, so a reload would
-  # announce everything already in the inbox.
-  #
-  # The first read seeds the set without a word: what was waiting when the
-  # page opened is the inbox's to show, and opening a page is not news. A
-  # track leaves the set when it stops wanting somebody (it was read, or a
-  # new turn started), so the next time it finishes it is news again; a
-  # failed one stays until it is closed, and is said once. The same
-  # predicate as the badge, so the two cannot disagree about what "needs
-  # you" means.
+  defp select_notice_thread(
+         %{assigns: %{notice_thread: {track_id, thread_id}, track_host: pid}} = socket,
+         track_id
+       )
+       when is_pid(pid) do
+    send(pid, {:select_thread, track_id, thread_id})
+    assign(socket, notice_thread: nil)
+  end
+
+  defp select_notice_thread(socket, _track_id), do: socket
+
+  # Seed silently on mount; subsequent transitions belong to individual threads.
   defp announce(socket, tracks) do
     wanting =
       for {_id, rows} <- tracks,
           track <- rows,
-          attention?(track),
+          thread <- track.threads,
+          attention?(thread),
           into: %{},
-          do: {track.id, track}
+          do: {thread.id, notice(track, thread, socket.assigns.projects)}
 
     ids = MapSet.new(Map.keys(wanting))
 
@@ -698,26 +712,22 @@ defmodule RavixWeb.WorkspaceLive do
 
       noticed ->
         fresh =
-          ids
-          |> MapSet.difference(noticed)
-          |> Enum.map(&notice(wanting[&1], socket.assigns.projects))
-          |> Enum.sort_by(& &1.title)
+          ids |> MapSet.difference(noticed) |> Enum.map(&wanting[&1]) |> Enum.sort_by(& &1.title)
 
         socket = assign(socket, noticed: ids)
         if fresh == [], do: socket, else: push_event(socket, "notify", %{tracks: fresh})
     end
   end
 
-  # What the browser says: the title, where, and which of the two things
-  # happened. No transcript text; the notification is a knock, not the news.
-  defp notice(track, projects) do
+  defp notice(track, thread, projects) do
     project = Enum.find(projects, &(&1.id == track.project_id))
 
     %{
       id: track.id,
-      title: track.title,
+      thread_id: thread.id,
+      title: if(thread.id == track.id, do: track.title, else: "#{track.title} · #{thread.title}"),
       project: project && project.display_name,
-      status: track.status
+      status: thread.status
     }
   end
 

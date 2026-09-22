@@ -55,7 +55,11 @@ defmodule Ravix.PlansAssignmentTest do
              Repo.get!(Track, api.track_id)
 
     assert plan_id == plan.id
-    prompt = QueueStore.get(api.task.id).body["prompt"]
+    queued = QueueStore.get(api.task.id)
+    assert queued.thread_id == api.track_id
+    assert %{track_id: track_id} = Ravix.Tracks.Store.thread(api.track_id)
+    assert track_id == api.track_id
+    prompt = queued.body["prompt"]
 
     for text <- [
           "Ship together",
@@ -145,6 +149,14 @@ defmodule Ravix.PlansAssignmentTest do
   test "existing open tracks must belong to the same project; browser receipts require a live session",
        %{user: user, project: project, plan: plan, p: p} do
     track = insert_track(project: project, conversation_id: "existing")
+
+    {:ok, _side} =
+      Ravix.Tracks.Store.create_thread(%{
+        track_id: track.id,
+        title: "Side",
+        conversation_id: "side"
+      })
+
     other = insert_track(project: insert_project(user: user))
     closed = insert_track(project: project, closed_at: DateTime.utc_now())
 
@@ -173,6 +185,7 @@ defmodule Ravix.PlansAssignmentTest do
 
     assert id == track.id
     assert Repo.get!(Ravix.Tooling.Task, task.id).client_id == nil
+    assert QueueStore.get(task.id).thread_id == track.id
     Ravix.Accounts.end_session(browser.session_hash)
 
     assert {:error, :unauthenticated} =

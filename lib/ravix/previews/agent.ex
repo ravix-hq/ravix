@@ -128,7 +128,8 @@ defmodule Ravix.Previews.Agent do
         hash: hash,
         track_id: track.id,
         user_id: user_id,
-        conversation_id: track.conversation_id,
+        thread_id: prompt_thread(track, prompt_id),
+        conversation_id: prompt_conversation(track, prompt_id),
         prompt_id: prompt_id,
         sandbox_id: sandbox_id,
         sprite: sprite,
@@ -136,7 +137,7 @@ defmodule Ravix.Previews.Agent do
       }
 
       with :ok <- Store.grant_agent(grant),
-           {:ok, path} <- write_helper(track, sprite, token),
+           {:ok, path} <- write_helper(track, sprite, token, grant.thread_id),
            %{} <- Store.agent_grant(hash) do
         {:ok, path}
       else
@@ -147,9 +148,9 @@ defmodule Ravix.Previews.Agent do
     end
   end
 
-  defp write_helper(track, sprite, token) do
+  defp write_helper(track, sprite, token, thread_id) do
     dir = "#{Ids.state_dir()}/previews"
-    path = "#{dir}/#{track.id}.sh"
+    path = "#{dir}/#{thread_id}.sh"
 
     url =
       "#{Ravix.Config.public_url()}/api/tracks/#{URI.encode(track.id, &URI.char_unreserved?/1)}/preview/agent"
@@ -164,8 +165,8 @@ defmodule Ravix.Previews.Agent do
     end
   end
 
-  defp abandon(track, hash) do
-    if hash && Store.agent_grant(hash), do: Store.revoke_agent(track.id)
+  defp abandon(_track, hash) do
+    if hash, do: Store.revoke_agent_hash(hash)
 
     "#{@start}\nThe preview helper could not be prepared this turn. Continue the requested work; " <>
       "use the track's preview controls if needed.\n#{@end_}"
@@ -282,13 +283,33 @@ defmodule Ravix.Previews.Agent do
     end
   end
 
+  defp prompt_thread(track, prompt_id) do
+    # ownership: no door here; the grant is checked against its persisted delivered prompt.
+    case Repo.get_by(Item, id: prompt_id) do
+      nil -> track.id
+      prompt -> prompt.thread_id || track.id
+    end
+  end
+
+  defp prompt_conversation(track, prompt_id) do
+    # ownership: no door here; delivered_turn/3 checks the grant against this persisted prompt.
+    prompt = Repo.get_by(Item, id: prompt_id)
+    thread_id = if prompt, do: prompt.thread_id, else: nil
+
+    case Tracks.thread(track.id, thread_id) do
+      nil -> nil
+      thread -> thread.conversation_id
+    end
+  end
+
   defp delivered_turn(track, grant, user) do
     # ownership: no door but the grant -- this is the door. The helper presents
     # a bearer grant and this is what decides whether the turn that minted it
     # really was this person's, on this track, and actually delivered.
     prompt = Repo.get_by(Item, id: grant.prompt_id)
 
-    if track.conversation_id == grant.conversation_id and prompt != nil and
+    if (grant.thread_id || track.id) == prompt_thread(track, grant.prompt_id) and
+         prompt_conversation(track, grant.prompt_id) == grant.conversation_id and prompt != nil and
          prompt.track_id == track.id and prompt.user_id == user.id and prompt.status in @delivered,
        do: :ok,
        else: auth_error("This preview helper no longer belongs to an active delivered turn.")
@@ -336,7 +357,9 @@ defmodule Ravix.Previews.Agent do
     prompt = Repo.get_by(Item, id: grant.prompt_id)
     track = Tracks.get_track(track_id)
 
-    if track != nil and track.conversation_id == grant.conversation_id and prompt != nil and
+    if track != nil and (grant.thread_id || track.id) == prompt_thread(track, grant.prompt_id) and
+         prompt_conversation(track, grant.prompt_id) == grant.conversation_id and
+         prompt != nil and
          prompt.status in @delivered,
        do: :ok,
        else: auth_error("This preview helper's turn has ended or changed.")

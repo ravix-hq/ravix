@@ -400,6 +400,23 @@ test('project, track, streaming, image upload, reconnect, and revocation', async
   await expect.poll(() => page.evaluate(() => window.liveSocket.getSocket().isConnected())).toBe(true);
   await expect(page.locator('[data-phx-main]')).toHaveClass(/phx-connected/);
   await expect(composer).toHaveValue('Draft survives reconnect');
+  // A new thread is blank and retains the track's branch, URL, and default draft.
+  const trackUrl = page.url();
+  const branch = await page.locator('.track-branch').textContent();
+  const defaultThread = await page.locator('#selected-thread').inputValue();
+  await page.getByRole('button', { name: 'Add thread', exact: true }).click();
+  await expect(page.locator('#selected-thread')).not.toHaveValue(defaultThread);
+  const nextThread = await page.locator('#selected-thread').inputValue();
+  await expect(composer).toHaveValue('');
+  await expect(page.locator('.track-branch')).toHaveText(branch);
+  expect(page.url()).toBe(trackUrl);
+  await composer.fill('A separate thread draft');
+  await page.locator('#selected-thread').selectOption(defaultThread);
+  await expect(composer).toHaveValue('Draft survives reconnect');
+  await page.locator('#selected-thread').selectOption(nextThread);
+  await expect(composer).toHaveValue('A separate thread draft');
+  await page.locator('#selected-thread').selectOption(defaultThread);
+  await expect(composer).toHaveValue('Draft survives reconnect');
   const chooserOpened = page.waitForEvent('filechooser');
   await page.getByRole('button', { name: 'Choose images', exact: true }).click();
   const chooser = await chooserOpened;

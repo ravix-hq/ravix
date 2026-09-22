@@ -289,6 +289,12 @@ defmodule Ravix.Previews.Store do
     found && present_grant(found)
   end
 
+  @doc "Revoke only the helper whose installation failed."
+  def revoke_agent_hash(hash) do
+    Repo.delete_all(from(g in PreviewAgentGrant, where: g.hash == ^hash))
+    :ok
+  end
+
   @doc "Drop a track's browser grants, or only those of one user's sessions."
   @spec revoke(String.t(), String.t() | nil) :: :ok
   def revoke(track_id, user_id \\ nil) do
@@ -327,9 +333,14 @@ defmodule Ravix.Previews.Store do
   def grant_agent(%AgentGrant{} = grant) do
     now = Clock.now_ms()
     track_id = grant.track_id
+    thread_id = grant.thread_id || track_id
 
     Repo.delete_all(
-      from g in PreviewAgentGrant, where: g.expires <= ^now or g.track_id == ^track_id
+      from g in PreviewAgentGrant,
+        where:
+          g.expires <= ^now or
+            (g.track_id == ^track_id and
+               fragment("COALESCE(?->>'thread_id', ?)", g.row, g.track_id) == ^thread_id)
     )
 
     attrs = %{

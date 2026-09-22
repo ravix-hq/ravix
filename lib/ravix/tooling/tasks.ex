@@ -9,27 +9,35 @@ defmodule Ravix.Tooling.Tasks do
   @terminal ~w(TASK_STATE_COMPLETED TASK_STATE_FAILED TASK_STATE_CANCELED TASK_STATE_REJECTED)
   def terminal?(task), do: task.state in @terminal
 
-  def send(principal, track_id, prompt, request_id) do
+  def send(principal, track_id, prompt, request_id, thread_id \\ nil) do
     with {:ok, principal} <- Authorization.check(principal, "tracks:write"),
-         {:ok, _} <- Access.track_access(principal.user, track_id) do
+         {:ok, %{thread: thread}} <- Access.thread_access(principal.user, track_id, thread_id) do
       id = id(principal, request_id)
-      fingerprint = digest({track_id, prompt})
 
-      Store.transaction(fn -> accept(principal, id, track_id, prompt, fingerprint) end)
+      fingerprint =
+        if thread.id == track_id,
+          do: digest({track_id, prompt}),
+          else: digest({track_id, thread.id, prompt})
+
+      Store.transaction(fn -> accept(principal, id, track_id, prompt, fingerprint, thread.id) end)
     end
   end
 
-  defp accept(principal, id, track_id, prompt, fingerprint) do
+  defp accept(principal, id, track_id, prompt, fingerprint, thread_id) do
     # Queue acceptance and the task receipt share a transaction.
     case Store.task(id) do
       %Task{fingerprint: ^fingerprint} = task -> task
       %Task{} -> Store.rollback(conflict())
-      nil -> enqueue(principal, id, track_id, prompt, fingerprint)
+      nil -> enqueue(principal, id, track_id, prompt, fingerprint, thread_id)
     end
   end
 
-  defp enqueue(principal, id, track_id, prompt, fingerprint) do
-    case Tracks.prompt(principal.user, track_id, %{"prompt" => prompt, "request_id" => id}) do
+  defp enqueue(principal, id, track_id, prompt, fingerprint, thread_id) do
+    case Tracks.prompt(principal.user, track_id, %{
+           "prompt" => prompt,
+           "request_id" => id,
+           "thread_id" => thread_id
+         }) do
       {:ok, _} ->
         # The queue serializes on the track; re-read after it to resolve two
         # simultaneous retries before inserting the task's unique receipt.
@@ -121,7 +129,9 @@ defmodule Ravix.Tooling.Tasks do
     client_id = principal.grant.client_id
 
     with %Task{user_id: ^user_id, client_id: ^client_id} = task <- Store.task(id),
-         {:ok, access} <- Access.track_access(principal.user, task.track_id) do
+         # ownership: the task belongs to this OAuth principal; Access.thread_access checks its track below.
+         %{} = queue <- PromptQueue.Store.get(task.id),
+         {:ok, access} <- Access.thread_access(principal.user, task.track_id, queue.thread_id) do
       {:ok, task, access}
     else
       _ -> {:error, :not_found}
@@ -145,7 +155,7 @@ defmodule Ravix.Tooling.Tasks do
 
   defp reconcile(task, access) do
     with {:ok, client} <- Ravix.Providers.fountain(),
-         {:ok, turns} <- Fountain.turns(client, access.track.conversation_id) do
+         {:ok, turns} <- Fountain.turns(client, access.thread.conversation_id) do
       case Enum.find(turns, &(&1.client_request_id == task.id)) do
         nil -> {:ok, task}
         turn -> collect(task, access, client, turn)
@@ -155,7 +165,7 @@ defmodule Ravix.Tooling.Tasks do
 
   defp collect(task, access, client, turn) do
     with {:ok, page} <-
-           Fountain.events_page(client, access.track.conversation_id,
+           Fountain.events_page(client, access.thread.conversation_id,
              after: task.cursor,
              limit: 100
            ),

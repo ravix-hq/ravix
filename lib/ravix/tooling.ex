@@ -63,7 +63,11 @@ defmodule Ravix.Tooling do
   defp execute(p, "read_track", a), do: events(p, a)
 
   defp execute(p, "send_prompt", a),
-    do: map_result(Tasks.send(p, a["track_id"], a["prompt"], a["request_id"]), &Tasks.present/1)
+    do:
+      map_result(
+        Tasks.send(p, a["track_id"], a["prompt"], a["request_id"], a["thread_id"]),
+        &Tasks.present/1
+      )
 
   defp execute(p, "get_task", a), do: map_result(Tasks.get(p, a["task_id"]), &Tasks.present/1)
 
@@ -105,10 +109,11 @@ defmodule Ravix.Tooling do
   end
 
   defp events(p, args) do
-    with {:ok, %{track: track}} <- Access.track_access(p.user, args["track_id"]),
+    with {:ok, %{track: track, thread: thread}} <-
+           Access.thread_access(p.user, args["track_id"], args["thread_id"]),
          {:ok, client} <- Ravix.Providers.fountain(),
          {:ok, page} <-
-           Fountain.events_page(client, track.conversation_id,
+           Fountain.events_page(client, thread.conversation_id,
              after: args["after"],
              limit: Map.get(args, "limit", 50)
            ),
@@ -203,6 +208,8 @@ defmodule Ravix.Tooling do
         :status,
         :created_by_login
       ])
+      # Fountain's conversation ids stay on this side, as they do for the track.
+      |> Map.put(:threads, Enum.map(v.threads, &Map.take(&1, [:id, :title, :default, :status])))
       |> Map.put(:url, Config.public_url() <> "/p/#{v.project_id}/t/#{v.id}")
 
   defp settings(v),

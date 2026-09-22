@@ -455,7 +455,7 @@ defmodule Ravix.TracksTest do
 
       [_list, create, prompt] = FakeTransport.calls(client)
       assert create.body["sandbox_id"] == "sb-1"
-      assert create.body["channel_id"] == "ravix:#{ctx.project.id}:kyoto@r2"
+      assert create.body["channel_id"] == "ravix:#{ctx.project.id}:kyoto@r2:#{presented.id}"
       assert create.body["fresh"] == true
       assert create.body["agent_id"] == ctx.project.agent_id
       assert create.body["environment_id"] == ctx.project.environment_id
@@ -826,7 +826,12 @@ defmodule Ravix.TracksTest do
     end
 
     test "is accepted into the queue with its images", ctx do
-      expect(Ravix.PromptQueue.Store, :enqueue, fn track_id, user_id, login, request_id, body ->
+      expect(Ravix.PromptQueue.Store, :enqueue, fn track_id,
+                                                   user_id,
+                                                   login,
+                                                   request_id,
+                                                   body,
+                                                   _thread_id ->
         assert track_id == ctx.track.id
         assert user_id == ctx.owner.id
         assert login == ctx.owner.login
