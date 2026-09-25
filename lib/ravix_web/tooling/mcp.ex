@@ -62,10 +62,28 @@ defmodule RavixWeb.Tooling.MCP do
 
       {:error, reason} ->
         error = Error.from(reason)
-        {:ok, %{content: [%{type: "text", text: error.message}], isError: true}}
+        details = error_details(error, name, Map.get(params, "arguments", %{}))
+
+        {:ok,
+         %{
+           content: [%{type: "text", text: Jason.encode!(details)}],
+           structuredContent: %{error: details},
+           isError: true
+         }}
     end
   end
 
   defp method(_, "tools/call", _), do: {:error, -32_602, "A tool name is required"}
   defp method(_, _, _), do: {:error, -32_601, "Method not found"}
+
+  defp error_details(error, name, args) do
+    details = %{code: error.code, message: error.message}
+
+    if name == "create_track" and error.code in ["invalid_branch", "branch_taken"] do
+      field = if Map.has_key?(args, "branch_name"), do: "branch_name", else: "title"
+      Map.put(details, :field, field)
+    else
+      details
+    end
+  end
 end

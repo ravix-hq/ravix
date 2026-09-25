@@ -55,11 +55,12 @@ defmodule Ravix.Tooling.Catalog do
       ),
       tool(
         "create_track",
-        "Open a track. Supply branch_name without the fixed ravix/ prefix; returns the full branch. PR origins keep their existing branch.",
+        "Open a track. Supply branch_name (or the compatibility alias title) without the fixed ravix/ prefix; returns the full branch. PR origins keep their existing branch.",
         "tracks:write",
         %{
           "project_id" => string(),
-          "branch_name" => string(),
+          "branch_name" => %{"type" => "string"},
+          "title" => %{"type" => "string"},
           "origin" => origin(),
           "request_id" => string(100)
         },
@@ -119,13 +120,15 @@ defmodule Ravix.Tooling.Catalog do
 
   def validate(value, %{"type" => "string"} = schema) when is_binary(value),
     do:
-      byte_size(value) <= schema["maxLength"] and
-        byte_size(value) >= Map.get(schema, "minLength", 1) and enum?(value, schema)
+      (not Map.has_key?(schema, "maxLength") or
+         length(String.codepoints(value)) <= schema["maxLength"]) and
+        length(String.codepoints(value)) >= Map.get(schema, "minLength", 0) and
+        enum?(value, schema)
 
   def validate(value, %{"type" => "integer"} = schema) when is_integer(value),
     do:
-      value >= Map.get(schema, "minimum", 0) and
-        value <= Map.get(schema, "maximum", 9_007_199_254_740_991)
+      (not Map.has_key?(schema, "minimum") or value >= schema["minimum"]) and
+        (not Map.has_key?(schema, "maximum") or value <= schema["maximum"])
 
   def validate(value, %{"type" => "boolean"}) when is_boolean(value), do: true
 
@@ -141,7 +144,7 @@ defmodule Ravix.Tooling.Catalog do
 
   defp enum?(value, %{"enum" => values}), do: value in values
   defp enum?(_, _), do: true
-  defp string(max \\ 200), do: %{"type" => "string", "maxLength" => max}
+  defp string(max \\ 200), do: %{"type" => "string", "minLength" => 1, "maxLength" => max}
   defp integer, do: %{"type" => "integer", "minimum" => 0}
 
   defp object(properties, required),

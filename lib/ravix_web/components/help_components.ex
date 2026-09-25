@@ -93,6 +93,23 @@ defmodule RavixWeb.HelpComponents do
           in the same context for follow-up work. Project settings are managed through MCP.
         </p>
       </details>
+      <p>
+        MCP <code>create_track</code>
+        requires <code>project_id</code>
+        and <code>request_id</code>.
+        Supply <code>branch_name</code>
+        without <code>ravix/</code>, or its compatibility alias <code>title</code>; when both are present,
+        <code>branch_name</code>
+        wins.
+        Omit the name or leave it empty for a generated name. Names follow the web form's Git rules.
+        Optional <code>origin</code>
+        takes <code>kind</code>: <code>blank</code>, <code>branch</code>, <code>pr</code>
+        or <code>issue</code>, with optional <code>base</code>, <code>number</code>
+        and <code>title</code>.
+        Base defaults to the project's default branch. PR tracks keep their head branch
+        and ignore the supplied name. Name errors include a field, code and validation message.
+        Retry with the same request ID and arguments to retrieve the original receipt.
+      </p>
       <details>
         <summary>Permissions, progress and disconnecting</summary>
         <p>

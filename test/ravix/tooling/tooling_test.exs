@@ -7,6 +7,7 @@ defmodule Ravix.ToolingTest do
   alias Ravix.Tooling
   alias Ravix.Tooling.OAuth
   alias Ravix.Tracks.Track
+  alias RavixWeb.Tooling.MCP
   import Ravix.ToolingFixture
 
   setup do
@@ -275,6 +276,84 @@ defmodule Ravix.ToolingTest do
              Tooling.call(p, "get_project_settings", %{"project_id" => project.id})
 
     assert {:error, _} = Tooling.call(p, "list_repositories", %{})
+  end
+
+  for {label, attrs, branch, kind} <- [
+        {"legacy title", %{"title" => "quiet-finch"}, "ravix/quiet-finch", :blank},
+        {"name precedence", %{"title" => "old", "branch_name" => "new"}, "ravix/new", :blank},
+        {"blank origin", %{"origin" => %{"kind" => "blank"}}, nil, :blank},
+        {"branch origin",
+         %{"title" => "fix", "origin" => %{"kind" => "branch", "base" => "release"}}, "ravix/fix",
+         :branch},
+        {"PR origin", %{"origin" => %{"kind" => "pr", "base" => "feature/fix", "number" => 42}},
+         "feature/fix", :pr},
+        {"issue origin",
+         %{"origin" => %{"kind" => "issue", "number" => 42, "title" => "Fix login"}},
+         "ravix/42-fix-login", :issue},
+        {"no optional arguments", %{}, nil, :blank},
+        {"empty name", %{"title" => ""}, nil, :blank}
+      ] do
+    @attrs attrs
+    @branch branch
+    @kind kind
+    test "MCP creates and retries #{label}", %{p: p, user: user} do
+      project = insert_project(user: user)
+      stub(Ravix.Projects, :prepare_machine, fn _, _ -> :ok end)
+
+      client =
+        fountain([
+          {%{method: "GET", path: "/api/conversations"}, {200, [], %{data: []}}},
+          {%{method: "POST", path: "/api/conversations"},
+           {201, [], %{data: %{id: "new-conversation"}}}}
+        ])
+
+      args = Map.merge(@attrs, %{"project_id" => project.id, "request_id" => "open"})
+
+      request = %{
+        "id" => 1,
+        "method" => "tools/call",
+        "params" => %{"name" => "create_track", "arguments" => args}
+      }
+
+      assert {:ok, %{isError: false, structuredContent: result}} =
+               MCP.call(p, request)
+
+      row = Repo.get!(Track, result.id)
+      assert row.origin_kind == @kind
+
+      if @branch,
+        do: assert(row.branch == @branch),
+        else: assert(String.starts_with?(row.branch, "ravix/"))
+
+      assert {:ok, %{isError: false, structuredContent: retry}} =
+               MCP.call(p, request)
+
+      assert retry["id"] == result.id
+      assert length(FakeTransport.calls(client)) == 2
+    end
+  end
+
+  test "MCP invalid names expose the field and the web form's typed rule", %{p: p, user: user} do
+    project = insert_project(user: user)
+    stub(Fountain, :client, fn -> Client.new("https://fountain.test", "key") end)
+    stub(Ravix.Projects, :prepare_machine, fn _, _ -> :ok end)
+    stub(Ravix.MachineCache, :machine_of, fn _, _ -> {:ok, nil} end)
+
+    for field <- ["title", "branch_name"] do
+      args = %{"project_id" => project.id, "request_id" => field, field => "two words"}
+
+      assert {:error, {:unprocessable, "invalid_branch", message}} =
+               Ravix.Tracks.open(user, project.id, %{field => "two words"})
+
+      assert {:ok, %{isError: true, structuredContent: %{error: error}}} =
+               MCP.call(p, %{
+                 "id" => 1,
+                 "method" => "tools/call",
+                 "params" => %{"name" => "create_track", "arguments" => args}
+               })
+
+      assert error == %{field: field, code: "invalid_branch", message: message}
+    end
   end
 
   defp fountain(expectations) do

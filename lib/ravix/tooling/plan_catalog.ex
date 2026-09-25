@@ -92,7 +92,7 @@ defmodule Ravix.Tooling.PlanCatalog do
       }
     }
 
-  defp string(max \\ 200), do: %{"type" => "string", "maxLength" => max}
+  defp string(max \\ 200), do: %{"type" => "string", "minLength" => 1, "maxLength" => max}
   defp text(max), do: Map.put(string(max), "minLength", 0)
   defp array(items), do: %{"type" => "array", "items" => items, "maxItems" => 100}
 
