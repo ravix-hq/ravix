@@ -267,6 +267,9 @@ safe upload, escaped markdown, and preview-origin response functions.
 
 ## Code map
 
+Start with the [architecture guide](docs/architecture.md) for diagrams of the
+system, ownership boundaries, prompt delivery, previews, and cluster recovery.
+
 | Area | Location |
 | --- | --- |
 | Data, access, service clients, supervised processes | `lib/ravix/` |
