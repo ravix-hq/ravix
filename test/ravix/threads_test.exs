@@ -139,6 +139,8 @@ defmodule Ravix.ThreadsTest do
       {:ok, []}
     end)
 
+    expect(Fountain, :events, fn _, _ -> {:ok, []} end)
+
     expect(Fountain, :prompt, fn _, id, text, [], opts ->
       assert text =~ ctx.track.workdir
       assert String.ends_with?(text, "second")

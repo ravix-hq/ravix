@@ -414,6 +414,27 @@ defmodule Ravix.PromptQueue.Store do
     tracks |> Enum.uniq() |> Enum.each(&publish_queue/1)
   end
 
+  @doc "Last reset whose preamble was confirmed delivered on this thread."
+  @spec delivered_reset(String.t()) :: non_neg_integer()
+  def delivered_reset(thread_id) do
+    Repo.one(
+      from p in Item,
+        where: p.thread_id == ^thread_id and p.status == :sent and not is_nil(p.session_reset_id),
+        select: max(p.session_reset_id)
+    ) || 0
+  end
+
+  @doc "Save the reset included in a claimed POST, before crossing the network."
+  @spec prepare_reset(String.t(), integer() | nil) :: :ok
+  def prepare_reset(id, reset_id) do
+    {1, nil} =
+      Repo.update_all(from(p in Item, where: p.id == ^id and p.status == :sending),
+        set: [session_reset_id: reset_id]
+      )
+
+    :ok
+  end
+
   @doc """
   Record a prompt as delivered, even if the track closed while it was in
   flight.

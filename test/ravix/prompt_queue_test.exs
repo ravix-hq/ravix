@@ -32,6 +32,7 @@ defmodule Ravix.PromptQueueTest do
     track = insert_track(project: project, conversation_id: "c1", created_by_login: owner.login)
 
     stub(Ravix.Projects, :prepare_machine, fn _project, _client -> :ok end)
+    stub(Ravix.Fountain, :events, fn _client, _id -> {:ok, []} end)
     server = start_server()
 
     %{

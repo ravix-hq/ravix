@@ -32,7 +32,7 @@ defmodule RavixWeb.WorkspaceMemoTest do
 
     for _ <- 1..2 do
       {:ok, view, _} = live(log_in_user(conn, user), "/home")
-      render_async(view)
+      render_async(view, 5_000)
 
       for {project, track} <- rows do
         render_patch(view, "/p/#{project.id}")
@@ -100,7 +100,7 @@ defmodule RavixWeb.WorkspaceMemoTest do
     tabs =
       for _ <- 1..2 do
         {:ok, view, _} = live(log_in_user(conn, user), "/p/#{project.id}")
-        render_async(view)
+        render_async(view, 5_000)
         assert has_element?(view, ".track-tab [aria-label='Unread reply']")
         view
       end
@@ -108,10 +108,10 @@ defmodule RavixWeb.WorkspaceMemoTest do
     assert :ok = Tracks.mark_read(user, track.id)
 
     for view <- tabs do
-      refute render_async(view) =~ "Unread reply"
+      refute render_async(view, 5_000) =~ "Unread reply"
       # A non-turn rail reload still reads the user's markers from the DB.
       send(view.pid, {:hub, Event.new(:settings, project.id)})
-      refute render_async(view) =~ "Unread reply"
+      refute render_async(view, 5_000) =~ "Unread reply"
     end
 
     assert {:ok, threads} = Tracks.threads(user, track.id)

@@ -140,6 +140,11 @@ defmodule Ravix.Tooling.HeldTasksTest do
         {:ok, Fountain.Shapes.conversation(%{"id" => id, "status" => "idle"})}
       end)
 
+      expect(Fountain, :events, fn _, id ->
+        assert id == c.track.conversation_id
+        {:ok, []}
+      end)
+
       expect(Fountain, :prompt, fn _, _, _, _, opts ->
         assert opts[:client_request_id] == c.next.id
         :ok

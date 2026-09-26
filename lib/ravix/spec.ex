@@ -206,6 +206,29 @@ defmodule Ravix.Spec do
     )
   end
 
+  @doc "Context for the first prompt delivered after Fountain lost the session."
+  @spec session_recovery_prompt(Ravix.Tracks.Track.t(), [map()]) :: String.t()
+  def session_recovery_prompt(track, items) do
+    assignments =
+      items
+      |> Enum.with_index(1)
+      |> Enum.map_join("\n\n", fn {item, index} ->
+        "#{index}. #{item.title} (#{item.id})\n#{item.brief}\n#{item.acceptance}"
+      end)
+
+    """
+    [ravix: session context restored]
+    Fountain restarted this thread after session_gone. Earlier turns may be missing from your memory.
+    Your working directory is #{track.workdir} and your branch is #{track.branch}.
+    Work only in this track's directory. Do not edit, stage, commit, or check out files in the shared clone or another track's worktree.
+    The assigned plan items, in order, are:
+    #{if assignments == "", do: "No plan items assigned.", else: assignments}
+    Continue the assigned work in order. Treat the following prompt as additional direction unless it explicitly cancels or replaces earlier work.
+    [/ravix: session context restored]
+    """
+    |> String.trim()
+  end
+
   defp worktree(repo_path, origin, slug, branch) do
     dir = Ids.workdir_for(slug)
 
