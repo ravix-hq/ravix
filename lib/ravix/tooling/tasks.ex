@@ -164,14 +164,57 @@ defmodule Ravix.Tooling.Tasks do
   end
 
   defp collect(task, access, client, turn) do
+    finished = turn_state(turn.status) in @terminal
+    # Rebuild a finished reply from its complete event window: ACP replies may
+    # span pages, and a previous poll may already have consumed its last event.
+    cursor = if finished, do: nil, else: task.cursor
+
     with {:ok, page} <-
-           Fountain.events_page(client, access.thread.conversation_id,
-             after: task.cursor,
-             limit: 100
-           ),
+           collect_pages(client, access.thread.conversation_id, turn, cursor, %{
+             events: [],
+             seen: false
+           }),
          text <- reply(page.events, turn.id, access.project.runtime) do
       Store.transaction(fn -> save_page(task, turn, page, text) end)
     end
+  end
+
+  defp collect_pages(client, conversation_id, turn, cursor, acc) do
+    with {:ok, page} <- Fountain.events_page(client, conversation_id, after: cursor, limit: 100) do
+      {events, seen, past} = turn_window(page.events, turn.id, acc.seen)
+      acc = %{events: [events | acc.events], seen: seen}
+
+      cond do
+        not page.has_more or past or turn_state(turn.status) not in @terminal ->
+          {:ok, %{page | events: acc.events |> Enum.reverse() |> List.flatten()}}
+
+        is_nil(page.next_cursor) or (not is_nil(cursor) and page.next_cursor <= cursor) ->
+          {:error,
+           %Fountain.Error{
+             status: 0,
+             code: "pagination_stalled",
+             message: "Fountain event pagination did not advance",
+             kind: :api
+           }}
+
+        true ->
+          collect_pages(client, conversation_id, turn, page.next_cursor, acc)
+      end
+    end
+  end
+
+  defp turn_window(events, turn_id, seen) do
+    {events, seen, past} =
+      Enum.reduce_while(events, {[], seen, false}, fn event, {events, seen, false} ->
+        case event["turn_id"] do
+          ^turn_id -> {:cont, {[event | events], true, false}}
+          nil -> {:cont, {events, seen, false}}
+          _ when seen -> {:halt, {events, seen, true}}
+          _ -> {:cont, {events, seen, false}}
+        end
+      end)
+
+    {Enum.reverse(events), seen, past}
   end
 
   defp save_page(task, turn, page, text) do
@@ -180,13 +223,14 @@ defmodule Ravix.Tooling.Tasks do
     if current.cursor != task.cursor or terminal?(current) do
       current
     else
-      state = if page.has_more, do: "TASK_STATE_WORKING", else: turn_state(turn.status)
+      state = turn_state(turn.status)
+      result = if state in @terminal, do: text, else: current.result <> text
 
       Store.update(current,
         state: state,
         turn_id: turn.id,
         cursor: page.next_cursor || current.cursor,
-        result: String.slice(current.result <> text, 0, 64_000)
+        result: String.slice(result, 0, 64_000)
       )
     end
   end
@@ -203,7 +247,9 @@ defmodule Ravix.Tooling.Tasks do
     end)
   end
 
-  defp turn_state(status) when status in ["completed", "done"], do: "TASK_STATE_COMPLETED"
+  defp turn_state(status) when status in ["ended", "completed", "done"],
+    do: "TASK_STATE_COMPLETED"
+
   defp turn_state("failed"), do: "TASK_STATE_FAILED"
   defp turn_state(status) when status in ["canceled", "cancelled"], do: "TASK_STATE_CANCELED"
   defp turn_state(_), do: "TASK_STATE_WORKING"
