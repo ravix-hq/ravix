@@ -88,7 +88,7 @@ receipt, so tool calls do not hold open the connection until an agent finishes.
 | `update_project_settings` | `project_id`, `settings`, `request_id` |
 | `list_tracks` | `project_id`; optional `after`, `limit`. Each item includes the project owner’s `owner_login` (distinct from the track creator). |
 | `get_track` | `track_id` |
-| `create_track` | `project_id`, `request_id`; optional `branch_name` (without `ravix/`), `origin` |
+| `create_track` | `project_id`, `request_id`; optional `branch_name` (without `ravix/`), `title` (compatibility alias), `origin` |
 | `send_prompt` | `track_id`, `prompt`, `request_id` |
 | `get_task` | `task_id` |
 | `cancel_task` | `task_id` |
@@ -243,3 +243,23 @@ customer subscription or an interactive Claude Code session.
 References: [MCP authorization](https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization),
 [A2A specification](https://a2a-protocol.org/latest/specification/), and
 [Claude Code MCP](https://code.claude.com/docs/en/mcp). Reviewed 2026-09-22.
+
+### Naming a track
+
+`create_track` accepts `branch_name` and the published compatibility alias `title`.
+If both are supplied, `branch_name` wins. Omit the name or send an empty string
+for a generated name. Names use the same Git branch validation as the web form;
+new branches are `ravix/<name>`. PR origins retain the existing head branch and
+ignore the supplied name. The alias has no scheduled removal.
+
+`origin` is optional and accepts `{"kind":"blank"}`,
+`{"kind":"branch","base":"release"}`,
+`{"kind":"pr","base":"feature/fix","number":42}`, or
+`{"kind":"issue","number":42,"title":"Fix login","base":"main"}`.
+Omitting it starts a blank track. `base`, `number` and `title` are optional;
+base defaults to the project's default branch.
+
+MCP tool failures include `structuredContent.error` with `code` and `message`.
+Invalid or unavailable names also include `field` (`branch_name` or `title`)
+and the same validation message as the web form. Retry a mutation with the same
+`request_id` and unchanged arguments to retrieve its original receipt.

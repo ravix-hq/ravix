@@ -80,6 +80,9 @@
           <.icon name="plus" />Add a project
         </button>
 
+        <.link patch="/schedules" class={["yard-item", @live_action == :schedules && "on"]}>
+          <.icon name="clock" />Schedules
+        </.link>
         <button
           class="yard-item"
           phx-click={JS.push_focus() |> JS.push("dialog")}
@@ -460,7 +463,15 @@
           </section>
         </div>
       </div>
-      <div :if={is_nil(@project) && @live_action != :projects} class="inbox">
+      <.live_component
+        :if={@live_action == :schedules}
+        module={RavixWeb.Live.SchedulesPanel}
+        id="schedules"
+        current_user={@current_user}
+        session_hash={@session_hash}
+        projects={@projects}
+      />
+      <div :if={is_nil(@project) && @live_action not in [:projects, :schedules]} class="inbox">
         <header>
           <div class="row">
             <h1>

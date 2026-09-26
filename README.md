@@ -55,6 +55,8 @@ the corresponding Phoenix URL when launching `bun mock/server.ts` directly.
 
 - `/` and `/inbox`: projects and tracks needing attention.
 - `/home`: project selection; `/p/:project`: one project's tracks.
+- `/schedules`: personal hourly, daily, or weekly project prompts (UTC), with
+  editing, pause/resume, and links to the latest dispatched track.
 - `/p/:project/t/:track`: conversation, image attachments, queued prompts,
   presence, files, changes, GitHub checks/PRs, previews, command execution,
   and machine vitals.
@@ -63,6 +65,13 @@ the corresponding Phoenix URL when launching `bun mock/server.ts` directly.
 - Project and track sharing: GitHub usernames and revocable invite links.
 - Desktop notifications, switched on from the rail: when a track finishes or
   fails while the tab is in the background, the browser says so.
+
+Schedules recheck the creator's project membership before opening each fresh
+track and use the durable prompt queue. A cluster singleton polls every 30 seconds;
+database claims prevent duplicate dispatches. Downtime coalesces missed occurrences
+into one run. Claimed occurrences are not replayed after a crash or provider error:
+check the dispatch status and project tracks before retrying manually. Pausing or
+deleting a schedule stops future dispatches; already claimed runs may finish.
 
 The terminal runs complete shell commands; it is not an interactive TTY.
 Persistent application servers belong in Preview, whose process owns the
