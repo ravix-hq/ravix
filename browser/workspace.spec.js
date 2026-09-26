@@ -30,10 +30,25 @@ async function accessible(page) {
 // themselves in `sign-in.js`.
 const signIn = (page) => signInAs(page, 'mockuser');
 
+// In the workspace the picker is inside the account menu, which is opened
+// first and shut again afterwards so that it covers nothing measured next.
+async function openAccountMenu(page) {
+  const menu = page.locator('#account-menu');
+  if (!(await menu.evaluate(el => el.matches(':popover-open')))) await page.locator('#account-trigger').click();
+  await expect(menu).toBeVisible();
+  return menu;
+}
+
 async function chooseTheme(page, name) {
+  const inMenu = (await page.locator('#account-trigger').count()) > 0;
+  if (inMenu) await openAccountMenu(page);
   await page.locator('[data-theme-toggle]').click();
   await page.getByRole('menuitemradio', { name, exact: true }).click({ timeout: 15_000 });
   await expect(page.locator('html')).toHaveAttribute('data-theme', name.toLowerCase().replaceAll(' ', '-'));
+  if (inMenu) {
+    await page.keyboard.press('Escape');
+    await expect(page.locator('#account-menu')).toBeHidden();
+  }
   // Measure the selected palette after its CSS transitions, not a mixed frame.
   await page.evaluate(async () => {
     await new Promise(requestAnimationFrame);
@@ -193,13 +208,36 @@ test('a first visit is walked through how it works, the agent, and GitHub', asyn
 
 test('the account dialog is where the agent lives after the walkthrough', async ({ page }) => {
   await signIn(page);
-  await page.getByRole('button', { name: 'account', exact: true }).click();
+  const trigger = page.locator('#account-trigger');
+  await trigger.click();
+  const menu = page.locator('#account-menu');
+  await expect(menu).toBeVisible();
+  await accessible(page);
+  await capture(page, 'account-menu');
+  // Escape inside the palette list shuts the list and leaves the menu open;
+  // the next Escape shuts the menu and puts focus back on its trigger.
+  await menu.locator('[data-theme-toggle]').click();
+  await expect(page.getByRole('menu', { name: 'Theme' })).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('menu', { name: 'Theme' })).toBeHidden();
+  await expect(menu).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(menu).toBeHidden();
+  await expect(trigger).toBeFocused();
+  // A click outside shuts it too.
+  await trigger.click();
+  await page.locator('#workspace-stage').click({ position: { x: 400, y: 300 } });
+  await expect(menu).toBeHidden();
+  await trigger.click();
+  await menu.getByRole('button', { name: 'Account', exact: true }).click();
+  await expect(menu).toBeHidden();
   await expect(page.getByRole('dialog', { name: 'Your account' })).toBeVisible();
   await expect(page.getByRole('group', { name: 'Agent' })).toBeVisible();
   await accessible(page);
   await capture(page, 'account-dialog');
   await page.keyboard.press('Escape');
   await expect(page.getByRole('dialog', { name: 'Your account' })).toHaveCount(0);
+  await expect(trigger).toBeFocused();
 });
 
 test('home quick start creates a scratch project and recent navigation survives theme changes', async ({ page }) => {
@@ -244,20 +282,27 @@ test('home quick start creates a scratch project and recent navigation survives 
   // the theme picker, the account --- was unreachable until Menu brought it
   // back over the page. Following a link in it closes it again.
   const menu = mobileNav.getByRole('button', { name: 'Menu' });
-  await expect(page.getByRole('link', { name: 'Sign out' })).toBeHidden();
+  const account = page.locator('#account-trigger');
+  await expect(account).toBeHidden();
   await expect(menu).toHaveAttribute('aria-expanded', 'false');
   await menu.click();
   await expect(menu).toHaveAttribute('aria-expanded', 'true');
-  await expect(page.getByRole('link', { name: 'Sign out' })).toBeVisible();
+  await expect(account).toBeVisible();
   await expect(page.getByRole('button', { name: 'Close menu' })).toBeVisible();
   await accessible(page);
   await capture(page, 'home-mobile-menu');
+  await account.click();
+  await expect(page.getByRole('link', { name: 'Sign out' })).toBeVisible();
+  await accessible(page);
+  await capture(page, 'home-mobile-account-menu');
   await page.keyboard.press('Escape');
   await expect(page.getByRole('link', { name: 'Sign out' })).toBeHidden();
+  await page.keyboard.press('Escape');
+  await expect(account).toBeHidden();
   await menu.click();
   await page.getByRole('complementary', { name: 'Projects' }).getByRole('link', { name: 'Inbox' }).click();
   await expect(page.getByRole('heading', { name: "You're all caught up" })).toBeVisible();
-  await expect(page.getByRole('link', { name: 'Sign out' })).toBeHidden();
+  await expect(account).toBeHidden();
   await expect(menu).toHaveAttribute('aria-expanded', 'false');
 });
 
@@ -489,7 +534,7 @@ test('project, track, streaming, image upload, reconnect, and revocation', async
   await expect(page.getByRole('button', { name: 'Project settings' })).toBeHidden();
   await trackMenu.click();
   await expect(page.getByRole('button', { name: 'Project settings' })).toBeVisible();
-  await expect(page.getByRole('link', { name: 'Sign out' })).toBeVisible();
+  await expect(page.locator('#account-trigger')).toBeVisible();
   await accessible(page);
   await capture(page, 'track-mobile-menu');
   await page.getByRole('button', { name: 'Close menu' }).click();
@@ -500,6 +545,7 @@ test('project, track, streaming, image upload, reconnect, and revocation', async
   await composer.fill("This must never be sent");
   const other = await context.newPage();
   await other.goto('/home');
+  await other.locator('#account-trigger').click();
   await other.getByRole('link', { name: 'Sign out' }).click();
   await expect(other.getByRole('heading', { name: 'Sign in to Ravix' })).toBeVisible();
   // Submitting on a revoked session is refused by sending this browser to
@@ -578,7 +624,9 @@ test('a hard load paints the saved palette, never the default one first', async 
 
 test('help explains desktop connections and stays accessible on mobile', async ({ page }) => {
   await signIn(page);
+  const account = page.locator('#account-trigger');
   const help = page.getByRole('button', { name: 'Help', exact: true });
+  await account.click();
   await help.click();
   const dialog = page.getByRole('dialog', { name: 'Help · AI tools' });
   await expect(dialog).toBeVisible();
@@ -591,9 +639,12 @@ test('help explains desktop connections and stays accessible on mobile', async (
   await capture(page, 'tooling-help');
   await page.keyboard.press('Escape');
   await expect(dialog).toHaveCount(0);
-  await expect(help).toBeFocused();
+  // Help was in the account menu, which shut as the dialog opened; focus
+  // comes back to the menu's trigger rather than to a hidden item.
+  await expect(account).toBeFocused();
   await page.setViewportSize({ width: 390, height: 844 });
   await page.getByRole('navigation', { name: 'Workspace navigation' }).getByRole('button', { name: 'Menu' }).click();
+  await account.click();
   await help.click();
   await expect(dialog).toBeVisible();
   await dialog.getByText('Permissions, progress and disconnecting', { exact: true }).click();

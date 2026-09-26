@@ -155,17 +155,22 @@ defmodule RavixWeb.WorkspaceLiveTest do
     late = insert_user(created_at: DateTime.add(Ravix.Changelog.at(entry), 1, :day))
 
     {:ok, view, _} = live(log_in_user(conn, early), "/home")
-    assert has_element?(view, "button[phx-value-name=changes] .chip")
-    render_click(view, "dialog", %{name: "changes"})
+    # The count is in the account menu, and a dot on the closed menu's
+    # trigger says there is something in there to read.
+    assert has_element?(view, "#account-menu #open-changes .badge")
+    assert has_element?(view, "#account-trigger #account-unseen", "new in What's new")
+    view |> element("#open-changes") |> render_click()
     assert has_element?(view, "#changes-dialog", entry.title)
     # Opening it is the acknowledgement: the count goes, and stays gone.
-    refute has_element?(view, "button[phx-value-name=changes] .chip")
+    refute has_element?(view, "#open-changes .badge")
+    refute has_element?(view, "#account-unseen")
     assert Repo.get!(Ravix.Accounts.User, early.id).changes_seen_at
     {:ok, again, _} = live(log_in_user(conn, early), "/home")
-    refute has_element?(again, "button[phx-value-name=changes] .chip")
+    refute has_element?(again, "#open-changes .badge")
 
     {:ok, fresh, _} = live(log_in_user(conn, late), "/home")
-    refute has_element?(fresh, "button[phx-value-name=changes] .chip")
+    refute has_element?(fresh, "#open-changes .badge")
+    refute has_element?(fresh, "#account-unseen")
     render_click(fresh, "dialog", %{name: "changes"})
     refute has_element?(fresh, "#changes-dialog", entry.title)
   end
@@ -521,6 +526,96 @@ defmodule RavixWeb.WorkspaceLiveTest do
     refute has_element?(view, "#new-track-form")
     refute has_element?(view, "a.project-add")
     refute has_element?(view, "button", "New track")
+    refute has_element?(view, "#yard button.project-action")
+  end
+
+  test "the open project's people and settings are actions on its own row", %{conn: conn} do
+    user = insert_user()
+    mine = insert_project(user: user, name: "Mine")
+    other = insert_project(user: user, name: "Other one")
+    shared = insert_project(user: insert_user(login: "sharer"), name: "Shared")
+    insert_project_member(shared, user)
+    {:ok, view, _} = live(log_in_user(conn, user), "/p/#{mine.id}")
+
+    row = "#yard [data-project-id='#{mine.id}'].current"
+    assert has_element?(view, "#{row} button[aria-label='People in Mine']")
+    assert has_element?(view, "#{row} button[aria-label='Project settings for Mine']")
+    assert has_element?(view, "#{row} a.project-add[aria-label='New track in Mine']")
+    # Every row offers a new track; only the open one has dialogs to open,
+    # because they act on the open project.
+    closed = "#yard [data-project-id='#{other.id}']"
+    refute has_element?(view, "#{closed}.current")
+    assert has_element?(view, "#{closed} a.project-add")
+    refute has_element?(view, "#{closed} button.project-action")
+    # The nested links under the open project are gone.
+    refute has_element?(view, ".project-links")
+
+    view |> element("#{row} button[aria-label='People in Mine']") |> render_click()
+    assert has_element?(view, "#people-dialog")
+    render_click(view, "dismiss")
+
+    stub(Projects, :settings, fn _, id when id == mine.id ->
+      {:ok,
+       %{
+         name: "Mine",
+         runtime: "claude",
+         model: "model",
+         instructions: "",
+         setup_script: "",
+         packages: %{},
+         env_keys: [],
+         vault_keys: [],
+         catalog: Catalog.empty()
+       }}
+    end)
+
+    view |> element("#{row} button[aria-label='Project settings for Mine']") |> render_click()
+    assert has_element?(view, "#settings-dialog")
+
+    # A member who does not own the project has its people but not its settings.
+    {:ok, view, _} = live(log_in_user(conn, user), "/p/#{shared.id}")
+    row = "#yard [data-project-id='#{shared.id}'].current"
+    assert has_element?(view, "#{row} button[aria-label='People in sharer / Shared']")
+    refute has_element?(view, "#{row} button[aria-label^='Project settings']")
+  end
+
+  test "the account menu holds preferences, help and signing out", %{conn: conn} do
+    user = insert_user(login: "menuuser")
+    {:ok, view, _} = live(log_in_user(conn, user), "/home")
+
+    # One row at the top opens it; nothing of it is left at the foot.
+    assert has_element?(
+             view,
+             "#yard button#account-trigger[popovertarget='account-menu']",
+             "@menuuser"
+           )
+
+    refute has_element?(view, ".workspace-account")
+    menu = "#yard #account-menu[popover]"
+
+    for item <- [
+          "#theme-picker",
+          "#notify",
+          "a[href='/api/auth/install']",
+          "a[href='/auth/signout']"
+        ] do
+      assert has_element?(view, "#{menu} #{item}")
+    end
+
+    # Each item that opens a dialog also hides the menu, and returns focus to
+    # the trigger when the dialog closes, since the item itself is hidden.
+    for {id, dialog} <- [
+          {"open-account", "#account-dialog"},
+          {"open-help", "#help-dialog"},
+          {"open-changes", "#changes-dialog"}
+        ] do
+      item = "#{menu} button##{id}[popovertarget='account-menu'][popovertargetaction='hide']"
+      assert has_element?(view, item)
+      assert view |> element(item) |> render() =~ "#account-trigger"
+      view |> element(item) |> render_click()
+      assert has_element?(view, dialog)
+      render_click(view, "dismiss")
+    end
   end
 
   test "a track URL cannot name a different project", %{conn: conn} do
@@ -1103,8 +1198,17 @@ defmodule RavixWeb.WorkspaceLiveTest do
       # Everything the yard holds is now reachable on a phone, which it was
       # not: the rail was `display: none` under the breakpoint and nothing
       # set the class that shows it.
-      assert has_element?(ctx.view, "#yard.forced a[href='/auth/signout']", "Sign out")
-      assert has_element?(ctx.view, "#yard.forced button", "Project settings")
+      assert has_element?(
+               ctx.view,
+               "#yard.forced #account-menu a[href='/auth/signout']",
+               "Sign out"
+             )
+
+      assert has_element?(
+               ctx.view,
+               "#yard.forced button[aria-label='Project settings for Pocket work']"
+             )
+
       assert has_element?(ctx.view, "#yard.forced button.yard-close[aria-label='Close menu']")
 
       # And the same button closes it again.

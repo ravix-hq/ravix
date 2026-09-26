@@ -638,10 +638,14 @@ defmodule RavixWeb.WorkspaceLive do
     {:noreply, put_flash(socket, :error, RavixWeb.Error.from(reason).message)}
   end
 
+  # The named sections first, then whatever is in none of them. Last, so the
+  # Projects heading is never followed straight away by a second heading
+  # saying "Other projects"; with no named sections at all the group has no
+  # heading and its projects sit directly under Projects.
   defp section_groups(projects, sections, placements) do
     grouped = Enum.group_by(projects, &Map.get(placements, &1.id))
     unsectioned = %{id: nil, name: "Other projects", collapsed: false}
-    Enum.map([unsectioned | sections], &{&1, Map.get(grouped, &1.id, [])})
+    Enum.map(sections ++ [unsectioned], &{&1, Map.get(grouped, &1.id, [])})
   end
 
   # The rail, read here and now. Mount has nothing to draw until this answers

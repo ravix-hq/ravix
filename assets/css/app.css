@@ -454,12 +454,55 @@ h4 { font-size: 12px; color: var(--dim); font-weight: 500; letter-spacing: 0; }
 /* ── the yard (left rail) ──────────────────────────────────────────────── */
 
 .yard { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--sidebar); border-right: 1px solid var(--line); }
-.yard-top { display: flex; align-items: center; gap: 8px; padding: 12px; }
+.yard-top { display: flex; align-items: center; gap: 4px; padding: 8px 8px 6px; }
 .avatar { flex: none; width: 24px; height: 24px; border-radius: var(--radius); background: var(--surface); border: 1px solid var(--line); object-fit: cover; }
 .workspace-avatar { display: grid; place-items: center; color: var(--ink); font-size: 12px; }
-.yard-who { min-width: 0; display: flex; flex-direction: column; line-height: 1.2; }
+.yard-who { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.2; }
 .yard-who strong { font-size: 13px; font-weight: 600; }
 .yard-who small { color: var(--dimmer); font-size: 11px; }
+
+/* The person's row opens the account menu: a native popover in the top
+   layer, so it is placed against the viewport. The yard is always flush to
+   the left edge, which makes fixed coordinates correct wherever anchor
+   positioning is not available to say the same thing exactly. */
+.yard-account {
+  position: relative; flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px;
+  padding: 5px 6px; color: var(--ink); background: transparent;
+  border: 1px solid transparent; border-radius: var(--radius); text-align: left;
+}
+.yard-account:hover:not(:disabled) { background: var(--surface-hover); border-color: transparent; }
+.yard:has(#account-menu:popover-open) .yard-account { background: var(--surface-hover); }
+/* The login is `--dimmer` on the rail; on a lit row that falls under 4.5:1. */
+.yard-account:hover small, .yard:has(#account-menu:popover-open) .yard-account small { color: var(--dim); }
+.account-chevron { flex: none; color: var(--dimmer); }
+/* What's new has something unseen: a dot on the avatar's corner. */
+.account-unseen {
+  position: absolute; left: 25px; top: 3px; width: 8px; height: 8px; border-radius: 50%;
+  background: var(--accent); box-shadow: 0 0 0 2px var(--sidebar);
+}
+.account-menu {
+  position: fixed; inset: auto; top: 54px; left: 8px; margin: 0;
+  width: min(272px, calc(100vw - 16px)); max-height: calc(100vh - 66px); overflow-y: auto;
+  padding: 4px; color: var(--ink); background: var(--panel);
+  border: 1px solid var(--line); border-radius: var(--radius-lg); box-shadow: 0 8px 28px var(--shadow);
+}
+@supports (position-anchor: --a) {
+  .yard-account { anchor-name: --account; }
+  .account-menu { position-anchor: --account; top: calc(anchor(bottom) + 4px); left: anchor(left); }
+}
+.account-menu hr { margin: 4px 2px; border: none; border-top: 1px solid var(--line); }
+.account-menu .theme-picker { width: 100%; }
+/* Inside the menu the palette list unfolds in place rather than floating
+   above a trigger that is now at the top of the screen. */
+.account-menu .theme-menu { position: static; max-height: min(40vh, 320px); margin: 2px 0 4px; box-shadow: none; }
+.account-item {
+  display: flex; align-items: center; gap: 10px; width: 100%; padding: 6px 8px;
+  color: var(--dim); background: transparent; border: none; border-radius: var(--radius);
+  text-align: left; text-decoration: none; font-size: 13px;
+}
+.account-item:hover:not(:disabled), .account-item:focus-visible { background: var(--surface-hover); color: var(--ink); border-color: transparent; }
+.account-item svg { flex: none; color: var(--dimmer); }
+.account-item:hover svg, .account-item:focus-visible svg { color: var(--dim); }
 /* The x in the yard's corner and the scrim behind it exist only when the
    yard has been forced over the page, which only `narrow` does. */
 .yard-close { display: none; margin-left: auto; }
@@ -489,15 +532,30 @@ h4 { font-size: 12px; color: var(--dim); font-weight: 500; letter-spacing: 0; }
 .yard-label .row { gap: 2px; }
 .yard-label button { padding: 2px; }
 
-.workspace-project { padding: 4px 0; }
-.workspace-project-row { display: flex; align-items: center; gap: 2px; }
+/* A project is an item in the list, the same size as the nav's items; the
+   section it is filed under is the label above it. Its own actions sit at the
+   row's end: always on the open project, on hover or focus on the others
+   (and always where there is no hover to reveal them). */
+.workspace-project { padding: 1px 0; }
+.workspace-project-row { display: flex; align-items: center; gap: 2px; border-radius: var(--radius); }
+.workspace-project-row:hover { background: var(--surface-hover); }
+.workspace-project.current .workspace-project-row { background: var(--surface-active); }
 .workspace-project-name {
-  flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; padding: 6px;
-  color: inherit; text-decoration: none; border-radius: var(--radius); font-size: 13px; font-weight: 600;
+  flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; padding: 5px 6px;
+  color: var(--dim); text-decoration: none; border-radius: var(--radius); font-size: 13px; font-weight: 500;
 }
-.workspace-project-name.selected { background: var(--surface-hover); }
-.project-toggle, .project-add { flex: none; padding: 3px 0; width: 16px; display: grid; place-items: center; color: var(--dim); }
-.project-add { text-decoration: none; }
+.workspace-project-row:hover .workspace-project-name, .workspace-project-name.selected { color: var(--ink); }
+.workspace-project-name:hover, .account-item:hover { text-decoration: none; }
+.project-actions { flex: none; display: flex; align-items: center; gap: 1px; padding-right: 3px; }
+.project-action {
+  flex: none; width: 22px; height: 22px; padding: 0; display: grid; place-items: center;
+  color: var(--dim); background: transparent; border: none; border-radius: var(--radius); text-decoration: none;
+}
+.project-action:hover:not(:disabled), .project-action:focus-visible { color: var(--ink); background: var(--surface); border-color: transparent; }
+@media (hover: hover) {
+  .workspace-project:not(.current) .project-actions { opacity: 0; }
+  .workspace-project:hover .project-actions, .workspace-project:focus-within .project-actions { opacity: 1; }
+}
 .project-mark {
   flex: none; width: 18px; height: 18px; border-radius: 4px; display: grid; place-items: center;
   background: linear-gradient(135deg, var(--accent-soft), var(--surface)); border: 1px solid var(--line);
@@ -528,23 +586,10 @@ h4 { font-size: 12px; color: var(--dim); font-weight: 500; letter-spacing: 0; }
 .dot.failed { background: var(--bad); }
 @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.32; } }
 
-.project-links { display: flex; flex-direction: column; align-items: stretch; padding: 3px 0 3px 17px; }
-.project-links button { display: flex; align-items: center; gap: 8px; padding: 5px 8px; font-size: 12px; }
-.yard-meta { display: flex; align-items: center; justify-content: space-between; width: 100%; color: var(--dimmer); font-size: 11px; }
-.yard-meta a { color: var(--dimmer); text-decoration: none; }
-.yard-meta button.linkish { font-size: inherit; padding: 0; color: var(--dimmer); }
-
-.workspace-account {
-  display: flex; gap: 8px; align-items: center; justify-content: center; flex-wrap: wrap;
-  padding: 12px; margin-top: auto; border-top: 1px solid var(--line);
-}
-.workspace-account .theme-picker { width: 100%; }
-.workspace-account > a { color: var(--dim); text-decoration: none; }
-.workspace-account > a:hover { color: var(--ink); }
 
 /* ── the theme picker ──────────────────────────────────────────────────────
-   In the foot of the yard because it is settled once and then never again,
-   and because the rail is the only chrome on screen at every route.
+   In the account menu because it is settled once and then never again, and
+   because the rail is the only chrome on screen at every route.
 
    The swatch is the trick worth pointing at: the span carries `data-theme`,
    so `var(--bg)`, `var(--accent)` and the rest resolve to *that* theme rather
@@ -1376,9 +1421,24 @@ body:has(.phx-error) #request-progress { display: none; }
 @media (prefers-reduced-motion: reduce) { .loading-spinner { animation: none; } }
 
 /* Personal project sections in the sidebar. */
-.section-toggle { display: flex; align-items: center; gap: 6px; width: 100%; min-width: 0; text-align: left; }
+/* A section's name is a group label: small, quiet, above its projects. The
+   unsectioned group is last and has a label only beside named sections; when
+   it is empty it appears only while a project is being dragged, as the place
+   to drop one to take it out of its section. */
+.project-section + .project-section { margin-top: 6px; }
+.section-label { display: flex; align-items: center; min-width: 0; }
+.section-toggle, .section-name {
+  display: flex; align-items: center; gap: 6px; width: 100%; min-width: 0; padding: 4px 6px;
+  color: var(--dimmer); background: transparent; border: none; text-align: left;
+  font-size: 11px; font-weight: 600; letter-spacing: 0.02em;
+}
+.section-name { padding-left: 24px; }
+.section-toggle:hover:not(:disabled) { color: var(--dim); background: transparent; border-color: transparent; }
 .section-toggle .truncate { flex: 1; }
-.section-empty { padding: 0 14px; }
+.section-toggle .dim { font-weight: 400; font-variant-numeric: tabular-nums; }
+.section-empty { margin: 0; padding: 4px 6px 6px 24px; font-size: 12px; }
+.project-section-idle { display: none; }
+#project-sections:has(.dragging) .project-section-idle { display: block; }
 .project-section-picker { display: flex; align-items: center; gap: 8px; padding: 4px 0; }
 .project-section-picker label { flex: 1; min-width: 0; }
 .project-section-picker select { flex: 1; min-width: 0; padding: 4px; }
