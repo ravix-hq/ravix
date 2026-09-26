@@ -162,16 +162,11 @@ defmodule RavixWeb.Live.AgentPanelTest do
     assert has_element?(view, "#held-codex-api_key")
     refute has_element?(view, "#held-codex-api_key .chip")
 
-    assert has_element?(
-             view,
-             "#remove-claude-api_key[data-confirm*='Projects using Claude Code']"
-           )
-
-    assert has_element?(view, "#remove-codex-api_key[data-confirm]")
-    refute has_element?(view, "#remove-codex-api_key[data-confirm*='nothing to run on']")
-    assert render(view) =~ "ends your open tracks"
+    refute has_element?(view, "#agent-panel [data-confirm]")
+    assert has_element?(view, "#remove-codex-api_key")
 
     view |> element("#remove-claude-api_key") |> render_click()
+    view |> element("#confirm-agent-disconnect") |> render_click()
     render_async(view)
     # The component sends the parent its flash after its async result. Drain
     # that queued message before checking the parent's rendered notice.
@@ -200,6 +195,7 @@ defmodule RavixWeb.Live.AgentPanelTest do
     view = open_account(conn, user)
     render_async(view)
     view |> element("#remove-codex-api_key") |> render_click()
+    view |> element("#confirm-agent-disconnect") |> render_click()
     render_async(view)
     assert has_element?(view, "#flash-info", "Removed.")
     refute has_element?(view, "#flash-info", "nothing to run on")
@@ -349,10 +345,53 @@ defmodule RavixWeb.Live.AgentPanelTest do
     view = open_account(conn, user)
     render_async(view)
     view |> element("#remove-claude-api_key") |> render_click()
+    assert has_element?(view, "#agent-disconnect-confirmation", "Claude project")
+    refute has_element?(view, "#agent-disconnect-confirmation", "Codex project")
+    refute has_element?(view, "#agent-disconnect-confirmation", "Someone else's")
+    view |> element("#confirm-agent-disconnect") |> render_click()
     render_async(view)
     render_async(view)
     assert has_element?(view, "#flash-info", "Connect Claude Code again to run: Claude project")
     refute has_element?(view, "#flash-info", "Codex project")
     refute has_element?(view, "#flash-info", "Someone else's")
+  end
+
+  test "removal needs an in-app decision and cancellation preserves the credential", %{conn: conn} do
+    user = insert_user(agent: :codex, credential_kind: :api_key, credential_set_id: "s")
+
+    for name <- ["ravix2", "second", "third"],
+        do: insert_project(user: user, name: name, runtime: "codex")
+
+    stub(Inference, :held, fn _ -> {:ok, [{:codex, :api_key}]} end)
+    reject(&Inference.disconnect/3)
+    view = open_account(conn, user)
+    render_async(view)
+    view |> element("#remove-codex-api_key") |> render_click()
+
+    assert has_element?(
+             view,
+             "#agent-disconnect-confirmation",
+             "ravix2 and 2 other projects use Codex"
+           )
+
+    refute has_element?(view, "#agent-panel [data-confirm]")
+    view |> element("[phx-click=cancel-disconnect]") |> render_click()
+    refute has_element?(view, "#agent-disconnect-confirmation")
+    assert has_element?(view, "#held-codex-api_key")
+  end
+
+  test "revocation after the removal warning prevents confirming it", %{conn: conn} do
+    user = insert_user(agent: :codex, credential_kind: :api_key, credential_set_id: "s")
+    stub(Inference, :held, fn _ -> {:ok, [{:codex, :api_key}]} end)
+    reject(&Inference.disconnect/3)
+    conn = log_in_user(conn, user)
+    view = open_account(conn, user)
+    render_async(view)
+    view |> element("#remove-codex-api_key") |> render_click()
+    # Revoke this view's session, without depending on notification delivery.
+    Repo.delete_all(Ravix.Accounts.Session)
+
+    assert {:error, {:redirect, %{to: "/login"}}} =
+             view |> element("#confirm-agent-disconnect") |> render_click()
   end
 end

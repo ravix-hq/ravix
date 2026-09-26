@@ -233,6 +233,21 @@
           enabled={Ravix.Config.threads_enabled?()}
         />
         <div class="workspace-composer">
+          <.live_component
+            module={RavixWeb.Live.AgentHealth}
+            id="track-agent-health"
+            current_user={@current_user}
+            session_hash={@session_hash}
+            project_id={@project.id}
+            refused={
+              @agent_refused ||
+                Enum.any?(
+                  @queue,
+                  &(&1.status == :failed && &1.error == Ravix.Fountain.Error.credential_message())
+                )
+            }
+            refresh={@health_refresh}
+          />
           <p :for={person <- Enum.filter(@present, & &1.typing)} class="hint">
             @{person.login} is typing…
           </p>

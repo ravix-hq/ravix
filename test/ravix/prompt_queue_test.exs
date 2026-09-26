@@ -5,6 +5,7 @@ defmodule Ravix.PromptQueueTest do
   import ExUnit.CaptureLog
 
   alias Ecto.Adapters.SQL.Sandbox
+  alias Ravix.Accounts.Inference.Cache
   alias Ravix.Fountain.{Error, FakeTransport}
   alias Ravix.Fountain.Shapes
   alias Ravix.Hub
@@ -388,6 +389,34 @@ defmodule Ravix.PromptQueueTest do
     assert :ok = PromptQueue.retry(f.owner, f.track.id, id)
     Server.tick(f.server)
     assert [%{"prompt" => "refused"}, %{"prompt" => "refused"}] = posted(client)
+  end
+
+  test "a cached missing credential does not stop a turn Fountain accepts", f do
+    {:ok, owner} = Ravix.Accounts.save_setup(f.owner, %{credential_set_id: "set-#{f.owner.id}"})
+    Ravix.Projects.Store.set_harness(f.project.id, "codex", "openai/gpt-5.5")
+    client = fountain([read("idle"), accept()])
+
+    # The set was empty at the last lookup; Fountain can now accept a turn.
+    assert {:ok, []} = Cache.fetch(owner, fn -> {:ok, []} end)
+    assert {:ok, %{usable?: false}} = Ravix.Projects.agent_health(owner, f.project.id)
+    {:ok, %Item{id: id}} = send_prompt(f.track, owner, "send despite the stale warning")
+    Server.tick(f.server)
+    assert %Item{status: :sent} = PromptQueue.Store.get(id)
+    assert [%{"prompt" => "send despite the stale warning"}] = posted(client)
+  end
+
+  for code <- ~w(chatgpt_grant_unusable inference_credential_unusable) do
+    @code code
+    test "credential refusal #{@code} retains the prompt for reconnect and retry", f do
+      fountain([read("idle"), refuse(409, @code), read("idle"), accept()])
+      {:ok, %Item{id: id}} = send_prompt(f.track, f.owner, "keep this")
+      Server.tick(f.server)
+      assert %Item{status: :failed, error: message} = PromptQueue.Store.get(id)
+      assert message == Error.credential_message()
+      assert :ok = PromptQueue.retry(f.owner, f.track.id, id)
+      Server.tick(f.server)
+      assert %Item{status: :sent} = PromptQueue.Store.get(id)
+    end
   end
 
   test "an ended conversation fails the prompt with directions", f do

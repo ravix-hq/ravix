@@ -72,6 +72,8 @@ defmodule RavixWeb.TrackLive do
         thread_generation: 0,
         threads: [],
         project_id: session["project_id"],
+        agent_refused: false,
+        health_refresh: 0,
         track: nil,
         project: nil,
         header: nil,
@@ -377,11 +379,14 @@ defmodule RavixWeb.TrackLive do
   defp open_dialog(socket, dialog), do: assign(socket, dialog: dialog)
 
   @impl true
-  # Ravix runs on more than one instance (ADR 0003) and a deploy is rolling,
-  # so for one release a follower on an instance running the previous version
-  # is still broadcasting Fountain's raw maps onto this topic. Normalising
-  # here is the expand half of expand/contract: accept both shapes now, and
-  # drop this clause once no instance publishes the old one.
+  def handle_info({:reconnect_agent, project_id}, socket) do
+    if socket.parent_pid, do: send(socket.parent_pid, {:reconnect_agent, project_id})
+    {:noreply, socket}
+  end
+
+  def handle_info(:refresh_agent_health, socket),
+    do: {:noreply, socket |> assign(agent_refused: false) |> update(:health_refresh, &(&1 + 1))}
+
   def handle_info({:select_thread, track_id, thread_id}, socket) do
     if track_id == socket.assigns.track_id and
          match?({:ok, _}, Access.thread_access(socket.assigns.current_user, track_id, thread_id)),
@@ -389,6 +394,11 @@ defmodule RavixWeb.TrackLive do
        else: {:noreply, socket}
   end
 
+  # Ravix runs on more than one instance (ADR 0003) and a deploy is rolling,
+  # so for one release a follower on an instance running the previous version
+  # is still broadcasting Fountain's raw maps onto this topic. Normalising
+  # here is the expand half of expand/contract: accept both shapes now, and
+  # drop this clause once no instance publishes the old one.
   def handle_info({:transcript, id, %{} = raw}, socket) when not is_struct(raw),
     do: handle_info({:transcript, id, TranscriptEvent.from(raw)}, socket)
 
@@ -468,7 +478,12 @@ defmodule RavixWeb.TrackLive do
     Process.send_after(self(), :refresh, @refresh_ms)
 
     {:noreply,
-     socket |> refresh_detail() |> refresh_queue() |> refresh_transcript() |> refresh_plan_items()}
+     socket
+     |> update(:health_refresh, &(&1 + 1))
+     |> refresh_detail()
+     |> refresh_queue()
+     |> refresh_transcript()
+     |> refresh_plan_items()}
   end
 
   # The follower went away, which on a cluster means its instance did (ADR
@@ -784,11 +799,23 @@ defmodule RavixWeb.TrackLive do
         request_id: Ecto.UUID.generate()
       })
 
-    {:noreply,
-     result(socket, response, fn s, _ ->
-       Tracks.mark_read(s.assigns.current_user, s.assigns.track_id, s.assigns.thread_id)
-       s |> assign(attached_images: []) |> push_event("composer:clear", %{}) |> refresh_queue()
-     end)}
+    case response do
+      {:error, %Ravix.Fountain.Error{} = reason} ->
+        if Ravix.Fountain.Error.credential?(reason),
+          do: {:noreply, assign(socket, agent_refused: true)},
+          else: {:noreply, error(socket, reason)}
+
+      _ ->
+        {:noreply,
+         result(socket, response, fn s, _ ->
+           Tracks.mark_read(s.assigns.current_user, s.assigns.track_id, s.assigns.thread_id)
+
+           s
+           |> assign(attached_images: [], agent_refused: false)
+           |> push_event("composer:clear", %{})
+           |> refresh_queue()
+         end)}
+    end
   end
 
   # Tell the page hosting this one where it is, so that choosing another track
@@ -884,6 +911,7 @@ defmodule RavixWeb.TrackLive do
     socket
     |> assign(
       loading: true,
+      agent_refused: false,
       transcript_loading: true,
       page: Transcript.empty(""),
       rendered: %{}

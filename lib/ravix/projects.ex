@@ -163,6 +163,49 @@ defmodule Ravix.Projects do
     end
   end
 
+  @doc "Whether the caller can see a live project, including through a track invitation."
+  @spec visible?(User.t(), String.t()) :: boolean()
+  def visible?(%User{} = user, id) do
+    case Store.live_project(id) do
+      %Project{} = project -> not is_nil(access_of(user.id, project))
+      _ -> false
+    end
+  end
+
+  @doc "Cached funding status for a visible project. Unknown availability never blocks work."
+  @spec agent_health(User.t(), String.t()) :: {:ok, map()} | {:error, :not_found}
+  def agent_health(%User{} = user, id) do
+    with %Project{} = project <- Store.live_project(id),
+         access when not is_nil(access) <- access_of(user.id, project) do
+      # ownership: Access.access_of above established a project or track membership.
+      # Always reload the owner: the socket's user may predate a disconnect.
+      owner = Ravix.Accounts.Store.get_user(project.user_id)
+
+      usable =
+        case owner && Inference.usable?(owner, project.runtime, []) do
+          {:ok, value} -> value
+          _ -> nil
+        end
+
+      {:ok,
+       %{
+         runtime: project.runtime,
+         owner_login: owner && owner.login,
+         owner?: access == :owner,
+         usable?: usable
+       }}
+    else
+      _ -> {:error, :not_found}
+    end
+  end
+
+  @doc "Owned projects affected by removing an agent; never includes shared projects."
+  @spec projects_using_agent(User.t(), User.agent()) :: [Project.t()]
+  def projects_using_agent(%User{} = user, agent) do
+    Store.projects_of(user.id)
+    |> Enum.filter(&(&1.runtime == Atom.to_string(agent)))
+  end
+
   @doc """
   How the caller reaches a project, or nil when they do not.
 

@@ -581,6 +581,7 @@ defmodule Ravix.PromptQueue.Server do
   # refusal needs a person; anything else may or may not have arrived.
   defp settle({:error, %Error{} = error}, row, _track, _project) do
     cond do
+      Error.credential?(error) -> Store.set_status(row.id, :failed, Error.credential_message())
       Error.busy?(error) -> Store.set_status(row.id, :queued)
       Error.rejected?(error) -> Store.set_status(row.id, :failed, @refused)
       true -> Store.set_status(row.id, :unconfirmed, @unconfirmed)

@@ -36,12 +36,13 @@ import {Composer} from "./hooks/composer"
 import {Terminal} from "./hooks/terminal"
 import {Notify} from "./hooks/notify"
 import {TrackTabs} from "./hooks/track_tabs"
+import {AgentConfirmation} from "./hooks/agent_confirmation"
 import {SettingsSections} from "./hooks/settings_sections"
 import {ProjectSections} from "./hooks/project_sections"
 import {ProjectFormFocus} from "./hooks/project_form_focus"
 import {CopyCode} from "./hooks/copy_code"
 
-const hooks = {Theme, PanelResize, TranscriptTail, Composer, Terminal, Notify, SettingsSections, TrackTabs, ProjectSections, CopyCode, ProjectFormFocus}
+const hooks = {AgentConfirmation, Theme, PanelResize, TranscriptTail, Composer, Terminal, Notify, SettingsSections, TrackTabs, ProjectSections, CopyCode, ProjectFormFocus}
 
 const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
 const liveSocket = new LiveSocket("/live", Socket, {

@@ -80,7 +80,8 @@ defmodule RavixWeb.Live.AgentPanel do
        # What the set holds, as Fountain reports it: nil until it has answered.
        held: nil,
        scoped_agent: nil,
-       poll_token: make_ref()
+       poll_token: make_ref(),
+       disconnect_confirmation: nil
      )}
   end
 
@@ -112,7 +113,7 @@ defmodule RavixWeb.Live.AgentPanel do
         else:
           socket
           |> assign(
-            agent: socket.assigns.scoped_agent || user.agent,
+            agent: socket.assigns.scoped_agent || Map.get(assigns, :initial_agent) || user.agent,
             kind:
               if(socket.assigns.scoped_agent,
                 do: :subscription,
@@ -166,24 +167,37 @@ defmodule RavixWeb.Live.AgentPanel do
      |> traced_async(:make_default, fn -> Inference.make_default(user, agent) end)}
   end
 
-  # Remove one thing the set holds. Which one comes from the button and is
-  # narrowed through the same two tables as a choice; the person is not asked
-  # to confirm here because the browser already did (`data-confirm`).
   def handle_event(
         "disconnect",
         %{"agent" => a, "kind" => k},
-        %{assigns: %{busy: false}} = socket
+        %{assigns: %{busy: false, disconnect_confirmation: nil}} = socket
       )
       when is_map_key(@agents, a) and is_map_key(@kinds, k) do
-    user = socket.assigns.current_user
     {agent, kind} = {Map.fetch!(@agents, a), Map.fetch!(@kinds, k)}
+    projects = Ravix.Projects.projects_using_agent(socket.assigns.current_user, agent)
+
+    {:noreply,
+     assign(socket, disconnect_confirmation: %{agent: agent, kind: kind, projects: projects})}
+  end
+
+  def handle_event("cancel-disconnect", _, socket),
+    do: {:noreply, assign(socket, disconnect_confirmation: nil)}
+
+  def handle_event(
+        "confirm-disconnect",
+        _,
+        %{assigns: %{busy: false, disconnect_confirmation: %{} = confirmation}} = socket
+      ) do
+    user = socket.assigns.current_user
+    %{agent: agent, kind: kind} = confirmation
 
     {:noreply,
      socket
-     |> assign(busy: true)
-     |> assign(disconnecting_agent: agent)
+     |> assign(busy: true, disconnect_confirmation: nil, disconnecting_agent: agent)
      |> traced_async(:disconnect, fn -> Inference.disconnect(user, agent, kind) end)}
   end
+
+  def handle_event("confirm-disconnect", _, socket), do: {:noreply, socket}
 
   # A word neither table holds is a browser saying something the form never
   # offered. Nothing to do and nothing to say.
@@ -391,6 +405,12 @@ defmodule RavixWeb.Live.AgentPanel do
 
   defp missing?(_user, _held), do: false
 
+  defp affected_projects([project]), do: project.name
+
+  defp affected_projects([project | rest]),
+    do:
+      "#{project.name} and #{length(rest)} other #{if length(rest) == 1, do: "project", else: "projects"}"
+
   defp remove_confirm(agent, kind) do
     what = "#{agent_name(agent)}'s #{paid_by(agent, kind)}"
 
@@ -433,7 +453,32 @@ defmodule RavixWeb.Live.AgentPanel do
   @impl true
   def render(assigns) do
     ~H"""
-    <div class="agent-panel" id={@id}>
+    <div class="agent-panel" id={@id} phx-hook="AgentConfirmation">
+      <div
+        :if={@disconnect_confirmation}
+        id="agent-disconnect-confirmation"
+        role="group"
+        aria-label="Confirm agent removal"
+      >
+        <p>{remove_confirm(@disconnect_confirmation.agent, @disconnect_confirmation.kind)}</p>
+        <p :if={@disconnect_confirmation.projects != []}>
+          {affected_projects(@disconnect_confirmation.projects)} use {agent_name(
+            @disconnect_confirmation.agent
+          )} and will stop working unless another credential for this agent remains connected.
+        </p>
+        <ul aria-label="Affected projects">
+          <li :for={project <- @disconnect_confirmation.projects}>{project.name}</li>
+        </ul>
+        <button
+          type="button"
+          id="confirm-agent-disconnect"
+          class="primary"
+          phx-click="confirm-disconnect"
+          phx-target={@myself}
+          phx-mounted={Phoenix.LiveView.JS.focus()}
+        >Remove connection</button>
+        <button type="button" phx-click="cancel-disconnect" phx-target={@myself}>Cancel</button>
+      </div>
       <.loading_status :if={@busy}>Updating agent connection…</.loading_status>
       <div :if={is_nil(@scoped_agent)} class="agent-choices" role="group" aria-label="Agent">
         <div :for={agent <- User.agents()}>
@@ -508,7 +553,6 @@ defmodule RavixWeb.Live.AgentPanel do
               phx-target={@myself}
               phx-value-agent={agent}
               phx-value-kind={kind}
-              data-confirm={remove_confirm(agent, kind)}
               disabled={@busy}
               id={"remove-#{agent}-#{kind}"}
             >
