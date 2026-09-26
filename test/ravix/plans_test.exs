@@ -189,7 +189,7 @@ defmodule Ravix.PlansTest do
           "track-b",
           "Own the interface",
           "rebase",
-          "draft PR",
+          "ready for review (not a draft)",
           "Do not merge"
         ],
         do: assert(prompt =~ text)

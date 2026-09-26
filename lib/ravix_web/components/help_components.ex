@@ -74,7 +74,7 @@ defmodule RavixWeb.HelpComponents do
         </p>
         <p>Only people assign in v1, including MCP clients acting as a person. Agents may prepare
           plans and add notes. Assignment prompts ask tracks to stay in scope, rebase,
-          push and open draft PRs, and never merge.</p>
+          open a PR ready for review with a Plan-Item line per item, and never merge.</p>
       </details>
       <details>
         <summary>Drive tracks with an A2A client</summary>

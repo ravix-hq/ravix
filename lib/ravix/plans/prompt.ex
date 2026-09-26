@@ -24,9 +24,9 @@ defmodule Ravix.Plans.Prompt do
     #{coverage}
 
     Stay within this item's scope. Other tracks may be working in parallel; leave their work alone.
-    Expect to rebase onto main. Push your branch and open a draft PR with validation and limitations.
-    End each PR body for this item with the exact trailer line: Plan-Item: #{item.id}
-    For a PR carrying multiple items, include one Plan-Item trailer per item in the final block.
+    Expect to rebase onto main. When the work is complete, push your branch and open a PR ready for review (not a draft) with validation and limitations.
+    Its description must include this exact line: Plan-Item: #{item.id}
+    A PR carrying several items lists one Plan-Item line per item.
     Do not merge. Notes and agent claims do not mark this item done; only a merged PR does.
     """
   end

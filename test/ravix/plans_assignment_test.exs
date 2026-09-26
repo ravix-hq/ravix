@@ -67,7 +67,7 @@ defmodule Ravix.PlansAssignmentTest do
           "Own the UI",
           "Tests pass",
           ui.track_id,
-          "draft PR",
+          "ready for review (not a draft)",
           "Do not merge"
         ],
         do: assert(prompt =~ text)

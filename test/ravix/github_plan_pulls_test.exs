@@ -4,15 +4,28 @@ defmodule Ravix.GitHubPlanPullsTest do
   alias Ravix.GitHub.Shapes
   alias Ravix.GitHubFake, as: Fake
 
-  test "only exact final trailers count, preserving IDs and ignoring examples" do
+  test "exact Plan-Item lines count anywhere outside fenced code, in order, once each" do
     assert Shapes.pull_ref(%{
              "body" => "Summary\n\nPlan-Item: a\r\nPlan-Item: B_2\r\nPlan-Item: a\n"
            }).plan_item_ids == ["a", "B_2"]
 
+    # A footer after the list (an agent harness's attribution) must not unlink it.
+    assert Shapes.pull_ref(%{
+             "body" =>
+               "Plan-Item: first\n\nWhat changed.\n\nPlan-Item: second\n\n🤖 Generated with a tool"
+           }).plan_item_ids == ["first", "second"]
+
+    # A documented example in a fence is not a link; the real line after it is.
+    assert Shapes.pull_ref(%{
+             "body" =>
+               "Use a trailer:\n\n```\nPlan-Item: example-item-id\n```\n\n~~~\nPlan-Item: tilde\n~~~\nPlan-Item: real"
+           }).plan_item_ids == ["real"]
+
     for body <- [
           nil,
-          "Plan-Item: a\nMore prose",
+          "More prose mentioning Plan-Item: a inline",
           "```\nPlan-Item: a\n```",
+          "```elixir\nPlan-Item: a",
           "> Plan-Item: a",
           "Plan-Item: a b",
           "Plan-Item: ../a",

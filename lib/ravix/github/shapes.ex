@@ -182,14 +182,24 @@ defmodule Ravix.GitHub.Shapes do
     }
   end
 
-  # Only the final trailer block counts, never prose, quoted examples or fenced code.
+  # A whole line, anywhere in the body, so a footer an agent's harness appends
+  # after the list cannot unlink the PR. The exact line format rules out prose
+  # and quotes; fenced code is skipped so a documented example never counts.
+  @plan_item ~r/^Plan-Item: ([a-zA-Z0-9_-]{1,100})$/
+  @fence ~r/^ {0,3}(```|~~~)/
+
   defp plan_item_ids(body) when is_binary(body) do
     body
-    |> String.trim()
     |> String.split(~r/\r?\n/)
-    |> Enum.reverse()
-    |> Enum.take_while(&Regex.match?(~r/^Plan-Item: [a-zA-Z0-9_-]{1,100}$/, &1))
-    |> Enum.map(&String.replace_prefix(&1, "Plan-Item: ", ""))
+    |> Enum.reduce({false, []}, fn line, {fenced?, ids} ->
+      cond do
+        Regex.match?(@fence, line) -> {not fenced?, ids}
+        fenced? -> {fenced?, ids}
+        match = Regex.run(@plan_item, line, capture: :all_but_first) -> {fenced?, match ++ ids}
+        true -> {fenced?, ids}
+      end
+    end)
+    |> elem(1)
     |> Enum.reverse()
     |> Enum.uniq()
   end

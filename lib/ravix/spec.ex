@@ -127,9 +127,9 @@ defmodule Ravix.Spec do
     |> Kernel.++([
       "## Finishing",
       "",
-      "When a PR carries plan work, end its body with a trailer block: one line",
-      "`Plan-Item: <item id>` for each item it implements. Use the exact assigned IDs.",
-      "Keep these trailers when updating the PR body, including PRs on other branches.",
+      "When a PR carries plan work, its description lists each item it implements",
+      "on a line of its own: `Plan-Item: <item id>`, using the exact assigned IDs.",
+      "Keep these lines when updating the PR description, including PRs on other branches.",
       "Ravix uses the linked PR evidence to determine each item's status.",
       "",
       "## Live previews",
@@ -230,7 +230,7 @@ defmodule Ravix.Spec do
         issue_lines(origin) ++
         [
           "",
-          "For plan work, end each PR body with `Plan-Item: <item id>` trailers (one per item)."
+          "For plan work, list each item in the PR description as `Plan-Item: <item id>`, one per line."
         ] ++
         [
           "",
