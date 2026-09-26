@@ -168,12 +168,30 @@ defmodule RavixWeb.WorkspaceLiveTest do
     assert has_element?(view, ".workspace-project-name[href='/p/#{project.id}']")
   end
 
+  test "a transient initial rail crash recovers automatically once", %{conn: conn} do
+    user = insert_user()
+    project = insert_project(user: user)
+    expect(Projects, :list, fn _, _ -> raise "transient database failure" end)
+
+    stub(Projects, :list, fn user, opts ->
+      Mimic.call_original(Projects, :list, [user, opts])
+    end)
+
+    {:ok, view, _} = live(log_in_user(conn, user), "/home")
+    render_async(view, 5_000)
+    render_async(view, 5_000)
+    assert has_element?(view, ".workspace-project-name[href='/p/#{project.id}']")
+    refute has_element?(view, "#rail-loading")
+    refute has_element?(view, "#rail-error")
+  end
+
   test "an initial rail crash offers retry and then resolves the pending URL", %{conn: conn} do
     user = insert_user()
     insert_project(user: user)
-    expect(Projects, :list, fn _, _ -> raise "initial rail failed" end)
+    expect(Projects, :list, 2, fn _, _ -> raise "initial rail failed" end)
     {:ok, view, _} = live(log_in_user(conn, user), "/p/missing")
-    render_async(view)
+    render_async(view, 5_000)
+    render_async(view, 5_000)
     assert has_element?(view, "#rail-error", "Projects could not be loaded.")
     refute has_element?(view, "#rail-loading")
     assert has_element?(view, "#project-sections[aria-busy=false]")
@@ -191,9 +209,10 @@ defmodule RavixWeb.WorkspaceLiveTest do
 
   test "retry after an initial rail crash still sends a new user to onboarding", %{conn: conn} do
     user = insert_user(onboarded_at: nil)
-    expect(Projects, :list, fn _, _ -> raise "initial rail failed" end)
+    expect(Projects, :list, 2, fn _, _ -> raise "initial rail failed" end)
     {:ok, view, _} = live(log_in_user(conn, user), "/")
-    render_async(view)
+    render_async(view, 5_000)
+    render_async(view, 5_000)
     assert has_element?(view, "#rail-error")
     stub(Projects, :list, fn _, _ -> [] end)
     view |> element("#rail-error button", "Retry") |> render_click()

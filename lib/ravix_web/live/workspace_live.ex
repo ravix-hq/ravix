@@ -50,6 +50,7 @@ defmodule RavixWeb.WorkspaceLive do
         projects: [],
         rail_loaded: false,
         rail_error: false,
+        rail_retried: false,
         pending_url: nil,
         sections: [],
         section_placements: %{},
@@ -509,7 +510,20 @@ defmodule RavixWeb.WorkspaceLive do
     end
   end
 
-  # An initial failure needs a visible way forward. Later failures retain
+  # Retry the initial read once after a short backoff. The retry remains a
+  # LiveView async task so termination and session guards still own it.
+  def handle_async(
+        :reload,
+        {:exit, _reason},
+        %{assigns: %{rail_loaded: false, rail_retried: false}} = socket
+      ) do
+    {:noreply,
+     socket
+     |> assign(rail_retried: true)
+     |> reload_async(fresh: true, backoff_ms: 100)}
+  end
+
+  # Exhausted initial reads need a visible way forward. Later failures retain
   # the loaded rail; the normal refresh path is still available.
   def handle_async(:reload, {:exit, _reason}, socket),
     do: {:noreply, assign(socket, rail_error: !socket.assigns.rail_loaded)}
@@ -710,7 +724,12 @@ defmodule RavixWeb.WorkspaceLive do
 
   defp reload_async(socket, opts) do
     user = socket.assigns.current_user
-    traced_async(assign(socket, rail_error: false), :reload, fn -> read_rail(user, opts) end)
+    {backoff, opts} = Keyword.pop(opts, :backoff_ms, 0)
+
+    traced_async(assign(socket, rail_error: false), :reload, fn ->
+      if backoff > 0, do: Process.sleep(backoff)
+      read_rail(user, opts)
+    end)
   end
 
   # The two creates, once they have something to show. The page patches to
