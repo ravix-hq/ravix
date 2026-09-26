@@ -1008,6 +1008,8 @@ defmodule Ravix.GitHubTest do
     end
 
     test "a limit met here is told to the others", ctx do
+      app_id = ctx.app.app_id
+      installation = ctx.installation
       Phoenix.PubSub.subscribe(Ravix.PubSub, "github:rate_limit")
       test_pid = self()
       until = Clock.now_ms() + 60_000
@@ -1020,13 +1022,13 @@ defmodule Ravix.GitHubTest do
       end)
 
       assert_receive :put, 5_000
-      assert_receive {:rate_limit, app_id, installation, ^until, error}, 5_000
-      assert app_id == ctx.app.app_id
-      assert installation == ctx.installation
+      assert_receive {:rate_limit, ^app_id, ^installation, ^until, error}, 5_000
       assert error == ctx.error
     end
 
     test "a limit met elsewhere is remembered here, without being echoed back", ctx do
+      app_id = ctx.app.app_id
+      installation = ctx.installation
       Phoenix.PubSub.subscribe(Ravix.PubSub, "github:rate_limit")
       until = Clock.now_ms() + 60_000
 
@@ -1036,8 +1038,9 @@ defmodule Ravix.GitHubTest do
       assert {:ok, ^until, error} = Cache.rate_limit(ctx.app.app_id, ctx.installation)
       assert error == ctx.error
 
-      # Re-publishing what it was told is how a message circulates forever.
-      refute_receive {:rate_limit, _, _, _, _}, 500
+      # Re-publishing this limit is a loop. Other async cases legitimately
+      # broadcast their own limits on the same deployment-wide topic.
+      refute_receive {:rate_limit, ^app_id, ^installation, _, _}, 500
     end
 
     test "and a clearance elsewhere lifts it here", ctx do
