@@ -86,7 +86,6 @@ export const TranscriptTail = {
     this.observer = new ResizeObserver(() => this.stick())
     this.observer.observe(this.el)
     this.observeContent()
-    this.localize()
     this.stick()
   },
 
@@ -112,17 +111,6 @@ export const TranscriptTail = {
     }
     this.anchor = null
     this.observeContent()
-    this.localize()
-  },
-
-  // A turn's end is written in UTC, which the server is sure of; the reader's
-  // own zone is only known here. Rewriting an already-local time is a no-op.
-  localize() {
-    for (const time of this.el.querySelectorAll("time[data-local-time]")) {
-      const at = new Date(time.getAttribute("datetime"))
-      if (Number.isNaN(at.getTime())) continue
-      time.textContent = at.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
-    }
   },
 
   // Every element child, not just the first: the scroller's own box does not

@@ -1832,6 +1832,31 @@ defmodule RavixWeb.TrackLiveTest do
     assert has_element?(ctx.view, "#turns-image-only .said img")
   end
 
+  test "a new transcript shows its setup card without the internal bootstrap or machine path",
+       ctx do
+    page =
+      Transcript.page(
+        [
+          opened(
+            1,
+            "bootstrap",
+            "[ravix] Open this track. Make its working directory, then stop.\nInternal commands"
+          )
+        ],
+        "claude"
+      )
+
+    stub(Tracks, :events, fn _, _, _ -> {:ok, page} end)
+    render_click(ctx.view, "retry-load")
+    render_async(ctx.view)
+
+    assert has_element?(ctx.view, ".track-ribbon", ctx.track.branch)
+    refute has_element?(ctx.view, ".track-ribbon", ctx.track.workdir)
+    refute has_element?(ctx.view, "#turns-bootstrap")
+    assert has_element?(ctx.view, ".workspace-welcome", "What would you like to work on?")
+    assert has_element?(ctx.view, ~s|.jump-latest svg path[d="M12 5v14M6 13l6 6 6-6"]|)
+  end
+
   test "shared transcript messages name their senders in snapshots and live updates", ctx do
     page =
       Transcript.page(
@@ -2079,7 +2104,8 @@ defmodule RavixWeb.TrackLiveTest do
 
     assert has_element?(
              ctx.view,
-             ~s|#turns-turn .turn-footer time[datetime="2026-09-26T13:02:05Z"]|
+             ~s|#turns-turn .turn-footer time[datetime="2026-09-26T13:02:05Z"]|,
+             "13:02 UTC"
            )
 
     assert has_element?(ctx.view, ~s|#turns-turn .turn-copy[data-copy="**Done**"]|)

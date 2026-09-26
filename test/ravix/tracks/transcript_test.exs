@@ -293,6 +293,37 @@ defmodule Ravix.Tracks.TranscriptTest do
     |> Map.put("blocks", if(prompt, do: [%{"kind" => "prompt", "body" => prompt}], else: []))
   end
 
+  test "bootstrap is represented by the ribbon, while failures and user turns remain visible" do
+    prompt = "[ravix] Open this track. Make its working directory, then stop.\nSetup commands"
+
+    page =
+      Transcript.page(
+        [
+          opened(1, "setup", prompt),
+          event(2, text_chunk("/home/sprite/work/demo"), turn: "setup")
+        ],
+        "claude"
+      )
+
+    assert Transcript.visible_turns(page) == []
+
+    failed =
+      Transcript.add_event(
+        page,
+        event(3, nil, turn: "setup", kind: "stage", stage: "turn", state: "failed")
+      )
+
+    assert [%{id: "setup"}] = Transcript.visible_turns(failed)
+
+    user =
+      Transcript.page(
+        [opened(1, "user", "Open this track. Make its working directory, then stop.")],
+        "claude"
+      )
+
+    assert [%{id: "user"}] = Transcript.visible_turns(user)
+  end
+
   describe "page/2" do
     test "turns are in the order they opened, with their prompts; orphan events trail" do
       events = [
