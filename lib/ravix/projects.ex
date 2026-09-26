@@ -86,7 +86,9 @@ defmodule Ravix.Projects do
   is a track with no home in the sidebar. What it is marked decides which
   controls the rail draws; the functions behind them refuse the rest
   regardless. Each project carries its machine state, one memoised Fountain
-  list per project through `Ravix.MachineCache.conversations/3`.
+  list per project through `Ravix.MachineCache.conversations/3`. Pass
+  `include_machine: false` for a database-only membership read; machine state
+  is then `:none` until the caller loads that project separately.
 
   Five reads however long the rail is. The memberships are read once each,
   the projects behind the track memberships in one query, the owners of
@@ -96,8 +98,8 @@ defmodule Ravix.Projects do
   three more per guest project before, which for a person helping across a
   team's projects was the largest thing the page did.
   """
-  @spec list(User.t()) :: [View.t()]
-  def list(%User{} = user) do
+  @spec list(User.t(), include_machine: boolean()) :: [View.t()]
+  def list(%User{} = user, opts \\ []) do
     mine = Store.projects_of(user.id)
 
     # ownership: these two *are* how this caller's access is established --
@@ -131,7 +133,13 @@ defmodule Ravix.Projects do
 
     for project <- mine ++ guest do
       access = access_of(user.id, project, known)
-      present(project, access, Machine.state(project), Map.get(owners, project.user_id, user))
+
+      machine =
+        if Keyword.get(opts, :include_machine, true),
+          do: Machine.state(project),
+          else: Machine.none()
+
+      present(project, access, machine, Map.get(owners, project.user_id, user))
     end
   end
 

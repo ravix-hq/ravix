@@ -190,16 +190,24 @@ defmodule Ravix.Fountain.FakeTransport do
       url: url
     }
 
-    Agent.get_and_update(@scripts, fn scripts ->
-      case Map.fetch(scripts, id) do
-        :error ->
-          {{:unmatched, call}, scripts}
+    result =
+      Agent.get_and_update(@scripts, fn scripts ->
+        case Map.fetch(scripts, id) do
+          :error ->
+            {{:unmatched, call}, scripts}
 
-        {:ok, script} ->
-          {result, script} = consume(%{script | calls: [call | script.calls]}, call)
-          {result, Map.put(scripts, id, script)}
-      end
-    end)
+          {:ok, script} ->
+            {result, script} = consume(%{script | calls: [call | script.calls]}, call)
+            {result, Map.put(scripts, id, script)}
+        end
+      end)
+
+    # The script agent owns expectation bookkeeping, not provider latency.
+    # Run delayed responses in the caller so independent requests can overlap.
+    case result do
+      {:ok, response} when is_function(response, 1) -> {:ok, response.(call)}
+      other -> other
+    end
   end
 
   # The first remaining expectation that fits, consumed; or the call filed as unmatched.
@@ -210,7 +218,6 @@ defmodule Ravix.Fountain.FakeTransport do
 
       index ->
         {{_matcher, response}, remaining} = List.pop_at(script.remaining, index)
-        response = if is_function(response, 1), do: response.(call), else: response
         {{:ok, response}, %{script | remaining: remaining}}
     end
   end
