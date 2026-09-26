@@ -11,6 +11,8 @@ defmodule RavixWeb.SchedulesLiveTest do
     project = insert_project(user: user)
     stub(Tracks, :list, fn _, _ -> {:ok, []} end)
     {:ok, view, html} = live(log_in_user(conn, user), "/schedules")
+    # The rail (and with it the project options) arrives after mount (#221).
+    render_async(view)
     assert html =~ "No schedules yet"
     assert has_element?(view, ".yard-nav a.on[href='/schedules']", "Schedules")
 
@@ -66,6 +68,8 @@ defmodule RavixWeb.SchedulesLiveTest do
     {token, session} = insert_session(user)
     conn = Plug.Test.init_test_session(conn, %{session_token: token})
     {:ok, view, _} = live(conn, "/schedules")
+    # The rail (and with it the project options) arrives after mount (#221).
+    render_async(view)
     Ravix.Repo.delete!(session)
     # Component event guards verify the session directly.
     assert {:error, {:redirect, %{to: "/login"}}} =
