@@ -52,7 +52,9 @@ defmodule Ravix.Previews.Reconciler do
       rows = Store.all()
 
       Ravix.TaskSupervisor
-      |> Task.Supervisor.async_stream_nolink(with_context(rows), &reconcile/1,
+      |> Task.Supervisor.async_stream_nolink(
+        with_context(rows),
+        Ravix.Trace.link_each(&reconcile/1),
         ordered: false,
         timeout: @row_timeout_ms,
         on_timeout: :kill_task

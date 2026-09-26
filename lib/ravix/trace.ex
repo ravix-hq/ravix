@@ -200,6 +200,51 @@ defmodule Ravix.Trace do
     fn -> carry.(fun) end
   end
 
+  @doc "Carry the current context into each worker of an async stream."
+  @spec link_each((term() -> term())) :: (term() -> term())
+  def link_each(fun) when is_function(fun, 1) do
+    carry = carrier()
+    fn item -> carry.(fn -> fun.(item) end) end
+  end
+
+  @doc false
+  @spec memo_caller() :: map()
+  def memo_caller do
+    %{carry: carrier(), span: Tracer.current_span_ctx()}
+  end
+
+  @doc false
+  @spec memo_started(map()) :: map()
+  def memo_started(caller), do: Map.put(caller, :started, OpenTelemetry.timestamp())
+
+  @doc """
+  Record a shared load under its first caller, linking the other waiters.
+
+  The SDK accepts links only at span creation. Emit this span when the load
+  settles, with its original start time, so late joiners are included too.
+  Provider spans remain direct children of the first caller. Cache hits and
+  single-caller loads need no additional span. No cache key or value is exported.
+  """
+  @spec memo_shared(map(), [map()]) :: :ok
+  def memo_shared(lead, callers) do
+    links =
+      callers
+      |> Enum.map(& &1.span)
+      |> Enum.reject(&(&1 == :undefined or &1 == lead.span))
+      |> Enum.uniq()
+      |> Enum.map(&OpenTelemetry.link/1)
+
+    if links != [] do
+      lead.carry.(fn ->
+        Tracer.with_span "memo.shared", %{links: links, start_time: lead.started} do
+          :ok
+        end
+      end)
+    end
+
+    :ok
+  end
+
   @doc """
   The current context, as something that can run a function under it later.
 
