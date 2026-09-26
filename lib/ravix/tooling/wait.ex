@@ -207,6 +207,15 @@ defmodule Ravix.Tooling.Wait do
   defp refresh(%{worker: %Task{}} = state), do: %{state | dirty: true}
 
   defp refresh(state) do
+    # Acknowledged terminal tasks may wait for a queue retry, but there is
+    # nothing to reconcile now. Avoid starting a DB worker only to kill it at
+    # a short deadline; snapshots still recheck authorization and queue state.
+    if Enum.all?(state.rows, &Tasks.terminal?(&1.task)),
+      do: %{state | stale: false},
+      else: start_refresh(state)
+  end
+
+  defp start_refresh(state) do
     principal = state.principal
     ids = state.ids
 

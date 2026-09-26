@@ -106,6 +106,25 @@ defmodule Ravix.Tooling.HeldTasksTest do
     assert hd(head.status.message.parts).text =~ "no turn"
   end
 
+  test "an acknowledged failed task still wakes when retried", c do
+    Store.set_status(c.head.id, :failed, "Delivery refused.")
+
+    waiter =
+      Task.async(fn ->
+        Tooling.call(c.p, "wait_task", %{
+          "task_ids" => [c.head.id],
+          "since" => %{c.head.id => "TASK_STATE_FAILED"},
+          "timeout_ms" => 2000
+        })
+      end)
+
+    wait_subscribed(c.project.id, waiter.pid)
+    assert {:ok, _} = Tasks.retry(c.p, c.head.id)
+    assert {:ok, {:ok, %{changed: [id], tasks: [head]}}} = Task.yield(waiter, 1000)
+    assert id == c.head.id
+    assert head.status.state == "TASK_STATE_SUBMITTED"
+  end
+
   for actor <- [:p, :owner] do
     test "#{actor} can cancel an unconfirmed head and the next sweep delivers its successor", c do
       Store.set_status(c.head.id, :unconfirmed, "Unconfirmed")
