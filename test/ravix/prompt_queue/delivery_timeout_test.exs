@@ -1,5 +1,7 @@
 defmodule Ravix.PromptQueue.DeliveryTimeoutTest do
-  use ExUnit.Case, async: true
+  # This deliberately short HTTP deadline must not compete with parallel
+  # coverage compilation before the local server can accept the request.
+  use ExUnit.Case, async: false
   alias Ravix.Fountain
   alias Ravix.PromptQueue.{Server, Store}
 
