@@ -76,6 +76,10 @@ defmodule RavixWeb.TrackLive do
         project: nil,
         header: nil,
         starters: [],
+        # The models the composer's menu offers, for the project's runtime.
+        # Empty when the catalog could not be read: the model is then shown
+        # without a menu.
+        models: [],
         page: Transcript.empty(""),
         # The markdown of every block on the page, rendered once per body.
         # See `memoize/1`.
@@ -204,6 +208,16 @@ defmodule RavixWeb.TrackLive do
   def handle_event("interrupt", _, socket) do
     thread_id = socket.assigns.thread_id
     {:noreply, begin(socket, :interrupt, &Tracks.interrupt(&1, &2, thread_id))}
+  end
+
+  # The model the shown conversation runs from its next turn. The menu is
+  # disabled while a turn runs, which Fountain would refuse anyway.
+  def handle_event("set-model", %{"model" => model}, socket) when is_binary(model) do
+    thread_id = socket.assigns.thread_id
+
+    if MapSet.member?(socket.assigns.pending, :model),
+      do: {:noreply, socket},
+      else: {:noreply, begin(socket, :model, &Tracks.set_model(&1, &2, thread_id, model))}
   end
 
   def handle_event("retry-track", _, socket),
@@ -498,6 +512,7 @@ defmodule RavixWeb.TrackLive do
       project: project,
       header: detail.header,
       starters: detail.starters,
+      models: detail.models,
       loading: false
     )
     # This render is the one that puts `#transcript-turns` on the page, and a
@@ -523,7 +538,13 @@ defmodule RavixWeb.TrackLive do
   end
 
   defp async_result(:detail, {:ok, {:ok, detail}}, socket),
-    do: assign(socket, track: detail.track, header: detail.header, threads: detail.threads)
+    do:
+      assign(socket,
+        track: detail.track,
+        header: detail.header,
+        threads: detail.threads,
+        models: detail.models
+      )
 
   defp async_result(:detail, {:ok, {:error, reason}}, socket), do: error(socket, reason)
 
@@ -609,6 +630,11 @@ defmodule RavixWeb.TrackLive do
   defp async_result(:retry, {:ok, response}, socket),
     do: result(settle(socket, :retry), response, fn s, _ -> load(s) end)
 
+  # The hub event `set_model/4` publishes refreshes every page on the track,
+  # this one included; the refresh here is so this page does not wait on it.
+  defp async_result(:model, {:ok, response}, socket),
+    do: result(settle(socket, :model), response, fn s, _ -> refresh_detail(s) end)
+
   defp async_result(:pull, {:ok, response}, socket),
     do: result(settle(socket, :pull), response, &assign(&1, pull: &2, dialog: nil))
 
@@ -616,7 +642,7 @@ defmodule RavixWeb.TrackLive do
   # below: nothing was being loaded, and "could not finish loading" about a
   # Stop that crashed would be a sentence about the wrong thing.
   defp async_result(name, {:exit, reason}, socket)
-       when name in [:interrupt, :retry, :pull, :add_thread],
+       when name in [:interrupt, :retry, :pull, :add_thread, :model],
        do: socket |> settle(name) |> exit(reason)
 
   # A background refresh that crashed leaves the page showing what it had.
@@ -958,6 +984,70 @@ defmodule RavixWeb.TrackLive do
     socket
     |> update_panel(&%{&1 | busy?: true})
     |> traced_async(:preview_action, fn -> call.(user, id, hash) end)
+  end
+
+  attr :model, :string, required: true, doc: "what the shown conversation runs"
+  attr :project_model, :string, required: true
+  attr :models, :list, required: true, doc: "the catalog's models for the project's runtime"
+  attr :disabled, :boolean, default: false
+
+  @doc """
+  The model under the composer, and the menu that changes it for the shown
+  conversation from its next turn.
+
+  A native popover, like the account menu: light dismiss, Escape and focus
+  return come with it, and choosing an item hides it. The project's model
+  is marked as the default, and choosing it puts the conversation back on
+  whatever the project runs. With no catalog to offer, or while a turn
+  runs, it is the plain label it used to be, or a disabled trigger.
+  """
+  def model_menu(%{models: []} = assigns) do
+    ~H"""
+    <span class="composer-model" title={@model}>{ModelName.friendly(@model)}</span>
+    """
+  end
+
+  def model_menu(assigns) do
+    assigns = assign(assigns, :choices, Enum.uniq(assigns.models ++ [assigns.model]))
+
+    ~H"""
+    <button
+      type="button"
+      id="model-trigger"
+      class="composer-model model-trigger"
+      popovertarget="model-menu"
+      title={if @disabled, do: "Change the model between turns", else: @model}
+      disabled={@disabled}
+    >
+      {ModelName.friendly(@model)}<span class="sr-only">, change model</span><.icon
+        name="chevron"
+        size={10}
+        open={true}
+      />
+    </button>
+    <div id="model-menu" class="model-menu" popover role="menu" aria-label="Model">
+      <button
+        :for={choice <- @choices}
+        type="button"
+        class="account-item model-option"
+        role="menuitemradio"
+        aria-checked={to_string(choice == @model)}
+        popovertarget="model-menu"
+        popovertargetaction="hide"
+        phx-click="set-model"
+        phx-value-model={choice}
+        title={choice}
+      >
+        <span class="truncate">{ModelName.friendly(choice)}</span><small :if={
+          choice == @project_model
+        }>Project default</small><span class="spacer"></span><span
+          :if={choice == @model}
+          class="check"
+          aria-hidden="true"
+        >✓</span>
+      </button>
+    </div>
+    """
   end
 
   attr :threads, :list, required: true

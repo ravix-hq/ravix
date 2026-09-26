@@ -1078,7 +1078,15 @@ defmodule RavixWeb.WorkspaceLiveTest do
 
       stub(Tracks, :get, fn _user, id, _opts ->
         row = Repo.get!(Ravix.Tracks.Track, id)
-        {:ok, %{track: Tracks.present(row), header: blank_header(), threads: [], starters: []}}
+
+        {:ok,
+         %{
+           track: Tracks.present(row),
+           header: blank_header(),
+           threads: [],
+           starters: [],
+           models: []
+         }}
       end)
 
       stub(Tracks, :events, fn _, _, _thread_opts -> {:ok, Transcript.empty("")} end)
@@ -1114,7 +1122,15 @@ defmodule RavixWeb.WorkspaceLiveTest do
         end
 
         row = Repo.get!(Ravix.Tracks.Track, id)
-        {:ok, %{track: Tracks.present(row), header: blank_header(), threads: [], starters: []}}
+
+        {:ok,
+         %{
+           track: Tracks.present(row),
+           header: blank_header(),
+           threads: [],
+           starters: [],
+           models: []
+         }}
       end)
 
       render_patch(ctx.parent, "/p/#{ctx.project.id}/t/#{ctx.two.id}")
@@ -1280,7 +1296,14 @@ defmodule RavixWeb.WorkspaceLiveTest do
 
   defp stub_track(track) do
     stub(Tracks, :get, fn _, _, _ ->
-      {:ok, %{track: Tracks.present(track), header: blank_header(), threads: [], starters: []}}
+      {:ok,
+       %{
+         track: Tracks.present(track),
+         header: blank_header(),
+         threads: [],
+         starters: [],
+         models: []
+       }}
     end)
 
     stub(Tracks, :events, fn _, _, _thread_opts -> {:ok, Transcript.empty("")} end)

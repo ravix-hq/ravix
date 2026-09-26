@@ -44,7 +44,7 @@ defmodule Ravix.Tracks do
   alias Ravix.Analytics
   alias Ravix.Fountain
   alias Ravix.Fountain.Launch
-  alias Ravix.Fountain.Shapes.Conversation
+  alias Ravix.Fountain.Shapes.{Catalog, Conversation}
   alias Ravix.Hub
   alias Ravix.Ids
   alias Ravix.MachineCache
@@ -189,7 +189,13 @@ defmodule Ravix.Tracks do
   """
   @spec get(User.t(), String.t(), keyword()) ::
           {:ok,
-           %{track: View.t(), header: header(), starters: [Spec.Starter.t()], threads: [map()]}}
+           %{
+             track: View.t(),
+             header: header(),
+             starters: [Spec.Starter.t()],
+             threads: [map()],
+             models: [String.t()]
+           }}
           | {:error, reason()}
   def get(%User{} = user, track_id, opts \\ []) do
     fresh = Keyword.get(opts, :fresh, true)
@@ -248,8 +254,19 @@ defmodule Ravix.Tracks do
            ),
          threads: threads,
          header: header,
-         starters: Spec.starters(project)
+         starters: Spec.starters(project),
+         models: models_of(client, project)
        }}
+    end
+  end
+
+  # What the composer's model menu offers: the catalog's models for the
+  # project's runtime, from the memo. A catalog that cannot be read offers
+  # nothing, and the page shows the model without a menu.
+  defp models_of(client, project) do
+    case MachineCache.catalog(client) do
+      {:ok, catalog} -> Catalog.models_for(catalog, project.runtime)
+      _ -> []
     end
   end
 
@@ -706,6 +723,73 @@ defmodule Ravix.Tracks do
   end
 
   @doc """
+  Run the shown conversation on `model` from its next turn, or on the
+  project's model again with `nil` (Fountain ADR 0061).
+
+  The transcript, the machine and the runtime session are kept, so the agent
+  keeps its context; only this one conversation changes, and the project's
+  agent keeps its model. Choosing the project's own model is the same as
+  `nil`: the conversation follows the project again rather than pinning a
+  copy of what it happens to be today.
+
+  Anybody who may prompt the track may do this, since the model spends the
+  same subscription a prompt does. The model has to be one the catalog
+  offers for the project's runtime. Fountain refuses while a turn runs and
+  when the model needs another credential than the one the conversation is
+  pinned to; both are reported as conflicts with nothing changed.
+  """
+  @spec set_model(User.t(), String.t(), String.t() | nil, String.t() | nil) ::
+          {:ok, String.t() | nil} | {:error, reason()}
+  def set_model(%User{} = user, track_id, thread_id, model)
+      when is_binary(model) or is_nil(model) do
+    with {:ok, %{track: track, project: project, thread: thread}} <-
+           Access.thread_access(user, track_id, thread_id),
+         :ok <-
+           check(is_nil(track.closed_at), {:conflict, "closed_track", "This track is closed."}),
+         :ok <-
+           check(
+             thread.conversation_id,
+             {:conflict, "not_open", "This track has no conversation yet."}
+           ),
+         {:ok, client} <- fountain(),
+         {:ok, override} <- model_override(client, project, model),
+         {:ok, %Conversation{model: ^override}} <-
+           Fountain.set_model(client, thread.conversation_id, override) do
+      MachineCache.forget_project(project.id)
+      publish_tracks(project.id, track.id)
+      {:ok, override}
+    else
+      # A Fountain from before ADR 0061 ignores the field it does not know
+      # and answers with the conversation unchanged.
+      {:ok, %Conversation{}} ->
+        {:error,
+         {:conflict, "model_unsupported",
+          "This Fountain cannot change a conversation's model yet."}}
+
+      {:error, %Fountain.Error{code: "conversation_busy"}} ->
+        {:error,
+         {:conflict, "conversation_busy", "Wait for the turn to finish, then change the model."}}
+
+      {:error, %Fountain.Error{code: "inference_source_changed"}} ->
+        {:error,
+         {:conflict, "model_needs_other_credential",
+          "That model needs a different subscription from the one this track runs on."}}
+
+      error ->
+        error
+    end
+  end
+
+  defp model_override(_client, %{model: model}, model), do: {:ok, nil}
+  defp model_override(_client, _project, nil), do: {:ok, nil}
+
+  defp model_override(client, project, model) do
+    if model in models_of(client, project),
+      do: {:ok, model},
+      else: {:error, {:unprocessable, "invalid_model", "Choose one of this harness's models."}}
+  end
+
+  @doc """
   I am here, and possibly typing.
 
   One function for both because they are one heartbeat: the page is already
@@ -1121,7 +1205,8 @@ defmodule Ravix.Tracks do
       people: Keyword.get(opts, :people, []),
       threads: Keyword.get(opts, :threads, []),
       role: Keyword.get(opts, :role, :owner),
-      unread: unread?(last_active, Keyword.get(opts, :last_read))
+      unread: unread?(last_active, Keyword.get(opts, :last_read)),
+      model: live && live.model
     }
   end
 

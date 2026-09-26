@@ -35,8 +35,17 @@ defmodule Ravix.Fountain.ShapesTest do
                sprite_name: nil,
                inserted_at: nil,
                last_active_at: nil,
-               turn_count: nil
+               turn_count: nil,
+               model: nil
              } = Shapes.conversation(%{})
+    end
+
+    test "a conversation's own model is kept, and anything but a string is none" do
+      assert %Conversation{model: "anthropic/claude-sonnet-5"} =
+               Shapes.conversation(%{"model" => "anthropic/claude-sonnet-5"})
+
+      assert %Conversation{model: nil} = Shapes.conversation(%{"model" => nil})
+      assert %Conversation{model: nil} = Shapes.conversation(%{"model" => 5})
     end
 
     test "a status this version does not know is :other, and no atom is created" do
@@ -103,7 +112,8 @@ defmodule Ravix.Fountain.ShapesTest do
           sprite_name: nil,
           inserted_at: nil,
           last_active_at: nil,
-          turn_count: nil
+          turn_count: nil,
+          model: nil
         }
 
         assert Shapes.live?(conversation) == live, "live?/1 on #{status}"

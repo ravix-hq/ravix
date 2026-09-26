@@ -29,7 +29,8 @@ defmodule RavixWeb.Live.PeopleDialogTest do
          track: Tracks.present(row, role: :owner),
          header: blank_header(),
          threads: [],
-         starters: []
+         starters: [],
+         models: []
        }}
     end)
 

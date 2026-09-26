@@ -76,6 +76,11 @@ defmodule Ravix.Fountain.Shapes do
     conversation `sprite_name` is nil and stays nil. Only the detail endpoint
     embeds the sandbox. This is why `Ravix.MachineCache.sprite_for/3` is a
     second call rather than a field off the list.
+
+    `model` is the conversation's own model (Fountain ADR 0061), and nil
+    when it follows its agent's. A Fountain that predates the field sends
+    none, which reads the same as following the agent, and that is what
+    such a Fountain does.
     """
 
     @enforce_keys [
@@ -85,7 +90,8 @@ defmodule Ravix.Fountain.Shapes do
       :sprite_name,
       :inserted_at,
       :last_active_at,
-      :turn_count
+      :turn_count,
+      :model
     ]
     defstruct @enforce_keys
 
@@ -102,7 +108,8 @@ defmodule Ravix.Fountain.Shapes do
             sprite_name: String.t() | nil,
             inserted_at: String.t() | nil,
             last_active_at: DateTime.t() | nil,
-            turn_count: integer() | nil
+            turn_count: integer() | nil,
+            model: String.t() | nil
           }
   end
 
@@ -209,7 +216,8 @@ defmodule Ravix.Fountain.Shapes do
       sprite_name: get_in(raw, ["sandbox", "sprite_name"]),
       inserted_at: raw["inserted_at"],
       last_active_at: time(raw["last_active_at"]),
-      turn_count: raw["turn_count"]
+      turn_count: raw["turn_count"],
+      model: string_or_nil(raw["model"])
     }
   end
 

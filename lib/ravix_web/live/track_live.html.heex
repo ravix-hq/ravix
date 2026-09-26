@@ -287,9 +287,15 @@
                 >
                   <.icon name="picture" size={17} />
                 </button>
-                <span class="composer-model" title={@project.model}>{ModelName.friendly(
-                  @project.model
-                )}</span><span class="spacer"></span>
+                <.model_menu
+                  model={@track.model || @project.model}
+                  project_model={@project.model}
+                  models={@models}
+                  disabled={
+                    is_nil(@track.conversation_id) or @track.status in [:running, :opening] or
+                      :model in @pending
+                  }
+                /><span class="spacer"></span>
                 <button
                   type="submit"
                   class="primary composer-send"

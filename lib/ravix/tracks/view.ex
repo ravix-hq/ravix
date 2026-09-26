@@ -5,6 +5,10 @@ defmodule Ravix.Tracks.View do
   `owner_login` identifies the project owner, independently of who created
   the track. It is taken from the already-scoped people list.
 
+  `model` is the model the shown conversation runs instead of its agent's,
+  read live off Fountain like the status, and nil when it follows the
+  project's model.
+
   Deliberately not the `Ravix.Tracks.Track` schema with extra fields on it.
   That schema argues against exactly that in its own documentation -- status,
   turn count and whether the machine is up are read live because "caching
@@ -48,7 +52,8 @@ defmodule Ravix.Tracks.View do
     :created_by_login,
     :people,
     :role,
-    :unread
+    :unread,
+    :model
   ]
 
   defstruct @enforce_keys ++ [threads: []]
@@ -73,6 +78,7 @@ defmodule Ravix.Tracks.View do
           people: [Person.t()],
           role: :owner | :member,
           unread: boolean(),
+          model: String.t() | nil,
           threads: [map()]
         }
 end

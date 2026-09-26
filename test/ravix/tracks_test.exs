@@ -942,6 +942,129 @@ defmodule Ravix.TracksTest do
     end
   end
 
+  describe "set_model/4" do
+    @catalog {%{method: "GET", path: "/api/catalog"},
+              {200, [],
+               %{
+                 data: %{
+                   runtimes: ["claude"],
+                   models: %{"claude" => ["anthropic/claude-opus-5", "anthropic/claude-sonnet-5"]}
+                 }
+               }}}
+
+    setup do
+      owner = insert_user()
+      project = insert_project(user: owner, runtime: "claude", model: "anthropic/claude-opus-5")
+      track = insert_track(project: project, conversation_id: "c1")
+      Hub.subscribe(project.id)
+      {:ok, owner: owner, project: project, track: track}
+    end
+
+    defp reapply(model, answer),
+      do:
+        {%{method: "POST", path: "/api/conversations/c1/reapply", body: %{"model" => model}},
+         answer}
+
+    defp answered(model),
+      do: {200, [], %{data: %{id: "c1", status: "idle", sandbox_id: "s1", model: model}}}
+
+    test "a catalog model becomes this conversation's own, and the track is republished", ctx do
+      client =
+        FakeTransport.client([
+          @catalog,
+          reapply("anthropic/claude-sonnet-5", answered("anthropic/claude-sonnet-5"))
+        ])
+
+      stub(Ravix.Fountain, :client, fn -> client end)
+
+      assert {:ok, "anthropic/claude-sonnet-5"} =
+               Tracks.set_model(ctx.owner, ctx.track.id, nil, "anthropic/claude-sonnet-5")
+
+      track_id = ctx.track.id
+      assert_receive {:hub, %Event{name: :tracks, track_id: ^track_id}}
+    end
+
+    test "the project's own model, or nil, follows the project again", ctx do
+      client =
+        FakeTransport.client([reapply(nil, answered(nil)), reapply(nil, answered(nil))])
+
+      stub(Ravix.Fountain, :client, fn -> client end)
+
+      assert {:ok, nil} =
+               Tracks.set_model(ctx.owner, ctx.track.id, nil, "anthropic/claude-opus-5")
+
+      assert {:ok, nil} = Tracks.set_model(ctx.owner, ctx.track.id, nil, nil)
+    end
+
+    test "a model the catalog does not offer this runtime is refused before Fountain", ctx do
+      client = FakeTransport.client([@catalog])
+      stub(Ravix.Fountain, :client, fn -> client end)
+
+      assert {:error, {:unprocessable, "invalid_model", _}} =
+               Tracks.set_model(ctx.owner, ctx.track.id, nil, "openai/gpt-6-astra")
+    end
+
+    test "Fountain's refusals say what to do, and change nothing here", ctx do
+      client =
+        FakeTransport.client([
+          @catalog,
+          reapply(
+            "anthropic/claude-sonnet-5",
+            {409, [], %{error: "conversation_busy", message: "busy"}}
+          ),
+          reapply(
+            "anthropic/claude-sonnet-5",
+            {409, [], %{error: "inference_source_changed", message: "other credential"}}
+          ),
+          # A Fountain from before ADR 0061 ignores the field it does not know.
+          reapply("anthropic/claude-sonnet-5", answered(nil))
+        ])
+
+      stub(Ravix.Fountain, :client, fn -> client end)
+      set = fn -> Tracks.set_model(ctx.owner, ctx.track.id, nil, "anthropic/claude-sonnet-5") end
+
+      assert {:error, {:conflict, "conversation_busy", _}} = set.()
+      assert {:error, {:conflict, "model_needs_other_credential", _}} = set.()
+      assert {:error, {:conflict, "model_unsupported", _}} = set.()
+      refute_received {:hub, %Event{name: :tracks}}
+    end
+
+    test "another person's track, a closed one, and one with no conversation are refused", ctx do
+      client = FakeTransport.client([])
+      stub(Ravix.Fountain, :client, fn -> client end)
+
+      assert {:error, :not_found} =
+               Tracks.set_model(insert_user(), ctx.track.id, nil, "anthropic/claude-sonnet-5")
+
+      closed =
+        insert_track(project: ctx.project, conversation_id: "c9", closed_at: DateTime.utc_now())
+
+      assert {:error, {:conflict, "closed_track", _}} =
+               Tracks.set_model(ctx.owner, closed.id, nil, nil)
+
+      unopened = insert_track(project: ctx.project, conversation_id: nil)
+
+      assert {:error, {:conflict, "not_open", _}} =
+               Tracks.set_model(ctx.owner, unopened.id, nil, nil)
+    end
+
+    test "a track member may change it, since they may prompt it", ctx do
+      member = insert_user()
+      insert_track_member(ctx.track, member)
+
+      client =
+        FakeTransport.client([
+          @catalog,
+          reapply("anthropic/claude-sonnet-5", answered("anthropic/claude-sonnet-5"))
+        ])
+
+      stub(Ravix.Fountain, :client, fn -> client end)
+
+      assert {:ok, "anthropic/claude-sonnet-5"} =
+               Tracks.set_model(member, ctx.track.id, nil, "anthropic/claude-sonnet-5")
+    end
+  end
+
   describe "events/3" do
     test "one read of the feed, prompts included, is a page; a track with no conversation an empty one" do
       owner = insert_user()
