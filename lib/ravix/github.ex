@@ -259,7 +259,10 @@ defmodule Ravix.GitHub do
 
   def installations_for(%GitHubApp{} = app, user_token) do
     with {:ok, body} <-
-           HTTP.request(app, :get, "/user/installations?per_page=100", user_token: user_token) do
+           HTTP.request(app, :get, "/user/installations?per_page=100",
+             user_token: user_token,
+             cache_ttl: 30_000
+           ) do
       {:ok, Enum.map(body["installations"] || [], &Shapes.installation/1)}
     end
   end
@@ -270,30 +273,38 @@ defmodule Ravix.GitHub do
   Sorted by `pushed_at` rather than by name, because the picker is opened by
   somebody who wants the thing they were just working on and the alphabet
   has no opinion about that. Paged to a thousand: an installation with more
-  repositories than that wants a search box, which the picker has.
+  repositories than that wants a search box, which the picker has. Display
+  reads are cached for 30 seconds; `:fresh` bypasses the cache for access checks.
   """
-  @spec repositories(app(), String.t(), installation_id()) ::
+  @spec repositories(app(), String.t(), installation_id(), freshness()) ::
           {:ok, [Shapes.RepoRef.t()]} | error()
-  def repositories(nil, _user_token, _installation_id), do: {:error, {:unconfigured, :github}}
+  def repositories(app, user_token, installation_id, freshness \\ :cached)
 
-  def repositories(%GitHubApp{} = app, user_token, installation_id) do
-    with {:ok, repos} <- repository_pages(app, user_token, installation_id, 1, []) do
+  def repositories(nil, _user_token, _installation_id, _freshness),
+    do: {:error, {:unconfigured, :github}}
+
+  def repositories(%GitHubApp{} = app, user_token, installation_id, freshness)
+      when freshness in [:cached, :fresh] do
+    opts = if freshness == :cached, do: [cache_ttl: 30_000], else: []
+
+    with {:ok, repos} <- repository_pages(app, user_token, installation_id, 1, [], opts) do
       {:ok, Enum.sort_by(repos, &(&1.pushed_at || ""), :desc)}
     end
   end
 
-  defp repository_pages(_app, _token, _installation_id, page, acc) when page > 10, do: {:ok, acc}
+  defp repository_pages(_app, _token, _installation_id, page, acc, _opts) when page > 10,
+    do: {:ok, acc}
 
-  defp repository_pages(app, user_token, installation_id, page, acc) do
+  defp repository_pages(app, user_token, installation_id, page, acc, opts) do
     path = "/user/installations/#{installation_id}/repositories?per_page=100&page=#{page}"
 
-    with {:ok, body} <- HTTP.request(app, :get, path, user_token: user_token) do
+    with {:ok, body} <- HTTP.request(app, :get, path, Keyword.put(opts, :user_token, user_token)) do
       batch = Enum.map(body["repositories"] || [], &Shapes.repo_ref(&1, installation_id))
       acc = acc ++ batch
 
       if length(batch) < 100,
         do: {:ok, acc},
-        else: repository_pages(app, user_token, installation_id, page + 1, acc)
+        else: repository_pages(app, user_token, installation_id, page + 1, acc, opts)
     end
   end
 
@@ -318,7 +329,7 @@ defmodule Ravix.GitHub do
   def branches(%GitHubApp{} = app, installation_id, full_name, default_branch) do
     path = "/repos/#{full_name}/branches?per_page=100"
 
-    with {:ok, raw} <- as_installation(app, installation_id, :get, path) do
+    with {:ok, raw} <- as_installation(app, installation_id, :get, path, cache_ttl: 60_000) do
       refs =
         raw
         |> Enum.map(&Shapes.branch_ref(&1, default_branch))
@@ -335,7 +346,7 @@ defmodule Ravix.GitHub do
   def pulls(%GitHubApp{} = app, installation_id, full_name) do
     path = "/repos/#{full_name}/pulls?state=open&sort=updated&direction=desc&per_page=50"
 
-    with {:ok, raw} <- as_installation(app, installation_id, :get, path) do
+    with {:ok, raw} <- as_installation(app, installation_id, :get, path, cache_ttl: 60_000) do
       {:ok, Enum.map(raw, &Shapes.pull_ref/1)}
     end
   end
@@ -353,7 +364,7 @@ defmodule Ravix.GitHub do
   def issues(%GitHubApp{} = app, installation_id, full_name) do
     path = "/repos/#{full_name}/issues?state=open&sort=updated&direction=desc&per_page=50"
 
-    with {:ok, raw} <- as_installation(app, installation_id, :get, path) do
+    with {:ok, raw} <- as_installation(app, installation_id, :get, path, cache_ttl: 60_000) do
       {:ok,
        raw |> Enum.reject(&Map.has_key?(&1, "pull_request")) |> Enum.map(&Shapes.issue_ref/1)}
     end
