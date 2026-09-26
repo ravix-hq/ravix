@@ -72,7 +72,6 @@ defmodule RavixWeb.Router do
 
     get "/oauth/authorize", ToolingOAuthController, :authorize
     post "/oauth/authorize", ToolingOAuthController, :consent
-    get "/settings/connections", ToolingOAuthController, :connections
     post "/settings/connections/:id/revoke", ToolingOAuthController, :disconnect
 
     # Signing in is two round trips to GitHub (see `Ravix.Accounts.Auth`).
@@ -103,6 +102,7 @@ defmodule RavixWeb.Router do
       live "/login", WorkspaceLive, :login
       live "/home", WorkspaceLive, :projects
       live "/schedules", WorkspaceLive, :schedules
+      live "/settings/connections", WorkspaceLive, :connections
       live "/inbox", WorkspaceLive, :inbox
       live "/p/:project", WorkspaceLive, :project
       live "/p/:project/t/:track", WorkspaceLive, :track

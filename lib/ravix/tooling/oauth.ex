@@ -159,6 +159,7 @@ defmodule Ravix.Tooling.OAuth do
          # ownership: no door before this one -- the credential proves identity;
          # operation contexts subsequently establish project/track access.
          %User{} = user <- Ravix.Accounts.Store.get_user(grant.user_id) do
+      :ok = Store.record_use(grant.id)
       {:ok, %{user: user, grant: grant, token: token}}
     else
       _ -> {:error, :unauthenticated}
@@ -189,7 +190,9 @@ defmodule Ravix.Tooling.OAuth do
         name: Store.client(g.client_id).name,
         resource: g.resource,
         scopes: g.scopes,
-        active: valid_grant?(g)
+        active: valid_grant?(g),
+        connected_at: g.inserted_at,
+        last_used_at: g.last_used_at
       }
     end)
   end
