@@ -18,11 +18,15 @@ defmodule Ravix.Plans.Status do
       |> Map.merge(%{
         status: derive(item, track, report, completed),
         status_available: report != :unavailable,
+        pull: public_pull(report),
         track_url: if(track, do: "/p/#{project.id}/t/#{track.id}"),
         track_title: if(track, do: track.title)
       })
     end)
   end
+
+  defp public_pull(%{pull: %{} = pull}), do: Map.take(pull, [:number, :url])
+  defp public_pull(_), do: nil
 
   def derive(item, track, report, completed) do
     case pull_state(report) do

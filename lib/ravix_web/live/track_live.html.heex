@@ -41,11 +41,11 @@
       </button>
       <strong :if={!owner_or_creator?(@current_user, @track)}>{@track.title}</strong>
       <.link
-        :if={@track.origin.kind == :plan && @project.access != :tracks}
-        navigate={@track.origin.url}
-        class="chip"
-      >Plan: {@track.origin.title}</.link>
-      <span :if={@track.origin.kind == :plan && @project.access == :tracks} class="chip">Plan item: {@track.origin.title}</span>
+        :if={@assigned_plan.plan}
+        navigate={@assigned_plan.plan.url}
+        class="chip track-plan-chip"
+        title={@assigned_plan.plan.title}
+      >Plan: {@assigned_plan.plan.title}</.link>
       <%!-- A new track is titled with its branch, so the chip appears only
         once the two say different things: after a rename, say. --%>
       <span
@@ -117,6 +117,7 @@
           current_user={@current_user}
           session_hash={@session_hash}
           track_id={@track.id}
+          summary={@assigned_plan}
         />
         <%!-- `data-track` is how the scroll hook learns it is somewhere new.
           This element keeps its id across a track switch now --- the page

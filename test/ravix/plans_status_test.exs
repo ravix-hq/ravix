@@ -89,5 +89,15 @@ defmodule Ravix.PlansStatusTest do
     assert Ravix.GitHubFake.request_count("/repos/") == 12
     assert {:ok, %{items: ^items}} = Plans.get(user, plan.id)
     assert Ravix.GitHubFake.request_count() == 0
+    track_id = hd(items).track_url |> String.split("/t/") |> List.last()
+    guest = insert_user()
+    insert_track_member(Repo.get!(Ravix.Tracks.Track, track_id), guest)
+    assert {:ok, %{items: [assigned], plan: nil}} = Plans.track_summary(guest, track_id)
+    assert assigned.status == :done
+    assert assigned.pull.number == 1
+    refute Map.has_key?(assigned, :dependencies)
+    assert Ravix.GitHubFake.request_count() == 0
+    assert {:ok, %{plan: %{title: "Batch"}}} = Plans.track_summary(user, track_id)
+    assert {:error, :not_found} = Plans.track_summary(insert_user(), track_id)
   end
 end

@@ -123,12 +123,15 @@ test('a project plan assigns coordinated tracks and works at phone width', async
   await page.setViewportSize({ width: 390, height: 844 });
   await assertHorizontalTabs();
   expect(await tabs.evaluate(el => el.scrollWidth > el.clientWidth)).toBe(true);
-  await tabs.getByRole('link', { name: /ravix\/build-ui/ }).scrollIntoViewIfNeeded();
+  // Without the redundant Plan badges the last track can already be visible.
+  // Exercise the strip's overflow rather than assuming this link needs a scroll.
+  await tabs.evaluate(el => el.scrollTo({ left: el.scrollWidth, behavior: 'instant' }));
+  await expect(tabs.getByRole('link', { name: /ravix\/build-ui/ })).toBeInViewport();
   expect(await tabs.evaluate(el => el.scrollLeft)).toBeGreaterThan(0);
 
   await expect(panel).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await page.screenshot({ path: 'test-results/plans-phone.png', fullPage: true });
   await panel.getByRole('link', { name: 'Open track: ravix/build-api' }).click();
-  await expect(page.getByRole('link', { name: 'Plan: Build API' })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Plan: Ship the release' })).toBeVisible();
 });

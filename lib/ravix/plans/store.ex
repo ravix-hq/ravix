@@ -23,7 +23,11 @@ defmodule Ravix.Plans.Store do
       |> Repo.preload(:notes)
 
   def for_track(track_id),
-    do: Repo.all(from i in Item, where: i.track_id == ^track_id) |> Repo.preload(:notes)
+    do:
+      Repo.all(
+        from i in Item, where: i.track_id == ^track_id, order_by: [asc: i.position, asc: i.id]
+      )
+      |> Repo.preload(:notes)
 
   def lock(id), do: Repo.one(from p in Plan, where: p.id == ^id, lock: "FOR UPDATE")
   def transaction(fun), do: Repo.transaction(fun)
@@ -32,7 +36,7 @@ defmodule Ravix.Plans.Store do
   def update(changeset), do: Repo.update(changeset)
   def delete(row), do: Repo.delete(row)
 
-  # ownership: Plans established Access.project_access before loading its assigned
-  # tracks, including closed ones which project members must still see in history.
+  # ownership: Plans established Access.project_access for the plan or
+  # Access.track_access for the single track's assigned items before this read.
   def tracks(ids), do: Repo.all(from t in Ravix.Tracks.Track, where: t.id in ^ids)
 end
