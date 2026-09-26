@@ -1,5 +1,7 @@
 defmodule Ravix.Tooling.WaitTest do
-  use Ravix.DataCase, async: true
+  # The 100 ms wake-up assertion measures event latency without competing
+  # with the full suite's parallel coverage instrumentation.
+  use Ravix.DataCase, async: false
   use Mimic
   import Ravix.ToolingFixture
   alias Ravix.{Fountain, Hub, Tooling, Tracks}
@@ -50,6 +52,7 @@ defmodule Ravix.Tooling.WaitTest do
     assert_receive {:subscribed, server}
     assert_receive :refreshed
     assert_receive :refreshed
+    await_idle(server)
     Agent.update(ctx.statuses, &Map.put(&1, ctx.one.id, "ended"))
 
     Phoenix.PubSub.broadcast(
@@ -218,8 +221,43 @@ defmodule Ravix.Tooling.WaitTest do
   defp start_wait(ctx, extra \\ %{}) do
     args = Map.merge(%{"task_ids" => [ctx.one.id, ctx.two.id], "timeout_ms" => 1000}, extra)
 
-    Task.Supervisor.async_nolink(Ravix.TaskSupervisor, fn ->
-      Tooling.call(ctx.p, "wait_task", args)
+    waiter =
+      Task.Supervisor.async_nolink(Ravix.TaskSupervisor, fn ->
+        Tooling.call(ctx.p, "wait_task", args)
+      end)
+
+    on_exit(fn ->
+      stop_process(waiter.pid)
+
+      case :global.whereis_name({Ravix.Tooling.Wait, ctx.p.user.id, ctx.p.grant.client_id}) do
+        :undefined ->
+          :ok
+
+        pid ->
+          ref = Process.monitor(pid)
+          send(pid, :cancel)
+          assert_receive {:DOWN, ^ref, :process, ^pid, _}, 1000
+      end
     end)
+
+    waiter
+  end
+
+  defp await_idle(server) do
+    case :sys.get_state(server).worker do
+      nil ->
+        :ok
+
+      %Task{pid: pid} ->
+        ref = Process.monitor(pid)
+        assert_receive {:DOWN, ^ref, :process, ^pid, _}, 1000
+        await_idle(server)
+    end
+  end
+
+  defp stop_process(pid) do
+    ref = Process.monitor(pid)
+    Process.exit(pid, :kill)
+    assert_receive {:DOWN, ^ref, :process, ^pid, _}, 1000
   end
 end
