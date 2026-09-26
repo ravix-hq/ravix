@@ -181,13 +181,15 @@ defmodule Ravix.PlansTest do
       ])
 
     for text <- [
+          "Item ID: #{item.id}",
+          "Plan-Item: #{item.id}",
           "Why now",
           "Implement API",
           "Test it",
           "track-b",
           "Own the interface",
           "rebase",
-          "draft PR",
+          "ready for review (not a draft)",
           "Do not merge"
         ],
         do: assert(prompt =~ text)

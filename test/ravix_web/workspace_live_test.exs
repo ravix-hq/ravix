@@ -1423,7 +1423,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
     child = find_live_child(parent, "track-host")
     render_async(child)
     child |> element("button", "app.ex") |> render_click()
-    assert render(child) =~ "hello file"
+    assert render_async(child) =~ "hello file"
     child |> element("button", "Changes") |> render_click()
     render_async(child)
     child |> element(".change-file", "app.ex") |> render_click()

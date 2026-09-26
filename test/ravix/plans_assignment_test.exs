@@ -67,7 +67,7 @@ defmodule Ravix.PlansAssignmentTest do
           "Own the UI",
           "Tests pass",
           ui.track_id,
-          "draft PR",
+          "ready for review (not a draft)",
           "Do not merge"
         ],
         do: assert(prompt =~ text)
@@ -336,10 +336,13 @@ defmodule Ravix.PlansAssignmentTest do
     plan: plan,
     p: p
   } do
-    assert {:ok, %{title: "Release", items: [_, _]}} =
+    progress = %{done: 0, wip: 0, unstarted: 2, blocked: 0, total: 2, percent: 0}
+
+    assert {:ok, %{title: "Release", items: [_, _], progress: ^progress}} =
              Tooling.call(p, "get_plan", %{"plan_id" => plan.id})
 
-    assert {:ok, %{items: [_]}} = Tooling.call(p, "list_plans", %{"project_id" => project.id})
+    assert {:ok, %{items: [%{progress: ^progress}]}} =
+             Tooling.call(p, "list_plans", %{"project_id" => project.id})
 
     assert {:ok, %{version: 2}} =
              Tooling.call(p, "update_plan", %{

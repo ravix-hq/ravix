@@ -22,6 +22,17 @@ defmodule Ravix.Plans.Store do
       )
       |> Repo.preload(:notes)
 
+  def project_items(project_id),
+    do:
+      Repo.all(
+        from i in Item,
+          join: p in Plan,
+          on: p.id == i.plan_id,
+          where: p.project_id == ^project_id,
+          order_by: [asc: i.position, asc: i.id]
+      )
+      |> Repo.preload(:notes)
+
   def for_track(track_id),
     do:
       Repo.all(

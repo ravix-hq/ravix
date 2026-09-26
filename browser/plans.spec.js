@@ -42,6 +42,21 @@ test('a project plan assigns coordinated tracks and works at phone width', async
   await expect(panel.getByLabel('Title', { exact: true })).toHaveValue('');
   await panel.getByRole('button', { name: 'Cancel', exact: true }).click();
   await expect(page).not.toHaveURL(/\?/);
+  await expect(panel.locator('.plans-list')).toContainText('0% complete');
+  await expect(panel.locator('.plans-list')).toContainText('3 unstarted');
+  await expect(panel.locator('.plans-list')).toContainText('1 blocked');
+  for (const theme of ['midnight', 'daylight']) {
+    await page.locator('html').evaluate((el, value) => el.dataset.theme = value, theme);
+    for (const width of [1480, 500]) {
+      await page.setViewportSize({ width, height: 900 });
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      await page.screenshot({ path: `tmp/plan-progress-${theme}-${width}.png` });
+    }
+    const result = await new AxeBuilder({ page }).include('#plans-panel').withTags(['wcag2a', 'wcag2aa']).analyze();
+    expect(result.violations).toEqual([]);
+  }
+  await page.locator('html').evaluate(el => el.dataset.theme = 'midnight');
+  await page.setViewportSize({ width: 1280, height: 900 });
   await panel.getByRole('link', { name: 'Ship the release', exact: true }).click();
   await expect(page).toHaveURL(planURL);
   await expect(panel.getByRole('heading', { name: 'Ship the release' })).toBeVisible();

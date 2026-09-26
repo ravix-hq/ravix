@@ -9,13 +9,13 @@ defmodule Ravix.Tooling.PlanTools do
   end
 
   def execute(p, "get_plan", a) do
-    with {:ok, %{plan: plan, items: items}} <- Plans.get(p.user, a["plan_id"]),
-         do: {:ok, Map.put(Plans.public_plan(plan), :items, items)}
+    with {:ok, %{plan: plan, items: items, progress: progress}} <- Plans.get(p.user, a["plan_id"]),
+         do: {:ok, Map.merge(Plans.public_plan(plan), %{items: items, progress: progress})}
   end
 
   def execute(p, "list_plans", a) do
-    with {:ok, plans} <- Plans.list(p.user, a["project_id"]),
-         do: {:ok, %{items: Enum.map(plans, &Plans.public_plan/1)}}
+    with {:ok, plans} <- Plans.list_with_progress(p.user, a["project_id"]),
+         do: {:ok, %{items: plans}}
   end
 
   def execute(p, "update_plan", a) do

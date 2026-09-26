@@ -234,7 +234,7 @@ defmodule RavixWeb.WorkspaceManagementTest do
         ] do
       ctx.view |> form("#new-track-form", new_track: [title: name]) |> render_submit()
       # This checks validation, not scheduling latency under CI coverage.
-      render_async(ctx.view, 1000)
+      render_async(ctx.view, 5_000)
       assert has_element?(ctx.view, "#new-track-form .field p.error", message)
       assert has_element?(ctx.view, "#track-title[value='#{name}']")
       refute has_element?(ctx.view, "#new-track-form button[disabled]")
@@ -424,9 +424,11 @@ defmodule RavixWeb.WorkspaceManagementTest do
       |> form("#agent-settings-form")
       |> render_submit(%{settings: %{runtime: "made-up", model: "also-made-up"}})
 
-      render_async(ctx.view)
+      # Each round starts a switch preview and then the save; the 100ms
+      # default fails under a full parallel coverage run, not on a slow app.
+      render_async(ctx.view, 1_000)
       ctx.view |> element("#confirm-agent-switch") |> render_click()
-      render_async(ctx.view)
+      render_async(ctx.view, 1_000)
       assert has_element?(ctx.view, "#agent-settings-form .field p.error", message)
 
       assert has_element?(ctx.view, "#{id} option[value='made-up'][selected]") or

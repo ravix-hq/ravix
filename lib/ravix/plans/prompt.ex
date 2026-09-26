@@ -14,6 +14,7 @@ defmodule Ravix.Plans.Prompt do
     #{plan.summary}
 
     Your item: #{item.title}
+    Item ID: #{item.id}
     #{item.brief}
 
     Acceptance notes:
@@ -23,7 +24,9 @@ defmodule Ravix.Plans.Prompt do
     #{coverage}
 
     Stay within this item's scope. Other tracks may be working in parallel; leave their work alone.
-    Expect to rebase onto main. Push your branch and open a draft PR with validation and limitations.
+    Expect to rebase onto main. When the work is complete, push your branch and open a PR ready for review (not a draft) with validation and limitations.
+    Its description must include this exact line: Plan-Item: #{item.id}
+    A PR carrying several items lists one Plan-Item line per item.
     Do not merge. Notes and agent claims do not mark this item done; only a merged PR does.
     """
   end

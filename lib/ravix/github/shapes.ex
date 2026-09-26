@@ -72,7 +72,7 @@ defmodule Ravix.GitHub.Shapes do
       :state,
       :url
     ]
-    defstruct @enforce_keys
+    defstruct @enforce_keys ++ [plan_item_ids: [], head_repo: nil]
 
     @type state :: :open | :closed | :merged
 
@@ -85,7 +85,9 @@ defmodule Ravix.GitHub.Shapes do
             draft: boolean(),
             updated_at: String.t(),
             state: state(),
-            url: String.t() | nil
+            url: String.t() | nil,
+            plan_item_ids: [String.t()],
+            head_repo: String.t() | nil
           }
   end
 
@@ -174,9 +176,35 @@ defmodule Ravix.GitHub.Shapes do
       draft: p["draft"] == true,
       updated_at: p["updated_at"],
       state: pull_state(p),
-      url: p["html_url"]
+      url: p["html_url"],
+      head_repo: get_in(p, ["head", "repo", "full_name"]),
+      plan_item_ids: plan_item_ids(p["body"])
     }
   end
+
+  # A whole line, anywhere in the body, so a footer an agent's harness appends
+  # after the list cannot unlink the PR. The exact line format rules out prose
+  # and quotes; fenced code is skipped so a documented example never counts.
+  @plan_item ~r/^Plan-Item: ([a-zA-Z0-9_-]{1,100})$/
+  @fence ~r/^ {0,3}(```|~~~)/
+
+  defp plan_item_ids(body) when is_binary(body) do
+    body
+    |> String.split(~r/\r?\n/)
+    |> Enum.reduce({false, []}, fn line, {fenced?, ids} ->
+      cond do
+        Regex.match?(@fence, line) -> {not fenced?, ids}
+        fenced? -> {fenced?, ids}
+        match = Regex.run(@plan_item, line, capture: :all_but_first) -> {fenced?, match ++ ids}
+        true -> {fenced?, ids}
+      end
+    end)
+    |> elem(1)
+    |> Enum.reverse()
+    |> Enum.uniq()
+  end
+
+  defp plan_item_ids(_), do: []
 
   @doc "Where a pull request got to: merged, closed or open."
   @spec pull_state(map()) :: PullRef.state()

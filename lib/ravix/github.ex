@@ -370,6 +370,35 @@ defmodule Ravix.GitHub do
     end
   end
 
+  @doc """
+  Item trailers in the 300 most recently updated PRs, including closed/merged PRs.
+  At most three cached, conditionally revalidated reads for the whole repository.
+  An incomplete scan cannot prove that an item has no explicit link.
+  """
+  @spec plan_pulls(app(), installation_id(), String.t()) ::
+          {:ok, %{pulls: [Shapes.PullRef.t()], complete: boolean()}} | error()
+  def plan_pulls(nil, _, _), do: {:error, {:unconfigured, :github}}
+
+  def plan_pulls(%GitHubApp{} = app, installation_id, full_name),
+    do: plan_pull_pages(app, installation_id, full_name, 1, [])
+
+  defp plan_pull_pages(app, installation_id, repo, page, acc) do
+    path = "/repos/#{repo}/pulls?state=all&sort=updated&direction=desc&per_page=100&page=#{page}"
+
+    with {:ok, raw} <- as_installation(app, installation_id, :get, path, cache_ttl: 300_000) do
+      pulls =
+        raw
+        |> Enum.map(&Shapes.pull_ref/1)
+        |> Enum.filter(&(&1.head_repo == repo and &1.plan_item_ids != []))
+
+      all = acc ++ pulls
+
+      if length(raw) == 100 and page < 3,
+        do: plan_pull_pages(app, installation_id, repo, page + 1, all),
+        else: {:ok, %{pulls: Enum.uniq_by(all, & &1.number), complete: length(raw) < 100}}
+    end
+  end
+
   @doc "The PR belonging to a track, without fetching its branch or CI checks."
   @spec pull_for_track(app(), installation_id(), String.t(), String.t(), track()) ::
           {:ok, Shapes.PullRef.t() | nil} | error()

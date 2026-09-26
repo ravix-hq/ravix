@@ -341,6 +341,8 @@ defmodule Ravix.GitHubTest do
       assert sparse.author == nil
       assert sparse.draft == false
       assert sparse.state == :open
+      assert sparse.plan_item_ids == []
+      assert sparse.head_repo == nil
 
       assert Map.keys(sparse) --
                [
@@ -352,6 +354,8 @@ defmodule Ravix.GitHubTest do
                  :base_ref,
                  :draft,
                  :updated_at,
+                 :plan_item_ids,
+                 :head_repo,
                  :state,
                  :url
                ] == []

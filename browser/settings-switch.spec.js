@@ -60,7 +60,8 @@ test('settings explicitly rebuilds when switching agents and the next track work
     expect(agent.runtime).toBe(target === 'codex' ? 'claude' : 'codex');
     if (previousAgent) expect(agent.id).not.toBe(previousAgent);
     previousAgent = agent.id;
-    await page.locator('.crumbs').getByRole('button', { name: 'Settings', exact: true }).click();
+    // #243 named the track header's gear for what it opens.
+    await page.locator('.track-crumbs').getByRole('button', { name: 'Project settings', exact: true }).click();
     const settings = page.getByRole('dialog', { name: 'Project settings', exact: true });
     await expect(settings.locator('[data-confirm]')).toHaveCount(0);
     await settings.getByRole('button', { name: 'Agent', exact: true }).click();

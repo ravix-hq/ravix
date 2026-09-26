@@ -176,7 +176,9 @@ defmodule Ravix.Tooling.WaitTest do
              Tooling.call(ctx.p, "wait_task", %{
                "task_ids" => [id],
                "since" => %{id => "TASK_STATE_FAILED"},
-               "timeout_ms" => 10
+               # Leave time for sandbox DB reads before the deadline cancels a worker.
+               # This case tests unchanged terminal state, not a sub-query time budget.
+               "timeout_ms" => 1000
              })
   end
 

@@ -125,6 +125,13 @@ defmodule Ravix.Spec do
       ""
     ])
     |> Kernel.++([
+      "## Finishing",
+      "",
+      "When a PR carries plan work, its description lists each item it implements",
+      "on a line of its own: `Plan-Item: <item id>`, using the exact assigned IDs.",
+      "Keep these lines when updating the PR description, including PRs on other branches.",
+      "Ravix uses the linked PR evidence to determine each item's status.",
+      "",
       "## Live previews",
       "",
       "Ravix can provide a track-scoped preview helper in the turn's instructions.",
@@ -221,6 +228,10 @@ defmodule Ravix.Spec do
           "Then `cd #{dir}` — that is your working directory for every turn in this track."
         ] ++
         issue_lines(origin) ++
+        [
+          "",
+          "For plan work, list each item in the PR description as `Plan-Item: <item id>`, one per line."
+        ] ++
         [
           "",
           "Reply with exactly one line: the working directory and the branch it is on. If",

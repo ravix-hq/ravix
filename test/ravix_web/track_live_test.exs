@@ -10,6 +10,8 @@ defmodule RavixWeb.TrackLiveTest do
   alias Ravix.Tracks.{Diff, Files, Track, TrackMember, Transcript}
   alias RavixWeb.Live.Guard
 
+  alias Ravix.Plans.Progress
+
   setup :verify_on_exit!
 
   setup %{conn: conn} do
@@ -354,7 +356,7 @@ defmodule RavixWeb.TrackLiveTest do
         }
       end)
 
-    summary = %{items: items, plan: nil}
+    summary = %{items: items, plan: nil, progress: Progress.summarize(items)}
 
     expect(Ravix.Plans, :track_summary, fn user, id ->
       assert {user.id, id} == {ctx.user.id, ctx.track.id}
@@ -365,6 +367,9 @@ defmodule RavixWeb.TrackLiveTest do
     settle(ctx.view)
     assert has_element?(ctx.view, ".track-plan-toggle[aria-expanded=false]", "1 of 4 done")
     assert has_element?(ctx.view, ".track-plan-summary")
+    assert has_element?(ctx.view, ".track-plan-summary", "25% complete")
+    assert has_element?(ctx.view, ".track-plan-summary", "2 WIP")
+    assert has_element?(ctx.view, ".track-plan-summary", "1 unstarted")
     refute has_element?(ctx.view, ".track-plan-summary ~ .track-plan-summary")
     refute has_element?(ctx.view, ".track-plan-item-row")
     refute render(ctx.view) =~ "Private brief"
@@ -404,6 +409,8 @@ defmodule RavixWeb.TrackLiveTest do
 
     stub(Ravix.Config, :github, fn -> Ravix.GitHubFake.app() end)
 
+    stub(Ravix.GitHub, :plan_pulls, fn _, _, _ -> {:ok, %{pulls: [], complete: true}} end)
+
     expect(Ravix.GitHub, :pull_for_track, fn _, _, _, _, _ ->
       {:ok, %{state: :merged, number: 231, url: "https://github.com/acme/app/pull/231"}}
     end)
@@ -442,7 +449,10 @@ defmodule RavixWeb.TrackLiveTest do
         }
       end)
 
-    expect(Ravix.Plans, :track_summary, fn _, _ -> {:ok, %{items: items, plan: nil}} end)
+    expect(Ravix.Plans, :track_summary, fn _, _ ->
+      {:ok, %{items: items, plan: nil, progress: Progress.summarize(items)}}
+    end)
+
     send(ctx.view.pid, :refresh_plan_items)
     settle(ctx.view)
     ctx.view |> element(".track-plan-toggle") |> render_click()
