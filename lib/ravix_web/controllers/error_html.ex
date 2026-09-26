@@ -6,18 +6,41 @@ defmodule RavixWeb.ErrorHTML do
   """
   use RavixWeb, :html
 
-  # If you want to customize your error pages,
-  # uncomment the embed_templates/1 call below
-  # and add pages to the error directory:
-  #
-  #   * lib/ravix_web/controllers/error_html/404.html.heex
-  #   * lib/ravix_web/controllers/error_html/500.html.heex
-  #
-  # embed_templates "error_html/*"
+  embed_templates "error_html/*"
 
-  # The default is to render a plain text page based on
-  # the template name. For example, "404.html" becomes
-  # "Not Found".
+  attr :status, :string, required: true
+  attr :title, :string, required: true
+  slot :inner_block, required: true
+
+  # Errors can happen before the browser pipeline establishes a session.
+  # Keep this shell independent of session data and LiveView startup.
+  def page(assigns) do
+    ~H"""
+    <!DOCTYPE html>
+    <html lang="en">
+      <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>{@title} · Ravix</title>
+        <script src={~p"/theme.js"}>
+        </script>
+        <link rel="stylesheet" href={~p"/assets/js/app.css"} />
+      </head>
+      <body>
+        <main class="centred">
+          <div class="hero">
+            <p class="wordmark">Ravix</p>
+            <h1>{@status} · {@title}</h1>
+            <p class="hero-sub">{render_slot(@inner_block)}</p>
+            <a href={~p"/home"}>Home</a>
+          </div>
+        </main>
+      </body>
+    </html>
+    """
+  end
+
+  # Preserve Phoenix's status message for other HTTP errors.
   def render(template, _assigns) do
     Phoenix.Controller.status_message_from_template(template)
   end
