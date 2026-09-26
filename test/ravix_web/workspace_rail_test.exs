@@ -27,21 +27,27 @@ defmodule RavixWeb.WorkspaceRailTest do
         Enum.map(rows, fn {project, track, delay} ->
           {request(project),
            fn _ ->
-             send(test_pid, {:reading, project.id})
-             # Deliberately model provider latency; readiness is proved by
-             # receiving all three starts before the first response can land.
-             receive do
-             after
-               delay -> response(track)
-             end
+             send(test_pid, {:reading, project.id, self()})
+             # Every provider must start before any is released, proving
+             # overlap without counting login/render setup as provider time.
+             receive do: (:release -> :ok)
+             Process.sleep(delay)
+             response(track)
            end}
         end)
       )
 
     stub(Fountain, :client, fn -> client end)
-    started = System.monotonic_time(:millisecond)
     {:ok, view, _} = live(log_in_user(conn, user), "/home")
-    for {project, _, _} <- rows, do: assert_receive({:reading, id} when id == project.id, 500)
+
+    workers =
+      for {project, _, _} <- rows do
+        assert_receive {:reading, id, worker} when id == project.id, 2_000
+        worker
+      end
+
+    started = System.monotonic_time(:millisecond)
+    Enum.each(workers, &send(&1, :release))
     html = render_async(view, 4_000)
     elapsed = System.monotonic_time(:millisecond) - started
 

@@ -193,10 +193,18 @@
             ><.icon name="plus" size={13} /></button>
           </div>
         </div>
-        <div id="project-sections" phx-hook="ProjectSections" aria-busy={to_string(!@rail_loaded)}>
-          <p :if={!@rail_loaded} id="rail-loading" class="hint" role="status">
+        <div
+          id="project-sections"
+          phx-hook="ProjectSections"
+          aria-busy={to_string(!@rail_loaded && !@rail_error)}
+        >
+          <p :if={!@rail_loaded && !@rail_error} id="rail-loading" class="hint" role="status">
             Loading projects…
           </p>
+          <div :if={@rail_error} id="rail-error" role="alert">
+            <p class="hint">Projects could not be loaded.</p>
+            <button type="button" class="btn" phx-click="refresh">Retry</button>
+          </div>
           <div
             :for={
               {section, projects} <- section_groups(@projects, @sections, @section_placements)
