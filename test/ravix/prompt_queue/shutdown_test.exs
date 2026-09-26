@@ -135,6 +135,41 @@ defmodule Ravix.PromptQueue.ShutdownTest do
     assert Store.get(row.id).status == :queued
   end
 
+  test "a preparer recovered during discovery lag releases its refused POST and delivers once",
+       c do
+    row = enqueue(c, "discovery-lag")
+    parent = self()
+
+    stub(Fountain, :get_conversation, fn _, id ->
+      {:ok, Fountain.Shapes.conversation(%{"id" => id, "status" => "idle"})}
+    end)
+
+    stub(Ravix.Previews, :prepare_agent_preview, fn _ ->
+      send(parent, {:preparing, self()})
+      receive do: (:continue -> "")
+    end)
+
+    expect(Fountain, :prompt, fn _, _, _, _, opts ->
+      assert opts[:client_request_id] == row.id
+      :ok
+    end)
+
+    server = server()
+    tick = Task.async(fn -> Server.tick(server) end)
+    assert_receive {:preparing, preparer}, 2000
+    Store.get(row.id) |> Ecto.Changeset.change(claimed_by: "undiscovered@host") |> Repo.update!()
+    Store.recover()
+    assert Store.get(row.id).status == :unconfirmed
+    send(preparer, :continue)
+    assert :ok = Task.await(tick)
+    assert Store.get(row.id).status == :queued
+
+    stub(Ravix.Previews, :prepare_agent_preview, fn _ -> "" end)
+    Server.tick(server)
+    assert Store.get(row.id).status == :sent
+    Server.tick(server)
+  end
+
   test "release cannot reset POSTs or a newer claim", c do
     row = enqueue(c, "guarded")
     first = Ecto.UUID.generate()
