@@ -315,11 +315,14 @@
         >
           <.icon name="chevron" size={13} open={@yard_open} class="ico" />Menu
         </button>
-        <.link patch="/home">Home</.link><.link patch="/inbox">Inbox</.link><button
+        <.link patch="/home" aria-current={@live_action == :projects && "page"}>Home</.link>
+        <.link patch="/inbox" aria-current={@live_action in [:home, :inbox] && "page"}>Inbox</.link>
+        <button
           class="ghost"
           phx-click={JS.push_focus() |> JS.push("dialog")}
           phx-value-name="search"
-        >Tracks</button><button
+        >Search</button>
+        <button
           class="ghost"
           phx-click={JS.push_focus() |> JS.push("dialog")}
           phx-value-name="new-project"
@@ -636,7 +639,7 @@
     <.dialog
       :if={@dialog == :search}
       id="search-dialog"
-      title="Find a track"
+      title="Search"
       on_close="dismiss"
       initial_focus="#search-query"
     >
