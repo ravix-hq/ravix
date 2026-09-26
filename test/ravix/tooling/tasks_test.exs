@@ -96,7 +96,7 @@ defmodule Ravix.Tooling.TasksTest do
     stub(Fountain, :turns, fn _, _ -> {:error, {:unconfigured, :fountain}} end)
     assert {:error, _} = Tasks.get(p, task.id)
     assert Repo.get!(Task, task.id).state == "TASK_STATE_SUBMITTED"
-    stub(Fountain, :turns, fn _, _ -> {:ok, [turn(task.id, "mine", "done")]} end)
+    stub(Fountain, :turns, fn _, _ -> {:ok, [turn(task.id, "mine", "running")]} end)
 
     expect(Fountain, :events_page, fn _, _, opts ->
       assert opts[:after] == nil
@@ -105,12 +105,126 @@ defmodule Ravix.Tooling.TasksTest do
 
     assert {:ok, %{state: "TASK_STATE_WORKING", result: "one "}} = Tasks.get(p, task.id)
 
+    stub(Fountain, :turns, fn _, _ -> {:ok, [turn(task.id, "mine", "ended")]} end)
+
     expect(Fountain, :events_page, fn _, _, opts ->
-      assert opts[:after] == 1
-      {:ok, %{events: [event(2, "mine", "two")], next_cursor: 2, has_more: false}}
+      assert opts[:after] == nil
+
+      {:ok,
+       %{
+         events: [event(1, "mine", "one "), event(2, "mine", "two")],
+         next_cursor: 2,
+         has_more: false
+       }}
     end)
 
     assert {:ok, %{state: "TASK_STATE_COMPLETED", result: "one two"}} = Tasks.get(p, task.id)
+  end
+
+  for {status, state} <- [
+        {"ended", "TASK_STATE_COMPLETED"},
+        {"completed", "TASK_STATE_COMPLETED"},
+        {"done", "TASK_STATE_COMPLETED"},
+        {"failed", "TASK_STATE_FAILED"},
+        {"cancelled", "TASK_STATE_CANCELED"}
+      ] do
+    test "#{status} returns its full reply before 500 later events", %{p: p, track: track} do
+      {:ok, task} = Tasks.send(p, track.id, "hello", "request")
+      QueueStore.mark_delivered(task.id)
+
+      expect(Fountain, :turns, fn _, "conversation" ->
+        {:ok, [turn(task.id, "mine", unquote(status)), turn("later", "later", "running")]}
+      end)
+
+      events =
+        Enum.map(1..100, &event(&1, "earlier", "old")) ++
+          Enum.map(101..250, &event(&1, "mine", "answer ")) ++
+          Enum.map(251..750, &event(&1, "later", "unrelated"))
+
+      expect(Fountain, :events_page, 3, fn _, "conversation", opts ->
+        cursor = opts[:after] || 0
+        assert opts[:limit] == 100
+        assert cursor in [0, 100, 200]
+
+        {:ok,
+         %{
+           events: Enum.slice(events, cursor, 100),
+           next_cursor: cursor + 100,
+           has_more: true
+         }}
+      end)
+
+      assert {:ok, done} = Tasks.get(p, task.id)
+      assert done.state == unquote(state)
+      assert done.result == String.duplicate("answer ", 150)
+      assert {:ok, ^done} = Tasks.get(p, task.id)
+    end
+  end
+
+  test "ACP reply spans pages and stops at a later turn on the next page", %{
+    p: p,
+    track: track,
+    project: project
+  } do
+    project |> Ecto.Changeset.change(runtime: "codex") |> Repo.update!()
+    {:ok, task} = Tasks.send(p, track.id, "hello", "request")
+    QueueStore.mark_delivered(task.id)
+    stub(Fountain, :turns, fn _, _ -> {:ok, [turn(task.id, "mine", "ended")]} end)
+
+    chunk = fn text ->
+      Jason.encode!(%{
+        jsonrpc: "2.0",
+        method: "session/update",
+        params: %{
+          update: %{sessionUpdate: "agent_message_chunk", content: %{type: "text", text: text}}
+        }
+      })
+    end
+
+    first = chunk.("Full ")
+    last = chunk.("answer")
+
+    expect(Fountain, :events_page, fn _, _, opts ->
+      assert opts[:after] == nil
+
+      {:ok,
+       %{events: [%{event(1, "mine", first) | "stream" => "acp"}], next_cursor: 1, has_more: true}}
+    end)
+
+    expect(Fountain, :events_page, fn _, _, opts ->
+      assert opts[:after] == 1
+
+      {:ok,
+       %{
+         events: [%{event(2, "mine", last) | "stream" => "acp"}, event(3, nil, "noise")],
+         next_cursor: 3,
+         has_more: true
+       }}
+    end)
+
+    expect(Fountain, :events_page, fn _, _, opts ->
+      assert opts[:after] == 3
+      {:ok, %{events: [event(4, "later", "not mine")], next_cursor: 4, has_more: true}}
+    end)
+
+    assert {:ok, %{state: "TASK_STATE_COMPLETED", result: "Full answer"}} = Tasks.get(p, task.id)
+  end
+
+  test "failed or stalled reply pagination preserves the receipt for retry", %{p: p, track: track} do
+    {:ok, task} = Tasks.send(p, track.id, "hello", "request")
+    QueueStore.mark_delivered(task.id)
+    stub(Fountain, :turns, fn _, _ -> {:ok, [turn(task.id, "mine", "ended")]} end)
+
+    for failure <- [{:error, :unavailable}, {:ok, %{events: [], next_cursor: 1, has_more: true}}] do
+      expect(Fountain, :events_page, fn _, _, _ ->
+        {:ok, %{events: [event(1, "mine", "partial")], next_cursor: 1, has_more: true}}
+      end)
+
+      expect(Fountain, :events_page, fn _, _, _ -> failure end)
+      assert {:error, _} = Tasks.get(p, task.id)
+      assert Repo.get!(Task, task.id).state == "TASK_STATE_SUBMITTED"
+      assert Repo.get!(Task, task.id).result == ""
+    end
   end
 
   test "task IDs never grant access to other users or clients; revoked memberships stop reads", %{
