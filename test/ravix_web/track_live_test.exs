@@ -1019,8 +1019,9 @@ defmodule RavixWeb.TrackLiveTest do
   end
 
   defp settle(view) do
-    render_async(view)
-    render_async(view)
+    # Shared CI/database load can exceed LiveViewTest's 100ms default during setup.
+    render_async(view, 5_000)
+    render_async(view, 5_000)
   end
 
   # The track page's flash, which is the workspace's: the nested page has no
