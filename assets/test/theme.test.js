@@ -45,3 +45,20 @@ test("hover preview rolls back on escape, outside click, menu leave, and trigger
   hook.menu().dispatchEvent(new MouseEvent("mouseleave"))
   expect(document.documentElement.dataset.theme).toBe("nord")
 })
+
+test("escape closes only the palette list and gives focus back to its trigger", () => {
+  const {hook} = mountHook(Theme, ".theme-picker")
+  // Closed, Escape is somebody else's: an enclosing popover must still get it.
+  expect(key(document, "Escape").defaultPrevented).toBe(false)
+  hook.trigger().click()
+  hook.el.querySelector("[data-theme-choice=nord]").focus()
+  const escape = key(document, "Escape")
+  expect(escape.defaultPrevented).toBe(true)
+  expect(hook.menu().hidden).toBe(true)
+  expect(document.activeElement).toBe(hook.trigger())
+  // Opened by pointer with focus elsewhere, closing leaves focus alone.
+  hook.trigger().click()
+  document.querySelector("#outside").focus()
+  key(document, "Escape")
+  expect(document.activeElement).toBe(document.querySelector("#outside"))
+})

@@ -90,8 +90,16 @@ export const Theme = {
     this.onAway = e => {
       if (this.open && !this.el.contains(e.target)) this.close()
     }
+    // Escape shuts this menu and nothing else: cancelling the key keeps a
+    // popover the picker sits in (the account menu) open, the way the
+    // browser's close requests promise, and focus goes back to the trigger
+    // rather than to the body when it was on a row that is now hidden.
     this.onKey = e => {
-      if (e.key === "Escape" && this.open) this.close()
+      if (e.key !== "Escape" || !this.open) return
+      e.preventDefault()
+      const refocus = this.menu()?.contains(document.activeElement)
+      this.close()
+      if (refocus) this.trigger()?.focus()
     }
     this.el.addEventListener("click", this.onClick)
     this.el.addEventListener("mouseover", this.onOver)

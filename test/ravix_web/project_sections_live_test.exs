@@ -11,9 +11,19 @@ defmodule RavixWeb.ProjectSectionsLiveTest do
     project = insert_project(user: user, name: "Section project")
     conn = log_in_user(conn, user)
     {:ok, view, _} = live(conn, "/p/#{project.id}")
+    # With no named sections, projects sit directly under Projects: the
+    # unsectioned group has no heading of its own.
+    assert has_element?(view, "#section-other a[href='/p/#{project.id}']")
+    refute has_element?(view, "#section-other .section-label")
+    refute render(view) =~ "Other projects"
     view |> element("#manage-sections") |> render_click()
     view |> form("#new-section-form", section: %{name: "Work"}) |> render_submit()
     {[section], %{}} = Sections.list(user)
+    # Beside a named section it is labelled, and it comes after the sections,
+    # so the Projects heading is never followed straight away by another.
+    assert has_element?(view, "#section-other .section-label", "Other projects")
+    [_, after_section] = String.split(render(view), ~s(id="section-#{section.id}"), parts: 2)
+    assert after_section =~ ~s(id="section-other")
     view |> form("#new-section-form", section: %{name: "Work"}) |> render_submit()
     assert render(view) =~ "has already been taken"
     view |> form("#rename-section-#{section.id}", section: %{name: "Active"}) |> render_submit()
@@ -30,8 +40,9 @@ defmodule RavixWeb.ProjectSectionsLiveTest do
     |> render_hook("move-project", %{project: project.id, section: section.id})
 
     assert has_element?(view, "#section-#{section.id} a[href='/p/#{project.id}']")
-    # With every project filed away, Other projects stays as a place to drop.
-    assert has_element?(view, "#section-other", "Drag a project here")
+    # With every project filed away, Other projects stays as a place to drop,
+    # shown while a project is being dragged (`.project-section-idle`).
+    assert has_element?(view, "#section-other.project-section-idle", "Drag a project here")
     view |> element("#section-#{section.id} .section-toggle") |> render_click()
     assert has_element?(view, "#section-projects-#{section.id}[hidden]")
     {:ok, reloaded, _} = live(conn, "/p/#{project.id}")

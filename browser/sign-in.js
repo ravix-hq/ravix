@@ -24,7 +24,9 @@ export async function signIn(page, login, landing = '/') {
   await page.goto('/');
   await page.getByRole('link', { name: 'Sign in with GitHub', exact: true }).click();
   await page.getByRole('link', { name: `Sign in as @${login}`, exact: true }).click();
-  await expect(page.getByRole('link', { name: 'Sign out' })).toBeVisible();
+  // Signed in: the walkthrough offers "Sign out" outright, the workspace
+  // behind the account menu that the person's own row opens.
+  await expect(page.getByRole('link', { name: 'Sign out' }).or(page.locator('#account-trigger'))).toBeVisible();
   await expect(page.locator('[data-phx-main]')).toHaveClass(/phx-connected/);
   // Whoever signs in first, with no project yet, is shown the walkthrough.
   // One test is about that; every other test is about the workspace, and must

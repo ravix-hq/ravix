@@ -53,16 +53,97 @@
     >
     </div>
     <aside id="yard" class={["yard", @yard_open && "forced"]} aria-label="Projects">
+      <%!-- The person, and everything about them rather than about a project:
+        the preferences this browser keeps, the account, help, signing out.
+        Settled once and then rarely touched, so it is one row that opens a
+        native popover rather than a footer that holds 250px forever. The
+        popover gives light dismiss, Escape and focus return for free; an item
+        that opens a dialog also hides it (`popovertargetaction="hide"`) and
+        pushes the trigger, not itself, as the place focus comes back to. --%>
       <div class="yard-top">
-        <span class="avatar workspace-avatar" aria-hidden="true">
-          {String.first(@current_user.login) |> String.upcase()}
-        </span>
-        <div class="yard-who">
-          <strong>{@current_user.name || @current_user.login}</strong><small>@{@current_user.login}</small>
-        </div>
+        <button
+          type="button"
+          id="account-trigger"
+          class="yard-account"
+          popovertarget="account-menu"
+        >
+          <span class="avatar workspace-avatar" aria-hidden="true">
+            {String.first(@current_user.login) |> String.upcase()}
+          </span>
+          <span class="yard-who">
+            <strong class="truncate">{@current_user.name || @current_user.login}</strong><small class="truncate">@{@current_user.login}</small>
+          </span>
+          <span class="sr-only">Account menu</span>
+          <span :if={@changes_unseen > 0} class="account-unseen" id="account-unseen">
+            <span class="sr-only">, {@changes_unseen} new in What's new</span>
+          </span>
+          <.icon name="chevron" size={12} open={true} class="account-chevron" />
+        </button>
         <button type="button" class="x yard-close" phx-click="yard-close" aria-label="Close menu">
           <.icon name="x" size={16} />
         </button>
+      </div>
+      <div id="account-menu" class="account-menu" popover aria-label="Account menu">
+        <.theme_picker id="theme-picker" />
+        <div id="notify" phx-hook="Notify" class="notify">
+          <button
+            type="button"
+            class="theme-trigger"
+            data-notify-toggle
+            aria-pressed="false"
+            title="Say so from the desktop when a track needs you and this tab is in the background"
+          >
+            <span class="notify-dot" data-notify-dot></span><span class="col"><small>Desktop notifications</small><span
+              class="truncate"
+              data-notify-state
+            >Off</span></span>
+          </button>
+        </div>
+        <hr />
+        <button
+          type="button"
+          class="account-item"
+          id="open-account"
+          popovertarget="account-menu"
+          popovertargetaction="hide"
+          phx-click={JS.push_focus(to: "#account-trigger") |> JS.push("dialog")}
+          phx-value-name="account"
+        >
+          <.icon name="person" size={14} />Account
+        </button>
+        <a class="account-item" href="/api/auth/install">
+          <.icon name="github" size={14} />Repository access
+        </a>
+        <button
+          type="button"
+          class="account-item"
+          id="open-help"
+          popovertarget="account-menu"
+          popovertargetaction="hide"
+          phx-click={JS.push_focus(to: "#account-trigger") |> JS.push("dialog")}
+          phx-value-name="help"
+        >
+          <.icon name="info" size={14} />Help
+        </button>
+        <button
+          type="button"
+          class="account-item"
+          id="open-changes"
+          popovertarget="account-menu"
+          popovertargetaction="hide"
+          phx-click={JS.push_focus(to: "#account-trigger") |> JS.push("dialog")}
+          phx-value-name="changes"
+          aria-label="What's new"
+        >
+          <.icon name="sparkle" size={14} />What's new<span class="spacer"></span><span
+            :if={@changes_unseen > 0}
+            class="badge"
+          >{@changes_unseen}</span>
+        </button>
+        <hr />
+        <.link href="/auth/signout" method="post" class="account-item">
+          <.icon name="sign-out" size={14} />Sign out
+        </.link>
       </div>
       <div class="workspace-actions yard-nav">
         <.link patch="/inbox" class={["yard-item", @live_action in [:home, :inbox] && "on"]}>
@@ -118,11 +199,14 @@
               {section, projects} <- section_groups(@projects, @sections, @section_placements)
             }
             :if={section.id || projects != [] || @sections != []}
-            class="project-section"
+            class={[
+              "project-section",
+              !section.id && projects == [] && "project-section-idle"
+            ]}
             id={"section-#{section.id || "other"}"}
             data-section-drop={section.id || ""}
           >
-            <div :if={section.id || @sections != []} class="yard-label">
+            <div :if={section.id || @sections != []} class="section-label">
               <button
                 :if={section.id}
                 class="ghost section-toggle"
@@ -135,7 +219,7 @@
                 <.icon name="chevron" size={12} open={!section.collapsed} />
                 <span class="truncate">{section.name}</span><span class="dim">{length(projects)}</span>
               </button>
-              <span :if={!section.id}>{section.name}</span>
+              <span :if={!section.id} class="section-name">{section.name}</span>
             </div>
             <div id={"section-projects-#{section.id || "other"}"} hidden={section.collapsed}>
               <p :if={section.id && projects == []} class="hint section-empty">
@@ -146,7 +230,7 @@
               </p>
               <section
                 :for={project <- projects}
-                class="workspace-project"
+                class={["workspace-project", @project && @project.id == project.id && "current"]}
                 draggable={to_string(@sections != [])}
                 data-project-id={project.id}
               >
@@ -163,83 +247,49 @@
                     </span>
                     <span class="truncate"><.project_name project={project} /></span>
                   </.link>
-                  <.link
-                    :if={project.access != :tracks}
-                    patch={"/p/#{project.id}?new=track"}
-                    class="project-add"
-                    aria-label={"New track in #{project.display_name}"}
-                  >
-                    <.icon name="plus" size={13} />
-                  </.link>
-                </div>
-                <div
-                  :if={@project && @project.id == project.id && project.access != :tracks}
-                  class="project-links"
-                >
-                  <button
-                    class="ghost"
-                    phx-click={JS.push_focus() |> JS.push("dialog")}
-                    phx-value-name="people"
-                  >
-                    <.icon name="add-person" size={13} />People
-                  </button>
-                  <button
-                    :if={project.role == :owner}
-                    class="ghost"
-                    phx-click={JS.push_focus() |> JS.push("dialog")}
-                    phx-value-name="settings"
-                  >
-                    <.icon name="settings" size={13} />Project settings
-                  </button>
+                  <%!-- The open project's own dialogs act on `@project`, so
+                    they are offered on its row only; every row offers a new
+                    track, which names its project in the URL. --%>
+                  <div class="project-actions">
+                    <button
+                      :if={@project && @project.id == project.id && project.access != :tracks}
+                      type="button"
+                      class="project-action"
+                      aria-label={"People in #{project.display_name}"}
+                      title="People"
+                      phx-click={JS.push_focus() |> JS.push("dialog")}
+                      phx-value-name="people"
+                    >
+                      <.icon name="add-person" size={13} />
+                    </button>
+                    <button
+                      :if={
+                        @project && @project.id == project.id && project.access != :tracks &&
+                          project.role == :owner
+                      }
+                      type="button"
+                      class="project-action"
+                      aria-label={"Project settings for #{project.display_name}"}
+                      title="Project settings"
+                      phx-click={JS.push_focus() |> JS.push("dialog")}
+                      phx-value-name="settings"
+                    >
+                      <.icon name="settings" size={13} />
+                    </button>
+                    <.link
+                      :if={project.access != :tracks}
+                      patch={"/p/#{project.id}?new=track"}
+                      class="project-action project-add"
+                      aria-label={"New track in #{project.display_name}"}
+                      title="New track"
+                    >
+                      <.icon name="plus" size={13} />
+                    </.link>
+                  </div>
                 </div>
               </section>
             </div>
           </div>
-        </div>
-      </div>
-      <div class="workspace-account">
-        <.link href="/auth/signout" method="post" class="ghost">Sign out</.link>
-        <.theme_picker id="theme-picker" />
-        <div id="notify" phx-hook="Notify" class="notify">
-          <button
-            type="button"
-            class="theme-trigger"
-            data-notify-toggle
-            aria-pressed="false"
-            title="Say so from the desktop when a track needs you and this tab is in the background"
-          >
-            <span class="notify-dot" data-notify-dot></span><span class="col"><small>Desktop notifications</small><span
-              class="truncate"
-              data-notify-state
-            >Off</span></span>
-          </button>
-        </div>
-        <div class="yard-meta">
-          <span class="chip">Ravix</span><a href="/api/auth/install">repo access</a><button
-            type="button"
-            class="linkish"
-            phx-click={JS.push_focus() |> JS.push("dialog")}
-            phx-value-name="account"
-            id="open-account"
-          >
-            account
-          </button>
-          <button
-            type="button"
-            class="linkish"
-            phx-click={JS.push_focus() |> JS.push("dialog")}
-            phx-value-name="help"
-            id="open-help"
-          >
-            Help
-          </button>
-          <button
-            type="button"
-            class="linkish"
-            phx-click="dialog"
-            phx-value-name="changes"
-            aria-label="What's new"
-          >What's new<span :if={@changes_unseen > 0} class="chip">{@changes_unseen}</span></button>
         </div>
       </div>
     </aside>
