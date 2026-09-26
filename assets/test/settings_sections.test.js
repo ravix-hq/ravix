@@ -139,3 +139,24 @@ test('in-app switch confirmation blocks discard and navigation, then restores fo
   expect(document.querySelector('[data-settings-discard]').disabled).toBe(false)
   expect(document.activeElement).toBe(document.querySelector('[data-switch-agent]'))
 })
+
+test('agent picker warns on changed selection, ignores credential typing, and discards server state', () => {
+  const {hook} = mountHook(SettingsSections, '#settings')
+  hook.section = 'agent'
+  hook.el.dataset.component = '7'
+  const calls = []
+  hook.pushEventTo = (...args) => calls.push(args)
+  const panel = document.querySelector('[data-settings-panel=agent]')
+  panel.insertAdjacentHTML('afterbegin', '<button data-settings-agent="claude" aria-pressed="true">Claude</button><button data-settings-agent="codex" aria-pressed="false">Codex</button><div id="settings-connect-codex"><form><input id="inline-key"></form></div>')
+  edit('#inline-key')
+  expect(hook.dirty).toBe(false)
+  document.querySelector('[data-settings-agent=claude]').click()
+  expect(hook.dirty).toBe(false)
+  document.querySelector('[data-settings-agent=codex]').click()
+  expect(hook.dirty).toBe(true)
+  expect(key(window, 'Escape').defaultPrevented).toBe(true)
+  document.querySelector('[data-settings-discard]').click()
+  expect(calls).toEqual([['7', 'discard-agent', {}]])
+  expect(hook.dirty).toBe(false)
+  expect(key(window, 'Escape').defaultPrevented).toBe(false)
+})

@@ -663,6 +663,14 @@ defmodule RavixWeb.WorkspaceLive do
          (socket.assigns.dialog == :new_project and NewProject.active_panel?(socket, id)),
        do: send_update(RavixWeb.Live.AgentPanel, id: id, tick: tick)
 
+    if (socket.assigns.dialog == :settings and socket.assigns.project) &&
+         socket.assigns.project.role == :owner do
+      send_update(RavixWeb.Live.SettingsDialog,
+        id: "settings-dialog-panel",
+        agent_tick: {id, tick}
+      )
+    end
+
     {:noreply, socket}
   end
 
@@ -693,6 +701,14 @@ defmodule RavixWeb.WorkspaceLive do
 
     if socket.assigns.track_host, do: send(socket.assigns.track_host, :refresh_agent_health)
     socket = update(socket, :health_refresh, &(&1 + 1))
+
+    if (socket.assigns.dialog == :settings and socket.assigns.project) &&
+         socket.assigns.project.role == :owner do
+      send_update(RavixWeb.Live.SettingsDialog,
+        id: "settings-dialog-panel",
+        connected_agent: agent
+      )
+    end
 
     default =
       if socket.assigns.current_user.agent != user.agent,

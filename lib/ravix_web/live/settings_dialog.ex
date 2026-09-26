@@ -9,7 +9,7 @@ defmodule RavixWeb.Live.SettingsDialog do
   """
   use RavixWeb, :live_component
 
-  alias Ravix.Accounts.Access
+  alias Ravix.Accounts.{Access, Inference}
   alias Ravix.Fountain.Shapes.Catalog
   alias Ravix.Previews
   alias Ravix.Projects
@@ -28,6 +28,9 @@ defmodule RavixWeb.Live.SettingsDialog do
       {:ok,
        assign(socket,
          settings: nil,
+         agents: nil,
+         agent_error: nil,
+         agent_generation: System.unique_integer([:positive]),
          pending: MapSet.new(),
          save_state: "",
          save_version: 0,
@@ -37,6 +40,22 @@ defmodule RavixWeb.Live.SettingsDialog do
        )}
 
   @impl true
+  def update(%{agent_tick: {id, tick}}, socket) do
+    if active_panel?(socket, id) and
+         match?({:ok, _}, Access.project_of(user(socket), project_id(socket))) do
+      send_update(RavixWeb.Live.AgentPanel, id: id, tick: tick)
+    end
+
+    {:ok, socket}
+  end
+
+  def update(%{connected_agent: agent}, socket) do
+    {:ok,
+     socket
+     |> cancel_async(:settings_agents)
+     |> assign(agents: Enum.uniq([agent | socket.assigns.agents || []]), agent_error: nil)}
+  end
+
   def update(assigns, socket) do
     socket = assign(socket, assigns)
 
@@ -50,6 +69,28 @@ defmodule RavixWeb.Live.SettingsDialog do
       {:error, reason} -> {:noreply, error(socket, reason)}
     end
   end
+
+  defp settings_event("choose-settings-agent", %{"agent" => agent}, socket)
+       when agent in ["claude", "codex"] do
+    if socket.assigns.switch_confirmation || MapSet.size(socket.assigns.pending) > 0 ||
+         socket.assigns.settings_form[:runtime].value == agent do
+      {:noreply, socket}
+    else
+      model = List.first(Catalog.models_for(socket.assigns.settings.catalog, agent)) || ""
+      {:noreply, edit_agent(socket, %{"runtime" => agent, "model" => model})}
+    end
+  end
+
+  defp settings_event("choose-settings-agent", _, socket), do: {:noreply, socket}
+
+  defp settings_event("edit-agent", %{"settings" => params}, socket),
+    do: {:noreply, edit_agent(socket, Map.take(params, ~w(model instructions)))}
+
+  defp settings_event("discard-agent", _, socket),
+    do: {:noreply, assign(socket, settings_form: settings_form(socket.assigns.settings))}
+
+  defp settings_event("refresh-settings-agents", _, socket),
+    do: {:noreply, refresh_agents(socket)}
 
   defp settings_event("save-settings", %{"settings" => params}, socket) do
     attrs =
@@ -156,6 +197,12 @@ defmodule RavixWeb.Live.SettingsDialog do
     end)
   end
 
+  defp async_result(:settings_agents, {:ok, {:ok, agents}}, socket),
+    do: {:noreply, assign(socket, agents: agents, agent_error: nil)}
+
+  defp async_result(:settings_agents, {:ok, {:error, reason}}, socket),
+    do: {:noreply, assign(socket, agents: nil, agent_error: RavixWeb.Error.from(reason).message)}
+
   defp async_result(:settings, {:ok, response}, socket) do
     {:noreply,
      result(
@@ -253,12 +300,38 @@ defmodule RavixWeb.Live.SettingsDialog do
       s
       |> assign(settings: settings, settings_form: settings_form(settings))
       |> show_defaults(defaults)
+      |> refresh_agents()
       # The secret form is always blank: values are write-only, so there is
       # nothing to read back, and a key left in the box from the last save
       # invites somebody to overwrite a secret they meant to add beside.
       |> assign(secret_form: Form.new(:secret, %{"store" => "env"}))
     end)
   end
+
+  defp edit_agent(socket, params) do
+    assign(socket,
+      settings_form: Form.new(:settings, Map.merge(socket.assigns.settings_form.params, params)),
+      save_state: ""
+    )
+  end
+
+  defp refresh_agents(socket) do
+    user = user(socket)
+    traced_async(socket, :settings_agents, fn -> Inference.usable_agents(user) end)
+  end
+
+  defp usable?(agents, runtime),
+    do: is_list(agents) and Enum.any?(agents, &(to_string(&1) == runtime))
+
+  defp panel_id(socket),
+    do:
+      "settings-connect-#{socket.assigns.settings_form[:runtime].value}-#{socket.assigns.agent_generation}"
+
+  defp active_panel?(socket, id),
+    do:
+      socket.assigns.settings != nil and id == panel_id(socket) and
+        socket.assigns.settings_form[:runtime].value in ["claude", "codex"] and
+        not usable?(socket.assigns.agents, socket.assigns.settings_form[:runtime].value)
 
   # The settings form opens on what is saved. The three package boxes are one
   # space-separated line each; `Ravix.Projects.Settings` holds them as a map
@@ -372,6 +445,9 @@ defmodule RavixWeb.Live.SettingsDialog do
 
   @impl true
   def render(assigns) do
+    assigns =
+      assign(assigns, :runtime, assigns[:settings_form] && assigns.settings_form[:runtime].value)
+
     ~H"""
     <div>
       <.dialog
@@ -383,6 +459,7 @@ defmodule RavixWeb.Live.SettingsDialog do
       >
         <div
           id="settings-sections"
+          data-component={@myself}
           phx-hook="SettingsSections"
           data-save-state={@save_state}
           data-save-version={@save_version}
@@ -457,29 +534,73 @@ defmodule RavixWeb.Live.SettingsDialog do
               <p class="settings-help">
                 Switching agents rebuilds the machine, closes every track and loses unpushed work on its disk. Model and instruction changes apply to new tracks.
               </p>
+              <div class="field" role="group" aria-label="Agent">
+                <div class="agent-choices">
+                  <button
+                    :for={{label, agent} <- RavixWeb.AgentName.options()}
+                    type="button"
+                    id={"settings-agent-#{agent}"}
+                    class={["agent-choice", @runtime == agent && "on"]}
+                    aria-pressed={to_string(@runtime == agent)}
+                    phx-click="choose-settings-agent"
+                    phx-target={@myself}
+                    phx-value-agent={agent}
+                    data-settings-agent={agent}
+                    disabled={@switch_confirmation != nil or MapSet.size(@pending) > 0}
+                  >
+                    <strong>{label}</strong>
+                    <small>{cond do
+                      usable?(@agents, agent) -> "Connected"
+                      @agent_error -> "Connection status unavailable"
+                      is_nil(@agents) -> "Checking connection…"
+                      true -> "Not connected - connect to use"
+                    end}</small>
+                  </button>
+                </div>
+                <p class="settings-help">
+                  Every turn in this project uses your {RavixWeb.AgentName.label(@runtime)} subscription, whoever is working.
+                </p>
+                <p :if={@agent_error} class="error">{@agent_error}</p>
+                <button
+                  :if={@agent_error}
+                  type="button"
+                  class="ghost"
+                  phx-click="refresh-settings-agents"
+                  phx-target={@myself}
+                >Check connections again</button>
+              </div>
+              <div
+                :if={@runtime in ["claude", "codex"] and not usable?(@agents, @runtime)}
+                id={"settings-connect-#{@runtime}"}
+              >
+                <.live_component
+                  module={RavixWeb.Live.AgentPanel}
+                  id={"settings-connect-#{@runtime}-#{@agent_generation}"}
+                  scoped_agent={if @runtime == "codex", do: :codex, else: :claude}
+                  current_user={@current_user}
+                  session_hash={@session_hash}
+                />
+              </div>
               <.form
                 :let={f}
                 for={@settings_form}
                 id="agent-settings-form"
+                phx-change="edit-agent"
                 phx-target={@myself}
                 phx-submit="save-settings"
               >
-                <.input
-                  field={f[:runtime]}
-                  id="settings-runtime"
-                  disabled={
-                    @switch_confirmation != nil or (@switching_agent and MapSet.size(@pending) > 0)
-                  }
-                  label="Agent"
-                  type="select"
-                  options={
-                    RavixWeb.AgentName.settings_options(@settings.catalog.runtimes, f[:runtime].value)
-                  }
-                  aria-describedby="settings-runtime-help"
-                />
-                <p id="settings-runtime-help" class="settings-help">
-                  The coding program used for new tracks. Choose Claude Code or Codex; an existing agent choice is retained.
-                </p>
+                <div class="field">
+                  <input
+                    type="hidden"
+                    name="settings[runtime]"
+                    id="settings-runtime"
+                    value={@runtime}
+                  />
+                  <p :for={{message, _} <- f[:runtime].errors} class="error">{message}</p>
+                  <p :if={@runtime not in ["claude", "codex"]} class="settings-help">
+                    Current agent: {RavixWeb.AgentName.label(@runtime)}. Choose Claude Code or Codex to switch.
+                  </p>
+                </div>
                 <.input
                   field={f[:model]}
                   id="settings-model"
@@ -523,7 +644,10 @@ defmodule RavixWeb.Live.SettingsDialog do
                   data-switch-agent
                   class="primary"
                   phx-disable-with="Checking tracks…"
-                  disabled={MapSet.size(@pending) > 0 or @switch_confirmation != nil}
+                  disabled={
+                    MapSet.size(@pending) > 0 or @switch_confirmation != nil or
+                      not usable?(@agents, @runtime)
+                  }
                   hidden
                 >
                   Switch and rebuild

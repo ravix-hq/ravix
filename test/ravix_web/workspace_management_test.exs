@@ -364,7 +364,7 @@ defmodule RavixWeb.WorkspaceManagementTest do
       refute_receive :switched, 0
       ctx.view |> element("#agent-switch-confirmation button", "Cancel") |> render_click()
       refute has_element?(ctx.view, "#agent-switch-confirmation")
-      assert has_element?(ctx.view, "#settings-runtime option[value=codex][selected]")
+      assert has_element?(ctx.view, "#settings-runtime[value=codex]")
     end
 
     ctx.view |> form("#agent-settings-form") |> render_submit(%{settings: %{runtime: "codex"}})
@@ -440,7 +440,7 @@ defmodule RavixWeb.WorkspaceManagementTest do
       render_async(ctx.view, 1000)
       assert has_element?(ctx.view, "#agent-settings-form .field p.error", message)
 
-      assert has_element?(ctx.view, "#{id} option[value='made-up'][selected]") or
+      assert has_element?(ctx.view, "#{id}[value='made-up']") or
                has_element?(ctx.view, "#{id} option[value='also-made-up'][selected]")
     end
   end
@@ -785,18 +785,12 @@ defmodule RavixWeb.WorkspaceManagementTest do
        ctx do
     catalog = %{Catalog.empty() | runtimes: ~w(claude codex gemini opencode acp)}
     settings(ctx, catalog: catalog, runtime: "gemini")
-    assert has_element?(ctx.view, "label[for=settings-runtime]", "Agent")
-    assert has_element?(ctx.view, "#settings-runtime option[value=claude]", "Claude Code")
-    assert has_element?(ctx.view, "#settings-runtime option[value=codex]", "Codex")
-
-    assert has_element?(
-             ctx.view,
-             "#settings-runtime option[value=gemini][selected]",
-             "Gemini CLI"
-           )
-
-    refute has_element?(ctx.view, "#settings-runtime option[value=opencode]")
-    refute has_element?(ctx.view, "#settings-runtime option[value=acp]")
+    assert has_element?(ctx.view, "#settings-agent-claude", "Claude Code")
+    assert has_element?(ctx.view, "#settings-agent-codex", "Codex")
+    assert has_element?(ctx.view, "#settings-runtime[value=gemini]")
+    assert has_element?(ctx.view, "#settings-section-agent", "Current agent: Gemini CLI")
+    refute has_element?(ctx.view, "#settings-agent-opencode")
+    refute has_element?(ctx.view, "#settings-agent-acp")
   end
 
   test "danger actions require the exact project name", ctx do
@@ -1016,5 +1010,6 @@ defmodule RavixWeb.WorkspaceManagementTest do
     end)
 
     render_click(ctx.view, "dialog", %{name: "settings"})
+    render_async(ctx.view)
   end
 end

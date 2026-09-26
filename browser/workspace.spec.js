@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import { composerFixture } from './composer-fixture.js';
-import { signIn as signInAs } from './sign-in.js';
+import { signIn as signInAs, connectClaude } from './sign-in.js';
 
 async function primaryAppearance(locator) {
   return locator.evaluate((element) => {
@@ -862,6 +862,7 @@ test('help explains desktop connections and stays accessible on mobile', async (
 
 test('project settings navigate, warn before discarding, and save sections accessibly', async ({ page }) => {
   await signIn(page);
+  await connectClaude(page);
   await page.getByRole('button', { name: 'Add a project', exact: true }).first().click();
   const create = page.getByRole('dialog', { name: 'New project' });
   await create.getByLabel('Project name', { exact: true }).fill('Settings browser');
@@ -882,10 +883,10 @@ test('project settings navigate, warn before discarding, and save sections acces
   await settings.getByRole('button', { name: 'Discard changes', exact: true }).click();
   await settings.getByRole('button', { name: 'Agent', exact: true }).click();
   await expect(settings.getByRole('heading', { name: 'Agent', exact: true })).toBeFocused();
-  await expect(settings.getByRole('combobox', { name: 'Agent', exact: true }).locator('option')).toHaveText(['Claude Code', 'Codex']);
-  await settings.getByRole('combobox', { name: 'Agent', exact: true }).selectOption('codex');
+  await expect(settings.locator('[data-settings-agent] strong')).toHaveText(['Claude Code', 'Codex']);
+  await settings.locator('#settings-agent-codex').click();
   await expect(settings.getByLabel('Model', { exact: true }).locator('option')).toHaveText(['GPT-6 Astra', 'GPT-5.5']);
-  await settings.getByRole('combobox', { name: 'Agent', exact: true }).selectOption('claude');
+  await settings.locator('#settings-agent-claude').click();
   await expect(settings.getByLabel('Model', { exact: true }).locator('option')).toHaveText(['Claude Opus 5', 'Claude Sonnet 5']);
   await settings.getByLabel('Instructions', { exact: true }).fill('Explain changes and run focused tests.');
   await settings.getByRole('button', { name: 'Save agent', exact: true }).click();
