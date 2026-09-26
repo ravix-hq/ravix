@@ -57,7 +57,6 @@ defmodule RavixWeb.WorkspaceLive do
         attention: 0,
         noticed: nil,
         notice_thread: nil,
-        expanded_projects: MapSet.new(),
         advanced_track: false,
         project: nil,
         selected_plan_id: nil,
@@ -144,16 +143,6 @@ defmodule RavixWeb.WorkspaceLive do
   end
 
   defp select_project(socket, project, track_id, params) do
-    # Expand the project being opened, but only when it is a different one
-    # than was open before. Every patch lands here -- dismissing a dialog,
-    # following a track link -- and re-expanding on each would undo a collapse
-    # the reader just made on the group they are working in.
-    previous = socket.assigns[:project]
-    arriving? = project && (is_nil(previous) || previous.id != project.id)
-
-    expanded = socket.assigns.expanded_projects
-    expanded = if arriving?, do: MapSet.put(expanded, project.id), else: expanded
-
     socket =
       socket
       |> hand_over(project, track_id)
@@ -163,8 +152,7 @@ defmodule RavixWeb.WorkspaceLive do
         page_title: if(project, do: project.display_name <> " · Ravix", else: "Ravix"),
         selected_plan_id: params["plan"],
         track_id: track_id,
-        dialog: nil,
-        expanded_projects: expanded
+        dialog: nil
       )
 
     if params["new"] == "track" && project && project.access != :tracks do
@@ -260,21 +248,6 @@ defmodule RavixWeb.WorkspaceLive do
     do: {:noreply, assign(socket, yard_open: !socket.assigns.yard_open)}
 
   def handle_event("yard-close", _, socket), do: {:noreply, assign(socket, yard_open: false)}
-
-  def handle_event("toggle-project", %{"id" => id}, socket) do
-    expanded = socket.assigns.expanded_projects
-
-    if Enum.any?(socket.assigns.projects, &(&1.id == id)) do
-      expanded =
-        if MapSet.member?(expanded, id),
-          do: MapSet.delete(expanded, id),
-          else: MapSet.put(expanded, id)
-
-      {:noreply, assign(socket, expanded_projects: expanded)}
-    else
-      {:noreply, socket}
-    end
-  end
 
   def handle_event("create-section", %{"section" => attrs}, socket) do
     section_result(socket, Sections.create(socket.assigns.current_user, attrs))
@@ -746,9 +719,7 @@ defmodule RavixWeb.WorkspaceLive do
       section_placements: placements,
       projects: projects,
       tracks: tracks,
-      attention: attention_count(tracks),
-      expanded_projects:
-        MapSet.intersection(socket.assigns.expanded_projects, MapSet.new(projects, & &1.id))
+      attention: attention_count(tracks)
     )
     |> announce(tracks)
   end

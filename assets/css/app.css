@@ -1279,3 +1279,10 @@ body:has(.phx-error) #request-progress { display: none; }
 .project-section-picker { display: flex; align-items: center; gap: 6px; padding: 4px 12px; font-size: 11px; color: var(--dim); }
 .project-section-picker select { min-width: 0; width: 100%; padding: 4px; }
 .section-editor { margin-top: 16px; }
+
+/* Project tracks stay above the conversation, including on narrow screens. */
+.track-tabs { display: flex; flex: none; gap: 3px; overflow-x: auto; padding: 8px 10px 0; border-bottom: 1px solid var(--line); background: var(--sidebar); }
+.track-tab { display: flex; flex: none; align-items: center; gap: 8px; max-width: 240px; padding: 9px 12px; white-space: nowrap; color: var(--dim); text-decoration: none; border-radius: var(--radius) var(--radius) 0 0; border-bottom: 2px solid transparent; }
+.track-tab:hover { background: var(--surface-hover); }
+.track-tab.selected { color: var(--ink); background: var(--panel); border-bottom-color: var(--accent); }
+.track-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
