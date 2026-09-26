@@ -1559,3 +1559,16 @@ body:has(.phx-error) #request-progress { display: none; }
 .schedule-controls { margin-top: 16px; flex-wrap: wrap; }
 .schedule-error { padding: 12px; background: var(--danger-bg); border: 1px solid var(--danger-line); border-radius: var(--radius); }
 @media (max-width: 960px) { .schedules-layout { grid-template-columns: 1fr; } }
+
+/* Connected clients share the workspace rail and a readable settings column. */
+.connections-page > header, .connections-list { max-width: 1000px; margin-inline: auto; }
+.connections-list { display: grid; gap: 16px; margin-top: 28px; }
+.connection-card { border: 1px solid var(--line); border-radius: var(--radius); padding: 20px; min-width: 0; }
+.connection-heading { flex-wrap: wrap; gap: 12px; }
+.connection-heading h2 { font-size: 16px; overflow-wrap: anywhere; }
+.connection-resource { color: var(--dim); overflow-wrap: anywhere; }
+.connection-dates { display: flex; flex-wrap: wrap; gap: 16px 40px; margin: 16px 0; }
+.connection-dates dt { color: var(--dim); font-size: 12px; }
+.connection-dates dd { margin: 4px 0 0; }
+.connection-card summary { cursor: pointer; }
+.connection-card summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
