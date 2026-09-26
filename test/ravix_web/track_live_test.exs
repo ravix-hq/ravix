@@ -573,6 +573,83 @@ defmodule RavixWeb.TrackLiveTest do
     assert has_element?(ctx.view, ".changes-panel", "No matching files")
   end
 
+  for state <- [:open, :closed, :merged] do
+    test "Checks identifies a #{state} pull request and links to GitHub", ctx do
+      report = checks_fixture(unquote(state))
+
+      expect(Tracks, :checks, fn user, id ->
+        assert {user.id, id} == {ctx.user.id, ctx.track.id}
+        {:ok, report}
+      end)
+
+      render_click(ctx.view, "panel", %{name: "checks"})
+      render_async(ctx.view)
+
+      assert has_element?(
+               ctx.view,
+               ".pull-state.chip",
+               unquote(state |> Atom.to_string() |> String.capitalize())
+             )
+
+      assert has_element?(
+               ctx.view,
+               "a[href='https://github.com/acme/repo/pull/209']",
+               "View on GitHub"
+             )
+
+      refute has_element?(ctx.view, "button[phx-value-name='pull']")
+    end
+  end
+
+  test "Checks without a pull request retains the creation action", ctx do
+    expect(Tracks, :checks, fn _, _ -> {:ok, %{checks_fixture(:open) | pull: nil}} end)
+    render_click(ctx.view, "panel", %{name: "checks"})
+    render_async(ctx.view)
+    refute has_element?(ctx.view, ".pull-state")
+    ctx.view |> element("button[phx-value-name='pull']", "Create pull request") |> render_click()
+    assert has_element?(ctx.view, "#pull-dialog")
+  end
+
+  for state <- [:merged, :closed, :open, :missing, :unavailable] do
+    test "empty Changes handles #{state} PR state without visiting Checks first", ctx do
+      diff = %{changes_fixture() | diff: "", changes: [], files: []}
+      stub(Tracks, :diff, fn _, _ -> {:ok, diff} end)
+
+      expect(Tracks, :checks, fn user, id ->
+        assert {user.id, id} == {ctx.user.id, ctx.track.id}
+
+        case unquote(state) do
+          :unavailable -> {:error, :github_unavailable}
+          :missing -> {:ok, %{checks_fixture(:open) | pull: nil}}
+          state -> {:ok, checks_fixture(state)}
+        end
+      end)
+
+      render_click(ctx.view, "panel", %{name: "changes"})
+      render_async(ctx.view)
+
+      if unquote(state) == :merged do
+        assert has_element?(ctx.view, ".changes-panel .empty h3", "Branch merged")
+        assert has_element?(ctx.view, ".changes-panel", "This branch was merged")
+        refute has_element?(ctx.view, ".changes-panel", "No changes yet")
+        expect(Tracks, :checks, fn _, _ -> {:ok, checks_fixture(:open)} end)
+        render_click(ctx.view, "refresh-panel")
+        render_async(ctx.view)
+      end
+
+      assert has_element?(ctx.view, ".changes-panel .empty h3", "No changes yet")
+    end
+  end
+
+  test "nonempty Changes does not fetch PR state", ctx do
+    expect(Tracks, :diff, fn _, _ -> {:ok, changes_fixture()} end)
+    reject(Tracks, :checks, 2)
+    render_click(ctx.view, "panel", %{name: "changes"})
+    render_async(ctx.view)
+    assert has_element?(ctx.view, ".changes-summary")
+    refute has_element?(ctx.view, ".changes-panel", "Branch merged")
+  end
+
   test "large diffs require an explicit show action and empty diffs retain their message", ctx do
     patch =
       "diff --git a/large b/large\n@@ -0,0 +1,1001 @@\n" <> String.duplicate("+line\n", 1001)
@@ -998,6 +1075,148 @@ defmodule RavixWeb.TrackLiveTest do
     assert has_element?(ctx.view, "pre", "hello explorer")
   end
 
+  test "listing renders before blocked metadata exec and is enriched afterward", ctx do
+    owner = self()
+
+    stub(Tracks, :files, fn _, _, _ ->
+      {:ok,
+       %Files.Listing{
+         path: ctx.track.workdir,
+         truncated: false,
+         entries: [
+           %Files.Entry{name: "_build", type: "directory", size: 0},
+           %Files.Entry{name: "src", type: "directory", size: 0}
+         ]
+       }}
+    end)
+
+    expect(Terminal, :status, fn _, _, [passive: true] -> {:ok, %{available: true}} end)
+
+    expect(Terminal, :exec, fn _, _, _ ->
+      send(owner, {:metadata_exec, self()})
+
+      receive do
+        :finish ->
+          {:ok,
+           %{code: 0, stdout: ~s({"ignore_available":true,"entries":{"_build":{"ignored":true}}})}}
+      end
+    end)
+
+    render_click(ctx.view, "refresh-panel")
+    assert_receive {:metadata_exec, worker}
+    assert has_element?(ctx.view, ".file-name", "_build")
+    assert has_element?(ctx.view, ".file-name", "src")
+    assert has_element?(ctx.view, "button[phx-click='toggle-ignored']")
+    send(worker, :finish)
+    render_async(ctx.view, 1_000)
+    refute has_element?(ctx.view, ".file-name", "_build")
+    ctx.view |> element("button[phx-click='toggle-ignored']") |> render_click()
+    assert has_element?(ctx.view, ".file-name", "_build")
+  end
+
+  test "internal directory links expand their targets and ancestor links cannot recurse", ctx do
+    target = Path.join(ctx.track.workdir, ".agents/skills")
+
+    stub(Tracks, :files, fn _, _, path ->
+      entries =
+        if path == target do
+          [
+            %Files.Entry{name: "guide.md", type: "file", size: 12},
+            %Files.Entry{
+              name: "back",
+              type: "symlink",
+              size: 0,
+              target: "../..",
+              directory_target: ctx.track.workdir
+            }
+          ]
+        else
+          [
+            %Files.Entry{
+              name: "skills",
+              type: "symlink",
+              size: 0,
+              target: ".agents/skills",
+              directory_target: target
+            }
+          ]
+        end
+
+      {:ok, %Files.Listing{path: path || ctx.track.workdir, entries: entries, truncated: false}}
+    end)
+
+    render_click(ctx.view, "refresh-panel")
+    render_async(ctx.view, 1_000)
+    button = "button[phx-click='directory'][phx-value-path='#{target}']:not([disabled])"
+    assert has_element?(ctx.view, button, "skills")
+    ctx.view |> element(button) |> render_click()
+    render_async(ctx.view, 1_000)
+    assert has_element?(ctx.view, ".file-name", "guide.md")
+    assert has_element?(ctx.view, "button[disabled][aria-expanded=false]", "back")
+    ctx.view |> element(button) |> render_click()
+    refute has_element?(ctx.view, ".file-name", "guide.md")
+  end
+
+  test "a collapsed directory rejects its late metadata result", ctx do
+    owner = self()
+
+    expect(Tracks, :file_metadata, fn _, _, listing ->
+      send(owner, {:metadata_reader, self()})
+
+      receive do: (:finish ->
+                     {:ok,
+                      %{
+                        listing
+                        | entries: [
+                            %Files.Entry{name: "late", type: "file", size: 0}
+                          ]
+                      }})
+    end)
+
+    ctx.view |> element("button.workspace-file", "src") |> render_click()
+    assert_receive {:metadata_reader, reader}
+    ctx.view |> element("button.workspace-file[aria-expanded=true]", "src") |> render_click()
+    send(reader, :finish)
+    render_async(ctx.view, 1_000)
+    refute has_element?(ctx.view, ".file-name", "late")
+    refute has_element?(ctx.view, ".file-list .file-list")
+  end
+
+  test "ignored entries are hidden throughout the tree and the toggle restores them", ctx do
+    stub(Tracks, :files, fn _, _, path ->
+      {:ok,
+       %Files.Listing{
+         path: path || ctx.track.workdir,
+         truncated: false,
+         ignore_available?: true,
+         entries: [
+           %Files.Entry{name: "src", type: "directory", size: 0},
+           %Files.Entry{name: "_build", type: "directory", size: 0, ignored?: true},
+           %Files.Entry{name: "skills", type: "symlink", size: 0, target: "../.agents/skills"}
+         ]
+       }}
+    end)
+
+    render_click(ctx.view, "refresh-panel")
+    render_async(ctx.view)
+    refute has_element?(ctx.view, ".file-name", "_build")
+    assert has_element?(ctx.view, "button[disabled] .file-name", "skills → ../.agents/skills")
+    ctx.view |> element("button[phx-value-path='#{ctx.track.workdir}/src']") |> render_click()
+    render_async(ctx.view)
+    refute has_element?(ctx.view, ".file-name", "_build")
+    ctx.view |> element("button[phx-click='toggle-ignored']") |> render_click()
+    assert has_element?(ctx.view, "button[aria-pressed='true']", "Show ignored files")
+    assert has_element?(ctx.view, "button[phx-value-path='#{ctx.track.workdir}/_build']")
+    assert has_element?(ctx.view, "button[phx-value-path='#{ctx.track.workdir}/src/_build']")
+    ctx.view |> element("button[phx-click='toggle-ignored']") |> render_click()
+    refute has_element?(ctx.view, ".file-name", "_build")
+
+    assert has_element?(
+             ctx.view,
+             "button[phx-value-path='#{ctx.track.workdir}/src'][aria-expanded='true']"
+           )
+  end
+
   test "collapsed folders ignore late results and directory errors can be retried", ctx do
     owner = self()
 
@@ -1012,7 +1231,8 @@ defmodule RavixWeb.TrackLiveTest do
     ctx.view |> element("button.workspace-file", "src") |> render_click()
     send(reader, :finish)
     render_async(ctx.view)
-    refute has_element?(ctx.view, ".file-note")
+    refute has_element?(ctx.view, ".file-note[role=status], .file-note[role=alert]")
+    refute has_element?(ctx.view, ".file-list .file-list")
     expect(Tracks, :files, fn _, _, _ -> {:error, {:unavailable, "Folder offline"}} end)
     ctx.view |> element("button.workspace-file", "src") |> render_click()
     render_async(ctx.view)
@@ -1317,6 +1537,38 @@ defmodule RavixWeb.TrackLiveTest do
       assert has_element?(ctx.view, "button[phx-value-action='logs']:not([disabled])", "Logs")
       refute has_element?(ctx.view, "button.ghost[phx-click='preview']")
     end
+  end
+
+  test "preview startup keeps logs collapsed and failure opens diagnostics", ctx do
+    logs = ~s({"type":"stdout","data":"app booting"})
+
+    stub(Previews, :status, fn _, _ ->
+      {:ok, %{preview() | state: :starting, logs: logs, config: %{readiness_path: "/health"}}}
+    end)
+
+    render_click(ctx.view, "panel", %{name: "preview"})
+    render_async(ctx.view)
+
+    assert has_element?(
+             ctx.view,
+             "#preview-loading[role=status]",
+             "Waiting for it to answer on /health"
+           )
+
+    assert has_element?(ctx.view, "#preview-logs:not([open]) summary", "Show logs")
+    assert has_element?(ctx.view, "#preview-logs:not([open]) pre", "[stdout] app booting")
+    refute has_element?(ctx.view, ".workspace-preview")
+    refute render(ctx.view) =~ ~s(&quot;type&quot;)
+
+    stub(Previews, :status, fn _, _ ->
+      {:ok, %{preview() | state: :failed, logs: logs, error: "App did not answer"}}
+    end)
+
+    render_click(ctx.view, "refresh-panel")
+    render_async(ctx.view)
+    refute has_element?(ctx.view, "#preview-loading")
+    assert has_element?(ctx.view, "[role=alert]", "App did not answer")
+    assert has_element?(ctx.view, "#preview-logs[open] pre", "[stdout] app booting")
   end
 
   test "Start launches the stopped preview and disables controls until the response", ctx do
@@ -2591,12 +2843,13 @@ defmodule RavixWeb.TrackLiveTest do
     end
   end
 
-  for revocation <- [:session, :track] do
+  for revocation <- [:session, :track], reader <- [:files, :file_metadata] do
     @revocation revocation
-    test "#{revocation} revocation rejects a delayed provider result", ctx do
+    @reader reader
+    test "#{revocation} revocation rejects a delayed #{reader} result", ctx do
       parent = self()
 
-      stub(Tracks, :files, fn _, _, _ ->
+      stub(Tracks, @reader, fn _, _, _ ->
         send(parent, {:provider_waiting, self()})
 
         receive do
@@ -2627,6 +2880,19 @@ defmodule RavixWeb.TrackLiveTest do
   # The real struct, not a map that happens to have some of its keys: the
   # template reads these by field, and `@enforce_keys` is what stops this
   # stub drifting away from what `Ravix.Previews.present/1` really returns.
+  defp checks_fixture(state) do
+    pull =
+      Ravix.GitHub.Shapes.pull_ref(%{
+        "number" => 209,
+        "title" => "Fix track panels",
+        "state" => if(state == :open, do: "open", else: "closed"),
+        "merged_at" => if(state == :merged, do: "2026-09-26T10:00:00Z"),
+        "html_url" => "https://github.com/acme/repo/pull/209"
+      })
+
+    %Ravix.GitHub.ChecksReport{ref: "track", sha: "abc", pushed: true, pull: pull, runs: []}
+  end
+
   defp preview do
     %Previews.View{
       state: :stopped,

@@ -366,8 +366,8 @@ defmodule Ravix.PreviewGatewayFake do
         config: nil,
         override: nil,
         state: row.state,
-        error: nil,
-        logs: "",
+        error: row.error,
+        logs: row.logs,
         url: nil
       }
     end
@@ -502,7 +502,12 @@ defmodule Ravix.PreviewGatewayFake do
 
           {:noreply, %{state | conn: conn}}
 
-        {:error, conn, reason, _} ->
+        {:error, conn, reason, responses} ->
+          # Mint can return the final close frame alongside a failed active-once
+          # rearm. Preserve those bytes before reporting the transport error.
+          for {:data, _, data} <- responses,
+              do: send(state.owner, {:tunnel, self(), {:data, data}})
+
           send(state.owner, {:tunnel, self(), {:error, reason}})
           {:stop, :normal, %{state | conn: conn, notified: true}}
       end

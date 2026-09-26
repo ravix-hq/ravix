@@ -1052,6 +1052,40 @@ defmodule Ravix.Tracks do
     end
   end
 
+  @doc "Optional metadata for an already-rendered listing, only on a running machine."
+  @spec file_metadata(User.t(), String.t(), Files.Listing.t()) ::
+          {:ok, Files.Listing.t()} | {:error, reason()}
+  def file_metadata(%User{} = user, track_id, %Files.Listing{} = listing) do
+    with {:ok, %{track: track}} <- Access.track_access(user, track_id) do
+      task =
+        Task.Supervisor.async_nolink(
+          Ravix.TaskSupervisor,
+          Ravix.Trace.link(fn -> read_file_metadata(user, track, listing) end)
+        )
+
+      case Task.yield(task, 2_000) || Task.shutdown(task, :brutal_kill) do
+        {:ok, enriched} -> {:ok, enriched}
+        _ -> {:ok, listing}
+      end
+    end
+  end
+
+  defp read_file_metadata(user, track, listing) do
+    with true <- confine(track.workdir, listing.path) == listing.path,
+         {:ok, %{available: true}} <- Ravix.Terminal.status(user, track.id, passive: true) do
+      metadata =
+        Ravix.Terminal.exec(user, track.id, %Ravix.Terminal.Request{
+          command: Files.metadata_command(track.workdir, listing),
+          cwd: track.workdir,
+          timeout_sec: 2
+        })
+
+      Files.with_metadata(listing, metadata)
+    else
+      _ -> listing
+    end
+  end
+
   @doc "One file, confined to the worktree."
   @spec file(User.t(), String.t(), String.t() | nil) ::
           {:ok, Files.Content.t()} | {:error, reason()}
