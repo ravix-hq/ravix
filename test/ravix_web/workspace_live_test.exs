@@ -634,6 +634,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
     expect(Projects, :create, fn actual_user, attrs ->
       assert actual_user.id == user.id
       assert attrs["name"] == "New project"
+      assert attrs["runtime"] == "codex"
       project = insert_project(user: user, name: attrs["name"])
       {:ok, %{id: project.id}}
     end)
@@ -642,7 +643,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
     view |> element(".workspace-actions button", "Add a project") |> render_click()
 
     view
-    |> form("#new-project-form", new_project: [name: "New project", repo: ""])
+    |> form("#new-project-form", new_project: [name: "New project", repo: "", runtime: "codex"])
     |> render_submit()
 
     render_async(view)

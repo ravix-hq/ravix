@@ -176,7 +176,8 @@ defmodule Ravix.Projects do
   somebody pointing a project at a repository they merely know the name of.
 
   `attrs` (string or atom keys): `name`, `repo` (`owner/name`),
-  `installation_id`. A name is required unless a repository supplies one.
+  `installation_id`, and optional `runtime` ("claude" or "codex").
+  The runtime defaults to the owner’s agent choice. A name is required unless a repository supplies one.
   """
   @spec create(User.t(), map()) :: {:ok, View.t()} | {:error, reason()}
   def create(%User{} = user, attrs) do
@@ -192,7 +193,8 @@ defmodule Ravix.Projects do
            repo_private: input.private,
            default_branch: input.default_branch,
            installation_id: input.installation_id,
-           instructions: ""
+           instructions: "",
+           runtime: input.runtime
          },
          {:ok, ids} <- Machine.provision(project, user, client),
          {:ok, project} <- insert_provisioned(project, ids, client) do
@@ -494,15 +496,23 @@ defmodule Ravix.Projects do
     repo = attrs |> Map.get("repo") |> str(200) |> String.trim()
     installation_id = attrs |> Map.get("installation_id") |> integer_or_nil()
 
-    {:ok,
-     %{
-       repo: if(repo == "", do: nil, else: repo),
-       installation_id: installation_id,
-       name: attrs |> Map.get("name") |> str(120) |> String.trim(),
-       default_branch: nil,
-       private: false
-     }}
+    with :ok <- validate_create_runtime(attrs["runtime"]) do
+      {:ok,
+       %{
+         runtime: attrs["runtime"],
+         repo: if(repo == "", do: nil, else: repo),
+         installation_id: installation_id,
+         name: attrs |> Map.get("name") |> str(120) |> String.trim(),
+         default_branch: nil,
+         private: false
+       }}
+    end
   end
+
+  defp validate_create_runtime(runtime) when runtime in [nil, "claude", "codex"], do: :ok
+
+  defp validate_create_runtime(_runtime),
+    do: {:error, {:unprocessable, "invalid_runtime", "Choose Claude Code or Codex."}}
 
   defp resolve_repo(_user, %{repo: nil, installation_id: nil} = input), do: {:ok, input}
 

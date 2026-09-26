@@ -311,7 +311,7 @@ defmodule RavixWeb.WorkspaceLive do
 
   def handle_event("create-project", %{"new_project" => params}, socket) do
     repo = Enum.find(socket.assigns.repos, &(&1.full_name == params["repo"]))
-    attrs = Map.take(params, ["name"])
+    attrs = Map.take(params, ["name", "runtime"])
 
     attrs =
       if repo,

@@ -470,7 +470,14 @@ defmodule RavixWeb.OnboardingLiveTest do
 
       expect(Projects, :create, fn caller, attrs ->
         assert caller.id == user.id
-        assert attrs == %{"name" => "", "repo" => "acme/app", "installation_id" => 42}
+
+        assert attrs == %{
+                 "name" => "",
+                 "repo" => "acme/app",
+                 "installation_id" => 42,
+                 "runtime" => "codex"
+               }
+
         {:ok, %{id: "p-new"}}
       end)
 
@@ -478,7 +485,7 @@ defmodule RavixWeb.OnboardingLiveTest do
       render_async(view)
 
       view
-      |> form("#first-project-form", new_project: [repo: "acme/app", name: ""])
+      |> form("#first-project-form", new_project: [repo: "acme/app", name: "", runtime: "codex"])
       |> render_submit()
 
       # The page leaves as soon as the project exists, so there is no view

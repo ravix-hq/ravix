@@ -83,7 +83,9 @@ defmodule RavixWeb.Live.Form do
     # What pays for a person's agent. One field, and it is never given back
     # its value: see `RavixWeb.OnboardingLive`.
     credential: {%{value: :string}, %{"bad_credential" => :value, "no_credential" => :value}},
-    new_project: {%{name: :string, repo: :string}, %{"no_name" => :name}},
+    new_project:
+      {%{name: :string, repo: :string, runtime: :string},
+       %{"no_name" => :name, "invalid_runtime" => :runtime, "agent_unavailable" => :runtime}},
     new_track:
       {%{title: :string, ref: :string},
        %{"no_title" => :title, "invalid_branch" => :title, "branch_taken" => :title}},

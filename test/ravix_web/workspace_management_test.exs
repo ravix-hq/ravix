@@ -88,7 +88,14 @@ defmodule RavixWeb.WorkspaceManagementTest do
 
     expect(Projects, :create, fn user, attrs ->
       assert user.id == ctx.user.id
-      assert attrs == %{"name" => "Selected", "repo" => "acme/app", "installation_id" => 42}
+
+      assert attrs == %{
+               "name" => "Selected",
+               "repo" => "acme/app",
+               "installation_id" => 42,
+               "runtime" => "codex"
+             }
+
       {:error, {:unavailable, "Provisioning is offline"}}
     end)
 
@@ -97,15 +104,20 @@ defmodule RavixWeb.WorkspaceManagementTest do
     render_change(ctx.view, "installation", %{installation: "bad-id"})
 
     ctx.view
-    |> form("#new-project-form", new_project: [name: "Selected", repo: "acme/app"])
+    |> form("#new-project-form",
+      new_project: [name: "Selected", repo: "acme/app", runtime: "codex"]
+    )
     |> render_change()
 
     ctx.view
-    |> form("#new-project-form", new_project: [name: "Selected", repo: "acme/app"])
+    |> form("#new-project-form",
+      new_project: [name: "Selected", repo: "acme/app", runtime: "codex"]
+    )
     |> render_submit()
 
     assert render_async(ctx.view) =~ "Provisioning is offline"
     assert has_element?(ctx.view, "input[name='new_project[name]'][value=Selected]")
+    assert has_element?(ctx.view, "#project-runtime option[value=codex][selected]")
     refute has_element?(ctx.view, "#new-project-form button[disabled]")
   end
 
