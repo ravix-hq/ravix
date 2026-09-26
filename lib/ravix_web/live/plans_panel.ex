@@ -11,6 +11,7 @@ defmodule RavixWeb.Live.PlansPanel do
     do:
       {:ok,
        assign(socket,
+         progress: %{},
          plans: [],
          detail: nil,
          draft: nil,
@@ -217,6 +218,17 @@ defmodule RavixWeb.Live.PlansPanel do
     end
   end
 
+  defp settled(:progress, {:ok, {project_id, {:ok, plans}}}, socket) do
+    if project_id == socket.assigns.project.id do
+      {:noreply, assign(socket, progress: Map.new(plans, &{&1.id, &1.progress}))}
+    else
+      {:noreply, socket}
+    end
+  end
+
+  defp settled(:progress, _, socket),
+    do: {:noreply, assign(socket, error: "Progress could not load. Refresh to try again.")}
+
   defp settled(:detail, _, %{assigns: %{plan_id: nil}} = socket), do: {:noreply, socket}
 
   defp settled(:detail, {:ok, {:ok, detail}}, socket),
@@ -261,7 +273,14 @@ defmodule RavixWeb.Live.PlansPanel do
 
     case Plans.list(user, socket.assigns.project.id) do
       {:ok, plans} ->
-        socket = assign(socket, plans: plans)
+        project_id = socket.assigns.project.id
+
+        socket =
+          socket
+          |> assign(plans: plans, progress: %{})
+          |> start_async(:progress, fn ->
+            {project_id, Plans.list_with_progress(user, project_id)}
+          end)
 
         load_detail(socket, user, socket.assigns.plan_id)
 

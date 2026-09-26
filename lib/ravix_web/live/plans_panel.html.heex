@@ -8,9 +8,17 @@
   <p :if={@error} class="error" role="alert">{@error}</p>
   <p :if={@busy} role="status">Loading…</p>
   <ul :if={!@plan_id && !@draft} class="plans-list">
-    <li :for={plan <- @plans}>
+    <li
+      :for={plan <- @plans}
+      id={"plan-row-#{plan.id}"}
+      class={if plan.archived, do: "plan-archived"}
+    >
       <.link patch={"/p/#{@project.id}?plan=#{plan.id}"}>{plan.title}</.link>
       <span :if={plan.archived} class="chip">Archived</span>
+      <RavixWeb.PlanProgress.summary
+        progress={@progress[plan.id]}
+        label={"#{plan.title} completion"}
+      />
     </li>
   </ul>
   <p :if={@plans == [] && !@draft}>Write the plan once, then assign its items to tracks.</p>
@@ -112,6 +120,9 @@
         do: "Restore plan",
         else: "Archive plan"}</button>
     </header>
+    <div id="plan-detail-progress">
+      <RavixWeb.PlanProgress.summary progress={@detail.progress} />
+    </div>
     <div class="md">{md(@detail.plan.summary)}</div>
     <p class="hint">Created by {@detail.plan.created_by_login}</p>
     <RavixWeb.Live.PlanGraph.graph items={@detail.items} />

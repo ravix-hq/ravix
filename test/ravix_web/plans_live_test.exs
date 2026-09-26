@@ -4,6 +4,7 @@ defmodule RavixWeb.PlansLiveTest do
   import Mimic
   alias Ravix.{Accounts, Plans, Repo}
   alias Ravix.Fountain.Client
+  alias Ravix.GitHub.Shapes
 
   setup :verify_on_exit!
 
@@ -17,6 +18,72 @@ defmodule RavixWeb.PlansLiveTest do
     end)
 
     %{user: user, project: project}
+  end
+
+  test "list is available while status loads, then list and detail show the same counts", %{
+    conn: conn,
+    user: user
+  } do
+    project = insert_project(user: user)
+
+    {:ok, plan} =
+      Plans.create(user, project.id, %{
+        "title" => "Mixed progress",
+        "items" => [
+          %{"id" => "done", "title" => "Done"},
+          %{"id" => "review", "title" => "Review"},
+          %{"id" => "closed", "title" => "Closed"},
+          %{"id" => "blocked", "title" => "Blocked", "dependencies" => ["review"]}
+        ]
+      })
+
+    owner = self()
+    stub(Ravix.Config, :github, fn -> Ravix.GitHubFake.app() end)
+
+    pulls =
+      Enum.map(
+        [
+          {1, "done", "closed", "2026-09-26T00:00:00Z"},
+          {2, "review", "open", nil},
+          {3, "closed", "closed", nil}
+        ],
+        fn {number, id, state, merged} ->
+          Shapes.pull_ref(%{
+            "number" => number,
+            "state" => state,
+            "merged_at" => merged,
+            "body" => "Plan-Item: #{id}"
+          })
+        end
+      )
+
+    stub(Ravix.GitHub, :plan_pulls, fn _, _, _ ->
+      send(owner, {:progress_read, self()})
+
+      receive do
+        :release -> {:ok, %{pulls: pulls, complete: true}}
+      end
+    end)
+
+    {:ok, view, _} = live(log_in_user(conn, user), "/p/#{project.id}")
+    assert_receive {:progress_read, reader}, 5_000
+    assert has_element?(view, ".plans-list a", "Mixed progress")
+    assert has_element?(view, ".plan-progress-placeholder", "Loading progress")
+    send(reader, :release)
+    render_async(view)
+    assert has_element?(view, ".plans-list progress[value='25']")
+    assert has_element?(view, ".plans-list", "25% complete")
+    assert has_element?(view, ".plans-list", "1 WIP")
+    assert has_element?(view, ".plans-list", "1 unstarted")
+    assert has_element?(view, ".plans-list", "1 blocked")
+    stub(Ravix.GitHub, :plan_pulls, fn _, _, _ -> {:ok, %{pulls: pulls, complete: true}} end)
+    view |> element(".plans-list a", "Mixed progress") |> render_click()
+    assert_patch(view, "/p/#{project.id}?plan=#{plan.id}")
+    render_async(view)
+    assert has_element?(view, "#plan-detail-progress progress[value='25']")
+    assert has_element?(view, "#plan-detail-progress", "1 WIP")
+    assert has_element?(view, "#plan-detail-progress", "1 unstarted")
+    assert has_element?(view, "#plan-detail-progress", "1 blocked")
   end
 
   test "create, edit, reorder, note, archive and restore a plan", %{

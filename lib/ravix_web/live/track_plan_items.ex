@@ -78,6 +78,9 @@ defmodule RavixWeb.Live.TrackPlanItems do
           Plan · {@summary.plan.title}
         </.link>
         <span :if={!@summary.plan} class="track-plan-title">Plan items</span>
+        <RavixWeb.PlanProgress.summary progress={
+          if @summary.plan, do: @summary.plan.progress, else: @summary.progress
+        } />
         <button
           type="button"
           class="ghost track-plan-toggle"

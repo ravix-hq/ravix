@@ -1,7 +1,7 @@
 defmodule Ravix.Plans do
   @moduledoc "Project-scoped plans. A track invitation exposes assigned items only."
   alias Ravix.Accounts.Access
-  alias Ravix.Plans.{Graph, Item, Note, Plan, Status, Store}
+  alias Ravix.Plans.{Graph, Item, Note, Plan, Progress, Status, Store}
 
   def create(user, project_id, attrs, actor \\ :person) do
     with {:ok, _} <- Access.project_access(user, project_id),
@@ -31,6 +31,23 @@ defmodule Ravix.Plans do
     with {:ok, _} <- Access.project_access(user, project_id), do: {:ok, Store.list(project_id)}
   end
 
+  @doc "One project-wide status batch for list consumers; keep list/2 provider-free."
+  def list_with_progress(user, project_id) do
+    with {:ok, %{project: project}} <- Access.project_access(user, project_id) do
+      plans = Store.list(project_id)
+      rows = Store.project_items(project_id)
+      items = Status.items(project, rows)
+      plan_ids = Map.new(rows, &{&1.id, &1.plan_id})
+      grouped = Enum.group_by(items, &plan_ids[&1.id])
+
+      {:ok,
+       Enum.map(plans, fn plan ->
+         public_plan(plan)
+         |> Map.put(:progress, Progress.summarize(Map.get(grouped, plan.id, [])))
+       end)}
+    end
+  end
+
   def access(user, id) do
     with %Plan{} = plan <- Store.get(id),
          {:ok, access} <- Access.project_access(user, plan.project_id) do
@@ -43,7 +60,8 @@ defmodule Ravix.Plans do
   def get(user, id) do
     with {:ok, plan, project} <- access(user, id) do
       items = Store.items(plan.id)
-      {:ok, %{plan: plan, items: Status.items(project, items)}}
+      items = Status.items(project, items)
+      {:ok, %{plan: plan, items: items, progress: Progress.summarize(items)}}
     end
   end
 
@@ -59,23 +77,35 @@ defmodule Ravix.Plans do
     with {:ok, %{track: track, project: project}} <- Access.track_access(user, track_id) do
       rows = Store.for_track(track_id)
 
-      items =
-        project
-        |> Status.items(rows)
-        |> Enum.map(&Map.drop(&1, [:dependencies, :track_url, :track_title]))
-
       plan_id = track.origin_plan_id || (List.first(rows) && hd(rows).plan_id)
 
-      plan =
+      {plan, plan_rows} =
         case access(user, plan_id) do
-          {:ok, plan, _} ->
-            %{id: plan.id, title: plan.title, url: "/p/#{project.id}?plan=#{plan.id}"}
-
-          _ ->
-            nil
+          {:ok, plan, _} -> {plan, Store.items(plan.id)}
+          _ -> {nil, []}
         end
 
-      {:ok, %{items: items, plan: plan}}
+      derived = Status.items(project, Enum.uniq_by(rows ++ plan_rows, & &1.id))
+      assigned_ids = MapSet.new(rows, & &1.id)
+
+      items =
+        derived
+        |> Enum.filter(&MapSet.member?(assigned_ids, &1.id))
+        |> Enum.map(&Map.drop(&1, [:dependencies, :track_url, :track_title]))
+
+      plan =
+        if plan do
+          ids = MapSet.new(plan_rows, & &1.id)
+
+          %{
+            id: plan.id,
+            title: plan.title,
+            url: "/p/#{project.id}?plan=#{plan.id}",
+            progress: Progress.summarize(Enum.filter(derived, &MapSet.member?(ids, &1.id)))
+          }
+        end
+
+      {:ok, %{items: items, plan: plan, progress: Progress.summarize(items)}}
     end
   end
 
