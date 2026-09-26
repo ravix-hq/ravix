@@ -90,19 +90,25 @@
       </div>
       <div class="yard-scroll">
         <div class="yard-label">
-          <span>Projects</span><span class="spacer"></span><button
-            class="ghost"
-            aria-label="Add a project"
-            phx-click={JS.push_focus() |> JS.push("dialog")}
-            phx-value-name="new-project"
-          ><.icon name="plus" size={13} /></button>
+          <span>Projects</span><span class="spacer"></span>
+          <div class="row">
+            <button
+              type="button"
+              class="ghost"
+              id="manage-sections"
+              aria-label="Manage sections"
+              title="Manage sections"
+              phx-click={JS.push_focus() |> JS.push("dialog")}
+              phx-value-name="sections"
+            ><.icon name="settings" size={13} /></button>
+            <button
+              class="ghost"
+              aria-label="Add a project"
+              phx-click={JS.push_focus() |> JS.push("dialog")}
+              phx-value-name="new-project"
+            ><.icon name="plus" size={13} /></button>
+          </div>
         </div>
-        <button
-          class="ghost section-manage"
-          id="manage-sections"
-          phx-click={JS.push_focus() |> JS.push("dialog")}
-          phx-value-name="sections"
-        >Manage sections</button>
         <div id="project-sections" phx-hook="ProjectSections">
           <div
             :for={
