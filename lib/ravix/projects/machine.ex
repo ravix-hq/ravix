@@ -55,9 +55,9 @@ defmodule Ravix.Projects.Machine do
 
   Takes the project as it will be inserted (name, repository, branch,
   installation) and its owner, and returns the ids to insert it with. The
-  owner is here for two things they chose: which agent the machine runs, and
-  the credential set that pays for it (`Ravix.Accounts.Inference`). Both are
-  the *owner's* whoever goes on to work in the project. A half-made project
+  owner supplies the default agent when the project has no explicit choice,
+  and the credential set that pays for it (`Ravix.Accounts.Inference`),
+  whoever goes on to work in the project. A half-made project
   is three orphaned Fountain records and a row that points at a machine
   nobody can build, so any failure unwinds what went in, in reverse, and
   reports the original failure rather than the cleanup's.
@@ -127,12 +127,13 @@ defmodule Ravix.Projects.Machine do
   defp clone_token(_client, _project, state), do: {:ok, state}
 
   defp agent(client, project, state, owner) do
-    with {:ok, choice} <- harness_for(catalog(client), Inference.runtime(owner)) do
+    with {:ok, choice} <-
+           harness_for(catalog(client), project.runtime || Inference.runtime(owner)) do
       create_agent(client, project, state, choice, owner)
     end
   end
 
-  # The owner's agent, when this Fountain runs it. A catalog that *lists*
+  # The project's chosen agent (or the owner's default), when Fountain runs it. A catalog that *lists*
   # runtimes and leaves theirs out is refused rather than quietly built on
   # another: the machine would come up on Claude Code with an OpenAI key to
   # spend, and say so only when the first turn failed. A catalog that could

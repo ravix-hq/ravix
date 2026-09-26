@@ -709,6 +709,58 @@ defmodule Ravix.ProjectsTest do
                Repo.get!(Project, project.id)
     end
 
+    for {runtime, model} <- [
+          {"claude", "anthropic/claude-opus-5"},
+          {"codex", "openai/gpt-6-astra"}
+        ] do
+      test "a project can select #{runtime} independently of the account default" do
+        runtime = unquote(runtime)
+        model = unquote(model)
+
+        client =
+          fountain([
+            {%{method: "POST", path: "/api/environments"}, {201, [], %{data: %{id: "new-env"}}}},
+            {%{method: "POST", path: "/api/vaults"}, {201, [], %{data: %{id: "new-vault"}}}},
+            {%{method: "GET", path: "/api/catalog"},
+             {200, [],
+              %{
+                data: %{
+                  runtimes: ["claude", "codex"],
+                  models: %{
+                    "claude" => ["anthropic/claude-opus-5"],
+                    "codex" => ["openai/gpt-6-astra"]
+                  }
+                }
+              }}},
+            {%{method: "POST", path: "/api/agents"}, {201, [], %{data: %{id: "new-agent"}}}}
+          ])
+
+        no_github()
+        me = insert_user(agent: :codex, credential_kind: :api_key, credential_set_id: "set-me")
+
+        assert {:ok, project} = Projects.create(me, %{name: "Scratch", runtime: runtime})
+
+        agent = body_of(client, "POST", "/api/agents")
+        assert agent["runtime"] == runtime
+        assert agent["model"] == model
+        assert agent["inference_credential_id"] == "set-me"
+        # Closed, so no launch can name a set that is not the owner's.
+        assert agent["allowed_inference_credential_ids"] == []
+
+        assert %Project{runtime: ^runtime, credential_set_id: "set-me"} =
+                 Repo.get!(Project, project.id)
+      end
+    end
+
+    test "invalid project runtimes are rejected before provisioning" do
+      client = fountain([])
+
+      assert {:error, {:unprocessable, "invalid_runtime", _}} =
+               Projects.create(person("me"), %{name: "Scratch", runtime: "unknown"})
+
+      assert requests(client) == []
+    end
+
     test "somebody who connected nothing gets the agent this app always built" do
       client =
         fountain([

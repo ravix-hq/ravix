@@ -674,6 +674,15 @@
       >
         <.input field={f[:name]} id="project-name" label="Project name" maxlength="120" />
         <.input
+          field={f[:runtime]}
+          id="project-runtime"
+          label="Agent"
+          type="select"
+          value={f[:runtime].value || Ravix.Accounts.Inference.runtime(@current_user) || "claude"}
+          options={[{"Claude Code", "claude"}, {"Codex", "codex"}]}
+        />
+        <p class="hint">Uses your connected credentials for the selected agent.</p>
+        <.input
           field={f[:repo]}
           id="project-repo"
           disabled={@repos_loading}

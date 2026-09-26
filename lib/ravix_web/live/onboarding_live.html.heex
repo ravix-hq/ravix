@@ -84,7 +84,7 @@
       <section :if={@live_action == :agent} id="welcome-agent" aria-labelledby="welcome-agent-h">
         <h1 id="welcome-agent-h">Choose your agent</h1>
         <p class="lede">
-          The agent is the program that does the work on the machine. It runs on your own account with its maker, which is what pays for its turns. Projects you create are built with this agent; you can change it later.
+          The agent is the program that does the work on the machine. It runs on your own account with its maker, which is what pays for its turns. This is the default for new projects; you can choose either agent when creating a project.
         </p>
         <.live_component
           module={RavixWeb.Live.AgentPanel}
@@ -195,6 +195,17 @@
           phx-submit="create-project"
           phx-change="edit"
         >
+          <.input
+            field={f[:runtime]}
+            id="project-runtime"
+            label="Agent"
+            type="select"
+            value={
+              f[:runtime].value || Ravix.Accounts.Inference.runtime(@current_user) || "claude"
+            }
+            options={[{"Claude Code", "claude"}, {"Codex", "codex"}]}
+          />
+          <p class="hint">Uses your connected credentials for the selected agent.</p>
           <.input
             field={f[:repo]}
             id="project-repo"
