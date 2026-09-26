@@ -64,17 +64,18 @@ defmodule RavixWeb.WorkspaceMemoTest do
 
     stub(Fountain, :client, fn -> client end)
     {:ok, view, _} = live(log_in_user(conn, user), "/p/#{project.id}")
-    render_async(view)
+    # Synchronize with the actual async reads; CI scheduling can exceed 100ms.
+    render_async(view, 5_000)
     refute has_element?(view, ".track-tab [aria-label='Working']")
     assert length(FakeTransport.calls(client)) == 1
 
     render_click(view, "refresh")
-    render_async(view)
+    render_async(view, 5_000)
     assert has_element?(view, ".track-tab [aria-label='Working']")
     assert length(FakeTransport.calls(client)) == 2
 
     send(view.pid, {:hub, Event.new(:turn, project.id, track_id: track.id)})
-    render_async(view)
+    render_async(view, 5_000)
     refute has_element?(view, ".track-tab [aria-label='Working']")
     assert has_element?(view, ".track-tab [aria-label='Unread reply']")
     assert length(FakeTransport.calls(client)) == 3
