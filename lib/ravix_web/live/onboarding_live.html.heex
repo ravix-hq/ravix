@@ -166,81 +166,22 @@
         <p class="lede">
           Pick the repository to work in. Ravix builds its computer, clones the repository onto it, and opens your first conversation.
         </p>
-        <p
-          :if={!Inference.connected?(@current_user)}
-          class="welcome-warning"
-          id="project-no-agent"
-        >
-          <.icon name="info" size={14} class="ico" />
-          <span>
-            You have not connected an agent yet, so this project's agent will have nothing to run on. <.link patch={
-              path(:agent)
-            }>Connect one first</.link>.
-          </span>
-        </p>
-        <form
-          :if={@installations not in [nil, []]}
-          id="installation-form"
-          phx-change="installation"
-        >
-          <.input
-            name="installation"
-            id="installation"
-            label="GitHub account"
-            type="select"
-            value={@installation}
-            options={Enum.map(@installations, &{&1.account, &1.id})}
-          />
-        </form>
-        <.form
-          :let={f}
-          for={@project_form}
-          id="first-project-form"
-          phx-submit="create-project"
-          phx-change="edit"
-        >
-          <.input
-            field={f[:runtime]}
-            id="project-runtime"
-            label="Agent"
-            type="select"
-            value={
-              f[:runtime].value || Ravix.Accounts.Inference.runtime(@current_user) || "claude"
-            }
-            options={RavixWeb.AgentName.options()}
-          />
-          <p class="hint">Uses your connected credentials for the selected agent.</p>
-          <.input
-            field={f[:repo]}
-            id="project-repo"
-            label="Repository"
-            type="select"
-            options={[
-              {"No repository (scratch)", ""} | Enum.map(@repos, &{&1.full_name, &1.full_name})
-            ]}
-          />
-          <.input
-            field={f[:name]}
-            id="project-name"
-            label="Project name"
-            maxlength="120"
-            placeholder="Defaults to the repository's name"
-          />
-          <p :if={@github_available && @repos == []} class="hint">
-            No repositories to choose from. <.link patch={path(:github)}>Connect GitHub</.link>
-            to pick one, or start with a scratch machine.
-          </p>
-          <.loading_status :if={@busy}>
-            Creating project and preparing its machine…
-          </.loading_status>
-          <button
-            class="primary welcome-primary"
-            disabled={@busy}
-            phx-disable-with="Building the machine…"
-          >
-            {if @busy, do: "Building the machine…", else: "Create project"}
-          </button>
-        </.form>
+        <RavixWeb.Live.NewProject.render_form
+          form_id="first-project-form"
+          submit_class="primary welcome-primary"
+          project_form={@project_form}
+          project_agents={@project_agents}
+          project_generation={@project_generation}
+          project_agent_error={@project_agent_error}
+          project_mode={@project_mode}
+          current_user={@current_user}
+          session_hash={@session_hash}
+          repos={@repos}
+          repos_loading={@repos_loading}
+          installations={@installations}
+          installation={@installation}
+          busy={@busy}
+        />
         <div class="welcome-actions">
           <.link patch={path(:github)} class="ghost">Back</.link>
         </div>

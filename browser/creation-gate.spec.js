@@ -1,24 +1,27 @@
 import { test, expect } from '@playwright/test';
-import { signIn, connectClaude } from './sign-in.js';
+import AxeBuilder from '@axe-core/playwright';
+import { signIn } from './sign-in.js';
 
-test('project creation requires the selected agent and retains the submitted form', async ({ page }) => {
+test('connect Codex inline without losing the new project draft', async ({ page }) => {
   await signIn(page, 'dana', '/home');
   await page.getByRole('button', { name: /^Quick start/ }).click();
   const dialog = page.getByRole('dialog', { name: 'New project' });
   await dialog.getByLabel('Project name', { exact: true }).fill('Credential gate');
-  await dialog.getByLabel('Agent', { exact: true }).selectOption('codex');
-  await dialog.getByRole('button', { name: 'Create project', exact: true }).click();
-  await expect(dialog.locator('.field').filter({ has: page.locator('#project-runtime') }))
-    .toContainText('Connect Codex before creating a project with it.');
+  await dialog.locator('#project-agent-codex').click();
+  await expect(dialog.locator('#project-agent-codex')).toContainText('Not connected');
+  await expect(dialog.getByRole('button', { name: 'Create project', exact: true })).toBeDisabled();
+  await dialog.getByRole('button', { name: 'API key', exact: true }).click();
+  await page.evaluate(() => Promise.all(document.getAnimations()
+    .filter(a => a.effect?.getTiming?.().iterations !== Infinity)
+    .map(a => a.finished.catch(() => {}))));
+  const axe = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze();
+  expect(axe.violations).toEqual([]);
+  await dialog.getByLabel('API key', { exact: true }).fill('sk-browser-codex-fixture');
+  await dialog.getByRole('button', { name: 'Connect Codex', exact: true }).click();
+  await expect(dialog.locator('#project-agent-codex')).toContainText('Connected');
+  await expect(dialog.locator('#project-agent-codex')).toHaveAttribute('aria-pressed', 'true');
   await expect(dialog.getByLabel('Project name', { exact: true })).toHaveValue('Credential gate');
-  await expect(dialog.getByLabel('Agent', { exact: true })).toHaveValue('codex');
   await expect(dialog.getByRole('button', { name: 'Create project', exact: true })).toBeEnabled();
-  await page.keyboard.press('Escape');
-  await expect(dialog).not.toBeVisible();
-  await connectClaude(page);
-  await page.getByRole('button', { name: /^Quick start/ }).click();
-  await dialog.getByLabel('Project name', { exact: true }).fill('Credential gate');
-  await dialog.getByLabel('Agent', { exact: true }).selectOption('claude');
   await dialog.getByRole('button', { name: 'Create project', exact: true }).click();
   await expect(dialog).not.toBeVisible();
   await expect(page.locator('.crumbs')).toContainText('Credential gate');

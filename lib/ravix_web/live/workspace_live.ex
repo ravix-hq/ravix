@@ -2,6 +2,8 @@ defmodule RavixWeb.WorkspaceLive do
   @moduledoc "The project rail, inbox, navigation, and project management forms."
   use RavixWeb, :live_view
 
+  alias RavixWeb.Live.NewProject
+
   alias Ravix.{Accounts, Hub, Ids, Projects, Tracks}
   alias Ravix.Accounts.Access
   alias Ravix.Hub.Event
@@ -81,6 +83,10 @@ defmodule RavixWeb.WorkspaceLive do
         changes: [],
         changes_unseen: 0,
         project_form: Form.new(:new_project),
+        project_generation: 0,
+        project_agents: nil,
+        project_agent_error: nil,
+        project_mode: "github",
         track_form: Form.new(:new_track),
         repos_loading: false,
         refs_loading: false,
@@ -369,15 +375,31 @@ defmodule RavixWeb.WorkspaceLive do
 
   def handle_event("search", %{"q" => q}, socket), do: {:noreply, assign(socket, query: q)}
 
+  def handle_event("choose-project-agent", %{"agent" => agent}, socket),
+    do: {:noreply, NewProject.choose(socket, agent)}
+
+  def handle_event("refresh-project-agents", _, socket),
+    do: {:noreply, NewProject.refresh(socket)}
+
   def handle_event("edit", %{"new_project" => params}, socket),
-    do: {:noreply, assign(socket, project_form: Form.new(:new_project, params))}
+    do: {:noreply, NewProject.edit(socket, params)}
 
   def handle_event("edit", %{"new_track" => params}, socket),
     do: {:noreply, assign(socket, track_form: Form.new(:new_track, params))}
 
-  def handle_event("dialog", %{"name" => name}, socket) when is_map_key(@dialogs, name) do
+  def handle_event("dialog", %{"name" => name} = params, socket)
+      when is_map_key(@dialogs, name) do
     dialog = Map.fetch!(@dialogs, name)
     socket = open_dialog(socket, dialog)
+
+    socket =
+      if dialog == :new_project,
+        do:
+          assign(socket,
+            project_mode: if(params["mode"] == "scratch", do: "scratch", else: "github")
+          ),
+        else: socket
+
     if dialog == :changes, do: {:noreply, mark_changes(socket)}, else: {:noreply, socket}
   end
 
@@ -391,21 +413,10 @@ defmodule RavixWeb.WorkspaceLive do
   end
 
   def handle_event("create-project", %{"new_project" => params}, socket) do
-    repo = Enum.find(socket.assigns.repos, &(&1.full_name == params["repo"]))
-    attrs = Map.take(params, ["name", "runtime"])
-
-    attrs =
-      if repo,
-        do:
-          Map.merge(attrs, %{"repo" => repo.full_name, "installation_id" => repo.installation_id}),
-        else: attrs
-
-    user = socket.assigns.current_user
-
     {:noreply,
-     socket
-     |> assign(busy: true, project_form: Form.new(:new_project, params))
-     |> traced_async(:create_project, fn -> created(Projects.create(user, attrs), user) end)}
+     NewProject.create(socket, params, fn user, attrs ->
+       created(Projects.create(user, attrs), user)
+     end)}
   end
 
   def handle_event("origin", %{"kind" => word}, socket) when is_map_key(@form_origins, word) do
@@ -463,6 +474,15 @@ defmodule RavixWeb.WorkspaceLive do
   end
 
   @impl true
+  def handle_async(:project_agents, {:ok, response}, socket),
+    do: {:noreply, NewProject.availability(socket, response)}
+
+  def handle_async(:project_agents, {:exit, {:shutdown, :cancel}}, socket),
+    do: {:noreply, socket}
+
+  def handle_async(:project_agents, {:exit, reason}, socket),
+    do: {:noreply, NewProject.availability(socket, {:error, {:async_exit, reason}})}
+
   def handle_async(:create_project, {:ok, response}, socket) do
     {:noreply,
      result(
@@ -637,7 +657,10 @@ defmodule RavixWeb.WorkspaceLive do
 
   # The agent panel's clock; see `RavixWeb.Live.AgentPanel`.
   def handle_info({:agent_panel, id, tick}, socket) do
-    send_update(RavixWeb.Live.AgentPanel, id: id, tick: tick)
+    if (id == "agent-panel" and socket.assigns.dialog == :account) or
+         (socket.assigns.dialog == :new_project and NewProject.active_panel?(socket, id)),
+       do: send_update(RavixWeb.Live.AgentPanel, id: id, tick: tick)
+
     {:noreply, socket}
   end
 
@@ -645,6 +668,11 @@ defmodule RavixWeb.WorkspaceLive do
   # agent. The person on the page is now out of date, and the dialog has
   # already said what replacing it means for open tracks.
   def handle_info({:agent_connected, %Accounts.User{} = user, agent}, socket) do
+    socket =
+      if socket.assigns.dialog == :new_project,
+        do: NewProject.connected(socket, user, agent),
+        else: socket
+
     default =
       if socket.assigns.current_user.agent != user.agent,
         do: " New projects default to #{agent_name(user)}.",
@@ -986,7 +1014,8 @@ defmodule RavixWeb.WorkspaceLive do
   defp open_dialog(socket, :new_project),
     do:
       socket
-      |> assign(dialog: :new_project, project_form: Form.new(:new_project))
+      |> assign(dialog: :new_project)
+      |> NewProject.init()
       |> load_repos(nil)
 
   defp open_dialog(socket, :new_track) do

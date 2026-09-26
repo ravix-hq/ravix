@@ -45,6 +45,11 @@ defmodule RavixWeb.WorkspaceLiveTest do
     end
   end
 
+  setup do
+    stub(Ravix.Accounts.Inference, :usable_agents, fn _ -> {:ok, [:claude, :codex]} end)
+    :ok
+  end
+
   test "page titles follow navigation and background rail updates", %{conn: conn} do
     user = insert_user()
     project = insert_project(user: user, name: "Title project")
@@ -612,7 +617,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
     render_async(view)
     assert has_element?(view, ".home-recent a[href='/p/#{own.id}']", "Recent work")
     refute render(view) =~ hidden.name
-    assert has_element?(view, ".home-action[disabled]", "Open a local project")
+    refute has_element?(view, ".home-action[disabled]", "Open a local project")
     view |> element(".home-action", "Open a GitHub project") |> render_click()
     view |> form("#new-project-form", new_project: [name: "Abandoned name"]) |> render_change()
     render_click(view, "dismiss")
@@ -621,7 +626,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
     # comes up empty; the point of the assertion is that the abandoned name
     # is not still in it.
     assert has_element?(view, "#project-name:not([value])")
-    assert has_element?(view, "#project-repo option[value='']", "No repository")
+    refute has_element?(view, "#project-repo")
     refute render(view) =~ "Abandoned name"
   end
 
@@ -1063,6 +1068,8 @@ defmodule RavixWeb.WorkspaceLiveTest do
     {:ok, view, _} = live(log_in_user(conn, user), "/")
     render_async(view)
     view |> element(".workspace-actions button", "Add a project") |> render_click()
+
+    render_click(view, "choose-project-agent", %{"agent" => "codex"})
 
     view
     |> form("#new-project-form", new_project: [name: "New project", repo: "", runtime: "codex"])

@@ -479,6 +479,7 @@
               class="home-action"
               phx-click={JS.push_focus() |> JS.push("dialog")}
               phx-value-name="new-project"
+              phx-value-mode="github"
             >
               <.icon name="globe" size={18} class="ico" />
               <span>
@@ -489,16 +490,11 @@
               class="home-action"
               phx-click={JS.push_focus() |> JS.push("dialog")}
               phx-value-name="new-project"
+              phx-value-mode="scratch"
             >
               <.icon name="folder-plus" size={18} class="ico" />
               <span>
                 <strong>Quick start</strong><small>A machine with no repository. Somewhere to try things, or to start something new.</small>
-              </span>
-            </button>
-            <button class="home-action" disabled>
-              <.icon name="folder" size={18} class="ico" />
-              <span>
-                <strong>Open a local project</strong><small>The machine is in the cloud, so there is no folder on this computer for it to open. Push the repository and open it from GitHub.</small>
               </span>
             </button>
           </div>
@@ -671,67 +667,24 @@
       :if={@dialog == :new_project}
       id="new-project-dialog"
       title="New project"
+      initial_focus={if @project_mode == "scratch", do: "#project-name", else: "#project-repo"}
       on_close="dismiss"
     >
-      <.loading_status :if={@repos_loading}>Loading GitHub repositories…</.loading_status>
-      <form :if={@installations != []} id="installation-form" phx-change="installation">
-        <.input
-          name="installation"
-          id="installation"
-          label="GitHub account"
-          type="select"
-          value={@installation}
-          options={Enum.map(@installations, &{&1.account, &1.id})}
-        />
-      </form>
-      <.form
-        :let={f}
-        for={@project_form}
-        id="new-project-form"
-        phx-submit="create-project"
-        phx-change="edit"
-      >
-        <.input field={f[:name]} id="project-name" label="Project name" maxlength="120" />
-        <.input
-          field={f[:runtime]}
-          id="project-runtime"
-          label="Agent"
-          type="select"
-          value={f[:runtime].value || Ravix.Accounts.Inference.runtime(@current_user) || "claude"}
-          options={RavixWeb.AgentName.options()}
-        />
-        <p class="hint">Uses your connected credentials for the selected agent.</p>
-        <.input
-          field={f[:repo]}
-          id="project-repo"
-          disabled={@repos_loading}
-          label="Repository"
-          type="select"
-          options={[
-            {"No repository (scratch)", ""} | Enum.map(@repos, &{&1.full_name, &1.full_name})
-          ]}
-        />
-        <p><a href="/api/auth/install">Connect or manage GitHub repositories ↗</a></p>
-        <p
-          :if={!Ravix.Accounts.Inference.connected?(@current_user)}
-          class="hint"
-          id="new-project-no-agent"
-        >
-          You have not connected an agent, so this project's agent may have nothing to run on.
-          <button
-            type="button"
-            class="linkish"
-            phx-click={JS.push_focus() |> JS.push("dialog")}
-            phx-value-name="account"
-          >
-            Connect Claude Code or Codex
-          </button>
-        </p>
-        <.loading_status :if={@busy}>Creating project and preparing its machine…</.loading_status>
-        <button class="primary" disabled={@busy || @repos_loading} phx-disable-with="Creating…">
-          {if @busy, do: "Creating project…", else: "Create project"}
-        </button>
-      </.form>
+      <RavixWeb.Live.NewProject.render_form
+        form_id="new-project-form"
+        project_form={@project_form}
+        project_agents={@project_agents}
+        project_generation={@project_generation}
+        project_agent_error={@project_agent_error}
+        project_mode={@project_mode}
+        current_user={@current_user}
+        session_hash={@session_hash}
+        repos={@repos}
+        repos_loading={@repos_loading}
+        installations={@installations}
+        installation={@installation}
+        busy={@busy}
+      />
     </.dialog>
     <.dialog
       :if={@dialog == :new_track && @project}

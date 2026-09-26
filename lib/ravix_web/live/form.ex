@@ -87,6 +87,7 @@ defmodule RavixWeb.Live.Form do
       {%{name: :string, repo: :string, runtime: :string},
        %{
          "no_name" => :name,
+         "invalid_repository" => :repo,
          "invalid_runtime" => :runtime,
          "agent_unavailable" => :runtime,
          "agent_not_connected" => :runtime

@@ -95,15 +95,14 @@ defmodule RavixWeb.Live.AgentPanelTest do
     assert %User{agent: :claude} = Repo.get!(User, user.id)
   end
 
-  test "the new-project form's nudge opens the account dialog rather than leaving the workspace",
-       %{conn: conn} do
+  test "the new-project form connects inline without leaving the draft", %{conn: conn} do
+    stub(Inference, :usable_agents, fn _ -> {:ok, []} end)
     {:ok, view, _} = live(log_in_user(conn, insert_user()), "/home")
-    view |> element(".home-action", "Quick start") |> render_click()
-    assert has_element?(view, "#new-project-no-agent button", "Connect Claude Code or Codex")
-
-    view |> element("#new-project-no-agent button") |> render_click()
-    assert has_element?(view, "#account-dialog")
-    refute has_element?(view, "#new-project-dialog")
+    render_click(view, "dialog", %{name: "new-project"})
+    render_async(view)
+    view |> element("#project-agent-claude") |> render_click()
+    assert has_element?(view, "#new-project-dialog #credential-form")
+    refute has_element?(view, "#account-dialog")
   end
 
   test "the workspace hands the panel its polling tick", %{conn: conn} do

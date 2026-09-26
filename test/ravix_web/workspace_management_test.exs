@@ -10,6 +10,11 @@ defmodule RavixWeb.WorkspaceManagementTest do
 
   setup :verify_on_exit!
 
+  setup do
+    stub(Ravix.Accounts.Inference, :usable_agents, fn _ -> {:ok, [:claude, :codex]} end)
+    :ok
+  end
+
   setup %{conn: conn} do
     user = insert_user()
     project = insert_project(user: user)
@@ -109,11 +114,11 @@ defmodule RavixWeb.WorkspaceManagementTest do
       render_click(ctx.view, "dialog", %{name: "new-project"})
       assert_receive {:loading_repos, task}, 1000
       assert has_element?(ctx.view, "#new-project-dialog [role=status]", "Loading GitHub")
-      assert has_element?(ctx.view, "#project-repo[disabled]")
+      assert has_element?(ctx.view, "#project-repo[aria-busy=true]")
       send(task, :finish)
       render_async(ctx.view, 1000)
       refute has_element?(ctx.view, "#new-project-dialog .loading-status")
-      refute has_element?(ctx.view, "#project-repo[disabled]")
+      refute has_element?(ctx.view, "#project-repo[aria-busy=true]")
     end
   end
 
@@ -149,11 +154,15 @@ defmodule RavixWeb.WorkspaceManagementTest do
     render_change(ctx.view, "installation", %{installation: "42"})
     render_change(ctx.view, "installation", %{installation: "bad-id"})
 
+    render_click(ctx.view, "choose-project-agent", %{"agent" => "codex"})
+
     ctx.view
     |> form("#new-project-form",
       new_project: [name: "Selected", repo: "acme/app", runtime: "codex"]
     )
     |> render_change()
+
+    render_click(ctx.view, "choose-project-agent", %{"agent" => "codex"})
 
     ctx.view
     |> form("#new-project-form",
@@ -163,7 +172,7 @@ defmodule RavixWeb.WorkspaceManagementTest do
 
     assert render_async(ctx.view, 1000) =~ "Provisioning is offline"
     assert has_element?(ctx.view, "input[name='new_project[name]'][value=Selected]")
-    assert has_element?(ctx.view, "#project-runtime option[value=codex][selected]")
+    assert has_element?(ctx.view, "#project-agent-codex[aria-pressed=true]")
     refute has_element?(ctx.view, "#new-project-form button[disabled]")
   end
 
@@ -556,6 +565,8 @@ defmodule RavixWeb.WorkspaceManagementTest do
 
     render_click(ctx.view, "dialog", %{name: "new-project"})
 
+    render_click(ctx.view, "choose-project-agent", %{"agent" => "codex"})
+
     ctx.view
     |> form("#new-project-form", new_project: [name: "Keep this", runtime: "codex"])
     |> render_submit()
@@ -564,11 +575,11 @@ defmodule RavixWeb.WorkspaceManagementTest do
 
     assert has_element?(
              ctx.view,
-             ".field:has(#project-runtime) p.error",
+             "#project-runtime p.error",
              "Connect Codex before creating a project with it."
            )
 
-    assert has_element?(ctx.view, "#project-runtime option[value=codex][selected]")
+    assert has_element?(ctx.view, "#project-agent-codex[aria-pressed=true]")
     assert has_element?(ctx.view, "input[name='new_project[name]'][value='Keep this']")
     refute has_element?(ctx.view, "#new-project-form button[disabled]")
   end
