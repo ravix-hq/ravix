@@ -14,7 +14,12 @@ defmodule RavixWeb.HelpComponents do
         <summary>Connect Claude Code with MCP</summary>
         <ol>
           <li>
-            Run this command in your desktop terminal: <pre><code>claude mcp add --transport http ravix {@base}/mcp</code></pre>
+            Run this command in your desktop terminal:
+            <.copyable_code
+              id="help-mcp-command"
+              label="Claude Code command"
+              code={"claude mcp add --transport http ravix #{@base}/mcp"}
+            />
           </li>
           <li>In Claude Code, open <code>/mcp</code>, choose Ravix and authenticate.</li>
           <li>
@@ -84,7 +89,7 @@ defmodule RavixWeb.HelpComponents do
         </ol>
         <details>
           <summary>Example JSON-RPC request</summary>
-          <pre><code>{a2a_example()}</code></pre>
+          <.copyable_code id="help-a2a-request" label="JSON-RPC request" code={a2a_example()} />
         </details>
         <p>
           To open a new track, omit <code>contextId</code>
@@ -152,6 +157,22 @@ defmodule RavixWeb.HelpComponents do
           </li>
         </ul>
       </details>
+    </div>
+    """
+  end
+
+  attr :id, :string, required: true
+  attr :label, :string, required: true
+  attr :code, :string, required: true
+
+  defp copyable_code(assigns) do
+    ~H"""
+    <div id={@id} class="help-code" phx-hook="CopyCode">
+      <div class="row">
+        <span role="status" class="dim"></span>
+        <button type="button" class="ghost" aria-label={"Copy #{@label}"}>Copy</button>
+      </div>
+      <pre><code>{@code}</code></pre>
     </div>
     """
   end

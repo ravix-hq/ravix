@@ -11,6 +11,8 @@ defmodule RavixWeb.SchedulesLiveTest do
     project = insert_project(user: user)
     stub(Tracks, :list, fn _, _ -> {:ok, []} end)
     {:ok, view, html} = live(log_in_user(conn, user), "/schedules")
+    # The rail (and with it the project options) arrives after mount (#221).
+    render_async(view)
     assert html =~ "No schedules yet"
     assert has_element?(view, ".yard-nav a.on[href='/schedules']", "Schedules")
 
@@ -40,6 +42,28 @@ defmodule RavixWeb.SchedulesLiveTest do
     assert Schedules.list(user) == []
   end
 
+  test "refresh explicitly retrieves changes made outside this page", %{conn: conn} do
+    user = insert_user()
+    project = insert_project(user: user)
+    {:ok, view, _} = live(log_in_user(conn, user), "/schedules")
+    # Let the rail land first: applying it re-renders the panel, which would
+    # otherwise pick up the schedule created below without a Refresh.
+    render_async(view)
+    assert has_element?(view, "#schedules-refresh-note", "latest run status")
+
+    {:ok, schedule} =
+      Schedules.create(user, project.id, %{
+        "name" => "Created elsewhere",
+        "prompt" => "Check tests",
+        "frequency" => "daily",
+        "time" => "09:00"
+      })
+
+    refute has_element?(view, "#schedule-#{schedule.id}")
+    view |> element("#schedules-panel button", "Refresh") |> render_click()
+    assert has_element?(view, "#schedule-#{schedule.id}", "Created elsewhere")
+  end
+
   test "expired session cannot create schedules", %{conn: conn} do
     user = insert_user()
     project = insert_project(user: user)
@@ -47,6 +71,8 @@ defmodule RavixWeb.SchedulesLiveTest do
     {token, session} = insert_session(user)
     conn = Plug.Test.init_test_session(conn, %{session_token: token})
     {:ok, view, _} = live(conn, "/schedules")
+    # The rail (and with it the project options) arrives after mount (#221).
+    render_async(view)
     Ravix.Repo.delete!(session)
     # Component event guards verify the session directly.
     assert {:error, {:redirect, %{to: "/login"}}} =

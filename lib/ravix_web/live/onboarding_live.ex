@@ -75,7 +75,10 @@ defmodule RavixWeb.OnboardingLive do
 
   @impl true
   def handle_params(params, _uri, socket) do
-    socket = validate_session(socket)
+    socket =
+      socket
+      |> validate_session()
+      |> assign(page_title: step_title(socket.assigns.live_action) <> " · Ravix")
 
     cond do
       is_nil(socket.assigns.current_user) ->
@@ -91,6 +94,11 @@ defmodule RavixWeb.OnboardingLive do
         {:noreply, enter(socket, socket.assigns.live_action)}
     end
   end
+
+  defp step_title(:intro), do: "Welcome"
+  defp step_title(:agent), do: "Connect your agent"
+  defp step_title(:github), do: "Connect GitHub"
+  defp step_title(:project), do: "Create your first project"
 
   # The two steps that read GitHub do it on arrival and off this process.
   defp enter(socket, step) when step in [:github, :project], do: load_repos(socket, nil)

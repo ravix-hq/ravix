@@ -101,6 +101,7 @@ test('public design loads local Plex fonts and works in dark, light, and narrow 
   for (const path of ['/', '/inbox']) {
     await page.goto(path);
     await expect(page).toHaveURL(/\/login$/);
+    await expect(page).toHaveTitle('Sign in · Ravix');
   }
   await expect(page.getByRole('heading', { name: 'Sign in to Ravix' })).toBeVisible();
   await expect(page.locator('[data-phx-main]')).toHaveClass(/phx-connected/);
@@ -133,6 +134,7 @@ test('a first visit is walked through how it works, the agent, and GitHub', asyn
 
   // Nobody chose to be here, so this is where a first visit lands.
   await expect(page).toHaveURL(/\/welcome$/);
+  await expect(page).toHaveTitle('Welcome · Ravix');
   await expect(page.locator('[data-phx-main]')).toHaveClass(/phx-connected/);
   await expect(page.getByRole('heading', { name: /^Welcome to Ravix/ })).toBeVisible();
   for (const idea of ['A project is a repository.', 'Every project has a computer.', 'A project holds many conversations.', 'Invite teammates, and you are the one billed.']) {
@@ -143,6 +145,7 @@ test('a first visit is walked through how it works, the agent, and GitHub', asyn
 
   await page.getByRole('link', { name: 'Set up your agent', exact: true }).click();
   await expect(page).toHaveURL(/\/welcome\/agent$/);
+  await expect(page).toHaveTitle('Connect your agent · Ravix');
 
   // Codex on a ChatGPT subscription is a sign-in, not a paste: the page shows
   // the code the mock Fountain hands out and notices the approval by itself
@@ -180,6 +183,7 @@ test('a first visit is walked through how it works, the agent, and GitHub', asyn
   await page.getByLabel('Subscription token', { exact: true }).fill('sk-ant-oat01-mock');
   await page.getByRole('button', { name: 'Connect Claude Code', exact: true }).click();
   await expect(page).toHaveURL(/\/welcome\/github$/);
+  await expect(page).toHaveTitle('Connect GitHub · Ravix');
   expect(await page.content()).not.toContain('sk-ant-oat01-mock');
   await expect(page.getByRole('heading', { name: 'Connect GitHub' })).toBeVisible();
   await expect(page.locator('#github-connected, #github-none')).toBeVisible();
@@ -189,9 +193,11 @@ test('a first visit is walked through how it works, the agent, and GitHub', asyn
   // Coming back part way through carries on from here, not from the top.
   await page.goto('/');
   await expect(page).toHaveURL(/\/welcome\/github$/);
+  await expect(page).toHaveTitle('Connect GitHub · Ravix');
 
   await page.locator('#github-continue').click();
   await expect(page).toHaveURL(/\/welcome\/project$/);
+  await expect(page).toHaveTitle('Create your first project · Ravix');
   await expect(page.getByRole('heading', { name: 'Create your first project' })).toBeVisible();
   await accessible(page);
   await page.setViewportSize({ width: 390, height: 844 });
@@ -202,6 +208,7 @@ test('a first visit is walked through how it works, the agent, and GitHub', asyn
   // the tests after this one start from an empty workspace as they always did.
   await page.getByRole('button', { name: 'Skip setup', exact: true }).click();
   await expect(page).toHaveURL(/\/home$/);
+  await expect(page).toHaveTitle('Home · Ravix');
   await page.goto('/');
   await expect(page.getByRole('heading', { name: /Inbox/ })).toBeVisible();
 });
@@ -306,6 +313,45 @@ test('home quick start creates a scratch project and recent navigation survives 
   await expect(menu).toHaveAttribute('aria-expanded', 'false');
 });
 
+test('workspace titles follow links, reloads and browser history', async ({ page }) => {
+  await signIn(page);
+  for (const name of ['Home', 'Inbox', 'Schedules']) {
+    await page.getByRole('link', { name, exact: true }).first().click();
+    await expect(page).toHaveTitle(`${name} · Ravix`);
+    await page.reload();
+    await expect(page.locator('[data-phx-main]')).toHaveClass(/phx-connected/);
+    await expect(page).toHaveTitle(`${name} · Ravix`);
+  }
+  await expect(page.getByRole('button', { name: 'Refresh', exact: true })).toHaveAccessibleDescription(
+    'Refresh to see the latest run status and changes made in another tab.');
+  await page.goBack();
+  await expect(page).toHaveTitle('Inbox · Ravix');
+  await expect(page.getByRole('button', { name: 'Refresh', exact: true })).toHaveCount(0);
+});
+
+test('find a track focuses its search field and explains no matches', async ({ page }) => {
+  await signIn(page);
+  const open = page.getByRole('button', { name: 'Search', exact: true });
+  const dialog = page.getByRole('dialog', { name: 'Find a track', exact: true });
+  const query = dialog.getByLabel('Search projects and tracks');
+
+  await open.focus();
+  await open.press('Enter');
+  await expect(query).toBeFocused();
+  await page.keyboard.type('no-track-could-match-this-query');
+  await expect(dialog.getByRole('status')).toHaveText('No tracks match');
+  await expect(dialog.locator('a')).toHaveCount(0);
+  await expect(query).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(dialog).toHaveCount(0);
+  await expect(open).toBeFocused();
+
+  await open.click();
+  await expect(query).toBeFocused();
+  await dialog.getByRole('button', { name: 'Close', exact: true }).click();
+  await expect(open).toBeFocused();
+});
+
 test('keyboard users can resize panels and close dialogs with focus restored', async ({ page }) => {
   await signIn(page);
   const handle = page.getByRole('separator', { name: 'Sidebar width' });
@@ -363,6 +409,8 @@ test('project, track, streaming, image upload, reconnect, and revocation', async
   await page.getByRole('button', { name: 'Create track', exact: true }).click();
   const composer = page.getByRole('textbox', { name: 'Message', exact: true });
   await expect(composer).toBeEnabled({ timeout: 30_000 });
+  const selectedTrackTitle = await page.locator('.track-tabs [aria-current="page"]').getAttribute('title');
+  await expect(page).toHaveTitle(`${selectedTrackTitle} · Browser quality · Ravix`);
   // The composer enables once the conversation exists, before the opening
   // turn has made the worktree. A diff read then is honestly empty and the
   // panel does not poll, so wait for the turn to settle first.
@@ -637,19 +685,27 @@ test('a hard load paints the saved palette, never the default one first', async 
   await paintedOnly(page, 'hot-dog-stand');
 });
 
-test('help explains desktop connections and stays accessible on mobile', async ({ page }) => {
+test('help explains desktop connections and stays accessible on mobile', async ({ page, context }) => {
+  await context.grantPermissions(['clipboard-read', 'clipboard-write']);
   await signIn(page);
   const account = page.locator('#account-trigger');
   const help = page.getByRole('button', { name: 'Help', exact: true });
   await account.click();
   await help.click();
-  const dialog = page.getByRole('dialog', { name: 'Help · AI tools' });
+  const dialog = page.getByRole('dialog', { name: 'Help – AI tools' });
   await expect(dialog).toBeVisible();
   await expect(dialog.getByText(`claude mcp add --transport http ravix http://localhost:${process.env.BROWSER_PORT || 4103}/mcp`, { exact: true })).toBeVisible();
   await dialog.getByText('Drive tracks with an A2A client', { exact: true }).click();
   await expect(dialog.getByText(`http://localhost:${process.env.BROWSER_PORT || 4103}/.well-known/agent-card.json`, { exact: true })).toBeVisible();
   await dialog.getByText('Example JSON-RPC request', { exact: true }).click();
   await expect(dialog.locator('pre').filter({ hasText: 'SendMessage' })).toBeVisible();
+  for (const id of ['help-mcp-command', 'help-a2a-request']) {
+    const block = dialog.locator(`#${id}`);
+    const expected = await block.locator('code').textContent();
+    await block.getByRole('button', { name: /^Copy / }).click();
+    await expect(block.getByRole('status')).toHaveText('Copied');
+    expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(expected);
+  }
   await accessible(page);
   await capture(page, 'tooling-help');
   await page.keyboard.press('Escape');

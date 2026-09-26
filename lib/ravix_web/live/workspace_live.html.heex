@@ -523,7 +523,6 @@
             <h1>
               Inbox <span :if={@attention > 0} class="badge">{@attention}</span>
             </h1>
-            <span class="spacer"></span><button class="ghost" phx-click="refresh">Refresh</button>
           </div>
           <p>Replies and failed turns across all your projects.</p>
         </header>
@@ -628,7 +627,13 @@
         </form>
       </div>
     </.dialog>
-    <.dialog :if={@dialog == :search} id="search-dialog" title="Find a track" on_close="dismiss">
+    <.dialog
+      :if={@dialog == :search}
+      id="search-dialog"
+      title="Find a track"
+      on_close="dismiss"
+      initial_focus="#search-query"
+    >
       <form id="search-form" phx-change="search">
         <%!-- Every keystroke re-renders the list below it, which is every
           track of every project this person has. A pause is what somebody
@@ -639,18 +644,27 @@
           value={@query}
           label="Search projects and tracks"
           phx-debounce="150"
-          autofocus
         />
       </form>
-      <div :for={project <- @projects}>
+      <% results =
+        for project <- @projects,
+            tracks = Enum.filter(@tracks[project.id] || [], &matching?(&1, project, @query)),
+            tracks != [],
+            do: {project, tracks} %>
+      <p :if={results == []} role="status">No tracks match</p>
+      <section
+        :for={{project, tracks} <- results}
+        aria-labelledby={"search-project-#{project.id}"}
+      >
+        <h3 id={"search-project-#{project.id}"}><.project_name project={project} /></h3>
         <.link
-          :for={track <- Enum.filter(@tracks[project.id] || [], &matching?(&1, project, @query))}
+          :for={track <- tracks}
           patch={"/p/#{project.id}/t/#{track.id}"}
           class="workspace-track"
         >
-          <.project_name project={project} /> / {track.title}
+          {track.title}
         </.link>
-      </div>
+      </section>
     </.dialog>
     <.dialog
       :if={@dialog == :new_project}
@@ -822,7 +836,7 @@
         </article>
       </div>
     </.dialog>
-    <.dialog :if={@dialog == :help} id="help-dialog" title="Help · AI tools" on_close="dismiss">
+    <.dialog :if={@dialog == :help} id="help-dialog" title="Help – AI tools" on_close="dismiss">
       <button type="button" class="secondary" phx-click="dialog" phx-value-name="changes">What's new<span
         :if={@changes_unseen > 0}
         class="chip"

@@ -54,8 +54,15 @@ defmodule RavixWeb.ToolingOAuthController do
           })
 
         case CurrentUser.require_user(conn) do
-          {:ok, _user} -> render(conn, :consent, request: request, nonce: nonce)
-          _ -> redirect(conn, to: "/auth/github")
+          {:ok, _user} ->
+            render(conn, :consent,
+              request: request,
+              nonce: nonce,
+              page_title: "Connect an application · Ravix"
+            )
+
+          _ ->
+            redirect(conn, to: "/auth/github")
         end
 
       {:error, error} ->
@@ -76,8 +83,14 @@ defmodule RavixWeb.ToolingOAuthController do
 
   def connections(conn, _) do
     case CurrentUser.require_user(conn) do
-      {:ok, user} -> render(conn, :connections, connections: OAuth.connections(user))
-      _ -> redirect(conn, to: "/auth/github")
+      {:ok, user} ->
+        render(conn, :connections,
+          connections: OAuth.connections(user),
+          page_title: "Connected applications · Ravix"
+        )
+
+      _ ->
+        redirect(conn, to: "/auth/github")
     end
   end
 
