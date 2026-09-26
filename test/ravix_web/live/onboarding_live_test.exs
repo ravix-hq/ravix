@@ -9,6 +9,25 @@ defmodule RavixWeb.OnboardingLiveTest do
 
   setup :verify_on_exit!
 
+  test "each onboarding step has a title on arrival and navigation", %{conn: conn} do
+    github([])
+    conn = log_in_user(conn, fresh())
+    {:ok, view, _} = live(conn, "/welcome")
+
+    for {path, title} <- [
+          {"/welcome", "Welcome"},
+          {"/welcome/agent", "Connect your agent"},
+          {"/welcome/github", "Connect GitHub"},
+          {"/welcome/project", "Create your first project"}
+        ] do
+      {:ok, direct, _} = live(conn, path)
+      assert page_title(direct) == title <> " · Ravix"
+      render_patch(view, path)
+      render_async(view)
+      assert page_title(view) == title <> " · Ravix"
+    end
+  end
+
   defp fresh(attrs \\ []), do: insert_user(Keyword.merge([onboarded_at: nil], attrs))
 
   defp connected(attrs \\ []) do

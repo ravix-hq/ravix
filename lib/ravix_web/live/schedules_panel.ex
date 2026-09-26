@@ -103,9 +103,17 @@ defmodule RavixWeb.Live.SchedulesPanel do
       <header>
         <div class="row">
           <h1>Schedules</h1><span class="spacer"></span>
-          <button class="ghost" phx-click="refresh" phx-target={@myself}>Refresh</button>
+          <button
+            class="ghost"
+            phx-click="refresh"
+            phx-target={@myself}
+            aria-describedby="schedules-refresh-note"
+          >Refresh</button>
         </div>
         <p>Run a prompt on a schedule. Each run opens a fresh track in your project.</p>
+        <p id="schedules-refresh-note" class="dim">
+          Refresh to see the latest run status and changes made in another tab.
+        </p>
       </header>
       <p :if={@error} role="alert" class="schedule-error">{@error}</p>
       <div class="schedules-layout">

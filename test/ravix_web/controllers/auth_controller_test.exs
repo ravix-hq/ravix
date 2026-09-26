@@ -292,6 +292,7 @@ defmodule RavixWeb.AuthControllerTest do
         reject(&Ravix.People.claim_link/2)
 
         html = html_response(get(conn, "/j/link-token"), 200)
+        assert html =~ "Join an invitation · Ravix"
 
         # It says what is being joined, and who is asking.
         assert html =~ "Fix the bug"
@@ -324,6 +325,7 @@ defmodule RavixWeb.AuthControllerTest do
         end)
 
         html = html_response(get(conn, "/j/link-token"), 200)
+        assert html =~ "Join an invitation · Ravix"
         assert html =~ "Join a project"
         assert html =~ "acme"
         refute html =~ "Invited by"

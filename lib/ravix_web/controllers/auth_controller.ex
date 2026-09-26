@@ -146,8 +146,15 @@ defmodule RavixWeb.AuthController do
 
       user ->
         case link_target(token, user) do
-          {:ok, target} -> render(conn, :confirm, target: target, token: token)
-          :error -> conn |> put_status(:see_other) |> redirect(to: "/?error=bad_invite")
+          {:ok, target} ->
+            render(conn, :confirm,
+              target: target,
+              token: token,
+              page_title: "Join an invitation · Ravix"
+            )
+
+          :error ->
+            conn |> put_status(:see_other) |> redirect(to: "/?error=bad_invite")
         end
     end
   end

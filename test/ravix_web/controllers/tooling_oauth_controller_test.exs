@@ -28,6 +28,7 @@ defmodule RavixWeb.ToolingOAuthControllerTest do
     assert get_session(anonymous, :tooling_authorization).params == params
     signed_in = build_conn() |> log_in_user(user) |> get("/oauth/authorize", params)
     body = html_response(signed_in, 200)
+    assert body =~ "Connect an application · Ravix"
     assert body =~ "Allow access"
     assert body =~ "executable setup scripts"
     assert body =~ "127.0.0.1"
@@ -78,6 +79,7 @@ defmodule RavixWeb.ToolingOAuthControllerTest do
     {p, tokens, params} = principal(user)
     conn = log_in_user(conn, user)
     page = get(conn, "/settings/connections")
+    assert html_response(page, 200) =~ "Connected applications · Ravix"
     assert html_response(page, 200) =~ "Desktop test"
     assert html_response(page, 200) =~ "Disconnect"
 

@@ -40,6 +40,25 @@ defmodule RavixWeb.SchedulesLiveTest do
     assert Schedules.list(user) == []
   end
 
+  test "refresh explicitly retrieves changes made outside this page", %{conn: conn} do
+    user = insert_user()
+    project = insert_project(user: user)
+    {:ok, view, _} = live(log_in_user(conn, user), "/schedules")
+    assert has_element?(view, "#schedules-refresh-note", "latest run status")
+
+    {:ok, schedule} =
+      Schedules.create(user, project.id, %{
+        "name" => "Created elsewhere",
+        "prompt" => "Check tests",
+        "frequency" => "daily",
+        "time" => "09:00"
+      })
+
+    refute has_element?(view, "#schedule-#{schedule.id}")
+    view |> element("#schedules-panel button", "Refresh") |> render_click()
+    assert has_element?(view, "#schedule-#{schedule.id}", "Created elsewhere")
+  end
+
   test "expired session cannot create schedules", %{conn: conn} do
     user = insert_user()
     project = insert_project(user: user)

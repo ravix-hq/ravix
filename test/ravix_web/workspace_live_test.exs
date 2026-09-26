@@ -14,6 +14,50 @@ defmodule RavixWeb.WorkspaceLiveTest do
 
   setup :verify_on_exit!
 
+  test "page titles follow navigation and background rail updates", %{conn: conn} do
+    user = insert_user()
+    project = insert_project(user: user, name: "Title project")
+    track = insert_track(project: project, title: "Track title")
+    conn = log_in_user(conn, user)
+
+    routes = [
+      {"/home", "Home · Ravix"},
+      {"/", "Inbox · Ravix"},
+      {"/inbox", "Inbox · Ravix"},
+      {"/schedules", "Schedules · Ravix"},
+      {"/p/#{project.id}", "Title project · Ravix"},
+      {"/p/#{project.id}/t/#{track.id}", "Track title · Title project · Ravix"}
+    ]
+
+    {:ok, view, _} = live(conn, "/home")
+
+    for {path, title} <- routes do
+      {:ok, direct, _} = live(conn, path)
+      assert page_title(direct) == title
+      GenServer.stop(direct.pid)
+      render_patch(view, path)
+      assert page_title(view) == title
+      Hub.publish(project.id, :tracks)
+      render(view)
+      render_async(view, 5_000)
+      assert page_title(view) == title
+    end
+
+    Repo.update_all(from(t in Ravix.Tracks.Track, where: t.id == ^track.id),
+      set: [title: "Renamed track"]
+    )
+
+    Hub.publish(project.id, :turn, track_id: track.id)
+    render(view)
+    render_async(view, 5_000)
+    assert page_title(view) == "Renamed track · Title project · Ravix"
+  end
+
+  test "sign in has its own document title", %{conn: conn} do
+    {:ok, view, _} = live(conn, "/login")
+    assert page_title(view) == "Sign in · Ravix"
+  end
+
   test "inbox opens the unread non-default thread and clears all unread indicators", %{conn: conn} do
     user = insert_user()
     project = insert_project(user: user)
@@ -478,8 +522,10 @@ defmodule RavixWeb.WorkspaceLiveTest do
       {:ok, Enum.map(tracks, &struct!(&1, status: :ready, unread: false))}
     end)
 
-    view |> element("button", "Refresh") |> render_click()
-    # The refresh re-reads the rail in a task; the inbox is drawn from it.
+    refute has_element?(view, "button", "Refresh")
+    Hub.publish(project.id, :turn, track_id: hd(rows).id)
+    render(view)
+    # A project event updates the inbox without a manual refresh.
     render_async(view)
     refute has_element?(view, ".inbox-item")
     assert has_element?(view, ".inbox-empty", "You're all caught up")

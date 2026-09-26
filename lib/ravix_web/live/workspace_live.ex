@@ -181,12 +181,13 @@ defmodule RavixWeb.WorkspaceLive do
       |> select_notice_thread(track_id)
       |> assign(
         project: project,
-        page_title: if(project, do: project.display_name <> " · Ravix", else: "Ravix"),
         selected_plan_id: if(params["new"] != "plan", do: params["plan"]),
         new_plan: params["new"] == "plan",
         track_id: track_id,
         dialog: nil
       )
+
+    socket = assign_page_title(socket)
 
     if params["new"] == "track" && project && project.access != :tracks do
       open_dialog(socket, :new_track)
@@ -472,7 +473,10 @@ defmodule RavixWeb.WorkspaceLive do
       tracks = Map.put(socket.assigns.tracks, id, tracks)
 
       {:noreply,
-       socket |> assign(tracks: tracks, attention: attention_count(tracks)) |> announce(tracks)}
+       socket
+       |> assign(tracks: tracks, attention: attention_count(tracks))
+       |> assign_page_title()
+       |> announce(tracks)}
     else
       {:noreply, socket}
     end
@@ -663,6 +667,7 @@ defmodule RavixWeb.WorkspaceLive do
         rows = Enum.map(rows, &clear_thread_unread(&1, track_id, thread_id || track_id))
 
         tracks = Map.put(tracks, project_id, rows)
+
         socket |> assign(tracks: tracks, attention: attention_count(tracks)) |> announce(tracks)
 
       :error ->
@@ -776,7 +781,6 @@ defmodule RavixWeb.WorkspaceLive do
     socket
     |> assign(
       project: project || socket.assigns.project,
-      page_title: if(project, do: project.display_name <> " · Ravix", else: "Ravix"),
       rail_loaded: true,
       sections: sections,
       section_placements: placements,
@@ -784,6 +788,7 @@ defmodule RavixWeb.WorkspaceLive do
       tracks: tracks,
       attention: attention_count(tracks)
     )
+    |> assign_page_title()
     |> announce(tracks)
   end
 
@@ -792,6 +797,32 @@ defmodule RavixWeb.WorkspaceLive do
   end
 
   defp accessible_rows(_user, _project, rows), do: rows
+
+  # Use the scoped rail already held by the workspace, including after a
+  # background reload or rename, so the browser tab follows the visible page.
+  defp assign_page_title(%{assigns: %{project: nil, live_action: action}} = socket) do
+    title =
+      case action do
+        :projects -> "Home"
+        :schedules -> "Schedules"
+        :login -> "Sign in"
+        _ -> "Inbox"
+      end
+
+    assign(socket, page_title: title <> " · Ravix")
+  end
+
+  defp assign_page_title(%{assigns: assigns} = socket) do
+    project = assigns.project
+
+    title =
+      case Enum.find(assigns.tracks[project.id] || [], &(&1.id == assigns.track_id)) do
+        nil -> project.display_name
+        track -> track.title <> " · " <> project.display_name
+      end
+
+    assign(socket, page_title: title <> " · Ravix")
+  end
 
   defp select_notice_thread(
          %{assigns: %{notice_thread: {track_id, thread_id}, track_host: pid}} = socket,
