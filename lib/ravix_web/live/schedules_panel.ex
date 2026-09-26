@@ -14,6 +14,12 @@ defmodule RavixWeb.Live.SchedulesPanel do
   end
 
   @impl true
+  def handle_event("change", %{"schedule" => attrs}, socket) do
+    # The browser omits Day while it is hidden; keep the choice when switching back.
+    attrs = Map.put_new(attrs, "weekday", socket.assigns.form[:weekday].value)
+    {:noreply, assign(socket, form: to_form(attrs, as: :schedule))}
+  end
+
   def handle_event("save", %{"schedule" => attrs}, socket) do
     %{current_user: user, editing: editing} = socket.assigns
 
@@ -119,7 +125,13 @@ defmodule RavixWeb.Live.SchedulesPanel do
       <div class="schedules-layout">
         <section class="schedule-editor" aria-labelledby="schedule-form-title">
           <h2 id="schedule-form-title">{if @editing, do: "Edit schedule", else: "New schedule"}</h2>
-          <.form for={@form} id="schedule-form" phx-submit="save" phx-target={@myself}>
+          <.form
+            for={@form}
+            id="schedule-form"
+            phx-change="change"
+            phx-submit="save"
+            phx-target={@myself}
+          >
             <.input
               field={@form[:name]}
               label="Name"
@@ -153,9 +165,10 @@ defmodule RavixWeb.Live.SchedulesPanel do
             />
             <.input field={@form[:time]} type="time" label="Time (UTC)" required />
             <.input
+              :if={@form[:frequency].value in [:weekly, "weekly"]}
               field={@form[:weekday]}
               type="select"
-              label="Day (weekly schedules)"
+              label="Day"
               options={[
                 {"Monday", 1},
                 {"Tuesday", 2},

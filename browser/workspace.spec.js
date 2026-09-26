@@ -1035,3 +1035,26 @@ test('slow navigation and requests show feedback until their response arrives', 
   await expect(page.locator('#request-progress')).toBeHidden();
   await page.evaluate(() => window.liveSocket.disableLatencySim());
 });
+
+test('schedule Day appears only for weekly repetition without losing the draft', async ({ page }) => {
+  await signIn(page);
+  await page.goto('/schedules');
+  await expect(page.locator('[data-phx-main]')).toHaveClass(/phx-connected/);
+  const form = page.locator('#schedule-form');
+  const day = form.getByLabel('Day', { exact: true });
+  await expect(day).toHaveCount(0);
+  await form.getByLabel('Name', { exact: true }).fill('Weekly review');
+  await form.getByLabel('Prompt', { exact: true }).fill('Review recent changes');
+  await form.getByLabel('Repeat', { exact: true }).selectOption('weekly');
+  await expect(day).toBeVisible();
+  await day.selectOption('5');
+  for (const frequency of ['daily', 'hourly']) {
+    await form.getByLabel('Repeat', { exact: true }).selectOption(frequency);
+    await expect(day).toHaveCount(0);
+  }
+  await form.getByLabel('Repeat', { exact: true }).selectOption('weekly');
+  await expect(day).toHaveValue('5');
+  await expect(form.getByLabel('Name', { exact: true })).toHaveValue('Weekly review');
+  await expect(form.getByLabel('Prompt', { exact: true })).toHaveValue('Review recent changes');
+  await accessible(page);
+});
