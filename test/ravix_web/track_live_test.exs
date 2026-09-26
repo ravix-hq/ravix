@@ -2081,6 +2081,28 @@ defmodule RavixWeb.TrackLiveTest do
     )
   end
 
+  test "panel actions reveal the inspector from conversation and commands", ctx do
+    for view <- ["conversation", "terminal"] do
+      render_click(ctx.view, "narrow-view", %{name: view})
+      render_click(ctx.view, "panel", %{name: "preview"})
+      assert has_element?(ctx.view, "[data-narrow-view='files']")
+      assert has_element?(ctx.view, ".workspace-tabs button.selected[phx-value-name='preview']")
+      render_async(ctx.view, 1000)
+    end
+  end
+
+  test "unknown or missing narrow view names leave the page unchanged", ctx do
+    render_click(ctx.view, "narrow-view", %{name: "terminal"})
+
+    for params <- [%{name: "retired"}, %{name: nil}, %{}] do
+      render_click(ctx.view, "narrow-view", params)
+      assert has_element?(ctx.view, "[data-narrow-view='terminal']")
+    end
+
+    render_click(ctx.view, "narrow-view", %{name: "conversation"})
+    assert has_element?(ctx.view, "[data-narrow-view='conversation']")
+  end
+
   test "narrow views switch without discarding the conversation or dock", ctx do
     assert has_element?(ctx.view, "[data-narrow-view='conversation']")
     ctx.view |> element("[phx-click='narrow-view'][phx-value-name='files']") |> render_click()
