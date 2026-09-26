@@ -14,6 +14,37 @@ defmodule RavixWeb.WorkspaceLiveTest do
 
   setup :verify_on_exit!
 
+  test "mobile navigation marks only the current destination on every workspace route", %{
+    conn: conn
+  } do
+    user = insert_user()
+    project = insert_project(user: user)
+    track = insert_track(project: project)
+    conn = log_in_user(conn, user)
+    {:ok, view, _} = live(conn, "/home")
+
+    for {path, current} <- [
+          {"/home", "/home"},
+          {"/", "/inbox"},
+          {"/inbox", "/inbox"},
+          {"/schedules", nil},
+          {"/p/#{project.id}", nil},
+          {"/p/#{project.id}/t/#{track.id}", nil}
+        ] do
+      {:ok, direct, _} = live(conn, path)
+      render_patch(view, path)
+
+      for page <- [direct, view] do
+        for href <- ["/home", "/inbox"] do
+          assert has_element?(page, ".workspace-mobile-nav a[href='#{href}'][aria-current=page]") ==
+                   (href == current)
+        end
+      end
+
+      GenServer.stop(direct.pid)
+    end
+  end
+
   test "page titles follow navigation and background rail updates", %{conn: conn} do
     user = insert_user()
     project = insert_project(user: user, name: "Title project")

@@ -1318,8 +1318,10 @@ h4 { font-size: 12px; color: var(--dim); font-weight: 500; letter-spacing: 0; }
   .yard.forced .yard-close { display: inline-flex; }
   .yard-scrim { display: block; position: fixed; inset: 0; z-index: 29; background: var(--scrim); animation: fade 120ms ease; }
   .workspace-mobile-nav .yard-menu { display: inline-flex; align-items: center; gap: 4px; }
-  .workspace-mobile-nav { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; padding: 10px; border-bottom: 1px solid var(--line); }
-  .workspace-mobile-nav a { color: var(--ink); }
+  .workspace-mobile-nav { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; padding: 10px; border-bottom: 1px solid var(--line); }
+  .workspace-mobile-nav > :is(a, button) { display: inline-flex; align-items: center; padding: 6px 10px; border: 1px solid transparent; border-radius: var(--radius); color: var(--dim); white-space: nowrap; }
+  .workspace-mobile-nav a:hover { color: var(--ink); background: var(--surface-hover); }
+  .workspace-mobile-nav a[aria-current="page"] { color: var(--ink); background: var(--surface-active); border-color: var(--line-strong); font-weight: 600; }
   .crumbs { flex-wrap: wrap; row-gap: 6px; height: auto; min-height: 44px; padding: 8px 12px; }
   /* The actions stay on the title's line; the title and chips give way. */
   .track-crumbs { flex-wrap: nowrap; }

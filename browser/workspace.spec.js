@@ -344,10 +344,36 @@ test('workspace titles follow links, reloads and browser history', async ({ page
   await expect(page.getByRole('button', { name: 'Refresh', exact: true })).toHaveCount(0);
 });
 
+test('mobile navigation marks the current page and names Search consistently', async ({ page }) => {
+  await signIn(page);
+  await page.setViewportSize({ width: 500, height: 844 });
+  await page.goto('/home');
+  const nav = page.getByRole('navigation', { name: 'Workspace navigation', exact: true });
+  await expect(nav.getByRole('link', { name: 'Home', exact: true })).toHaveAttribute('aria-current', 'page');
+  await expect(nav.locator('[aria-current="page"]')).toHaveCount(1);
+  const gaps = await nav.evaluate(el => {
+    const boxes = Array.from(el.children, child => child.getBoundingClientRect());
+    return boxes.slice(1).map((box, i) => box.left - boxes[i].right);
+  });
+  expect(Math.max(...gaps) - Math.min(...gaps)).toBeLessThan(1);
+  await capture(page, 'mobile-nav-home-500');
+  await nav.getByRole('link', { name: 'Inbox', exact: true }).click();
+  await expect(nav.getByRole('link', { name: 'Inbox', exact: true })).toHaveAttribute('aria-current', 'page');
+  await expect(nav.locator('[aria-current="page"]')).toHaveCount(1);
+  await capture(page, 'mobile-nav-inbox-500');
+  await nav.getByRole('button', { name: 'Search', exact: true }).click();
+  await expect(page.getByRole('dialog', { name: 'Search', exact: true })).toBeVisible();
+  await expect(page.getByLabel('Search projects and tracks')).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(nav.getByRole('button', { name: 'Search', exact: true })).toBeFocused();
+  await nav.getByRole('button', { name: 'Menu', exact: true }).click();
+  await expect(page.locator('#yard').getByRole('button', { name: 'Search', exact: true })).toBeVisible();
+});
+
 test('find a track focuses its search field and explains no matches', async ({ page }) => {
   await signIn(page);
   const open = page.getByRole('button', { name: 'Search', exact: true });
-  const dialog = page.getByRole('dialog', { name: 'Find a track', exact: true });
+  const dialog = page.getByRole('dialog', { name: 'Search', exact: true });
   const query = dialog.getByLabel('Search projects and tracks');
 
   await open.focus();
