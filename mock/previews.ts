@@ -42,7 +42,12 @@ const server = Bun.serve<{ tcp?: Socket }>({ port: Number(process.env.MOCK_SPRIT
     if (match[2] === "exec") {
       const argv = url.searchParams.getAll("cmd");
       const logs = argv[0] === "tail" ? [...services.values()].find(s => argv.at(-1)?.includes(s.name))?.logs || "" : "";
-      return new Response(Buffer.concat([Buffer.from([1]), Buffer.from(logs), Buffer.from([3, 0])]));
+      const stats = argv[0] === "sh" && argv.at(-1)?.includes("/sys/fs/cgroup/cpu.stat");
+      const output = stats ? [
+        "t0=10", "t1=11", "cg0=0", "cg1=300000", "nproc=2", "cpumax=200000 100000",
+        "memcur=1108246528", "memmax=8589934592", "df=20971520 3344148 /",
+      ].join("\n") : logs;
+      return new Response(Buffer.concat([Buffer.from([1]), Buffer.from(output), Buffer.from([3, 0])]));
     }
     const key = `${match[1]}/${match[3]}`;
     let service = services.get(key);
