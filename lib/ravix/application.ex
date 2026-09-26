@@ -45,6 +45,9 @@ defmodule Ravix.Application do
         {Ravix.PromptQueue.Server, Application.get_env(:ravix, Ravix.PromptQueue.Server, [])},
         # One process per track preview, its registry, and the reconciler tick.
         Ravix.Previews.child_specs(),
+        {Ravix.Cluster.Singleton,
+         key: "schedules",
+         child: {Ravix.Schedules.Server, Application.get_env(:ravix, Ravix.Schedules.Server, [])}},
         # Start to serve requests, typically the last entry
         RavixWeb.Endpoint
       ]
