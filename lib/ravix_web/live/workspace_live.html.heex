@@ -439,6 +439,15 @@
         )}
       </div>
       <.live_component
+        :if={@project && is_nil(@track_id)}
+        module={RavixWeb.Live.AgentHealth}
+        id={"project-agent-health-#{@project.id}"}
+        current_user={@current_user}
+        session_hash={@session_hash}
+        project_id={@project.id}
+        refresh={@health_refresh}
+      />
+      <.live_component
         :if={@project && is_nil(@track_id) && @project.access != :tracks}
         module={RavixWeb.Live.PlansPanel}
         id={"plans-#{@project.id}"}
@@ -810,6 +819,7 @@
       <.live_component
         module={RavixWeb.Live.AgentPanel}
         id="agent-panel"
+        initial_agent={@reconnect_agent}
         current_user={@current_user}
         session_hash={@session_hash}
       />

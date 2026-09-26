@@ -245,6 +245,7 @@ defmodule RavixWeb.OnboardingLiveTest do
       {:ok, view, _} = live(log_in_user(conn, user), "/welcome/agent")
       render_async(view)
       view |> element("#remove-claude-subscription") |> render_click()
+      view |> element("#confirm-agent-disconnect") |> render_click()
       html = render_async(view)
 
       refute html =~ "Claude Code is connected with your subscription"

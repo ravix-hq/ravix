@@ -49,6 +49,8 @@ defmodule RavixWeb.WorkspaceLive do
       assign(socket,
         session_token: session["session_token"],
         github_available: Accounts.capabilities().github,
+        reconnect_agent: nil,
+        health_refresh: 0,
         projects: [],
         rail_loaded: false,
         rail_error: false,
@@ -667,11 +669,30 @@ defmodule RavixWeb.WorkspaceLive do
   # The account dialog connected or replaced what pays for this person's
   # agent. The person on the page is now out of date, and the dialog has
   # already said what replacing it means for open tracks.
+  def handle_info({:reconnect_agent, id}, socket) do
+    case Access.project_of(socket.assigns.current_user, id) do
+      {:ok, project} ->
+        agent =
+          Map.get(
+            %{"claude" => :claude, "claude-code" => :claude, "codex" => :codex},
+            project.runtime
+          )
+
+        {:noreply, assign(socket, dialog: :account, reconnect_agent: agent)}
+
+      _ ->
+        {:noreply, socket}
+    end
+  end
+
   def handle_info({:agent_connected, %Accounts.User{} = user, agent}, socket) do
     socket =
       if socket.assigns.dialog == :new_project,
         do: NewProject.connected(socket, user, agent),
         else: socket
+
+    if socket.assigns.track_host, do: send(socket.assigns.track_host, :refresh_agent_health)
+    socket = update(socket, :health_refresh, &(&1 + 1))
 
     default =
       if socket.assigns.current_user.agent != user.agent,
@@ -692,6 +713,9 @@ defmodule RavixWeb.WorkspaceLive do
        |> flash(:info, "New projects default to #{agent_name(user)}.")}
 
   def handle_info({:agent_disconnected, %Accounts.User{} = user, agent}, socket) do
+    if socket.assigns.track_host, do: send(socket.assigns.track_host, :refresh_agent_health)
+    socket = update(socket, :health_refresh, &(&1 + 1))
+
     {:noreply,
      socket
      |> assign(current_user: user)
@@ -1040,7 +1064,7 @@ defmodule RavixWeb.WorkspaceLive do
   defp open_dialog(socket, :people), do: assign(socket, dialog: :people)
 
   # The account dialog is the agent panel, which holds its own state too.
-  defp open_dialog(socket, :account), do: assign(socket, dialog: :account)
+  defp open_dialog(socket, :account), do: assign(socket, dialog: :account, reconnect_agent: nil)
   defp open_dialog(socket, :help), do: assign(socket, dialog: :help)
   defp open_dialog(socket, :changes), do: assign(socket, dialog: :changes)
 

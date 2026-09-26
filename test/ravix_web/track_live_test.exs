@@ -3,6 +3,7 @@ defmodule RavixWeb.TrackLiveTest do
   import Phoenix.LiveViewTest
   import Mimic
   alias Ravix.Accounts.Session
+  alias Ravix.Fountain.Error, as: FountainError
   alias Ravix.Fountain.{FakeTransport, Shapes}
   alias Ravix.Hub.Event
   alias Ravix.{People, Previews, PromptQueue, QueryCount, Repo, Terminal, Tracks, Vitals}
@@ -61,6 +62,114 @@ defmodule RavixWeb.TrackLiveTest do
     view = find_live_child(parent, "track-host")
     settle(view)
     %{conn: conn, parent: parent, view: view, user: user, project: project, track: track}
+  end
+
+  test "cached missing funding warns the owner but does not prevent an accepted send", ctx do
+    stub(Ravix.Accounts.Inference, :usable?, fn owner, runtime, opts ->
+      assert owner.id == ctx.user.id
+      assert runtime == ctx.project.runtime
+      assert opts == []
+      {:ok, false}
+    end)
+
+    send(ctx.view.pid, :refresh_agent_health)
+    settle(ctx.view)
+    assert has_element?(ctx.view, "#track-agent-health-banner", "Reconnect Claude Code")
+    refute has_element?(ctx.view, "#composer-form button[type=submit][disabled]")
+
+    expect(Tracks, :prompt, fn caller, id, %{prompt: "accepted"} ->
+      assert caller.id == ctx.user.id
+      assert id == ctx.track.id
+      {:ok, %{}}
+    end)
+
+    ctx.view |> form("#composer-form", text: "accepted") |> render_submit()
+    assert_push_event(ctx.view, "composer:clear", %{})
+    ctx.view |> element("#track-agent-health-banner button") |> render_click()
+    render(ctx.view)
+    render(ctx.parent)
+    assert has_element?(ctx.parent, "#account-dialog")
+    assert has_element?(ctx.parent, "#agent-claude[aria-pressed=true]")
+  end
+
+  for code <- ~w(chatgpt_grant_unusable inference_credential_unusable) do
+    @code code
+    test "turn refusal #{@code} uses the funding banner", ctx do
+      expect(Tracks, :prompt, fn _, _, _ ->
+        {:error,
+         %Ravix.Fountain.Error{status: 409, code: @code, message: "private provider detail"}}
+      end)
+
+      ctx.view |> form("#composer-form", text: "preserve my draft") |> render_submit()
+      settle(ctx.view)
+      assert has_element?(ctx.view, "#track-agent-health-banner", "Sending is paused")
+      refute render(ctx.view) =~ "private provider detail"
+      refute_push_event(ctx.view, "composer:clear", %{})
+    end
+  end
+
+  test "a queued credential refusal shows the same banner", ctx do
+    stub(PromptQueue, :list, fn _, _, _ ->
+      {:ok,
+       [
+         %QueuedPrompt{
+           id: "funding",
+           prompt: "saved",
+           image_count: 0,
+           author_login: ctx.user.login,
+           created_at: DateTime.utc_now(),
+           status: :failed,
+           error: FountainError.credential_message(),
+           can_cancel: true
+         }
+       ]}
+    end)
+
+    send(ctx.view.pid, :refresh)
+    settle(ctx.view)
+    assert has_element?(ctx.view, "#track-agent-health-banner", "Sending is paused")
+    assert has_element?(ctx.view, "[phx-value-id=funding]", "Retry")
+  end
+
+  test "a member sees the owner's funding status and cannot open a connect form", ctx do
+    guest = insert_user()
+    insert_track_member(ctx.track, guest)
+
+    stub(Ravix.Accounts.Inference, :usable?, fn owner, _, _ ->
+      assert owner.id == ctx.user.id
+      {:ok, false}
+    end)
+
+    {:ok, parent, _} =
+      live(log_in_user(build_conn(), guest), "/p/#{ctx.project.id}/t/#{ctx.track.id}")
+
+    view = find_live_child(parent, "track-host")
+    settle(view)
+    assert has_element?(view, "#track-agent-health-banner", "Ask #{ctx.user.login}")
+    refute has_element?(view, "#track-agent-health-banner button")
+    view |> with_target("#track-agent-health") |> render_click("reconnect")
+    render(view)
+    refute has_element?(parent, "#account-dialog")
+    send(parent.pid, {:reconnect_agent, ctx.project.id})
+    refute has_element?(parent, "#account-dialog")
+  end
+
+  test "unavailable status clears on reconnect and a provider outage stays advisory", ctx do
+    for result <- [{:ok, true}, {:error, :offline}] do
+      stub(Ravix.Accounts.Inference, :usable?, fn _, _, [] -> result end)
+      send(ctx.view.pid, :refresh_agent_health)
+      settle(ctx.view)
+      refute has_element?(ctx.view, "#track-agent-health-banner")
+      refute has_element?(ctx.view, "#composer-form button[type=submit][disabled]")
+    end
+  end
+
+  test "a revoked session cannot use the reconnect action", ctx do
+    assert has_element?(ctx.view, "#track-agent-health-banner button")
+    Repo.delete_all(Session)
+
+    assert {:error, {:redirect, %{to: "/login"}}} =
+             ctx.view |> element("#track-agent-health-banner button") |> render_click()
   end
 
   test "switching threads changes transcript, composer, and delivery without changing tracks",
@@ -2017,7 +2126,8 @@ defmodule RavixWeb.TrackLiveTest do
       )
 
     {_result, sources} = counted
-    refute "sessions" in sources
+    # The funding component rechecks its session before applying the async answer.
+    assert Enum.count(sources, &(&1 == "sessions")) == 1
   end
 
   # What one hub event costs the page, in queries, once it has settled.

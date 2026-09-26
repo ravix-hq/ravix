@@ -291,6 +291,18 @@ test('the account dialog is where the agent lives after the walkthrough', async 
   await expect(page.locator('#agent-codex-status')).toContainText('Default for new projects');
   await page.locator('#make-default-claude').click();
   await expect(page.locator('#agent-claude-status')).toContainText('Default for new projects');
+  const remove = page.locator('#remove-claude-subscription');
+  await expect(account.locator('[data-confirm]')).toHaveCount(0);
+  await remove.click();
+  const confirmation = page.getByRole('group', { name: 'Confirm agent removal' });
+  await expect(confirmation).toBeVisible();
+  await expect(page.locator('#confirm-agent-disconnect')).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(confirmation).toBeVisible();
+  await accessible(page);
+  await confirmation.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await expect(confirmation).toHaveCount(0);
+  await expect(remove).toBeFocused();
   await capture(page, 'account-dialog');
   await page.keyboard.press('Escape');
   await expect(page.getByRole('dialog', { name: 'Your account' })).toHaveCount(0);

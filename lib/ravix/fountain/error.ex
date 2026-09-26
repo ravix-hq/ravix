@@ -28,6 +28,17 @@ defmodule Ravix.Fountain.Error do
 
   @busy_codes ~w(sandbox_at_capacity conversation_busy)
 
+  @credential_codes ~w(chatgpt_grant_unusable inference_credential_unusable)
+
+  @doc "A refusal of the project owner's inference credentials."
+  @spec credential?(term()) :: boolean()
+  def credential?(%__MODULE__{code: code}), do: code in @credential_codes
+  def credential?(_), do: false
+
+  @doc "Safe persisted explanation for queued messages refused for credentials."
+  def credential_message,
+    do: "Agent connection unavailable. Reconnect the project owner's agent, then retry."
+
   @doc "The SDK's error as ours."
   @spec from_sdk(Fountain.Error.t()) :: t()
   def from_sdk(%Fountain.Error{} = error) do
