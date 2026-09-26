@@ -42,18 +42,16 @@ defmodule Ravix.Application do
         Ravix.GitHub.Cache,
         {Ravix.Memo, name: Ravix.GitHub.Cache.Checks},
         {Ravix.Memo, name: Ravix.GitHub.Reads},
-        # Accepted prompts awaiting delivery, swept on a timer and on the
-        # turn that frees a thread the queue is waiting on. The
-        # sweep is off under test (config/test.exs): a timer outside the SQL
-        # sandbox would race every test that owns a connection.
-        {Ravix.PromptQueue.Server, Application.get_env(:ravix, Ravix.PromptQueue.Server, [])},
         # One process per track preview, its registry, and the reconciler tick.
         Ravix.Previews.child_specs(),
         {Ravix.Cluster.Singleton,
          key: "schedules",
          child: {Ravix.Schedules.Server, Application.get_env(:ravix, Ravix.Schedules.Server, [])}},
         # Start to serve requests, typically the last entry
-        RavixWeb.Endpoint
+        RavixWeb.Endpoint,
+        # Stop claiming before draining the endpoint (20s). Queue shutdown is
+        # capped at 5s, leaving 5s of Render's 30s for the remaining children.
+        {Ravix.PromptQueue.Server, Application.get_env(:ravix, Ravix.PromptQueue.Server, [])}
       ]
       |> List.flatten()
 

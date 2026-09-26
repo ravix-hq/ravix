@@ -7,7 +7,10 @@ defmodule Ravix.PromptQueue.Server do
   Fountain whether the conversation is idle, refreshes the clone credential,
   and only then claims the row and POSTs it. A claim is taken immediately
   before the POST; after a crash or an ambiguous response the payload is
-  retained but never replayed blindly.
+  retained but never replayed blindly. The server serializes claims and POST
+  permission with shutdown; a draining instance returns preparers to queued,
+  allows POSTs four seconds to settle, then leaves ambiguous sends to recovery.
+  It stops before the endpoint, with an explicit five-second child budget.
 
   Sweeps are on a timer -- every thirty seconds while nothing waits, every
   two while something does, because an idle deployment sweeping a nearly
@@ -36,7 +39,7 @@ defmodule Ravix.PromptQueue.Server do
   idempotency key, and a POST Fountain is still working on may not have made
   its turn yet.
 
-  Recovery (`Ravix.Store.recover/0`) runs at the start of the first
+  Recovery (`Ravix.PromptQueue.Store.recover/0`) runs at the start of the first
   sweep rather than in `init/1`, so that starting the process touches no
   database; the first sweep is one interval after start. `tick/1` runs a
   sweep now and returns when it is done, which is what tests drive instead
@@ -49,7 +52,7 @@ defmodule Ravix.PromptQueue.Server do
   `:interval`).
   """
 
-  use GenServer
+  use GenServer, shutdown: 5_000
 
   require Logger
 
@@ -79,8 +82,8 @@ defmodule Ravix.PromptQueue.Server do
   @busy_interval 2_000
   # A per-head backstop, not a sweep deadline: the HTTP client defaults to
   # 60 seconds, but readiness/preview work may also take time. A task killed
-  # here cannot settle its claim. Store.recover waits six minutes from the
-  # claim and the next sweep before marking it unconfirmed, never replaying it.
+  # here cannot settle its claim. Store.recover detects departed owners or
+  # waits six minutes on a live owner, marking it unconfirmed, never replaying it.
   @delivery_timeout 5 * 60_000
 
   @ended "This conversation has ended. Add a new thread and copy this prompt there."
@@ -118,18 +121,24 @@ defmodule Ravix.PromptQueue.Server do
   @spec tick(GenServer.server()) :: :ok
   def tick(server \\ __MODULE__), do: GenServer.call(server, :tick, @delivery_timeout + 1_000)
 
-  @doc "Stop the worker. A sweep in progress finishes first."
+  @doc "Stop claiming, release preparers, and drain in-flight POSTs within the shutdown budget."
   @spec stop(GenServer.server()) :: :ok
-  def stop(server \\ __MODULE__), do: GenServer.stop(server)
+  def stop(server \\ __MODULE__), do: GenServer.stop(server, :shutdown)
 
   # ── callbacks ─────────────────────────────────────────────────────────
 
   @impl true
   def init(opts) do
+    Process.flag(:trap_exit, true)
+
     state = %{
       interval: Keyword.get(opts, :interval, @interval),
       busy_interval: Keyword.get(opts, :busy_interval, @busy_interval),
       following: MapSet.new(),
+      running: nil,
+      timer: nil,
+      callers: [],
+      claims: %{},
       # Nothing is known until the first sweep, and a restart is exactly when
       # something may be waiting: a prompt the instance that went away had
       # queued, or a claim `Store.recover/0` has to take back. So the first
@@ -141,10 +150,53 @@ defmodule Ravix.PromptQueue.Server do
   end
 
   @impl true
-  def handle_call(:tick, _from, state), do: {:reply, :ok, sweep(state)}
+  def handle_call(:tick, from, state) do
+    {:noreply, start_sweep(%{state | callers: [from | state.callers]})}
+  end
+
+  def handle_call({:heads, heads}, _from, state), do: {:reply, :ok, follow(state, heads)}
+
+  # Claim and POST permission are serialized with supervisor shutdown. Once
+  # terminate starts no worker can pass either gate, even if readiness finishes.
+  def handle_call({:claim, id, token}, {pid, _}, state) do
+    if Store.claim(id, token) do
+      claim = %{id: id, token: token, phase: :preparing, ref: Process.monitor(pid)}
+      {:reply, true, %{state | claims: Map.put(state.claims, pid, claim)}}
+    else
+      {:reply, false, state}
+    end
+  end
+
+  def handle_call({:post, token}, {pid, _}, state) do
+    case state.claims[pid] do
+      %{token: ^token} = claim ->
+        allowed = Store.begin_post(claim.id, token)
+        claim = if allowed, do: %{claim | phase: :posting}, else: claim
+        {:reply, allowed, %{state | claims: Map.put(state.claims, pid, claim)}}
+
+      _ ->
+        {:reply, false, state}
+    end
+  end
 
   @impl true
-  def handle_info(:tick, state), do: {:noreply, state |> sweep() |> schedule()}
+  def handle_info(:tick, state), do: {:noreply, start_sweep(state)}
+
+  def handle_info({ref, _result}, %{running: %{ref: ref}} = state) do
+    Process.demonitor(ref, [:flush])
+    {:noreply, finish_sweep(state)}
+  end
+
+  def handle_info({:DOWN, ref, :process, _pid, reason}, %{running: %{ref: ref}} = state) do
+    Logger.error("ravix: prompt sweep crashed: #{inspect(reason)}")
+    {:noreply, finish_sweep(state)}
+  end
+
+  def handle_info({:DOWN, _ref, :process, pid, _reason}, state) do
+    {claim, claims} = Map.pop(state.claims, pid)
+    release_prepared(claim)
+    {:noreply, %{state | claims: claims}}
+  end
 
   # A followed thread's transcript. A settled turn is the moment its
   # conversation can take the next prompt, so sweep then rather than wait out
@@ -153,24 +205,63 @@ defmodule Ravix.PromptQueue.Server do
   # the sweep is idempotent and already claims each row before it sends, so a
   # broadcast both instances hear still sends once.
   def handle_info({:transcript, _thread_id, %Event{} = event}, state) do
-    if Event.settles?(event), do: {:noreply, sweep(state)}, else: {:noreply, state}
+    if Event.settles?(event), do: {:noreply, start_sweep(state)}, else: {:noreply, state}
   end
 
   # A topic this server has just left can still have a message in flight, and
   # the sweep covers anything an event would have.
   def handle_info(_message, state), do: {:noreply, state}
 
+  @impl true
+  def terminate(_reason, state) do
+    # Kill preparers before releasing their fenced claims. POST workers may
+    # finish for four seconds; the child has five seconds including DB cleanup.
+    Enum.each(state.claims, fn {pid, claim} ->
+      if claim.phase == :preparing do
+        Process.exit(pid, :kill)
+        release_prepared(claim)
+      end
+    end)
+
+    if state.running do
+      Task.yield(state.running, 4_000) || Task.shutdown(state.running, :brutal_kill)
+    end
+
+    Enum.each(state.claims, fn {pid, _claim} -> Process.exit(pid, :kill) end)
+    Enum.each(state.callers, &GenServer.reply(&1, :ok))
+    :ok
+  end
+
+  defp release_prepared(%{phase: :preparing, id: id, token: token}),
+    do: Store.release_claim(id, token)
+
+  defp release_prepared(_claim), do: :ok
+
+  defp start_sweep(%{running: nil} = state) do
+    if state.timer, do: Process.cancel_timer(state.timer)
+    server = self()
+    task = Task.Supervisor.async_nolink(Ravix.TaskSupervisor, fn -> sweep(server) end)
+    %{state | running: task}
+  end
+
+  defp start_sweep(state), do: state
+
+  defp finish_sweep(state) do
+    Enum.each(state.callers, &GenServer.reply(&1, :ok))
+    schedule(%{state | running: nil, callers: []})
+  end
+
   defp schedule(%{interval: false} = state), do: state
 
   defp schedule(%{interval: interval, waiting?: waiting?} = state) do
     delay = if waiting?, do: min(interval, state.busy_interval), else: interval
-    Process.send_after(self(), :tick, delay)
-    state
+    if state.timer, do: Process.cancel_timer(state.timer)
+    %{state | timer: Process.send_after(self(), :tick, delay)}
   end
 
   # ── the sweep ─────────────────────────────────────────────────────────
 
-  defp sweep(state) do
+  defp sweep(server) do
     # Untraced (ADR 0004). This runs on every instance and almost always finds
     # nothing: `Store.recover/0` and `Store.heads/0` with no
     # parent span would be two root traces per sweep, tens of thousands of empty
@@ -182,31 +273,31 @@ defmodule Ravix.PromptQueue.Server do
       # -- killed for running long, or lost between the POST and the status
       # write -- and `:sending` is refused by both `cancel/3` and `retry/3`, so
       # nothing else would ever take it back. `Store.recover/0` only
-      # reclaims claims older than `claim_timeout_ms/0`, so a task that is still
-      # working is left alone.
+      # reclaims departed-node claims promptly, with the age limit as a backstop.
+      # POST permission is fenced in the database against a recovered claim.
       Store.recover()
       client = Fountain.client()
 
-      if Client.configured?(client), do: deliver_heads(client, state), else: state
+      if Client.configured?(client), do: deliver_heads(client, server), else: :ok
     end)
   rescue
     # Leave claims intact for explicit recovery, and retry untouched rows on
     # the next sweep. Never log prompt bodies or manufacture a successful send.
     error ->
       Logger.error("ravix: prompt queue sweep failed: #{Exception.message(error)}")
-      state
+      :ok
   end
 
-  defp deliver_heads(client, state) do
+  defp deliver_heads(client, server) do
     heads = Store.heads()
     # Before delivering, not after: a turn that settles while this sweep is
     # asking Fountain whether the conversation is busy would otherwise be
     # broadcast into a topic nobody here had joined yet, and the prompt would
     # wait out the timer for a turn that had already ended.
-    state = follow(state, heads)
+    :ok = GenServer.call(server, {:heads, heads})
 
     Ravix.TaskSupervisor
-    |> Task.Supervisor.async_stream_nolink(heads, &deliver(client, &1),
+    |> Task.Supervisor.async_stream_nolink(heads, &deliver(client, &1, server),
       ordered: false,
       timeout: @delivery_timeout,
       on_timeout: :kill_task
@@ -216,7 +307,7 @@ defmodule Ravix.PromptQueue.Server do
       {:exit, reason} -> Logger.error("ravix: prompt delivery crashed: #{inspect(reason)}")
     end)
 
-    state
+    :ok
   end
 
   # Which threads this server listens to, and whether anything is waiting at
@@ -251,7 +342,7 @@ defmodule Ravix.PromptQueue.Server do
 
   # ── one head ──────────────────────────────────────────────────────────
 
-  defp deliver(client, %Item{} = row) do
+  defp deliver(client, %Item{} = row, server) do
     # A trace root: a delivery is background work that nothing clicked, and this
     # task's context is fresh, so the sweep's suppression does not reach it. One
     # trace per prompt actually delivered is a volume worth paying for, which
@@ -260,7 +351,7 @@ defmodule Ravix.PromptQueue.Server do
       "prompt_queue.deliver",
       %{"ravix.track_id" => row.track_id, "ravix.queue_item_status" => row.status},
       fn ->
-        outcome = outcome(client, row)
+        outcome = outcome(client, row, server)
 
         # `:ok`, `:held`, `:waiting`, `:lost_claim`, `:confirmed` or
         # `:not_arrived` -- never a tagged error, so
@@ -276,26 +367,26 @@ defmodule Ravix.PromptQueue.Server do
 
   # Cancelled when the sender may not send any more; otherwise what the row's
   # status calls for, on the track and project the access check loaded.
-  defp outcome(client, row) do
+  defp outcome(client, row, server) do
     case access(row) do
       :revoked -> cancel(row)
-      {:ok, track, project} -> deliver(client, row, track, project)
+      {:ok, track, project} -> deliver(client, row, track, project, server)
     end
   end
 
-  defp deliver(client, row, track, project) do
+  defp deliver(client, row, track, project, server) do
     cond do
       unchecked?(row) -> confirm(client, row, track, project)
       row.status != :queued -> :held
-      true -> deliver_queued(client, row, track, project)
+      true -> deliver_queued(client, row, track, project, server)
     end
   end
 
   # `track` and `project` are the rows `access/1` loaded to decide the sender
   # may send: what to send it to, without a second read of either.
-  defp deliver_queued(client, row, track, project) do
+  defp deliver_queued(client, row, track, project, server) do
     case readiness(client, track, project, row) do
-      :ready -> claim_and_send(client, row, track, project)
+      :ready -> claim_and_send(client, row, track, project, server)
       :busy -> :waiting
       {:ended, message} -> Store.set_status(row.id, :failed, message)
       :unavailable -> hold(row)
@@ -420,18 +511,20 @@ defmodule Ravix.PromptQueue.Server do
   end
 
   # Membership and cancellation may change during the network calls above.
-  defp claim_and_send(client, row, track, project) do
+  defp claim_and_send(client, row, track, project, server) do
+    row = %{row | claim_token: Ecto.UUID.generate()}
+
     cond do
       not authorized?(row) -> cancel(row)
-      not Store.claim(row.id) -> :lost_claim
-      true -> send_claimed(client, row, track, project)
+      not GenServer.call(server, {:claim, row.id, row.claim_token}) -> :lost_claim
+      true -> send_claimed(client, row, track, project, server)
     end
   end
 
-  defp send_claimed(client, row, track, project) do
+  defp send_claimed(client, row, track, project, server) do
     outcome =
       try do
-        post(client, row, track, project)
+        post(client, row, track, project, server)
       rescue
         error -> {:error, {:crashed, error}}
       catch
@@ -443,18 +536,27 @@ defmodule Ravix.PromptQueue.Server do
 
   # Re-read rather than taken from `row`: the sweep picked that up before the
   # network calls above, and a cancellation since then has released the body.
-  defp post(client, row, track, project) do
+  defp post(client, row, track, project, server) do
     body = row.id |> Store.get() |> Map.fetch!(:body) |> Body.decode()
     instructions = Ravix.Previews.prepare_agent_preview(row)
 
     if authorized?(row) do
       prompt = Body.in_thread(body.prompt, row, track)
       text = compose(instructions, authored(row, track, project, prompt))
-      Fountain.prompt(client, track.conversation_id, text, body.images, client_request_id: row.id)
+
+      if GenServer.call(server, {:post, row.claim_token}) do
+        Fountain.prompt(client, track.conversation_id, text, body.images,
+          client_request_id: row.id
+        )
+      else
+        :lost_claim
+      end
     else
       :revoked
     end
   end
+
+  defp settle(:lost_claim, _row, _track, _project), do: :lost_claim
 
   defp settle(:ok, row, track, project) do
     Store.mark_delivered(row.id)

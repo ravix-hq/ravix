@@ -62,9 +62,9 @@ projects:
             preDeployCommand: /app/bin/migrate
 
             # The drain window: Render waits this long after SIGTERM before killing the
-            # container. It has to exceed the endpoint's own `shutdown_timeout` (20s, in
-            # config/runtime.exs) or the connections that window exists to protect are
-            # dropped anyway. Render's own maximum is 300.
+            # container. The queue stops first (5s), then the endpoint drains (20s,
+            # config/runtime.exs), leaving 5s for other children. Render's maximum
+            # is 300; a mid-POST timeout remains ambiguous and is recovered safely.
             maxShutdownDelaySeconds: 30
             # Deploy a commit to main only once CI (.github/workflows/ci.yml) is green.
             autoDeployTrigger: checksPass
