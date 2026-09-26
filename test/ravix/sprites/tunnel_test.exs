@@ -1,5 +1,7 @@
 defmodule Ravix.Sprites.TunnelTest do
-  use ExUnit.Case, async: true
+  # Keep the real-socket 200 ms handshake tests independent of concurrent
+  # coverage work, so they time out in the protocol phase under test.
+  use ExUnit.Case, async: false
 
   alias Ravix.Sprites.Error
   alias Ravix.Sprites.Tunnel
