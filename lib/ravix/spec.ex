@@ -158,9 +158,17 @@ defmodule Ravix.Spec do
 
   The fallbacks matter more than they look. A repository with no commits has
   no ref to branch from; a directory left behind by a track that was closed
-  badly will refuse the add. Both are ordinary, and a track that dies at
-  `git worktree add` is a track a person cannot use at all, so it degrades
-  to a plain directory and says which one it got.
+  badly will refuse the add. A track that dies at `git worktree add` is a
+  track a person cannot use at all, so it degrades to a plain directory. That
+  is a fault rather than an outcome, though: it leaves the track with no
+  branch, so the reply leads with `error:` and git's own message, where a
+  person will see it.
+
+  The fetches ask for escalation up front. Fountain makes the shared clone
+  writable inside codex's sandbox, but the sandbox still has no network, and
+  codex will not ask for it on its own; a fetch tried inside the sandbox
+  first just fails. Escalating keeps codex's approvals on, which is the point
+  of not running the whole agent with full access.
 
   The two shapes are a project with a clone and one without, which is the
   `Project.repo_path/1` question rather than anything a caller has to work
@@ -202,7 +210,10 @@ defmodule Ravix.Spec do
         "hold a branch without disturbing the tracks already running:",
         "",
         "  cd #{repo_path}",
-        "  git fetch origin --prune"
+        "  git fetch origin --prune",
+        "",
+        "The sandbox has no network and will not ask for it. Run every `git fetch` in",
+        "this turn with escalated permissions, outside the sandbox, on the first attempt."
       ] ++
         cut_lines(origin, dir, branch) ++
         [
@@ -212,9 +223,10 @@ defmodule Ravix.Spec do
         issue_lines(origin) ++
         [
           "",
-          "Reply with exactly one line: the working directory and the branch it is on, or a",
-          "plain directory and why the worktree could not be made. No preamble, no summary,",
-          "no next steps, no offer to begin."
+          "Reply with exactly one line: the working directory and the branch it is on. If",
+          "the worktree could not be made, that is a fault, not a normal outcome: reply",
+          "`error:` followed by the plain directory and git's error message. No preamble,",
+          "no summary, no next steps, no offer to begin."
         ],
       "\n"
     )
@@ -247,7 +259,7 @@ defmodule Ravix.Spec do
       "",
       "Cut a new branch `#{branch}` from `origin/#{base}`:",
       "",
-      "  git worktree add #{dir} -b #{shell_ref(branch)} #{shell_ref("origin/#{base}")} 2>/dev/null \\",
+      "  git worktree add #{dir} -b #{shell_ref(branch)} #{shell_ref("origin/#{base}")} \\",
       "    || mkdir -p #{dir}"
     ]
   end

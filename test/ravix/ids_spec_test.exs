@@ -173,6 +173,10 @@ defmodule Ravix.IdsSpecTest do
                "  git worktree add /home/sprite/work/s -b me/s-1 origin/main 2>/dev/null \\"
 
       assert fresh =~ "    || mkdir -p /home/sprite/work/s"
+      assert fresh =~ "  git fetch origin --prune\n"
+      assert fresh =~ "Run every `git fetch` in\nthis turn with escalated permissions"
+      assert fresh =~ "`error:` followed by the plain directory and git's error message"
+      refute blank =~ "escalated"
 
       existing =
         Spec.open_track_prompt(
@@ -185,6 +189,9 @@ defmodule Ravix.IdsSpecTest do
       assert existing =~ "Cut a new branch `me/s-1` from `origin/feature/x`:"
       refute existing =~ "git worktree add /home/sprite/work/s feature/x"
 
+      assert existing =~
+               "  git worktree add /home/sprite/work/s -b me/s-1 origin/feature/x \\\n    || mkdir -p"
+
       pr =
         Spec.open_track_prompt(
           project(repo_full_name: "acme/r"),
@@ -196,6 +203,7 @@ defmodule Ravix.IdsSpecTest do
       assert pr =~ "This track continues pull request #7."
 
       assert pr =~ "  git fetch origin 'pull/7/head:me/s-1' 2>/dev/null \\"
+      assert pr =~ "escalated permissions"
       assert pr =~ "    || git worktree add /home/sprite/work/s -b me/s-1 HEAD"
 
       issue =
