@@ -735,35 +735,56 @@ defmodule RavixWeb.WorkspaceLive do
 
   # Reads only, so that it can run in a task. A project's tracks that cannot
   # be read are an empty group rather than a missing key, which is what keeps
-  # the rail drawing the project.
+  # the rail drawing the project. Each project gets a bounded worker and its
+  # own deadline. Ordered results keep failures paired with their project;
+  # neither a timeout nor a crashed worker can take down the complete rail.
   defp read_rail(user) do
-    projects = Projects.list(user)
+    projects = Projects.list(user, include_machine: false)
 
-    tracks =
-      Map.new(projects, fn p ->
-        case Tracks.list(user, p.id) do
-          {:ok, tracks} -> {p.id, tracks}
-          _ -> {p.id, []}
-        end
+    groups =
+      Ravix.TaskSupervisor
+      |> Task.Supervisor.async_stream_nolink(projects, &read_project(user, &1),
+        max_concurrency: 8,
+        timeout: 5_000,
+        on_timeout: :kill_task,
+        ordered: true
+      )
+      |> Enum.zip(projects)
+      |> Enum.map(fn
+        {{:ok, {:ok, project, tracks}}, _} -> {project, tracks}
+        {_, project} -> {project, []}
       end)
 
-    {projects, tracks}
+    {Enum.map(groups, &elem(&1, 0)),
+     Map.new(groups, fn {project, tracks} -> {project.id, tracks} end)}
+  end
+
+  # Tracks refreshes the conversation memo. Read the machine state from that
+  # same answer inside the worker, so even a cold memo stays within its budget.
+  defp read_project(user, project) do
+    with {:ok, tracks} <- Tracks.list(user, project.id),
+         {:ok, project} <- Projects.get(user, project.id) do
+      {:ok, project, tracks}
+    end
   end
 
   # Subscribing is this process's to do --- `Phoenix.PubSub` registers the
   # caller --- so it happens here rather than beside the reads above.
-  defp apply_rail(socket, {_projects, tracks}) do
+  defp apply_rail(socket, {loaded_projects, tracks}) do
     # The session hook runs before handle_async. Membership may also have
     # changed while Fountain was answering, before this page subscribed.
-    # Re-read the scoped project list without fetching conversations again.
-    projects = Projects.list(socket.assigns.current_user)
+    # This authorization recheck must not restart timed-out provider reads.
+    loaded = Map.new(loaded_projects, &{&1.id, &1})
+
+    projects =
+      socket.assigns.current_user
+      |> Projects.list(include_machine: false)
+      |> Enum.map(&%{&1 | machine: Map.get(loaded, &1.id, &1).machine})
 
     tracks =
       Map.new(projects, fn project ->
         rows = Map.get(tracks, project.id, [])
-
         rows = accessible_rows(socket.assigns.current_user, project, rows)
-
         {project.id, rows}
       end)
 
