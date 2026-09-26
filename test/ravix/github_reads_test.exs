@@ -70,12 +70,12 @@ defmodule Ravix.GitHubReadsTest do
     ])
 
     tasks = for _ <- 1..12, do: Task.async(fn -> GitHub.repositories(app, "first", 1) end)
-    assert_receive {:reading, reader}
+    assert_receive {:reading, reader}, 1_000
     send(reader, :release)
     assert Enum.all?(Enum.map(tasks, &Task.await/1), &match?({:ok, [_]}, &1))
     assert Fake.request_count() == 1
     other = Task.async(fn -> GitHub.repositories(app, "second", 1) end)
-    assert_receive {:reading, reader}
+    assert_receive {:reading, reader}, 1_000
     send(reader, :release)
     assert {:ok, [_]} = Task.await(other)
     assert Fake.request_count() == 1
