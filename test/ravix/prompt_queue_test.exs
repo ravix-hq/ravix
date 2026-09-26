@@ -811,7 +811,16 @@ defmodule Ravix.PromptQueueTest do
     # of the two the planner picks is a matter of the statistics of the
     # moment. What the plan must not show is the whole table.
     assert plan(fn -> PromptQueue.Store.heads() end) =~ ~r/prompt_queue_(thread|live)_heads/
-    assert plan(fn -> PromptQueue.Store.recover() end) =~ "prompt_queue_sending_claims"
+
+    # The recovery read filters `claimed_at IS NULL OR claimed_at < $1`, which
+    # no single btree scan can take as its condition, so every partial index
+    # whose predicate covers `sending` rows costs the planner the same and the
+    # tie is broken by whatever the index files look like at the time. Locally,
+    # after enough rolled-back sandbox inserts, that is `prompt_queue_thread_heads`.
+    # Any of them reads only live rows; the whole table is what must not appear.
+    recover = plan(fn -> PromptQueue.Store.recover() end)
+    assert recover =~ ~r/prompt_queue_(sending_claims|thread_heads|live_heads)/
+    refute recover =~ "Seq Scan"
   end
 
   # The plan Postgres has for the first query `fun` runs, with its parameters.
