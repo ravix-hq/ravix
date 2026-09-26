@@ -1416,6 +1416,128 @@ defmodule RavixWeb.TrackLiveTest do
     refute has_element?(ctx.view, "#transcript-turns script")
   end
 
+  test "a turn's work folds into one line above the answer it led to", ctx do
+    update = fn data ->
+      Jason.encode!(%{jsonrpc: "2.0", method: "session/update", params: %{update: data}})
+    end
+
+    text = fn kind, body -> %{sessionUpdate: kind, content: %{type: "text", text: body}} end
+
+    frames = [
+      text.("agent_thought_chunk", "Considering the change"),
+      %{
+        sessionUpdate: "tool_call",
+        toolCallId: "ls",
+        title: "git ls-remote origin HEAD",
+        kind: "execute",
+        rawInput: %{command: "git ls-remote origin HEAD", cwd: "/home/sprite/work/track"}
+      },
+      %{sessionUpdate: "tool_call_update", toolCallId: "ls", status: "completed"},
+      text.("agent_message_chunk", "Checking the remote next"),
+      %{
+        sessionUpdate: "tool_call",
+        toolCallId: "test",
+        title: "Run tests",
+        kind: "execute",
+        rawInput: %{command: "mix test", cwd: "/home/sprite/work/track"}
+      },
+      %{sessionUpdate: "tool_call_update", toolCallId: "test", status: "failed"},
+      text.("agent_message_chunk", "The answer")
+    ]
+
+    events =
+      frames
+      |> Enum.with_index(1)
+      |> Enum.map(fn {data, id} ->
+        %{
+          "id" => id,
+          "turn_id" => "turn",
+          "kind" => "output",
+          "stream" => "acp",
+          "data" => update.(data)
+        }
+      end)
+
+    page = Transcript.page([opened(0, "turn", "User prompt") | events], "claude")
+    stub(Tracks, :events, fn _, _, _thread_opts -> {:ok, page} end)
+    render_click(ctx.view, "retry-load")
+    render_async(ctx.view)
+
+    assert has_element?(
+             ctx.view,
+             "#turns-turn .workspace-work > summary",
+             "2 tool calls, 1 message, 1 thought"
+           )
+
+    assert has_element?(ctx.view, "#turns-turn .workspace-work > summary .tool-error", "1 failed")
+    assert has_element?(ctx.view, "#turns-turn .workspace-work-body .md", "Checking the remote")
+    refute has_element?(ctx.view, "#turns-turn .workspace-work", "The answer")
+    assert has_element?(ctx.view, "#turns-turn .agent-terminal-output > div > .md", "The answer")
+
+    # A command the title already names is not repeated, the working
+    # directory stays in the expanded arguments, and success needs no chip.
+    refute has_element?(ctx.view, "#turns-turn .tool-summary", "git ls-remote")
+    assert has_element?(ctx.view, "#turns-turn .tool-summary", "mix test")
+    refute render(ctx.view) =~ "cwd="
+    refute has_element?(ctx.view, "#turns-turn .workspace-tool .chip", "done")
+    assert has_element?(ctx.view, "#turns-turn .workspace-tool .chip.tool-error", "error")
+
+    # While a call runs, the folded line says which.
+    send(
+      ctx.view.pid,
+      {:transcript, ctx.track.id,
+       %{
+         "id" => 20,
+         "turn_id" => "turn",
+         "kind" => "output",
+         "stream" => "acp",
+         "data" =>
+           update.(%{
+             sessionUpdate: "tool_call",
+             toolCallId: "build",
+             title: "mix compile",
+             kind: "execute",
+             rawInput: %{command: "mix compile"}
+           })
+       }}
+    )
+
+    drawn(ctx.view)
+    assert has_element?(ctx.view, "#turns-turn .workspace-work .work-now", "mix compile")
+    assert has_element?(ctx.view, "#turns-turn .workspace-work > summary", "3 tool calls")
+    assert has_element?(ctx.view, "#turns-turn .workspace-work-body .md", "The answer")
+  end
+
+  test "a turn with no tool calls or thoughts has nothing to fold", ctx do
+    data =
+      Jason.encode!(%{
+        jsonrpc: "2.0",
+        method: "session/update",
+        params: %{
+          update: %{
+            sessionUpdate: "agent_message_chunk",
+            content: %{type: "text", text: "Just an answer"}
+          }
+        }
+      })
+
+    page =
+      Transcript.page(
+        [
+          opened(0, "turn", "Hi"),
+          %{"id" => 1, "turn_id" => "turn", "kind" => "output", "stream" => "acp", "data" => data}
+        ],
+        "claude"
+      )
+
+    stub(Tracks, :events, fn _, _, _thread_opts -> {:ok, page} end)
+    render_click(ctx.view, "retry-load")
+    render_async(ctx.view)
+
+    assert has_element?(ctx.view, "#turns-turn .md", "Just an answer")
+    refute has_element?(ctx.view, "#turns-turn .workspace-work")
+  end
+
   test "a refresh leaves the page answering while the provider is thinking", ctx do
     # `Ravix.Tracks.get/2` is two Fountain round trips, and the page runs it
     # on news it did not ask for: a hub event, a stage event on the transcript,

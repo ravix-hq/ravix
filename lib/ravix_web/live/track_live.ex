@@ -1371,6 +1371,109 @@ defmodule RavixWeb.TrackLive do
   defp rendered(cache, %TranscriptBlock.Thinking{body: body}), do: Map.get(cache, body)
   defp rendered(_cache, _block), do: nil
 
+  # A turn reads as its answer, with the work that led there folded into one
+  # line above it. Everything up to the last tool call or thought is that
+  # work, including the running commentary between calls; whatever follows
+  # it is the answer and stays open. A plan or a failure is never folded
+  # away, since each is news in its own right, so it is drawn after the fold
+  # in the order it arrived.
+  defp segments(blocks) do
+    case last_work_index(blocks) do
+      nil ->
+        Enum.map(blocks, &{:block, &1})
+
+      index ->
+        {head, answer} = Enum.split(blocks, index + 1)
+        {work, kept} = Enum.split_with(head, &folds?/1)
+        [{:work, work} | Enum.map(kept ++ answer, &{:block, &1})]
+    end
+  end
+
+  defp last_work_index(blocks) do
+    blocks
+    |> Enum.with_index()
+    |> Enum.reduce(nil, fn {block, index}, found -> if work?(block), do: index, else: found end)
+  end
+
+  defp work?(%TranscriptBlock.Tool{}), do: true
+  defp work?(%TranscriptBlock.Thinking{}), do: true
+  defp work?(_block), do: false
+
+  defp folds?(%TranscriptBlock.Plan{}), do: false
+  defp folds?(%TranscriptBlock.Failure{}), do: false
+  defp folds?(_block), do: true
+
+  attr :blocks, :list, required: true
+  attr :rendered, :map, required: true
+
+  # `open` is the reader's: the server never sets it, and ignoring it keeps a
+  # patch to a live turn from closing the fold somebody just opened.
+  defp work(assigns) do
+    tools = for %TranscriptBlock.Tool{} = tool <- assigns.blocks, do: tool
+
+    assigns =
+      assign(assigns,
+        label: work_label(assigns.blocks, length(tools)),
+        failed: Enum.count(tools, &(&1.status == :error)),
+        now: tools |> Enum.reverse() |> Enum.find(&(&1.status == :running))
+      )
+
+    ~H"""
+    <details class="workspace-work" phx-mounted={JS.ignore_attributes("open")}>
+      <summary>
+        <span>{@label}</span>
+        <span :if={@failed > 0} class="chip tool-error">{@failed} failed</span>
+        <span :if={@now} class="work-now">{@now.name}</span>
+      </summary>
+      <div class="workspace-work-body">
+        <div :for={block <- @blocks}>
+          <.block block={block} html={rendered(@rendered, block)} />
+        </div>
+      </div>
+    </details>
+    """
+  end
+
+  defp work_label(blocks, tools) do
+    [
+      counted(tools, "tool call"),
+      counted(Enum.count(blocks, &match?(%TranscriptBlock.Text{}, &1)), "message"),
+      counted(Enum.count(blocks, &match?(%TranscriptBlock.Thinking{}, &1)), "thought")
+    ]
+    |> Enum.reject(&is_nil/1)
+    |> Enum.join(", ")
+  end
+
+  defp counted(0, _noun), do: nil
+  defp counted(1, noun), do: "1 #{noun}"
+  defp counted(n, noun), do: "#{n} #{noun}s"
+
+  # What a call was run on, when its name does not already say so. An
+  # adapter commonly titles a shell call with the command itself, and the
+  # summary the ACP library builds is every argument as `key=value`, so the
+  # row used to read the command twice and then the working directory. The
+  # arguments are all in the expanded body; the row names one of them.
+  @primary_inputs ~w(command cmd file_path path pattern query url)
+
+  defp tool_summary(%TranscriptBlock.Tool{name: name, detail: detail}) do
+    candidate =
+      List.first(detail.paths) ||
+        Enum.find_value(@primary_inputs, fn key ->
+          case detail.input[key] do
+            value when is_binary(value) and value != "" -> value
+            _ -> nil
+          end
+        end)
+
+    if candidate && !names?(name || "", candidate), do: candidate
+  end
+
+  # A title may be the command cut short with an ellipsis.
+  defp names?(name, candidate) do
+    stem = name |> String.trim_trailing("…") |> String.trim_trailing("...")
+    String.contains?(name, candidate) or (stem != "" and String.starts_with?(candidate, stem))
+  end
+
   # One head per block struct, rather than five `:if` comparisons against a
   # `:kind` field the blocks no longer carry. A block shape added to
   # `Ravix.Tracks.Transcript.Block` and not drawn here is a
@@ -1410,10 +1513,14 @@ defmodule RavixWeb.TrackLive do
   end
 
   defp block(%{block: %TranscriptBlock.Tool{}} = assigns) do
+    assigns = assign(assigns, :summary, tool_summary(assigns.block))
+
     ~H"""
     <details class="workspace-tool">
       <summary>
-        <span class="chip">{@block.status}</span> {@block.name} {@block.summary}
+        <span :if={@block.status != :done} class={"chip tool-#{@block.status}"}>{@block.status}</span>
+        {@block.name}
+        <span :if={@summary} class="tool-summary">{@summary}</span>
       </summary>
       <pre :if={@block.detail.input != %{}}>{Jason.encode!(@block.detail.input, pretty: true)}</pre>
       <p :for={path <- @block.detail.paths}><code>{path}</code></p>

@@ -426,7 +426,7 @@ test('project, track, streaming, image upload, reconnect, and revocation', async
   // never arrived. It reaches the live page on the turn's opening event, which
   // the follower reads back from the feed because the stream never carries it.
   await expect(page.locator('#transcript-turns .said .workspace-prompt').filter({ hasText: 'Explain this project for the browser smoke test' })).toHaveCount(1);
-  await expect(page.locator('.workspace-turn').filter({ hasText: 'Explain this project for the browser smoke test' }).locator('.md')).toContainText('There is one TODO worth doing here');
+  await expect(page.locator('.workspace-turn').filter({ hasText: 'Explain this project for the browser smoke test' }).locator('.agent-terminal-output > div > .md')).toContainText('There is one TODO worth doing here');
   // The agent's checklist, as it last stood: one plan, both lines, the first done.
   await expect(page.locator('.workspace-plan')).toHaveCount(1);
   await expect(page.locator('.workspace-plan li.plan-completed')).toContainText('Look for open TODOs');
@@ -466,7 +466,7 @@ test('project, track, streaming, image upload, reconnect, and revocation', async
   await expect(page.locator('.workspace-upload')).toContainText('pixel.png');
   await page.getByRole('button', { name: 'Send', exact: true }).click();
   await expect(page.locator('.workspace-upload')).toHaveCount(0);
-  await expect(page.locator('.workspace-turn').filter({ hasText: 'Draft survives reconnect' }).locator('.md')).toContainText('There is one TODO worth doing here');
+  await expect(page.locator('.workspace-turn').filter({ hasText: 'Draft survives reconnect' }).locator('.agent-terminal-output > div > .md')).toContainText('There is one TODO worth doing here');
   await capture(page, 'track-Ravix');
   await chooseTheme(page, 'Daylight');
   await accessible(page);

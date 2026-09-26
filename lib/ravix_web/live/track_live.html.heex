@@ -122,9 +122,19 @@
                   <.icon name="terminal" size={12} /><span>agent</span>
                 </div>
                 <div class="agent-terminal-output">
-                  <div :for={block <- turn.blocks}>
-                    <.block block={block} html={rendered(@rendered, block)} />
-                  </div>
+                  <%= for segment <- segments(turn.blocks) do %>
+                    <.work
+                      :if={match?({:work, _}, segment)}
+                      blocks={elem(segment, 1)}
+                      rendered={@rendered}
+                    />
+                    <div :if={match?({:block, _}, segment)}>
+                      <.block
+                        block={elem(segment, 1)}
+                        html={rendered(@rendered, elem(segment, 1))}
+                      />
+                    </div>
+                  <% end %>
                 </div>
               </section>
             </article>
