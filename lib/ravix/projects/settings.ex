@@ -217,10 +217,10 @@ defmodule Ravix.Projects.Settings do
   defp validate_harness(_catalog, _runtime, _model), do: invalid_model()
 
   defp invalid_runtime,
-    do: {:error, {:unprocessable, "invalid_runtime", "Choose a harness this deployment offers."}}
+    do: {:error, {:unprocessable, "invalid_runtime", "Choose an agent this deployment offers."}}
 
   defp invalid_model,
-    do: {:error, {:unprocessable, "invalid_model", "Choose one of this harness's models."}}
+    do: {:error, {:unprocessable, "invalid_model", "Choose one of this agent's models."}}
 
   defp rename(project, %{name: name}) do
     case name |> str(120) |> String.trim() do

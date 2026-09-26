@@ -24,7 +24,14 @@ defmodule RavixWeb.Live.SettingsDialog do
   @impl true
   def mount(socket),
     do:
-      {:ok, assign(socket, settings: nil, pending: MapSet.new(), save_state: "", save_version: 0)}
+      {:ok,
+       assign(socket,
+         settings: nil,
+         pending: MapSet.new(),
+         save_state: "",
+         save_version: 0,
+         confirmations: %{}
+       )}
 
   @impl true
   def update(assigns, socket) do
@@ -88,6 +95,11 @@ defmodule RavixWeb.Live.SettingsDialog do
        end,
        :defaults_form
      )}
+  end
+
+  defp settings_event("confirm-danger", %{"action" => action, "confirm" => name}, socket)
+       when action in ["rebuild", "delete"] do
+    {:noreply, update(socket, :confirmations, &Map.put(&1, action, name))}
   end
 
   # The typed confirmation is the gate; which of the two irreversible things
@@ -294,16 +306,6 @@ defmodule RavixWeb.Live.SettingsDialog do
       {"danger", "Danger zone"}
     ]
 
-  defp picker_options(values, current) do
-    Enum.map(Enum.uniq(values ++ List.wrap(current)), fn value ->
-      {value
-       |> String.replace("-", " ")
-       |> String.replace("_", " ")
-       |> String.split()
-       |> Enum.map_join(" ", &String.capitalize/1), value}
-    end)
-  end
-
   defp model_options(values, current) do
     Enum.map(Enum.uniq(values ++ List.wrap(current)), &{ModelName.friendly(&1), &1})
   end
@@ -364,6 +366,9 @@ defmodule RavixWeb.Live.SettingsDialog do
                   "Each section saves separately."
               end}
             </p>
+            <button type="button" class="ghost settings-discard" data-settings-discard hidden>
+              Discard changes
+            </button>
             <section
               id="settings-section-general"
               data-settings-panel="general"
@@ -386,7 +391,7 @@ defmodule RavixWeb.Live.SettingsDialog do
                   aria-describedby="settings-name-help"
                 />
                 <p id="settings-name-help" class="settings-help">
-                  For example, “Customer portal”. Renaming appears immediately; it does not change the repository or open tracks.
+                  For example, “Customer portal”. The new name appears after you save; it does not change the repository or open tracks.
                 </p>
                 <button class="primary" phx-disable-with="Saving…" disabled={:settings in @pending}>Save general</button>
               </.form>
@@ -411,13 +416,15 @@ defmodule RavixWeb.Live.SettingsDialog do
                 <.input
                   field={f[:runtime]}
                   id="settings-runtime"
-                  label="Harness"
+                  label="Agent"
                   type="select"
-                  options={picker_options(@settings.catalog.runtimes, f[:runtime].value)}
+                  options={
+                    RavixWeb.AgentName.settings_options(@settings.catalog.runtimes, f[:runtime].value)
+                  }
                   aria-describedby="settings-runtime-help"
                 />
                 <p id="settings-runtime-help" class="settings-help">
-                  The coding program that runs your agent. Choices come from the available catalog.
+                  The coding program used for new tracks. Choose Claude Code or Codex; an existing agent choice is retained.
                 </p>
                 <.input
                   field={f[:model]}
@@ -433,7 +440,7 @@ defmodule RavixWeb.Live.SettingsDialog do
                   aria-describedby="settings-model-help"
                 />
                 <p id="settings-model-help" class="settings-help">
-                  The model used by this harness. If the catalog is unavailable, your saved choice is retained.
+                  The model used by this agent. If the catalog is unavailable, your saved choice is retained.
                 </p>
                 <.input
                   type="textarea"
@@ -629,19 +636,35 @@ defmodule RavixWeb.Live.SettingsDialog do
               <p>
                 Rebuilding discards the machine’s disk and closes every track, keeping project settings and secrets for the next machine. Unpushed work on that disk is lost. Deleting also removes the project settings and secrets. These actions cannot be undone.
               </p>
-              <form id="project-danger-form" phx-target={@myself} phx-submit="project-danger">
+              <form
+                :for={
+                  {action, label} <- [{"rebuild", "Rebuild machine"}, {"delete", "Delete project"}]
+                }
+                id={"project-#{action}-form"}
+                phx-target={@myself}
+                phx-change="confirm-danger"
+                phx-submit="project-danger"
+              >
+                <h4>{label}</h4>
+                <input type="hidden" name="action" value={action} />
                 <.input
                   name="confirm"
-                  id="danger-confirm"
-                  label={"Type #{@project.name} to confirm"}
-                  value=""
+                  id={"#{action}-confirm"}
+                  label={"Type #{@project.name} to confirm #{if action == "rebuild", do: "rebuilding", else: "deletion"}"}
+                  value={Map.get(@confirmations, action, "")}
+                  autocomplete="off"
                   required
                 />
-                <button name="action" value="rebuild" class="ghost" disabled={:danger in @pending}>
-                  Rebuild machine
-                </button>
-                <button name="action" value="delete" class="danger" disabled={:danger in @pending}>
-                  Delete project
+                <button
+                  name="action"
+                  value={action}
+                  class={if action == "delete", do: "danger", else: "ghost"}
+                  disabled={
+                    Map.get(@confirmations, action) != @project.name or MapSet.size(@pending) > 0
+                  }
+                  phx-disable-with="Working…"
+                >
+                  {label}
                 </button>
               </form>
             </section>

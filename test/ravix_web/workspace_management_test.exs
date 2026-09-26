@@ -333,8 +333,8 @@ defmodule RavixWeb.WorkspaceManagementTest do
     # is not. One code over a two-input form said something true that
     # pointed nowhere.
     for {code, message, id} <- [
-          {"invalid_runtime", "Choose a harness this deployment offers.", "#settings-runtime"},
-          {"invalid_model", "Choose one of this harness's models.", "#settings-model"}
+          {"invalid_runtime", "Choose an agent this deployment offers.", "#settings-runtime"},
+          {"invalid_model", "Choose one of this agent's models.", "#settings-model"}
         ] do
       expect(Projects, :update_settings, fn _, _, _ ->
         {:error, {:unprocessable, code, message}}
@@ -416,13 +416,13 @@ defmodule RavixWeb.WorkspaceManagementTest do
       end)
 
       ctx.view
-      |> form("#project-danger-form", confirm: "wrong")
+      |> form("#project-#{@action}-form", confirm: "wrong")
       |> render_submit(%{action: @action})
 
       assert render(ctx.view) =~ "Type the project name to confirm"
 
       ctx.view
-      |> form("#project-danger-form", confirm: ctx.project.name)
+      |> form("#project-#{@action}-form", confirm: ctx.project.name)
       |> render_submit(%{action: @action})
 
       render_async(ctx.view)
@@ -527,7 +527,7 @@ defmodule RavixWeb.WorkspaceManagementTest do
     end)
 
     ctx.view
-    |> form("#project-danger-form", confirm: ctx.project.name)
+    |> form("#project-rebuild-form", confirm: ctx.project.name)
     |> render_submit(%{action: "rebuild"})
 
     assert_receive {:rebuilding, rebuilding}
@@ -558,7 +558,7 @@ defmodule RavixWeb.WorkspaceManagementTest do
     end)
 
     ctx.view
-    |> form("#project-danger-form", confirm: ctx.project.name)
+    |> form("#project-rebuild-form", confirm: ctx.project.name)
     |> render_submit(%{action: "rebuild"})
 
     render_async(ctx.view)
@@ -575,7 +575,7 @@ defmodule RavixWeb.WorkspaceManagementTest do
     stub(Projects, :rebuild, fn _, _ -> {:ok, %Rebuild{removed: ["agent"], failed: []}} end)
 
     ctx.view
-    |> form("#project-danger-form", confirm: ctx.project.name)
+    |> form("#project-rebuild-form", confirm: ctx.project.name)
     |> render_submit(%{action: "rebuild"})
 
     render_async(ctx.view)
@@ -586,10 +586,11 @@ defmodule RavixWeb.WorkspaceManagementTest do
   test "a rebuild that crashes re-enables the buttons and says so", ctx do
     settings(ctx)
     stub(Projects, :rebuild, fn _, _ -> raise "provisioning fell over" end)
+    ctx.view |> form("#project-rebuild-form", confirm: ctx.project.name) |> render_change()
 
     ExUnit.CaptureLog.capture_log(fn ->
       ctx.view
-      |> form("#project-danger-form", confirm: ctx.project.name)
+      |> form("#project-rebuild-form", confirm: ctx.project.name)
       |> render_submit(%{action: "rebuild"})
 
       render_async(ctx.view)
@@ -634,13 +635,49 @@ defmodule RavixWeb.WorkspaceManagementTest do
     end
   end
 
+  test "destructive actions have independent confirmations that disable again when edited", ctx do
+    settings(ctx)
+
+    for action <- ~w(rebuild delete) do
+      assert has_element?(ctx.view, "#project-#{action}-form button[disabled]")
+      ctx.view |> form("#project-#{action}-form", confirm: ctx.project.name) |> render_change()
+      assert has_element?(ctx.view, "#project-#{action}-form button:not([disabled])")
+      other = if action == "rebuild", do: "delete", else: "rebuild"
+      assert has_element?(ctx.view, "#project-#{other}-form button[disabled]")
+
+      ctx.view
+      |> form("#project-#{action}-form", confirm: "#{ctx.project.name} ")
+      |> render_change()
+
+      assert has_element?(ctx.view, "#project-#{action}-form button[disabled]")
+    end
+  end
+
+  test "settings offers the same agent products as creation and retains a saved legacy agent",
+       ctx do
+    catalog = %{Catalog.empty() | runtimes: ~w(claude codex gemini opencode acp)}
+    settings(ctx, catalog: catalog, runtime: "gemini")
+    assert has_element?(ctx.view, "label[for=settings-runtime]", "Agent")
+    assert has_element?(ctx.view, "#settings-runtime option[value=claude]", "Claude Code")
+    assert has_element?(ctx.view, "#settings-runtime option[value=codex]", "Codex")
+
+    assert has_element?(
+             ctx.view,
+             "#settings-runtime option[value=gemini][selected]",
+             "Gemini CLI"
+           )
+
+    refute has_element?(ctx.view, "#settings-runtime option[value=opencode]")
+    refute has_element?(ctx.view, "#settings-runtime option[value=acp]")
+  end
+
   test "danger actions require the exact project name", ctx do
     settings(ctx)
-    assert has_element?(ctx.view, "#danger-confirm[required]")
+    assert has_element?(ctx.view, "#delete-confirm[required]")
     reject(&Projects.destroy/2)
 
     ctx.view
-    |> form("#project-danger-form", confirm: "wrong")
+    |> form("#project-delete-form", confirm: "wrong")
     |> render_submit(%{action: "delete"})
 
     assert render(ctx.view) =~ "Type the project name to confirm"
@@ -797,12 +834,19 @@ defmodule RavixWeb.WorkspaceManagementTest do
       end
     end
 
+    test "revoked session cannot enable a destructive action", ctx do
+      assert {:error, {:redirect, %{to: "/login"}}} =
+               ctx.view
+               |> form("#project-delete-form", confirm: ctx.project.name)
+               |> render_change()
+    end
+
     test "revoked session cannot rebuild", ctx do
       reject(&Projects.rebuild/2)
 
       assert {:error, {:redirect, %{to: "/login"}}} =
                ctx.view
-               |> form("#project-danger-form", confirm: ctx.project.name)
+               |> form("#project-rebuild-form", confirm: ctx.project.name)
                |> render_submit(%{action: "rebuild"})
     end
 
@@ -820,7 +864,7 @@ defmodule RavixWeb.WorkspaceManagementTest do
 
       assert {:error, {:redirect, %{to: "/login"}}} =
                ctx.view
-               |> form("#project-danger-form", confirm: ctx.project.name)
+               |> form("#project-delete-form", confirm: ctx.project.name)
                |> render_submit(%{action: "delete"})
 
       assert {:ok, _project} = Projects.get(ctx.user, ctx.project.id)

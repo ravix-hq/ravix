@@ -203,7 +203,7 @@
             value={
               f[:runtime].value || Ravix.Accounts.Inference.runtime(@current_user) || "claude"
             }
-            options={[{"Claude Code", "claude"}, {"Codex", "codex"}]}
+            options={RavixWeb.AgentName.options()}
           />
           <p class="hint">Uses your connected credentials for the selected agent.</p>
           <.input
