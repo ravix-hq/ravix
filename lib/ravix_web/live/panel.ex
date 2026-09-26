@@ -17,12 +17,16 @@ defmodule RavixWeb.Live.Panel do
   """
 
   @enforce_keys [:tab, :data, :error, :busy?, :file]
-  defstruct @enforce_keys
+  defstruct @enforce_keys ++ [directories: %{}]
 
   @type tab :: :files | :changes | :checks | :preview
 
   @type t :: %__MODULE__{
           tab: tab(),
+          directories: %{
+            optional(String.t()) =>
+              Ravix.Tracks.Files.Listing.t() | {:loading, reference()} | {:error, String.t()}
+          },
           data: term(),
           error: String.t() | nil,
           busy?: boolean(),
@@ -40,7 +44,7 @@ defmodule RavixWeb.Live.Panel do
   @doc "A read has started: nothing to show, and nothing to blame yet."
   @spec loading(t()) :: t()
   def loading(%__MODULE__{} = panel),
-    do: %__MODULE__{panel | busy?: true, error: nil, data: nil}
+    do: %__MODULE__{panel | busy?: true, error: nil, data: nil, directories: %{}}
 
   @doc "The read landed."
   @spec loaded(t(), term()) :: t()

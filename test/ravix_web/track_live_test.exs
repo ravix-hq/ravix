@@ -458,6 +458,86 @@ defmodule RavixWeb.TrackLiveTest do
     assert render_async(ctx.view) =~ "src"
   end
 
+  test "folders expand in place, preserve the file, and collapse independently", ctx do
+    root = ctx.track.workdir
+
+    stub(Tracks, :files, fn _, _, path ->
+      entries =
+        if path in [nil, root] do
+          [{"src", "directory"}, {"assets", "directory"}, {"README.md", "file"}]
+        else
+          [{"app.ex", "file"}, {"empty", "directory"}]
+        end
+
+      {:ok,
+       %Files.Listing{
+         path: path || root,
+         truncated: false,
+         entries:
+           Enum.map(entries, fn {name, type} -> %Files.Entry{name: name, type: type, size: 0} end)
+       }}
+    end)
+
+    render_click(ctx.view, "refresh-panel")
+    render_async(ctx.view)
+
+    stub(Tracks, :file, fn _, _, path ->
+      {:ok,
+       %Files.Content{
+         path: path,
+         encoding: "utf-8",
+         content: "hello explorer",
+         size: 14,
+         truncated: false
+       }}
+    end)
+
+    ctx.view |> element("button.workspace-file", "README.md") |> render_click()
+    render_async(ctx.view)
+    ctx.view |> element("button.workspace-file", "src") |> render_click()
+    render_async(ctx.view)
+    assert has_element?(ctx.view, ".file-list .file-list button", "app.ex")
+    assert has_element?(ctx.view, "button.workspace-file", "assets")
+    assert has_element?(ctx.view, "button[aria-expanded=true]", "src")
+    assert has_element?(ctx.view, "button[aria-current=true]", "README.md")
+    assert has_element?(ctx.view, "pre", "hello explorer")
+    ctx.view |> element("button.workspace-file", "src") |> render_click()
+    refute has_element?(ctx.view, "button.workspace-file", "app.ex")
+    assert has_element?(ctx.view, "button[aria-expanded=false]", "src")
+    assert has_element?(ctx.view, "pre", "hello explorer")
+  end
+
+  test "collapsed folders ignore late results and directory errors can be retried", ctx do
+    owner = self()
+
+    expect(Tracks, :files, fn _, _, path ->
+      send(owner, {:directory_reader, self()})
+      receive do: (:finish -> {:ok, %Files.Listing{path: path, entries: [], truncated: false}})
+    end)
+
+    ctx.view |> element("button.workspace-file", "src") |> render_click()
+    assert_receive {:directory_reader, reader}
+    assert has_element?(ctx.view, ".file-note[role=status]", "Loading")
+    ctx.view |> element("button.workspace-file", "src") |> render_click()
+    send(reader, :finish)
+    render_async(ctx.view)
+    refute has_element?(ctx.view, ".file-note")
+    expect(Tracks, :files, fn _, _, _ -> {:error, {:unavailable, "Folder offline"}} end)
+    ctx.view |> element("button.workspace-file", "src") |> render_click()
+    render_async(ctx.view)
+    assert has_element?(ctx.view, ".file-note[role=alert]", "Folder offline")
+    ctx.view |> element("button.workspace-file", "src") |> render_click()
+
+    expect(Tracks, :files, fn _, _, path ->
+      {:ok, %Files.Listing{path: path, entries: [], truncated: true}}
+    end)
+
+    ctx.view |> element("button.workspace-file", "src") |> render_click()
+    render_async(ctx.view)
+    assert has_element?(ctx.view, ".file-note", "Empty directory")
+    assert has_element?(ctx.view, ".file-note", "Directory listing is truncated")
+  end
+
   test "file navigation handles unavailable directories and binary files", ctx do
     ctx.view |> element("button.workspace-file", "src") |> render_click()
     assert render_async(ctx.view) =~ Path.join(ctx.track.workdir, "src")
