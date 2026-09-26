@@ -667,11 +667,12 @@
       :if={@dialog == :new_project}
       id="new-project-dialog"
       title="New project"
-      initial_focus={if @project_mode == "scratch", do: "#project-name", else: "#project-repo"}
+      focus_on_mount={false}
       on_close="dismiss"
     >
       <RavixWeb.Live.NewProject.render_form
         form_id="new-project-form"
+        autofocus={true}
         project_form={@project_form}
         project_agents={@project_agents}
         project_generation={@project_generation}

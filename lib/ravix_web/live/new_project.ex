@@ -130,6 +130,7 @@ defmodule RavixWeb.Live.NewProject do
   end
 
   attr :submit_class, :string, default: "primary"
+  attr :autofocus, :boolean, default: false
   attr :form_id, :string, required: true
   attr :project_form, :any, required: true
   attr :project_agents, :any, required: true
@@ -148,7 +149,12 @@ defmodule RavixWeb.Live.NewProject do
     assigns = assign(assigns, runtime: assigns.project_form[:runtime].value)
 
     ~H"""
-    <div class="new-project-fields">
+    <div
+      class="new-project-fields"
+      id="new-project-fields"
+      phx-hook={@autofocus && "ProjectFormFocus"}
+      data-focus={if @project_mode == "scratch", do: "#project-name", else: "#project-repo"}
+    >
       <div
         class="field"
         id="project-runtime"

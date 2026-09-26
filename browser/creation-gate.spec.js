@@ -26,3 +26,24 @@ test('connect Codex inline without losing the new project draft', async ({ page 
   await expect(dialog).not.toBeVisible();
   await expect(page.locator('.crumbs')).toContainText('Credential gate');
 });
+
+test('late dialog focus never steals typing from the project name', async ({ page }) => {
+  await signIn(page, 'dana', '/home');
+  await page.getByRole('button', { name: /^Open a GitHub project/ }).click();
+  const dialog = page.getByRole('dialog', { name: 'New project' });
+  await expect(dialog.getByRole('combobox', { name: 'Repository', exact: true })).toBeFocused();
+  const name = dialog.getByLabel('Project name', { exact: true });
+  await name.fill('Draft');
+  // Replay the mounted focus command after a person has already chosen a
+  // field: on a busy browser its queued animation frame can run this late.
+  await page.evaluate(async () => {
+    const element = document.querySelector('#new-project-dialog-dialog');
+    const command = element.getAttribute('phx-mounted');
+    if (command) window.liveSocket.execJS(element, command);
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  });
+  await expect(name).toBeFocused();
+  await page.keyboard.type(' kept');
+  await expect(name).toHaveValue('Draft kept');
+  await expect(dialog.getByRole('combobox', { name: 'Repository', exact: true })).toHaveValue('');
+});
