@@ -402,6 +402,83 @@ defmodule RavixWeb.TrackLiveTest do
     assert has_element?(ctx.view, ".changes-panel", "No matching files")
   end
 
+  for state <- [:open, :closed, :merged] do
+    test "Checks identifies a #{state} pull request and links to GitHub", ctx do
+      report = checks_fixture(unquote(state))
+
+      expect(Tracks, :checks, fn user, id ->
+        assert {user.id, id} == {ctx.user.id, ctx.track.id}
+        {:ok, report}
+      end)
+
+      render_click(ctx.view, "panel", %{name: "checks"})
+      render_async(ctx.view)
+
+      assert has_element?(
+               ctx.view,
+               ".pull-state.chip",
+               unquote(state |> Atom.to_string() |> String.capitalize())
+             )
+
+      assert has_element?(
+               ctx.view,
+               "a[href='https://github.com/acme/repo/pull/209']",
+               "View on GitHub"
+             )
+
+      refute has_element?(ctx.view, "button[phx-value-name='pull']")
+    end
+  end
+
+  test "Checks without a pull request retains the creation action", ctx do
+    expect(Tracks, :checks, fn _, _ -> {:ok, %{checks_fixture(:open) | pull: nil}} end)
+    render_click(ctx.view, "panel", %{name: "checks"})
+    render_async(ctx.view)
+    refute has_element?(ctx.view, ".pull-state")
+    ctx.view |> element("button[phx-value-name='pull']", "Create pull request") |> render_click()
+    assert has_element?(ctx.view, "#pull-dialog")
+  end
+
+  for state <- [:merged, :closed, :open, :missing, :unavailable] do
+    test "empty Changes handles #{state} PR state without visiting Checks first", ctx do
+      diff = %{changes_fixture() | diff: "", changes: [], files: []}
+      stub(Tracks, :diff, fn _, _ -> {:ok, diff} end)
+
+      expect(Tracks, :checks, fn user, id ->
+        assert {user.id, id} == {ctx.user.id, ctx.track.id}
+
+        case unquote(state) do
+          :unavailable -> {:error, :github_unavailable}
+          :missing -> {:ok, %{checks_fixture(:open) | pull: nil}}
+          state -> {:ok, checks_fixture(state)}
+        end
+      end)
+
+      render_click(ctx.view, "panel", %{name: "changes"})
+      render_async(ctx.view)
+
+      if unquote(state) == :merged do
+        assert has_element?(ctx.view, ".changes-panel .empty h3", "Branch merged")
+        assert has_element?(ctx.view, ".changes-panel", "This branch was merged")
+        refute has_element?(ctx.view, ".changes-panel", "No changes yet")
+        expect(Tracks, :checks, fn _, _ -> {:ok, checks_fixture(:open)} end)
+        render_click(ctx.view, "refresh-panel")
+        render_async(ctx.view)
+      end
+
+      assert has_element?(ctx.view, ".changes-panel .empty h3", "No changes yet")
+    end
+  end
+
+  test "nonempty Changes does not fetch PR state", ctx do
+    expect(Tracks, :diff, fn _, _ -> {:ok, changes_fixture()} end)
+    reject(Tracks, :checks, 2)
+    render_click(ctx.view, "panel", %{name: "changes"})
+    render_async(ctx.view)
+    assert has_element?(ctx.view, ".changes-summary")
+    refute has_element?(ctx.view, ".changes-panel", "Branch merged")
+  end
+
   test "large diffs require an explicit show action and empty diffs retain their message", ctx do
     patch =
       "diff --git a/large b/large\n@@ -0,0 +1,1001 @@\n" <> String.duplicate("+line\n", 1001)
@@ -2389,6 +2466,19 @@ defmodule RavixWeb.TrackLiveTest do
   # The real struct, not a map that happens to have some of its keys: the
   # template reads these by field, and `@enforce_keys` is what stops this
   # stub drifting away from what `Ravix.Previews.present/1` really returns.
+  defp checks_fixture(state) do
+    pull =
+      Ravix.GitHub.Shapes.pull_ref(%{
+        "number" => 209,
+        "title" => "Fix track panels",
+        "state" => if(state == :open, do: "open", else: "closed"),
+        "merged_at" => if(state == :merged, do: "2026-09-26T10:00:00Z"),
+        "html_url" => "https://github.com/acme/repo/pull/209"
+      })
+
+    %Ravix.GitHub.ChecksReport{ref: "track", sha: "abc", pushed: true, pull: pull, runs: []}
+  end
+
   defp preview do
     %Previews.View{
       state: :stopped,
