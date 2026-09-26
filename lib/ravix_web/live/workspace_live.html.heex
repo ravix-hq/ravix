@@ -854,9 +854,8 @@
       <RavixWeb.HelpComponents.agent_tooling />
     </.dialog>
     <.dialog :if={@dialog == :account} id="account-dialog" title="Your account" on_close="dismiss">
-      <a href="/settings/connections">Connected applications</a>
       <p class="lede">
-        Signed in as <strong>@{@current_user.login}</strong>. The agent below is the one your projects are built with, and its subscription or key is what pays for every turn in them, whoever is working.
+        Signed in as <strong>@{@current_user.login}</strong>. Choose a default agent below for new projects. Each project can use Claude Code or Codex. Work uses the project owner’s connected subscription or API key, whoever is working.
       </p>
       <.live_component
         module={RavixWeb.Live.AgentPanel}
@@ -865,6 +864,10 @@
         session_hash={@session_hash}
       />
       <hr />
+      <p class="account-connections">
+        <a href="/settings/connections">Manage connected applications →</a>
+        <span class="hint">Review access granted to external tools and disconnect them.</span>
+      </p>
       <p class="hint">
         <a href="/api/auth/install">Change which GitHub repositories Ravix may work in ↗</a>
       </p>

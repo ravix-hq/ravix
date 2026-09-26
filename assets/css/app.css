@@ -1582,3 +1582,12 @@ body:has(.phx-error) #request-progress { display: none; }
 .connection-dates dd { margin: 4px 0 0; }
 .connection-card summary { cursor: pointer; }
 .connection-card summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+
+/* People rows have the same rhythm whether or not they offer Remove. */
+.people-list { list-style: none; margin: 16px 0; padding: 0; }
+.people-row { display: flex; align-items: center; gap: 12px; min-height: 52px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+.people-identity { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 10px; flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.people-identity small { color: var(--dim); }
+.people-row button { flex: none; }
+.account-connections { display: flex; flex-direction: column; gap: 4px; }
+.account-connections a { text-decoration: underline; text-underline-offset: 2px; }

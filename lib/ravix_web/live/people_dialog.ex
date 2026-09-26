@@ -93,7 +93,11 @@ defmodule RavixWeb.Live.PeopleDialog do
 
   defp load(socket) do
     %{scope: scope, subject_id: id, current_user: user} = socket.assigns
-    result(socket, list(scope, user, id), &assign(&1, people: &2))
+    socket = result(socket, list(scope, user, id), &assign(&1, people: &2))
+
+    if socket.assigns.owner,
+      do: result(socket, link(scope, user, id), &assign(&1, invite: &2)),
+      else: socket
   end
 
   defp list(:track, user, id), do: People.list(user, id)
@@ -104,6 +108,9 @@ defmodule RavixWeb.Live.PeopleDialog do
 
   defp remove(:track, user, id, login), do: People.remove(user, id, login)
   defp remove(:project, user, id, login), do: People.remove_project(user, id, login)
+
+  defp link(:track, user, id), do: People.link(user, id)
+  defp link(:project, user, id), do: People.project_link(user, id)
 
   defp mint(:track, user, id), do: People.mint_link(user, id)
   defp mint(:project, user, id), do: People.mint_project_link(user, id)
@@ -155,21 +162,25 @@ defmodule RavixWeb.Live.PeopleDialog do
         <p :if={@scope == :project}>
           Project members can open tracks and work in every track on this machine.
         </p>
-        <div :for={person <- @people} class="workspace-track">
-          <span>@{person.login}</span>
-          <small :if={badge(person, @scope)}>{badge(person, @scope)}</small>
-          <button
-            :if={removable?(person, @scope, @owner, @current_user)}
-            class="ghost"
-            phx-click="remove-person"
-            phx-value-login={person.login}
-            phx-target={@myself}
-          >
-            {if person.login == @current_user.login,
-              do: leave_label(@scope),
-              else: "Remove"}
-          </button>
-        </div>
+        <ul class="people-list" aria-label="Members">
+          <li :for={person <- @people} class="people-row">
+            <div class="people-identity">
+              <span>@{person.login}</span>
+              <small :if={badge(person, @scope)}>{badge(person, @scope)}</small>
+            </div>
+            <button
+              :if={removable?(person, @scope, @owner, @current_user)}
+              class="ghost"
+              phx-click="remove-person"
+              phx-value-login={person.login}
+              phx-target={@myself}
+            >
+              {if person.login == @current_user.login,
+                do: leave_label(@scope),
+                else: "Remove"}
+            </button>
+          </li>
+        </ul>
         <form :if={@owner} id={"#{@id}-invite-form"} phx-submit="invite-person" phx-target={@myself}>
           <.input name="login" id={"#{@id}-invite-login"} label="GitHub username" value="" required />
           <.loading_status :if={@inviting?}>Sending invitation…</.loading_status>

@@ -182,6 +182,38 @@ defmodule RavixWeb.Live.PeopleDialogTest do
     end
   end
 
+  test "invite actions reflect stored links after creation, reopening and revocation", ctx do
+    for scope <- [:project, :track] do
+      view =
+        if scope == :project do
+          {:ok, view, _} = live(log_in_user(ctx.conn, ctx.owner), "/p/#{ctx.project.id}")
+          render_async(view)
+          view
+        else
+          track_page(ctx.conn, ctx.owner, ctx.project, ctx.track)
+        end
+
+      open_people(view)
+      assert has_element?(view, "button[phx-value-action=create]", "Create invite link")
+      refute has_element?(view, "button[phx-value-action=revoke]")
+      view |> element("button[phx-value-action=create]") |> render_click()
+      assert has_element?(view, "button[phx-value-action=create]", "Replace invite link")
+      assert has_element?(view, "a[href*='/j/']")
+      render_click(view, "dismiss")
+      open_people(view)
+      assert has_element?(view, "button[phx-value-action=revoke]")
+      assert has_element?(view, "button[phx-value-action=create]", "Replace invite link")
+      refute has_element?(view, "a[href*='/j/']")
+      assert render(view) =~ "Its URL is shown only when created"
+      view |> element("button[phx-value-action=revoke]") |> render_click()
+      refute has_element?(view, "button[phx-value-action=revoke]")
+      assert has_element?(view, "button[phx-value-action=create]", "Create invite link")
+      render_click(view, "dismiss")
+      open_people(view)
+      refute has_element?(view, "button[phx-value-action=revoke]")
+    end
+  end
+
   describe "who is offered the controls" do
     test "the owner may invite and mint a link", ctx do
       {:ok, view, _} = live(log_in_user(ctx.conn, ctx.owner), "/p/#{ctx.project.id}")

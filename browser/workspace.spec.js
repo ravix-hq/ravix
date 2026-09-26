@@ -269,7 +269,11 @@ test('the account dialog is where the agent lives after the walkthrough', async 
   await trigger.click();
   await menu.getByRole('button', { name: 'Account', exact: true }).click();
   await expect(menu).toBeHidden();
-  await expect(page.getByRole('dialog', { name: 'Your account' })).toBeVisible();
+  const account = page.getByRole('dialog', { name: 'Your account' });
+  await expect(account).toBeVisible();
+  await expect(account).toContainText('Each project can use Claude Code or Codex.');
+  await expect(account.getByRole('link', { name: 'Manage connected applications' })).toHaveAttribute('href', '/settings/connections');
+
   await expect(page.getByRole('group', { name: 'Agent' })).toBeVisible();
   await accessible(page);
   await capture(page, 'account-dialog');
@@ -969,6 +973,19 @@ test('shared project prefixes stay muted and truncate across every theme', async
   await page.getByLabel('GitHub username', { exact: true }).fill('eli');
   await page.getByRole('button', { name: 'Invite', exact: true }).click();
   await expect(page.locator('#people-dialog')).toContainText('@eli');
+  const people = page.locator('#people-dialog');
+  const heights = await people.locator('.people-row').evaluateAll(rows =>
+    rows.map(row => row.getBoundingClientRect().height));
+  expect(heights.length).toBeGreaterThanOrEqual(2);
+  expect(Math.max(...heights) - Math.min(...heights)).toBeLessThan(1);
+  await expect(people.getByRole('button', { name: 'Revoke invite link', exact: true })).toHaveCount(0);
+  await people.getByRole('button', { name: 'Create invite link', exact: true }).click();
+  await expect(people.getByRole('button', { name: 'Replace invite link', exact: true })).toBeVisible();
+  await people.getByRole('button', { name: 'Revoke invite link', exact: true }).click();
+  await expect(people.getByRole('button', { name: 'Revoke invite link', exact: true })).toHaveCount(0);
+  await accessible(page);
+  await capture(page, 'people-even-rows');
+
 
   const memberContext = await browser.newContext({ baseURL: new URL(page.url()).origin });
   try {
