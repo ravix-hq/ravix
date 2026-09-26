@@ -1016,7 +1016,7 @@ defmodule RavixWeb.TrackLive do
       id="model-trigger"
       class="composer-model model-trigger"
       popovertarget="model-menu"
-      title={if @disabled, do: "Change the model between turns", else: @model}
+      title={@model}
       disabled={@disabled}
     ><span class="truncate">{ModelName.friendly(@model)}</span><span class="sr-only">, change model</span><.icon
       name="chevron"
