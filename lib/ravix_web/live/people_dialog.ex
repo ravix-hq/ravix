@@ -172,6 +172,7 @@ defmodule RavixWeb.Live.PeopleDialog do
         </div>
         <form :if={@owner} id={"#{@id}-invite-form"} phx-submit="invite-person" phx-target={@myself}>
           <.input name="login" id={"#{@id}-invite-login"} label="GitHub username" value="" required />
+          <.loading_status :if={@inviting?}>Sending invitation…</.loading_status>
           <button class="primary" phx-disable-with="Inviting…" disabled={@inviting?}>Invite</button>
         </form>
         <.invite_link owner={@owner} invite={@invite} target={@myself} />

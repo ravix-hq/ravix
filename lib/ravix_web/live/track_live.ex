@@ -231,8 +231,20 @@ defmodule RavixWeb.TrackLive do
 
   def handle_event("refresh-panel", _, socket), do: {:noreply, load_panel(socket)}
 
-  def handle_event("directory", %{"path" => path}, socket),
-    do: {:noreply, load_panel(update_panel(socket, &Panel.close_file/1), path)}
+  def handle_event("directory", %{"path" => path}, socket) do
+    if Map.has_key?(socket.assigns.panel.directories, path) do
+      {:noreply, update_panel(socket, &%{&1 | directories: Map.delete(&1.directories, path)})}
+    else
+      user = socket.assigns.current_user
+      id = socket.assigns.track_id
+      token = make_ref()
+
+      {:noreply,
+       socket
+       |> update_panel(&%{&1 | directories: Map.put(&1.directories, path, {:loading, token})})
+       |> traced_async({:directory, path, token}, fn -> Tracks.files(user, id, path) end)}
+    end
+  end
 
   # Reading a file is a Fountain round trip, and it used to be one this
   # process waited out: for as long as the machine took to answer, the page
@@ -553,6 +565,21 @@ defmodule RavixWeb.TrackLive do
       response,
       &update_panel(&1, fn panel -> Panel.open_file(panel, &2) end)
     )
+  end
+
+  defp async_result({:directory, path, token}, response, socket) do
+    if socket.assigns.panel.directories[path] == {:loading, token} do
+      value =
+        case response do
+          {:ok, {:ok, listing}} -> listing
+          {:ok, {:error, reason}} -> {:error, Error.from(reason).message}
+          {:exit, _} -> {:error, "Could not finish loading. Collapse and expand to retry."}
+        end
+
+      update_panel(socket, &%{&1 | directories: Map.put(&1.directories, path, value)})
+    else
+      socket
+    end
   end
 
   defp async_result(:panel, {:ok, {:ok, %Previews.View{} = preview}}, socket),
@@ -929,6 +956,7 @@ defmodule RavixWeb.TrackLive do
     |> traced_async(:preview_action, fn -> call.(user, id, hash) end)
   end
 
+  attr :directories, :map, default: %{}
   attr :diff_path, :string, default: nil
   attr :diff_filter, :string, default: ""
   attr :diff_show_large, :boolean, default: false
@@ -945,21 +973,11 @@ defmodule RavixWeb.TrackLive do
   # list rather than fail.
   defp panel_body(%{data: %Files.Listing{}} = assigns) do
     ~H"""
-    <div>
-      <button class="ghost" phx-click="directory" phx-value-path={Path.dirname(@data.path)}>
-        ↑ Parent
-      </button>
-      <code>{@data.path}</code>
-      <div :for={entry <- @data.entries}>
-        <button
-          class="workspace-file"
-          phx-click={if entry.type == "directory", do: "directory", else: "file"}
-          phx-value-path={Path.join(@data.path, entry.name)}
-        >
-          {if entry.type == "directory", do: "▸ ", else: ""}{entry.name}
-        </button>
+    <div class="file-explorer">
+      <div class="file-root" title={@data.path}>
+        <.icon name="folder" />{Path.basename(@data.path)}
       </div>
-      <p :if={@data.truncated}>Directory listing is truncated.</p>
+      <.file_listing listing={@data} directories={@directories} file={@file} />
       <div :if={@file}>
         <h4>{@file.path}</h4>
         <pre :if={@file.encoding != "base64"}>{@file.content}</pre>
@@ -1093,6 +1111,68 @@ defmodule RavixWeb.TrackLive do
   defp diff_line_label(%{kind: :add, new: new}), do: "Added line #{new}: "
   defp diff_line_label(%{kind: :del, old: old}), do: "Removed line #{old}: "
   defp diff_line_label(%{new: new}), do: "Line #{new}: "
+
+  attr :listing, :any, required: true
+  attr :directories, :map, required: true
+  attr :file, :any, required: true
+
+  defp file_listing(assigns) do
+    assigns =
+      assign(
+        assigns,
+        :entries,
+        Enum.sort_by(assigns.listing.entries, &{&1.type != "directory", String.downcase(&1.name)})
+      )
+
+    ~H"""
+    <ul class="file-list">
+      <li :for={entry <- @entries}>
+        <% path = Path.join(@listing.path, entry.name) %>
+        <% child = @directories[path] %>
+        <button
+          type="button"
+          class={["workspace-file", @file && @file.path == path && "selected"]}
+          phx-click={if entry.type == "directory", do: "directory", else: "file"}
+          phx-value-path={path}
+          aria-expanded={if entry.type == "directory", do: to_string(child != nil)}
+          aria-current={if @file && @file.path == path, do: "true"}
+          title={path}
+        >
+          <span class="file-disclosure"><.icon
+            :if={entry.type == "directory"}
+            name="chevron"
+            open={child != nil}
+            size={12}
+          /></span>
+          <.icon name={file_icon(entry)} class="file-kind" />
+          <span class="file-name">{entry.name}</span>
+        </button>
+        <.file_listing
+          :if={is_struct(child, Files.Listing)}
+          listing={child}
+          directories={@directories}
+          file={@file}
+        />
+        <p :if={match?({:loading, _}, child)} class="file-note" role="status">Loading…</p>
+        <p :if={match?({:error, _}, child)} class="file-note" role="alert">{elem(child, 1)}</p>
+      </li>
+      <li :if={@entries == []} class="file-note">Empty directory</li>
+      <li :if={@listing.truncated} class="file-note">Directory listing is truncated.</li>
+    </ul>
+    """
+  end
+
+  defp file_icon(%{type: "directory"}), do: "folder"
+
+  defp file_icon(entry) do
+    case String.downcase(Path.extname(entry.name)) do
+      ext when ext in ~w(.ex .exs .js .jsx .ts .tsx .py .rb .rs .go .html .css .sh) -> "code"
+      ext when ext in ~w(.png .jpg .jpeg .gif .svg .webp .ico) -> "picture"
+      ext when ext in ~w(.json .yaml .yml .toml .ini .lock .config) -> "settings"
+      ext when ext in ~w(.md .txt .rst .pdf) -> "document"
+      _ -> "file"
+    end
+  end
 
   defp diff_directory(path),
     do: if(Path.dirname(path) == ".", do: "", else: Path.dirname(path) <> "/")
