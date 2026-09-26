@@ -70,3 +70,5 @@ config :posthog,
   enable: true,
   test_mode: true,
   api_key: "phc_test_mode_never_sent"
+
+config :ravix, Ravix.Schedules.Server, interval: false
