@@ -13,6 +13,11 @@ test('a project plan assigns coordinated tracks and works at phone width', async
   const panel = page.locator('#plans-panel');
   await expect(panel).toBeVisible();
   await panel.getByRole('button', { name: 'New plan', exact: true }).click();
+  await expect(page).toHaveURL(/\?new=plan$/);
+  await expect(panel.getByRole('heading', { name: 'New plan', exact: true })).toBeVisible();
+  await expect(panel.getByRole('button', { name: /Move up|Move down|Remove item/ })).toHaveCount(0);
+  await expect(panel.getByLabel('Depends on', { exact: true })).toHaveCount(0);
+  await expect(panel).not.toContainText('Assigned items must remain unchanged');
   await panel.getByLabel('Title', { exact: true }).fill('Ship the release');
   await panel.getByLabel('Summary and rationale (Markdown)').fill('**Together** with clear boundaries.');
   await panel.getByLabel('Item title', { exact: true }).fill('Build API');
@@ -28,6 +33,34 @@ test('a project plan assigns coordinated tracks and works at phone width', async
   await panel.getByRole('button', { name: 'Save plan', exact: true }).click();
   await expect(panel.getByRole('heading', { name: 'Ship the release' })).toBeVisible();
   await expect(panel.locator('strong', { hasText: 'Together' })).toBeVisible();
+  const planURL = page.url();
+  await panel.getByRole('button', { name: 'New plan', exact: true }).click();
+  await expect(page).toHaveURL(/\?new=plan$/);
+  await page.reload();
+  await expect(panel.getByRole('heading', { name: 'New plan', exact: true })).toBeVisible();
+  await expect(panel.getByLabel('Title', { exact: true })).toHaveValue('');
+  await panel.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await expect(page).not.toHaveURL(/\?/);
+  await panel.getByRole('link', { name: 'Ship the release', exact: true }).click();
+  await expect(page).toHaveURL(planURL);
+  await expect(panel.getByRole('heading', { name: 'Ship the release' })).toBeVisible();
+  const card = panel.locator('.plan-item').filter({ has: page.getByRole('heading', { name: 'Build API', exact: true }) });
+  await card.getByText('Add a note to Build API', { exact: true }).click();
+  await card.getByLabel('Note', { exact: true }).fill('Check the API contract.');
+  await card.getByRole('button', { name: 'Add note', exact: true }).click();
+  await expect(card).toContainText('Check the API contract.');
+  expect(await card.locator('form').evaluate(el => el.parentElement.closest('form') === null)).toBe(true);
+  for (const width of [1480, 535]) {
+    await page.setViewportSize({ width, height: 900 });
+    const sizes = await panel.evaluate(el => ({
+      title: parseFloat(getComputedStyle(el.querySelector('h3')).fontSize),
+      item: parseFloat(getComputedStyle(el.querySelector('h4')).fontSize),
+      body: parseFloat(getComputedStyle(el.querySelector('.md')).fontSize),
+    }));
+    expect(sizes.title).toBeGreaterThan(sizes.body);
+    expect(sizes.item).toBeGreaterThanOrEqual(sizes.body);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  }
   const api = panel.getByRole('group', { name: 'Build API', exact: true });
   const ui = panel.getByRole('group', { name: 'Build UI', exact: true });
   const blocked = panel.getByRole('group', { name: 'Ship after API', exact: true });

@@ -60,6 +60,7 @@ defmodule RavixWeb.WorkspaceLive do
         advanced_track: false,
         project: nil,
         selected_plan_id: nil,
+        new_plan: false,
         track_id: nil,
         # The nested `RavixWeb.TrackLive`, once it has said where it is. See
         # the `:track_host` clause of `handle_info/2`, and `hand_over/3`.
@@ -150,7 +151,8 @@ defmodule RavixWeb.WorkspaceLive do
       |> assign(
         project: project,
         page_title: if(project, do: project.display_name <> " · Ravix", else: "Ravix"),
-        selected_plan_id: params["plan"],
+        selected_plan_id: if(params["new"] != "plan", do: params["plan"]),
+        new_plan: params["new"] == "plan",
         track_id: track_id,
         dialog: nil
       )

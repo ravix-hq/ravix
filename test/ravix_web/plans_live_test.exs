@@ -60,13 +60,88 @@ defmodule RavixWeb.PlansLiveTest do
     assert {:ok, %{items: [%{title: "Second"}, %{title: "First"}]}} = Plans.get(user, plan.id)
     view |> form("#note-#{id}", %{"body" => "Review carefully"}) |> render_submit()
     render_async(view, 5_000)
-    assert render(view) =~ "Review carefully"
+    assert has_element?(view, "#item-#{id}", "Review carefully")
+    assert has_element?(view, "#item-#{id} .plan-note form#note-#{id}")
+    refute has_element?(view, "form form")
     view |> element("#plans-panel button", "Archive plan") |> render_click()
     render_async(view, 5_000)
-    refute has_element?(view, "#plan-assign button[type=submit]")
+    refute has_element?(view, "button[form=plan-assign]")
     view |> element("#plans-panel button", "Restore plan") |> render_click()
     render_async(view, 5_000)
-    assert has_element?(view, "#plan-assign button", "Assign selected items")
+    assert has_element?(view, "button[form=plan-assign]", "Assign selected items")
+  end
+
+  test "new plan navigation clears the old plan and cancel immediately restores the list", %{
+    conn: conn,
+    user: user,
+    project: project
+  } do
+    {:ok, plan} = Plans.create(user, project.id, %{"title" => "Existing", "items" => []})
+    conn = log_in_user(conn, user)
+    {:ok, view, _} = live(conn, "/p/#{project.id}?plan=#{plan.id}")
+    render_async(view, 5_000)
+    view |> element("#plans-panel button", "New plan") |> render_click()
+    assert_patch(view, "/p/#{project.id}?new=plan")
+    assert has_element?(view, "#plan-editor h3", "New plan")
+    refute has_element?(view, "#plan-editor", "Assigned items")
+    refute has_element?(view, "#plan-editor select")
+    refute has_element?(view, "#plan-editor button", "Move up")
+    refute has_element?(view, "#plan-editor button", "Move down")
+    refute has_element?(view, "#plan-editor button", "Remove item")
+
+    view |> element("#plan-editor button", "Cancel") |> render_click()
+    assert_patch(view, "/p/#{project.id}")
+    assert has_element?(view, ".plans-list a", "Existing")
+    refute has_element?(view, "#plan-editor")
+
+    # A hard load of the creation URL is also a blank draft.
+    {:ok, fresh, _} = live(conn, "/p/#{project.id}?new=plan")
+    assert has_element?(fresh, "#plan-editor h3", "New plan")
+    fresh |> element("#plan-editor button", "Cancel") |> render_click()
+    assert has_element?(fresh, ".plans-list a", "Existing")
+
+    view |> element(".plans-list a", "Existing") |> render_click()
+    render_async(view, 5_000)
+    view |> element("#plans-panel button", "Edit plan") |> render_click()
+    assert has_element?(view, "#plan-editor h3", "Edit plan")
+    view |> element("#plan-editor button", "Cancel") |> render_click()
+    assert has_element?(view, "#plans-panel h3", "Existing")
+  end
+
+  test "item controls follow position and removal clears obsolete dependencies", %{
+    conn: conn,
+    user: user,
+    project: project
+  } do
+    {:ok, view, _} = live(log_in_user(conn, user), "/p/#{project.id}?new=plan")
+    [_, first] = Regex.run(~r/id="edit-title-([^"]+)"/, render(view))
+    view |> element("#plan-editor button", "Add item") |> render_click()
+    ids = Regex.scan(~r/id="edit-title-([^"]+)"/, render(view)) |> Enum.map(&List.last/1)
+    second = List.last(ids)
+    refute has_element?(view, "button[phx-value-id='#{first}'][phx-value-direction=up]")
+    assert has_element?(view, "button[phx-value-id='#{first}'][phx-value-direction=down]")
+    assert has_element?(view, "button[phx-value-id='#{second}'][phx-value-direction=up]")
+    refute has_element?(view, "button[phx-value-id='#{second}'][phx-value-direction=down]")
+    assert has_element?(view, "#edit-deps-#{first} option", "Untitled item")
+
+    view
+    |> form("#plan-editor", %{
+      "plan" => %{
+        "title" => "New work",
+        "items" => %{
+          first => %{"title" => "Keep", "dependencies" => [second]},
+          second => %{"title" => "Remove"}
+        }
+      }
+    })
+    |> render_change()
+
+    view |> element("button[phx-click=remove-item][phx-value-id='#{second}']") |> render_click()
+    refute has_element?(view, "#plan-editor select")
+    view |> form("#plan-editor") |> render_submit()
+    render_async(view, 5_000)
+    assert {:ok, [plan]} = Plans.list(user, project.id)
+    assert {:ok, %{items: [%{title: "Keep", dependencies: []}]}} = Plans.get(user, plan.id)
   end
 
   test "a refused assignment does not spend the page's next request ID", %{
@@ -156,6 +231,8 @@ defmodule RavixWeb.PlansLiveTest do
     assert has_element?(view, "#item-a .chip", "in progress")
     assert Repo.aggregate(Ravix.Tooling.Task, :count) == 2
     assert has_element?(view, ".plan-assign-actions [role=status]", "0 selected")
+    view |> element("#plans-panel button", "Edit plan") |> render_click()
+    assert has_element?(view, "#plan-editor", "Assigned items must remain unchanged")
   end
 
   test "the plan shows its dependency graph, linking each node to its item", %{
