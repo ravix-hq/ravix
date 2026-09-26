@@ -111,6 +111,7 @@ defmodule Ravix.Tracks.SetupTest do
     assert QueueStore.get(item.id).status == :queued
 
     turn_status(ctx.track, "completed")
+    due(ctx.track)
     Server.tick(other)
     assert row(ctx.track).setup_state == "ready"
     assert row(ctx.track).opened_at
@@ -126,6 +127,7 @@ defmodule Ravix.Tracks.SetupTest do
     turn_status(ctx.track, "failed")
 
     for attempt <- 1..3 do
+      due(ctx.track)
       Server.tick(ctx.server)
       assert row(ctx.track).setup_attempts == attempt
 
@@ -141,7 +143,7 @@ defmodule Ravix.Tracks.SetupTest do
     assert %{status: :failed, error: "setup_failed:" <> _, body: %{"prompt" => "user work"}} =
              QueueStore.get(item.id)
 
-    assert {:ok, %{state: "TASK_STATE_FAILED", result: reason}} =
+    assert {:ok, %{state: "TASK_STATE_FAILED", status_message: reason}} =
              Tasks.get(principal, task.id)
 
     assert reason =~ "setup_failed:"
@@ -155,7 +157,7 @@ defmodule Ravix.Tracks.SetupTest do
 
     assert changed_id == task.id
     assert reported.status.state == "TASK_STATE_FAILED"
-    assert hd(hd(reported.artifacts).parts).text =~ "setup_failed:"
+    assert hd(reported.status.message.parts).text =~ "setup_failed:"
 
     refute_received {:prompt, _, "user work", _}
     refute_received {:prompt, _, "MCP work", _}
@@ -164,6 +166,7 @@ defmodule Ravix.Tracks.SetupTest do
     assert row(ctx.track).setup_attempts == 1
     assert_receive {:prompt, _, "[ravix] Open this track" <> _, _}
     turn_status(ctx.track, "completed")
+    due(ctx.track)
     Server.tick(ctx.server)
     assert row(ctx.track).setup_state == "ready"
     assert QueueStore.get(item.id).status == :failed
@@ -228,6 +231,7 @@ defmodule Ravix.Tracks.SetupTest do
     assert row(ctx.track).setup_request_id
     assert row(ctx.track).setup_state == "running"
     turn_status(ctx.track, "completed")
+    due(ctx.track)
     Setup.advance(ctx.client, ctx.track.id)
     assert row(ctx.track).setup_state == "ready"
     assert row(ctx.track).setup_attempts == 1
@@ -317,9 +321,63 @@ defmodule Ravix.Tracks.SetupTest do
              )
   end
 
+  test "running reconciliation is throttled across workers and grows to thirty seconds", ctx do
+    turn_status(ctx.track, "running")
+
+    expect(Fountain, :get_conversation, 2, fn _, id ->
+      {:ok, Shapes.conversation(%{"id" => id, "status" => "running"})}
+    end)
+
+    Server.tick(ctx.server)
+    first = row(ctx.track)
+    assert DateTime.diff(first.setup_retry_at, DateTime.utc_now()) in 4..5
+    refute ctx.track.id in Tracks.Store.pending_setups()
+    refute Tracks.Store.claim_setup(ctx.track.id)
+    other = server()
+    Server.tick(other)
+    Setup.advance(ctx.client, ctx.track.id)
+    refute :sys.get_state(other).waiting?
+
+    persist(first, setup_started_at: DateTime.add(DateTime.utc_now(), -300, :second))
+    due(ctx.track)
+    assert ctx.track.id in Tracks.Store.pending_setups()
+    Server.tick(other)
+    assert DateTime.diff(row(ctx.track).setup_retry_at, DateTime.utc_now()) in 29..30
+  end
+
+  test "legacy opened worktree is ready without matching opening history or a new prompt", ctx do
+    persist(ctx.track,
+      setup_state: "pending",
+      opened_at: DateTime.utc_now(),
+      created_at: DateTime.add(DateTime.utc_now(), -86_400, :second),
+      setup_request_id: nil
+    )
+
+    ctx.project |> Ecto.Changeset.change(repo_full_name: "owner/repo") |> Repo.update!()
+    stub(Fountain, :turns, fn _, _ -> {:ok, []} end)
+    Setup.advance(ctx.client, ctx.track.id)
+    assert row(ctx.track).setup_state == "ready"
+    refute_received {:prompt, _, _, _}
+  end
+
+  test "legacy listing outages hold setup and missing worktrees allow repair", ctx do
+    persist(ctx.track, setup_state: "pending", opened_at: DateTime.utc_now())
+    stub(Fountain, :turns, fn _, _ -> {:ok, []} end)
+    stub(Fountain, :listing, fn _, _, _ -> {:error, %Error{status: 503}} end)
+    Setup.advance(ctx.client, ctx.track.id)
+    assert row(ctx.track).setup_state == "running"
+    refute_received {:prompt, _, _, _}
+
+    due(ctx.track)
+    stub(Fountain, :listing, fn _, _, _ -> {:error, %Error{status: 404}} end)
+    Setup.advance(ctx.client, ctx.track.id)
+    assert row(ctx.track).setup_state == "retry"
+  end
+
   test "legacy accepted tracks are verified and closed tracks never retry", ctx do
     persist(ctx.track, setup_state: "pending", opened_at: DateTime.utc_now())
     turn_status(ctx.track, "completed")
+    due(ctx.track)
     Setup.advance(ctx.client, ctx.track.id)
     assert row(ctx.track).setup_state == "ready"
     persist(row(ctx.track), setup_state: "failed", closed_at: DateTime.utc_now())

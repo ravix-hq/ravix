@@ -18,7 +18,10 @@ defmodule Ravix.Repo.Migrations.AddTrackSetup do
 
     # Old releases still claim without a setup predicate during rolling deploys.
     # Suppress that UPDATE (zero rows claimed), preserving the old worker's
-    # existing lost-claim path until every instance runs the new gate.
+    # existing lost-claim path during the expand phase. There is no drop contract:
+    # retain this as defense in depth against future ungated writers. Its WHEN
+    # clause runs only on a delivery claim, with one primary-key track lookup;
+    # normal queue updates and turn events pay no lookup cost.
     execute """
             CREATE FUNCTION ravix.gate_prompt_setup() RETURNS trigger LANGUAGE plpgsql AS $$
             BEGIN

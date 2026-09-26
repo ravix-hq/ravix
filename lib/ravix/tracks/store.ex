@@ -170,11 +170,16 @@ defmodule Ravix.Tracks.Store do
     end
   end
 
-  @doc "Unfinished setup, including tracks with no queued prompts or connected page."
+  @doc "Due setup checks, including tracks with no queued prompts or connected page."
   def pending_setups do
+    now = DateTime.utc_now()
+
     Repo.all(
       from(t in Track,
-        where: is_nil(t.closed_at) and t.setup_state in ["pending", "running", "retry"],
+        where:
+          is_nil(t.closed_at) and t.setup_state in ["pending", "running", "retry"] and
+            (is_nil(t.setup_retry_at) or t.setup_retry_at <= ^now) and
+            (is_nil(t.setup_lease_until) or t.setup_lease_until < ^now),
         select: t.id
       )
     )
@@ -191,6 +196,7 @@ defmodule Ravix.Tracks.Store do
           where:
             t.id == ^id and is_nil(t.closed_at) and
               t.setup_state in ["pending", "running", "retry"] and
+              (is_nil(t.setup_retry_at) or t.setup_retry_at <= ^now) and
               (is_nil(t.setup_lease_until) or t.setup_lease_until < ^now),
           select: t
         ),

@@ -37,8 +37,8 @@ defmodule Ravix.Tracks.Setup do
   defp step(client, %{setup_state: "pending", opened_at: nil} = track, project),
     do: send_opening(client, track, project)
 
-  # Before this gate existed, opened_at meant accepted, not completed. Check
-  # those tracks' actual first opening turn too, instead of grandfathering them.
+  # Legacy accepted tracks may have no opening turn in the available history.
+  # Their worktree is the proof; never inject setup just because history is absent.
   defp step(client, %{setup_state: "pending"} = track, project) do
     attrs = [setup_state: "running", setup_attempts: 1, setup_started_at: track.created_at]
     if Store.update_setup(track, attrs), do: reconcile(client, struct(track, attrs), project)
@@ -56,7 +56,7 @@ defmodule Ravix.Tracks.Setup do
       setup_attempts: track.setup_attempts + 1,
       setup_request_id: Ecto.UUID.generate(),
       setup_started_at: DateTime.utc_now(),
-      setup_retry_at: nil,
+      setup_retry_at: DateTime.add(DateTime.utc_now(), 5, :second),
       setup_error: nil
     ]
 
@@ -104,10 +104,34 @@ defmodule Ravix.Tracks.Setup do
   defp sent(_outcome, track), do: publish(track)
 
   defp reconcile(client, track, project) do
-    with {:ok, conversation} <- Fountain.get_conversation(client, track.conversation_id),
-         {:ok, turns} <- Fountain.turns(client, track.conversation_id) do
-      turn = opening_turn(turns, track)
-      outcome(client, track, project, conversation, turn)
+    # Persist the next check before I/O, including provider failures. The lease
+    # claim checks this timestamp too, so stale sweeps on other nodes cannot poll.
+    elapsed =
+      max(0, DateTime.diff(DateTime.utc_now(), track.setup_started_at || track.created_at))
+
+    delay = min(30, 5 + div(elapsed, 10))
+    Store.update_setup(track, setup_retry_at: DateTime.add(DateTime.utc_now(), delay, :second))
+
+    with {:ok, conversation} <- Fountain.get_conversation(client, track.conversation_id) do
+      reconcile_turn(client, track, project, conversation)
+    end
+  end
+
+  defp reconcile_turn(
+         client,
+         %{opened_at: opened, setup_request_id: nil} = track,
+         project,
+         conversation
+       )
+       when not is_nil(opened) do
+    # No turn-history dependency for legacy tracks, including truncated history
+    # and launch prompts. An unavailable listing is not evidence of absence.
+    verify_worktree(client, track, project, conversation)
+  end
+
+  defp reconcile_turn(client, track, project, conversation) do
+    with {:ok, turns} <- Fountain.turns(client, track.conversation_id) do
+      outcome(client, track, project, conversation, opening_turn(turns, track))
     end
   end
 
@@ -122,11 +146,12 @@ defmodule Ravix.Tracks.Setup do
   defp opening_turn(turns, track),
     do: Enum.find(turns, &(&1.client_request_id == track.setup_request_id))
 
-  defp outcome(client, track, project, conversation, %{status: "completed"}) do
+  defp verify_worktree(client, track, project, conversation) do
     case worktree(client, track, project, conversation.sandbox_id) do
       :ok ->
         if Store.update_setup(track,
              setup_state: "ready",
+             setup_retry_at: nil,
              opened_at: DateTime.utc_now(),
              setup_error: nil
            ),
@@ -139,6 +164,9 @@ defmodule Ravix.Tracks.Setup do
         :ok
     end
   end
+
+  defp outcome(client, track, project, conversation, %{status: "completed"}),
+    do: verify_worktree(client, track, project, conversation)
 
   defp outcome(client, track, _project, _conversation, %{status: status})
        when status in ["failed", "cancelled", "canceled", "interrupted"] do
