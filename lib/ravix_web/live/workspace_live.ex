@@ -147,6 +147,7 @@ defmodule RavixWeb.WorkspaceLive do
     socket =
       socket
       |> hand_over(project, track_id)
+      |> url_thread(track_id, params)
       |> select_notice_thread(track_id)
       |> assign(
         project: project,
@@ -162,6 +163,20 @@ defmodule RavixWeb.WorkspaceLive do
     else
       socket
     end
+  end
+
+  defp url_thread(socket, track_id, %{"thread" => thread_id}) when is_binary(track_id),
+    do: assign(socket, notice_thread: {track_id, thread_id})
+
+  defp url_thread(socket, _track_id, _params), do: socket
+
+  defp inbox_path(project, track) do
+    thread =
+      Enum.find(track.threads, &(&1.unread && attention?(&1))) ||
+        Enum.find(track.threads, &attention?/1)
+
+    thread_id = if thread, do: thread.id, else: track.id
+    "/p/#{project.id}/t/#{track.id}?thread=#{thread_id}"
   end
 
   # Move the nested track page to the track that was just chosen, rather than

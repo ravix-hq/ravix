@@ -14,6 +14,55 @@ defmodule RavixWeb.WorkspaceLiveTest do
 
   setup :verify_on_exit!
 
+  test "inbox opens the unread non-default thread and clears all unread indicators", %{conn: conn} do
+    user = insert_user()
+    project = insert_project(user: user)
+    row = insert_track(project: project)
+
+    {:ok, other} =
+      Tracks.Store.create_thread(%{
+        track_id: row.id,
+        title: "Thread 2",
+        conversation_id: "second"
+      })
+
+    threads = [
+      %{id: row.id, title: "Default", status: :ready, unread: false},
+      %{id: other.id, title: "Thread 2", status: :ready, unread: true}
+    ]
+
+    track = %{Tracks.present(row) | status: :ready, unread: true, threads: threads}
+    stub_track(row)
+    stub(Tracks, :list, fn _, _ -> {:ok, [track]} end)
+
+    stub(Tracks, :get, fn _, _, _ ->
+      {:ok, %{track: track, header: blank_header(), threads: threads, starters: [], models: []}}
+    end)
+
+    stub(Tracks, :mark_read, fn user, id, thread ->
+      Mimic.call_original(Tracks, :mark_read, [user, id, thread])
+    end)
+
+    {:ok, view, _} = live(log_in_user(conn, user), "/inbox")
+    path = "/p/#{project.id}/t/#{row.id}?thread=#{other.id}"
+    assert has_element?(view, ~s|.inbox-item[href="#{path}"]|)
+    assert has_element?(view, ~s|a[href="/inbox"] .badge|, "1")
+    view |> element(".inbox-item") |> render_click()
+    assert_patch(view, path)
+    child = find_live_child(view, "track-host")
+    render_async(child)
+    assert has_element?(child, ~s|[data-thread-id="#{other.id}"][aria-current="true"]|)
+    assert Repo.get_by(Tracks.ThreadRead, thread_id: other.id, user_id: user.id)
+    refute has_element?(view, ~s|a[href="/inbox"] .badge|)
+    refute has_element?(view, ".track-tab .dot")
+    refute has_element?(view, ".dot.unread")
+
+    foreign = insert_track()
+    render_patch(view, "/p/#{project.id}/t/#{row.id}?thread=#{foreign.id}")
+    assert has_element?(child, ~s|[data-thread-id="#{other.id}"][aria-current="true"]|)
+    refute Repo.get_by(Tracks.ThreadRead, thread_id: foreign.id, user_id: user.id)
+  end
+
   test "notifications are independent for two threads on one track", %{conn: conn} do
     user = insert_user()
     project = insert_project(user: user, name: "Ravix")

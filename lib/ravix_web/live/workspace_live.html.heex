@@ -532,7 +532,7 @@
           <div :for={project <- @projects}>
             <.link
               :for={track <- Enum.filter(@tracks[project.id] || [], &attention?/1)}
-              patch={"/p/#{project.id}/t/#{track.id}"}
+              patch={inbox_path(project, track)}
               class="inbox-item"
             >
               <div class="row">
