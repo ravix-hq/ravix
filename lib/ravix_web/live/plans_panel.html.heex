@@ -104,6 +104,7 @@
     </header>
     <div class="md">{md(@detail.plan.summary)}</div>
     <p class="hint">Created by {@detail.plan.created_by_login}</p>
+    <RavixWeb.Live.PlanGraph.graph items={@detail.items} />
     <.form for={%{}} id="plan-assign" phx-submit="assign-items" phx-target={@myself}>
       <p>
         Assigning prompts agents and spends this project's owner's subscription. Completed dependencies become ready here; assignment is always your choice.
