@@ -482,12 +482,21 @@ defmodule RavixWeb.CoreComponents do
     ~H"""
     <div :if={@owner}>
       <button class="ghost" phx-click="invite-link" phx-value-action="create" phx-target={@target}>
-        Create invite link
+        {if @invite, do: "Replace invite link", else: "Create invite link"}
       </button>
-      <button class="ghost" phx-click="invite-link" phx-value-action="revoke" phx-target={@target}>
+      <button
+        :if={@invite}
+        class="ghost"
+        phx-click="invite-link"
+        phx-value-action="revoke"
+        phx-target={@target}
+      >
         Revoke invite link
       </button>
     </div>
+    <p :if={@owner && @invite && is_nil(@invite.url)} class="hint">
+      An invite link exists. Its URL is shown only when created. Replacing it invalidates the previous link.
+    </p>
     <p :if={@invite && @invite.url}>
       <a href={@invite.url}>{@invite.url}</a>
     </p>
