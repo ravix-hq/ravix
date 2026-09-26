@@ -442,19 +442,25 @@ test('project, track, streaming, image upload, reconnect, and revocation', async
   // A new thread is blank and retains the track's branch, URL, and default draft.
   const trackUrl = page.url();
   const branch = await page.locator('.track-branch').textContent();
-  const defaultThread = await page.locator('#selected-thread').inputValue();
-  await page.getByRole('button', { name: 'Add thread', exact: true }).click();
-  await expect(page.locator('#selected-thread')).not.toHaveValue(defaultThread);
-  const nextThread = await page.locator('#selected-thread').inputValue();
+  const threadTabs = page.getByRole('navigation', { name: 'Threads', exact: true });
+  const currentThread = threadTabs.locator('[aria-current="true"]');
+  const threadTab = id => threadTabs.locator(`button[data-thread-id="${id}"]`);
+  const defaultThread = await currentThread.getAttribute('data-thread-id');
+  await threadTabs.getByRole('button', { name: 'Add thread', exact: true }).click();
+  await expect(currentThread).not.toHaveAttribute('data-thread-id', defaultThread);
+  const nextThread = await currentThread.getAttribute('data-thread-id');
   await expect(composer).toHaveValue('');
   await expect(page.locator('.track-branch')).toHaveText(branch);
   expect(page.url()).toBe(trackUrl);
   await composer.fill('A separate thread draft');
-  await page.locator('#selected-thread').selectOption(defaultThread);
+  await threadTab(defaultThread).click();
   await expect(composer).toHaveValue('Draft survives reconnect');
-  await page.locator('#selected-thread').selectOption(nextThread);
+  // The tabs are plain buttons: Tab reaches them and Enter switches.
+  await threadTab(nextThread).focus();
+  await page.keyboard.press('Enter');
+  await expect(threadTab(nextThread)).toHaveAttribute('aria-current', 'true');
   await expect(composer).toHaveValue('A separate thread draft');
-  await page.locator('#selected-thread').selectOption(defaultThread);
+  await threadTab(defaultThread).click();
   await expect(composer).toHaveValue('Draft survives reconnect');
   const chooserOpened = page.waitForEvent('filechooser');
   await page.getByRole('button', { name: 'Choose images', exact: true }).click();
@@ -671,7 +677,8 @@ test('composer Send stays compact and keeps its arrow after repeated submissions
     expect(box.height).toBeLessThanOrEqual(44);
     expect(box.width).toBeGreaterThanOrEqual(32);
     expect(box.height).toBeGreaterThanOrEqual(32);
-    await expect(send).toHaveText('Send');
+    await expect(send).toHaveText('');
+    await expect(send).toHaveAttribute('title', 'Send');
     const svg = send.locator('svg');
     await expect(svg).toBeVisible();
     await expect(svg).toHaveAttribute('viewBox', '0 0 24 24');
@@ -685,7 +692,11 @@ test('composer Send stays compact and keeps its arrow after repeated submissions
     expect(colors.stroke).toBe(colors.ink);
     expect(colors.opacity).toBeGreaterThanOrEqual(0.6);
     await expect(page.getByRole('button', { name: 'Choose images', exact: true }).locator('svg')).toBeVisible();
-    await expect(page.locator('.send-hint')).toContainText('Enter');
+    await expect(page.locator('#composer-form')).not.toContainText('to send');
+    const model = page.locator('.composer-model');
+    await expect(model).toHaveText(/^\S/);
+    expect(await model.getAttribute('title')).toMatch(/\//);
+    expect(await model.evaluate(el => getComputedStyle(el).fontFamily)).toContain('IBM Plex Sans');
     await fitsViewport(page);
   };
   await chooseTheme(page, 'Bubblegum');

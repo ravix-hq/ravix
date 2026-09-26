@@ -79,10 +79,27 @@ defmodule RavixWeb.TrackLiveTest do
       {:ok, Transcript.empty("claude")}
     end)
 
-    render_hook(ctx.view, "select-thread", %{thread_id: thread.id})
+    send(ctx.view.pid, {:hub, Event.new(:tracks, ctx.project.id, track_id: ctx.track.id)})
+    settle(ctx.view)
+
+    ctx.view
+    |> element("#thread-switcher button[data-thread-id='#{thread.id}']")
+    |> render_click()
+
     render_async(ctx.view, 1_000)
     assert has_element?(ctx.view, "#composer-#{thread.id}")
-    assert has_element?(ctx.view, "#selected-thread option[value='#{thread.id}'][selected]")
+
+    assert has_element?(
+             ctx.view,
+             "#thread-switcher [data-thread-id='#{thread.id}'][aria-current]",
+             "Next"
+           )
+
+    refute has_element?(
+             ctx.view,
+             "#thread-switcher [data-thread-id='#{ctx.track.id}'][aria-current]"
+           )
+
     ctx.view |> form("#composer-form", %{text: "continue"}) |> render_submit()
     assert [%{thread_id: id}] = PromptQueue.Store.queued_prompts(ctx.track.id)
     assert id == thread.id
@@ -108,12 +125,60 @@ defmodule RavixWeb.TrackLiveTest do
       {:ok, Shapes.conversation(%{"id" => "added"})}
     end)
 
-    ctx.view |> element("button", "Add thread") |> render_click()
+    ctx.view |> element("#thread-switcher button[aria-label='Add thread']") |> render_click()
     render_async(ctx.view, 2_000)
     render_async(ctx.view, 2_000)
     [_, thread] = Tracks.Store.threads_of(ctx.track.id)
     assert thread.conversation_id == "added"
     assert has_element?(ctx.view, "#composer-#{thread.id}")
+  end
+
+  test "thread tabs mark the selected thread and unread ones, and pressing the current tab stays put",
+       ctx do
+    {:ok, other} =
+      Tracks.Store.create_thread(%{track_id: ctx.track.id, title: "Review", conversation_id: "r"})
+
+    stub(Tracks, :get, fn _, id, _ ->
+      threads = Enum.map(thread_options(id), &%{&1 | unread: true})
+
+      {:ok,
+       %{
+         track: Tracks.present(Repo.get!(Track, id), role: :owner),
+         header: blank_header(),
+         threads: threads,
+         starters: []
+       }}
+    end)
+
+    send(ctx.view.pid, {:hub, Event.new(:tracks, ctx.project.id, track_id: ctx.track.id)})
+    settle(ctx.view)
+
+    selected = "#thread-switcher button[data-thread-id='#{ctx.track.id}']"
+    unread = "#thread-switcher button[data-thread-id='#{other.id}']"
+    assert has_element?(ctx.view, "nav#thread-switcher[aria-label='Threads']")
+    assert has_element?(ctx.view, selected <> "[aria-current='true']")
+    refute has_element?(ctx.view, selected <> " .thread-unread")
+    assert has_element?(ctx.view, unread <> ":not([aria-current]) .thread-unread", "(unread)")
+    assert has_element?(ctx.view, unread, "Review")
+
+    reject(&Tracks.events/3)
+    ctx.view |> element(selected) |> render_click()
+    assert has_element?(ctx.view, "#composer-#{ctx.track.id}")
+  end
+
+  test "the thread row is absent with one thread when threads cannot be added" do
+    one = [%{id: "a", title: "Main", unread: false}]
+    two = one ++ [%{id: "b", title: "Side", unread: true}]
+    tabs = fn assigns -> render_component(&RavixWeb.TrackLive.thread_tabs/1, assigns) end
+
+    assert tabs.(threads: one, thread_id: "a", enabled: false) |> String.trim() == ""
+
+    html = tabs.(threads: two, thread_id: "a", enabled: false)
+    assert html =~ ~s(data-thread-id="b")
+    refute html =~ "Add thread"
+
+    html = tabs.(threads: one, thread_id: "a", enabled: true, adding: true)
+    assert html =~ ~r/aria-label="Add thread"[^>]*disabled/s
   end
 
   test "a forged thread ID cannot switch the page", ctx do
@@ -321,7 +386,8 @@ defmodule RavixWeb.TrackLiveTest do
       settle(ctx.view)
 
       button = "#composer-form button[aria-label='Send']"
-      assert has_element?(ctx.view, button <> "[type='submit'][title='Send']", "Send")
+      assert has_element?(ctx.view, button <> "[type='submit'][title='Send']")
+      refute has_element?(ctx.view, button, "Send")
       assert has_element?(ctx.view, button <> " svg[width='16'][height='16'] path")
       refute has_element?(ctx.view, button <> "[phx-disable-with]")
       assert has_element?(ctx.view, button <> "[disabled]") == is_nil(conversation_id)
@@ -333,7 +399,13 @@ defmodule RavixWeb.TrackLiveTest do
                status in [:opening, :failed]
 
       assert has_element?(ctx.view, "#composer-form button[aria-label='Choose images'] svg")
-      assert has_element?(ctx.view, ".send-hint", "to send")
+      refute has_element?(ctx.view, "#composer-form", "to send")
+
+      assert has_element?(
+               ctx.view,
+               ".composer-model[title='anthropic/claude-sonnet-5']",
+               "Claude Sonnet 5"
+             )
     end
   end
 

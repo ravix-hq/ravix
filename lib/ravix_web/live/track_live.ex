@@ -61,6 +61,7 @@ defmodule RavixWeb.TrackLive do
   alias RavixWeb.Live.Panel
   alias RavixWeb.Live.Params
   alias RavixWeb.Markdown
+  alias RavixWeb.ModelName
 
   @impl true
   def mount(_params, session, socket) do
@@ -148,6 +149,9 @@ defmodule RavixWeb.TrackLive do
   @impl true
   def handle_event("select-thread", %{"thread_id" => id}, socket) do
     case Access.thread_access(socket.assigns.current_user, socket.assigns.track_id, id) do
+      # The selected tab is still a button; pressing it again keeps the
+      # transcript and the follower it already has.
+      {:ok, _} when id == socket.assigns.thread_id -> {:noreply, socket}
       {:ok, _} -> {:noreply, switch_thread(socket, id)}
       {:error, reason} -> {:noreply, error(socket, reason)}
     end
@@ -954,6 +958,58 @@ defmodule RavixWeb.TrackLive do
     socket
     |> update_panel(&%{&1 | busy?: true})
     |> traced_async(:preview_action, fn -> call.(user, id, hash) end)
+  end
+
+  attr :threads, :list, required: true
+  attr :thread_id, :string, required: true
+  attr :adding, :boolean, default: false
+  attr :enabled, :boolean, required: true
+
+  @doc """
+  The track's threads as a row of tabs above the composer, with "+" at the
+  end when threads can be added. A track with one thread that cannot gain
+  another has nothing to switch between, so the row is not drawn at all.
+
+  Plain buttons in a labelled nav: each is reachable with Tab and fires on
+  Enter or Space, the selected one carries `aria-current`, and an unread
+  thread's dot has a spoken label.
+  """
+  def thread_tabs(assigns) do
+    ~H"""
+    <nav
+      :if={length(@threads) > 1 or @enabled}
+      id="thread-switcher"
+      class="thread-tabs"
+      aria-label="Threads"
+    >
+      <button
+        :for={thread <- @threads}
+        type="button"
+        class="thread-tab"
+        phx-click="select-thread"
+        phx-value-thread_id={thread.id}
+        data-thread-id={thread.id}
+        aria-current={if thread.id == @thread_id, do: "true"}
+        title={thread.title}
+      >
+        <span class="thread-tab-title">{thread.title}</span><span
+          :if={thread.unread && thread.id != @thread_id}
+          class="thread-unread"
+        ><span class="sr-only">(unread)</span></span>
+      </button>
+      <button
+        :if={@enabled}
+        type="button"
+        class="ghost thread-add"
+        aria-label="Add thread"
+        title="Add thread"
+        phx-click="add-thread"
+        disabled={@adding}
+      >
+        <.icon name="plus" size={14} />
+      </button>
+    </nav>
+    """
   end
 
   attr :directories, :map, default: %{}
