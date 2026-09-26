@@ -469,6 +469,8 @@ test('keyboard users can resize panels and close dialogs with focus restored', a
 });
 
 test('project, track, streaming, image upload, reconnect, and revocation', async ({ page, context }) => {
+  // Two independent idle queue sweeps plus the navigation/reconnect checks.
+  test.setTimeout(120_000);
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
   await signIn(page);
@@ -654,7 +656,8 @@ test('project, track, streaming, image upload, reconnect, and revocation', async
   // prompt back, so the transcript contains these words even when the prompt
   // never arrived. It reaches the live page on the turn's opening event, which
   // the follower reads back from the feed because the stream never carries it.
-  await expect(page.locator('#transcript-turns .said .workspace-prompt').filter({ hasText: 'Explain this project for the browser smoke test' })).toHaveCount(1);
+  // With no prior queued head, the worker may be on its 30-second idle sweep.
+  await expect(page.locator('#transcript-turns .said .workspace-prompt').filter({ hasText: 'Explain this project for the browser smoke test' })).toHaveCount(1, { timeout: 45_000 });
   await expect(page.locator('.workspace-turn').filter({ hasText: 'Explain this project for the browser smoke test' }).locator('.agent-terminal-output > div > .md')).toContainText('There is one TODO worth doing here');
   // The agent's checklist, as it last stood: one plan, both lines, the first done.
   await expect(page.locator('.workspace-plan')).toHaveCount(1);
@@ -705,7 +708,9 @@ test('project, track, streaming, image upload, reconnect, and revocation', async
   await expect(page.locator('.workspace-upload')).toContainText('pixel.png (100%)');
   await page.getByRole('button', { name: 'Send', exact: true }).click();
   await expect(page.locator('.workspace-upload')).toHaveCount(0);
-  await expect(page.locator('.workspace-turn').filter({ hasText: 'Draft survives reconnect' }).locator('.agent-terminal-output > div > .md')).toContainText('There is one TODO worth doing here');
+  // Reconnecting can leave the queue worker idle with no followed heads. Its
+  // documented backstop is 30 seconds; allow that sweep plus the streamed reply.
+  await expect(page.locator('.workspace-turn').filter({ hasText: 'Draft survives reconnect' }).locator('.agent-terminal-output > div > .md')).toContainText('There is one TODO worth doing here', { timeout: 45_000 });
   await capture(page, 'track-Ravix');
   await chooseTheme(page, 'Daylight');
   await accessible(page);
@@ -935,8 +940,8 @@ test('project settings navigate, warn before discarding, and save sections acces
 });
 
 test('composer Send stays compact and keeps its arrow after repeated submissions in every theme', async ({ page, request }) => {
-  // Five states x 22 palettes x 2 widths runs in ~30s locally; allow CI headroom.
-  test.setTimeout(120_000);
+  // Allow two idle queue sweeps and the five-state theme/viewport matrix.
+  test.setTimeout(150_000);
   await signIn(page);
   await page.getByRole('button', { name: 'Add a project', exact: true }).first().click();
   const projectDialog = page.getByRole('dialog', { name: 'New project', exact: true });
@@ -1000,11 +1005,13 @@ test('composer Send stays compact and keeps its arrow after repeated submissions
     await page.evaluate(() => window.liveSocket.disableLatencySim());
     // Acknowledgement clears the input before the agent finishes. Keep this
     // button-rendering regression sequential instead of queuing another turn.
-    await expect(page.locator('#transcript-turns .turn-footer')).toHaveCount(++completedAnswers, { timeout: 30_000 });
+    // An idle sweep can consume 30 seconds before the reply even begins.
+    await expect(page.locator('#transcript-turns .turn-footer')).toHaveCount(++completedAnswers, { timeout: 45_000 });
     await expect(page.locator('#composer-form').getByRole('button', { name: 'Stop', exact: true })).toHaveCount(0, { timeout: 30_000 });
   }
   await page.evaluate(() => window.liveSocket.disableLatencySim());
-  await expect(page.locator('#transcript-turns')).toContainText('Send regression Enter');
+  // Setup and delivery share the worker's 30-second idle backstop.
+  await expect(page.locator('#transcript-turns')).toContainText('Send regression Enter', { timeout: 45_000 });
   await expect(page.locator('#composer-form').getByRole('button', { name: 'Stop', exact: true })).toHaveCount(0, { timeout: 30_000 });
   const fixture = composerFixture(new URL(page.url()).pathname.split('/').pop());
   const palettes = await page.locator('[data-theme-choice]').evaluateAll(els => [...new Set(els.map(el => el.dataset.themeChoice))]);
