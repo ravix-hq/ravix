@@ -362,12 +362,23 @@
             phx-click="panel"
             phx-value-name={tab}
           >
-            {label}
+            {label}<.change_badge :if={tab == :changes} count={@panel.change_count} />
+          </button>
+          <button
+            class={["ghost panel-refresh", @panel.busy? && "busy"]}
+            phx-click="refresh-panel"
+            disabled={@panel.busy?}
+            aria-label="Refresh"
+            title="Refresh"
+          >
+            <.icon name="refresh" size={14} />
           </button>
         </nav>
         <div class="workspace-panel">
-          <button class="ghost" phx-click="refresh-panel" disabled={@panel.busy?}>Refresh</button>
-          <.loading_status :if={@panel.busy?}>Loading inspector…</.loading_status>
+          <%!-- A diff being re-read stays on screen; the refresh button turns instead. --%>
+          <.loading_status :if={@panel.busy? && !is_struct(@panel.data, Ravix.Tracks.Diff)}>
+            Loading inspector…
+          </.loading_status>
           <p :if={@panel.error} role="alert">{@panel.error}</p>
           <.panel_body
             :if={@panel.data}

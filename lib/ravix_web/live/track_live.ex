@@ -359,7 +359,7 @@ defmodule RavixWeb.TrackLive do
 
   def handle_info({:transcript, id, %TranscriptEvent{} = event}, socket) do
     if id == socket.assigns.thread_id,
-      do: {:noreply, socket |> absorb(event) |> schedule_flush()},
+      do: {:noreply, socket |> absorb(event) |> schedule_flush() |> after_turn(event)},
       else: {:noreply, socket}
   end
 
@@ -1012,6 +1012,24 @@ defmodule RavixWeb.TrackLive do
     """
   end
 
+  attr :count, :any, required: true, doc: "`Panel`'s `change_count`: `{files, truncated?}` or nil"
+
+  # The Changes tab's count, once a diff read has said what it is. Nothing is
+  # drawn for "not known yet" or for none: a 0 on a tab is a thing to read
+  # that says nothing. The visible number is hidden from assistive tech and
+  # said as words instead, so the button is "Changes, 3 changed files".
+  defp change_badge(%{count: {files, truncated}} = assigns) when files > 0 do
+    assigns = assign(assigns, files: files, more: if(truncated, do: "+", else: ""))
+
+    ~H"""
+    <span class="tab-count" aria-hidden="true">{@files}{@more}</span><span class="sr-only">, {changed_files(
+      @files
+    )}{if @more != "", do: " or more"}</span>
+    """
+  end
+
+  defp change_badge(assigns), do: ~H""
+
   attr :directories, :map, default: %{}
   attr :diff_path, :string, default: nil
   attr :diff_filter, :string, default: ""
@@ -1064,18 +1082,31 @@ defmodule RavixWeb.TrackLive do
 
     ~H"""
     <div class="changes-panel">
-      <p :if={@data.diff == ""}>No changes yet.</p>
-      <p>
-        {length(@data.changes)} changed files <span class="diff-add">+{@added}</span>
-        <span class="diff-del">−{@removed}</span>
+      <div :if={@data.diff == ""} class="panel-empty">
+        <.empty icon="branch" title="No changes yet">
+          Files the agent edits in this track’s worktree appear here, each with its diff.
+        </.empty>
+      </div>
+      <p :if={@data.diff != ""} class="changes-summary">
+        <span>{changed_files(length(@data.changes))}</span>
+        <span class="change-counts">
+          <span class="diff-add">+{@added}</span> <span class="diff-del">−{@removed}</span>
+        </span>
       </p>
-      <p :if={@data.truncated}>Diff is truncated.</p>
-      <div :if={!@selected}>
+      <p :if={@data.truncated} class="changes-note">Diff is truncated.</p>
+      <div :if={!@selected && @data.diff != ""}>
         <form id="diff-filter-form" phx-change="filter-diff" phx-submit="filter-diff">
-          <label for="diff-filter">Filter paths</label>
-          <input id="diff-filter" name="filter" type="search" value={@diff_filter} phx-debounce="150" />
+          <label for="diff-filter" class="sr-only">Filter paths</label>
+          <input
+            id="diff-filter"
+            name="filter"
+            type="search"
+            value={@diff_filter}
+            placeholder="Filter paths"
+            phx-debounce="150"
+          />
         </form>
-        <p :if={@filtered == [] and @data.diff != ""}>No matching files.</p>
+        <p :if={@filtered == []} class="changes-note">No matching files.</p>
         <button
           :for={file <- @filtered}
           type="button"
@@ -1083,13 +1114,20 @@ defmodule RavixWeb.TrackLive do
           phx-click="select-diff"
           phx-value-path={file.change.path}
         >
-          <span class="change-status">{diff_status(file.change.status)}</span>
+          <span
+            class={"change-status change-#{file.change.status}"}
+            title={diff_status_label(file.change.status)}
+            aria-hidden="true"
+          >{diff_status(file.change.status)}</span><span class="sr-only">{diff_status_label(
+            file.change.status
+          )}: </span>
           <span class="change-path"><span :if={file.change.status == :renamed}>{file.old_path} → </span><span class="change-directory">{diff_directory(
             file.change.path
           )}</span><strong>{Path.basename(file.change.path)}</strong></span>
-          <span class="change-counts"><span class="diff-add">+{file.change.added}</span>
+          <span :if={file.partial} class="change-tag">Partial</span>
+          <span :if={file.binary} class="change-tag">Binary</span>
+          <span :if={!file.binary} class="change-counts"><span class="diff-add">+{file.change.added}</span>
           <span class="diff-del">−{file.change.removed}</span></span>
-          <span :if={file.partial}>Partial</span>
         </button>
       </div>
       <div :if={@selected}>
@@ -1162,6 +1200,12 @@ defmodule RavixWeb.TrackLive do
   end
 
   defp diff_status(status), do: %{added: "A", modified: "M", deleted: "D", renamed: "R"}[status]
+
+  defp diff_status_label(status),
+    do: %{added: "Added", modified: "Modified", deleted: "Deleted", renamed: "Renamed"}[status]
+
+  defp changed_files(1), do: "1 changed file"
+  defp changed_files(count), do: "#{count} changed files"
   defp diff_marker(kind), do: %{add: "+", del: "−", context: " "}[kind]
 
   defp diff_line_label(%{kind: :add, new: new}), do: "Added line #{new}: "
@@ -1238,16 +1282,32 @@ defmodule RavixWeb.TrackLive do
       Enum.reduce(file.hunks, 0, &(length(&1.lines) + &2)) > 1000 or
         Enum.any?(file.hunks, fn hunk -> Enum.any?(hunk.lines, &(byte_size(&1.text) > 20_000)) end)
 
-  defp load_panel(socket, path \\ nil) do
+  # A turn ending is the moment the worktree stops moving, so it is when the
+  # Changes list is worth re-reading -- in place, because somebody may be
+  # reading the list or a diff in it. Only Changes: re-reading All files
+  # would fold every directory somebody opened, and Checks follow a push
+  # rather than a turn. Any other tab keeps what it shows, and the Changes
+  # badge forgets its count rather than keep one the turn may have made
+  # wrong; it comes back the next time the list is read. No polling, and no
+  # read the page was not already going to make.
+  defp after_turn(socket, %TranscriptEvent{} = event) do
+    cond do
+      not TranscriptEvent.settles?(event) -> socket
+      socket.assigns.panel.tab == :changes -> load_panel(socket, &Panel.reloading/1)
+      true -> update_panel(socket, &Panel.forget_changes/1)
+    end
+  end
+
+  defp load_panel(socket, mark \\ &Panel.loading/1) do
     user = socket.assigns.current_user
     id = socket.assigns.track_id
     tab = socket.assigns.panel.tab
 
     socket
-    |> update_panel(&Panel.loading/1)
+    |> update_panel(mark)
     |> traced_async(:panel, fn ->
       case tab do
-        :files -> Tracks.files(user, id, path)
+        :files -> Tracks.files(user, id, nil)
         :changes -> Tracks.diff(user, id)
         :checks -> Tracks.checks(user, id)
         :preview -> Previews.status(user, id)
