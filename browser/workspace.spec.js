@@ -751,3 +751,23 @@ test('shared project prefixes stay muted and truncate across every theme', async
     await memberContext.close();
   }
 });
+
+
+test('slow navigation and requests show feedback until their response arrives', async ({ page }) => {
+  await signIn(page);
+  await expect(page.locator('#request-progress')).toBeHidden();
+  await page.evaluate(() => window.liveSocket.enableLatencySim(700));
+  await page.locator('.yard-nav a').filter({ hasText: 'Home' }).click();
+  await expect(page.locator('#request-progress')).toBeVisible();
+  await expect(page.locator('#request-progress')).toBeHidden();
+  await page.locator('.yard-nav button').filter({ hasText: 'Add a project' }).click();
+  await expect(page.locator('#request-progress')).toBeVisible();
+  await expect(page.locator('#new-project-dialog')).toBeVisible();
+  await expect(page.locator('#request-progress')).toBeHidden();
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.locator('#new-project-dialog button.x').click();
+  await expect(page.locator('#request-progress')).toBeVisible();
+  await expect(page.locator('#request-progress .loading-spinner')).toHaveCSS('animation-name', 'none');
+  await expect(page.locator('#request-progress')).toBeHidden();
+  await page.evaluate(() => window.liveSocket.disableLatencySim());
+});

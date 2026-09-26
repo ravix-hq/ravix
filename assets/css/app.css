@@ -1235,3 +1235,27 @@ h4 { font-size: 12px; color: var(--dim); font-weight: 500; letter-spacing: 0; }
 .diff-line.diff-del { background: color-mix(in srgb, var(--bad) 10%, transparent); }
 .diff-line code { font: inherit; }
 .diff-no-newline { padding-left: 12ch; white-space: pre; }
+
+/* Keep the current page usable while a request or navigation is in flight.
+   LiveView owns event classes, so concurrent requests and failures clear with
+   the request that owns them. Async work uses a local loading-status instead. */
+#request-progress {
+  display: none; position: fixed; top: 12px; left: 50%; transform: translateX(-50%);
+  z-index: 70; max-width: calc(100vw - 24px); padding: 9px 14px;
+  gap: 8px; align-items: center; pointer-events: none;
+  color: var(--ink); background: var(--panel); border: 1px solid var(--line);
+  border-radius: var(--radius); box-shadow: 0 4px 16px var(--shadow); font-size: 12px;
+}
+html.page-loading #request-progress,
+body:has(.phx-click-loading, .phx-submit-loading, .phx-change-loading) #request-progress {
+  display: flex;
+}
+body:has(.phx-error) #request-progress { display: none; }
+.loading-status { display: flex; align-items: center; gap: 8px; color: var(--dim); font-size: 13px; }
+.loading-spinner {
+  display: inline-block; width: 14px; height: 14px; flex: none;
+  border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%;
+  animation: request-spin 800ms linear infinite;
+}
+@keyframes request-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .loading-spinner { animation: none; } }
