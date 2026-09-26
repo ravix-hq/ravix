@@ -326,6 +326,22 @@ test('project, track, streaming, image upload, reconnect, and revocation', async
   await page.getByRole('button', { name: '← All changed files' }).click();
   await expect(page.getByLabel('Filter paths')).toHaveValue('window');
   await page.getByRole('button', { name: 'All files', exact: true }).click();
+  const explorer = page.locator('.file-explorer');
+  const src = explorer.getByRole('button', { name: 'src', exact: true });
+  await expect(src).toHaveAttribute('aria-expanded', 'false');
+  await src.press('Enter');
+  await expect(src).toHaveAttribute('aria-expanded', 'true');
+  await expect(explorer.locator('.file-list .file-list')).toBeVisible();
+  const readme = explorer.getByRole('button', { name: 'README.md', exact: true });
+  await expect(readme).toBeVisible();
+  await readme.click();
+  await expect(readme).toHaveAttribute('aria-current', 'true');
+  await expect(explorer.locator('pre')).toContainText('A service that does one thing');
+  await src.click();
+  await expect(src).toHaveAttribute('aria-expanded', 'false');
+  await expect(explorer.locator('.file-list .file-list')).toHaveCount(0);
+  await expect(explorer.locator('pre')).toBeVisible();
+
 
   await accessible(page);
   await expect(page.locator('.crumbs')).toHaveCount(1);
