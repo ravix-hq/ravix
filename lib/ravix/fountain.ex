@@ -31,7 +31,7 @@ defmodule Ravix.Fountain do
   require Logger
 
   alias Fountain.HTTP
-  alias Ravix.Fountain.{Client, Error, Launch, Shapes}
+  alias Ravix.Fountain.{Client, Error, Image, Launch, Shapes}
   alias Ravix.Trace
 
   @type id :: String.t()
@@ -449,6 +449,19 @@ defmodule Ravix.Fountain do
     call(client, "POST", "/api/conversations/#{escape(id)}/terminate", fn http ->
       Fountain.Conversation.terminate(conversation(http, id))
     end)
+  end
+
+  @doc "The retained bytes of one prompt image. Credentials stay on the server."
+  @spec turn_image(Client.t(), id(), id(), non_neg_integer()) ::
+          result(Image.t()) | {:error, :not_found}
+  def turn_image(client, conversation_id, turn_id, position) do
+    path =
+      "/api/conversations/#{escape(conversation_id)}/turns/#{escape(turn_id)}/images/#{position}"
+
+    with {:ok, bytes} <-
+           call(client, "GET", path, &HTTP.request(&1, "GET", path, accept: "image/*")) do
+      Image.decode(bytes)
+    end
   end
 
   @doc "`GET /api/conversations/:id/turns`: the prompts, which live apart from the output."

@@ -28,6 +28,20 @@ defmodule RavixWeb.Router do
     plug :accepts, ["json"]
   end
 
+  pipeline :image do
+    plug :fetch_session
+    plug :protect_from_forgery
+    plug RavixWeb.Plugs.CurrentUser
+  end
+
+  scope "/", RavixWeb do
+    pipe_through :image
+
+    get "/tracks/:track/threads/:thread/turns/:turn/images/:position",
+        PromptImageController,
+        :show
+  end
+
   scope "/", RavixWeb do
     pipe_through :api
     get "/.well-known/oauth-authorization-server", ToolingOAuthController, :metadata

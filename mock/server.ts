@@ -326,7 +326,9 @@ const toolDone = (id: string, out: string) =>
  * because it does on a real runtime, and a transcript that only ever appears
  * all at once hides every streaming bug there is.
  */
-async function runTurn(conv: Conv, prompt: string, clientRequestId: string | null): Promise<void> {
+type PromptImage = { data: string; media_type: string };
+
+async function runTurn(conv: Conv, prompt: string, clientRequestId: string | null, images: PromptImage[]): Promise<void> {
   const turn = `turn-${state.turnSeq++}`;
   const emit = (ev: Record<string, unknown>) => push(conv.id, { turn_id: turn, ...ev });
   const say = async (body: string) => {
@@ -353,6 +355,8 @@ async function runTurn(conv: Conv, prompt: string, clientRequestId: string | nul
     // The sender's name for the prompt, copied back so it can tell which
     // turn was its own (the prompt queue sends its row id).
     client_request_id: clientRequestId,
+    image_count: images.length,
+    images,
   };
   state.turns.set(conv.id, [...(state.turns.get(conv.id) ?? []), record]);
 
@@ -484,11 +488,11 @@ function hasFilesUnder(dir: string): boolean {
  * *same* track queues behind its own turn, which is what a person typing twice
  * in a row expects.
  */
-function accept(conv: Conv, prompt: string, clientRequestId: string | null = null): { error: string } | null {
+function accept(conv: Conv, prompt: string, clientRequestId: string | null = null, images: PromptImage[] = []): { error: string } | null {
   const holder = conv.sandbox_id ? state.busy.get(conv.sandbox_id) : undefined;
   if (holder && holder !== conv.id) return { error: "sandbox_at_capacity" };
   const tail = state.queues.get(conv.id) ?? Promise.resolve();
-  const next = tail.then(() => runTurn(conv, prompt, clientRequestId)).catch((err: unknown) => {
+  const next = tail.then(() => runTurn(conv, prompt, clientRequestId, images)).catch((err: unknown) => {
     console.error("mock: turn blew up:", err);
   });
   state.queues.set(conv.id, next);
@@ -866,8 +870,8 @@ async function fountain(req: Request, url: URL): Promise<Response | null> {
   if (convPrompt) {
     const conv = state.conversations.find((c) => c.id === convPrompt[1]);
     if (!conv) return json({ error: "not_found" }, 404);
-    const { prompt, client_request_id } = body as { prompt?: unknown; client_request_id?: unknown };
-    const refused = accept(conv, String(prompt ?? ""), typeof client_request_id === "string" ? client_request_id : null);
+    const { prompt, client_request_id, images } = body as { prompt?: unknown; client_request_id?: unknown; images?: PromptImage[] };
+    const refused = accept(conv, String(prompt ?? ""), typeof client_request_id === "string" ? client_request_id : null, images ?? []);
     if (refused) return json(refused, 409);
     return json({ status: "accepted" });
   }
@@ -906,8 +910,17 @@ async function fountain(req: Request, url: URL): Promise<Response | null> {
     });
   }
 
+  const turnImage = /^\/api\/conversations\/([^/]+)\/turns\/([^/]+)\/images\/(\d+)$/.exec(p);
+  if (turnImage) {
+    const turn = state.turns.get(turnImage[1]!)?.find(t => t.id === turnImage[2]);
+    const image = (turn?.images as PromptImage[] | undefined)?.[Number(turnImage[3])];
+    return image
+      ? new Response(Buffer.from(image.data, "base64"), { headers: { "content-type": image.media_type } })
+      : new Response("Not Found", { status: 404 });
+  }
+
   const convTurns = /^\/api\/conversations\/([^/]+)\/turns$/.exec(p);
-  if (convTurns) return json({ data: state.turns.get(convTurns[1]!) ?? [] });
+  if (convTurns) return json({ data: (state.turns.get(convTurns[1]!) ?? []).map(({ images, ...turn }) => turn) });
 
   // Only the `model` half of reapply (ADR 0061): omitted keeps it, null
   // follows the agent again, and a turn in flight is refused as Fountain does.

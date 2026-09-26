@@ -1889,6 +1889,10 @@ defmodule RavixWeb.TrackLive do
   defp plan_status(:pending), do: "to do"
 
   attr :prompt, :string, required: true
+  attr :image_count, :integer, required: true
+  attr :track_id, :string, required: true
+  attr :thread_id, :string, required: true
+  attr :turn_id, :string, required: true
 
   defp prompt_message(assigns) do
     prompt = Ravix.Previews.Agent.visible_prompt(assigns.prompt)
@@ -1898,7 +1902,24 @@ defmodule RavixWeb.TrackLive do
     ~H"""
     <div class="said">
       <span class="speaker">{@speaker}</span>
-      <div class="workspace-prompt">{@body}</div>
+      <div :if={@body != ""} class="workspace-prompt">{@body}</div>
+      <div :if={@image_count > 0} class="prompt-images" role="group" aria-label="Attached images">
+        <a
+          :for={position <- 0..(@image_count - 1)}
+          href={~p"/tracks/#{@track_id}/threads/#{@thread_id}/turns/#{@turn_id}/images/#{position}"}
+          target="_blank"
+          rel="noopener"
+          aria-label={"Open attached image #{position + 1} in a new tab"}
+        >
+          <img
+            src={~p"/tracks/#{@track_id}/threads/#{@thread_id}/turns/#{@turn_id}/images/#{position}"}
+            alt={"Attached image #{position + 1}"}
+            loading="lazy"
+            width="160"
+            height="120"
+          />
+        </a>
+      </div>
     </div>
     """
   end

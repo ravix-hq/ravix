@@ -1797,6 +1797,41 @@ defmodule RavixWeb.TrackLiveTest do
     assert has_element?(ctx.view, ".workspace-plan li", "Fix <the> bug")
   end
 
+  test "prompt thumbnails stay with their turn in snapshots and image-only live updates", ctx do
+    page =
+      [opened(1, "with-images", "Look at these"), opened(2, "text-only", "Just text")]
+      |> Transcript.page("claude")
+      |> Transcript.with_images([Shapes.turn(%{"id" => "with-images", "image_count" => 2})])
+
+    stub(Tracks, :events, fn _, _, _ -> {:ok, page} end)
+    render_click(ctx.view, "retry-load")
+    render_async(ctx.view)
+
+    base = "/tracks/#{ctx.track.id}/threads/#{ctx.track.id}/turns/with-images/images/"
+
+    for position <- 0..1 do
+      assert has_element?(ctx.view, "#turns-with-images .said img[src='#{base}#{position}']")
+
+      assert has_element?(
+               ctx.view,
+               "#turns-with-images a[href='#{base}#{position}'][target='_blank']"
+             )
+    end
+
+    refute has_element?(ctx.view, "#turns-text-only img")
+
+    event = opened(3, "image-only", "") |> Transcript.Event.from() |> Map.put(:image_count, 1)
+    send(ctx.view.pid, {:transcript, ctx.track.id, event})
+    drawn(ctx.view)
+    assert has_element?(ctx.view, "#turns-image-only .said img[alt='Attached image 1']")
+    refute has_element?(ctx.view, "#turns-image-only .workspace-prompt")
+
+    # A replay without metadata must not erase the attachments.
+    send(ctx.view.pid, {:transcript, ctx.track.id, opened(3, "image-only", "")})
+    drawn(ctx.view)
+    assert has_element?(ctx.view, "#turns-image-only .said img")
+  end
+
   test "shared transcript messages name their senders in snapshots and live updates", ctx do
     page =
       Transcript.page(

@@ -46,9 +46,9 @@ defmodule Ravix.Tracks.Follower do
   what the machine wrote; the prompt is served on the paged feed alone, on
   the turn's `turn`/`started` event (`?prompts=true`). So when that event
   arrives here without one, the follower reads that single event back from
-  the feed and broadcasts the copy that has it. One small read per turn,
-  once for everybody following, and only when Fountain could not answer is
-  the bare event sent on: the next full read of the transcript fills it in.
+  the feed and adds the retained image count from the turn list. These reads
+  happen once per opening event for everybody following. If Fountain cannot answer,
+  the available event is sent on; the next full read fills in missing metadata.
   """
 
   use GenServer, restart: :temporary
@@ -290,8 +290,11 @@ defmodule Ravix.Tracks.Follower do
        when is_integer(id) and id > 0 do
     if Event.starts_turn?(event) do
       case Fountain.events_page(client, conversation_id, after: id - 1, limit: 1, prompts: true) do
-        {:ok, %{events: [%{"id" => ^id} = raw | _]}} -> Event.from(raw)
-        _unanswered -> event
+        {:ok, %{events: [%{"id" => ^id} = raw | _]}} ->
+          with_images(Event.from(raw), client, conversation_id)
+
+        _unanswered ->
+          event
       end
     else
       event
@@ -299,6 +302,21 @@ defmodule Ravix.Tracks.Follower do
   end
 
   defp with_prompt(event, _client, _conversation_id), do: event
+
+  defp with_images(event, client, conversation_id) do
+    case Fountain.turns(client, conversation_id) do
+      {:ok, turns} ->
+        count =
+          Enum.find_value(turns, 0, fn turn ->
+            if turn.id == event.turn_id, do: turn.image_count
+          end)
+
+        %{event | image_count: count}
+
+      {:error, _reason} ->
+        event
+    end
+  end
 
   defp reopen_later(state, result) do
     case result do

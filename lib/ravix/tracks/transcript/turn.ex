@@ -3,7 +3,7 @@ defmodule Ravix.Tracks.Transcript.Turn do
   One turn as the page carries it: the prompt that opened it, the events
   that answered it, and the blocks they fold into.
 
-  Built from the event log alone (see `Ravix.Tracks.Transcript`), so it is
+  Built from the event log and retained image counts (see `Ravix.Tracks.Transcript`), so it is
   not `Ravix.Fountain.Shapes.Turn`, the `/turns` record: `prompt` comes off
   the turn's `started` event, `events` and `blocks` accumulate as output
   arrives, and `settled?` and `visible?` are read off them.
@@ -55,6 +55,7 @@ defmodule Ravix.Tracks.Transcript.Turn do
   defstruct [
     :id,
     :prompt,
+    image_count: 0,
     events: [],
     blocks: [],
     settled?: false,
@@ -65,6 +66,7 @@ defmodule Ravix.Tracks.Transcript.Turn do
   @type t :: %__MODULE__{
           id: String.t() | nil,
           prompt: String.t() | nil,
+          image_count: non_neg_integer(),
           events: [Event.t()],
           blocks: [Block.t()],
           settled?: boolean(),

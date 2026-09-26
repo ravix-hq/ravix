@@ -90,6 +90,11 @@ defmodule Ravix.ThreadsTest do
       :ok
     end)
 
+    expect(Fountain, :turns, fn _, id ->
+      assert id == other.conversation_id
+      {:ok, []}
+    end)
+
     assert {:ok, _} = Tracks.events(ctx.user, ctx.track.id, thread_id: other.id)
     assert :ok = Tracks.interrupt(ctx.user, ctx.track.id, other.id)
   end
