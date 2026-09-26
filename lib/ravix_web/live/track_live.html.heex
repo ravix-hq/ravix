@@ -224,6 +224,9 @@
           {@announcement}
         </div>
         <.loading_status :if={:interrupt in @pending}>Stopping agent…</.loading_status>
+        <p :if={@track.status == :setup_failed} role="alert">
+          Setup failed. Retry setup, then retry your saved prompts.
+        </p>
         <.loading_status :if={:retry in @pending}>Retrying track…</.loading_status>
         <.loading_status :if={:add_thread in @pending}>Adding thread…</.loading_status>
         <.thread_tabs
@@ -330,13 +333,13 @@
                   Stop
                 </button>
                 <button
-                  :if={@track.status in [:failed, :opening]}
+                  :if={@track.status in [:failed, :opening, :setup_failed]}
                   type="button"
                   class="ghost"
                   phx-click="retry-track"
                   disabled={:retry in @pending}
                 >
-                  Wake / retry
+                  {if @track.status == :setup_failed, do: "Retry setup", else: "Wake / retry"}
                 </button>
               </div>
             </div>

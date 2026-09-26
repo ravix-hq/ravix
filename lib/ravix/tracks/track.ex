@@ -9,6 +9,11 @@ defmodule Ravix.Tracks.Track do
   and caching them here is how a UI ends up confidently showing a machine
   that died an hour ago.
 
+  Setup is the exception: its durable state records Ravix's verified opening
+  outcome, attempt budget, retry deadline and worker lease. `opened_at` is set
+  only after completion and a worktree check; old accepted-only rows are
+  reconciled by `Tracks.Setup` before queued work may be claimed.
+
   One live track per slug per project: the slug is a directory name on a
   real machine, so two of them is not a naming clash, it is two tracks
   writing to one worktree. The partial unique index `tracks_slug` enforces
@@ -56,6 +61,14 @@ defmodule Ravix.Tracks.Track do
     field :origin_plan_id, :string
     field :origin_item_id, :string
     field :rev, :integer, default: 1
+    field :setup_state, :string, default: "pending"
+    field :setup_attempts, :integer, default: 0
+    field :setup_request_id, :string
+    field :setup_started_at, :utc_datetime_usec
+    field :setup_retry_at, :utc_datetime_usec
+    field :setup_error, :string
+    field :setup_lease, :string
+    field :setup_lease_until, :utc_datetime_usec
     field :opened_at, :utc_datetime_usec
     field :closed_at, :utc_datetime_usec
     field :created_at, :utc_datetime_usec
@@ -71,7 +84,7 @@ defmodule Ravix.Tracks.Track do
   end
 
   @fields ~w(id project_id conversation_id slug title branch branch_reserved workdir origin_kind origin_base
-             origin_number origin_title origin_url origin_plan_id origin_item_id rev opened_at closed_at created_at created_by_login)a
+             origin_number origin_title origin_url origin_plan_id origin_item_id rev setup_state setup_attempts setup_request_id setup_started_at setup_retry_at setup_error setup_lease setup_lease_until opened_at closed_at created_at created_by_login)a
   @required ~w(id project_id slug title branch workdir origin_kind rev created_at created_by_login)a
 
   @doc "The four things a track can be started from."

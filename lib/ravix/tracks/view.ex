@@ -31,7 +31,7 @@ defmodule Ravix.Tracks.View do
   `:opening` until the machine answers, then whatever the conversation says.
   `:closed` outranks all of them: a closed track has no live half left.
   """
-  @type status :: :opening | :ready | :running | :failed | :closed
+  @type status :: :opening | :setup_failed | :ready | :running | :failed | :closed
 
   @enforce_keys [
     :id,

@@ -213,6 +213,11 @@ defmodule Ravix.Spec do
       [
         "[ravix] Open this track. Make its working directory, then stop.",
         "",
+        "This may be a setup retry. First check #{dir}: if it is already a Git",
+        "worktree on #{shell_ref(branch)}, use it and report the directory and branch.",
+        "Preserve existing work. If the directory or branch is inconsistent, report error:",
+        "instead of removing files or changing another worktree.",
+        "",
         "The shared clone is #{repo_path}. Give this track its own worktree so it can",
         "hold a branch without disturbing the tracks already running:",
         "",

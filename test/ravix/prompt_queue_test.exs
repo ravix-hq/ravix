@@ -606,12 +606,15 @@ defmodule Ravix.PromptQueueTest do
     fountain_hooks(fn -> "idle" end, fn -> :ok end)
     {:ok, %Item{id: id}} = send_prompt(f.track, f.owner, "run after I leave")
 
-    start_server(interval: 20)
+    timer_server = start_server(interval: 20)
     deadline = System.monotonic_time(:millisecond) + 3_500
     wait_until(fn -> status_of(id) == :sent end, deadline)
 
     assert status_of(id) == :sent
     assert [%{"prompt" => "run after I leave"}] = hooked_posts()
+    # Delivery records sent before its final analytics read; finish the sweep
+    # before this test releases the SQL sandbox owner.
+    Server.stop(timer_server)
   end
 
   defp wait_until(fun, deadline) do
@@ -820,9 +823,10 @@ defmodule Ravix.PromptQueueTest do
     # project once. Delivery itself used to read both a fourth time, having
     # been handed neither. The two further reads of `tracks` are the
     # publishes: `Store.claim/1` and `Store.mark_delivered/1` each tell the
-    # project's hub, and find the project through the track.
+    # project's hub, and find the project through the track. The setup sweep
+    # adds one indexed read of unfinished tracks.
     assert Enum.count(queries, &(&1 == "projects")) == 3
-    assert Enum.count(queries, &(&1 == "tracks")) == 3 + 2
+    assert Enum.count(queries, &(&1 == "tracks")) == 3 + 2 + 1
   end
 
   test "the sweep's two reads are answered from the indexes made for them" do

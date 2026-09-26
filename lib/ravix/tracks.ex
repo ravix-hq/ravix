@@ -66,6 +66,7 @@ defmodule Ravix.Tracks do
     Names,
     Opening,
     Origin,
+    Setup,
     Store,
     Track,
     Transcript,
@@ -400,18 +401,15 @@ defmodule Ravix.Tracks do
          {:ok, machine} <- MachineCache.machine_of(client, project),
          {:ok, plan} <- plan(user, project, attrs, machine),
          {:ok, track} <- cut(client, plan) do
-      if machine,
-        do:
-          send_opening_turn(
-            client,
-            track,
-            project,
-            plan.origin,
-            Keyword.get(opts, :opening_turn, :async)
-          ),
-        # It went with the launch. The track is open as far as Fountain is
-        # concerned; the worktree lands when that turn does.
-        else: Store.mark_opened(track.id)
+      if machine do
+        send_opening_turn(
+          client,
+          track,
+          project,
+          plan.origin,
+          Keyword.get(opts, :opening_turn, :async)
+        )
+      end
 
       # A first track provisions the machine, so what the memo holds is out
       # of date the moment this returns.
@@ -593,7 +591,16 @@ defmodule Ravix.Tracks do
     with {:ok, %{track: track, project: project}} <- Access.track_access(user, track_id),
          {:ok, client} <- fountain(),
          :ok <- Ravix.Projects.prepare_machine(project, client) do
-      send_opening_turn(client, track, project, Origin.from_row(track), :sync)
+      if track.setup_state == "ready" do
+        # Preserve Wake / retry for an established track whose session stopped.
+        prompt = opening_prompt(track.slug, track.branch, project, Origin.from_row(track))
+        discard(Fountain.prompt(client, track.conversation_id, prompt), "track wake was refused")
+        Hub.publish(project.id, :turn, track_id: track.id)
+      else
+        Store.retry_setup(track.id)
+        send_opening_turn(client, track, project, Origin.from_row(track), :sync)
+      end
+
       :ok
     end
   end
@@ -612,19 +619,8 @@ defmodule Ravix.Tracks do
     :ok
   end
 
-  defp send_opening_turn(client, track, project, origin, :sync) do
-    prompt = opening_prompt(track.slug, track.branch, project, origin)
-
-    case Fountain.prompt(client, track.conversation_id, prompt) do
-      :ok ->
-        Store.mark_opened(track.id)
-        Hub.publish(project.id, :turn, track_id: track.id)
-
-      {:error, reason} ->
-        Logger.error("ravix: opening turn for track #{track.id} did not send: #{inspect(reason)}")
-        Hub.publish(project.id, :turn, track_id: track.id)
-    end
-
+  defp send_opening_turn(client, track, _project, _origin, :sync) do
+    Setup.advance(client, track.id)
     :ok
   end
 
@@ -1287,6 +1283,8 @@ defmodule Ravix.Tracks do
   def origin_info(%Track{} = row), do: Origin.from_row(row)
 
   defp status_of(%Track{closed_at: closed}, _live) when not is_nil(closed), do: :closed
+  defp status_of(%Track{setup_state: "failed"}, _live), do: :setup_failed
+  defp status_of(%Track{setup_state: state}, _live) when state != "ready", do: :opening
   defp status_of(_row, %Conversation{status: :running}), do: :running
   defp status_of(_row, %Conversation{status: :failed}), do: :failed
   defp status_of(%Track{opened_at: nil}, _live), do: :opening

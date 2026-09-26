@@ -467,7 +467,8 @@ defmodule Ravix.TracksTest do
                "git worktree add /home/sprite/work/kyoto -b ravix/Kyoto origin/main"
 
       row = Repo.get!(Track, presented.id)
-      assert row.opened_at
+      refute row.opened_at
+      assert row.setup_state == "running"
       assert row.rev == 2
       assert row.created_by_login == "Ana"
       project_id = ctx.project.id
@@ -486,7 +487,8 @@ defmodule Ravix.TracksTest do
       assert create.body["sandbox_mode"] == "persistent"
       refute Map.has_key?(create.body, "sandbox_id")
       assert create.body["prompt"] =~ "[ravix] Open this track"
-      assert Repo.get!(Track, presented.id).opened_at
+      refute Repo.get!(Track, presented.id).opened_at
+      assert Repo.get!(Track, presented.id).setup_state == "running"
     end
 
     test "a name in use gets a suffix rather than a refusal, and a closed name is free", ctx do
@@ -495,13 +497,12 @@ defmodule Ravix.TracksTest do
       opening_fountain(ctx.project, false)
 
       # The slugs in use were read with the names, so a popular name costs no
-      # query per candidate: the project, every track once, the insert, and
-      # the row marked opened.
+      # query per candidate: the project, every track once, and the insert.
       {result, queries} =
         QueryCount.count(fn -> Tracks.open(ctx.owner, ctx.project.id, %{title: "Kyoto"}) end)
 
       assert {:ok, %{slug: "kyoto-2"}} = result
-      assert queries == ["projects", "tracks", "tracks", "tracks"]
+      assert queries == ["projects", "tracks", "tracks"]
     end
 
     # The one refusal `plan/4` cannot rule out: somebody opening a track with
@@ -791,7 +792,8 @@ defmodule Ravix.TracksTest do
 
       assert :ok = Tracks.retry(ctx.owner, track_id)
       assert_receive {:hub, %Event{name: :turn, track_id: ^track_id}}
-      assert Repo.get!(Track, track_id).opened_at
+      refute Repo.get!(Track, track_id).opened_at
+      assert Repo.get!(Track, track_id).setup_state == "running"
     end
 
     test "a project member may cut a track; a stranger may not", ctx do
