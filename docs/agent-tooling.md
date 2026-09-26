@@ -263,3 +263,26 @@ MCP tool failures include `structuredContent.error` with `code` and `message`.
 Invalid or unavailable names also include `field` (`branch_name` or `title`)
 and the same validation message as the web form. Retry a mutation with the same
 `request_id` and unchanged arguments to retrieve its original receipt.
+
+### Stored task state
+
+Task receipts advance on queue changes and a followed thread's turn settlement,
+without requiring `get_task`. A cluster singleton also reconciles tasks older
+than three seconds every five seconds, rotating through at most 50 threads per
+pass with four concurrent provider reads and a 30-second timeout per thread.
+The database is authoritative; a replacement singleton rebuilds its subscriptions
+and sweep position from it. Brief singleton overlap is harmless because receipt
+writes lock and recheck queue state, terminal state and the event cursor.
+
+Each reconciliation fetches turns once per thread and shares event pages across
+its tasks, stopping each reply at its turn's boundary. Earlier pages may still
+be needed to locate that window; later unrelated output is not traversed.
+Persisted task notifications wake waits without triggering another provider read.
+
+`wait_task` with `timeout_ms: 0` returns persisted terminal or held states without
+Fountain requests. Other snapshots still attempt a refresh within 250 ms. `stale`
+is true when that budget expires with active tasks still unreconciled, or an
+external event arrives during the refresh. It is false for wholly terminal or
+held snapshots. Missing events and provider outages can delay persistence until
+a successful backstop pass; `stale: false` is not a provider freshness timestamp.
+All reads still require the submitting principal and OAuth client.

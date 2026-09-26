@@ -55,6 +55,64 @@ defmodule Ravix.Tooling.Store do
   def task(id), do: Repo.get(Task, id)
   def lock_task(id), do: Repo.one(from t in Task, where: t.id == ^id, lock: "FOR UPDATE")
 
+  # ownership: no user door on server bookkeeping. These joins correlate
+  # existing receipts to their queue/thread/project; no new work is submitted
+  # and no result is returned to a client. Public reads remain scoped in Tasks.
+  defp pending do
+    from t in Task,
+      join: q in Ravix.PromptQueue.Item,
+      on: q.id == t.id,
+      join: thread in Ravix.Tracks.Thread,
+      on: thread.id == q.thread_id,
+      join: track in Ravix.Tracks.Track,
+      on: track.id == thread.track_id,
+      join: project in Ravix.Projects.Project,
+      on: project.id == track.project_id,
+      where:
+        t.state not in [
+          "TASK_STATE_COMPLETED",
+          "TASK_STATE_FAILED",
+          "TASK_STATE_CANCELED",
+          "TASK_STATE_REJECTED"
+        ] or
+          (t.state == "TASK_STATE_FAILED" and is_nil(t.turn_id) and
+             q.status != :failed)
+  end
+
+  def pending_threads do
+    Repo.all(from [t, q, thread, track, p] in pending(), distinct: true, select: thread.id)
+  end
+
+  def due_threads(cursor, cutoff, limit) do
+    Repo.all(
+      from [t, q, thread, track, p] in pending(),
+        where: t.updated_at < ^cutoff and thread.id > ^cursor,
+        distinct: true,
+        order_by: thread.id,
+        limit: ^limit,
+        select: thread.id
+    )
+  end
+
+  def reconciliation_rows(opts) do
+    query = pending()
+
+    query =
+      if opts[:track_id],
+        do: from([t] in query, where: t.track_id == ^opts[:track_id]),
+        else: query
+
+    query =
+      if opts[:thread_id],
+        do: from([t, q, thread] in query, where: thread.id == ^opts[:thread_id]),
+        else: query
+
+    Repo.all(
+      from [t, q, thread, track, project] in query,
+        select: {t, %{thread: thread, project: project}}
+    )
+  end
+
   # ownership: no door before this one -- the query establishes the same
   # owner/project/track membership door as Access.track_access, before paging.
   # Tasks.list additionally checks Access on every returned row.

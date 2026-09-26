@@ -12,7 +12,10 @@ defmodule Ravix.Tooling.Wait do
   One active waiter per OAuth user/client pair is admitted cluster-wide.
   Provider reads run outside the receive loop and are killed at the deadline.
   A timeout returns the latest persisted states with stale: true when reconciliation
-  cannot finish. Zero-timeout snapshots have a 250 ms reconciliation budget.
+  cannot finish for still-active work (including an event arriving during a
+  refresh). Persisted terminal or held states need no provider read and are not
+  stale. Zero-timeout snapshots have a 250 ms reconciliation budget; server-side
+  settlement and queue bookkeeping normally populate their answer first.
   """
   use GenServer, restart: :temporary
   alias Ravix.{Hub, Tracks}
@@ -115,6 +118,7 @@ defmodule Ravix.Tooling.Wait do
   def handle_continue(:subscribe, state) do
     projects = state.rows |> Enum.map(& &1.project_id) |> Enum.uniq()
     Enum.each(projects, &Hub.subscribe/1)
+    Enum.each(state.ids, &Phoenix.PubSub.subscribe(Ravix.PubSub, Tasks.topic(&1)))
     state = %{state | projects: projects}
     state = follow(state)
     {:noreply, refresh(state)}
@@ -172,6 +176,20 @@ defmodule Ravix.Tooling.Wait do
     {:noreply, follow(%{state | followers: followers})}
   end
 
+  # Receipt writes are already reconciled. Wake from the scoped database
+  # snapshot without turning our own persistence notification into another
+  # provider read. A running refresh will take its own final snapshot.
+  def handle_info({:tooling_task, id}, %{worker: nil} = state) do
+    if id in state.ids do
+      case snapshot(state) do
+        {:ok, %{changed: []}} -> {:noreply, state}
+        result -> finish(state, result)
+      end
+    else
+      {:noreply, state}
+    end
+  end
+
   def handle_info({:hub, %Hub.Event{} = event}, state) do
     relevant =
       event.project_id in state.projects and event.name in [:turn, :queue, :people, :tracks] and
@@ -226,23 +244,17 @@ defmodule Ravix.Tooling.Wait do
   end
 
   defp refresh_tasks(principal, ids) do
-    with {:ok, rows} <- Tasks.observe(principal, ids) do
-      refresh_rows(principal, Enum.reject(rows, &Tasks.terminal?(&1.task)))
+    case Tasks.refresh_many(principal, ids) do
+      :ok -> {:ok, []}
+      error -> error
     end
   end
 
-  defp refresh_rows(principal, rows) do
-    Enum.reduce_while(rows, {:ok, []}, fn row, {:ok, tasks} ->
-      case Tasks.get(principal, row.task.id) do
-        {:ok, task} -> {:cont, {:ok, [task | tasks]}}
-        error -> {:halt, error}
-      end
-    end)
-  end
-
   defp snapshot(state) do
-    with {:ok, rows} <- Tasks.observe(state.principal, state.ids),
-         do: {:ok, Map.put(result(rows, state.since), :stale, state.stale)}
+    with {:ok, rows} <- Tasks.observe(state.principal, state.ids) do
+      stale = state.stale and not Enum.all?(rows, &Tasks.held_or_terminal?(&1.task))
+      {:ok, Map.put(result(rows, state.since), :stale, stale)}
+    end
   end
 
   defp result(rows, since) do

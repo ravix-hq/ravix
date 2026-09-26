@@ -43,6 +43,10 @@ defmodule Ravix.Hub do
   """
   @spec publish(String.t(), Event.name(), keyword()) :: :ok
   def publish(project_id, name, opts \\ []) do
+    if name == :queue do
+      Phoenix.PubSub.broadcast(Ravix.PubSub, "tooling:queue", {:tooling_queue, opts[:track_id]})
+    end
+
     Phoenix.PubSub.broadcast(
       Ravix.PubSub,
       topic(project_id),

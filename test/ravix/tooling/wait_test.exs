@@ -114,7 +114,6 @@ defmodule Ravix.Tooling.WaitTest do
     waiter = start_wait(ctx)
     assert_receive {:subscribed, server}
     assert_receive :refreshed
-    assert_receive :refreshed
     await_idle(server)
     Agent.update(ctx.statuses, &Map.put(&1, ctx.one.id, "ended"))
 
@@ -137,10 +136,22 @@ defmodule Ravix.Tooling.WaitTest do
     assert_receive {:DOWN, ^ref, :process, ^server, _}
   end
 
+  test "persisted task notifications wake a waiter without another provider read", ctx do
+    waiter = start_wait(ctx)
+    assert_receive {:subscribed, server}
+    assert_receive :refreshed
+    await_idle(server)
+    Agent.update(ctx.statuses, &Map.put(&1, ctx.one.id, "ended"))
+    assert {:ok, _} = Tasks.get(ctx.p, ctx.one.id)
+    assert_receive :refreshed
+    assert {:ok, {:ok, %{changed: [id]}}} = Task.yield(waiter, 1000)
+    assert id == ctx.one.id
+    refute_receive :refreshed, 0
+  end
+
   test "timeout returns all current states without polling on tokens", ctx do
     waiter = start_wait(ctx, %{"timeout_ms" => 100})
     assert_receive {:subscribed, _}
-    assert_receive :refreshed
     assert_receive :refreshed
 
     Phoenix.PubSub.broadcast(
