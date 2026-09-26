@@ -187,7 +187,7 @@ defmodule RavixWeb.WorkspaceLive do
         dialog: nil
       )
 
-    socket = assign_page_title(socket)
+    socket = assign_page_title(socket, track)
 
     if params["new"] == "track" && project && project.access != :tracks do
       open_dialog(socket, :new_track)
@@ -800,7 +800,11 @@ defmodule RavixWeb.WorkspaceLive do
 
   # Use the scoped rail already held by the workspace, including after a
   # background reload or rename, so the browser tab follows the visible page.
-  defp assign_page_title(%{assigns: %{project: nil, live_action: action}} = socket) do
+  # `requested` is the track a deep link named, found through scoped access
+  # before the rail has arrived; the rail's own row wins once it is here.
+  defp assign_page_title(socket, requested \\ nil)
+
+  defp assign_page_title(%{assigns: %{project: nil, live_action: action}} = socket, _requested) do
     title =
       case action do
         :projects -> "Home"
@@ -812,11 +816,12 @@ defmodule RavixWeb.WorkspaceLive do
     assign(socket, page_title: title <> " · Ravix")
   end
 
-  defp assign_page_title(%{assigns: assigns} = socket) do
+  defp assign_page_title(%{assigns: assigns} = socket, requested) do
     project = assigns.project
 
     title =
-      case Enum.find(assigns.tracks[project.id] || [], &(&1.id == assigns.track_id)) do
+      case Enum.find(assigns.tracks[project.id] || [], &(&1.id == assigns.track_id)) ||
+             (requested && requested.id == assigns.track_id && requested) do
         nil -> project.display_name
         track -> track.title <> " · " <> project.display_name
       end
