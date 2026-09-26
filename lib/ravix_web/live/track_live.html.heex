@@ -46,7 +46,13 @@
         class="chip"
       >Plan: {@track.origin.title}</.link>
       <span :if={@track.origin.kind == :plan && @project.access == :tracks} class="chip">Plan item: {@track.origin.title}</span>
-      <span class="chip mono track-branch" title={@track.branch}>{@track.branch}</span>
+      <%!-- A new track is titled with its branch, so the chip appears only
+        once the two say different things: after a rename, say. --%>
+      <span
+        :if={@track.branch != @track.title}
+        class="chip mono track-branch"
+        title={@track.branch}
+      >{@track.branch}</span>
       <span class="spacer"></span><button
         class="ghost"
         phx-click={JS.push_focus() |> JS.push("dialog")}
@@ -56,28 +62,62 @@
       ><.icon name="add-person" size={15} /><span>{length(@present)}</span></button>
       <button
         :if={@project.access != :tracks}
-        class="ghost"
+        class="ghost icon-button"
         phx-click={JS.push_focus() |> JS.push("dialog", target: "#workspace-stage")}
         phx-value-name="new-track"
+        aria-label="New track"
+        title="New track"
       >
-        <.icon name="plus" size={13} />New track
+        <.icon name="plus" size={15} />
       </button>
       <button
         :if={@project.role == :owner}
-        class="ghost"
+        class="ghost icon-button"
         phx-click={JS.push_focus() |> JS.push("dialog", target: "#workspace-stage")}
         phx-value-name="settings"
+        aria-label="Settings"
+        title="Project settings"
       >
-        Settings
+        <.icon name="settings" size={15} />
       </button>
-      <button
+      <%!-- Closing is rare and final, so it waits behind a disclosure rather
+        than sitting beside the everyday actions. JS commands rather than
+        `<details>`, whose `open` a server patch would take away. --%>
+      <div
         :if={owner_or_creator?(@current_user, @track)}
-        class="ghost"
-        phx-click={JS.push_focus() |> JS.push("dialog")}
-        phx-value-name="close"
+        class="track-actions"
+        phx-click-away={hide_track_actions()}
+        phx-window-keydown={hide_track_actions()}
+        phx-key="Escape"
       >
-        Close track
-      </button>
+        <button
+          id="track-actions-toggle"
+          class="ghost icon-button"
+          aria-label="More track actions"
+          title="More track actions"
+          aria-expanded="false"
+          aria-controls="track-actions-menu"
+          phx-click={
+            JS.toggle_attribute({"hidden", ""}, to: "#track-actions-menu")
+            |> JS.toggle_attribute({"aria-expanded", "true", "false"})
+          }
+        >
+          <.icon name="more" size={15} />
+        </button>
+        <div id="track-actions-menu" class="track-actions-menu" hidden>
+          <button
+            class="ghost danger"
+            phx-click={
+              JS.push_focus(to: "#track-actions-toggle")
+              |> hide_track_actions()
+              |> JS.push("dialog")
+            }
+            phx-value-name="close"
+          >
+            <.icon name="x" size={13} />Close track
+          </button>
+        </div>
+      </div>
     </header>
     <div class="split">
       <section class="track-conversation" aria-label="Conversation">

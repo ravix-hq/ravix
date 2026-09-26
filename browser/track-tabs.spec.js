@@ -54,4 +54,28 @@ test('overflowing track tabs scroll with a mouse and keep navigation reachable',
     await expect(strip.getByRole('link', { name: 'Overview', exact: true })).toBeInViewport();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   }
+  // Every tab shares the ravix/ namespace, so it is named but not drawn.
+  const firstTab = strip.getByRole('link', { name: /^ravix\/scrolling-track-0\b/ });
+  await expect(firstTab).toHaveCount(1);
+  await expect(firstTab.locator('.track-title')).toHaveText('scrolling-track-0');
+  // Closing a track waits behind the header's overflow menu, which Escape
+  // shuts and which takes focus back when its dialog is dismissed.
+  const more = page.getByRole('button', { name: 'More track actions', exact: true });
+  const close = page.locator('.track-crumbs').getByRole('button', { name: 'Close track', exact: true });
+  await expect(more).toHaveAttribute('aria-expanded', 'false');
+  await expect(close).toBeHidden();
+  await more.click();
+  await expect(more).toHaveAttribute('aria-expanded', 'true');
+  await expect(close).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(close).toBeHidden();
+  await expect(more).toHaveAttribute('aria-expanded', 'false');
+  await more.click();
+  await close.click();
+  const dialog = page.getByRole('dialog', { name: 'Close track', exact: true });
+  await expect(dialog).toBeVisible();
+  await expect(close).toBeHidden();
+  await page.keyboard.press('Escape');
+  await expect(dialog).toHaveCount(0);
+  await expect(more).toBeFocused();
 });

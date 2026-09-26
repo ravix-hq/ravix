@@ -407,6 +407,63 @@ defmodule RavixWeb.WorkspaceLiveTest do
     refute has_element?(view, ".track-tabs a[href='/p/#{project.id}/t/#{track.id}']")
   end
 
+  test "track tabs drop the shared namespace and show each track's state", %{conn: conn} do
+    user = insert_user()
+    project = insert_project(user: user)
+
+    tracks =
+      for {title, status, unread} <- [
+            {"ravix/idle", :ready, false},
+            {"ravix/busy", :running, false},
+            {"ravix/booting", :opening, false},
+            {"ravix/broken", :failed, false},
+            {"ravix/answered", :ready, true},
+            {"feature/login", :ready, false}
+          ] do
+        insert_track(project: project, title: title)
+        |> Tracks.present(project: project)
+        |> struct!(status: status, unread: unread)
+      end
+
+    tracks =
+      List.update_at(tracks, 5, fn track ->
+        struct!(track, origin: struct!(track.origin, kind: :plan, title: "Login"))
+      end)
+
+    # Everything the tabs say comes from the rail's one list.
+    stub(Tracks, :list, fn _user, _project_id -> {:ok, tracks} end)
+    {:ok, view, _} = live(log_in_user(conn, user), "/p/#{project.id}")
+    tab = fn track -> ".track-tabs a[href='/p/#{project.id}/t/#{track.id}']" end
+    [idle, busy, booting, broken, answered, feature] = tracks
+
+    # The namespace every default title shares is left off the tab; the full
+    # title is still its accessible name and tooltip.
+    assert has_element?(view, "#{tab.(idle)}[aria-label='ravix/idle'][title='ravix/idle']")
+    assert render(element(view, "#{tab.(idle)} .track-title")) =~ ~r{>idle</span>}
+    # A title outside the namespace is shown whole, and a plan's track says so.
+    assert has_element?(view, "#{tab.(feature)} .track-title", "feature/login")
+
+    assert has_element?(
+             view,
+             "#{tab.(feature)}[aria-label='feature/login, from a project plan']"
+           )
+
+    for {track, label} <- [
+          {busy, "Working"},
+          {booting, "Starting"},
+          {broken, "Error"},
+          {answered, "Unread reply"}
+        ] do
+      assert has_element?(view, "#{tab.(track)} .dot[role=img][aria-label='#{label}']")
+      assert has_element?(view, "#{tab.(track)}[aria-label='#{track.title}, #{label}']")
+      refute has_element?(view, "#{tab.(track)} .track-num")
+    end
+
+    # A read, idle track has nothing to report and keeps its ordinal.
+    refute has_element?(view, "#{tab.(idle)} [role=img]")
+    assert has_element?(view, "#{tab.(idle)} .track-num", "1")
+  end
+
   test "hiding advanced options drops the origin they carried", %{conn: conn} do
     user = insert_user()
     project = insert_project(user: user, repo: "owner/repo")
@@ -649,7 +706,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
     {:ok, theirs, _} = live(log_in_user(conn, member), "/p/#{project.id}")
 
     for view <- [tab_a, tab_b, theirs] do
-      assert has_element?(view, ".track-attention")
+      assert has_element?(view, ".track-tab [role=img][aria-label='Unread reply']")
       assert has_element?(view, ".badge", "1")
     end
 
@@ -667,13 +724,13 @@ defmodule RavixWeb.WorkspaceLiveTest do
     for view <- [tab_a, tab_b, theirs], do: render_async(view)
 
     # Both of the reader's tabs cleared the dot from the event alone...
-    refute has_element?(tab_a, ".track-attention")
-    refute has_element?(tab_b, ".track-attention")
+    refute has_element?(tab_a, ".track-tab [role=img][aria-label='Unread reply']")
+    refute has_element?(tab_b, ".track-tab [role=img][aria-label='Unread reply']")
     refute has_element?(tab_a, ".badge")
 
     # ...somebody else's rail kept its own mark, which the event says nothing
     # about...
-    assert has_element?(theirs, ".track-attention")
+    assert has_element?(theirs, ".track-tab [role=img][aria-label='Unread reply']")
 
     # ...and nobody went back to Fountain. This used to be a `:tracks` event
     # that re-read every rail on the project, live, whenever anybody opened

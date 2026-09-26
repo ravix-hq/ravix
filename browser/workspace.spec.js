@@ -441,7 +441,9 @@ test('project, track, streaming, image upload, reconnect, and revocation', async
   await expect(composer).toHaveValue('Draft survives reconnect');
   // A new thread is blank and retains the track's branch, URL, and default draft.
   const trackUrl = page.url();
-  const branch = await page.locator('.track-branch').textContent();
+  // A new track is titled with its branch, which the header then shows once.
+  const branch = (await page.locator('.track-tabs [aria-current="page"] .track-title').textContent()).trim();
+  await expect(page.locator('.track-crumbs')).toContainText(branch);
   const threadTabs = page.getByRole('navigation', { name: 'Threads', exact: true });
   const currentThread = threadTabs.locator('[aria-current="true"]');
   const threadTab = id => threadTabs.locator(`button[data-thread-id="${id}"]`);
@@ -450,7 +452,7 @@ test('project, track, streaming, image upload, reconnect, and revocation', async
   await expect(currentThread).not.toHaveAttribute('data-thread-id', defaultThread);
   const nextThread = await currentThread.getAttribute('data-thread-id');
   await expect(composer).toHaveValue('');
-  await expect(page.locator('.track-branch')).toHaveText(branch);
+  await expect(page.locator('.track-crumbs')).toContainText(branch);
   expect(page.url()).toBe(trackUrl);
   await composer.fill('A separate thread draft');
   await threadTab(defaultThread).click();

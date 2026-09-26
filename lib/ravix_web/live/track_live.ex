@@ -1390,6 +1390,12 @@ defmodule RavixWeb.TrackLive do
   defp owner_or_creator?(user, track),
     do: track.role == :owner or track.created_by_login == user.login
 
+  defp hide_track_actions(js \\ %JS{}) do
+    js
+    |> JS.set_attribute({"hidden", ""}, to: "#track-actions-menu")
+    |> JS.set_attribute({"aria-expanded", "false"}, to: "#track-actions-toggle")
+  end
+
   # The markdown of every block on the page, rendered once per body.
   #
   # A text block's body only ever grows --- `push_text/4` appends the next

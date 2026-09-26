@@ -993,6 +993,69 @@ defmodule RavixWeb.TrackLiveTest do
     assert path == "/p/#{ctx.project.id}"
   end
 
+  test "the header names the track once and keeps its actions to labelled icons", ctx do
+    header = fn view -> element(view, ".track-crumbs") end
+
+    # This track's title and branch differ, so the chip still says something
+    # the title does not.
+    assert has_element?(ctx.view, ".track-crumbs .track-branch", ctx.track.branch)
+
+    for {label, name} <- [{"New track", "new-track"}, {"Settings", "settings"}] do
+      assert has_element?(
+               ctx.view,
+               ".track-crumbs button.icon-button[aria-label='#{label}'][phx-value-name='#{name}'] svg"
+             )
+    end
+
+    # Buttons whose only text is an icon: nothing visible is left to read.
+    refute render(header.(ctx.view)) =~ ~r/>\s*(New track|Settings)\s*</
+
+    # Closing is one step further away: inside a disclosure that starts shut.
+    assert has_element?(
+             ctx.view,
+             "#track-actions-toggle[aria-label='More track actions'][aria-expanded='false'][aria-controls='track-actions-menu']"
+           )
+
+    assert has_element?(ctx.view, "#track-actions-menu[hidden] button", "Close track")
+    ctx.view |> element("#track-actions-menu button", "Close track") |> render_click()
+    assert has_element?(ctx.view, "#close-form")
+
+    # A track still titled with its branch shows the name once.
+    Repo.update!(Ecto.Changeset.change(Repo.get!(Track, ctx.track.id), title: ctx.track.branch))
+    {:ok, parent, _} = live(ctx.conn, "/p/#{ctx.project.id}/t/#{ctx.track.id}")
+    view = find_live_child(parent, "track-host")
+    settle(view)
+    assert has_element?(view, ".track-crumbs button", ctx.track.branch)
+    refute has_element?(view, ".track-crumbs .track-branch")
+  end
+
+  test "a member who neither owns nor opened the track has no close action", ctx do
+    member = insert_user()
+    People.Store.add_project_member(ctx.project.id, member.id, ctx.user.id)
+
+    stub(Tracks, :get, fn _, id, _opts ->
+      row = Repo.get!(Track, id)
+
+      {:ok,
+       %{
+         track: Tracks.present(row, role: :member),
+         header: blank_header(),
+         threads: thread_options(id),
+         starters: []
+       }}
+    end)
+
+    {:ok, parent, _} =
+      live(log_in_user(build_conn(), member), "/p/#{ctx.project.id}/t/#{ctx.track.id}")
+
+    view = find_live_child(parent, "track-host")
+    settle(view)
+    assert has_element?(view, ".track-crumbs button[aria-label='New track']")
+    refute has_element?(view, ".track-crumbs button[aria-label='Settings']")
+    refute has_element?(view, "#track-actions-toggle")
+    refute has_element?(view, "button", "Close track")
+  end
+
   test "an event about a sibling track costs this page nothing of its own", ctx do
     # A project's hub carries every track's news to every page on it. This
     # page shows one track, so a turn starting, a queue moving or somebody

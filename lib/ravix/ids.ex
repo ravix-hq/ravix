@@ -127,7 +127,15 @@ defmodule Ravix.Ids do
 
   @doc "A newly cut track branch, under Ravix's fixed namespace."
   @spec branch_for(String.t()) :: String.t()
-  def branch_for(name), do: "ravix/#{name}"
+  def branch_for(name), do: branch_namespace() <> name
+
+  @doc """
+  The namespace every branch Ravix cuts sits under, and so the prefix of every
+  default track title: shared by all of a project's tracks, so it tells them
+  apart from nothing.
+  """
+  @spec branch_namespace() :: String.t()
+  def branch_namespace, do: "ravix/"
 
   @doc "Validate the name supplied after ravix/, without silently changing it."
   @spec valid_branch_name?(term()) :: boolean()
