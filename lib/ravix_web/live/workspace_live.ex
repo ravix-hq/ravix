@@ -4,6 +4,7 @@ defmodule RavixWeb.WorkspaceLive do
 
   alias Ravix.{Accounts, Hub, Projects, Tracks}
   alias Ravix.Hub.Event
+  alias Ravix.Projects.Sections
   alias RavixWeb.Live.Form
   alias RavixWeb.Live.Guard
 
@@ -24,6 +25,7 @@ defmodule RavixWeb.WorkspaceLive do
 
   # The workspace dialogs, as the buttons spell them and as this module does.
   @dialogs %{
+    "sections" => :sections,
     "search" => :search,
     "new-project" => :new_project,
     "new-track" => :new_track,
@@ -45,6 +47,8 @@ defmodule RavixWeb.WorkspaceLive do
         session_token: session["session_token"],
         github_available: Accounts.capabilities().github,
         projects: [],
+        sections: [],
+        section_placements: %{},
         tracks: %{},
         # How many tracks across every project want somebody. Counted where
         # the rail is read rather than in the template, which asked for it
@@ -270,6 +274,32 @@ defmodule RavixWeb.WorkspaceLive do
     else
       {:noreply, socket}
     end
+  end
+
+  def handle_event("create-section", %{"section" => attrs}, socket) do
+    section_result(socket, Sections.create(socket.assigns.current_user, attrs))
+  end
+
+  def handle_event("rename-section", %{"section_id" => id, "section" => attrs}, socket) do
+    section_result(
+      socket,
+      Sections.update(socket.assigns.current_user, id, Map.take(attrs, ["name"]))
+    )
+  end
+
+  def handle_event("toggle-section", %{"id" => id, "collapsed" => collapsed}, socket) do
+    section_result(
+      socket,
+      Sections.update(socket.assigns.current_user, id, %{collapsed: collapsed})
+    )
+  end
+
+  def handle_event("delete-section", %{"id" => id}, socket) do
+    section_result(socket, Sections.delete(socket.assigns.current_user, id))
+  end
+
+  def handle_event("move-project", %{"project" => id, "section" => section_id}, socket) do
+    section_result(socket, Sections.move(socket.assigns.current_user, id, section_id))
   end
 
   def handle_event("advanced-track", _, socket) do
@@ -626,6 +656,21 @@ defmodule RavixWeb.WorkspaceLive do
 
   defp clear_thread_unread(row, _track_id, _thread_id), do: row
 
+  defp section_result(socket, {:ok, _}) do
+    {sections, placements} = Sections.list(socket.assigns.current_user)
+    {:noreply, assign(socket, sections: sections, section_placements: placements)}
+  end
+
+  defp section_result(socket, {:error, reason}) do
+    {:noreply, put_flash(socket, :error, RavixWeb.Error.from(reason).message)}
+  end
+
+  defp section_groups(projects, sections, placements) do
+    grouped = Enum.group_by(projects, &Map.get(placements, &1.id))
+    unsectioned = %{id: nil, name: "Other projects", collapsed: false}
+    Enum.map([unsectioned | sections], &{&1, Map.get(grouped, &1.id, [])})
+  end
+
   # The rail, read here and now. Mount has nothing to draw until this answers
   # and `handle_params/3` decides whether the URL names a project this person
   # still has, so it waits, and it is the only caller that does. A button
@@ -682,6 +727,8 @@ defmodule RavixWeb.WorkspaceLive do
   # Subscribing is this process's to do --- `Phoenix.PubSub` registers the
   # caller --- so it happens here rather than beside the reads above.
   defp apply_rail(socket, {projects, tracks}) do
+    {sections, placements} = Sections.list(socket.assigns.current_user)
+
     if connected?(socket) do
       old = MapSet.new(socket.assigns.projects, & &1.id)
       new = MapSet.new(projects, & &1.id)
@@ -695,6 +742,8 @@ defmodule RavixWeb.WorkspaceLive do
     |> assign(
       project: project || socket.assigns.project,
       page_title: if(project, do: project.display_name <> " · Ravix", else: "Ravix"),
+      sections: sections,
+      section_placements: placements,
       projects: projects,
       tracks: tracks,
       attention: attention_count(tracks),
@@ -770,6 +819,8 @@ defmodule RavixWeb.WorkspaceLive do
       advanced_track: false
     )
   end
+
+  defp open_dialog(socket, :sections), do: assign(socket, dialog: :sections)
 
   defp open_dialog(socket, :search), do: assign(socket, dialog: :search, query: "")
 
