@@ -224,22 +224,17 @@ defmodule RavixWeb.ComponentsTest do
   end
 
   describe "wordmark/1" do
-    test "draws RAVIX as blocks" do
+    test "sets the name as text, not a drawn grid" do
       html = render_component(&CoreComponents.wordmark/1, [])
-      assert html =~ ~s(class="wordmark")
-      assert html =~ ~s(role="img")
-      assert html =~ ~s(aria-label="RAVIX")
-      # Five letters at a stride of 39 + 14, minus the trailing gap; seven rows of 8 minus one.
-      assert html =~ ~s(viewBox="0 0 251 55")
-      # R has 18 cells, A 18, V 13, I 15, X 13.
-      assert length(Regex.scan(~r/<rect /, html)) == 18 + 18 + 13 + 15 + 13
+      assert html =~ ~s(<span class="wordmark" style="font-size: 44px">Ravix</span>)
+      refute html =~ "<svg"
+      refute html =~ "<rect"
     end
 
-    test "unknown characters are skipped" do
-      html = render_component(&CoreComponents.wordmark/1, text: "a-b")
-      assert html =~ ~s(aria-label="a-b")
-      # Only A survives: the dash is not a glyph and B is not in the set.
-      assert length(Regex.scan(~r/<rect /, html)) == 18
+    test "takes a size and escapes its text" do
+      html = render_component(&CoreComponents.wordmark/1, text: "<b>", size: 24)
+      assert html =~ ~s(style="font-size: 24px")
+      assert html =~ "&lt;b&gt;"
     end
   end
 
