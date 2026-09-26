@@ -94,6 +94,7 @@ defmodule RavixWeb.TrackLive do
         present: [],
         panel: Panel.new(),
         show_ignored?: false,
+        branch_merged?: false,
         diff_path: nil,
         diff_filter: "",
         diff_show_large: false,
@@ -652,6 +653,12 @@ defmodule RavixWeb.TrackLive do
   defp async_result(:panel, {:ok, {:ok, %Previews.View{} = preview}}, socket),
     do: socket |> show_preview(preview) |> update_panel(&Panel.settled/1)
 
+  defp async_result(:panel, {:ok, {:ok, {%Diff{} = diff, merged?}}}, socket) do
+    socket
+    |> assign(branch_merged?: merged?)
+    |> update_panel(&Panel.loaded(&1, diff))
+  end
+
   defp async_result(:panel, {:ok, {:ok, data}}, socket),
     do: update_panel(socket, &Panel.loaded(&1, data))
 
@@ -818,6 +825,7 @@ defmodule RavixWeb.TrackLive do
       present: [],
       panel: Panel.new(),
       show_ignored?: false,
+      branch_merged?: false,
       diff_path: nil,
       diff_filter: "",
       diff_show_large: false,
@@ -1165,6 +1173,7 @@ defmodule RavixWeb.TrackLive do
   defp change_badge(assigns), do: ~H""
 
   attr :show_ignored?, :boolean, default: false
+  attr :branch_merged?, :boolean, default: false
   attr :directories, :map, default: %{}
   attr :diff_path, :string, default: nil
   attr :diff_filter, :string, default: ""
@@ -1226,7 +1235,10 @@ defmodule RavixWeb.TrackLive do
     ~H"""
     <div class="changes-panel">
       <div :if={@data.diff == ""} class="panel-empty">
-        <.empty icon="branch" title="No changes yet">
+        <.empty :if={@branch_merged?} icon="branch" title="Branch merged">
+          This branch was merged. There are no remaining changes in this track’s worktree.
+        </.empty>
+        <.empty :if={!@branch_merged?} icon="branch" title="No changes yet">
           Files the agent edits in this track’s worktree appear here, each with its diff.
         </.empty>
       </div>
@@ -1322,6 +1334,7 @@ defmodule RavixWeb.TrackLive do
         <a href={@data.pull.url} target="_blank" rel="noreferrer">
           Pull request #{@data.pull.number}: {@data.pull.title}
         </a>
+        <span class="chip pull-state">{pull_state_label(@data.pull.state)}</span>
       </p>
       <div :for={check <- @data.runs}>
         <a :if={check.url} href={check.url} target="_blank" rel="noreferrer">
@@ -1330,17 +1343,24 @@ defmodule RavixWeb.TrackLive do
         <span :if={!check.url}>{check.name}</span>
         <span class="chip">{check.conclusion || check.status}</span>
       </div>
+      <a :if={@data.pull} href={@data.pull.url} target="_blank" rel="noreferrer">
+        View on GitHub
+      </a>
       <button
-        :if={@project.repo}
+        :if={@project.repo && !@data.pull}
         class="primary"
         phx-click={JS.push_focus() |> JS.push("dialog")}
         phx-value-name="pull"
       >
-        Open pull request
+        Create pull request
       </button>
     </div>
     """
   end
+
+  defp pull_state_label(:merged), do: "Merged"
+  defp pull_state_label(:closed), do: "Closed"
+  defp pull_state_label(:open), do: "Open"
 
   defp diff_status(status), do: %{added: "A", modified: "M", deleted: "D", renamed: "R"}[status]
 
@@ -1469,7 +1489,7 @@ defmodule RavixWeb.TrackLive do
     |> traced_async(:panel, fn ->
       case tab do
         :files -> Tracks.files(user, id, nil)
-        :changes -> Tracks.diff(user, id)
+        :changes -> load_changes(user, id)
         :checks -> Tracks.checks(user, id)
         :preview -> Previews.status(user, id)
       end
@@ -1501,6 +1521,18 @@ defmodule RavixWeb.TrackLive do
     |> traced_async({:file_metadata, listing.path, token}, fn ->
       Tracks.file_metadata(user, id, listing)
     end)
+  end
+
+  # Only an empty diff needs GitHub to distinguish untouched work from a
+  # merged branch. A GitHub outage must not hide the worktree diff.
+  defp load_changes(user, id) do
+    with {:ok, diff} <- Tracks.diff(user, id) do
+      merged? =
+        diff.diff == "" &&
+          match?({:ok, %ChecksReport{pull: %{state: :merged}}}, Tracks.checks(user, id))
+
+      {:ok, {diff, merged?}}
+    end
   end
 
   defp update_panel(socket, fun), do: assign(socket, panel: fun.(socket.assigns.panel))
