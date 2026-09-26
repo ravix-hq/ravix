@@ -1093,7 +1093,7 @@ defmodule Ravix.ProjectsTest do
       reject(&Ravix.Fountain.update_agent/3)
       reject(&Ravix.Fountain.delete_agent/2)
 
-      assert {:error, {:unprocessable, "agent_not_connected", _}} =
+      assert {:error, {:conflict, "agent_not_connected", _}} =
                Projects.update_settings(ctx.owner, ctx.project.id, %{
                  runtime: "codex",
                  model: "openai/test-model",
@@ -1122,7 +1122,7 @@ defmodule Ravix.ProjectsTest do
       assert {:ok, [:codex]} = Inference.usable_agents(owner)
       attrs = %{runtime: "codex", model: "openai/test-model", rebuild: true}
 
-      assert {:error, {:unprocessable, "agent_not_connected", _}} =
+      assert {:error, {:conflict, "agent_not_connected", _}} =
                Projects.update_settings(owner, ctx.project.id, attrs)
 
       assert {:error, %Ravix.Fountain.Error{}} =

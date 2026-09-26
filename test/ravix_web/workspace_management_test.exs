@@ -345,7 +345,7 @@ defmodule RavixWeb.WorkspaceManagementTest do
       assert attrs["runtime"] == "codex"
       assert attrs["rebuild"] == true
       send(parent, :switched)
-      {:error, {:unprocessable, "agent_not_connected", "Connect first."}}
+      {:error, {:conflict, "agent_not_connected", "Connect first."}}
     end)
 
     for _ <- 1..2 do
@@ -410,14 +410,16 @@ defmodule RavixWeb.WorkspaceManagementTest do
     # and is the one to report; past that the harness is fine and the model
     # is not. One code over a two-input form said something true that
     # pointed nowhere.
-    for {code, message, id} <- [
-          {"invalid_runtime", "Choose an agent this deployment offers.", "#settings-runtime"},
-          {"invalid_model", "Choose one of this agent's models.", "#settings-model"},
-          {"agent_not_connected", "Connect this agent first.", "#settings-runtime"},
-          {"rebuild_required", "Choose Switch and rebuild.", "#settings-runtime"}
+    for {reason, code, message, id} <- [
+          {:unprocessable, "invalid_runtime", "Choose an agent this deployment offers.",
+           "#settings-runtime"},
+          {:unprocessable, "invalid_model", "Choose one of this agent's models.",
+           "#settings-model"},
+          {:conflict, "agent_not_connected", "Connect this agent first.", "#settings-runtime"},
+          {:unprocessable, "rebuild_required", "Choose Switch and rebuild.", "#settings-runtime"}
         ] do
       expect(Projects, :update_settings, fn _, _, _ ->
-        {:error, {:unprocessable, code, message}}
+        {:error, {reason, code, message}}
       end)
 
       ctx.view
