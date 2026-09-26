@@ -42,13 +42,21 @@ defmodule RavixWeb.HelpComponents do
           <code>task_ids</code>
           (up to 50).
           It returns all tasks and a <code>changed</code>
-          list when a task ends or after at most
-          50 seconds. Pass the returned states as <code>since</code>
+          list when a task ends, needs input, or is blocked behind a held prompt, or after at most
+          50 seconds. Pass the returned <code>metadata.ravix.status_version</code>
+          values as <code>since</code>
           on the next call to wait
           for any state change, or remove finished task IDs. A timeout with no changes returns <code>changed: []</code>; work continues. A timeout returns the latest persisted states
           even if the provider is slow. Keep one wait active per client and user; overlapping waits
           return <code>rate_limited</code>. For retries, reuse the
           same request ID and arguments so work is not submitted twice.
+          A failed or unconfirmed prompt shows its reason in <code>get_task</code>
+          and <code>wait_task</code>; queued tasks behind it explain the blockage.
+          The sender or project owner can use <code>cancel_task</code>
+          to clear it,
+          or <code>retry_task</code>
+          to resend it after checking the transcript.
+          A prompt currently being sent cannot be canceled.
         </p>
       </details>
       <details>

@@ -73,6 +73,9 @@ defmodule Ravix.Tooling do
 
   defp execute(p, "get_task", a), do: map_result(Tasks.get(p, a["task_id"]), &Tasks.present/1)
 
+  defp execute(p, "retry_task", a),
+    do: map_result(Tasks.retry(p, a["task_id"]), &Tasks.present/1)
+
   defp execute(p, "cancel_task", a),
     do: map_result(Tasks.cancel(p, a["task_id"]), &Tasks.present/1)
 

@@ -156,6 +156,31 @@ defmodule Ravix.PromptQueue.Store do
   @spec get(String.t()) :: Item.t() | nil
   def get(id), do: Repo.get_by(Item, id: id)
 
+  @doc "Delivery metadata for one row, excluding the prompt and attachments."
+  def delivery_status(track_id, id) do
+    Repo.one(
+      from p in Item,
+        where: p.track_id == ^track_id and p.id == ^id,
+        select: map(p, [:id, :thread_id, :sequence, :status, :error])
+    )
+  end
+
+  @doc "The live head preceding this row, if it is held."
+  def held_before(row) do
+    head =
+      live()
+      |> where([p], p.thread_id == ^row.thread_id and p.sequence < ^row.sequence)
+      |> order_by([p], p.sequence)
+      |> limit(1)
+      |> select([p], map(p, [:id, :status]))
+      |> Repo.one()
+
+    case head do
+      %{status: status} when status in [:unconfirmed, :failed] -> head
+      _ -> nil
+    end
+  end
+
   @doc "Every live row (not sent, not cancelled), oldest first; on one track when given."
   @spec queued_prompts(String.t() | nil) :: [Item.t()]
   def queued_prompts(track_id \\ nil) do
@@ -354,8 +379,9 @@ defmodule Ravix.PromptQueue.Store do
 
   @doc """
   How long a claim is honoured before `recover/0` may take it back. Longer
-  than the server's own delivery timeout, so a task that is about to be
-  killed for running long still settles its own row first.
+  than the server's own delivery timeout, so recovery does not race a task
+  that can still send. A killed task cannot settle its row; it remains sending
+  until this age and a subsequent sweep mark it unconfirmed.
   """
   @spec claim_timeout_ms() :: pos_integer()
   def claim_timeout_ms, do: @claim_timeout_ms

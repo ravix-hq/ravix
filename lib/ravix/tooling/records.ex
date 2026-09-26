@@ -63,6 +63,9 @@ defmodule Ravix.Tooling.Task do
     field :track_id, :string
     field :fingerprint, :string
     field :state, :string, default: "TASK_STATE_SUBMITTED"
+    field :queue_status, :any, virtual: true
+    field :status_message, :string, virtual: true
+    field :blocked, :boolean, virtual: true, default: false
     field :turn_id, :string
     field :cursor, :integer
     field :result, :string, default: ""

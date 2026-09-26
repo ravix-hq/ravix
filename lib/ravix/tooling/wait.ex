@@ -27,7 +27,7 @@ defmodule Ravix.Tooling.Wait do
 
     with true <- Enum.all?(Map.keys(since), &(&1 in ids)),
          {:ok, rows} <- Tasks.observe(principal, ids) do
-      if Enum.all?(rows, &Tasks.terminal?(&1.task)) and
+      if Enum.all?(rows, &Tasks.held_or_terminal?(&1.task)) and
            (timeout == 0 or result(rows, since).changed != []) do
         {:ok, result(rows, since)}
       else
@@ -242,8 +242,11 @@ defmodule Ravix.Tooling.Wait do
     changed =
       Enum.filter(tasks, fn task ->
         case Map.fetch(since, task.id) do
-          {:ok, previous} -> task.state != previous
-          :error -> Tasks.terminal?(task)
+          {:ok, previous} ->
+            previous != Tasks.version(task) and (task.state != previous or task.blocked)
+
+          :error ->
+            Tasks.held_or_terminal?(task)
         end
       end)
 
