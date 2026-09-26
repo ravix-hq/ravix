@@ -61,7 +61,7 @@ end
 
 with tempfile.TemporaryDirectory(prefix="ravix-hook-coverage-") as tmp:
     root = Path(tmp)
-    shutil.copytree(ROOT / "assets/js/hooks", root / "assets/js/hooks")
+    shutil.copytree(ROOT / "assets/js", root / "assets/js")
     shutil.copytree(ROOT / "assets/test", root / "assets/test")
     # Metadata tests exercise this repository, independently from hook instrumentation.
     (root / "assets/test/repository.test.js").unlink()
