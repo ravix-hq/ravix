@@ -486,6 +486,11 @@ defmodule RavixWeb.PreviewGatewayTest do
 
   test "the sprite's WebSocket closing closes the browser's", %{f: f} do
     {:ok, ws} = Client.ws_connect(f.port, "/hmr", ws_headers(f))
+    # A 101 response can arrive before the upstream finishes switching its
+    # handler to WebSocket mode. Prove that transition before shutting it down
+    # and asserting the WebSocket close frame rather than an HTTP disconnect.
+    ws = Client.ws_send(ws, {:text, "ready to drain"})
+    assert {:ok, {:text, "ready to drain"}, ws} = Client.ws_recv(ws)
     upstream = f.app_port
     Store.update_row(f.t1, &%{&1 | port: upstream})
     # The upstream is per test; stopping it drops every socket it holds.
