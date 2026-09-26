@@ -440,6 +440,7 @@ test('project, track, streaming, image upload, reconnect, and revocation', async
   await accessible(page);
   await capture(page, 'changes-diff');
   await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole('navigation', { name: 'Track views' }).getByRole('button', { name: 'Files', exact: true }).click();
   await expect(page.locator('.file-diff')).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await capture(page, 'changes-diff-mobile');
@@ -613,6 +614,7 @@ test('project, track, streaming, image upload, reconnect, and revocation', async
   await accessible(page);
   await capture(page, 'track-Daylight');
   await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole('navigation', { name: 'Track views' }).getByRole('button', { name: 'Conversation', exact: true }).click();
   await accessible(page);
   await capture(page, 'track-mobile');
   // On a phone the project's own controls live in the yard, and the yard is

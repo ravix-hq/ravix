@@ -2037,6 +2037,22 @@ defmodule RavixWeb.TrackLiveTest do
     )
   end
 
+  test "narrow views switch without discarding the conversation or dock", ctx do
+    assert has_element?(ctx.view, "[data-narrow-view='conversation']")
+    ctx.view |> element("[phx-click='narrow-view'][phx-value-name='files']") |> render_click()
+    assert has_element?(ctx.view, "[data-narrow-view='files']")
+    ctx.view |> element("[phx-click='narrow-view'][phx-value-name='terminal']") |> render_click()
+    assert has_element?(ctx.view, "[data-narrow-view='terminal']")
+    assert has_element?(ctx.view, "#machine-dock:not([hidden])")
+
+    ctx.view
+    |> element("[phx-click='narrow-view'][phx-value-name='conversation']")
+    |> render_click()
+
+    assert has_element?(ctx.view, "[data-narrow-view='conversation']")
+    assert has_element?(ctx.view, "#track-terminal")
+  end
+
   test "presence updates only affect their own track", ctx do
     send(
       ctx.view.pid,

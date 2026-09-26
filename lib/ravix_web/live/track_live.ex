@@ -92,6 +92,7 @@ defmodule RavixWeb.TrackLive do
         transcript_loading: true,
         queue: [],
         present: [],
+        narrow_view: "conversation",
         panel: Panel.new(),
         show_ignored?: false,
         branch_merged?: false,
@@ -169,6 +170,15 @@ defmodule RavixWeb.TrackLive do
     if MapSet.member?(socket.assigns.pending, :add_thread),
       do: {:noreply, socket},
       else: {:noreply, begin(socket, :add_thread, &Tracks.add_thread/2)}
+  end
+
+  def handle_event("narrow-view", %{"name" => name}, socket)
+      when name in ["conversation", "files", "terminal"] do
+    if name == "terminal" do
+      send_update(RavixWeb.Live.MachineDock, id: "machine-dock-panel", dock_open: true)
+    end
+
+    {:noreply, assign(socket, narrow_view: name)}
   end
 
   def handle_event("retry-load", _, socket), do: {:noreply, load(socket)}
@@ -823,6 +833,7 @@ defmodule RavixWeb.TrackLive do
       starters: [],
       queue: [],
       present: [],
+      narrow_view: "conversation",
       panel: Panel.new(),
       show_ignored?: false,
       branch_merged?: false,
