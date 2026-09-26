@@ -220,7 +220,7 @@ defmodule Ravix.Projects.Settings do
 
       {:ok, false} ->
         {:error,
-         {:unprocessable, "agent_not_connected",
+         {:conflict, "agent_not_connected",
           "Connect this agent in the project owner's account before selecting it."}}
 
       {:error, _} = error ->
