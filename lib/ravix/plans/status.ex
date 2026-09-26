@@ -1,5 +1,5 @@
 defmodule Ravix.Plans.Status do
-  @moduledoc "Derived status, using one bounded batch of the existing cached GitHub reports."
+  @moduledoc "Derived status, using one bounded batch of the cached GitHub pull requests."
   alias Ravix.Plans.Store
 
   def items(project, items) do
@@ -53,7 +53,7 @@ defmodule Ravix.Plans.Status do
           tracks,
           fn track ->
             {track.id,
-             Ravix.GitHub.checks(app, installation, repo, track.branch, %{
+             Ravix.GitHub.pull_for_track(app, installation, repo, track.branch, %{
                created_at: track.created_at,
                origin_number: if(track.origin_kind == :pr, do: track.origin_number)
              })}
@@ -64,7 +64,7 @@ defmodule Ravix.Plans.Status do
         )
         |> Enum.zip(tracks)
         |> Map.new(fn
-          {{:ok, {id, {:ok, report}}}, _} -> {id, report}
+          {{:ok, {id, {:ok, pull}}}, _} -> {id, %{pull: pull}}
           {_, track} -> {track.id, :unavailable}
         end)
 
