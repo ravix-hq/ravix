@@ -51,7 +51,7 @@ defmodule Ravix.Tooling do
       )
 
   defp execute(p, "get_track", a) do
-    with {:ok, detail} <- Tracks.get(p.user, a["track_id"]),
+    with {:ok, detail} <- Tracks.get(p.user, a["track_id"], fresh: true),
          {:ok, items} <- Ravix.Plans.track_items(p.user, a["track_id"]) do
       {:ok, Map.put(track(detail.track), :plan_items, items)}
     end

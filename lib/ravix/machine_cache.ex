@@ -20,11 +20,13 @@ defmodule Ravix.MachineCache do
     - **Invalidated on the writes that change the answer.** Opening a track
       (which may provision the machine), closing one, rebuilding or
       destroying the project: each calls `forget_project/1`.
-    - **Refreshed by whoever needs it fresh.** The sidebar's status dot must
-      not lag a turn ending, so `Ravix.Tracks.list/2` and `get/2` ask for a
-      list no older than the moment they asked, and the result is written
-      through; everything that only needs the machine's identity reads from
-      the memo. A refresh is not a forget: it joins a load already in
+    - **Refreshed by whoever needs it fresh.** Ordinary rail and thread lists
+      use the memo. A turn event, explicit Refresh, or track detail refresh
+      asks for `fresh: true`, and the answer is written through. A cached
+      status or last-active time may be up to `ttl_ms/0` old. Read markers are
+      not cached here: the reader's `:read` PubSub event clears unread dots
+      immediately, and list reads compare the memo with current DB markers.
+      A refresh is not a forget: it joins a load already in
       flight if that load started late enough, and otherwise the one
       load that follows it, so a hub event reaching every open page costs
       one or two Fountain calls rather than one per page. See

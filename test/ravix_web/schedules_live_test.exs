@@ -9,8 +9,9 @@ defmodule RavixWeb.SchedulesLiveTest do
   test "navigation, create, edit, pause, resume and delete", %{conn: conn} do
     user = insert_user()
     project = insert_project(user: user)
-    stub(Tracks, :list, fn _, _ -> {:ok, []} end)
+    stub(Tracks, :list, fn _, _, _opts -> {:ok, []} end)
     {:ok, view, html} = live(log_in_user(conn, user), "/schedules")
+    render_async(view)
     assert html =~ "No schedules yet"
     assert has_element?(view, ".yard-nav a.on[href='/schedules']", "Schedules")
 
@@ -43,10 +44,11 @@ defmodule RavixWeb.SchedulesLiveTest do
   test "expired session cannot create schedules", %{conn: conn} do
     user = insert_user()
     project = insert_project(user: user)
-    stub(Tracks, :list, fn _, _ -> {:ok, []} end)
+    stub(Tracks, :list, fn _, _, _opts -> {:ok, []} end)
     {token, session} = insert_session(user)
     conn = Plug.Test.init_test_session(conn, %{session_token: token})
     {:ok, view, _} = live(conn, "/schedules")
+    render_async(view)
     Ravix.Repo.delete!(session)
     # Component event guards verify the session directly.
     assert {:error, {:redirect, %{to: "/login"}}} =

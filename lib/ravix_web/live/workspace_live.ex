@@ -276,7 +276,7 @@ defmodule RavixWeb.WorkspaceLive do
     end
   end
 
-  def handle_event("refresh", _, socket), do: {:noreply, reload_async(socket)}
+  def handle_event("refresh", _, socket), do: {:noreply, reload_async(socket, fresh: true)}
 
   def handle_event("dismiss", _, socket) do
     socket = assign(socket, dialog: nil)
@@ -535,8 +535,8 @@ defmodule RavixWeb.WorkspaceLive do
   # activity and unread mark of the tracks of the project it names. So it
   # re-reads that project's tracks and nothing else. It used to re-read the
   # whole rail, and a rail read is `Ravix.Tracks.list/2` per project, each of
-  # which asks Fountain for that project's conversations *live* (the sidebar's
-  # status dot must not lag a turn ending, so it refuses the memo). Somebody
+  # which used to ask Fountain live even on an ordinary page load. Now only
+  # the changed project's turn read bypasses the memo. Somebody
   # with five projects therefore paid five or more round trips, in this
   # process, with the page unable to render or answer a click for the whole
   # of them, every time any agent anywhere started or finished a turn.
@@ -701,11 +701,12 @@ defmodule RavixWeb.WorkspaceLive do
   # start_async does not run on the disconnected render. The connected mount
   # starts the same traced read as subsequent refreshes, leaving the shell free
   # to render and the selected track free to mount independently.
-  defp reload_async(%{assigns: %{current_user: nil}} = socket), do: socket
+  defp reload_async(socket, opts \\ [])
+  defp reload_async(%{assigns: %{current_user: nil}} = socket, _opts), do: socket
 
-  defp reload_async(socket) do
+  defp reload_async(socket, opts) do
     user = socket.assigns.current_user
-    traced_async(socket, :reload, fn -> read_rail(user) end)
+    traced_async(socket, :reload, fn -> read_rail(user, opts) end)
   end
 
   # The two creates, once they have something to show. The page patches to
@@ -722,7 +723,10 @@ defmodule RavixWeb.WorkspaceLive do
   defp refresh_tracks(socket, project_id) do
     if Enum.any?(socket.assigns.projects, &(&1.id == project_id)) do
       user = socket.assigns.current_user
-      traced_async(socket, {:tracks, project_id}, fn -> Tracks.list(user, project_id) end)
+
+      traced_async(socket, {:tracks, project_id}, fn ->
+        Tracks.list(user, project_id, fresh: true)
+      end)
     else
       socket
     end
@@ -733,12 +737,12 @@ defmodule RavixWeb.WorkspaceLive do
   # the rail drawing the project. Each project gets a bounded worker and its
   # own deadline. Ordered results keep failures paired with their project;
   # neither a timeout nor a crashed worker can take down the complete rail.
-  defp read_rail(user) do
+  defp read_rail(user, opts \\ []) do
     projects = Projects.list(user, include_machine: false)
 
     groups =
       Ravix.TaskSupervisor
-      |> Task.Supervisor.async_stream_nolink(projects, &read_project(user, &1),
+      |> Task.Supervisor.async_stream_nolink(projects, &read_project(user, &1, opts),
         max_concurrency: 8,
         timeout: 5_000,
         on_timeout: :kill_task,
@@ -754,10 +758,10 @@ defmodule RavixWeb.WorkspaceLive do
      Map.new(groups, fn {project, tracks} -> {project.id, tracks} end)}
   end
 
-  # Tracks refreshes the conversation memo. Read the machine state from that
-  # same answer inside the worker, so even a cold memo stays within its budget.
-  defp read_project(user, project) do
-    with {:ok, tracks} <- Tracks.list(user, project.id),
+  # Tracks uses the memo or refreshes it when asked. Read machine state from
+  # that same answer inside the worker, keeping cold reads within its budget.
+  defp read_project(user, project, opts) do
+    with {:ok, tracks} <- Tracks.list(user, project.id, opts),
          {:ok, project} <- Projects.get(user, project.id) do
       {:ok, project, tracks}
     end

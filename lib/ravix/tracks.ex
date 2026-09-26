@@ -109,12 +109,12 @@ defmodule Ravix.Tracks do
   The owner and anybody invited to the whole project see all of its tracks.
   Somebody invited to particular tracks sees those and is not told there
   are others. Same function, because the sidebar asks the same question
-  whichever of the three is asking. Read live rather than from the memo,
-  because this is what the sidebar's status comes from and a turn that
-  ended must not show as running for another five seconds.
+  whichever of the three is asking. Ordinary lists use the short conversation
+  memo. Pass `fresh: true` after a turn event or for an explicit refresh;
+  membership and this person's read markers are always read from the database.
   """
-  @spec list(User.t(), String.t()) :: {:ok, [View.t()]} | {:error, :not_found}
-  def list(%User{} = user, project_id) do
+  @spec list(User.t(), String.t(), fresh: boolean()) :: {:ok, [View.t()]} | {:error, :not_found}
+  def list(%User{} = user, project_id, opts \\ []) do
     with %Project{} = project <- live_project(project_id),
          access when access != nil <- Access.access_of(user.id, project) do
       rows =
@@ -122,16 +122,17 @@ defmodule Ravix.Tracks do
           do: Store.member_tracks_of(user.id, project.id),
           else: Store.tracks_of(project.id)
 
-      {:ok, present_all(rows, project, user, if(access == :owner, do: :owner, else: :member))}
+      {:ok,
+       present_all(rows, project, user, if(access == :owner, do: :owner, else: :member), opts)}
     else
       _ -> {:error, :not_found}
     end
   end
 
-  defp present_all(rows, project, user, role) do
-    live = conversations_of(project)
-    # ownership: `list/1` above went through `Access.project_access/2` for this
-    # project, and these are read markers on tracks within it.
+  defp present_all(rows, project, user, role, opts) do
+    live = conversations_of(project, fresh: Keyword.get(opts, :fresh, false))
+    # ownership: list/3 established this user's membership with Access.access_of/2;
+    # these are read markers on tracks within that project.
     reads = People.Store.reads_of(user.id, project.id)
     # Both of these are read for the whole list rather than per row: the
     # sidebar is the one caller that asks for twenty tracks at once, and
@@ -270,10 +271,10 @@ defmodule Ravix.Tracks do
     end
   end
 
-  @doc "The conversations on a track, with this person's unread state."
+  @doc "The memoised conversations on a track, with this person's current unread state."
   def threads(%User{} = user, track_id) do
     with {:ok, %{project: project}} <- Access.track_access(user, track_id) do
-      {:ok, thread_views(track_id, user, project, conversations_of(project))}
+      {:ok, thread_views(track_id, user, project, conversations_of(project, fresh: false))}
     end
   end
 
@@ -1168,13 +1169,10 @@ defmodule Ravix.Tracks do
     end
   end
 
-  # Every conversation on the project's agent, by id, read live, not from the
-  # memo, because this is what the sidebar's status comes from and a turn
-  # that ended must not show as running for another five seconds. The fresh
-  # answer is written through, so a burst of machine reads right after it is
-  # free. A Fountain that cannot be reached is an empty map: every track
-  # then reads as `:ready` or `:opening` rather than nothing loading at all.
-  defp conversations_of(project, opts \\ [fresh: true]) do
+  # Every conversation on the project's agent, by id. Callers choose whether
+  # the short memo is enough or a known state transition needs a live read.
+  # Provider failures retain the existing ready/opening fallback.
+  defp conversations_of(project, opts) do
     with {:ok, client} <- fountain(),
          {:ok, all} <- MachineCache.conversations(client, project, opts) do
       Map.new(all, &{&1.id, &1})
