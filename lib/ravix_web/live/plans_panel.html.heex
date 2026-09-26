@@ -105,13 +105,25 @@
     <div class="md">{md(@detail.plan.summary)}</div>
     <p class="hint">Created by {@detail.plan.created_by_login}</p>
     <RavixWeb.Live.PlanGraph.graph items={@detail.items} />
-    <.form for={%{}} id="plan-assign" phx-submit="assign-items" phx-target={@myself}>
+    <.form
+      for={%{}}
+      id="plan-assign"
+      phx-change="select-items"
+      phx-submit="assign-items"
+      phx-target={@myself}
+    >
       <p>
         Assigning prompts agents and spends this project's owner's subscription. Completed dependencies become ready here; assignment is always your choice.
       </p>
+      <div :if={!@detail.plan.archived} class="plan-assign-actions">
+        <span role="status">{length(@selected)} selected</span>
+        <button class="primary" type="submit" disabled={@busy || @selected == []}>Assign selected items</button>
+      </div>
       <article :for={item <- @detail.items} id={"item-#{item.id}"} class="plan-item">
         <header class="plans-toolbar">
-          <h4>{item.title}</h4><span class="chip">{status_label(item.status)}</span>
+          <h4 id={"item-title-#{item.id}"}>{item.title}</h4><span class="chip">{status_label(
+            item.status
+          )}</span>
         </header>
         <p :if={!item.status_available} role="status">
           GitHub status is temporarily unavailable.
@@ -128,24 +140,43 @@
           )}
         </p>
         <.link :if={item.track_url} navigate={item.track_url}>Open track: {item.track_title}</.link>
-        <div :if={!item.track_id && !@detail.plan.archived} class="plans-toolbar">
-          <label><input
-            type="checkbox"
-            name="selected[]"
-            value={item.id}
-            disabled={item.status == :blocked || @busy}
-          /> Assign {item.title}</label>
-          <label for={"target-#{item.id}"}>Track</label>
-          <select
-            id={"target-#{item.id}"}
-            name={"targets[#{item.id}]"}
-            disabled={item.status == :blocked || @busy}
-          >
-            <option value="">New track</option>
-            <option :for={track <- @tracks} :if={track.status != :closed} value={track.id}>
-              {track.title}
-            </option>
-          </select>
+        <p :if={item.status == :blocked} id={"blocked-#{item.id}"}>
+          Blocked by: {blockers(@detail.items, item)}
+        </p>
+        <div
+          :if={!item.track_id && !@detail.plan.archived}
+          class="plan-assignment-row"
+          role="group"
+          aria-labelledby={"item-title-#{item.id}"}
+          aria-describedby={if item.status == :blocked, do: "blocked-#{item.id}"}
+        >
+          <label class="plan-assign-choice">
+            <input
+              type="checkbox"
+              name="selected[]"
+              value={item.id}
+              checked={item.id in @selected}
+              disabled={item.status == :blocked || @busy}
+            /> Assign
+          </label>
+          <div class="plan-assign-target">
+            <label for={"target-#{item.id}"}>Track</label>
+            <select
+              id={"target-#{item.id}"}
+              name={"targets[#{item.id}]"}
+              disabled={item.status == :blocked || @busy}
+            >
+              <option value="">New track</option>
+              <option
+                :for={track <- @tracks}
+                :if={track.status != :closed}
+                value={track.id}
+                selected={@targets[item.id] == track.id}
+              >
+                {track.title}
+              </option>
+            </select>
+          </div>
         </div>
         <ul :if={item.notes != []}>
           <li :for={note <- item.notes}>
@@ -153,7 +184,6 @@
           </li>
         </ul>
       </article>
-      <button :if={!@detail.plan.archived} class="primary" type="submit" disabled={@busy}>Assign selected items</button>
     </.form>
     <details :for={item <- @detail.items} class="plan-note">
       <summary>Add a note to {item.title}</summary>

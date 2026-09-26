@@ -21,11 +21,48 @@ test('a project plan assigns coordinated tracks and works at phone width', async
   await panel.getByRole('button', { name: 'Add item', exact: true }).click();
   await panel.getByLabel('Item title', { exact: true }).nth(1).fill('Build UI');
   await panel.getByLabel('Brief', { exact: true }).nth(1).fill('Own the views.');
+  await panel.getByRole('button', { name: 'Add item', exact: true }).click();
+  await panel.getByLabel('Item title', { exact: true }).nth(2).fill('Ship after API');
+  await panel.getByLabel('Brief', { exact: true }).nth(2).fill('Wait for the API.\n\n' + 'Release notes.\n\n'.repeat(30));
+  await panel.getByLabel('Depends on', { exact: true }).nth(2).selectOption({ label: 'Build API' });
   await panel.getByRole('button', { name: 'Save plan', exact: true }).click();
   await expect(panel.getByRole('heading', { name: 'Ship the release' })).toBeVisible();
   await expect(panel.locator('strong', { hasText: 'Together' })).toBeVisible();
-  await panel.getByLabel('Assign Build API', { exact: true }).check();
-  await panel.getByLabel('Assign Build UI', { exact: true }).check();
+  const api = panel.getByRole('group', { name: 'Build API', exact: true });
+  const ui = panel.getByRole('group', { name: 'Build UI', exact: true });
+  const blocked = panel.getByRole('group', { name: 'Ship after API', exact: true });
+  await expect(blocked.getByLabel('Assign', { exact: true })).toBeDisabled();
+  await expect(blocked.getByLabel('Track', { exact: true })).toBeDisabled();
+  await expect(panel.getByText('Blocked by: Build API', { exact: true })).toBeVisible();
+  for (const width of [1480, 535, 390]) {
+    await page.setViewportSize({ width, height: 844 });
+    await api.scrollIntoViewIfNeeded();
+    const boxes = await api.evaluate(el => {
+      const rect = node => { const { x, y, width, height } = node.getBoundingClientRect(); return { x, y, width, height }; };
+      return {
+        choice: rect(el.querySelector('.plan-assign-choice')),
+        checkbox: rect(el.querySelector('input')),
+        target: rect(el.querySelector('.plan-assign-target')),
+        label: rect(el.querySelector('.plan-assign-target label')),
+        select: rect(el.querySelector('select')),
+      };
+    });
+    expect(Math.abs(boxes.checkbox.y + boxes.checkbox.height / 2 - boxes.choice.y - boxes.choice.height / 2)).toBeLessThan(2);
+    expect(boxes.select.x).toBeGreaterThan(boxes.label.x);
+    expect(Math.abs(boxes.select.y + boxes.select.height / 2 - boxes.label.y - boxes.label.height / 2)).toBeLessThan(2);
+    if (width === 1480) expect(Math.abs(boxes.choice.y + boxes.choice.height / 2 - boxes.target.y - boxes.target.height / 2)).toBeLessThan(2);
+    expect(await panel.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
+  }
+  await api.getByLabel('Assign', { exact: true }).check();
+  await expect(panel.locator('.plan-assign-actions')).toContainText('1 selected');
+  await api.getByLabel('Assign', { exact: true }).uncheck();
+  await expect(panel.locator('.plan-assign-actions')).toContainText('0 selected');
+  await api.getByLabel('Assign', { exact: true }).check();
+  await ui.getByLabel('Assign', { exact: true }).check();
+  await expect(panel.locator('.plan-assign-actions')).toContainText('2 selected');
+  await blocked.scrollIntoViewIfNeeded();
+  await expect(panel.getByRole('button', { name: 'Assign selected items' })).toBeInViewport();
+  await page.screenshot({ path: 'test-results/plans-assign-phone.png' });
   await panel.getByRole('button', { name: 'Assign selected items' }).click();
   // A track is named after its reserved branch (#154); the item keeps its title.
   await expect(panel.getByRole('link', { name: 'Open track: ravix/build-api' })).toBeVisible();

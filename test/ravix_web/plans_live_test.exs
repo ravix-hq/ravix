@@ -88,7 +88,10 @@ defmodule RavixWeb.PlansLiveTest do
     {:ok, view, _} = live(log_in_user(conn, user), "/p/#{project.id}?plan=#{plan.id}")
     render_async(view, 5_000)
 
-    # The page offers no checkbox for a blocked item; a crafted event still arrives.
+    # The page disables blocked items; a crafted event still arrives.
+    assert has_element?(view, "#blocked-b", "Blocked by: A")
+    assert has_element?(view, "#item-b input[type=checkbox][disabled]")
+
     view
     |> element("#plan-assign")
     |> render_submit(%{"selected" => ["b"], "targets" => %{"b" => track.id}})
@@ -121,6 +124,25 @@ defmodule RavixWeb.PlansLiveTest do
     render_async(view, 5_000)
     assert has_element?(view, "#plan-assign", "owner's subscription")
 
+    assert has_element?(view, ".plan-assign-actions [role=status]", "0 selected")
+    assert has_element?(view, ".plan-assign-actions button[disabled]")
+
+    view
+    |> form("#plan-assign", %{"selected" => ["a"], "targets" => %{"a" => track.id}})
+    |> render_change()
+
+    assert has_element?(view, ".plan-assign-actions [role=status]", "1 selected")
+    assert has_element?(view, "#item-a input[checked]")
+    assert has_element?(view, "#target-a option[selected][value='#{track.id}']")
+    refute has_element?(view, ".plan-assign-actions button[disabled]")
+
+    view
+    |> element("#plan-assign")
+    |> render_change(%{"selected" => [], "targets" => %{"a" => track.id}})
+
+    assert has_element?(view, ".plan-assign-actions [role=status]", "0 selected")
+    refute has_element?(view, "#item-a input[checked]")
+
     view
     |> form("#plan-assign", %{
       "selected" => ["a", "b"],
@@ -133,6 +155,7 @@ defmodule RavixWeb.PlansLiveTest do
     assert Enum.all?(items, &(&1.track_id == track.id))
     assert has_element?(view, "#item-a .chip", "in progress")
     assert Repo.aggregate(Ravix.Tooling.Task, :count) == 2
+    assert has_element?(view, ".plan-assign-actions [role=status]", "0 selected")
   end
 
   test "the plan shows its dependency graph, linking each node to its item", %{
