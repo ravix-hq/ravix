@@ -9,7 +9,7 @@ defmodule Ravix.GitHub.Cache do
       machine that then uses it: a token that was valid when it left here and
       expired in flight fails as `fatal: Authentication failed`, which reads
       like a permissions problem and is not one.
-    * **Rate limits**, per installation. Once GitHub says stop, every read for
+    * **Rate limits**, per installation or user credential. Once GitHub says stop, every read for
       that installation is refused locally until the reset, so twenty mounted
       rows do not each discover the limit for themselves. The limit is GitHub's
       and belongs to the whole deployment rather than to one instance, so it is
@@ -47,6 +47,7 @@ defmodule Ravix.GitHub.Cache do
 
   @type app_id :: String.t()
   @type installation_id :: integer()
+  @type rate_scope :: installation_id() | {:user, binary()}
   @type checks_key :: tuple()
   @type checks_result :: {:ok, term()} | {:error, Error.t()}
 
@@ -76,10 +77,14 @@ defmodule Ravix.GitHub.Cache do
     :ok
   end
 
+  @doc "A non-reversible key for a user's credential; raw tokens never enter cache keys."
+  @spec user_scope(String.t()) :: {:user, binary()}
+  def user_scope(token), do: {:user, :crypto.hash(:sha256, token)}
+
   # ── rate limits ────────────────────────────────────────────────────
 
   @doc "The rate limit GitHub imposed on an installation, if one is remembered."
-  @spec rate_limit(app_id(), installation_id()) :: {:ok, integer(), Error.t()} | :error
+  @spec rate_limit(app_id(), rate_scope()) :: {:ok, integer(), Error.t()} | :error
   def rate_limit(app_id, installation_id) do
     case :ets.lookup(@table, {:rate_limit, app_id, installation_id}) do
       [{_, until_ms, error}] -> {:ok, until_ms, error}
@@ -91,31 +96,30 @@ defmodule Ravix.GitHub.Cache do
   Refuse reads for this installation until `until_ms`, answering `error`.
 
   Told to the other instances too. One instance earning a 403 is the whole
-  deployment's news: the limit is GitHub's, counted per installation, and an
+  deployment's news: the limit is GitHub's, counted per credential, and an
   instance that has not heard will spend the next reads discovering it again.
   """
-  @spec put_rate_limit(app_id(), installation_id(), integer(), Error.t()) :: :ok
+  @spec put_rate_limit(app_id(), rate_scope(), integer(), Error.t()) :: :ok
   def put_rate_limit(app_id, installation_id, until_ms, %Error{} = error) do
     put_rate_limit_local(app_id, installation_id, until_ms, error)
     tell_siblings({:rate_limit, app_id, installation_id, until_ms, error})
   end
 
   @doc "Forget a rate limit (it expired, or a request got through), here and elsewhere."
-  @spec clear_rate_limit(app_id(), installation_id()) :: :ok
+  @spec clear_rate_limit(app_id(), rate_scope()) :: :ok
   def clear_rate_limit(app_id, installation_id) do
     clear_rate_limit_local(app_id, installation_id)
     tell_siblings({:rate_limit_cleared, app_id, installation_id})
   end
 
   @doc false
-  @spec put_rate_limit_local(app_id(), installation_id(), integer(), Error.t()) :: :ok
+  @spec put_rate_limit_local(app_id(), rate_scope(), integer(), Error.t()) :: :ok
   def put_rate_limit_local(app_id, installation_id, until_ms, %Error{} = error) do
-    :ets.insert(@table, {{:rate_limit, app_id, installation_id}, until_ms, error})
-    :ok
+    GenServer.call(__MODULE__, {:remember_limit, app_id, installation_id, until_ms, error})
   end
 
   @doc false
-  @spec clear_rate_limit_local(app_id(), installation_id()) :: :ok
+  @spec clear_rate_limit_local(app_id(), rate_scope()) :: :ok
   def clear_rate_limit_local(app_id, installation_id) do
     :ets.delete(@table, {:rate_limit, app_id, installation_id})
     :ok
@@ -190,13 +194,27 @@ defmodule Ravix.GitHub.Cache do
   @impl true
   def handle_call(:ping, _from, state), do: {:reply, :ok, state}
 
+  def handle_call({:remember_limit, app_id, scope, until_ms, error}, _from, state) do
+    remember_limit(app_id, scope, until_ms, error)
+    {:reply, :ok, state}
+  end
+
+  # Replies can arrive out of order, including broadcasts from another node.
+  # A shorter cooldown must never shorten one GitHub has already imposed.
+  defp remember_limit(app_id, scope, until_ms, error) do
+    case rate_limit(app_id, scope) do
+      {:ok, existing, _} when existing >= until_ms -> :ok
+      _ -> :ets.insert(@table, {{:rate_limit, app_id, scope}, until_ms, error})
+    end
+  end
+
   # Another instance met the limit, or got through it. Written straight to this
   # instance's table without being broadcast onward: `broadcast_from/4` already
   # excluded the sender, and re-publishing what we were told is how a message
   # goes round forever.
   @impl true
   def handle_info({:rate_limit, app_id, installation_id, until_ms, error}, state) do
-    put_rate_limit_local(app_id, installation_id, until_ms, error)
+    remember_limit(app_id, installation_id, until_ms, error)
     {:noreply, state}
   end
 
