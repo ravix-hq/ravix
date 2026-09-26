@@ -51,13 +51,13 @@ defmodule Ravix.Plans.Status do
         Task.Supervisor.async_stream_nolink(
           Ravix.TaskSupervisor,
           tracks,
-          fn track ->
+          Ravix.Trace.link_each(fn track ->
             {track.id,
              Ravix.GitHub.pull_for_track(app, installation, repo, track.branch, %{
                created_at: track.created_at,
                origin_number: if(track.origin_kind == :pr, do: track.origin_number)
              })}
-          end,
+          end),
           max_concurrency: 4,
           timeout: 30_000,
           on_timeout: :kill_task

@@ -602,9 +602,12 @@ defmodule Ravix.Tracks do
 
   defp send_opening_turn(client, track, project, origin, :async) do
     {:ok, _pid} =
-      Task.Supervisor.start_child(Ravix.TaskSupervisor, fn ->
-        send_opening_turn(client, track, project, origin, :sync)
-      end)
+      Task.Supervisor.start_child(
+        Ravix.TaskSupervisor,
+        Ravix.Trace.link(fn ->
+          send_opening_turn(client, track, project, origin, :sync)
+        end)
+      )
 
     :ok
   end
@@ -947,9 +950,12 @@ defmodule Ravix.Tracks do
       threads = Store.threads_of(track.id)
 
       {:ok, _pid} =
-        Task.Supervisor.start_child(Ravix.TaskSupervisor, fn ->
-          tear_down(client, track, project, opts, threads)
-        end)
+        Task.Supervisor.start_child(
+          Ravix.TaskSupervisor,
+          Ravix.Trace.link(fn ->
+            tear_down(client, track, project, opts, threads)
+          end)
+        )
 
       Analytics.track(
         user,

@@ -139,9 +139,12 @@ defmodule Ravix.Previews.Lifecycle do
   # End existing connections and defer traffic until reconciliation has
   # retired the previous service and passed readiness on the replacement.
   defp replaced(track_id) do
-    Task.Supervisor.start_child(Ravix.TaskSupervisor, fn ->
-      start_service(track_id, :restart)
-    end)
+    Task.Supervisor.start_child(
+      Ravix.TaskSupervisor,
+      Ravix.Trace.link(fn ->
+        start_service(track_id, :restart)
+      end)
+    )
 
     {:error,
      {:unavailable, "preview_replaced",
@@ -372,7 +375,9 @@ defmodule Ravix.Previews.Lifecycle do
     track_ids = project_id |> Tracks.tracks_of(:all) |> Enum.map(& &1.id)
 
     Ravix.TaskSupervisor
-    |> Task.Supervisor.async_stream_nolink(track_ids, &stop_service(&1, :cleanup),
+    |> Task.Supervisor.async_stream_nolink(
+      track_ids,
+      Ravix.Trace.link_each(&stop_service(&1, :cleanup)),
       ordered: false,
       timeout: :infinity
     )

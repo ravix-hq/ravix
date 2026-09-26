@@ -747,7 +747,9 @@ defmodule RavixWeb.WorkspaceLive do
 
     groups =
       Ravix.TaskSupervisor
-      |> Task.Supervisor.async_stream_nolink(projects, &read_project(user, &1, opts),
+      |> Task.Supervisor.async_stream_nolink(
+        projects,
+        Ravix.Trace.link_each(&read_project(user, &1, opts)),
         max_concurrency: 8,
         timeout: 5_000,
         on_timeout: :kill_task,
