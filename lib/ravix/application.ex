@@ -28,6 +28,8 @@ defmodule Ravix.Application do
         {DynamicSupervisor, name: Ravix.Tooling.Wait.Supervisor, strategy: :one_for_one},
         # Fountain's conversation list and sprite names, memoised briefly.
         Ravix.MachineCache,
+        {Ravix.Memo, name: Ravix.Accounts.Inference.Cache.Reads},
+        Ravix.Accounts.Inference.Cache,
         # Who is looking at which track, and who is typing.
         Ravix.Presence,
         # One follower per track -- per cluster, not per instance (ADR 0003): the
