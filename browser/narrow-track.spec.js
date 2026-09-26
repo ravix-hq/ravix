@@ -47,7 +47,7 @@ test('narrow track views give the conversation space and preserve drafts', async
     await expect(composer).toBeHidden();
     expect(await scrollSurfaces(page)).toBe(1);
     await page.screenshot({ path: `tmp/narrow-files-${width}.png` });
-    await views.getByRole('button', { name: 'Terminal', exact: true }).click();
+    await views.getByRole('button', { name: 'Commands', exact: true }).click();
     const command = page.getByRole('textbox', { name: 'Command', exact: true });
     await expect(command).toBeVisible();
     await command.fill('echo preserved');
@@ -55,7 +55,7 @@ test('narrow track views give the conversation space and preserve drafts', async
     await page.screenshot({ path: `tmp/narrow-terminal-${width}.png` });
     await views.getByRole('button', { name: 'Conversation', exact: true }).click();
     await expect(composer).toHaveValue('Keep this conversation draft');
-    await views.getByRole('button', { name: 'Terminal', exact: true }).click();
+    await views.getByRole('button', { name: 'Commands', exact: true }).click();
     await expect(command).toHaveValue('echo preserved');
     const result = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze();
     expect(result.violations).toEqual([]);
