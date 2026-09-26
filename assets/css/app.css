@@ -387,7 +387,8 @@ input:focus, textarea:focus, select:focus {
   border-color: var(--accent-line);
   box-shadow: 0 0 0 1px var(--accent-line);
 }
-textarea { resize: vertical; font-family: var(--mono); }
+textarea { resize: vertical; font-family: inherit; }
+textarea.mono { font-family: var(--mono); }
 
 code, kbd, pre { font-family: var(--mono); }
 code { color: color-mix(in srgb, var(--ink) 80%, var(--accent)); font-size: 0.94em; }
@@ -559,7 +560,7 @@ h4 { font-size: 12px; color: var(--dim); font-weight: 500; letter-spacing: 0; }
 .project-mark {
   flex: none; width: 18px; height: 18px; border-radius: 4px; display: grid; place-items: center;
   background: linear-gradient(135deg, var(--accent-soft), var(--surface)); border: 1px solid var(--line);
-  font-family: var(--mono); font-size: 10px; color: var(--dim); font-weight: 500;
+  font-size: 10px; color: var(--dim); font-weight: 600;
 }
 
 /* The rail that makes a list of tracks read as branches off one line. */
@@ -1066,7 +1067,7 @@ h4 { font-size: 12px; color: var(--dim); font-weight: 500; letter-spacing: 0; }
 .welcome-steps a:hover { color: var(--ink); }
 .welcome-steps li.done a { border-top-color: var(--line-strong); color: var(--dim); }
 .welcome-steps li.on a { border-top-color: var(--accent); color: var(--ink); }
-.welcome-step-num { font-family: var(--mono); font-size: 11px; }
+.welcome-step-num { font-size: 11px; font-variant-numeric: tabular-nums; }
 .welcome-ideas { list-style: none; margin: 0 0 8px; padding: 0; display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: var(--radius-lg); }
 .welcome-ideas li { display: flex; gap: 12px; padding: 14px; border-bottom: 1px solid var(--line); }
 .welcome-ideas li:last-child { border-bottom: none; }
@@ -1277,6 +1278,10 @@ h4 { font-size: 12px; color: var(--dim); font-weight: 500; letter-spacing: 0; }
   .workspace-mobile-nav { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; padding: 10px; border-bottom: 1px solid var(--line); }
   .workspace-mobile-nav a { color: var(--ink); }
   .crumbs { flex-wrap: wrap; row-gap: 6px; height: auto; min-height: 44px; padding: 8px 12px; }
+  /* The actions stay on the title's line; the title and chips give way. */
+  .track-crumbs { flex-wrap: nowrap; }
+  .track-crumbs > * { flex-shrink: 0; }
+  .track-crumbs > .project-crumb, .track-crumbs > button:first-of-type, .track-crumbs > .chip { flex-shrink: 1; min-width: 0; }
   .track-crumbs .track-branch { max-width: 44%; }
   .workspace-welcome { padding: 24px; }
   .said { max-width: 100%; }
