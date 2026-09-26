@@ -450,6 +450,7 @@ h4 { font-size: 12px; color: var(--dim); font-weight: 500; letter-spacing: 0; }
    beside the inspector, each column scrolling on its own. */
 .workspace-track-host, .track-workspace, .track-workspace-body { display: flex; flex: 1; flex-direction: column; min-height: 0; overflow: hidden; }
 .workspace-track-host > div { display: flex; flex: 1; min-height: 0; }
+.track-view-switch.workspace-tabs { display: none; }
 .track-conversation { display: flex; flex: 1; flex-direction: column; min-width: 0; min-height: 0; }
 
 /* ── the yard (left rail) ──────────────────────────────────────────────── */
@@ -1311,6 +1312,19 @@ h4 { font-size: 12px; color: var(--dim); font-weight: 500; letter-spacing: 0; }
 }
 
 @media (max-width: 760px) {
+  .track-view-switch.workspace-tabs { display: flex; flex: none; }
+  .track-workspace-body > .split { overflow: hidden; }
+  .track-conversation { min-height: 0; }
+  .inspector { min-height: 0; flex: 1; border-left: 0; }
+  [data-narrow-view="conversation"] .inspector,
+  [data-narrow-view="files"] .track-conversation,
+  [data-narrow-view="terminal"] .track-conversation,
+  [data-narrow-view="files"] .machine-dock-host,
+  [data-narrow-view="terminal"] .inspector > .workspace-tabs,
+  [data-narrow-view="terminal"] .workspace-panel { display: none; }
+  [data-narrow-view="terminal"] .machine-dock-host { display: flex; flex: 1; flex-direction: column; min-height: 0; }
+  [data-narrow-view="terminal"] .machine-dock { flex: 1; height: auto; }
+  [data-narrow-view="terminal"] .dock-toggle { display: none; }
   .panel-resize-handle { display: none; }
   .app { grid-template-columns: 1fr; }
   .yard { display: none; }
@@ -1568,7 +1582,7 @@ body:has(.phx-error) #request-progress { display: none; }
 
 /* Assigned plan material occupies one row until the reader opens it. */
 .track-crumbs .track-plan-chip { min-width: 0; max-width: 18rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.track-plan-items { flex: none; min-width: 0; border-bottom: 1px solid var(--line); }
+.track-plan-items { margin-bottom: 8px; flex: none; min-width: 0; border-bottom: 1px solid var(--line); }
 .track-plan-items:empty { display: none; }
 .track-plan-summary { display: flex; align-items: center; gap: .5rem; padding: .35rem .75rem; min-width: 0; }
 .track-plan-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .8rem; color: var(--dim); }
@@ -1585,6 +1599,6 @@ body:has(.phx-error) #request-progress { display: none; }
 @media (max-width: 600px) {
   .track-crumbs .track-plan-chip { max-width: 9rem; }
   .track-plan-summary { padding: .25rem .5rem; }
-  .track-plan-list { padding: 0 .5rem .4rem; max-height: 32vh; }
+  .track-plan-list { padding: 0 .5rem .4rem; max-height: none; overflow: visible; }
   .track-plan-item-row { gap: .3rem; }
 }

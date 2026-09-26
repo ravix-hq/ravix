@@ -159,7 +159,7 @@ defmodule RavixWeb.Live.MachineDock do
   @impl true
   def render(assigns) do
     ~H"""
-    <div>
+    <div class="machine-dock-host">
       <nav class="workspace-tabs dock-tabs" aria-label="Machine panels">
         <button
           class="ghost dock-toggle"

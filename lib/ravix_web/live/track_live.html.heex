@@ -22,7 +22,7 @@
     <p>Could not load this track.</p>
     <button class="primary" phx-click="retry-load">Try again</button>
   </div>
-  <div :if={@track} class="track-workspace-body">
+  <div :if={@track} class="track-workspace-body" data-narrow-view={@narrow_view}>
     <header class="crumbs track-crumbs">
       <.link navigate={"/p/#{@project.id}"} class="project-crumb">
         <span class="project-mark" aria-hidden="true">
@@ -109,16 +109,23 @@
         </div>
       </div>
     </header>
+    <nav class="track-view-switch workspace-tabs" aria-label="Track views">
+      <button
+        :for={
+          {name, label} <- [
+            {"conversation", "Conversation"},
+            {"files", "Files"},
+            {"terminal", "Commands"}
+          ]
+        }
+        class={if @narrow_view == name, do: "selected", else: "ghost"}
+        aria-pressed={to_string(@narrow_view == name)}
+        phx-click="narrow-view"
+        phx-value-name={name}
+      >{label}</button>
+    </nav>
     <div class="split">
       <section class="track-conversation" aria-label="Conversation">
-        <.live_component
-          module={RavixWeb.Live.TrackPlanItems}
-          id={"track-plan-items-#{@track.id}"}
-          current_user={@current_user}
-          session_hash={@session_hash}
-          track_id={@track.id}
-          summary={@assigned_plan}
-        />
         <%!-- `data-track` is how the scroll hook learns it is somewhere new.
           This element keeps its id across a track switch now --- the page
           moves rather than being rebuilt --- so without it a reader who had
@@ -130,6 +137,14 @@
           class="transcript-scroll"
           data-track={@track.id}
         >
+          <.live_component
+            module={RavixWeb.Live.TrackPlanItems}
+            id={"track-plan-items-#{@track.id}"}
+            current_user={@current_user}
+            session_hash={@session_hash}
+            track_id={@track.id}
+            summary={@assigned_plan}
+          />
           <div class="track-ribbon">
             <p :if={@header && @header.copy_of} class="track-copy">
               You are in a copy of {@header.copy_of} called
