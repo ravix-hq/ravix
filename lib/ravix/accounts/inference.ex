@@ -81,6 +81,7 @@ defmodule Ravix.Accounts.Inference do
   """
 
   alias Ravix.Accounts
+  alias Ravix.Accounts.Inference.Cache
   alias Ravix.Accounts.User
   alias Ravix.Analytics
   alias Ravix.Fountain
@@ -159,7 +160,10 @@ defmodule Ravix.Accounts.Inference do
   def pasted?(agent, kind), do: is_map_key(@providers, {agent, kind})
 
   @doc """
-  Whether this person has connected something for an agent to run on.
+  Whether this person has a connection recorded for their saved choice.
+
+  This row-only compatibility check does not establish current availability;
+  use `usable_agents/1` or `usable?/2` for that (including their error result).
 
   All three of the row's fields, because `disconnect/3` clears only the
   kind: the set is still theirs and the agent is still their choice, but
@@ -196,12 +200,64 @@ defmodule Ravix.Accounts.Inference do
   def held(%User{credential_set_id: nil}), do: {:ok, []}
 
   def held(%User{credential_set_id: set_id}) do
-    with {:ok, client} <- fountain(),
-         {:ok, sets} <- Fountain.credential_sets(client) do
+    with {:ok, client} <- fountain(), do: held_from(client, set_id)
+  end
+
+  defp held_from(client, set_id) do
+    with {:ok, sets} <- Fountain.credential_sets(client) do
       case Enum.find(sets, &(is_map(&1) and &1["id"] == set_id)) do
         %{} = set -> {:ok, held_in(set)}
         nil -> {:ok, []}
       end
+    end
+  end
+
+  @doc """
+  Agents this person's Fountain credential set can pay for, Claude then Codex.
+
+  Successful reads are cached per person for five seconds. Errors are returned
+  unchanged and never cached; the saved choice is not evidence of a credential.
+  `fresh: true` bypasses the cache, including any in-flight read, for callers
+  about to provision a machine. `held/1` remains an authoritative uncached read.
+  """
+  @spec usable_agents(User.t(), keyword()) :: {:ok, [User.agent()]} | {:error, reason()}
+  def usable_agents(user, opts \\ [])
+  def usable_agents(%User{credential_set_id: nil}, _opts), do: {:ok, []}
+
+  def usable_agents(%User{} = user, opts) do
+    result =
+      if Keyword.get(opts, :fresh, false) do
+        held(user)
+      else
+        cached_held(user)
+      end
+
+    with {:ok, credentials} <- result do
+      {:ok,
+       Enum.filter([:claude, :codex], fn agent ->
+         Enum.any?(kinds(agent), &({agent, &1} in credentials))
+       end)}
+    end
+  end
+
+  defp cached_held(user) do
+    with {:ok, client} <- fountain() do
+      Cache.fetch(user, fn -> held_from(client, user.credential_set_id) end)
+    end
+  end
+
+  @doc """
+  Whether this set pays for an agent, as `{:ok, boolean}` or `{:error, reason}`.
+
+  Accepts agent atoms and runtime strings. Unknown runtimes return `{:ok, false}`
+  after a successful read; provider errors are still returned unchanged. Both
+  result tuples are truthy: callers must match them, not use a bare `if`.
+  """
+  @spec usable?(User.t(), User.agent() | String.t(), keyword()) ::
+          {:ok, boolean()} | {:error, reason()}
+  def usable?(%User{} = user, agent, opts \\ []) do
+    with {:ok, agents} <- usable_agents(user, opts) do
+      {:ok, Enum.any?(agents, &(agent == &1 or agent == Atom.to_string(&1)))}
     end
   end
 
@@ -232,12 +288,18 @@ defmodule Ravix.Accounts.Inference do
   """
   @spec disconnect(User.t(), User.agent(), User.credential_kind()) ::
           {:ok, User.t()} | {:error, reason()}
-  def disconnect(%User{credential_set_id: nil} = user, agent, kind)
-      when {agent, kind} in @choices,
-      do: forget(user, agent, kind)
+  def disconnect(%User{} = user, agent, kind) when {agent, kind} in @choices do
+    do_disconnect(user, agent, kind)
+  after
+    Cache.invalidate(user)
+  end
 
-  def disconnect(%User{credential_set_id: set_id} = user, agent, kind)
-      when {agent, kind} in @choices do
+  defp do_disconnect(%User{credential_set_id: nil} = user, agent, kind)
+       when {agent, kind} in @choices,
+       do: forget(user, agent, kind)
+
+  defp do_disconnect(%User{credential_set_id: set_id} = user, agent, kind)
+       when {agent, kind} in @choices do
     with {:ok, client} <- fountain(),
          :ok <- remove(client, set_id, user, agent, kind) do
       forget(user, agent, kind)
@@ -321,7 +383,13 @@ defmodule Ravix.Accounts.Inference do
   the first track. Nothing about the person changes unless every step did.
   """
   @spec connect(User.t(), attrs()) :: {:ok, User.t()} | {:error, reason()}
-  def connect(%User{} = user, %{agent: agent, kind: kind, value: value}) do
+  def connect(%User{} = user, attrs) do
+    do_connect(user, attrs)
+  after
+    Cache.invalidate(user)
+  end
+
+  defp do_connect(%User{} = user, %{agent: agent, kind: kind, value: value}) do
     with {:ok, provider} <- provider(agent, kind),
          {:ok, value} <- present(value),
          {:ok, client} <- fountain(),
@@ -679,7 +747,11 @@ defmodule Ravix.Accounts.Inference do
           {:ok, :pending}
 
         %{"state" => "completed", "result_grant_id" => grant_id} when is_binary(grant_id) ->
-          finish_link(client, user, set_id, grant_id)
+          try do
+            finish_link(client, user, set_id, grant_id)
+          after
+            Cache.invalidate(user)
+          end
 
         %{"state" => "failed"} = attempt ->
           {:error, link_failure(attempt["failure"])}
