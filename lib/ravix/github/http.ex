@@ -5,8 +5,8 @@ defmodule Ravix.GitHub.HTTP do
   Every call to GitHub goes through `request/4`: the headers GitHub wants, a
   twenty-second budget, the body as JSON in and out, the span, and an error
   that keeps GitHub's own message. Rate limits are remembered per
-  installation in `Ravix.GitHub.Cache`, so once GitHub says stop, nothing
-  else for that installation is even sent until the reset.
+  credential in `Ravix.GitHub.Cache`, so once GitHub says stop, nothing
+  else for that credential is even sent until the reset.
 
   That includes the one call that is not to the API host: the OAuth code
   exchange at `web_url/login/oauth/access_token`, which authenticates by the
@@ -28,7 +28,8 @@ defmodule Ravix.GitHub.HTTP do
   @timeout_ms 20_000
 
   @type option ::
-          {:auth, String.t()}
+          {:user_token, String.t()}
+          | {:auth, String.t()}
           | {:json, term()}
           | {:installation_id, integer()}
           | {:accept, String.t()}
@@ -42,12 +43,13 @@ defmodule Ravix.GitHub.HTTP do
   `:accept` replaces the API's media type for a host that speaks plain JSON.
   With `:installation_id`, a rate limit GitHub answers with is remembered
   against that installation, and a remembered one is answered without a
-  request.
+  request. `:user_token` authenticates as a user and applies the same cooldown
+  across all endpoints read with that credential, including repository listing.
   """
   @spec request(GitHubApp.t(), :get | :post, String.t(), [option()]) ::
           {:ok, term()} | {:error, Error.t()}
   def request(%GitHubApp{} = app, method, path, opts \\ []) do
-    installation_id = Keyword.get(opts, :installation_id)
+    scope = scope(opts)
 
     # Every GitHub request funnels through here. The span covers the rate-limit
     # check as well as the call, on purpose: a request answered from a
@@ -57,15 +59,17 @@ defmodule Ravix.GitHub.HTTP do
     Trace.span(
       "github.request",
       %{"http.request.method" => method, "url.path" => path},
-      fn -> attempt(app, installation_id, method, path, opts) end
+      fn -> attempt(app, scope, method, path, opts) end
     )
   end
 
-  defp attempt(app, installation_id, method, path, opts) do
-    case check_rate_limit(app, installation_id) do
+  defp attempt(app, scope, method, path, opts) do
+    case check_rate_limit(app, scope) do
       :ok ->
-        with {:ok, response} <- send_request(app, method, path, opts),
-             do: interpret(app, installation_id, response)
+        with {:ok, response} <- send_request(app, method, path, opts) do
+          observe(app, scope, response)
+          interpret(app, scope, response)
+        end
 
       # A limit GitHub gave us earlier, answered without a request. Said on the
       # span, because the alternative is a 403 or a 429 that took no time and
@@ -80,13 +84,13 @@ defmodule Ravix.GitHub.HTTP do
 
   defp check_rate_limit(_app, nil), do: :ok
 
-  defp check_rate_limit(app, installation_id) do
-    case Cache.rate_limit(app.app_id, installation_id) do
+  defp check_rate_limit(app, scope) do
+    case Cache.rate_limit(app.app_id, scope) do
       {:ok, until_ms, error} ->
         if until_ms > Clock.now_ms() do
           {:error, error}
         else
-          Cache.clear_rate_limit(app.app_id, installation_id)
+          :ok
         end
 
       :error ->
@@ -128,7 +132,20 @@ defmodule Ravix.GitHub.HTTP do
     end
   end
 
+  defp scope(opts) do
+    case Keyword.fetch(opts, :user_token) do
+      {:ok, token} -> Cache.user_scope(token)
+      :error -> Keyword.get(opts, :installation_id)
+    end
+  end
+
   defp auth_header(opts) do
+    opts =
+      case Keyword.fetch(opts, :user_token) do
+        {:ok, token} -> Keyword.put(opts, :auth, "Bearer " <> token)
+        :error -> opts
+      end
+
     case Keyword.fetch(opts, :auth) do
       {:ok, auth} -> [{"authorization", auth}]
       :error -> []
@@ -139,6 +156,57 @@ defmodule Ravix.GitHub.HTTP do
   defp req_options(opts), do: Keyword.merge(opts, Application.get_env(:ravix, :req_options, []))
 
   defp describe(%{__exception__: true} = exception), do: Exception.message(exception)
+
+  # Only numeric budget fields and the credential kind leave this boundary.
+  # Never annotate an Authorization header, token fingerprint or response body.
+  defp observe(app, scope, response) do
+    Trace.annotate(
+      %{
+        "http.response.status_code" => response.status,
+        "github.budget_scope" => credential_kind(scope),
+        "github.rate_limit.limit" => integer_header(response, "x-ratelimit-limit"),
+        "github.rate_limit.remaining" => integer_header(response, "x-ratelimit-remaining"),
+        "github.rate_limit.used" => integer_header(response, "x-ratelimit-used"),
+        "github.rate_limit.reset" => integer_header(response, "x-ratelimit-reset")
+      }
+      |> Map.reject(fn {_key, value} -> is_nil(value) end)
+    )
+
+    # The last successful request still succeeds; the next request waits for
+    # reset instead of spending a request to discover the exhausted budget.
+    reset = integer_header(response, "x-ratelimit-reset")
+
+    if scope && response.status in 200..299 &&
+         integer_header(response, "x-ratelimit-remaining") == 0 &&
+         is_integer(reset) && reset * 1000 > Clock.now_ms() do
+      until = reset * 1000
+
+      error = %Error{
+        status: 429,
+        message: "GitHub's request budget is exhausted.",
+        retry_at_ms: until
+      }
+
+      Cache.put_rate_limit(app.app_id, scope, until, error)
+    end
+  end
+
+  defp credential_kind({:user, _}), do: :user
+  defp credential_kind(nil), do: :app
+  defp credential_kind(_), do: :installation
+
+  defp integer_header(response, name) do
+    case header(response, name) do
+      nil ->
+        nil
+
+      value ->
+        case Integer.parse(value) do
+          {n, ""} when n >= 0 -> n
+          _ -> nil
+        end
+    end
+  end
 
   # ── the answer ─────────────────────────────────────────────────────
 

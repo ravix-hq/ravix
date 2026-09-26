@@ -239,7 +239,7 @@ defmodule Ravix.GitHub do
   def viewer(nil, _user_token), do: {:error, {:unconfigured, :github}}
 
   def viewer(%GitHubApp{} = app, user_token) do
-    with {:ok, raw} <- HTTP.request(app, :get, "/user", auth: "Bearer " <> user_token) do
+    with {:ok, raw} <- HTTP.request(app, :get, "/user", user_token: user_token) do
       {:ok, Shapes.account(raw)}
     end
   end
@@ -259,9 +259,7 @@ defmodule Ravix.GitHub do
 
   def installations_for(%GitHubApp{} = app, user_token) do
     with {:ok, body} <-
-           HTTP.request(app, :get, "/user/installations?per_page=100",
-             auth: "Bearer " <> user_token
-           ) do
+           HTTP.request(app, :get, "/user/installations?per_page=100", user_token: user_token) do
       {:ok, Enum.map(body["installations"] || [], &Shapes.installation/1)}
     end
   end
@@ -289,7 +287,7 @@ defmodule Ravix.GitHub do
   defp repository_pages(app, user_token, installation_id, page, acc) do
     path = "/user/installations/#{installation_id}/repositories?per_page=100&page=#{page}"
 
-    with {:ok, body} <- HTTP.request(app, :get, path, auth: "Bearer " <> user_token) do
+    with {:ok, body} <- HTTP.request(app, :get, path, user_token: user_token) do
       batch = Enum.map(body["repositories"] || [], &Shapes.repo_ref(&1, installation_id))
       acc = acc ++ batch
 
