@@ -90,7 +90,7 @@ defmodule RavixWeb.ToolingOAuthControllerTest do
              OAuth.authenticate(tokens.access_token, params["resource"])
 
     assert json_response(post(conn, "/settings/connections/unknown/revoke"), 404)
-    assert redirected_to(get(build_conn(), "/settings/connections")) == "/auth/github"
+    assert redirected_to(get(build_conn(), "/settings/connections")) == "/login"
 
     assert response(
              post(build_conn(), "/oauth/revoke", %{"token" => "unknown", "client_id" => "unknown"}),

@@ -81,19 +81,6 @@ defmodule RavixWeb.ToolingOAuthController do
     end
   end
 
-  def connections(conn, _) do
-    case CurrentUser.require_user(conn) do
-      {:ok, user} ->
-        render(conn, :connections,
-          connections: OAuth.connections(user),
-          page_title: "Connected applications · Ravix"
-        )
-
-      _ ->
-        redirect(conn, to: "/auth/github")
-    end
-  end
-
   def disconnect(conn, %{"id" => id}) do
     with {:ok, user} <- CurrentUser.require_user(conn), :ok <- OAuth.disconnect(user, id) do
       redirect(conn, to: "/settings/connections")

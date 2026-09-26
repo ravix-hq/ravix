@@ -17,6 +17,22 @@ defmodule Ravix.Tooling.Store do
   def grants(user),
     do: Repo.all(from g in Grant, where: g.user_id == ^user, order_by: [desc: g.inserted_at])
 
+  # Token checks can repeat throughout a stream. Sample activity once a minute
+  # and condition the write so an older concurrent request cannot move it back.
+  def record_use(id) do
+    now = DateTime.utc_now()
+    cutoff = DateTime.add(now, -60, :second)
+
+    Repo.update_all(
+      from(g in Grant,
+        where: g.id == ^id and (is_nil(g.last_used_at) or g.last_used_at < ^cutoff)
+      ),
+      set: [last_used_at: now]
+    )
+
+    :ok
+  end
+
   def revoke(id) do
     Repo.update_all(from(g in Grant, where: g.id == ^id), set: [revoked_at: DateTime.utc_now()])
     :ok

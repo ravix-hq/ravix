@@ -809,6 +809,7 @@ defmodule RavixWeb.WorkspaceLive do
       case action do
         :projects -> "Home"
         :schedules -> "Schedules"
+        :connections -> "Connected applications"
         :login -> "Sign in"
         _ -> "Inbox"
       end
