@@ -143,13 +143,13 @@ defmodule RavixWeb.ComponentsTest do
   end
 
   describe "invite_link/1" do
-    test "the owner is offered both buttons, and they are the same two on either dialog" do
+    test "the owner is offered only Create when no link exists" do
       html = render_component(&CoreComponents.invite_link/1, owner: true, invite: nil)
       assert html =~ ~s(phx-click="invite-link")
       assert html =~ ~s(phx-value-action="create")
-      assert html =~ ~s(phx-value-action="revoke")
+      refute html =~ ~s(phx-value-action="revoke")
       assert html =~ "Create invite link"
-      assert html =~ "Revoke invite link"
+      refute html =~ "Revoke invite link"
     end
 
     test "a member is offered neither" do
@@ -170,7 +170,7 @@ defmodule RavixWeb.ComponentsTest do
 
     test "a link that is merely out has no url and is not shown" do
       # `Ravix.People.link/2` reports an existing link with `url: nil`, because
-      # only its hash is kept. There is nothing to render and nothing to imply.
+      # only its hash is kept. The controls still reflect its existence.
       html =
         render_component(&CoreComponents.invite_link/1,
           owner: true,
@@ -182,6 +182,8 @@ defmodule RavixWeb.ComponentsTest do
         )
 
       refute html =~ "<a href"
+      assert html =~ "Replace invite link"
+      assert html =~ "Revoke invite link"
     end
   end
 

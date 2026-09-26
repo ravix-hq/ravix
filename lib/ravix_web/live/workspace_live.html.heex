@@ -526,7 +526,17 @@
         session_hash={@session_hash}
         projects={@projects}
       />
-      <div :if={is_nil(@project) && @live_action not in [:projects, :schedules]} class="inbox">
+      <.live_component
+        :if={@live_action == :connections}
+        module={RavixWeb.Live.ConnectionsPanel}
+        id="connections"
+        current_user={@current_user}
+        session_hash={@session_hash}
+      />
+      <div
+        :if={is_nil(@project) && @live_action not in [:projects, :schedules, :connections]}
+        class="inbox"
+      >
         <header>
           <div class="row">
             <h1>
@@ -655,25 +665,7 @@
           phx-debounce="150"
         />
       </form>
-      <% results =
-        for project <- @projects,
-            tracks = Enum.filter(@tracks[project.id] || [], &matching?(&1, project, @query)),
-            tracks != [],
-            do: {project, tracks} %>
-      <p :if={results == []} role="status">No tracks match</p>
-      <section
-        :for={{project, tracks} <- results}
-        aria-labelledby={"search-project-#{project.id}"}
-      >
-        <h3 id={"search-project-#{project.id}"}><.project_name project={project} /></h3>
-        <.link
-          :for={track <- tracks}
-          patch={"/p/#{project.id}/t/#{track.id}"}
-          class="workspace-track"
-        >
-          {track.title}
-        </.link>
-      </section>
+      <.track_search_results projects={@projects} tracks={@tracks} query={@query} />
     </.dialog>
     <.dialog
       :if={@dialog == :new_project}
@@ -858,7 +850,6 @@
       <RavixWeb.HelpComponents.agent_tooling />
     </.dialog>
     <.dialog :if={@dialog == :account} id="account-dialog" title="Your account" on_close="dismiss">
-      <a href="/settings/connections">Connected applications</a>
       <p class="lede">
         Signed in as <strong>@{@current_user.login}</strong>. Connect either or both agents and choose a default for new projects. Each project uses its selected agent, paid for by its owner’s subscription or key, whoever is working.
       </p>
@@ -869,6 +860,10 @@
         session_hash={@session_hash}
       />
       <hr />
+      <p class="account-connections">
+        <a href="/settings/connections">Manage connected applications →</a>
+        <span class="hint">Review access granted to external tools and disconnect them.</span>
+      </p>
       <p class="hint">
         <a href="/api/auth/install">Change which GitHub repositories Ravix may work in ↗</a>
       </p>

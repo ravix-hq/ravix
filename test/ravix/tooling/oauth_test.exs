@@ -3,6 +3,43 @@ defmodule Ravix.Tooling.OAuthTest do
   alias Ravix.Tooling.{Credential, Grant, OAuth}
   import Ravix.ToolingFixture
 
+  test "connection activity records valid token use without changing the connection date" do
+    user = insert_user()
+    {principal, tokens, params} = principal(user)
+    grant = Repo.get!(Grant, principal.grant.id)
+    Repo.update!(Ecto.Changeset.change(grant, last_used_at: nil))
+    assert [%{connected_at: connected, last_used_at: nil}] = OAuth.connections(user)
+    assert connected == grant.inserted_at
+
+    assert {:error, :unauthenticated} =
+             OAuth.authenticate(tokens.access_token, OAuth.resource("a2a"))
+
+    assert {:error, :unauthenticated} =
+             OAuth.authenticate(tokens.refresh_token, params["resource"])
+
+    assert [%{last_used_at: nil}] = OAuth.connections(user)
+
+    before_use = DateTime.utc_now()
+    assert {:ok, _} = OAuth.authenticate(tokens.access_token, params["resource"])
+    assert [%{last_used_at: used, connected_at: ^connected}] = OAuth.connections(user)
+    assert DateTime.compare(used, before_use) in [:eq, :gt]
+    assert {:ok, _} = OAuth.authenticate(tokens.access_token, params["resource"])
+    assert [%{last_used_at: ^used}] = OAuth.connections(user)
+
+    old = DateTime.add(used, -120, :second)
+    Repo.update!(Ecto.Changeset.change(Repo.get!(Grant, grant.id), last_used_at: old))
+    assert {:ok, _} = OAuth.authenticate(tokens.access_token, params["resource"])
+    assert [%{last_used_at: updated}] = OAuth.connections(user)
+    assert DateTime.compare(updated, old) == :gt
+    assert :ok = OAuth.disconnect(user, grant.id)
+
+    assert {:error, :unauthenticated} =
+             OAuth.authenticate(tokens.access_token, params["resource"])
+
+    assert [%{last_used_at: ^updated, active: false}] = OAuth.connections(user)
+    assert OAuth.connections(insert_user()) == []
+  end
+
   test "PKCE exchange binds tokens to their resource, user and scopes" do
     user = insert_user()
     {p, tokens, _} = principal(user, "mcp", ["tracks:read"])

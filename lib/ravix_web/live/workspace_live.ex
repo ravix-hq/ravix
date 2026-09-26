@@ -911,6 +911,7 @@ defmodule RavixWeb.WorkspaceLive do
       case action do
         :projects -> "Home"
         :schedules -> "Schedules"
+        :connections -> "Connected applications"
         :login -> "Sign in"
         _ -> "Inbox"
       end
@@ -1091,6 +1092,32 @@ defmodule RavixWeb.WorkspaceLive do
     ]
     |> Enum.filter(& &1)
     |> Enum.join(", ")
+  end
+
+  # Keep filtering inside a component so HEEx tracks its input assigns.
+  defp track_search_results(assigns) do
+    results =
+      for project <- assigns.projects,
+          tracks =
+            Enum.filter(assigns.tracks[project.id] || [], &matching?(&1, project, assigns.query)),
+          tracks != [],
+          do: {project, tracks}
+
+    assigns = assign(assigns, :results, results)
+
+    ~H"""
+    <p :if={@results == []} role="status">No tracks match</p>
+    <section :for={{project, tracks} <- @results} aria-labelledby={"search-project-#{project.id}"}>
+      <h3 id={"search-project-#{project.id}"}><.project_name project={project} /></h3>
+      <.link
+        :for={track <- tracks}
+        patch={"/p/#{project.id}/t/#{track.id}"}
+        class="workspace-track"
+      >
+        {track.title}
+      </.link>
+    </section>
+    """
   end
 
   defp matching?(track, project, query),

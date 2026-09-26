@@ -3,6 +3,30 @@ import AxeBuilder from '@axe-core/playwright';
 import { composerFixture } from './composer-fixture.js';
 import { signIn as signInAs } from './sign-in.js';
 
+async function primaryAppearance(locator) {
+  return locator.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return Object.fromEntries(['backgroundColor', 'color', 'borderColor', 'borderRadius',
+      'padding', 'fontSize', 'fontWeight', 'lineHeight'].map((key) => [key, style[key]]));
+  });
+}
+
+async function recentColumns(page) {
+  const rows = page.locator('.home-recent .pick-row');
+  expect(await rows.count()).toBeGreaterThanOrEqual(2);
+  const columns = await rows.evaluateAll((elements) => elements.map((row) => {
+    const name = row.querySelector('.project-label').getBoundingClientRect();
+    const repo = row.querySelector('.meta').getBoundingClientRect();
+    return { name: name.x, repo: repo.x, right: repo.right, overflow: row.scrollWidth > row.clientWidth };
+  }));
+  for (const column of columns) {
+    expect(column.name).toBeCloseTo(columns[0].name, 0);
+    expect(column.repo).toBeCloseTo(columns[0].repo, 0);
+    expect(column.right).toBeLessThanOrEqual(page.viewportSize().width);
+    expect(column.overflow).toBe(false);
+  }
+}
+
 async function accessible(page) {
   // Settle first. Axe computes contrast against *composited* colour, so an
   // element measured while something fades is measured against a blend that
@@ -204,10 +228,17 @@ test('a first visit is walked through how it works, the agent, and GitHub', asyn
   await expect(page).toHaveURL(/\/welcome\/github$/);
   await expect(page).toHaveTitle('Connect GitHub · Ravix');
 
+  const continueStyle = await primaryAppearance(page.locator('#github-continue'));
+  const continueHeight = (await page.locator('#github-continue').boundingBox()).height;
   await page.locator('#github-continue').click();
   await expect(page).toHaveURL(/\/welcome\/project$/);
   await expect(page).toHaveTitle('Create your first project · Ravix');
   await expect(page.getByRole('heading', { name: 'Create your first project' })).toBeVisible();
+  const createProject = page.getByRole('button', { name: 'Create project', exact: true });
+  expect(await primaryAppearance(createProject)).toEqual(continueStyle);
+  expect((await createProject.boundingBox()).height).toBeCloseTo(continueHeight, 0);
+  expect((await createProject.boundingBox()).width).toBeLessThan(
+    (await page.locator('#first-project-form').boundingBox()).width / 2);
   await accessible(page);
   await page.setViewportSize({ width: 390, height: 844 });
   await accessible(page);
@@ -247,7 +278,11 @@ test('the account dialog is where the agent lives after the walkthrough', async 
   await trigger.click();
   await menu.getByRole('button', { name: 'Account', exact: true }).click();
   await expect(menu).toBeHidden();
-  await expect(page.getByRole('dialog', { name: 'Your account' })).toBeVisible();
+  const account = page.getByRole('dialog', { name: 'Your account' });
+  await expect(account).toBeVisible();
+  await expect(account).toContainText('Each project uses its selected agent');
+  await expect(account.getByRole('link', { name: 'Manage connected applications' })).toHaveAttribute('href', '/settings/connections');
+
   await expect(page.getByRole('group', { name: 'Agent' })).toBeVisible();
   await accessible(page);
   await expect(page.locator('#agent-claude-status')).toContainText('Connected');
@@ -279,6 +314,13 @@ test('home quick start creates a scratch project and recent navigation survives 
   const recent = page.getByRole('region', { name: 'Recent projects' });
   await expect(recent).toContainText('Quick start quality');
   await expect(recent).toContainText('no repository');
+  await page.getByRole('button', { name: /^Quick start/ }).click();
+  await page.getByLabel('Project name', { exact: true }).fill('A much longer project name to verify columns and narrow screen wrapping');
+  await page.getByRole('button', { name: 'Create project', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Plans', exact: true })).toBeVisible();
+  await page.getByRole('link', { name: 'Home', exact: true }).first().click();
+  await expect(recent.getByRole('link')).toHaveCount(2);
+  await recentColumns(page);
   for (const theme of ['Ravix', 'Daylight']) {
     await chooseTheme(page, theme);
     await accessible(page);
@@ -299,6 +341,7 @@ test('home quick start creates a scratch project and recent navigation survives 
   const mobileNav = page.getByRole('navigation', { name: 'Workspace navigation' });
   await mobileNav.getByRole('link', { name: 'Home' }).click();
   await accessible(page);
+  await recentColumns(page);
   await capture(page, 'home-mobile');
   // The rail is gone at this width, and everything in it --- signing out,
   // the theme picker, the account --- was unreachable until Menu brought it
@@ -931,8 +974,9 @@ test('composer Send stays compact and keeps its arrow after repeated submissions
   await chooseTheme(page, 'Bubblegum');
   // Sending previously destroyed the SVG. Exercise both mouse and Enter, and
   // inspect during the LiveView acknowledgement window as well as afterwards.
-  await page.evaluate(() => window.liveSocket.enableLatencySim(200));
+  let completedAnswers = await page.locator('#transcript-turns .turn-footer').count();
   for (const method of ['click', 'Enter']) {
+    await page.evaluate(() => window.liveSocket.enableLatencySim(200));
     await composer.fill(`Send regression ${method}`);
     if (method === 'click') await send.click();
     else await composer.press('Enter');
@@ -941,6 +985,11 @@ test('composer Send stays compact and keeps its arrow after repeated submissions
     await expect(composer).toHaveValue('');
     await expect(send).toBeEnabled();
     await checkSend();
+    await page.evaluate(() => window.liveSocket.disableLatencySim());
+    // Acknowledgement clears the input before the agent finishes. Keep this
+    // button-rendering regression sequential instead of queuing another turn.
+    await expect(page.locator('#transcript-turns .turn-footer')).toHaveCount(++completedAnswers, { timeout: 30_000 });
+    await expect(page.locator('#composer-form').getByRole('button', { name: 'Stop', exact: true })).toHaveCount(0, { timeout: 30_000 });
   }
   await page.evaluate(() => window.liveSocket.disableLatencySim());
   await expect(page.locator('#transcript-turns')).toContainText('Send regression Enter');
@@ -991,6 +1040,19 @@ test('shared project prefixes stay muted and truncate across every theme', async
   await page.getByLabel('GitHub username', { exact: true }).fill('eli');
   await page.getByRole('button', { name: 'Invite', exact: true }).click();
   await expect(page.locator('#people-dialog')).toContainText('@eli');
+  const people = page.locator('#people-dialog');
+  const heights = await people.locator('.people-row').evaluateAll(rows =>
+    rows.map(row => row.getBoundingClientRect().height));
+  expect(heights.length).toBeGreaterThanOrEqual(2);
+  expect(Math.max(...heights) - Math.min(...heights)).toBeLessThan(1);
+  await expect(people.getByRole('button', { name: 'Revoke invite link', exact: true })).toHaveCount(0);
+  await people.getByRole('button', { name: 'Create invite link', exact: true }).click();
+  await expect(people.getByRole('button', { name: 'Replace invite link', exact: true })).toBeVisible();
+  await people.getByRole('button', { name: 'Revoke invite link', exact: true }).click();
+  await expect(people.getByRole('button', { name: 'Revoke invite link', exact: true })).toHaveCount(0);
+  await accessible(page);
+  await capture(page, 'people-even-rows');
+
 
   const memberContext = await browser.newContext({ baseURL: new URL(page.url()).origin });
   try {
@@ -1056,4 +1118,27 @@ test('slow navigation and requests show feedback until their response arrives', 
   await expect(page.locator('#request-progress .loading-spinner')).toHaveCSS('animation-name', 'none');
   await expect(page.locator('#request-progress')).toBeHidden();
   await page.evaluate(() => window.liveSocket.disableLatencySim());
+});
+
+test('schedule Day appears only for weekly repetition without losing the draft', async ({ page }) => {
+  await signIn(page);
+  await page.goto('/schedules');
+  await expect(page.locator('[data-phx-main]')).toHaveClass(/phx-connected/);
+  const form = page.locator('#schedule-form');
+  const day = form.getByLabel('Day', { exact: true });
+  await expect(day).toHaveCount(0);
+  await form.getByLabel('Name', { exact: true }).fill('Weekly review');
+  await form.getByLabel('Prompt', { exact: true }).fill('Review recent changes');
+  await form.getByLabel('Repeat', { exact: true }).selectOption('weekly');
+  await expect(day).toBeVisible();
+  await day.selectOption('5');
+  for (const frequency of ['daily', 'hourly']) {
+    await form.getByLabel('Repeat', { exact: true }).selectOption(frequency);
+    await expect(day).toHaveCount(0);
+  }
+  await form.getByLabel('Repeat', { exact: true }).selectOption('weekly');
+  await expect(day).toHaveValue('5');
+  await expect(form.getByLabel('Name', { exact: true })).toHaveValue('Weekly review');
+  await expect(form.getByLabel('Prompt', { exact: true })).toHaveValue('Review recent changes');
+  await accessible(page);
 });

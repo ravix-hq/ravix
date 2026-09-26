@@ -28,7 +28,7 @@ defmodule RavixWeb.WorkspaceManagementTest do
     models = Enum.map(labels, &elem(&1, 0))
     catalog = %{Catalog.empty() | runtimes: ["claude"], models: %{"claude" => models}}
     settings(ctx, catalog: catalog, model: hd(models))
-    render_async(ctx.view)
+    render_async(ctx.view, 1000)
 
     html = render(ctx.view) |> LazyHTML.from_document()
 
@@ -75,13 +75,13 @@ defmodule RavixWeb.WorkspaceManagementTest do
     end)
 
     render_click(ctx.view, "dialog", %{name: "new-project"})
-    render_async(ctx.view)
+    render_async(ctx.view, 1000)
     ctx.view |> form("#new-project-form", new_project: [name: "Waiting"]) |> render_submit()
-    assert_receive {:creating, task}
+    assert_receive {:creating, task}, 1000
     assert has_element?(ctx.view, "#new-project-form [role=status]", "Creating project")
     assert has_element?(ctx.view, "#new-project-form button[disabled]", "Creating project")
     send(task, :finish)
-    assert render_async(ctx.view) =~ "Machine unavailable"
+    assert render_async(ctx.view, 1000) =~ "Machine unavailable"
     refute has_element?(ctx.view, "#new-project-form [role=status]")
     assert has_element?(ctx.view, "#project-name[value=Waiting]")
   end
@@ -107,11 +107,11 @@ defmodule RavixWeb.WorkspaceManagementTest do
       end)
 
       render_click(ctx.view, "dialog", %{name: "new-project"})
-      assert_receive {:loading_repos, task}
+      assert_receive {:loading_repos, task}, 1000
       assert has_element?(ctx.view, "#new-project-dialog [role=status]", "Loading GitHub")
       assert has_element?(ctx.view, "#project-repo[disabled]")
       send(task, :finish)
-      render_async(ctx.view, 1_000)
+      render_async(ctx.view, 1000)
       refute has_element?(ctx.view, "#new-project-dialog .loading-status")
       refute has_element?(ctx.view, "#project-repo[disabled]")
     end
@@ -161,7 +161,7 @@ defmodule RavixWeb.WorkspaceManagementTest do
     )
     |> render_submit()
 
-    assert render_async(ctx.view) =~ "Provisioning is offline"
+    assert render_async(ctx.view, 1000) =~ "Provisioning is offline"
     assert has_element?(ctx.view, "input[name='new_project[name]'][value=Selected]")
     assert has_element?(ctx.view, "#project-runtime option[value=codex][selected]")
     refute has_element?(ctx.view, "#new-project-form button[disabled]")
@@ -199,7 +199,7 @@ defmodule RavixWeb.WorkspaceManagementTest do
       render_click(ctx.view, "origin", %{kind: @kind})
       # Listing a repository's branches, pulls or issues is a GitHub call,
       # and the form cannot be submitted against a ref that has not arrived.
-      render_async(ctx.view)
+      render_async(ctx.view, 1000)
 
       params =
         if ref,
@@ -208,7 +208,7 @@ defmodule RavixWeb.WorkspaceManagementTest do
 
       params = if @kind == "pr", do: Map.delete(params, :title), else: params
       ctx.view |> form("#new-track-form", new_track: params) |> render_submit()
-      assert render_async(ctx.view) =~ "Machine is busy"
+      assert render_async(ctx.view, 1000) =~ "Machine is busy"
       refute has_element?(ctx.view, "#new-track-form button[disabled]")
     end
   end
@@ -253,10 +253,10 @@ defmodule RavixWeb.WorkspaceManagementTest do
 
     render_click(ctx.view, "dialog", %{name: "new-track"})
     render_click(ctx.view, "origin", %{kind: "pr"})
-    render_async(ctx.view)
+    render_async(ctx.view, 1000)
     refute has_element?(ctx.view, "#track-title")
     ctx.view |> form("#new-track-form", new_track: [ref: "12"]) |> render_submit()
-    render_async(ctx.view)
+    render_async(ctx.view, 1000)
     assert has_element?(ctx.view, "#new-track-form p.error", "That branch name is already used")
   end
 
@@ -279,7 +279,7 @@ defmodule RavixWeb.WorkspaceManagementTest do
 
     # The write is a Fountain round trip and runs off the page, and the
     # dialog hands its sentence to the page one message after the answer.
-    render_async(ctx.view)
+    render_async(ctx.view, 1000)
     html = render(ctx.view)
     assert html =~ "Secret updated"
     refute html =~ "private-value"
@@ -303,14 +303,14 @@ defmodule RavixWeb.WorkspaceManagementTest do
 
     ctx.view |> form("#settings-form", settings: [name: "Renamed"]) |> render_submit()
 
-    assert_receive {:saving, saving}
+    assert_receive {:saving, saving}, 1000
     assert has_element?(ctx.view, "#settings-form button[disabled]")
     # The secret form is not the one that is out, and the page still answers.
     refute has_element?(ctx.view, "#secret-form button[disabled]")
     assert render_click(ctx.view, "dialog", %{name: "settings"}) =~ "settings-form"
 
     send(saving, :finish)
-    render_async(ctx.view)
+    render_async(ctx.view, 1000)
     assert render(ctx.view) =~ "Settings saved"
     refute has_element?(ctx.view, "#settings-form button[disabled]")
   end
@@ -322,7 +322,7 @@ defmodule RavixWeb.WorkspaceManagementTest do
 
     ctx.view |> form("#settings-form", settings: [name: "Renamed"]) |> render_submit()
 
-    render_async(ctx.view)
+    render_async(ctx.view, 1000)
     assert render(ctx.view) =~ "The operation could not finish"
     refute has_element?(ctx.view, "#settings-form button[disabled]")
     # What was typed is still there to try again with.
@@ -350,7 +350,7 @@ defmodule RavixWeb.WorkspaceManagementTest do
 
     for _ <- 1..2 do
       ctx.view |> form("#agent-settings-form") |> render_submit(%{settings: %{runtime: "codex"}})
-      render_async(ctx.view)
+      render_async(ctx.view, 1000)
       assert has_element?(ctx.view, "#agent-switch-confirmation", "This closes 2 open tracks")
       refute_receive :switched, 0
       ctx.view |> element("#agent-switch-confirmation button", "Cancel") |> render_click()
@@ -359,9 +359,9 @@ defmodule RavixWeb.WorkspaceManagementTest do
     end
 
     ctx.view |> form("#agent-settings-form") |> render_submit(%{settings: %{runtime: "codex"}})
-    render_async(ctx.view)
+    render_async(ctx.view, 1000)
     ctx.view |> element("#confirm-agent-switch") |> render_click()
-    render_async(ctx.view)
+    render_async(ctx.view, 1000)
     assert_receive :switched
   end
 
@@ -395,9 +395,9 @@ defmodule RavixWeb.WorkspaceManagementTest do
       settings: %{runtime: "codex", model: "openai/test-model", rebuild: "true"}
     })
 
-    render_async(ctx.view)
+    render_async(ctx.view, 1000)
     ctx.view |> element("#confirm-agent-switch") |> render_click()
-    render_async(ctx.view)
+    render_async(ctx.view, 1000)
     assert has_element?(ctx.view, "#settings-runtime ~ p.error", "Connect this agent")
     assert Repo.get!(Ravix.Projects.Project, ctx.project.id).runtime == ctx.project.runtime
   end
@@ -424,11 +424,9 @@ defmodule RavixWeb.WorkspaceManagementTest do
       |> form("#agent-settings-form")
       |> render_submit(%{settings: %{runtime: "made-up", model: "also-made-up"}})
 
-      # Each round starts a switch preview and then the save; the 100ms
-      # default fails under a full parallel coverage run, not on a slow app.
-      render_async(ctx.view, 1_000)
+      render_async(ctx.view, 1000)
       ctx.view |> element("#confirm-agent-switch") |> render_click()
-      render_async(ctx.view, 1_000)
+      render_async(ctx.view, 1000)
       assert has_element?(ctx.view, "#agent-settings-form .field p.error", message)
 
       assert has_element?(ctx.view, "#{id} option[value='made-up'][selected]") or
@@ -452,7 +450,7 @@ defmodule RavixWeb.WorkspaceManagementTest do
     |> form("#secret-form", secret: [store: "env", key: "not a key", value: "private-value"])
     |> render_submit()
 
-    render_async(ctx.view)
+    render_async(ctx.view, 1000)
 
     assert has_element?(
              ctx.view,
@@ -509,7 +507,7 @@ defmodule RavixWeb.WorkspaceManagementTest do
       |> form("#project-#{@action}-form", confirm: ctx.project.name)
       |> render_submit(%{action: @action})
 
-      render_async(ctx.view)
+      render_async(ctx.view, 1000)
       assert_patch(ctx.view, "/")
     end
   end
@@ -527,7 +525,7 @@ defmodule RavixWeb.WorkspaceManagementTest do
     end)
 
     ctx.view |> form("#new-project-form", new_project: [name: ""]) |> render_submit()
-    render_async(ctx.view)
+    render_async(ctx.view, 1000)
 
     assert has_element?(
              ctx.view,
@@ -542,7 +540,7 @@ defmodule RavixWeb.WorkspaceManagementTest do
     expect(Projects, :create, fn _, _ -> {:error, {:unconfigured, :fountain}} end)
 
     ctx.view |> form("#new-project-form", new_project: [name: "Fine"]) |> render_submit()
-    assert render_async(ctx.view) =~ RavixWeb.Error.from({:unconfigured, :fountain}).message
+    assert render_async(ctx.view, 1000) =~ RavixWeb.Error.from({:unconfigured, :fountain}).message
     refute has_element?(ctx.view, "#new-project-form .field p.error")
   end
 
@@ -560,7 +558,7 @@ defmodule RavixWeb.WorkspaceManagementTest do
     |> form("#new-project-form", new_project: [name: "Keep this", runtime: "codex"])
     |> render_submit()
 
-    render_async(ctx.view)
+    render_async(ctx.view, 1000)
 
     assert has_element?(
              ctx.view,
@@ -578,7 +576,7 @@ defmodule RavixWeb.WorkspaceManagementTest do
     expect(Projects, :create, fn _, _ -> raise "provider crashed" end)
     render_click(ctx.view, "dialog", %{name: "new-project"})
     ctx.view |> form("#new-project-form", new_project: [name: "Keep my work"]) |> render_submit()
-    assert render_async(ctx.view) =~ "The operation could not finish"
+    assert render_async(ctx.view, 1000) =~ "The operation could not finish"
     refute has_element?(ctx.view, "#new-project-form button[disabled]")
     assert has_element?(ctx.view, "input[name='new_project[name]'][value='Keep my work']")
   end
@@ -596,7 +594,7 @@ defmodule RavixWeb.WorkspaceManagementTest do
     People.Store.add_project_member(ctx.project.id, member.id, ctx.user.id)
     render_click(ctx.view, "dialog", %{name: "people"})
     ctx.view |> element("button[phx-value-login='#{member.login}']") |> render_click()
-    render_async(ctx.view)
+    render_async(ctx.view, 1000)
     assert {:error, :not_found} = Projects.get(member, ctx.project.id)
     assert_patch(ctx.view, "/")
   end
@@ -607,7 +605,7 @@ defmodule RavixWeb.WorkspaceManagementTest do
     render_click(ctx.view, "refresh")
     # The refresh re-reads the rail in a task now, and the search reads the
     # rail, so it has to have landed first.
-    render_async(ctx.view)
+    render_async(ctx.view, 1000)
     render_click(ctx.view, "dialog", %{name: "search"})
     render_change(ctx.view, "search", %{q: "SEARCHABLE"})
     assert has_element?(ctx.view, "a[href='/p/#{ctx.project.id}/t/#{track.id}']")
@@ -647,12 +645,12 @@ defmodule RavixWeb.WorkspaceManagementTest do
     |> form("#project-rebuild-form", confirm: ctx.project.name)
     |> render_submit(%{action: "rebuild"})
 
-    assert_receive {:rebuilding, rebuilding}
+    assert_receive {:rebuilding, rebuilding}, 1000
     assert has_element?(ctx.view, "button[value=rebuild][disabled]")
     assert has_element?(ctx.view, "button[value=delete][disabled]")
 
     send(rebuilding, :finish)
-    render_async(ctx.view)
+    render_async(ctx.view, 1000)
     assert_patch(ctx.view, "/")
   end
 
@@ -678,7 +676,7 @@ defmodule RavixWeb.WorkspaceManagementTest do
     |> form("#project-rebuild-form", confirm: ctx.project.name)
     |> render_submit(%{action: "rebuild"})
 
-    render_async(ctx.view)
+    render_async(ctx.view, 1000)
     assert_patch(ctx.view, "/")
 
     html = render(ctx.view)
@@ -695,7 +693,7 @@ defmodule RavixWeb.WorkspaceManagementTest do
     |> form("#project-rebuild-form", confirm: ctx.project.name)
     |> render_submit(%{action: "rebuild"})
 
-    render_async(ctx.view)
+    render_async(ctx.view, 1000)
     assert_patch(ctx.view, "/")
     refute render(ctx.view) =~ "would not stop first"
   end
@@ -710,7 +708,7 @@ defmodule RavixWeb.WorkspaceManagementTest do
       |> form("#project-rebuild-form", confirm: ctx.project.name)
       |> render_submit(%{action: "rebuild"})
 
-      render_async(ctx.view)
+      render_async(ctx.view, 1000)
     end)
 
     assert render(ctx.view) =~ "The operation could not finish"
@@ -740,14 +738,14 @@ defmodule RavixWeb.WorkspaceManagementTest do
       end)
 
       ctx.view |> form("##{@form_id}", settings: @params) |> render_submit()
-      assert render_async(ctx.view) =~ "Saved."
+      assert render_async(ctx.view, 1000) =~ "Saved."
     end
 
     test "#{form_id} retains inputs on provider failure", ctx do
       settings(ctx)
       expect(Projects, :update_settings, fn _, _, _ -> {:error, {:unavailable, "Try later"}} end)
       ctx.view |> form("##{@form_id}", settings: @params) |> render_submit()
-      assert render_async(ctx.view) =~ "Could not save"
+      assert render_async(ctx.view, 1000) =~ "Could not save"
       assert render(ctx.view) =~ "Try later"
     end
   end
@@ -812,7 +810,7 @@ defmodule RavixWeb.WorkspaceManagementTest do
     |> form("#secret-form", secret: [store: "env", key: "TOKEN", value: ""])
     |> render_submit()
 
-    assert render_async(ctx.view) =~ "Secret updated"
+    assert render_async(ctx.view, 1000) =~ "Secret updated"
   end
 
   test "a delayed settings save rechecks the session before returning data", ctx do
@@ -835,7 +833,7 @@ defmodule RavixWeb.WorkspaceManagementTest do
     end)
 
     view |> form("#settings-form", settings: [name: "Delayed"]) |> render_submit()
-    assert_receive {:saving_settings, task}
+    assert_receive {:saving_settings, task}, 1000
     Repo.delete!(session)
     send(task, :finish)
     assert_redirect(view, "/login")
@@ -900,7 +898,7 @@ defmodule RavixWeb.WorkspaceManagementTest do
     end)
 
     ctx.view |> form("#settings-form", settings: [name: "First"]) |> render_submit()
-    assert_receive {:saving, saving}
+    assert_receive {:saving, saving}, 1000
 
     ctx.view
     |> form("#agent-settings-form", settings: [instructions: "Second"])
@@ -909,7 +907,7 @@ defmodule RavixWeb.WorkspaceManagementTest do
     # The second form keeps what was typed, so nothing is lost by waiting.
     assert has_element?(ctx.view, "#settings-instructions", "Second")
     send(saving, :finish)
-    assert render_async(ctx.view) =~ "Saved."
+    assert render_async(ctx.view, 1000) =~ "Saved."
   end
 
   test "preview defaults that cannot be read open on the usual starting values", ctx do
