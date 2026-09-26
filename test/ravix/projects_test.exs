@@ -499,16 +499,52 @@ defmodule Ravix.ProjectsTest do
 
   # ── create ────────────────────────────────────────────────────────────
 
+  # Provisioning fixtures hold both supported agents. Gate refusals and stale
+  # credentials are exercised through the real provider in ProjectCreationGateTest.
+  defp connected_person(login, token \\ nil) do
+    insert_user(
+      login: login,
+      token_enc: token && Ravix.Crypto.encrypt(token),
+      credential_set_id: "set-me"
+    )
+  end
+
+  defp creation_fountain(script \\ []) do
+    has_catalog? = Enum.any?(script, fn {request, _} -> request.path == "/api/catalog" end)
+
+    script =
+      if Enum.any?(script, fn {request, _} ->
+           request.method == "POST" and request.path == "/api/environments"
+         end) do
+        credentials =
+          {%{method: "GET", path: "/api/account/inference-credential-sets"},
+           {200, [],
+            %{data: [%{id: "set-me", providers: ["anthropic_api_key", "openai_api_key"]}]}}}
+
+        script = script ++ [credentials]
+
+        if has_catalog?,
+          do: script,
+          else: script ++ [{%{method: "GET", path: "/api/catalog"}, {200, [], %{data: @catalog}}}]
+      else
+        script
+      end
+
+    fountain(script)
+  end
+
   describe "create/2" do
     test "without Fountain there are no machines" do
       no_fountain()
-      assert {:error, {:unconfigured, :fountain}} = Projects.create(person("me"), %{name: "x"})
+
+      assert {:error, {:unconfigured, :fountain}} =
+               Projects.create(connected_person("me"), %{name: "x"})
     end
 
     test "blank projects reject installation credentials before creating upstream records" do
-      fountain()
+      creation_fountain()
       github()
-      guest = person("guest", "guest-token")
+      guest = connected_person("guest", "guest-token")
 
       assert {:error, {:unprocessable, "no_repo", _}} =
                Projects.create(guest, %{name: "Blank", installation_id: 99_999})
@@ -518,7 +554,7 @@ defmodule Ravix.ProjectsTest do
 
     test "a blank project is an environment, a vault and an agent, no token" do
       client =
-        fountain([
+        creation_fountain([
           {%{method: "POST", path: "/api/environments"}, {201, [], %{data: %{id: "new-env"}}}},
           {%{method: "POST", path: "/api/vaults"}, {201, [], %{data: %{id: "new-vault"}}}},
           {%{method: "GET", path: "/api/catalog"}, {200, [], %{data: @catalog}}},
@@ -526,7 +562,7 @@ defmodule Ravix.ProjectsTest do
         ])
 
       github()
-      me = person("me", "me-token")
+      me = connected_person("me", "me-token")
 
       assert {:ok, project} = Projects.create(me, %{"name" => "  Blank  "})
       assert %{name: "Blank", repo: nil, repo_path: nil, role: :owner, access: :owner} = project
@@ -564,8 +600,8 @@ defmodule Ravix.ProjectsTest do
 
     test "a warm repository picker cannot authorize creation after access is removed" do
       app = github([repositories_route(1, [repo("owner/repo")])])
-      me = person("owner", "owner-token")
-      client = fountain()
+      me = connected_person("owner", "owner-token")
+      client = creation_fountain()
       assert {:ok, [_]} = Ravix.GitHub.repositories(app, "owner-token", 1)
       GH.install([repositories_route(1, [])])
 
@@ -579,8 +615,8 @@ defmodule Ravix.ProjectsTest do
     test "repository access is checked before minting the installation token" do
       app = github()
       GH.install([GH.token_route(app), repositories_route(1, [repo("owner/repo")])])
-      me = person("owner", "owner-token")
-      fountain()
+      me = connected_person("owner", "owner-token")
+      creation_fountain()
 
       assert {:error, {:not_found, "repo_not_found", _}} =
                Projects.create(me, %{repo: "stranger/private", installation_id: 1})
@@ -589,7 +625,7 @@ defmodule Ravix.ProjectsTest do
       assert GH.request_count("access_tokens") == 0
 
       client =
-        fountain([
+        creation_fountain([
           {%{method: "POST", path: "/api/environments"}, {201, [], %{data: %{id: "new-env"}}}},
           {%{method: "POST", path: "/api/vaults"}, {201, [], %{data: %{id: "new-vault"}}}},
           {%{
@@ -625,18 +661,19 @@ defmodule Ravix.ProjectsTest do
       assert agent["system"] =~ "/workspace/repo is the shared clone"
 
       assert requests(client) == [
+               {"GET", "/api/catalog"},
+               {"GET", "/api/account/inference-credential-sets"},
                {"POST", "/api/environments"},
                {"POST", "/api/vaults"},
                {"POST", "/api/vaults/new-vault/secrets"},
-               {"GET", "/api/catalog"},
                {"POST", "/api/agents"}
              ]
     end
 
     test "a repository needs an installation, and a project needs a name" do
-      fountain()
+      creation_fountain()
       github()
-      me = person("me", "me-token")
+      me = connected_person("me", "me-token")
 
       assert {:error, {:unprocessable, "no_installation", _}} =
                Projects.create(me, %{repo: "owner/repo"})
@@ -645,16 +682,16 @@ defmodule Ravix.ProjectsTest do
     end
 
     test "a person whose GitHub token is gone is sent to sign in again" do
-      fountain()
+      creation_fountain()
       github()
 
       assert {:error, {:reauthenticate, _}} =
-               Projects.create(person("me"), %{repo: "owner/repo", installation_id: 1})
+               Projects.create(connected_person("me"), %{repo: "owner/repo", installation_id: 1})
     end
 
     test "a Fountain without vaults still builds, and the agent has none" do
       client =
-        fountain([
+        creation_fountain([
           {%{method: "POST", path: "/api/environments"}, {201, [], %{data: %{id: "new-env"}}}},
           {%{method: "POST", path: "/api/vaults"}, {501, [], %{error: "not_implemented"}}},
           {%{method: "GET", path: "/api/catalog"}, {500, [], "boom"}},
@@ -663,7 +700,7 @@ defmodule Ravix.ProjectsTest do
 
       app = github()
       GH.install([GH.token_route(app), repositories_route(1, [repo("owner/repo")])])
-      me = person("me", "me-token")
+      me = connected_person("me", "me-token")
 
       assert {:ok, project} = Projects.create(me, %{repo: "owner/repo", installation_id: 1})
 
@@ -676,7 +713,7 @@ defmodule Ravix.ProjectsTest do
 
     test "the machine is built with the owner's agent and pointed at the owner's credential set" do
       client =
-        fountain([
+        creation_fountain([
           {%{method: "POST", path: "/api/environments"}, {201, [], %{data: %{id: "new-env"}}}},
           {%{method: "POST", path: "/api/vaults"}, {201, [], %{data: %{id: "new-vault"}}}},
           {%{method: "GET", path: "/api/catalog"},
@@ -718,7 +755,7 @@ defmodule Ravix.ProjectsTest do
         model = unquote(model)
 
         client =
-          fountain([
+          creation_fountain([
             {%{method: "POST", path: "/api/environments"}, {201, [], %{data: %{id: "new-env"}}}},
             {%{method: "POST", path: "/api/vaults"}, {201, [], %{data: %{id: "new-vault"}}}},
             {%{method: "GET", path: "/api/catalog"},
@@ -753,17 +790,17 @@ defmodule Ravix.ProjectsTest do
     end
 
     test "invalid project runtimes are rejected before provisioning" do
-      client = fountain([])
+      client = creation_fountain([])
 
       assert {:error, {:unprocessable, "invalid_runtime", _}} =
-               Projects.create(person("me"), %{name: "Scratch", runtime: "unknown"})
+               Projects.create(connected_person("me"), %{name: "Scratch", runtime: "unknown"})
 
       assert requests(client) == []
     end
 
-    test "somebody who connected nothing gets the agent this app always built" do
+    test "a connected owner without an agent choice gets the fallback when the catalog is down" do
       client =
-        fountain([
+        creation_fountain([
           {%{method: "POST", path: "/api/environments"}, {201, [], %{data: %{id: "new-env"}}}},
           {%{method: "POST", path: "/api/vaults"}, {201, [], %{data: %{id: "new-vault"}}}},
           {%{method: "GET", path: "/api/catalog"}, {500, [], "boom"}},
@@ -771,23 +808,21 @@ defmodule Ravix.ProjectsTest do
         ])
 
       no_github()
-      assert {:ok, project} = Projects.create(person("me"), %{name: "Scratch"})
+      assert {:ok, project} = Projects.create(connected_person("me"), %{name: "Scratch"})
 
       agent = body_of(client, "POST", "/api/agents")
-      refute Map.has_key?(agent, "inference_credential_id")
-      refute Map.has_key?(agent, "allowed_inference_credential_ids")
-      assert %Project{runtime: "claude", credential_set_id: nil} = Repo.get!(Project, project.id)
+      assert agent["inference_credential_id"] == "set-me"
+      assert agent["allowed_inference_credential_ids"] == []
+
+      assert %Project{runtime: "claude", credential_set_id: "set-me"} =
+               Repo.get!(Project, project.id)
     end
 
     test "an agent this Fountain does not run is refused, and nothing is left behind" do
       client =
-        fountain([
-          {%{method: "POST", path: "/api/environments"}, {201, [], %{data: %{id: "new-env"}}}},
-          {%{method: "POST", path: "/api/vaults"}, {201, [], %{data: %{id: "new-vault"}}}},
+        creation_fountain([
           {%{method: "GET", path: "/api/catalog"},
-           {200, [], %{data: %{runtimes: ["claude"], models: %{}}}}},
-          {%{method: "DELETE", path: "/api/vaults/new-vault"}, {204, [], nil}},
-          {%{method: "DELETE", path: "/api/environments/new-env"}, {204, [], nil}}
+           {200, [], %{data: %{runtimes: ["claude"], models: %{}}}}}
         ])
 
       no_github()
@@ -802,7 +837,7 @@ defmodule Ravix.ProjectsTest do
 
     test "a failure unwinds what went in, in reverse, and reports the original error" do
       client =
-        fountain([
+        creation_fountain([
           {%{method: "POST", path: "/api/environments"}, {201, [], %{data: %{id: "new-env"}}}},
           {%{method: "POST", path: "/api/vaults"}, {201, [], %{data: %{id: "new-vault"}}}},
           {%{method: "GET", path: "/api/catalog"}, {200, [], %{data: @catalog}}},
@@ -813,7 +848,7 @@ defmodule Ravix.ProjectsTest do
         ])
 
       github()
-      me = person("me", "me-token")
+      me = connected_person("me", "me-token")
 
       assert {:error, %Ravix.Fountain.Error{status: 422, message: "model is invalid"}} =
                Projects.create(me, %{name: "Doomed"})
@@ -824,7 +859,7 @@ defmodule Ravix.ProjectsTest do
 
     test "a mint failure before the first build unwinds the vault and the environment" do
       client =
-        fountain([
+        creation_fountain([
           {%{method: "POST", path: "/api/environments"}, {201, [], %{data: %{id: "new-env"}}}},
           {%{method: "POST", path: "/api/vaults"}, {201, [], %{data: %{id: "new-vault"}}}},
           {%{method: "DELETE", path: "/api/vaults/new-vault"}, {204, [], nil}},
@@ -836,7 +871,7 @@ defmodule Ravix.ProjectsTest do
         repositories_route(1, [repo("owner/repo")])
       ])
 
-      me = person("me", "me-token")
+      me = connected_person("me", "me-token")
 
       assert {:error, %Ravix.GitHub.Error{status: 503}} =
                Projects.create(me, %{repo: "owner/repo", installation_id: 1})

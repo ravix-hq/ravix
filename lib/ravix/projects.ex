@@ -2,8 +2,8 @@ defmodule Ravix.Projects do
   @moduledoc """
   Projects, which are machines.
 
-  Creating one is four Fountain calls in a fixed order and the order is the
-  whole design. Sandbox identity is `(user, agent, environment, vault)` *by
+  Creation checks the catalog and the owner's credentials before making
+  Fountain records in a fixed order. Sandbox identity is `(user, agent, environment, vault)` *by
   id*, so the environment and the vault must exist before the agent, because
   the agent is created already pointing at them. An agent updated afterwards
   to point at them would be an agent whose identity changed between its
@@ -38,6 +38,7 @@ defmodule Ravix.Projects do
   `%Ravix.GitHub.Error{}` passed through from the client that produced it.
   """
 
+  alias Ravix.Accounts.Inference
   alias Ravix.Accounts.User
   alias Ravix.Analytics
   alias Ravix.Fountain.Client
@@ -185,7 +186,10 @@ defmodule Ravix.Projects do
 
   `attrs` (string or atom keys): `name`, `repo` (`owner/name`),
   `installation_id`, and optional `runtime` ("claude" or "codex").
-  The runtime defaults to the owner’s agent choice. A name is required unless a repository supplies one.
+  The runtime defaults to the owner's agent choice, then the catalog default.
+  The owner must hold a credential for that runtime, checked authoritatively
+  before any Fountain records are created. Provider errors refuse creation.
+  A name is required unless a repository supplies one.
   """
   @spec create(User.t(), map()) :: {:ok, View.t()} | {:error, reason()}
   def create(%User{} = user, attrs) do
@@ -193,6 +197,9 @@ defmodule Ravix.Projects do
          {:ok, input} <- parse_create(attrs),
          {:ok, input} <- resolve_repo(user, input),
          {:ok, input} <- require_name(input),
+         {:ok, harness} <-
+           Machine.creation_harness(client, input.runtime || Inference.runtime(user)),
+         :ok <- require_connected_agent(user, harness.runtime),
          project = %Project{
            id: Ecto.UUID.generate(),
            user_id: user.id,
@@ -202,9 +209,9 @@ defmodule Ravix.Projects do
            default_branch: input.default_branch,
            installation_id: input.installation_id,
            instructions: "",
-           runtime: input.runtime
+           runtime: harness.runtime
          },
-         {:ok, ids} <- Machine.provision(project, user, client),
+         {:ok, ids} <- Machine.provision(project, user, client, harness),
          {:ok, project} <- insert_provisioned(project, ids, client) do
       Analytics.track(
         user,
@@ -213,6 +220,24 @@ defmodule Ravix.Projects do
       )
 
       {:ok, present(project, :owner, Machine.none(), user)}
+    end
+  end
+
+  # The same resolved runtime is checked and provisioned. A cached answer is
+  # insufficient at the point where this request starts creating paid resources.
+  defp require_connected_agent(owner, runtime) do
+    case Inference.usable?(owner, runtime, fresh: true) do
+      {:ok, true} ->
+        :ok
+
+      {:ok, false} ->
+        agent = Map.get(%{"claude" => "Claude Code", "codex" => "Codex"}, runtime, runtime)
+
+        {:error,
+         {:conflict, "agent_not_connected", "Connect #{agent} before creating a project with it."}}
+
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 

@@ -10,7 +10,6 @@ defmodule Ravix.Projects.Machine do
   track routes already keep warm.
   """
 
-  alias Ravix.Accounts.Inference
   alias Ravix.Accounts.User
   alias Ravix.Fountain
   alias Ravix.Fountain.Error
@@ -55,17 +54,17 @@ defmodule Ravix.Projects.Machine do
 
   Takes the project as it will be inserted (name, repository, branch,
   installation) and its owner, and returns the ids to insert it with. The
-  owner supplies the default agent when the project has no explicit choice,
-  and the credential set that pays for it (`Ravix.Accounts.Inference`),
+  caller supplies the resolved harness whose credential availability it checked.
+  The owner supplies the credential set that pays for it (`Ravix.Accounts.Inference`),
   whoever goes on to work in the project. A half-made project
   is three orphaned Fountain records and a row that points at a machine
   nobody can build, so any failure unwinds what went in, in reverse, and
   reports the original failure rather than the cleanup's.
   """
-  @spec provision(Project.t(), User.t(), Fountain.Client.t()) ::
+  @spec provision(Project.t(), User.t(), Fountain.Client.t(), Harness.t()) ::
           {:ok, Provisioned.t()} | {:error, term()}
-  def provision(%Project{} = project, %User{} = owner, client) do
-    steps = [&environment/3, &vault/3, &clone_token/3, &agent(&1, &2, &3, owner)]
+  def provision(%Project{} = project, %User{} = owner, client, %Harness{} = harness) do
+    steps = [&environment/3, &vault/3, &clone_token/3, &create_agent(&1, &2, &3, harness, owner)]
 
     Enum.reduce_while(steps, {:ok, %Provisioned{}}, fn
       step, {:ok, state} ->
@@ -126,12 +125,10 @@ defmodule Ravix.Projects.Machine do
 
   defp clone_token(_client, _project, state), do: {:ok, state}
 
-  defp agent(client, project, state, owner) do
-    with {:ok, choice} <-
-           harness_for(catalog(client), project.runtime || Inference.runtime(owner)) do
-      create_agent(client, project, state, choice, owner)
-    end
-  end
+  @doc "Resolve the requested runtime (or catalog default) before creation spends anything."
+  @spec creation_harness(Fountain.Client.t(), String.t() | nil) ::
+          {:ok, Harness.t()} | {:error, term()}
+  def creation_harness(client, wanted), do: harness_for(catalog(client), wanted)
 
   # The project's chosen agent (or the owner's default), when Fountain runs it. A catalog that *lists*
   # runtimes and leaves theirs out is refused rather than quietly built on

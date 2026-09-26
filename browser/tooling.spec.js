@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { createHash, randomBytes } from 'node:crypto';
 import { createServer } from 'node:http';
+import { signIn, connectClaude } from './sign-in.js';
 
 const base = `http://localhost:${process.env.BROWSER_PORT || 4103}`;
 let callback;
@@ -73,6 +74,8 @@ async function tool(request, token, name, args = {}) {
 
 test('browser consent connects MCP and A2A, work survives reconnect, and disconnect revokes access', async ({ page, request }) => {
   test.setTimeout(120_000);
+  await signIn(page, 'dana');
+  await connectClaude(page);
   const mcp = await connect(page, request, 'mcp', 'MCP browser test');
   const initialized = await rpc(request, mcp, 'mcp', 'initialize', { protocolVersion: '2025-11-25', capabilities: {}, clientInfo: { name: 'browser-test', version: '1' } });
   expect(initialized.capabilities.tools).toBeDefined();

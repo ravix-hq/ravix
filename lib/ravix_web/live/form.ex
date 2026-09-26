@@ -29,7 +29,7 @@ defmodule RavixWeb.Live.Form do
 
   What the page does instead is put the context's *own sentence* where the
   person was typing. That is what the `code` in
-  `{:unprocessable, code, message}` has always been for --- `"no_name"`,
+  `{:unprocessable, code, message}` (or a field-specific `:conflict`) is for --- `"no_name"`,
   `"no_title"`, `"bad_key"` name a field --- and until now it was thrown
   away on the way to `RavixWeb.Error`, which has no notion of fields.
 
@@ -85,7 +85,12 @@ defmodule RavixWeb.Live.Form do
     credential: {%{value: :string}, %{"bad_credential" => :value, "no_credential" => :value}},
     new_project:
       {%{name: :string, repo: :string, runtime: :string},
-       %{"no_name" => :name, "invalid_runtime" => :runtime, "agent_unavailable" => :runtime}},
+       %{
+         "no_name" => :name,
+         "invalid_runtime" => :runtime,
+         "agent_unavailable" => :runtime,
+         "agent_not_connected" => :runtime
+       }},
     new_track:
       {%{title: :string, ref: :string},
        %{"no_title" => :title, "invalid_branch" => :title, "branch_taken" => :title}},
@@ -155,7 +160,8 @@ defmodule RavixWeb.Live.Form do
       else: :error
   end
 
-  def refuse(%Phoenix.HTML.Form{name: name} = form, {:unprocessable, code, message}) do
+  def refuse(%Phoenix.HTML.Form{name: name} = form, {kind, code, message})
+      when kind in [:unprocessable, :conflict] do
     key = String.to_existing_atom(name)
     {_types, codes} = Map.fetch!(@forms, key)
 

@@ -15,12 +15,13 @@ defmodule Ravix.Tooling.Catalog do
       ),
       tool(
         "create_project",
-        "Create a project using your connected agent subscription.",
+        "Create a project using a connected credential. Optional runtime is claude or codex; defaults to your account agent, then the catalog default. Connect that agent first or receive agent_not_connected.",
         "projects:write",
         %{
           "name" => string(100),
           "repo" => string(200),
           "installation_id" => integer(),
+          "runtime" => %{"type" => "string", "enum" => ["claude", "codex"]},
           "request_id" => string(100)
         },
         ["request_id"]

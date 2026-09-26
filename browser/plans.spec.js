@@ -1,12 +1,13 @@
 import { test, expect } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
-import { signIn } from './sign-in.js';
+import { signIn, connectClaude } from './sign-in.js';
 
 test('a project plan assigns coordinated tracks and works at phone width', async ({ page }) => {
   // Not @mockuser: this file runs before workspace.spec.js, whose first-visit
   // walkthrough and empty inbox need that person untouched. @dana is
   // tooling.spec.js's, so plans get @eli.
   await signIn(page, 'eli', '/home');
+  await connectClaude(page);
   await page.getByRole('button', { name: /^Quick start/ }).click();
   await page.getByLabel('Project name', { exact: true }).fill('Planned release');
   await page.getByRole('button', { name: 'Create project', exact: true }).click();

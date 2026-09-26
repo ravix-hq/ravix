@@ -1,9 +1,10 @@
 import { test, expect } from '@playwright/test';
-import { signIn } from './sign-in.js';
+import { signIn, connectClaude } from './sign-in.js';
 
 test('images upload before Send and remain visible in conversation history', async ({ page }) => {
   test.setTimeout(90_000);
   await signIn(page, 'eli');
+  await connectClaude(page);
   await page.getByRole('button', { name: 'Add a project', exact: true }).first().click();
   const project = page.getByRole('dialog', { name: 'New project' });
   await project.getByLabel('Project name', { exact: true }).fill('Image uploads');

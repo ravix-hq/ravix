@@ -15,6 +15,8 @@ defmodule RavixWeb.ErrorTest do
           {:no_token, 401, "reauthenticate"},
           {{:forbidden, "Owner only"}, 403, "owner_only"},
           {{:conflict, :busy, "Busy"}, 409, "busy"},
+          {{:conflict, "agent_not_connected", "Connect Codex first."}, 409,
+           "agent_not_connected"},
           {{:unprocessable, :empty, "Empty"}, 422, "empty"},
           {{:unavailable, :offline, "Offline"}, 503, "offline"},
           {{:unavailable, "Offline"}, 503, "unavailable"}
