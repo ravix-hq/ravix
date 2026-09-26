@@ -234,7 +234,7 @@ defmodule RavixWeb.WorkspaceManagementTest do
         ] do
       ctx.view |> form("#new-track-form", new_track: [title: name]) |> render_submit()
       # This checks validation, not scheduling latency under CI coverage.
-      render_async(ctx.view, 1000)
+      render_async(ctx.view, 5_000)
       assert has_element?(ctx.view, "#new-track-form .field p.error", message)
       assert has_element?(ctx.view, "#track-title[value='#{name}']")
       refute has_element?(ctx.view, "#new-track-form button[disabled]")

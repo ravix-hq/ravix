@@ -225,6 +225,8 @@ defmodule RavixWeb.PlansLiveTest do
     })
     |> render_submit()
 
+    # Assignment completion starts a second async stage to reload status.
+    render_async(view, 5_000)
     render_async(view, 5_000)
     assert {:ok, %{items: items}} = Plans.get(user, plan.id)
     assert Enum.all?(items, &(&1.track_id == track.id))
