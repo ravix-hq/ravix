@@ -512,12 +512,22 @@ defmodule Ravix.Accounts.InferenceTest do
 
     test "switching agent leaves the other agent's credential for the projects still on it" do
       me = insert_user(agent: :claude, credential_kind: :subscription, credential_set_id: "s")
-      client = fountain([put("s", "openai_api_key")])
 
-      assert {:ok, %User{agent: :codex, credential_kind: :api_key}} =
+      client =
+        fountain([
+          put("s", "openai_api_key"),
+          {%{method: "GET", path: @sets},
+           {200, [],
+            %{data: [%{id: "s", providers: ["claude_code_oauth_token", "openai_api_key"]}]}}}
+        ])
+
+      assert {:ok, %User{agent: :claude, credential_kind: :subscription}} =
                Inference.connect(me, %{agent: :codex, kind: :api_key, value: "sk-openai"})
 
-      assert requests(client) == [{"PUT", "#{@sets}/s/credentials/openai_api_key"}]
+      assert requests(client) == [
+               {"PUT", "#{@sets}/s/credentials/openai_api_key"},
+               {"GET", @sets}
+             ]
     end
 
     test "choosing a key for Codex clears the subscription from the set, or the key would go unused" do
@@ -913,6 +923,115 @@ defmodule Ravix.Accounts.InferenceTest do
       assert_raise Postgrex.Error, ~r/users_agent/, fn ->
         Repo.query!("UPDATE ravix.users SET agent = 'gemini' WHERE id = $1", [me.id])
       end
+    end
+  end
+
+  describe "default agents" do
+    test "make_default uses held credentials and emits analytics without provider writes" do
+      user = insert_user(agent: :claude, credential_kind: :api_key, credential_set_id: "s")
+
+      client =
+        fountain([
+          {%{method: "GET", path: @sets},
+           {200, [], %{data: [%{id: "s", providers: ["anthropic_api_key", "openai_api_key"]}]}}}
+        ])
+
+      assert {:ok, %User{agent: :codex, credential_kind: :api_key}} =
+               Inference.make_default(user, :codex)
+
+      assert Repo.get!(User, user.id).agent == :codex
+      assert requests(client) == [{"GET", @sets}]
+
+      assert Enum.any?(
+               PostHog.Test.all_captured(),
+               &(&1.event == "default agent changed" and &1.distinct_id == user.id)
+             )
+    end
+
+    test "a cached or another person's connection does not authorize a default" do
+      user = insert_user(agent: :claude, credential_kind: :api_key, credential_set_id: "s")
+
+      fountain([
+        {%{method: "GET", path: @sets},
+         {200, [], %{data: [%{id: "s", providers: ["openai_api_key"]}]}}},
+        {%{method: "GET", path: @sets},
+         {200, [], %{data: [%{id: "other", providers: ["openai_api_key"]}]}}},
+        {%{method: "GET", path: @sets}, {:error, :econnrefused}}
+      ])
+
+      assert {:ok, [:codex]} = Inference.usable_agents(user)
+
+      assert {:error, {:unprocessable, "agent_not_connected", _}} =
+               Inference.make_default(user, :codex)
+
+      assert {:error, %Ravix.Fountain.Error{}} = Inference.make_default(user, :codex)
+      assert Repo.get!(User, user.id).agent == :claude
+      refute Enum.any?(PostHog.Test.all_captured(), &(&1.event == "default agent changed"))
+    end
+
+    test "connecting can explicitly choose a new default" do
+      user = insert_user(agent: :claude, credential_kind: :subscription, credential_set_id: "s")
+
+      fountain([
+        put("s", :openai_api_key),
+        {%{method: "GET", path: @sets},
+         {200, [], %{data: [%{id: "s", providers: ["openai_api_key"]}]}}}
+      ])
+
+      assert {:ok, %User{agent: :codex, credential_kind: :api_key}} =
+               Inference.connect(user, %{
+                 agent: :codex,
+                 kind: :api_key,
+                 value: "mock-key",
+                 make_default: true
+               })
+
+      assert Enum.any?(PostHog.Test.all_captured(), &(&1.event == "default agent changed"))
+    end
+
+    test "connecting from a stale page preserves the newly chosen default" do
+      user = insert_user(agent: :claude, credential_kind: :api_key, credential_set_id: "s")
+      Accounts.save_setup(user, %{agent: :codex, credential_kind: :subscription})
+      fountain([put("s", :anthropic_api_key)])
+
+      assert {:ok, %User{agent: :codex, credential_kind: :subscription}} =
+               Inference.connect(user, %{agent: :claude, kind: :api_key, value: "mock-key"})
+    end
+
+    test "replacing a non-default ChatGPT subscription with a key clears the grant" do
+      user = insert_user(agent: :claude, credential_kind: :api_key, credential_set_id: "s")
+
+      client =
+        fountain([
+          put("s", :openai_api_key),
+          {%{method: "GET", path: @sets},
+           {200, [],
+            %{data: [%{id: "s", chatgpt_grant_id: "grant", providers: ["openai_api_key"]}]}}},
+          {%{method: "PATCH", path: "#{@sets}/s", body: %{chatgpt_grant_id: nil}},
+           {200, [], %{data: %{id: "s"}}}}
+        ])
+
+      assert {:ok, %User{agent: :claude, credential_kind: :api_key}} =
+               Inference.connect(user, %{agent: :codex, kind: :api_key, value: "mock-key"})
+
+      assert {"PATCH", "#{@sets}/s"} in requests(client)
+    end
+
+    test "ChatGPT approval preserves the existing default and clears a non-default key" do
+      user = insert_user(agent: :claude, credential_kind: :api_key, credential_set_id: "s")
+
+      fountain([
+        {%{method: "GET", path: "#{@chatgpt}/attempts/att-1"},
+         {200, [], %{data: attempt("att-1", %{state: "completed", result_grant_id: "grant"})}}},
+        {%{method: "PATCH", path: "#{@sets}/s"}, {200, [], %{data: %{id: "s"}}}},
+        {%{method: "GET", path: @sets},
+         {200, [],
+          %{data: [%{id: "s", chatgpt_grant_id: "grant", providers: ["openai_api_key"]}]}}},
+        {%{method: "DELETE", path: "#{@sets}/s/credentials/openai_api_key"}, {204, [], nil}}
+      ])
+
+      assert {:ok, %User{agent: :claude, credential_kind: :api_key}} =
+               Inference.poll_link(user, link("s"))
     end
   end
 end

@@ -183,6 +183,15 @@ test('a first visit is walked through how it works, the agent, and GitHub', asyn
   await page.getByLabel('Subscription token', { exact: true }).fill('sk-ant-oat01-mock');
   await page.getByRole('button', { name: 'Connect Claude Code', exact: true }).click();
   await expect(page).toHaveURL(/\/welcome\/github$/);
+  // Adding Claude leaves the first connected agent (Codex) as the default.
+  await page.goto('/welcome/agent');
+  await expect(page.locator('[data-phx-main]')).toHaveClass(/phx-connected/);
+  await expect(page.locator('#agent-claude-status')).toContainText('Connected');
+  await expect(page.locator('#agent-codex-status')).toContainText('Connected');
+  await expect(page.locator('#agent-codex-status')).toContainText('Default for new projects');
+  await page.locator('#make-default-claude').click();
+  await expect(page.locator('#agent-claude-status')).toContainText('Default for new projects');
+  await page.goto('/welcome/github');
   await expect(page).toHaveTitle('Connect GitHub · Ravix');
   expect(await page.content()).not.toContain('sk-ant-oat01-mock');
   await expect(page.getByRole('heading', { name: 'Connect GitHub' })).toBeVisible();
@@ -241,6 +250,12 @@ test('the account dialog is where the agent lives after the walkthrough', async 
   await expect(page.getByRole('dialog', { name: 'Your account' })).toBeVisible();
   await expect(page.getByRole('group', { name: 'Agent' })).toBeVisible();
   await accessible(page);
+  await expect(page.locator('#agent-claude-status')).toContainText('Connected');
+  await expect(page.locator('#agent-codex-status')).toContainText('Connected');
+  await page.locator('#make-default-codex').click();
+  await expect(page.locator('#agent-codex-status')).toContainText('Default for new projects');
+  await page.locator('#make-default-claude').click();
+  await expect(page.locator('#agent-claude-status')).toContainText('Default for new projects');
   await capture(page, 'account-dialog');
   await page.keyboard.press('Escape');
   await expect(page.getByRole('dialog', { name: 'Your account' })).toHaveCount(0);

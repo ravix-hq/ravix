@@ -120,6 +120,7 @@ defmodule Ravix.Accounts.InferenceAvailabilityTest do
       {%{method: "PUT", path: "#{@sets}/mine/credentials/openai_api_key"},
        {200, [], %{data: %{set: true}}}},
       listed(["claude_code_oauth_token", "openai_api_key"]),
+      listed(["claude_code_oauth_token", "openai_api_key"]),
       {%{method: "DELETE", path: "#{@sets}/mine/credentials/claude_code_oauth_token"},
        {204, [], nil}},
       listed(["openai_api_key"])
@@ -131,6 +132,7 @@ defmodule Ravix.Accounts.InferenceAvailabilityTest do
              Inference.connect(user, %{agent: :codex, kind: :api_key, value: "test-key"})
 
     assert Inference.usable_agents(user) == {:ok, [:claude, :codex]}
+    assert user.agent == :claude
     assert {:ok, user} = Inference.disconnect(user, :claude, :subscription)
     assert Inference.usable_agents(user) == {:ok, [:codex]}
   end

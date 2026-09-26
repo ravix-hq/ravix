@@ -158,11 +158,14 @@ defmodule RavixWeb.OnboardingLive do
   end
 
   # The panel connected something. That was the step; on to GitHub.
-  def handle_info({:agent_connected, %User{} = user}, socket),
+  def handle_info({:agent_connected, %User{} = user, _agent}, socket),
     do: {:noreply, socket |> assign(current_user: user) |> push_patch(to: @paths[:github])}
 
+  def handle_info({:agent_default_changed, %User{} = user}, socket),
+    do: {:noreply, assign(socket, current_user: user)}
+
   # The panel removed something. The step is not done by that; it stays.
-  def handle_info({:agent_disconnected, %User{} = user}, socket),
+  def handle_info({:agent_disconnected, %User{} = user, _agent}, socket),
     do: {:noreply, assign(socket, current_user: user)}
 
   # The panel cannot put a flash in the page's own socket; see
