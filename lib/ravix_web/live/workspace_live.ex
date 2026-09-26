@@ -52,6 +52,7 @@ defmodule RavixWeb.WorkspaceLive do
         rail_error: false,
         rail_retried: false,
         pending_url: nil,
+        url_notice: nil,
         sections: [],
         section_placements: %{},
         tracks: %{},
@@ -100,9 +101,13 @@ defmodule RavixWeb.WorkspaceLive do
   end
 
   @impl true
-  def handle_params(params, _uri, socket) do
+  def handle_params(params, uri, socket) do
     # Every link in the yard patches, so arriving anywhere is leaving it.
-    socket = socket |> validate_session() |> assign(yard_open: false, pending_url: nil)
+    socket =
+      socket
+      |> validate_session()
+      |> navigation_notice(URI.parse(uri).path)
+      |> assign(yard_open: false, pending_url: nil)
 
     case wrong_page(socket) do
       nil -> {:noreply, open_url(socket, params)}
@@ -154,14 +159,40 @@ defmodule RavixWeb.WorkspaceLive do
       is_nil(track_id) or
         Enum.any?(socket.assigns.tracks[params["project"]] || [], &(&1.id == track_id))
 
-    if params["project"] && (is_nil(project) or not valid_track) do
-      socket
-      |> put_flash(:error, "That project or track is no longer available.")
-      |> push_patch(to: "/")
-    else
-      select_project(socket, project, track_id, params)
+    cond do
+      params["project"] && is_nil(project) ->
+        bad_url(socket, "/home", missing_message(params["project"], :project))
+
+      project && not valid_track ->
+        bad_url(socket, "/p/#{project.id}", missing_message(track_id, :track))
+
+      true ->
+        select_project(socket, project, track_id, params)
     end
   end
+
+  defp missing_message(id, kind) do
+    case {Ecto.UUID.cast(id), kind} do
+      {:error, :project} -> "Invalid project link."
+      {:error, :track} -> "Invalid track link."
+      {_, :project} -> "Project not found."
+      {_, :track} -> "Track not found in this project."
+    end
+  end
+
+  # Show the notice on the corrective patch, then clear just this notice on
+  # the next navigation. Unrelated operation errors keep their own lifecycle.
+  defp bad_url(socket, target, message) do
+    socket |> assign(url_notice: {:pending, target, message}) |> push_patch(to: target)
+  end
+
+  defp navigation_notice(%{assigns: %{url_notice: {:pending, target, message}}} = socket, target),
+    do: socket |> flash(:info, message) |> assign(url_notice: {:shown, message})
+
+  defp navigation_notice(%{assigns: %{url_notice: {:shown, message}}} = socket, _path),
+    do: socket |> clear_notice(:info, message) |> assign(url_notice: nil)
+
+  defp navigation_notice(socket, _path), do: assign(socket, url_notice: nil)
 
   defp requested_track(_user, _project_id, nil), do: {:ok, nil}
 

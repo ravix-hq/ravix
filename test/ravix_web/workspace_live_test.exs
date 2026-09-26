@@ -202,8 +202,8 @@ defmodule RavixWeb.WorkspaceLiveTest do
     end)
 
     view |> element("#rail-error button", "Retry") |> render_click()
-    assert render_async(view) =~ "That project or track is no longer available."
-    assert_patch(view, "/")
+    assert render_async(view) =~ "Invalid project link."
+    assert_patch(view, "/home")
     refute has_element?(view, "#rail-error")
   end
 
@@ -219,6 +219,54 @@ defmodule RavixWeb.WorkspaceLiveTest do
     assert_redirect(view, "/welcome")
   end
 
+  test "an unknown track returns to its project and its notice clears on navigation", %{
+    conn: conn
+  } do
+    user = insert_user()
+    project = insert_project(user: user)
+    {:ok, view, _} = live(log_in_user(conn, user), "/p/#{project.id}/t/#{Ecto.UUID.generate()}")
+    render_async(view, 5_000)
+    assert_patch(view, "/p/#{project.id}")
+    assert has_element?(view, "#flash-info", "Track not found in this project.")
+    render_patch(view, "/home")
+    refute has_element?(view, "#flash-info")
+  end
+
+  test "bad track patches after the rail loads return to the project", %{conn: conn} do
+    user = insert_user()
+    project = insert_project(user: user)
+    {:ok, view, _} = live(log_in_user(conn, user), "/home")
+    render_async(view, 5_000)
+    render_patch(view, "/p/#{project.id}/t/not-a-uuid")
+    assert_patch(view, "/p/#{project.id}")
+    assert has_element?(view, "#flash-info", "Invalid track link.")
+    render_patch(view, "/p/#{project.id}/t/#{Ecto.UUID.generate()}")
+    assert_patch(view, "/p/#{project.id}")
+    assert has_element?(view, "#flash-info", "Track not found in this project.")
+    render_patch(view, "/inbox")
+    refute has_element?(view, "#flash-info")
+  end
+
+  test "a well-formed unknown project returns home with a not-found notice", %{conn: conn} do
+    user = insert_user()
+    {:ok, view, _} = live(log_in_user(conn, user), "/p/#{Ecto.UUID.generate()}")
+    render_async(view, 5_000)
+    assert_patch(view, "/home")
+    assert has_element?(view, "#flash-info", "Project not found.")
+    render_patch(view, "/inbox")
+    refute has_element?(view, "#flash-info")
+  end
+
+  test "a malformed project link returns home and does not leave a sticky notice", %{conn: conn} do
+    user = insert_user()
+    {:ok, view, _} = live(log_in_user(conn, user), "/p/not-a-uuid")
+    render_async(view, 5_000)
+    assert_patch(view, "/home")
+    assert has_element?(view, "#flash-info", "Invalid project link.")
+    render_patch(view, "/inbox")
+    refute has_element?(view, "#flash-info")
+  end
+
   test "an unknown project waits for the rail before flashing and leaving", %{conn: conn} do
     user = insert_user()
     insert_project(user: user)
@@ -232,10 +280,10 @@ defmodule RavixWeb.WorkspaceLiveTest do
     {:ok, view, _} = live(log_in_user(conn, user), "/p/missing")
     assert_receive {:rail_started, worker}
     refute_patched(view)
-    refute render(view) =~ "no longer available"
+    refute render(view) =~ "Invalid project link."
     send(worker, :release_rail)
-    assert render_async(view) =~ "That project or track is no longer available."
-    assert_patch(view, "/")
+    assert render_async(view) =~ "Invalid project link."
+    assert_patch(view, "/home")
   end
 
   test "a revoked session cannot apply its initial async rail", %{conn: conn} do
@@ -295,7 +343,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
     render_async(view)
     assert page_title(view) == project.name <> " · Ravix"
     refute_patched(view)
-    refute render(view) =~ "no longer available"
+    refute render(view) =~ "Invalid project link."
   end
 
   test "a removed track share is filtered even while another share keeps the project visible", %{
@@ -967,7 +1015,8 @@ defmodule RavixWeb.WorkspaceLiveTest do
 
     {:ok, view, _} = live(log_in_user(conn, user), "/p/#{one.id}/t/#{track.id}")
     render_async(view)
-    assert_patch(view, "/")
+    assert_patch(view, "/p/#{one.id}")
+    assert has_element?(view, "#flash-info", "Track not found in this project.")
   end
 
   test "project creation calls the context and navigates to the new project", %{conn: conn} do

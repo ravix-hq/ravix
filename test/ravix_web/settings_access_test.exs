@@ -14,7 +14,7 @@ defmodule RavixWeb.SettingsAccessTest do
 
     {:ok, stranger, _} = live(log_in_user(conn, insert_user()), "/p/#{project.id}")
     render_async(stranger)
-    assert_patch(stranger, "/")
-    assert has_element?(stranger, "#flash-error", "no longer available")
+    assert_patch(stranger, "/home")
+    assert has_element?(stranger, "#flash-info", "Project not found.")
   end
 end
