@@ -235,10 +235,15 @@ defmodule RavixWeb.Live.MachineDock do
               />
             </.empty>
           </div>
-          <dl :if={@vitals && @vitals.readings}>
-            <div :for={{label, value} <- Vitals.Readings.rows(@vitals.readings)}>
+          <dl :if={@vitals && @vitals.readings} class="machine-stats">
+            <div :for={{label, value, fraction} <- RavixWeb.MachineStats.rows(@vitals.readings)}>
               <dt>{label}</dt>
-              <dd>{value}</dd>
+              <dd>
+                <span>{value}</span>
+                <meter :if={!is_nil(fraction)} min="0" max="1" value={fraction} aria-label={label}>
+                  {RavixWeb.MachineStats.percent(fraction)}
+                </meter>
+              </dd>
             </div>
           </dl>
         </div>

@@ -493,6 +493,14 @@ test('project, track, streaming, image upload, reconnect, and revocation', async
   await expect(page.getByLabel('Command', { exact: true })).toHaveValue('echo draft');
   await page.getByRole('button', { name: 'Machine stats', exact: true }).click();
   await expect(page.getByLabel('Command', { exact: true })).not.toBeVisible();
+  const stats = page.locator('.machine-stats');
+  await expect(stats).toContainText('15%');
+  await expect(stats).toContainText('1.0 GB of 8.0 GB');
+  await expect(stats).toContainText('3.2 GB of 20.0 GB');
+  await expect(stats.locator('meter')).toHaveCount(3);
+  await expect(stats.getByRole('meter', { name: 'CPU in use', exact: true })).toHaveAttribute('value', '0.15');
+  await accessible(page);
+  await capture(page, 'machine-stats');
   await page.getByRole('button', { name: 'Terminal', exact: true }).click();
   await expect(page.getByLabel('Command', { exact: true })).toHaveValue('echo draft');
   await page.getByRole('button', { name: 'Collapse the dock' }).click();
