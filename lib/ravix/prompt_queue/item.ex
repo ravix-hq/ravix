@@ -37,10 +37,13 @@ defmodule Ravix.PromptQueue.Item do
     field :status, Ecto.Enum, values: @statuses, default: :queued
     field :error, :string
     field :claimed_at, :utc_datetime_usec
+    field :claimed_by, :string
+    field :claim_token, :string
+    field :post_started_at, :utc_datetime_usec
   end
 
   @fields ~w(id thread_id track_id user_id author_login body image_count payload created_at status error
-             claimed_at)a
+             claimed_at claimed_by claim_token post_started_at)a
 
   @doc "The six statuses, in the order the TypeScript declared them."
   @spec statuses() :: [status()]

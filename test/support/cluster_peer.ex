@@ -9,7 +9,16 @@ defmodule Ravix.ClusterPeer do
   `UndefinedFunctionError`. Named functions in a compiled module cross cleanly.
   """
 
+  alias Ecto.Adapters.SQL.Sandbox
   alias Ravix.Cluster.Singleton
+  alias Ravix.PromptQueue.Store, as: PromptQueue
+
+  @doc "Claim a committed queue row from this instance, outside a test transaction."
+  def claim_prompt(id) do
+    Sandbox.unboxed_run(Ravix.Repo, fn ->
+      PromptQueue.claim(id, Ecto.UUID.generate())
+    end)
+  end
 
   @doc """
   Subscribe to `topics` on this node and forward everything that arrives to

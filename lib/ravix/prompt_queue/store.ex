@@ -306,33 +306,67 @@ defmodule Ravix.PromptQueue.Store do
   cancelled meanwhile, or claimed by another sweep.
   """
   @spec claim(String.t()) :: boolean()
-  def claim(id) do
+  @spec claim(String.t(), String.t() | nil) :: boolean()
+  def claim(id, token \\ nil) do
     {count, tracks} =
       Item
       |> where([p], p.id == ^id and p.status == :queued)
       |> select([p], p.track_id)
-      |> Repo.update_all(set: [status: :sending, error: nil, claimed_at: DateTime.utc_now()])
+      |> Repo.update_all(
+        set: [
+          status: :sending,
+          error: nil,
+          claimed_at: DateTime.utc_now(),
+          claimed_by: Atom.to_string(node()),
+          claim_token: token,
+          post_started_at: nil
+        ]
+      )
 
     Enum.each(tracks, &publish_queue/1)
     count == 1
   end
 
+  @doc "Fence the final POST permission against recovery or a newer claim."
+  def begin_post(id, token) when is_binary(token) do
+    {count, _} =
+      Item
+      |> where([p], p.id == ^id and p.status == :sending and p.claim_token == ^token)
+      |> Repo.update_all(set: [post_started_at: DateTime.utc_now()])
+
+    count == 1
+  end
+
+  @doc "Release only this worker's claim, and only if POST permission was never issued."
+  def release_claim(id, token) when is_binary(token) do
+    {_count, tracks} =
+      Item
+      # Recovery/turn lookup can win the race with graceful release. Only the
+      # stopped preparer's exact token proves this attempt never had permission
+      # to POST; a missing turn or a departed node alone does not prove it.
+      |> where(
+        [p],
+        p.id == ^id and p.status in [:sending, :unconfirmed] and p.claim_token == ^token
+      )
+      |> where([p], is_nil(p.post_started_at))
+      |> select([p], p.track_id)
+      |> Repo.update_all(
+        set: [status: :queued, error: nil, claimed_at: nil, claimed_by: nil, claim_token: nil]
+      )
+
+    Enum.each(tracks, &publish_queue/1)
+  end
+
   @doc """
-  Rows whose claim has outlived any task that could still be holding it.
+  Recover claims older than the timeout or owned by a node no longer visible.
 
-  A `:sending` row may or may not have reached Fountain, so it becomes
-  `:unconfirmed` for a person to check and is never replayed blindly. What
-  the claim age decides is *which* rows those are. Reclaiming every
-  `:sending` row would replay one that a surviving task is still POSTing --
-  the delivery tasks are supervised beside this server, not under it, so they
-  outlive its restart, and a deploy overlaps two instances entirely. Waiting
-  out `claim_timeout_ms/0` instead means only a claim nothing can still be
-  working on is taken back, which also unsticks a row whose task died between
-  the POST and the status write: `:sending` is refused by both `cancel/3` and
-  `retry/3`, so without this it would hold its track's head forever.
-
-  A row with no `claimed_at` was claimed before this column existed and is
-  treated as stale.
+  Node membership is a failure detector, not proof that a POST did not happen:
+  partitions and discovery lag can also hide a live owner. All such claims
+  become unconfirmed, never queued; the turn lookup remains mandatory and a
+  missing turn alone never permits replay. A surviving preparer must pass the
+  fenced begin_post check before it can send. Live-node claims retain the
+  six-minute timeout backstop. Older releases write no owner, so their claims
+  still use only age (or a missing claimed_at).
 
   `status = 'sending'` is written first and on its own so that the query
   matches `prompt_queue_sending_claims`, the partial index over only those
@@ -342,11 +376,16 @@ defmodule Ravix.PromptQueue.Store do
   @spec recover() :: :ok
   def recover do
     cutoff = DateTime.add(DateTime.utc_now(), -claim_timeout_ms(), :millisecond)
+    members = Enum.map([node() | Node.list()], &Atom.to_string/1)
 
     {_count, tracks} =
       Item
       |> where([p], p.status == :sending)
-      |> where([p], is_nil(p.claimed_at) or p.claimed_at < ^cutoff)
+      |> where(
+        [p],
+        is_nil(p.claimed_at) or p.claimed_at < ^cutoff or
+          (not is_nil(p.claimed_by) and p.claimed_by not in ^members)
+      )
       |> select([p], p.track_id)
       |> Repo.update_all(set: [status: :unconfirmed, error: @restart_error])
 
@@ -378,7 +417,7 @@ defmodule Ravix.PromptQueue.Store do
   end
 
   @doc """
-  How long a claim is honoured before `recover/0` may take it back. Longer
+  How long a live or legacy owner's claim is honoured before recovery. Longer
   than the server's own delivery timeout, so recovery does not race a task
   that can still send. A killed task cannot settle its row; it remains sending
   until this age and a subsequent sweep mark it unconfirmed.
