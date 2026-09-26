@@ -1106,13 +1106,75 @@ defmodule RavixWeb.TrackLiveTest do
     refute has_element?(ctx.view, "#rename-dialog")
   end
 
-  test "preview actions keep status and use fresh tickets for the iframe", ctx do
+  for {state, launch_label, restart?, stop?} <- [
+        {:stopped, "Start", false, false},
+        {:starting, "Open", true, true},
+        {:ready, "Open", true, true},
+        {:failed, "Start", false, true}
+      ] do
+    test "preview controls reflect #{state}", ctx do
+      stub(Previews, :status, fn _, _ -> {:ok, %{preview() | state: unquote(state)}} end)
+      render_click(ctx.view, "panel", %{name: "preview"})
+      render_async(ctx.view)
+
+      assert has_element?(
+               ctx.view,
+               "button.primary[phx-value-action='open']:not([disabled])",
+               unquote(launch_label)
+             )
+
+      assert has_element?(ctx.view, "button[phx-value-action='restart']") == unquote(restart?)
+
+      assert has_element?(ctx.view, "button[phx-value-action='stop']:not([disabled])") ==
+               unquote(stop?)
+
+      assert has_element?(ctx.view, "button[phx-value-action='logs']:not([disabled])", "Logs")
+      refute has_element?(ctx.view, "button.ghost[phx-click='preview']")
+    end
+  end
+
+  test "Start launches the stopped preview and disables controls until the response", ctx do
     stub(Previews, :status, fn _, _ -> {:ok, preview()} end)
+    render_click(ctx.view, "panel", %{name: "preview"})
+    render_async(ctx.view)
+    owner = self()
+
+    expect(Previews, :open, fn user, id, hash ->
+      assert {user.id, id} == {ctx.user.id, ctx.track.id}
+      assert is_binary(hash)
+      send(owner, {:launching, self()})
+      receive do: (:finish -> {:ok, %{preview() | state: :starting}})
+    end)
+
+    ctx.view |> element("button[phx-value-action='open']", "Start") |> render_click()
+    assert_receive {:launching, task}
+    refute has_element?(ctx.view, "button[phx-click='preview']:not([disabled])")
+    send(task, :finish)
+    render_async(ctx.view)
+    assert has_element?(ctx.view, "button[phx-value-action='restart']:not([disabled])", "Restart")
+  end
+
+  test "unavailable previews disable launch controls but retain logs", ctx do
+    stub(Previews, :status, fn _, _ ->
+      {:ok,
+       %{preview() | available: false, unavailable_reason: "Preview domain is not configured"}}
+    end)
+
+    render_click(ctx.view, "panel", %{name: "preview"})
+    render_async(ctx.view)
+    assert has_element?(ctx.view, "button[phx-value-action='open'][disabled]", "Start")
+    assert has_element?(ctx.view, "button[phx-value-action='stop'][disabled]")
+    assert has_element?(ctx.view, "button[phx-value-action='logs']:not([disabled])")
+  end
+
+  test "preview actions keep status and use fresh tickets for the iframe", ctx do
+    stub(Previews, :status, fn _, _ -> {:ok, %{preview() | state: :ready}} end)
     render_click(ctx.view, "panel", %{name: "preview"})
     render_async(ctx.view)
 
     answered =
       struct!(preview(),
+        state: :ready,
         logs: "service output",
         open_url: "https://preview.test/__ravix/open#fresh"
       )
