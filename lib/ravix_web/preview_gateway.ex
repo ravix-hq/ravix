@@ -377,9 +377,12 @@ defmodule RavixWeb.PreviewGateway do
 
   # Fire and forget, as the TypeScript's `void manager.startService(...)`.
   defp start_service(%Site{} = site) do
-    Task.Supervisor.start_child(Ravix.TaskSupervisor, fn ->
-      site.backend.start_service(site.row.track_id)
-    end)
+    Task.Supervisor.start_child(
+      Ravix.TaskSupervisor,
+      Ravix.Trace.link(fn ->
+        site.backend.start_service(site.row.track_id)
+      end)
+    )
   end
 
   # ── the reverse proxy ────────────────────────────────────────────────

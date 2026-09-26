@@ -275,14 +275,17 @@ defmodule Ravix.Previews do
   defp launch(user, track_id, session_hash, mode) do
     with {:ok, track} <- open_track(user, track_id),
          {:ok, url} <- mint_ticket(track_id, session_hash) do
-      Task.Supervisor.start_child(Ravix.TaskSupervisor, fn ->
-        # `user` is captured deliberately. This page has already returned by the
-        # time the service answers, so the outcome is only knowable here -- and
-        # without carrying who asked, a failed preview would be an event with
-        # nobody attached to it, which is the one thing `Analytics.track/3`
-        # refuses to file.
-        report(user, track, mode, Lifecycle.start_service(track_id, mode))
-      end)
+      Task.Supervisor.start_child(
+        Ravix.TaskSupervisor,
+        Ravix.Trace.link(fn ->
+          # `user` is captured deliberately. This page has already returned by the
+          # time the service answers, so the outcome is only knowable here -- and
+          # without carrying who asked, a failed preview would be an event with
+          # nobody attached to it, which is the one thing `Analytics.track/3`
+          # refuses to file.
+          report(user, track, mode, Lifecycle.start_service(track_id, mode))
+        end)
+      )
 
       {:ok, %View{Lifecycle.info(track_id) | open_url: url}}
     end
@@ -411,7 +414,9 @@ defmodule Ravix.Previews do
             do: track_id
 
       Ravix.TaskSupervisor
-      |> Task.Supervisor.async_stream_nolink(affected, &Lifecycle.stop_service/1,
+      |> Task.Supervisor.async_stream_nolink(
+        affected,
+        Ravix.Trace.link_each(&Lifecycle.stop_service/1),
         ordered: false,
         timeout: :infinity
       )

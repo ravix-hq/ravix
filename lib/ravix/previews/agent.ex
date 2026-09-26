@@ -384,9 +384,12 @@ defmodule Ravix.Previews.Agent do
     # compares a string.
     mode = if action == "restart", do: :restart, else: :start
 
-    Task.Supervisor.start_child(Ravix.TaskSupervisor, fn ->
-      Lifecycle.start_service(track_id, mode)
-    end)
+    Task.Supervisor.start_child(
+      Ravix.TaskSupervisor,
+      Ravix.Trace.link(fn ->
+        Lifecycle.start_service(track_id, mode)
+      end)
+    )
 
     :ok
   end

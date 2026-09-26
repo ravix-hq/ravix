@@ -69,6 +69,8 @@ defmodule Ravix.Memo do
 
   use GenServer
 
+  alias Ravix.Trace
+
   @type key :: term()
   @type result :: term()
 
@@ -172,7 +174,7 @@ defmodule Ravix.Memo do
       :task ->
         GenServer.call(
           server,
-          {:load, key, load, expires_at, now, newer_than, on_crash(opts)},
+          {:load, key, load, expires_at, now, newer_than, on_crash(opts), Trace.memo_caller()},
           @call_timeout
         )
 
@@ -187,7 +189,11 @@ defmodule Ravix.Memo do
   # caller's own clock, unless it was a follower handed the next load, in
   # which case the latest follower's.
   defp run_here(server, key, load, expires_at, now, newer_than, opts) do
-    case GenServer.call(server, {:claim, key, now, newer_than, on_crash(opts)}, @call_timeout) do
+    case GenServer.call(
+           server,
+           {:claim, key, now, newer_than, on_crash(opts), Trace.memo_caller()},
+           @call_timeout
+         ) do
       {:answered, result} ->
         result
 
@@ -239,7 +245,7 @@ defmodule Ravix.Memo do
 
   @impl true
   # A task runs the load. The caller waits here.
-  def handle_call({:load, key, load, expires_at, now, newer_than, on_crash}, from, state) do
+  def handle_call({:load, key, load, expires_at, now, newer_than, on_crash, trace}, from, state) do
     case hit(state.table, key, now, newer_than) do
       {:ok, value} ->
         {:reply, value, state}
@@ -253,7 +259,8 @@ defmodule Ravix.Memo do
           expires_at: expires_at,
           now: now,
           newer_than: newer_than,
-          on_crash: on_crash
+          on_crash: on_crash,
+          trace: trace
         }
 
         {:noreply, join_or_start(state, key, [caller])}
@@ -261,7 +268,7 @@ defmodule Ravix.Memo do
   end
 
   # The caller runs the load. It gets permission, or somebody else's answer.
-  def handle_call({:claim, key, now, newer_than, on_crash}, from, state) do
+  def handle_call({:claim, key, now, newer_than, on_crash, trace}, from, state) do
     case hit(state.table, key, now, newer_than) do
       {:ok, value} ->
         {:reply, {:answered, value}, state}
@@ -275,7 +282,8 @@ defmodule Ravix.Memo do
           expires_at: nil,
           now: now,
           newer_than: newer_than,
-          on_crash: on_crash
+          on_crash: on_crash,
+          trace: trace
         }
 
         {:noreply, join_or_start(state, key, [caller])}
@@ -361,7 +369,7 @@ defmodule Ravix.Memo do
         :task ->
           task =
             Task.Supervisor.async_nolink(Ravix.TaskSupervisor, fn ->
-              safely(lead.load, lead.on_crash)
+              lead.trace.carry.(fn -> safely(lead.load, lead.on_crash) end)
             end)
 
           {task.ref, callers}
@@ -374,6 +382,7 @@ defmodule Ravix.Memo do
       end
 
     load = %{
+      trace: Trace.memo_started(lead.trace),
       ref: ref,
       waiters: waiters,
       followers: [],
@@ -403,6 +412,8 @@ defmodule Ravix.Memo do
     {load, loads} = Map.pop(state.loads, key)
 
     if load do
+      Trace.memo_shared(load.trace, Enum.map(load.waiters, & &1.trace))
+
       # A key held under `{:forgotten, ...}` was invalidated after this load
       # began, so its answer is already out of date. The waiters still get it,
       # because it is the best answer that exists; the table does not.
