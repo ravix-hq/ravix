@@ -33,6 +33,7 @@ defmodule Ravix.Accounts.InferenceAvailabilityTest do
       assert Inference.usable_agents(user) == {:ok, agents}
       assert Inference.usable?(user, :claude) == {:ok, :claude in agents}
       assert Inference.usable?(user, "codex") == {:ok, :codex in agents}
+      assert Inference.usable?(user, "claude-code") == {:ok, false}
       assert length(FakeTransport.calls(client)) == 1
     end
   end
@@ -48,6 +49,28 @@ defmodule Ravix.Accounts.InferenceAvailabilityTest do
     ])
 
     assert Inference.usable_agents(insert_user(credential_set_id: "mine")) == {:ok, []}
+  end
+
+  test "first connect discovers availability after creating the person's set" do
+    user = insert_user()
+
+    fountain([
+      {%{method: "GET", path: @sets}, {200, [], %{data: [%{id: "house", is_default: true}]}}},
+      {%{method: "POST", path: @sets, body: %{name: "ravix:#{user.id}"}},
+       {201, [], %{data: %{id: "mine"}}}},
+      {%{method: "PUT", path: "#{@sets}/mine/credentials/openai_api_key"},
+       {200, [], %{data: %{set: true}}}},
+      listed(["openai_api_key"])
+    ])
+
+    assert user.credential_set_id == nil
+    assert Inference.usable_agents(user) == {:ok, []}
+
+    assert {:ok, connected} =
+             Inference.connect(user, %{agent: :codex, kind: :api_key, value: "test-key"})
+
+    assert connected.credential_set_id == "mine"
+    assert Inference.usable_agents(connected) == {:ok, [:codex]}
   end
 
   test "provider errors are returned and not remembered" do
@@ -169,6 +192,7 @@ defmodule Ravix.Accounts.InferenceAvailabilityTest do
     :ok = Cache.invalidate(user)
     # A second invalidation while the disowned load still exists must be safe.
     :ok = Cache.invalidate(user)
+    :sys.get_state(Cache)
     assert Cache.fetch(user, fn -> {:ok, [{:codex, :api_key}]} end) == {:ok, [{:codex, :api_key}]}
     send(loader, :finish)
     for reader <- readers, do: assert(Task.await(reader) == {:ok, [{:claude, :subscription}]})

@@ -246,7 +246,13 @@ defmodule Ravix.Accounts.Inference do
     end
   end
 
-  @doc "Whether this set pays for an agent; preserves errors instead of treating them as absence."
+  @doc """
+  Whether this set pays for an agent, as `{:ok, boolean}` or `{:error, reason}`.
+
+  Accepts agent atoms and runtime strings. Unknown runtimes return `{:ok, false}`
+  after a successful read; provider errors are still returned unchanged. Both
+  result tuples are truthy: callers must match them, not use a bare `if`.
+  """
   @spec usable?(User.t(), User.agent() | String.t(), keyword()) ::
           {:ok, boolean()} | {:error, reason()}
   def usable?(%User{} = user, agent, opts \\ []) do

@@ -3,12 +3,16 @@ defmodule Ravix.Accounts.Inference.Cache do
   Short-lived, per-person credential availability, never credential values.
 
   Each instance owns its own memo; writes synchronously invalidate the local
-  memo and broadcast invalidation to the others. A disconnected instance can
+  memo directly in the caller and broadcast invalidation to every subscriber.
+  The subscriber is only a listener, never on the credential write path. Cache
+  outages are logged and do not change a write result. A disconnected instance can
   retain an answer for at most five seconds. Spending decisions bypass it.
   Memo owns the supervised loads and answers invalidated waiters without
   letting their old results overwrite newer reads.
   """
   use GenServer
+
+  require Logger
 
   alias Ravix.Accounts.User
   alias Ravix.Memo
@@ -29,19 +33,15 @@ defmodule Ravix.Accounts.Inference.Cache do
   end
 
   @doc false
-  def invalidate(%User{id: id}), do: GenServer.call(__MODULE__, {:invalidate, id})
+  def invalidate(%User{id: id}) do
+    forget(id)
+    best_effort(fn -> Phoenix.PubSub.broadcast(Ravix.PubSub, @topic, {:invalidate, id}) end)
+  end
 
   @impl true
   def init(_opts) do
     Phoenix.PubSub.subscribe(Ravix.PubSub, @topic)
     {:ok, nil}
-  end
-
-  @impl true
-  def handle_call({:invalidate, id}, _from, state) do
-    forget(id)
-    Phoenix.PubSub.broadcast_from(Ravix.PubSub, self(), @topic, {:invalidate, id})
-    {:reply, :ok, state}
   end
 
   @impl true
@@ -51,9 +51,31 @@ defmodule Ravix.Accounts.Inference.Cache do
   end
 
   defp forget(id) do
-    Memo.forget_where(@memo, fn
-      {user_id, _set_id} -> user_id == id
-      _forgotten -> false
+    best_effort(fn ->
+      Memo.forget_where(@memo, fn
+        {user_id, _set_id} -> user_id == id
+        _forgotten -> false
+      end)
     end)
+  end
+
+  # Cache availability must never change the outcome of a credential write.
+  # The memo may be restarting (missing table / process) or its call may time
+  # out. Broadcast still gets a chance to invalidate surviving subscribers.
+  defp best_effort(fun) do
+    fun.()
+    :ok
+  rescue
+    ArgumentError -> invalidation_failed()
+  catch
+    :exit, _reason -> invalidation_failed()
+  end
+
+  defp invalidation_failed do
+    Logger.warning(
+      "Inference cache invalidation unavailable; cached reads expire within five seconds"
+    )
+
+    :ok
   end
 end
