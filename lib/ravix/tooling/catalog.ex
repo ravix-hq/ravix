@@ -87,7 +87,7 @@ defmodule Ravix.Tooling.Catalog do
       ),
       tool(
         "wait_task",
-        "Wait up to timeout_ms (default/max 50000) for any owned task to change. Returns tasks and changed task IDs. Without since, terminal tasks count as changed; missing since entries also use terminal detection. Remove finished tasks or pass their states in since on the next call. One active wait per user/client; concurrent waits return rate_limited.",
+        "Wait up to timeout_ms (default/max 50000) for any owned task to change. Returns tasks, changed task IDs, and stale (true if reconciliation could not finish). timeout_ms: 0 performs one refresh with a 250 ms budget, without waiting for changes. Persisted terminal states do not require a provider read. Without since, terminal tasks count as changed; missing since entries also use terminal detection. Remove finished tasks or pass their states in since on the next call. One active wait per user/client; concurrent waits return rate_limited.",
         "tracks:read",
         %{
           "task_ids" => %{

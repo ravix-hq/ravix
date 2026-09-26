@@ -11,7 +11,8 @@ defmodule Ravix.Tooling.Wait do
 
   One active waiter per OAuth user/client pair is admitted cluster-wide.
   Provider reads run outside the receive loop and are killed at the deadline.
-  A timeout returns the latest persisted states when the provider cannot finish.
+  A timeout returns the latest persisted states with stale: true when reconciliation
+  cannot finish. Zero-timeout snapshots have a 250 ms reconciliation budget.
   """
   use GenServer, restart: :temporary
   alias Ravix.{Hub, Tracks}
@@ -22,14 +23,23 @@ defmodule Ravix.Tooling.Wait do
     ids = args["task_ids"]
     since = Map.get(args, "since", %{})
     timeout = Map.get(args, "timeout_ms", 50_000)
-    deadline = now() + timeout
+    deadline = now() + if(timeout == 0, do: 250, else: timeout)
 
     with true <- Enum.all?(Map.keys(since), &(&1 in ids)),
          {:ok, rows} <- Tasks.observe(principal, ids) do
-      if timeout == 0 or result(rows, since).changed != [] do
+      if Enum.all?(rows, &Tasks.terminal?(&1.task)) and
+           (timeout == 0 or result(rows, since).changed != []) do
         {:ok, result(rows, since)}
       else
-        run(%{principal: principal, ids: ids, since: since, rows: rows, deadline: deadline})
+        run(%{
+          principal: principal,
+          ids: ids,
+          since: since,
+          rows: rows,
+          deadline: deadline,
+          snapshot_only: timeout == 0,
+          stale: true
+        })
       end
     else
       false ->
@@ -99,6 +109,9 @@ defmodule Ravix.Tooling.Wait do
   end
 
   @impl true
+  def handle_continue(:subscribe, %{snapshot_only: true} = state),
+    do: {:noreply, refresh(state)}
+
   def handle_continue(:subscribe, state) do
     projects = state.rows |> Enum.map(& &1.project_id) |> Enum.uniq()
     Enum.each(projects, &Hub.subscribe/1)
@@ -178,8 +191,10 @@ defmodule Ravix.Tooling.Wait do
   def handle_info(_, state), do: {:noreply, state}
 
   defp refreshed(state, {:ok, _}) do
+    state = %{state | stale: state.dirty}
+
     case snapshot(state) do
-      {:ok, %{changed: []}} ->
+      {:ok, %{changed: []}} when not state.snapshot_only ->
         if state.dirty, do: {:noreply, refresh(%{state | dirty: false})}, else: {:noreply, state}
 
       result ->
@@ -198,12 +213,18 @@ defmodule Ravix.Tooling.Wait do
     worker =
       Task.Supervisor.async_nolink(Ravix.TaskSupervisor, fn -> refresh_tasks(principal, ids) end)
 
-    %{state | worker: worker}
+    %{state | worker: worker, stale: true}
   end
 
   defp refresh_tasks(principal, ids) do
-    Enum.reduce_while(ids, {:ok, []}, fn id, {:ok, tasks} ->
-      case Tasks.get(principal, id) do
+    with {:ok, rows} <- Tasks.observe(principal, ids) do
+      refresh_rows(principal, Enum.reject(rows, &Tasks.terminal?(&1.task)))
+    end
+  end
+
+  defp refresh_rows(principal, rows) do
+    Enum.reduce_while(rows, {:ok, []}, fn row, {:ok, tasks} ->
+      case Tasks.get(principal, row.task.id) do
         {:ok, task} -> {:cont, {:ok, [task | tasks]}}
         error -> {:halt, error}
       end
@@ -212,7 +233,7 @@ defmodule Ravix.Tooling.Wait do
 
   defp snapshot(state) do
     with {:ok, rows} <- Tasks.observe(state.principal, state.ids),
-         do: {:ok, result(rows, state.since)}
+         do: {:ok, Map.put(result(rows, state.since), :stale, state.stale)}
   end
 
   defp result(rows, since) do
@@ -226,7 +247,7 @@ defmodule Ravix.Tooling.Wait do
         end
       end)
 
-    %{tasks: Enum.map(tasks, &Tasks.present/1), changed: Enum.map(changed, & &1.id)}
+    %{tasks: Enum.map(tasks, &Tasks.present/1), changed: Enum.map(changed, & &1.id), stale: false}
   end
 
   defp finish(state, result) do
