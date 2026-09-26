@@ -243,7 +243,7 @@ defmodule Ravix.Tooling.Wait do
       Enum.filter(tasks, fn task ->
         case Map.fetch(since, task.id) do
           {:ok, previous} ->
-            previous != Tasks.version(task) and (task.state != previous or task.blocked)
+            previous != Tasks.version(task) and task.state != previous
 
           :error ->
             Tasks.held_or_terminal?(task)
