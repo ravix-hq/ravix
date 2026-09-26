@@ -549,6 +549,10 @@ defmodule Ravix.PromptQueue.Server do
           client_request_id: row.id
         )
       else
+        # Discovery lag may have recovered this live preparer's claim. Its
+        # fenced token and absent POST permission prove this attempt is safe
+        # to release now, without waiting for the server's DOWN notification.
+        Store.release_claim(row.id, row.claim_token)
         :lost_claim
       end
     else
