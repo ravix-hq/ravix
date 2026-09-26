@@ -68,10 +68,10 @@ defmodule Ravix.GitHubPullStatusTest do
 
     opts = [installation_id: 1, auth: "Bearer test", cache_ttl: 30_000]
     old = Task.async(fn -> HTTP.request(app, :get, "/read", opts) end)
-    assert_receive {:read, old_reader}
+    assert_receive {:read, old_reader}, 1_000
     Cache.invalidate_reads(app.app_id, 1)
     new = Task.async(fn -> HTTP.request(app, :get, "/read", opts) end)
-    assert_receive {:read, new_reader}
+    assert_receive {:read, new_reader}, 1_000
     send(new_reader, {:answer, "new"})
     assert {:ok, %{"value" => "new"}} = Task.await(new)
     send(old_reader, {:answer, "old"})

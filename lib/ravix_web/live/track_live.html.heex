@@ -146,7 +146,14 @@
           </div>
           <div id="transcript-turns" phx-update="stream">
             <article :for={{dom_id, turn} <- @streams.turns} id={dom_id} class="workspace-turn">
-              <.prompt_message :if={turn.prompt} prompt={turn.prompt} />
+              <.prompt_message
+                :if={turn.prompt || turn.image_count > 0}
+                prompt={turn.prompt || ""}
+                image_count={turn.image_count}
+                track_id={@track.id}
+                thread_id={@thread_id}
+                turn_id={turn.id}
+              />
               <section :if={turn.blocks != []} class="agent-terminal" aria-label="Agent output">
                 <div class="agent-terminal-output">
                   <%= for segment <- segments(turn.blocks) do %>

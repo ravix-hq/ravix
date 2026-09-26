@@ -1066,7 +1066,7 @@ defmodule Ravix.TracksTest do
   end
 
   describe "events/3" do
-    test "one read of the feed, prompts included, is a page; a track with no conversation an empty one" do
+    test "the feed and retained image counts form a page; unopened tracks are empty" do
       owner = insert_user()
       project = insert_project(user: owner, runtime: "claude")
       track = insert_track(project: project, conversation_id: "c1")
@@ -1080,9 +1080,11 @@ defmodule Ravix.TracksTest do
           }
         })
 
-      # No `/turns`: the script refuses any request it does not list.
+      # Image metadata comes from turns; image bytes stay out of the transcript.
       client =
         FakeTransport.client([
+          {%{method: "GET", path: "/api/conversations/c1/turns"},
+           {200, [], %{data: [%{id: "t1", image_count: 2}]}}},
           {%{
              method: "GET",
              path: "/api/conversations/c1/events",
@@ -1115,7 +1117,16 @@ defmodule Ravix.TracksTest do
 
       stub(Ravix.Fountain, :client, fn -> client end)
       assert {:ok, page} = Tracks.events(owner, track.id)
-      assert [%Turn{id: "t1", prompt: "say hi", blocks: [%Block.Text{body: "hi"}]}] = page.turns
+
+      assert [
+               %Turn{
+                 id: "t1",
+                 prompt: "say hi",
+                 image_count: 2,
+                 blocks: [%Block.Text{body: "hi"}]
+               }
+             ] = page.turns
+
       assert page.last_event_id == 2
 
       unopened = insert_track(project: project, conversation_id: nil)

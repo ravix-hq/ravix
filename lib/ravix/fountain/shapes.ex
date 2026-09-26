@@ -127,9 +127,10 @@ defmodule Ravix.Fountain.Shapes do
     """
 
     @enforce_keys [:id, :prompt, :origin, :status, :inserted_at, :client_request_id]
-    defstruct @enforce_keys
+    defstruct @enforce_keys ++ [image_count: 0]
 
     @type t :: %__MODULE__{
+            image_count: non_neg_integer(),
             id: String.t(),
             prompt: String.t() | nil,
             origin: String.t() | nil,
@@ -241,9 +242,13 @@ defmodule Ravix.Fountain.Shapes do
       origin: string_or_nil(raw["origin"]),
       status: string_or_nil(raw["status"]),
       inserted_at: string_or_nil(raw["inserted_at"]),
-      client_request_id: string_or_nil(raw["client_request_id"])
+      client_request_id: string_or_nil(raw["client_request_id"]),
+      image_count: image_count(raw["image_count"])
     }
   end
+
+  defp image_count(n) when is_integer(n) and n in 0..6, do: n
+  defp image_count(_), do: 0
 
   @doc "A list of turns, from the JSON Fountain sent."
   @spec turns([map()]) :: [Turn.t()]

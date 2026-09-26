@@ -1,7 +1,8 @@
 import { test, expect } from '@playwright/test';
 import { signIn } from './sign-in.js';
 
-test('images upload before Send through the picker, paste, and drop', async ({ page }) => {
+test('images upload before Send and remain visible in conversation history', async ({ page }) => {
+  test.setTimeout(90_000);
   await signIn(page, 'eli');
   await page.getByRole('button', { name: 'Add a project', exact: true }).first().click();
   const project = page.getByRole('dialog', { name: 'New project' });
@@ -41,4 +42,24 @@ test('images upload before Send through the picker, paste, and drop', async ({ p
   await page.getByRole('button', { name: 'Send', exact: true }).click();
   await expect(uploads).toHaveCount(0);
   await expect(composer).toHaveValue('');
+
+  const message = page.locator('.workspace-turn').filter({ hasText: 'Describe these images' });
+  const images = message.locator('.said img');
+  // Delivery may wait for the queue's 30-second idle sweep.
+  await expect(images).toHaveCount(2, { timeout: 45_000 });
+  for (const image of await images.all()) {
+    await expect.poll(() => image.evaluate(el => el.complete && el.naturalWidth > 0)).toBe(true);
+  }
+  const imageUrl = await images.first().getAttribute('src');
+  const response = await page.request.get(imageUrl, { headers: { Accept: 'image/png' } });
+  expect(response.status()).toBe(200);
+  expect(await response.body()).toEqual(Buffer.from(png, 'base64'));
+
+  await page.reload();
+  await expect(images).toHaveCount(2);
+  for (const image of await images.all()) {
+    await expect.poll(() => image.evaluate(el => el.complete && el.naturalWidth > 0)).toBe(true);
+  }
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });

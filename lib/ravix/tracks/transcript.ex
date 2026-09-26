@@ -2,13 +2,14 @@ defmodule Ravix.Tracks.Transcript do
   @moduledoc """
   The scrollback, as the page draws it.
 
-  One source: the event log, read with Fountain's `?prompts=true`. Fountain
+  Text and output come from the event log with Fountain's `?prompts=true`. Fountain
   keeps *turns* (what somebody asked for) apart from the *events* (the bytes
   the machine produced answering), and this module used to fetch both and
   join them on `turn_id`. A transcript built from the events alone rendered
   an agent talking to itself. Fountain now puts each turn's prompt on that
   turn's `turn`/`started` event, so the log alone has both halves, in order,
-  and the page needs one read instead of two. `Ravix.Tracks.Transcript.Event`
+  while the turn list supplies retained image counts without their bytes.
+  `Ravix.Tracks.Transcript.Event`
   carries the prompt as `prompt`, and `lay_in/3` hands it to its turn.
 
   A turn Fountain started on its own (`origin: autonomous`) has no prompt on
@@ -73,6 +74,20 @@ defmodule Ravix.Tracks.Transcript do
   @spec page([Event.t() | map()], String.t()) :: Page.t()
   def page(events, runtime) do
     add_events(%Page{turns: [], last_event_id: nil, runtime: runtime || ""}, events)
+  end
+
+  @doc "Attach retained image counts from Fountain's turn records to a loaded page."
+  @spec with_images(Page.t(), [Ravix.Fountain.Shapes.Turn.t()]) :: Page.t()
+  def with_images(page, records) do
+    counts = Map.new(records, &{&1.id, &1.image_count})
+
+    turns =
+      Enum.map(page.turns, fn turn ->
+        count = Map.get(counts, turn.id, 0)
+        %{turn | image_count: count, visible?: turn.visible? or count > 0}
+      end)
+
+    %{page | turns: turns}
   end
 
   @doc "An empty page for a track with no conversation yet."
@@ -147,6 +162,7 @@ defmodule Ravix.Tracks.Transcript do
   # with prompts; a copy of that event without one leaves the prompt alone.
   defp lay_in(%Turn{} = turn, event, runtime) do
     turn = if event.prompt, do: %{turn | prompt: event.prompt}, else: turn
+    turn = %{turn | image_count: max(turn.image_count, event.image_count)}
 
     cond do
       appended?(turn.events, event) ->
@@ -194,7 +210,7 @@ defmodule Ravix.Tracks.Transcript do
       turn
       | blocks: visible,
         fold: acc,
-        visible?: has_text?(turn.prompt) or visible != []
+        visible?: has_text?(turn.prompt) or turn.image_count > 0 or visible != []
     }
   end
 

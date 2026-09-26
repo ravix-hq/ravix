@@ -90,6 +90,7 @@ defmodule Ravix.FountainTest do
       assert {:error, {:unconfigured, :fountain}} = Fountain.interrupt(client, "c")
       assert {:error, {:unconfigured, :fountain}} = Fountain.terminate(client, "c")
       assert {:error, {:unconfigured, :fountain}} = Fountain.turns(client, "c")
+      assert {:error, {:unconfigured, :fountain}} = Fountain.turn_image(client, "c", "t", 0)
       assert {:error, {:unconfigured, :fountain}} = Fountain.events(client, "c")
       assert {:error, {:unconfigured, :fountain}} = Fountain.events_page(client, "c")
       assert {:error, {:unconfigured, :fountain}} = Fountain.stream_events(client, "c")

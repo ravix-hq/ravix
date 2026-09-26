@@ -35,7 +35,7 @@ defmodule Ravix.Tracks.Transcript.Event do
   """
 
   @enforce_keys [:id, :turn_id, :kind, :stage, :state, :stream, :data, :ts]
-  defstruct @enforce_keys ++ [prompt: nil]
+  defstruct @enforce_keys ++ [prompt: nil, image_count: 0]
 
   @pending "pending"
 
@@ -54,7 +54,8 @@ defmodule Ravix.Tracks.Transcript.Event do
           stream: stream(),
           data: String.t() | nil,
           ts: term(),
-          prompt: String.t() | nil
+          prompt: String.t() | nil,
+          image_count: non_neg_integer()
         }
 
   @doc """

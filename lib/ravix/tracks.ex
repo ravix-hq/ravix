@@ -816,8 +816,9 @@ defmodule Ravix.Tracks do
   The prompts and the output live in two different places on Fountain, and
   this used to read both and join them on `turn_id`. The event log read with
   `prompts: true` carries each turn's prompt on its opening event, so it is
-  one read, on the call that gates the first paint of a track. A
-  conversation too new to have events is ordinary, not an error. The page
+  the source of prompt text. A separate turn-list read supplies image counts;
+  image bytes are fetched only through the scoped image route. A conversation
+  too new to have events is ordinary, not an error. The page
   then follows the rest through `Ravix.Tracks.Follower.subscribe/2` from the
   page's `last_event_id`.
   """
@@ -840,9 +841,28 @@ defmodule Ravix.Tracks do
     end
   end
 
+  @doc "A retained prompt image, scoped to the reader's track and thread."
+  @spec prompt_image(User.t(), String.t(), String.t(), String.t(), non_neg_integer()) ::
+          {:ok, Ravix.Fountain.Image.t()} | {:error, reason()}
+  def prompt_image(%User{} = user, track_id, thread_id, turn_id, position)
+      when is_integer(position) and position in 0..5 do
+    with {:ok, %{thread: thread}} <- Access.thread_access(user, track_id, thread_id),
+         true <- is_binary(thread.conversation_id),
+         {:ok, client} <- fountain() do
+      Fountain.turn_image(client, thread.conversation_id, turn_id, position)
+    else
+      false -> {:error, :not_found}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  def prompt_image(%User{}, _track_id, _thread_id, _turn_id, _position),
+    do: {:error, :not_found}
+
   defp read_transcript(client, conversation_id, runtime) do
-    with {:ok, log} <- Fountain.events(client, conversation_id, prompts: true) do
-      page = Transcript.page(log, runtime)
+    with {:ok, log} <- Fountain.events(client, conversation_id, prompts: true),
+         {:ok, turns} <- Fountain.turns(client, conversation_id) do
+      page = log |> Transcript.page(runtime) |> Transcript.with_images(turns)
 
       # How much transcript came back, on the span that fetched it. A slow
       # first paint is either Fountain being slow or a conversation being long,

@@ -98,7 +98,9 @@ defmodule Ravix.Tracks.FollowerTest do
              method: "GET",
              path: events,
              query: %{limit: "1", after: "4", blocks: "true", prompts: "true"}
-           }, feed}
+           }, feed},
+          {%{method: "GET", path: "/api/conversations/#{conversation_id}/turns"},
+           {200, [], %{data: [%{id: "t1", image_count: 2}]}}}
         ],
         verify: false
       )
@@ -116,7 +118,10 @@ defmodule Ravix.Tracks.FollowerTest do
       assert {:ok, _follower} = subscribe(ctx, client: client)
       track_id = ctx.track_id
 
-      assert_receive {:transcript, ^track_id, %Event{id: 5, prompt: "do the thing"}}, 1_000
+      assert_receive {:transcript, ^track_id,
+                      %Event{id: 5, prompt: "do the thing", image_count: 2}},
+                     1_000
+
       assert_receive {:transcript, ^track_id, %Event{id: 6, prompt: nil}}, 1_000
 
       # Once, for the opening event, and not for the output after it.
