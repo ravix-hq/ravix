@@ -93,6 +93,7 @@ defmodule RavixWeb.TrackLive do
         queue: [],
         present: [],
         panel: Panel.new(),
+        show_ignored?: false,
         diff_path: nil,
         diff_filter: "",
         diff_show_large: false,
@@ -251,7 +252,12 @@ defmodule RavixWeb.TrackLive do
 
   def handle_event("refresh-panel", _, socket), do: {:noreply, load_panel(socket)}
 
+  def handle_event("toggle-ignored", _, socket),
+    do: {:noreply, assign(socket, show_ignored?: !socket.assigns.show_ignored?)}
+
   def handle_event("directory", %{"path" => path}, socket) do
+    socket = update_panel(socket, &%{&1 | metadata: Map.delete(&1.metadata, path)})
+
     if Map.has_key?(socket.assigns.panel.directories, path) do
       {:noreply, update_panel(socket, &%{&1 | directories: Map.delete(&1.directories, path)})}
     else
@@ -621,10 +627,26 @@ defmodule RavixWeb.TrackLive do
           {:exit, _} -> {:error, "Could not finish loading. Collapse and expand to retry."}
         end
 
-      update_panel(socket, &%{&1 | directories: Map.put(&1.directories, path, value)})
+      socket = update_panel(socket, &%{&1 | directories: Map.put(&1.directories, path, value)})
+      if is_struct(value, Files.Listing), do: load_file_metadata(socket, value), else: socket
     else
       socket
     end
+  end
+
+  defp async_result({:file_metadata, path, token}, response, socket) do
+    if socket.assigns.panel.metadata[path] == token do
+      update_panel(socket, fn panel ->
+        panel = %{panel | metadata: Map.delete(panel.metadata, path)}
+        enrich_listing(panel, path, response)
+      end)
+    else
+      socket
+    end
+  end
+
+  defp async_result(:panel, {:ok, {:ok, %Files.Listing{} = listing}}, socket) do
+    socket |> update_panel(&Panel.loaded(&1, listing)) |> load_file_metadata(listing)
   end
 
   defp async_result(:panel, {:ok, {:ok, %Previews.View{} = preview}}, socket),
@@ -795,6 +817,7 @@ defmodule RavixWeb.TrackLive do
       queue: [],
       present: [],
       panel: Panel.new(),
+      show_ignored?: false,
       diff_path: nil,
       diff_filter: "",
       diff_show_large: false,
@@ -1141,6 +1164,7 @@ defmodule RavixWeb.TrackLive do
 
   defp change_badge(assigns), do: ~H""
 
+  attr :show_ignored?, :boolean, default: false
   attr :directories, :map, default: %{}
   attr :diff_path, :string, default: nil
   attr :diff_filter, :string, default: ""
@@ -1162,7 +1186,15 @@ defmodule RavixWeb.TrackLive do
       <div class="file-root" title={@data.path}>
         <.icon name="folder" />{Path.basename(@data.path)}
       </div>
-      <.file_listing listing={@data} directories={@directories} file={@file} />
+      <button phx-click="toggle-ignored" aria-pressed={to_string(@show_ignored?)}>
+        Show ignored files
+      </button>
+      <.file_listing
+        listing={@data}
+        directories={@directories}
+        file={@file}
+        show_ignored?={@show_ignored?}
+      />
       <div :if={@file}>
         <h4>{@file.path}</h4>
         <pre :if={@file.encoding != "base64"}>{@file.content}</pre>
@@ -1323,44 +1355,55 @@ defmodule RavixWeb.TrackLive do
   defp diff_line_label(%{kind: :del, old: old}), do: "Removed line #{old}: "
   defp diff_line_label(%{new: new}), do: "Line #{new}: "
 
+  attr :show_ignored?, :boolean, required: true
+  attr :ancestors, :list, default: []
   attr :listing, :any, required: true
   attr :directories, :map, required: true
   attr :file, :any, required: true
 
   defp file_listing(assigns) do
+    assigns = assign(assigns, ancestors: [assigns.listing.path | assigns.ancestors])
+
     assigns =
       assign(
         assigns,
         :entries,
-        Enum.sort_by(assigns.listing.entries, &{&1.type != "directory", String.downcase(&1.name)})
+        assigns.listing.entries
+        |> Enum.reject(&(&1.ignored? && !assigns.show_ignored?))
+        |> Enum.sort_by(&{!file_directory?(&1), String.downcase(&1.name)})
       )
 
     ~H"""
     <ul class="file-list">
       <li :for={entry <- @entries}>
-        <% path = Path.join(@listing.path, entry.name) %>
+        <% path = entry.directory_target || Path.join(@listing.path, entry.name) %>
+        <% directory? = file_directory?(entry) %>
+        <% cycle? = path in @ancestors %>
         <% child = @directories[path] %>
         <button
           type="button"
           class={["workspace-file", @file && @file.path == path && "selected"]}
-          phx-click={if entry.type == "directory", do: "directory", else: "file"}
+          disabled={cycle? || (entry.type in ["symlink", "link"] && !directory?)}
+          phx-click={if directory?, do: "directory", else: "file"}
           phx-value-path={path}
-          aria-expanded={if entry.type == "directory", do: to_string(child != nil)}
+          aria-expanded={if directory?, do: to_string(child != nil && !cycle?)}
           aria-current={if @file && @file.path == path, do: "true"}
-          title={path}
+          title={if entry.target, do: path <> " → " <> entry.target, else: path}
         >
           <span class="file-disclosure"><.icon
-            :if={entry.type == "directory"}
+            :if={directory?}
             name="chevron"
             open={child != nil}
             size={12}
           /></span>
           <.icon name={file_icon(entry)} class="file-kind" />
-          <span class="file-name">{entry.name}</span>
+          <span class="file-name">{entry.name}<span :if={entry.target}> → {entry.target}</span></span>
         </button>
         <.file_listing
-          :if={is_struct(child, Files.Listing)}
+          :if={is_struct(child, Files.Listing) && !cycle?}
           listing={child}
+          ancestors={@ancestors}
+          show_ignored?={@show_ignored?}
           directories={@directories}
           file={@file}
         />
@@ -1368,12 +1411,19 @@ defmodule RavixWeb.TrackLive do
         <p :if={match?({:error, _}, child)} class="file-note" role="alert">{elem(child, 1)}</p>
       </li>
       <li :if={@entries == []} class="file-note">Empty directory</li>
+      <li :if={!@listing.ignore_available?} class="file-note">
+        Git ignore filtering is unavailable for this directory.
+      </li>
       <li :if={@listing.truncated} class="file-note">Directory listing is truncated.</li>
     </ul>
     """
   end
 
+  defp file_directory?(%{type: "directory"}), do: true
+  defp file_directory?(entry), do: is_binary(entry.directory_target)
+
   defp file_icon(%{type: "directory"}), do: "folder"
+  defp file_icon(%{type: type}) when type in ["symlink", "link"], do: "external"
 
   defp file_icon(entry) do
     case String.downcase(Path.extname(entry.name)) do
@@ -1423,6 +1473,33 @@ defmodule RavixWeb.TrackLive do
         :checks -> Tracks.checks(user, id)
         :preview -> Previews.status(user, id)
       end
+    end)
+  end
+
+  defp enrich_listing(panel, path, {:ok, {:ok, %Files.Listing{path: path} = listing}}) do
+    cond do
+      match?(%Files.Listing{path: ^path}, panel.data) ->
+        %{panel | data: listing}
+
+      is_struct(panel.directories[path], Files.Listing) ->
+        %{panel | directories: Map.put(panel.directories, path, listing)}
+
+      true ->
+        panel
+    end
+  end
+
+  defp enrich_listing(panel, _path, _response), do: panel
+
+  defp load_file_metadata(socket, listing) do
+    user = socket.assigns.current_user
+    id = socket.assigns.track_id
+    token = make_ref()
+
+    socket
+    |> update_panel(&%{&1 | metadata: Map.put(&1.metadata, listing.path, token)})
+    |> traced_async({:file_metadata, listing.path, token}, fn ->
+      Tracks.file_metadata(user, id, listing)
     end)
   end
 

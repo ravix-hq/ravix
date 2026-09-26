@@ -998,6 +998,148 @@ defmodule RavixWeb.TrackLiveTest do
     assert has_element?(ctx.view, "pre", "hello explorer")
   end
 
+  test "listing renders before blocked metadata exec and is enriched afterward", ctx do
+    owner = self()
+
+    stub(Tracks, :files, fn _, _, _ ->
+      {:ok,
+       %Files.Listing{
+         path: ctx.track.workdir,
+         truncated: false,
+         entries: [
+           %Files.Entry{name: "_build", type: "directory", size: 0},
+           %Files.Entry{name: "src", type: "directory", size: 0}
+         ]
+       }}
+    end)
+
+    expect(Terminal, :status, fn _, _, [passive: true] -> {:ok, %{available: true}} end)
+
+    expect(Terminal, :exec, fn _, _, _ ->
+      send(owner, {:metadata_exec, self()})
+
+      receive do
+        :finish ->
+          {:ok,
+           %{code: 0, stdout: ~s({"ignore_available":true,"entries":{"_build":{"ignored":true}}})}}
+      end
+    end)
+
+    render_click(ctx.view, "refresh-panel")
+    assert_receive {:metadata_exec, worker}
+    assert has_element?(ctx.view, ".file-name", "_build")
+    assert has_element?(ctx.view, ".file-name", "src")
+    assert has_element?(ctx.view, "button[phx-click='toggle-ignored']")
+    send(worker, :finish)
+    render_async(ctx.view, 1_000)
+    refute has_element?(ctx.view, ".file-name", "_build")
+    ctx.view |> element("button[phx-click='toggle-ignored']") |> render_click()
+    assert has_element?(ctx.view, ".file-name", "_build")
+  end
+
+  test "internal directory links expand their targets and ancestor links cannot recurse", ctx do
+    target = Path.join(ctx.track.workdir, ".agents/skills")
+
+    stub(Tracks, :files, fn _, _, path ->
+      entries =
+        if path == target do
+          [
+            %Files.Entry{name: "guide.md", type: "file", size: 12},
+            %Files.Entry{
+              name: "back",
+              type: "symlink",
+              size: 0,
+              target: "../..",
+              directory_target: ctx.track.workdir
+            }
+          ]
+        else
+          [
+            %Files.Entry{
+              name: "skills",
+              type: "symlink",
+              size: 0,
+              target: ".agents/skills",
+              directory_target: target
+            }
+          ]
+        end
+
+      {:ok, %Files.Listing{path: path || ctx.track.workdir, entries: entries, truncated: false}}
+    end)
+
+    render_click(ctx.view, "refresh-panel")
+    render_async(ctx.view, 1_000)
+    button = "button[phx-click='directory'][phx-value-path='#{target}']:not([disabled])"
+    assert has_element?(ctx.view, button, "skills")
+    ctx.view |> element(button) |> render_click()
+    render_async(ctx.view, 1_000)
+    assert has_element?(ctx.view, ".file-name", "guide.md")
+    assert has_element?(ctx.view, "button[disabled][aria-expanded=false]", "back")
+    ctx.view |> element(button) |> render_click()
+    refute has_element?(ctx.view, ".file-name", "guide.md")
+  end
+
+  test "a collapsed directory rejects its late metadata result", ctx do
+    owner = self()
+
+    expect(Tracks, :file_metadata, fn _, _, listing ->
+      send(owner, {:metadata_reader, self()})
+
+      receive do: (:finish ->
+                     {:ok,
+                      %{
+                        listing
+                        | entries: [
+                            %Files.Entry{name: "late", type: "file", size: 0}
+                          ]
+                      }})
+    end)
+
+    ctx.view |> element("button.workspace-file", "src") |> render_click()
+    assert_receive {:metadata_reader, reader}
+    ctx.view |> element("button.workspace-file[aria-expanded=true]", "src") |> render_click()
+    send(reader, :finish)
+    render_async(ctx.view, 1_000)
+    refute has_element?(ctx.view, ".file-name", "late")
+    refute has_element?(ctx.view, ".file-list .file-list")
+  end
+
+  test "ignored entries are hidden throughout the tree and the toggle restores them", ctx do
+    stub(Tracks, :files, fn _, _, path ->
+      {:ok,
+       %Files.Listing{
+         path: path || ctx.track.workdir,
+         truncated: false,
+         ignore_available?: true,
+         entries: [
+           %Files.Entry{name: "src", type: "directory", size: 0},
+           %Files.Entry{name: "_build", type: "directory", size: 0, ignored?: true},
+           %Files.Entry{name: "skills", type: "symlink", size: 0, target: "../.agents/skills"}
+         ]
+       }}
+    end)
+
+    render_click(ctx.view, "refresh-panel")
+    render_async(ctx.view)
+    refute has_element?(ctx.view, ".file-name", "_build")
+    assert has_element?(ctx.view, "button[disabled] .file-name", "skills → ../.agents/skills")
+    ctx.view |> element("button[phx-value-path='#{ctx.track.workdir}/src']") |> render_click()
+    render_async(ctx.view)
+    refute has_element?(ctx.view, ".file-name", "_build")
+    ctx.view |> element("button[phx-click='toggle-ignored']") |> render_click()
+    assert has_element?(ctx.view, "button[aria-pressed='true']", "Show ignored files")
+    assert has_element?(ctx.view, "button[phx-value-path='#{ctx.track.workdir}/_build']")
+    assert has_element?(ctx.view, "button[phx-value-path='#{ctx.track.workdir}/src/_build']")
+    ctx.view |> element("button[phx-click='toggle-ignored']") |> render_click()
+    refute has_element?(ctx.view, ".file-name", "_build")
+
+    assert has_element?(
+             ctx.view,
+             "button[phx-value-path='#{ctx.track.workdir}/src'][aria-expanded='true']"
+           )
+  end
+
   test "collapsed folders ignore late results and directory errors can be retried", ctx do
     owner = self()
 
@@ -1012,7 +1154,8 @@ defmodule RavixWeb.TrackLiveTest do
     ctx.view |> element("button.workspace-file", "src") |> render_click()
     send(reader, :finish)
     render_async(ctx.view)
-    refute has_element?(ctx.view, ".file-note")
+    refute has_element?(ctx.view, ".file-note[role=status], .file-note[role=alert]")
+    refute has_element?(ctx.view, ".file-list .file-list")
     expect(Tracks, :files, fn _, _, _ -> {:error, {:unavailable, "Folder offline"}} end)
     ctx.view |> element("button.workspace-file", "src") |> render_click()
     render_async(ctx.view)
@@ -2591,12 +2734,13 @@ defmodule RavixWeb.TrackLiveTest do
     end
   end
 
-  for revocation <- [:session, :track] do
+  for revocation <- [:session, :track], reader <- [:files, :file_metadata] do
     @revocation revocation
-    test "#{revocation} revocation rejects a delayed provider result", ctx do
+    @reader reader
+    test "#{revocation} revocation rejects a delayed #{reader} result", ctx do
       parent = self()
 
-      stub(Tracks, :files, fn _, _, _ ->
+      stub(Tracks, @reader, fn _, _, _ ->
         send(parent, {:provider_waiting, self()})
 
         receive do

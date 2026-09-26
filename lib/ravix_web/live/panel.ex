@@ -26,12 +26,13 @@ defmodule RavixWeb.Live.Panel do
   alias Ravix.Tracks.Diff
 
   @enforce_keys [:tab, :data, :error, :busy?, :file]
-  defstruct @enforce_keys ++ [directories: %{}, change_count: nil]
+  defstruct @enforce_keys ++ [directories: %{}, metadata: %{}, change_count: nil]
 
   @type tab :: :files | :changes | :checks | :preview
 
   @type t :: %__MODULE__{
           tab: tab(),
+          metadata: %{optional(String.t()) => reference()},
           directories: %{
             optional(String.t()) =>
               Ravix.Tracks.Files.Listing.t() | {:loading, reference()} | {:error, String.t()}
@@ -54,7 +55,7 @@ defmodule RavixWeb.Live.Panel do
   @doc "A read has started: nothing to show, and nothing to blame yet."
   @spec loading(t()) :: t()
   def loading(%__MODULE__{} = panel),
-    do: %__MODULE__{panel | busy?: true, error: nil, data: nil, directories: %{}}
+    do: %__MODULE__{panel | busy?: true, error: nil, data: nil, directories: %{}, metadata: %{}}
 
   @doc """
   A read of the same tab has started, and what is showing stays until it

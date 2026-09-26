@@ -10,6 +10,24 @@ defmodule Ravix.SpritesTest do
 
   @cfg Fake.config()
 
+  test "runtime inspection is a passive GET and only running permits metadata" do
+    for status <- ["running", "warm", "cold"] do
+      Fake.install(fn conn, call ->
+        assert call.method == "GET"
+        assert call.path == "/v1/sprites/sprite-7"
+        Req.Test.json(conn, %{status: status})
+      end)
+
+      assert Sprites.running?(@cfg, "sprite-7") == (status == "running")
+    end
+
+    Fake.install(fn conn, _ -> send_resp(conn, 200, "not json") end)
+    refute Sprites.running?(@cfg, "sprite-7")
+    Fake.install(fn conn, _ -> send_resp(conn, 404, "missing") end)
+    refute Sprites.running?(@cfg, "sprite-7")
+    refute Sprites.running?(nil, "sprite-7")
+  end
+
   # ── the frame decoder ──────────────────────────────────────────────────
 
   describe "decode_frames/1" do

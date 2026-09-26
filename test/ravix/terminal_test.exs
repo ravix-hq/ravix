@@ -154,6 +154,22 @@ defmodule Ravix.TerminalTest do
     end
   end
 
+  test "passive status never execs to wake a parked machine", ctx do
+    stub(Ravix.Config, :sprites, fn -> @sprites end)
+    fountain(ctx.project, "sprite-7")
+
+    for status <- ["cold", "warm", "running"] do
+      SpritesFake.install(fn conn, call ->
+        assert call.method == "GET"
+        assert call.path == "/v1/sprites/sprite-7"
+        Req.Test.json(conn, %{status: status})
+      end)
+
+      assert {:ok, result} = Terminal.status(ctx.owner, ctx.track.id, passive: true)
+      assert result.available == (status == "running")
+    end
+  end
+
   describe "status/2" do
     test "the four answers, in the order the panel tells them apart", ctx do
       stub(Ravix.Config, :sprites, fn -> nil end)

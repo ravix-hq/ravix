@@ -1354,6 +1354,12 @@ defmodule Ravix.TracksTest do
       client
     end
 
+    test "an outsider cannot trigger file metadata commands", ctx do
+      reject(Ravix.Terminal, :exec, 3)
+      reject(Ravix.Fountain, :listing, 3)
+      assert {:error, _} = Tracks.files(insert_user(), ctx.track.id, nil)
+    end
+
     test "a directory, confined, as the panel reads it", ctx do
       machine_fountain(ctx.project, [
         {%{
@@ -1371,13 +1377,84 @@ defmodule Ravix.TracksTest do
           }}}
       ])
 
+      reject(Ravix.Terminal, :exec, 3)
+      reject(Ravix.Terminal, :status, 3)
+
       assert {:ok,
               %{
+                ignore_available?: false,
                 path: "/home/sprite/work/kyoto/src",
-                entries: [%{name: "app.ts", type: "file", size: 12}],
+                entries: [%{name: "app.ts", type: "file", size: 12, ignored?: false}],
                 truncated: false
               }} =
                Tracks.files(ctx.owner, ctx.track.id, "../../../../home/sprite/work/kyoto/src")
+    end
+
+    defp metadata_listing(ctx) do
+      %Files.Listing{
+        path: ctx.track.workdir,
+        truncated: false,
+        entries: [%Files.Entry{name: "_build", type: "directory", size: 0}]
+      }
+    end
+
+    test "metadata rejects outsiders and escaping paths before contacting the machine", ctx do
+      listing = metadata_listing(ctx)
+      reject(Ravix.Terminal, :exec, 3)
+      reject(Ravix.Terminal, :status, 3)
+      assert {:error, :not_found} = Tracks.file_metadata(insert_user(), ctx.track.id, listing)
+
+      assert {:ok, %{path: "/etc"}} =
+               Tracks.file_metadata(ctx.owner, ctx.track.id, %{listing | path: "/etc"})
+    end
+
+    test "metadata skips parked machines without exec", ctx do
+      listing = metadata_listing(ctx)
+      reject(Ravix.Terminal, :exec, 3)
+
+      expect(Ravix.Terminal, :status, fn user, id, opts ->
+        assert {user.id, id, opts} == {ctx.owner.id, ctx.track.id, [passive: true]}
+        {:ok, %{available: false}}
+      end)
+
+      assert {:ok, ^listing} = Tracks.file_metadata(ctx.owner, ctx.track.id, listing)
+    end
+
+    test "running machines enrich the listing with a bounded metadata command", ctx do
+      listing = metadata_listing(ctx)
+
+      expect(Ravix.Terminal, :status, fn _, _, [passive: true] ->
+        {:ok, %{available: true}}
+      end)
+
+      expect(Ravix.Terminal, :exec, fn user, id, request ->
+        assert {user.id, id} == {ctx.owner.id, ctx.track.id}
+        assert request.cwd == ctx.track.workdir
+        assert request.timeout_sec == 2
+
+        {:ok,
+         %{code: 0, stdout: ~s({"ignore_available":true,"entries":{"_build":{"ignored":true}}})}}
+      end)
+
+      assert {:ok, %{ignore_available?: true, entries: [%{ignored?: true}]}} =
+               Tracks.file_metadata(ctx.owner, ctx.track.id, listing)
+    end
+
+    test "metadata times out without losing the listing or leaving its task running", ctx do
+      listing = %Files.Listing{path: ctx.track.workdir, entries: [], truncated: false}
+      parent = self()
+      expect(Ravix.Terminal, :status, fn _, _, _ -> {:ok, %{available: true}} end)
+
+      expect(Ravix.Terminal, :exec, fn _, _, _ ->
+        send(parent, {:metadata_worker, self()})
+        receive do: (:never -> {:error, :unavailable})
+      end)
+
+      task = Task.async(fn -> Tracks.file_metadata(ctx.owner, ctx.track.id, listing) end)
+      assert_receive {:metadata_worker, worker}
+      monitor = Process.monitor(worker)
+      assert Task.await(task, 3_000) == {:ok, listing}
+      assert_receive {:DOWN, ^monitor, :process, ^worker, :killed}
     end
 
     test "a file, and the diff counted per file", ctx do

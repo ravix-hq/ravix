@@ -297,6 +297,26 @@ defmodule Ravix.Sprites do
     end
   end
 
+  @doc "Passively inspect runtime state; unlike an exec probe, this cannot wake the sprite."
+  @spec running?(config(), String.t()) :: boolean()
+  def running?(nil, _sprite), do: false
+
+  def running?(cfg, sprite) do
+    request(
+      "sprites.status",
+      %{"ravix.sprite" => sprite},
+      cfg,
+      [method: :get, url: "#{cfg.base_url}/v1/sprites/#{encode(sprite)}", receive_timeout: 1_000],
+      fn
+        %Req.Response{status: 200, body: body} ->
+          match?({:ok, %{"status" => "running"}}, Jason.decode(body))
+
+        _ ->
+          false
+      end
+    ) == true
+  end
+
   @doc "Is this sprite reachable at all? Used to decide between two empty states."
   @spec reachable?(config(), String.t()) :: boolean()
   def reachable?(cfg, sprite), do: match?({:ok, %{code: 0}}, exec(cfg, sprite, ["true"], 15))
