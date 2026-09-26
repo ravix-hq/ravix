@@ -311,7 +311,8 @@ defmodule RavixWeb.WorkspaceLiveTest do
 
       render_click(view, "dialog", %{name: "search"})
       render_change(view, "search", %{q: "PROJECT-OWNER"})
-      assert has_element?(view, "#search-dialog a", label <> " / Visible track")
+      assert has_element?(view, "#search-dialog h3", label)
+      assert has_element?(view, "#search-dialog a", "Visible track")
       if user == guest, do: refute(has_element?(view, "#search-dialog a", hidden_track.title))
       render_click(view, "dismiss")
 

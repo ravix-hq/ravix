@@ -628,7 +628,13 @@
         </form>
       </div>
     </.dialog>
-    <.dialog :if={@dialog == :search} id="search-dialog" title="Find a track" on_close="dismiss">
+    <.dialog
+      :if={@dialog == :search}
+      id="search-dialog"
+      title="Find a track"
+      on_close="dismiss"
+      initial_focus="#search-query"
+    >
       <form id="search-form" phx-change="search">
         <%!-- Every keystroke re-renders the list below it, which is every
           track of every project this person has. A pause is what somebody
@@ -639,18 +645,27 @@
           value={@query}
           label="Search projects and tracks"
           phx-debounce="150"
-          autofocus
         />
       </form>
-      <div :for={project <- @projects}>
+      <% results =
+        for project <- @projects,
+            tracks = Enum.filter(@tracks[project.id] || [], &matching?(&1, project, @query)),
+            tracks != [],
+            do: {project, tracks} %>
+      <p :if={results == []} role="status">No tracks match</p>
+      <section
+        :for={{project, tracks} <- results}
+        aria-labelledby={"search-project-#{project.id}"}
+      >
+        <h3 id={"search-project-#{project.id}"}><.project_name project={project} /></h3>
         <.link
-          :for={track <- Enum.filter(@tracks[project.id] || [], &matching?(&1, project, @query))}
+          :for={track <- tracks}
           patch={"/p/#{project.id}/t/#{track.id}"}
           class="workspace-track"
         >
-          <.project_name project={project} /> / {track.title}
+          {track.title}
         </.link>
-      </div>
+      </section>
     </.dialog>
     <.dialog
       :if={@dialog == :new_project}

@@ -306,6 +306,29 @@ test('home quick start creates a scratch project and recent navigation survives 
   await expect(menu).toHaveAttribute('aria-expanded', 'false');
 });
 
+test('find a track focuses its search field and explains no matches', async ({ page }) => {
+  await signIn(page);
+  const open = page.getByRole('button', { name: 'Search', exact: true });
+  const dialog = page.getByRole('dialog', { name: 'Find a track', exact: true });
+  const query = dialog.getByLabel('Search projects and tracks');
+
+  await open.focus();
+  await open.press('Enter');
+  await expect(query).toBeFocused();
+  await page.keyboard.type('no-track-could-match-this-query');
+  await expect(dialog.getByRole('status')).toHaveText('No tracks match');
+  await expect(dialog.locator('a')).toHaveCount(0);
+  await expect(query).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(dialog).toHaveCount(0);
+  await expect(open).toBeFocused();
+
+  await open.click();
+  await expect(query).toBeFocused();
+  await dialog.getByRole('button', { name: 'Close', exact: true }).click();
+  await expect(open).toBeFocused();
+});
+
 test('keyboard users can resize panels and close dialogs with focus restored', async ({ page }) => {
   await signIn(page);
   const handle = page.getByRole('separator', { name: 'Sidebar width' });

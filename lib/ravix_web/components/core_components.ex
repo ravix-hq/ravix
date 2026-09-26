@@ -515,6 +515,7 @@ defmodule RavixWeb.CoreComponents do
   attr :title, :string, required: true
   attr :on_close, :any, required: true, doc: "a JS command or the name of an event to push"
   attr :wide, :boolean, default: false, doc: "for a sheet of fields rather than a list of rows"
+  attr :initial_focus, :string, default: nil, doc: "selector to focus when the dialog opens"
   attr :rest, :global
   slot :inner_block, required: true
   slot :footer
@@ -535,7 +536,11 @@ defmodule RavixWeb.CoreComponents do
         phx-window-keydown={@close}
         phx-key="escape"
         phx-click-away={@close}
-        phx-mounted={JS.focus_first(to: "##{@id}-dialog")}
+        phx-mounted={
+          if @initial_focus,
+            do: JS.focus(to: @initial_focus),
+            else: JS.focus_first(to: "##{@id}-dialog")
+        }
       >
         <div class="dialog-head">
           <h2 id={"#{@id}-title"}>{@title}</h2>
