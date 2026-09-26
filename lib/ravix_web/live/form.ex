@@ -111,7 +111,14 @@ defmodule RavixWeb.Live.Form do
          apt: :string,
          pip: :string,
          npm: :string
-       }, %{"invalid_runtime" => :runtime, "invalid_model" => :model, "no_name" => :name}},
+       },
+       %{
+         "invalid_runtime" => :runtime,
+         "invalid_model" => :model,
+         "no_name" => :name,
+         "agent_not_connected" => :runtime,
+         "rebuild_required" => :runtime
+       }},
     secret:
       {%{store: :string, key: :string, value: :string},
        %{

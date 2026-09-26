@@ -4,11 +4,11 @@ import {mountHook, key} from './setup.js'
 
 beforeEach(() => {
   document.body.innerHTML = `<div class="dialog"><button aria-label="Close">Close</button>
-    <div id="settings" data-model-labels='{"model-a":"Model A","model-b":"Model B"}' data-save-version="0" data-save-state="" data-models='{"claude":["model-a","model-b"]}'>
+    <div id="settings" data-model-labels='{"model-a":"Model A","model-b":"Model B"}' data-saved-runtime="claude" data-save-version="0" data-save-state="" data-models='{"claude":["model-a","model-b"]}'>
     <button data-settings-section="general">General</button><button data-settings-section="agent">Agent</button>
     <p data-settings-feedback></p><button data-settings-discard hidden>Discard changes</button>
     <section data-settings-panel="general"><h3 tabindex="-1">General</h3><form><input id="name" value="Original"><input id="secret-value" type="password"><button class="primary">Save general</button></form></section>
-    <section data-settings-panel="agent" hidden><h3 tabindex="-1">Agent</h3><form><select id="settings-runtime"><option>claude</option></select><select id="settings-model"></select></form></section>
+    <section data-settings-panel="agent" hidden><h3 tabindex="-1">Agent</h3><form><select id="settings-runtime"><option selected>claude</option><option>codex</option></select><select id="settings-model"></select><button data-save-agent class="primary">Save agent</button><button data-switch-agent class="primary" hidden>Switch and rebuild</button></form></section>
     </div></div><button id="outside">Outside</button>`
 })
 
@@ -104,4 +104,38 @@ test('runtime changes and discarded edits use server model labels without changi
   hook.el.dataset.savedModel = 'openai/gpt-5.5'
   document.querySelector('[data-settings-discard]').click()
   expect(document.querySelector('#settings-model').value).toBe('openai/gpt-5.5')
+})
+
+
+test('runtime switches expose the explicit rebuild action and discard restores Save agent', () => {
+  const {hook} = mountHook(SettingsSections, '#settings')
+  hook.section = 'agent'
+  expect(document.querySelector('[data-switch-agent]').hidden).toBe(true)
+  document.querySelector('#settings-runtime').value = 'codex'
+  edit('#settings-runtime')
+  expect(document.querySelector('[data-save-agent]').hidden).toBe(true)
+  expect(document.querySelector('[data-switch-agent]').hidden).toBe(false)
+  document.querySelector('[data-settings-section=general]').click()
+  expect(document.activeElement).toBe(document.querySelector('[data-switch-agent]'))
+  document.querySelector('[data-settings-discard]').click()
+  expect(document.querySelector('[data-switch-agent]').hidden).toBe(true)
+  expect(document.querySelector('[data-save-agent]').hidden).toBe(false)
+})
+
+test('in-app switch confirmation blocks discard and navigation, then restores focus on Cancel', () => {
+  const {hook} = mountHook(SettingsSections, '#settings')
+  hook.section = 'agent'
+  document.querySelector('#settings-runtime').value = 'codex'
+  edit('#settings-runtime')
+  document.querySelector('[data-settings-panel=agent]').insertAdjacentHTML('beforeend', '<div id="agent-switch-confirmation"><button id="confirm-agent-switch">Rebuild and switch</button></div>')
+  hook.updated()
+  expect(document.querySelector('[data-settings-discard]').disabled).toBe(true)
+  expect(key(window, 'Escape').defaultPrevented).toBe(true)
+  expect(document.activeElement.id).toBe('confirm-agent-switch')
+  document.querySelector('[data-settings-section=general]').click()
+  expect(hook.section).toBe('agent')
+  document.querySelector('#agent-switch-confirmation').remove()
+  hook.updated()
+  expect(document.querySelector('[data-settings-discard]').disabled).toBe(false)
+  expect(document.activeElement).toBe(document.querySelector('[data-switch-agent]'))
 })

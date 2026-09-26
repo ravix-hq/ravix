@@ -2,6 +2,7 @@ defmodule Ravix.ProjectsTest do
   use Ravix.DataCase, async: true
   use Mimic
 
+  alias Ravix.Accounts.Inference
   alias Ravix.Fountain.{Client, FakeTransport}
   alias Ravix.Fountain.Shapes
   alias Ravix.GitHubFake, as: GH
@@ -1083,35 +1084,196 @@ defmodule Ravix.ProjectsTest do
       %{owner: owner, project: project, tracks: tracks}
     end
 
-    test "settings switch harness in place for future tracks", %{owner: owner, project: project} do
+    test "an owner without Codex cannot switch, even with rebuild confirmation", ctx do
       client =
         fountain([
-          {%{method: "GET", path: "/api/catalog"}, {200, [], %{data: @catalog}}},
-          {%{
-             method: "PUT",
-             path: "/api/agents/a",
-             body: %{runtime: "codex", model: "openai/test-model"}
-           }, {200, [], %{data: %{id: "a"}}}}
+          {%{method: "GET", path: "/api/catalog"}, {200, [], %{data: @catalog}}}
         ])
 
-      assert {:ok, %{rev: 2}} =
-               Projects.update_settings(owner, project.id, %{
+      reject(&Ravix.Fountain.update_agent/3)
+      reject(&Ravix.Fountain.delete_agent/2)
+
+      assert {:error, {:unprocessable, "agent_not_connected", _}} =
+               Projects.update_settings(ctx.owner, ctx.project.id, %{
+                 runtime: "codex",
+                 model: "openai/test-model",
+                 rebuild: true
+               })
+
+      assert Repo.get!(Project, ctx.project.id).runtime == "claude"
+      assert length(requests(client)) == 1
+    end
+
+    test "the owner check bypasses cached credentials and preserves provider errors", ctx do
+      owner = Repo.update!(Ecto.Changeset.change(ctx.owner, credential_set_id: "owner-set"))
+
+      client =
+        fountain([
+          {%{method: "GET", path: "/api/account/inference-credential-sets"},
+           {200, [], %{data: [%{id: "owner-set", providers: ["openai_api_key"]}]}}},
+          {%{method: "GET", path: "/api/catalog"}, {200, [], %{data: @catalog}}},
+          {%{method: "GET", path: "/api/account/inference-credential-sets"},
+           {200, [], %{data: [%{id: "owner-set", providers: []}]}}},
+          {%{method: "GET", path: "/api/catalog"}, {200, [], %{data: @catalog}}},
+          {%{method: "GET", path: "/api/account/inference-credential-sets"},
+           {:error, :econnrefused}}
+        ])
+
+      assert {:ok, [:codex]} = Inference.usable_agents(owner)
+      attrs = %{runtime: "codex", model: "openai/test-model", rebuild: true}
+
+      assert {:error, {:unprocessable, "agent_not_connected", _}} =
+               Projects.update_settings(owner, ctx.project.id, attrs)
+
+      assert {:error, %Ravix.Fountain.Error{}} =
+               Projects.update_settings(owner, ctx.project.id, attrs)
+
+      assert Enum.all?(requests(client), fn {method, _path} -> method == "GET" end)
+    end
+
+    test "a connected owner must explicitly authorize a rebuild", ctx do
+      expect(Inference, :usable?, fn owner, "codex", [fresh: true] ->
+        assert owner.id == ctx.owner.id
+        {:ok, true}
+      end)
+
+      client =
+        fountain([
+          {%{method: "GET", path: "/api/catalog"}, {200, [], %{data: @catalog}}}
+        ])
+
+      assert {:error, {:unprocessable, "rebuild_required", _}} =
+               Projects.update_settings(ctx.owner, ctx.project.id, %{
                  runtime: "codex",
                  model: "openai/test-model"
                })
 
-      assert %Project{
-               runtime: "codex",
-               model: "openai/test-model",
-               agent_id: "a",
-               environment_id: "e",
-               rev: 2
-             } =
-               Repo.get!(Project, project.id)
+      assert length(requests(client)) == 1
+    end
 
-      assert [%{rev: 1}, %{rev: 1}] = Projects.Store.open_tracks(project.id)
-      assert_received {:hub, %Event{name: :settings}}
+    for {from, target, model} <- [
+          {"claude", "codex", "openai/test-model"},
+          {"codex", "claude", "anthropic/claude-opus-5"}
+        ] do
+      test "switching #{from} to #{target} replaces the agent and closes tracks", ctx do
+        from = unquote(from)
+        target = unquote(target)
+        model = unquote(model)
+        Projects.Store.set_harness(ctx.project.id, from, "old-model")
+        owner = Repo.update!(Ecto.Changeset.change(ctx.owner, credential_set_id: "owner-set"))
+        stub(Ravix.Previews.Lifecycle, :retire_project, fn _ -> :ok end)
+        stub(Ravix.MachineCache, :forget_project, fn _ -> :ok end)
+        catalog = %{runtimes: [target], models: %{target => [model]}}
+
+        client =
+          fountain([
+            {%{method: "GET", path: "/api/catalog"}, {200, [], %{data: catalog}}},
+            {%{method: "GET", path: "/api/account/inference-credential-sets"},
+             {200, [],
+              %{data: [%{id: "owner-set", providers: ["openai_api_key", "anthropic_api_key"]}]}}},
+            {%{method: "GET", path: "/api/conversations"}, {200, [], %{data: []}}},
+            {%{method: "DELETE", path: "/api/agents/a"}, {204, [], nil}},
+            {%{method: "GET", path: "/api/catalog"}, {200, [], %{data: catalog}}},
+            {%{method: "POST", path: "/api/agents"}, {201, [], %{data: %{id: "new-agent"}}}},
+            {%{method: "PUT", path: "/api/agents/new-agent"},
+             {200, [], %{data: %{id: "new-agent"}}}}
+          ])
+
+        assert {:ok, %{rev: 2}} =
+                 Projects.update_settings(owner, ctx.project.id, %{
+                   runtime: target,
+                   model: model,
+                   rebuild: true,
+                   instructions: "New instructions"
+                 })
+
+        assert %Project{
+                 runtime: ^target,
+                 model: ^model,
+                 agent_id: "new-agent",
+                 environment_id: "e",
+                 vault_id: "v",
+                 credential_set_id: "owner-set",
+                 rev: 2
+               } =
+                 Repo.get!(Project, ctx.project.id)
+
+        assert %{"runtime" => ^target, "model" => ^model} = body_of(client, "POST", "/api/agents")
+        assert Projects.Store.open_tracks(ctx.project.id) == []
+
+        assert body_of(client, "POST", "/api/agents")["inference_credential_id"] ==
+                 "owner-set"
+
+        assert_received {:hub, %Event{name: :settings}}
+      end
+    end
+
+    test "a failed replacement can be retried without saving a broken harness", ctx do
+      stub(Inference, :usable?, fn _, "codex", [fresh: true] -> {:ok, true} end)
+      stub(Ravix.Previews.Lifecycle, :retire_project, fn _ -> :ok end)
+      stub(Ravix.MachineCache, :forget_project, fn _ -> :ok end)
+
+      client =
+        fountain([
+          {%{method: "GET", path: "/api/catalog"}, {200, [], %{data: @catalog}}},
+          {%{method: "GET", path: "/api/conversations"}, {200, [], %{data: []}}},
+          {%{method: "DELETE", path: "/api/agents/a"}, {204, [], nil}},
+          {%{method: "GET", path: "/api/catalog"}, {200, [], %{data: @catalog}}},
+          {%{method: "POST", path: "/api/agents"}, {503, [], %{error: "unavailable"}}},
+          {%{method: "GET", path: "/api/catalog"}, {200, [], %{data: @catalog}}},
+          {%{method: "GET", path: "/api/conversations"}, {200, [], %{data: []}}},
+          {%{method: "DELETE", path: "/api/agents/a"}, {404, [], %{error: "not_found"}}},
+          {%{method: "GET", path: "/api/catalog"}, {200, [], %{data: @catalog}}},
+          {%{method: "POST", path: "/api/agents"}, {201, [], %{data: %{id: "replacement"}}}}
+        ])
+
+      attrs = %{runtime: "codex", model: "openai/test-model", rebuild: true}
+
+      assert {:error, %Ravix.Fountain.Error{status: 503}} =
+               Projects.update_settings(ctx.owner, ctx.project.id, attrs)
+
+      assert %Project{runtime: "claude", rev: 1} = Repo.get!(Project, ctx.project.id)
+      assert {:ok, %{rev: 2}} = Projects.update_settings(ctx.owner, ctx.project.id, attrs)
+      assert Repo.get!(Project, ctx.project.id).agent_id == "replacement"
+      refute Enum.any?(requests(client), fn {method, _} -> method == "PUT" end)
+    end
+
+    test "connected owners can change just the model without rebuilding", ctx do
+      stub(Inference, :usable?, fn _, "claude", [fresh: true] -> {:ok, true} end)
+
+      client =
+        fountain([
+          {%{method: "GET", path: "/api/catalog"},
+           {200, [], %{data: %{runtimes: ["claude"], models: %{claude: ["new-model"]}}}}},
+          {%{
+             method: "PUT",
+             path: "/api/agents/a",
+             body: %{runtime: "claude", model: "new-model"}
+           }, {200, [], %{data: %{id: "a"}}}}
+        ])
+
+      assert {:ok, %{rev: 2}} =
+               Projects.update_settings(ctx.owner, ctx.project.id, %{model: "new-model"})
+
+      assert %Project{agent_id: "a", model: "new-model"} = Repo.get!(Project, ctx.project.id)
+      assert length(Projects.Store.open_tracks(ctx.project.id)) == 2
       assert length(requests(client)) == 2
+    end
+
+    test "catalog runtimes outside product support are refused", ctx do
+      fountain([
+        {%{method: "GET", path: "/api/catalog"},
+         {200, [], %{data: %{runtimes: ["gemini"], models: %{gemini: ["gemini-model"]}}}}}
+      ])
+
+      reject(&Inference.usable?/3)
+
+      assert {:error, {:unprocessable, "invalid_runtime", _}} =
+               Projects.update_settings(ctx.owner, ctx.project.id, %{
+                 runtime: "gemini",
+                 model: "gemini-model",
+                 rebuild: true
+               })
     end
 
     test "invalid harness/model pairs are rejected before any settings change", %{
@@ -1170,15 +1332,18 @@ defmodule Ravix.ProjectsTest do
       owner: owner,
       project: project
     } do
+      stub(Inference, :usable?, fn _, "claude", [fresh: true] -> {:ok, true} end)
+
       fountain([
-        {%{method: "GET", path: "/api/catalog"}, {200, [], %{data: @catalog}}},
+        {%{method: "GET", path: "/api/catalog"},
+         {200, [], %{data: %{runtimes: ["claude"], models: %{claude: ["new-model"]}}}}},
         {%{method: "PUT", path: "/api/agents/a"}, {:error, :econnrefused}}
       ])
 
       assert {:error, %Ravix.Fountain.Error{} = error} =
                Projects.update_settings(owner, project.id, %{
-                 runtime: "codex",
-                 model: "openai/test-model"
+                 runtime: "claude",
+                 model: "new-model"
                })
 
       assert Ravix.Fountain.Error.unreachable?(error)

@@ -65,6 +65,7 @@ interface Conv {
 }
 
 interface Box {
+  runtime: string;
   id: string;
   sprite_name: string;
   status: string;
@@ -807,6 +808,8 @@ async function fountain(req: Request, url: URL): Promise<Response | null> {
     const agentId = b.agent_id;
     if (!agentId) return json({ error: "validation_failed", errors: { agent_id: ["can't be blank"] } }, 422);
 
+    const agent = state.agents.find((a) => a.id === agentId) as { runtime?: string } | undefined;
+    const runtime = agent?.runtime ?? "claude";
     let box = state.boxes.get(agentId);
     if (b.sandbox_id) {
       // The rule that costs the most to get wrong, so the fake enforces it.
@@ -823,8 +826,14 @@ async function fountain(req: Request, url: URL): Promise<Response | null> {
           422,
         );
       }
+      // Fountain Machines.Binding.attachable/5 refuses the old disk after
+      // an agent runtime edit. A PUT alone does not make a switch work.
+      if (box.runtime !== runtime) {
+        return json({ error: "sandbox_runtime_mismatch" }, 422);
+      }
     } else if (!box) {
       box = {
+        runtime,
         id: `sb-${agentId}`,
         sprite_name: `ravix-${Math.random().toString(36).slice(2, 8)}`,
         status: "ready",
@@ -838,7 +847,6 @@ async function fountain(req: Request, url: URL): Promise<Response | null> {
       state.boxes.set(agentId, box);
     }
 
-    const agent = state.agents.find((a) => a.id === agentId) as { runtime?: string } | undefined;
     const conv: Conv = {
       id: `c${state.conversations.length + 1}-${Math.random().toString(36).slice(2, 8)}`,
       title: b.title ?? null,

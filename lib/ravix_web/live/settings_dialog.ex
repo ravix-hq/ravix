@@ -14,6 +14,7 @@ defmodule RavixWeb.Live.SettingsDialog do
   alias Ravix.Previews
   alias Ravix.Projects
   alias Ravix.Projects.Machine.Rebuild
+  alias Ravix.Tracks
   alias RavixWeb.Live.Form
   alias RavixWeb.Live.Hooks
   alias RavixWeb.Live.Params
@@ -30,6 +31,8 @@ defmodule RavixWeb.Live.SettingsDialog do
          pending: MapSet.new(),
          save_state: "",
          save_version: 0,
+         switching_agent: false,
+         switch_confirmation: nil,
          confirmations: %{}
        )}
 
@@ -54,16 +57,46 @@ defmodule RavixWeb.Live.SettingsDialog do
       |> Map.take(~w(name runtime model instructions setup_script))
       |> put_packages(params)
 
-    user = user(socket)
-    id = project_id(socket)
+    switching =
+      is_binary(attrs["runtime"]) and attrs["runtime"] != socket.assigns.settings.runtime
 
-    {:noreply,
-     socket
-     |> assign(
-       settings_form: Form.new(:settings, Map.merge(socket.assigns.settings_form.params, params))
-     )
-     |> begin(:settings, fn -> Projects.update_settings(user, id, attrs) end)}
+    socket =
+      assign(socket,
+        switching_agent: switching,
+        switch_confirmation: nil,
+        settings_form: Form.new(:settings, Map.merge(socket.assigns.settings_form.params, params))
+      )
+
+    if switching do
+      user = user(socket)
+      id = project_id(socket)
+
+      {:noreply,
+       begin(socket, :switch_preview, fn ->
+         with {:ok, tracks} <- Tracks.list(user, id) do
+           {:ok, %{attrs: attrs, count: length(tracks)}}
+         end
+       end)}
+    else
+      {:noreply, save_settings(socket, attrs)}
+    end
   end
+
+  defp settings_event("confirm-agent-switch", _, socket) do
+    case socket.assigns.switch_confirmation do
+      %{attrs: attrs} ->
+        {:noreply,
+         socket
+         |> assign(switch_confirmation: nil)
+         |> save_settings(Map.put(attrs, "rebuild", true))}
+
+      nil ->
+        {:noreply, socket}
+    end
+  end
+
+  defp settings_event("cancel-agent-switch", _, socket),
+    do: {:noreply, assign(socket, switch_confirmation: nil)}
 
   defp settings_event("save-secret", %{"secret" => params}, socket) do
     # The store and the key go back into the form so a refusal can be
@@ -132,7 +165,11 @@ defmodule RavixWeb.Live.SettingsDialog do
          # The name may have changed, so the rail is wrong until the page
          # re-reads it. Saying so is this dialog's part; what to re-read is
          # the page's.
-         send(self(), :project_settings_saved)
+         if s.assigns.switching_agent do
+           send(self(), :project_left_behind)
+         else
+           send(self(), :project_settings_saved)
+         end
 
          s
          |> load()
@@ -144,6 +181,13 @@ defmodule RavixWeb.Live.SettingsDialog do
        end,
        :settings_form
      )}
+  end
+
+  defp async_result(:switch_preview, {:ok, response}, socket) do
+    {:noreply,
+     result(settle(socket, :switch_preview), response, fn s, confirmation ->
+       assign(s, switch_confirmation: confirmation, save_state: "")
+     end)}
   end
 
   defp async_result(:secret, {:ok, response}, socket) do
@@ -170,6 +214,12 @@ defmodule RavixWeb.Live.SettingsDialog do
     do: {:noreply, socket |> settle(name) |> exit(reason)}
 
   # ── what is out ───────────────────────────────────────────────────────
+
+  defp save_settings(socket, attrs) do
+    user = user(socket)
+    id = project_id(socket)
+    begin(socket, :settings, fn -> Projects.update_settings(user, id, attrs) end)
+  end
 
   # One of the dialog's three writes, started off this process and named in
   # `pending` until its answer or its exit settles it.
@@ -339,6 +389,7 @@ defmodule RavixWeb.Live.SettingsDialog do
           data-models={Jason.encode!(@settings.catalog.models)}
           data-model-labels={Jason.encode!(model_labels(@settings.catalog, @settings.model))}
           data-saved-model={@settings.model}
+          data-saved-runtime={@settings.runtime}
         >
           <nav class="settings-nav" aria-label="Settings sections">
             <button
@@ -404,7 +455,7 @@ defmodule RavixWeb.Live.SettingsDialog do
             >
               <h3 id="settings-agent-title" tabindex="-1">Agent</h3>
               <p class="settings-help">
-                Choose how the agent works. Applies to tracks opened after you save; open tracks keep their settings.
+                Switching agents rebuilds the machine, closes every track and loses unpushed work on its disk. Model and instruction changes apply to new tracks.
               </p>
               <.form
                 :let={f}
@@ -416,6 +467,9 @@ defmodule RavixWeb.Live.SettingsDialog do
                 <.input
                   field={f[:runtime]}
                   id="settings-runtime"
+                  disabled={
+                    @switch_confirmation != nil or (@switching_agent and MapSet.size(@pending) > 0)
+                  }
                   label="Agent"
                   type="select"
                   options={
@@ -429,6 +483,9 @@ defmodule RavixWeb.Live.SettingsDialog do
                 <.input
                   field={f[:model]}
                   id="settings-model"
+                  disabled={
+                    @switch_confirmation != nil or (@switching_agent and MapSet.size(@pending) > 0)
+                  }
                   label="Model"
                   type="select"
                   options={
@@ -446,6 +503,9 @@ defmodule RavixWeb.Live.SettingsDialog do
                   type="textarea"
                   field={f[:instructions]}
                   id="settings-instructions"
+                  disabled={
+                    @switch_confirmation != nil or (@switching_agent and MapSet.size(@pending) > 0)
+                  }
                   label="Instructions"
                   rows="7"
                   aria-describedby="settings-instructions-help"
@@ -453,8 +513,47 @@ defmodule RavixWeb.Live.SettingsDialog do
                 <p id="settings-instructions-help" class="settings-help">
                   Extra guidance for every new track, alongside Ravix’s instructions. For example: “Run focused tests before committing. Explain any accessibility changes.”
                 </p>
-                <button class="primary" phx-disable-with="Saving…" disabled={:settings in @pending}>Save agent</button>
+                <button
+                  data-save-agent
+                  class="primary"
+                  phx-disable-with="Saving…"
+                  disabled={:settings in @pending}
+                >Save agent</button>
+                <button
+                  data-switch-agent
+                  class="primary"
+                  phx-disable-with="Checking tracks…"
+                  disabled={MapSet.size(@pending) > 0 or @switch_confirmation != nil}
+                  hidden
+                >
+                  Switch and rebuild
+                </button>
               </.form>
+              <div
+                :if={@switch_confirmation}
+                id="agent-switch-confirmation"
+                role="group"
+                aria-label="Confirm agent switch"
+              >
+                <p>
+                  This closes {@switch_confirmation.count} open {if @switch_confirmation.count == 1,
+                    do: "track",
+                    else: "tracks"} and discards the machine's disk, including unpushed work.
+                </p>
+                <button
+                  id="confirm-agent-switch"
+                  class="primary"
+                  phx-click="confirm-agent-switch"
+                  phx-target={@myself}
+                  phx-mounted={Phoenix.LiveView.JS.focus()}
+                  disabled={MapSet.size(@pending) > 0}
+                >
+                  Rebuild and switch
+                </button>
+                <button type="button" phx-click="cancel-agent-switch" phx-target={@myself}>
+                  Cancel
+                </button>
+              </div>
             </section>
             <section
               id="settings-section-environment"

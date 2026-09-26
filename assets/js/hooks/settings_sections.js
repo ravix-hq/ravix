@@ -60,6 +60,8 @@ export const SettingsSections = {
     this.showSection()
   },
   updated() {
+    const wasConfirming = this.confirmingSwitch
+    this.confirmingSwitch = !!this.el.querySelector('#agent-switch-confirmation')
     if (this.version !== this.el.dataset.saveVersion) {
       this.version = this.el.dataset.saveVersion
       this.dirty = false
@@ -70,16 +72,24 @@ export const SettingsSections = {
       this.el.querySelector('#secret-value').value = ''
     }
     this.showSection()
+    if (wasConfirming && !this.confirmingSwitch && this.el.dataset.saveState !== 'saving') {
+      this.el.querySelector('[data-switch-agent]')?.focus()
+    }
     if (this.dirty && !this.el.dataset.saveState) this.feedback('Unsaved changes')
   },
   mayLeave() {
+    if (this.el.querySelector('#agent-switch-confirmation')) {
+      this.feedback('Confirm or cancel the agent switch before leaving.')
+      this.el.querySelector('#confirm-agent-switch')?.focus()
+      return false
+    }
     if (this.el.dataset.saveState === 'saving') {
       this.feedback('Saving… Wait for this save to finish before leaving.')
       return false
     }
     if (this.dirty) {
       this.feedback('Save this section or discard your changes before leaving.')
-      this.el.querySelector(`[data-settings-panel="${this.section}"] form button.primary`)?.focus()
+      this.el.querySelector(`[data-settings-panel="${this.section}"] form button.primary:not([hidden])`)?.focus()
       return false
     }
     return true
@@ -100,9 +110,16 @@ export const SettingsSections = {
     this.el.querySelector('[data-settings-feedback]').textContent = text
   },
   showSection() {
+    const runtime = this.el.querySelector('#settings-runtime')
+    const switching = runtime?.value !== this.el.dataset.savedRuntime
+    const save = this.el.querySelector('[data-save-agent]')
+    const rebuild = this.el.querySelector('[data-switch-agent]')
+    if (save) save.hidden = switching
+    if (rebuild) rebuild.hidden = !switching
+
     const discard = this.el.querySelector('[data-settings-discard]')
     discard.hidden = !this.dirty
-    discard.disabled = this.el.dataset.saveState === 'saving'
+    discard.disabled = this.el.dataset.saveState === 'saving' || !!this.el.querySelector('#agent-switch-confirmation')
 
     this.el.querySelectorAll('[data-settings-panel]').forEach(panel => {
       panel.hidden = panel.dataset.settingsPanel !== this.section

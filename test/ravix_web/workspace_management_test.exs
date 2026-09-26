@@ -111,7 +111,7 @@ defmodule RavixWeb.WorkspaceManagementTest do
       assert has_element?(ctx.view, "#new-project-dialog [role=status]", "Loading GitHub")
       assert has_element?(ctx.view, "#project-repo[disabled]")
       send(task, :finish)
-      render_async(ctx.view)
+      render_async(ctx.view, 1_000)
       refute has_element?(ctx.view, "#new-project-dialog .loading-status")
       refute has_element?(ctx.view, "#project-repo[disabled]")
     end
@@ -214,6 +214,10 @@ defmodule RavixWeb.WorkspaceManagementTest do
   end
 
   test "branch validation errors keep the entered name beside the fixed prefix", ctx do
+    # The mount-time rail may still be loading when this test enables Fountain.
+    # Keep that read local too, rather than racing a request to fountain.test.
+    stub(Ravix.MachineCache, :conversations, fn _, _, _ -> {:ok, []} end)
+
     stub(Ravix.Fountain, :client, fn ->
       Client.new("https://fountain.test", "key")
     end)
@@ -325,6 +329,79 @@ defmodule RavixWeb.WorkspaceManagementTest do
     assert has_element?(ctx.view, "#settings-name[value=Renamed]")
   end
 
+  test "agent switch counts only this project's open tracks and Cancel makes no write", ctx do
+    insert_track(project: ctx.project)
+    insert_track(project: ctx.project)
+    closed = insert_track(project: ctx.project)
+    closed |> Ecto.Changeset.change(closed_at: DateTime.utc_now()) |> Repo.update!()
+    insert_track()
+    stub(Ravix.MachineCache, :conversations, fn _, _, _ -> {:ok, []} end)
+    settings(ctx)
+    parent = self()
+
+    expect(Projects, :update_settings, fn caller, id, attrs ->
+      assert caller.id == ctx.user.id
+      assert id == ctx.project.id
+      assert attrs["runtime"] == "codex"
+      assert attrs["rebuild"] == true
+      send(parent, :switched)
+      {:error, {:unprocessable, "agent_not_connected", "Connect first."}}
+    end)
+
+    for _ <- 1..2 do
+      ctx.view |> form("#agent-settings-form") |> render_submit(%{settings: %{runtime: "codex"}})
+      render_async(ctx.view)
+      assert has_element?(ctx.view, "#agent-switch-confirmation", "This closes 2 open tracks")
+      refute_receive :switched, 0
+      ctx.view |> element("#agent-switch-confirmation button", "Cancel") |> render_click()
+      refute has_element?(ctx.view, "#agent-switch-confirmation")
+      assert has_element?(ctx.view, "#settings-runtime option[value=codex][selected]")
+    end
+
+    ctx.view |> form("#agent-settings-form") |> render_submit(%{settings: %{runtime: "codex"}})
+    render_async(ctx.view)
+    ctx.view |> element("#confirm-agent-switch") |> render_click()
+    render_async(ctx.view)
+    assert_receive :switched
+  end
+
+  test "a revoked session cannot confirm an agent switch", ctx do
+    {token, session} = insert_session(ctx.user)
+    conn = Plug.Test.init_test_session(ctx.conn, session_token: token)
+    {:ok, view, _} = live(conn, "/p/#{ctx.project.id}")
+    settings(%{ctx | view: view})
+    reject(&Projects.update_settings/3)
+    view |> form("#agent-settings-form") |> render_submit(%{settings: %{runtime: "codex"}})
+    render_async(view)
+    assert has_element?(view, "#agent-switch-confirmation", "This closes 0 open tracks")
+    Repo.delete!(session)
+
+    assert {:error, {:redirect, %{to: "/login"}}} =
+             view |> element("#confirm-agent-switch") |> render_click()
+  end
+
+  test "an owner without Codex gets a Harness field error without a provider mutation", ctx do
+    catalog = %Catalog{runtimes: ["claude", "codex"], models: %{"codex" => ["openai/test-model"]}}
+    settings(ctx, catalog: catalog)
+    stub(Ravix.MachineCache, :conversations, fn _, _, _ -> {:ok, []} end)
+    stub(Ravix.Fountain, :client, fn -> Client.new("https://fountain.test", "key") end)
+    expect(Ravix.Fountain, :catalog, fn _ -> {:ok, catalog} end)
+    reject(&Ravix.Fountain.update_agent/3)
+    reject(&Ravix.Fountain.delete_agent/2)
+
+    ctx.view
+    |> form("#agent-settings-form")
+    |> render_submit(%{
+      settings: %{runtime: "codex", model: "openai/test-model", rebuild: "true"}
+    })
+
+    render_async(ctx.view)
+    ctx.view |> element("#confirm-agent-switch") |> render_click()
+    render_async(ctx.view)
+    assert has_element?(ctx.view, "#settings-runtime ~ p.error", "Connect this agent")
+    assert Repo.get!(Ravix.Projects.Project, ctx.project.id).runtime == ctx.project.runtime
+  end
+
   test "an unavailable harness is refused on the box it is about", ctx do
     settings(ctx)
 
@@ -335,7 +412,9 @@ defmodule RavixWeb.WorkspaceManagementTest do
     # pointed nowhere.
     for {code, message, id} <- [
           {"invalid_runtime", "Choose an agent this deployment offers.", "#settings-runtime"},
-          {"invalid_model", "Choose one of this agent's models.", "#settings-model"}
+          {"invalid_model", "Choose one of this agent's models.", "#settings-model"},
+          {"agent_not_connected", "Connect this agent first.", "#settings-runtime"},
+          {"rebuild_required", "Choose Switch and rebuild.", "#settings-runtime"}
         ] do
       expect(Projects, :update_settings, fn _, _, _ ->
         {:error, {:unprocessable, code, message}}
@@ -345,6 +424,8 @@ defmodule RavixWeb.WorkspaceManagementTest do
       |> form("#agent-settings-form")
       |> render_submit(%{settings: %{runtime: "made-up", model: "also-made-up"}})
 
+      render_async(ctx.view)
+      ctx.view |> element("#confirm-agent-switch") |> render_click()
       render_async(ctx.view)
       assert has_element?(ctx.view, "#agent-settings-form .field p.error", message)
 

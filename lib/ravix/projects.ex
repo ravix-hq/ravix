@@ -251,7 +251,7 @@ defmodule Ravix.Projects do
   end
 
   @doc """
-  Save the settings dialog: every field a mutation in place. Owner only.
+  Save the settings dialog. Runtime switches require `rebuild: true`; owner only.
 
   The revision is bumped whenever something Fountain injects at *session*
   start changes, which is not the same set as "things that changed". A setup
