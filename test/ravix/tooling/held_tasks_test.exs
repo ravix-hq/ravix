@@ -47,6 +47,26 @@ defmodule Ravix.Tooling.HeldTasksTest do
     assert ids == [c.head.id, c.next.id]
   end
 
+  test "legacy state acknowledgements do not repeatedly report an unchanged blocked task", c do
+    Store.set_status(c.head.id, :unconfirmed, "Check the transcript.")
+
+    args = %{
+      "task_ids" => [c.next.id],
+      "since" => %{c.next.id => "TASK_STATE_SUBMITTED"},
+      "timeout_ms" => 0
+    }
+
+    for _ <- 1..2 do
+      assert {:ok, %{changed: [], tasks: [next]}} = Tooling.call(c.p, "wait_task", args)
+      assert next.status.state == "TASK_STATE_SUBMITTED"
+      assert hd(next.status.message.parts).text =~ c.head.id
+    end
+
+    assert {:ok, _} = Tasks.cancel(c.p, c.next.id)
+    assert {:ok, %{changed: [id]}} = Tooling.call(c.p, "wait_task", args)
+    assert id == c.next.id
+  end
+
   test "a queue transition wakes an active waiter even when a blocked task stays submitted", c do
     {:ok, before} = Tasks.get(c.p, c.next.id)
 
