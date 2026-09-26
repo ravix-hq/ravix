@@ -79,7 +79,7 @@ export const SettingsSections = {
     }
     if (this.dirty) {
       this.feedback('Save this section or discard your changes before leaving.')
-      this.el.querySelector(`[data-settings-panel="${this.section}"] form button.primary`)?.focus()
+      this.el.querySelector(`[data-settings-panel="${this.section}"] form button.primary:not([hidden])`)?.focus()
       return false
     }
     return true
@@ -100,6 +100,13 @@ export const SettingsSections = {
     this.el.querySelector('[data-settings-feedback]').textContent = text
   },
   showSection() {
+    const runtime = this.el.querySelector('#settings-runtime')
+    const switching = runtime?.value !== this.el.dataset.savedRuntime
+    const save = this.el.querySelector('[data-save-agent]')
+    const rebuild = this.el.querySelector('[data-switch-agent]')
+    if (save) save.hidden = switching
+    if (rebuild) rebuild.hidden = !switching
+
     const discard = this.el.querySelector('[data-settings-discard]')
     discard.hidden = !this.dirty
     discard.disabled = this.el.dataset.saveState === 'saving'

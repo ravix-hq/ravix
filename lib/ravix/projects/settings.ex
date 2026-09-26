@@ -1,6 +1,17 @@
 defmodule Ravix.Projects.Settings do
   @moduledoc """
-  What a project's settings panel edits. Every field is a mutation in place.
+  What a project's settings panel edits.
+
+  Runtime switches require an explicit rebuild; model edits stay in place.
+  Investigated against Fountain a7b9dc6f (2026-09-26): Agents.update_agent
+  changes the record, but Machines.Binding.attachable/5 refuses a machine
+  whose runtime differs (`sandbox_runtime_mismatch`), in either direction.
+  Codex's shared auth-file binding also survives conversation termination.
+  Our mock previously accepted the mismatched attach and hid this failure.
+  Switching therefore retires the agent/machine through Machine.rebuild/2,
+  closing tracks and discarding the disk, before saving the new harness.
+  A failed replacement leaves the old selection so the explicit switch can
+  be retried (rebuild tolerates an already deleted agent).
 
   The panel shows the harness (runtime and model, against Fountain's
   catalog), the name, the setup script and packages of the environment, the
@@ -10,6 +21,7 @@ defmodule Ravix.Projects.Settings do
   revision is bumped only for the ones Fountain injects at session start.
   """
 
+  alias Ravix.Accounts.Inference
   alias Ravix.Fountain
   alias Ravix.Fountain.Shapes.Catalog
   alias Ravix.Projects
@@ -66,6 +78,7 @@ defmodule Ravix.Projects.Settings do
   @attrs %{
     name: :string,
     runtime: :string,
+    rebuild: :boolean,
     model: :string,
     instructions: :string,
     setup_script: :string,
@@ -115,7 +128,8 @@ defmodule Ravix.Projects.Settings do
   @doc """
   Apply a settings change and answer the resulting revision.
 
-  `attrs` (string or atom keys), each optional: `runtime` and `model`
+  `attrs` (string or atom keys), each optional: `rebuild: true` explicitly
+  authorizes a runtime switch and disk replacement; `runtime` and `model`
   (validated together against the catalog, then set on the agent), `name`,
   `setup_script` and `packages` (the environment), `instructions` (the
   agent's system prompt), and `secret` as `%{store: "vault" | "env", key,
@@ -130,7 +144,7 @@ defmodule Ravix.Projects.Settings do
   @spec update(Project.t(), map(), Fountain.Client.t()) :: {:ok, integer()} | {:error, term()}
   def update(%Project{} = project, attrs, client) do
     with {:ok, change} <- cast_attrs(attrs),
-         {:ok, bumps} <- harness(project, change, client),
+         {:ok, project, bumps} <- harness(project, change, client),
          :ok <- rename(project, change),
          :ok <- environment(project, change, client),
          {:ok, bumps} <- instructions(project, change, client, bumps),
@@ -184,16 +198,55 @@ defmodule Ravix.Projects.Settings do
     model = Map.get(change, :model, project.model)
 
     if runtime == project.runtime and model == project.model do
-      {:ok, false}
+      {:ok, project, false}
     else
       with {:ok, catalog} <- Fountain.catalog(client),
            :ok <- validate_harness(catalog, runtime, model),
-           {:ok, _agent} <-
-             Fountain.update_agent(client, project.agent_id, %{runtime: runtime, model: model}) do
-        Projects.Store.set_harness(project.id, runtime, model)
-        {:ok, true}
+           :ok <- usable(project, runtime),
+           {:ok, project} <- save_harness(project, runtime, model, change, client) do
+        {:ok, project, true}
       end
     end
+  end
+
+  # ownership: Settings.update/3 is behind Access.project_of/2. Always read
+  # the project's owner, never a teammate's choice or cached connectivity.
+  defp usable(project, runtime) do
+    owner = Ravix.Accounts.Store.get_user(project.user_id)
+
+    case Inference.usable?(owner, runtime, fresh: true) do
+      {:ok, true} ->
+        :ok
+
+      {:ok, false} ->
+        {:error,
+         {:unprocessable, "agent_not_connected",
+          "Connect this agent in the project owner's account before selecting it."}}
+
+      {:error, _} = error ->
+        error
+    end
+  end
+
+  defp save_harness(%{runtime: runtime} = project, runtime, model, _change, client) do
+    with {:ok, _} <-
+           Fountain.update_agent(client, project.agent_id, %{runtime: runtime, model: model}) do
+      Projects.Store.set_harness(project.id, runtime, model)
+      {:ok, %{project | model: model}}
+    end
+  end
+
+  defp save_harness(project, runtime, model, %{rebuild: true}, client) do
+    with {:ok, _} <- Projects.Machine.rebuild(%{project | runtime: runtime, model: model}, client) do
+      Projects.Store.set_harness(project.id, runtime, model)
+      {:ok, Projects.Store.get_project(project.id)}
+    end
+  end
+
+  defp save_harness(_project, _runtime, _model, _change, _client) do
+    {:error,
+     {:unprocessable, "rebuild_required",
+      "Switching agents closes every track and discards the machine's disk. Choose Switch and rebuild."}}
   end
 
   # Two refusals rather than one, because they are about two boxes. The
@@ -205,7 +258,7 @@ defmodule Ravix.Projects.Settings do
   defp validate_harness(%Catalog{} = catalog, runtime, model)
        when is_binary(runtime) and is_binary(model) do
     cond do
-      runtime not in catalog.runtimes -> invalid_runtime()
+      runtime not in ~w(claude codex) or runtime not in catalog.runtimes -> invalid_runtime()
       model not in Catalog.models_for(catalog, runtime) -> invalid_model()
       true -> :ok
     end

@@ -30,6 +30,7 @@ defmodule RavixWeb.Live.SettingsDialog do
          pending: MapSet.new(),
          save_state: "",
          save_version: 0,
+         switching_agent: false,
          confirmations: %{}
        )}
 
@@ -51,7 +52,7 @@ defmodule RavixWeb.Live.SettingsDialog do
   defp settings_event("save-settings", %{"settings" => params}, socket) do
     attrs =
       params
-      |> Map.take(~w(name runtime model instructions setup_script))
+      |> Map.take(~w(name runtime model instructions setup_script rebuild))
       |> put_packages(params)
 
     user = user(socket)
@@ -60,6 +61,8 @@ defmodule RavixWeb.Live.SettingsDialog do
     {:noreply,
      socket
      |> assign(
+       switching_agent:
+         is_binary(attrs["runtime"]) and attrs["runtime"] != socket.assigns.settings.runtime,
        settings_form: Form.new(:settings, Map.merge(socket.assigns.settings_form.params, params))
      )
      |> begin(:settings, fn -> Projects.update_settings(user, id, attrs) end)}
@@ -132,7 +135,11 @@ defmodule RavixWeb.Live.SettingsDialog do
          # The name may have changed, so the rail is wrong until the page
          # re-reads it. Saying so is this dialog's part; what to re-read is
          # the page's.
-         send(self(), :project_settings_saved)
+         if s.assigns.switching_agent do
+           send(self(), :project_left_behind)
+         else
+           send(self(), :project_settings_saved)
+         end
 
          s
          |> load()
@@ -339,6 +346,7 @@ defmodule RavixWeb.Live.SettingsDialog do
           data-models={Jason.encode!(@settings.catalog.models)}
           data-model-labels={Jason.encode!(model_labels(@settings.catalog, @settings.model))}
           data-saved-model={@settings.model}
+          data-saved-runtime={@settings.runtime}
         >
           <nav class="settings-nav" aria-label="Settings sections">
             <button
@@ -404,7 +412,7 @@ defmodule RavixWeb.Live.SettingsDialog do
             >
               <h3 id="settings-agent-title" tabindex="-1">Agent</h3>
               <p class="settings-help">
-                Choose how the agent works. Applies to tracks opened after you save; open tracks keep their settings.
+                Switching agents rebuilds the machine, closes every track and loses unpushed work on its disk. Model and instruction changes apply to new tracks.
               </p>
               <.form
                 :let={f}
@@ -453,7 +461,24 @@ defmodule RavixWeb.Live.SettingsDialog do
                 <p id="settings-instructions-help" class="settings-help">
                   Extra guidance for every new track, alongside Ravix’s instructions. For example: “Run focused tests before committing. Explain any accessibility changes.”
                 </p>
-                <button class="primary" phx-disable-with="Saving…" disabled={:settings in @pending}>Save agent</button>
+                <button
+                  data-save-agent
+                  class="primary"
+                  phx-disable-with="Saving…"
+                  disabled={:settings in @pending}
+                >Save agent</button>
+                <button
+                  data-switch-agent
+                  class="primary"
+                  name="settings[rebuild]"
+                  value="true"
+                  data-confirm="Switch agents and rebuild? Every track will close and unpushed work on the machine will be lost."
+                  phx-disable-with="Rebuilding…"
+                  disabled={:settings in @pending}
+                  hidden
+                >
+                  Switch and rebuild
+                </button>
               </.form>
             </section>
             <section
