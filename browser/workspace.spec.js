@@ -974,8 +974,9 @@ test('composer Send stays compact and keeps its arrow after repeated submissions
   await chooseTheme(page, 'Bubblegum');
   // Sending previously destroyed the SVG. Exercise both mouse and Enter, and
   // inspect during the LiveView acknowledgement window as well as afterwards.
-  await page.evaluate(() => window.liveSocket.enableLatencySim(200));
+  let completedAnswers = await page.locator('#transcript-turns .turn-footer').count();
   for (const method of ['click', 'Enter']) {
+    await page.evaluate(() => window.liveSocket.enableLatencySim(200));
     await composer.fill(`Send regression ${method}`);
     if (method === 'click') await send.click();
     else await composer.press('Enter');
@@ -984,6 +985,11 @@ test('composer Send stays compact and keeps its arrow after repeated submissions
     await expect(composer).toHaveValue('');
     await expect(send).toBeEnabled();
     await checkSend();
+    await page.evaluate(() => window.liveSocket.disableLatencySim());
+    // Acknowledgement clears the input before the agent finishes. Keep this
+    // button-rendering regression sequential instead of queuing another turn.
+    await expect(page.locator('#transcript-turns .turn-footer')).toHaveCount(++completedAnswers, { timeout: 30_000 });
+    await expect(page.locator('#composer-form').getByRole('button', { name: 'Stop', exact: true })).toHaveCount(0, { timeout: 30_000 });
   }
   await page.evaluate(() => window.liveSocket.disableLatencySim());
   await expect(page.locator('#transcript-turns')).toContainText('Send regression Enter');
