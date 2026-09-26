@@ -1,7 +1,6 @@
 defmodule RavixWeb.Live.MachineDock do
   @moduledoc """
-  The strip along the bottom of a track: a terminal, the preview's output,
-  and the machine's metrics.
+  The strip along the bottom of a track: standalone commands and the machine’s metrics.
 
   Its own `live_component` because every piece of state it needs is state
   nothing else on the page reads -- which tab is showing, whether the strip
@@ -25,10 +24,10 @@ defmodule RavixWeb.Live.MachineDock do
   alias Ravix.Terminal
   alias Ravix.Vitals
 
-  # The dock's three tabs, as the buttons spell them and as this module does.
+  # The dock's tabs, as the buttons spell them and as this module does.
   # `@labels` keeps the order the dock offers them in.
-  @tabs %{"terminal" => :terminal, "run" => :run, "vitals" => :vitals}
-  @labels [terminal: "Terminal", run: "Run", vitals: "Machine stats"]
+  @tabs %{"terminal" => :terminal, "vitals" => :vitals}
+  @labels [terminal: "Commands", vitals: "Machine stats"]
 
   @doc "The tabs the dock offers, labelled, in the order it offers them."
   @spec tabs() :: [{atom(), String.t()}]
@@ -184,7 +183,7 @@ defmodule RavixWeb.Live.MachineDock do
       </nav>
       <div id="machine-dock" hidden={!@dock_open} class="machine-dock">
         <div
-          hidden={@dock not in [:terminal, :run]}
+          hidden={@dock != :terminal}
           id="track-terminal"
           phx-hook="Terminal"
           phx-target={@myself}
@@ -199,13 +198,8 @@ defmodule RavixWeb.Live.MachineDock do
             </div>
             <div :if={@output == [] && @dock == :terminal} class="dock-empty">
               <.empty icon="terminal" title="No commands yet">
-                Type a command below to run it in this track’s worktree. Each one runs on its own,
-                without an interactive terminal.
-              </.empty>
-            </div>
-            <div :if={@output == [] && @dock == :run} class="dock-empty">
-              <.empty icon="play" title="Run tests, builds and scripts">
-                Run a command in this track’s worktree and read what it prints.
+                Run commands, tests, builds and scripts in this track’s worktree.
+                Each command runs on its own, without an interactive terminal.
                 For a server that keeps running, start a preview instead.
                 <:action label="Open Previews" click={JS.push("panel", value: %{name: "preview"})} />
               </.empty>

@@ -1071,7 +1071,7 @@ defmodule RavixWeb.TrackLiveTest do
     ctx.view |> element("#track-terminal") |> render_hook("exec", %{command: "cd src"})
     assert render_async(ctx.view) =~ "Exit 2"
     assert render(ctx.view) =~ "problem"
-    ctx.view |> element("button[phx-click=dock][phx-value-name=run]") |> render_click()
+    ctx.view |> element("button[phx-click=dock][phx-value-name=terminal]") |> render_click()
     ctx.view |> element("#track-terminal") |> render_hook("exec", %{command: "pwd"})
     assert render_async(ctx.view) =~ "out"
     ctx.view |> element("button[phx-click=clear]") |> render_click()
@@ -1085,22 +1085,34 @@ defmodule RavixWeb.TrackLiveTest do
     refute has_element?(ctx.view, "input[data-terminal-input][disabled]")
   end
 
-  test "the Run tab explains itself and the Terminal tab does not", ctx do
-    hint = "Run a command in this track’s worktree"
-    refute render(ctx.view) =~ hint
+  test "Commands combines standalone execution in one clearly named dock tab", ctx do
+    ctx.view
+    |> element("button[phx-click=dock][phx-value-name=terminal]", "Commands")
+    |> render_click()
+
+    assert has_element?(ctx.view, "#machine-dock:not([hidden])")
     assert has_element?(ctx.view, "#track-terminal .dock-empty h3", "No commands yet")
+    assert has_element?(ctx.view, "#track-terminal .dock-empty", "tests, builds and scripts")
 
-    ctx.view |> element("button[phx-click=dock][phx-value-name=run]") |> render_click()
-    assert has_element?(ctx.view, "#track-terminal .dock-empty", hint)
-    refute has_element?(ctx.view, "#track-terminal .dock-empty h3", "No commands yet")
+    assert has_element?(
+             ctx.view,
+             "#track-terminal .dock-empty",
+             "without an interactive terminal"
+           )
 
-    ctx.view |> element("button[phx-click=dock][phx-value-name=terminal]") |> render_click()
-    refute render(ctx.view) =~ hint
+    assert has_element?(
+             ctx.view,
+             "#track-terminal .dock-empty",
+             "For a server that keeps running"
+           )
+
+    refute has_element?(ctx.view, "button[phx-click=dock]", "Run")
+    refute has_element?(ctx.view, "button[phx-click=dock]", "Terminal")
   end
 
-  test "the Run tab's empty state opens Previews, and output replaces it", ctx do
+  test "the Commands tab's empty state opens Previews, and output replaces it", ctx do
     stub(Previews, :status, fn _, _ -> {:ok, preview()} end)
-    ctx.view |> element("button[phx-click=dock][phx-value-name=run]") |> render_click()
+    ctx.view |> element("button[phx-click=dock][phx-value-name=terminal]") |> render_click()
 
     # The button is the dock's, but the tab it opens is the page's: the push
     # carries no target, so it reaches `TrackLive` rather than the component.
@@ -2430,16 +2442,6 @@ defmodule RavixWeb.TrackLiveTest do
     # waiting on.
     assert render(ctx.view) =~ ctx.track.title
     refute render(ctx.parent) =~ "Could not finish loading"
-  end
-
-  test "the run tab says what it is for, and the atom is the one the dock keeps", ctx do
-    # `@dock` is an atom from the moment the browser's word crosses `@tabs`;
-    # this hint compared it with the string and so was never drawn.
-    refute render(ctx.view) =~ "Run a command in this track"
-    ctx.view |> element("button[phx-click=dock][phx-value-name=run]") |> render_click()
-    assert render(ctx.view) =~ "Run a command in this track"
-    ctx.view |> element("button[phx-click=dock][phx-value-name=terminal]") |> render_click()
-    refute render(ctx.view) =~ "Run a command in this track"
   end
 
   test "the live region says when a turn ends, and only then", ctx do

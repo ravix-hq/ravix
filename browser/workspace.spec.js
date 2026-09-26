@@ -485,7 +485,9 @@ test('project, track, streaming, image upload, reconnect, and revocation', async
 
 
   await expect(page.getByLabel('Command', { exact: true })).not.toBeVisible();
-  await page.getByRole('button', { name: 'Terminal', exact: true }).click();
+  await page.getByRole('button', { name: 'Commands', exact: true }).click();
+  await expect(page.locator('#track-terminal .dock-empty')).toContainText('without an interactive terminal');
+  await expect(page.getByRole('button', { name: 'Run', exact: true })).toHaveCount(0);
   await page.getByLabel('Command', { exact: true }).fill('echo draft');
   await page.getByRole('button', { name: 'Collapse the dock' }).click();
   await expect(page.getByLabel('Command', { exact: true })).not.toBeVisible();
@@ -501,7 +503,7 @@ test('project, track, streaming, image upload, reconnect, and revocation', async
   await expect(stats.getByRole('meter', { name: 'CPU in use', exact: true })).toHaveAttribute('value', '0.15');
   await accessible(page);
   await capture(page, 'machine-stats');
-  await page.getByRole('button', { name: 'Terminal', exact: true }).click();
+  await page.getByRole('button', { name: 'Commands', exact: true }).click();
   await expect(page.getByLabel('Command', { exact: true })).toHaveValue('echo draft');
   await page.getByRole('button', { name: 'Collapse the dock' }).click();
   await composer.fill('A draft while opening workspace dialogs');
