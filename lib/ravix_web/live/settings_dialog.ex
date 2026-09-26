@@ -17,6 +17,7 @@ defmodule RavixWeb.Live.SettingsDialog do
   alias RavixWeb.Live.Form
   alias RavixWeb.Live.Hooks
   alias RavixWeb.Live.Params
+  alias RavixWeb.ModelName
 
   @packages ~w(apt pip npm)
 
@@ -303,6 +304,18 @@ defmodule RavixWeb.Live.SettingsDialog do
     end)
   end
 
+  defp model_options(values, current) do
+    Enum.map(Enum.uniq(values ++ List.wrap(current)), &{ModelName.friendly(&1), &1})
+  end
+
+  defp model_labels(catalog, current) do
+    catalog.models
+    |> Map.values()
+    |> List.flatten()
+    |> Kernel.++(List.wrap(current))
+    |> Map.new(&{&1, ModelName.friendly(&1)})
+  end
+
   # ── the dialog ────────────────────────────────────────────────────────
 
   @impl true
@@ -322,6 +335,7 @@ defmodule RavixWeb.Live.SettingsDialog do
           data-save-state={@save_state}
           data-save-version={@save_version}
           data-models={Jason.encode!(@settings.catalog.models)}
+          data-model-labels={Jason.encode!(model_labels(@settings.catalog, @settings.model))}
           data-saved-model={@settings.model}
         >
           <nav class="settings-nav" aria-label="Settings sections">
@@ -411,7 +425,7 @@ defmodule RavixWeb.Live.SettingsDialog do
                   label="Model"
                   type="select"
                   options={
-                    picker_options(
+                    model_options(
                       Catalog.models_for(@settings.catalog, f[:runtime].value),
                       f[:model].value
                     )

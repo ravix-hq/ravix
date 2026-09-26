@@ -98,11 +98,12 @@ export const SettingsSections = {
   models(runtime, selected) {
     const select = this.el.querySelector('#settings-model')
     const models = JSON.parse(this.el.dataset.models)[runtime] || []
+    const labels = JSON.parse(this.el.dataset.modelLabels)
     select.replaceChildren(...models.map(value => {
       const option = document.createElement('option')
       option.value = value
       option.selected = value === selected
-      option.textContent = value.replaceAll('-', ' ').replaceAll('_', ' ')
+      option.textContent = labels[value]
       return option
     }))
   },

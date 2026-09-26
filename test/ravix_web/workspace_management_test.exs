@@ -17,6 +17,52 @@ defmodule RavixWeb.WorkspaceManagementTest do
     %{view: view, user: user, project: project}
   end
 
+  test "settings and composer use the same friendly catalog labels", ctx do
+    labels = [
+      {"openai/gpt-6-astra", "GPT-6 Astra"},
+      {"openai/gpt-5.5", "GPT-5.5"},
+      {"anthropic/claude-fable-5-1", "Claude Fable 5.1"},
+      {"anthropic/claude-opus-5.5", "Claude Opus 5.5"}
+    ]
+
+    models = Enum.map(labels, &elem(&1, 0))
+    catalog = %{Catalog.empty() | runtimes: ["claude"], models: %{"claude" => models}}
+    settings(ctx, catalog: catalog, model: hd(models))
+    render_async(ctx.view)
+
+    html = render(ctx.view) |> LazyHTML.from_document()
+
+    [encoded] =
+      html |> LazyHTML.query("#settings-sections") |> LazyHTML.attribute("data-model-labels")
+
+    assert Jason.decode!(encoded) == Map.new(labels)
+
+    for {id, label} <- labels do
+      assert has_element?(ctx.view, "#settings-model option[value='#{id}']", label)
+
+      composer =
+        render_component(&RavixWeb.TrackLive.model_menu/1,
+          model: id,
+          project_model: hd(models),
+          models: models,
+          disabled: false
+        )
+        |> LazyHTML.from_document()
+
+      assert composer |> LazyHTML.query("#model-trigger") |> LazyHTML.attribute("aria-label") == [
+               label
+             ]
+
+      assert composer |> LazyHTML.query("#model-trigger .truncate") |> LazyHTML.text() == label
+
+      for {choice, name} <- labels do
+        assert composer
+               |> LazyHTML.query("[phx-value-model='#{choice}'] .truncate")
+               |> LazyHTML.text() == name
+      end
+    end
+  end
+
   test "project creation keeps feedback until a failed task settles", ctx do
     test_pid = self()
 

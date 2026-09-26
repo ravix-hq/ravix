@@ -4,7 +4,7 @@ import {mountHook, key} from './setup.js'
 
 beforeEach(() => {
   document.body.innerHTML = `<div class="dialog"><button aria-label="Close">Close</button>
-    <div id="settings" data-save-version="0" data-save-state="" data-models='{"claude":["model-a","model-b"]}'>
+    <div id="settings" data-model-labels='{"model-a":"Model A","model-b":"Model B"}' data-save-version="0" data-save-state="" data-models='{"claude":["model-a","model-b"]}'>
     <button data-settings-section="general">General</button><button data-settings-section="agent">Agent</button>
     <p data-settings-feedback></p>
     <section data-settings-panel="general"><h3 tabindex="-1">General</h3><form><input id="name" value="Original"><input id="secret-value" type="password"></form></section>
@@ -86,4 +86,15 @@ test('existing secret actions choose the key and store without saving or retaini
   document.querySelector('#secret-value').value = 'sensitive'
   hook.updated()
   expect(document.querySelector('#secret-value').value).toBe('')
+})
+
+test('runtime changes and discarded edits use server model labels without changing ids', () => {
+  const {hook} = mountHook(SettingsSections, '#settings')
+  const labels = {'openai/gpt-5.5': 'GPT-5.5', 'anthropic/claude-fable-5-1': 'Claude Fable 5.1'}
+  hook.el.dataset.models = JSON.stringify({claude: Object.keys(labels)})
+  hook.el.dataset.modelLabels = JSON.stringify(labels)
+  edit('#settings-runtime')
+  expect([...document.querySelector('#settings-model').options].map(o => [o.value, o.textContent])).toEqual(Object.entries(labels))
+  hook.models('claude', 'openai/gpt-5.5')
+  expect(document.querySelector('#settings-model').value).toBe('openai/gpt-5.5')
 })

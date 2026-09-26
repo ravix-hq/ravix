@@ -674,6 +674,10 @@ test('project settings navigate, warn before discarding, and save sections acces
   page.once('dialog', dialog => dialog.accept());
   await settings.getByRole('button', { name: 'Agent', exact: true }).click();
   await expect(settings.getByRole('heading', { name: 'Agent', exact: true })).toBeFocused();
+  await settings.getByLabel('Harness', { exact: true }).selectOption('codex');
+  await expect(settings.getByLabel('Model', { exact: true }).locator('option')).toHaveText(['GPT-6 Astra', 'GPT-5.5']);
+  await settings.getByLabel('Harness', { exact: true }).selectOption('claude');
+  await expect(settings.getByLabel('Model', { exact: true }).locator('option')).toHaveText(['Claude Opus 5', 'Claude Sonnet 5']);
   await settings.getByLabel('Instructions', { exact: true }).fill('Explain changes and run focused tests.');
   await settings.getByRole('button', { name: 'Save agent', exact: true }).click();
   await expect(settings.getByRole('status')).toHaveText('Saved.');
@@ -751,6 +755,7 @@ test('composer Send stays compact and keeps its arrow after repeated submissions
     const model = page.locator('.composer-model');
     await expect(model).toHaveText(/^\S/);
     expect(await model.getAttribute('title')).toMatch(/\//);
+    await expect(model).toHaveAccessibleName(await model.locator('.truncate').innerText());
     expect(await model.evaluate(el => getComputedStyle(el).fontFamily)).toContain('IBM Plex Sans');
     await fitsViewport(page);
   };
