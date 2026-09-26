@@ -414,6 +414,22 @@ test('project, track, streaming, image upload, reconnect, and revocation', async
     await expect(refs.locator(`option[value="${value}"]`)).toHaveText(label);
     await expect(refs).toBeEnabled();
     await refs.selectOption(value);
+    if (kind === 'Branch') {
+      for (const width of [390, 1280]) {
+        await page.setViewportSize({ width, height: 844 });
+        const toggle = await newTrack.getByRole('button', { name: 'Hide advanced', exact: true }).boundingBox();
+        const source = await newTrack.locator('.origin-options').boundingBox();
+        const start = await refs.boundingBox();
+        const branch = await newTrack.getByLabel('Branch name', { exact: true }).boundingBox();
+        const row = await newTrack.locator('.track-branch-input').boundingBox();
+        expect(toggle.y + toggle.height).toBeLessThanOrEqual(source.y);
+        expect(source.y + source.height).toBeLessThanOrEqual(start.y);
+        expect(start.y + start.height).toBeLessThan(branch.y);
+        expect(branch.width).toBeGreaterThan(row.width * 0.7);
+        expect(Math.abs(branch.x + branch.width - row.x - row.width)).toBeLessThan(2);
+      }
+      await page.setViewportSize({ width: 1280, height: 720 });
+    }
     await expect(newTrack).toBeVisible();
     await expect(newTrack.getByRole('button', { name: 'Create track', exact: true })).toBeEnabled();
   }

@@ -62,7 +62,14 @@ defmodule RavixWeb.WorkspaceRefsTest do
       # This handshake includes installation-token signing and provider setup;
       # the default 100ms is too short on a busy CI runner.
       assert_receive {:loading_refs, task}, 5_000
-      assert has_element?(ctx.view, "#new-track-form [role=status]", "Loading branches")
+
+      loading = %{
+        "branch" => "Loading branches…",
+        "pr" => "Loading pull requests…",
+        "issue" => "Loading issues…"
+      }
+
+      assert has_element?(ctx.view, "#new-track-form [role=status]", loading[@kind])
       assert has_element?(ctx.view, "#track-ref[disabled]")
       send(task, :finish)
       html = render_async(ctx.view)

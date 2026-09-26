@@ -751,32 +751,8 @@
         phx-submit="create-track"
         phx-change="edit"
       >
-        <div :if={@origin_kind != :pr} hidden={!@advanced_track}>
-          <label for="track-title">Branch name</label>
-          <div class="workspace-actions">
-            <span id="branch-prefix">ravix/</span>
-            <.input
-              field={f[:title]}
-              id="track-title"
-              aria-describedby="branch-prefix branch-hint"
-            />
-          </div>
-          <p id="branch-hint" class="hint">
-            Leave empty for a suggested name (for example, ravix/crewe), or an issue's number and title.
-          </p>
-        </div>
-        <p :if={@origin_kind == :pr} class="hint">
-          The track uses the pull request's existing branch and name.
-        </p>
-        <p
-          :for={{message, _opts} <- f[:title].errors}
-          :if={@origin_kind == :pr}
-          class="error fine"
-        >
-          {message}
-        </p>
-        <p :if={@origin_kind == :blank} class="hint">
-          New worktree from {@project.default_branch || "the default branch"}, with an automatic name matching its directory.
+        <p :if={!@advanced_track} class="hint">
+          New worktree from {@project.default_branch || "the default branch"}, with an automatic name.
         </p>
         <button
           type="button"
@@ -801,7 +777,7 @@
             </button>
           </div>
           <.loading_status :if={@refs_loading}>
-            Loading branches, pull requests or issues…
+            Loading {%{branch: "branches", pr: "pull requests", issue: "issues"}[@origin_kind]}…
           </.loading_status>
           <.input
             :if={@origin_kind != :blank}
@@ -813,6 +789,35 @@
             options={Enum.map(@refs, &{ref_label(&1), ref_id(&1)})}
             required
           />
+          <p :if={@origin_kind == :blank} class="hint">
+            Start from {@project.default_branch || "the default branch"}.
+          </p>
+          <div :if={@origin_kind != :pr}>
+            <label for="track-title">Branch name</label>
+            <div class="track-branch-input">
+              <span id="branch-prefix">ravix/</span>
+              <.input
+                field={f[:title]}
+                id="track-title"
+                aria-describedby="branch-prefix branch-hint"
+              />
+            </div>
+            <p id="branch-hint" class="hint">
+              {if @origin_kind == :issue,
+                do: "Leave empty to use the issue’s number and title.",
+                else: "Leave empty for an automatic name (for example, ravix/crewe)."}
+            </p>
+          </div>
+          <p :if={@origin_kind == :pr} class="hint">
+            The track uses the pull request's existing branch and name.
+          </p>
+          <p
+            :for={{message, _opts} <- f[:title].errors}
+            :if={@origin_kind == :pr}
+            class="error fine"
+          >
+            {message}
+          </p>
         </div>
         <.loading_status :if={@busy}>Opening track and preparing its worktree…</.loading_status>
         <button
