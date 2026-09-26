@@ -665,25 +665,7 @@
           phx-debounce="150"
         />
       </form>
-      <% results =
-        for project <- @projects,
-            tracks = Enum.filter(@tracks[project.id] || [], &matching?(&1, project, @query)),
-            tracks != [],
-            do: {project, tracks} %>
-      <p :if={results == []} role="status">No tracks match</p>
-      <section
-        :for={{project, tracks} <- results}
-        aria-labelledby={"search-project-#{project.id}"}
-      >
-        <h3 id={"search-project-#{project.id}"}><.project_name project={project} /></h3>
-        <.link
-          :for={track <- tracks}
-          patch={"/p/#{project.id}/t/#{track.id}"}
-          class="workspace-track"
-        >
-          {track.title}
-        </.link>
-      </section>
+      <.track_search_results projects={@projects} tracks={@tracks} query={@query} />
     </.dialog>
     <.dialog
       :if={@dialog == :new_project}
