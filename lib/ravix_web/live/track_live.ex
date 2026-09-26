@@ -1018,13 +1018,11 @@ defmodule RavixWeb.TrackLive do
       popovertarget="model-menu"
       title={if @disabled, do: "Change the model between turns", else: @model}
       disabled={@disabled}
-    >
-      {ModelName.friendly(@model)}<span class="sr-only">, change model</span><.icon
-        name="chevron"
-        size={10}
-        open={true}
-      />
-    </button>
+    ><span class="truncate">{ModelName.friendly(@model)}</span><span class="sr-only">, change model</span><.icon
+      name="chevron"
+      size={10}
+      open={true}
+    /></button>
     <div id="model-menu" class="model-menu" popover role="menu" aria-label="Model">
       <button
         :for={choice <- @choices}
