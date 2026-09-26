@@ -18,6 +18,7 @@
 //   Notify          desktop notifications when a track needs you and you are not looking
 //   SettingsSections section navigation and unsaved input warnings
 //   TrackTabs       horizontal scrolling and selected track visibility
+//   ProjectSections drag a sidebar project onto one of your sections
 //
 // Adding a hook is a product decision, not a convenience. Say why in its
 // file's header, and list it here.
@@ -34,8 +35,9 @@ import {Terminal} from "./hooks/terminal"
 import {Notify} from "./hooks/notify"
 import {TrackTabs} from "./hooks/track_tabs"
 import {SettingsSections} from "./hooks/settings_sections"
+import {ProjectSections} from "./hooks/project_sections"
 
-const hooks = {Theme, PanelResize, TranscriptTail, Composer, Terminal, Notify, SettingsSections, TrackTabs}
+const hooks = {Theme, PanelResize, TranscriptTail, Composer, Terminal, Notify, SettingsSections, TrackTabs, ProjectSections}
 
 const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
 const liveSocket = new LiveSocket("/live", Socket, {

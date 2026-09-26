@@ -1277,14 +1277,18 @@ body:has(.phx-error) #request-progress { display: none; }
 .section-toggle { display: flex; align-items: center; gap: 6px; width: 100%; min-width: 0; text-align: left; }
 .section-toggle .truncate { flex: 1; }
 .section-empty { padding: 0 14px; }
-.project-section-picker { display: flex; align-items: center; gap: 6px; padding: 4px 12px; font-size: 11px; color: var(--dim); }
-.project-section-picker select { min-width: 0; width: 100%; padding: 4px; }
+.project-section-picker { display: flex; align-items: center; gap: 8px; padding: 4px 0; }
+.project-section-picker label { flex: 1; min-width: 0; }
+.project-section-picker select { flex: 1; min-width: 0; padding: 4px; }
+.workspace-project[draggable="true"] { cursor: grab; }
+.workspace-project.dragging { opacity: 0.5; }
+.project-section.drop-target { border-radius: var(--radius); background: var(--accent-soft); outline: 1px dashed var(--accent-line); outline-offset: -1px; }
 .section-editor { margin-top: 16px; }
 
 /* Project tracks stay above the conversation, including on narrow screens. */
 .track-navigation { display: flex; flex: none; min-width: 0; background: var(--sidebar); border-bottom: 1px solid var(--line); }
 .track-scroll { flex: none; align-self: stretch; width: 32px; padding: 4px; font-size: 22px; }
-.track-tabs { display: flex; flex: 1; min-width: 0; gap: 3px; overflow-x: auto; padding: 8px 10px 0; background: var(--sidebar); }
+.track-tabs { display: flex; flex-flow: row nowrap; flex: 1; min-width: 0; gap: 3px; overflow-x: auto; padding: 8px 10px 0; background: var(--sidebar); }
 .track-tab { display: flex; flex: none; align-items: center; gap: 8px; max-width: 240px; padding: 9px 12px; white-space: nowrap; color: var(--dim); text-decoration: none; border-radius: var(--radius) var(--radius) 0 0; border-bottom: 2px solid transparent; }
 .track-tab:hover { background: var(--surface-hover); }
 .track-tab.selected { color: var(--ink); background: var(--panel); border-bottom-color: var(--accent); }
