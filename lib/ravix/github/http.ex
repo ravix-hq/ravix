@@ -21,7 +21,7 @@ defmodule Ravix.GitHub.HTTP do
 
   alias Ravix.Clock
   alias Ravix.Config.GitHubApp
-  alias Ravix.GitHub.{Cache, Error}
+  alias Ravix.GitHub.{Cache, Error, Reads}
   alias Ravix.Trace
 
   @user_agent "ravix (+https://app.ravix.sh)"
@@ -33,6 +33,7 @@ defmodule Ravix.GitHub.HTTP do
           | {:json, term()}
           | {:installation_id, integer()}
           | {:accept, String.t()}
+          | {:cache_ttl, non_neg_integer()}
 
   @doc """
   One request to GitHub.
@@ -59,16 +60,40 @@ defmodule Ravix.GitHub.HTTP do
     Trace.span(
       "github.request",
       %{"http.request.method" => method, "url.path" => path},
-      fn -> attempt(app, scope, method, path, opts) end
+      fn -> request_or_cached(app, scope, method, path, opts) end
     )
+  end
+
+  defp request_or_cached(app, scope, :get, path, opts) do
+    case Keyword.fetch(opts, :cache_ttl) do
+      {:ok, ttl} when is_integer(ttl) and ttl >= 0 and not is_nil(scope) ->
+        key = {app.app_id, app.api_url, scope, path, Keyword.get(opts, :accept)}
+
+        Reads.fetch(
+          key,
+          ttl,
+          fn headers -> attempt(app, scope, :get, path, Keyword.put(opts, :headers, headers)) end,
+          &interpret(app, scope, &1)
+        )
+
+      _ ->
+        uncached(app, scope, :get, path, opts)
+    end
+  end
+
+  defp request_or_cached(app, scope, method, path, opts),
+    do: uncached(app, scope, method, path, opts)
+
+  defp uncached(app, scope, method, path, opts) do
+    with {:ok, response} <- attempt(app, scope, method, path, opts),
+         do: interpret(app, scope, response)
   end
 
   defp attempt(app, scope, method, path, opts) do
     case check_rate_limit(app, scope) do
       :ok ->
         with {:ok, response} <- send_request(app, method, path, opts) do
-          observe(app, scope, response)
-          interpret(app, scope, response)
+          received(app, scope, response)
         end
 
       # A limit GitHub gave us earlier, answered without a request. Said on the
@@ -78,6 +103,14 @@ defmodule Ravix.GitHub.HTTP do
         Trace.annotate(%{"ravix.rate_limited" => true})
         refused
     end
+  end
+
+  defp received(app, scope, response) do
+    observe(app, scope, response)
+
+    if response.status in 200..299 or response.status == 304,
+      do: {:ok, response},
+      else: interpret(app, scope, response)
   end
 
   # ── the request ────────────────────────────────────────────────────
@@ -106,7 +139,7 @@ defmodule Ravix.GitHub.HTTP do
         {"accept", Keyword.get(opts, :accept, "application/vnd.github+json")},
         {"user-agent", @user_agent},
         {"x-github-api-version", "2022-11-28"}
-      ] ++ auth_header(opts)
+      ] ++ auth_header(opts) ++ Keyword.get(opts, :headers, [])
 
     base = [
       method: method,
@@ -176,7 +209,7 @@ defmodule Ravix.GitHub.HTTP do
     # reset instead of spending a request to discover the exhausted budget.
     reset = integer_header(response, "x-ratelimit-reset")
 
-    if scope && response.status in 200..299 &&
+    if scope && (response.status in 200..299 or response.status == 304) &&
          integer_header(response, "x-ratelimit-remaining") == 0 &&
          is_integer(reset) && reset * 1000 > Clock.now_ms() do
       until = reset * 1000

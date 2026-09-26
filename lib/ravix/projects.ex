@@ -522,7 +522,7 @@ defmodule Ravix.Projects do
   defp resolve_repo(user, input) do
     with {:ok, app} <- github(),
          {:ok, token} <- user_token(user),
-         {:ok, repos} <- Ravix.GitHub.repositories(app, token, input.installation_id),
+         {:ok, repos} <- Ravix.GitHub.repositories(app, token, input.installation_id, :fresh),
          {:ok, repo} <- find_repo(repos, input.repo) do
       # GitHub's own spelling of the name, not the caller's: the match is
       # case-insensitive, and the mount path and clone URL come from this.
