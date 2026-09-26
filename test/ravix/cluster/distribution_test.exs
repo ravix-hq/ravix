@@ -176,6 +176,52 @@ defmodule Ravix.Cluster.DistributionTest do
     end
   end
 
+  test "the next sweep recovers a departed node's fresh claim, but not a live node's", ctx do
+    alias Ecto.Adapters.SQL.Sandbox
+    alias Ravix.PromptQueue.Store
+    alias Ravix.Repo
+    import Ravix.Factory
+
+    # Both instances must see committed rows; their sandbox connections cannot
+    # share a transaction across BEAMs. Remove only this test's owned fixtures.
+    Sandbox.unboxed_run(Repo, fn ->
+      user = insert_user()
+      project = insert_project(user: user)
+      track = insert_track(project: project)
+
+      try do
+        {:ok, row} =
+          Store.enqueue(
+            track.id,
+            user.id,
+            user.login,
+            Ecto.UUID.generate(),
+            %Ravix.PromptQueue.Body{prompt: "survive the instance", images: []}
+          )
+
+        assert :erpc.call(ctx.node, Ravix.ClusterPeer, :claim_prompt, [row.id])
+        claimed = Store.get(row.id)
+        assert claimed.claimed_by == Atom.to_string(ctx.node)
+        Store.recover()
+        assert Store.get(row.id).status == :sending
+
+        stop_peer(ctx.peer, ctx.node)
+        # tick's first operation is recovery, even without a configured provider.
+        server = start_supervised!({Ravix.PromptQueue.Server, name: nil, interval: false})
+        Sandbox.allow(Repo, self(), server)
+        Ravix.PromptQueue.Server.tick(server)
+        assert Store.get(row.id).status == :unconfirmed
+
+        assert DateTime.diff(DateTime.utc_now(), claimed.claimed_at, :millisecond) <
+                 Store.claim_timeout_ms()
+      after
+        Repo.delete!(track)
+        Repo.delete!(project)
+        Repo.delete!(user)
+      end
+    end)
+  end
+
   # ── the cluster ───────────────────────────────────────────────────────
 
   defp distribute!(name \\ :"ravix_primary@127.0.0.1") do

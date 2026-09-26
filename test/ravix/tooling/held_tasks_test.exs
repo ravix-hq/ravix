@@ -47,6 +47,26 @@ defmodule Ravix.Tooling.HeldTasksTest do
     assert ids == [c.head.id, c.next.id]
   end
 
+  test "legacy state acknowledgements do not repeatedly report an unchanged blocked task", c do
+    Store.set_status(c.head.id, :unconfirmed, "Check the transcript.")
+
+    args = %{
+      "task_ids" => [c.next.id],
+      "since" => %{c.next.id => "TASK_STATE_SUBMITTED"},
+      "timeout_ms" => 0
+    }
+
+    for _ <- 1..2 do
+      assert {:ok, %{changed: [], tasks: [next]}} = Tooling.call(c.p, "wait_task", args)
+      assert next.status.state == "TASK_STATE_SUBMITTED"
+      assert hd(next.status.message.parts).text =~ c.head.id
+    end
+
+    assert {:ok, _} = Tasks.cancel(c.p, c.next.id)
+    assert {:ok, %{changed: [id]}} = Tooling.call(c.p, "wait_task", args)
+    assert id == c.next.id
+  end
+
   test "a queue transition wakes an active waiter even when a blocked task stays submitted", c do
     {:ok, before} = Tasks.get(c.p, c.next.id)
 
@@ -84,6 +104,25 @@ defmodule Ravix.Tooling.HeldTasksTest do
     Store.annotate(c.head.id, :unconfirmed, "Fountain has no turn carrying this prompt's id.")
     assert {:ok, {:ok, %{changed: [_], tasks: [head]}}} = Task.yield(waiter, 1000)
     assert hd(head.status.message.parts).text =~ "no turn"
+  end
+
+  test "an acknowledged failed task still wakes when retried", c do
+    Store.set_status(c.head.id, :failed, "Delivery refused.")
+
+    waiter =
+      Task.async(fn ->
+        Tooling.call(c.p, "wait_task", %{
+          "task_ids" => [c.head.id],
+          "since" => %{c.head.id => "TASK_STATE_FAILED"},
+          "timeout_ms" => 2000
+        })
+      end)
+
+    wait_subscribed(c.project.id, waiter.pid)
+    assert {:ok, _} = Tasks.retry(c.p, c.head.id)
+    assert {:ok, {:ok, %{changed: [id], tasks: [head]}}} = Task.yield(waiter, 1000)
+    assert id == c.head.id
+    assert head.status.state == "TASK_STATE_SUBMITTED"
   end
 
   for actor <- [:p, :owner] do

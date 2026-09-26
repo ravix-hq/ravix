@@ -115,10 +115,16 @@ database. Deliberately not a cluster check: the first instance of a deploy has
 no peers and would wait for a sibling that is waiting for it.
 
 **Deploys drain.** The endpoint's `shutdown_timeout` is 20s and Render's
-`maxShutdownDelaySeconds` is 30s — paired, and in that order, or the container
-is killed mid-drain. The endpoint is the last child in `Ravix.Application`, so
-it stops accepting before the followers and preview servers those pages talk to
-go away.
+`maxShutdownDelaySeconds` is 30s. The prompt queue is the last child in
+`Ravix.Application`, so it
+stops claiming first, releases claims without POST permission, and allows
+in-flight POSTs four seconds inside its five-second child shutdown budget.
+The endpoint then drains for 20s before the followers and preview servers those
+pages talk to go away; 5s remains for other children. Claims record their owning
+node and a fencing token: a departed owner's claim is recovered as unconfirmed
+on the next sweep, while age remains the backstop for live or legacy owners.
+Membership loss is not proof of non-delivery, so neither it nor a missing turn
+permits automatic replay of an ambiguous POST.
 
 **The database gets a standby.** Render HA requires at least one CPU, so
 `ravix-db` moves from `0.1c-256mb` to `1c-2g`. Failover terminates every
