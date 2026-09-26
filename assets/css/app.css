@@ -1273,7 +1273,6 @@ body:has(.phx-error) #request-progress { display: none; }
 @media (prefers-reduced-motion: reduce) { .loading-spinner { animation: none; } }
 
 /* Personal project sections in the sidebar. */
-.section-manage { margin: 0 12px 8px; }
 .section-toggle { display: flex; align-items: center; gap: 6px; width: 100%; min-width: 0; text-align: left; }
 .section-toggle .truncate { flex: 1; }
 .section-empty { padding: 0 14px; }
