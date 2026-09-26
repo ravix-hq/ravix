@@ -1385,10 +1385,21 @@ h4 { font-size: 12px; color: var(--dim); font-weight: 500; letter-spacing: 0; }
 .plans-panel { padding: 1.25rem; overflow: auto; min-width: 0; width: 100%; }
 .plans-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: .65rem; margin-bottom: .8rem; }
 .plans-toolbar h2, .plans-toolbar h3, .plans-toolbar h4 { margin: 0; }
+.plans-panel .plan-title { font-size: 1.35rem; line-height: 1.3; margin-bottom: .8rem; }
+.plan-item h4 { font-size: 1rem; color: var(--ink); }
 .plans-list { display: grid; gap: .8rem; padding-left: 1.25rem; }
 .plan-item, .plan-editor-item { border: 1px solid var(--line); border-radius: .5rem; padding: 1rem; margin: 1rem 0; min-width: 0; overflow-wrap: anywhere; }
 .plans-panel textarea, .plans-panel input:not([type=checkbox]), .plans-panel select { max-width: 100%; }
 #plan-editor > input, #plan-editor > textarea, .plan-editor-item > input, .plan-editor-item > textarea, .plan-editor-item > select, .plan-note textarea { display: block; width: 100%; margin: .35rem 0 1rem; }
+/* Keep labels and native controls together despite the global full-width input styles. */
+.plan-assignment-row { display: flex; flex-wrap: wrap; align-items: center; gap: .75rem 1.25rem; margin-top: .8rem; }
+.plan-assignment-row .plan-assign-choice { display: inline-flex; align-items: center; gap: .5rem; margin: 0; }
+.plan-assign-choice input[type=checkbox] { width: auto; margin: 0; flex: none; }
+.plan-assign-target { display: flex; align-items: center; gap: .65rem; flex: 1 1 16rem; min-width: 0; max-width: 30rem; }
+.plan-assign-target label { margin: 0; flex: none; }
+.plan-assign-target select { width: 100%; min-width: 0; margin: 0; }
+.plan-assign-actions { position: sticky; top: 0; z-index: 2; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .65rem; padding: .75rem; background: var(--panel); border: 1px solid var(--line-strong); border-radius: var(--radius); }
+.plan-item { scroll-margin-top: 7rem; }
 .plan-note { margin-top: 1rem; }
 /* The dependency graph scrolls on its own; the page never does. Colour
    repeats the status text inside each node rather than replacing it. */

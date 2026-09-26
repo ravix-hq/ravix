@@ -13,6 +13,11 @@ test('a project plan assigns coordinated tracks and works at phone width', async
   const panel = page.locator('#plans-panel');
   await expect(panel).toBeVisible();
   await panel.getByRole('button', { name: 'New plan', exact: true }).click();
+  await expect(page).toHaveURL(/\?new=plan$/);
+  await expect(panel.getByRole('heading', { name: 'New plan', exact: true })).toBeVisible();
+  await expect(panel.getByRole('button', { name: /Move up|Move down|Remove item/ })).toHaveCount(0);
+  await expect(panel.getByLabel('Depends on', { exact: true })).toHaveCount(0);
+  await expect(panel).not.toContainText('Assigned items must remain unchanged');
   await panel.getByLabel('Title', { exact: true }).fill('Ship the release');
   await panel.getByLabel('Summary and rationale (Markdown)').fill('**Together** with clear boundaries.');
   await panel.getByLabel('Item title', { exact: true }).fill('Build API');
@@ -21,11 +26,76 @@ test('a project plan assigns coordinated tracks and works at phone width', async
   await panel.getByRole('button', { name: 'Add item', exact: true }).click();
   await panel.getByLabel('Item title', { exact: true }).nth(1).fill('Build UI');
   await panel.getByLabel('Brief', { exact: true }).nth(1).fill('Own the views.');
+  await panel.getByRole('button', { name: 'Add item', exact: true }).click();
+  await panel.getByLabel('Item title', { exact: true }).nth(2).fill('Ship after API');
+  await panel.getByLabel('Brief', { exact: true }).nth(2).fill('Wait for the API.\n\n' + 'Release notes.\n\n'.repeat(30));
+  await panel.getByLabel('Depends on', { exact: true }).nth(2).selectOption({ label: 'Build API' });
   await panel.getByRole('button', { name: 'Save plan', exact: true }).click();
   await expect(panel.getByRole('heading', { name: 'Ship the release' })).toBeVisible();
   await expect(panel.locator('strong', { hasText: 'Together' })).toBeVisible();
-  await panel.getByLabel('Assign Build API', { exact: true }).check();
-  await panel.getByLabel('Assign Build UI', { exact: true }).check();
+  const planURL = page.url();
+  await panel.getByRole('button', { name: 'New plan', exact: true }).click();
+  await expect(page).toHaveURL(/\?new=plan$/);
+  await page.reload();
+  await expect(panel.getByRole('heading', { name: 'New plan', exact: true })).toBeVisible();
+  await expect(panel.getByLabel('Title', { exact: true })).toHaveValue('');
+  await panel.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await expect(page).not.toHaveURL(/\?/);
+  await panel.getByRole('link', { name: 'Ship the release', exact: true }).click();
+  await expect(page).toHaveURL(planURL);
+  await expect(panel.getByRole('heading', { name: 'Ship the release' })).toBeVisible();
+  const card = panel.locator('.plan-item').filter({ has: page.getByRole('heading', { name: 'Build API', exact: true }) });
+  await card.getByText('Add a note to Build API', { exact: true }).click();
+  await card.getByLabel('Note', { exact: true }).fill('Check the API contract.');
+  await card.getByRole('button', { name: 'Add note', exact: true }).click();
+  await expect(card).toContainText('Check the API contract.');
+  expect(await card.locator('form').evaluate(el => el.parentElement.closest('form') === null)).toBe(true);
+  for (const width of [1480, 535]) {
+    await page.setViewportSize({ width, height: 900 });
+    const sizes = await panel.evaluate(el => ({
+      title: parseFloat(getComputedStyle(el.querySelector('h3')).fontSize),
+      item: parseFloat(getComputedStyle(el.querySelector('h4')).fontSize),
+      body: parseFloat(getComputedStyle(el.querySelector('.md')).fontSize),
+    }));
+    expect(sizes.title).toBeGreaterThan(sizes.body);
+    expect(sizes.item).toBeGreaterThanOrEqual(sizes.body);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  }
+  const api = panel.getByRole('group', { name: 'Build API', exact: true });
+  const ui = panel.getByRole('group', { name: 'Build UI', exact: true });
+  const blocked = panel.getByRole('group', { name: 'Ship after API', exact: true });
+  await expect(blocked.getByLabel('Assign', { exact: true })).toBeDisabled();
+  await expect(blocked.getByLabel('Track', { exact: true })).toBeDisabled();
+  await expect(panel.getByText('Blocked by: Build API', { exact: true })).toBeVisible();
+  for (const width of [1480, 535, 390]) {
+    await page.setViewportSize({ width, height: 844 });
+    await api.scrollIntoViewIfNeeded();
+    const boxes = await api.evaluate(el => {
+      const rect = node => { const { x, y, width, height } = node.getBoundingClientRect(); return { x, y, width, height }; };
+      return {
+        choice: rect(el.querySelector('.plan-assign-choice')),
+        checkbox: rect(el.querySelector('input')),
+        target: rect(el.querySelector('.plan-assign-target')),
+        label: rect(el.querySelector('.plan-assign-target label')),
+        select: rect(el.querySelector('select')),
+      };
+    });
+    expect(Math.abs(boxes.checkbox.y + boxes.checkbox.height / 2 - boxes.choice.y - boxes.choice.height / 2)).toBeLessThan(2);
+    expect(boxes.select.x).toBeGreaterThan(boxes.label.x);
+    expect(Math.abs(boxes.select.y + boxes.select.height / 2 - boxes.label.y - boxes.label.height / 2)).toBeLessThan(2);
+    if (width === 1480) expect(Math.abs(boxes.choice.y + boxes.choice.height / 2 - boxes.target.y - boxes.target.height / 2)).toBeLessThan(2);
+    expect(await panel.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
+  }
+  await api.getByLabel('Assign', { exact: true }).check();
+  await expect(panel.locator('.plan-assign-actions')).toContainText('1 selected');
+  await api.getByLabel('Assign', { exact: true }).uncheck();
+  await expect(panel.locator('.plan-assign-actions')).toContainText('0 selected');
+  await api.getByLabel('Assign', { exact: true }).check();
+  await ui.getByLabel('Assign', { exact: true }).check();
+  await expect(panel.locator('.plan-assign-actions')).toContainText('2 selected');
+  await blocked.scrollIntoViewIfNeeded();
+  await expect(panel.getByRole('button', { name: 'Assign selected items' })).toBeInViewport();
+  await page.screenshot({ path: 'test-results/plans-assign-phone.png' });
   await panel.getByRole('button', { name: 'Assign selected items' }).click();
   // A track is named after its reserved branch (#154); the item keeps its title.
   await expect(panel.getByRole('link', { name: 'Open track: ravix/build-api' })).toBeVisible();

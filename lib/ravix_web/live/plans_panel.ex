@@ -17,6 +17,8 @@ defmodule RavixWeb.Live.PlansPanel do
          error: nil,
          busy: false,
          loaded: nil,
+         selected: [],
+         targets: %{},
          request_id: Ecto.UUID.generate()
        )}
 
@@ -26,12 +28,21 @@ defmodule RavixWeb.Live.PlansPanel do
 
     case Access.project_access(assigns.current_user, assigns.project.id) do
       {:ok, _} ->
-        key = {assigns.project.id, assigns.plan_id}
+        key = {assigns.project.id, assigns.plan_id, assigns.new_plan}
 
         {:ok,
          if(socket.assigns.loaded == key,
            do: socket,
-           else: load(assign(socket, loaded: key, draft: nil, detail: nil))
+           else:
+             load(
+               assign(socket,
+                 loaded: key,
+                 draft: if(assigns.new_plan, do: blank_plan()),
+                 detail: nil,
+                 error: nil,
+                 busy: false
+               )
+             )
          )}
 
       _ ->
@@ -61,15 +72,6 @@ defmodule RavixWeb.Live.PlansPanel do
          )}
     end
   end
-
-  defp event("new-plan", _, socket),
-    do:
-      {:noreply,
-       assign(socket,
-         detail: nil,
-         draft: %{"title" => "", "summary" => "", "items" => [blank_item()]},
-         error: nil
-       )}
 
   defp event("cancel-edit", _, socket), do: {:noreply, assign(socket, draft: nil, error: nil)}
 
@@ -103,7 +105,13 @@ defmodule RavixWeb.Live.PlansPanel do
        update(
          socket,
          :draft,
-         &Map.update!(&1, "items", fn items -> Enum.reject(items, fn i -> i["id"] == id end) end)
+         &Map.update!(&1, "items", fn items ->
+           items
+           |> Enum.reject(fn item -> item["id"] == id end)
+           |> Enum.map(fn item ->
+             Map.update!(item, "dependencies", fn ids -> List.delete(ids, id) end)
+           end)
+         end)
        )}
 
   defp event("move-item", %{"id" => id, "direction" => direction}, socket) do
@@ -163,6 +171,12 @@ defmodule RavixWeb.Live.PlansPanel do
     end
   end
 
+  defp event("select-items", params, socket) do
+    selected = Map.get(params, "selected", [])
+    targets = Map.get(params, "targets", %{})
+    {:noreply, assign(socket, selected: selected, targets: targets)}
+  end
+
   defp event("assign-items", params, socket) do
     assignments =
       Enum.map(Map.get(params, "selected", []), fn id ->
@@ -202,6 +216,8 @@ defmodule RavixWeb.Live.PlansPanel do
          )}
     end
   end
+
+  defp settled(:detail, _, %{assigns: %{plan_id: nil}} = socket), do: {:noreply, socket}
 
   defp settled(:detail, {:ok, {:ok, detail}}, socket),
     do: {:noreply, assign(socket, detail: detail, busy: false)}
@@ -260,7 +276,7 @@ defmodule RavixWeb.Live.PlansPanel do
     project_id = socket.assigns.project.id
 
     socket
-    |> assign(busy: true)
+    |> assign(busy: true, selected: [], targets: %{})
     |> start_async(:detail, fn ->
       case Plans.get(user, id) do
         {:ok, %{plan: %{project_id: ^project_id}}} = result -> result
@@ -289,6 +305,11 @@ defmodule RavixWeb.Live.PlansPanel do
 
   defp nonempty_dependencies(ids), do: Enum.reject(ids, &(&1 == ""))
 
+  defp blank_plan, do: %{"title" => "", "summary" => "", "items" => [blank_item()]}
+
+  defp assigned_items?(nil), do: false
+  defp assigned_items?(detail), do: Enum.any?(detail.items, & &1.track_id)
+
   defp blank_item,
     do: %{
       "id" => Ecto.UUID.generate(),
@@ -301,5 +322,12 @@ defmodule RavixWeb.Live.PlansPanel do
   defp message(reason), do: RavixWeb.Error.from(reason).message
   defp status_label(status), do: status |> to_string() |> String.replace("_", " ")
   defp dependency_title(items, id), do: (Enum.find(items, &(&1.id == id)) || %{title: id}).title
+
+  defp blockers(items, item) do
+    items
+    |> Enum.filter(&(&1.id in item.dependencies && &1.status != :done))
+    |> Enum.map_join(", ", & &1.title)
+  end
+
   defp md(text), do: RavixWeb.Markdown.render_safe(text)
 end
