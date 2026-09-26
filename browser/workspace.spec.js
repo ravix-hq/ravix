@@ -516,7 +516,9 @@ test('project, track, streaming, image upload, reconnect, and revocation', async
     name: 'pixel.png', mimeType: 'image/png',
     buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j4WQAAAAASUVORK5CYII=', 'base64'),
   });
-  await expect(page.locator('.workspace-upload')).toContainText('pixel.png');
+  // Attaching starts the transfer before Send, so progress cannot sit at 0%
+  // while the person waits for the screenshot to be ready.
+  await expect(page.locator('.workspace-upload')).toContainText('pixel.png (100%)');
   await page.getByRole('button', { name: 'Send', exact: true }).click();
   await expect(page.locator('.workspace-upload')).toHaveCount(0);
   await expect(page.locator('.workspace-turn').filter({ hasText: 'Draft survives reconnect' }).locator('.agent-terminal-output > div > .md')).toContainText('There is one TODO worth doing here');

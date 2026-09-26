@@ -129,6 +129,7 @@ defmodule RavixWeb.TrackLive do
         socket
         |> allow_upload(:images,
           accept: ~w(.png .jpg .jpeg .gif .webp),
+          auto_upload: true,
           max_entries: 6,
           max_file_size: 8 * 1024 * 1024
         )
