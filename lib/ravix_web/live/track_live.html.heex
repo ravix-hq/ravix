@@ -118,9 +118,6 @@
             <article :for={{dom_id, turn} <- @streams.turns} id={dom_id} class="workspace-turn">
               <.prompt_message :if={turn.prompt} prompt={turn.prompt} />
               <section :if={turn.blocks != []} class="agent-terminal" aria-label="Agent output">
-                <div class="agent-terminal-label">
-                  <.icon name="terminal" size={12} /><span>agent</span>
-                </div>
                 <div class="agent-terminal-output">
                   <%= for segment <- segments(turn.blocks) do %>
                     <.work
@@ -136,6 +133,7 @@
                     </div>
                   <% end %>
                 </div>
+                <.turn_footer :if={turn.settled?} turn={turn} workdir={@track.workdir} />
               </section>
             </article>
           </div>

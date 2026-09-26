@@ -1448,6 +1448,125 @@ defmodule RavixWeb.TrackLive do
   defp counted(1, noun), do: "1 #{noun}"
   defp counted(n, noun), do: "#{n} #{noun}s"
 
+  attr :turn, :map, required: true
+  attr :workdir, :string, default: nil
+
+  # What a finished turn cost and left behind: how long it ran, when it
+  # ended, the answer to copy, and the files its edits touched. The time is
+  # written in UTC and rewritten in the reader's own zone by
+  # `assets/js/hooks/transcript_tail.js`, since the server does not know it.
+  defp turn_footer(assigns) do
+    %{turn: turn, workdir: workdir} = assigns
+    {started, ended} = turn_span(turn.events)
+    files = changed_files(turn.blocks, workdir)
+    {shown, rest} = Enum.split(files, 2)
+
+    assigns =
+      assign(assigns,
+        duration: started && ended && duration(DateTime.diff(ended, started)),
+        ended: ended,
+        answer: answer(turn.blocks),
+        shown: shown,
+        rest: rest
+      )
+
+    ~H"""
+    <footer class="turn-footer">
+      <span :if={@duration}>{@duration}</span>
+      <span :if={@duration && @ended} aria-hidden="true">·</span>
+      <time :if={@ended} datetime={DateTime.to_iso8601(@ended)} data-local-time>
+        {Calendar.strftime(@ended, "%H:%M")} UTC
+      </time>
+      <button
+        :if={@answer != ""}
+        type="button"
+        class="ghost turn-copy"
+        aria-label="Copy answer"
+        title="Copy answer"
+        data-copy={@answer}
+      >
+        <.icon name="copy" size={13} />
+      </button>
+      <span :for={file <- @shown} class="turn-file" title={file.path}>
+        {Path.basename(file.path)}
+        <span class="diff-add">+{file.added}</span> <span class="diff-del">−{file.removed}</span>
+      </span>
+      <span
+        :if={@rest != []}
+        class="turn-file"
+        title={Enum.map_join(@rest, "\n", & &1.path)}
+      >
+        +{length(@rest)} more <span class="diff-add">+{Enum.sum_by(@rest, & &1.added)}</span>
+        <span class="diff-del">−{Enum.sum_by(@rest, & &1.removed)}</span>
+      </span>
+    </footer>
+    """
+  end
+
+  # Events are newest first. The turn opened at its `started` stage (or its
+  # oldest event, for a turn Fountain started itself) and ended at the stage
+  # that settled it.
+  defp turn_span(events) do
+    opened = Enum.find(events, &TranscriptEvent.starts_turn?/1) || List.last(events)
+    closed = Enum.find(events, &TranscriptEvent.settles?/1)
+    {timestamp(opened), timestamp(closed)}
+  end
+
+  defp timestamp(%TranscriptEvent{ts: ts}) when is_binary(ts) do
+    case DateTime.from_iso8601(ts) do
+      {:ok, at, _offset} -> at
+      _ -> nil
+    end
+  end
+
+  defp timestamp(_event), do: nil
+
+  defp duration(seconds) when seconds < 60, do: "#{max(seconds, 0)}s"
+  defp duration(seconds) when seconds < 3600, do: "#{div(seconds, 60)}m #{rem(seconds, 60)}s"
+  defp duration(seconds), do: "#{div(seconds, 3600)}h #{div(rem(seconds, 3600), 60)}m"
+
+  # The answer is what `segments/1` leaves open after the work.
+  defp answer(blocks) do
+    blocks
+    |> segments()
+    |> Enum.flat_map(fn
+      {:block, %TranscriptBlock.Text{body: body}} -> [String.trim(body)]
+      _segment -> []
+    end)
+    |> Enum.join("\n\n")
+  end
+
+  # Every file an edit in this turn touched, once, with its lines summed,
+  # named relative to the track's directory.
+  defp changed_files(blocks, workdir) do
+    prefix = if is_binary(workdir), do: String.trim_trailing(workdir, "/") <> "/", else: nil
+
+    blocks
+    |> Enum.flat_map(fn
+      %TranscriptBlock.Tool{detail: detail} -> detail.edits
+      _block -> []
+    end)
+    |> Enum.reject(&(&1.path == ""))
+    |> Enum.group_by(&relative(&1.path, prefix))
+    |> Enum.map(fn {path, edits} ->
+      %{
+        path: path,
+        added: Enum.sum_by(edits, & &1.added),
+        removed: Enum.sum_by(edits, & &1.removed)
+      }
+    end)
+    |> Enum.sort_by(& &1.path)
+  end
+
+  defp relative(path, nil), do: path
+
+  defp relative(path, prefix),
+    do:
+      if(String.starts_with?(path, prefix),
+        do: String.replace_prefix(path, prefix, ""),
+        else: path
+      )
+
   # What a call was run on, when its name does not already say so. An
   # adapter commonly titles a shell call with the command itself, and the
   # summary the ACP library builds is every argument as `key=value`, so the

@@ -76,6 +76,8 @@ export const TranscriptTail = {
       }
       const button = e.target.closest("button.code-copy")
       if (button && this.el.contains(button)) this.copy(button)
+      const answer = e.target.closest("button[data-copy]")
+      if (answer && this.el.contains(answer)) this.copyAnswer(answer)
     })
 
     // Most of what makes this panel taller does not arrive with a patch: an
@@ -84,6 +86,7 @@ export const TranscriptTail = {
     this.observer = new ResizeObserver(() => this.stick())
     this.observer.observe(this.el)
     this.observeContent()
+    this.localize()
     this.stick()
   },
 
@@ -109,6 +112,17 @@ export const TranscriptTail = {
     }
     this.anchor = null
     this.observeContent()
+    this.localize()
+  },
+
+  // A turn's end is written in UTC, which the server is sure of; the reader's
+  // own zone is only known here. Rewriting an already-local time is a no-op.
+  localize() {
+    for (const time of this.el.querySelectorAll("time[data-local-time]")) {
+      const at = new Date(time.getAttribute("datetime"))
+      if (Number.isNaN(at.getTime())) continue
+      time.textContent = at.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
+    }
   },
 
   // Every element child, not just the first: the scroller's own box does not
@@ -138,6 +152,27 @@ export const TranscriptTail = {
     if (!event || this.asked) return
     this.asked = true
     this.pushEvent(event, {})
+  },
+
+  // A turn's answer, as the markdown it was written in. The button is an
+  // icon, so what happened is said through its label and a class.
+  async copyAnswer(button) {
+    if (button.disabled) return
+    button.disabled = true
+    try {
+      await navigator.clipboard.writeText(button.dataset.copy ?? "")
+      button.setAttribute("aria-label", "Answer copied")
+      button.classList.add("copied")
+    } catch {
+      button.setAttribute("aria-label", "Copy failed. Try again")
+    } finally {
+      button.disabled = false
+      window.setTimeout(() => {
+        if (!button.isConnected) return
+        button.setAttribute("aria-label", "Copy answer")
+        button.classList.remove("copied")
+      }, 2000)
+    }
   },
 
   async copy(button) {

@@ -1508,6 +1508,89 @@ defmodule RavixWeb.TrackLiveTest do
     assert has_element?(ctx.view, "#turns-turn .workspace-work-body .md", "The answer")
   end
 
+  test "a finished turn says how long it ran, what it touched, and offers its answer", ctx do
+    update = fn data ->
+      Jason.encode!(%{jsonrpc: "2.0", method: "session/update", params: %{update: data}})
+    end
+
+    workdir = ctx.track |> Repo.reload!() |> Map.fetch!(:workdir)
+
+    edit = fn id, path, old, new ->
+      [
+        %{sessionUpdate: "tool_call", toolCallId: id, title: "Edit", kind: "edit"},
+        %{
+          sessionUpdate: "tool_call_update",
+          toolCallId: id,
+          status: "completed",
+          content: [%{type: "diff", path: path, oldText: old, newText: new}]
+        }
+      ]
+    end
+
+    frames =
+      edit.("a", "#{workdir}/lib/app.ex", "one", "one\ntwo") ++
+        edit.("b", "#{workdir}/lib/app.ex", "x", "y") ++
+        edit.("c", "#{workdir}/README.md", "", "hello") ++
+        edit.("d", "/elsewhere/notes.txt", "a\nb", "") ++
+        [%{sessionUpdate: "agent_message_chunk", content: %{type: "text", text: "**Done**"}}]
+
+    output =
+      frames
+      |> Enum.with_index(1)
+      |> Enum.map(fn {data, id} ->
+        %{
+          "id" => id,
+          "turn_id" => "turn",
+          "kind" => "output",
+          "stream" => "acp",
+          "data" => update.(data),
+          "ts" => "2026-09-26T13:00:30Z"
+        }
+      end)
+
+    started = Map.put(opened(0, "turn", "Change things"), "ts", "2026-09-26T13:00:00Z")
+
+    completed = %{
+      "id" => 99,
+      "turn_id" => "turn",
+      "kind" => "stage",
+      "stage" => "turn",
+      "state" => "completed",
+      "ts" => "2026-09-26T13:02:05Z"
+    }
+
+    live = %{
+      "id" => 100,
+      "turn_id" => "live",
+      "kind" => "output",
+      "stream" => "acp",
+      "data" =>
+        update.(%{sessionUpdate: "agent_message_chunk", content: %{type: "text", text: "Going"}})
+    }
+
+    page = Transcript.page([started | output] ++ [completed, live], "claude")
+    stub(Tracks, :events, fn _, _, _thread_opts -> {:ok, page} end)
+    render_click(ctx.view, "retry-load")
+    render_async(ctx.view)
+
+    assert has_element?(ctx.view, "#turns-turn .turn-footer", "2m 5s")
+
+    assert has_element?(
+             ctx.view,
+             ~s|#turns-turn .turn-footer time[datetime="2026-09-26T13:02:05Z"]|
+           )
+
+    assert has_element?(ctx.view, ~s|#turns-turn .turn-copy[data-copy="**Done**"]|)
+    # Files are named from the track's directory, summed across edits, and
+    # past the first two are counted rather than listed.
+    assert has_element?(ctx.view, ~s|#turns-turn .turn-file[title="README.md"]|, "+1 −0")
+    assert has_element?(ctx.view, ~s|#turns-turn .turn-file[title="/elsewhere/notes.txt"]|)
+    assert has_element?(ctx.view, "#turns-turn .turn-file", "+1 more")
+    assert has_element?(ctx.view, "#turns-turn .turn-file", "+2 −1")
+    # A turn still running has no footer yet.
+    refute has_element?(ctx.view, "#turns-live .turn-footer")
+  end
+
   test "a turn with no tool calls or thoughts has nothing to fold", ctx do
     data =
       Jason.encode!(%{
