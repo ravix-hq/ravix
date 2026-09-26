@@ -401,6 +401,10 @@
           />
           <div :if={@panel.tab == :preview && @preview}>
             <p>Status: {@preview.state}</p>
+            <.loading_status :if={@preview.state == :starting} id="preview-loading">
+              {RavixWeb.PreviewPresentation.loading_label(@preview.config)}
+            </.loading_status>
+            <p :if={@preview.error} role="alert">{@preview.error}</p>
             <p :if={@preview.unavailable_reason}>{@preview.unavailable_reason}</p>
             <div class="workspace-actions">
               <button
@@ -426,12 +430,18 @@
               >
                 Stop
               </button>
-              <button phx-click="preview" phx-value-action="logs" disabled={@panel.busy?}>
+              <button
+                phx-click={
+                  JS.push("preview") |> JS.set_attribute({"open", ""}, to: "#preview-logs")
+                }
+                phx-value-action="logs"
+                disabled={@panel.busy?}
+              >
                 Logs
               </button>
             </div>
             <a
-              :if={@preview_url}
+              :if={@preview_url && @preview.state == :ready}
               href={~p"/preview/#{@track_id}"}
               target="_blank"
               rel="noreferrer"
@@ -439,13 +449,16 @@
               Open preview in new tab ↗
             </a>
             <iframe
-              :if={@preview_url}
+              :if={@preview_url && @preview.state == :ready}
               src={@preview_url}
               title="Track preview"
               class="workspace-preview"
               sandbox="allow-scripts allow-forms allow-same-origin allow-popups allow-downloads"
             ></iframe>
-            <pre :if={@preview.logs}>{@preview.logs}</pre>
+            <details id="preview-logs" open={@preview.state == :failed}>
+              <summary>Show logs</summary>
+              <pre>{RavixWeb.PreviewPresentation.logs(@preview.logs) |> then(&if(&1 == "", do: "No logs yet.", else: &1))}</pre>
+            </details>
             <details>
               <summary>Preview configuration</summary>
               <.form

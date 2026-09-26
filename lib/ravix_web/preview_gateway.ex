@@ -354,10 +354,22 @@ defmodule RavixWeb.PreviewGateway do
       {@start, _} ->
         site.backend.touch(site.row.track_id)
         if site.row.state == :stopped, do: start_service(site)
-        reply(conn, 200, start_page(back))
+
+        reply(
+          conn,
+          200,
+          start_page(
+            back,
+            RavixWeb.PreviewPresentation.loading_label(
+              site.backend.info(site.row.track_id).config
+            )
+          )
+        )
 
       {@status, _} ->
-        reply(conn, 200, Jason.encode!(site.backend.info(site.row.track_id)), "application/json")
+        info = site.backend.info(site.row.track_id)
+        info = %{info | logs: RavixWeb.PreviewPresentation.logs(info.logs)}
+        reply(conn, 200, Jason.encode!(info), "application/json")
 
       {@heartbeat, "POST"} ->
         if site.row.desired == :running do
@@ -656,13 +668,14 @@ defmodule RavixWeb.PreviewGateway do
     """
   end
 
-  defp start_page(back) do
-    """
-    <meta name="viewport" content="width=device-width,initial-scale=1"><h1>Live working copy</h1><p id="state">Starting preview…</p><pre id="logs"></pre><a href="#{escape(back)}">Back to track · send a correction</a><script>
-    async function poll(){const r=await fetch('#{@control}status');if(!r.ok){document.querySelector('#state').textContent='Access ended. Return to the track.';return;}const s=await r.json();if(s.state==='ready'){location.replace('/');return;}document.querySelector('#state').textContent=s.error||'Starting preview…';document.querySelector('#logs').textContent=s.logs||'';if(s.state!=='failed')setTimeout(poll,1000)}poll();
-    </script>
-    """
-  end
+  require EEx
+
+  EEx.function_from_file(
+    :defp,
+    :start_page,
+    Path.expand("preview_gateway/start.html.eex", __DIR__),
+    [:back, :label]
+  )
 
   defp activity_script(back) do
     "(()=>{const beat=()=>{if(document.visibilityState==='visible')fetch('#{@control}heartbeat',{method:'POST'}).catch(()=>{})};" <>

@@ -329,6 +329,16 @@ defmodule RavixWeb.PreviewGatewayTest do
     start = get(f, "/__ravix/start")
     assert start.status == 200
     assert start.body =~ "Live working copy"
+    assert start.body =~ ~s(id="loader" class="loading-status" role="status")
+    assert start.body =~ ~s(<details id="log-disclosure">)
+    assert start.body =~ "Show logs"
+    refute start.body =~ ~s(<details id="log-disclosure" open)
+    assert start.body =~ "preview.state==='ready'"
+    assert start.body =~ "location.replace('/')"
+    assert start.body =~ "preview.state==='failed'"
+    assert start.body =~ "disclosure.open=true"
+    assert start.body =~ "logs.textContent="
+    refute start.body =~ "logs.innerHTML"
     assert start.body =~ ~s(href="http://localhost:5183/p/#{f.project}/t/#{f.t1}")
     eventually(fn -> :start_service in Store.calls(f.t1) end)
     assert :touch in Store.calls(f.t1)
@@ -344,6 +354,22 @@ defmodule RavixWeb.PreviewGatewayTest do
     # and must never appear here; the rest is simply not the page's business.
     assert Map.keys(body) |> Enum.sort() == ["error", "logs", "state"]
     assert f.tunnels.() == 0
+  end
+
+  test "status presents readable bounded logs without exposing tickets", %{f: f} do
+    Store.update_row(
+      f.t1,
+      &%{
+        &1
+        | state: :starting,
+          logs: Jason.encode!(%{type: "stdout", data: "<script>app booting</script>
+"})
+      }
+    )
+
+    response = get(f, "/__ravix/status")
+    assert Jason.decode!(response.body)["logs"] == "[stdout] <script>app booting</script>"
+    assert get(f, "/__ravix/status", cookie: "").status == 401
   end
 
   test "heartbeats extend the lease only while the preview is wanted", %{f: f} do
@@ -440,6 +466,22 @@ defmodule RavixWeb.PreviewGatewayTest do
     assert res.body =~ "The preview did not answer."
     assert res.body =~ "Back to Ravix"
     assert {:error, 502} = Client.ws_connect(f.port, "/hmr", ws_headers(f))
+  end
+
+  test "the test tunnel retains close bytes when rearming a closed socket fails", %{f: f} do
+    {:ok, ws} = Client.ws_connect(f.port, "/hmr", ws_headers(f))
+    conn = Mint.HTTP.put_private(ws.conn, :mode, :active)
+    socket = Mint.HTTP.get_socket(conn)
+    {:ok, _} = Mint.HTTP.close(conn)
+    close = <<0x88, 2, 1000::16>>
+    owner = self()
+    state = %{socket: socket, conn: conn, mode: :raw, owner: owner, notified: false}
+
+    assert {:stop, :normal, %{notified: true}} =
+             Fake.Tunnel.handle_info({:tcp, socket, close}, state)
+
+    assert_receive {:tunnel, ^owner, {:data, ^close}}
+    assert_receive {:tunnel, ^owner, {:error, _}}
   end
 
   test "the sprite's WebSocket closing closes the browser's", %{f: f} do

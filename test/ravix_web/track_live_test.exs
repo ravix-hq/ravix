@@ -1539,6 +1539,38 @@ defmodule RavixWeb.TrackLiveTest do
     end
   end
 
+  test "preview startup keeps logs collapsed and failure opens diagnostics", ctx do
+    logs = ~s({"type":"stdout","data":"app booting"})
+
+    stub(Previews, :status, fn _, _ ->
+      {:ok, %{preview() | state: :starting, logs: logs, config: %{readiness_path: "/health"}}}
+    end)
+
+    render_click(ctx.view, "panel", %{name: "preview"})
+    render_async(ctx.view)
+
+    assert has_element?(
+             ctx.view,
+             "#preview-loading[role=status]",
+             "Waiting for it to answer on /health"
+           )
+
+    assert has_element?(ctx.view, "#preview-logs:not([open]) summary", "Show logs")
+    assert has_element?(ctx.view, "#preview-logs:not([open]) pre", "[stdout] app booting")
+    refute has_element?(ctx.view, ".workspace-preview")
+    refute render(ctx.view) =~ ~s(&quot;type&quot;)
+
+    stub(Previews, :status, fn _, _ ->
+      {:ok, %{preview() | state: :failed, logs: logs, error: "App did not answer"}}
+    end)
+
+    render_click(ctx.view, "refresh-panel")
+    render_async(ctx.view)
+    refute has_element?(ctx.view, "#preview-loading")
+    assert has_element?(ctx.view, "[role=alert]", "App did not answer")
+    assert has_element?(ctx.view, "#preview-logs[open] pre", "[stdout] app booting")
+  end
+
   test "Start launches the stopped preview and disables controls until the response", ctx do
     stub(Previews, :status, fn _, _ -> {:ok, preview()} end)
     render_click(ctx.view, "panel", %{name: "preview"})

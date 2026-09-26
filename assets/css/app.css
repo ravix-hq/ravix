@@ -694,6 +694,9 @@ h4 { font-size: 12px; color: var(--dim); font-weight: 500; letter-spacing: 0; }
 .transcript-scroll { position: relative; flex: 1; min-height: 0; overflow: auto; padding: 8px 20px 20px; }
 .workspace-turn { margin: 0 0 18px; max-width: none; line-height: 1.6; overflow-wrap: anywhere; }
 .workspace-turn pre, .workspace-panel pre, .term-scroll pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; }
+.workspace-panel #preview-logs { margin-block: 16px; }
+.workspace-panel #preview-logs summary { cursor: pointer; }
+.workspace-panel #preview-logs pre { max-height: 320px; overflow: auto; }
 /* Prose is set in the sans face at a readable measure; mono is for code,
    commands and tool output, which the fold below keeps in it. */
 .workspace-turn .md { font-size: 13.5px; }
