@@ -3,6 +3,7 @@ defmodule RavixWeb.WorkspaceLive do
   use RavixWeb, :live_view
 
   alias Ravix.{Accounts, Hub, Ids, Projects, Tracks}
+  alias Ravix.Accounts.Access
   alias Ravix.Hub.Event
   alias Ravix.Projects.Sections
   alias RavixWeb.Live.Form
@@ -47,6 +48,8 @@ defmodule RavixWeb.WorkspaceLive do
         session_token: session["session_token"],
         github_available: Accounts.capabilities().github,
         projects: [],
+        rail_loaded: false,
+        pending_url: nil,
         sections: [],
         section_placements: %{},
         tracks: %{},
@@ -63,7 +66,7 @@ defmodule RavixWeb.WorkspaceLive do
         new_plan: false,
         track_id: nil,
         # The nested `RavixWeb.TrackLive`, once it has said where it is. See
-        # the `:track_host` clause of `handle_info/2`, and `hand_over/3`.
+        # the `:track_host` clause of `handle_info/2`, and `hand_over/4`.
         track_host: nil,
         # Whether the yard is open over the page. Only the phone layout asks:
         # under `--bp-narrow` the rail is gone and the "Menu" button in the
@@ -91,13 +94,13 @@ defmodule RavixWeb.WorkspaceLive do
         busy: false
       )
 
-    {:ok, if(socket.assigns.current_user, do: socket |> unseen() |> reload(), else: socket)}
+    {:ok, if(socket.assigns.current_user, do: socket |> unseen() |> reload_async(), else: socket)}
   end
 
   @impl true
   def handle_params(params, _uri, socket) do
     # Every link in the yard patches, so arriving anywhere is leaving it.
-    socket = socket |> validate_session() |> assign(yard_open: false)
+    socket = socket |> validate_session() |> assign(yard_open: false, pending_url: nil)
 
     case wrong_page(socket) do
       nil -> {:noreply, open_url(socket, params)}
@@ -118,6 +121,8 @@ defmodule RavixWeb.WorkspaceLive do
   defp wrong_page(%{assigns: %{current_user: nil}}), do: "/login"
   defp wrong_page(%{assigns: %{live_action: :login}}), do: "/"
 
+  defp wrong_page(%{assigns: %{rail_loaded: false}}), do: nil
+
   defp wrong_page(%{assigns: %{live_action: action} = assigns})
        when action in [:home, :projects, :inbox] do
     if Accounts.needs_onboarding?(assigns.current_user, length(assigns.projects)),
@@ -125,6 +130,19 @@ defmodule RavixWeb.WorkspaceLive do
   end
 
   defp wrong_page(_socket), do: nil
+
+  # Before the rail arrives, database-backed access is enough to mount the
+  # selected child. An unavailable URL waits for the rail's normal decision.
+  defp open_url(%{assigns: %{rail_loaded: false}} = socket, %{"project" => id} = params) do
+    user = socket.assigns.current_user
+
+    with {:ok, project} <- Projects.get(user, id),
+         {:ok, track} <- requested_track(user, id, params["track"]) do
+      select_project(socket, project, params["track"], params, track)
+    else
+      _ -> assign(socket, pending_url: params)
+    end
+  end
 
   defp open_url(socket, params) do
     project = Enum.find(socket.assigns.projects, &(&1.id == params["project"]))
@@ -143,10 +161,22 @@ defmodule RavixWeb.WorkspaceLive do
     end
   end
 
-  defp select_project(socket, project, track_id, params) do
+  defp requested_track(_user, _project_id, nil), do: {:ok, nil}
+
+  defp requested_track(user, project_id, id) do
+    case Access.track_access(user, id) do
+      {:ok, %{track: %{project_id: ^project_id, closed_at: nil} = track}} ->
+        {:ok, Tracks.present(track)}
+
+      _ ->
+        {:error, :not_found}
+    end
+  end
+
+  defp select_project(socket, project, track_id, params, track \\ nil) do
     socket =
       socket
-      |> hand_over(project, track_id)
+      |> hand_over(project, track_id, track)
       |> url_thread(track_id, params)
       |> select_notice_thread(track_id)
       |> assign(
@@ -199,10 +229,10 @@ defmodule RavixWeb.WorkspaceLive do
   # Nothing is sent when the track is not changing, because every patch comes
   # through here --- opening a dialog, dismissing one --- and a hand-over is a
   # reload of the page on the right.
-  defp hand_over(socket, project, track_id) do
+  defp hand_over(socket, project, track_id, requested) do
     track =
       project && track_id &&
-        Enum.find(socket.assigns.tracks[project.id] || [], &(&1.id == track_id))
+        (requested || Enum.find(socket.assigns.tracks[project.id] || [], &(&1.id == track_id)))
 
     if track && socket.assigns.track_host && socket.assigns.track_id != track_id do
       send(socket.assigns.track_host, {:select_track, project, track})
@@ -466,6 +496,9 @@ defmodule RavixWeb.WorkspaceLive do
       to = wrong_page(socket) ->
         {:noreply, push_navigate(socket, to: to)}
 
+      params = socket.assigns.pending_url ->
+        {:noreply, socket |> assign(pending_url: nil) |> open_url(params)}
+
       true ->
         {:noreply, socket}
     end
@@ -665,15 +698,9 @@ defmodule RavixWeb.WorkspaceLive do
     Enum.map(sections ++ [unsectioned], &{&1, Map.get(grouped, &1.id, [])})
   end
 
-  # The rail, read here and now. Mount has nothing to draw until this answers
-  # and `handle_params/3` decides whether the URL names a project this person
-  # still has, so it waits, and it is the only caller that does. A button
-  # pressed, a dialog closing behind a change it made, a hub event: every
-  # rail read after mount goes through `reload_async/1`, because a rail read
-  # is every project's tracks and the page is drawing nothing while it runs.
-  defp reload(%{assigns: %{current_user: nil}} = socket), do: socket
-  defp reload(socket), do: apply_rail(socket, read_rail(socket.assigns.current_user))
-
+  # start_async does not run on the disconnected render. The connected mount
+  # starts the same traced read as subsequent refreshes, leaving the shell free
+  # to render and the selected track free to mount independently.
   defp reload_async(%{assigns: %{current_user: nil}} = socket), do: socket
 
   defp reload_async(socket) do
@@ -684,8 +711,8 @@ defmodule RavixWeb.WorkspaceLive do
   # The two creates, once they have something to show. The page patches to
   # what was created, and `handle_params/3` will only open a project that is
   # in the rail, so the rail is read here, in the task that did the creating,
-  # and arrives in the same answer. Off this process, as every rail read after
-  # mount is, and in hand before the patch, which a `reload_async/1` could
+  # and arrives in the same answer. Off this process, as every rail read
+  # is, and in hand before the patch, which a `reload_async/1` could
   # not promise.
   defp created({:ok, value}, user), do: {:ok, {value, read_rail(user)}}
   defp created(response, _user), do: response
@@ -720,7 +747,21 @@ defmodule RavixWeb.WorkspaceLive do
 
   # Subscribing is this process's to do --- `Phoenix.PubSub` registers the
   # caller --- so it happens here rather than beside the reads above.
-  defp apply_rail(socket, {projects, tracks}) do
+  defp apply_rail(socket, {_projects, tracks}) do
+    # The session hook runs before handle_async. Membership may also have
+    # changed while Fountain was answering, before this page subscribed.
+    # Re-read the scoped project list without fetching conversations again.
+    projects = Projects.list(socket.assigns.current_user)
+
+    tracks =
+      Map.new(projects, fn project ->
+        rows = Map.get(tracks, project.id, [])
+
+        rows = accessible_rows(socket.assigns.current_user, project, rows)
+
+        {project.id, rows}
+      end)
+
     {sections, placements} = Sections.list(socket.assigns.current_user)
 
     if connected?(socket) do
@@ -736,6 +777,7 @@ defmodule RavixWeb.WorkspaceLive do
     |> assign(
       project: project || socket.assigns.project,
       page_title: if(project, do: project.display_name <> " · Ravix", else: "Ravix"),
+      rail_loaded: true,
       sections: sections,
       section_placements: placements,
       projects: projects,
@@ -744,6 +786,12 @@ defmodule RavixWeb.WorkspaceLive do
     )
     |> announce(tracks)
   end
+
+  defp accessible_rows(user, %{access: :tracks}, rows) do
+    Enum.filter(rows, &match?({:ok, _}, Access.track_access(user, &1.id)))
+  end
+
+  defp accessible_rows(_user, _project, rows), do: rows
 
   defp select_notice_thread(
          %{assigns: %{notice_thread: {track_id, thread_id}, track_host: pid}} = socket,

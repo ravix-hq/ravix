@@ -193,7 +193,10 @@
             ><.icon name="plus" size={13} /></button>
           </div>
         </div>
-        <div id="project-sections" phx-hook="ProjectSections">
+        <div id="project-sections" phx-hook="ProjectSections" aria-busy={to_string(!@rail_loaded)}>
+          <p :if={!@rail_loaded} id="rail-loading" class="hint" role="status">
+            Loading projects…
+          </p>
           <div
             :for={
               {section, projects} <- section_groups(@projects, @sections, @section_placements)
@@ -416,7 +419,7 @@
         <%!-- A fixed id, so choosing another track moves this LiveView instead
           of replacing it. The session is its starting point and nothing more:
           it is read once, at mount, and every switch after that arrives as
-          `{:select_track, project, track}`. See `hand_over/3`. --%>
+          `{:select_track, project, track}`. See `hand_over/4`. --%>
         {live_render(@socket, RavixWeb.TrackLive,
           id: "track-host",
           session: %{

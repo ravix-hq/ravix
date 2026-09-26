@@ -11,6 +11,7 @@ defmodule RavixWeb.ProjectSectionsLiveTest do
     project = insert_project(user: user, name: "Section project")
     conn = log_in_user(conn, user)
     {:ok, view, _} = live(conn, "/p/#{project.id}")
+    render_async(view)
     # With no named sections, projects sit directly under Projects: the
     # unsectioned group has no heading of its own.
     assert has_element?(view, "#section-other a[href='/p/#{project.id}']")
@@ -46,6 +47,7 @@ defmodule RavixWeb.ProjectSectionsLiveTest do
     view |> element("#section-#{section.id} .section-toggle") |> render_click()
     assert has_element?(view, "#section-projects-#{section.id}[hidden]")
     {:ok, reloaded, _} = live(conn, "/p/#{project.id}")
+    render_async(reloaded)
     assert has_element?(reloaded, "#section-projects-#{section.id}[hidden]")
     reloaded |> element("#section-#{section.id} .section-toggle") |> render_click()
     refute has_element?(reloaded, "#section-projects-#{section.id}[hidden]")
