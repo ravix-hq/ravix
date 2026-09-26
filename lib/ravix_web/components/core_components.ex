@@ -625,83 +625,21 @@ defmodule RavixWeb.CoreComponents do
     """
   end
 
-  @glyphs %{
-    "S" => ~w(01110 10001 10000 01110 00001 10001 01110),
-    "W" => ~w(10001 10001 10001 10101 10101 11011 10001),
-    "I" => ~w(11111 00100 00100 00100 00100 00100 11111),
-    "T" => ~w(11111 00100 00100 00100 00100 00100 00100),
-    "C" => ~w(01110 10001 10000 10000 10000 10001 01110),
-    "H" => ~w(10001 10001 10001 11111 10001 10001 10001),
-    "Y" => ~w(10001 10001 01010 00100 00100 00100 00100),
-    "A" => ~w(01110 10001 10001 11111 10001 10001 10001),
-    "R" => ~w(11110 10001 10001 11110 10100 10010 10001),
-    "D" => ~w(11110 10001 10001 10001 10001 10001 11110),
-    "V" => ~w(10001 10001 10001 10001 10001 01010 00100),
-    "X" => ~w(10001 10001 01010 00100 01010 10001 10001)
-  }
-  @cols 5
-  @rows 7
-
   @doc """
-  The wordmark, drawn as blocks (`src/components/Wordmark.tsx`).
+  The wordmark: the product name set in the app's own sans.
 
-  A five-by-seven bitmap rather than a font: at this size a typeface is
-  somebody else's decision about letterforms, and a grid is the app saying
-  what it is. SVG so it scales, prints and screenshots cleanly, and so the
-  whole thing is one element.
+  Plain type on purpose. A drawn or pixel-grid logotype invites comparison
+  with other products' marks; the typeface we already ship does not.
 
       <.wordmark />
-      <.wordmark text="RAVIX" unit={7} gap={1} />
+      <.wordmark size={24} />
   """
-  attr :text, :string, default: "RAVIX"
-  attr :unit, :integer, default: 7, doc: "the side of one block, in user units"
-  attr :gap, :integer, default: 1, doc: "the space between blocks"
+  attr :text, :string, default: "Ravix"
+  attr :size, :integer, default: 44, doc: "the font size, in pixels"
 
   def wordmark(assigns) do
-    letters =
-      assigns.text
-      |> String.upcase()
-      |> String.graphemes()
-      |> Enum.filter(&Map.has_key?(@glyphs, &1))
-
-    unit = assigns.unit
-    gap = assigns.gap
-    letter_width = @cols * (unit + gap) - gap
-    # A letter's worth of air between words is too much at this size; two
-    # cells reads as a space without the wordmark falling apart.
-    stride = letter_width + unit * 2
-    width = length(letters) * stride - unit * 2
-    height = @rows * (unit + gap) - gap
-
-    cells =
-      for {char, li} <- Enum.with_index(letters),
-          {row, ri} <- Enum.with_index(Map.fetch!(@glyphs, char)),
-          {cell, ci} <- Enum.with_index(String.graphemes(row)),
-          cell == "1",
-          do: {li * stride + ci * (unit + gap), ri * (unit + gap)}
-
-    assigns = assign(assigns, width: width, height: height, cells: cells)
-
     ~H"""
-    <svg
-      class="wordmark"
-      viewBox={"0 0 #{@width} #{@height}"}
-      width={@width}
-      height={@height}
-      role="img"
-      aria-label={@text}
-      style="height: auto; max-width: 100%"
-    >
-      <rect
-        :for={{x, y} <- @cells}
-        x={x}
-        y={y}
-        width={@unit}
-        height={@unit}
-        rx="1"
-        fill="currentColor"
-      />
-    </svg>
+    <span class="wordmark" style={"font-size: #{@size}px"}>{@text}</span>
     """
   end
 

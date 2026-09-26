@@ -2,7 +2,7 @@
   <main :if={@current_user} class="centred welcome-page">
     <div class="welcome-card">
       <header class="welcome-head">
-        <.wordmark unit={4} />
+        <.wordmark size={24} />
         <span class="spacer"></span>
         <.link href="/auth/signout" method="post" class="ghost">Sign out</.link>
         <button class="ghost" phx-click="skip" id="welcome-skip">Skip setup</button>

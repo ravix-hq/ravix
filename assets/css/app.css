@@ -977,8 +977,8 @@ h4 { font-size: 12px; color: var(--dim); font-weight: 500; letter-spacing: 0; }
 .centred { min-height: 100vh; display: grid; place-items: center; padding: 32px 24px; }
 .hero { width: min(480px, 100%); display: flex; flex-direction: column; align-items: flex-start; gap: 20px; }
 .wordmark {
-  display: flex; gap: 5px; align-items: flex-end; height: 56px;
-  color: var(--ink);
+  display: inline-block; font-family: var(--sans); font-weight: 600;
+  line-height: 1; letter-spacing: -0.03em; color: var(--ink);
 }
 .hero-sub { color: var(--dim); text-align: left; max-width: 48ch; margin: -8px 0 0; line-height: 1.55; }
 
