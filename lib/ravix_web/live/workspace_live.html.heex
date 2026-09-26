@@ -224,47 +224,71 @@
         data-side="left"
       >
       </div>
-      <nav :if={@project} class="track-tabs" aria-label="Project tracks">
-        <.link
-          patch={"/p/#{@project.id}"}
-          class={["track-tab", is_nil(@track_id) && "selected"]}
-          aria-current={if is_nil(@track_id), do: "page"}
-        >Overview</.link>
-        <.link
-          :for={{track, index} <- Enum.with_index(@tracks[@project.id] || [], 1)}
-          patch={"/p/#{@project.id}/t/#{track.id}"}
-          class={["workspace-track track-tab", @track_id == track.id && "selected"]}
-          aria-current={if @track_id == track.id, do: "page"}
-        >
-          <span
-            :if={track.status in [:running, :opening]}
-            class={"dot #{track.status}"}
-            role="img"
-            aria-label="Working"
-          ></span>
-          <span
-            :if={attention?(track)}
-            class="track-attention"
-            role="img"
-            aria-label="Needs attention"
-          >
-            !
-          </span>
-          <span
-            :if={track.status not in [:running, :opening] && !attention?(track)}
-            class="track-num"
-          >
-            {index}
-          </span>
-          <span class="track-title">{track.title}</span>
-          <span :if={track.origin.kind == :plan} class="chip" title="From a project plan">Plan</span>
-        </.link>
+      <nav
+        :if={@project}
+        id="project-track-navigation"
+        phx-hook="TrackTabs"
+        class="track-navigation"
+        aria-label="Project tracks"
+      >
         <button
-          :if={@project.access != :tracks}
-          class="ghost track-tab"
-          phx-click={JS.push_focus() |> JS.push("dialog")}
-          phx-value-name="new-track"
-        ><.icon name="plus" size={13} />New track</button>
+          type="button"
+          class="ghost track-scroll"
+          data-scroll-left
+          aria-label="Scroll tracks left"
+          aria-controls="project-track-tabs"
+          disabled
+        >‹</button>
+        <div id="project-track-tabs" class="track-tabs">
+          <.link
+            patch={"/p/#{@project.id}"}
+            class={["track-tab", is_nil(@track_id) && "selected"]}
+            aria-current={if is_nil(@track_id), do: "page"}
+          >Overview</.link>
+          <.link
+            :for={{track, index} <- Enum.with_index(@tracks[@project.id] || [], 1)}
+            patch={"/p/#{@project.id}/t/#{track.id}"}
+            class={["workspace-track track-tab", @track_id == track.id && "selected"]}
+            aria-current={if @track_id == track.id, do: "page"}
+          >
+            <span
+              :if={track.status in [:running, :opening]}
+              class={"dot #{track.status}"}
+              role="img"
+              aria-label="Working"
+            ></span>
+            <span
+              :if={attention?(track)}
+              class="track-attention"
+              role="img"
+              aria-label="Needs attention"
+            >
+              !
+            </span>
+            <span
+              :if={track.status not in [:running, :opening] && !attention?(track)}
+              class="track-num"
+            >
+              {index}
+            </span>
+            <span class="track-title">{track.title}</span>
+            <span :if={track.origin.kind == :plan} class="chip" title="From a project plan">Plan</span>
+          </.link>
+          <button
+            :if={@project.access != :tracks}
+            class="ghost track-tab"
+            phx-click={JS.push_focus() |> JS.push("dialog")}
+            phx-value-name="new-track"
+          ><.icon name="plus" size={13} />New track</button>
+        </div>
+        <button
+          type="button"
+          class="ghost track-scroll"
+          data-scroll-right
+          aria-label="Scroll tracks right"
+          aria-controls="project-track-tabs"
+          disabled
+        >›</button>
       </nav>
       <div :if={@project && is_nil(@track_id)} class="crumbs">
         <span class="project-mark" aria-hidden="true">
