@@ -1400,7 +1400,11 @@ defmodule RavixWeb.WorkspaceLiveTest do
     assert has_element?(child, ".diff-line.diff-add code", "hello change")
     child |> element("button", "Checks") |> render_click()
     assert render_async(child) =~ "CI passed"
-    child |> element("button", "Preview") |> render_click()
+
+    child
+    |> element("button[phx-click=panel][phx-value-name=preview]", "Previews")
+    |> render_click()
+
     assert render_async(child) =~ "stopped"
     assert has_element?(child, "#preview-config-form")
   end
