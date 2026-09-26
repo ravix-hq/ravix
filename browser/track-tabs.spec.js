@@ -9,8 +9,8 @@ test('overflowing track tabs scroll with a mouse and keep navigation reachable',
   await page.getByRole('button', { name: 'Add a project', exact: true }).first().click();
   const project = page.getByRole('dialog', { name: 'New project' });
   await project.getByLabel('Project name', { exact: true }).fill('Scrolling tracks');
-  await expect(project.getByLabel('Repository', { exact: true }).locator('option')).not.toHaveCount(1);
-  await project.getByLabel('Repository', { exact: true }).selectOption('mockuser/atlas-api');
+  await expect(project.locator('#project-repositories option')).not.toHaveCount(0);
+  await project.getByLabel('Repository', { exact: true }).fill('mockuser/atlas-api');
   await project.getByRole('button', { name: 'Create project' }).click();
   await expect(project).not.toBeVisible();
   const nav = page.getByRole('navigation', { name: 'Project tracks', exact: true });

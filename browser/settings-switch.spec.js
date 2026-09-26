@@ -41,7 +41,7 @@ test('settings explicitly rebuilds when switching agents and the next track work
   await page.getByRole('button', { name: 'Add a project', exact: true }).first().click();
   const create = page.getByRole('dialog', { name: 'New project' });
   await create.getByLabel('Project name', { exact: true }).fill('Agent switch browser');
-  await create.getByLabel('Agent', { exact: true }).selectOption('claude');
+  await create.locator('#project-agent-claude').click();
   await create.getByRole('button', { name: 'Create project', exact: true }).click();
   await expect(create).not.toBeVisible();
   const projectUrl = page.url();

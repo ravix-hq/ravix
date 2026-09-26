@@ -15,8 +15,8 @@ test('narrow track views give the conversation space and preserve drafts', async
   await page.getByRole('button', { name: 'Add a project', exact: true }).first().click();
   await page.getByLabel('Project name', { exact: true }).fill('Narrow track');
   const repository = page.getByLabel('Repository', { exact: true });
-  await expect(repository.locator('option')).not.toHaveCount(1);
-  await repository.selectOption('mockuser/atlas-api');
+  await expect(page.locator('#project-repositories option')).not.toHaveCount(0);
+  await repository.fill('mockuser/atlas-api');
   await page.getByRole('button', { name: 'Create project', exact: true }).click();
   await page.getByRole('navigation', { name: 'Project tracks', exact: true }).getByRole('button', { name: 'New track', exact: true }).click();
   await page.getByRole('button', { name: 'Create track', exact: true }).click();

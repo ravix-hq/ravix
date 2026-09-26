@@ -300,12 +300,12 @@ test('the account dialog is where the agent lives after the walkthrough', async 
 test('home quick start creates a scratch project and recent navigation survives theme changes', async ({ page }) => {
   await signIn(page);
   await page.getByRole('link', { name: 'Home', exact: true }).first().click();
-  await expect(page.getByRole('button', { name: /Open a local project/ })).toBeDisabled();
+  await expect(page.getByRole('button', { name: /Open a local project/ })).toHaveCount(0);
   await accessible(page);
   await capture(page, 'home-empty');
   await page.getByRole('button', { name: /^Quick start/ }).click();
   await page.getByLabel('Project name', { exact: true }).fill('Quick start quality');
-  await expect(page.getByLabel('Repository', { exact: true })).toHaveValue('');
+  await expect(page.getByLabel('Repository', { exact: true })).toHaveCount(0);
   await page.getByRole('button', { name: 'Create project', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Plans', exact: true })).toBeVisible();
   await expect(page.locator('.crumbs')).toContainText('Quick start quality');
@@ -449,7 +449,7 @@ test('keyboard users can resize panels and close dialogs with focus restored', a
   await open.press('Enter');
   const dialog = page.getByRole('dialog', { name: 'New project' });
   await expect(dialog).toBeVisible();
-  await expect(dialog.getByRole('button', { name: 'Close', exact: true })).toBeFocused();
+  await expect(dialog.getByRole('combobox', { name: 'Repository', exact: true })).toBeFocused();
   await accessible(page);
   await page.keyboard.press('Escape');
   await expect(dialog).not.toBeVisible();
@@ -464,8 +464,8 @@ test('project, track, streaming, image upload, reconnect, and revocation', async
   const projectDialog = page.getByRole('dialog', { name: 'New project' });
   await expect(projectDialog).toBeVisible();
   await page.getByLabel('Project name', { exact: true }).fill('Browser quality');
-  await expect(page.getByLabel('Repository', { exact: true }).locator('option')).not.toHaveCount(1);
-  await page.getByLabel('Repository', { exact: true }).selectOption('mockuser/atlas-api');
+  await expect(page.locator('#project-repositories option')).not.toHaveCount(0);
+  await page.getByLabel('Repository', { exact: true }).fill('mockuser/atlas-api');
   await projectDialog.getByRole('button', { name: 'Create project' }).click();
   await expect(projectDialog).not.toBeVisible();
   await page.getByRole('navigation', { name: 'Project tracks', exact: true }).getByRole('button', { name: 'New track', exact: true }).click();

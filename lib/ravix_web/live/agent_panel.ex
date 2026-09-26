@@ -9,10 +9,11 @@ defmodule RavixWeb.Live.AgentPanel do
   empty, and each thing held has its own Remove; nobody is sent to another
   console for any of it.
 
-  Rendered in two places that must not drift: the walkthrough's agent step
+  Rendered in the walkthrough's agent step
   (`RavixWeb.OnboardingLive`), and the account dialog in the workspace
   (`RavixWeb.WorkspaceLive`), which is where somebody comes back to it
-  weeks later. A `live_component` because the state is nobody else's --- the
+  weeks later, and scoped to one agent inside the shared new-project form.
+  A `live_component` because the state is nobody else's --- the
   agent and kind being chosen, the credential form, the ChatGPT sign-in that
   is open --- and because the two pages would otherwise each carry a copy of
   the same eight assigns and nine event clauses.
@@ -30,7 +31,10 @@ defmodule RavixWeb.Live.AgentPanel do
 
     * **What happens after.** Connecting changes the person, and the page is
       what holds `current_user`. The panel sends `{:agent_connected, user, agent}`;
-      the walkthrough moves on to GitHub, the workspace says so.
+      the standalone walkthrough step moves on to GitHub; an inline connection
+      keeps the project draft and selected agent. Pages route clock messages only
+      while that panel is visible. Each dialog opening and panel mount has its
+      own identity, so an old tick cannot poll a later sign-in.
 
   ## The session
 
@@ -74,19 +78,27 @@ defmodule RavixWeb.Live.AgentPanel do
        link_error: nil,
        subscription: nil,
        # What the set holds, as Fountain reports it: nil until it has answered.
-       held: nil
+       held: nil,
+       scoped_agent: nil,
+       poll_token: make_ref()
      )}
   end
 
   # The page's clock, handed back: one poll of the open sign-in.
   @impl true
-  def update(%{tick: :poll_link}, %{assigns: %{link: %Inference.Link{} = link}} = socket) do
+  def update(%{tick: :poll_link}, %{assigns: %{scoped_agent: nil, poll_token: token}} = socket),
+    do: update(%{tick: {:poll_link, token}}, socket)
+
+  def update(
+        %{tick: {:poll_link, token}},
+        %{assigns: %{link: %Inference.Link{} = link, poll_token: token}} = socket
+      ) do
     user = socket.assigns.current_user
     {:ok, traced_async(socket, :poll_link, fn -> Inference.poll_link(user, link) end)}
   end
 
   # The sign-in this tick was for has been cancelled or has finished.
-  def update(%{tick: :poll_link}, socket), do: {:ok, socket}
+  def update(%{tick: _tick}, socket), do: {:ok, socket}
 
   def update(assigns, socket) do
     socket = assign(socket, assigns)
@@ -99,7 +111,14 @@ defmodule RavixWeb.Live.AgentPanel do
         do: socket,
         else:
           socket
-          |> assign(agent: user.agent, kind: user.credential_kind || :subscription)
+          |> assign(
+            agent: socket.assigns.scoped_agent || user.agent,
+            kind:
+              if(socket.assigns.scoped_agent,
+                do: :subscription,
+                else: user.credential_kind || :subscription
+              )
+          )
           |> read_link_status()
           |> read_subscription()
           |> read_held()
@@ -108,6 +127,9 @@ defmodule RavixWeb.Live.AgentPanel do
   end
 
   @impl true
+  def handle_event("choose-agent", _, %{assigns: %{scoped_agent: agent}} = socket)
+      when not is_nil(agent), do: {:noreply, socket}
+
   def handle_event("choose-agent", %{"agent" => word}, %{assigns: %{busy: false}} = socket)
       when is_map_key(@agents, word) do
     agent = Map.fetch!(@agents, word)
@@ -330,9 +352,10 @@ defmodule RavixWeb.Live.AgentPanel do
     do: socket |> assign(link: link, link_error: nil) |> schedule_poll()
 
   defp schedule_poll(
-         %{assigns: %{link: %Inference.Link{poll_interval: seconds}, id: id}} = socket
+         %{assigns: %{link: %Inference.Link{poll_interval: seconds}, id: id, poll_token: token}} =
+           socket
        ) do
-    Process.send_after(self(), {:agent_panel, id, :poll_link}, seconds * 1000)
+    Process.send_after(self(), {:agent_panel, id, {:poll_link, token}}, seconds * 1000)
     socket
   end
 
@@ -412,7 +435,7 @@ defmodule RavixWeb.Live.AgentPanel do
     ~H"""
     <div class="agent-panel" id={@id}>
       <.loading_status :if={@busy}>Updating agent connection…</.loading_status>
-      <div class="agent-choices" role="group" aria-label="Agent">
+      <div :if={is_nil(@scoped_agent)} class="agent-choices" role="group" aria-label="Agent">
         <div :for={agent <- User.agents()}>
           <button
             type="button"
@@ -455,7 +478,9 @@ defmodule RavixWeb.Live.AgentPanel do
       </div>
 
       <section
-        :if={is_list(@held) and (@held != [] or missing?(@current_user, @held))}
+        :if={
+          is_nil(@scoped_agent) and is_list(@held) and (@held != [] or missing?(@current_user, @held))
+        }
         class="agent-held"
         id="agent-held"
         aria-label="What you have connected"

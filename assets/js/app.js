@@ -19,6 +19,7 @@
 //   SettingsSections section navigation and unsaved input warnings
 //   TrackTabs       horizontal scrolling and selected track visibility
 //   ProjectSections drag a sidebar project onto one of your sections
+//   ProjectFormFocus synchronous dialog focus that never steals later typing
 //   CopyCode        copy a Help example exactly, with success or failure feedback
 //
 // Adding a hook is a product decision, not a convenience. Say why in its
@@ -37,9 +38,10 @@ import {Notify} from "./hooks/notify"
 import {TrackTabs} from "./hooks/track_tabs"
 import {SettingsSections} from "./hooks/settings_sections"
 import {ProjectSections} from "./hooks/project_sections"
+import {ProjectFormFocus} from "./hooks/project_form_focus"
 import {CopyCode} from "./hooks/copy_code"
 
-const hooks = {Theme, PanelResize, TranscriptTail, Composer, Terminal, Notify, SettingsSections, TrackTabs, ProjectSections, CopyCode}
+const hooks = {Theme, PanelResize, TranscriptTail, Composer, Terminal, Notify, SettingsSections, TrackTabs, ProjectSections, CopyCode, ProjectFormFocus}
 
 const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
 const liveSocket = new LiveSocket("/live", Socket, {

@@ -9,6 +9,11 @@ defmodule RavixWeb.OnboardingLiveTest do
 
   setup :verify_on_exit!
 
+  setup do
+    stub(Ravix.Accounts.Inference, :usable_agents, fn _ -> {:ok, [:claude, :codex]} end)
+    :ok
+  end
+
   test "each onboarding step has a title on arrival and navigation", %{conn: conn} do
     github([])
     conn = log_in_user(conn, fresh())
@@ -509,6 +514,8 @@ defmodule RavixWeb.OnboardingLiveTest do
       {:ok, view, _} = live(log_in_user(conn, user), "/welcome/project")
       render_async(view)
 
+      render_click(view, "choose-project-agent", %{"agent" => "codex"})
+
       view
       |> form("#first-project-form", new_project: [repo: "acme/app", name: "", runtime: "codex"])
       |> render_submit()
@@ -522,10 +529,7 @@ defmodule RavixWeb.OnboardingLiveTest do
     test "a repository the list never offered is not sent as one", %{conn: conn} do
       github([%{account: "acme", id: 42}], [%{full_name: "acme/app", installation_id: 42}])
 
-      expect(Projects, :create, fn _user, attrs ->
-        assert attrs == %{"name" => "Mine"}
-        {:error, {:unavailable, "Provisioning is offline"}}
-      end)
+      reject(&Projects.create/2)
 
       {:ok, view, _} = live(log_in_user(conn, connected()), "/welcome/project")
       render_async(view)
@@ -534,7 +538,7 @@ defmodule RavixWeb.OnboardingLiveTest do
         "new_project" => %{"name" => "Mine", "repo" => "someone-elses/private"}
       })
 
-      assert render_async(view) =~ "Provisioning is offline"
+      assert render_async(view) =~ "Choose a repository from the list"
       # Not finished: they are still here and can try again.
       refute has_element?(view, "#first-project-form button[disabled]")
     end
@@ -598,10 +602,14 @@ defmodule RavixWeb.OnboardingLiveTest do
       assert has_element?(view, "#first-project-form")
     end
 
-    test "without an agent it says what that means rather than refusing", %{conn: conn} do
+    test "without an agent it offers both connections and pauses creation", %{conn: conn} do
       github([])
+      stub(Inference, :usable_agents, fn _ -> {:ok, []} end)
       {:ok, view, _} = live(log_in_user(conn, fresh()), "/welcome/project")
-      assert has_element?(view, "#project-no-agent")
+      render_async(view)
+      assert has_element?(view, "#project-agent-codex", "Not connected - connect to use")
+      refute has_element?(view, "#project-runtime [aria-pressed=true]")
+      assert has_element?(view, "#first-project-form button[disabled]")
     end
   end
 

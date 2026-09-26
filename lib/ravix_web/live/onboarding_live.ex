@@ -41,6 +41,8 @@ defmodule RavixWeb.OnboardingLive do
   """
   use RavixWeb, :live_view
 
+  alias RavixWeb.Live.NewProject
+
   alias Ravix.{Accounts, Projects}
   alias Ravix.Accounts.{Inference, User}
   alias RavixWeb.Live.{AgentPanel, Form, Guard}
@@ -63,12 +65,17 @@ defmodule RavixWeb.OnboardingLive do
      assign(socket,
        github_available: Accounts.capabilities().github,
        project_form: Form.new(:new_project),
+       project_generation: 0,
+       project_agents: nil,
+       project_agent_error: nil,
+       project_mode: "github",
        # `nil` until GitHub has answered, which is not the same as "none": the
        # GitHub step says "checking" for the first and offers the install
        # button for the second.
        installations: nil,
        installation: nil,
        repos: [],
+       repos_loading: false,
        busy: false
      )}
   end
@@ -101,7 +108,8 @@ defmodule RavixWeb.OnboardingLive do
   defp step_title(:project), do: "Create your first project"
 
   # The two steps that read GitHub do it on arrival and off this process.
-  defp enter(socket, step) when step in [:github, :project], do: load_repos(socket, nil)
+  defp enter(socket, :project), do: socket |> NewProject.init() |> load_repos(nil)
+  defp enter(socket, step) when step == :github, do: load_repos(socket, nil)
   defp enter(socket, _step), do: socket
 
   # A URL patch is not a message, so no hook has run for it. See the same
@@ -123,25 +131,17 @@ defmodule RavixWeb.OnboardingLive do
     end
   end
 
+  def handle_event("choose-project-agent", %{"agent" => agent}, socket),
+    do: {:noreply, NewProject.choose(socket, agent)}
+
+  def handle_event("refresh-project-agents", _, socket),
+    do: {:noreply, NewProject.refresh(socket)}
+
   def handle_event("edit", %{"new_project" => params}, socket),
-    do: {:noreply, assign(socket, project_form: Form.new(:new_project, params))}
+    do: {:noreply, NewProject.edit(socket, params)}
 
   def handle_event("create-project", %{"new_project" => params}, socket) do
-    repo = Enum.find(socket.assigns.repos, &(&1.full_name == params["repo"]))
-    attrs = Map.take(params, ["name", "runtime"])
-
-    attrs =
-      if repo,
-        do:
-          Map.merge(attrs, %{"repo" => repo.full_name, "installation_id" => repo.installation_id}),
-        else: attrs
-
-    user = socket.assigns.current_user
-
-    {:noreply,
-     socket
-     |> assign(busy: true, project_form: Form.new(:new_project, params))
-     |> traced_async(:create_project, fn -> Projects.create(user, attrs) end)}
+    {:noreply, NewProject.create(socket, params, &Projects.create/2)}
   end
 
   # Leaving without finishing is finishing: the workspace must not send
@@ -153,13 +153,19 @@ defmodule RavixWeb.OnboardingLive do
   @impl true
   # The agent panel's clock; see `RavixWeb.Live.AgentPanel`.
   def handle_info({:agent_panel, id, tick}, socket) do
-    send_update(AgentPanel, id: id, tick: tick)
+    if (id == "agent-panel" and socket.assigns.live_action == :agent) or
+         (socket.assigns.live_action == :project and NewProject.active_panel?(socket, id)),
+       do: send_update(AgentPanel, id: id, tick: tick)
+
     {:noreply, socket}
   end
 
   # The panel connected something. That was the step; on to GitHub.
-  def handle_info({:agent_connected, %User{} = user, _agent}, socket),
-    do: {:noreply, socket |> assign(current_user: user) |> push_patch(to: @paths[:github])}
+  def handle_info({:agent_connected, %User{} = user, agent}, socket) do
+    if socket.assigns.live_action == :project,
+      do: {:noreply, NewProject.connected(socket, user, agent)},
+      else: {:noreply, socket |> assign(current_user: user) |> push_patch(to: @paths[:github])}
+  end
 
   def handle_info({:agent_default_changed, %User{} = user}, socket),
     do: {:noreply, assign(socket, current_user: user)}
@@ -177,6 +183,15 @@ defmodule RavixWeb.OnboardingLive do
     do: {:noreply, clear_notice(socket, kind, message)}
 
   @impl true
+  def handle_async(:project_agents, {:ok, response}, socket),
+    do: {:noreply, NewProject.availability(socket, response)}
+
+  def handle_async(:project_agents, {:exit, {:shutdown, :cancel}}, socket),
+    do: {:noreply, socket}
+
+  def handle_async(:project_agents, {:exit, reason}, socket),
+    do: {:noreply, NewProject.availability(socket, {:error, {:async_exit, reason}})}
+
   def handle_async(:create_project, {:ok, response}, socket) do
     {:noreply,
      result(
@@ -192,6 +207,7 @@ defmodule RavixWeb.OnboardingLive do
   def handle_async(:repos, {:ok, {:ok, data}}, socket) do
     {:noreply,
      assign(socket,
+       repos_loading: false,
        repos: data.repos,
        installations: data.installations,
        installation: data.selected
@@ -201,7 +217,9 @@ defmodule RavixWeb.OnboardingLive do
   # GitHub could not be read. "None" is the honest thing to draw: the install
   # button is also how somebody whose token has gone gets a working one.
   def handle_async(:repos, _other, socket),
-    do: {:noreply, assign(socket, repos: [], installations: [], installation: nil)}
+    do:
+      {:noreply,
+       assign(socket, repos_loading: false, repos: [], installations: [], installation: nil)}
 
   def handle_async(_name, {:exit, reason}, socket),
     do: {:noreply, socket |> assign(busy: false) |> exit(reason)}
@@ -221,10 +239,10 @@ defmodule RavixWeb.OnboardingLive do
       user = socket.assigns.current_user
 
       socket
-      |> assign(repos: [], installation: nil)
+      |> assign(repos_loading: true, repos: [], installation: nil)
       |> traced_async(:repos, fn -> Projects.repos(user, id) end)
     else
-      assign(socket, repos: [], installations: [], installation: nil)
+      assign(socket, repos_loading: false, repos: [], installations: [], installation: nil)
     end
   end
 
