@@ -77,7 +77,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
 
     track = %{Tracks.present(row) | status: :ready, unread: true, threads: threads}
     stub_track(row)
-    stub(Tracks, :list, fn _, _ -> {:ok, [track]} end)
+    stub(Tracks, :list, fn _, _, _opts -> {:ok, [track]} end)
 
     stub(Tracks, :get, fn _, _, _ ->
       {:ok, %{track: track, header: blank_header(), threads: threads, starters: [], models: []}}
@@ -139,7 +139,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
 
     on_exit(fn -> :telemetry.detach(handler) end)
 
-    expect(Tracks, :list, fn _, _ ->
+    expect(Tracks, :list, fn _, _, _opts ->
       send(test_pid, {:rail_started, self()})
       receive do: (:release_rail -> {:ok, [Tracks.present(track)]})
     end)
@@ -173,7 +173,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
     insert_project(user: user)
     test_pid = self()
 
-    expect(Tracks, :list, fn _, _ ->
+    expect(Tracks, :list, fn _, _, _opts ->
       send(test_pid, {:rail_started, self()})
       receive do: (:release_rail -> {:ok, []})
     end)
@@ -193,7 +193,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
     {token, session} = insert_session(user)
     test_pid = self()
 
-    expect(Tracks, :list, fn _, _ ->
+    expect(Tracks, :list, fn _, _, _opts ->
       send(test_pid, {:rail_started, self()})
       receive do: (:release_rail -> {:ok, []})
     end)
@@ -212,7 +212,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
     insert_project_member(project, user)
     test_pid = self()
 
-    expect(Tracks, :list, fn _, _ ->
+    expect(Tracks, :list, fn _, _, _opts ->
       send(test_pid, {:rail_started, self()})
       receive do: (:release_rail -> {:ok, []})
     end)
@@ -231,7 +231,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
     project = insert_project(user: user)
     test_pid = self()
 
-    expect(Tracks, :list, fn _, _ ->
+    expect(Tracks, :list, fn _, _, _opts ->
       send(test_pid, {:rail_started, self()})
       receive do: (:release_rail -> {:ok, []})
     end)
@@ -258,7 +258,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
     insert_track_member(removed, user)
     test_pid = self()
 
-    expect(Tracks, :list, fn _, _ ->
+    expect(Tracks, :list, fn _, _, _opts ->
       send(test_pid, {:rail_started, self()})
       receive do: (:release_rail -> {:ok, Enum.map([kept, removed], &Tracks.present/1)})
     end)
@@ -285,7 +285,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
     second = %{id: other.id, title: "Next", status: :running, unread: false}
 
     rail = fn a, b ->
-      stub(Tracks, :list, fn _, _ -> {:ok, [%{view_row | threads: [a, b]}]} end)
+      stub(Tracks, :list, fn _, _, _opts -> {:ok, [%{view_row | threads: [a, b]}]} end)
     end
 
     rail.(first, second)
@@ -508,7 +508,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
         row |> Tracks.present(project: project) |> struct!(status: status, unread: true)
       end)
 
-    stub(Tracks, :list, fn actual_user, project_id ->
+    stub(Tracks, :list, fn actual_user, project_id, _opts ->
       assert actual_user.id == user.id
       assert project_id == project.id
       {:ok, tracks}
@@ -521,7 +521,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
     refute has_element?(view, ".inbox-item", "Still working")
     refute has_element?(view, ".inbox-empty")
 
-    stub(Tracks, :list, fn _, _ ->
+    stub(Tracks, :list, fn _, _, _opts ->
       {:ok, Enum.map(tracks, &struct!(&1, status: :ready, unread: false))}
     end)
 
@@ -551,10 +551,10 @@ defmodule RavixWeb.WorkspaceLiveTest do
     end
 
     for user <- [owner, member, guest] do
-      stub(Tracks, :list, fn _, _ -> {:ok, [at.(:running, false)]} end)
+      stub(Tracks, :list, fn _, _, _opts -> {:ok, [at.(:running, false)]} end)
       {:ok, view, _} = live(log_in_user(conn, user), "/inbox")
       render_async(view)
-      stub(Tracks, :list, fn _, _ -> {:ok, [at.(:ready, true)]} end)
+      stub(Tracks, :list, fn _, _, _opts -> {:ok, [at.(:ready, true)]} end)
       send(view.pid, {:hub, Event.new(:turn, project.id, track_id: row.id)})
       render_async(view)
       label = if user == owner, do: "ravix", else: "notice-owner / ravix"
@@ -584,7 +584,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
     waiting = default.(struct!(waiting, status: :failed, unread: true))
 
     rail = fn working ->
-      stub(Tracks, :list, fn _, _ -> {:ok, [waiting, default.(working)]} end)
+      stub(Tracks, :list, fn _, _, _opts -> {:ok, [waiting, default.(working)]} end)
     end
 
     rail.(struct!(working, status: :running, unread: false))
@@ -716,7 +716,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
       end)
 
     # Everything the tabs say comes from the rail's one list.
-    stub(Tracks, :list, fn _user, _project_id -> {:ok, tracks} end)
+    stub(Tracks, :list, fn _user, _project_id, _opts -> {:ok, tracks} end)
     {:ok, view, _} = live(log_in_user(conn, user), "/p/#{project.id}")
     render_async(view)
     tab = fn track -> ".track-tabs a[href='/p/#{project.id}/t/#{track.id}']" end
@@ -1088,7 +1088,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
 
     # The rail's list is the Fountain read this page makes, so this is where
     # a read is counted. Every rail starts with the track wanting attention.
-    stub(Tracks, :list, fn user, project_id ->
+    stub(Tracks, :list, fn user, project_id, _opts ->
       send(test_pid, {:listed, user.id})
       assert project_id == project.id
       {:ok, [track |> Tracks.present(project: project) |> struct!(status: :ready, unread: true)]}

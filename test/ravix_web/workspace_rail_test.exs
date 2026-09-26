@@ -99,7 +99,7 @@ defmodule RavixWeb.WorkspaceRailTest do
     [failed, crashed, good] = projects
     track = insert_track(project: good, title: "Survived")
 
-    stub(Tracks, :list, fn _, id ->
+    stub(Tracks, :list, fn _, id, _opts ->
       cond do
         id == failed.id -> {:error, :not_found}
         id == crashed.id -> exit(:rail_test_crash)
@@ -122,7 +122,7 @@ defmodule RavixWeb.WorkspaceRailTest do
     projects = for _ <- 1..10, do: insert_project(user: user)
     test_pid = self()
 
-    stub(Tracks, :list, fn _, id ->
+    stub(Tracks, :list, fn _, id, _opts ->
       send(test_pid, {:worker, self(), id})
       receive do: (:release -> {:ok, []})
     end)
