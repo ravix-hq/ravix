@@ -47,6 +47,69 @@ defmodule Ravix.Tooling.WaitTest do
     %{p: p, one: one, two: two, track: track, project: project, statuses: statuses}
   end
 
+  test "zero timeout reconciles never-polled completed turns", ctx do
+    Agent.update(ctx.statuses, &Map.put(&1, ctx.one.id, "ended"))
+
+    assert {:ok, %{stale: false, changed: [id], tasks: [task]}} =
+             Tooling.call(ctx.p, "wait_task", %{
+               "task_ids" => [ctx.one.id],
+               "timeout_ms" => 0
+             })
+
+    assert id == ctx.one.id
+    assert task.status.state == "TASK_STATE_COMPLETED"
+    assert_receive :refreshed
+    refute_receive {:subscribed, _}, 0
+  end
+
+  test "an initially changed persisted task does not bypass reconciliation of others", ctx do
+    Agent.update(ctx.statuses, &Map.put(&1, ctx.one.id, "ended"))
+    assert {:ok, _} = Tasks.get(ctx.p, ctx.one.id)
+    Agent.update(ctx.statuses, &Map.put(&1, ctx.two.id, "failed"))
+
+    assert {:ok, %{stale: false, changed: changed, tasks: tasks}} =
+             Tooling.call(ctx.p, "wait_task", %{
+               "task_ids" => [ctx.one.id, ctx.two.id],
+               "timeout_ms" => 1000
+             })
+
+    assert changed == [ctx.one.id, ctx.two.id]
+    assert Enum.map(tasks, & &1.status.state) == ["TASK_STATE_COMPLETED", "TASK_STATE_FAILED"]
+  end
+
+  test "persisted terminal snapshots need no provider read", ctx do
+    Agent.update(ctx.statuses, &Map.put(&1, ctx.one.id, "ended"))
+    assert {:ok, _} = Tasks.get(ctx.p, ctx.one.id)
+    assert_receive :refreshed
+    reject(Fountain, :turns, 2)
+
+    assert {:ok, %{stale: false, changed: [_]}} =
+             Tooling.call(ctx.p, "wait_task", %{
+               "task_ids" => [ctx.one.id],
+               "timeout_ms" => 0
+             })
+  end
+
+  test "zero timeout bounds blocked reconciliation and flags persisted states as stale", ctx do
+    owner = self()
+
+    stub(Fountain, :turns, fn _, _ ->
+      send(owner, {:blocked, self()})
+
+      receive do
+        :never -> {:ok, []}
+      end
+    end)
+
+    waiter = start_wait(ctx, %{"timeout_ms" => 0})
+    assert_receive {:blocked, worker}, 200
+    worker_ref = Process.monitor(worker)
+    assert {:ok, {:ok, %{stale: true, changed: [], tasks: tasks}}} = Task.yield(waiter, 400)
+    assert Enum.all?(tasks, &(&1.status.state == "TASK_STATE_SUBMITTED"))
+    assert_receive {:DOWN, ^worker_ref, :process, ^worker, _}, 1000
+    refute_receive {:subscribed, _}, 0
+  end
+
   test "turn PubSub wakes two-task wait promptly and returns every task", ctx do
     waiter = start_wait(ctx)
     assert_receive {:subscribed, server}
