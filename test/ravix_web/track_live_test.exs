@@ -302,7 +302,133 @@ defmodule RavixWeb.TrackLiveTest do
     expect(Tracks, :diff, fn _, _ -> {:ok, %{diff | diff: "", changes: [], files: []}} end)
     render_click(ctx.view, "refresh-panel")
     render_async(ctx.view, 1_000)
-    assert has_element?(ctx.view, ".changes-panel", "No changes yet.")
+    assert has_element?(ctx.view, ".changes-panel .empty h3", "No changes yet")
+    # Nothing to filter and nothing to count: no search box, no "0 changed files".
+    refute has_element?(ctx.view, "#diff-filter")
+    refute has_element?(ctx.view, ".changes-summary")
+    refute has_element?(ctx.view, "nav[aria-label='Inspector panels'] .tab-count")
+  end
+
+  test "the Changes tab counts its files once a read has, and each file says how much", ctx do
+    tab = "nav[aria-label='Inspector panels'] button[phx-value-name=changes]"
+    # Nothing has read a diff yet, and nothing reads one to draw a badge.
+    refute has_element?(ctx.view, "#{tab} .tab-count")
+
+    expect(Tracks, :diff, fn _, _ -> {:ok, changes_fixture()} end)
+    render_click(ctx.view, "panel", %{name: "changes"})
+    render_async(ctx.view, 1_000)
+
+    assert has_element?(ctx.view, "#{tab} .tab-count[aria-hidden=true]", "8")
+    assert has_element?(ctx.view, "#{tab} .sr-only", ", 8 changed files")
+    assert has_element?(ctx.view, ".changes-summary", "8 changed files")
+    assert has_element?(ctx.view, ".changes-summary .diff-add", "+4")
+    assert has_element?(ctx.view, ".changes-summary .diff-del", "−4")
+
+    added = ".change-file[phx-value-path='added.txt']"
+    assert has_element?(ctx.view, "#{added} .change-status.change-added[title=Added]", "A")
+    assert has_element?(ctx.view, "#{added} .sr-only", "Added:")
+    assert has_element?(ctx.view, "#{added} .change-counts .diff-add", "+1")
+    assert has_element?(ctx.view, "#{added} .change-counts .diff-del", "−0")
+    deleted = ".change-file[phx-value-path='deleted.txt']"
+    assert has_element?(ctx.view, "#{deleted} .change-status.change-deleted", "D")
+    # A binary file has no lines to count, and says what it is instead of +0 −0.
+    binary = ".change-file[phx-value-path='binary.dat']"
+    assert has_element?(ctx.view, "#{binary} .change-tag", "Binary")
+    refute has_element?(ctx.view, "#{binary} .change-counts")
+
+    # The count belongs to the tab, not to the list: it stays while another shows.
+    render_click(ctx.view, "panel", %{name: "files"})
+    render_async(ctx.view, 1_000)
+    assert has_element?(ctx.view, "#{tab} .tab-count", "8")
+
+    # A turn ending out of sight may have changed the worktree. The count is
+    # forgotten rather than kept wrong, and nothing is read to replace it:
+    # `expect/3` above allowed exactly one diff.
+    settled = %{"id" => 9, "turn_id" => "t", "kind" => "stage", "stage" => "turn"}
+    send(ctx.view.pid, {:transcript, ctx.track.id, Map.put(settled, "state", "completed")})
+    render_async(drawn(ctx.view))
+    refute has_element?(ctx.view, "#{tab} .tab-count")
+    assert has_element?(ctx.view, ".file-explorer")
+  end
+
+  test "a truncated diff's count is a floor, and says so", ctx do
+    expect(Tracks, :diff, fn _, _ -> {:ok, changes_fixture(true)} end)
+    render_click(ctx.view, "panel", %{name: "changes"})
+    render_async(ctx.view, 1_000)
+    tab = "nav[aria-label='Inspector panels'] button[phx-value-name=changes]"
+    assert has_element?(ctx.view, "#{tab} .tab-count", "8+")
+    assert has_element?(ctx.view, "#{tab} .sr-only", "8 changed files or more")
+  end
+
+  test "a turn ending re-reads the Changes list in place, and only a turn ending", ctx do
+    test_pid = self()
+    patch = "diff --git a/one.txt b/one.txt\n@@ -1 +1,2 @@\n one\n+two\n"
+
+    expect(Tracks, :diff, fn _, _ -> {:ok, changes_fixture()} end)
+    render_click(ctx.view, "panel", %{name: "changes"})
+    render_async(ctx.view, 1_000)
+    ctx.view |> element(".change-file", "space name.txt") |> render_click()
+
+    # Output streaming in is not a turn ending, and reads nothing.
+    output = %{"id" => 1, "turn_id" => "t", "kind" => "output", "stream" => "acp", "data" => "Hi"}
+    send(ctx.view.pid, {:transcript, ctx.track.id, output})
+    render(drawn(ctx.view))
+
+    # The re-read waits for the test, so what the panel shows while it is out
+    # can be asserted rather than raced.
+    expect(Tracks, :diff, fn _, _ ->
+      send(test_pid, {:reading_diff, self()})
+      assert_receive :go, 5_000
+
+      {:ok,
+       %Diff{
+         path: "/",
+         repo_root: "/",
+         diff: patch,
+         truncated: false,
+         changes: Diff.summarize(patch),
+         files: Diff.parse(patch)
+       }}
+    end)
+
+    settled = %{"id" => 2, "turn_id" => "t", "kind" => "stage", "stage" => "turn"}
+    send(ctx.view.pid, {:transcript, ctx.track.id, Map.put(settled, "state", "completed")})
+    assert_receive {:reading_diff, reader}, 5_000
+
+    # The diff somebody was reading stays on screen; the refresh turns instead
+    # of the panel blanking into "Loading inspector…".
+    assert has_element?(ctx.view, ".file-diff")
+    assert has_element?(ctx.view, "button.panel-refresh.busy[disabled]")
+    refute has_element?(ctx.view, ".workspace-panel .loading-status")
+
+    send(reader, :go)
+    render_async(ctx.view, 1_000)
+    refute has_element?(ctx.view, "button.panel-refresh.busy")
+    # The file that was open is no longer in the diff, so the list is showing.
+    refute has_element?(ctx.view, ".file-diff")
+    assert has_element?(ctx.view, ".changes-summary", "1 changed file")
+    assert has_element?(ctx.view, ".change-file[phx-value-path='one.txt']")
+    tab = "nav[aria-label='Inspector panels'] button[phx-value-name=changes]"
+    assert has_element?(ctx.view, "#{tab} .tab-count", "1")
+  end
+
+  test "Refresh is an icon in the inspector's tab bar and reads the tab again", ctx do
+    button = "nav[aria-label='Inspector panels'] button.panel-refresh[aria-label=Refresh]"
+    assert has_element?(ctx.view, "#{button} svg")
+    refute has_element?(ctx.view, ".workspace-panel button", "Refresh")
+
+    expect(Tracks, :files, fn _, _, nil ->
+      {:ok,
+       %Files.Listing{
+         path: ctx.track.workdir,
+         truncated: false,
+         entries: [%Files.Entry{name: "fresh.txt", type: "file", size: 1}]
+       }}
+    end)
+
+    ctx.view |> element(button) |> render_click()
+    render_async(ctx.view, 1_000)
+    assert has_element?(ctx.view, ".file-explorer", "fresh.txt")
   end
 
   test "selecting a diff respects session revocation", ctx do
@@ -669,12 +795,53 @@ defmodule RavixWeb.TrackLiveTest do
   test "the Run tab explains itself and the Terminal tab does not", ctx do
     hint = "Run a command in this track’s worktree"
     refute render(ctx.view) =~ hint
+    assert has_element?(ctx.view, "#track-terminal .dock-empty h3", "No commands yet")
 
     ctx.view |> element("button[phx-click=dock][phx-value-name=run]") |> render_click()
-    assert has_element?(ctx.view, "#track-terminal p.hint", hint)
+    assert has_element?(ctx.view, "#track-terminal .dock-empty", hint)
+    refute has_element?(ctx.view, "#track-terminal .dock-empty h3", "No commands yet")
 
     ctx.view |> element("button[phx-click=dock][phx-value-name=terminal]") |> render_click()
     refute render(ctx.view) =~ hint
+  end
+
+  test "the Run tab's empty state opens Previews, and output replaces it", ctx do
+    stub(Previews, :status, fn _, _ -> {:ok, preview()} end)
+    ctx.view |> element("button[phx-click=dock][phx-value-name=run]") |> render_click()
+
+    # The button is the dock's, but the tab it opens is the page's: the push
+    # carries no target, so it reaches `TrackLive` rather than the component.
+    ctx.view |> element("#track-terminal .dock-empty button", "Open Previews") |> render_click()
+    render_async(ctx.view)
+
+    assert has_element?(
+             ctx.view,
+             "nav[aria-label='Inspector panels'] button.selected",
+             "Previews"
+           )
+
+    assert has_element?(ctx.view, "#preview-config-form")
+
+    expect(Terminal, :exec, fn _, _, _ ->
+      {:ok,
+       %Terminal.Result{
+         cwd: ctx.track.workdir,
+         stdout: "ok",
+         stderr: "",
+         code: 0,
+         timed_out: false,
+         duration_ms: 1
+       }}
+    end)
+
+    ctx.view |> element("#track-terminal") |> render_hook("exec", %{command: "mix test"})
+    render_async(ctx.view)
+    assert has_element?(ctx.view, "#track-terminal strong", "$ mix test")
+    refute has_element?(ctx.view, "#track-terminal .dock-empty")
+
+    # Clearing the scrollback is an empty terminal again, and says so.
+    ctx.view |> element("button[phx-click=clear]") |> render_click()
+    assert has_element?(ctx.view, "#track-terminal .dock-empty", "Open Previews")
   end
 
   test "a session that went without notice cannot run a command through the dock", ctx do
@@ -750,7 +917,47 @@ defmodule RavixWeb.TrackLiveTest do
     end)
 
     ctx.view |> element("button[phx-click=dock][phx-value-name=vitals]") |> render_click()
-    assert render_async(ctx.view) =~ "no_machine"
+    render_async(ctx.view)
+    # The reason is a sentence, not the atom `Vitals` answers with.
+    assert has_element?(ctx.view, ".dock-empty h3", "No machine stats")
+    assert has_element?(ctx.view, ".dock-empty", "This project has no machine yet")
+    refute render(ctx.view) =~ "no_machine"
+
+    # Asking again is the empty state's action, and it is a real second read.
+    expect(Vitals, :report, fn _, _ ->
+      {:ok, %Vitals.Report{available: false, why: :unreachable, readings: nil}}
+    end)
+
+    ctx.view |> element(".dock-empty button", "Try again") |> render_click()
+    render_async(ctx.view)
+    assert has_element?(ctx.view, ".dock-empty", "asleep or unreachable")
+
+    # A server with no token cannot be retried into having one.
+    expect(Vitals, :report, fn _, _ ->
+      {:ok, %Vitals.Report{available: false, why: :no_token, readings: nil}}
+    end)
+
+    ctx.view |> element(".dock-empty button", "Try again") |> render_click()
+    render_async(ctx.view)
+    assert has_element?(ctx.view, ".dock-empty", "no Sprites token")
+    refute has_element?(ctx.view, ".dock-empty button", "Try again")
+
+    # Reachable but with nothing legible to report is its own sentence.
+    expect(Vitals, :report, fn _, _ ->
+      {:ok, %Vitals.Report{available: true, why: nil, readings: nil}}
+    end)
+
+    ctx.view |> element("button[phx-click=dock][phx-value-name=vitals]") |> render_click()
+    render_async(ctx.view)
+    assert has_element?(ctx.view, ".dock-empty", "reported no readings")
+  end
+
+  test "vitals that could not be read say so and offer another try", ctx do
+    expect(Vitals, :report, fn _, _ -> {:error, :not_found} end)
+    ctx.view |> element("button[phx-click=dock][phx-value-name=vitals]") |> render_click()
+    render_async(ctx.view)
+    assert has_element?(ctx.view, ".dock-empty", "did not answer")
+    assert has_element?(ctx.view, ".dock-empty button", "Try again")
   end
 
   test "a tab or dialog name nobody declared is refused, not shown", ctx do

@@ -59,6 +59,9 @@ defmodule RavixWeb.Icons do
     "pencil" =>
       ~S(<path d="M4.5 19.5h4L19.5 8.5a2.1 2.1 0 0 0-3-3L5.5 16.5z" /><path d="m14.5 6.5 3 3" />),
     "clock" => ~S(<circle cx="12" cy="12" r="8.5" /><path d="M12 7.5V12l3 1.8" />),
+    # Two arcs chasing each other: read again.
+    "refresh" =>
+      ~S(<path d="M20 11.5A8 8 0 0 0 6.3 6.3L4 8.5" /><path d="M4 4v4.5h4.5" /><path d="M4 12.5a8 8 0 0 0 13.7 5.2L20 15.5" /><path d="M20 20v-4.5h-4.5" />),
     "chevron" => ~S(<path d="m9.5 6 6 6-6 6" />),
     # Three quarters of a ring, drawn open at the top so that it reads as
     # turning once something turns it. A circle that is missing a piece is

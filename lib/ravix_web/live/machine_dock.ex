@@ -136,6 +136,27 @@ defmodule RavixWeb.Live.MachineDock do
   def handle_async(:exec, {:exit, reason}, socket),
     do: {:noreply, socket |> assign(exec_busy: false) |> exit(reason)}
 
+  # Why there is nothing to show, in words. `Vitals` answers with an atom so
+  # that nothing past it has to parse a sentence; this is where the atom
+  # becomes one, rather than being printed as `no_machine`.
+  defp vitals_reason(nil), do: "The machine did not answer this time."
+
+  defp vitals_reason(%Vitals.Report{available: true}),
+    do: "The machine answered but reported no readings."
+
+  defp vitals_reason(%Vitals.Report{why: :no_token}),
+    do: "This server has no Sprites token, so it cannot read machine stats."
+
+  defp vitals_reason(%Vitals.Report{why: :no_machine}),
+    do: "This project has no machine yet. One is built when a track first needs it."
+
+  defp vitals_reason(%Vitals.Report{why: why}) when why in [:no_sprite, :unreachable],
+    do: "The machine is asleep or unreachable. It wakes on the next turn."
+
+  # Asking again cannot conjure a token this server was not given.
+  defp retry_vitals?(%Vitals.Report{why: :no_token}), do: false
+  defp retry_vitals?(_), do: true
+
   @impl true
   def render(assigns) do
     ~H"""
@@ -176,13 +197,20 @@ defmodule RavixWeb.Live.MachineDock do
                 Exit {block.code}
               </span>
             </div>
+            <div :if={@output == [] && @dock == :terminal} class="dock-empty">
+              <.empty icon="terminal" title="No commands yet">
+                Type a command below to run it in this track’s worktree. Each one runs on its own,
+                without an interactive terminal.
+              </.empty>
+            </div>
+            <div :if={@output == [] && @dock == :run} class="dock-empty">
+              <.empty icon="play" title="Run tests, builds and scripts">
+                Run a command in this track’s worktree and read what it prints.
+                For a server that keeps running, start a preview instead.
+                <:action label="Open Previews" click={JS.push("panel", value: %{name: "preview"})} />
+              </.empty>
+            </div>
           </div>
-          <p :if={@dock == :run} class="hint">
-            Run a command in this track’s worktree. For a persistent service, use Preview.
-          </p>
-          <p class="hint">
-            Commands run without an interactive terminal. Use Preview for persistent servers.
-          </p>
           <div class="term-input">
             <span class="ps1">{if @cwd, do: Path.basename(@cwd), else: ""} $</span>
             <fieldset class="term-command" disabled={@exec_busy}>
@@ -196,9 +224,17 @@ defmodule RavixWeb.Live.MachineDock do
           </div>
         </div>
         <div :if={@dock == :vitals} class="workspace-panel">
-          <p :if={@vitals_busy?} role="status">Reading machine metrics…</p>
-          <p :if={!@vitals_busy? && !@vitals}>No machine metrics available.</p>
-          <p :if={@vitals && !@vitals.available}>Metrics unavailable: {@vitals.why}</p>
+          <.loading_status :if={@vitals_busy?}>Reading machine metrics…</.loading_status>
+          <div :if={!@vitals_busy? && !(@vitals && @vitals.readings)} class="dock-empty">
+            <.empty icon="machine" title="No machine stats" because={vitals_reason(@vitals)}>
+              CPU, memory and disk for the machine this track runs on.
+              <:action
+                :if={retry_vitals?(@vitals)}
+                label="Try again"
+                click={JS.push("dock", target: @myself, value: %{name: "vitals"})}
+              />
+            </.empty>
+          </div>
           <dl :if={@vitals && @vitals.readings}>
             <div :for={{label, value} <- Vitals.Readings.rows(@vitals.readings)}>
               <dt>{label}</dt>
