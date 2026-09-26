@@ -46,6 +46,9 @@ defmodule RavixWeb.SchedulesLiveTest do
     user = insert_user()
     project = insert_project(user: user)
     {:ok, view, _} = live(log_in_user(conn, user), "/schedules")
+    # Let the rail land first: applying it re-renders the panel, which would
+    # otherwise pick up the schedule created below without a Refresh.
+    render_async(view)
     assert has_element?(view, "#schedules-refresh-note", "latest run status")
 
     {:ok, schedule} =
