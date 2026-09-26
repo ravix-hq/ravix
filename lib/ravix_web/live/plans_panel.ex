@@ -28,12 +28,21 @@ defmodule RavixWeb.Live.PlansPanel do
 
     case Access.project_access(assigns.current_user, assigns.project.id) do
       {:ok, _} ->
-        key = {assigns.project.id, assigns.plan_id}
+        key = {assigns.project.id, assigns.plan_id, assigns.new_plan}
 
         {:ok,
          if(socket.assigns.loaded == key,
            do: socket,
-           else: load(assign(socket, loaded: key, draft: nil, detail: nil))
+           else:
+             load(
+               assign(socket,
+                 loaded: key,
+                 draft: if(assigns.new_plan, do: blank_plan()),
+                 detail: nil,
+                 error: nil,
+                 busy: false
+               )
+             )
          )}
 
       _ ->
@@ -63,15 +72,6 @@ defmodule RavixWeb.Live.PlansPanel do
          )}
     end
   end
-
-  defp event("new-plan", _, socket),
-    do:
-      {:noreply,
-       assign(socket,
-         detail: nil,
-         draft: %{"title" => "", "summary" => "", "items" => [blank_item()]},
-         error: nil
-       )}
 
   defp event("cancel-edit", _, socket), do: {:noreply, assign(socket, draft: nil, error: nil)}
 
@@ -105,7 +105,13 @@ defmodule RavixWeb.Live.PlansPanel do
        update(
          socket,
          :draft,
-         &Map.update!(&1, "items", fn items -> Enum.reject(items, fn i -> i["id"] == id end) end)
+         &Map.update!(&1, "items", fn items ->
+           items
+           |> Enum.reject(fn item -> item["id"] == id end)
+           |> Enum.map(fn item ->
+             Map.update!(item, "dependencies", fn ids -> List.delete(ids, id) end)
+           end)
+         end)
        )}
 
   defp event("move-item", %{"id" => id, "direction" => direction}, socket) do
@@ -211,6 +217,8 @@ defmodule RavixWeb.Live.PlansPanel do
     end
   end
 
+  defp settled(:detail, _, %{assigns: %{plan_id: nil}} = socket), do: {:noreply, socket}
+
   defp settled(:detail, {:ok, {:ok, detail}}, socket),
     do: {:noreply, assign(socket, detail: detail, busy: false)}
 
@@ -296,6 +304,11 @@ defmodule RavixWeb.Live.PlansPanel do
   end
 
   defp nonempty_dependencies(ids), do: Enum.reject(ids, &(&1 == ""))
+
+  defp blank_plan, do: %{"title" => "", "summary" => "", "items" => [blank_item()]}
+
+  defp assigned_items?(nil), do: false
+  defp assigned_items?(detail), do: Enum.any?(detail.items, & &1.track_id)
 
   defp blank_item,
     do: %{
