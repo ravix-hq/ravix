@@ -14,7 +14,7 @@ import { expect } from '@playwright/test';
  * Skipping is a server write --- `Accounts.finish_onboarding/1` --- and the
  * walkthrough is over only once that write lands. `WorkspaceLive` answers
  * `/`, `/home` and `/inbox` for anybody still unonboarded with a redirect
- * back to `/welcome`, and it answers the *static* render, so a plain
+ * back to `/welcome`, after loading the rail, so a plain
  * `page.goto` racing the skip is sent back to the walkthrough and nothing
  * the workspace draws is ever there. Waiting for the navigation the skip
  * itself causes is what proves the write happened.
@@ -27,6 +27,11 @@ export async function signIn(page, login, landing = '/') {
   // Signed in: the walkthrough offers "Sign out" outright, the workspace
   // behind the account menu that the person's own row opens.
   await expect(page.getByRole('link', { name: 'Sign out' }).or(page.locator('#account-trigger'))).toBeVisible();
+  await expect(page.locator('[data-phx-main]')).toHaveClass(/phx-connected/);
+  // A connected workspace can still be deciding whether to send a first
+  // visit to onboarding. Wait for that decision before inspecting the URL.
+  await expect(page.locator('#project-sections[aria-busy="false"]')
+    .or(page.getByRole('button', { name: 'Skip setup', exact: true }))).toBeAttached();
   await expect(page.locator('[data-phx-main]')).toHaveClass(/phx-connected/);
   // Whoever signs in first, with no project yet, is shown the walkthrough.
   // One test is about that; every other test is about the workspace, and must

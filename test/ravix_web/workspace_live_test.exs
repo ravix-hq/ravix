@@ -44,6 +44,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
     end)
 
     {:ok, view, _} = live(log_in_user(conn, user), "/inbox")
+    render_async(view)
     path = "/p/#{project.id}/t/#{row.id}?thread=#{other.id}"
     assert has_element?(view, ~s|.inbox-item[href="#{path}"]|)
     assert has_element?(view, ~s|a[href="/inbox"] .badge|, "1")
@@ -61,6 +62,170 @@ defmodule RavixWeb.WorkspaceLiveTest do
     render_patch(view, "/p/#{project.id}/t/#{row.id}?thread=#{foreign.id}")
     assert has_element?(child, ~s|[data-thread-id="#{other.id}"][aria-current="true"]|)
     refute Repo.get_by(Tracks.ThreadRead, thread_id: foreign.id, user_id: user.id)
+  end
+
+  test "the shell and deep-linked child render while the initial rail is blocked", %{conn: conn} do
+    user = insert_user()
+    project = insert_project(user: user)
+    track = insert_track(project: project, title: "Deep-linked work")
+    stub_track(track)
+    test_pid = self()
+
+    handler = {__MODULE__, make_ref()}
+
+    :ok =
+      :telemetry.attach(
+        handler,
+        [:phoenix, :live_view, :mount, :stop],
+        fn _, times, meta, _ ->
+          case meta.socket do
+            %{view: RavixWeb.WorkspaceLive, assigns: %{current_user: %{id: id}}} = socket
+            when id == user.id ->
+              send(
+                test_pid,
+                {:mount_finished, Phoenix.LiveView.connected?(socket), times.duration}
+              )
+
+            _ ->
+              :ok
+          end
+        end,
+        nil
+      )
+
+    on_exit(fn -> :telemetry.detach(handler) end)
+
+    expect(Tracks, :list, fn _, _ ->
+      send(test_pid, {:rail_started, self()})
+      receive do: (:release_rail -> {:ok, [Tracks.present(track)]})
+    end)
+
+    conn = log_in_user(conn, user)
+    dead = get(conn, "/p/#{project.id}/t/#{track.id}")
+    assert html_response(dead, 200) =~ "rail-loading"
+    refute_received {:rail_started, _}
+    assert_receive {:mount_finished, false, dead_duration}
+
+    {:ok, view, _} = live(dead)
+    assert_receive {:rail_started, worker}
+    assert_receive {:mount_finished, true, connected_duration}
+
+    IO.puts(
+      "WorkspaceLive.mount with rail blocked: dead=#{System.convert_time_unit(dead_duration, :native, :microsecond)}µs connected=#{System.convert_time_unit(connected_duration, :native, :microsecond)}µs"
+    )
+
+    assert has_element?(view, "#rail-loading")
+    child = find_live_child(view, "track-host")
+    assert render_async(child) =~ "Deep-linked work"
+    refute_patched(view)
+    send(worker, :release_rail)
+    render_async(view)
+    refute has_element?(view, "#rail-loading")
+    assert has_element?(view, ".workspace-project-name[href='/p/#{project.id}']")
+  end
+
+  test "an unknown project waits for the rail before flashing and leaving", %{conn: conn} do
+    user = insert_user()
+    insert_project(user: user)
+    test_pid = self()
+
+    expect(Tracks, :list, fn _, _ ->
+      send(test_pid, {:rail_started, self()})
+      receive do: (:release_rail -> {:ok, []})
+    end)
+
+    {:ok, view, _} = live(log_in_user(conn, user), "/p/missing")
+    assert_receive {:rail_started, worker}
+    refute_patched(view)
+    refute render(view) =~ "no longer available"
+    send(worker, :release_rail)
+    assert render_async(view) =~ "That project or track is no longer available."
+    assert_patch(view, "/")
+  end
+
+  test "a revoked session cannot apply its initial async rail", %{conn: conn} do
+    user = insert_user()
+    insert_project(user: user)
+    {token, session} = insert_session(user)
+    test_pid = self()
+
+    expect(Tracks, :list, fn _, _ ->
+      send(test_pid, {:rail_started, self()})
+      receive do: (:release_rail -> {:ok, []})
+    end)
+
+    {:ok, view, _} = live(Plug.Test.init_test_session(conn, session_token: token), "/home")
+    assert_receive {:rail_started, worker}
+    Repo.delete!(session)
+    :sys.replace_state(view.pid, &age_session_guard/1)
+    send(worker, :release_rail)
+    assert_redirect(view, "/login")
+  end
+
+  test "membership removed during the initial read is not restored by its result", %{conn: conn} do
+    user = insert_user()
+    project = insert_project()
+    insert_project_member(project, user)
+    test_pid = self()
+
+    expect(Tracks, :list, fn _, _ ->
+      send(test_pid, {:rail_started, self()})
+      receive do: (:release_rail -> {:ok, []})
+    end)
+
+    {:ok, view, _} = live(log_in_user(conn, user), "/p/#{project.id}")
+    assert_receive {:rail_started, worker}
+    People.remove_project_member(project.id, user.id)
+    send(worker, :release_rail)
+    render_async(view)
+    refute has_element?(view, ".workspace-project-name[href='/p/#{project.id}']")
+    assert_patch(view, "/")
+  end
+
+  test "a pending unavailable URL cannot replace a newer selection", %{conn: conn} do
+    user = insert_user()
+    project = insert_project(user: user)
+    test_pid = self()
+
+    expect(Tracks, :list, fn _, _ ->
+      send(test_pid, {:rail_started, self()})
+      receive do: (:release_rail -> {:ok, []})
+    end)
+
+    {:ok, view, _} = live(log_in_user(conn, user), "/p/missing")
+    assert_receive {:rail_started, worker}
+    render_patch(view, "/p/#{project.id}")
+    assert_patch(view, "/p/#{project.id}")
+    send(worker, :release_rail)
+    render_async(view)
+    assert page_title(view) == project.name <> " · Ravix"
+    refute_patched(view)
+    refute render(view) =~ "no longer available"
+  end
+
+  test "a removed track share is filtered even while another share keeps the project visible", %{
+    conn: conn
+  } do
+    user = insert_user()
+    project = insert_project()
+    kept = insert_track(project: project, title: "Kept share")
+    removed = insert_track(project: project, title: "Removed share")
+    insert_track_member(kept, user)
+    insert_track_member(removed, user)
+    test_pid = self()
+
+    expect(Tracks, :list, fn _, _ ->
+      send(test_pid, {:rail_started, self()})
+      receive do: (:release_rail -> {:ok, Enum.map([kept, removed], &Tracks.present/1)})
+    end)
+
+    {:ok, view, _} = live(log_in_user(conn, user), "/p/#{project.id}")
+    assert_receive {:rail_started, worker}
+    People.remove_member(removed.id, user.id)
+    send(worker, :release_rail)
+    html = render_async(view)
+    assert html =~ "Kept share"
+    refute html =~ "Removed share"
   end
 
   test "notifications are independent for two threads on one track", %{conn: conn} do
@@ -81,6 +246,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
 
     rail.(first, second)
     {:ok, view, _} = live(log_in_user(conn, user), "/inbox")
+    render_async(view)
     refute_push_event(view, "notify", %{})
 
     refresh = fn ->
@@ -132,6 +298,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
           {guest, "project-owner / ravix"}
         ] do
       {:ok, view, _} = live(log_in_user(conn, user), "/home")
+      render_async(view)
       selector = ".workspace-project-name[href='/p/#{project.id}'] .project-label"
       assert has_element?(view, selector, label)
       assert has_element?(view, ".home-recent .project-label", label)
@@ -166,8 +333,10 @@ defmodule RavixWeb.WorkspaceLiveTest do
     insert_track(project: project)
     {token, session} = insert_session(guest)
 
-    {:ok, view, html} =
+    {:ok, view, _} =
       live(Plug.Test.init_test_session(conn, session_token: token), "/p/#{project.id}")
+
+    html = render_async(view)
 
     assert html =~ "&lt;img"
     refute has_element?(view, ".project-label img")
@@ -181,6 +350,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
   test "workspace help explains connections and returns to the workspace", %{conn: conn} do
     user = insert_user()
     {:ok, view, _} = live(log_in_user(conn, user), "/home")
+    render_async(view)
     view |> element("#open-help") |> render_click()
     assert has_element?(view, "#help-dialog", "Connect Claude Code with MCP")
     assert has_element?(view, "#help-dialog code", Ravix.Config.public_url() <> "/mcp")
@@ -204,6 +374,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
     late = insert_user(created_at: DateTime.add(Ravix.Changelog.at(entry), 1, :day))
 
     {:ok, view, _} = live(log_in_user(conn, early), "/home")
+    render_async(view)
     # The count is in the account menu, and a dot on the closed menu's
     # trigger says there is something in there to read.
     assert has_element?(view, "#account-menu #open-changes .badge")
@@ -215,9 +386,11 @@ defmodule RavixWeb.WorkspaceLiveTest do
     refute has_element?(view, "#account-unseen")
     assert Repo.get!(Ravix.Accounts.User, early.id).changes_seen_at
     {:ok, again, _} = live(log_in_user(conn, early), "/home")
+    render_async(again)
     refute has_element?(again, "#open-changes .badge")
 
     {:ok, fresh, _} = live(log_in_user(conn, late), "/home")
+    render_async(fresh)
     refute has_element?(fresh, "#open-changes .badge")
     refute has_element?(fresh, "#account-unseen")
     render_click(fresh, "dialog", %{name: "changes"})
@@ -232,6 +405,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
 
   test "sign-in works without a configured backend", %{conn: conn} do
     {:ok, signin, _} = live(conn, "/login")
+    render_async(signin)
     assert has_element?(signin, "h1", "Sign in to Ravix")
 
     assert has_element?(
@@ -257,6 +431,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
     own = insert_project(user: user, name: "Recent work")
     hidden = insert_project(user: insert_user(), name: "Private work")
     {:ok, view, _} = live(log_in_user(conn, user), "/home")
+    render_async(view)
     assert has_element?(view, ".home-recent a[href='/p/#{own.id}']", "Recent work")
     refute render(view) =~ hidden.name
     assert has_element?(view, ".home-action[disabled]", "Open a local project")
@@ -292,6 +467,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
     end)
 
     {:ok, view, _} = live(log_in_user(conn, user), "/inbox")
+    render_async(view)
     assert has_element?(view, ".inbox-item", "Review this")
     assert has_element?(view, ".inbox-item", "Needs help")
     refute has_element?(view, ".inbox-item", "Still working")
@@ -327,6 +503,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
     for user <- [owner, member, guest] do
       stub(Tracks, :list, fn _, _ -> {:ok, [at.(:running, false)]} end)
       {:ok, view, _} = live(log_in_user(conn, user), "/inbox")
+      render_async(view)
       stub(Tracks, :list, fn _, _ -> {:ok, [at.(:ready, true)]} end)
       send(view.pid, {:hub, Event.new(:turn, project.id, track_id: row.id)})
       render_async(view)
@@ -362,6 +539,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
 
     rail.(struct!(working, status: :running, unread: false))
     {:ok, view, _} = live(log_in_user(conn, user), "/inbox")
+    render_async(view)
     turn = fn -> send(view.pid, {:hub, Event.new(:turn, project.id, track_id: working.id)}) end
     assert has_element?(view, ".inbox-item", "Already waiting")
     # What was waiting when the page opened is the inbox's to show, not news.
@@ -410,6 +588,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
     insert_project(name: "Someone else's project", user: insert_user())
     track = insert_track(project: own, title: "My work")
     {:ok, view, _} = live(log_in_user(conn, user), "/")
+    render_async(view)
     assert has_element?(view, "a", "My project")
     refute has_element?(view, "#yard a", "My work")
     refute render(view) =~ "Someone else"
@@ -424,6 +603,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
     project = insert_project(user: user)
     insert_track(project: project)
     {:ok, view, _} = live(log_in_user(conn, user), "/home")
+    render_async(view)
     refute has_element?(view, "#yard .workspace-track")
     refute has_element?(view, ".track-tabs")
     view |> element("a.project-add") |> render_click()
@@ -448,6 +628,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
     other = insert_project(user: user)
     other_track = insert_track(project: other)
     {:ok, view, _} = live(log_in_user(conn, user), "/p/#{project.id}/t/#{track.id}")
+    render_async(view)
 
     assert has_element?(
              view,
@@ -487,6 +668,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
     # Everything the tabs say comes from the rail's one list.
     stub(Tracks, :list, fn _user, _project_id -> {:ok, tracks} end)
     {:ok, view, _} = live(log_in_user(conn, user), "/p/#{project.id}")
+    render_async(view)
     tab = fn track -> ".track-tabs a[href='/p/#{project.id}/t/#{track.id}']" end
     [idle, busy, booting, broken, answered, feature] = tracks
 
@@ -522,6 +704,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
     user = insert_user()
     project = insert_project(user: user, repo: "owner/repo")
     {:ok, view, _} = live(log_in_user(conn, user), "/p/#{project.id}?new=track")
+    render_async(view)
 
     view |> element("button", "Advanced") |> render_click()
     render_click(view, "origin", %{"kind" => "branch"})
@@ -539,6 +722,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
     user = insert_user()
     insert_project(user: user)
     {:ok, view, _} = live(log_in_user(conn, user), "/inbox")
+    render_async(view)
 
     assert render(view) =~ "You&#39;re all caught up"
     refute has_element?(view, "a.yard-item .badge")
@@ -553,14 +737,17 @@ defmodule RavixWeb.WorkspaceLiveTest do
 
     People.add_member(track.id, member.id, owner.id)
     {:ok, shared, _} = live(log_in_user(conn, member), "/p/#{project.id}")
+    render_async(shared)
     assert has_element?(shared, ".workspace-project-name", label)
     assert has_element?(shared, "strong", label)
 
     People.add_project_member(project.id, member.id, owner.id)
     {:ok, project_member, _} = live(log_in_user(conn, member), "/home")
+    render_async(project_member)
     assert has_element?(project_member, ".home-recent a[href='/p/#{project.id}']", label)
 
     {:ok, own, _} = live(log_in_user(conn, owner), "/p/#{project.id}")
+    render_async(own)
     assert has_element?(own, ".workspace-project-name", project.name)
     refute has_element?(own, ".workspace-project-name", label)
   end
@@ -572,6 +759,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
     track = insert_track(project: project)
     People.add_member(track.id, member.id, owner.id)
     {:ok, view, _} = live(log_in_user(conn, member), "/p/#{project.id}?new=track")
+    render_async(view)
     refute has_element?(view, "#new-track-form")
     refute has_element?(view, "a.project-add")
     refute has_element?(view, "button", "New track")
@@ -585,6 +773,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
     shared = insert_project(user: insert_user(login: "sharer"), name: "Shared")
     insert_project_member(shared, user)
     {:ok, view, _} = live(log_in_user(conn, user), "/p/#{mine.id}")
+    render_async(view)
 
     row = "#yard [data-project-id='#{mine.id}'].current"
     assert has_element?(view, "#{row} button[aria-label='People in Mine']")
@@ -623,6 +812,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
 
     # A member who does not own the project has its people but not its settings.
     {:ok, view, _} = live(log_in_user(conn, user), "/p/#{shared.id}")
+    render_async(view)
     row = "#yard [data-project-id='#{shared.id}'].current"
     assert has_element?(view, "#{row} button[aria-label='People in sharer / Shared']")
     refute has_element?(view, "#{row} button[aria-label^='Project settings']")
@@ -631,6 +821,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
   test "the account menu holds preferences, help and signing out", %{conn: conn} do
     user = insert_user(login: "menuuser")
     {:ok, view, _} = live(log_in_user(conn, user), "/home")
+    render_async(view)
 
     # One row at the top opens it; nothing of it is left at the foot.
     assert has_element?(
@@ -673,8 +864,9 @@ defmodule RavixWeb.WorkspaceLiveTest do
     two = insert_project(user: user)
     track = insert_track(project: two)
 
-    assert {:error, {:live_redirect, %{to: "/"}}} =
-             live(log_in_user(conn, user), "/p/#{one.id}/t/#{track.id}")
+    {:ok, view, _} = live(log_in_user(conn, user), "/p/#{one.id}/t/#{track.id}")
+    render_async(view)
+    assert_patch(view, "/")
   end
 
   test "project creation calls the context and navigates to the new project", %{conn: conn} do
@@ -689,6 +881,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
     end)
 
     {:ok, view, _} = live(log_in_user(conn, user), "/")
+    render_async(view)
     view |> element(".workspace-actions button", "Add a project") |> render_click()
 
     view
@@ -705,6 +898,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
     {token, _session} = insert_session(user)
     conn = Plug.Test.init_test_session(conn, session_token: token)
     {:ok, view, _} = live(conn, "/")
+    render_async(view)
 
     # Signing out announces itself, so the page goes at once rather than
     # waiting for whatever it does next. Before, a page nobody was touching
@@ -718,6 +912,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
     {token, session} = insert_session(user)
     conn = Plug.Test.init_test_session(conn, session_token: token)
     {:ok, view, _} = live(conn, "/")
+    render_async(view)
 
     # PubSub is best-effort and Ravix runs on more than one instance (ADR
     # 0003), so the notice above can go missing. A row deleted without one is
@@ -750,6 +945,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
     project = insert_project(user: owner)
     People.add_project_member(project.id, user.id, owner.id)
     {:ok, view, _} = live(log_in_user(conn, user), "/p/#{project.id}")
+    render_async(view)
     refute has_element?(view, "button", "Settings")
     People.remove_project_member(project.id, user.id)
     Hub.publish(project.id, :people)
@@ -763,6 +959,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
     project = insert_project(user: user)
     track = insert_track(project: project, title: "On the rail")
     {:ok, view, _} = live(log_in_user(conn, user), "/p/#{project.id}")
+    render_async(view)
     assert render(view) =~ "On the rail"
 
     cost = fn name ->
@@ -801,6 +998,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
     on_b = insert_track(project: b, title: "Beta one")
 
     {:ok, view, _} = live(log_in_user(conn, user), "/p/#{a.id}")
+    render_async(view)
     assert render(view) =~ "Alpha one"
 
     # Renamed underneath the page, without the hub being told, so that what
@@ -847,8 +1045,11 @@ defmodule RavixWeb.WorkspaceLiveTest do
     end)
 
     {:ok, tab_a, _} = live(log_in_user(conn, owner), "/p/#{project.id}")
+    render_async(tab_a)
     {:ok, tab_b, _} = live(log_in_user(conn, owner), "/p/#{project.id}")
+    render_async(tab_b)
     {:ok, theirs, _} = live(log_in_user(conn, member), "/p/#{project.id}")
+    render_async(theirs)
 
     for view <- [tab_a, tab_b, theirs] do
       assert has_element?(view, ".track-tab [role=img][aria-label='Unread reply']")
@@ -897,6 +1098,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
     end)
 
     {:ok, parent, _} = live(log_in_user(conn, user), "/p/#{project.id}/t/#{track.id}")
+    render_async(parent)
     child = find_live_child(parent, "track-host")
     render_async(child)
     assert has_element?(child, "#composer-form")
@@ -913,6 +1115,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
     People.add_member(track.id, user.id, owner.id)
     stub_track(track)
     {:ok, parent, _} = live(log_in_user(conn, user), "/p/#{project.id}/t/#{track.id}")
+    render_async(parent)
     child = find_live_child(parent, "track-host")
     render_async(child)
     People.remove_member(track.id, user.id)
@@ -950,6 +1153,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
     end)
 
     {:ok, view, _} = live(log_in_user(conn, user), "/p/#{project.id}")
+    render_async(view)
     view |> element("button", "Settings") |> render_click()
 
     view
@@ -1035,6 +1239,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
     end)
 
     {:ok, parent, _} = live(log_in_user(conn, user), "/p/#{project.id}/t/#{track.id}")
+    render_async(parent)
     child = find_live_child(parent, "track-host")
     render_async(child)
     child |> element("button", "app.ex") |> render_click()
@@ -1057,6 +1262,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
     stub_track(track)
     expect(Tracks, :prompt, fn _, _, _ -> {:error, {:unavailable, "Please try again"}} end)
     {:ok, parent, _} = live(log_in_user(conn, user), "/p/#{project.id}/t/#{track.id}")
+    render_async(parent)
     child = find_live_child(parent, "track-host")
     render_async(child)
     child |> form("#composer-form", text: "Keep this draft") |> render_submit()
@@ -1075,6 +1281,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
     track = insert_track(project: project, conversation_id: "conversation-test")
     stub_track(track)
     {:ok, parent, _} = live(log_in_user(conn, user), "/p/#{project.id}/t/#{track.id}")
+    render_async(parent)
     child = find_live_child(parent, "track-host")
     render_async(child)
 
@@ -1146,6 +1353,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
       stub(Tracks, :files, fn _, _, _ -> {:error, {:unavailable, "no machine"}} end)
 
       {:ok, parent, _} = live(log_in_user(conn, user), "/p/#{project.id}/t/#{one.id}")
+      render_async(parent)
       child = find_live_child(parent, "track-host")
       render_async(child)
 
@@ -1249,6 +1457,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
       user = insert_user()
       project = insert_project(user: user, name: "Pocket work")
       {:ok, view, _} = live(log_in_user(conn, user), "/p/#{project.id}")
+      render_async(view)
       %{view: view, project: project}
     end
 
@@ -1312,6 +1521,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
       user = insert_user()
       insert_project(user: user)
       {:ok, view, _} = live(log_in_user(conn, user), "/home")
+      render_async(view)
       %{view: view}
     end
 

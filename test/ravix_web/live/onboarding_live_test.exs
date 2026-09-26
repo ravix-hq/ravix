@@ -43,7 +43,8 @@ defmodule RavixWeb.OnboardingLiveTest do
       conn = log_in_user(conn, fresh())
 
       for path <- ["/", "/home", "/inbox"] do
-        assert {:error, {:live_redirect, %{to: "/welcome"}}} = live(conn, path)
+        assert {:ok, view, _} = live(conn, path)
+        assert_redirect(view, "/welcome")
       end
     end
 
