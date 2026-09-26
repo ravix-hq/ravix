@@ -161,7 +161,10 @@ defmodule RavixWeb.Live.AgentPanelTest do
     assert render(view) =~ "ends your open tracks"
 
     view |> element("#remove-claude-api_key") |> render_click()
-    html = render_async(view)
+    render_async(view)
+    # The component sends the parent its flash after its async result. Drain
+    # that queued message before checking the parent's rendered notice.
+    html = render(view)
 
     assert html =~
              "Removed. Projects you own have nothing to run on until you connect Claude Code again."
