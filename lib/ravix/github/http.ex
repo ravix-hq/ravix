@@ -67,7 +67,9 @@ defmodule Ravix.GitHub.HTTP do
   defp request_or_cached(app, scope, :get, path, opts) do
     case Keyword.fetch(opts, :cache_ttl) do
       {:ok, ttl} when is_integer(ttl) and ttl >= 0 and not is_nil(scope) ->
-        key = {app.app_id, app.api_url, scope, path, Keyword.get(opts, :accept)}
+        key =
+          {app.app_id, app.api_url, scope, Cache.read_generation(app.app_id, scope), path,
+           Keyword.get(opts, :accept)}
 
         Reads.fetch(
           key,

@@ -130,10 +130,38 @@ defmodule Ravix.GitHub.Cache do
   # PubSub that is not up (a test that never started it) must not fail a
   # GitHub read that has otherwise succeeded.
   defp tell_siblings(message) do
-    Phoenix.PubSub.broadcast_from(Ravix.PubSub, self(), @topic, message)
+    # The local table was already updated synchronously. Exclude its owner,
+    # rather than the calling request, so it does not apply its own news twice.
+    Phoenix.PubSub.broadcast_from(Ravix.PubSub, Process.whereis(__MODULE__), @topic, message)
     :ok
   catch
     _kind, _reason -> :ok
+  end
+
+  @doc "The local generation of display reads for this credential."
+  @spec read_generation(app_id(), rate_scope()) :: non_neg_integer()
+  def read_generation(app_id, scope) do
+    case :ets.lookup(@table, {:reads, app_id, scope}) do
+      [{_, generation}] -> generation
+      [] -> 0
+    end
+  end
+
+  @doc """
+  Start a new display-read generation after a mutation, on every instance.
+  Old loads still answer their waiters under their original keys, but no new
+  caller can reuse their results. No in-flight caller is cancelled or stranded.
+  """
+  @spec invalidate_reads(app_id(), rate_scope()) :: :ok
+  def invalidate_reads(app_id, scope) do
+    bump_reads(app_id, scope)
+    tell_siblings({:reads_changed, app_id, scope})
+  end
+
+  defp bump_reads(app_id, scope) do
+    key = {:reads, app_id, scope}
+    :ets.update_counter(@table, key, {2, 1}, {key, 0})
+    :ok
   end
 
   # ── checks ─────────────────────────────────────────────────────────
@@ -220,6 +248,11 @@ defmodule Ravix.GitHub.Cache do
 
   def handle_info({:rate_limit_cleared, app_id, installation_id}, state) do
     clear_rate_limit_local(app_id, installation_id)
+    {:noreply, state}
+  end
+
+  def handle_info({:reads_changed, app_id, scope}, state) do
+    bump_reads(app_id, scope)
     {:noreply, state}
   end
 

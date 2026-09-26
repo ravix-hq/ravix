@@ -370,6 +370,18 @@ defmodule Ravix.GitHub do
     end
   end
 
+  @doc "The PR belonging to a track, without fetching its branch or CI checks."
+  @spec pull_for_track(app(), installation_id(), String.t(), String.t(), track()) ::
+          {:ok, Shapes.PullRef.t() | nil} | error()
+  def pull_for_track(nil, _installation_id, _full_name, _ref, _track),
+    do: {:error, {:unconfigured, :github}}
+
+  def pull_for_track(%GitHubApp{} = app, installation_id, full_name, ref, track) do
+    with {:ok, pulls} <- pulls_for_head(app, installation_id, full_name, ref) do
+      {:ok, choose_pull(pulls, ref, to_ms(track.created_at), track.origin_number)}
+    end
+  end
+
   # ── what GitHub thinks of a branch ───────────────────────────────────
 
   @doc """
@@ -451,7 +463,8 @@ defmodule Ravix.GitHub do
       app,
       installation_id,
       :get,
-      "/repos/#{full_name}/pulls?state=all&per_page=20&head=#{head}"
+      "/repos/#{full_name}/pulls?state=all&per_page=20&head=#{head}",
+      cache_ttl: 300_000
     )
   end
 
@@ -502,6 +515,8 @@ defmodule Ravix.GitHub do
 
     with {:ok, raw} <-
            as_installation(app, installation_id, :post, "/repos/#{full_name}/pulls", json: body) do
+      Cache.invalidate_reads(app.app_id, installation_id)
+
       Cache.drop_checks(app.app_id, fn
         {^installation_id, ^full_name, ^head, _, _} -> true
         _ -> false
