@@ -121,3 +121,21 @@ test('runtime switches expose the explicit rebuild action and discard restores S
   expect(document.querySelector('[data-switch-agent]').hidden).toBe(true)
   expect(document.querySelector('[data-save-agent]').hidden).toBe(false)
 })
+
+test('in-app switch confirmation blocks discard and navigation, then restores focus on Cancel', () => {
+  const {hook} = mountHook(SettingsSections, '#settings')
+  hook.section = 'agent'
+  document.querySelector('#settings-runtime').value = 'codex'
+  edit('#settings-runtime')
+  document.querySelector('[data-settings-panel=agent]').insertAdjacentHTML('beforeend', '<div id="agent-switch-confirmation"><button id="confirm-agent-switch">Rebuild and switch</button></div>')
+  hook.updated()
+  expect(document.querySelector('[data-settings-discard]').disabled).toBe(true)
+  expect(key(window, 'Escape').defaultPrevented).toBe(true)
+  expect(document.activeElement.id).toBe('confirm-agent-switch')
+  document.querySelector('[data-settings-section=general]').click()
+  expect(hook.section).toBe('agent')
+  document.querySelector('#agent-switch-confirmation').remove()
+  hook.updated()
+  expect(document.querySelector('[data-settings-discard]').disabled).toBe(false)
+  expect(document.activeElement).toBe(document.querySelector('[data-switch-agent]'))
+})

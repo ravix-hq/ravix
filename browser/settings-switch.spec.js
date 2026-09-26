@@ -62,13 +62,22 @@ test('settings explicitly rebuilds when switching agents and the next track work
     previousAgent = agent.id;
     await page.locator('.crumbs').getByRole('button', { name: 'Settings', exact: true }).click();
     const settings = page.getByRole('dialog', { name: 'Project settings', exact: true });
+    await expect(settings.locator('[data-confirm]')).toHaveCount(0);
     await settings.getByRole('button', { name: 'Agent', exact: true }).click();
     await settings.getByRole('combobox', { name: 'Agent', exact: true }).selectOption(target);
     await expect(settings.getByRole('button', { name: 'Save agent', exact: true })).toBeHidden();
     await settings.getByRole('button', { name: 'General', exact: true }).click();
     await expect(settings.getByRole('button', { name: 'Switch and rebuild', exact: true })).toBeFocused();
-    page.once('dialog', dialog => dialog.accept());
     await settings.getByRole('button', { name: 'Switch and rebuild', exact: true }).click();
+    const confirmation = settings.getByRole('group', { name: 'Confirm agent switch' });
+    await expect(confirmation).toContainText("This closes 1 open track and discards the machine's disk");
+    await expect(confirmation.getByRole('button', { name: 'Rebuild and switch' })).toBeFocused();
+    await confirmation.getByRole('button', { name: 'Cancel', exact: true }).click();
+    await expect(confirmation).toHaveCount(0);
+    await expect(settings.getByRole('combobox', { name: 'Agent', exact: true })).toHaveValue(target);
+    await expect(settings.getByRole('button', { name: 'Switch and rebuild', exact: true })).toBeFocused();
+    await settings.getByRole('button', { name: 'Switch and rebuild', exact: true }).click();
+    await confirmation.getByRole('button', { name: 'Rebuild and switch' }).click();
     await expect(page).toHaveURL(/\/(home)?$/);
   }
   await page.goto(projectUrl);
