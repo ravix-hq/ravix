@@ -23,8 +23,7 @@ defmodule RavixWeb.SchedulesLiveTest do
         project_id: project.id,
         prompt: "Check tests",
         frequency: "daily",
-        time: "10:15",
-        weekday: "1"
+        time: "10:15"
       }
     )
     |> render_submit()
@@ -40,6 +39,57 @@ defmodule RavixWeb.SchedulesLiveTest do
     assert {:ok, %{enabled: true}} = Schedules.get(user, row.id)
     view |> element("#schedule-#{row.id} button", "Delete") |> render_click()
     assert Schedules.list(user) == []
+  end
+
+  test "Day follows Repeat and preserves the weekly choice through changes and editing", %{
+    conn: conn
+  } do
+    user = insert_user()
+    project = insert_project(user: user)
+    {:ok, view, _} = live(log_in_user(conn, user), "/schedules")
+    render_async(view)
+    refute has_element?(view, "#schedule_weekday")
+
+    view
+    |> form("#schedule-form",
+      schedule: %{
+        name: "Review",
+        project_id: project.id,
+        prompt: "Check tests",
+        frequency: "weekly"
+      }
+    )
+    |> render_change()
+
+    assert has_element?(view, "#schedule_weekday option[value='1'][selected]")
+    view |> form("#schedule-form", schedule: %{weekday: "5"}) |> render_change()
+
+    for frequency <- ["hourly", "daily"] do
+      view |> form("#schedule-form", schedule: %{frequency: frequency}) |> render_change()
+      refute has_element?(view, "#schedule_weekday")
+      assert has_element?(view, "#schedule_name[value='Review']")
+      assert has_element?(view, "#schedule_prompt", "Check tests")
+    end
+
+    view |> form("#schedule-form", schedule: %{frequency: "weekly"}) |> render_change()
+    assert has_element?(view, "#schedule_weekday option[value='5'][selected]")
+    view |> form("#schedule-form") |> render_submit()
+    [row] = Schedules.list(user)
+    assert row.frequency == :weekly
+    assert row.weekday == 5
+    refute has_element?(view, "#schedule_weekday")
+
+    view |> element("#schedule-#{row.id} button", "Edit") |> render_click()
+    assert has_element?(view, "#schedule_weekday option[value='5'][selected]")
+    view |> form("#schedule-form", schedule: %{frequency: "daily"}) |> render_change()
+    refute has_element?(view, "#schedule_weekday")
+    view |> form("#schedule-form") |> render_submit()
+    assert {:ok, %{frequency: :daily}} = Schedules.get(user, row.id)
+    view |> element("#schedule-#{row.id} button", "Edit") |> render_click()
+    refute has_element?(view, "#schedule_weekday")
+    view |> form("#schedule-form", schedule: %{frequency: "weekly"}) |> render_change()
+    view |> element("#schedule-form button", "Cancel") |> render_click()
+    refute has_element?(view, "#schedule_weekday")
   end
 
   test "refresh explicitly retrieves changes made outside this page", %{conn: conn} do
@@ -83,8 +133,7 @@ defmodule RavixWeb.SchedulesLiveTest do
                  project_id: project.id,
                  prompt: "Check",
                  frequency: "daily",
-                 time: "09:00",
-                 weekday: "1"
+                 time: "09:00"
                }
              )
              |> render_submit()
