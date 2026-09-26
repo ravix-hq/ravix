@@ -172,6 +172,8 @@ defmodule Ravix.Tooling.WaitTest do
     assert id == ctx.one.id
     await_waiter_stop()
 
+    reject(Fountain, :turns, 2)
+
     assert {:ok, %{changed: []}} =
              Tooling.call(ctx.p, "wait_task", %{
                "task_ids" => [id],
