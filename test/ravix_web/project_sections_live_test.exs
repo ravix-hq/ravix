@@ -91,6 +91,8 @@ defmodule RavixWeb.ProjectSectionsLiveTest do
     insert_project(user: user)
     {token, session} = insert_session(user)
     {:ok, view, _} = live(Plug.Test.init_test_session(conn, session_token: token), "/home")
+    # Isolate event authorization from the mount-time async rail guard.
+    render_async(view, 1_000)
     Repo.delete!(session)
 
     :sys.replace_state(view.pid, fn state ->
