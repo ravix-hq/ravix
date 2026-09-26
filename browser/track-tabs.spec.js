@@ -1,10 +1,11 @@
 import { test, expect } from '@playwright/test';
-import { signIn } from './sign-in.js';
+import { signIn, connectClaude } from './sign-in.js';
 
 test('overflowing track tabs scroll with a mouse and keep navigation reachable', async ({ page }) => {
   test.setTimeout(120_000);
   // Keep mockuser's first-visit state for the onboarding walkthrough.
   await signIn(page, 'eli');
+  await connectClaude(page);
   await page.getByRole('button', { name: 'Add a project', exact: true }).first().click();
   const project = page.getByRole('dialog', { name: 'New project' });
   await project.getByLabel('Project name', { exact: true }).fill('Scrolling tracks');

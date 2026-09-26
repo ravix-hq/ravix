@@ -44,3 +44,20 @@ export async function signIn(page, login, landing = '/') {
   // The workspace's own buttons need the socket too, for the same reason.
   await expect(page.locator('[data-phx-main]')).toHaveClass(/phx-connected/);
 }
+
+/** Connect a mock Claude credential through the real account flow before spending it. */
+export async function connectClaude(page) {
+  const returnTo = new URL(page.url()).pathname + new URL(page.url()).search;
+  await page.goto('/welcome/agent');
+  await expect(page.locator('[data-phx-main]')).toHaveClass(/phx-connected/);
+  await page.getByRole('button', { name: /^Claude Code/ }).click();
+  await page.getByRole('button', { name: 'Subscription', exact: true }).click();
+  await expect(page.getByLabel('Subscription token', { exact: true })).toBeVisible();
+  if (!(await page.locator('#welcome-connected').isVisible())) {
+    await page.getByLabel('Subscription token', { exact: true }).fill('sk-ant-oat01-browser-fixture');
+    await page.getByRole('button', { name: 'Connect Claude Code', exact: true }).click();
+    await expect(page).toHaveURL(/\/welcome\/github$/);
+  }
+  await page.goto(returnTo);
+  await expect(page.locator('[data-phx-main]')).toHaveClass(/phx-connected/);
+}

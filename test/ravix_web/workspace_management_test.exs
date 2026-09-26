@@ -463,6 +463,33 @@ defmodule RavixWeb.WorkspaceManagementTest do
     refute has_element?(ctx.view, "#new-project-form .field p.error")
   end
 
+  test "an unconnected runtime is refused on the Agent field", ctx do
+    expect(Projects, :create, fn _, attrs ->
+      assert attrs["runtime"] == "codex"
+
+      {:error,
+       {:conflict, "agent_not_connected", "Connect Codex before creating a project with it."}}
+    end)
+
+    render_click(ctx.view, "dialog", %{name: "new-project"})
+
+    ctx.view
+    |> form("#new-project-form", new_project: [name: "Keep this", runtime: "codex"])
+    |> render_submit()
+
+    render_async(ctx.view)
+
+    assert has_element?(
+             ctx.view,
+             ".field:has(#project-runtime) p.error",
+             "Connect Codex before creating a project with it."
+           )
+
+    assert has_element?(ctx.view, "#project-runtime option[value=codex][selected]")
+    assert has_element?(ctx.view, "input[name='new_project[name]'][value='Keep this']")
+    refute has_element?(ctx.view, "#new-project-form button[disabled]")
+  end
+
   @tag capture_log: true
   test "a crashed provisioning task restores a usable form", ctx do
     expect(Projects, :create, fn _, _ -> raise "provider crashed" end)

@@ -90,9 +90,10 @@ defmodule Ravix.ToolingTest do
              Tooling.call(owner_principal, "list_projects", %{})
   end
 
-  test "project creation returns a public receipt and repeated calls do not provision twice", %{
-    p: p
-  } do
+  test "project creation returns a public receipt and repeated calls do not provision twice" do
+    user = insert_user(credential_set_id: "mine")
+    {p, _, _} = principal(user)
+
     client =
       fountain([
         {%{method: "POST", path: "/api/environments"}, {201, [], %{data: %{id: "new-env"}}}},
@@ -102,13 +103,19 @@ defmodule Ravix.ToolingTest do
         {%{method: "POST", path: "/api/agents"}, {201, [], %{data: %{id: "new-agent"}}}}
       ])
 
+    FakeTransport.expect(
+      client,
+      %{method: "GET", path: "/api/account/inference-credential-sets"},
+      {200, [], %{data: [%{id: "mine", providers: ["openai_api_key"]}]}}
+    )
+
     args = %{"name" => "Desktop", "request_id" => "create-project-1"}
     assert {:ok, result} = Tooling.call(p, "create_project", args)
     assert Repo.get!(Project, result.id).name == "Desktop"
     refute Map.has_key?(result, :vault_id)
     assert {:ok, retried} = Tooling.call(p, "create_project", args)
     assert retried["id"] == result.id
-    assert length(FakeTransport.calls(client)) == 4
+    assert length(FakeTransport.calls(client)) == 5
 
     assert {:error, {:conflict, "request_id_used", _}} =
              Tooling.call(p, "create_project", %{args | "name" => "Another"})

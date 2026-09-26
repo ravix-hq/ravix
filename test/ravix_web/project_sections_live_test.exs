@@ -91,6 +91,8 @@ defmodule RavixWeb.ProjectSectionsLiveTest do
     insert_project(user: user)
     {token, session} = insert_session(user)
     {:ok, view, _} = live(Plug.Test.init_test_session(conn, session_token: token), "/home")
+    # Test revocation at the event boundary, after mount's async rail settles.
+    render_async(view)
     Repo.delete!(session)
 
     :sys.replace_state(view.pid, fn state ->

@@ -105,6 +105,10 @@ defmodule RavixWeb.Error do
   def from({:forbidden, message}, _opts),
     do: %__MODULE__{status: 403, code: "owner_only", message: message}
 
+  # Shared by the Agent select and MCP's tagged tool error.
+  def from({:conflict, "agent_not_connected", message}, _opts),
+    do: %__MODULE__{status: 409, code: "agent_not_connected", message: message}
+
   def from({:conflict, code, message}, _opts),
     do: %__MODULE__{status: 409, code: to_string(code), message: message}
 
