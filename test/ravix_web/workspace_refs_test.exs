@@ -59,7 +59,9 @@ defmodule RavixWeb.WorkspaceRefsTest do
       ])
 
       ctx.view |> element("button[phx-click=origin][phx-value-kind=#{@kind}]") |> render_click()
-      assert_receive {:loading_refs, task}
+      # This handshake includes installation-token signing and provider setup;
+      # the default 100ms is too short on a busy CI runner.
+      assert_receive {:loading_refs, task}, 5_000
       assert has_element?(ctx.view, "#new-track-form [role=status]", "Loading branches")
       assert has_element?(ctx.view, "#track-ref[disabled]")
       send(task, :finish)
