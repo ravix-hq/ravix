@@ -114,7 +114,9 @@ defmodule RavixWeb.WorkspaceRailTest do
     end)
 
     {:ok, view, _} = live(log_in_user(conn, user), "/home")
-    render_async(view)
+    # The rail runs three supervised project reads, one of which crashes; under a
+    # loaded suite that settles past render_async's 100 ms default.
+    render_async(view, 2_000)
 
     for project <- projects do
       assert has_element?(view, ".workspace-project-name[href='/p/#{project.id}']")

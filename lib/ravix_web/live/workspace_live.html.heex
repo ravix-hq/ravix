@@ -380,7 +380,6 @@
             <%!-- Without the `ravix/` namespace every default title shares:
               the full title is the tab's name and its tooltip. --%>
             <span class="track-title">{tab_label(track)}</span>
-            <span :if={track.origin.kind == :plan} class="chip" title="From a project plan">Plan</span>
           </.link>
           <button
             :if={@project.access != :tracks}

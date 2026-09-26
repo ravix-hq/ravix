@@ -63,9 +63,10 @@ defmodule RavixWeb.ToolingWaitTest do
     {:ok, {_, port}} = ThousandIsland.listener_info(server)
     {:ok, socket} = :gen_tcp.connect(~c"localhost", port, [:binary, active: false])
     :ok = :gen_tcp.send(socket, "POST / HTTP/1.1\r\nHost: localhost\r\nContent-Length: 0\r\n\r\n")
+    # Wait for actual listener/provider startup, not a sub-second CI schedule.
     assert_receive {:request, _}, 5_000
-    assert_receive {:subscribed, waiter}, 1000
-    assert_receive {:refresh, worker}, 1000
+    assert_receive {:subscribed, waiter}, 5_000
+    assert_receive {:refresh, worker}, 5_000
     waiter_ref = Process.monitor(waiter)
     worker_ref = Process.monitor(worker)
     :ok = :inet.setopts(socket, linger: {true, 0})

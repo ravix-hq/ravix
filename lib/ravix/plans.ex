@@ -54,6 +54,31 @@ defmodule Ravix.Plans do
     end
   end
 
+  @doc "Assigned material and derived PR status; plan metadata only for project members."
+  def track_summary(user, track_id) do
+    with {:ok, %{track: track, project: project}} <- Access.track_access(user, track_id) do
+      rows = Store.for_track(track_id)
+
+      items =
+        project
+        |> Status.items(rows)
+        |> Enum.map(&Map.drop(&1, [:dependencies, :track_url, :track_title]))
+
+      plan_id = track.origin_plan_id || (List.first(rows) && hd(rows).plan_id)
+
+      plan =
+        case access(user, plan_id) do
+          {:ok, plan, _} ->
+            %{id: plan.id, title: plan.title, url: "/p/#{project.id}?plan=#{plan.id}"}
+
+          _ ->
+            nil
+        end
+
+      {:ok, %{items: items, plan: plan}}
+    end
+  end
+
   def update(user, id, expected_version, attrs, actor \\ :person) do
     with {:ok, plan, _} <- access(user, id),
          {:ok, _} <- actor_track(user, plan.project_id, actor) do

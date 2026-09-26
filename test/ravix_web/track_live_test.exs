@@ -331,6 +331,170 @@ defmodule RavixWeb.TrackLiveTest do
     Enum.map(Tracks.Store.threads_of(id), &%{id: &1.id, title: &1.title, unread: false})
   end
 
+  test "assigned items occupy one collapsed row and reveal status-ordered lines and details",
+       ctx do
+    items =
+      Enum.with_index([:done, :unassigned, :in_review, :in_progress], fn status, position ->
+        %{
+          id: "compact-#{position}",
+          title: "Item #{position}",
+          position: position,
+          brief: "Private brief #{position}",
+          acceptance: "Verify #{position}",
+          notes: [],
+          status: status,
+          status_available: true,
+          pull:
+            if(status in [:done, :in_review],
+              do: %{
+                number: 231 + position,
+                url: "https://github.com/acme/app/pull/#{231 + position}"
+              }
+            )
+        }
+      end)
+
+    summary = %{items: items, plan: nil}
+
+    expect(Ravix.Plans, :track_summary, fn user, id ->
+      assert {user.id, id} == {ctx.user.id, ctx.track.id}
+      {:ok, summary}
+    end)
+
+    send(ctx.view.pid, :refresh_plan_items)
+    settle(ctx.view)
+    assert has_element?(ctx.view, ".track-plan-toggle[aria-expanded=false]", "1 of 4 done")
+    assert has_element?(ctx.view, ".track-plan-summary")
+    refute has_element?(ctx.view, ".track-plan-summary ~ .track-plan-summary")
+    refute has_element?(ctx.view, ".track-plan-item-row")
+    refute render(ctx.view) =~ "Private brief"
+    ctx.view |> element(".track-plan-toggle") |> render_click()
+    html = render(ctx.view) |> LazyHTML.from_document()
+
+    assert html |> LazyHTML.query(".track-plan-list > li") |> LazyHTML.attribute("id") ==
+             [
+               "assigned-item-compact-2",
+               "assigned-item-compact-3",
+               "assigned-item-compact-1",
+               "assigned-item-compact-0"
+             ]
+
+    assert has_element?(ctx.view, ".plan-status", "In review")
+    assert has_element?(ctx.view, ".plan-status", "Merged")
+    assert has_element?(ctx.view, "a[href='https://github.com/acme/app/pull/233']", "#233")
+    refute has_element?(ctx.view, ".track-plan-detail")
+    ctx.view |> element("#assigned-item-compact-2 .track-plan-item-title") |> render_click()
+    assert has_element?(ctx.view, ".track-plan-detail", "Private brief 2")
+    assert has_element?(ctx.view, "#track-note-compact-2")
+    ctx.view |> element("#assigned-item-compact-0 .track-plan-item-title") |> render_click()
+    refute has_element?(ctx.view, "#track-note-compact-2")
+    assert has_element?(ctx.view, "#track-note-compact-0")
+  end
+
+  test "the header uses the plan title and completed items have a quiet summary", ctx do
+    {:ok, plan} =
+      Ravix.Plans.create(ctx.user, ctx.project.id, %{
+        "title" => "Small fixes: task state, machine stats and navigation",
+        "items" => [%{"id" => "complete", "title" => "An item title"}]
+      })
+
+    Repo.get!(Ravix.Plans.Item, "complete")
+    |> Ecto.Changeset.change(track_id: ctx.track.id)
+    |> Repo.update!()
+
+    stub(Ravix.Config, :github, fn -> Ravix.GitHubFake.app() end)
+
+    expect(Ravix.GitHub, :pull_for_track, fn _, _, _, _, _ ->
+      {:ok, %{state: :merged, number: 231, url: "https://github.com/acme/app/pull/231"}}
+    end)
+
+    send(ctx.view.pid, :refresh_plan_items)
+    settle(ctx.view)
+
+    assert has_element?(
+             ctx.view,
+             ".track-plan-chip[title='#{plan.title}'][href='/p/#{ctx.project.id}?plan=#{plan.id}']",
+             "Plan: #{plan.title}"
+           )
+
+    assert has_element?(
+             ctx.view,
+             ".track-plan-toggle[aria-expanded=false]",
+             "All plan items done"
+           )
+  end
+
+  test "closed, blocked and ready items retain their distinct labels", ctx do
+    items =
+      Enum.with_index([:closed_without_merge, :blocked, :ready], fn status, i ->
+        %{
+          id: "status-#{i}",
+          title: "Status #{i}",
+          position: i,
+          status: status,
+          status_available: false,
+          pull: nil,
+          brief: "Brief",
+          acceptance: "",
+          notes: []
+        }
+      end)
+
+    expect(Ravix.Plans, :track_summary, fn _, _ -> {:ok, %{items: items, plan: nil}} end)
+    send(ctx.view.pid, :refresh_plan_items)
+    settle(ctx.view)
+    ctx.view |> element(".track-plan-toggle") |> render_click()
+
+    for label <- ["Closed without merge", "Blocked", "Unassigned"],
+        do: assert(has_element?(ctx.view, ".plan-status", label))
+
+    ctx.view |> element("#assigned-item-status-1 .track-plan-item-title") |> render_click()
+    assert has_element?(ctx.view, ".track-plan-detail", "PR status is temporarily unavailable")
+  end
+
+  test "a delayed summary cannot expose plan metadata after project membership is revoked", ctx do
+    {:ok, plan} =
+      Ravix.Plans.create(ctx.user, ctx.project.id, %{
+        "title" => "Member-only plan",
+        "items" => [%{"id" => "delayed", "title" => "Assigned work"}]
+      })
+
+    Repo.get!(Ravix.Plans.Item, "delayed")
+    |> Ecto.Changeset.change(track_id: ctx.track.id)
+    |> Repo.update!()
+
+    member = insert_user()
+    membership = insert_project_member(ctx.project, member)
+    insert_track_member(ctx.track, member)
+
+    {:ok, parent, _} =
+      live(log_in_user(build_conn(), member), "/p/#{ctx.project.id}/t/#{ctx.track.id}")
+
+    view = find_live_child(parent, "track-host")
+    settle(view)
+    assert has_element?(view, ".track-plan-chip", plan.title)
+    {:ok, summary} = Ravix.Plans.track_summary(member, ctx.track.id)
+    owner = self()
+
+    expect(Ravix.Plans, :track_summary, fn _, _ ->
+      send(owner, {:reading_plan, self()})
+
+      receive do
+        :finish -> {:ok, summary}
+      end
+    end)
+
+    send(view.pid, :refresh_plan_items)
+    assert_receive {:reading_plan, task}, 5_000
+    Repo.delete!(membership)
+    send(task, :finish)
+    settle(view)
+    refute render(view) =~ plan.title
+    refute has_element?(view, ".track-plan-items a")
+    view |> element(".track-plan-toggle") |> render_click()
+    assert has_element?(view, ".track-plan-item-title", "Assigned work")
+  end
+
   test "a track guest reads assigned material and notes without plan or sibling metadata", ctx do
     {:ok, plan} =
       Ravix.Plans.create(ctx.user, ctx.project.id, %{
@@ -354,11 +518,18 @@ defmodule RavixWeb.TrackLiveTest do
 
     view = find_live_child(parent, "track-host")
     settle(view)
-    assert has_element?(view, "summary", "Assigned item: Allowed work")
+    assert has_element?(view, ".track-plan-toggle[aria-expanded=false]", "0 of 1 done")
+    refute has_element?(view, ".track-plan-items a")
+    view |> element(".track-plan-toggle") |> render_click()
+    assert has_element?(view, ".track-plan-item-title", "Allowed work")
+    assert has_element?(view, ".plan-status", "In progress")
+    view |> element(".track-plan-item-title") |> render_click()
+    assert has_element?(view, ".track-plan-detail", "Implement the endpoint")
     refute render(view) =~ plan.title
     refute render(view) =~ "Private rationale"
     refute render(view) =~ "Hidden sibling"
     view |> form("#track-note-allowed", %{body: "Verified endpoint"}) |> render_submit()
+    settle(view)
     assert has_element?(view, "li", "Verified endpoint")
     Repo.delete_all(Ravix.Tracks.TrackMember)
     view |> form("#track-note-allowed", %{body: "revoked"}) |> render_submit()

@@ -1559,3 +1559,26 @@ body:has(.phx-error) #request-progress { display: none; }
 .schedule-controls { margin-top: 16px; flex-wrap: wrap; }
 .schedule-error { padding: 12px; background: var(--danger-bg); border: 1px solid var(--danger-line); border-radius: var(--radius); }
 @media (max-width: 960px) { .schedules-layout { grid-template-columns: 1fr; } }
+
+/* Assigned plan material occupies one row until the reader opens it. */
+.track-crumbs .track-plan-chip { min-width: 0; max-width: 18rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.track-plan-items { flex: none; min-width: 0; border-bottom: 1px solid var(--line); }
+.track-plan-items:empty { display: none; }
+.track-plan-summary { display: flex; align-items: center; gap: .5rem; padding: .35rem .75rem; min-width: 0; }
+.track-plan-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .8rem; color: var(--dim); }
+.track-plan-toggle { flex: none; font-size: .75rem; white-space: nowrap; }
+.track-plan-list { list-style: none; margin: 0; padding: 0 .75rem .5rem; max-height: min(40vh, 24rem); overflow-y: auto; }
+.track-plan-item-row { display: flex; align-items: center; gap: .5rem; min-width: 0; padding: .2rem 0; }
+.track-plan-item-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; font-size: .8rem; }
+.track-plan-pr { flex: none; font-size: .8rem; }
+.plan-status { flex: none; font-size: .65rem; }
+.plan-status-done { color: var(--ok); }
+.plan-status-closed_without_merge, .plan-status-blocked { color: var(--bad); }
+.track-plan-detail { padding: .65rem; font-size: .8rem; overflow-wrap: anywhere; background: var(--panel); border-left: 2px solid var(--line-strong); }
+.track-plan-detail textarea { display: block; width: 100%; margin: .4rem 0; }
+@media (max-width: 600px) {
+  .track-crumbs .track-plan-chip { max-width: 9rem; }
+  .track-plan-summary { padding: .25rem .5rem; }
+  .track-plan-list { padding: 0 .5rem .4rem; max-height: 32vh; }
+  .track-plan-item-row { gap: .3rem; }
+}

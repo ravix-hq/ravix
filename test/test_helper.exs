@@ -18,6 +18,7 @@ for mod <- [
       Ravix.Previews.Store,
       Ravix.Tracks,
       Ravix.Projects,
+      Ravix.Plans,
       Ravix.PromptQueue,
       Ravix.PromptQueue.Store,
       Ravix.Terminal,

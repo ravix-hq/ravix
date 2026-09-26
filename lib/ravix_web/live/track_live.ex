@@ -75,6 +75,7 @@ defmodule RavixWeb.TrackLive do
         track: nil,
         project: nil,
         header: nil,
+        assigned_plan: %{items: [], plan: nil},
         starters: [],
         # The models the composer's menu offers, for the project's runtime.
         # Empty when the catalog could not be read: the model is then shown
@@ -442,9 +443,13 @@ defmodule RavixWeb.TrackLive do
     end
   end
 
+  def handle_info(:refresh_plan_items, socket), do: {:noreply, refresh_plan_items(socket)}
+
   def handle_info(:refresh, socket) do
     Process.send_after(self(), :refresh, @refresh_ms)
-    {:noreply, socket |> refresh_detail() |> refresh_queue() |> refresh_transcript()}
+
+    {:noreply,
+     socket |> refresh_detail() |> refresh_queue() |> refresh_transcript() |> refresh_plan_items()}
   end
 
   # The follower went away, which on a cluster means its instance did (ADR
@@ -485,6 +490,20 @@ defmodule RavixWeb.TrackLive do
       {:noreply, redirect(socket, to: "/")}
     end
   end
+
+  defp async_result({:plan_items, track_id}, {:ok, {:ok, summary}}, socket) do
+    if track_id == socket.assigns.track_id do
+      # A track invitation can survive removal of project membership while
+      # this read is in flight. Recheck before exposing the plan's metadata.
+      plan = visible_plan(socket.assigns.current_user, summary.plan)
+
+      assign(socket, assigned_plan: %{summary | plan: plan})
+    else
+      socket
+    end
+  end
+
+  defp async_result({:plan_items, _}, _response, socket), do: socket
 
   defp async_result(:add_thread, {:ok, {:ok, thread}}, socket) do
     socket = settle(socket, :add_thread)
@@ -771,6 +790,7 @@ defmodule RavixWeb.TrackLive do
       track: track,
       project: project,
       header: nil,
+      assigned_plan: %{items: [], plan: nil},
       starters: [],
       queue: [],
       present: [],
@@ -844,6 +864,7 @@ defmodule RavixWeb.TrackLive do
     end)
     |> traced_async(:transcript, fn -> Tracks.events(user, id, thread_id: thread_id) end)
     |> refresh_queue()
+    |> refresh_plan_items()
     |> load_panel()
   end
 
@@ -1434,7 +1455,7 @@ defmodule RavixWeb.TrackLive do
     do: socket |> refresh_detail() |> refresh_queue() |> refresh_transcript()
 
   defp hub(%Event{name: name}, socket) when name in [:people, :tracks, :settings],
-    do: refresh_detail(socket)
+    do: socket |> refresh_detail() |> refresh_plan_items()
 
   # Somebody's read mark moved. This page is the one that moves it, and it
   # draws nothing from it: the unread dot is the rail's, and the rail clears
@@ -1485,6 +1506,18 @@ defmodule RavixWeb.TrackLive do
     traced_async(socket, {:detail, thread_id, generation}, fn ->
       Tracks.get(user, id, fresh: true, thread_id: thread_id)
     end)
+  end
+
+  defp visible_plan(user, %{id: id} = plan) do
+    if match?({:ok, _, _}, Ravix.Plans.access(user, id)), do: plan
+  end
+
+  defp visible_plan(_user, nil), do: nil
+
+  defp refresh_plan_items(socket) do
+    user = socket.assigns.current_user
+    id = socket.assigns.track_id
+    traced_async(socket, {:plan_items, id}, fn -> Ravix.Plans.track_summary(user, id) end)
   end
 
   defp refresh_queue(socket) do
