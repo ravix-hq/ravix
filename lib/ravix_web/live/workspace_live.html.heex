@@ -517,7 +517,17 @@
         session_hash={@session_hash}
         projects={@projects}
       />
-      <div :if={is_nil(@project) && @live_action not in [:projects, :schedules]} class="inbox">
+      <.live_component
+        :if={@live_action == :connections}
+        module={RavixWeb.Live.ConnectionsPanel}
+        id="connections"
+        current_user={@current_user}
+        session_hash={@session_hash}
+      />
+      <div
+        :if={is_nil(@project) && @live_action not in [:projects, :schedules, :connections]}
+        class="inbox"
+      >
         <header>
           <div class="row">
             <h1>

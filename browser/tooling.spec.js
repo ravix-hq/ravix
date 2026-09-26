@@ -103,3 +103,32 @@ test('browser consent connects MCP and A2A, work survives reconnect, and disconn
   const revoked = await request.post('/a2a', { headers: { Authorization: `Bearer ${reconnected.access_token}` }, data: { jsonrpc: '2.0', id: 1, method: 'GetTask', params: { id: submitted.task.id } } });
   expect(revoked.status()).toBe(401);
 });
+
+
+test('same-name connections show activity in a wide workspace with collapsed permissions', async ({ page, request }) => {
+  const used = await connect(page, request, 'mcp', 'Claude');
+  await connect(page, request, 'mcp', 'Claude');
+  await rpc(request, used, 'mcp', 'initialize', {
+    protocolVersion: '2025-11-25', capabilities: {}, clientInfo: { name: 'activity-test', version: '1' },
+  });
+  await page.setViewportSize({ width: 1480, height: 1000 });
+  await page.goto('/settings/connections');
+  await expect(page.locator('[data-phx-main]')).toHaveClass(/phx-connected/);
+  await expect(page.getByRole('complementary', { name: 'Projects', exact: true })).toBeVisible();
+  await expect(page).toHaveTitle('Connected applications · Ravix');
+  const heading = page.getByRole('heading', { name: 'Connected applications', exact: true });
+  expect((await heading.boundingBox()).height).toBeLessThan(40);
+  expect((await page.locator('.connections-list').boundingBox()).width).toBeGreaterThan(700);
+  const cards = page.locator('.connection-card').filter({ has: page.getByRole('heading', { name: 'Claude', exact: true }) });
+  await expect(cards).toHaveCount(2);
+  await expect(cards.filter({ hasText: 'Not recorded yet' })).toHaveCount(1);
+  await expect(cards.locator('time')).toHaveCount(3);
+  await expect(cards.locator('details[open]')).toHaveCount(0);
+  await cards.first().locator('summary').click();
+  await expect(cards.first().locator('details ul')).toBeVisible();
+  await page.screenshot({ path: test.info().outputPath('connections-desktop.png'), fullPage: true });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(heading).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.screenshot({ path: test.info().outputPath('connections-mobile.png'), fullPage: true });
+});
