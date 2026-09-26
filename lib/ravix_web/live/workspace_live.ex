@@ -869,8 +869,10 @@ defmodule RavixWeb.WorkspaceLive do
   defp track_suffix(id), do: "/t/#{id}"
 
   defp project_id(socket), do: socket.assigns.project && socket.assigns.project.id
-  defp ref_id(ref), do: to_string(ref[:number] || ref[:name])
-  defp ref_label(ref), do: if(ref[:number], do: "##{ref.number} #{ref.title}", else: ref.name)
+  defp ref_id(%{number: number}), do: to_string(number)
+  defp ref_id(%{name: name}), do: name
+  defp ref_label(%{number: number, title: title}), do: "##{number} #{title}"
+  defp ref_label(%{name: name}), do: name
 
   defp attention_count(tracks),
     do:
