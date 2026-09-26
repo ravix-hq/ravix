@@ -1,5 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { signIn } from './sign-in.js';
 import AxeBuilder from '@axe-core/playwright';
 
 // Exercise the production gateway template and its poll script without a
@@ -36,4 +38,61 @@ test('standalone preview loads quietly, reveals diagnostics, fails visibly and r
   await page.goto('http://preview.test/__ravix/start');
   await expect(page).toHaveURL('http://preview.test/');
   await expect(page.getByRole('heading')).toHaveText('Ready app');
+});
+
+
+test('track logs stay open through status patches and failure still opens diagnostics', async ({ page }) => {
+  await signIn(page, 'eli', '/home');
+  await page.getByRole('button', { name: /^Quick start/ }).click();
+  await page.getByLabel('Project name', { exact: true }).fill('Preview disclosure');
+  await page.getByRole('button', { name: 'Create project', exact: true }).click();
+  await page.getByRole('navigation', { name: 'Project tracks', exact: true }).getByRole('button', { name: 'New track', exact: true }).click();
+  await page.getByRole('button', { name: 'Create track', exact: true }).click();
+  await expect(page.getByRole('textbox', { name: 'Message', exact: true })).toBeEnabled();
+
+  const track = new URL(page.url()).pathname.split('/t/')[1];
+  const { database } = JSON.parse(readFileSync(`tmp/browser-${process.env.BROWSER_PORT || 4103}.json`, 'utf8'));
+  if (!/^ravix_browser_[a-f0-9]{32}$/.test(database) || !/^[a-f0-9-]{36}$/.test(track)) throw new Error('Invalid browser fixture');
+  const server = process.env.BROWSER_DATABASE_SERVER || 'postgres://postgres:postgres@localhost:5432';
+  const quote = value => `'${value.replaceAll("'", "''")}'`;
+  // Only the harness-owned database is changed. desired=stopped keeps the
+  // reconciler from starting a machine while these display states are tested.
+  const status = (state, logs) => {
+    if (!['starting', 'failed'].includes(state)) throw new Error('Invalid preview state');
+    const changed = execFileSync('psql', [`${server}/${database}`, '-XAtq', '-v', 'ON_ERROR_STOP=1', '-c',
+      `UPDATE ravix.previews SET state = '${state}', desired = 'stopped', logs = ${quote(logs)}, error = ${state === 'failed' ? "'App failed'" : 'NULL'} WHERE track_id = '${track}' RETURNING track_id`
+    ], { encoding: 'utf8' }).trim();
+    expect(changed).toBe(track);
+  };
+  await page.locator('button[phx-click="panel"][phx-value-name="preview"]').click();
+  const disclosure = page.locator('#preview-logs');
+  const summary = disclosure.locator('summary');
+  const logs = disclosure.locator('pre');
+  const refresh = page.locator('button[phx-click="refresh-panel"]');
+  await expect(disclosure).toBeAttached();
+
+  for (const opener of ['summary', 'button']) {
+    status('starting', `Before ${opener}`);
+    await refresh.click();
+    await expect(logs).toHaveText(`Before ${opener}`);
+    await expect(disclosure).toHaveJSProperty('open', false);
+    if (opener === 'summary') await summary.click();
+    else await page.locator('button[phx-value-action="logs"]').click();
+    await expect(logs).toBeVisible();
+
+    status('starting', `After ${opener}`);
+    await refresh.click();
+    await expect(logs).toHaveText(`After ${opener}`);
+    await expect(disclosure).toHaveJSProperty('open', true);
+    await expect(logs).toBeVisible();
+    await summary.click();
+    await expect(logs).not.toBeVisible();
+  }
+
+  status('failed', 'Failure diagnostics');
+  await refresh.click();
+  await expect(page.getByRole('alert')).toContainText('App failed');
+  await expect(logs).toHaveText('Failure diagnostics');
+  await expect(disclosure).toHaveJSProperty('open', true);
+  await expect(logs).toBeVisible();
 });

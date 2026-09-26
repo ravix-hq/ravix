@@ -408,6 +408,7 @@
             show_ignored?={@show_ignored?}
             branch_merged?={@branch_merged?}
             directories={@panel.directories}
+            metadata={@panel.metadata}
             file={@panel.file}
             project={@project}
             diff_path={@diff_path}
@@ -419,7 +420,14 @@
             <.loading_status :if={@preview.state == :starting} id="preview-loading">
               {RavixWeb.PreviewPresentation.loading_label(@preview.config)}
             </.loading_status>
-            <p :if={@preview.error} role="alert">{@preview.error}</p>
+            <p
+              :if={@preview.error}
+              id="preview-error"
+              role="alert"
+              phx-mounted={JS.set_attribute({"open", ""}, to: "#preview-logs")}
+            >
+              {@preview.error}
+            </p>
             <p :if={@preview.unavailable_reason}>{@preview.unavailable_reason}</p>
             <div class="workspace-actions">
               <button
@@ -470,7 +478,11 @@
               class="workspace-preview"
               sandbox="allow-scripts allow-forms allow-same-origin allow-popups allow-downloads"
             ></iframe>
-            <details id="preview-logs" open={@preview.state == :failed}>
+            <details
+              id="preview-logs"
+              open={@preview.state == :failed}
+              phx-mounted={JS.ignore_attributes(["open"])}
+            >
               <summary>Show logs</summary>
               <pre>{RavixWeb.PreviewPresentation.logs(@preview.logs) |> then(&if(&1 == "", do: "No logs yet.", else: &1))}</pre>
             </details>
