@@ -135,6 +135,35 @@ defmodule RavixWeb.PlansLiveTest do
     assert Repo.aggregate(Ravix.Tooling.Task, :count) == 2
   end
 
+  test "the plan shows its dependency graph, linking each node to its item", %{
+    conn: conn,
+    user: user,
+    project: project
+  } do
+    {:ok, plan} =
+      Plans.create(user, project.id, %{
+        "title" => "Graph",
+        "items" => [
+          %{"id" => "a", "title" => "Decide"},
+          %{"id" => "b", "title" => "Build", "dependencies" => ["a"]},
+          %{"id" => "c", "title" => "Ship <b>it</b>", "dependencies" => ["a", "b"]}
+        ]
+      })
+
+    {:ok, view, _} = live(log_in_user(conn, user), "/p/#{project.id}?plan=#{plan.id}")
+    render_async(view, 5_000)
+
+    assert has_element?(view, ".plan-graph-unassigned a[href='#item-a']", "Decide")
+    assert has_element?(view, ".plan-graph-blocked a[href='#item-b']", "blocked")
+    assert has_element?(view, ".plan-graph-blocked a[href='#item-c']", "Ship <b>it</b>")
+    refute has_element?(view, ".plan-graph b")
+
+    assert view |> element(".plan-graph svg") |> render() |> String.split("<path") |> length() ==
+             4
+
+    assert has_element?(view, "#item-c")
+  end
+
   test "guests never mount the plans panel, and revoked sessions cannot assign", %{
     conn: conn,
     user: user,
