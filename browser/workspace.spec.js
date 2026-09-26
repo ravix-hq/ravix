@@ -356,9 +356,9 @@ test('project, track, streaming, image upload, reconnect, and revocation', async
   const sectionsDialog = page.getByRole('dialog', { name: 'Project sections', exact: true });
   await expect(sectionsDialog.getByLabel('Section name', { exact: true })).toHaveValue('Browser work');
   await page.keyboard.press('Escape');
-  const sectionPicker = page.getByRole('combobox', { name: 'Section for Browser quality', exact: true });
-  await sectionPicker.selectOption({ label: 'Browser work' });
+  await expect(page.getByRole('combobox', { name: 'Section for Browser quality', exact: true })).toHaveCount(0);
   const sectionGroup = page.locator('.project-section').filter({ has: page.locator('.section-toggle', { hasText: 'Browser work' }) });
+  await page.locator('.workspace-project', { hasText: 'Browser quality' }).dragTo(sectionGroup);
   await expect(sectionGroup.locator('.workspace-project-name')).toContainText('Browser quality');
   await sectionGroup.locator('.section-toggle').click();
   await expect(sectionGroup.locator('.workspace-project-name')).toBeHidden();

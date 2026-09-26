@@ -19,17 +19,31 @@ defmodule RavixWeb.ProjectSectionsLiveTest do
     view |> form("#rename-section-#{section.id}", section: %{name: "Active"}) |> render_submit()
     assert has_element?(view, ".section-toggle", "Active")
     render_click(view, "dismiss")
-    view |> form("#move-project-#{project.id}", section: section.id) |> render_change()
+    # The sidebar has no per-project picker; dragging onto a section files it.
+    refute has_element?(view, "#project-sections select")
+    assert has_element?(view, "#section-other[data-section-drop='']")
+    assert has_element?(view, "#section-#{section.id}[data-section-drop='#{section.id}']")
+    assert has_element?(view, "[data-project-id='#{project.id}'][draggable='true']")
+
+    view
+    |> element("#project-sections")
+    |> render_hook("move-project", %{project: project.id, section: section.id})
+
     assert has_element?(view, "#section-#{section.id} a[href='/p/#{project.id}']")
+    # With every project filed away, Other projects stays as a place to drop.
+    assert has_element?(view, "#section-other", "Drag a project here")
     view |> element("#section-#{section.id} .section-toggle") |> render_click()
     assert has_element?(view, "#section-projects-#{section.id}[hidden]")
     {:ok, reloaded, _} = live(conn, "/p/#{project.id}")
     assert has_element?(reloaded, "#section-projects-#{section.id}[hidden]")
     reloaded |> element("#section-#{section.id} .section-toggle") |> render_click()
     refute has_element?(reloaded, "#section-projects-#{section.id}[hidden]")
+    # The dialog's picker is the way to move a project without a pointer.
+    reloaded |> element("#manage-sections") |> render_click()
     reloaded |> form("#move-project-#{project.id}", section: "") |> render_change()
     assert has_element?(reloaded, "#section-other a[href='/p/#{project.id}']")
     reloaded |> form("#move-project-#{project.id}", section: section.id) |> render_change()
+    assert has_element?(reloaded, "#section-#{section.id} a[href='/p/#{project.id}']")
     render_click(reloaded, "delete-section", %{id: section.id})
     assert has_element?(reloaded, "#section-other a[href='/p/#{project.id}']")
     refute has_element?(reloaded, "#section-#{section.id}")
