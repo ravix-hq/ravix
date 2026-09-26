@@ -362,7 +362,7 @@
             aria-current={if is_nil(@track_id), do: "page"}
           >Overview</.link>
           <.link
-            :for={{track, index} <- Enum.with_index(@tracks[@project.id] || [], 1)}
+            :for={track <- @tracks[@project.id] || []}
             patch={"/p/#{@project.id}/t/#{track.id}"}
             class={["workspace-track track-tab", @track_id == track.id && "selected"]}
             aria-current={if @track_id == track.id, do: "page"}
@@ -376,7 +376,6 @@
               aria-label={tab_status_label(tab_status(track))}
               title={tab_status_label(tab_status(track))}
             ></span>
-            <span :if={!tab_status(track)} class="track-num" aria-hidden="true">{index}</span>
             <%!-- Without the `ravix/` namespace every default title shares:
               the full title is the tab's name and its tooltip. --%>
             <span class="track-title">{tab_label(track)}</span>

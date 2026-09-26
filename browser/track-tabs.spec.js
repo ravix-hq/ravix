@@ -24,6 +24,7 @@ test('overflowing track tabs scroll with a mouse and keep navigation reachable',
     await expect(nav.locator('.workspace-track')).toHaveCount(index + 1);
   }
   const strip = page.locator('.track-tabs');
+  await expect(strip.locator('.track-num')).toHaveCount(0);
   for (const width of [1280, 390]) {
     await page.setViewportSize({ width, height: 844 });
     await strip.evaluate(el => { el.scrollLeft = 0; });
