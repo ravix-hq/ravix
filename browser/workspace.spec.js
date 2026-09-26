@@ -668,12 +668,22 @@ test('project settings navigate, warn before discarding, and save sections acces
   const settings = page.getByRole('dialog', { name: 'Project settings', exact: true });
   await settings.getByLabel('Name', { exact: true }).fill('Unsaved name');
   await expect(settings.getByRole('status')).toHaveText('Unsaved changes');
-  page.once('dialog', dialog => dialog.dismiss());
+  const nativeDialogs = [];
+  page.on('dialog', async dialog => { nativeDialogs.push(dialog.type()); await dialog.dismiss(); });
   await settings.getByRole('button', { name: 'Agent', exact: true }).click();
   await expect(settings.getByLabel('Name', { exact: true })).toBeVisible();
-  page.once('dialog', dialog => dialog.accept());
+  await expect(settings.getByRole('button', { name: 'Save general', exact: true })).toBeFocused();
+  await expect(settings.getByLabel('Name', { exact: true })).toHaveValue('Unsaved name');
+  await page.keyboard.press('Escape');
+  await expect(settings).toBeVisible();
+  await settings.getByRole('button', { name: 'Discard changes', exact: true }).click();
   await settings.getByRole('button', { name: 'Agent', exact: true }).click();
   await expect(settings.getByRole('heading', { name: 'Agent', exact: true })).toBeFocused();
+  await expect(settings.getByRole('combobox', { name: 'Agent', exact: true }).locator('option')).toHaveText(['Claude Code', 'Codex']);
+  await settings.getByRole('combobox', { name: 'Agent', exact: true }).selectOption('codex');
+  await expect(settings.getByLabel('Model', { exact: true }).locator('option')).toHaveText(['GPT-6 Astra', 'GPT-5.5']);
+  await settings.getByRole('combobox', { name: 'Agent', exact: true }).selectOption('claude');
+  await expect(settings.getByLabel('Model', { exact: true }).locator('option')).toHaveText(['Claude Opus 5', 'Claude Sonnet 5']);
   await settings.getByLabel('Instructions', { exact: true }).fill('Explain changes and run focused tests.');
   await settings.getByRole('button', { name: 'Save agent', exact: true }).click();
   await expect(settings.getByRole('status')).toHaveText('Saved.');
@@ -693,15 +703,40 @@ test('project settings navigate, warn before discarding, and save sections acces
   await settings.getByLabel('Readiness path', { exact: true }).fill('/health');
   await settings.getByRole('button', { name: 'Save defaults', exact: true }).click();
   await expect(settings.getByRole('status')).toHaveText('Saved.');
+  const top = (await settings.boundingBox()).y;
   for (const section of ['Environment', 'Secrets', 'Danger zone']) {
     await settings.getByRole('button', { name: section, exact: true }).click();
+    expect((await settings.boundingBox()).y).toBeCloseTo(top, 0);
     await accessible(page);
   }
+  const rebuild = settings.getByRole('button', { name: 'Rebuild machine', exact: true });
+  const remove = settings.getByRole('button', { name: 'Delete project', exact: true });
+  await expect(rebuild).toBeDisabled();
+  await expect(remove).toBeDisabled();
+  await settings.getByLabel('Type Settings organized to confirm rebuilding', { exact: true }).fill('Settings organized');
+  await expect(rebuild).toBeEnabled();
+  await expect(remove).toBeDisabled();
+  await settings.getByLabel('Type Settings organized to confirm rebuilding', { exact: true }).fill('wrong');
+  await expect(rebuild).toBeDisabled();
+  await settings.getByLabel('Type Settings organized to confirm deletion', { exact: true }).fill('Settings organized');
+  await expect(remove).toBeEnabled();
+  await expect(rebuild).toBeDisabled();
+  await settings.getByLabel('Type Settings organized to confirm deletion', { exact: true }).fill('');
+  await expect(remove).toBeDisabled();
   await page.setViewportSize({ width: 390, height: 844 });
   await settings.getByRole('button', { name: 'Agent', exact: true }).click();
   await expect(settings.getByLabel('Instructions', { exact: true })).toHaveValue('Explain changes and run focused tests.');
   await accessible(page);
   await capture(page, 'settings-mobile');
+  const mobileTop = (await settings.boundingBox()).y;
+  for (const section of ['General', 'Environment', 'Secrets', 'Danger zone', 'Agent']) {
+    await settings.getByRole('button', { name: section, exact: true }).click();
+    expect((await settings.boundingBox()).y).toBeCloseTo(mobileTop, 0);
+    await fitsViewport(page);
+  }
+  const tabTops = await settings.locator('[data-settings-section]').evaluateAll(tabs => tabs.map(tab => tab.getBoundingClientRect().top));
+  expect(Math.max(...tabTops) - Math.min(...tabTops)).toBeLessThan(2);
+  expect(nativeDialogs).toEqual([]);
   await page.keyboard.press('Escape');
   await expect(settings).not.toBeVisible();
 });
@@ -751,6 +786,7 @@ test('composer Send stays compact and keeps its arrow after repeated submissions
     const model = page.locator('.composer-model');
     await expect(model).toHaveText(/^\S/);
     expect(await model.getAttribute('title')).toMatch(/\//);
+    await expect(model).toHaveAccessibleName(await model.locator('.truncate').innerText());
     expect(await model.evaluate(el => getComputedStyle(el).fontFamily)).toContain('IBM Plex Sans');
     await fitsViewport(page);
   };
