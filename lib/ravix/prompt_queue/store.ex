@@ -424,12 +424,30 @@ defmodule Ravix.PromptQueue.Store do
     ) || 0
   end
 
-  @doc "Save the reset included in a claimed POST, before crossing the network."
-  @spec prepare_reset(String.t(), integer() | nil) :: :ok
-  def prepare_reset(id, reset_id) do
+  @doc "The committed event cursor, or a first-scan baseline for legacy sent history."
+  @spec recovery_scan(String.t()) :: {non_neg_integer(), boolean()}
+  def recovery_scan(thread_id) do
+    cursor =
+      Repo.one(
+        from p in Item,
+          where:
+            p.thread_id == ^thread_id and p.status == :sent and not is_nil(p.session_scan_id),
+          select: max(p.session_scan_id)
+      )
+
+    baseline? =
+      is_nil(cursor) and
+        Repo.exists?(from p in Item, where: p.thread_id == ^thread_id and p.status == :sent)
+
+    {cursor || 0, baseline?}
+  end
+
+  @doc "Prepare the scanned cursor and included reset; only a sent row commits either."
+  @spec prepare_recovery(String.t(), integer() | nil, non_neg_integer()) :: :ok
+  def prepare_recovery(id, reset_id, scan_id) do
     {1, nil} =
       Repo.update_all(from(p in Item, where: p.id == ^id and p.status == :sending),
-        set: [session_reset_id: reset_id]
+        set: [session_reset_id: reset_id, session_scan_id: scan_id]
       )
 
     :ok

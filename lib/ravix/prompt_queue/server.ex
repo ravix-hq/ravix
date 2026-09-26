@@ -572,7 +572,7 @@ defmodule Ravix.PromptQueue.Server do
 
     prompt = Body.in_thread(body.prompt, row, track)
 
-    with {:ok, preamble} <- Recovery.prepare(client, row, track),
+    with {:ok, preamble} <- Recovery.prepare(client, row, track, project),
          true <- authorized?(row) do
       text = compose(preamble, compose(instructions, authored(row, track, project, prompt)))
 

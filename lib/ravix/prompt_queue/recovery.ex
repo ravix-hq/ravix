@@ -2,46 +2,75 @@ defmodule Ravix.PromptQueue.Recovery do
   @moduledoc """
   Context replay on the next queued prompt after a session reset.
 
-  The queue's database claim serializes delivery per thread. A prepared reset
-  remains on that prompt through ambiguous delivery; only a sent row counts as
-  a receipt. Confirmation of an uncertain POST therefore commits the same
-  receipt as a successful POST, including when another instance confirms it.
+  Scans one page at a time, forward from the last sent receipt's cursor. Both
+  the cursor and any preamble remain tentative through ambiguous delivery;
+  confirmation by any worker commits them with the queue row's sent status.
+
+  Sent history without a cursor identifies an upgrade: the first successful
+  delivery baselines at the current tail, without replaying historical resets.
+  A new thread with no sent history starts at zero so an opening-turn reset
+  still restores context on its first queued prompt.
   """
 
   alias Ravix.Fountain
+  alias Ravix.Plans.Status
+  alias Ravix.Projects.Project
   alias Ravix.PromptQueue.{Item, Store}
   alias Ravix.Spec
   alias Ravix.Tracks.Track
 
-  @doc "Read reset events and persist the context attached to this claimed delivery."
-  @spec prepare(Fountain.Client.t(), Item.t(), Track.t()) ::
+  @doc "Scan new events and persist the context attached to this claimed delivery."
+  @spec prepare(Fountain.Client.t(), Item.t(), Track.t(), Project.t()) ::
           {:ok, String.t()} | {:error, :context_unavailable}
-  def prepare(client, row, track) do
-    case Fountain.events(client, track.conversation_id) do
-      {:ok, events} -> prepare_events(events, row, track)
-      {:error, _reason} -> {:error, :context_unavailable}
-    end
-  end
-
-  defp prepare_events(events, row, track) do
+  def prepare(client, row, track, project) do
+    {cursor, baseline?} = Store.recovery_scan(row.thread_id)
     last = Store.delivered_reset(row.thread_id)
-    reset = events |> Enum.filter(&reset?/1) |> Enum.map(& &1["id"]) |> Enum.max(fn -> 0 end)
+    state = %{scan: cursor, reset: last, baseline?: baseline?}
 
-    if reset > last do
-      # ownership: Server.access/1 established Access.thread_access for the
-      # queued sender; only that track's assigned plan items belong in replay.
-      items = Ravix.Plans.Store.for_track(track.id)
-      preamble = Spec.session_recovery_prompt(track, items)
-      Store.prepare_reset(row.id, reset)
+    with {:ok, scanned} <- scan(client, track.conversation_id, cursor, state) do
+      preamble = if scanned.reset > last, do: preamble(track, project), else: ""
+      reset = if preamble == "", do: nil, else: scanned.reset
+      Store.prepare_recovery(row.id, reset, scanned.scan)
       {:ok, preamble}
-    else
-      Store.prepare_reset(row.id, nil)
-      {:ok, ""}
     end
   end
 
-  defp reset?(%{"kind" => "stage", "id" => id, "data" => data})
-       when is_integer(id) and is_binary(data) do
+  defp scan(client, conversation, cursor, state) do
+    case Fountain.events_page(client, conversation, after: cursor) do
+      {:ok, page} ->
+        state = Enum.reduce(page.events, state, &advance(&1, &2, cursor))
+        next = page.next_cursor
+        state = if is_integer(next), do: %{state | scan: max(state.scan, next)}, else: state
+
+        cond do
+          not page.has_more -> {:ok, state}
+          is_integer(next) and next > cursor -> scan(client, conversation, next, state)
+          true -> {:error, :context_unavailable}
+        end
+
+      {:error, _reason} ->
+        {:error, :context_unavailable}
+    end
+  end
+
+  defp advance(%{"id" => id} = event, state, cursor) when is_integer(id) and id > cursor do
+    reset =
+      if not state.baseline? and reset?(event), do: max(state.reset, id), else: state.reset
+
+    %{state | scan: max(state.scan, id), reset: reset}
+  end
+
+  defp advance(_event, state, _cursor), do: state
+
+  defp preamble(track, project) do
+    # ownership: Server.access/1 established Access.thread_access for the
+    # queued sender; only that track's assigned material and derived statuses
+    # belong in replay, not its siblings or the rest of the project plan.
+    items = Ravix.Plans.Store.for_track(track.id)
+    Spec.session_recovery_prompt(track, Status.items(project, items))
+  end
+
+  defp reset?(%{"kind" => "stage", "data" => data}) when is_binary(data) do
     case Jason.decode(data) do
       {:ok, %{"reason" => "session_gone"}} -> true
       _ -> false

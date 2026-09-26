@@ -41,6 +41,7 @@ defmodule Ravix.PromptQueue.Item do
     field :claim_token, :string
     field :post_started_at, :utc_datetime_usec
     field :session_reset_id, :integer
+    field :session_scan_id, :integer
   end
 
   @fields ~w(id thread_id track_id user_id author_login body image_count payload created_at status error

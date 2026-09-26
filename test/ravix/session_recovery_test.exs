@@ -41,7 +41,7 @@ defmodule Ravix.SessionRecoveryTest do
     first = enqueue(ctx, "Continue the gate")
     second = enqueue(ctx, "Then restore context")
     events = replay()
-    client = provider([delivery(events), delivery(events)] |> List.flatten())
+    client = provider(delivery(events) ++ delivery([], accepted(), 5))
     Server.tick(ctx.server)
     assert Store.delivered_reset(ctx.track.id) == 4
     assert Store.get(first.id).status == :sent
@@ -57,6 +57,9 @@ defmodule Ravix.SessionRecoveryTest do
     assert first_prompt =~ "2. Restore context (context)"
     assert first_prompt =~ "Wait for setup"
     assert first_prompt =~ "Once per reset"
+    assert first_prompt =~ "reported status: in progress"
+    assert first_prompt =~ "Skip items confirmed done"
+    assert first_prompt =~ "check git log and the track's PRs"
     refute first_prompt =~ "Private sibling work"
     assert String.ends_with?(first_prompt, "Continue the gate")
     refute second_prompt =~ "session context restored"
@@ -83,7 +86,7 @@ defmodule Ravix.SessionRecoveryTest do
   test "a later reset needs another preamble, including a reset during the previous POST", ctx do
     enqueue(ctx, "First")
     enqueue(ctx, "Second")
-    client = provider(delivery([stage(1)]) ++ delivery([stage(1), stage(2)]))
+    client = provider(delivery([stage(1)]) ++ delivery([stage(2)], accepted(), 1))
     Server.tick(ctx.server)
     Server.tick(ctx.server)
     assert Enum.all?(prompts(client), &String.contains?(&1, "session context restored"))
@@ -100,16 +103,19 @@ defmodule Ravix.SessionRecoveryTest do
           [
             {%{method: "GET", path: "/api/conversations/reset-thread/turns"},
              {200, [], %{data: [%{id: "t1", status: "completed", client_request_id: first.id}]}}}
-          ] ++ delivery([stage(7)])
+          ] ++ delivery([], accepted(), 7)
       )
 
     Server.tick(ctx.server)
     assert Store.get(first.id).status == :unconfirmed
     assert Store.delivered_reset(ctx.track.id) == 0
+    assert Store.recovery_scan(ctx.track.id) == {0, false}
+    assert Store.get(first.id).session_scan_id == 7
     another = server()
     Server.tick(another)
     assert Store.get(first.id).status == :sent
     assert Store.delivered_reset(ctx.track.id) == 7
+    assert Store.recovery_scan(ctx.track.id) == {7, false}
     Server.tick(another)
     [first_prompt, second_prompt] = prompts(client)
     assert first_prompt =~ "session context restored"
@@ -162,7 +168,7 @@ defmodule Ravix.SessionRecoveryTest do
       )
 
     assert Store.claim(other_row.id)
-    Store.prepare_reset(other_row.id, 100)
+    Store.prepare_recovery(other_row.id, 100, 100)
     Store.mark_delivered(other_row.id)
     enqueue(ctx, "This thread")
     client = provider(delivery([stage(1)]))
@@ -185,7 +191,7 @@ defmodule Ravix.SessionRecoveryTest do
       end
     end
 
-    client = provider(delivery([stage(11)], delayed) ++ delivery([stage(11)]))
+    client = provider(delivery([stage(11)], delayed) ++ delivery([], accepted(), 11))
     another = server()
     pending = Task.async(fn -> Server.tick(ctx.server) end)
     assert_receive {:posting, sender}, 2_000
@@ -222,6 +228,157 @@ defmodule Ravix.SessionRecoveryTest do
     assert Store.delivered_reset(ctx.track.id) == 0
   end
 
+  test "legacy sent history baselines old resets once, then scans only newer events", ctx do
+    legacy = enqueue(ctx, "Delivered before the feature")
+    Store.mark_delivered(legacy.id)
+    assert Store.recovery_scan(ctx.track.id) == {0, true}
+    first = enqueue(ctx, "First after deploy")
+    second = enqueue(ctx, "After a new reset")
+    old_reset = Map.put(stage(20), "ts", "2026-01-01T00:00:00Z")
+    client = provider(delivery([old_reset]) ++ delivery([stage(21)], accepted(), 20))
+
+    Server.tick(ctx.server)
+    assert prompts(client) == ["First after deploy"]
+    assert Store.get(first.id).session_reset_id == nil
+    assert Store.get(first.id).session_scan_id == 20
+    assert Store.recovery_scan(ctx.track.id) == {20, false}
+
+    Server.tick(server())
+    [_, restored] = prompts(client)
+    assert restored =~ ctx.track.workdir
+    assert Store.get(second.id).session_reset_id == 21
+    assert event_cursors(client) == ["0", "20"]
+  end
+
+  test "multiple pages commit their tail and the next delivery reads only after that cursor",
+       ctx do
+    enqueue(ctx, "First")
+    enqueue(ctx, "Second")
+
+    client =
+      provider(
+        [
+          idle(),
+          page([stage(2)], 0, %{has_more: true, next_cursor: 2}),
+          page([%{"id" => 3, "kind" => "output", "data" => "reply"}], 2),
+          post(accepted())
+        ] ++ delivery([stage(2)], accepted(), 3)
+      )
+
+    Server.tick(ctx.server)
+    assert event_cursors(client) == ["0", "2"]
+    assert Store.recovery_scan(ctx.track.id) == {3, false}
+    Server.tick(server())
+    assert event_cursors(client) == ["0", "2", "3"]
+    [first, second] = prompts(client)
+    assert first =~ "session context restored"
+    assert second == "Second"
+  end
+
+  test "a later page failure consumes neither the cursor nor reset", ctx do
+    row = enqueue(ctx, "After history returns")
+    first_page = page([stage(4)], 0, %{has_more: true, next_cursor: 4})
+
+    client =
+      provider([
+        idle(),
+        first_page,
+        {event_request(4), {503, [], %{error: "offline"}}},
+        idle(),
+        first_page,
+        page([], 4),
+        post(accepted())
+      ])
+
+    Server.tick(ctx.server)
+    assert Store.get(row.id).status == :queued
+    assert Store.get(row.id).session_scan_id == nil
+    assert Store.recovery_scan(ctx.track.id) == {0, false}
+    assert prompts(client) == []
+    Server.tick(server())
+    assert Store.recovery_scan(ctx.track.id) == {4, false}
+    assert [prompt] = prompts(client)
+    assert prompt =~ ctx.track.workdir
+    assert event_cursors(client) == ["0", "4", "0", "4"]
+  end
+
+  test "a stalled page cursor holds delivery without committing its events", ctx do
+    row = enqueue(ctx, "Wait for valid pagination")
+    client = provider([idle(), page([stage(1)], 0, %{has_more: true, next_cursor: 0})])
+    Server.tick(ctx.server)
+    assert Store.get(row.id).status == :queued
+    assert Store.recovery_scan(ctx.track.id) == {0, false}
+    assert prompts(client) == []
+    assert event_cursors(client) == ["0"]
+  end
+
+  test "an empty legacy baseline commits zero so the next reset is not baselined away", ctx do
+    legacy = enqueue(ctx, "Legacy")
+    Store.mark_delivered(legacy.id)
+    enqueue(ctx, "Baseline")
+    enqueue(ctx, "After reset")
+    client = provider(delivery([]) ++ delivery([stage(1)]))
+    Server.tick(ctx.server)
+    assert Store.recovery_scan(ctx.track.id) == {0, false}
+    Server.tick(server())
+    [first, second] = prompts(client)
+    assert first == "Baseline"
+    assert second =~ "session context restored"
+    assert event_cursors(client) == ["0", "0"]
+  end
+
+  test "a rejected legacy baseline is not committed", ctx do
+    legacy = enqueue(ctx, "Old")
+    Store.mark_delivered(legacy.id)
+    row = enqueue(ctx, "New")
+
+    client =
+      provider(delivery([stage(12)], {400, [], %{error: "refused"}}) ++ delivery([stage(12)]))
+
+    Server.tick(ctx.server)
+    assert Store.get(row.id).status == :failed
+    assert Store.recovery_scan(ctx.track.id) == {0, true}
+    assert :ok = Ravix.PromptQueue.retry(ctx.user, ctx.track.id, row.id)
+    Server.tick(server())
+    assert prompts(client) == ["New", "New"]
+    assert event_cursors(client) == ["0", "0"]
+    assert Store.recovery_scan(ctx.track.id) == {12, false}
+  end
+
+  for {report, label} <- [
+        {{:ok, %{state: :merged}}, "done"},
+        {{:ok, %{state: :open}}, "in review"},
+        {{:error, :offline}, "unknown (status unavailable)"}
+      ] do
+    test "recovery includes derived item status: #{label}", ctx do
+      ctx.project
+      |> Ecto.Changeset.change(repo_full_name: "org/repo", installation_id: 1)
+      |> Repo.update!()
+
+      {:ok, _} =
+        Ravix.Plans.create(ctx.user, ctx.project.id, %{
+          "title" => "Assigned",
+          "items" => [%{"id" => "assigned", "title" => "Existing work"}]
+        })
+
+      Ravix.Plans.Item
+      |> Repo.get!("assigned")
+      |> Ecto.Changeset.change(track_id: ctx.track.id)
+      |> Repo.update!()
+
+      stub(Ravix.Config, :github, fn -> Ravix.GitHubFake.app() end)
+      stub(Ravix.GitHub, :pull_for_track, fn _, _, _, _, _ -> unquote(Macro.escape(report)) end)
+      enqueue(ctx, "Continue")
+      client = provider(delivery([stage(1)]))
+      Server.tick(ctx.server)
+      assert [prompt] = prompts(client)
+      assert prompt =~ "reported status: #{unquote(label)}"
+      assert prompt =~ "Skip items confirmed done"
+      assert prompt =~ "check git log and the track's PRs"
+      assert prompt =~ "verify which items each PR covers"
+    end
+  end
+
   defp server do
     pid =
       start_supervised!(
@@ -229,7 +386,10 @@ defmodule Ravix.SessionRecoveryTest do
       )
 
     Sandbox.allow(Repo, self(), pid)
-    for mod <- [Fountain, Ravix.Projects, Ravix.Previews], do: allow(mod, self(), pid)
+
+    for mod <- [Fountain, Ravix.Projects, Ravix.Previews, Ravix.Config, Ravix.GitHub],
+        do: allow(mod, self(), pid)
+
     pid
   end
 
@@ -254,13 +414,32 @@ defmodule Ravix.SessionRecoveryTest do
      {200, [], %{data: %{id: "reset-thread", status: "idle"}}}}
   end
 
-  defp delivery(events, response \\ {202, [], %{data: %{ok: true}}}) do
-    [
-      idle(),
-      {%{method: "GET", path: "/api/conversations/reset-thread/events"},
-       {200, [], %{data: events}}},
-      {%{method: "POST", path: "/api/conversations/reset-thread/prompts"}, response}
-    ]
+  defp accepted, do: {202, [], %{data: %{ok: true}}}
+
+  defp delivery(events, response \\ accepted(), cursor \\ 0) do
+    [idle(), page(events, cursor), post(response)]
+  end
+
+  defp post(response),
+    do: {%{method: "POST", path: "/api/conversations/reset-thread/prompts"}, response}
+
+  defp page(events, cursor, meta \\ %{}) do
+    {event_request(cursor), {200, [], %{data: events, meta: meta}}}
+  end
+
+  defp event_request(cursor) do
+    %{
+      method: "GET",
+      path: "/api/conversations/reset-thread/events",
+      query: %{after: to_string(cursor), limit: "1000"}
+    }
+  end
+
+  defp event_cursors(client) do
+    client
+    |> FakeTransport.calls()
+    |> Enum.filter(&String.ends_with?(&1.path, "/events"))
+    |> Enum.map(& &1.query["after"])
   end
 
   defp prompts(client) do
