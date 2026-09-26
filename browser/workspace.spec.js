@@ -343,6 +343,19 @@ test('project, track, streaming, image upload, reconnect, and revocation', async
   await expect(newTrack.getByLabel('Branch name')).toHaveValue('');
   await newTrack.getByRole('button', { name: 'Advanced', exact: true }).click();
   await expect(newTrack.getByRole('button', { name: 'Branch', exact: true })).toBeVisible();
+  for (const [kind, value, label] of [
+    ['Branch', 'release/2026-08', 'release/2026-08'],
+    ['Pull request', '41', '#41 Count days in the local zone, not in 86400-second blocks'],
+    ['Issue', '40', '#40 Timestamps drift by an hour after the clocks change'],
+  ]) {
+    await newTrack.getByRole('button', { name: kind, exact: true }).click();
+    const refs = newTrack.getByLabel('Start from', { exact: true });
+    await expect(refs.locator(`option[value="${value}"]`)).toHaveText(label);
+    await expect(refs).toBeEnabled();
+    await refs.selectOption(value);
+    await expect(newTrack).toBeVisible();
+    await expect(newTrack.getByRole('button', { name: 'Create track', exact: true })).toBeEnabled();
+  }
   await newTrack.getByRole('button', { name: 'Hide advanced', exact: true }).click();
   await expect(newTrack.getByRole('button', { name: 'Branch', exact: true })).not.toBeVisible();
   await capture(page, 'new-track');
