@@ -16,7 +16,7 @@ defmodule Ravix.Accounts.Inference do
   at by id. Each person gets one, named after their Ravix id, made the first
   time they connect anything. The value is written into it and cannot be read
   back by anybody, this application included; what the row keeps is the set's
-  id, which agent they chose, and whether it was a subscription or a key.
+  id, the default agent for new projects, and how that default was connected.
 
   ## Who pays
 
@@ -75,7 +75,7 @@ defmodule Ravix.Accounts.Inference do
   `held/1` reads what their set holds from Fountain rather than trusting the
   row, and `disconnect/3` removes any one of them --- deleting a pasted
   value, or un-naming a subscription and forgetting its sign-in. The row is
-  the person's *choice*; the set is the credential; where the two disagree
+  the person's *default*; the set is the credential; where the two disagree
   (a slot emptied on the account by hand), the page says so rather than
   drawing the row as true.
   """
@@ -122,7 +122,12 @@ defmodule Ravix.Accounts.Inference do
   end
 
   @typedoc "What `connect/2` takes, as atoms the page has already narrowed."
-  @type attrs :: %{agent: User.agent(), kind: User.credential_kind(), value: String.t()}
+  @type attrs :: %{
+          required(:agent) => User.agent(),
+          required(:kind) => User.credential_kind(),
+          required(:value) => String.t(),
+          optional(:make_default) => boolean()
+        }
 
   @typedoc "What `link_status/1` answers: may anybody link here, and is a sign-in of this person's open."
   @type link_status :: %{enabled?: boolean(), pending: Link.t() | nil}
@@ -347,14 +352,17 @@ defmodule Ravix.Accounts.Inference do
     end
   end
 
-  defp forget(%User{agent: agent, credential_kind: kind} = user, agent, kind) do
+  defp forget(user, agent, kind),
+    do: forget_current(Accounts.Store.get_user(user.id), agent, kind)
+
+  defp forget_current(%User{agent: agent, credential_kind: kind} = user, agent, kind) do
     with {:ok, user} <- Accounts.save_setup(user, %{credential_kind: nil}) do
       track_disconnected(user, agent, kind, true)
       {:ok, user}
     end
   end
 
-  defp forget(%User{} = user, agent, kind) do
+  defp forget_current(%User{} = user, agent, kind) do
     track_disconnected(user, agent, kind, false)
     {:ok, user}
   end
@@ -376,7 +384,9 @@ defmodule Ravix.Accounts.Inference do
   def runtime(%User{agent: agent}), do: Atom.to_string(agent)
 
   @doc """
-  Store `value` as what pays for `agent`, and make `agent` this person's choice.
+  Store `value` as what pays for `agent`. The first connection establishes the
+  default for new projects. Later connections preserve it unless attrs contains
+  `make_default: true`. Replacing the default agent's credential updates its kind.
 
   Fountain asks the provider whether the value works before keeping it, so a
   mistyped token is refused here, on the field, and not by the first turn of
@@ -389,7 +399,7 @@ defmodule Ravix.Accounts.Inference do
     Cache.invalidate(user)
   end
 
-  defp do_connect(%User{} = user, %{agent: agent, kind: kind, value: value}) do
+  defp do_connect(%User{} = user, %{agent: agent, kind: kind, value: value} = attrs) do
     with {:ok, provider} <- provider(agent, kind),
          {:ok, value} <- present(value),
          {:ok, client} <- fountain(),
@@ -397,11 +407,7 @@ defmodule Ravix.Accounts.Inference do
          :ok <- write(client, set_id, provider, value),
          :ok <- drop_sibling(client, set_id, user, agent, kind),
          {:ok, user} <-
-           Accounts.save_setup(user, %{
-             agent: agent,
-             credential_kind: kind,
-             credential_set_id: set_id
-           }) do
+           remember_connection(user, agent, kind, set_id, attrs[:make_default] == true) do
       Analytics.track(user, :agent_connected, %{
         "ravix.agent" => Atom.to_string(agent),
         "ravix.paid_by" => Atom.to_string(kind)
@@ -410,6 +416,53 @@ defmodule Ravix.Accounts.Inference do
       {:ok, user}
     end
   end
+
+  # Read the user's current default after provider I/O, so a stale page or a
+  # ChatGPT poll does not overwrite a default chosen while it was waiting.
+  defp remember_connection(user, agent, kind, set_id, make_default?) do
+    current = Accounts.Store.get_user(user.id)
+    choose? = is_nil(current.agent) or make_default?
+    attrs = %{credential_set_id: set_id}
+
+    attrs =
+      if choose? or current.agent == agent,
+        do: Map.merge(attrs, %{agent: agent, credential_kind: kind}),
+        else: attrs
+
+    with {:ok, updated} <- Accounts.save_setup(current, attrs) do
+      if choose? and current.agent != agent, do: track_default(updated)
+      {:ok, updated}
+    end
+  end
+
+  @doc "Choose a connected agent as the default for new projects, without changing credentials."
+  @spec make_default(User.t(), User.agent()) :: {:ok, User.t()} | {:error, reason()}
+  def make_default(%User{} = user, agent) when agent in [:claude, :codex] do
+    user = Accounts.Store.get_user(user.id)
+
+    with {:ok, held} <- held(user),
+         {:ok, kind} <- default_kind(held, agent),
+         {:ok, updated} <- Accounts.save_setup(user, %{agent: agent, credential_kind: kind}) do
+      if user.agent != agent, do: track_default(updated)
+      {:ok, updated}
+    end
+  end
+
+  defp default_kind(held, agent) do
+    case Enum.find(held, fn {connected, _kind} -> connected == agent end) do
+      {^agent, kind} ->
+        {:ok, kind}
+
+      nil ->
+        {:error,
+         {:unprocessable, "agent_not_connected",
+          "Connect this agent before making it the default."}}
+    end
+  end
+
+  defp track_default(user),
+    do:
+      Analytics.track(user, :default_agent_changed, %{"ravix.agent" => Atom.to_string(user.agent)})
 
   defp provider(agent, kind) do
     case @providers do
@@ -534,6 +587,21 @@ defmodule Ravix.Accounts.Inference do
   # running on a subscription the person has just replaced with a key. Only
   # when there was one --- a delete bumps the set's revision like any other
   # write --- and a set that has already lost it is the outcome wanted.
+  # The row only describes the default. For the other agent, consult the set
+  # before replacing its payment method (especially ChatGPT versus an API key).
+  defp drop_sibling(client, set_id, %User{agent: default} = user, agent, kind)
+       when not is_nil(default) and default != agent do
+    with {:ok, held} <- held_from(client, set_id) do
+      case other_kind(held, agent, kind) do
+        {^agent, old} ->
+          drop_sibling(client, set_id, %{user | agent: agent, credential_kind: old}, agent, kind)
+
+        nil ->
+          :ok
+      end
+    end
+  end
+
   defp drop_sibling(
          client,
          set_id,
@@ -553,6 +621,9 @@ defmodule Ravix.Accounts.Inference do
   end
 
   defp drop_sibling(_client, _set_id, _user, _agent, _kind), do: :ok
+
+  defp other_kind(held, agent, kind),
+    do: Enum.find(held, fn {a, k} -> a == agent and k != kind end)
 
   # ── a ChatGPT sign-in ─────────────────────────────────────────────────
 
@@ -734,7 +805,7 @@ defmodule Ravix.Accounts.Inference do
   Once the sign-in completes, the grant is named on the person's set ---
   which is the whole of what makes Codex run on it, and what ends any Codex
   conversation already running on that set --- their key for Codex is
-  removed if they had one, and the choice is remembered. A sign-in that
+  removed if they had one. Codex becomes the default only if none was chosen. A sign-in that
   failed, expired or was cancelled is a refusal in words, with nothing
   changed.
   """
@@ -772,11 +843,7 @@ defmodule Ravix.Accounts.Inference do
     with {:ok, _set} <- name_grant(client, set_id, grant_id),
          :ok <- drop_sibling(client, set_id, user, :codex, :subscription),
          {:ok, user} <-
-           Accounts.save_setup(user, %{
-             agent: :codex,
-             credential_kind: :subscription,
-             credential_set_id: set_id
-           }) do
+           remember_connection(user, :codex, :subscription, set_id, false) do
       Analytics.track(user, :agent_connected, %{
         "ravix.agent" => "codex",
         "ravix.paid_by" => "subscription"

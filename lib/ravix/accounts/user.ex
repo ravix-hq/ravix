@@ -27,9 +27,9 @@ defmodule Ravix.Accounts.User do
     # `current_user` assign on every page, so any crash report or `inspect`
     # of a socket would otherwise write it to the log.
     field :token_enc, :string, redact: true
-    # Which agent this person runs and the Fountain credential set that pays
-    # for it. The set holds their subscription token or API key; only its id
-    # is ever here. See `Ravix.Accounts.Inference`.
+    # The default agent for new projects and its last recorded payment kind.
+    # The Fountain set can hold credentials for both agents; only its id is
+    # ever here. Connectivity comes from `Ravix.Accounts.Inference.held/1`.
     field :agent, Ecto.Enum, values: [:claude, :codex]
     field :credential_set_id, :string
     field :credential_kind, Ecto.Enum, values: [:subscription, :api_key]

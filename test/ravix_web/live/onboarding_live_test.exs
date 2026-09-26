@@ -217,7 +217,9 @@ defmodule RavixWeb.OnboardingLiveTest do
     end
 
     test "somebody already connected is told so, and what replacing it means", %{conn: conn} do
-      {:ok, _view, html} = live(log_in_user(conn, connected()), "/welcome/agent")
+      stub(Inference, :held, fn _ -> {:ok, [{:claude, :subscription}]} end)
+      {:ok, view, _} = live(log_in_user(conn, connected()), "/welcome/agent")
+      html = render_async(view)
       assert html =~ "Claude Code is connected with your subscription"
       assert html =~ "open tracks"
     end
@@ -424,9 +426,12 @@ defmodule RavixWeb.OnboardingLiveTest do
     } do
       linking()
 
-      {:ok, _view, html} =
+      stub(Inference, :held, fn _ -> {:ok, [{:codex, :subscription}]} end)
+
+      {:ok, view, _} =
         live(log_in_user(conn, connected(agent: :codex)), "/welcome/agent")
 
+      html = render_async(view)
       assert html =~ "Codex is connected with your ChatGPT subscription"
       assert html =~ "Sign in again to reconnect it"
       assert html =~ "open tracks"

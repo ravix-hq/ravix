@@ -71,6 +71,7 @@ defmodule Ravix.Analytics do
   @type event ::
           :signed_in
           | :agent_connected
+          | :default_agent_changed
           | :agent_disconnected
           | :onboarding_finished
           | :project_created
@@ -84,6 +85,7 @@ defmodule Ravix.Analytics do
   @events [
     signed_in: "signed in",
     agent_connected: "agent connected",
+    default_agent_changed: "default agent changed",
     agent_disconnected: "agent disconnected",
     onboarding_finished: "onboarding finished",
     project_created: "project created",

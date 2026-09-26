@@ -1,6 +1,6 @@
 defmodule RavixWeb.Live.AgentPanel do
   @moduledoc """
-  Which agent this person runs, and what pays for it: chosen, connected,
+  Connected agents and the default for new projects: chosen, connected,
   replaced, reconnected, removed.
 
   The whole of a person's dealings with their credential happen here. What
@@ -29,7 +29,7 @@ defmodule RavixWeb.Live.AgentPanel do
       way, which is what stops the polling when the session has ended.
 
     * **What happens after.** Connecting changes the person, and the page is
-      what holds `current_user`. The panel sends `{:agent_connected, user}`;
+      what holds `current_user`. The panel sends `{:agent_connected, user, agent}`;
       the walkthrough moves on to GitHub, the workspace says so.
 
   ## The session
@@ -108,7 +108,8 @@ defmodule RavixWeb.Live.AgentPanel do
   end
 
   @impl true
-  def handle_event("choose-agent", %{"agent" => word}, socket) when is_map_key(@agents, word) do
+  def handle_event("choose-agent", %{"agent" => word}, %{assigns: %{busy: false}} = socket)
+      when is_map_key(@agents, word) do
     agent = Map.fetch!(@agents, word)
     kinds = Inference.kinds(agent)
     kind = if socket.assigns.kind in kinds, do: socket.assigns.kind, else: hd(kinds)
@@ -119,7 +120,8 @@ defmodule RavixWeb.Live.AgentPanel do
      |> read_link_status()}
   end
 
-  def handle_event("choose-kind", %{"kind" => word}, socket) when is_map_key(@kinds, word) do
+  def handle_event("choose-kind", %{"kind" => word}, %{assigns: %{busy: false}} = socket)
+      when is_map_key(@kinds, word) do
     kind = Map.fetch!(@kinds, word)
 
     if socket.assigns.agent && kind in Inference.kinds(socket.assigns.agent),
@@ -129,6 +131,17 @@ defmodule RavixWeb.Live.AgentPanel do
          |> assign(kind: kind, credential_form: Form.new(:credential))
          |> read_link_status()},
       else: {:noreply, socket}
+  end
+
+  def handle_event("make-default", %{"agent" => word}, %{assigns: %{busy: false}} = socket)
+      when is_map_key(@agents, word) do
+    user = socket.assigns.current_user
+    agent = Map.fetch!(@agents, word)
+
+    {:noreply,
+     socket
+     |> assign(busy: true)
+     |> traced_async(:make_default, fn -> Inference.make_default(user, agent) end)}
   end
 
   # Remove one thing the set holds. Which one comes from the button and is
@@ -146,13 +159,14 @@ defmodule RavixWeb.Live.AgentPanel do
     {:noreply,
      socket
      |> assign(busy: true)
+     |> assign(disconnecting_agent: agent)
      |> traced_async(:disconnect, fn -> Inference.disconnect(user, agent, kind) end)}
   end
 
   # A word neither table holds is a browser saying something the form never
   # offered. Nothing to do and nothing to say.
   def handle_event(event, _params, socket)
-      when event in ["choose-agent", "choose-kind", "disconnect"],
+      when event in ["choose-agent", "choose-kind", "disconnect", "make-default"],
       do: {:noreply, socket}
 
   def handle_event("connect", %{"credential" => %{"value" => value}}, socket)
@@ -198,9 +212,17 @@ defmodule RavixWeb.Live.AgentPanel do
      result(
        assign(socket, busy: false),
        response,
-       fn s, %User{} = user -> connected(s, user) end,
+       fn s, %User{} = user -> connected(s, user, s.assigns.agent, s.assigns.kind) end,
        :credential_form
      )}
+  end
+
+  def handle_async(:make_default, {:ok, response}, socket) do
+    {:noreply,
+     result(assign(socket, busy: false), response, fn s, user ->
+       send(self(), {:agent_default_changed, user})
+       s |> assign(current_user: user) |> read_held()
+     end)}
   end
 
   def handle_async(:link_status, {:ok, {:ok, %{enabled?: enabled?, pending: pending}}}, socket) do
@@ -228,7 +250,7 @@ defmodule RavixWeb.Live.AgentPanel do
     do: {:noreply, schedule_poll(socket)}
 
   def handle_async(:poll_link, {:ok, {:ok, %User{} = user}}, socket),
-    do: {:noreply, socket |> assign(link: nil) |> connected(user)}
+    do: {:noreply, socket |> assign(link: nil) |> connected(user, :codex, :subscription)}
 
   def handle_async(:poll_link, {:ok, {:error, reason}}, socket),
     do: {:noreply, assign(socket, link: nil, link_error: RavixWeb.Error.from(reason).message)}
@@ -260,11 +282,11 @@ defmodule RavixWeb.Live.AgentPanel do
 
   # The person changed. The panel shows what they now have, and the page is
   # told, since it is the page that holds them.
-  defp connected(socket, %User{} = user) do
-    send(self(), {:agent_connected, user})
+  defp connected(socket, %User{} = user, agent, kind) do
+    send(self(), {:agent_connected, user, agent})
 
     socket
-    |> assign(current_user: user, agent: user.agent, kind: user.credential_kind)
+    |> assign(current_user: user, agent: agent, kind: kind)
     |> read_subscription()
     |> read_held()
   end
@@ -273,17 +295,17 @@ defmodule RavixWeb.Live.AgentPanel do
   # was, so what to connect instead is one paste away; the page is told, since
   # projects they own may now have nothing to run on.
   defp disconnected(socket, %User{} = user) do
-    send(self(), {:agent_disconnected, user})
+    send(self(), {:agent_disconnected, user, socket.assigns.disconnecting_agent})
 
     socket
-    |> assign(current_user: user, credential_form: Form.new(:credential))
+    |> assign(current_user: user, held: nil, credential_form: Form.new(:credential))
     |> read_subscription()
     |> read_held()
   end
 
   # What the set holds, asked of Fountain off this process. The list is kept
-  # while it is asked again, so a remove does not blank the section and
-  # redraw it.
+  # while it is asked again, except after removal, when stale connected
+  # labels are cleared until the authoritative read completes.
   defp read_held(socket) do
     user = socket.assigns.current_user
     traced_async(socket, :held, fn -> Inference.held(user) end)
@@ -300,13 +322,8 @@ defmodule RavixWeb.Live.AgentPanel do
 
   # Somebody connected this way has a subscription with a state worth seeing.
   defp read_subscription(socket) do
-    case socket.assigns.current_user do
-      %User{agent: :codex, credential_kind: :subscription} = user ->
-        traced_async(socket, :subscription, fn -> Inference.subscription(user) end)
-
-      _ ->
-        assign(socket, subscription: nil)
-    end
+    user = socket.assigns.current_user
+    traced_async(socket, :subscription, fn -> Inference.subscription(user) end)
   end
 
   defp show_link(socket, %Inference.Link{} = link),
@@ -341,27 +358,26 @@ defmodule RavixWeb.Live.AgentPanel do
   end
 
   # Whether this held thing is the one the person's choice names.
-  defp in_use?(%User{agent: agent, credential_kind: kind}, agent, kind), do: true
+  defp in_use?(%User{agent: agent}, agent, _kind), do: true
   defp in_use?(%User{}, _agent, _kind), do: false
 
   # The row says something pays for the agent; the set, read from Fountain,
   # says it does not. Said only once the set has answered.
   defp missing?(%User{} = user, held) when is_list(held),
-    do: Inference.connected?(user) and {user.agent, user.credential_kind} not in held
+    do: Inference.connected?(user) and not connected_agent?(held, user.agent)
 
   defp missing?(_user, _held), do: false
 
-  defp remove_confirm(agent, kind, in_use?) do
+  defp remove_confirm(agent, kind) do
     what = "#{agent_name(agent)}'s #{paid_by(agent, kind)}"
 
-    tracks =
-      if in_use?,
-        do:
-          " This ends your open tracks in every project you own, and those projects have nothing to run on until you connect something again.",
-        else: " This ends your open tracks in every project you own."
-
-    "Remove #{what} from Ravix?#{tracks} The #{paid_by(agent, kind)} itself is untouched."
+    "Remove #{what} from Ravix? This ends your open tracks in every project you own. Projects using #{agent_name(agent)} need another connected #{agent_name(agent)} credential to run again. The #{paid_by(agent, kind)} itself is untouched."
   end
+
+  defp connected_agent?(held, agent) when is_list(held),
+    do: Enum.any?(held, fn {a, _} -> a == agent end)
+
+  defp connected_agent?(_held, _agent), do: false
 
   # The subscription's state in a word, as a chip, and the rest in a line.
   defp subscription_state(%{status: "active", exhausted_until: until}) when is_binary(until),
@@ -397,24 +413,45 @@ defmodule RavixWeb.Live.AgentPanel do
     <div class="agent-panel" id={@id}>
       <.loading_status :if={@busy}>Updating agent connection…</.loading_status>
       <div class="agent-choices" role="group" aria-label="Agent">
-        <button
-          :for={agent <- User.agents()}
-          type="button"
-          class={["agent-choice", @agent == agent && "on"]}
-          aria-pressed={to_string(@agent == agent)}
-          phx-click="choose-agent"
-          phx-target={@myself}
-          phx-value-agent={agent}
-          id={"agent-#{agent}"}
-        >
-          <strong>{agent_name(agent)}</strong>
-          <small :if={agent == :claude}>
-            Anthropic's agent. Runs on a Claude Pro, Max or Team subscription, or an Anthropic API key.
-          </small>
-          <small :if={agent == :codex}>
-            OpenAI's agent. Runs on a ChatGPT Plus, Pro, Business or Enterprise subscription, or an OpenAI API key.
-          </small>
-        </button>
+        <div :for={agent <- User.agents()}>
+          <button
+            type="button"
+            class={["agent-choice", @agent == agent && "on"]}
+            aria-pressed={to_string(@agent == agent)}
+            phx-click="choose-agent"
+            phx-target={@myself}
+            phx-value-agent={agent}
+            id={"agent-#{agent}"}
+            disabled={@busy}
+          >
+            <strong>{agent_name(agent)}</strong>
+            <small :if={agent == :claude}>
+              Anthropic's agent. Runs on a Claude Pro, Max or Team subscription, or an Anthropic API key.
+            </small>
+            <small :if={agent == :codex}>
+              OpenAI's agent. Runs on a ChatGPT Plus, Pro, Business or Enterprise subscription, or an OpenAI API key.
+            </small>
+          </button>
+          <p id={"agent-#{agent}-status"}>
+            <span :if={is_list(@held)}>{if connected_agent?(@held, agent),
+              do: "Connected",
+              else: "Not connected"}</span>
+            <span :if={is_nil(@held)}>Connection status unavailable</span>
+            <span :if={@current_user.agent == agent} class="chip">Default for new projects</span>
+          </p>
+          <button
+            :if={connected_agent?(@held, agent) and @current_user.agent != agent}
+            type="button"
+            class="ghost"
+            id={"make-default-#{agent}"}
+            phx-click="make-default"
+            phx-value-agent={agent}
+            phx-target={@myself}
+            disabled={@busy}
+          >
+            Make default
+          </button>
+        </div>
       </div>
 
       <section
@@ -429,7 +466,7 @@ defmodule RavixWeb.Live.AgentPanel do
             Nothing is stored for {agent_name(@current_user.agent)} any more: its {paid_by(
               @current_user.agent,
               @current_user.credential_kind
-            )} was removed outside this page. Projects you own have nothing to run on until you connect one again below.
+            )} was removed outside this page. Projects using this agent need a connected credential to run.
           </span>
         </p>
         <ul :if={@held != []} class="agent-held-list">
@@ -437,7 +474,7 @@ defmodule RavixWeb.Live.AgentPanel do
             <span class="agent-held-name">
               <strong>{agent_name(agent)}</strong>
               <span class="dim">{paid_by(agent, kind)}</span>
-              <span :if={in_use?(@current_user, agent, kind)} class="chip ok">In use</span>
+              <span :if={in_use?(@current_user, agent, kind)} class="chip ok">Default for new projects</span>
             </span>
             <button
               type="button"
@@ -446,7 +483,7 @@ defmodule RavixWeb.Live.AgentPanel do
               phx-target={@myself}
               phx-value-agent={agent}
               phx-value-kind={kind}
-              data-confirm={remove_confirm(agent, kind, in_use?(@current_user, agent, kind))}
+              data-confirm={remove_confirm(agent, kind)}
               disabled={@busy}
               id={"remove-#{agent}-#{kind}"}
             >
@@ -470,16 +507,14 @@ defmodule RavixWeb.Live.AgentPanel do
             phx-target={@myself}
             phx-value-kind={kind}
             id={"kind-#{kind}"}
+            disabled={@busy}
           >
             {kind_name(kind)}
           </button>
         </div>
 
         <p
-          :if={
-            Inference.connected?(@current_user) && @current_user.agent == @agent &&
-              @current_user.credential_kind == @kind
-          }
+          :if={is_list(@held) and {@agent, @kind} in @held}
           class="welcome-connected"
           id="welcome-connected"
         >

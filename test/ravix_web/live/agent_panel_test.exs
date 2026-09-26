@@ -22,10 +22,11 @@ defmodule RavixWeb.Live.AgentPanelTest do
 
   test "opens from the rail, shows what is connected, and says who pays", %{conn: conn} do
     user = insert_user(agent: :claude, credential_kind: :api_key, credential_set_id: "s")
+    stub(Inference, :held, fn _ -> {:ok, [{:claude, :api_key}]} end)
     view = open_account(conn, user)
 
     assert has_element?(view, "#account-dialog h2", "Your account")
-    html = render(view)
+    html = render_async(view)
     assert html =~ "@#{user.login}"
     assert html =~ "whoever is working"
     assert has_element?(view, "#agent-claude[aria-pressed=true]")
@@ -68,6 +69,10 @@ defmodule RavixWeb.Live.AgentPanelTest do
   test "connecting through the dialog changes the person on the page and says so", %{conn: conn} do
     user = insert_user()
 
+    stub(Inference, :held, fn user ->
+      {:ok, if(user.agent, do: [{:claude, :subscription}], else: [])}
+    end)
+
     expect(Inference, :connect, fn caller,
                                    %{agent: :claude, kind: :subscription, value: "sk-ant-oat01-x"} ->
       Accounts.save_setup(caller, %{
@@ -81,8 +86,10 @@ defmodule RavixWeb.Live.AgentPanelTest do
     view |> element("#agent-claude") |> render_click()
     view |> form("#credential-form", credential: [value: "sk-ant-oat01-x"]) |> render_submit()
 
+    # Connecting starts a fresh held-credential read after the write finishes.
+    render_async(view)
     html = render_async(view)
-    assert html =~ "Claude Code is connected. New projects are built with it."
+    assert html =~ "Claude Code is connected. New projects default to Claude Code."
     assert html =~ "Claude Code is connected with your subscription"
     refute html =~ "sk-ant-oat01-x"
     assert %User{agent: :claude} = Repo.get!(User, user.id)
@@ -152,10 +159,15 @@ defmodule RavixWeb.Live.AgentPanelTest do
 
     view = open_account(conn, user)
     render_async(view)
-    assert has_element?(view, "#held-claude-api_key .chip.ok", "In use")
+    assert has_element?(view, "#held-claude-api_key .chip.ok", "Default for new projects")
     assert has_element?(view, "#held-codex-api_key")
     refute has_element?(view, "#held-codex-api_key .chip")
-    assert has_element?(view, "#remove-claude-api_key[data-confirm*='nothing to run on']")
+
+    assert has_element?(
+             view,
+             "#remove-claude-api_key[data-confirm*='Projects using Claude Code']"
+           )
+
     assert has_element?(view, "#remove-codex-api_key[data-confirm]")
     refute has_element?(view, "#remove-codex-api_key[data-confirm*='nothing to run on']")
     assert render(view) =~ "ends your open tracks"
@@ -167,7 +179,7 @@ defmodule RavixWeb.Live.AgentPanelTest do
     html = render(view)
 
     assert html =~
-             "Removed. Projects you own have nothing to run on until you connect Claude Code again."
+             "Removed."
 
     refute has_element?(view, "#held-claude-api_key")
     assert has_element?(view, "#held-codex-api_key")
@@ -218,7 +230,8 @@ defmodule RavixWeb.Live.AgentPanelTest do
     render_async(view)
     refute has_element?(view, "#agent-held")
     refute has_element?(view, "#held-missing")
-    assert has_element?(view, "#welcome-connected")
+    refute has_element?(view, "#welcome-connected")
+    assert has_element?(view, "#agent-claude-status", "Connection status unavailable")
   end
 
   test "a session that went without notice cannot remove through the dialog", %{conn: conn} do
@@ -250,5 +263,97 @@ defmodule RavixWeb.Live.AgentPanelTest do
 
     assert {:error, {:redirect, %{to: "/login"}}} =
              view |> form("#credential-form", credential: [value: "k"]) |> render_submit()
+  end
+
+  for path <- ["/home", "/welcome/agent"] do
+    @path path
+    test "#{path} shows both connected agents and changes the default explicitly", %{conn: conn} do
+      user = insert_user(agent: :claude, credential_kind: :api_key, credential_set_id: "s")
+      project = insert_project(user: user, runtime: "claude")
+      stub(Inference, :held, fn _ -> {:ok, [{:claude, :api_key}, {:codex, :api_key}]} end)
+
+      expect(Inference, :make_default, fn caller, :codex ->
+        assert caller.id == user.id
+        Accounts.save_setup(caller, %{agent: :codex, credential_kind: :api_key})
+      end)
+
+      reject(&Ravix.Fountain.update_agent/3)
+      {:ok, view, _} = live(log_in_user(conn, user), @path)
+      if @path == "/home", do: view |> element("#open-account") |> render_click()
+      render_async(view)
+      assert has_element?(view, "#agent-claude-status", "Connected")
+      assert has_element?(view, "#agent-codex-status", "Connected")
+      assert has_element?(view, "#agent-claude-status", "Default for new projects")
+      view |> element("#make-default-codex") |> render_click()
+      render_async(view)
+      assert has_element?(view, "#agent-codex-status", "Default for new projects")
+      assert has_element?(view, "#make-default-claude")
+      assert Repo.get!(User, user.id).agent == :codex
+      assert Repo.get!(Ravix.Projects.Project, project.id).runtime == "claude"
+    end
+
+    test "#{path} rejects Make default after session revocation", %{conn: conn} do
+      user = insert_user(agent: :claude, credential_kind: :api_key, credential_set_id: "s")
+      stub(Inference, :held, fn _ -> {:ok, [{:codex, :api_key}]} end)
+      reject(&Inference.make_default/2)
+      {token, session} = insert_session(user)
+      {:ok, view, _} = live(Plug.Test.init_test_session(conn, session_token: token), @path)
+      if @path == "/home", do: view |> element("#open-account") |> render_click()
+      render_async(view)
+      Repo.delete!(session)
+      view |> element("#make-default-codex") |> render_click()
+      assert_redirect(view, "/login")
+      assert Repo.get!(User, user.id).agent == :claude
+    end
+  end
+
+  test "connecting a second agent reports that agent and does not announce a new default", %{
+    conn: conn
+  } do
+    user = insert_user(agent: :claude, credential_kind: :api_key, credential_set_id: "s")
+    stub(Inference, :held, fn _ -> {:ok, [{:claude, :api_key}, {:codex, :api_key}]} end)
+
+    expect(Inference, :connect, fn caller, %{agent: :codex, kind: :api_key, value: "mock-key"} ->
+      {:ok, caller}
+    end)
+
+    view = open_account(conn, user)
+    render_async(view)
+    view |> element("#agent-codex") |> render_click()
+    view |> form("#credential-form", credential: [value: "mock-key"]) |> render_submit()
+    render_async(view)
+    assert has_element?(view, "#flash-info", "Codex is connected.")
+    refute has_element?(view, "#flash-info", "New projects")
+    assert has_element?(view, "#agent-codex[aria-pressed=true]")
+    assert has_element?(view, "#agent-claude-status", "Default for new projects")
+  end
+
+  test "disconnect notices name only owned projects using the removed agent", %{conn: conn} do
+    user = insert_user(agent: :claude, credential_kind: :api_key, credential_set_id: "s")
+    insert_project(user: user, name: "Claude project", runtime: "claude")
+    insert_project(user: user, name: "Codex project", runtime: "codex")
+    insert_project(name: "Someone else's Claude", runtime: "claude")
+
+    stub(Inference, :held, fn user ->
+      {:ok,
+       if(user.credential_kind,
+         do: [{:claude, :api_key}, {:codex, :api_key}],
+         else: [{:codex, :api_key}]
+       )}
+    end)
+
+    expect(Inference, :disconnect, fn caller, :claude, :api_key ->
+      Accounts.save_setup(caller, %{credential_kind: nil})
+    end)
+
+    expect(Inference, :usable?, fn _, :claude, [fresh: true] -> {:ok, false} end)
+    view = open_account(conn, user)
+    render_async(view)
+    view |> element("#remove-claude-api_key") |> render_click()
+    render_async(view)
+    render_async(view)
+    assert has_element?(view, "#flash-info", "Connect Claude Code again to run: Claude project")
+    refute has_element?(view, "#flash-info", "Codex project")
+    refute has_element?(view, "#flash-info", "Someone else's")
   end
 end

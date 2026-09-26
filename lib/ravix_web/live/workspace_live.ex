@@ -485,6 +485,9 @@ defmodule RavixWeb.WorkspaceLive do
      )}
   end
 
+  def handle_async(:agent_disconnect_notice, {:ok, message}, socket),
+    do: {:noreply, flash(socket, :info, message)}
+
   def handle_async(:refs, {:ok, response}, socket),
     do: {:noreply, result(assign(socket, refs_loading: false), response, &assign(&1, refs: &2))}
 
@@ -641,24 +644,46 @@ defmodule RavixWeb.WorkspaceLive do
   # The account dialog connected or replaced what pays for this person's
   # agent. The person on the page is now out of date, and the dialog has
   # already said what replacing it means for open tracks.
-  def handle_info({:agent_connected, %Accounts.User{} = user}, socket) do
+  def handle_info({:agent_connected, %Accounts.User{} = user, agent}, socket) do
+    default =
+      if socket.assigns.current_user.agent != user.agent,
+        do: " New projects default to #{agent_name(user)}.",
+        else: ""
+
+    name = RavixWeb.AgentName.label(Atom.to_string(agent))
+
+    {:noreply,
+     socket |> assign(current_user: user) |> flash(:info, "#{name} is connected." <> default)}
+  end
+
+  def handle_info({:agent_default_changed, %Accounts.User{} = user}, socket),
+    do:
+      {:noreply,
+       socket
+       |> assign(current_user: user)
+       |> flash(:info, "New projects default to #{agent_name(user)}.")}
+
+  def handle_info({:agent_disconnected, %Accounts.User{} = user, agent}, socket) do
     {:noreply,
      socket
      |> assign(current_user: user)
-     |> flash(:info, "#{agent_name(user)} is connected. New projects are built with it.")}
-  end
+     |> traced_async(:agent_disconnect_notice, fn ->
+       case Accounts.Inference.usable?(user, agent, fresh: true) do
+         {:ok, false} ->
+           names =
+             Projects.list(user, include_machine: false)
+             |> Enum.filter(&(&1.role == :owner and &1.runtime == Atom.to_string(agent)))
+             |> Enum.map_join(", ", & &1.name)
 
-  # The account dialog removed something the person held. When it was what
-  # paid for their agent, the projects they own have nothing to run on until
-  # they connect another; the dialog has already said so, and stays open.
-  def handle_info({:agent_disconnected, %Accounts.User{} = user}, socket) do
-    message =
-      if Accounts.Inference.connected?(user),
-        do: "Removed.",
-        else:
-          "Removed. Projects you own have nothing to run on until you connect #{agent_name(user)} again."
+           if names == "",
+             do: "Removed.",
+             else:
+               "Removed. Connect #{RavixWeb.AgentName.label(Atom.to_string(agent))} again to run: #{names}."
 
-    {:noreply, socket |> assign(current_user: user) |> flash(:info, message)}
+         _ ->
+           "Removed."
+       end
+     end)}
   end
 
   # A rebuild closed every track on the project and a delete removed it
