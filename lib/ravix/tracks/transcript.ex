@@ -210,8 +210,17 @@ defmodule Ravix.Tracks.Transcript do
       turn
       | blocks: visible,
         fold: acc,
-        visible?: has_text?(turn.prompt) or turn.image_count > 0 or visible != []
+        visible?:
+          (has_text?(turn.prompt) or turn.image_count > 0 or visible != []) and
+            not bootstrap?(turn)
     }
+  end
+
+  # The track ribbon represents setup. Keep failed setup visible so its error
+  # can still be read; ordinary user prompts and other app turns remain intact.
+  defp bootstrap?(turn) do
+    app_turn_label(turn.prompt) == "Open this track. Make its working directory, then stop." and
+      not Enum.any?(turn.events, &Event.failed_stage?/1)
   end
 
   defp empty_acc, do: Turn.empty_fold()

@@ -43,7 +43,7 @@ defmodule RavixWeb.ComponentsTest do
 
     test "every icon in the SPA's set has a name here" do
       spa = ~w(home plus search folder folder-plus file globe branch pull issue terminal play
-               wrench check x dot picture pencil clock chevron spinner arrow-up external
+               wrench check x dot picture pencil clock chevron spinner arrow-up arrow-down external
                settings sparkle info machine add-person github code document copy more
                refresh person sign-out)
 

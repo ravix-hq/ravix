@@ -135,7 +135,7 @@
               <code>{Path.basename(@track.workdir)}</code>
             </p>
             <div class="ribbon-line">
-              <.icon name="folder" size={13} /><span>Created <code>{@track.workdir}</code></span>
+              <.icon name="folder" size={13} /><span>Branch <code>{@track.branch}</code></span>
             </div>
             <span
               :if={@track.stale}
@@ -178,7 +178,7 @@
             has scrolled up: it toggles `unpinned` on the scroller, and the
             stylesheet shows this only under that class. A click re-pins. --%>
           <button type="button" class="jump-latest" data-jump-latest>
-            <.icon name="arrow-up" size={12} class="ico" />Jump to latest
+            <.icon name="arrow-down" size={12} class="ico" />Jump to latest
           </button>
           <p :if={@transcript_loading} class="workspace-welcome" role="status">
             Loading conversation…
@@ -188,7 +188,10 @@
             offering the starters for a conversation with a year of history
             in it --- for the moment before the read answers --- is a worse
             answer than saying nothing yet. --%>
-          <div :if={!@transcript_loading && @page.turns == []} class="workspace-welcome">
+          <div
+            :if={!@transcript_loading && Transcript.visible_turns(@page) == []}
+            class="workspace-welcome"
+          >
             <h2>What would you like to work on?</h2>
             <button
               :for={starter <- @starters}

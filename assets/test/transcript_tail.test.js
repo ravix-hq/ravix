@@ -188,16 +188,13 @@ test("a turn's answer copies its markdown, says so, and resets", async () => {
   }
 })
 
-test("a turn's end time is shown in the reader's own zone, on mount and after a patch", () => {
+test("UTC timestamps stay consistent with the inbox on mount and after a patch", () => {
   const el = document.querySelector("#transcript > div")
   el.insertAdjacentHTML("beforeend",
-    `<time data-local-time datetime="2026-09-26T13:01:00Z">13:01 UTC</time><time data-local-time datetime="nonsense">kept</time>`)
+    `<time datetime="2026-09-26T13:01:00Z">13:01 UTC</time>`)
   const {hook} = mountHook(TranscriptTail,"#transcript")
-  const local = new Date("2026-09-26T13:01:00Z").toLocaleTimeString([], {hour: "numeric", minute: "2-digit"})
-  const [time, bad] = hook.el.querySelectorAll("time")
-  expect(time.textContent).toBe(local)
-  expect(bad.textContent).toBe("kept")
-  el.insertAdjacentHTML("beforeend", `<time data-local-time datetime="2026-09-26T14:30:00Z">14:30 UTC</time>`)
+  expect(hook.el.querySelector("time").textContent).toBe("13:01 UTC")
+  el.insertAdjacentHTML("beforeend", `<time datetime="2026-09-26T14:30:00Z">14:30 UTC</time>`)
   hook.updated()
-  expect(hook.el.querySelectorAll("time")[2].textContent).not.toContain("UTC")
+  expect(hook.el.querySelectorAll("time")[1].textContent).toBe("14:30 UTC")
 })

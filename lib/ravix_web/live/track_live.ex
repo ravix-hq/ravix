@@ -1665,8 +1665,7 @@ defmodule RavixWeb.TrackLive do
 
   # What a finished turn cost and left behind: how long it ran, when it
   # ended, the answer to copy, and the files its edits touched. The time is
-  # written in UTC and rewritten in the reader's own zone by
-  # `assets/js/hooks/transcript_tail.js`, since the server does not know it.
+  # written in UTC, matching the inbox and schedule timestamps.
   defp turn_footer(assigns) do
     %{turn: turn, workdir: workdir} = assigns
     {started, ended} = turn_span(turn.events)
@@ -1686,7 +1685,7 @@ defmodule RavixWeb.TrackLive do
     <footer class="turn-footer">
       <span :if={@duration}>{@duration}</span>
       <span :if={@duration && @ended} aria-hidden="true">·</span>
-      <time :if={@ended} datetime={DateTime.to_iso8601(@ended)} data-local-time>
+      <time :if={@ended} datetime={DateTime.to_iso8601(@ended)}>
         {Calendar.strftime(@ended, "%H:%M")} UTC
       </time>
       <button
