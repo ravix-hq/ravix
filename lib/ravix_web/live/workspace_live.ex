@@ -2,7 +2,7 @@ defmodule RavixWeb.WorkspaceLive do
   @moduledoc "The project rail, inbox, navigation, and project management forms."
   use RavixWeb, :live_view
 
-  alias Ravix.{Accounts, Hub, Projects, Tracks}
+  alias Ravix.{Accounts, Hub, Ids, Projects, Tracks}
   alias Ravix.Hub.Event
   alias Ravix.Projects.Sections
   alias RavixWeb.Live.Form
@@ -856,6 +856,33 @@ defmodule RavixWeb.WorkspaceLive do
       Enum.reduce(tracks, 0, fn {_id, rows}, count -> count + Enum.count(rows, &attention?/1) end)
 
   defp attention?(track), do: track.status == :failed or (track.status == :ready and track.unread)
+
+  # A tab's dot, from what the rail already read: nothing new is asked of
+  # Fountain to draw it. Idle, read tracks keep their ordinal instead.
+  defp tab_status(%{status: status}) when status in [:running, :opening, :failed], do: status
+  defp tab_status(%{status: :ready, unread: true}), do: :unread
+  defp tab_status(_track), do: nil
+
+  defp tab_status_label(:running), do: "Working"
+  defp tab_status_label(:opening), do: "Starting"
+  defp tab_status_label(:failed), do: "Error"
+  defp tab_status_label(:unread), do: "Unread reply"
+
+  defp tab_label(%{title: title}) do
+    namespace = Ids.branch_namespace()
+    if title != namespace, do: String.replace_prefix(title, namespace, ""), else: title
+  end
+
+  # The link's accessible name: what the tab draws, less the abbreviation.
+  defp tab_name(track) do
+    [
+      track.title,
+      track.origin.kind == :plan && "from a project plan",
+      (status = tab_status(track)) && tab_status_label(status)
+    ]
+    |> Enum.filter(& &1)
+    |> Enum.join(", ")
+  end
 
   defp matching?(track, project, query),
     do:

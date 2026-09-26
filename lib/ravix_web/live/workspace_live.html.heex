@@ -305,28 +305,20 @@
             patch={"/p/#{@project.id}/t/#{track.id}"}
             class={["workspace-track track-tab", @track_id == track.id && "selected"]}
             aria-current={if @track_id == track.id, do: "page"}
+            aria-label={tab_name(track)}
+            title={track.title}
           >
             <span
-              :if={track.status in [:running, :opening]}
-              class={"dot #{track.status}"}
+              :if={tab_status(track)}
+              class={"dot #{tab_status(track)}"}
               role="img"
-              aria-label="Working"
+              aria-label={tab_status_label(tab_status(track))}
+              title={tab_status_label(tab_status(track))}
             ></span>
-            <span
-              :if={attention?(track)}
-              class="track-attention"
-              role="img"
-              aria-label="Needs attention"
-            >
-              !
-            </span>
-            <span
-              :if={track.status not in [:running, :opening] && !attention?(track)}
-              class="track-num"
-            >
-              {index}
-            </span>
-            <span class="track-title">{track.title}</span>
+            <span :if={!tab_status(track)} class="track-num" aria-hidden="true">{index}</span>
+            <%!-- Without the `ravix/` namespace every default title shares:
+              the full title is the tab's name and its tooltip. --%>
+            <span class="track-title">{tab_label(track)}</span>
             <span :if={track.origin.kind == :plan} class="chip" title="From a project plan">Plan</span>
           </.link>
           <button

@@ -51,6 +51,8 @@ defmodule RavixWeb.Icons do
     "copy" =>
       ~S(<rect x="8.5" y="8.5" width="12" height="12" rx="2" /><path d="M15.5 8.5V5.5a2 2 0 0 0-2-2h-8a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h3" />),
     "x" => ~S(<path d="M6 6l12 12M18 6 6 18" />),
+    "more" =>
+      ~S(<circle cx="5.5" cy="12" r="1.4" fill="currentColor" stroke="none" /><circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none" /><circle cx="18.5" cy="12" r="1.4" fill="currentColor" stroke="none" />),
     "dot" => ~S(<circle cx="12" cy="12" r="4" fill="currentColor" stroke="none" />),
     "picture" =>
       ~S(<rect x="3" y="4.5" width="18" height="15" rx="2" /><circle cx="8.5" cy="10" r="1.5" /><path d="m3.5 17.5 4.5-4.5 3.5 3.5 3-2.5 6 5" />),
