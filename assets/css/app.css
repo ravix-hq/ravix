@@ -1036,8 +1036,9 @@ h4 { font-size: 12px; color: var(--dim); font-weight: 500; letter-spacing: 0; }
 .home-action:disabled { opacity: 0.55; }
 .home-recent { width: 100%; }
 .home-recent h2 { padding: 0 2px 8px; color: var(--dim); font-size: 10px; text-transform: uppercase; letter-spacing: 0.1em; }
-.home-recent .pick-row { padding: 10px 16px; }
-.home-recent .pick-row .meta { overflow-wrap: anywhere; text-align: right; }
+.home-recent .pick-row { display: grid; grid-template-columns: 18px minmax(0, 1fr) minmax(0, 1fr); padding: 10px 16px; }
+.home-recent .project-label { min-width: 0; white-space: normal; overflow-wrap: anywhere; }
+.home-recent .pick-row .meta { min-width: 0; margin-left: 0; overflow-wrap: anywhere; text-align: left; }
 
 .signin-page { position: relative; }
 .signin-card {
@@ -1144,8 +1145,17 @@ h4 { font-size: 12px; color: var(--dim); font-weight: 500; letter-spacing: 0; }
 .welcome-actions { display: flex; align-items: center; gap: 12px; margin-top: 24px; }
 .welcome-actions a.ghost { color: var(--dim); font-size: 13px; text-decoration: none; }
 .welcome-actions a.ghost:hover { color: var(--ink); }
-.welcome-actions a.landing-button { text-decoration: none; }
-.welcome-card a.landing-primary, .welcome-card a.landing-primary:hover { color: var(--bg); }
+.welcome-card .welcome-primary {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  width: fit-content; max-width: 100%; align-self: flex-end;
+  padding: 7px 12px; border: 1px solid var(--accent-line); border-radius: var(--radius);
+  background: var(--accent-soft); color: var(--accent-ink); font: inherit;
+  font-weight: 500; text-decoration: none;
+}
+.welcome-card .welcome-primary:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent-soft) 80%, var(--accent));
+  border-color: var(--accent-line); color: var(--accent-ink); text-decoration: none;
+}
 .welcome-card .hint, .agent-panel .hint { color: var(--dimmer); font-size: 12px; line-height: 1.55; margin: 8px 0 0; }
 .welcome-card form, .agent-panel form { display: flex; flex-direction: column; gap: 12px; }
 .agent-panel { display: flex; flex-direction: column; gap: 16px; }
@@ -1333,8 +1343,8 @@ h4 { font-size: 12px; color: var(--dim); font-weight: 500; letter-spacing: 0; }
   .workspace-home .hero-sub { text-align: left; }
   .home-actions { grid-template-columns: 1fr; }
   .home-action { min-height: 0; flex-direction: row; gap: 12px; }
-  .home-recent .pick-row { flex-wrap: wrap; padding: 10px 2px; }
-  .home-recent .pick-row .meta { margin-left: 28px; }
+  .home-recent .pick-row { grid-template-columns: 18px minmax(0, 1fr); padding: 10px 2px; row-gap: 4px; }
+  .home-recent .pick-row .meta { grid-column: 2; }
   .inbox { padding: 22px 18px; }
   .inbox-item .row { flex-wrap: wrap; }
   .inbox-item time { width: 100%; }

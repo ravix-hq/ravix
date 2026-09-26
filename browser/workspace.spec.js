@@ -3,6 +3,30 @@ import AxeBuilder from '@axe-core/playwright';
 import { composerFixture } from './composer-fixture.js';
 import { signIn as signInAs } from './sign-in.js';
 
+async function primaryAppearance(locator) {
+  return locator.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return Object.fromEntries(['backgroundColor', 'color', 'borderColor', 'borderRadius',
+      'padding', 'fontSize', 'fontWeight', 'lineHeight'].map((key) => [key, style[key]]));
+  });
+}
+
+async function recentColumns(page) {
+  const rows = page.locator('.home-recent .pick-row');
+  expect(await rows.count()).toBeGreaterThanOrEqual(2);
+  const columns = await rows.evaluateAll((elements) => elements.map((row) => {
+    const name = row.querySelector('.project-label').getBoundingClientRect();
+    const repo = row.querySelector('.meta').getBoundingClientRect();
+    return { name: name.x, repo: repo.x, right: repo.right, overflow: row.scrollWidth > row.clientWidth };
+  }));
+  for (const column of columns) {
+    expect(column.name).toBeCloseTo(columns[0].name, 0);
+    expect(column.repo).toBeCloseTo(columns[0].repo, 0);
+    expect(column.right).toBeLessThanOrEqual(page.viewportSize().width);
+    expect(column.overflow).toBe(false);
+  }
+}
+
 async function accessible(page) {
   // Settle first. Axe computes contrast against *composited* colour, so an
   // element measured while something fades is measured against a blend that
@@ -195,10 +219,17 @@ test('a first visit is walked through how it works, the agent, and GitHub', asyn
   await expect(page).toHaveURL(/\/welcome\/github$/);
   await expect(page).toHaveTitle('Connect GitHub · Ravix');
 
+  const continueStyle = await primaryAppearance(page.locator('#github-continue'));
+  const continueHeight = (await page.locator('#github-continue').boundingBox()).height;
   await page.locator('#github-continue').click();
   await expect(page).toHaveURL(/\/welcome\/project$/);
   await expect(page).toHaveTitle('Create your first project · Ravix');
   await expect(page.getByRole('heading', { name: 'Create your first project' })).toBeVisible();
+  const createProject = page.getByRole('button', { name: 'Create project', exact: true });
+  expect(await primaryAppearance(createProject)).toEqual(continueStyle);
+  expect((await createProject.boundingBox()).height).toBeCloseTo(continueHeight, 0);
+  expect((await createProject.boundingBox()).width).toBeLessThan(
+    (await page.locator('#first-project-form').boundingBox()).width / 2);
   await accessible(page);
   await page.setViewportSize({ width: 390, height: 844 });
   await accessible(page);
@@ -264,6 +295,13 @@ test('home quick start creates a scratch project and recent navigation survives 
   const recent = page.getByRole('region', { name: 'Recent projects' });
   await expect(recent).toContainText('Quick start quality');
   await expect(recent).toContainText('no repository');
+  await page.getByRole('button', { name: /^Quick start/ }).click();
+  await page.getByLabel('Project name', { exact: true }).fill('A much longer project name to verify columns and narrow screen wrapping');
+  await page.getByRole('button', { name: 'Create project', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Plans', exact: true })).toBeVisible();
+  await page.getByRole('link', { name: 'Home', exact: true }).first().click();
+  await expect(recent.getByRole('link')).toHaveCount(2);
+  await recentColumns(page);
   for (const theme of ['Ravix', 'Daylight']) {
     await chooseTheme(page, theme);
     await accessible(page);
@@ -284,6 +322,7 @@ test('home quick start creates a scratch project and recent navigation survives 
   const mobileNav = page.getByRole('navigation', { name: 'Workspace navigation' });
   await mobileNav.getByRole('link', { name: 'Home' }).click();
   await accessible(page);
+  await recentColumns(page);
   await capture(page, 'home-mobile');
   // The rail is gone at this width, and everything in it --- signing out,
   // the theme picker, the account --- was unreachable until Menu brought it

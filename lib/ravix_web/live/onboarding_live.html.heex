@@ -75,7 +75,7 @@
           </li>
         </ul>
         <div class="welcome-actions">
-          <.link patch={path(:agent)} class="landing-button landing-primary" id="welcome-start">
+          <.link patch={path(:agent)} class="welcome-primary" id="welcome-start">
             Set up your agent
           </.link>
         </div>
@@ -96,7 +96,11 @@
         <div class="welcome-actions">
           <.link patch={path(:intro) <> "?from=start"} class="ghost">Back</.link>
           <span class="spacer"></span>
-          <.link patch={path(:github)} class="ghost" id="agent-later">
+          <.link
+            patch={path(:github)}
+            class={if Inference.connected?(@current_user), do: "welcome-primary", else: "ghost"}
+            id="agent-later"
+          >
             {if Inference.connected?(@current_user),
               do: "Continue",
               else: "I'll do this later"}
@@ -120,7 +124,7 @@
           Checking what Ravix can already see…
         </p>
         <div :if={@github_available && @installations == []} id="github-none">
-          <a class="landing-button landing-primary gh-button" href="/api/auth/install">
+          <a class="welcome-primary" href="/api/auth/install">
             <.icon name="github" size={17} />Install the GitHub App
           </a>
           <p class="hint">
@@ -143,7 +147,7 @@
             patch={path(:project)}
             class={
               if @installations not in [nil, []],
-                do: "landing-button landing-primary",
+                do: "welcome-primary",
                 else: "ghost"
             }
             id="github-continue"
@@ -229,7 +233,11 @@
           <.loading_status :if={@busy}>
             Creating project and preparing its machine…
           </.loading_status>
-          <button class="primary" disabled={@busy} phx-disable-with="Building the machine…">
+          <button
+            class="primary welcome-primary"
+            disabled={@busy}
+            phx-disable-with="Building the machine…"
+          >
             {if @busy, do: "Building the machine…", else: "Create project"}
           </button>
         </.form>
