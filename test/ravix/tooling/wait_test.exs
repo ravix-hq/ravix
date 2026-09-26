@@ -163,12 +163,14 @@ defmodule Ravix.Tooling.WaitTest do
              })
 
     assert changed == [ctx.one.id]
+    await_waiter_stop()
     Agent.update(ctx.statuses, &Map.put(&1, ctx.one.id, "failed"))
 
     assert {:ok, %{changed: [id]}} =
              Tooling.call(ctx.p, "wait_task", %{"task_ids" => [ctx.one.id], "timeout_ms" => 1000})
 
     assert id == ctx.one.id
+    await_waiter_stop()
 
     assert {:ok, %{changed: []}} =
              Tooling.call(ctx.p, "wait_task", %{
@@ -304,6 +306,14 @@ defmodule Ravix.Tooling.WaitTest do
     end)
 
     waiter
+  end
+
+  # A response can arrive before terminate/2 kills the provider worker.
+  # Let it finish before another caller borrows the same sandbox connection.
+  defp await_waiter_stop do
+    assert_receive {:subscribed, server}, 1000
+    ref = Process.monitor(server)
+    assert_receive {:DOWN, ^ref, :process, ^server, _}, 1000
   end
 
   defp await_idle(server) do

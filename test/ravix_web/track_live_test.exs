@@ -413,9 +413,11 @@ defmodule RavixWeb.TrackLiveTest do
 
     assert has_element?(
              ctx.view,
-             ".track-plan-chip[title='#{plan.title}'][href='/p/#{ctx.project.id}?plan=#{plan.id}']",
-             "Plan: #{plan.title}"
+             ".track-plan-summary .track-plan-title[title='#{plan.title}'][href='/p/#{ctx.project.id}?plan=#{plan.id}']",
+             "Plan · #{plan.title}"
            )
+
+    refute has_element?(ctx.view, ".track-plan-chip")
 
     assert has_element?(
              ctx.view,
@@ -472,7 +474,7 @@ defmodule RavixWeb.TrackLiveTest do
 
     view = find_live_child(parent, "track-host")
     settle(view)
-    assert has_element?(view, ".track-plan-chip", plan.title)
+    assert has_element?(view, ".track-plan-summary .track-plan-title", plan.title)
     {:ok, summary} = Ravix.Plans.track_summary(member, ctx.track.id)
     owner = self()
 
@@ -1867,7 +1869,7 @@ defmodule RavixWeb.TrackLiveTest do
 
     assert has_element?(
              ctx.view,
-             ".track-crumbs button.icon-button[aria-label='Settings'][phx-value-name='settings'] svg"
+             ".track-crumbs button.icon-button[aria-label='Project settings'][phx-value-name='settings'] svg"
            )
 
     # New track lives once, at the end of the tab strip above; the header
@@ -1877,14 +1879,20 @@ defmodule RavixWeb.TrackLiveTest do
     # Buttons whose only text is an icon: nothing visible is left to read.
     refute render(header.(ctx.view)) =~ ~r/>\s*(New track|Settings)\s*</
 
-    # Closing is one step further away: inside a disclosure that starts shut.
+    assert has_element?(ctx.view, ".track-crumbs button[title='Project settings']")
+    assert has_element?(ctx.view, ".track-crumbs button[title='Rename track']")
+
     assert has_element?(
              ctx.view,
-             "#track-actions-toggle[aria-label='More track actions'][aria-expanded='false'][aria-controls='track-actions-menu']"
+             ".track-crumbs button[aria-label^='Track sharing'][title$='viewing now)']"
            )
 
-    assert has_element?(ctx.view, "#track-actions-menu[hidden] button", "Close track")
-    ctx.view |> element("#track-actions-menu button", "Close track") |> render_click()
+    refute has_element?(ctx.view, "#track-actions-menu")
+
+    ctx.view
+    |> element(".track-crumbs button[aria-label='Close track'][title='Close track']")
+    |> render_click()
+
     assert has_element?(ctx.view, "#close-form")
 
     # A track still titled with its branch shows the name once.
@@ -1918,8 +1926,8 @@ defmodule RavixWeb.TrackLiveTest do
 
     view = find_live_child(parent, "track-host")
     settle(view)
-    assert has_element?(view, ".track-crumbs button[aria-label^='People']")
-    refute has_element?(view, ".track-crumbs button[aria-label='Settings']")
+    assert has_element?(view, ".track-crumbs button[aria-label^='Track sharing']")
+    refute has_element?(view, ".track-crumbs button[aria-label='Project settings']")
     refute has_element?(view, "#track-actions-toggle")
     refute has_element?(view, "button", "Close track")
   end
@@ -2111,6 +2119,13 @@ defmodule RavixWeb.TrackLiveTest do
     )
 
     assert render(ctx.view) =~ "@teammate is typing"
+
+    assert has_element?(
+             ctx.view,
+             ".track-crumbs button[aria-label='Track sharing (1 viewing now)'][title='Track sharing (1 viewing now)']",
+             "1"
+           )
+
     send(ctx.view.pid, :refresh)
     assert render_async(ctx.view) =~ "Start here"
   end

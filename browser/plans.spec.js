@@ -134,5 +134,5 @@ test('a project plan assigns coordinated tracks and works at phone width', async
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await page.screenshot({ path: 'test-results/plans-phone.png', fullPage: true });
   await panel.getByRole('link', { name: 'Open track: ravix/build-api' }).click();
-  await expect(page.getByRole('link', { name: 'Plan: Ship the release' })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Plan · Ship the release' })).toBeVisible();
 });

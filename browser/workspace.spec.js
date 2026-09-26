@@ -571,7 +571,7 @@ test('project, track, streaming, image upload, reconnect, and revocation', async
   await page.keyboard.press('Escape');
   await expect(newTrackTrigger).toBeFocused();
   await expect(composer).toHaveValue('A draft while opening workspace dialogs');
-  await page.locator('.crumbs').getByRole('button', { name: 'Settings', exact: true }).click();
+  await page.locator('.crumbs').getByRole('button', { name: 'Project settings', exact: true }).click();
   const settings = page.getByRole('dialog', { name: 'Project settings', exact: true });
   await expect(settings).toBeVisible();
   await settings.getByRole('button', { name: 'Danger zone', exact: true }).click();
@@ -661,16 +661,16 @@ test('project, track, streaming, image upload, reconnect, and revocation', async
   await capture(page, 'track-mobile');
   // On a phone the project's own controls live in the yard, and the yard is
   // behind Menu. The owner's "Project settings" is the one worth proving
-  // reachable, because nothing else on the page offers it at this width.
+  // reachable alongside the explicitly named track-header control.
   const trackMenu = page.getByRole('navigation', { name: 'Workspace navigation' }).getByRole('button', { name: 'Menu' });
-  await expect(page.getByRole('button', { name: 'Project settings' })).toBeHidden();
+  await expect(page.getByRole('complementary', { name: 'Projects', exact: true }).getByRole('button', { name: 'Project settings' })).toBeHidden();
   await trackMenu.click();
-  await expect(page.getByRole('button', { name: 'Project settings' })).toBeVisible();
+  await expect(page.getByRole('complementary', { name: 'Projects', exact: true }).getByRole('button', { name: 'Project settings' })).toBeVisible();
   await expect(page.locator('#account-trigger')).toBeVisible();
   await accessible(page);
   await capture(page, 'track-mobile-menu');
   await page.getByRole('button', { name: 'Close menu' }).click();
-  await expect(page.getByRole('button', { name: 'Project settings' })).toBeHidden();
+  await expect(page.getByRole('complementary', { name: 'Projects', exact: true }).getByRole('button', { name: 'Project settings' })).toBeHidden();
   await page.setViewportSize({ width: 1280, height: 720 });
   // The same session is revoked from a second tab while the first remains connected.
   const trackURL = page.url();

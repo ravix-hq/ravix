@@ -31,7 +31,8 @@ test('assigned plan items stay compact across widths and themes', async ({ page 
   await expect(summary.getByRole('button')).toHaveAttribute('aria-expanded', 'false');
   await expect(summary).toContainText('0 of 4 done');
   await expect(page.locator('.track-plan-item-row')).toHaveCount(0);
-  await expect(page.locator('.track-plan-chip')).toHaveAttribute('title', 'Small fixes: task state, machine stats, 404 and navigation');
+  await expect(page.locator('.track-plan-chip')).toHaveCount(0);
+  await expect(page.getByRole('link', { name: 'Plan · Small fixes: task state, machine stats, 404 and navigation', exact: true })).toHaveCount(1);
   for (const theme of ['midnight', 'daylight']) {
     await page.locator('html').evaluate((el, theme) => el.dataset.theme = theme, theme);
     for (const width of [1480, 500]) {
