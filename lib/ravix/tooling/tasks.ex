@@ -73,6 +73,33 @@ defmodule Ravix.Tooling.Tasks do
     end
   end
 
+  @doc "Authorize every task before subscribing or returning a multi-task snapshot."
+  def observe(principal, ids) do
+    with {:ok, principal} <- Authorization.check(principal, "tracks:read") do
+      observe_rows(principal, ids)
+    end
+  end
+
+  defp observe_rows(principal, ids) do
+    Enum.reduce_while(ids, {:ok, []}, fn id, {:ok, rows} ->
+      case accessible(principal, id) do
+        {:ok, task, access} ->
+          row = %{
+            task: task,
+            project_id: access.project.id,
+            track_id: task.track_id,
+            thread_id: access.thread.id,
+            conversation_id: access.thread.conversation_id
+          }
+
+          {:cont, {:ok, rows ++ [row]}}
+
+        error ->
+          {:halt, error}
+      end
+    end)
+  end
+
   def cancel(principal, id) do
     with {:ok, principal} <- Authorization.check(principal, "tracks:cancel"),
          {:ok, task, _} <- accessible(principal, id),

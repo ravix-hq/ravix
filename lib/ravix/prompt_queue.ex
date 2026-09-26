@@ -22,8 +22,8 @@ defmodule Ravix.PromptQueue do
   """
 
   alias Ravix.Accounts.{Access, User}
+  alias Ravix.{Hub, Repo}
   alias Ravix.PromptQueue.{Store, View}
-  alias Ravix.Repo
 
   @type reason ::
           :not_found
@@ -50,18 +50,21 @@ defmodule Ravix.PromptQueue do
   """
   @spec cancel(User.t(), String.t(), String.t()) :: :ok | {:error, reason()}
   def cancel(%User{} = user, track_id, id) do
-    with {:ok, %{role: role}} <- Access.track_access(user, track_id),
+    with {:ok, %{role: role, project: project}} <- Access.track_access(user, track_id),
          {:ok, :ok} <- Repo.transaction(fn -> cancel_locked(id, track_id, role, user) end) do
-      :ok
+      # The Store hint is inside this transaction. Repeat it after commit so
+      # wait_task on another node cannot consume only the pre-commit state.
+      Hub.publish(project.id, :queue, track_id: track_id)
     end
   end
 
   @doc "Send a refused or unconfirmed prompt again, explicitly. Same rule of who may as `cancel/3`."
   @spec retry(User.t(), String.t(), String.t()) :: :ok | {:error, reason()}
   def retry(%User{} = user, track_id, id) do
-    with {:ok, %{role: role, track: track}} <- Access.track_access(user, track_id),
+    with {:ok, %{role: role, track: track, project: project}} <-
+           Access.track_access(user, track_id),
          {:ok, :ok} <- Repo.transaction(fn -> retry_locked(id, track, role, user) end) do
-      :ok
+      Hub.publish(project.id, :queue, track_id: track_id)
     end
   end
 

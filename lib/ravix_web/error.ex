@@ -111,6 +111,9 @@ defmodule RavixWeb.Error do
   def from({:unprocessable, code, message}, _opts),
     do: %__MODULE__{status: 422, code: to_string(code), message: message}
 
+  def from({:rate_limited, message}, _opts),
+    do: %__MODULE__{status: 429, code: "rate_limited", message: message}
+
   def from({:unavailable, message}, _opts) when is_binary(message),
     do: %__MODULE__{status: 503, code: "unavailable", message: message}
 

@@ -1029,7 +1029,10 @@ defmodule RavixWeb.TrackLiveTest do
     rendered = render_async(ctx.view)
 
     assert rendered =~ "Memory used"
-    assert rendered =~ "33554432"
+    assert rendered =~ "32.0 MB"
+    assert rendered =~ "12%"
+    refute rendered =~ "33554432"
+    assert has_element?(ctx.view, ~s(meter[aria-label="CPU in use"][value="0.12"]))
     # A reading the machine could not give is left out, not drawn as a blank
     # row: `mem_total_bytes` is nil and no "Memory total" appears.
     refute rendered =~ "Memory total"

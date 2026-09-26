@@ -25,6 +25,7 @@ defmodule Ravix.Application do
         {Phoenix.PubSub, name: Ravix.PubSub},
         # Unlinked, supervised background work; never `Task.async` for fire-and-forget.
         {Task.Supervisor, name: Ravix.TaskSupervisor},
+        {DynamicSupervisor, name: Ravix.Tooling.Wait.Supervisor, strategy: :one_for_one},
         # Fountain's conversation list and sprite names, memoised briefly.
         Ravix.MachineCache,
         # Who is looking at which track, and who is typing.

@@ -46,6 +46,28 @@ defmodule RavixWeb.ToolingControllerTest do
     assert id == track.id
   end
 
+  test "wait_task returns a single JSON tool result through the router", %{
+    user: user,
+    track: track
+  } do
+    {p, token, _} = principal(user)
+    {:ok, task} = Tasks.send(p, track.id, "hello", "wait")
+
+    conn =
+      request(token, "/mcp", tool("wait_task", %{"task_ids" => [task.id], "timeout_ms" => 0}))
+
+    result = Jason.decode!(conn.resp_body)["result"]
+    refute result["isError"]
+    assert result["structuredContent"]["changed"] == []
+    assert [%{"id" => id}] = result["structuredContent"]["tasks"]
+    assert id == task.id
+    {_, limited, _} = principal(user, "mcp", ["tracks:write"])
+    result = json_response(request(limited, "/mcp", rpc("tools/list")), 200)["result"]
+    refute Enum.any?(result["tools"], &(&1["name"] == "wait_task"))
+    conn = request(limited, "/mcp", tool("wait_task", %{"task_ids" => [task.id]}))
+    assert Jason.decode!(conn.resp_body)["result"]["isError"]
+  end
+
   test "MCP rejects absent tokens, other audiences and untrusted origins", %{user: user} do
     assert response = post(build_conn(), "/mcp", rpc("initialize"))
     assert json_response(response, 401)["error"] == "invalid_token"
@@ -94,6 +116,7 @@ defmodule RavixWeb.ToolingControllerTest do
       json_response(request(token, "/mcp", rpc("tools/list")), 200)
 
     assert Enum.any?(tools, &(&1["name"] == "create_track"))
+    assert Enum.any?(tools, &(&1["name"] == "wait_task"))
     refute Enum.any?(tools, &Map.has_key?(&1, "scope"))
     result = json_response(request(token, "/mcp", tool("list_projects")), 200)["result"]
     refute result["isError"]

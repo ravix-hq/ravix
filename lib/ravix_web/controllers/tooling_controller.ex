@@ -2,7 +2,7 @@ defmodule RavixWeb.ToolingController do
   @moduledoc "Authenticated stateless MCP and A2A JSON-RPC HTTP boundaries."
   use RavixWeb, :controller
   alias Ravix.Tooling.OAuth
-  alias RavixWeb.Tooling.{A2A, MCP, RPC, Stream}
+  alias RavixWeb.Tooling.{A2A, MCP, RPC, Stream, Wait}
 
   def card(conn, _),
     do: conn |> put_resp_header("cache-control", "public, max-age=300") |> json(A2A.card())
@@ -19,15 +19,27 @@ defmodule RavixWeb.ToolingController do
          {:ok, principal} <- authenticate(conn, protocol),
          :ok <- version(conn, protocol),
          :ok <- RPC.validate(params) do
-      result =
-        if protocol == "mcp", do: MCP.call(principal, params), else: A2A.call(principal, params)
-
-      respond(conn, params, principal, result)
+      invoke(conn, params, principal, protocol)
     else
       {:error, :unauthenticated} -> unauthorized(conn, protocol)
       {:error, :origin} -> send_resp(conn, 403, "Origin not allowed")
       {:error, code, message} -> json(conn, RPC.error(params["id"], code, message))
     end
+  end
+
+  defp invoke(
+         conn,
+         %{"method" => "tools/call", "params" => %{"name" => "wait_task"}} = params,
+         principal,
+         "mcp"
+       ),
+       do: Wait.call(conn, principal, params)
+
+  defp invoke(conn, params, principal, protocol) do
+    result =
+      if protocol == "mcp", do: MCP.call(principal, params), else: A2A.call(principal, params)
+
+    respond(conn, params, principal, result)
   end
 
   defp respond(conn, _params, _principal, :notification), do: send_resp(conn, 202, "")

@@ -29,7 +29,7 @@ defmodule RavixWeb.Tooling.MCP do
        capabilities: %{tools: %{listChanged: false}},
        serverInfo: %{name: "ravix", version: "1.0.0"},
        instructions:
-         "Use request_id for mutations. Poll get_task after send_prompt. Delivery is not completion."
+         "Use request_id for mutations. Assign with send_prompt, then loop wait_task with task_ids and the last states in since. Delivery is not completion."
      }}
   end
 

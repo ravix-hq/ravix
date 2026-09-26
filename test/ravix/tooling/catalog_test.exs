@@ -72,6 +72,9 @@ defmodule Ravix.Tooling.CatalogTest do
       end)
   end
 
+  defp samples(%{"type" => "object", "additionalProperties" => item}) when is_map(item),
+    do: [%{}, %{"any" => hd(samples(item))}]
+
   defp samples(%{"type" => "object"}), do: [%{}, %{"any" => [1, nil, true]}]
   defp samples(%{"enum" => values}), do: values
 
@@ -85,6 +88,14 @@ defmodule Ravix.Tooling.CatalogTest do
     do: [Map.get(schema, "minimum", -1), Map.get(schema, "maximum", 9_007_199_254_740_992)]
 
   defp samples(%{"type" => "boolean"}), do: [true, false]
+
+  defp samples(
+         %{"type" => "array", "items" => %{"type" => "string"}, "uniqueItems" => true} = schema
+       ) do
+    for count <- [schema["minItems"], schema["maxItems"]] do
+      Enum.map(1..count, &"task-#{&1}")
+    end
+  end
 
   defp samples(%{"type" => "array", "items" => item} = schema),
     do:
