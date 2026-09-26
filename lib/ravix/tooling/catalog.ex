@@ -68,7 +68,7 @@ defmodule Ravix.Tooling.Catalog do
       ),
       tool(
         "send_prompt",
-        "Queue a prompt durably. Reuse request_id only to retry the same prompt; poll get_task for completion.",
+        "Queue a prompt durably. Reuse request_id only to retry the same prompt; use wait_task for completion.",
         "tracks:write",
         %{
           "thread_id" => string(),
@@ -84,6 +84,27 @@ defmodule Ravix.Tooling.Catalog do
         "tracks:read",
         %{"task_id" => string()},
         ["task_id"]
+      ),
+      tool(
+        "wait_task",
+        "Wait up to timeout_ms (default/max 50000) for any owned task to change. Returns tasks and changed task IDs. Without since, terminal tasks count as changed; missing since entries also use terminal detection. Remove finished tasks or pass their states in since on the next call. One active wait per user/client; concurrent waits return rate_limited.",
+        "tracks:read",
+        %{
+          "task_ids" => %{
+            "type" => "array",
+            "items" => string(),
+            "minItems" => 1,
+            "maxItems" => 50,
+            "uniqueItems" => true
+          },
+          "since" => %{
+            "type" => "object",
+            "maxProperties" => 50,
+            "additionalProperties" => string()
+          },
+          "timeout_ms" => %{"type" => "integer", "minimum" => 0, "maximum" => 50_000}
+        },
+        ["task_ids"]
       ),
       tool(
         "cancel_task",
@@ -116,6 +137,12 @@ defmodule Ravix.Tooling.Catalog do
       Enum.all?(value, fn {k, v} -> Map.has_key?(properties, k) and validate(v, properties[k]) end)
   end
 
+  def validate(value, %{"type" => "object", "additionalProperties" => item} = schema)
+      when is_map(value) and is_map(item) do
+    map_size(value) <= Map.get(schema, "maxProperties", 100) and
+      Enum.all?(value, fn {key, value} -> is_binary(key) and validate(value, item) end)
+  end
+
   def validate(value, %{"type" => "object"}) when is_map(value), do: true
 
   def validate(value, %{"type" => "string"} = schema) when is_binary(value),
@@ -134,7 +161,10 @@ defmodule Ravix.Tooling.Catalog do
 
   def validate(value, %{"type" => "array", "items" => item} = schema) when is_list(value),
     do:
-      length(value) <= Map.get(schema, "maxItems", 100) and Enum.all?(value, &validate(&1, item))
+      length(value) >= Map.get(schema, "minItems", 0) and
+        length(value) <= Map.get(schema, "maxItems", 100) and
+        (not Map.get(schema, "uniqueItems", false) or length(Enum.uniq(value)) == length(value)) and
+        Enum.all?(value, &validate(&1, item))
 
   def validate(_, _), do: false
 

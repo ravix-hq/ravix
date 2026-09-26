@@ -38,7 +38,16 @@ defmodule RavixWeb.HelpComponents do
         </ul>
         <p>
           MCP tools can list repositories, create projects, update settings, open tracks, send
-          prompts and read replies. Keep the task ID to check progress. For retries, reuse the
+          prompts and read replies. Assign, then loop <code>wait_task</code>: collect task IDs from <code>send_prompt</code>, then pass them as
+          <code>task_ids</code>
+          (up to 50).
+          It returns all tasks and a <code>changed</code>
+          list when a task ends or after at most
+          50 seconds. Pass the returned states as <code>since</code>
+          on the next call to wait
+          for any state change, or remove finished task IDs. A timeout with no changes returns <code>changed: []</code>; work continues. A timeout returns the latest persisted states
+          even if the provider is slow. Keep one wait active per client and user; overlapping waits
+          return <code>rate_limited</code>. For retries, reuse the
           same request ID and arguments so work is not submitted twice.
         </p>
       </details>

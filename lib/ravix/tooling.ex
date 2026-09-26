@@ -2,7 +2,7 @@ defmodule Ravix.Tooling do
   @moduledoc "Scoped operations shared by MCP and A2A. External output is explicitly selected."
   alias Ravix.Accounts.Access
   alias Ravix.{Config, Fountain, Projects, Tracks}
-  alias Ravix.Tooling.{Catalog, Mutations, OAuth, PlanTools, Tasks}
+  alias Ravix.Tooling.{Catalog, Mutations, OAuth, PlanTools, Tasks, Wait}
 
   def call(principal, name, args) do
     with %{} = tool <- Catalog.find(name),
@@ -68,6 +68,8 @@ defmodule Ravix.Tooling do
         Tasks.send(p, a["track_id"], a["prompt"], a["request_id"], a["thread_id"]),
         &Tasks.present/1
       )
+
+  defp execute(p, "wait_task", a), do: Wait.wait(p, a)
 
   defp execute(p, "get_task", a), do: map_result(Tasks.get(p, a["task_id"]), &Tasks.present/1)
 
