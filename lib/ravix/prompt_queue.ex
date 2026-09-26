@@ -9,8 +9,8 @@ defmodule Ravix.PromptQueue do
   `Ravix.PromptQueue.Server` delivers the first live row per track to
   Fountain when the conversation is idle.
 
-  The three functions here are the ones a person calls: `list/2`, `cancel/3`
-  and `retry/3` each go through `Ravix.Accounts.Access.track_access/2` first.
+  The functions here are the person's side: listing, delivery status,
+  cancellation and retry all establish scoped access through `Ravix.Accounts.Access`.
   Everything else is `Ravix.PromptQueue.Store` -- the worker's half, which
   takes ids because at the moment a prompt is finally delivered there is no
   caller left to take a user from.
@@ -38,6 +38,19 @@ defmodule Ravix.PromptQueue do
   def list(%User{} = user, track_id, thread_id \\ nil) do
     with {:ok, %{role: role, thread: thread}} <- Access.thread_access(user, track_id, thread_id) do
       {:ok, Store.summaries(track_id, thread.id) |> Enum.map(&present(&1, role, user))}
+    end
+  end
+
+  @doc "Scoped delivery state and any held head blocking this prompt; no payload is returned."
+  def status(%User{} = user, track_id, id) do
+    with {:ok, _} <- Access.track_access(user, track_id),
+         %{} = row <- Store.delivery_status(track_id, id),
+         {:ok, _} <- Access.thread_access(user, track_id, row.thread_id) do
+      blocked = if row.status == :queued, do: Store.held_before(row)
+      {:ok, Map.put(row, :blocked_by, blocked)}
+    else
+      nil -> {:error, :not_found}
+      error -> error
     end
   end
 

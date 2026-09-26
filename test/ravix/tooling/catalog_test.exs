@@ -62,6 +62,20 @@ defmodule Ravix.Tooling.CatalogTest do
     assert Enum.any?(tools, &(&1.name == "assign_items"))
   end
 
+  test "held prompt actions are advertised only with their mutation scope" do
+    {:ok, %{tools: read_tools}} =
+      MCP.call(%{grant: %{scopes: ["tracks:read"]}}, %{"id" => 1, "method" => "tools/list"})
+
+    refute Enum.any?(read_tools, &(&1.name in ["retry_task", "cancel_task"]))
+
+    for {scope, name} <- [{"tracks:write", "retry_task"}, {"tracks:cancel", "cancel_task"}] do
+      {:ok, %{tools: tools}} =
+        MCP.call(%{grant: %{scopes: [scope]}}, %{"id" => 1, "method" => "tools/list"})
+
+      assert Enum.any?(tools, &(&1.name == name))
+    end
+  end
+
   defp samples(%{"type" => "object", "properties" => properties} = schema) do
     full = Map.new(properties, fn {key, value} -> {key, hd(samples(value))} end)
     minimal = Map.take(full, schema["required"])

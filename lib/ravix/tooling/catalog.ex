@@ -87,7 +87,7 @@ defmodule Ravix.Tooling.Catalog do
       ),
       tool(
         "wait_task",
-        "Wait up to timeout_ms (default/max 50000) for any owned task to change. Returns tasks, changed task IDs, and stale (true if reconciliation could not finish). timeout_ms: 0 performs one refresh with a 250 ms budget, without waiting for changes. Persisted terminal states do not require a provider read. Without since, terminal tasks count as changed; missing since entries also use terminal detection. Remove finished tasks or pass their states in since on the next call. One active wait per user/client; concurrent waits return rate_limited.",
+        "Wait up to timeout_ms (default/max 50000) for any owned task to change. Returns tasks, changed task IDs, and stale (true if reconciliation could not finish). timeout_ms: 0 performs one refresh with a 250 ms budget, without waiting for changes. Persisted terminal states do not require a provider read. Without since, terminal, input-required and blocked tasks count as changed. Pass metadata.ravix.status_version in since to acknowledge both state and reason changes; state strings remain supported. Missing since entries also detect held tasks. Remove finished tasks or pass their states in since on the next call. One active wait per user/client; concurrent waits return rate_limited.",
         "tracks:read",
         %{
           "task_ids" => %{
@@ -107,8 +107,15 @@ defmodule Ravix.Tooling.Catalog do
         ["task_ids"]
       ),
       tool(
+        "retry_task",
+        "Requeue a failed or unconfirmed prompt as its sender or project owner. Check the transcript first: an unconfirmed POST may have arrived. This explicitly resends the saved prompt.",
+        "tracks:write",
+        %{"task_id" => string()},
+        ["task_id"]
+      ),
+      tool(
         "cancel_task",
-        "Cancel this client's queued task. Running tasks cannot be safely interrupted.",
+        "Cancel a queued, failed or unconfirmed prompt as its sender or project owner. Sending and delivered prompts cannot be canceled.",
         "tracks:cancel",
         %{"task_id" => string()},
         ["task_id"]

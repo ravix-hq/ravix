@@ -77,7 +77,10 @@ defmodule Ravix.PromptQueue.Server do
   # case this interval is for -- so the gap while something waits stays what
   # it was before the wake existed.
   @busy_interval 2_000
-  # A backstop only: the Fountain client times out well inside this.
+  # A per-head backstop, not a sweep deadline: the HTTP client defaults to
+  # 60 seconds, but readiness/preview work may also take time. A task killed
+  # here cannot settle its claim. Store.recover waits six minutes from the
+  # claim and the next sweep before marking it unconfirmed, never replaying it.
   @delivery_timeout 5 * 60_000
 
   @ended "This conversation has ended. Add a new thread and copy this prompt there."
@@ -107,6 +110,9 @@ defmodule Ravix.PromptQueue.Server do
       do: GenServer.start_link(__MODULE__, opts, name: name),
       else: GenServer.start_link(__MODULE__, opts)
   end
+
+  @doc "The maximum lifetime of one supervised delivery task, including readiness; not a global sweep deadline."
+  def delivery_timeout_ms, do: @delivery_timeout
 
   @doc "Run one sweep now and return once every head has been handled."
   @spec tick(GenServer.server()) :: :ok
