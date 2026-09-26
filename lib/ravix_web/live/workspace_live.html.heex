@@ -52,7 +52,7 @@
       aria-hidden="true"
     >
     </div>
-    <aside id="yard" class={["yard", @yard_open && "forced"]} aria-label="Projects and tracks">
+    <aside id="yard" class={["yard", @yard_open && "forced"]} aria-label="Projects">
       <div class="yard-top">
         <span class="avatar workspace-avatar" aria-hidden="true">
           {String.first(@current_user.login) |> String.upcase()}
@@ -99,20 +99,6 @@
         </div>
         <section :for={project <- @projects} class="workspace-project">
           <div class="workspace-project-row">
-            <button
-              class="project-toggle ghost"
-              phx-click="toggle-project"
-              phx-value-id={project.id}
-              aria-expanded={to_string(MapSet.member?(@expanded_projects, project.id))}
-              aria-controls={"project-tracks-#{project.id}"}
-              aria-label={"#{if MapSet.member?(@expanded_projects, project.id), do: "Collapse", else: "Expand"} #{project.display_name}"}
-            >
-              <.icon
-                name="chevron"
-                size={12}
-                open={MapSet.member?(@expanded_projects, project.id)}
-              />
-            </button>
             <.link
               patch={"/p/#{project.id}"}
               class={[
@@ -135,58 +121,24 @@
             </.link>
           </div>
           <div
-            id={"project-tracks-#{project.id}"}
-            hidden={!MapSet.member?(@expanded_projects, project.id)}
-            class="project-tracks"
+            :if={@project && @project.id == project.id && project.access != :tracks}
+            class="project-links"
           >
-            <.link
-              :for={{track, index} <- Enum.with_index(@tracks[project.id] || [], 1)}
-              patch={"/p/#{project.id}/t/#{track.id}"}
-              class={["workspace-track", @track_id == track.id && "selected"]}
+            <button
+              class="ghost"
+              phx-click={JS.push_focus() |> JS.push("dialog")}
+              phx-value-name="people"
             >
-              <span
-                :if={track.status in [:running, :opening]}
-                class={"dot #{track.status}"}
-                role="img"
-                aria-label="Working"
-              ></span>
-              <span
-                :if={attention?(track)}
-                class="track-attention"
-                role="img"
-                aria-label="Needs attention"
-              >
-                !
-              </span>
-              <span
-                :if={track.status not in [:running, :opening] && !attention?(track)}
-                class="track-num"
-              >
-                {index}
-              </span>
-              <span class="track-title">{track.title}</span>
-              <span :if={track.origin.kind == :plan} class="chip" title="From a project plan">Plan</span>
-            </.link>
-            <div
-              :if={@project && @project.id == project.id && project.access != :tracks}
-              class="project-links"
+              <.icon name="add-person" size={13} />People
+            </button>
+            <button
+              :if={project.role == :owner}
+              class="ghost"
+              phx-click={JS.push_focus() |> JS.push("dialog")}
+              phx-value-name="settings"
             >
-              <button
-                class="ghost"
-                phx-click={JS.push_focus() |> JS.push("dialog")}
-                phx-value-name="people"
-              >
-                <.icon name="add-person" size={13} />People
-              </button>
-              <button
-                :if={project.role == :owner}
-                class="ghost"
-                phx-click={JS.push_focus() |> JS.push("dialog")}
-                phx-value-name="settings"
-              >
-                <.icon name="settings" size={13} />Project settings
-              </button>
-            </div>
+              <.icon name="settings" size={13} />Project settings
+            </button>
           </div>
         </section>
       </div>
@@ -272,6 +224,48 @@
         data-side="left"
       >
       </div>
+      <nav :if={@project} class="track-tabs" aria-label="Project tracks">
+        <.link
+          patch={"/p/#{@project.id}"}
+          class={["track-tab", is_nil(@track_id) && "selected"]}
+          aria-current={if is_nil(@track_id), do: "page"}
+        >Overview</.link>
+        <.link
+          :for={{track, index} <- Enum.with_index(@tracks[@project.id] || [], 1)}
+          patch={"/p/#{@project.id}/t/#{track.id}"}
+          class={["workspace-track track-tab", @track_id == track.id && "selected"]}
+          aria-current={if @track_id == track.id, do: "page"}
+        >
+          <span
+            :if={track.status in [:running, :opening]}
+            class={"dot #{track.status}"}
+            role="img"
+            aria-label="Working"
+          ></span>
+          <span
+            :if={attention?(track)}
+            class="track-attention"
+            role="img"
+            aria-label="Needs attention"
+          >
+            !
+          </span>
+          <span
+            :if={track.status not in [:running, :opening] && !attention?(track)}
+            class="track-num"
+          >
+            {index}
+          </span>
+          <span class="track-title">{track.title}</span>
+          <span :if={track.origin.kind == :plan} class="chip" title="From a project plan">Plan</span>
+        </.link>
+        <button
+          :if={@project.access != :tracks}
+          class="ghost track-tab"
+          phx-click={JS.push_focus() |> JS.push("dialog")}
+          phx-value-name="new-track"
+        ><.icon name="plus" size={13} />New track</button>
+      </nav>
       <div :if={@project && is_nil(@track_id)} class="crumbs">
         <span class="project-mark" aria-hidden="true">
           {String.first(@project.name) |> String.upcase()}
@@ -280,14 +274,6 @@
           :if={@project.repo}
           class="chip mono"
         >{@project.repo}</span><span class="spacer"></span>
-        <button
-          :if={@project.access != :tracks}
-          class="ghost"
-          phx-click={JS.push_focus() |> JS.push("dialog")}
-          phx-value-name="new-track"
-        >
-          New track
-        </button>
         <button
           :if={@project.access != :tracks}
           class="ghost"
@@ -346,7 +332,7 @@
         >
           New track
         </button>
-        <p :if={@project.access == :tracks}>Choose a track shared with you in the sidebar.</p>
+        <p :if={@project.access == :tracks}>Choose a track shared with you in the tabs above.</p>
       </div>
       <div :if={is_nil(@project) && @live_action == :projects} class="centred workspace-home">
         <div class="hero">
@@ -533,7 +519,7 @@
         phx-submit="create-track"
         phx-change="edit"
       >
-        <div :if={@origin_kind != :pr}>
+        <div :if={@origin_kind != :pr} hidden={!@advanced_track}>
           <label for="track-title">Branch name</label>
           <div class="workspace-actions">
             <span id="branch-prefix">ravix/</span>
@@ -558,7 +544,7 @@
           {message}
         </p>
         <p :if={@origin_kind == :blank} class="hint">
-          New worktree from {@project.default_branch || "the default branch"}.
+          New worktree from {@project.default_branch || "the default branch"}, with an automatic name matching its directory.
         </p>
         <button
           type="button"
