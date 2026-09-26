@@ -185,6 +185,9 @@
         <div id="transcript-status" class="sr-only" role="status" aria-live="polite">
           {@announcement}
         </div>
+        <.loading_status :if={:interrupt in @pending}>Stopping agent…</.loading_status>
+        <.loading_status :if={:retry in @pending}>Retrying track…</.loading_status>
+        <.loading_status :if={:add_thread in @pending}>Adding thread…</.loading_status>
         <form id="thread-switcher" phx-change="select-thread">
           <label for="selected-thread">Thread</label>
           <select id="selected-thread" name="thread_id" value={@thread_id}>
@@ -324,7 +327,7 @@
         </nav>
         <div class="workspace-panel">
           <button class="ghost" phx-click="refresh-panel" disabled={@panel.busy?}>Refresh</button>
-          <p :if={@panel.busy?} role="status">Loading…</p>
+          <.loading_status :if={@panel.busy?}>Loading inspector…</.loading_status>
           <p :if={@panel.error} role="alert">{@panel.error}</p>
           <.panel_body
             :if={@panel.data}
@@ -452,7 +455,9 @@
           type="checkbox"
           label="Draft pull request"
           value={true}
-        /><button class="primary" phx-disable-with="Opening…" disabled={:pull in @pending}>
+        />
+        <.loading_status :if={:pull in @pending}>Opening pull request…</.loading_status>
+        <button class="primary" phx-disable-with="Opening…" disabled={:pull in @pending}>
           Open pull request
         </button>
       </form>

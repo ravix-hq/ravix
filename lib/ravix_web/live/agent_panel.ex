@@ -395,6 +395,7 @@ defmodule RavixWeb.Live.AgentPanel do
   def render(assigns) do
     ~H"""
     <div class="agent-panel" id={@id}>
+      <.loading_status :if={@busy}>Updating agent connection…</.loading_status>
       <div class="agent-choices" role="group" aria-label="Agent">
         <button
           :for={agent <- User.agents()}

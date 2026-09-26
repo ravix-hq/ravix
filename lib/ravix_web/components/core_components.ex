@@ -20,6 +20,19 @@ defmodule RavixWeb.CoreComponents do
   alias Phoenix.HTML.Form
   alias Phoenix.LiveView.JS
 
+  @doc "Visible, politely announced feedback for work awaiting a response."
+  attr :id, :string, default: nil
+  slot :inner_block, required: true
+
+  def loading_status(assigns) do
+    ~H"""
+    <p id={@id} class="loading-status" role="status">
+      <span class="loading-spinner" aria-hidden="true"></span>
+      <span>{render_slot(@inner_block)}</span>
+    </p>
+    """
+  end
+
   @doc "A viewer-relative project label; the context supplies ownership and plain text."
   attr :project, :map, required: true
 

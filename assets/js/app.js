@@ -4,8 +4,9 @@
 // change to it, and the browser's job is to keep the socket up and to do the
 // handful of things that cannot round-trip — a keystroke in the terminal, a
 // scroll position, a drag, the palette painted before the first frame. Those
-// live in `hooks/`, one file each, and this file registers them. There is
-// nothing else: no framework, no state, no packages beyond Phoenix's own.
+// live in `hooks/`, one file each, and this file registers them. The
+// page_loading helper also reflects pending navigation in the shared status
+// indicator. There is no framework or package beyond Phoenix's own.
 //
 // The six hooks, and what they are for:
 //
@@ -20,6 +21,7 @@
 // file's header, and list it here.
 import "../css/app.css"
 import "phoenix_html"
+import {trackPageLoading} from "./page_loading"
 import {Socket} from "phoenix"
 import {LiveSocket} from "phoenix_live_view"
 import {Theme} from "./hooks/theme"
@@ -40,6 +42,7 @@ const liveSocket = new LiveSocket("/live", Socket, {
   hooks,
 })
 
+trackPageLoading(window)
 liveSocket.connect()
 
 // For the console: `liveSocket.enableDebug()`, `liveSocket.enableLatencySim(1000)`.

@@ -215,8 +215,11 @@
             No repositories to choose from. <.link patch={path(:github)}>Connect GitHub</.link>
             to pick one, or start with a scratch machine.
           </p>
+          <.loading_status :if={@busy}>
+            Creating project and preparing its machine…
+          </.loading_status>
           <button class="primary" disabled={@busy} phx-disable-with="Building the machine…">
-            Create project
+            {if @busy, do: "Building the machine…", else: "Create project"}
           </button>
         </.form>
         <div class="welcome-actions">

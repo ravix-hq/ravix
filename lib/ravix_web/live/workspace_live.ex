@@ -72,6 +72,8 @@ defmodule RavixWeb.WorkspaceLive do
         changes_unseen: 0,
         project_form: Form.new(:new_project),
         track_form: Form.new(:new_track),
+        repos_loading: false,
+        refs_loading: false,
         repos: [],
         installations: [],
         installation: nil,
@@ -324,7 +326,9 @@ defmodule RavixWeb.WorkspaceLive do
 
   def handle_event("origin", %{"kind" => word}, socket) when is_map_key(@form_origins, word) do
     kind = Map.fetch!(@form_origins, word)
-    socket = assign(socket, origin_kind: kind, refs: [], advanced_track: true)
+
+    socket =
+      assign(socket, origin_kind: kind, refs: [], refs_loading: false, advanced_track: true)
 
     case @origin_refs[kind] do
       nil ->
@@ -338,7 +342,11 @@ defmodule RavixWeb.WorkspaceLive do
         # already said "not yet" while this was synchronous too.
         user = socket.assigns.current_user
         id = project_id(socket)
-        {:noreply, traced_async(socket, :refs, fn -> Projects.refs(user, id, refs_kind) end)}
+
+        {:noreply,
+         traced_async(assign(socket, refs_loading: true), :refs, fn ->
+           Projects.refs(user, id, refs_kind)
+         end)}
     end
   end
 
@@ -394,11 +402,11 @@ defmodule RavixWeb.WorkspaceLive do
   end
 
   def handle_async(:refs, {:ok, response}, socket),
-    do: {:noreply, result(socket, response, &assign(&1, refs: &2))}
+    do: {:noreply, result(assign(socket, refs_loading: false), response, &assign(&1, refs: &2))}
 
   def handle_async(:repos, {:ok, response}, socket) do
     {:noreply,
-     result(socket, response, fn s, data ->
+     result(assign(socket, repos_loading: false), response, fn s, data ->
        assign(s,
          repos: data.repos,
          installations: data.installations,
@@ -451,6 +459,11 @@ defmodule RavixWeb.WorkspaceLive do
       when name == :reload
       when elem(name, 0) == :tracks,
       do: {:noreply, socket}
+
+  def handle_async(name, {:exit, reason}, socket) when name in [:refs, :repos] do
+    flag = if name == :refs, do: :refs_loading, else: :repos_loading
+    {:noreply, socket |> assign(flag, false) |> exit(reason)}
+  end
 
   def handle_async(_name, {:exit, reason}, socket),
     do: {:noreply, socket |> assign(busy: false) |> exit(reason)}
@@ -802,7 +815,7 @@ defmodule RavixWeb.WorkspaceLive do
       user = socket.assigns.current_user
 
       socket
-      |> assign(repos: [], installations: [], installation: nil)
+      |> assign(repos_loading: true, repos: [], installations: [], installation: nil)
       |> traced_async(:repos, fn -> Projects.repos(user, id) end)
     else
       socket

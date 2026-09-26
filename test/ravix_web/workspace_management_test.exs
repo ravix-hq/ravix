@@ -17,6 +17,60 @@ defmodule RavixWeb.WorkspaceManagementTest do
     %{view: view, user: user, project: project}
   end
 
+  test "project creation keeps feedback until a failed task settles", ctx do
+    test_pid = self()
+
+    expect(Projects, :create, fn _, _ ->
+      send(test_pid, {:creating, self()})
+
+      receive do
+        :finish -> {:error, {:unavailable, "Machine unavailable"}}
+      end
+    end)
+
+    render_click(ctx.view, "dialog", %{name: "new-project"})
+    render_async(ctx.view)
+    ctx.view |> form("#new-project-form", new_project: [name: "Waiting"]) |> render_submit()
+    assert_receive {:creating, task}
+    assert has_element?(ctx.view, "#new-project-form [role=status]", "Creating project")
+    assert has_element?(ctx.view, "#new-project-form button[disabled]", "Creating project")
+    send(task, :finish)
+    assert render_async(ctx.view) =~ "Machine unavailable"
+    refute has_element?(ctx.view, "#new-project-form [role=status]")
+    assert has_element?(ctx.view, "#project-name[value=Waiting]")
+  end
+
+  for outcome <- [:success, :error, :exit] do
+    @outcome outcome
+    @tag :capture_log
+    test "repository loading feedback settles on #{@outcome}", ctx do
+      test_pid = self()
+      stub(Accounts, :capabilities, fn -> %{github: true} end)
+
+      expect(Projects, :repos, fn _, _ ->
+        send(test_pid, {:loading_repos, self()})
+
+        receive do
+          :finish ->
+            case @outcome do
+              :success -> {:ok, %{repos: [], installations: [], selected: nil}}
+              :error -> {:error, {:unavailable, "GitHub unavailable"}}
+              :exit -> exit(:provider_down)
+            end
+        end
+      end)
+
+      render_click(ctx.view, "dialog", %{name: "new-project"})
+      assert_receive {:loading_repos, task}
+      assert has_element?(ctx.view, "#new-project-dialog [role=status]", "Loading GitHub")
+      assert has_element?(ctx.view, "#project-repo[disabled]")
+      send(task, :finish)
+      render_async(ctx.view)
+      refute has_element?(ctx.view, "#new-project-dialog .loading-status")
+      refute has_element?(ctx.view, "#project-repo[disabled]")
+    end
+  end
+
   test "repository selection retains installation ownership", ctx do
     stub(Accounts, :capabilities, fn -> %{github: true} end)
 

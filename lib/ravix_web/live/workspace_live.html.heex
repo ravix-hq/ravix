@@ -469,6 +469,7 @@
       title="New project"
       on_close="dismiss"
     >
+      <.loading_status :if={@repos_loading}>Loading GitHub repositories…</.loading_status>
       <form :if={@installations != []} id="installation-form" phx-change="installation">
         <.input
           name="installation"
@@ -490,6 +491,7 @@
         <.input
           field={f[:repo]}
           id="project-repo"
+          disabled={@repos_loading}
           label="Repository"
           type="select"
           options={[
@@ -512,8 +514,9 @@
             Connect Claude Code or Codex
           </button>
         </p>
-        <button class="primary" disabled={@busy} phx-disable-with="Creating…">
-          Create project
+        <.loading_status :if={@busy}>Creating project and preparing its machine…</.loading_status>
+        <button class="primary" disabled={@busy || @repos_loading} phx-disable-with="Creating…">
+          {if @busy, do: "Creating project…", else: "Create project"}
         </button>
       </.form>
     </.dialog>
@@ -579,22 +582,27 @@
               {label}
             </button>
           </div>
+          <.loading_status :if={@refs_loading}>
+            Loading branches, pull requests or issues…
+          </.loading_status>
           <.input
             :if={@origin_kind != :blank}
             field={f[:ref]}
             id="track-ref"
+            disabled={@refs_loading}
             label="Start from"
             type="select"
             options={Enum.map(@refs, &{ref_label(&1), ref_id(&1)})}
             required
           />
         </div>
+        <.loading_status :if={@busy}>Opening track and preparing its worktree…</.loading_status>
         <button
           class="primary"
           disabled={@busy || (@origin_kind != :blank && @refs == [])}
           phx-disable-with="Opening…"
         >
-          Create track
+          {if @busy, do: "Opening track…", else: "Create track"}
         </button>
       </.form>
     </.dialog>
