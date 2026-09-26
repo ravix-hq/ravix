@@ -562,6 +562,20 @@ defmodule Ravix.ProjectsTest do
       assert GH.requests() == []
     end
 
+    test "a warm repository picker cannot authorize creation after access is removed" do
+      app = github([repositories_route(1, [repo("owner/repo")])])
+      me = person("owner", "owner-token")
+      client = fountain()
+      assert {:ok, [_]} = Ravix.GitHub.repositories(app, "owner-token", 1)
+      GH.install([repositories_route(1, [])])
+
+      assert {:error, {:not_found, "repo_not_found", _}} =
+               Projects.create(me, %{repo: "owner/repo", installation_id: 1})
+
+      assert GH.request_count("repositories") == 2
+      assert requests(client) == []
+    end
+
     test "repository access is checked before minting the installation token" do
       app = github()
       GH.install([GH.token_route(app), repositories_route(1, [repo("owner/repo")])])

@@ -38,6 +38,7 @@ defmodule Ravix.Application do
         # that shares one checks read between every row asking about a branch.
         Ravix.GitHub.Cache,
         {Ravix.Memo, name: Ravix.GitHub.Cache.Checks},
+        {Ravix.Memo, name: Ravix.GitHub.Reads},
         # Accepted prompts awaiting delivery, swept on a timer and on the
         # turn that frees a thread the queue is waiting on. The
         # sweep is off under test (config/test.exs): a timer outside the SQL
