@@ -31,7 +31,8 @@ defmodule RavixWeb.TrackLiveTest do
          track: Tracks.present(row, role: :owner),
          header: blank_header(),
          threads: thread_options(id),
-         starters: [%{label: "Start here", prompt: "Build it"}]
+         starters: [%{label: "Start here", prompt: "Build it"}],
+         models: []
        }}
     end)
 
@@ -146,7 +147,8 @@ defmodule RavixWeb.TrackLiveTest do
          track: Tracks.present(Repo.get!(Track, id), role: :owner),
          header: blank_header(),
          threads: threads,
-         starters: []
+         starters: [],
+         models: []
        }}
     end)
 
@@ -203,6 +205,125 @@ defmodule RavixWeb.TrackLiveTest do
                render_hook(ctx.view, @thread_event, %{thread_id: ctx.track.id})
 
       assert length(Tracks.Store.threads_of(ctx.track.id)) == 1
+    end
+  end
+
+  describe "the model menu" do
+    setup ctx do
+      # `status` and `model` stand for the live conversation, which is
+      # Fountain's; the rest is the row.
+      serve = fn status, model ->
+        stub(Tracks, :get, fn _, id, _ ->
+          track = %{
+            Tracks.present(Repo.get!(Track, id), role: :owner)
+            | status: status,
+              model: model
+          }
+
+          {:ok,
+           %{
+             track: track,
+             header: blank_header(),
+             threads: thread_options(id),
+             starters: [],
+             models: ["anthropic/claude-opus-5", "anthropic/claude-sonnet-5"]
+           }}
+        end)
+
+        send(ctx.view.pid, {:hub, Event.new(:tracks, ctx.project.id, track_id: ctx.track.id)})
+        settle(ctx.view)
+      end
+
+      serve.(:ready, nil)
+      %{serve: serve}
+    end
+
+    test "names what the conversation runs and marks the project's model as the default", ctx do
+      assert has_element?(ctx.view, "#model-trigger:not([disabled])", "Claude Sonnet 5")
+
+      assert has_element?(
+               ctx.view,
+               "#model-menu [role=menuitemradio][aria-checked=true]",
+               "Project default"
+             )
+
+      assert has_element?(
+               ctx.view,
+               ~s(#model-menu [phx-value-model="anthropic/claude-opus-5"][aria-checked=false])
+             )
+
+      # A conversation on its own model shows that one, still offering the default.
+      ctx.serve.(:ready, "anthropic/claude-opus-5")
+      assert has_element?(ctx.view, "#model-trigger", "Claude Opus 5")
+
+      assert has_element?(
+               ctx.view,
+               ~s(#model-menu [phx-value-model="anthropic/claude-opus-5"][aria-checked=true])
+             )
+    end
+
+    test "choosing one changes the shown conversation through the scoped context", ctx do
+      user_id = ctx.user.id
+      track_id = ctx.track.id
+
+      # The page's first thread is the track's own conversation, named by
+      # the track's id.
+      expect(Tracks, :set_model, fn %{id: ^user_id},
+                                    ^track_id,
+                                    ^track_id,
+                                    "anthropic/claude-opus-5" = model ->
+        {:ok, model}
+      end)
+
+      ctx.view
+      |> element(~s(#model-menu [phx-value-model="anthropic/claude-opus-5"]))
+      |> render_click()
+
+      render_async(ctx.view)
+      assert has_element?(ctx.view, "#model-trigger:not([disabled])")
+    end
+
+    test "a refusal is said, and the page keeps the model it had", ctx do
+      stub(Tracks, :set_model, fn _, _, _, _ ->
+        {:error,
+         {:conflict, "conversation_busy", "Wait for the turn to finish, then change the model."}}
+      end)
+
+      ctx.view
+      |> element(~s(#model-menu [phx-value-model="anthropic/claude-opus-5"]))
+      |> render_click()
+
+      render_async(ctx.view)
+      assert toasted(ctx) =~ "Wait for the turn to finish"
+      assert has_element?(ctx.view, "#model-trigger", "Claude Sonnet 5")
+    end
+
+    test "is disabled while a turn runs, and a plain label with no catalog", ctx do
+      ctx.serve.(:running, nil)
+      assert has_element?(ctx.view, "#model-trigger[disabled]")
+
+      html =
+        render_component(&RavixWeb.TrackLive.model_menu/1,
+          model: "anthropic/claude-sonnet-5",
+          project_model: "anthropic/claude-sonnet-5",
+          models: []
+        )
+
+      assert html =~ ~s(class="composer-model")
+      refute html =~ "model-menu"
+    end
+
+    test "a revoked session cannot change it", ctx do
+      reject(&Tracks.set_model/4)
+      token = Plug.Conn.get_session(ctx.conn, :session_token)
+      Repo.delete!(Repo.get_by!(Session, token_hash: Ravix.Crypto.sha256(token)))
+
+      :sys.replace_state(ctx.view.pid, fn state ->
+        update_in(state.socket.assigns.session_guard, &%{&1 | stale?: true})
+      end)
+
+      assert {:error, {:redirect, %{to: "/login"}}} =
+               render_hook(ctx.view, "set-model", %{model: "anthropic/claude-opus-5"})
     end
   end
 
@@ -504,6 +625,7 @@ defmodule RavixWeb.TrackLiveTest do
            track: track,
            header: blank_header(),
            starters: [],
+           models: [],
            threads: thread_options(ctx.track.id)
          }}
       end)
@@ -1250,7 +1372,8 @@ defmodule RavixWeb.TrackLiveTest do
          track: Tracks.present(row, role: :member),
          header: blank_header(),
          threads: thread_options(id),
-         starters: []
+         starters: [],
+         models: []
        }}
     end)
 
@@ -2076,7 +2199,8 @@ defmodule RavixWeb.TrackLiveTest do
        track: Tracks.present(Repo.get!(Track, ctx.track.id), role: :owner),
        header: blank_header(),
        threads: [],
-       starters: []
+       starters: [],
+       models: []
      }}
   end
 
@@ -2315,7 +2439,8 @@ defmodule RavixWeb.TrackLiveTest do
          track: Tracks.present(row, role: :owner),
          header: blank_header(),
          threads: [],
-         starters: [%{label: "Start here", prompt: "Build it"}]
+         starters: [%{label: "Start here", prompt: "Build it"}],
+         models: []
        }}
     end)
 

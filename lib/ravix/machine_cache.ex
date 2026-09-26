@@ -34,7 +34,9 @@ defmodule Ravix.MachineCache do
   lookup is memoised for longer; a "not a sprite" answer only briefly, since
   a sandbox mid-provisioning may not have one yet. A project's environment
   is memoised for the same minute and forgotten when settings are saved,
-  which is the only thing that changes it.
+  which is the only thing that changes it. Fountain's catalog changes only
+  when Fountain deploys, so it stands for five minutes; it is what a
+  track's model menu offers, and a track opening should not wait on it.
 
   Values live in a public ETS table so a hit never touches the server; only
   misses go through the GenServer, which is where concurrent misses are
@@ -57,6 +59,7 @@ defmodule Ravix.MachineCache do
   @ttl_ms 5_000
   @sprite_ttl_ms 60_000
   @environment_ttl_ms 60_000
+  @catalog_ttl_ms 300_000
 
   @typedoc "A conversation as `GET /api/conversations` lists it."
   @type conversation :: Conversation.t()
@@ -75,6 +78,10 @@ defmodule Ravix.MachineCache do
   @doc "How long an environment record stands before it is re-read."
   @spec environment_ttl_ms() :: pos_integer()
   def environment_ttl_ms, do: @environment_ttl_ms
+
+  @doc "How long Fountain's catalog stands before it is re-read."
+  @spec catalog_ttl_ms() :: pos_integer()
+  def catalog_ttl_ms, do: @catalog_ttl_ms
 
   @doc false
   def child_spec(opts), do: Memo.child_spec(Keyword.put_new(opts, :name, @memo))
@@ -180,6 +187,21 @@ defmodule Ravix.MachineCache do
       {client_id(client), :environment, environment_id},
       fn -> Fountain.get_environment(client, environment_id) end,
       fn _ -> @environment_ttl_ms end,
+      opts
+    )
+  end
+
+  @doc """
+  Fountain's catalog, from the memo for `catalog_ttl_ms/0`. The settings
+  panel does not come through here: it validates a harness against the
+  catalog as it stands, for the reason `environment/3` gives.
+  """
+  @spec catalog(Client.t(), opts()) :: {:ok, Shapes.Catalog.t()} | {:error, Fountain.failure()}
+  def catalog(%Client{} = client, opts \\ []) do
+    memo(
+      {client_id(client), :catalog},
+      fn -> Fountain.catalog(client) end,
+      fn _ -> @catalog_ttl_ms end,
       opts
     )
   end

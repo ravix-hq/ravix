@@ -15,7 +15,8 @@ defmodule Ravix.MachineCacheTest do
     sprite_name: nil,
     inserted_at: "2026-09-07",
     last_active_at: nil,
-    turn_count: nil
+    turn_count: nil,
+    model: nil
   }
 
   setup_all do

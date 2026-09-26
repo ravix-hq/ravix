@@ -57,7 +57,8 @@ defmodule RavixWeb.TrackLiveTraceTest do
            has_setup_script: false
          },
          threads: [],
-         starters: []
+         starters: [],
+         models: []
        }}
     end)
 

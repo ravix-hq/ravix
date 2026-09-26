@@ -421,6 +421,28 @@ defmodule Ravix.Fountain do
     end)
   end
 
+  @doc """
+  `POST /api/conversations/:id/reapply` naming only `model`: the model this
+  one conversation runs from its next turn (Fountain ADR 0061).
+
+  A string sets it and `nil` returns the conversation to its agent's model.
+  Nothing else is named, so the agent, environment and vault keep their
+  selection, which is also the only selection a shared machine accepts. The
+  runtime session is kept, so the agent keeps its context.
+
+  Fountain refuses with `conversation_busy` while a turn runs and with
+  `inference_source_changed` when the model needs another credential than
+  the one the conversation is pinned to; either way nothing changes.
+  """
+  @spec set_model(Client.t(), id(), String.t() | nil) :: result(Shapes.Conversation.t())
+  def set_model(client, id, model) when is_binary(model) or is_nil(model) do
+    path = "/api/conversations/#{escape(id)}/reapply"
+
+    with {:ok, raw} <- data(client, "POST", path, body: %{"model" => model}) do
+      {:ok, Shapes.conversation(raw)}
+    end
+  end
+
   @doc "`POST /api/conversations/:id/terminate`: end the conversation."
   @spec terminate(Client.t(), id()) :: outcome()
   def terminate(client, id) do

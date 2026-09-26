@@ -60,6 +60,8 @@ interface Conv {
   turn_count: number;
   last_active_at: string | null;
   inserted_at: string;
+  /** The conversation's own model (Fountain ADR 0061); null follows the agent's. */
+  model: string | null;
 }
 
 interface Box {
@@ -846,6 +848,7 @@ async function fountain(req: Request, url: URL): Promise<Response | null> {
       turn_count: 0,
       last_active_at: null,
       inserted_at: now(),
+      model: typeof b.model === "string" ? b.model : null,
     };
     state.conversations.push(conv);
     // A prompt sent with the launch is the first turn. Ravix sends the
@@ -905,6 +908,19 @@ async function fountain(req: Request, url: URL): Promise<Response | null> {
 
   const convTurns = /^\/api\/conversations\/([^/]+)\/turns$/.exec(p);
   if (convTurns) return json({ data: state.turns.get(convTurns[1]!) ?? [] });
+
+  // Only the `model` half of reapply (ADR 0061): omitted keeps it, null
+  // follows the agent again, and a turn in flight is refused as Fountain does.
+  const convReapply = /^\/api\/conversations\/([^/]+)\/reapply$/.exec(p);
+  if (convReapply && req.method === "POST") {
+    const conv = state.conversations.find((c) => c.id === convReapply[1]);
+    if (!conv) return json({ error: "not_found", message: "Conversation not found" }, 404);
+    if (conv.status === "running" || conv.status === "pending")
+      return json({ error: "conversation_busy", message: "A turn is running" }, 409);
+    const b = (await req.json().catch(() => ({}))) as { model?: unknown };
+    if ("model" in b) conv.model = typeof b.model === "string" ? b.model : null;
+    return json({ data: withBox(conv) });
+  }
 
   const convAction = /^\/api\/conversations\/([^/]+)\/(interrupt|terminate)$/.exec(p);
   if (convAction) {
