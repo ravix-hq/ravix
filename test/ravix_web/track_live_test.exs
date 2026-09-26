@@ -1207,12 +1207,14 @@ defmodule RavixWeb.TrackLiveTest do
     # the title does not.
     assert has_element?(ctx.view, ".track-crumbs .track-branch", ctx.track.branch)
 
-    for {label, name} <- [{"New track", "new-track"}, {"Settings", "settings"}] do
-      assert has_element?(
-               ctx.view,
-               ".track-crumbs button.icon-button[aria-label='#{label}'][phx-value-name='#{name}'] svg"
-             )
-    end
+    assert has_element?(
+             ctx.view,
+             ".track-crumbs button.icon-button[aria-label='Settings'][phx-value-name='settings'] svg"
+           )
+
+    # New track lives once, at the end of the tab strip above; the header
+    # does not offer it a second time.
+    refute has_element?(ctx.view, ".track-crumbs button[aria-label='New track']")
 
     # Buttons whose only text is an icon: nothing visible is left to read.
     refute render(header.(ctx.view)) =~ ~r/>\s*(New track|Settings)\s*</
@@ -1257,7 +1259,7 @@ defmodule RavixWeb.TrackLiveTest do
 
     view = find_live_child(parent, "track-host")
     settle(view)
-    assert has_element?(view, ".track-crumbs button[aria-label='New track']")
+    assert has_element?(view, ".track-crumbs button[aria-label^='People']")
     refute has_element?(view, ".track-crumbs button[aria-label='Settings']")
     refute has_element?(view, "#track-actions-toggle")
     refute has_element?(view, "button", "Close track")

@@ -61,16 +61,6 @@
         title="People on this track"
       ><.icon name="add-person" size={15} /><span>{length(@present)}</span></button>
       <button
-        :if={@project.access != :tracks}
-        class="ghost icon-button"
-        phx-click={JS.push_focus() |> JS.push("dialog", target: "#workspace-stage")}
-        phx-value-name="new-track"
-        aria-label="New track"
-        title="New track"
-      >
-        <.icon name="plus" size={15} />
-      </button>
-      <button
         :if={@project.role == :owner}
         class="ghost icon-button"
         phx-click={JS.push_focus() |> JS.push("dialog", target: "#workspace-stage")}

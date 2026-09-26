@@ -457,6 +457,7 @@ defmodule RavixWeb.Live.SettingsDialog do
                   field={f[:setup_script]}
                   id="settings-setup"
                   label="Setup script"
+                  class="mono"
                   rows="7"
                   aria-describedby="settings-setup-help"
                 />
