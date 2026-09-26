@@ -48,6 +48,8 @@ defmodule RavixWeb.Icons do
     "wrench" =>
       ~S(<path d="M15.5 3.5a5 5 0 0 0-5.9 6.4L3.6 15.9a2 2 0 0 0 2.8 2.8l6-6a5 5 0 0 0 6.4-5.9L16 9.6l-2.1-.5-.5-2.1z" />),
     "check" => ~S(<path d="m5 12.5 4.5 4.5L19 7" />),
+    "copy" =>
+      ~S(<rect x="8.5" y="8.5" width="12" height="12" rx="2" /><path d="M15.5 8.5V5.5a2 2 0 0 0-2-2h-8a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h3" />),
     "x" => ~S(<path d="M6 6l12 12M18 6 6 18" />),
     "dot" => ~S(<circle cx="12" cy="12" r="4" fill="currentColor" stroke="none" />),
     "picture" =>

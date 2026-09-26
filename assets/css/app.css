@@ -641,25 +641,34 @@ h4 { font-size: 12px; color: var(--dim); font-weight: 500; letter-spacing: 0; }
 .workspace-turn .md { font-size: 13.5px; }
 .agent-terminal .md { max-width: 80ch; }
 
-/* Keep human messages visibly distinct from the terminal stream below. */
-.said { display: flex; flex-direction: column; align-items: flex-start; align-self: flex-start; max-width: 88%; min-width: 0; gap: 4px; margin-bottom: 8px; }
-.speaker { margin-bottom: 4px; font-family: var(--mono); font-size: 11px; color: var(--dim); }
+/* A person's message sits at the right as a bubble, the agent's reply at
+   the left as the page itself, so who said what reads from the layout
+   alone. The name stays above the bubble: a shared track has several. */
+.workspace-turn { display: flex; flex-direction: column; }
+.said { display: flex; flex-direction: column; align-items: flex-end; align-self: flex-end; max-width: 80%; min-width: 0; gap: 2px; margin-bottom: 14px; }
+.speaker { font-size: 11.5px; color: var(--dimmer); }
 .workspace-prompt {
-  padding: 9px 12px; margin: 0; white-space: pre-line; color: var(--accent-ink);
-  background: var(--accent-soft); border: 1px solid var(--accent-line); border-left-width: 3px;
-  border-radius: 2px 10px 10px 10px;
+  padding: 8px 12px; margin: 0; white-space: pre-line; color: var(--ink);
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: 12px 12px 3px 12px;
 }
 
-/* Agent output sits beneath the human's message, ruled off at its left. */
 .agent-terminal { min-width: 0; line-height: 1.6; }
-.agent-terminal-label {
-  display: flex; align-items: center; gap: 6px; padding: 3px 0 5px;
-  color: var(--dimmer); font-size: 10px; letter-spacing: 0.06em;
+.agent-terminal-output { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+
+/* Under a finished turn: how long, when, a copy of the answer, and the
+   files it touched. Quiet until pointed at. */
+.turn-footer {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin-top: 8px;
+  color: var(--dimmer); font-size: 12px;
 }
-.agent-terminal-output {
-  display: flex; flex-direction: column; gap: 6px; min-width: 0;
-  border-left: 1px solid var(--line-strong); padding: 4px 0 4px 12px;
+.turn-footer .turn-copy { padding: 3px; line-height: 0; color: var(--dimmer); }
+.turn-footer .turn-copy:hover, .turn-footer .turn-copy.copied { color: var(--ink); }
+.turn-footer .turn-file {
+  display: inline-flex; gap: 5px; align-items: baseline; padding: 1px 7px;
+  border: 1px solid var(--line); border-radius: 5px; color: var(--dim);
 }
+.turn-footer .turn-file .diff-add, .turn-footer .turn-file .diff-del { font-family: var(--mono); font-size: 11px; }
 .agent-terminal .md h1, .agent-terminal .md h2,
 .agent-terminal .md h3, .agent-terminal .md h4 { font-size: 1em; letter-spacing: 0; }
 .agent-terminal .md pre { border-radius: 2px; }

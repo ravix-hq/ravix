@@ -152,3 +152,52 @@ test("growth is watched on the turns, not only on whatever is laid in above them
     globalThis.ResizeObserver = native
   }
 })
+
+test("a turn's answer copies its markdown, says so, and resets", async () => {
+  {
+    const el = document.querySelector("#transcript > div")
+    el.insertAdjacentHTML("beforeend", `<button data-copy="**The** answer" aria-label="Copy answer">c</button>`)
+  }
+  const {hook} = mountHook(TranscriptTail,"#transcript")
+  const writes = []
+  Object.defineProperty(navigator,"clipboard",{configurable:true,value:{writeText:async text=>writes.push(text)}})
+  const callbacks = []
+  const schedule = window.setTimeout
+  window.setTimeout = callback => {callbacks.push(callback); return 0}
+  try {
+    const button = hook.el.querySelector("[data-copy]")
+    button.click()
+    await Promise.resolve()
+    expect(writes).toEqual(["**The** answer"])
+    expect(button.getAttribute("aria-label")).toBe("Answer copied")
+    expect(button.classList.contains("copied")).toBe(true)
+    callbacks.shift()()
+    expect(button.getAttribute("aria-label")).toBe("Copy answer")
+    expect(button.classList.contains("copied")).toBe(false)
+    navigator.clipboard.writeText = async () => {throw new Error("denied")}
+    await hook.copyAnswer(button)
+    expect(button.getAttribute("aria-label")).toBe("Copy failed. Try again")
+    button.disabled = true
+    await hook.copyAnswer(button)
+    expect(writes.length).toBe(1)
+    button.disabled = false
+    button.remove()
+    callbacks.shift()()
+  } finally {
+    window.setTimeout = schedule
+  }
+})
+
+test("a turn's end time is shown in the reader's own zone, on mount and after a patch", () => {
+  const el = document.querySelector("#transcript > div")
+  el.insertAdjacentHTML("beforeend",
+    `<time data-local-time datetime="2026-09-26T13:01:00Z">13:01 UTC</time><time data-local-time datetime="nonsense">kept</time>`)
+  const {hook} = mountHook(TranscriptTail,"#transcript")
+  const local = new Date("2026-09-26T13:01:00Z").toLocaleTimeString([], {hour: "numeric", minute: "2-digit"})
+  const [time, bad] = hook.el.querySelectorAll("time")
+  expect(time.textContent).toBe(local)
+  expect(bad.textContent).toBe("kept")
+  el.insertAdjacentHTML("beforeend", `<time data-local-time datetime="2026-09-26T14:30:00Z">14:30 UTC</time>`)
+  hook.updated()
+  expect(hook.el.querySelectorAll("time")[2].textContent).not.toContain("UTC")
+})
