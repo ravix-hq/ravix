@@ -300,7 +300,11 @@ const acp = (update: Record<string, unknown>) =>
 const text = (t: string) => acp({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: t } });
 const plan = (entries: [string, string][]) =>
   acp({ sessionUpdate: "plan", entries: entries.map(([content, status]) => ({ content, status, priority: "medium" })) });
-const tool = (id: string, title: string) => acp({ sessionUpdate: "tool_call", toolCallId: id, title, kind: "execute" });
+const thought = (t: string) => acp({ sessionUpdate: "agent_thought_chunk", content: { type: "text", text: t } });
+// A shell call as the Claude adapter reports one: titled with the command, and
+// the command again among the raw arguments beside the directory it ran in.
+const tool = (id: string, title: string, cwd?: string) =>
+  acp({ sessionUpdate: "tool_call", toolCallId: id, title, kind: "execute", rawInput: { command: title, ...(cwd ? { cwd } : {}) } });
 const toolDone = (id: string, out: string) =>
   acp({
     sessionUpdate: "tool_call_update",
@@ -448,9 +452,14 @@ async function act(prompt: string, emit: Emit, say: Say, conv: Conv): Promise<vo
   updateMockPreview(home);
   // A checklist, as ACP reports one: the whole list every time, never a diff.
   emit({ kind: "output", stream: "acp", data: plan([["Look for open TODOs", "in_progress"], ["Say what is worth fixing", "pending"]]) });
-  emit({ kind: "output", stream: "acp", data: tool("x1", `cd ${home} && rg -n "TODO|FIXME"`) });
+  emit({ kind: "output", stream: "acp", data: thought("Start with whatever the code already admits is unfinished.") });
+  emit({ kind: "output", stream: "acp", data: tool("x1", `rg -n "TODO|FIXME"`, home) });
   await sleep(400);
   emit({ kind: "output", stream: "acp", data: toolDone("x1", "src/lib/window.ts:1:// TODO: rounding here is wrong across a DST boundary") });
+  emit({ kind: "output", stream: "acp", data: thought("One hit. Read it before judging it.") });
+  emit({ kind: "output", stream: "acp", data: tool("x2", "sed -n 1,20p src/lib/window.ts", home) });
+  await sleep(300);
+  emit({ kind: "output", stream: "acp", data: toolDone("x2", "// TODO: rounding here is wrong across a DST boundary\nexport const dayOf = (ms: number) => Math.floor(ms / 86400000);") });
   emit({ kind: "output", stream: "acp", data: plan([["Look for open TODOs", "completed"], ["Say what is worth fixing", "in_progress"]]) });
   await say(
     `(mock) I am in ${home} and I read: ${prompt.trim().split("\n")[0]?.slice(0, 120)}\n\n` +
