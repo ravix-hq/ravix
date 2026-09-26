@@ -196,20 +196,12 @@
         <.loading_status :if={:interrupt in @pending}>Stopping agent…</.loading_status>
         <.loading_status :if={:retry in @pending}>Retrying track…</.loading_status>
         <.loading_status :if={:add_thread in @pending}>Adding thread…</.loading_status>
-        <form id="thread-switcher" phx-change="select-thread">
-          <label for="selected-thread">Thread</label>
-          <select id="selected-thread" name="thread_id" value={@thread_id}>
-            <option :for={thread <- @threads} value={thread.id} selected={thread.id == @thread_id}>
-              {thread.title}{if thread.unread && thread.id != @thread_id, do: " •", else: ""}
-            </option>
-          </select>
-          <button
-            :if={Ravix.Config.threads_enabled?()}
-            type="button"
-            phx-click="add-thread"
-            disabled={MapSet.member?(@pending, :add_thread)}
-          >Add thread</button>
-        </form>
+        <.thread_tabs
+          threads={@threads}
+          thread_id={@thread_id}
+          adding={:add_thread in @pending}
+          enabled={Ravix.Config.threads_enabled?()}
+        />
         <div class="workspace-composer">
           <p :for={person <- Enum.filter(@present, & &1.typing)} class="hint">
             @{person.login} is typing…
@@ -265,8 +257,9 @@
                 >
                   <.icon name="picture" size={17} />
                 </button>
-                <span class="composer-model mono">{@project.model}</span><span class="send-hint"><kbd>Enter</kbd>
-                to send</span><span class="spacer"></span>
+                <span class="composer-model" title={@project.model}>{ModelName.friendly(
+                  @project.model
+                )}</span><span class="spacer"></span>
                 <button
                   type="submit"
                   class="primary composer-send"
@@ -275,7 +268,6 @@
                   disabled={is_nil(@track.conversation_id)}
                 >
                   <.icon name="arrow-up" size={16} />
-                  <span>Send</span>
                 </button>
                 <button
                   :if={@track.status in [:running, :opening]}

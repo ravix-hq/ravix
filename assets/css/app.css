@@ -785,15 +785,41 @@ h4 { font-size: 12px; color: var(--dim); font-weight: 500; letter-spacing: 0; }
 .workspace-upload { display: flex; align-items: center; padding: 6px; gap: 8px; }
 .workspace-composer .workspace-actions { padding: 8px; gap: 6px; }
 /* Keep the SVG in the DOM during LiveView submit: phx-disable-with restores
-   text only, losing its attributes when the subsequent diff rebuilds it. */
+   text only, losing its attributes when the subsequent diff rebuilds it.
+   The arrow is the whole label; `aria-label` and `title` say "Send". */
 .workspace-composer .composer-send {
-  display: inline-flex; align-items: center; justify-content: center; gap: 4px;
-  flex: 0 0 72px; width: 72px; height: 36px; padding: 0; border-radius: 6px;
+  display: inline-flex; align-items: center; justify-content: center;
+  flex: 0 0 34px; width: 34px; height: 34px; padding: 0; border-radius: var(--radius);
 }
 .workspace-composer .composer-send svg { flex: none; }
 .workspace-composer .composer-send:disabled { opacity: 0.65; }
-.composer-model { color: var(--dimmer); font-size: 11px; max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.send-hint { font-size: 11px; color: var(--dimmer); }
+/* The model is a name, not code: sans, quiet, and the raw id in its title. */
+.composer-model {
+  color: var(--dimmer); font: 12px/1 var(--sans); max-width: 45%;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* The thread tabs sit on the composer's gutter, just above its box. The row
+   scrolls sideways instead of wrapping, and its block padding leaves room
+   for a focus ring the scroll container would otherwise clip. */
+.thread-tabs {
+  display: flex; align-items: center; gap: 4px; padding: 8px 20px 3px;
+  overflow-x: auto; scrollbar-width: thin;
+}
+.thread-tabs + .workspace-composer { padding-top: 6px; }
+.thread-tabs button {
+  flex: none; display: inline-flex; align-items: center; gap: 6px;
+  height: 26px; padding: 0 10px; font-size: 12px;
+}
+.thread-tab {
+  max-width: 200px; background: transparent; border-color: transparent; color: var(--dim);
+}
+.thread-tab:hover:not(:disabled) { background: var(--surface-hover); border-color: transparent; color: var(--ink); }
+.thread-tab[aria-current="true"] { background: var(--surface-active); border-color: var(--line); color: var(--ink); }
+.thread-tab-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.thread-unread { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+.thread-tabs .thread-add { width: 26px; padding: 0; justify-content: center; }
+@media (max-width: 760px) { .thread-tabs { padding-inline: 12px; } }
 
 /* ── the inspector: files, changes, checks, preview ────────────────────── */
 
