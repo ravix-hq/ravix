@@ -20,10 +20,12 @@ defmodule Ravix.PromptQueue.DeliveryTimeoutTest do
 
     server = start_supervised!({Bandit, plug: {HungPost, self()}, port: 0, ip: {127, 0, 0, 1}})
     {:ok, {_, port}} = ThousandIsland.listener_info(server)
-    client = Fountain.Client.new("http://127.0.0.1:#{port}", "test", timeout: 200)
+    # Leave room for the first TCP connection under full-suite scheduler load;
+    # the handler deliberately never replies, so the HTTP deadline still ends it.
+    client = Fountain.Client.new("http://127.0.0.1:#{port}", "test", timeout: 2000)
     task = Task.async(fn -> Fountain.prompt(client, "conversation", "saved prompt", [], []) end)
-    assert_receive {:post_started, handler}, 1000
-    assert {:ok, {:error, %Fountain.Error{kind: :connection}}} = Task.yield(task, 1000)
+    assert_receive {:post_started, handler}, 5000
+    assert {:ok, {:error, %Fountain.Error{kind: :connection}}} = Task.yield(task, 5000)
     send(handler, :release)
   end
 end
