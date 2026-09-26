@@ -404,6 +404,8 @@ defmodule RavixWeb.TrackLiveTest do
 
     stub(Ravix.Config, :github, fn -> Ravix.GitHubFake.app() end)
 
+    stub(Ravix.GitHub, :plan_pulls, fn _, _, _ -> {:ok, %{pulls: [], complete: true}} end)
+
     expect(Ravix.GitHub, :pull_for_track, fn _, _, _, _, _ ->
       {:ok, %{state: :merged, number: 231, url: "https://github.com/acme/app/pull/231"}}
     end)

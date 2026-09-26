@@ -181,6 +181,8 @@ defmodule Ravix.PlansTest do
       ])
 
     for text <- [
+          "Item ID: #{item.id}",
+          "Plan-Item: #{item.id}",
           "Why now",
           "Implement API",
           "Test it",

@@ -72,7 +72,7 @@ defmodule Ravix.GitHub.Shapes do
       :state,
       :url
     ]
-    defstruct @enforce_keys
+    defstruct @enforce_keys ++ [plan_item_ids: [], head_repo: nil]
 
     @type state :: :open | :closed | :merged
 
@@ -85,7 +85,9 @@ defmodule Ravix.GitHub.Shapes do
             draft: boolean(),
             updated_at: String.t(),
             state: state(),
-            url: String.t() | nil
+            url: String.t() | nil,
+            plan_item_ids: [String.t()],
+            head_repo: String.t() | nil
           }
   end
 
@@ -174,9 +176,25 @@ defmodule Ravix.GitHub.Shapes do
       draft: p["draft"] == true,
       updated_at: p["updated_at"],
       state: pull_state(p),
-      url: p["html_url"]
+      url: p["html_url"],
+      head_repo: get_in(p, ["head", "repo", "full_name"]),
+      plan_item_ids: plan_item_ids(p["body"])
     }
   end
+
+  # Only the final trailer block counts, never prose, quoted examples or fenced code.
+  defp plan_item_ids(body) when is_binary(body) do
+    body
+    |> String.trim()
+    |> String.split(~r/\r?\n/)
+    |> Enum.reverse()
+    |> Enum.take_while(&Regex.match?(~r/^Plan-Item: [a-zA-Z0-9_-]{1,100}$/, &1))
+    |> Enum.map(&String.replace_prefix(&1, "Plan-Item: ", ""))
+    |> Enum.reverse()
+    |> Enum.uniq()
+  end
+
+  defp plan_item_ids(_), do: []
 
   @doc "Where a pull request got to: merged, closed or open."
   @spec pull_state(map()) :: PullRef.state()

@@ -125,6 +125,13 @@ defmodule Ravix.Spec do
       ""
     ])
     |> Kernel.++([
+      "## Finishing",
+      "",
+      "When a PR carries plan work, end its body with a trailer block: one line",
+      "`Plan-Item: <item id>` for each item it implements. Use the exact assigned IDs.",
+      "Keep these trailers when updating the PR body, including PRs on other branches.",
+      "Ravix uses the linked PR evidence to determine each item's status.",
+      "",
       "## Live previews",
       "",
       "Ravix can provide a track-scoped preview helper in the turn's instructions.",
@@ -221,6 +228,10 @@ defmodule Ravix.Spec do
           "Then `cd #{dir}` — that is your working directory for every turn in this track."
         ] ++
         issue_lines(origin) ++
+        [
+          "",
+          "For plan work, end each PR body with `Plan-Item: <item id>` trailers (one per item)."
+        ] ++
         [
           "",
           "Reply with exactly one line: the working directory and the branch it is on. If",

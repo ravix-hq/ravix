@@ -129,6 +129,8 @@ defmodule Ravix.IdsSpecTest do
       assert with_repo =~ "  - /workspace/ravix is the shared clone."
       assert with_repo =~ "The trunk is `main`. Branch from it and merge back to it."
       assert with_repo =~ "Git is configured for pushing"
+      assert with_repo =~ "## Finishing"
+      assert with_repo =~ "Plan-Item: <item id>"
 
       no_trunk = Spec.system_prompt(project(name: "X", repo_full_name: "acme/x"))
 
@@ -139,6 +141,7 @@ defmodule Ravix.IdsSpecTest do
       refute blank =~ "shared clone"
       refute blank =~ "Git is configured"
       assert blank =~ "## Live previews"
+      assert blank =~ "Plan-Item: <item id>"
       assert String.ends_with?(blank, "back verbatim.")
     end
 
@@ -167,6 +170,7 @@ defmodule Ravix.IdsSpecTest do
           "me/s-1"
         )
 
+      assert fresh =~ "Plan-Item: <item id>"
       assert fresh =~ "Cut a new branch `me/s-1` from `origin/main`:"
 
       assert fresh =~
