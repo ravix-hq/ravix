@@ -827,6 +827,41 @@ defmodule RavixWeb.TrackLiveTest do
     assert has_element?(ctx.view, "pre", "hello explorer")
   end
 
+  test "ignored entries are hidden throughout the tree and the toggle restores them", ctx do
+    stub(Tracks, :files, fn _, _, path ->
+      {:ok,
+       %Files.Listing{
+         path: path || ctx.track.workdir,
+         truncated: false,
+         ignore_available?: true,
+         entries: [
+           %Files.Entry{name: "src", type: "directory", size: 0},
+           %Files.Entry{name: "_build", type: "directory", size: 0, ignored?: true},
+           %Files.Entry{name: "skills", type: "symlink", size: 0, target: "../.agents/skills"}
+         ]
+       }}
+    end)
+
+    render_click(ctx.view, "refresh-panel")
+    render_async(ctx.view)
+    refute has_element?(ctx.view, ".file-name", "_build")
+    assert has_element?(ctx.view, "button[disabled] .file-name", "skills → ../.agents/skills")
+    ctx.view |> element("button[phx-value-path='#{ctx.track.workdir}/src']") |> render_click()
+    render_async(ctx.view)
+    refute has_element?(ctx.view, ".file-name", "_build")
+    ctx.view |> element("button[phx-click='toggle-ignored']") |> render_click()
+    assert has_element?(ctx.view, "button[aria-pressed='true']", "Show ignored files")
+    assert has_element?(ctx.view, "button[phx-value-path='#{ctx.track.workdir}/_build']")
+    assert has_element?(ctx.view, "button[phx-value-path='#{ctx.track.workdir}/src/_build']")
+    ctx.view |> element("button[phx-click='toggle-ignored']") |> render_click()
+    refute has_element?(ctx.view, ".file-name", "_build")
+
+    assert has_element?(
+             ctx.view,
+             "button[phx-value-path='#{ctx.track.workdir}/src'][aria-expanded='true']"
+           )
+  end
+
   test "collapsed folders ignore late results and directory errors can be retried", ctx do
     owner = self()
 
@@ -841,7 +876,8 @@ defmodule RavixWeb.TrackLiveTest do
     ctx.view |> element("button.workspace-file", "src") |> render_click()
     send(reader, :finish)
     render_async(ctx.view)
-    refute has_element?(ctx.view, ".file-note")
+    refute has_element?(ctx.view, ".file-note[role=status], .file-note[role=alert]")
+    refute has_element?(ctx.view, ".file-list .file-list")
     expect(Tracks, :files, fn _, _, _ -> {:error, {:unavailable, "Folder offline"}} end)
     ctx.view |> element("button.workspace-file", "src") |> render_click()
     render_async(ctx.view)

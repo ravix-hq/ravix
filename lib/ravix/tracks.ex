@@ -1035,13 +1035,22 @@ defmodule Ravix.Tracks do
 
   # ── reading a track's directory ───────────────────────────────────────
 
-  @doc "One directory, confined to the worktree. Free; it does not wake a parked box."
+  @doc "One directory, confined to the worktree, with best-effort Git and symlink metadata."
   @spec files(User.t(), String.t(), String.t() | nil) ::
           {:ok, Files.Listing.t()} | {:error, reason()}
   def files(%User{} = user, track_id, path) do
     with {:ok, track, client, sandbox_id} <- machine_read(user, track_id),
          {:ok, raw} <- Fountain.listing(client, sandbox_id, confine(track.workdir, path)) do
-      {:ok, Files.present_listing(raw)}
+      listing = Files.present_listing(raw)
+
+      metadata =
+        Ravix.Terminal.exec(user, track_id, %Ravix.Terminal.Request{
+          command: Files.metadata_command(track.workdir, listing),
+          cwd: track.workdir,
+          timeout_sec: 10
+        })
+
+      {:ok, Files.with_metadata(listing, metadata)}
     end
   end
 

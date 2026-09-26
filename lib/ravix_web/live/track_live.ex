@@ -92,6 +92,7 @@ defmodule RavixWeb.TrackLive do
         queue: [],
         present: [],
         panel: Panel.new(),
+        show_ignored?: false,
         diff_path: nil,
         diff_filter: "",
         diff_show_large: false,
@@ -249,6 +250,9 @@ defmodule RavixWeb.TrackLive do
     do: {:noreply, assign(socket, diff_show_large: true)}
 
   def handle_event("refresh-panel", _, socket), do: {:noreply, load_panel(socket)}
+
+  def handle_event("toggle-ignored", _, socket),
+    do: {:noreply, assign(socket, show_ignored?: !socket.assigns.show_ignored?)}
 
   def handle_event("directory", %{"path" => path}, socket) do
     if Map.has_key?(socket.assigns.panel.directories, path) do
@@ -775,6 +779,7 @@ defmodule RavixWeb.TrackLive do
       queue: [],
       present: [],
       panel: Panel.new(),
+      show_ignored?: false,
       diff_path: nil,
       diff_filter: "",
       diff_show_large: false,
@@ -1120,6 +1125,7 @@ defmodule RavixWeb.TrackLive do
 
   defp change_badge(assigns), do: ~H""
 
+  attr :show_ignored?, :boolean, default: false
   attr :directories, :map, default: %{}
   attr :diff_path, :string, default: nil
   attr :diff_filter, :string, default: ""
@@ -1141,7 +1147,15 @@ defmodule RavixWeb.TrackLive do
       <div class="file-root" title={@data.path}>
         <.icon name="folder" />{Path.basename(@data.path)}
       </div>
-      <.file_listing listing={@data} directories={@directories} file={@file} />
+      <button phx-click="toggle-ignored" aria-pressed={to_string(@show_ignored?)}>
+        Show ignored files
+      </button>
+      <.file_listing
+        listing={@data}
+        directories={@directories}
+        file={@file}
+        show_ignored?={@show_ignored?}
+      />
       <div :if={@file}>
         <h4>{@file.path}</h4>
         <pre :if={@file.encoding != "base64"}>{@file.content}</pre>
@@ -1302,6 +1316,7 @@ defmodule RavixWeb.TrackLive do
   defp diff_line_label(%{kind: :del, old: old}), do: "Removed line #{old}: "
   defp diff_line_label(%{new: new}), do: "Line #{new}: "
 
+  attr :show_ignored?, :boolean, required: true
   attr :listing, :any, required: true
   attr :directories, :map, required: true
   attr :file, :any, required: true
@@ -1311,7 +1326,9 @@ defmodule RavixWeb.TrackLive do
       assign(
         assigns,
         :entries,
-        Enum.sort_by(assigns.listing.entries, &{&1.type != "directory", String.downcase(&1.name)})
+        assigns.listing.entries
+        |> Enum.reject(&(&1.ignored? && !assigns.show_ignored?))
+        |> Enum.sort_by(&{&1.type != "directory", String.downcase(&1.name)})
       )
 
     ~H"""
@@ -1322,11 +1339,12 @@ defmodule RavixWeb.TrackLive do
         <button
           type="button"
           class={["workspace-file", @file && @file.path == path && "selected"]}
+          disabled={entry.type in ["symlink", "link"]}
           phx-click={if entry.type == "directory", do: "directory", else: "file"}
           phx-value-path={path}
           aria-expanded={if entry.type == "directory", do: to_string(child != nil)}
           aria-current={if @file && @file.path == path, do: "true"}
-          title={path}
+          title={if entry.target, do: path <> " → " <> entry.target, else: path}
         >
           <span class="file-disclosure"><.icon
             :if={entry.type == "directory"}
@@ -1335,11 +1353,12 @@ defmodule RavixWeb.TrackLive do
             size={12}
           /></span>
           <.icon name={file_icon(entry)} class="file-kind" />
-          <span class="file-name">{entry.name}</span>
+          <span class="file-name">{entry.name}<span :if={entry.target}> → {entry.target}</span></span>
         </button>
         <.file_listing
           :if={is_struct(child, Files.Listing)}
           listing={child}
+          show_ignored?={@show_ignored?}
           directories={@directories}
           file={@file}
         />
@@ -1347,12 +1366,16 @@ defmodule RavixWeb.TrackLive do
         <p :if={match?({:error, _}, child)} class="file-note" role="alert">{elem(child, 1)}</p>
       </li>
       <li :if={@entries == []} class="file-note">Empty directory</li>
+      <li :if={!@listing.ignore_available?} class="file-note">
+        Git ignore filtering is unavailable for this directory.
+      </li>
       <li :if={@listing.truncated} class="file-note">Directory listing is truncated.</li>
     </ul>
     """
   end
 
   defp file_icon(%{type: "directory"}), do: "folder"
+  defp file_icon(%{type: type}) when type in ["symlink", "link"], do: "external"
 
   defp file_icon(entry) do
     case String.downcase(Path.extname(entry.name)) do

@@ -1354,6 +1354,12 @@ defmodule Ravix.TracksTest do
       client
     end
 
+    test "an outsider cannot trigger file metadata commands", ctx do
+      reject(Ravix.Terminal, :exec, 3)
+      reject(Ravix.Fountain, :listing, 3)
+      assert {:error, _} = Tracks.files(insert_user(), ctx.track.id, nil)
+    end
+
     test "a directory, confined, as the panel reads it", ctx do
       machine_fountain(ctx.project, [
         {%{
@@ -1371,10 +1377,24 @@ defmodule Ravix.TracksTest do
           }}}
       ])
 
+      expect(Ravix.Terminal, :exec, fn user, id, request ->
+        assert {user.id, id} == {ctx.owner.id, ctx.track.id}
+        assert request.cwd == ctx.track.workdir
+        assert request.command =~ "python3"
+
+        {:ok,
+         %{
+           code: 0,
+           stdout:
+             ~s({"ignore_available":true,"entries":{"app.ts":{"ignored":true,"target":null}}})
+         }}
+      end)
+
       assert {:ok,
               %{
+                ignore_available?: true,
                 path: "/home/sprite/work/kyoto/src",
-                entries: [%{name: "app.ts", type: "file", size: 12}],
+                entries: [%{name: "app.ts", type: "file", size: 12, ignored?: true}],
                 truncated: false
               }} =
                Tracks.files(ctx.owner, ctx.track.id, "../../../../home/sprite/work/kyoto/src")
