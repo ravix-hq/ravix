@@ -49,6 +49,7 @@ defmodule RavixWeb.WorkspaceLive do
         github_available: Accounts.capabilities().github,
         projects: [],
         rail_loaded: false,
+        rail_error: false,
         pending_url: nil,
         sections: [],
         section_placements: %{},
@@ -508,14 +509,12 @@ defmodule RavixWeb.WorkspaceLive do
     end
   end
 
-  # A rail read that crashed leaves the rail showing what it had. The clause
-  # below belongs to the two reads somebody pressed a button for; saying "the
-  # operation could not finish" about a refresh nobody asked for is an error
-  # message for something that was not an operation.
-  def handle_async(name, {:exit, _reason}, socket)
-      when name == :reload
-      when elem(name, 0) == :tracks,
-      do: {:noreply, socket}
+  # An initial failure needs a visible way forward. Later failures retain
+  # the loaded rail; the normal refresh path is still available.
+  def handle_async(:reload, {:exit, _reason}, socket),
+    do: {:noreply, assign(socket, rail_error: !socket.assigns.rail_loaded)}
+
+  def handle_async({:tracks, _id}, {:exit, _reason}, socket), do: {:noreply, socket}
 
   def handle_async(name, {:exit, reason}, socket) when name in [:refs, :repos] do
     flag = if name == :refs, do: :refs_loading, else: :repos_loading
@@ -711,7 +710,7 @@ defmodule RavixWeb.WorkspaceLive do
 
   defp reload_async(socket, opts) do
     user = socket.assigns.current_user
-    traced_async(socket, :reload, fn -> read_rail(user, opts) end)
+    traced_async(assign(socket, rail_error: false), :reload, fn -> read_rail(user, opts) end)
   end
 
   # The two creates, once they have something to show. The page patches to
@@ -809,6 +808,7 @@ defmodule RavixWeb.WorkspaceLive do
     |> assign(
       project: project || socket.assigns.project,
       rail_loaded: true,
+      rail_error: false,
       sections: sections,
       section_placements: placements,
       projects: projects,

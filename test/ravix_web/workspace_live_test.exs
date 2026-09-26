@@ -168,6 +168,38 @@ defmodule RavixWeb.WorkspaceLiveTest do
     assert has_element?(view, ".workspace-project-name[href='/p/#{project.id}']")
   end
 
+  test "an initial rail crash offers retry and then resolves the pending URL", %{conn: conn} do
+    user = insert_user()
+    insert_project(user: user)
+    expect(Projects, :list, fn _, _ -> raise "initial rail failed" end)
+    {:ok, view, _} = live(log_in_user(conn, user), "/p/missing")
+    render_async(view)
+    assert has_element?(view, "#rail-error", "Projects could not be loaded.")
+    refute has_element?(view, "#rail-loading")
+    assert has_element?(view, "#project-sections[aria-busy=false]")
+    refute_patched(view)
+
+    stub(Projects, :list, fn user, opts ->
+      Mimic.call_original(Projects, :list, [user, opts])
+    end)
+
+    view |> element("#rail-error button", "Retry") |> render_click()
+    assert render_async(view) =~ "That project or track is no longer available."
+    assert_patch(view, "/")
+    refute has_element?(view, "#rail-error")
+  end
+
+  test "retry after an initial rail crash still sends a new user to onboarding", %{conn: conn} do
+    user = insert_user(onboarded_at: nil)
+    expect(Projects, :list, fn _, _ -> raise "initial rail failed" end)
+    {:ok, view, _} = live(log_in_user(conn, user), "/")
+    render_async(view)
+    assert has_element?(view, "#rail-error")
+    stub(Projects, :list, fn _, _ -> [] end)
+    view |> element("#rail-error button", "Retry") |> render_click()
+    assert_redirect(view, "/welcome")
+  end
+
   test "an unknown project waits for the rail before flashing and leaving", %{conn: conn} do
     user = insert_user()
     insert_project(user: user)
