@@ -52,7 +52,7 @@
       aria-hidden="true"
     >
     </div>
-    <aside id="yard" class={["yard", @yard_open && "forced"]} aria-label="Projects and tracks">
+    <aside id="yard" class={["yard", @yard_open && "forced"]} aria-label="Projects">
       <div class="yard-top">
         <span class="avatar workspace-avatar" aria-hidden="true">
           {String.first(@current_user.login) |> String.upcase()}
@@ -97,98 +97,108 @@
             phx-value-name="new-project"
           ><.icon name="plus" size={13} /></button>
         </div>
-        <section :for={project <- @projects} class="workspace-project">
-          <div class="workspace-project-row">
+        <button
+          class="ghost section-manage"
+          id="manage-sections"
+          phx-click={JS.push_focus() |> JS.push("dialog")}
+          phx-value-name="sections"
+        >Manage sections</button>
+        <div
+          :for={{section, projects} <- section_groups(@projects, @sections, @section_placements)}
+          :if={section.id || projects != []}
+          class="project-section"
+          id={"section-#{section.id || "other"}"}
+        >
+          <div :if={section.id || @sections != []} class="yard-label">
             <button
-              class="project-toggle ghost"
-              phx-click="toggle-project"
-              phx-value-id={project.id}
-              aria-expanded={to_string(MapSet.member?(@expanded_projects, project.id))}
-              aria-controls={"project-tracks-#{project.id}"}
-              aria-label={"#{if MapSet.member?(@expanded_projects, project.id), do: "Collapse", else: "Expand"} #{project.display_name}"}
+              :if={section.id}
+              class="ghost section-toggle"
+              phx-click="toggle-section"
+              phx-value-id={section.id}
+              phx-value-collapsed={to_string(!section.collapsed)}
+              aria-expanded={to_string(!section.collapsed)}
+              aria-controls={"section-projects-#{section.id}"}
             >
-              <.icon
-                name="chevron"
-                size={12}
-                open={MapSet.member?(@expanded_projects, project.id)}
-              />
+              <.icon name="chevron" size={12} open={!section.collapsed} />
+              <span class="truncate">{section.name}</span><span class="dim">{length(projects)}</span>
             </button>
-            <.link
-              patch={"/p/#{project.id}"}
-              class={[
-                "workspace-project-name",
-                @project && @project.id == project.id && "selected"
-              ]}
-            >
-              <span class="project-mark" aria-hidden="true">
-                {String.first(project.name) |> String.upcase()}
-              </span>
-              <span class="truncate"><.project_name project={project} /></span>
-            </.link>
-            <.link
-              :if={project.access != :tracks}
-              patch={"/p/#{project.id}?new=track"}
-              class="project-add"
-              aria-label={"New track in #{project.display_name}"}
-            >
-              <.icon name="plus" size={13} />
-            </.link>
+            <span :if={!section.id}>{section.name}</span>
           </div>
-          <div
-            id={"project-tracks-#{project.id}"}
-            hidden={!MapSet.member?(@expanded_projects, project.id)}
-            class="project-tracks"
-          >
-            <.link
-              :for={{track, index} <- Enum.with_index(@tracks[project.id] || [], 1)}
-              patch={"/p/#{project.id}/t/#{track.id}"}
-              class={["workspace-track", @track_id == track.id && "selected"]}
-            >
-              <span
-                :if={track.status in [:running, :opening]}
-                class={"dot #{track.status}"}
-                role="img"
-                aria-label="Working"
-              ></span>
-              <span
-                :if={attention?(track)}
-                class="track-attention"
-                role="img"
-                aria-label="Needs attention"
+          <div id={"section-projects-#{section.id || "other"}"} hidden={section.collapsed}>
+            <p :if={section.id && projects == []} class="hint section-empty">
+              No projects. Choose this section from a project’s section picker.
+            </p>
+            <section :for={project <- projects} class="workspace-project">
+              <div class="workspace-project-row">
+                <.link
+                  patch={"/p/#{project.id}"}
+                  class={[
+                    "workspace-project-name",
+                    @project && @project.id == project.id && "selected"
+                  ]}
+                >
+                  <span class="project-mark" aria-hidden="true">
+                    {String.first(project.name) |> String.upcase()}
+                  </span>
+                  <span class="truncate"><.project_name project={project} /></span>
+                </.link>
+                <.link
+                  :if={project.access != :tracks}
+                  patch={"/p/#{project.id}?new=track"}
+                  class="project-add"
+                  aria-label={"New track in #{project.display_name}"}
+                >
+                  <.icon name="plus" size={13} />
+                </.link>
+              </div>
+              <form
+                :if={@sections != []}
+                id={"move-project-#{project.id}"}
+                phx-change="move-project"
+                class="project-section-picker"
               >
-                !
-              </span>
-              <span
-                :if={track.status not in [:running, :opening] && !attention?(track)}
-                class="track-num"
+                <input type="hidden" name="project" value={project.id} />
+                <label for={"project-section-#{project.id}"}>Section</label>
+                <select
+                  id={"project-section-#{project.id}"}
+                  name="section"
+                  aria-label={"Section for #{project.display_name}"}
+                >
+                  <option value="" selected={is_nil(@section_placements[project.id])}>
+                    Other projects
+                  </option>
+                  <option
+                    :for={section <- @sections}
+                    value={section.id}
+                    selected={@section_placements[project.id] == section.id}
+                  >
+                    {section.name}
+                  </option>
+                </select>
+              </form>
+              <div
+                :if={@project && @project.id == project.id && project.access != :tracks}
+                class="project-links"
               >
-                {index}
-              </span>
-              <span class="track-title">{track.title}</span>
-              <span :if={track.origin.kind == :plan} class="chip" title="From a project plan">Plan</span>
-            </.link>
-            <div
-              :if={@project && @project.id == project.id && project.access != :tracks}
-              class="project-links"
-            >
-              <button
-                class="ghost"
-                phx-click={JS.push_focus() |> JS.push("dialog")}
-                phx-value-name="people"
-              >
-                <.icon name="add-person" size={13} />People
-              </button>
-              <button
-                :if={project.role == :owner}
-                class="ghost"
-                phx-click={JS.push_focus() |> JS.push("dialog")}
-                phx-value-name="settings"
-              >
-                <.icon name="settings" size={13} />Project settings
-              </button>
-            </div>
+                <button
+                  class="ghost"
+                  phx-click={JS.push_focus() |> JS.push("dialog")}
+                  phx-value-name="people"
+                >
+                  <.icon name="add-person" size={13} />People
+                </button>
+                <button
+                  :if={project.role == :owner}
+                  class="ghost"
+                  phx-click={JS.push_focus() |> JS.push("dialog")}
+                  phx-value-name="settings"
+                >
+                  <.icon name="settings" size={13} />Project settings
+                </button>
+              </div>
+            </section>
           </div>
-        </section>
+        </div>
       </div>
       <div class="workspace-account">
         <.link href="/auth/signout" method="post" class="ghost">Sign out</.link>
@@ -272,6 +282,72 @@
         data-side="left"
       >
       </div>
+      <nav
+        :if={@project}
+        id="project-track-navigation"
+        phx-hook="TrackTabs"
+        class="track-navigation"
+        aria-label="Project tracks"
+      >
+        <button
+          type="button"
+          class="ghost track-scroll"
+          data-scroll-left
+          aria-label="Scroll tracks left"
+          aria-controls="project-track-tabs"
+          disabled
+        >‹</button>
+        <div id="project-track-tabs" class="track-tabs">
+          <.link
+            patch={"/p/#{@project.id}"}
+            class={["track-tab", is_nil(@track_id) && "selected"]}
+            aria-current={if is_nil(@track_id), do: "page"}
+          >Overview</.link>
+          <.link
+            :for={{track, index} <- Enum.with_index(@tracks[@project.id] || [], 1)}
+            patch={"/p/#{@project.id}/t/#{track.id}"}
+            class={["workspace-track track-tab", @track_id == track.id && "selected"]}
+            aria-current={if @track_id == track.id, do: "page"}
+          >
+            <span
+              :if={track.status in [:running, :opening]}
+              class={"dot #{track.status}"}
+              role="img"
+              aria-label="Working"
+            ></span>
+            <span
+              :if={attention?(track)}
+              class="track-attention"
+              role="img"
+              aria-label="Needs attention"
+            >
+              !
+            </span>
+            <span
+              :if={track.status not in [:running, :opening] && !attention?(track)}
+              class="track-num"
+            >
+              {index}
+            </span>
+            <span class="track-title">{track.title}</span>
+            <span :if={track.origin.kind == :plan} class="chip" title="From a project plan">Plan</span>
+          </.link>
+          <button
+            :if={@project.access != :tracks}
+            class="ghost track-tab"
+            phx-click={JS.push_focus() |> JS.push("dialog")}
+            phx-value-name="new-track"
+          ><.icon name="plus" size={13} />New track</button>
+        </div>
+        <button
+          type="button"
+          class="ghost track-scroll"
+          data-scroll-right
+          aria-label="Scroll tracks right"
+          aria-controls="project-track-tabs"
+          disabled
+        >›</button>
+      </nav>
       <div :if={@project && is_nil(@track_id)} class="crumbs">
         <span class="project-mark" aria-hidden="true">
           {String.first(@project.name) |> String.upcase()}
@@ -280,14 +356,6 @@
           :if={@project.repo}
           class="chip mono"
         >{@project.repo}</span><span class="spacer"></span>
-        <button
-          :if={@project.access != :tracks}
-          class="ghost"
-          phx-click={JS.push_focus() |> JS.push("dialog")}
-          phx-value-name="new-track"
-        >
-          New track
-        </button>
         <button
           :if={@project.access != :tracks}
           class="ghost"
@@ -346,7 +414,7 @@
         >
           New track
         </button>
-        <p :if={@project.access == :tracks}>Choose a track shared with you in the sidebar.</p>
+        <p :if={@project.access == :tracks}>Choose a track shared with you in the tabs above.</p>
       </div>
       <div :if={is_nil(@project) && @live_action == :projects} class="centred workspace-home">
         <div class="hero">
@@ -439,6 +507,43 @@
         </div>
       </div>
     </main>
+    <.dialog
+      :if={@dialog == :sections}
+      id="sections-dialog"
+      title="Project sections"
+      on_close="dismiss"
+    >
+      <p class="hint">Organize your sidebar. Sections are visible only to you.</p>
+      <form id="new-section-form" phx-submit="create-section">
+        <.input
+          name="section[name]"
+          id="section-name"
+          value=""
+          label="New section"
+          required
+          maxlength="80"
+        />
+        <button class="primary" phx-disable-with="Creating…">Create section</button>
+      </form>
+      <div :for={section <- @sections} class="section-editor">
+        <form id={"rename-section-#{section.id}"} phx-submit="rename-section">
+          <input type="hidden" name="section_id" value={section.id} />
+          <.input
+            name="section[name]"
+            id={"section-name-#{section.id}"}
+            value={section.name}
+            label="Section name"
+            required
+            maxlength="80"
+          />
+          <button class="secondary" phx-disable-with="Saving…">Rename</button>
+          <button type="button" class="ghost" phx-click="delete-section" phx-value-id={section.id}>Remove section</button>
+        </form>
+      </div>
+      <p :if={@sections != []} class="hint">
+        Removing a section keeps its projects in Other projects.
+      </p>
+    </.dialog>
     <.dialog :if={@dialog == :search} id="search-dialog" title="Find a track" on_close="dismiss">
       <form id="search-form" phx-change="search">
         <%!-- Every keystroke re-renders the list below it, which is every
@@ -533,7 +638,7 @@
         phx-submit="create-track"
         phx-change="edit"
       >
-        <div :if={@origin_kind != :pr}>
+        <div :if={@origin_kind != :pr} hidden={!@advanced_track}>
           <label for="track-title">Branch name</label>
           <div class="workspace-actions">
             <span id="branch-prefix">ravix/</span>
@@ -558,7 +663,7 @@
           {message}
         </p>
         <p :if={@origin_kind == :blank} class="hint">
-          New worktree from {@project.default_branch || "the default branch"}.
+          New worktree from {@project.default_branch || "the default branch"}, with an automatic name matching its directory.
         </p>
         <button
           type="button"

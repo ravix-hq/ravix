@@ -8,7 +8,7 @@
 // page_loading helper also reflects pending navigation in the shared status
 // indicator. There is no framework or package beyond Phoenix's own.
 //
-// The six hooks, and what they are for:
+// The hooks, and what they are for:
 //
 //   Theme           the palette picker (reads and writes `ravix.theme`)
 //   PanelResize     the drag handle between the rail, the stage and the inspector
@@ -16,8 +16,10 @@
 //   Composer        the prompt box: Enter sends, pasted images become uploads
 //   Terminal        the shell panel: history, Ctrl+L, output that follows itself
 //   Notify          desktop notifications when a track needs you and you are not looking
+//   SettingsSections section navigation and unsaved input warnings
+//   TrackTabs       horizontal scrolling and selected track visibility
 //
-// Adding a seventh is a product decision, not a convenience. Say why in its
+// Adding a hook is a product decision, not a convenience. Say why in its
 // file's header, and list it here.
 import "../css/app.css"
 import "phoenix_html"
@@ -30,10 +32,10 @@ import {TranscriptTail} from "./hooks/transcript_tail"
 import {Composer} from "./hooks/composer"
 import {Terminal} from "./hooks/terminal"
 import {Notify} from "./hooks/notify"
+import {TrackTabs} from "./hooks/track_tabs"
 import {SettingsSections} from "./hooks/settings_sections"
 
-// SettingsSections: section navigation and warnings before discarding unsaved inputs.
-const hooks = {Theme, PanelResize, TranscriptTail, Composer, Terminal, Notify, SettingsSections}
+const hooks = {Theme, PanelResize, TranscriptTail, Composer, Terminal, Notify, SettingsSections, TrackTabs}
 
 const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
 const liveSocket = new LiveSocket("/live", Socket, {

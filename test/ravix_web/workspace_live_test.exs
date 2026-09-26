@@ -357,7 +357,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
     track = insert_track(project: own, title: "My work")
     {:ok, view, _} = live(log_in_user(conn, user), "/")
     assert has_element?(view, "a", "My project")
-    assert has_element?(view, "a", "My work")
+    refute has_element?(view, "#yard a", "My work")
     refute render(view) =~ "Someone else"
     view |> element("a.workspace-project-name") |> render_click()
     assert_patch(view, "/p/#{own.id}")
@@ -370,17 +370,12 @@ defmodule RavixWeb.WorkspaceLiveTest do
     project = insert_project(user: user)
     insert_track(project: project)
     {:ok, view, _} = live(log_in_user(conn, user), "/home")
-    assert has_element?(view, "#project-tracks-#{project.id}[hidden]")
-    view |> element("button[phx-value-id='#{project.id}']") |> render_click()
-    refute has_element?(view, "#project-tracks-#{project.id}[hidden]")
-    view |> element("button[phx-value-id='#{project.id}']") |> render_click()
-    assert has_element?(view, "#project-tracks-#{project.id}[hidden]")
-    render_click(view, "toggle-project", %{id: "someone-elses-project"})
-    refute render(view) =~ "someone-elses-project"
+    refute has_element?(view, "#yard .workspace-track")
+    refute has_element?(view, ".track-tabs")
     view |> element("a.project-add") |> render_click()
     assert_patch(view, "/p/#{project.id}?new=track")
     assert has_element?(view, "#new-track-form")
-    refute has_element?(view, "#project-tracks-#{project.id}[hidden]")
+    assert has_element?(view, ".track-tabs .workspace-track")
     view |> form("#new-track-form", new_track: [title: "Keep this name"]) |> render_change()
     view |> element("button", "Advanced") |> render_click()
     refute has_element?(view, "#track-advanced[hidden]")
@@ -392,21 +387,24 @@ defmodule RavixWeb.WorkspaceLiveTest do
     refute has_element?(view, "#new-track-form")
   end
 
-  test "a collapsed project stays collapsed across patches", %{conn: conn} do
+  test "track tabs follow the selected project and mark the current track", %{conn: conn} do
     user = insert_user()
     project = insert_project(user: user)
     track = insert_track(project: project)
+    other = insert_project(user: user)
+    other_track = insert_track(project: other)
     {:ok, view, _} = live(log_in_user(conn, user), "/p/#{project.id}/t/#{track.id}")
 
-    # Arriving expands the group; collapsing it is the reader's decision and
-    # the next patch must not undo it.
-    refute has_element?(view, "#project-tracks-#{project.id}[hidden]")
-    view |> element("button[phx-value-id='#{project.id}']") |> render_click()
-    assert has_element?(view, "#project-tracks-#{project.id}[hidden]")
+    assert has_element?(
+             view,
+             ".track-tabs a[aria-current='page'][href='/p/#{project.id}/t/#{track.id}']"
+           )
 
-    render_click(view, "dismiss")
-    assert_patch(view, "/p/#{project.id}/t/#{track.id}")
-    assert has_element?(view, "#project-tracks-#{project.id}[hidden]")
+    refute has_element?(view, "#yard .workspace-track")
+    refute has_element?(view, ".track-tabs a[href='/p/#{other.id}/t/#{other_track.id}']")
+    view |> element(".workspace-project-name[href='/p/#{other.id}']") |> render_click()
+    assert has_element?(view, ".track-tabs a[href='/p/#{other.id}/t/#{other_track.id}']")
+    refute has_element?(view, ".track-tabs a[href='/p/#{project.id}/t/#{track.id}']")
   end
 
   test "hiding advanced options drops the origin they carried", %{conn: conn} do
@@ -424,19 +422,6 @@ defmodule RavixWeb.WorkspaceLiveTest do
     assert has_element?(view, "#track-advanced[hidden]")
     assert render(view) =~ "New worktree from"
     assert has_element?(view, "button.primary", "Blank")
-  end
-
-  test "disclosure state reaches assistive technology as a string", %{conn: conn} do
-    user = insert_user()
-    project = insert_project(user: user)
-    insert_track(project: project)
-    {:ok, view, _} = live(log_in_user(conn, user), "/home")
-
-    # A bare `aria-expanded` is invalid ARIA and reads as undefined, which is
-    # what a raw boolean renders to in HEEx.
-    assert has_element?(view, "button[aria-expanded='false'][phx-value-id='#{project.id}']")
-    view |> element("button[phx-value-id='#{project.id}']") |> render_click()
-    assert has_element?(view, "button[aria-expanded='true'][phx-value-id='#{project.id}']")
   end
 
   test "an empty inbox carries no count", %{conn: conn} do
@@ -636,7 +621,8 @@ defmodule RavixWeb.WorkspaceLiveTest do
     html = render_async(view)
 
     assert html =~ "Alpha two"
-    assert html =~ "Beta one"
+    view |> element(".workspace-project-name[href='/p/#{b.id}']") |> render_click()
+    assert render(view) =~ "Beta one"
     refute html =~ "Beta two"
   end
 
