@@ -349,6 +349,35 @@ test('project, track, streaming, image upload, reconnect, and revocation', async
   await expect(firstTrackTab).toBeVisible();
   const firstTrackName = (await firstTrackTab.locator('.track-title').textContent()).trim();
   await expect(page.locator('#yard .workspace-track')).toHaveCount(0);
+  // Personal sections persist across reloads and never delete the projects inside.
+  await page.getByRole('button', { name: 'Manage sections', exact: true }).click();
+  await page.getByLabel('New section', { exact: true }).fill('Browser work');
+  await page.getByRole('button', { name: 'Create section', exact: true }).click();
+  const sectionsDialog = page.getByRole('dialog', { name: 'Project sections', exact: true });
+  await expect(sectionsDialog.getByLabel('Section name', { exact: true })).toHaveValue('Browser work');
+  await page.keyboard.press('Escape');
+  const sectionPicker = page.getByRole('combobox', { name: 'Section for Browser quality', exact: true });
+  await sectionPicker.selectOption({ label: 'Browser work' });
+  const sectionGroup = page.locator('.project-section').filter({ has: page.locator('.section-toggle', { hasText: 'Browser work' }) });
+  await expect(sectionGroup.locator('.workspace-project-name')).toContainText('Browser quality');
+  await sectionGroup.locator('.section-toggle').click();
+  await expect(sectionGroup.locator('.workspace-project-name')).toBeHidden();
+  await page.reload();
+  await expect(sectionGroup.locator('.section-toggle')).toHaveAttribute('aria-expanded', 'false');
+  await sectionGroup.locator('.section-toggle').click();
+  await expect(sectionGroup.locator('.workspace-project-name')).toBeVisible();
+  await accessible(page);
+  await capture(page, 'project-sections');
+  await page.getByRole('button', { name: 'Manage sections', exact: true }).click();
+  await sectionsDialog.getByLabel('Section name', { exact: true }).fill('Renamed work');
+  await sectionsDialog.getByRole('button', { name: 'Rename', exact: true }).click();
+  await expect(page.locator('.section-toggle')).toContainText('Renamed work');
+  await sectionsDialog.getByRole('button', { name: 'Remove section', exact: true }).click();
+  await expect(sectionsDialog.getByLabel('Section name', { exact: true })).toHaveCount(0);
+  await page.keyboard.press('Escape');
+  await expect(page.locator('#section-other .workspace-project-name', { hasText: 'Browser quality' })).toBeVisible();
+
+
   await expect(page.getByLabel('Command', { exact: true })).not.toBeVisible();
   await page.getByRole('button', { name: 'Terminal', exact: true }).click();
   await page.getByLabel('Command', { exact: true }).fill('echo draft');
