@@ -791,7 +791,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
     refute has_element?(view, ".track-tabs a[href='/p/#{project.id}/t/#{track.id}']")
   end
 
-  test "track tabs drop the shared namespace and show each track's state", %{conn: conn} do
+  test "track tabs omit ordinals across mixed states and show each track's state", %{conn: conn} do
     user = insert_user()
     project = insert_project(user: user)
 
@@ -841,12 +841,11 @@ defmodule RavixWeb.WorkspaceLiveTest do
         ] do
       assert has_element?(view, "#{tab.(track)} .dot[role=img][aria-label='#{label}']")
       assert has_element?(view, "#{tab.(track)}[aria-label='#{track.title}, #{label}']")
-      refute has_element?(view, "#{tab.(track)} .track-num")
     end
 
-    # A read, idle track has nothing to report and keeps its ordinal.
+    # Idle and active tracks alike omit decorative numbering.
     refute has_element?(view, "#{tab.(idle)} [role=img]")
-    assert has_element?(view, "#{tab.(idle)} .track-num", "1")
+    refute has_element?(view, ".track-tabs .track-num")
   end
 
   test "hiding advanced options drops the origin they carried", %{conn: conn} do

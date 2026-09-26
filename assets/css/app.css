@@ -574,13 +574,9 @@ h4 { font-size: 12px; color: var(--dim); font-weight: 500; letter-spacing: 0; }
 .workspace-track .track-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .workspace-track:hover { background: var(--surface-hover); }
 .workspace-track.selected { color: var(--ink); background: var(--surface-active); }
-.track-num {
-  flex: none; min-width: 13px; display: inline-flex; align-items: center; justify-content: center;
-  color: var(--dimmer); font-size: 11px; font-variant-numeric: tabular-nums;
-}
 .track-attention { flex: none; width: 13px; height: 13px; display: grid; place-items: center; border: 1px solid var(--warn); border-radius: 3px; color: var(--warn); font-size: 10px; }
 
-/* The status dot takes the ordinal's slot while a track is working. */
+/* Status dots accompany track titles when there is activity to report. */
 .dot { flex: none; width: 6px; height: 6px; border-radius: 999px; background: var(--dimmer); }
 .dot.ready { background: var(--ok); }
 .dot.running { background: var(--accent); animation: pulse 1.4s ease-in-out infinite; }
