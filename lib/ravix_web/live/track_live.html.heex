@@ -401,13 +401,30 @@
             <p :if={@preview.unavailable_reason}>{@preview.unavailable_reason}</p>
             <div class="workspace-actions">
               <button
-                :for={action <- ~w(open restart stop logs)}
-                class="ghost"
+                class="primary"
                 phx-click="preview"
-                phx-value-action={action}
-                disabled={@panel.busy?}
+                phx-value-action="open"
+                disabled={@panel.busy? || !@preview.available}
               >
-                {String.capitalize(action)}
+                {if @preview.state in [:stopped, :failed], do: "Start", else: "Open"}
+              </button>
+              <button
+                :if={@preview.state in [:starting, :ready]}
+                phx-click="preview"
+                phx-value-action="restart"
+                disabled={@panel.busy? || !@preview.available}
+              >
+                Restart
+              </button>
+              <button
+                phx-click="preview"
+                phx-value-action="stop"
+                disabled={@panel.busy? || @preview.state == :stopped}
+              >
+                Stop
+              </button>
+              <button phx-click="preview" phx-value-action="logs" disabled={@panel.busy?}>
+                Logs
               </button>
             </div>
             <a
