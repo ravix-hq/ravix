@@ -19,6 +19,7 @@
 //   SettingsSections section navigation and unsaved input warnings
 //   TrackTabs       horizontal scrolling and selected track visibility
 //   ProjectSections drag a sidebar project onto one of your sections
+//   CopyCode        copy a Help example exactly, with success or failure feedback
 //
 // Adding a hook is a product decision, not a convenience. Say why in its
 // file's header, and list it here.
@@ -36,8 +37,9 @@ import {Notify} from "./hooks/notify"
 import {TrackTabs} from "./hooks/track_tabs"
 import {SettingsSections} from "./hooks/settings_sections"
 import {ProjectSections} from "./hooks/project_sections"
+import {CopyCode} from "./hooks/copy_code"
 
-const hooks = {Theme, PanelResize, TranscriptTail, Composer, Terminal, Notify, SettingsSections, TrackTabs, ProjectSections}
+const hooks = {Theme, PanelResize, TranscriptTail, Composer, Terminal, Notify, SettingsSections, TrackTabs, ProjectSections, CopyCode}
 
 const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
 const liveSocket = new LiveSocket("/live", Socket, {

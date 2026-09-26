@@ -685,19 +685,27 @@ test('a hard load paints the saved palette, never the default one first', async 
   await paintedOnly(page, 'hot-dog-stand');
 });
 
-test('help explains desktop connections and stays accessible on mobile', async ({ page }) => {
+test('help explains desktop connections and stays accessible on mobile', async ({ page, context }) => {
+  await context.grantPermissions(['clipboard-read', 'clipboard-write']);
   await signIn(page);
   const account = page.locator('#account-trigger');
   const help = page.getByRole('button', { name: 'Help', exact: true });
   await account.click();
   await help.click();
-  const dialog = page.getByRole('dialog', { name: 'Help · AI tools' });
+  const dialog = page.getByRole('dialog', { name: 'Help – AI tools' });
   await expect(dialog).toBeVisible();
   await expect(dialog.getByText(`claude mcp add --transport http ravix http://localhost:${process.env.BROWSER_PORT || 4103}/mcp`, { exact: true })).toBeVisible();
   await dialog.getByText('Drive tracks with an A2A client', { exact: true }).click();
   await expect(dialog.getByText(`http://localhost:${process.env.BROWSER_PORT || 4103}/.well-known/agent-card.json`, { exact: true })).toBeVisible();
   await dialog.getByText('Example JSON-RPC request', { exact: true }).click();
   await expect(dialog.locator('pre').filter({ hasText: 'SendMessage' })).toBeVisible();
+  for (const id of ['help-mcp-command', 'help-a2a-request']) {
+    const block = dialog.locator(`#${id}`);
+    const expected = await block.locator('code').textContent();
+    await block.getByRole('button', { name: /^Copy / }).click();
+    await expect(block.getByRole('status')).toHaveText('Copied');
+    expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(expected);
+  }
   await accessible(page);
   await capture(page, 'tooling-help');
   await page.keyboard.press('Escape');

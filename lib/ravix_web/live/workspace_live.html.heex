@@ -836,7 +836,7 @@
         </article>
       </div>
     </.dialog>
-    <.dialog :if={@dialog == :help} id="help-dialog" title="Help · AI tools" on_close="dismiss">
+    <.dialog :if={@dialog == :help} id="help-dialog" title="Help – AI tools" on_close="dismiss">
       <button type="button" class="secondary" phx-click="dialog" phx-value-name="changes">What's new<span
         :if={@changes_unseen > 0}
         class="chip"
