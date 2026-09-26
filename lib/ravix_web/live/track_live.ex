@@ -181,6 +181,8 @@ defmodule RavixWeb.TrackLive do
     {:noreply, assign(socket, narrow_view: name)}
   end
 
+  def handle_event("narrow-view", _, socket), do: {:noreply, socket}
+
   def handle_event("retry-load", _, socket), do: {:noreply, load(socket)}
   def handle_event("validate", _, socket), do: {:noreply, socket}
 
@@ -245,7 +247,7 @@ defmodule RavixWeb.TrackLive do
 
   def handle_event("panel", %{"name" => name}, socket) when is_map_key(@tabs, name) do
     panel = Panel.select(socket.assigns.panel, Map.fetch!(@tabs, name))
-    {:noreply, socket |> assign(panel: panel) |> load_panel()}
+    {:noreply, socket |> assign(panel: panel, narrow_view: "files") |> load_panel()}
   end
 
   def handle_event("select-diff", %{"path" => path}, socket) do

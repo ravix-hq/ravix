@@ -50,6 +50,11 @@ test('narrow track views give the conversation space and preserve drafts', async
     await views.getByRole('button', { name: 'Commands', exact: true }).click();
     const command = page.getByRole('textbox', { name: 'Command', exact: true });
     await expect(command).toBeVisible();
+    await page.getByRole('button', { name: 'Open Previews', exact: true }).click();
+    await expect(views.getByRole('button', { name: 'Files', exact: true })).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.getByRole('navigation', { name: 'Inspector panels' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Previews', exact: true })).toHaveClass('selected');
+    await views.getByRole('button', { name: 'Commands', exact: true }).click();
     await command.fill('echo preserved');
     expect(await scrollSurfaces(page)).toBe(1);
     await page.screenshot({ path: `tmp/narrow-terminal-${width}.png` });
