@@ -107,12 +107,33 @@ defmodule Ravix.Tooling.WaitTest do
 
     assert id == ctx.one.id
 
-    assert {:ok, %{changed: []}} =
-             Tooling.call(ctx.p, "wait_task", %{
-               "task_ids" => [id],
-               "since" => %{id => "TASK_STATE_FAILED"},
-               "timeout_ms" => 10
-             })
+    {:ok, rows} = Tasks.observe(ctx.p, [id])
+    ref = make_ref()
+
+    server =
+      start_supervised!(
+        {Ravix.Tooling.Wait,
+         %{
+           principal: ctx.p,
+           ids: [id],
+           since: %{id => "TASK_STATE_FAILED"},
+           rows: rows,
+           deadline: System.monotonic_time(:millisecond) + 5_000,
+           owner: self(),
+           ref: ref,
+           callers: []
+         }}
+      )
+
+    # A 10ms wall-clock deadline could kill a refresh during a SQL query,
+    # disconnecting this test's shared sandbox. Exercise the deadline only
+    # after the worker has returned the known terminal state.
+    await_idle(server)
+    refute_receive {^ref, _}, 0
+    monitor = Process.monitor(server)
+    send(server, :deadline)
+    assert_receive {^ref, {:ok, %{changed: []}}}, 1000
+    assert_receive {:DOWN, ^monitor, :process, ^server, _}, 1000
   end
 
   test "queue changes wake the waiter and revocation is checked before returning", ctx do
