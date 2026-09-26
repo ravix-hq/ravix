@@ -1107,11 +1107,47 @@ defmodule RavixWeb.TrackLiveTest do
     assert has_element?(ctx.view, ".file-name", "_build")
     assert has_element?(ctx.view, ".file-name", "src")
     assert has_element?(ctx.view, "button[phx-click='toggle-ignored']")
+    refute has_element?(ctx.view, ".file-note", "Git ignore filtering is unavailable")
     send(worker, :finish)
     render_async(ctx.view, 1_000)
+    refute has_element?(ctx.view, ".file-note", "Git ignore filtering is unavailable")
     refute has_element?(ctx.view, ".file-name", "_build")
     ctx.view |> element("button[phx-click='toggle-ignored']") |> render_click()
     assert has_element?(ctx.view, ".file-name", "_build")
+  end
+
+  test "unavailable filtering appears once at the root only after metadata finishes", ctx do
+    owner = self()
+    notice = "Git ignore filtering is unavailable for this directory."
+
+    stub(Tracks, :file_metadata, fn _, _, listing ->
+      if listing.path == ctx.track.workdir do
+        send(owner, {:metadata_pending, self()})
+        receive do: (:finish -> {:ok, listing})
+      else
+        {:ok, listing}
+      end
+    end)
+
+    render_click(ctx.view, "refresh-panel")
+    assert_receive {:metadata_pending, worker}
+    assert has_element?(ctx.view, ".file-name", "src")
+    refute has_element?(ctx.view, ".file-note", notice)
+    send(worker, :finish)
+    render_async(ctx.view, 1_000)
+    assert has_element?(ctx.view, ".file-explorer > .file-note", notice)
+    assert has_element?(ctx.view, "button[phx-click='toggle-ignored']")
+
+    for path <- ["src", "src/src"] do
+      ctx.view
+      |> element("button[phx-value-path='#{ctx.track.workdir}/#{path}']")
+      |> render_click()
+
+      render_async(ctx.view, 1_000)
+      render_async(ctx.view, 1_000)
+      assert has_element?(ctx.view, ".file-explorer > .file-note", notice)
+      refute has_element?(ctx.view, ".file-list .file-note", notice)
+    end
   end
 
   test "internal directory links expand their targets and ancestor links cannot recurse", ctx do

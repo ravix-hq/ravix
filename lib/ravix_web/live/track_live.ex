@@ -1175,6 +1175,7 @@ defmodule RavixWeb.TrackLive do
   attr :show_ignored?, :boolean, default: false
   attr :branch_merged?, :boolean, default: false
   attr :directories, :map, default: %{}
+  attr :metadata, :map, default: %{}
   attr :diff_path, :string, default: nil
   attr :diff_filter, :string, default: ""
   attr :diff_show_large, :boolean, default: false
@@ -1198,6 +1199,12 @@ defmodule RavixWeb.TrackLive do
       <button phx-click="toggle-ignored" aria-pressed={to_string(@show_ignored?)}>
         Show ignored files
       </button>
+      <p
+        :if={!@data.ignore_available? && !Map.has_key?(@metadata, @data.path)}
+        class="file-note"
+      >
+        Git ignore filtering is unavailable for this directory.
+      </p>
       <.file_listing
         listing={@data}
         directories={@directories}
@@ -1431,9 +1438,6 @@ defmodule RavixWeb.TrackLive do
         <p :if={match?({:error, _}, child)} class="file-note" role="alert">{elem(child, 1)}</p>
       </li>
       <li :if={@entries == []} class="file-note">Empty directory</li>
-      <li :if={!@listing.ignore_available?} class="file-note">
-        Git ignore filtering is unavailable for this directory.
-      </li>
       <li :if={@listing.truncated} class="file-note">Directory listing is truncated.</li>
     </ul>
     """
