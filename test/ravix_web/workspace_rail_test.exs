@@ -57,6 +57,7 @@ defmodule RavixWeb.WorkspaceRailTest do
 
     for {project, track, _} <- rows do
       render_patch(view, "/p/#{project.id}")
+      render_async(view)
       assert has_element?(view, ".track-tab", track.title)
     end
 
@@ -89,8 +90,10 @@ defmodule RavixWeb.WorkspaceRailTest do
     render_async(view, 7_000)
     assert has_element?(view, ".workspace-project-name[href='/p/#{slow.id}']")
     render_patch(view, "/p/#{slow.id}")
+    render_async(view)
     refute has_element?(view, ".track-tab", slow_track.title)
     render_patch(view, "/p/#{fast.id}")
+    render_async(view)
     assert has_element?(view, ".track-tab", fast_track.title)
 
     # The memo owns its provider task and may have other waiters. Finish it
@@ -121,6 +124,7 @@ defmodule RavixWeb.WorkspaceRailTest do
     for project <- projects do
       assert has_element?(view, ".workspace-project-name[href='/p/#{project.id}']")
       render_patch(view, "/p/#{project.id}")
+      render_async(view)
       assert has_element?(view, ".track-tab", track.title) == (project.id == good.id)
     end
   end
