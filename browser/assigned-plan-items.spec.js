@@ -7,7 +7,7 @@ import { signIn, connectClaude } from './sign-in.js';
 test('assigned plan items stay compact across widths and themes', async ({ page }) => {
   await signIn(page, 'eli', '/home');
   await connectClaude(page);
-  await page.getByRole('button', { name: /^Quick start/ }).click();
+  await page.getByRole('button', { name: /^New project/ }).click();
   await page.getByLabel('Project name', { exact: true }).fill('Assigned items');
   await page.getByRole('button', { name: 'Create project', exact: true }).click();
   await page.getByRole('navigation', { name: 'Project tracks', exact: true }).getByRole('button', { name: 'New track', exact: true }).click();

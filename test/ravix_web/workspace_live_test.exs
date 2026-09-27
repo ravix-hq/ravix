@@ -621,15 +621,15 @@ defmodule RavixWeb.WorkspaceLiveTest do
     assert has_element?(view, ".home-recent a[href='/p/#{own.id}']", "Recent work")
     refute render(view) =~ hidden.name
     refute has_element?(view, ".home-action[disabled]", "Open a local project")
-    view |> element(".home-action", "Open a GitHub project") |> render_click()
+    view |> element(".home-action", "New project") |> render_click()
     view |> form("#new-project-form", new_project: [name: "Abandoned name"]) |> render_change()
     render_click(view, "dismiss")
-    view |> element(".home-action", "Quick start") |> render_click()
+    view |> element(".home-action", "New project") |> render_click()
     # A pristine form renders no `value` at all, which is how the field
     # comes up empty; the point of the assertion is that the abandoned name
-    # is not still in it.
+    # is not still in it. The one home action opens the repository form.
     assert has_element?(view, "#project-name:not([value])")
-    refute has_element?(view, "#project-repo")
+    assert has_element?(view, "#project-repo")
     refute render(view) =~ "Abandoned name"
   end
 

@@ -161,9 +161,12 @@ test('a first visit is walked through how it works, the agent, and GitHub', asyn
   await expect(page).toHaveTitle('Welcome · Ravix');
   await expect(page.locator('[data-phx-main]')).toHaveClass(/phx-connected/);
   await expect(page.getByRole('heading', { name: /^Welcome to Ravix/ })).toBeVisible();
-  for (const idea of ['A project is a repository.', 'Every project has a computer.', 'A project holds many conversations.', 'Invite teammates, and you are the one billed.']) {
-    await expect(page.getByText(idea, { exact: true })).toBeVisible();
-  }
+  await expect(page.getByText('Describe a change. Ravix opens a branch, and your agent starts there.', { exact: true })).toBeVisible();
+  await expect(page.getByText('You describe the task. Ravix opens a branch, and the agent starts there.', { exact: true })).toBeVisible();
+  await page.locator('summary', { hasText: 'Review the work' }).click();
+  await expect(page.getByText('The diff sits next to the conversation. The preview is the app, already running.', { exact: true })).toBeVisible();
+  await page.locator('summary', { hasText: 'Bring someone into the same thread' }).click();
+  await expect(page.getByText('Share the track. They continue the thread, with the earlier decisions still there.', { exact: true })).toBeVisible();
   await accessible(page);
   await capture(page, 'welcome-intro');
 
@@ -320,9 +323,14 @@ test('home quick start creates a scratch project and recent navigation survives 
   await expect(page.getByRole('button', { name: /Open a local project/ })).toHaveCount(0);
   await accessible(page);
   await capture(page, 'home-empty');
-  await page.getByRole('button', { name: /^Quick start/ }).click();
+  await page.getByRole('button', { name: /^New project/ }).click();
   await page.getByLabel('Project name', { exact: true }).fill('Quick start quality');
-  await expect(page.getByLabel('Repository', { exact: true })).toHaveCount(0);
+  const repository = page.getByLabel('Repository', { exact: true });
+  await expect(repository).toHaveValue('');
+  await expect(repository).toHaveAttribute(
+    'placeholder',
+    'Search repositories, or leave empty for scratch',
+  );
   await page.getByRole('button', { name: 'Create project', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Plans', exact: true })).toBeVisible();
   await expect(page.locator('.crumbs')).toContainText('Quick start quality');
@@ -331,7 +339,7 @@ test('home quick start creates a scratch project and recent navigation survives 
   const recent = page.getByRole('region', { name: 'Recent projects' });
   await expect(recent).toContainText('Quick start quality');
   await expect(recent).toContainText('no repository');
-  await page.getByRole('button', { name: /^Quick start/ }).click();
+  await page.getByRole('button', { name: /^New project/ }).click();
   await page.getByLabel('Project name', { exact: true }).fill('A much longer project name to verify columns and narrow screen wrapping');
   await page.getByRole('button', { name: 'Create project', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Plans', exact: true })).toBeVisible();
@@ -1062,7 +1070,7 @@ test('shared project prefixes stay muted and truncate across every theme', async
   test.setTimeout(120_000);
   await signIn(page);
   await page.getByRole('link', { name: 'Home', exact: true }).first().click();
-  await page.getByRole('button', { name: /^Quick start/ }).click();
+  await page.getByRole('button', { name: /^New project/ }).click();
   const name = 'Shared project with a deliberately long name for a narrow rail';
   await page.getByLabel('Project name', { exact: true }).fill(name);
   await page.getByRole('button', { name: 'Create project', exact: true }).click();

@@ -43,7 +43,7 @@ test('standalone preview loads quietly, reveals diagnostics, fails visibly and r
 
 test('track logs stay open through status patches and failure still opens diagnostics', async ({ page }) => {
   await signIn(page, 'eli', '/home');
-  await page.getByRole('button', { name: /^Quick start/ }).click();
+  await page.getByRole('button', { name: /^New project/ }).click();
   await page.getByLabel('Project name', { exact: true }).fill('Preview disclosure');
   await page.getByRole('button', { name: 'Create project', exact: true }).click();
   await page.getByRole('navigation', { name: 'Project tracks', exact: true }).getByRole('button', { name: 'New track', exact: true }).click();
