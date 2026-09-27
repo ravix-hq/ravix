@@ -325,7 +325,12 @@ test('home quick start creates a scratch project and recent navigation survives 
   await capture(page, 'home-empty');
   await page.getByRole('button', { name: /^New project/ }).click();
   await page.getByLabel('Project name', { exact: true }).fill('Quick start quality');
-  await expect(page.getByLabel('Repository', { exact: true })).toHaveCount(0);
+  const repository = page.getByLabel('Repository', { exact: true });
+  await expect(repository).toHaveValue('');
+  await expect(repository).toHaveAttribute(
+    'placeholder',
+    'Search repositories, or leave empty for scratch',
+  );
   await page.getByRole('button', { name: 'Create project', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Plans', exact: true })).toBeVisible();
   await expect(page.locator('.crumbs')).toContainText('Quick start quality');
