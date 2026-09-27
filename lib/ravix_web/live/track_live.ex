@@ -1781,6 +1781,9 @@ defmodule RavixWeb.TrackLive do
   defp setup_label(%{sandbox_state: :closing}, _now),
     do: "Closing… cleaning up this track's machine"
 
+  defp setup_label(%{setup_error_code: "sandbox_outcome_unknown"}, _now),
+    do: "Checking this track's machine…"
+
   defp setup_label(%{sandbox_stage: "creating"}, _now), do: "Creating this track's machine…"
 
   defp setup_label(%{sandbox_stage: "cloning", repo_full_name: repo}, _now),

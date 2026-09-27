@@ -66,6 +66,40 @@ defmodule Ravix.Cluster.DistributionTest do
     end
   end
 
+  test "project mutation locks exclude another instance and release on node loss", ctx do
+    id = Ecto.UUID.generate()
+
+    for kind <- [:shared_machine, :secret_change] do
+      holder = Node.spawn(ctx.node, Ravix.ClusterPeer, :hold_project_mutation, [self(), id, kind])
+      assert_receive {:mutation_locked, ^holder}, 5_000
+
+      assert {:error, {:conflict, "project_change_in_progress", _}} =
+               Cluster.project_mutation(id, kind, fn -> flunk("overlapping mutation") end)
+
+      monitor = Process.monitor(holder)
+      send(holder, :release)
+      assert_receive {:DOWN, ^monitor, :process, ^holder, :normal}, 5_000
+      assert :allowed = Cluster.project_mutation(id, kind, fn -> :allowed end)
+    end
+
+    holder =
+      Node.spawn(ctx.node, Ravix.ClusterPeer, :hold_project_mutation, [
+        self(),
+        id,
+        :shared_machine
+      ])
+
+    assert_receive {:mutation_locked, ^holder}, 5_000
+    stop_peer(ctx.peer, ctx.node)
+    assert :allowed = Cluster.project_mutation(id, :shared_machine, fn -> :allowed end)
+
+    assert_raise RuntimeError, "failed allocation", fn ->
+      Cluster.project_mutation(id, :shared_machine, fn -> raise "failed allocation" end)
+    end
+
+    assert :allowed = Cluster.project_mutation(id, :shared_machine, fn -> :allowed end)
+  end
+
   describe "busy?/1 across instances" do
     test "reads the answer from the instance that owns the server", %{node: node} do
       track_id = Ecto.UUID.generate()

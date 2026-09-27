@@ -93,11 +93,13 @@ defmodule Ravix.Tracks.Sandbox.Store do
     end)
   end
 
-  @doc "Check the optional retirement fence without holding a connection across allocation."
+  @doc "Serialize the opt-in fence check and allocation with last-shared retirement."
   def shared_open(project_id, fun) do
     if Ravix.Config.retire_shared_machines?() do
-      # ownership: Access.project_access admitted this shared allocation.
-      shared_available(Ravix.Projects.Store.live_project(project_id), fun)
+      Ravix.Cluster.project_mutation(project_id, :shared_machine, fn ->
+        # ownership: Access.project_access admitted this shared allocation.
+        shared_available(Ravix.Projects.Store.live_project(project_id), fun)
+      end)
     else
       fun.()
     end
@@ -115,7 +117,9 @@ defmodule Ravix.Tracks.Sandbox.Store do
 
   def close_shared(track, project) do
     if Ravix.Config.retire_shared_machines?() do
-      close_shared_retiring(track, project)
+      Ravix.Cluster.project_mutation(project.id, :shared_machine, fn ->
+        close_shared_retiring(track, project)
+      end)
     else
       Ravix.Tracks.Store.close_track(track.id)
       {:ok, :ok}

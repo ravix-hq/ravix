@@ -1436,6 +1436,98 @@ defmodule Ravix.ProjectsTest do
       assert requests(client) == []
     end
 
+    test "owner can confirm an uncertain secret write and save again without reviving stale snapshots",
+         ctx do
+      track =
+        insert_track(project: ctx.project, sandbox_layout: :dedicated, sandbox_state: :ready)
+
+      client =
+        fountain([
+          {%{method: "POST", path: "/api/vaults/v/secrets"}, {:error, :timeout}},
+          {%{method: "POST", path: "/api/vaults/v/secrets"}, {201, [], %{data: %{key: "TOKEN"}}}}
+        ])
+
+      attrs = %{secret: %{store: "vault", key: "TOKEN", value: "private-value"}}
+
+      assert {:error, %Ravix.Fountain.Error{} = error} =
+               Projects.update_settings(ctx.owner, ctx.project.id, attrs)
+
+      assert Ravix.Fountain.Error.unknown_outcome?(error)
+      pending = Repo.get!(Project, ctx.project.id)
+      assert pending.secrets_pending
+      member = insert_user()
+      insert_project_member(ctx.project, member)
+
+      for outsider <- [member, insert_user()] do
+        assert {:error, :not_found} =
+                 Projects.confirm_secret_change(
+                   outsider,
+                   ctx.project.id,
+                   pending.secrets_generation
+                 )
+      end
+
+      assert {:error, {:conflict, "stale_secret_confirmation", _}} =
+               Projects.confirm_secret_change(
+                 ctx.owner,
+                 ctx.project.id,
+                 pending.secrets_generation - 1
+               )
+
+      assert Repo.get!(Project, ctx.project.id).secrets_pending
+
+      assert :ok =
+               Projects.confirm_secret_change(
+                 ctx.owner,
+                 ctx.project.id,
+                 pending.secrets_generation
+               )
+
+      refute Repo.get!(Project, ctx.project.id).secrets_pending
+      assert Ravix.Tracks.Store.get_track(track.id).setup_error_code == "secrets_changed"
+      assert {:ok, %{rev: 3}} = Projects.update_settings(ctx.owner, ctx.project.id, attrs)
+      assert length(requests(client)) == 2
+      {:ok, _} = Ravix.Projects.Store.begin_secret_change(ctx.project.id)
+
+      assert {:error, {:conflict, "stale_secret_confirmation", _}} =
+               Projects.confirm_secret_change(
+                 ctx.owner,
+                 ctx.project.id,
+                 pending.secrets_generation
+               )
+
+      assert Repo.get!(Project, ctx.project.id).secrets_pending
+    end
+
+    test "owner confirmation and another save cannot unlock a provider write still in flight",
+         ctx do
+      insert_track(project: ctx.project, sandbox_layout: :dedicated)
+      fountain([])
+      parent = self()
+
+      stub(Ravix.Fountain, :put_secret, fn _, _, _, _, _ ->
+        refute Repo.in_transaction?()
+        send(parent, :writing_secret)
+        receive do: (:finish -> :ok)
+      end)
+
+      attrs = %{secret: %{store: "vault", key: "TOKEN", value: "value"}}
+      writer = Task.async(fn -> Projects.update_settings(ctx.owner, ctx.project.id, attrs) end)
+      assert_receive :writing_secret, 1_000
+      generation = Repo.get!(Project, ctx.project.id).secrets_generation
+
+      assert {:error, {:conflict, "project_change_in_progress", _}} =
+               Projects.confirm_secret_change(ctx.owner, ctx.project.id, generation)
+
+      assert {:error, {:conflict, "project_change_in_progress", _}} =
+               Projects.update_settings(ctx.owner, ctx.project.id, attrs)
+
+      assert Repo.get!(Project, ctx.project.id).secrets_pending
+      send(writer.pid, :finish)
+      assert {:ok, %{rev: 2}} = Task.await(writer)
+      refute Repo.get!(Project, ctx.project.id).secrets_pending
+    end
+
     test "secrets: named, not reserved, and only in a store the project has", %{
       owner: owner,
       project: project

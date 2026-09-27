@@ -44,6 +44,30 @@ defmodule Ravix.Cluster do
   def name(scope, key), do: {:ravix, scope, key}
 
   @doc """
+  Exclude overlapping project mutations across connected instances without
+  checking out a database connection. Only opt-in lifecycle paths use this.
+  The caller owns the lock; process/node loss releases it. Durable fences
+  remain in the database after the critical section ends.
+  """
+  @spec project_mutation(String.t(), :shared_machine | :secret_change, (-> term())) :: term()
+  def project_mutation(project_id, kind, fun) do
+    lock = {{:ravix, :project_mutation, kind, project_id}, self()}
+    nodes = [node() | Node.list()]
+
+    if :global.set_lock(lock, nodes, 0) do
+      try do
+        fun.()
+      after
+        :global.del_lock(lock, nodes)
+      end
+    else
+      {:error,
+       {:conflict, "project_change_in_progress",
+        "Another change to this project's machine or secrets is still running. Try again shortly."}}
+    end
+  end
+
+  @doc """
   A name to start a process under, cluster-wide.
 
   `GenServer.start_link(mod, arg, name: Ravix.Cluster.via(:follower, id))`

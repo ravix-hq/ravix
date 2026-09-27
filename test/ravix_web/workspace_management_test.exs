@@ -373,6 +373,93 @@ defmodule RavixWeb.WorkspaceManagementTest do
     refute html =~ "private-value"
   end
 
+  test "owner confirms a pending secret change explicitly and the form disappears", ctx do
+    {:ok, generation} = Projects.Store.begin_secret_change(ctx.project.id)
+    settings(ctx, secrets_pending: true, secrets_generation: generation)
+    assert has_element?(ctx.view, "#secret-confirmation-form", "Values cannot be checked here")
+    reject(&Projects.update_settings/3)
+    ctx.view |> form("#secret-confirmation-form") |> render_submit()
+    assert render(ctx.view) =~ "Confirm that the previous secret change has finished first"
+    assert Projects.Store.live_project(ctx.project.id).secrets_pending
+
+    stub(Projects, :settings, fn _, _ ->
+      {:ok,
+       %Projects.Settings{
+         name: ctx.project.name,
+         runtime: "claude",
+         model: "model",
+         instructions: "",
+         setup_script: "",
+         packages: %{},
+         env_keys: [],
+         vault_keys: [],
+         catalog: Catalog.empty()
+       }}
+    end)
+
+    ctx.view |> form("#secret-confirmation-form", confirmed: "true") |> render_submit()
+    render_async(ctx.view)
+    refute Projects.Store.live_project(ctx.project.id).secrets_pending
+    refute has_element?(ctx.view, "#secret-confirmation-form")
+    assert render(ctx.view) =~ "Secret changes are unlocked"
+    assert render(ctx.view) =~ "rebuild dedicated tracks"
+  end
+
+  test "a failed secret save immediately exposes confirmation without keeping its value", ctx do
+    settings(ctx)
+
+    expect(Projects, :update_settings, fn _, id, _ ->
+      {:ok, _} = Projects.Store.begin_secret_change(id)
+      {:error, {:unavailable, "The service did not confirm the change."}}
+    end)
+
+    ctx.view
+    |> form("#secret-form", secret: [store: "vault", key: "TOKEN", value: "never-render-me"])
+    |> render_submit()
+
+    render_async(ctx.view)
+
+    assert has_element?(
+             ctx.view,
+             "#secret-confirmation-form",
+             "previous secret change could not be confirmed"
+           )
+
+    refute render(ctx.view) =~ "never-render-me"
+  end
+
+  test "secret confirmation refuses stale forms and lost ownership", ctx do
+    {:ok, generation} = Projects.Store.begin_secret_change(ctx.project.id)
+    settings(ctx, secrets_pending: true, secrets_generation: generation)
+    :ok = Projects.Store.finish_secret_change(ctx.project.id, generation)
+    {:ok, _} = Projects.Store.begin_secret_change(ctx.project.id)
+    ctx.view |> form("#secret-confirmation-form", confirmed: "true") |> render_submit()
+    render_async(ctx.view)
+    assert render(ctx.view) =~ "Reopen Settings"
+    assert Projects.Store.live_project(ctx.project.id).secrets_pending
+    Repo.update!(Ecto.Changeset.change(ctx.project, user_id: insert_user().id))
+    ctx.view |> form("#secret-confirmation-form", confirmed: "true") |> render_submit()
+    assert render(ctx.view) =~ "No such thing here"
+    assert Projects.Store.live_project(ctx.project.id).secrets_pending
+  end
+
+  test "revoked session cannot confirm a pending secret change", ctx do
+    {token, session} = insert_session(ctx.user)
+
+    {:ok, view, _} =
+      live(Plug.Test.init_test_session(ctx.conn, session_token: token), "/p/#{ctx.project.id}")
+
+    {:ok, generation} = Projects.Store.begin_secret_change(ctx.project.id)
+    settings(%{ctx | view: view}, secrets_pending: true, secrets_generation: generation)
+    Repo.delete!(session)
+    reject(&Projects.confirm_secret_change/3)
+
+    assert {:error, {:redirect, %{to: "/login"}}} =
+             view |> form("#secret-confirmation-form", confirmed: "true") |> render_submit()
+
+    assert Projects.Store.live_project(ctx.project.id).secrets_pending
+  end
+
   test "saving settings runs off the page, with the button disabled until Fountain answers",
        ctx do
     settings(ctx)

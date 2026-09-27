@@ -168,6 +168,31 @@ defmodule RavixWeb.TrackLiveTest do
     refute has_element?(ctx.view, "#track-setup-status")
   end
 
+  test "uncertain allocation shows ongoing checks and saved prompts without a retry button",
+       ctx do
+    Repo.update!(
+      Ecto.Changeset.change(ctx.track,
+        sandbox_layout: :dedicated,
+        sandbox_state: :provisioning,
+        sandbox_stage: "creating",
+        setup_state: "retry",
+        setup_error_code: "sandbox_outcome_unknown",
+        setup_error: FountainError.public_message("sandbox_outcome_unknown")
+      )
+    )
+
+    send(
+      ctx.view.pid,
+      {:hub, %Event{name: :tracks, project_id: ctx.project.id, track_id: ctx.track.id}}
+    )
+
+    settle(ctx.view)
+    assert has_element?(ctx.view, "#track-setup-status", "Checking this track's machine…")
+    assert has_element?(ctx.view, "#track-setup-status", "Your prompts are saved")
+    refute has_element?(ctx.view, "button[phx-click=retry-track]")
+    refute render(ctx.view) =~ "next in 0s"
+  end
+
   test "stale secret snapshots explain the required destructive rebuild", ctx do
     Repo.update!(
       Ecto.Changeset.change(ctx.track,
