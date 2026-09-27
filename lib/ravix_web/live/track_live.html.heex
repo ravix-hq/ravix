@@ -225,6 +225,7 @@
         </div>
         <.loading_status :if={:interrupt in @pending}>Stopping agent…</.loading_status>
         <div
+          :if={@track.setup_state != "ready"}
           id="track-setup-status"
           role={if @track.status == :setup_failed, do: "alert", else: "status"}
         >

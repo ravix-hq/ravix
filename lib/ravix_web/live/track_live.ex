@@ -474,10 +474,16 @@ defmodule RavixWeb.TrackLive do
     end
   end
 
+  # The countdown only moves while a retry is scheduled. Otherwise re-arm
+  # slowly and assign nothing, so an idle track page does not re-render.
   def handle_info(:setup_clock, socket) do
-    Process.send_after(self(), :setup_clock, 1_000)
-
-    {:noreply, assign(socket, setup_now: DateTime.utc_now())}
+    if match?(%{setup_state: "retry"}, socket.assigns.track) do
+      Process.send_after(self(), :setup_clock, 1_000)
+      {:noreply, assign(socket, setup_now: DateTime.utc_now())}
+    else
+      Process.send_after(self(), :setup_clock, 15_000)
+      {:noreply, socket}
+    end
   end
 
   def handle_info(:refresh_plan_items, socket), do: {:noreply, refresh_plan_items(socket)}

@@ -191,11 +191,17 @@ defmodule RavixWeb.TrackLiveTest do
 
       send(ctx.view.pid, {:hub, Event.new(:turn, ctx.project.id, track_id: ctx.track.id)})
       settle(ctx.view)
-      assert has_element?(ctx.view, "#track-setup-status", unquote(label))
-      assert has_element?(ctx.view, "#track-setup-status", "The runtime could not initialize.")
 
-      assert has_element?(ctx.view, "#track-setup-status", "Prompts will wait") ==
-               unquote(state) in ["pending", "running", "retry"]
+      if unquote(state) == "ready" do
+        # A working track carries no setup line at all.
+        refute has_element?(ctx.view, "#track-setup-status")
+      else
+        assert has_element?(ctx.view, "#track-setup-status", unquote(label))
+        assert has_element?(ctx.view, "#track-setup-status", "The runtime could not initialize.")
+
+        assert has_element?(ctx.view, "#track-setup-status", "Prompts will wait") ==
+                 unquote(state) in ["pending", "running", "retry"]
+      end
     end
   end
 
