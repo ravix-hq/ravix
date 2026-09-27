@@ -608,7 +608,14 @@ defmodule RavixWeb.PreviewGateway do
             protocol -> put_resp_header(conn, "sec-websocket-protocol", protocol)
           end
 
-        state = %{tunnel: tunnel, tunnel_module: tunnel_module, watch: watch, leftover: leftover}
+        state = %{
+          tunnel: tunnel,
+          tunnel_module: tunnel_module,
+          watch: watch,
+          leftover: leftover,
+          backend: site.backend,
+          row: site.row
+        }
 
         WebSockAdapter.upgrade(conn, Relay, state,
           compress: false,
