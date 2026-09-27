@@ -18,6 +18,72 @@ defmodule Ravix.Tooling.ReconcilerTest do
     %{p: principal, track: track, project: project}
   end
 
+  for status <- ["running", "interrupted", "failed", "completed"] do
+    test "suspension hint settles a #{status} turn without a turn stage", c do
+      task = submit(c, "suspend")
+      server = server()
+      Reconciler.tick(server)
+      events = Ravix.SuspensionFixture.events(task.id)
+      expect(Fountain, :turns, fn _, _ -> {:ok, [%{turn(task) | status: unquote(status)}]} end)
+
+      expect(Fountain, :events_page, fn _, _, _ ->
+        {:ok, %{events: events, next_cursor: 3, has_more: false}}
+      end)
+
+      send(server, {:transcript, c.track.id, Event.from(List.last(events))})
+      :sys.get_state(server)
+      saved = Repo.get!(Task, task.id)
+      assert saved.state == "TASK_STATE_FAILED"
+      assert saved.result == Ravix.SuspensionFixture.message()
+      assert saved.failure_message == saved.result
+      assert Repo.get_by!(Ravix.Tracks.TurnFailure, turn_id: task.id).code == "machine_suspended"
+    end
+  end
+
+  for {status, expected} <- [
+        {"interrupted", "TASK_STATE_FAILED"},
+        {"ended", "TASK_STATE_COMPLETED"}
+      ] do
+    test "45-second backstop settles WORKING when Fountain reports #{status}", c do
+      task = submit(c, "backstop")
+
+      task
+      |> Ecto.Changeset.change(state: "TASK_STATE_WORKING", turn_id: task.id)
+      |> Repo.update!()
+
+      reconciled_ago(task, 46)
+      expect(Fountain, :turns, fn _, _ -> {:ok, [%{turn(task) | status: unquote(status)}]} end)
+
+      expect(Fountain, :events_page, fn _, _, _ ->
+        {:ok, %{events: [event(task, 1)], next_cursor: 1, has_more: false}}
+      end)
+
+      assert :ok = Reconciler.tick(server())
+      assert Repo.get!(Task, task.id).state == unquote(expected)
+    end
+  end
+
+  test "an uncorrelated suspension after the saved cursor settles the active receipt", c do
+    task = submit(c, "cursor")
+
+    task
+    |> Ecto.Changeset.change(state: "TASK_STATE_WORKING", turn_id: task.id, cursor: 2)
+    |> Repo.update!()
+
+    reconciled_ago(task, 46)
+    expect(Fountain, :turns, fn _, _ -> {:ok, [%{turn(task) | status: "running"}]} end)
+
+    expect(Fountain, :events_page, fn _, _, opts ->
+      assert opts[:after] == 2
+
+      {:ok,
+       %{events: [List.last(Ravix.SuspensionFixture.events())], next_cursor: 3, has_more: false}}
+    end)
+
+    assert :ok = Reconciler.tick(server())
+    assert Repo.get!(Task, task.id).failure_message == Ravix.SuspensionFixture.message()
+  end
+
   test "settlement persists ten replies without get_task, sharing one thread read", c do
     tasks = for n <- 1..10, do: submit(c, "#{n}")
     server = server()

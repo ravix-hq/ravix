@@ -108,10 +108,31 @@ defmodule Ravix.Tracks.Transcript do
   @spec add_event(Page.t(), Event.t() | map()) :: Page.t()
   def add_event(page, raw) do
     case Event.from(raw) do
-      %Event{id: id} = event when is_integer(id) -> place(page, event, id)
-      _unnumbered -> page
+      %Event{id: id} = event when is_integer(id) ->
+        place_suspension(page, event, id)
+
+      _unnumbered ->
+        page
     end
   end
+
+  # Fountain publishes sandbox lifecycle notices without a turn_id. Bind only
+  # to the immediately preceding open turn; sleeping between turns is normal.
+  defp place_suspension(page, %Event{turn_id: "pending"} = event, id) do
+    if Event.suspension(event) do
+      case List.last(page.turns) do
+        %Turn{settled?: false, id: turn_id, events: [%Event{id: last} | _]} when last < id ->
+          place(page, %{event | turn_id: turn_id}, id)
+
+        _ ->
+          %{page | last_event_id: max(page.last_event_id || 0, id)}
+      end
+    else
+      place(page, event, id)
+    end
+  end
+
+  defp place_suspension(page, event, id), do: place(page, event, id)
 
   defp place(%Page{} = page, %Event{turn_id: turn_id} = event, id) do
     {turns, found?} =
