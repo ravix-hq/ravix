@@ -12,15 +12,14 @@ defmodule Ravix.PromptQueue.Server do
   allows POSTs four seconds to settle, then leaves ambiguous sends to recovery.
   It stops before the endpoint, with an explicit five-second child budget.
 
-  Sweeps are on a timer -- every thirty seconds while nothing waits, every
-  two while something does, because an idle deployment sweeping a nearly
-  always empty index on every instance is the common case and the one worth
-  spending nothing on -- and out of turn whenever a thread with a waiting
-  prompt says a turn has settled. A prompt held back by a busy agent
+  Sweeps run every thirty seconds as a backstop and immediately whenever a
+  thread with a waiting prompt says a turn has settled. The worker holds a
+  real follower subscription for each queued head, even without a browser.
+  A prompt held back by a busy agent
   therefore goes out as that turn ends rather than on the next tick, and the
-  timer remains the backstop for every case an event cannot cover: nobody is
-  following the thread, the broadcast was missed, or the instance that heard
-  it left. Both paths run the same idempotent sweep, and `Store.claim/1`
+  timer remains the backstop when a stream is unavailable, a broadcast is
+  missed, or the instance that heard it leaves. Both paths run the same
+  idempotent sweep, and `Store.claim/1`
   decides which instance actually sends.
 
   Threads are delivered in parallel, one task each under
@@ -48,7 +47,7 @@ defmodule Ravix.PromptQueue.Server do
   Options to `start_link/1`: `:name` (default this module), `:interval`
   in milliseconds between sweeps that find nothing waiting (default 30000;
   `false` for no timer at all, for tests), and `:busy_interval`, the shorter
-  gap used while a prompt waits (default 2000, and never longer than
+  gap used while a prompt waits (default 30000, and never longer than
   `:interval`).
   """
 
@@ -75,12 +74,9 @@ defmodule Ravix.PromptQueue.Server do
   import Ecto.Query, only: [from: 2]
 
   @interval 30_000
-  # While a prompt is actually waiting. The wake below is what usually gets
-  # there first, but only a thread somebody is following broadcasts at all --
-  # a prompt sent through the MCP server to a track no page has open is the
-  # case this interval is for -- so the gap while something waits stays what
-  # it was before the wake existed.
-  @busy_interval 2_000
+  # Followers deliver settle events even without a browser. Poll only as a
+  # backstop for missed events or a temporarily unavailable stream.
+  @busy_interval 30_000
   # A per-head backstop, not a sweep deadline: the HTTP client defaults to
   # 60 seconds, but readiness/preview work may also take time. A task killed
   # here cannot settle its claim. Store.recover detects departed owners or
@@ -135,7 +131,7 @@ defmodule Ravix.PromptQueue.Server do
     state = %{
       interval: Keyword.get(opts, :interval, @interval),
       busy_interval: Keyword.get(opts, :busy_interval, @busy_interval),
-      following: MapSet.new(),
+      following: %{},
       running: nil,
       timer: nil,
       callers: [],
@@ -196,10 +192,19 @@ defmodule Ravix.PromptQueue.Server do
     {:noreply, finish_sweep(state)}
   end
 
-  def handle_info({:DOWN, _ref, :process, pid, _reason}, state) do
+  def handle_info({:DOWN, ref, :process, pid, _reason}, state) do
     {claim, claims} = Map.pop(state.claims, pid)
     release_prepared(claim)
-    {:noreply, %{state | claims: claims}}
+    state = %{state | claims: claims}
+
+    case Enum.find(state.following, fn {_id, monitor} -> monitor == ref end) do
+      nil ->
+        {:noreply, state}
+
+      {id, _} ->
+        Follower.unsubscribe(id)
+        {:noreply, start_sweep(%{state | following: Map.delete(state.following, id)})}
+    end
   end
 
   # A followed thread's transcript. A settled turn is the moment its
@@ -316,6 +321,9 @@ defmodule Ravix.PromptQueue.Server do
       {:exit, reason} -> Logger.error("ravix: prompt delivery crashed: #{inspect(reason)}")
     end)
 
+    # Release subscriptions as soon as a head settles instead of holding
+    # otherwise idle streams until the next backstop sweep.
+    GenServer.call(server, {:heads, Store.heads(), MapSet.size(setups) > 0})
     :ok
   end
 
@@ -344,17 +352,35 @@ defmodule Ravix.PromptQueue.Server do
   defp follow(state, heads) do
     wanted = for %Item{status: :queued} = row <- heads, into: MapSet.new(), do: row.thread_id
 
-    Enum.each(MapSet.difference(wanted, state.following), &join/1)
-    Enum.each(MapSet.difference(state.following, wanted), &leave/1)
+    following =
+      Enum.reduce(state.following, state.following, fn {id, ref}, acc ->
+        if MapSet.member?(wanted, id) do
+          acc
+        else
+          Follower.unsubscribe(id)
+          Process.demonitor(ref, [:flush])
+          Map.delete(acc, id)
+        end
+      end)
 
-    %{state | following: wanted, waiting?: not Enum.empty?(wanted)}
+    following = Enum.reduce(wanted, following, &join_follower/2)
+    %{state | following: following, waiting?: not Enum.empty?(wanted)}
   end
 
-  defp join(thread_id),
-    do: Phoenix.PubSub.subscribe(Ravix.PubSub, Follower.topic(thread_id))
+  defp join_follower(id, following) when is_map_key(following, id), do: following
 
-  defp leave(thread_id),
-    do: Phoenix.PubSub.unsubscribe(Ravix.PubSub, Follower.topic(thread_id))
+  defp join_follower(id, following) do
+    # ownership: a queued head belongs to this thread; delivery below
+    # rechecks its sender's access before sending anything to Fountain.
+    case Follower.subscribe(id) do
+      {:ok, pid} ->
+        Map.put(following, id, Process.monitor(pid))
+
+      {:error, _} ->
+        Follower.unsubscribe(id)
+        following
+    end
+  end
 
   # ── one head ──────────────────────────────────────────────────────────
 
@@ -464,11 +490,17 @@ defmodule Ravix.PromptQueue.Server do
     case Fountain.get_conversation(client, track.conversation_id) do
       {:ok, conversation} ->
         cond do
-          Shapes.busy?(conversation) and not blank_thread?(client, row, conversation) -> :busy
-          Shapes.ended?(conversation) -> {:ended, ended_message(client, track, conversation)}
+          track.sandbox_layout == :shared and Shapes.busy?(conversation) and
+              not blank_thread?(client, row, conversation) ->
+            :busy
+
+          Shapes.ended?(conversation) ->
+            {:ended, ended_message(client, track, conversation)}
+
           # Idle, or a status this version does not know: either way nothing
           # is running, so whether a prompt can be sent is the machine's answer.
-          true -> machine_readiness(client, project)
+          true ->
+            machine_readiness(client, project, track)
         end
 
       {:error, _reason} ->
@@ -535,7 +567,12 @@ defmodule Ravix.PromptQueue.Server do
     |> Enum.find(&Event.failed_stage?/1)
   end
 
-  defp machine_readiness(client, project) do
+  defp machine_readiness(client, project, track) do
+    project =
+      if track.sandbox_layout == :dedicated,
+        do: %{project | vault_id: track.vault_id},
+        else: project
+
     case Ravix.Projects.prepare_machine(project, client) do
       :ok -> :ready
       {:error, _reason} -> :unavailable
