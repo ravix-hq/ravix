@@ -340,6 +340,15 @@ defmodule Ravix.DedicatedLifecycleTest do
         sandbox_state: :ready
       })
 
+    sibling =
+      insert_track(
+        project: project,
+        sandbox_layout: :dedicated,
+        sandbox_state: :ready,
+        sandbox_id: "sibling-disk",
+        vault_id: "sibling-copy"
+      )
+
     assert {:ok, _} = Store.request_rebuild(track, project)
     [_, rebuild] = Store.operations(track.id)
 
@@ -360,6 +369,9 @@ defmodule Ravix.DedicatedLifecycleTest do
     Sandbox.advance(client, rebuild.id)
     assert %{phase: "failed"} = Store.get_operation(rebuild.id)
     assert %{sandbox_generation: 2, vault_id: nil, sandbox_id: nil} = Store.get_track(track.id)
+    assert Store.get_track(sibling.id) == sibling
+    assert Store.operations(sibling.id) == []
+    refute Enum.any?(FakeTransport.calls(client), &String.contains?(&1.path, "sibling"))
   end
 
   test "cleanup remains pending until deletion is confirmed, then retries idempotently" do

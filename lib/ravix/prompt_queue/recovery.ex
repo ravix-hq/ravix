@@ -15,8 +15,10 @@ defmodule Ravix.PromptQueue.Recovery do
   alias Ravix.Fountain
   alias Ravix.Plans.Status
   alias Ravix.Projects.Project
-  alias Ravix.PromptQueue.{Item, Store}
+  alias Ravix.PromptQueue.Item
+  alias Ravix.PromptQueue.Store
   alias Ravix.Spec
+  alias Ravix.Tracks.CredentialRecovery
   alias Ravix.Tracks.Track
 
   @doc "Remove a complete leading recovery block and report whether context was restored."
@@ -40,7 +42,13 @@ defmodule Ravix.PromptQueue.Recovery do
     state = %{scan: cursor, reset: last, baseline?: baseline?}
 
     with {:ok, scanned} <- scan(client, track.conversation_id, cursor, state) do
-      preamble = if scanned.reset > last, do: preamble(track, project), else: ""
+      # ownership: Server.access admitted this queued sender through Access.thread_access.
+      thread =
+        if CredentialRecovery.enabled?(track, project),
+          do: Ravix.Tracks.Store.thread(track.id, row.thread_id)
+
+      restore? = thread && thread.recovery_context_pending
+      preamble = if scanned.reset > last or restore?, do: preamble(track, project), else: ""
       reset = if preamble == "", do: nil, else: scanned.reset
 
       if Store.prepare_recovery(row.id, row.claim_token, reset, scanned.scan),

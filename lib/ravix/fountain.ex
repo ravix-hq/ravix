@@ -415,6 +415,7 @@ defmodule Ravix.Fountain do
       |> optional("title", launch.title)
       |> optional("prompt", launch.prompt)
       |> optional("model", launch.model)
+      |> optional("inference_credential_id", launch.inference_credential_id)
 
     with {:ok, raw} <- data(client, "POST", "/api/conversations", body: body) do
       {:ok, Shapes.conversation(raw)}

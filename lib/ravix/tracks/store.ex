@@ -225,6 +225,99 @@ defmodule Ravix.Tracks.Store do
     end
   end
 
+  @doc "Persist a rejected source's replacement identity before any provider mutation."
+  def recover_credentials(track, thread_id) do
+    Repo.transaction(fn ->
+      current = Repo.one!(from(t in Track, where: t.id == ^track.id, lock: "FOR UPDATE"))
+
+      thread =
+        Repo.one!(
+          from(t in Thread,
+            where: t.id == ^thread_id and t.track_id == ^track.id,
+            lock: "FOR UPDATE"
+          )
+        )
+
+      if current.closed_at || thread.closed_at ||
+           current.sandbox_generation != track.sandbox_generation,
+         do: Repo.rollback(:stale_generation)
+
+      if thread.conversation_id == track.conversation_id and is_nil(thread.credential_recovery) do
+        recovery = %{
+          "channel" => Ecto.UUID.generate(),
+          "generation" => current.sandbox_generation,
+          "conversation" => thread.conversation_id,
+          "attempted" => false
+        }
+
+        thread |> Ecto.Changeset.change(credential_recovery: recovery) |> Repo.update!()
+      else
+        thread
+      end
+    end)
+  end
+
+  def attempt_credential_recovery(thread) do
+    recovery = Map.put(thread.credential_recovery, "attempted", true)
+
+    {count, _} =
+      Repo.update_all(
+        from(t in Thread,
+          where: t.id == ^thread.id and t.credential_recovery == ^thread.credential_recovery
+        ),
+        set: [credential_recovery: recovery]
+      )
+
+    if count == 1,
+      do: {:ok, %{thread | credential_recovery: recovery}},
+      else: {:error, :stale_recovery}
+  end
+
+  def retry_credential_recovery(thread) do
+    Repo.update_all(
+      from(t in Thread,
+        where: t.id == ^thread.id and t.credential_recovery == ^thread.credential_recovery
+      ),
+      set: [credential_recovery: Map.put(thread.credential_recovery, "attempted", false)]
+    )
+
+    :ok
+  end
+
+  def bind_credential_recovery(track, thread, conversation_id) do
+    Repo.transaction(fn ->
+      current = Repo.one!(from(t in Track, where: t.id == ^track.id, lock: "FOR UPDATE"))
+      fresh = Repo.one!(from(t in Thread, where: t.id == ^thread.id, lock: "FOR UPDATE"))
+      recovery = thread.credential_recovery
+
+      if current.closed_at || fresh.closed_at || current.sandbox_state != :ready ||
+           current.sandbox_generation != recovery["generation"] ||
+           fresh.credential_recovery != recovery,
+         do: Repo.rollback(:stale_generation)
+
+      fresh
+      |> Ecto.Changeset.change(
+        conversation_id: conversation_id,
+        credential_recovery: nil,
+        recovery_context_pending: true,
+        previous_conversation_ids: fresh.previous_conversation_ids ++ [fresh.conversation_id]
+      )
+      |> Repo.update!()
+
+      if thread.id == track.id, do: update_track(track.id, conversation_id: conversation_id)
+      :ok
+    end)
+  end
+
+  def credential_context_delivered(thread_id, conversation_id) do
+    Repo.update_all(
+      from(t in Thread, where: t.id == ^thread_id and t.conversation_id == ^conversation_id),
+      set: [recovery_context_pending: false]
+    )
+
+    :ok
+  end
+
   @doc "Due setup checks, including tracks with no queued prompts or connected page."
   def pending_setups, do: Repo.all(from(t in setup_candidates(), select: t.id))
 

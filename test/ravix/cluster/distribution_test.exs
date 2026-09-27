@@ -251,6 +251,42 @@ defmodule Ravix.Cluster.DistributionTest do
     end)
   end
 
+  test "a departed credential recovery worker cannot cause a second allocation", ctx do
+    alias Ecto.Adapters.SQL.Sandbox
+    alias Ravix.{Repo, Tracks}
+    import Ravix.Factory
+
+    Sandbox.unboxed_run(Repo, fn ->
+      user = insert_user()
+      project = insert_project(user: user)
+
+      track =
+        insert_track(
+          project: project,
+          sandbox_layout: :dedicated,
+          sandbox_state: :ready,
+          conversation_id: "old"
+        )
+
+      try do
+        {:ok, thread} = Tracks.Store.recover_credentials(track, track.id)
+
+        assert {:ok, claimed} =
+                 :erpc.call(ctx.node, Ravix.ClusterPeer, :attempt_credential_recovery, [thread])
+
+        stop_peer(ctx.peer, ctx.node)
+        assert {:error, :stale_recovery} = Tracks.Store.attempt_credential_recovery(thread)
+        assert Tracks.Store.thread(track.id).credential_recovery == claimed.credential_recovery
+        assert {:ok, :ok} = Tracks.Store.bind_credential_recovery(track, claimed, "reconciled")
+        assert Tracks.Store.thread(track.id).previous_conversation_ids == ["old"]
+      after
+        Repo.delete!(track)
+        Repo.delete!(project)
+        Repo.delete!(user)
+      end
+    end)
+  end
+
   test "the next sweep recovers a departed node's fresh claim, but not a live node's", ctx do
     alias Ecto.Adapters.SQL.Sandbox
     alias Ravix.PromptQueue.Store

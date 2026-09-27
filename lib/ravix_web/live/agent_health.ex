@@ -2,7 +2,7 @@ defmodule RavixWeb.Live.AgentHealth do
   @moduledoc "Owner-funded runtime status, shared by the project overview and track composer."
   use RavixWeb, :live_component
 
-  alias Ravix.{Accounts, Projects}
+  alias Ravix.{Accounts, Projects, Tracks}
   alias RavixWeb.Live.Hooks
 
   @impl true
@@ -10,17 +10,24 @@ defmodule RavixWeb.Live.AgentHealth do
 
   @impl true
   def update(assigns, socket) do
+    key = {assigns[:track_id], assigns[:thread_id]}
+
+    socket =
+      if socket.assigns[:health_key] != key,
+        do: assign(socket, health: nil, health_key: key),
+        else: socket
+
     socket = assign(socket, assigns)
     user = socket.assigns.current_user
-    id = socket.assigns.project_id
-    {:ok, traced_async(socket, :health, fn -> Projects.agent_health(user, id) end)}
+    project_id = socket.assigns.project_id
+    {:ok, traced_async(socket, :health, fn -> read_health(user, project_id, key) end)}
   end
 
   @impl true
   def handle_async(:health, {:ok, response}, socket) do
     Hooks.component(socket, fn ->
       # A membership can disappear while Fountain's answer is in flight.
-      case Projects.visible?(socket.assigns.current_user, socket.assigns.project_id) do
+      case visible?(socket) do
         false -> {:noreply, assign(socket, health: nil)}
         _ -> {:noreply, assign(socket, health: health(response))}
       end
@@ -43,6 +50,24 @@ defmodule RavixWeb.Live.AgentHealth do
     {:noreply, socket}
   end
 
+  defp read_health(user, _project_id, {track_id, thread_id}) when is_binary(track_id),
+    do: Tracks.agent_health(user, track_id, thread_id)
+
+  defp read_health(user, project_id, _), do: Projects.agent_health(user, project_id)
+
+  defp visible?(socket) do
+    case socket.assigns[:health_key] do
+      {track_id, thread_id} when is_binary(track_id) ->
+        match?(
+          {:ok, _},
+          Ravix.Accounts.Access.thread_access(socket.assigns.current_user, track_id, thread_id)
+        )
+
+      _ ->
+        Projects.visible?(socket.assigns.current_user, socket.assigns.project_id)
+    end
+  end
+
   defp health({:ok, health}), do: health
   defp health(_), do: nil
 
@@ -59,7 +84,14 @@ defmodule RavixWeb.Live.AgentHealth do
         <p :if={@health.exhausted_until}>
           {@health.owner_login}'s ChatGPT usage resets at {@health.exhausted_until}.
         </p>
-        <p :if={!@health.exhausted_until}>
+        <p :if={!@health.exhausted_until && Map.get(@health, :scope) == :thread}>
+          <%= if @health.usable? == false do %>
+            This thread uses {RavixWeb.AgentName.label(@health.runtime)}, which {@health.owner_login} has disconnected.
+          <% else %>
+            This thread’s {RavixWeb.AgentName.label(@health.runtime)} connection was refused. Reconnect, then retry the saved message.
+          <% end %>
+        </p>
+        <p :if={!@health.exhausted_until && Map.get(@health, :scope) != :thread}>
           <%= if @health.owner? do %>
             <%= if @refused do %>
               Sending is paused because your agent connection was refused. Reconnect, then retry your saved prompts.

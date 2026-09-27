@@ -99,7 +99,8 @@ defmodule RavixWeb.Live.SettingsDialog do
       |> put_packages(params)
 
     switching =
-      is_binary(attrs["runtime"]) and attrs["runtime"] != socket.assigns.settings.runtime
+      is_binary(attrs["runtime"]) and attrs["runtime"] != socket.assigns.settings.runtime and
+        not Map.get(socket.assigns.settings, :default_only, false)
 
     socket =
       assign(socket,
@@ -111,11 +112,17 @@ defmodule RavixWeb.Live.SettingsDialog do
     if switching do
       user = user(socket)
       id = project_id(socket)
+      shared_only? = Map.get(socket.assigns.settings, :shared_tracks) != nil
 
       {:noreply,
        begin(socket, :switch_preview, fn ->
          with {:ok, tracks} <- Tracks.list(user, id) do
-           {:ok, %{attrs: attrs, count: length(tracks)}}
+           count =
+             if shared_only?,
+               do: Enum.count(tracks, &(&1.sandbox_layout == :shared)),
+               else: length(tracks)
+
+           {:ok, %{attrs: attrs, count: count, shared_only?: shared_only?}}
          end
        end)}
     else
@@ -521,6 +528,7 @@ defmodule RavixWeb.Live.SettingsDialog do
           data-model-labels={Jason.encode!(model_labels(@settings.catalog, @settings.model))}
           data-saved-model={@settings.model}
           data-saved-runtime={@settings.runtime}
+          data-default-only={to_string(Map.get(@settings, :default_only, false))}
         >
           <nav class="settings-nav" aria-label="Settings sections">
             <button
@@ -585,6 +593,12 @@ defmodule RavixWeb.Live.SettingsDialog do
               hidden
             >
               <h3 id="settings-agent-title" tabindex="-1">Agent</h3>
+              <p :if={Map.get(@settings, :default_only, false)} class="settings-help">
+                Changes the default agent for new threads. Existing threads keep their agent.
+              </p>
+              <p :if={Map.get(@settings, :shared_tracks) not in [nil, 0]} class="settings-help">
+                {@settings.shared_tracks} tracks still share the project machine
+              </p>
               <p class="settings-help">
                 Switching agents rebuilds the machine, closes every track and loses unpushed work on its disk. Model and instruction changes apply to new tracks.
               </p>
@@ -717,6 +731,7 @@ defmodule RavixWeb.Live.SettingsDialog do
                   This closes {@switch_confirmation.count} open {if @switch_confirmation.count == 1,
                     do: "track",
                     else: "tracks"} and discards the machine's disk, including unpushed work.
+                  <span :if={Map.get(@switch_confirmation, :shared_only?, false)}>Dedicated tracks are unaffected.</span>
                 </p>
                 <button
                   id="confirm-agent-switch"
@@ -931,13 +946,18 @@ defmodule RavixWeb.Live.SettingsDialog do
               hidden
             >
               <h3 id="settings-danger-title" tabindex="-1">Danger zone</h3>
-              <p>
+              <p :if={Map.get(@settings, :shared_tracks) != nil}>
+                Rebuild an individual track from that track; sibling tracks are unaffected.
+                Deleting the project deletes all its tracks’ machines, uncommitted changes, unpushed commits, settings and secrets. Cleanup continues until deletion is confirmed.
+              </p>
+              <p :if={Map.get(@settings, :shared_tracks) == nil}>
                 Rebuilding discards the machine’s disk and closes every track, keeping project settings and secrets for the next machine. Unpushed work on that disk is lost. Deleting also removes the project settings and secrets. These actions cannot be undone.
               </p>
               <form
                 :for={
                   {action, label} <- [{"rebuild", "Rebuild machine"}, {"delete", "Delete project"}]
                 }
+                :if={action != "rebuild" or not Map.get(@settings, :default_only, false)}
                 id={"project-#{action}-form"}
                 phx-target={@myself}
                 phx-change="confirm-danger"

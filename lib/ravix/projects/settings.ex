@@ -48,9 +48,17 @@ defmodule Ravix.Projects.Settings do
     :model,
     :instructions
   ]
-  defstruct @enforce_keys ++ [secrets_pending: false, secrets_generation: 0]
+  defstruct @enforce_keys ++
+              [
+                secrets_pending: false,
+                secrets_generation: 0,
+                default_only: false,
+                shared_tracks: nil
+              ]
 
   @type t :: %__MODULE__{
+          default_only: boolean(),
+          shared_tracks: non_neg_integer() | nil,
           secrets_pending: boolean(),
           secrets_generation: non_neg_integer(),
           name: String.t(),
@@ -103,6 +111,9 @@ defmodule Ravix.Projects.Settings do
     with {:ok, env} <- Fountain.get_environment(client, project.environment_id) do
       {:ok,
        %__MODULE__{
+         default_only: default_only?(project),
+         shared_tracks:
+           if(Project.maintenance?(project), do: Store.shared_track_count(project.id)),
          secrets_pending: project.secrets_pending,
          secrets_generation: project.secrets_generation,
          runtime: project.runtime,
@@ -207,8 +218,8 @@ defmodule Ravix.Projects.Settings do
       with {:ok, catalog} <- Fountain.catalog(client),
            :ok <- validate_harness(catalog, runtime, model),
            :ok <- usable(project, runtime),
-           {:ok, project} <- save_harness(project, runtime, model, change, client) do
-        {:ok, project, true}
+           {:ok, project} <- save_harness_mode(project, runtime, model, change, client) do
+        {:ok, project, not Project.maintenance?(project)}
       end
     end
   end
@@ -229,6 +240,43 @@ defmodule Ravix.Projects.Settings do
 
       {:error, _} = error ->
         error
+    end
+  end
+
+  def default_only?(project),
+    do: Project.maintenance?(project) and Store.shared_track_count(project.id) == 0
+
+  defp save_harness_mode(project, runtime, model, change, client) do
+    if Project.maintenance?(project) do
+      Ravix.Cluster.project_mutation(project.id, :shared_machine, fn ->
+        save_defaults(project, runtime, model, change, client)
+      end)
+    else
+      save_harness(project, runtime, model, change, client)
+    end
+  end
+
+  defp save_defaults(project, runtime, model, change, client) do
+    with :ok <- retire_for_defaults(project, runtime, change, client),
+         :ok <- Store.set_defaults(project.id, runtime, model),
+         do: {:ok, Store.get_project(project.id)}
+  end
+
+  defp retire_for_defaults(project, runtime, change, client) do
+    cond do
+      runtime == project.runtime and not project.shared_machine_retiring ->
+        :ok
+
+      default_only?(project) and not project.shared_machine_retiring ->
+        :ok
+
+      change[:rebuild] == true ->
+        with {:ok, _} <- Projects.Deletion.retire_shared_locked(project, client), do: :ok
+
+      true ->
+        {:error,
+         {:unprocessable, "rebuild_required",
+          "Shared tracks still use the project machine. Choose Switch and rebuild; dedicated tracks are unaffected."}}
     end
   end
 

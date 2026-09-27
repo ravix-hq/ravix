@@ -55,10 +55,13 @@ defmodule Ravix.PromptQueue.Server do
 
   require Logger
 
-  alias Ravix.Accounts.{Access, User}
+  alias Ravix.Accounts.Access
+  alias Ravix.Accounts.User
   alias Ravix.Analytics
   alias Ravix.Fountain
-  alias Ravix.Fountain.{Client, Error, Shapes}
+  alias Ravix.Fountain.Client
+  alias Ravix.Fountain.Error
+  alias Ravix.Fountain.Shapes
   alias Ravix.Hub
   alias Ravix.Projects.ProjectMember
   alias Ravix.PromptQueue
@@ -68,7 +71,12 @@ defmodule Ravix.PromptQueue.Server do
   alias Ravix.PromptQueue.Store
   alias Ravix.Repo
   alias Ravix.Trace
-  alias Ravix.Tracks.{Follower, Setup, TrackMember, Transcript}
+  alias Ravix.Tracks.CredentialRecovery
+  alias Ravix.Tracks.Follower
+  alias Ravix.Tracks.Sandbox.Maintenance
+  alias Ravix.Tracks.Setup
+  alias Ravix.Tracks.TrackMember
+  alias Ravix.Tracks.Transcript
   alias Ravix.Tracks.Transcript.Event
 
   import Ecto.Query, only: [from: 2]
@@ -443,7 +451,22 @@ defmodule Ravix.PromptQueue.Server do
   # `track` and `project` are the rows `access/1` loaded to decide the sender
   # may send: what to send it to, without a second read of either.
   defp deliver_queued(client, row, track, project, server) do
-    case readiness(client, track, project, row) do
+    readiness =
+      case CredentialRecovery.prepare(client, track, project, row.thread_id) do
+        :ok -> readiness(client, track, project, row)
+        _ -> :recovering_credentials
+      end
+
+    case readiness do
+      :recovering_credentials ->
+        Store.annotate(
+          row.id,
+          :queued,
+          "Updating this thread's agent connection. Your prompt is saved."
+        )
+
+        :waiting
+
       :ready ->
         claim_and_send(client, row, track, project, server)
 
@@ -495,7 +518,8 @@ defmodule Ravix.PromptQueue.Server do
               not blank_thread?(client, row, conversation) ->
             :busy
 
-          Shapes.ended?(conversation) ->
+          Shapes.ended?(conversation) and
+              not CredentialRecovery.enabled?(track, project) ->
             {:ended, ended_message(client, track, conversation)}
 
           # Idle, or a status this version does not know: either way nothing
@@ -569,12 +593,7 @@ defmodule Ravix.PromptQueue.Server do
   end
 
   defp machine_readiness(client, project, track) do
-    project =
-      if track.sandbox_layout == :dedicated,
-        do: %{project | vault_id: track.vault_id},
-        else: project
-
-    case Ravix.Projects.prepare_machine(project, client) do
+    case Maintenance.prepare(client, track, project) do
       :ok -> :ready
       {:error, _reason} -> :unavailable
     end
@@ -644,6 +663,10 @@ defmodule Ravix.PromptQueue.Server do
 
   defp settle(:ok, row, track, project) do
     Store.mark_delivered(row.id)
+    # ownership: access/1 established Access.thread_access before this confirmed delivery.
+    if CredentialRecovery.enabled?(track, project),
+      do: Ravix.Tracks.Store.credential_context_delivered(row.thread_id, track.conversation_id)
+
     Hub.publish(project.id, :turn, track_id: track.id, thread_id: row.thread_id)
     delivered(row, track, project)
   end
@@ -667,8 +690,19 @@ defmodule Ravix.PromptQueue.Server do
   # Fountain can reject an idle-looking track because another turn took the
   # sandbox's capacity meanwhile. A rejection is safe to retry. Any other
   # refusal needs a person; anything else may or may not have arrived.
-  defp settle({:error, %Error{} = error}, row, _track, _project) do
+  defp settle({:error, %Error{} = error}, row, track, project) do
     cond do
+      error.code == "inference_source_changed" and
+          CredentialRecovery.enabled?(track, project) ->
+        CredentialRecovery.reject(track, project, row.thread_id)
+
+        Store.set_status(
+          row.id,
+          :queued,
+          "Updating this thread's agent connection. Your prompt is saved.",
+          error.code
+        )
+
       Error.credential?(error) ->
         Store.set_status(row.id, :failed, Error.credential_message(), error.code)
 

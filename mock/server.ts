@@ -63,6 +63,8 @@ interface Conv {
   /** The conversation's own model (Fountain ADR 0061); null follows the agent's. */
   model: string | null;
   turn_generation: number;
+  inference_credential_id: string | null;
+  inference_revision: number;
 }
 
 interface Disk {
@@ -102,6 +104,7 @@ const state = {
     id: string;
     name: string;
     is_default: boolean;
+    revision: number;
     providers: string[];
     chatgpt_grant_id: string | null;
   }[],
@@ -521,7 +524,21 @@ function deleteBox(box: Box): void {
 }
 
 /** No provider queue: reserve capacity before scheduling any async work. */
+function invalidateInference(set: { id: string; revision: number }): void {
+  set.revision++;
+  for (const conv of state.conversations) {
+    if (conv.inference_credential_id === set.id) endTurn(conv, "terminated");
+  }
+}
+
 function accept(conv: Conv, prompt: string, clientRequestId: string | null = null, images: PromptImage[] = []): { error: string } | null {
+  const source = state.credentialSets.find(s => s.id === conv.inference_credential_id);
+  if (source && source.revision !== conv.inference_revision) return { error: "inference_source_changed" };
+  if (source) {
+    const connected = conv.runtime === "codex" ? source.providers.includes("openai_api_key") || state.chatgptGrants.some(g => g.id === source.chatgpt_grant_id && g.status === "active") :
+      source.providers.some(p => ["anthropic_api_key", "claude_code_oauth_token"].includes(p));
+    if (!connected) return { error: "inference_credential_unusable" };
+  }
   if (conv.status === "terminated") return { error: "conversation_terminated" };
   if (!state.boxes.has(conv.sandbox_id!)) return { error: "sandbox_not_found" };
   const key = capacityKey(conv);
@@ -611,6 +628,7 @@ export async function fountain(req: Request, url: URL): Promise<Response | null>
         id: `set${state.credentialSets.length + 1}-${Math.random().toString(36).slice(2, 8)}`,
         name,
         is_default: state.credentialSets.length === 0,
+        revision: 0,
         providers: [] as string[],
         chatgpt_grant_id: null,
       };
@@ -634,6 +652,7 @@ export async function fountain(req: Request, url: URL): Promise<Response | null>
         }
       }
       set.chatgpt_grant_id = typeof wanted === "string" ? wanted : null;
+      invalidateInference(set);
     }
     const grant = state.chatgptGrants.find((g) => g.id === set.chatgpt_grant_id);
     return json({ data: { ...set, chatgpt_grant: grant ? { id: grant.id, name: grant.name, status: grant.status } : null } });
@@ -735,6 +754,7 @@ export async function fountain(req: Request, url: URL): Promise<Response | null>
     const grant = state.chatgptGrants.find((g) => g.id === grantDisconnect[1]);
     if (!grant) return json({ error: "not_found" }, 404);
     grant.status = "disconnected";
+    for (const set of state.credentialSets) if (set.chatgpt_grant_id === grant.id) invalidateInference(set);
     return json({ data: grant });
   }
   const credential = new RegExp(`^${SETS}/([^/]+)/credentials/([a-z_]+)$`).exec(p);
@@ -747,6 +767,7 @@ export async function fountain(req: Request, url: URL): Promise<Response | null>
     }
     if (method === "DELETE") {
       set.providers = set.providers.filter((held) => held !== provider);
+      invalidateInference(set);
       return new Response(null, { status: 204 });
     }
     if (method === "PUT") {
@@ -762,6 +783,7 @@ export async function fountain(req: Request, url: URL): Promise<Response | null>
         );
       }
       if (!set.providers.includes(provider)) set.providers = [...set.providers, provider].sort();
+      invalidateInference(set);
       return json({ data: { provider, set: true } });
     }
   }
@@ -878,6 +900,12 @@ export async function fountain(req: Request, url: URL): Promise<Response | null>
     const agent = state.agents.find((a) => a.id === agentId);
     if (!agent) return json({ error: "agent_not_found" }, 404);
     const runtime = String(agent.runtime ?? "claude");
+    const sourceId = b.inference_credential_id ?? agent.inference_credential_id ?? null;
+    if (b.inference_credential_id && b.inference_credential_id !== agent.inference_credential_id &&
+        !(agent.allowed_inference_credential_ids as string[] | undefined)?.includes(b.inference_credential_id)) {
+      return json({ error: "inference_credential_not_allowed" }, 422);
+    }
+    const source = state.credentialSets.find(s => s.id === sourceId);
     const userId = String(agent.user_id ?? "mock-user");
     const environmentId = b.environment_id ?? null;
     const vaultId = b.vault_id ?? null;
@@ -926,6 +954,8 @@ export async function fountain(req: Request, url: URL): Promise<Response | null>
       environment_id: b.environment_id ?? null,
       runtime,
       turn_generation: 0,
+      inference_credential_id: typeof sourceId === "string" ? sourceId : null,
+      inference_revision: source?.revision ?? 0,
       status: "idle",
       channel_id: b.channel_id ?? null,
       turn_count: 0,

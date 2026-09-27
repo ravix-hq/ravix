@@ -118,7 +118,7 @@ export const SettingsSections = {
   },
   showSection() {
     const runtime = this.el.querySelector('#settings-runtime')
-    const switching = runtime?.value !== this.el.dataset.savedRuntime
+    const switching = this.el.dataset.defaultOnly !== 'true' && runtime?.value !== this.el.dataset.savedRuntime
     const save = this.el.querySelector('[data-save-agent]')
     const rebuild = this.el.querySelector('[data-switch-agent]')
     if (save) save.hidden = switching

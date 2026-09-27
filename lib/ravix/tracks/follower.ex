@@ -139,6 +139,12 @@ defmodule Ravix.Tracks.Follower do
     end
   end
 
+  @doc "Retire the old stream after a generation-fenced conversation replacement."
+  def rebound(thread_id, previous_conversation) do
+    if pid = whereis(thread_id), do: GenServer.cast(pid, {:rebound, previous_conversation})
+    :ok
+  end
+
   @doc "The follower for a track, anywhere in the cluster, if one is running."
   @spec whereis(String.t()) :: pid() | nil
   def whereis(track_id), do: Ravix.Cluster.whereis(:follower, track_id)
@@ -216,6 +222,9 @@ defmodule Ravix.Tracks.Follower do
   end
 
   @impl true
+  def handle_cast({:rebound, id}, %{conversation_id: id} = state), do: {:stop, :normal, state}
+  def handle_cast({:rebound, _id}, state), do: {:noreply, state}
+
   def handle_cast({:unsubscribe, pid}, state), do: {:noreply, drop_subscriber(state, pid)}
 
   @impl true

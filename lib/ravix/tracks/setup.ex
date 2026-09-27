@@ -4,10 +4,14 @@ defmodule Ravix.Tracks.Setup do
   without a queued prompt. PostgreSQL leases serialize instances; request ids
   survive a crash between POST and response. No browser or follower owns setup.
   """
-  alias Ravix.{Fountain, Hub, Spec}
-  alias Ravix.Projects.Machine
+  alias Ravix.Fountain
+  alias Ravix.Hub
+  alias Ravix.Spec
   alias Ravix.Tracks.AgentFailure
-  alias Ravix.Tracks.{Origin, Store, Transcript}
+  alias Ravix.Tracks.Origin
+  alias Ravix.Tracks.Sandbox.Maintenance
+  alias Ravix.Tracks.Store
+  alias Ravix.Tracks.Transcript
   alias Ravix.Tracks.Transcript.Event
 
   @max_attempts 3
@@ -26,10 +30,17 @@ defmodule Ravix.Tracks.Setup do
 
       track ->
         try do
-          # ownership: no door — this durable setup lease belongs to the track
-          # whose project is needed to reconstruct its opening instructions.
+          # ownership: the setup lease admitted by Access.track_access owns this opening reconciliation.
           project = Ravix.Projects.Store.live_project(track.project_id)
-          if project, do: step(client, track, project)
+
+          if project do
+            thread = Store.thread(track.id)
+
+            project =
+              if thread && thread.runtime, do: %{project | runtime: thread.runtime}, else: project
+
+            step(client, track, project)
+          end
         after
           Store.update_setup(track, setup_lease: nil, setup_lease_until: nil)
         end
@@ -76,14 +87,7 @@ defmodule Ravix.Tracks.Setup do
   end
 
   defp post_opening(client, track, project, prompt) do
-    preparation =
-      if track.sandbox_layout == :dedicated,
-        do:
-          Machine.prepare_machine(
-            %{project | vault_id: track.vault_id},
-            client
-          ),
-        else: Ravix.Projects.prepare_machine(project, client)
+    preparation = Maintenance.prepare(client, track, project)
 
     case preparation do
       :ok ->

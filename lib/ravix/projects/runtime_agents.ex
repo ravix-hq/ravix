@@ -3,7 +3,7 @@ defmodule Ravix.Projects.RuntimeAgents do
   alias Ravix.Fountain
   alias Ravix.Fountain.Error
   alias Ravix.Projects
-  alias Ravix.Projects.Store
+  alias Ravix.Projects.{Project, Store}
 
   # ownership: callers enter through Access.project_access/2 or Access.track_access/2.
   # Subscription ownership follows the project's owner, never the collaborating member.
@@ -18,7 +18,7 @@ defmodule Ravix.Projects.RuntimeAgents do
     agents = Store.runtime_agents(project.id)
 
     if agents == [] or is_nil(sandbox_id) do
-      {:ok, project.shared_home_runtime || project.runtime}
+      {:ok, project.shared_home_runtime || Project.home_runtime(project)}
     else
       with {:ok, sandbox} <- Fountain.sandbox(client, sandbox_id),
            do: identify_home(project, agents, sandbox.agent_id)
@@ -28,7 +28,7 @@ defmodule Ravix.Projects.RuntimeAgents do
   defp identify_home(project, agents, id) do
     cond do
       id == project.agent_id ->
-        {:ok, project.runtime}
+        {:ok, Project.home_runtime(project)}
 
       agent = Enum.find(agents, &(&1.agent_id == id and not is_nil(id))) ->
         {:ok, agent.runtime}
@@ -53,32 +53,44 @@ defmodule Ravix.Projects.RuntimeAgents do
     end
   end
 
-  def ensure(%{runtime_agents_retiring: true}, _client, _runtime, _model), do: pending()
+  def ensure(project, client, runtime, model, opts \\ [])
+  def ensure(%{runtime_agents_retiring: true}, _client, _runtime, _model, _opts), do: pending()
 
-  def ensure(project, client, runtime, model) do
+  def ensure(project, client, runtime, model, opts) do
     case Store.live_project(project.id) do
       %{runtime_agents_retiring: false, agent_id: id} = fresh when id == project.agent_id ->
-        ensure_current(fresh, client, runtime, model)
+        ensure_current(fresh, client, runtime, model, opts)
 
       _ ->
         pending()
     end
   end
 
-  defp ensure_current(project, client, runtime, model) do
-    if runtime == project.runtime do
-      with :ok <- Projects.Machine.adopt_credentials(project, client),
-           do: {:ok, project.agent_id}
+  defp ensure_current(project, client, runtime, model, opts) do
+    isolated? = Keyword.get(opts, :isolated, false) and Project.maintenance?(project)
+
+    if runtime == Project.home_runtime(project) do
+      adopt_home(project, client, isolated?)
     else
-      ensure_other(project, client, runtime, model)
+      ensure_other(project, client, runtime, model, isolated?)
     end
   end
 
-  defp ensure_other(project, client, runtime, model) do
+  defp adopt_home(project, client, isolated?) do
+    if isolated?,
+      do: allow_source(project, client, project.agent_id, project.credential_set_id),
+      else:
+        with(
+          :ok <- Projects.Machine.adopt_credentials(project, client),
+          do: {:ok, project.agent_id}
+        )
+  end
+
+  defp ensure_other(project, client, runtime, model, isolated?) do
     case Enum.find(Store.runtime_agents(project.id), &(&1.runtime == runtime)) do
       nil -> reserve_and_create(project, client, runtime, model)
       %{agent_id: nil} -> pending()
-      agent -> adopt(project, client, agent)
+      agent -> adopt(project, client, agent, isolated?)
     end
   end
 
@@ -121,17 +133,50 @@ defmodule Ravix.Projects.RuntimeAgents do
     end
   end
 
-  defp adopt(project, client, agent) do
+  defp adopt(project, client, agent, isolated?) do
     set = owner(project).credential_set_id
 
-    if set == agent.credential_set_id do
-      {:ok, agent.agent_id}
+    cond do
+      isolated? ->
+        allow_source(project, client, agent.agent_id, agent.credential_set_id)
+
+      set == agent.credential_set_id ->
+        {:ok, agent.agent_id}
+
+      true ->
+        with {:ok, _} <-
+               Fountain.update_agent(client, agent.agent_id, %{inference_credential_id: set}) do
+          Store.bind_runtime(project.id, agent.runtime, agent.agent_id, set)
+          {:ok, agent.agent_id}
+        end
+    end
+  end
+
+  # Conversation overrides must be admitted by the agent. Add only the owner's
+  # source to its allowlist; never change its default or any sibling session.
+  defp allow_source(project, client, agent_id, default_source) do
+    source = owner(project).credential_set_id
+
+    if source == default_source do
+      {:ok, agent_id}
+    else
+      with {:ok, agent} <- Fountain.get_agent(client, agent_id),
+           :ok <- allow_source_id(client, agent_id, agent, source),
+           do: {:ok, agent_id}
+    end
+  end
+
+  defp allow_source_id(client, agent_id, agent, source) do
+    allowed = agent["allowed_inference_credential_ids"] || []
+
+    if source == agent["inference_credential_id"] or source in allowed do
+      :ok
     else
       with {:ok, _} <-
-             Fountain.update_agent(client, agent.agent_id, %{inference_credential_id: set}) do
-        Store.bind_runtime(project.id, agent.runtime, agent.agent_id, set)
-        {:ok, agent.agent_id}
-      end
+             Fountain.update_agent(client, agent_id, %{
+               allowed_inference_credential_ids: Enum.uniq(allowed ++ [source])
+             }),
+           do: :ok
     end
   end
 

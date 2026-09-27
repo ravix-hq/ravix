@@ -40,22 +40,26 @@ defmodule Ravix.Tracks do
   """
 
   alias Ravix.Accounts.Access
+  alias Ravix.Accounts.Inference
   alias Ravix.Accounts.User
   alias Ravix.Analytics
   alias Ravix.Fountain
   alias Ravix.Fountain.Launch
-  alias Ravix.Fountain.Shapes.{Catalog, Conversation}
+  alias Ravix.Fountain.Shapes.Catalog
+  alias Ravix.Fountain.Shapes.Conversation
   alias Ravix.Hub
   alias Ravix.Ids
   alias Ravix.MachineCache
   alias Ravix.People
   alias Ravix.Previews.Lifecycle
   alias Ravix.Projects.Project
+  alias Ravix.Projects.RuntimeAgents
   alias Ravix.PromptQueue.Body
   alias Ravix.PromptQueue.Body.Image
   alias Ravix.Spec
   alias Ravix.Trace
   alias Ravix.Tracks.AgentFailure
+  alias Ravix.Tracks.Sandbox.Maintenance
 
   require Logger
 
@@ -322,6 +326,18 @@ defmodule Ravix.Tracks do
     end)
   end
 
+  @doc "Funding status for precisely the selected thread; legacy shared copy stays unchanged."
+  def agent_health(%User{} = user, track_id, thread_id) do
+    with {:ok, %{track: track, project: project, thread: thread, role: role}} <-
+           Access.thread_access(user, track_id, thread_id) do
+      if track.sandbox_layout == :dedicated and Project.maintenance?(project) do
+        thread_health(project, thread, role)
+      else
+        Ravix.Projects.agent_health(user, project.id)
+      end
+    end
+  end
+
   def thread_options(%User{} = user, track_id) do
     with {:ok, %{track: track, project: project}} <- Access.track_access(user, track_id),
          {:ok, client} <- fountain(),
@@ -336,6 +352,38 @@ defmodule Ravix.Tracks do
       Runtime.options(user, project, client)
     end
   end
+
+  defp thread_health(project, thread, role) do
+    owner = RuntimeAgents.owner(project)
+    runtime = thread.runtime || Project.home_runtime(project)
+
+    usable =
+      case Inference.usable?(owner, runtime, []) do
+        {:ok, value} -> value
+        _ -> nil
+      end
+
+    {:ok,
+     %{
+       scope: :thread,
+       runtime: runtime,
+       owner_login: owner.login,
+       owner?: role == :owner,
+       usable?: usable,
+       exhausted_until: thread_reset(owner, runtime, usable)
+     }}
+  end
+
+  defp thread_reset(owner, "codex", true) do
+    with {:ok, held} <- Inference.held(owner),
+         true <- {:codex, :subscription} in held,
+         {:ok, %{status: "active", exhausted_until: until}} when is_binary(until) <-
+           Inference.subscription(owner),
+         do: until,
+         else: (_ -> nil)
+  end
+
+  defp thread_reset(_, _, _), do: nil
 
   @doc "Attach a blank conversation to the track's existing sandbox."
   def add_thread(%User{} = user, track_id, attrs \\ %{}) do
@@ -385,7 +433,8 @@ defmodule Ravix.Tracks do
              client,
              attrs,
              track.last_runtime,
-             sandbox_id
+             sandbox_id,
+             isolated: track.sandbox_layout == :dedicated
            ) do
       launch_selected_thread(user, track, project, client, sandbox_id, selection)
     end
@@ -407,7 +456,13 @@ defmodule Ravix.Tracks do
       prompt: nil
     }
 
-    with {:ok, %Conversation{id: conversation_id}} <- Fountain.create_conversation(client, launch) do
+    launch =
+      if track.sandbox_layout == :dedicated,
+        do: Maintenance.adopt(launch, project),
+        else: launch
+
+    with :ok <- prepare_thread(client, track, project),
+         {:ok, %Conversation{id: conversation_id}} <- Fountain.create_conversation(client, launch) do
       result =
         with {:ok, %{track: %{closed_at: nil}, project: %{runtime_agents_retiring: false}}} <-
                Access.track_access(user, track.id),
@@ -437,6 +492,14 @@ defmodule Ravix.Tracks do
       end
     end
   end
+
+  defp prepare_thread(client, %{sandbox_layout: :dedicated} = track, project) do
+    if Project.maintenance?(project),
+      do: Maintenance.prepare(client, track, project),
+      else: :ok
+  end
+
+  defp prepare_thread(_client, _track, _project), do: :ok
 
   # ── opening ───────────────────────────────────────────────────────────
 
@@ -476,7 +539,8 @@ defmodule Ravix.Tracks do
          {:ok, attrs} <- resolve_pr_origin(project, attrs),
          {:ok, client} <- fountain(),
          {:ok, plan} <- plan(user, project, attrs, nil),
-         {:ok, selection} <- Runtime.select(user, project, client, attrs),
+         {:ok, selection} <-
+           Runtime.select(user, project, client, attrs, nil, nil, isolated: true),
          {:ok, _} <- Access.project_access(user, project_id),
          :ok <-
            check(
@@ -1014,7 +1078,7 @@ defmodule Ravix.Tracks do
            Access.thread_access(user, track_id, thread_id),
          {:ok, client} <- fountain() do
       if thread.conversation_id,
-        do: read_transcript(client, thread.conversation_id, thread.runtime || project.runtime),
+        do: read_thread_transcript(client, thread, thread.runtime || project.runtime),
         else: {:ok, Transcript.empty(thread.runtime || project.runtime)}
     end
   end
@@ -1027,7 +1091,12 @@ defmodule Ravix.Tracks do
     with {:ok, %{thread: thread}} <- Access.thread_access(user, track_id, thread_id),
          true <- is_binary(thread.conversation_id),
          {:ok, client} <- fountain() do
-      Fountain.turn_image(client, thread.conversation_id, turn_id, position)
+      read_thread_image(
+        client,
+        [thread.conversation_id | Enum.reverse(thread.previous_conversation_ids)],
+        turn_id,
+        position
+      )
     else
       false -> {:error, :not_found}
       {:error, reason} -> {:error, reason}
@@ -1036,6 +1105,28 @@ defmodule Ravix.Tracks do
 
   def prompt_image(%User{}, _track_id, _thread_id, _turn_id, _position),
     do: {:error, :not_found}
+
+  defp read_thread_image(_client, [], _turn_id, _position), do: {:error, :not_found}
+
+  defp read_thread_image(client, [id | rest], turn_id, position) do
+    case Fountain.turn_image(client, id, turn_id, position) do
+      {:error, %Fountain.Error{status: 404}} -> read_thread_image(client, rest, turn_id, position)
+      result -> result
+    end
+  end
+
+  defp read_thread_transcript(client, thread, runtime) do
+    Enum.reduce_while(
+      thread.previous_conversation_ids ++ [thread.conversation_id],
+      {:ok, Transcript.empty(runtime)},
+      fn id, {:ok, previous} ->
+        case read_transcript(client, id, runtime) do
+          {:ok, page} -> {:cont, {:ok, %{page | turns: previous.turns ++ page.turns}}}
+          error -> {:halt, error}
+        end
+      end
+    )
+  end
 
   defp read_transcript(client, conversation_id, runtime) do
     with {:ok, log} <- Fountain.events(client, conversation_id, prompts: true),

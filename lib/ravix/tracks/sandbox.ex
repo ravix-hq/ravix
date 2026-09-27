@@ -1,9 +1,14 @@
 defmodule Ravix.Tracks.Sandbox do
   @moduledoc "Durable track machine operations. Callers authorize intent; leases fence each provider step."
-  alias Ravix.{Fountain, Hub, MachineCache, Spec}
-  alias Ravix.Fountain.{Error, Launch}
+  alias Ravix.Fountain
+  alias Ravix.Fountain.Error
+  alias Ravix.Fountain.Launch
+  alias Ravix.Hub
+  alias Ravix.MachineCache
   alias Ravix.Previews.Lifecycle
   alias Ravix.Projects.Machine
+  alias Ravix.Spec
+  alias Ravix.Tracks.Sandbox.Maintenance
   alias Ravix.Tracks.Sandbox.Store
   alias Ravix.Tracks.Setup
 
@@ -233,6 +238,7 @@ defmodule Ravix.Tracks.Sandbox do
       prompt: Spec.open_dedicated_prompt(project, track)
     }
 
+    launch = Maintenance.adopt(launch, project)
     launched(Fountain.create_conversation(client, launch), client, op, track, project)
   end
 
@@ -264,9 +270,9 @@ defmodule Ravix.Tracks.Sandbox do
   end
 
   defp close(client, %{resource_ids: %{"legacy" => true}} = op, track, _project) do
-    with true <- Ravix.Config.retire_shared_machines?(),
+    with true <- Ravix.Config.retire_shared_machines?() or op.resource_ids["maintenance"] == true,
          {:ok, op} <- discover_shared(client, op),
-         :ok <- end_threads(client, track),
+         :ok <- retire_shared_dependents(client, op, track),
          :ok <- delete_box(client, op.resource_ids["sandbox_id"]),
          {:ok, _} <- Store.finish_shared(op, track) do
       MachineCache.forget_project(track.project_id)
@@ -275,7 +281,7 @@ defmodule Ravix.Tracks.Sandbox do
       false ->
         Store.finish_shared(op, track, %{code: "retirement_disabled"})
 
-      _ when op.attempts >= 5 ->
+      _ when op.attempts >= 5 and not is_map_key(op.resource_ids, "maintenance") ->
         Store.finish_shared(op, track, %{code: "sandbox_cleanup_pending"})
 
       _ ->
@@ -285,6 +291,22 @@ defmodule Ravix.Tracks.Sandbox do
 
   defp close(client, op, track, project) do
     if Store.prior_pending?(op), do: pause(op), else: close_owned(client, op, track, project)
+  end
+
+  defp retire_shared_dependents(client, op, track) do
+    ids = op.resource_ids["shared_tracks"] || [track.id]
+
+    Enum.reduce_while(ids, :ok, fn id, :ok ->
+      sibling = Store.get_track(id)
+
+      with true <- sibling.project_id == track.project_id and sibling.sandbox_layout == :shared,
+           :ok <- revoke_preview(sibling),
+           :ok <- end_threads(client, sibling) do
+        {:cont, :ok}
+      else
+        _ -> {:halt, {:error, :cleanup_pending}}
+      end
+    end)
   end
 
   defp close_owned(client, op, track, project) do
@@ -431,8 +453,10 @@ defmodule Ravix.Tracks.Sandbox do
   defp end_threads(client, track) do
     # ownership: the durable close owns every thread of this track.
     Ravix.Tracks.Store.threads_of(track.id)
-    |> Enum.reduce_while(:ok, fn thread, :ok ->
-      case terminate(client, thread.conversation_id) do
+    |> Enum.flat_map(&(&1.previous_conversation_ids ++ [&1.conversation_id]))
+    |> Enum.uniq()
+    |> Enum.reduce_while(:ok, fn conversation_id, :ok ->
+      case terminate(client, conversation_id) do
         :ok -> {:cont, :ok}
         error -> {:halt, error}
       end

@@ -44,5 +44,5 @@ test('the provider mock enforces sandbox lifecycle, identity and runtime capacit
   });
   const output = result.stdout.toString() + result.stderr.toString();
   expect(result.exitCode, output).toBe(0);
-  expect(output).toContain('8 pass');
+  expect(output).toContain('9 pass');
 }, 30000);

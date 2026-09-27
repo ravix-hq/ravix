@@ -683,6 +683,54 @@ defmodule Ravix.PromptQueueTest do
     assert {:error, {:conflict, "queue_full", _}} = send_prompt(f.track, f.owner, "over limit")
   end
 
+  test "a rejected inference revision saves the prompt, replaces its session, and delivers with context",
+       f do
+    stub(Ravix.Config, :dedicated_opens_enabled?, fn _ -> true end)
+    stub(Ravix.Accounts.Inference, :usable?, fn _, _, _ -> {:ok, true} end)
+    allow(Ravix.Config, self(), f.server)
+    allow(Ravix.Accounts.Inference, self(), f.server)
+
+    track =
+      Repo.update!(
+        Ecto.Changeset.change(f.track,
+          sandbox_layout: :dedicated,
+          sandbox_state: :ready,
+          sandbox_id: "disk",
+          vault_id: "copy"
+        )
+      )
+
+    client =
+      fountain([
+        read("idle"),
+        {%{method: "POST", path: "/api/conversations/c1/prompts"},
+         {409, [], %{error: "inference_source_changed"}}},
+        {%{method: "POST", path: "/api/conversations"},
+         {201, [], %{data: %{id: "renewed", sandbox_id: "disk"}}}},
+        {%{method: "GET", path: "/api/conversations/renewed"},
+         {200, [], %{data: %{id: "renewed", status: "idle"}}}},
+        {%{method: "POST", path: "/api/conversations/renewed/prompts"},
+         {200, [], %{status: "accepted"}}}
+      ])
+
+    {:ok, row} = send_prompt(track, f.owner, "survives revision")
+    Server.tick(f.server)
+    assert status_of(row.id) == :queued
+    assert PromptQueue.Store.get(row.id).error_code == "inference_source_changed"
+    Server.tick(f.server)
+    assert status_of(row.id) == :queued
+    Server.tick(f.server)
+    assert status_of(row.id) == :sent
+    assert Tracks.Store.thread(track.id).previous_conversation_ids == ["c1"]
+    refute Tracks.Store.thread(track.id).recovery_context_pending
+
+    sent =
+      Enum.find(FakeTransport.calls(client), &(&1.path == "/api/conversations/renewed/prompts"))
+
+    assert sent.body["prompt"] =~ "[ravix: session context restored]"
+    assert sent.body["prompt"] =~ "survives revision"
+  end
+
   test "a solo track is not prefixed with its own author", f do
     client = fountain([read("idle"), accept()])
     send_prompt(f.track, f.owner, "just me")
