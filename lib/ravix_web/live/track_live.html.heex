@@ -250,7 +250,7 @@
           </p>
         </div>
         <.loading_status :if={:retry in @pending}>Retrying track…</.loading_status>
-        <.loading_status :if={:thread_options in @pending}>Loading runtimes…</.loading_status>
+        <.loading_status :if={:thread_options in @pending}>Loading agents…</.loading_status>
         <form
           :if={@thread_options}
           id="new-thread-form"
@@ -350,6 +350,9 @@
                 >
                   <.icon name="picture" size={17} />
                 </button>
+                <span class="composer-agent">{RavixWeb.AgentName.label(
+                  @track.runtime || @project.runtime
+                )}</span>
                 <.model_menu
                   model={@track.model || @track.default_model || @project.model}
                   project_model={

@@ -33,7 +33,7 @@ test('cohort threads attach the other runtime to the home disk and reuse its pro
     await page.getByRole('navigation', { name: 'Project tracks', exact: true })
       .getByRole('button', { name: 'New track', exact: true }).click();
     const track = page.getByRole('dialog', { name: 'New track', exact: true });
-    await expect(track.getByLabel('Runtime', { exact: true })).toHaveValue(home);
+    await expect(track.getByLabel('Agent', { exact: true })).toHaveValue(home);
     await track.getByRole('button', { name: 'Create track', exact: true }).click();
     await expect(page.getByRole('textbox', { name: 'Message', exact: true })).toBeEnabled({ timeout: 30_000 });
     const homeAgent = (await list('agents')).find(a => a.metadata?.ravix?.project === projectId);
@@ -44,8 +44,8 @@ test('cohort threads attach the other runtime to the home disk and reuse its pro
     for (let n = 1; n <= 2; n++) {
       await page.getByRole('button', { name: 'Add thread', exact: true }).click();
       const form = page.locator('#new-thread-form');
-      await expect(form.getByLabel('Runtime', { exact: true })).toHaveValue(n === 1 ? home : guest);
-      await form.getByLabel('Runtime', { exact: true }).selectOption(guest);
+      await expect(form.getByLabel('Agent', { exact: true })).toHaveValue(n === 1 ? home : guest);
+      await form.getByLabel('Agent', { exact: true }).selectOption(guest);
       const models = form.getByLabel('Model', { exact: true });
       const model = await models.locator('option').last().getAttribute('value');
       await models.selectOption(model);

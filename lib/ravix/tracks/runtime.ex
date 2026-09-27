@@ -1,23 +1,24 @@
 defmodule Ravix.Tracks.Runtime do
   @moduledoc "Thread choices after the caller has admitted project or track access."
   alias Ravix.Accounts.Inference
+  alias Ravix.AgentName
   alias Ravix.Fountain.Shapes.Catalog
   alias Ravix.MachineCache
   alias Ravix.Projects.RuntimeAgents
 
   def options(user, project, client, last_runtime \\ nil, machine \\ :discover) do
+    owner = RuntimeAgents.owner(project)
+
     with {:ok, machine} <- options_machine(client, project, machine),
          {:ok, home} <- RuntimeAgents.home_runtime(project, client, machine && machine.sandbox_id),
-         {:ok, usable} <- Inference.usable_agents(RuntimeAgents.owner(project)),
+         {:ok, usable} <- Inference.usable_agents(owner),
          {:ok, catalog} <- MachineCache.catalog(client) do
       runtimes =
-        Enum.filter(["claude", "codex"], fn runtime ->
-          runtime == home or Ravix.Config.dedicated_opens_enabled?(user)
-        end)
-        |> Enum.map(fn runtime ->
+        Enum.map(["claude", "codex"], fn runtime ->
           %{
             runtime: runtime,
             connected: runtime in Enum.map(usable, &to_string/1),
+            enabled: runtime == home or Ravix.Config.dedicated_opens_enabled?(user),
             models: Catalog.models_for(catalog, runtime)
           }
         end)
@@ -25,9 +26,16 @@ defmodule Ravix.Tracks.Runtime do
       default = last_runtime || project.runtime
 
       default =
-        if Enum.any?(runtimes, &(&1.runtime == default)), do: default, else: home
+        if Enum.any?(runtimes, &(&1.runtime == default and &1.enabled)), do: default, else: home
 
-      {:ok, %{runtimes: runtimes, runtime: default, model: project.model}}
+      {:ok,
+       %{
+         runtimes: runtimes,
+         runtime: default,
+         model: project.model,
+         owner_login: owner.login,
+         owner?: user.id == owner.id
+       }}
     end
   end
 
@@ -47,7 +55,8 @@ defmodule Ravix.Tracks.Runtime do
     else
       {:ok, false} ->
         {:error,
-         {:conflict, "agent_not_connected", "The project owner has not connected this runtime."}}
+         {:conflict, "agent_not_connected",
+          "#{RuntimeAgents.owner(project).login} hasn't connected #{AgentName.label(runtime)}."}}
 
       error ->
         error
@@ -59,7 +68,7 @@ defmodule Ravix.Tracks.Runtime do
   def gate(user, project, runtime) do
     cond do
       runtime not in ["claude", "codex"] ->
-        {:error, {:unprocessable, "invalid_runtime", "Choose Claude or Codex."}}
+        {:error, {:unprocessable, "invalid_runtime", "Choose Claude Code or Codex."}}
 
       runtime == project.runtime or Ravix.Config.dedicated_opens_enabled?(user) ->
         :ok
@@ -67,7 +76,7 @@ defmodule Ravix.Tracks.Runtime do
       true ->
         {:error,
          {:conflict, "guest_runtime_disabled",
-          "Other-runtime threads are not enabled for your account yet."}}
+          "#{AgentName.label(runtime)} threads on this project aren't available yet."}}
     end
   end
 
@@ -83,7 +92,10 @@ defmodule Ravix.Tracks.Runtime do
 
       if is_binary(selected) and selected in models,
         do: {:ok, selected},
-        else: {:error, {:unprocessable, "invalid_model", "Choose one of this runtime's models."}}
+        else:
+          {:error,
+           {:unprocessable, "invalid_model",
+            "Choose one of #{AgentName.label(runtime)}'s models."}}
     end
   end
 

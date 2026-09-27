@@ -35,8 +35,7 @@ defmodule Ravix.Projects.RuntimeAgents do
 
       true ->
         {:error,
-         {:conflict, "unknown_home_runtime",
-          "The machine's home runtime could not be established."}}
+         {:conflict, "unknown_home_runtime", "The machine's home agent could not be established."}}
     end
   end
 
@@ -50,7 +49,7 @@ defmodule Ravix.Projects.RuntimeAgents do
       _ ->
         {:error,
          {:conflict, "home_runtime_pending",
-          "Wait for the home runtime to open the machine before attaching another runtime."}}
+          "Wait for the home agent to open the machine before attaching another agent."}}
     end
   end
 
@@ -160,6 +159,6 @@ defmodule Ravix.Projects.RuntimeAgents do
   defp pending do
     {:error,
      {:conflict, "runtime_agent_pending",
-      "This runtime's agent is being created or needs reconciliation after an uncertain response. Try again later; an administrator must reconcile an interrupted creation."}}
+      "This agent is being created or needs reconciliation after an uncertain response. Try again later; an administrator must reconcile an interrupted creation."}}
   end
 end

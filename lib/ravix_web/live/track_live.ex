@@ -1248,7 +1248,8 @@ defmodule RavixWeb.TrackLive do
         phx-value-thread_id={thread.id}
         data-thread-id={thread.id}
         aria-current={if thread.id == @thread_id, do: "true"}
-        title={thread.title}
+        title={thread.title <> " · " <> (RavixWeb.AgentName.label(Map.get(thread, :runtime)) || "Agent")}
+        aria-label={thread.title <> " · " <> (RavixWeb.AgentName.label(Map.get(thread, :runtime)) || "Agent") <> if(Map.get(thread, :status) == :running, do: " · Working", else: "") <> if(thread.unread && thread.id != @thread_id, do: " (unread)", else: "")}
       >
         <span class="thread-tab-title">{thread.title}</span><span :if={
           Map.get(thread, :status) == :running

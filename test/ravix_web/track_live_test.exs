@@ -514,6 +514,93 @@ defmodule RavixWeb.TrackLiveTest do
     assert has_element?(ctx.view, "#composer-#{thread.id}")
   end
 
+  test "thread picker explains unavailable agents and uses product and model names", ctx do
+    base = %{
+      runtime: "claude",
+      model: "anthropic/claude-opus-5",
+      owner_login: ctx.user.login,
+      owner?: true,
+      runtimes: [
+        %{runtime: "claude", connected: true, enabled: true, models: ["anthropic/claude-opus-5"]},
+        %{runtime: "codex", connected: true, enabled: false, models: ["openai/gpt-6-astra"]}
+      ]
+    }
+
+    stub(Tracks, :thread_options, fn _, _ -> {:ok, base} end)
+    render_click(ctx.view, "new-thread")
+    render_async(ctx.view)
+    assert has_element?(ctx.view, "label[for=new_thread-runtime]", "Agent")
+    assert has_element?(ctx.view, "#new_thread-runtime option[value=claude]", "Claude Code")
+
+    assert has_element?(
+             ctx.view,
+             "#new_thread-runtime option[value=codex][disabled]",
+             "Codex threads on this project aren't available yet"
+           )
+
+    assert has_element?(ctx.view, "#new_thread-model option", "Claude Opus 5")
+
+    for {owner?, reason} <- [
+          {true, "Connect to use"},
+          {false, "Not connected — #{ctx.user.login} must connect it"}
+        ] do
+      render_click(ctx.view, "cancel-thread")
+
+      options = %{
+        base
+        | owner?: owner?,
+          runtimes:
+            Enum.map(base.runtimes, &%{&1 | enabled: true, connected: &1.runtime == "claude"})
+      }
+
+      stub(Tracks, :thread_options, fn _, _ -> {:ok, options} end)
+      render_click(ctx.view, "new-thread")
+      render_async(ctx.view)
+      assert has_element?(ctx.view, "#new_thread-runtime option[value=codex][disabled]", reason)
+    end
+  end
+
+  test "selected thread names its agent in the composer and accessible tab", ctx do
+    stub(Tracks, :get, fn _, id, _ ->
+      {:ok,
+       %{
+         track: %{
+           Tracks.present(ctx.track, role: :owner)
+           | runtime: "codex",
+             model: "openai/gpt-6-astra"
+         },
+         header: blank_header(),
+         threads: [%{id: id, title: "Review", unread: false, runtime: "codex", status: :running}],
+         starters: [],
+         models: ["openai/gpt-6-astra"]
+       }}
+    end)
+
+    send(ctx.view.pid, :refresh)
+    settle(ctx.view)
+    assert has_element?(ctx.view, ".composer-agent", "Codex")
+    assert has_element?(ctx.view, ".composer-model", "GPT-6 Astra")
+
+    assert has_element?(
+             ctx.view,
+             "#thread-switcher button[title='Review · Codex'][aria-label='Review · Codex · Working']"
+           )
+  end
+
+  test "thread errors name the agent and owner in plain words", ctx do
+    for {code, message} <- [
+          {"agent_not_connected", "#{ctx.user.login} hasn't connected Codex."},
+          {"guest_runtime_disabled", "Codex threads on this project aren't available yet."},
+          {"invalid_runtime", "Choose Claude Code or Codex."},
+          {"invalid_model", "Choose one of Codex's models."}
+        ] do
+      expect(Tracks, :add_thread, fn _, _, _ -> {:error, {:conflict, code, message}} end)
+      render_click(ctx.view, "add-thread", %{"new_thread" => %{"runtime" => "codex"}})
+      render_async(ctx.view)
+      assert has_element?(ctx.parent, "[role=status]", message)
+    end
+  end
+
   test "thread tabs mark the selected thread and unread ones, and pressing the current tab stays put",
        ctx do
     {:ok, other} =
@@ -542,6 +629,7 @@ defmodule RavixWeb.TrackLiveTest do
     refute has_element?(ctx.view, selected <> " .thread-unread")
     assert has_element?(ctx.view, unread <> ":not([aria-current]) .thread-unread", "(unread)")
     assert has_element?(ctx.view, unread, "Review")
+    assert has_element?(ctx.view, unread <> "[aria-label='Review · Agent (unread)']")
 
     reject(&Tracks.events/3)
     ctx.view |> element(selected) |> render_click()

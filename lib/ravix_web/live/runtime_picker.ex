@@ -12,15 +12,15 @@ defmodule RavixWeb.Live.RuntimePicker do
     assigns = assign(assigns, runtime: runtime, models: if(choice, do: choice.models, else: []))
 
     ~H"""
-    <label for={@name <> "-runtime"}>Runtime</label>
+    <label for={@name <> "-runtime"}>Agent</label>
     <select id={@name <> "-runtime"} name={@name <> "[runtime]"}>
       <option
         :for={choice <- @options.runtimes}
         value={choice.runtime}
-        disabled={!choice.connected}
+        disabled={!choice.connected or !choice.enabled}
         selected={choice.runtime == @runtime}
       >
-        {String.capitalize(choice.runtime)}{if !choice.connected, do: " — Not connected"}
+        {RavixWeb.AgentName.label(choice.runtime)}{availability(choice, @options)}
       </option>
     </select>
     <label for={@name <> "-model"}>Model</label>
@@ -30,9 +30,19 @@ defmodule RavixWeb.Live.RuntimePicker do
         value={model}
         selected={model == (@params["model"] || @options.model)}
       >
-        {model}
+        {RavixWeb.ModelName.friendly(model)}
       </option>
     </select>
     """
   end
+
+  defp availability(%{enabled: false, runtime: runtime}, _options),
+    do: " — #{RavixWeb.AgentName.label(runtime)} threads on this project aren't available yet"
+
+  defp availability(%{connected: false}, %{owner?: true}), do: " — Connect to use"
+
+  defp availability(%{connected: false}, options),
+    do: " — Not connected — #{options.owner_login} must connect it"
+
+  defp availability(_, _), do: ""
 end

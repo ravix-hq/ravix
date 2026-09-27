@@ -79,10 +79,12 @@ defmodule Ravix.ThreadRuntimeTest do
     reject(&Fountain.create_agent/2)
     reject(&Fountain.create_conversation/2)
 
-    assert {:error, {:conflict, "guest_runtime_disabled", _}} =
+    assert {:error,
+            {:conflict, "guest_runtime_disabled",
+             "Codex threads on this project aren't available yet."}} =
              Tracks.add_thread(ctx.owner, ctx.track.id, %{runtime: "codex"})
 
-    assert {:error, {:unprocessable, "invalid_runtime", _}} =
+    assert {:error, {:unprocessable, "invalid_runtime", "Choose Claude Code or Codex."}} =
              Tracks.add_thread(ctx.owner, ctx.track.id, %{runtime: "unexpected"})
   end
 
@@ -98,7 +100,9 @@ defmodule Ravix.ThreadRuntimeTest do
 
     reject(&Fountain.create_agent/2)
 
-    assert {:error, {:conflict, "agent_not_connected", _}} =
+    message = "#{ctx.owner.login} hasn't connected Codex."
+
+    assert {:error, {:conflict, "agent_not_connected", ^message}} =
              Tracks.add_thread(member, ctx.track.id, %{runtime: "codex"})
   end
 
@@ -162,8 +166,14 @@ defmodule Ravix.ThreadRuntimeTest do
     assert Ravix.Projects.Store.runtime_agents(ctx.project.id) == []
   end
 
-  test "options hide guests outside the cohort and mark owner-disconnected runtimes", ctx do
-    assert {:ok, %{runtimes: [%{runtime: "claude", connected: true}]}} =
+  test "options disable guests outside the cohort and mark owner-disconnected runtimes", ctx do
+    assert {:ok,
+            %{
+              runtimes: [
+                %{runtime: "claude", connected: true, enabled: true},
+                %{runtime: "codex", enabled: false}
+              ]
+            }} =
              Tracks.thread_options(ctx.owner, ctx.track.id)
 
     stub(Ravix.Config, :dedicated_opens_enabled?, fn _ -> true end)
@@ -231,7 +241,7 @@ defmodule Ravix.ThreadRuntimeTest do
     assert Store.get_thread(thread.id).model == "openai/gpt-5.6"
     assert Store.thread(ctx.track.id).model == nil
 
-    assert {:error, {:unprocessable, "invalid_model", _}} =
+    assert {:error, {:unprocessable, "invalid_model", "Choose one of Codex's models."}} =
              Tracks.set_model(ctx.owner, ctx.track.id, thread.id, ctx.project.model)
 
     expect(Fountain, :events, fn _, "codex-conversation", _ -> {:ok, []} end)
