@@ -503,7 +503,7 @@ defmodule RavixWeb.Live.SettingsDialog do
               aria-labelledby="settings-general-title"
             >
               <h3 id="settings-general-title" tabindex="-1">General</h3>
-              <p class="settings-help">Give this project a recognizable name in your workspace.</p>
+              <p class="settings-help">The name shown in your workspace.</p>
               <.form
                 :let={f}
                 for={@settings_form}
@@ -618,7 +618,7 @@ defmodule RavixWeb.Live.SettingsDialog do
                   aria-describedby="settings-model-help"
                 />
                 <p id="settings-model-help" class="settings-help">
-                  The model used by this agent. If the catalog is unavailable, your saved choice is retained.
+                  Models available to this agent. Your saved choice is kept if the catalog is unavailable.
                 </p>
                 <.input
                   type="textarea"
@@ -632,7 +632,7 @@ defmodule RavixWeb.Live.SettingsDialog do
                   aria-describedby="settings-instructions-help"
                 />
                 <p id="settings-instructions-help" class="settings-help">
-                  Extra guidance for every new track, alongside Ravix’s instructions. For example: “Run focused tests before committing. Explain any accessibility changes.”
+                  Guidance added to every new track, such as “Run tests before committing.”
                 </p>
                 <button
                   data-save-agent
@@ -687,7 +687,7 @@ defmodule RavixWeb.Live.SettingsDialog do
             >
               <h3 id="settings-environment-title" tabindex="-1">Environment</h3>
               <p class="settings-help">
-                Prepare the machine’s disk. These changes apply when the machine is built, not when another track opens. Rebuild an existing machine to apply them; rebuilding discards its disk and closes every track.
+                Applied when the machine is built. Applying changes to an existing machine requires a rebuild, which discards its disk and closes every track.
               </p>
               <.form
                 :let={f}
@@ -706,7 +706,7 @@ defmodule RavixWeb.Live.SettingsDialog do
                   aria-describedby="settings-setup-help"
                 />
                 <p id="settings-setup-help" class="settings-help">
-                  Shell commands to prepare the project. For example: <code>npm ci</code>. Keep credentials in Secrets.
+                  Commands to prepare the project, such as <code>npm ci</code>. Keep credentials in Secrets.
                 </p>
                 <.input
                   :for={kind <- ~w(apt pip npm)}
@@ -716,7 +716,7 @@ defmodule RavixWeb.Live.SettingsDialog do
                   aria-describedby="settings-packages-help"
                 />
                 <p id="settings-packages-help" class="settings-help">
-                  Space- or comma-separated package names: apt for system tools (git curl), pip for Python (pytest), npm for JavaScript (typescript). Empty lists remove that manager’s packages from the configuration.
+                  Separate names with spaces or commas. Leave blank to remove that package list.
                 </p>
                 <button class="primary" phx-disable-with="Saving…" disabled={:settings in @pending}>Save environment</button>
               </.form>
@@ -729,13 +729,13 @@ defmodule RavixWeb.Live.SettingsDialog do
             >
               <h3 id="settings-secrets-title" tabindex="-1">Secrets</h3>
               <p class="settings-help">
-                Values are write-only and never shown again. Changes apply to tracks opened after you save; open tracks keep their settings.
+                Values are never shown again. Changes apply to new tracks.
               </p>
               <p class="settings-help">
-                Environment secrets are available as environment variables on the machine. Vault secrets stay off the machine: the machine service substitutes them into outgoing requests. Choose the store your integration uses; the same key can exist in both.
+                Environment secrets become machine environment variables. Vault secrets are inserted into outgoing requests and stay off the machine. The same key can exist in both.
               </p>
               <p class="settings-help">
-                Add a new key, or enter an existing key to replace it. To remove a key, enter its name and store and submit an empty value.
+                Use an existing key to replace it. Submit an empty value to remove it.
               </p>
               <div
                 :for={
@@ -805,7 +805,7 @@ defmodule RavixWeb.Live.SettingsDialog do
             >
               <h3 id="settings-previews-title" tabindex="-1">Previews</h3>
               <p class="settings-help">
-                A preview runs your app on the track’s machine so you can open it in your browser. These defaults are used when a track has no preview override; saving does not restart a running preview.
+                Defaults for tracks without a preview override. Saving does not restart running previews.
               </p>
               <.form
                 :let={f}
@@ -821,7 +821,7 @@ defmodule RavixWeb.Live.SettingsDialog do
                   aria-describedby="default-directory-help"
                 />
                 <p id="default-directory-help" class="settings-help">
-                  Relative to the project checkout, for example apps/web. Use . for the repository root.
+                  Relative path, such as apps/web. Use . for the repository root.
                 </p>
                 <.input
                   field={f[:command]}

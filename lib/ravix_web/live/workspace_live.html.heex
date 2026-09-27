@@ -4,9 +4,30 @@
     <div class="signin-card">
       <div class="signin-mark"><.wordmark size={32} /></div>
       <h1>Sign in to Ravix</h1>
-      <p class="lede">
-        Point Ravix at a repository and it builds you a cloud machine. Every piece of work you start is its own git worktree on that machine, with its own agent, its own branch and its own conversation — so several things can be in flight at once, none of them touching another's files, and the laptop can close.
-      </p>
+      <p class="lede">Share the running version, and keep working on it together.</p>
+      <ul class="points">
+        <li>
+          <.icon name="globe" size={14} class="ico" />
+          <span>
+            <strong>A live preview</strong>
+            <small>The app is already running when someone opens it.</small>
+          </span>
+        </li>
+        <li>
+          <.icon name="add-person" size={14} class="ico" />
+          <span>
+            <strong>One conversation</strong>
+            <small>The next change stays in the same thread.</small>
+          </span>
+        </li>
+        <li>
+          <.icon name="machine" size={14} class="ico" />
+          <span>
+            <strong>A cloud machine</strong>
+            <small>The work continues after you close the laptop.</small>
+          </span>
+        </li>
+      </ul>
       <a
         :if={@github_available}
         class="landing-button landing-primary gh-button"
@@ -17,26 +38,6 @@
       <p :if={!@github_available} class="error">
         GitHub sign-in is not configured for this deployment. Contact the person who runs it to get access.
       </p>
-      <ul class="points">
-        <li>
-          <.icon name="github" size={14} class="ico" />
-          <span>
-            Sign-in is a GitHub App, so the machine sees the repositories you pick and nothing else. A personal token would have handed it everything you can reach.
-          </span>
-        </li>
-        <li>
-          <.icon name="machine" size={14} class="ico" />
-          <span>
-            The machine is a persistent sandbox with your repository already cloned. It keeps its disk between visits.
-          </span>
-        </li>
-        <li>
-          <.icon name="sparkle" size={14} class="ico" />
-          <span>
-            The agent is Claude Code or Codex, running on your own subscription or API key. Teammates you invite work on your plan, so they need nothing of their own.
-          </span>
-        </li>
-      </ul>
     </div>
   </main>
   <div :if={@current_user} class="app">
@@ -455,32 +456,21 @@
       </div>
       <div :if={is_nil(@project) && @live_action == :projects} class="centred workspace-home">
         <div class="hero">
-          <.wordmark />
-          <p class="hero-sub">
-            A project is a machine. A track is a worktree on it. Start as many as you like — they share one disk and take it in turns.
-          </p>
+          <div class="home-heading">
+            <h1 :if={@rail_loaded}>
+              {if @projects == [], do: "What will you build?", else: "Pick up where you left off"}
+            </h1>
+            <p :if={@rail_loaded && @projects == []} class="hero-sub">
+              Start from a repository, or a scratch machine.
+            </p>
+          </div>
           <div class="home-actions">
             <button
-              class="home-action"
+              class="primary home-action"
               phx-click={JS.push_focus() |> JS.push("dialog")}
               phx-value-name="new-project"
-              phx-value-mode="github"
             >
-              <.icon name="globe" size={18} class="ico" />
-              <span>
-                <strong>Open a GitHub project</strong><small>Pick a repository Ravix can see and it builds the machine. Connect GitHub to choose which repositories it can access.</small>
-              </span>
-            </button>
-            <button
-              class="home-action"
-              phx-click={JS.push_focus() |> JS.push("dialog")}
-              phx-value-name="new-project"
-              phx-value-mode="scratch"
-            >
-              <.icon name="folder-plus" size={18} class="ico" />
-              <span>
-                <strong>Quick start</strong><small>A machine with no repository. Somewhere to try things, or to start something new.</small>
-              </span>
+              <.icon name="plus" size={16} class="ico" /> New project
             </button>
           </div>
           <section :if={@projects != []} class="home-recent" aria-label="Recent projects">
@@ -770,6 +760,7 @@
       focus_on_mount={false}
       on_close="dismiss"
     >
+      <p class="lede">A repository, or a scratch machine with nothing cloned yet.</p>
       <RavixWeb.Live.NewProject.render_form
         form_id="new-project-form"
         autofocus={true}

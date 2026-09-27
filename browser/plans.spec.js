@@ -8,7 +8,7 @@ test('a project plan assigns coordinated tracks and works at phone width', async
   // tooling.spec.js's, so plans get @eli.
   await signIn(page, 'eli', '/home');
   await connectClaude(page);
-  await page.getByRole('button', { name: /^Quick start/ }).click();
+  await page.getByRole('button', { name: /^New project/ }).click();
   await page.getByLabel('Project name', { exact: true }).fill('Planned release');
   await page.getByRole('button', { name: 'Create project', exact: true }).click();
   const panel = page.locator('#plans-panel');

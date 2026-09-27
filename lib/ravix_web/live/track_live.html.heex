@@ -190,17 +190,20 @@
             answer than saying nothing yet. --%>
           <div
             :if={!@transcript_loading && Transcript.visible_turns(@page) == []}
-            class="workspace-welcome"
+            class="workspace-welcome conversation-start"
           >
-            <h2>What would you like to work on?</h2>
-            <button
-              :for={starter <- @starters}
-              class="ghost"
-              phx-click="starter"
-              phx-value-prompt={starter.prompt}
-            >
-              {starter.label}
-            </button>
+            <span class="empty-icon"><.icon name="sparkle" size={22} /></span>
+            <h2>What are we working on?</h2>
+            <div class="conversation-starters">
+              <button
+                :for={starter <- @starters}
+                class="ghost"
+                phx-click="starter"
+                phx-value-prompt={starter.prompt}
+              >
+                {starter.label}
+              </button>
+            </div>
           </div>
         </div>
         <div :if={@queue != []} class="workspace-queue">
@@ -331,7 +334,7 @@
                 name="text"
                 rows="2"
                 phx-debounce="blur"
-                placeholder="Ask for a change, or a question about this branch"
+                placeholder="Ask to make changes…"
                 aria-label="Message"
                 data-draft-key={"track:#{@track.id}:thread:#{@thread_id}"}
                 data-typing-event="typing"

@@ -235,7 +235,7 @@ defmodule RavixWeb.Live.NewProjectTest do
     assert has_element?(view, "#project-agent-claude[aria-pressed=true]")
   end
 
-  test "GitHub and scratch cards have different starting states and repository choices filter in name order",
+  test "the new project form lists repositories in name order and can start empty",
        %{conn: conn, user: user} do
     view = open(conn, user)
 
@@ -248,11 +248,14 @@ defmodule RavixWeb.Live.NewProjectTest do
     assert has_element?(view, "#project-repositories option[value='zebra/api']")
     refute has_element?(view, "#project-repositories option[value='acme/web']")
     render_click(view, "dismiss")
-    view |> element(".home-action", "Quick start") |> render_click()
-    refute has_element?(view, "#project-repo")
-    render_click(view, "dismiss")
-    view |> element(".home-action", "Open a GitHub project") |> render_click()
+    view |> element(".home-action", "New project") |> render_click()
     assert has_element?(view, "#project-repo")
+
+    assert has_element?(
+             view,
+             "#project-repo[placeholder='Search repositories, or leave empty for scratch']"
+           )
+
     assert has_element?(view, "#project-name[placeholder=\"Defaults to the repository's name\"]")
   end
 

@@ -94,13 +94,19 @@ defmodule RavixWeb.OnboardingLiveTest do
   end
 
   describe "how it works" do
-    test "says the four things, and that the owner is the one billed", %{conn: conn} do
+    test "walks through describing a change, reviewing it, and a shared thread", %{
+      conn: conn
+    } do
       {:ok, view, html} = live(log_in_user(conn, fresh()), "/welcome")
 
-      assert html =~ "A project is a repository."
-      assert html =~ "Every project has a computer."
-      assert html =~ "A project holds many conversations."
-      assert html =~ "you are the one billed"
+      assert html =~ "Describe a change. Ravix opens a branch, and your agent starts there."
+      assert html =~ "You describe the task. Ravix opens a branch, and the agent starts there."
+
+      assert html =~
+               "The diff sits next to the conversation. The preview is the app, already running."
+
+      assert html =~
+               "Share the track. They continue the thread, with the earlier decisions still there."
 
       assert view |> element("#welcome-start") |> render_click()
       assert_patch(view, "/welcome/agent")
@@ -115,7 +121,7 @@ defmodule RavixWeb.OnboardingLiveTest do
 
     test "but the introduction can still be read again on purpose", %{conn: conn} do
       {:ok, _view, html} = live(log_in_user(conn, connected()), "/welcome?from=start")
-      assert html =~ "A project is a repository."
+      assert html =~ "Describe a change. Ravix opens a branch, and your agent starts there."
     end
   end
 
@@ -311,7 +317,9 @@ defmodule RavixWeb.OnboardingLiveTest do
                ~s(#chatgpt-verification[href="https://auth.openai.com/codex/device"])
              )
 
-      assert html =~ "only type it if you started this sign-in yourself"
+      assert html =~
+               "Only type it if you started this sign-in yourself, on this page, just now."
+
       refute has_element?(view, "#chatgpt-connect")
 
       # The page ticks itself; here the ticks are sent by hand so the test

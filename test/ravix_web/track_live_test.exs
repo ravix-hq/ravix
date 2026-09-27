@@ -3224,7 +3224,8 @@ defmodule RavixWeb.TrackLiveTest do
     assert has_element?(ctx.view, ".track-ribbon", ctx.track.branch)
     refute has_element?(ctx.view, ".track-ribbon", ctx.track.workdir)
     refute has_element?(ctx.view, "#turns-bootstrap")
-    assert has_element?(ctx.view, ".workspace-welcome", "What would you like to work on?")
+    assert has_element?(ctx.view, ".workspace-welcome", "What are we working on?")
+    assert has_element?(ctx.view, "#composer-form textarea[placeholder='Ask to make changes…']")
     assert has_element?(ctx.view, ~s|.jump-latest svg path[d="M12 5v14M6 13l6 6 6-6"]|)
   end
 
@@ -3953,7 +3954,7 @@ defmodule RavixWeb.TrackLiveTest do
     # The starters are the empty-conversation answer, and this conversation is
     # not empty --- it is unread. Offering them here would be a wrong answer
     # shown and then taken back.
-    refute html =~ "What would you like to work on?"
+    refute html =~ "What are we working on?"
 
     send(reader, :release_transcript)
     html = render_async(view)

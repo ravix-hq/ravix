@@ -34,46 +34,9 @@
           Welcome to Ravix, {@current_user.name || @current_user.login}
         </h1>
         <p class="lede">
-          Ravix gives a coding agent its own computer to work on your repository, so the work carries on when your laptop is closed. Four ideas cover all of it.
+          Describe a change. Ravix opens a branch, and your agent starts there.
         </p>
-        <ul class="welcome-ideas">
-          <li>
-            <.icon name="github" size={16} class="ico" />
-            <span>
-              <strong>A project is a repository.</strong>
-              <small>
-                You pick one repository from GitHub and that is the project. Ravix sees only the repositories you grant it, never everything your account can reach.
-              </small>
-            </span>
-          </li>
-          <li>
-            <.icon name="machine" size={16} class="ico" />
-            <span>
-              <strong>Every project has a computer.</strong>
-              <small>
-                A cloud machine with the repository already cloned. It keeps its disk between visits, sleeps when nothing is running, and wakes when you come back.
-              </small>
-            </span>
-          </li>
-          <li>
-            <.icon name="branch" size={16} class="ico" />
-            <span>
-              <strong>A project holds many conversations.</strong>
-              <small>
-                Ravix calls each one a track: its own conversation with the agent, on its own branch, in its own worktree. Several can be in flight at once without touching each other's files.
-              </small>
-            </span>
-          </li>
-          <li>
-            <.icon name="add-person" size={16} class="ico" />
-            <span>
-              <strong>Invite teammates, and you are the one billed.</strong>
-              <small>
-                Share a whole project or a single track. Everything anybody does in your project runs on your computer and on your agent subscription, so their turns count against your plan, not theirs.
-              </small>
-            </span>
-          </li>
-        </ul>
+        <RavixWeb.OnboardingComponents.workflow_preview id="welcome-workflow" />
         <div class="welcome-actions">
           <.link patch={path(:agent)} class="welcome-primary" id="welcome-start">
             Set up your agent

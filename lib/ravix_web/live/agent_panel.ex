@@ -522,10 +522,10 @@ defmodule RavixWeb.Live.AgentPanel do
           >
             <strong>{agent_name(agent)}</strong>
             <small :if={agent == :claude}>
-              Anthropic's agent. Runs on a Claude Pro, Max or Team subscription, or an Anthropic API key.
+              Claude subscription or Anthropic API key.
             </small>
             <small :if={agent == :codex}>
-              OpenAI's agent. Runs on a ChatGPT Plus, Pro, Business or Enterprise subscription, or an OpenAI API key.
+              ChatGPT subscription or OpenAI API key.
             </small>
           </button>
           <p id={"agent-#{agent}-status"}>
@@ -605,7 +605,7 @@ defmodule RavixWeb.Live.AgentPanel do
           </li>
         </ul>
         <p :if={@held != []} class="hint">
-          Removing one forgets it here; the subscription or key itself is untouched, and you can paste it or sign in again. Like replacing one, it ends your open tracks in every project you own.
+          Removing or replacing a connection ends your open tracks. Your provider account stays active.
         </p>
       </section>
 
@@ -636,7 +636,7 @@ defmodule RavixWeb.Live.AgentPanel do
             {agent_name(@agent)} is connected with your {paid_by(@agent, @kind)}. {replace_hint(
               @agent,
               @kind
-            )} — but replacing it ends your open tracks, in every project you own. A conversation will not carry on with a different credential than it started with, so you would open new ones.
+            )}. Replacing it ends your open tracks in every project you own. A conversation will not carry on with a different credential than it started with.
           </span>
         </p>
 
@@ -647,17 +647,17 @@ defmodule RavixWeb.Live.AgentPanel do
 
         <ol :if={@agent == :claude && @kind == :subscription} class="agent-howto">
           <li>
-            On a computer where Claude Code is signed in to your subscription, run <code>claude setup-token</code>.
+            In a signed-in Claude Code terminal, run <code>claude setup-token</code>.
           </li>
-          <li>Approve it in the browser window that opens.</li>
-          <li>Paste the token it prints. It starts with <code>sk-ant-oat01-</code>.</li>
+          <li>Approve in your browser.</li>
+          <li>Paste the token beginning with <code>sk-ant-oat01-</code>.</li>
         </ol>
         <ol :if={@agent == :claude && @kind == :api_key} class="agent-howto">
           <li>
             Create a key in the Anthropic Console, under <strong>API keys</strong>.
           </li>
           <li>
-            Paste it here. It starts with <code>sk-ant-api</code>, and its usage is metered rather than part of a subscription.
+            Paste it here. It starts with <code>sk-ant-api</code>. API usage is billed separately.
           </li>
         </ol>
         <ol :if={@agent == :codex && @kind == :api_key} class="agent-howto">
@@ -665,19 +665,19 @@ defmodule RavixWeb.Live.AgentPanel do
             Create a key on the OpenAI platform, under <strong>API keys</strong>.
           </li>
           <li>
-            Paste it here. It starts with <code>sk-</code>, and its usage is metered rather than part of a subscription.
+            Paste it here. It starts with <code>sk-</code>. API usage is billed separately.
           </li>
         </ol>
 
         <div :if={@agent == :codex && @kind == :subscription} id="chatgpt-link">
           <ol class="agent-howto">
             <li>
-              Press <strong>Connect ChatGPT</strong>. Ravix asks ChatGPT for a one-time code.
+              Press <strong>Connect ChatGPT</strong> for a one-time code.
             </li>
             <li>
-              Open the page it names in a browser signed in to the ChatGPT account whose plan should pay, and type the code.
+              Enter it in a browser signed in to the ChatGPT account whose plan should pay.
             </li>
-            <li>This page notices the approval by itself and moves on.</li>
+            <li>This page notices the approval and moves on.</li>
           </ol>
           <p :if={@link_error} class="error" id="link-error" role="alert">{@link_error}</p>
           <p :if={@linking == false && is_nil(@link)} class="welcome-warning" id="linking-off">
@@ -699,10 +699,10 @@ defmodule RavixWeb.Live.AgentPanel do
                 target="_blank"
                 rel="noopener noreferrer"
                 id="chatgpt-verification"
-              >{@link.verification_url}</a><code :if={!@link.trusted?} id="chatgpt-verification">{@link.verification_url}</code>. Whoever types this code lets this Ravix spend their ChatGPT plan, so only type it if you started this sign-in yourself, on this page, just now. Nobody at Ravix will ever send you a code.
+              >{@link.verification_url}</a><code :if={!@link.trusted?} id="chatgpt-verification">{@link.verification_url}</code>. This authorizes use of your ChatGPT plan. Only type it if you started this sign-in yourself, on this page, just now. Nobody at Ravix will ever send you a code.
             </p>
             <p class="hint">
-              Waiting for ChatGPT… the code is good for fifteen minutes, and you can close this page and come back.
+              Waiting for approval. This code expires in 15 minutes.
             </p>
             <div class="workspace-actions">
               <button
@@ -729,7 +729,7 @@ defmodule RavixWeb.Live.AgentPanel do
             </button>
           </div>
           <p class="hint">
-            The sign-in is kept encrypted with the machines that run your agent and renewed for you. No token is ever shown — not to you, not to teammates, and not on this page. Removing it above forgets it here; it cannot sign you out of ChatGPT, so do that in your ChatGPT account if you want to.
+            Credentials stay encrypted with the agent service and are never shown — not to you, not to teammates, and not on this page. Disconnecting Ravix does not sign you out of ChatGPT.
           </p>
         </div>
 
@@ -751,7 +751,7 @@ defmodule RavixWeb.Live.AgentPanel do
             required
           />
           <p class="hint">
-            Stored encrypted with the machines that run your agent and never shown again — not to you, not to teammates, and not on this page. You can remove it here whenever you like.
+            Stored encrypted with the agent service. Never displayed or shared with teammates.
           </p>
           <button class="primary" disabled={@busy} phx-disable-with="Connecting…">
             Connect {agent_name(@agent)}

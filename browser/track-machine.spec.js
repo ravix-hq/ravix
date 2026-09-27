@@ -7,7 +7,7 @@ test('machine status follows the selected dedicated track, never its shared proj
   test.setTimeout(120_000);
   await signIn(page, 'eli', '/home');
   await connectClaude(page);
-  await page.getByRole('button', { name: /^Quick start/ }).click();
+  await page.getByRole('button', { name: /^New project/ }).click();
   await page.getByLabel('Project name', { exact: true }).fill('Track machine isolation');
   await page.getByRole('button', { name: 'Create project', exact: true }).click();
   const paths = [];
