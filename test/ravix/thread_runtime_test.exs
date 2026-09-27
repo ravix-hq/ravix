@@ -271,18 +271,6 @@ defmodule Ravix.ThreadRuntimeTest do
       {:ok, %{"id" => "codex-home"}}
     end)
 
-    expect(Fountain, :create_conversation, fn _, launch ->
-      assert launch.agent_id == "codex-home"
-      assert launch.sandbox_id == nil
-      assert launch.model == "openai/gpt-5.6"
-      assert is_binary(launch.prompt)
-      # A racing first opener cannot provision the other home identity.
-      assert {:error, {:conflict, "home_runtime_pending", _}} =
-               Tracks.open(ctx.owner, ctx.project.id, %{title: "race", runtime: "claude"})
-
-      {:ok, Shapes.conversation(%{"id" => "new-first", "sandbox_id" => "disk"})}
-    end)
-
     assert {:ok, view} =
              Tracks.open(ctx.owner, ctx.project.id, %{
                title: "chosen-home",
@@ -293,7 +281,12 @@ defmodule Ravix.ThreadRuntimeTest do
     assert Store.thread(view.id).runtime == "codex"
     assert Store.thread(view.id).model == "openai/gpt-5.6"
     assert Store.get_track(view.id).last_runtime == "codex"
-    assert Ravix.Projects.Store.get_project(ctx.project.id).shared_home_runtime == "codex"
+    assert Store.get_track(view.id).sandbox_layout == :dedicated
+
+    assert [%{resource_ids: %{"agent_id" => "codex-home"}, action: :open}] =
+             Ravix.Tracks.Sandbox.Store.operations(view.id)
+
+    assert Ravix.Projects.Store.get_project(ctx.project.id).shared_home_runtime == nil
     :ok = Ravix.Projects.Store.rebind_agent(ctx.project.id, "replacement", "owner-set")
     assert Ravix.Projects.Store.get_project(ctx.project.id).shared_home_runtime == nil
   end
@@ -327,6 +320,7 @@ defmodule Ravix.ThreadRuntimeTest do
     Repo.update!(
       Ecto.Changeset.change(ctx.track,
         sandbox_layout: :dedicated,
+        sandbox_state: :ready,
         sandbox_id: "track-disk",
         vault_id: "track-vault"
       )

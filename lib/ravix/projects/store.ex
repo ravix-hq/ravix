@@ -39,6 +39,79 @@ defmodule Ravix.Projects.Store do
 
   def live_project(_), do: nil
 
+  def lock_retirement(id),
+    do: Repo.one!(from p in Project, where: p.id == ^id, lock: "FOR UPDATE")
+
+  def set_retiring(id, retiring),
+    do:
+      Repo.update_all(from(p in Project, where: p.id == ^id),
+        set: [shared_machine_retiring: retiring]
+      )
+
+  def finish_retirement(id, success?) do
+    attrs =
+      if success?,
+        do: [shared_machine_retiring: false, shared_home_runtime: nil],
+        else: [shared_machine_retiring: false]
+
+    Repo.update_all(from(p in Project, where: p.id == ^id), set: attrs)
+  end
+
+  def secret_snapshots?(id) do
+    # ownership: Access.project_access and owner checks admitted this secret change.
+    Ravix.Config.dedicated_rollout?() or
+      Repo.exists?(
+        from t in Track,
+          where: t.project_id == ^id and t.sandbox_layout == :dedicated and is_nil(t.closed_at)
+      )
+  end
+
+  @doc "Invalidate snapshots before the provider mutation; concurrent writes serialize."
+  def begin_secret_change(id) do
+    # ownership: Access.project_access and owner checks in Settings admitted this secret change.
+    Repo.transaction(fn ->
+      project = Repo.one!(from p in Project, where: p.id == ^id, lock: "FOR UPDATE")
+      if project.secrets_pending, do: Repo.rollback(:secrets_pending)
+      generation = project.secrets_generation + 1
+
+      Repo.update_all(from(p in Project, where: p.id == ^id),
+        set: [secrets_generation: generation, secrets_pending: true]
+      )
+
+      # ownership: Access.project_access and owner checks admitted this project secret change.
+      Repo.update_all(
+        from(t in Track,
+          where:
+            t.project_id == ^id and
+              t.sandbox_layout == :dedicated and is_nil(t.closed_at) and
+              t.sandbox_state not in [:closing, :terminated]
+        ),
+        set: [
+          setup_state: "failed",
+          setup_error_code: "secrets_changed",
+          setup_error: "Secrets changed — rebuild to apply",
+          setup_lease: nil,
+          setup_lease_until: nil
+        ]
+      )
+
+      generation
+    end)
+  end
+
+  def finish_secret_change(id, generation) do
+    Repo.update_all(
+      from(p in Project,
+        where:
+          p.id == ^id and
+            p.secrets_generation == ^generation
+      ),
+      set: [secrets_pending: false]
+    )
+
+    :ok
+  end
+
   @doc "Insert a project. `rev` starts at 1; `created_at` is stamped."
   @spec create_project(map()) :: {:ok, Project.t()} | {:error, Ecto.Changeset.t()}
   def create_project(attrs) do

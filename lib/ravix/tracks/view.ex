@@ -61,7 +61,16 @@ defmodule Ravix.Tracks.View do
   ]
 
   defstruct @enforce_keys ++
-              [threads: [], setup_error_code: nil, runtime: nil, default_model: nil]
+              [
+                sandbox_layout: :shared,
+                sandbox_state: nil,
+                sandbox_stage: nil,
+                repo_full_name: nil,
+                threads: [],
+                setup_error_code: nil,
+                runtime: nil,
+                default_model: nil
+              ]
 
   @type t :: %__MODULE__{
           id: String.t(),

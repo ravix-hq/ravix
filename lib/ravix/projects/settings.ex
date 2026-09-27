@@ -25,7 +25,7 @@ defmodule Ravix.Projects.Settings do
   alias Ravix.Fountain
   alias Ravix.Fountain.Shapes.Catalog
   alias Ravix.Projects
-  alias Ravix.Projects.Project
+  alias Ravix.Projects.{Project, Store}
 
   @typedoc """
   What the panel is given to show. `@enforce_keys` covers all of it, so a
@@ -328,20 +328,55 @@ defmodule Ravix.Projects.Settings do
   end
 
   defp secret(project, %{secret: raw}, client, _bumps) do
-    with {:ok, secret} <- cast_secret(raw) do
-      store = if secret[:store] == "vault", do: :vaults, else: :environments
-      key = secret |> Map.get(:key, "") |> str(200) |> String.trim()
-      target = if store == :vaults, do: project.vault_id, else: project.environment_id
-
-      with :ok <- validate_key(key),
-           :ok <- require_target(target),
-           :ok <- write_secret(client, store, target, key, Map.get(secret, :value)) do
-        {:ok, true}
-      end
-    end
+    with {:ok, secret} <- cast_secret(raw), do: persist_secret(project, secret, client)
   end
 
   defp secret(_project, _change, _client, bumps), do: {:ok, bumps}
+
+  defp persist_secret(project, secret, client) do
+    store = if secret[:store] == "vault", do: :vaults, else: :environments
+    key = secret |> Map.get(:key, "") |> str(200) |> String.trim()
+    target = if store == :vaults, do: project.vault_id, else: project.environment_id
+
+    with :ok <- validate_key(key), :ok <- require_target(target) do
+      change_secret(project, client, store, target, key, Map.get(secret, :value))
+    end
+  end
+
+  defp change_secret(project, client, store, target, key, value) do
+    if Store.secret_snapshots?(project.id) do
+      change_snapshot_secret(project, client, store, target, key, value)
+    else
+      secret_result(write_secret(client, store, target, key, value))
+    end
+  end
+
+  defp change_snapshot_secret(project, client, store, target, key, value) do
+    case Store.begin_secret_change(project.id) do
+      {:ok, generation} ->
+        result = write_secret(client, store, target, key, value)
+        if confirmed_secret_write?(result), do: Store.finish_secret_change(project.id, generation)
+        Ravix.Hub.publish(project.id, :tracks)
+        secret_result(result)
+
+      {:error, :secrets_pending} ->
+        {:error,
+         {:conflict, "secrets_pending",
+          "A previous secret change is still awaiting confirmation. Ask the project owner to check its status before saving again."}}
+
+      error ->
+        error
+    end
+  end
+
+  defp confirmed_secret_write?({:error, %Fountain.Error{} = error}),
+    do: not Fountain.Error.unknown_outcome?(error)
+
+  defp confirmed_secret_write?(:ok), do: true
+  defp confirmed_secret_write?(_), do: false
+
+  defp secret_result(:ok), do: {:ok, true}
+  defp secret_result(error), do: error
 
   defp validate_key(key) do
     cond do

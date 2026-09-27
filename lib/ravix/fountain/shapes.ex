@@ -68,6 +68,23 @@ defmodule Ravix.Fountain.Shapes do
   different message for each.
   """
 
+  defmodule Vault do
+    @moduledoc "A credential container; secret values never cross this boundary."
+    @enforce_keys [:id, :name, :description, :metadata, :secret_count]
+    defstruct @enforce_keys
+    @type t :: %__MODULE__{}
+  end
+
+  def vault(raw) do
+    %Vault{
+      id: raw["id"],
+      name: raw["name"],
+      description: raw["description"],
+      metadata: raw["metadata"] || %{},
+      secret_count: raw["secret_count"] || 0
+    }
+  end
+
   defmodule Conversation do
     @moduledoc """
     A conversation, as `GET /api/conversations` lists it or `/:id` serves it.

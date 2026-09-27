@@ -1,6 +1,8 @@
 defmodule Ravix.IdsSpecTest do
   use ExUnit.Case, async: true
 
+  import Mimic
+
   alias Ravix.{Ids, Spec}
   alias Ravix.Projects.Project
   alias Ravix.Tracks.Origin
@@ -129,6 +131,13 @@ defmodule Ravix.IdsSpecTest do
       assert with_repo =~ "  - /workspace/ravix is the shared clone."
       assert with_repo =~ "The trunk is `main`. Branch from it and merge back to it."
       assert with_repo =~ "Git is configured for pushing"
+      assert with_repo =~ "It runs one turn\nat a time across all tracks"
+      refute with_repo =~ "ordinary"
+      stub(Ravix.Config, :dedicated_rollout?, fn -> true end)
+      own = Spec.system_prompt(project(repo_full_name: "acme/ravix"))
+      assert own =~ "ordinary"
+      assert own =~ "may run concurrently"
+      stub(Ravix.Config, :dedicated_rollout?, fn -> false end)
       assert with_repo =~ "## Finishing"
       assert with_repo =~ "Plan-Item: <item id>"
 

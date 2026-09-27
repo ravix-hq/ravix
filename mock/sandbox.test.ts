@@ -153,3 +153,28 @@ test("a discarded create response can be reconciled by full identity without all
   expect((await request("GET", "/api/sandboxes?status=parked")).body.data).toEqual([]);
   expect((await request("GET", `/api/sandboxes/${f.sandbox_id}`)).body.data.status).toBe("ready");
 });
+
+test("vault copy is an atomic owned snapshot and never returns secret values", async () => {
+  const source = await create("vaults", { name: crypto.randomUUID(), description: "project", metadata: { project: "p" } });
+  await request("POST", `/api/vaults/${source.id}/secrets`, { key: "TOKEN", value: "private-original" });
+  const name = crypto.randomUUID();
+  const result = await request("POST", `/api/vaults/${source.id}/copy`, { name });
+  expect(result.status).toBe(201);
+  expect(result.body.data).toMatchObject({ name, description: "project", metadata: { project: "p" }, secret_count: 1 });
+  expect(JSON.stringify(result.body)).not.toContain("private-original");
+  expect((await request("POST", `/api/vaults/${source.id}/copy`, { name })).status).toBe(422);
+  expect((await request("POST", `/api/vaults/${source.id}/copy`, {})).status).toBe(422);
+  await request("POST", `/api/vaults/${source.id}/secrets`, { key: "LATER", value: "later" });
+  const keys = await request("GET", `/api/vaults/${result.body.data.id}/secrets`);
+  expect(JSON.stringify(keys.body)).toContain("TOKEN");
+  expect(JSON.stringify(keys.body)).not.toContain("LATER");
+  const foreign = await create("vaults", { user_id: "another-owner" });
+  expect(await request("POST", `/api/vaults/${foreign.id}/copy`, { name: crypto.randomUUID() }))
+    .toEqual(await request("POST", "/api/vaults/malformed/copy", { name: crypto.randomUUID() }));
+  await request("POST", `/api/vaults/${source.id}/secrets`, { key: "BAD", value: "mock:cannot-decrypt" });
+  const before = await request("GET", "/api/vaults");
+  expect(await request("POST", `/api/vaults/${source.id}/copy`, { name: crypto.randomUUID() }))
+    .toMatchObject({ status: 422, body: { error: "secret_not_copyable", key: "BAD" } });
+  expect(await request("GET", "/api/vaults")).toEqual(before);
+  for (const id of [source.id, result.body.data.id, foreign.id]) await request("DELETE", `/api/vaults/${id}`);
+});

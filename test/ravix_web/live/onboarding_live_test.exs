@@ -603,7 +603,8 @@ defmodule RavixWeb.OnboardingLiveTest do
       assert has_element?(view, "input[name='new_project[name]'][value='Half typed']")
 
       view |> form("#first-project-form", new_project: [name: "Half typed"]) |> render_submit()
-      assert render_async(view) =~ "The operation could not finish"
+      # Await the monitored crash and its LiveView response, including coverage/logging overhead.
+      assert render_async(view, 5_000) =~ "The operation could not finish"
       refute has_element?(view, "#first-project-form button[disabled]")
     end
 

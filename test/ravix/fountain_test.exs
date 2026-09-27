@@ -184,6 +184,42 @@ defmodule Ravix.FountainTest do
   end
 
   describe "vaults" do
+    test "copies secrets server-side and returns only the boundary metadata" do
+      client =
+        fake([
+          {%{method: "POST", path: "/api/vaults/source/copy", body: %{name: "track"}},
+           {201, [],
+            %{
+              data: %{
+                id: "copy",
+                name: "track",
+                secret_count: 2,
+                metadata: %{track: "t"},
+                description: "snapshot"
+              }
+            }}}
+        ])
+
+      assert {:ok, %Shapes.Vault{id: "copy", secret_count: 2, metadata: %{"track" => "t"}}} =
+               Fountain.copy_vault(client, "source", %{name: "track"})
+    end
+
+    test "missing or foreign sources are gone; invalid copies are rejected" do
+      for {status, code} <- [{404, "not_found"}, {422, "secret_not_copyable"}] do
+        client =
+          fake([
+            {%{method: "POST", path: "/api/vaults/source/copy"},
+             {status, [], %{error: code, key: "EXAMPLE"}}}
+          ])
+
+        assert {:error, %Error{} = error} =
+                 Fountain.copy_vault(client, "source", %{name: "track"})
+
+        assert Error.vault_gone?(error) == (status == 404)
+        assert Error.rejected?(error)
+      end
+    end
+
     test "create and delete" do
       client =
         fake([

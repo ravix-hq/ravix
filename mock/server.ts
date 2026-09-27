@@ -399,10 +399,18 @@ async function act(prompt: string, emit: Emit, say: Say, conv: Conv, disk: Disk,
   const dir = /\/home\/sprite\/work\/[A-Za-z0-9._-]+/.exec(prompt)?.[0] ?? null;
 
   if (prompt.startsWith("[ravix] Open this track") && dir) {
+    const dedicated = prompt.includes("ordinary clone, with no worktrees");
     const repoPath = /The shared clone is (\/\S+?)\./.exec(prompt)?.[1] ?? null;
     const branch = /git worktree add \S+ -b (\S+)/.exec(prompt)?.[1] ?? null;
 
-    if (repoPath) {
+    if (dedicated) {
+      emit({ kind: "output", stream: "acp", data: tool("t1", `git clone repository ${dir}`) });
+      await pause(300);
+      const source = [...disk.files.keys()].find(path => path.endsWith("/README.md"));
+      if (source) copyTree(disk, source.slice(0, -"/README.md".length), dir);
+      disk.files.set(`${dir}/.git/config`, "[core]\nrepositoryformatversion = 0\n");
+      emit({ kind: "output", stream: "acp", data: toolDone("t1", "Clone ready") });
+    } else if (repoPath) {
       emit({ kind: "output", stream: "acp", data: tool("t1", `cd ${repoPath} && git fetch origin --prune`) });
       await pause(300);
       emit({ kind: "output", stream: "acp", data: toolDone("t1", "From github.com:mockuser/repo\n * [new branch]  main -> origin/main") });
@@ -756,6 +764,31 @@ export async function fountain(req: Request, url: URL): Promise<Response | null>
       if (!set.providers.includes(provider)) set.providers = [...set.providers, provider].sort();
       return json({ data: { provider, set: true } });
     }
+  }
+
+  // Copy atomically, without exposing values. The fixture account is mock-user.
+  const vaultCopy = /^\/api\/vaults\/([^/]+)\/copy$/.exec(p);
+  if (vaultCopy && method === "POST") {
+    const source = state.vaults.find((v) => v.id === vaultCopy[1] &&
+      (v.user_id ?? "mock-user") === "mock-user");
+    if (!source) return json({ error: "not_found" }, 404);
+    const name = typeof body.name === "string" ? body.name.trim() : "";
+    if (!name || state.vaults.some((v) => v.name === name &&
+      (v.user_id ?? "mock-user") === "mock-user")) {
+      return json({ error: "invalid_name" }, 422);
+    }
+    const secrets = secretsFor("vaults", String(source.id));
+    for (const [key, value] of secrets) {
+      if (value === "mock:cannot-decrypt") {
+        return json({ error: "secret_not_copyable", key }, 422);
+      }
+    }
+    const copy = { id: crypto.randomUUID(), user_id: "mock-user", name,
+      description: body.description ?? source.description ?? null,
+      metadata: body.metadata ?? source.metadata ?? {}, secret_count: secrets.size };
+    state.secrets.set(`vaults:${copy.id}`, new Map(secrets));
+    state.vaults.push(copy);
+    return json({ data: copy }, 201);
   }
 
   // ── the three records a project is ───────────────────────────────────

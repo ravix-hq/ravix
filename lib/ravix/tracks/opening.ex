@@ -66,7 +66,7 @@ defmodule Ravix.Tracks.Opening do
   Every column a new track has; `Ravix.Tracks.Track.changeset/2` fills in
   `created_at` and leaves `opened_at` and `closed_at` for later.
   """
-  @spec track_attrs(t(), String.t()) :: map()
+  @spec track_attrs(t(), String.t() | nil) :: map()
   def track_attrs(%__MODULE__{} = plan, conversation_id) do
     %{
       setup_state: if(plan.conversation.prompt, do: "running", else: "pending"),

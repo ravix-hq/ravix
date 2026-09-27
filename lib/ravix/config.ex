@@ -5,6 +5,11 @@ defmodule Ravix.Config do
     id in Application.get_env(:ravix, :dedicated_open_user_ids, [])
   end
 
+  @doc "Retire final shared machines only after explicit operator enablement."
+  def retire_shared_machines?, do: Application.get_env(:ravix, :retire_shared_machines, false)
+
+  def dedicated_rollout?, do: Application.get_env(:ravix, :dedicated_open_user_ids, []) != []
+
   @doc "Enable new threads only after old queue workers have drained."
   def threads_enabled?, do: Application.get_env(:ravix, :threads_enabled, false)
 

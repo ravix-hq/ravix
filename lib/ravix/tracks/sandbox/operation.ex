@@ -16,6 +16,10 @@ defmodule Ravix.Tracks.Sandbox.Operation do
     belongs_to :track, Ravix.Tracks.Track
     field :generation, :integer
     field :action, Ecto.Enum, values: [:open, :close, :rebuild]
+    field :phase, :string, default: "pending"
+    field :lease, :string
+    field :lease_until, :utc_datetime_usec
+    field :retry_at, :utc_datetime_usec
     field :attempts, :integer, default: 0
     field :revision, :integer, default: 1
     field :resource_ids, :map, default: %{}
@@ -39,7 +43,7 @@ defmodule Ravix.Tracks.Sandbox.Operation do
   @doc "Persist progress without letting an older worker overwrite a newer result."
   def progress_changeset(operation, attrs) do
     operation
-    |> cast(attrs, [:attempts, :resource_ids, :error, :cleanup, :completed_at])
+    |> cast(attrs, [:attempts, :resource_ids, :error, :cleanup, :completed_at, :phase, :retry_at])
     |> validate_required([:attempts, :resource_ids, :cleanup])
     |> validate_number(:attempts, greater_than_or_equal_to: 0)
     |> optimistic_lock(:revision)

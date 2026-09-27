@@ -53,6 +53,8 @@ defmodule Ravix.Tracks.Track do
   schema "tracks" do
     belongs_to :project, Ravix.Projects.Project
     field :sandbox_layout, Ecto.Enum, values: [:shared, :dedicated], default: :shared
+    field :sandbox_stage, :string
+    field :secrets_generation, :integer, default: 0
     field :sandbox_id, :string
     field :sandbox_generation, :integer, default: 0
 
