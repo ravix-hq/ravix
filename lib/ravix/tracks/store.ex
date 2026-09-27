@@ -98,6 +98,19 @@ defmodule Ravix.Tracks.Store do
     |> Map.new()
   end
 
+  @doc "Dedicated identities excluded from legacy project-machine discovery."
+  def dedicated_identities(project_id) do
+    Repo.all(
+      from(t in Track,
+        left_join: th in Thread,
+        on: th.track_id == t.id,
+        where: t.project_id == ^project_id and t.sandbox_layout == :dedicated,
+        select: {t.sandbox_id, th.conversation_id}
+      )
+    )
+    |> Enum.unzip()
+  end
+
   @doc "One track by id, closed or not."
   @spec get_track(String.t()) :: Track.t() | nil
   def get_track(id) when is_binary(id), do: Repo.get(Track, id)

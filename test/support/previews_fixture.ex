@@ -149,7 +149,7 @@ defmodule Ravix.PreviewsFixture do
 
   @doc "Stub configuration, the provider, the machine, readiness and the clock for this test."
   @spec stub_provider(pid()) :: :ok
-  def stub_provider(pid) do
+  def stub_provider(pid, opts \\ []) do
     stub(Ravix.Config, :sprites, fn ->
       %Ravix.Config.Sprites{token: "test", base_url: "http://sprites.test"}
     end)
@@ -167,8 +167,11 @@ defmodule Ravix.PreviewsFixture do
     stub(Clock, :now_ms, fn -> now(pid) end)
     stub(Clock, :sleep, fn ms -> advance(pid, ms) end)
 
-    stub(Ravix.Tracks, :machine_of, fn _project -> machine(pid) end)
-    stub(Ravix.Tracks, :machine_of, fn _project, _opts -> machine(pid) end)
+    if Keyword.get(opts, :machine, true) do
+      stub(Ravix.Tracks, :machine_of_track, fn _project, _track -> machine(pid) end)
+      stub(Ravix.Tracks, :machine_of_track, fn _project, _track, _opts -> machine(pid) end)
+    end
+
     stub(Ravix.Tracks, :sprite_for, fn sandbox_id -> sandbox_id end)
 
     stub(Ravix.Previews.Lifecycle, :ready?, fn _row, _path ->

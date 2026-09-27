@@ -1,5 +1,5 @@
 defmodule Ravix.MachineCacheTest do
-  use ExUnit.Case, async: true
+  use Ravix.DataCase, async: true
 
   alias Ravix.Fountain.FakeTransport
   alias Ravix.Fountain.Shapes.Conversation

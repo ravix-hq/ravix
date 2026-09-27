@@ -227,7 +227,7 @@ defmodule Ravix.Terminal do
     with {:ok, %{track: track, project: project}} <- Access.track_access(user, track_id),
          {:ok, sprites} <- sprites(),
          {:ok, %Request{} = request} <- Request.parse(request),
-         {:ok, sprite} <- sprite_of(project) do
+         {:ok, sprite} <- sprite_of(project, track) do
       cwd = Sprites.resolve_cwd(track.workdir, request.cwd)
       started = System.monotonic_time(:millisecond)
 
@@ -275,7 +275,7 @@ defmodule Ravix.Terminal do
     do: %Status{available: false, why: :no_token, cwd: track.workdir}
 
   defp status_of(sprites, track, project, passive) do
-    case sprite_of(project) do
+    case sprite_of(project, track) do
       {:ok, sprite} ->
         available? =
           if passive,
@@ -295,8 +295,8 @@ defmodule Ravix.Terminal do
   end
 
   # The machine, then the sprite behind it: the two answers the panels tell apart.
-  defp sprite_of(project) do
-    case Tracks.machine_of(project) do
+  defp sprite_of(project, track) do
+    case Tracks.machine_of_track(project, track) do
       {:ok, %{sandbox_id: sandbox_id}} ->
         case Tracks.sprite_for(sandbox_id) do
           nil -> {:error, {:unavailable, "no_exec", @no_sprite}}

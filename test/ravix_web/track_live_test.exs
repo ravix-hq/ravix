@@ -1659,6 +1659,95 @@ defmodule RavixWeb.TrackLiveTest do
     assert_redirect(view, "/login")
   end
 
+  test "a file result from a replaced workspace is discarded", ctx do
+    test_pid = self()
+
+    expect(Tracks, :file, fn _, _, _ ->
+      send(test_pid, {:file_waiting, self()})
+      receive do: (:finish -> :ok)
+
+      {:ok,
+       %Files.Content{
+         path: "secret.txt",
+         content: "old file secret",
+         encoding: "utf-8",
+         truncated: false,
+         size: 15
+       }}
+    end)
+
+    render_click(ctx.view, "file", %{path: "secret.txt"})
+    assert_receive {:file_waiting, worker}
+    Repo.update!(Ecto.Changeset.change(ctx.track, sandbox_generation: 1))
+    send(worker, :finish)
+    html = render_async(ctx.view)
+    refute html =~ "old file secret"
+    assert html =~ "workspace changed"
+  end
+
+  test "a command result from a replaced workspace never enters the dock", ctx do
+    test_pid = self()
+
+    expect(Terminal, :exec, fn _, _, _ ->
+      send(test_pid, {:command_waiting, self()})
+      receive do: (:finish -> :ok)
+      {:ok, %{cwd: ctx.track.workdir, stdout: "old disk secret", stderr: "", code: 0}}
+    end)
+
+    ctx.view |> element("#track-terminal") |> render_hook("exec", %{command: "cat secret"})
+    assert_receive {:command_waiting, worker}
+    Repo.update!(Ecto.Changeset.change(ctx.track, sandbox_generation: 1))
+    send(worker, :finish)
+    refute render_async(ctx.view) =~ "old disk secret"
+    refute has_element?(ctx.view, ".term-command[disabled]")
+  end
+
+  test "a revoked session cannot receive an in-flight command result", ctx do
+    {token, session} = insert_session(ctx.user)
+    conn = Plug.Test.init_test_session(build_conn(), session_token: token)
+    {:ok, parent, _} = live(conn, "/p/#{ctx.project.id}/t/#{ctx.track.id}")
+    view = find_live_child(parent, "track-host")
+    settle(view)
+    test_pid = self()
+
+    expect(Terminal, :exec, fn _, _, _ ->
+      send(test_pid, {:command_waiting, self()})
+      receive do: (:finish -> :ok)
+      {:ok, %{cwd: ctx.track.workdir, stdout: "revoked secret", stderr: "", code: 0}}
+    end)
+
+    view |> element("#track-terminal") |> render_hook("exec", %{command: "pwd"})
+    assert_receive {:command_waiting, worker}
+    Repo.delete!(session)
+    send(worker, :finish)
+    assert_redirect(parent, "/login", 1_000)
+  end
+
+  test "a membership revoked during a Vitals read cannot render its response", ctx do
+    member = insert_user()
+    membership = insert_track_member(ctx.track, member)
+
+    {:ok, parent, _} =
+      live(log_in_user(build_conn(), member), "/p/#{ctx.project.id}/t/#{ctx.track.id}")
+
+    view = find_live_child(parent, "track-host")
+    settle(view)
+    test_pid = self()
+
+    expect(Vitals, :report, fn _, _ ->
+      send(test_pid, {:vitals_waiting, self()})
+      receive do: (:finish -> :ok)
+      {:ok, %Vitals.Report{available: true, why: nil, readings: Vitals.parse_vitals("nproc=123")}}
+    end)
+
+    view |> element("button[phx-click=dock][phx-value-name=vitals]") |> render_click()
+    assert_receive {:vitals_waiting, worker}
+    Repo.delete!(membership)
+    send(worker, :finish)
+    refute render_async(view) =~ "123"
+    refute has_element?(view, ".machine-stats")
+  end
+
   test "the dock keeps its own state and its refusals still reach the page", ctx do
     # The dock is a `live_component`, and a component cannot put a flash in
     # the page's own socket -- `put_flash/3` there changes a socket nothing

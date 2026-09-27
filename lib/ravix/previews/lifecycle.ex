@@ -127,8 +127,8 @@ defmodule Ravix.Previews.Lifecycle do
   """
   @spec destination(String.t()) :: {:ok, Row.t()} | {:error, Previews.reason()}
   def destination(track_id) do
-    with {:ok, %{project: project}} <- assert_open(track_id),
-         {:ok, %Machine{sandbox_id: actual_sandbox}, actual_sprite} <- locate(project) do
+    with {:ok, %{track: track, project: project}} <- assert_open(track_id),
+         {:ok, %Machine{sandbox_id: actual_sandbox}, actual_sprite} <- locate(project, track) do
       case Store.get(track_id) do
         %Row{sprite: ^actual_sprite, sandbox_id: ^actual_sandbox} = row -> {:ok, row}
         _ -> replaced(track_id)
@@ -154,8 +154,8 @@ defmodule Ravix.Previews.Lifecycle do
   # The machine and the sprite in front of it: two answers from two calls,
   # so they are two values rather than a map that looks like a `Machine`
   # with a field `Machine` cannot have.
-  defp locate(project) do
-    case Ravix.Tracks.machine_of(project) do
+  defp locate(project, track) do
+    case Ravix.Tracks.machine_of_track(project, track) do
       {:ok, %Machine{sandbox_id: sandbox_id} = machine} ->
         case Ravix.Tracks.sprite_for(sandbox_id) do
           sprite when is_binary(sprite) ->
@@ -320,8 +320,13 @@ defmodule Ravix.Previews.Lifecycle do
 
     case Store.get(track_id) do
       %Row{sprite: sprite, desired: :running} = row when is_binary(sprite) and cfg != nil ->
-        with {:ok, logs} <- Sprites.service_logs(cfg, sprite, row.service) do
+        with {:ok, current} <- destination(track_id),
+             true <- current.sandbox_id == row.sandbox_id and current.sprite == sprite,
+             {:ok, logs} <- Sprites.service_logs(cfg, sprite, row.service) do
           Server.update(row, logs: logs)
+        else
+          false -> :ok
+          {:error, _} = error -> error
         end
 
       _ ->
@@ -372,7 +377,11 @@ defmodule Ravix.Previews.Lifecycle do
     # behind `Access.project_of/2` and asked for its previews to go with it;
     # naming its tracks, open or closed, is how they are found -- a preview
     # outlives its track being closed until something retires it.
-    track_ids = project_id |> Tracks.tracks_of(:all) |> Enum.map(& &1.id)
+    track_ids =
+      project_id
+      |> Tracks.tracks_of(:all)
+      |> Enum.filter(&(&1.sandbox_layout == :shared))
+      |> Enum.map(& &1.id)
 
     Ravix.TaskSupervisor
     |> Task.Supervisor.async_stream_nolink(

@@ -459,7 +459,7 @@ defmodule Ravix.Previews.Server do
   defp start(row, mode, held_at, owner) do
     with {:ok, %{track: track, project: project}} <- open(row),
          {:ok, config} <- config_for(row, project),
-         {:ok, machine} <- machine(row, project),
+         {:ok, machine} <- machine(row, project, track),
          {:ok, sprite} <- sprite(row, machine),
          :ok <- fresh(row),
          {:ok, row} <- replace_if_moved(row, machine, sprite, owner),
@@ -467,7 +467,7 @@ defmodule Ravix.Previews.Server do
          {:ok, row} <- define(row, track, config, mode),
          :ok <- fresh(row),
          :ok <- sprites(hold(Store.get(row.track_id) || row, held_at, owner), row) do
-      await_ready(row, project, config, Clock.now_ms() + @start_ms, @max_probes)
+      await_ready(row, {project, track}, config, Clock.now_ms() + @start_ms, @max_probes)
     end
   end
 
@@ -489,8 +489,8 @@ defmodule Ravix.Previews.Server do
   end
 
   # Fresh, not memoised: the reconciler is what notices a replaced machine.
-  defp machine(row, project) do
-    case Ravix.Tracks.machine_of(project, fresh: true) do
+  defp machine(row, project, track) do
+    case Ravix.Tracks.machine_of_track(project, track, fresh: true) do
       {:ok, %Machine{} = machine} -> {:ok, machine}
       {:ok, nil} -> {:error, "This project has no machine. Open a track first.", row}
       {:error, reason} -> {:error, reason, row}
@@ -671,11 +671,13 @@ defmodule Ravix.Previews.Server do
   end
 
   # A machine replacement during startup cannot publish an old result.
-  defp publish_ready(row, project) do
-    case Ravix.Tracks.machine_of(project, fresh: true) do
-      {:ok, %{sandbox_id: sandbox_id}} when sandbox_id == row.sandbox_id ->
-        update(row, state: :ready, error: nil)
-
+  defp publish_ready(row, {project, track}) do
+    with {:ok, %{track: current}} <- Lifecycle.assert_open(row.track_id),
+         true <- current.sandbox_generation == track.sandbox_generation,
+         {:ok, %{sandbox_id: sandbox_id}} when sandbox_id == row.sandbox_id <-
+           Ravix.Tracks.machine_of_track(project, current, fresh: true) do
+      update(row, state: :ready, error: nil)
+    else
       _ ->
         {:error, "The workspace changed during startup. Open the preview again.", row}
     end

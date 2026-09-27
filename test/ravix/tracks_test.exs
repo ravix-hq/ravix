@@ -497,12 +497,13 @@ defmodule Ravix.TracksTest do
       opening_fountain(ctx.project, false)
 
       # The slugs in use were read with the names, so a popular name costs no
-      # query per candidate: the project, every track once, and the insert.
+      # query per candidate: the project, dedicated-identity exclusion,
+      # every track once for names, and the insert.
       {result, queries} =
         QueryCount.count(fn -> Tracks.open(ctx.owner, ctx.project.id, %{title: "Kyoto"}) end)
 
       assert {:ok, %{slug: "kyoto-2"}} = result
-      assert queries == ["projects", "tracks", "tracks"]
+      assert queries == ["projects", "tracks", "tracks", "tracks"]
     end
 
     # The one refusal `plan/4` cannot rule out: somebody opening a track with

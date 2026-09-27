@@ -161,9 +161,9 @@ defmodule Ravix.VitalsTest do
         %Ravix.Config.Sprites{token: "test", base_url: "http://sprites.test"}
       end)
 
-      stub(Ravix.Tracks, :machine_of, fn _ -> {:ok, nil} end)
+      stub(Ravix.Tracks, :machine_of_track, fn _, _ -> {:ok, nil} end)
       assert {:ok, %Report{available: false, why: :no_machine}} = Vitals.report(owner, track.id)
-      stub(Ravix.Tracks, :machine_of, fn _ -> {:ok, %Machine{sandbox_id: "box"}} end)
+      stub(Ravix.Tracks, :machine_of_track, fn _, _ -> {:ok, %Machine{sandbox_id: "box"}} end)
       stub(Ravix.Tracks, :sprite_for, fn "box" -> nil end)
       assert {:ok, %Report{available: false, why: :no_sprite}} = Vitals.report(owner, track.id)
       stub(Ravix.Tracks, :sprite_for, fn "box" -> "sprite" end)

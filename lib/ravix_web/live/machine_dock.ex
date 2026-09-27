@@ -22,7 +22,9 @@ defmodule RavixWeb.Live.MachineDock do
   use RavixWeb, :live_component
 
   alias Ravix.Terminal
+  alias Ravix.Tracks
   alias Ravix.Vitals
+  alias RavixWeb.Live.Hooks
 
   # The dock's tabs, as the buttons spell them and as this module does.
   # `@labels` keeps the order the dock offers them in.
@@ -51,6 +53,7 @@ defmodule RavixWeb.Live.MachineDock do
        dock_open: false,
        output: [],
        exec_busy: false,
+       machine_status: nil,
        vitals: nil,
        vitals_busy?: false
      )}
@@ -63,7 +66,31 @@ defmodule RavixWeb.Live.MachineDock do
     # `mount/1`. It follows the worktree only until a command answers from
     # somewhere else, and `assign_new/3` is the framework's way of saying
     # exactly that --- seed it the first time, never walk it back after.
-    {:ok, socket |> assign(assigns) |> assign_new(:cwd, fn -> assigns.workdir end)}
+    socket = assign(socket, assigns)
+    identity = Tracks.machine_identity(socket.assigns.current_user, socket.assigns.track_id)
+    changed? = socket.assigns[:machine_identity] != identity
+    socket = assign(socket, machine_identity: identity)
+
+    socket =
+      if changed? do
+        %{current_user: user, track_id: id} = socket.assigns
+
+        socket
+        |> assign(
+          cwd: socket.assigns.workdir,
+          output: [],
+          vitals: nil,
+          machine_status: nil,
+          exec_busy: false
+        )
+        |> scoped_async(:machine_status, fn ->
+          Terminal.status(user, id, passive: true)
+        end)
+      else
+        socket
+      end
+
+    {:ok, socket}
   end
 
   @impl true
@@ -80,7 +107,7 @@ defmodule RavixWeb.Live.MachineDock do
       {:noreply,
        socket
        |> assign(vitals: nil, vitals_busy?: true)
-       |> traced_async(:vitals, fn -> Vitals.report(user, id) end)}
+       |> scoped_async(:vitals, fn -> Vitals.report(user, id) end)}
     else
       {:noreply, socket}
     end
@@ -107,7 +134,7 @@ defmodule RavixWeb.Live.MachineDock do
         )
 
       {:noreply,
-       traced_async(socket, :exec, fn ->
+       scoped_async(socket, :exec, fn ->
          Terminal.exec(user, id, %{command: command, cwd: cwd})
        end)}
     end
@@ -115,14 +142,55 @@ defmodule RavixWeb.Live.MachineDock do
 
   def handle_event("clear", _, socket), do: {:noreply, assign(socket, output: [])}
 
+  # Component async callbacks do not pass through the parent's hooks. Check
+  # the session, membership and generation again before rendering any output.
   @impl true
-  def handle_async(:vitals, {:ok, response}, socket),
+  def handle_async(name, response, socket) do
+    Hooks.component(socket, fn ->
+      current = Tracks.machine_identity(socket.assigns.current_user, socket.assigns.track_id)
+
+      case response do
+        {:ok, {identity, result}} when identity == current and elem(current, 0) == :ok ->
+          receive_async(name, {:ok, result}, socket)
+
+        {:exit, reason} ->
+          receive_async(name, {:exit, reason}, socket)
+
+        _ ->
+          {:noreply,
+           assign(socket,
+             exec_busy: false,
+             vitals_busy?: false,
+             output: [],
+             vitals: nil,
+             machine_status: nil
+           )}
+      end
+    end)
+  end
+
+  defp scoped_async(socket, name, fun) do
+    %{current_user: user, track_id: id} = socket.assigns
+
+    traced_async(socket, name, fn ->
+      identity = Tracks.machine_identity(user, id)
+      {identity, if(elem(identity, 0) == :ok, do: fun.(), else: {:error, :not_found})}
+    end)
+  end
+
+  defp receive_async(:machine_status, {:ok, {:ok, status}}, socket),
+    do: {:noreply, assign(socket, machine_status: status)}
+
+  defp receive_async(:machine_status, _, socket),
+    do: {:noreply, assign(socket, machine_status: nil)}
+
+  defp receive_async(:vitals, {:ok, response}, socket),
     do: {:noreply, result(assign(socket, vitals_busy?: false), response, &assign(&1, vitals: &2))}
 
-  def handle_async(:vitals, {:exit, reason}, socket),
+  defp receive_async(:vitals, {:exit, reason}, socket),
     do: {:noreply, socket |> assign(vitals_busy?: false) |> exit(reason)}
 
-  def handle_async(:exec, {:ok, response}, socket) do
+  defp receive_async(:exec, {:ok, response}, socket) do
     {:noreply,
      result(assign(socket, exec_busy: false), response, fn s, output ->
        assign(s,
@@ -132,7 +200,7 @@ defmodule RavixWeb.Live.MachineDock do
      end)}
   end
 
-  def handle_async(:exec, {:exit, reason}, socket),
+  defp receive_async(:exec, {:exit, reason}, socket),
     do: {:noreply, socket |> assign(exec_busy: false) |> exit(reason)}
 
   # Why there is nothing to show, in words. `Vitals` answers with an atom so
@@ -156,10 +224,19 @@ defmodule RavixWeb.Live.MachineDock do
   defp retry_vitals?(%Vitals.Report{why: :no_token}), do: false
   defp retry_vitals?(_), do: true
 
+  defp machine_status(nil), do: "Checking this track’s machine…"
+  defp machine_status(%Terminal.Status{available: true}), do: "This track’s machine is running"
+  defp machine_status(%Terminal.Status{why: :no_machine}), do: "This track has no machine"
+  defp machine_status(%Terminal.Status{why: :no_token}), do: "Machine status is unavailable"
+  defp machine_status(_), do: "This track’s machine is asleep or unreachable"
+
   @impl true
   def render(assigns) do
     ~H"""
     <div class="machine-dock-host">
+      <p id="track-machine-status" role="status">
+        {machine_status(@machine_status)}
+      </p>
       <nav class="workspace-tabs dock-tabs" aria-label="Machine panels">
         <button
           class="ghost dock-toggle"
