@@ -368,8 +368,28 @@ defmodule Ravix.SessionRecoveryTest do
       |> Repo.update!()
 
       stub(Ravix.Config, :github, fn -> Ravix.GitHubFake.app() end)
-      stub(Ravix.GitHub, :plan_pulls, fn _, _, _ -> {:ok, %{pulls: [], complete: true}} end)
-      stub(Ravix.GitHub, :pull_for_track, fn _, _, _, _, _ -> unquote(Macro.escape(report)) end)
+
+      stub(Ravix.GitHub, :plan_pulls, fn _, _, _ ->
+        case unquote(Macro.escape(report)) do
+          {:ok, pull} ->
+            {:ok,
+             %{
+               pulls: [
+                 Map.merge(pull, %{
+                   number: 1,
+                   url: "https://github.com/org/repo/pull/1",
+                   plan_item_ids: ["assigned"]
+                 })
+               ],
+               complete: true
+             }}
+
+          error ->
+            error
+        end
+      end)
+
+      reject(Ravix.GitHub, :pull_for_track, 5)
       enqueue(ctx, "Continue")
       client = provider(delivery([stage(1)]))
       Server.tick(ctx.server)

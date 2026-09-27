@@ -56,7 +56,7 @@ defmodule Ravix.Tooling.Catalog do
       ),
       tool(
         "create_track",
-        "Open a track. Supply branch_name (or the compatibility alias title) without the fixed ravix/ prefix; returns the full branch. PR origins keep their existing branch.",
+        "Open a track. Supply branch_name (or the compatibility alias title) without the fixed ravix/ prefix; returns the full branch. PR origins keep their existing branch; supply the PR number to resolve its head from GitHub.",
         "tracks:write",
         %{
           "project_id" => string(),
@@ -88,7 +88,7 @@ defmodule Ravix.Tooling.Catalog do
       ),
       tool(
         "wait_task",
-        "Wait up to timeout_ms (default/max 50000) for any owned task to change. Returns tasks, changed task IDs, and stale (true if reconciliation could not finish). timeout_ms: 0 performs one refresh with a 250 ms budget, without waiting for changes. Persisted terminal states do not require a provider read. Without since, terminal, input-required and blocked tasks count as changed. Pass metadata.ravix.status_version in since to acknowledge both state and reason changes; state strings remain supported. Missing since entries also detect held tasks. Remove finished tasks or pass their states in since on the next call. One active wait per user/client; concurrent waits return rate_limited.",
+        "Wait up to timeout_ms (default/max 50000) for any owned task to change. Returns tasks, changed task IDs, and stale (true if reconciliation of still-active work could not finish within the budget or another event arrived during refresh). timeout_ms: 0 performs one refresh with a 250 ms budget, without waiting for changes. Server-side turn and queue events persist task states; terminal and held states do not require a provider read. Without since, terminal, input-required and blocked tasks count as changed. Pass metadata.ravix.status_version in since to acknowledge both state and reason changes; state strings remain supported. Missing since entries also detect held tasks. Remove finished tasks or pass their states in since on the next call. One active wait per user/client; concurrent waits return rate_limited.",
         "tracks:read",
         %{
           "task_ids" => %{
@@ -106,6 +106,13 @@ defmodule Ravix.Tooling.Catalog do
           "timeout_ms" => %{"type" => "integer", "minimum" => 0, "maximum" => 50_000}
         },
         ["task_ids"]
+      ),
+      tool(
+        "retry_setup",
+        "Retry track setup using the same action as Retry setup in the browser. After setup succeeds, call retry_task to resend a failed saved prompt.",
+        "tracks:write",
+        %{"track_id" => string()},
+        ["track_id"]
       ),
       tool(
         "retry_task",

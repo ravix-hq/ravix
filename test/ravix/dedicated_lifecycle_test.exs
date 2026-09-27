@@ -2,7 +2,10 @@ defmodule Ravix.DedicatedLifecycleTest do
   use Ravix.DataCase, async: true
   import Mimic
   setup :verify_on_exit!
-  alias Ravix.Fountain.FakeTransport
+  alias Ravix.Accounts.Store, as: AccountsStore
+  alias Ravix.Fountain.{Client, FakeTransport}
+  alias Ravix.PromptQueue.Store, as: QueueStore
+  alias Ravix.Tooling.Tasks
   alias Ravix.Tracks.Sandbox
   alias Ravix.Tracks.Sandbox.{Operation, Store}
 
@@ -58,6 +61,16 @@ defmodule Ravix.DedicatedLifecycleTest do
 
   test "a rejected allocation deletes the copied secrets and retains actionable failure" do
     {project, track, op} = operation()
+    user = AccountsStore.get_user(project.user_id)
+
+    stub(Ravix.Fountain, :client, fn ->
+      Client.new("https://fountain.test", "test-key")
+    end)
+
+    {principal, _, _} = Ravix.ToolingFixture.principal(user)
+
+    {:ok, prompt} =
+      Tasks.send(principal, track.id, "saved work", "allocation-failure")
 
     client =
       FakeTransport.client([
@@ -88,6 +101,16 @@ defmodule Ravix.DedicatedLifecycleTest do
              Store.get_track(track.id)
 
     assert Store.pending() == []
+    saved = QueueStore.get(prompt.id)
+    assert saved.status == :failed
+    assert saved.error_code == "sandbox_creation_failed"
+    assert saved.error =~ "Retry setup, then retry this saved prompt."
+    refute saved.error =~ "retry_setup"
+    assert {:ok, task} = Tasks.get(principal, prompt.id)
+    assert task.error_code == "sandbox_creation_failed"
+    message = hd(Tasks.present(task).status.message.parts).text
+    assert message =~ "retry_setup"
+    assert message =~ "retry_task"
   end
 
   test "lost copy response recovers its named snapshot and never issues a second copy" do

@@ -8,6 +8,9 @@ defmodule Ravix.Tooling.Tasks do
   alias Ravix.Tracks.Transcript.Block
 
   @terminal ~w(TASK_STATE_COMPLETED TASK_STATE_FAILED TASK_STATE_CANCELED TASK_STATE_REJECTED)
+  def topic(id), do: "tooling:task:" <> id
+  defp publish(id), do: Phoenix.PubSub.broadcast(Ravix.PubSub, topic(id), {:tooling_task, id})
+
   def terminal?(task), do: task.state in @terminal
 
   def send(principal, track_id, prompt, request_id, thread_id \\ nil) do
@@ -20,7 +23,13 @@ defmodule Ravix.Tooling.Tasks do
           do: digest({track_id, prompt}),
           else: digest({track_id, thread.id, prompt})
 
-      Store.transaction(fn -> accept(principal, id, track_id, prompt, fingerprint, thread.id) end)
+      result =
+        Store.transaction(fn ->
+          accept(principal, id, track_id, prompt, fingerprint, thread.id)
+        end)
+
+      Phoenix.PubSub.broadcast(Ravix.PubSub, "tooling:queue", {:tooling_queue, track_id})
+      result
     end
   end
 
@@ -90,7 +99,8 @@ defmodule Ravix.Tooling.Tasks do
             project_id: access.project.id,
             track_id: task.track_id,
             thread_id: access.thread.id,
-            conversation_id: access.thread.conversation_id
+            conversation_id: access.thread.conversation_id,
+            access: access
           }
 
           {:cont, {:ok, rows ++ [row]}}
@@ -99,6 +109,13 @@ defmodule Ravix.Tooling.Tasks do
           {:halt, error}
       end
     end)
+  end
+
+  @doc "Refresh a scoped set once per thread, sharing provider pages."
+  def refresh_many(principal, ids) do
+    with {:ok, rows} <- observe(principal, ids) do
+      reconcile_rows(Enum.map(rows, &{&1.task, &1.access}))
+    end
   end
 
   def cancel(principal, id) do
@@ -164,20 +181,21 @@ defmodule Ravix.Tooling.Tasks do
     with %Task{user_id: ^user_id, client_id: ^client_id} = task <- Store.task(id),
          {:ok, queue} <- PromptQueue.status(principal.user, task.track_id, task.id),
          {:ok, access} <- Access.thread_access(principal.user, task.track_id, queue.thread_id) do
-      {:ok, queue_view(task, queue), access}
+      {:ok, queue_view(task, queue, access.track), access}
     else
       _ -> {:error, :not_found}
     end
   end
 
-  defp refresh(%Task{state: state} = task, _) when state in @terminal, do: {:ok, task}
+  defp refresh(%Task{state: state} = task, _) when state in @terminal,
+    do: {:ok, persist_queue(task)}
 
   defp refresh(%Task{queue_status: status} = task, access) when status in [:sent, :sending],
     do: reconcile(task, access)
 
-  defp refresh(task, _access), do: {:ok, task}
+  defp refresh(task, _access), do: {:ok, persist_queue(task)}
 
-  defp queue_view(task, queue) do
+  defp queue_view(task, queue, track) do
     {state, message} =
       case queue.status do
         :cancelled ->
@@ -202,6 +220,9 @@ defmodule Ravix.Tooling.Tasks do
       task
       | state: state,
         status_message: message,
+        error_code: queue.error_code,
+        # Setup is a track state, not a replacement for the provider failure code.
+        setup_failed: match?(%{setup_state: "failed"}, track),
         queue_status: queue.status,
         blocked: not is_nil(queue.blocked_by)
     }
@@ -211,6 +232,7 @@ defmodule Ravix.Tooling.Tasks do
   # resume delivery without touching that receipt; only a correlated turn
   # can keep it failed once the queue is sending or sent again.
   defp delivered_state(%{state: "TASK_STATE_FAILED", turn_id: nil}), do: "TASK_STATE_SUBMITTED"
+  defp delivered_state(%{state: "TASK_STATE_INPUT_REQUIRED"}), do: "TASK_STATE_SUBMITTED"
   defp delivered_state(task), do: task.state
 
   defp blocked_message(%{blocked_by: %{id: id, status: status}}),
@@ -222,41 +244,121 @@ defmodule Ravix.Tooling.Tasks do
   def held_or_terminal?(task),
     do: terminal?(task) or task.state == "TASK_STATE_INPUT_REQUIRED" or task.blocked
 
-  def version(task), do: digest({task.state, task.status_message})
+  def version(task), do: digest({task.state, task_message(task)})
 
-  defp reconcile(task, access) do
-    with {:ok, client} <- Ravix.Providers.fountain(),
-         {:ok, turns} <- Fountain.turns(client, access.thread.conversation_id) do
-      case Enum.find(turns, &(&1.client_request_id == task.id)) do
-        nil -> {:ok, task}
-        turn -> collect(task, access, client, turn)
+  @doc false
+  def reconcile_rows(rows) do
+    rows
+    |> Enum.group_by(fn {_task, access} -> access.thread.id end)
+    |> Enum.reduce_while(:ok, fn {_id, group}, :ok ->
+      case reconcile_group(group) do
+        :ok -> {:cont, :ok}
+        error -> {:halt, error}
       end
+    end)
+  end
+
+  defp reconcile_group(rows) do
+    rows =
+      Enum.map(rows, fn {task, access} ->
+        current = persist_queue(task)
+        current = %{current | reconciled_at: Store.record_reconciliation(task.id)}
+
+        if current.state != task.state,
+          do: publish(task.id)
+
+        {current, access}
+      end)
+
+    active =
+      Enum.filter(rows, fn {task, _} ->
+        not terminal?(task) and task.queue_status in [:sent, :sending]
+      end)
+
+    case active do
+      [] ->
+        :ok
+
+      [{_, access} | _] ->
+        with {:ok, client} <- Ravix.Providers.fountain(),
+             {:ok, turns} <- Fountain.turns(client, access.thread.conversation_id) do
+          reconcile_turns(active, client, turns)
+        end
     end
   end
 
-  defp collect(task, access, client, turn) do
+  defp reconcile_turns(rows, client, turns) do
+    Enum.reduce_while(rows, {:ok, %{}}, fn {task, access}, {:ok, pages} ->
+      result =
+        case Enum.find(turns, &(&1.client_request_id == task.id)) do
+          nil -> {:ok, pages}
+          turn -> collect(task, access, client, turn, pages)
+        end
+
+      case result do
+        {:ok, pages} -> {:cont, {:ok, pages}}
+        error -> {:halt, error}
+      end
+    end)
+    |> case do
+      {:ok, _} -> :ok
+      error -> error
+    end
+  end
+
+  defp persist_queue(task) do
+    {:ok, current} =
+      Store.transaction(fn ->
+        # ownership: no door for internal receipt reconciliation; the queue owns delivery
+        # state, and public reads still pass accessible/2's principal/client door.
+        {:ok, queue} = Ravix.PromptQueue.Store.lock_row(task.id, task.track_id)
+        current = Store.lock_task(task.id)
+        queue = Map.put(queue, :blocked_by, Ravix.PromptQueue.Store.held_before(queue))
+        # The same receipt door: setup state only shapes MCP recovery guidance.
+        track = Ravix.Tracks.Store.get_track(task.track_id)
+        view = queue_view(current, queue, track)
+        if view.state != current.state, do: Store.update(current, state: view.state)
+        view
+      end)
+
+    current
+  end
+
+  defp reconcile(task, access) do
+    with :ok <- reconcile_rows([{task, access}]), do: {:ok, Store.task(task.id)}
+  end
+
+  defp collect(task, access, client, turn, pages) do
     finished = turn_state(turn.status) in @terminal
-    # Rebuild a finished reply from its complete event window: ACP replies may
-    # span pages, and a previous poll may already have consumed its last event.
     cursor = if finished, do: nil, else: task.cursor
 
-    with {:ok, page} <-
-           collect_pages(client, access.thread.conversation_id, turn, cursor, %{
-             events: [],
-             seen: false
-           }),
+    with {:ok, page, pages} <-
+           collect_pages(
+             client,
+             access.thread.conversation_id,
+             turn,
+             cursor,
+             %{events: [], seen: false},
+             pages
+           ),
          runtime <- access.thread.runtime || access.project.runtime,
          text <- reply(page.events, turn.id, runtime) do
       blocks = Transcript.blocks_for_turn(page.events, runtime)
       failure = if finished, do: AgentFailure.detect(page.events, runtime, blocks)
 
-      Store.transaction(fn -> persist_outcome(task, access, turn, page, text, failure) end)
+      {:ok, saved} =
+        Store.transaction(fn -> persist_outcome(task, access, turn, page, text, failure) end)
+
+      if {saved.state, saved.result, saved.cursor} != {task.state, task.result, task.cursor},
+        do: publish(task.id)
+
+      {:ok, pages}
     end
   end
 
   defp persist_outcome(task, access, turn, page, text, failure) do
     if failure do
-      # ownership: Access.thread_access admitted this task's correlated conversation.
+      # ownership: no door for bookkeeping; reconciliation correlates an existing receipt's thread and turn.
       Ravix.Tracks.Store.record_turn_failure(
         access.thread.conversation_id,
         turn.id,
@@ -268,14 +370,16 @@ defmodule Ravix.Tooling.Tasks do
     save_page(task, turn, page, text, failure)
   end
 
-  defp collect_pages(client, conversation_id, turn, cursor, acc) do
-    with {:ok, page} <- Fountain.events_page(client, conversation_id, after: cursor, limit: 100) do
+  # Cache provider pages across receipts belonging to this thread.
+  defp collect_pages(client, conversation_id, turn, cursor, acc, pages) do
+    with {:ok, page} <- cached_page(pages, cursor, client, conversation_id) do
+      pages = Map.put(pages, cursor, page)
       {events, seen, past} = turn_window(page.events, turn.id, acc.seen)
       acc = %{events: [events | acc.events], seen: seen}
 
       cond do
         not page.has_more or past or turn_state(turn.status) not in @terminal ->
-          {:ok, %{page | events: acc.events |> Enum.reverse() |> List.flatten()}}
+          {:ok, %{page | events: acc.events |> Enum.reverse() |> List.flatten()}, pages}
 
         is_nil(page.next_cursor) or (not is_nil(cursor) and page.next_cursor <= cursor) ->
           {:error,
@@ -287,8 +391,15 @@ defmodule Ravix.Tooling.Tasks do
            }}
 
         true ->
-          collect_pages(client, conversation_id, turn, page.next_cursor, acc)
+          collect_pages(client, conversation_id, turn, page.next_cursor, acc, pages)
       end
+    end
+  end
+
+  defp cached_page(pages, cursor, client, conversation_id) do
+    case Map.fetch(pages, cursor) do
+      {:ok, page} -> {:ok, page}
+      :error -> Fountain.events_page(client, conversation_id, after: cursor, limit: 100)
     end
   end
 
@@ -307,9 +418,11 @@ defmodule Ravix.Tooling.Tasks do
   end
 
   defp save_page(task, turn, page, text, failure) do
+    # ownership: no door for bookkeeping of existing receipts; lock queue before receipt to fence late reads.
+    {:ok, queue} = Ravix.PromptQueue.Store.lock_row(task.id, task.track_id)
     current = Store.lock_task(task.id)
 
-    if current.cursor != task.cursor or terminal?(%{current | state: delivered_state(current)}) do
+    if stale_page?(task, current, queue) do
       current
     else
       state = if failure, do: "TASK_STATE_FAILED", else: turn_state(turn.status)
@@ -324,6 +437,11 @@ defmodule Ravix.Tooling.Tasks do
         failure_message: failure && failure.reason
       )
     end
+  end
+
+  defp stale_page?(task, current, queue) do
+    queue.status not in [:sent, :sending] or current.cursor != task.cursor or
+      terminal?(%{current | state: delivered_state(current)})
   end
 
   defp reply(events, turn_id, runtime) do
@@ -363,16 +481,22 @@ defmodule Ravix.Tooling.Tasks do
       timestamp: DateTime.to_iso8601(task.updated_at)
     }
 
-    if task.status_message do
+    if message = task_message(task) do
       Map.put(status, :message, %{
         role: "ROLE_AGENT",
         messageId: version(task),
-        parts: [%{text: task.status_message}]
+        parts: [%{text: message}]
       })
     else
       status
     end
   end
+
+  defp task_message(%{queue_status: :failed, setup_failed: true} = task) do
+    "#{task.status_message} Call retry_setup with track_id #{task.track_id}, then after setup succeeds call retry_task with task_id #{task.id}."
+  end
+
+  defp task_message(task), do: task.status_message
 
   def id(principal, request_id),
     do: digest({principal.user.id, principal.grant.client_id, request_id})

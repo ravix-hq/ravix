@@ -8,7 +8,7 @@ defmodule RavixWeb.TrackLiveTest do
   alias Ravix.Hub.Event
   alias Ravix.{People, Previews, PromptQueue, QueryCount, Repo, Terminal, Tracks, Vitals}
   alias Ravix.PromptQueue.View, as: QueuedPrompt
-  alias Ravix.Tracks.{Diff, Files, Follower, Track, TrackMember, Transcript}
+  alias Ravix.Tracks.{Diff, Files, Follower, Setup, Track, TrackMember, Transcript}
   alias RavixWeb.Live.Guard
 
   alias Ravix.Plans.Progress
@@ -1356,10 +1356,19 @@ defmodule RavixWeb.TrackLiveTest do
 
     stub(Ravix.Config, :github, fn -> Ravix.GitHubFake.app() end)
 
-    stub(Ravix.GitHub, :plan_pulls, fn _, _, _ -> {:ok, %{pulls: [], complete: true}} end)
-
-    expect(Ravix.GitHub, :pull_for_track, fn _, _, _, _, _ ->
-      {:ok, %{state: :merged, number: 231, url: "https://github.com/acme/app/pull/231"}}
+    stub(Ravix.GitHub, :plan_pulls, fn _, _, _ ->
+      {:ok,
+       %{
+         pulls: [
+           %{
+             state: :merged,
+             number: 231,
+             url: "https://github.com/acme/app/pull/231",
+             plan_item_ids: ["complete"]
+           }
+         ],
+         complete: true
+       }}
     end)
 
     send(ctx.view.pid, :refresh_plan_items)
@@ -3612,6 +3621,34 @@ defmodule RavixWeb.TrackLiveTest do
     assert has_element?(ctx.view, "#turns-restored .speaker", "@teammate")
     assert has_element?(ctx.view, "#turns-restored .chip", "Context restored")
     refute render(ctx.view) =~ "Earlier turns may be missing"
+  end
+
+  test "saved setup failures show human recovery guidance without MCP tool names", ctx do
+    ctx.track |> Ecto.Changeset.change(setup_state: "failed") |> Repo.update!()
+    id = Ecto.UUID.generate()
+
+    {:ok, _} =
+      PromptQueue.Store.enqueue(ctx.track.id, ctx.user.id, ctx.user.login, id, %{
+        prompt: "Saved work",
+        images: []
+      })
+
+    PromptQueue.Store.fail_setup(
+      ctx.track.id,
+      Setup.failure_message() <> " Opening was refused."
+    )
+
+    send(ctx.view.pid, {:hub, Event.new(:queue, ctx.project.id, track_id: ctx.track.id)})
+    render_async(ctx.view)
+
+    assert has_element?(
+             ctx.view,
+             ".workspace-queue",
+             "Track setup failed. Retry setup, then retry this saved prompt. Opening was refused."
+           )
+
+    refute has_element?(ctx.view, ".workspace-queue", "retry_setup")
+    refute has_element?(ctx.view, ".workspace-queue", "retry_task")
   end
 
   test "saved prompts explain statuses, busy waits and a held head", ctx do

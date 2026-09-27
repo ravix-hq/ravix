@@ -73,3 +73,5 @@ config :posthog,
   api_key: "phc_test_mode_never_sent"
 
 config :ravix, Ravix.Schedules.Server, interval: false
+
+config :ravix, Ravix.Tooling.Reconciler, interval: false, subscribe: false

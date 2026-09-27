@@ -73,6 +73,10 @@ defmodule Ravix.Tooling do
 
   defp execute(p, "get_task", a), do: map_result(Tasks.get(p, a["task_id"]), &Tasks.present/1)
 
+  defp execute(p, "retry_setup", a) do
+    with :ok <- Tracks.retry(p.user, a["track_id"]), do: {:ok, %{retried: true}}
+  end
+
   defp execute(p, "retry_task", a),
     do: map_result(Tasks.retry(p, a["task_id"]), &Tasks.present/1)
 
@@ -168,8 +172,9 @@ defmodule Ravix.Tooling do
   defp recheck(p, "list_tracks", _, result),
     do: all_access(result.items, &Access.track_access(p.user, &1.id))
 
-  defp recheck(p, name, args, _) when name in ["get_track", "read_track", "send_prompt"],
-    do: access_result(Access.track_access(p.user, args["track_id"]))
+  defp recheck(p, name, args, _)
+       when name in ["get_track", "read_track", "send_prompt", "retry_setup"],
+       do: access_result(Access.track_access(p.user, args["track_id"]))
 
   defp recheck(p, name, args, _) when name in ["get_project_settings", "update_project_settings"],
     do: access_result(Access.project_of(p.user, args["project_id"]))

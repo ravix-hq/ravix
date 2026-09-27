@@ -315,6 +315,9 @@ defmodule RavixWeb.Live.PeopleDialogTest do
       conn = Plug.Test.init_test_session(ctx.conn, session_token: token)
       {:ok, view, _} = live(conn, "/p/#{ctx.project.id}")
       open_people(view)
+      # Finish mount-time work before revoking the session; the component event
+      # below must be the first operation to observe that revocation.
+      render_async(view)
       %{view: view, session: session}
     end
 

@@ -88,7 +88,7 @@ defmodule Ravix.Plans.Assignment do
     status = Enum.find(statuses, &(&1.id == item.id))
 
     cond do
-      item.track_id || item.assignment_request ->
+      assigned?(item) ->
         Store.rollback(
           {:conflict, "item_assigned",
            "This item is already assigned or has an unconfirmed assignment."}
@@ -100,7 +100,20 @@ defmodule Ravix.Plans.Assignment do
         )
 
       true ->
-        item |> Ecto.Changeset.change(assignment_request: request_id) |> Store.update() |> saved()
+        item
+        |> Ecto.Changeset.change(track_id: nil, assignment_request: request_id)
+        |> Store.update()
+        |> saved()
+    end
+  end
+
+  defp assigned?(%{track_id: nil, assignment_request: request}), do: not is_nil(request)
+
+  defp assigned?(item) do
+    case Store.tracks([item.track_id]) do
+      [%{closed_at: at}] when not is_nil(at) -> false
+      [%{setup_state: "failed"}] -> false
+      _ -> true
     end
   end
 

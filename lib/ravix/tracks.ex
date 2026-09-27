@@ -473,6 +473,7 @@ defmodule Ravix.Tracks do
   defp open_dedicated(user, project_id, attrs) do
     with {:ok, %{project: project, role: role}} <- Access.project_access(user, project_id),
          :ok <- plan_origin_access(user, project_id, attrs["origin"]),
+         {:ok, attrs} <- resolve_pr_origin(project, attrs),
          {:ok, client} <- fountain(),
          {:ok, plan} <- plan(user, project, attrs, nil),
          {:ok, selection} <- Runtime.select(user, project, client, attrs),
@@ -510,6 +511,7 @@ defmodule Ravix.Tracks do
   defp open_shared_available(user, project_id, attrs, opts) do
     with {:ok, %{project: project, role: role}} <- Access.project_access(user, project_id),
          :ok <- plan_origin_access(user, project_id, attrs["origin"]),
+         {:ok, attrs} <- resolve_pr_origin(project, attrs),
          {:ok, client} <- fountain(),
          :ok <- Ravix.Projects.prepare_machine(project, client),
          {:ok, machine} <- MachineCache.machine_of(client, project),
@@ -1613,6 +1615,38 @@ defmodule Ravix.Tracks do
   end
 
   defp plan_origin_access(_, _, _), do: :ok
+
+  # The browser picker supplies a head; number-only API origins must resolve it
+  # before provisioning, never fall back to the project's default branch.
+  defp resolve_pr_origin(project, %{"origin" => %{"kind" => "pr"} = origin} = attrs) do
+    if is_binary(origin["base"]) and origin["base"] != "" do
+      {:ok, attrs}
+    else
+      with n when is_integer(n) and n > 0 <- number(origin["number"]),
+           {:ok, app} <- Ravix.Providers.github(),
+           {:ok, pull} <-
+             Ravix.GitHub.pull(app, project.installation_id, project.repo_full_name, n),
+           :ok <- same_pr_repository(pull, project),
+           head when is_binary(head) and head != "" <- pull.head_ref do
+        {:ok,
+         Map.put(attrs, "origin", Map.merge(origin, %{"base" => head, "title" => pull.title}))}
+      else
+        {:error, _} = error -> error
+        _ -> {:error, {:unprocessable, "invalid_pr", "Choose a pull request with a head branch."}}
+      end
+    end
+  end
+
+  defp resolve_pr_origin(_project, attrs), do: {:ok, attrs}
+
+  defp same_pr_repository(%{head_repo: repo}, %{repo_full_name: repo}) when is_binary(repo),
+    do: :ok
+
+  defp same_pr_repository(_, _),
+    do:
+      {:error,
+       {:unprocessable, "invalid_pr",
+        "The pull request head must belong to this project's repository; fork PRs are not supported."}}
 
   defp read_origin(raw, project) when is_map(raw) do
     raw = stringify(raw)

@@ -1075,7 +1075,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
     track = insert_track(project: project)
     People.add_member(track.id, member.id, owner.id)
     {:ok, view, _} = live(log_in_user(conn, member), "/p/#{project.id}?new=track")
-    render_async(view)
+    render_async(view, 5_000)
     refute has_element?(view, "#new-track-form")
     refute has_element?(view, "a.project-add")
     refute has_element?(view, "button", "New track")
