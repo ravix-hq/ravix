@@ -167,7 +167,7 @@ defmodule RavixWeb.TrackLiveTest do
   end
 
   test "add-thread capacity refusal says to try again without claiming a queued prompt", ctx do
-    expect(Tracks, :add_thread, fn _, _ ->
+    expect(Tracks, :add_thread, fn _, _, _ ->
       {:error, %FountainError{status: 409, code: "sandbox_at_capacity"}}
     end)
 
