@@ -354,11 +354,16 @@ verified. The first thread selects the project's home-runtime agent for this dis
 Secret copies are snapshots. Editing project secrets pauses dedicated tracks and
 shows **Secrets changed — rebuild to apply**; an explicitly confirmed rebuild
 replaces the machine and its copy. An unconfirmed source-secret write also holds
-new copies; explicitly saving the secret again can recover an interrupted writer.
+new copies and overlapping saves. An operator must confirm an interrupted write's
+outcome before clearing its persisted pending generation; no database connection
+is held while writing to Fountain.
 Closing is durable and remains visible while cleanup retries. It ends every
 thread, deletes the machine, confirms its absence, and deletes the copied secrets.
-The final shared track also retires the old shared machine, retaining project
-secrets and runtime agents for future tracks.
+Shared open/close is unchanged by default. Only the separately enabled
+`RAVIX_RETIRE_SHARED_MACHINES=true` retires the old machine after the final shared
+track closes, retaining project secrets and runtime agents. Retirement gives up
+after five attempts, keeps a failed operation for inspection and releases the
+shared-open fence.
 
 Operation leases and generations fence workers across nodes. Lost allocation
 responses are reconciled by the operation's copy name and full machine identity.

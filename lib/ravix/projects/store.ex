@@ -16,7 +16,6 @@ defmodule Ravix.Projects.Store do
 
   import Ecto.Query
 
-  alias Ecto.Adapters.SQL
   alias Ravix.Projects.Project
   alias Ravix.Repo
   alias Ravix.Tracks.Track
@@ -40,21 +39,31 @@ defmodule Ravix.Projects.Store do
 
   def live_project(_), do: nil
 
-  @doc "Serialize source-secret writes; a later explicit save can recover a crashed writer."
-  def secret_write(id, fun) do
-    Repo.checkout(
-      fn ->
-        SQL.query!(Repo, "SELECT pg_advisory_lock(hashtextextended($1, 8))", [id])
+  def lock_retirement(id),
+    do: Repo.one!(from p in Project, where: p.id == ^id, lock: "FOR UPDATE")
 
-        try do
-          Repo.update_all(from(p in Project, where: p.id == ^id), set: [secrets_pending: false])
-          fun.()
-        after
-          SQL.query!(Repo, "SELECT pg_advisory_unlock(hashtextextended($1, 8))", [id])
-        end
-      end,
-      timeout: 180_000
-    )
+  def set_retiring(id, retiring),
+    do:
+      Repo.update_all(from(p in Project, where: p.id == ^id),
+        set: [shared_machine_retiring: retiring]
+      )
+
+  def finish_retirement(id, success?) do
+    attrs =
+      if success?,
+        do: [shared_machine_retiring: false, shared_home_runtime: nil],
+        else: [shared_machine_retiring: false]
+
+    Repo.update_all(from(p in Project, where: p.id == ^id), set: attrs)
+  end
+
+  def secret_snapshots?(id) do
+    # ownership: Access.project_access and owner checks admitted this secret change.
+    Ravix.Config.dedicated_rollout?() or
+      Repo.exists?(
+        from t in Track,
+          where: t.project_id == ^id and t.sandbox_layout == :dedicated and is_nil(t.closed_at)
+      )
   end
 
   @doc "Invalidate snapshots before the provider mutation; concurrent writes serialize."

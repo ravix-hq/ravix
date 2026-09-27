@@ -339,18 +339,33 @@ defmodule Ravix.Projects.Settings do
     target = if store == :vaults, do: project.vault_id, else: project.environment_id
 
     with :ok <- validate_key(key), :ok <- require_target(target) do
-      Store.secret_write(project.id, fn ->
-        change_secret(project, client, store, target, key, Map.get(secret, :value))
-      end)
+      change_secret(project, client, store, target, key, Map.get(secret, :value))
     end
   end
 
   defp change_secret(project, client, store, target, key, value) do
-    with {:ok, generation} <- Store.begin_secret_change(project.id) do
-      result = write_secret(client, store, target, key, value)
-      if confirmed_secret_write?(result), do: Store.finish_secret_change(project.id, generation)
-      Ravix.Hub.publish(project.id, :tracks)
-      secret_result(result)
+    if Store.secret_snapshots?(project.id) do
+      change_snapshot_secret(project, client, store, target, key, value)
+    else
+      secret_result(write_secret(client, store, target, key, value))
+    end
+  end
+
+  defp change_snapshot_secret(project, client, store, target, key, value) do
+    case Store.begin_secret_change(project.id) do
+      {:ok, generation} ->
+        result = write_secret(client, store, target, key, value)
+        if confirmed_secret_write?(result), do: Store.finish_secret_change(project.id, generation)
+        Ravix.Hub.publish(project.id, :tracks)
+        secret_result(result)
+
+      {:error, :secrets_pending} ->
+        {:error,
+         {:conflict, "secrets_pending",
+          "A previous secret change is still awaiting confirmation. Ask the project owner to check its status before saving again."}}
+
+      error ->
+        error
     end
   end
 

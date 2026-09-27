@@ -1419,6 +1419,23 @@ defmodule Ravix.ProjectsTest do
       assert Settings.normalize_packages(nil) == %{}
     end
 
+    test "pending dedicated snapshots refuse overlapping secret writes", %{
+      owner: owner,
+      project: project
+    } do
+      insert_track(project: project, sandbox_layout: :dedicated)
+      {:ok, _} = Ravix.Projects.Store.begin_secret_change(project.id)
+      client = fountain([])
+
+      assert {:error, {:conflict, "secrets_pending", message}} =
+               Projects.update_settings(owner, project.id, %{
+                 secret: %{store: "vault", key: "API_KEY", value: "new"}
+               })
+
+      assert message =~ "awaiting confirmation"
+      assert requests(client) == []
+    end
+
     test "secrets: named, not reserved, and only in a store the project has", %{
       owner: owner,
       project: project
@@ -1454,6 +1471,9 @@ defmodule Ravix.ProjectsTest do
                })
 
       assert length(requests(client)) == 2
+      unchanged = Ravix.Projects.Store.live_project(project.id)
+      assert unchanged.secrets_generation == 0
+      refute unchanged.secrets_pending
 
       vaultless = blank_project(owner, id: "p2", vault_id: nil)
 

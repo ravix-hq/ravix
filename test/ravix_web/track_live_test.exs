@@ -65,6 +65,12 @@ defmodule RavixWeb.TrackLiveTest do
   end
 
   test "dedicated lifecycle stages and close warnings stay visible", ctx do
+    refute has_element?(ctx.view, "#track-machine-scope")
+    stub(Ravix.Config, :dedicated_opens_enabled?, fn _ -> true end)
+    {:ok, parent, _} = live(ctx.conn, "/p/#{ctx.project.id}/t/#{ctx.track.id}")
+    view = find_live_child(parent, "track-host")
+    settle(view)
+    ctx = %{ctx | view: view, parent: parent}
     assert has_element?(ctx.view, "#track-machine-scope", "Shared project machine")
 
     for {stage, state, text} <- [
@@ -125,6 +131,48 @@ defmodule RavixWeb.TrackLiveTest do
     render_async(ctx.view)
     assert has_element?(ctx.view, "#rebuild-track-machine", "Secrets changed — rebuild to apply")
     assert has_element?(ctx.view, "#rebuild-track-machine input[required]")
+  end
+
+  test "only an owner or cutter sees rebuild and forged member events are refused", ctx do
+    Repo.update!(
+      Ecto.Changeset.change(ctx.track,
+        sandbox_layout: :dedicated,
+        setup_state: "failed",
+        setup_error_code: "secrets_changed"
+      )
+    )
+
+    member = insert_user()
+    insert_track_member(ctx.track, member)
+
+    stub(Tracks, :get, fn user, id, _opts ->
+      {:ok,
+       %{
+         track:
+           Tracks.present(Repo.get!(Track, id),
+             role: if(user.id == ctx.user.id, do: :owner, else: :member)
+           ),
+         header: blank_header(),
+         threads: thread_options(id),
+         starters: [],
+         models: []
+       }}
+    end)
+
+    {:ok, parent, _} =
+      live(log_in_user(build_conn(), member), "/p/#{ctx.project.id}/t/#{ctx.track.id}")
+
+    view = find_live_child(parent, "track-host")
+    settle(view)
+    refute has_element?(view, "#rebuild-track-machine")
+    render_hook(view, "rebuild-machine", %{force: "true"})
+    assert Tracks.Sandbox.Store.operations(ctx.track.id) == []
+
+    # Removing the member turns the same connected page into another user's page.
+    Repo.delete!(Repo.get_by!(TrackMember, track_id: ctx.track.id, user_id: member.id))
+
+    render_hook(view, "rebuild-machine", %{force: "true"})
+    assert Tracks.Sandbox.Store.operations(ctx.track.id) == []
   end
 
   test "cached missing funding warns the owner but does not prevent an accepted send", ctx do
@@ -978,7 +1026,7 @@ defmodule RavixWeb.TrackLiveTest do
     refute has_element?(ctx.view, "#composer-#{foreign.id}")
   end
 
-  for event <- ["select-thread", "add-thread", "connect-thread-agent"] do
+  for event <- ["select-thread", "add-thread", "connect-thread-agent", "rebuild-machine"] do
     @thread_event event
     test "revoked session rejects #{event}", ctx do
       token = Plug.Conn.get_session(ctx.conn, :session_token)
@@ -990,7 +1038,11 @@ defmodule RavixWeb.TrackLiveTest do
       end)
 
       assert {:error, {:redirect, %{to: "/login"}}} =
-               render_hook(ctx.view, @thread_event, %{thread_id: ctx.track.id, runtime: "codex"})
+               render_hook(ctx.view, @thread_event, %{
+                 thread_id: ctx.track.id,
+                 runtime: "codex",
+                 force: "true"
+               })
 
       assert length(Tracks.Store.threads_of(ctx.track.id)) == 1
     end

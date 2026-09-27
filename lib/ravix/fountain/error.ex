@@ -170,7 +170,7 @@ defmodule Ravix.Fountain.Error do
 
   def public_message("sandbox_outcome_unknown"),
     do:
-      "Machine creation is being checked after a lost response. Your prompts are saved; no second machine will be created."
+      "The machine provider has not confirmed whether creation finished. Your prompts are saved. Ask the project owner to check the machine provider; automatic checks continue without creating a second machine."
 
   def public_message("sandbox_cleanup_pending"),
     do: "Closing… cleaning up this track's machine. Cleanup will retry automatically."

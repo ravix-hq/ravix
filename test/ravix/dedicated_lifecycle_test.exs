@@ -33,6 +33,29 @@ defmodule Ravix.DedicatedLifecycleTest do
     {project, track, op}
   end
 
+  test "uncertain creation is visible and never allocates again on retry" do
+    {_project, track, op} = operation()
+    {:ok, op} = Store.update_operation(op, %{phase: "launching"})
+
+    client =
+      FakeTransport.client([
+        {%{method: "GET", path: "/api/sandboxes"}, {200, [], %{data: []}}}
+      ])
+
+    Sandbox.advance(client, op.id)
+
+    assert %{
+             setup_state: "failed",
+             setup_error_code: "sandbox_outcome_unknown",
+             setup_error: message
+           } = Store.get_track(track.id)
+
+    assert message =~ "Ask the project owner"
+    assert {:error, :pending} = Store.retry(Store.get_track(track.id))
+    assert %{phase: "launching", completed_at: nil} = Store.get_operation(op.id)
+    refute Enum.any?(FakeTransport.calls(client), &(&1.method == "POST"))
+  end
+
   test "a rejected allocation deletes the copied secrets and retains actionable failure" do
     {project, track, op} = operation()
 
@@ -186,6 +209,7 @@ defmodule Ravix.DedicatedLifecycleTest do
   end
 
   test "last shared close retains project secrets and gates a racing shared open until deletion" do
+    stub(Ravix.Config, :retire_shared_machines?, fn -> true end)
     project = insert_project()
     first = insert_track(project: project)
     last = insert_track(project: project)
@@ -383,20 +407,59 @@ defmodule Ravix.DedicatedLifecycleTest do
     assert {:error, :not_found} = Ravix.Tracks.close_info(insert_user(), track.id)
   end
 
-  test "a subsequent explicit secret save recovers a crashed source writer" do
+  test "a pending source write refuses overlap until its outcome is confirmed" do
     {project, _track, _op} = operation()
     assert {:ok, 1} = Ravix.Projects.Store.begin_secret_change(project.id)
-
-    assert {:ok, 2} =
-             Ravix.Projects.Store.secret_write(project.id, fn ->
-               Ravix.Projects.Store.begin_secret_change(project.id)
-             end)
-
+    assert {:error, :secrets_pending} = Ravix.Projects.Store.begin_secret_change(project.id)
+    assert :ok = Ravix.Projects.Store.finish_secret_change(project.id, 0)
     assert Ravix.Projects.Store.live_project(project.id).secrets_pending
-    assert :ok = Ravix.Projects.Store.finish_secret_change(project.id, 2)
+    assert :ok = Ravix.Projects.Store.finish_secret_change(project.id, 1)
+    assert {:ok, 2} = Ravix.Projects.Store.begin_secret_change(project.id)
+  end
+
+  test "legacy retirement fails after bounded retries and releases its fence" do
+    stub(Ravix.Config, :retire_shared_machines?, fn -> true end)
+
+    project =
+      Repo.update!(
+        Ecto.Changeset.change(insert_project(), shared_home_runtime: "missing-runtime")
+      )
+
+    track = insert_track(project: project)
+    assert {:ok, :ok} = Store.close_shared(track, project)
+    assert {:ok, :ok} = Store.close_shared(track, project)
+    [op] = Store.operations(track.id)
+    client = FakeTransport.client([])
+
+    for attempt <- 1..5 do
+      Sandbox.advance(client, op.id)
+      current = Store.get_operation(op.id)
+      assert current.attempts == attempt
+      if attempt < 5, do: Store.update_operation(current, %{retry_at: nil})
+    end
+
+    assert %{phase: "failed", completed_at: %DateTime{}} = Store.get_operation(op.id)
+    refute Ravix.Projects.Store.live_project(project.id).shared_machine_retiring
+    assert Store.shared_open(project.id, fn -> :allowed end) == :allowed
+    assert FakeTransport.calls(client) == []
+  end
+
+  test "turning retirement off cancels pending legacy work without provider calls" do
+    stub(Ravix.Config, :retire_shared_machines?, fn -> true end)
+    project = insert_project()
+    track = insert_track(project: project)
+    {:ok, :ok} = Store.close_shared(track, project)
+    [op] = Store.operations(track.id)
+    stub(Ravix.Config, :retire_shared_machines?, fn -> false end)
+    client = FakeTransport.client([])
+    Sandbox.advance(client, op.id)
+    assert %{phase: "failed"} = Store.get_operation(op.id)
+    refute Ravix.Projects.Store.live_project(project.id).shared_machine_retiring
+    assert FakeTransport.calls(client) == []
   end
 
   test "last shared cleanup follows its pinned home runtime and releases that pin" do
+    stub(Ravix.Config, :retire_shared_machines?, fn -> true end)
     project = insert_project(runtime: "claude")
     :ok = Ravix.Projects.Store.reserve_runtime(project.id, "codex")
     :ok = Ravix.Projects.Store.bind_runtime(project.id, "codex", "codex-home", nil)

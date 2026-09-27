@@ -264,14 +264,22 @@ defmodule Ravix.Tracks.Sandbox do
   end
 
   defp close(client, %{resource_ids: %{"legacy" => true}} = op, track, _project) do
-    with {:ok, op} <- discover_shared(client, op),
+    with true <- Ravix.Config.retire_shared_machines?(),
+         {:ok, op} <- discover_shared(client, op),
          :ok <- end_threads(client, track),
          :ok <- delete_box(client, op.resource_ids["sandbox_id"]),
          {:ok, _} <- Store.finish_shared(op, track) do
       MachineCache.forget_project(track.project_id)
       publish(track)
     else
-      _ -> defer(op, "sandbox_cleanup_pending")
+      false ->
+        Store.finish_shared(op, track, %{code: "retirement_disabled"})
+
+      _ when op.attempts >= 5 ->
+        Store.finish_shared(op, track, %{code: "sandbox_cleanup_pending"})
+
+      _ ->
+        defer(op, "sandbox_cleanup_pending")
     end
   end
 
@@ -355,7 +363,7 @@ defmodule Ravix.Tracks.Sandbox do
              sandbox_state: :failed,
              sandbox_stage: "failed"
            ) do
-      # ownership: no door — the operation's generation owns this track's failed setup.
+      # ownership: the durable operation was admitted by Access.track_access and require_owner_or_cutter.
       Ravix.PromptQueue.Store.fail_setup(track.id, error.message, code)
       publish(track)
       cleanup(client, op, track, project)
@@ -436,7 +444,7 @@ defmodule Ravix.Tracks.Sandbox do
   end
 
   defp revoke_preview(track) do
-    # ownership: no door — the track's durable close has revoked new activity.
+    # ownership: the durable close was admitted by Access.track_access and require_owner_or_cutter.
     Lifecycle.stop_service(track.id, :cleanup)
   end
 
@@ -471,8 +479,11 @@ defmodule Ravix.Tracks.Sandbox do
         retry_at: DateTime.add(DateTime.utc_now(), 15)
       },
       setup_error: Error.public_message(code),
-      setup_error_code: code
+      setup_error_code: code,
+      setup_state: if(code == "sandbox_outcome_unknown", do: "failed", else: "pending")
     )
+
+    if code == "sandbox_outcome_unknown", do: publish(Store.get_track(op.track_id))
   end
 
   defp publish(track), do: Hub.publish(track.project_id, :tracks, track_id: track.id)

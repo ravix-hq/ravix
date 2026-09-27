@@ -501,12 +501,12 @@ defmodule Ravix.Tracks do
   defp open_shared(user, project_id, attrs, opts) do
     with {:ok, _} <- Access.project_access(user, project_id) do
       Ravix.Tracks.Sandbox.Store.shared_open(project_id, fn ->
-        open_shared_locked(user, project_id, attrs, opts)
+        open_shared_available(user, project_id, attrs, opts)
       end)
     end
   end
 
-  defp open_shared_locked(user, project_id, attrs, opts) do
+  defp open_shared_available(user, project_id, attrs, opts) do
     with {:ok, %{project: project, role: role}} <- Access.project_access(user, project_id),
          :ok <- plan_origin_access(user, project_id, attrs["origin"]),
          {:ok, client} <- fountain(),
@@ -1181,12 +1181,17 @@ defmodule Ravix.Tracks do
   end
 
   defp close_track(user, track, project, client, opts) do
+    with {:ok, :ok} <- Ravix.Tracks.Sandbox.Store.close_shared(track, project) do
+      finish_shared_close(user, track, project, client, opts)
+    end
+  end
+
+  defp finish_shared_close(user, track, project, client, opts) do
     # ownership: `Access.track_access/2` above admitted this caller to the
     # track being closed; prompts waiting to be delivered to it have nowhere
     # to go.
     Ravix.PromptQueue.Store.cancel_track(track.id)
 
-    {:ok, :ok} = Ravix.Tracks.Sandbox.Store.close_shared(track, project)
     MachineCache.forget_project(project.id)
     publish_tracks(project.id, track.id)
 

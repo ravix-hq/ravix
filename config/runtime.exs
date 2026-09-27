@@ -1,5 +1,9 @@
 import Config
 
+config :ravix,
+       :retire_shared_machines,
+       System.get_env("RAVIX_RETIRE_SHARED_MACHINES", "false") == "true"
+
 # Explicit user-id cohort; blank/unset disables new dedicated opens. Readers
 # must never consult this flag. B7 wires this eligibility into provisioning.
 config :ravix,

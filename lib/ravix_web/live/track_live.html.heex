@@ -55,7 +55,14 @@
         class="chip mono track-branch"
         title={@track.branch}
       >{@track.branch}</span>
-      <span class="chip" id="track-machine-scope">{if @track.sandbox_layout == :dedicated,
+      <span
+        :if={
+          @track.sandbox_layout == :dedicated ||
+            Ravix.Config.dedicated_opens_enabled?(@current_user)
+        }
+        class="chip"
+        id="track-machine-scope"
+      >{if @track.sandbox_layout == :dedicated,
         do: "Own machine",
         else: "Shared project machine"}</span>
       <span class="spacer"></span><button
@@ -249,7 +256,10 @@
           role={if @track.status == :setup_failed, do: "alert", else: "status"}
         >
           <strong>{setup_label(@track, @setup_now)}</strong>
-          <span>{if @track.sandbox_layout == :dedicated,
+          <span :if={
+            @track.sandbox_layout == :dedicated ||
+              Ravix.Config.dedicated_opens_enabled?(@current_user)
+          }>{if @track.sandbox_layout == :dedicated,
             do: "Own machine",
             else: "Shared project machine"}</span>
           <span :if={@track.setup_error}>{@track.setup_error}</span>
@@ -257,7 +267,10 @@
             Prompts will wait until setup is ready.
           </p>
           <form
-            :if={@track.setup_error_code == "secrets_changed"}
+            :if={
+              @track.setup_error_code == "secrets_changed" &&
+                owner_or_creator?(@current_user, @track)
+            }
             phx-submit="rebuild-machine"
             id="rebuild-track-machine"
           >
@@ -636,7 +649,7 @@
               else: "No uncommitted changes found."}
             <%= case info.unpushed do %>
               <% :unknown -> %>
-                Unpushed commits could not be checked because the branch has no upstream.
+                Unpushed commits could not be checked. The branch may have no upstream, or the check may have failed.
               <% true -> %>
                 Unpushed commits will be deleted.
               <% false -> %>

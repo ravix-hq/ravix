@@ -15,6 +15,22 @@ defmodule Ravix.ConfigTest do
 
   defp override_all(pairs), do: Enum.each(pairs, fn {k, v} -> override(k, v) end)
 
+  test "shared machine retirement is off unless explicitly enabled" do
+    previous = Application.fetch_env(:ravix, :retire_shared_machines)
+
+    on_exit(fn ->
+      case previous do
+        {:ok, value} -> Application.put_env(:ravix, :retire_shared_machines, value)
+        :error -> Application.delete_env(:ravix, :retire_shared_machines)
+      end
+    end)
+
+    Application.delete_env(:ravix, :retire_shared_machines)
+    refute Config.retire_shared_machines?()
+    Application.put_env(:ravix, :retire_shared_machines, true)
+    assert Config.retire_shared_machines?()
+  end
+
   describe "github/0" do
     @required [github_app_id: "1", github_client_id: "Iv1.x", github_client_secret: "s"]
 

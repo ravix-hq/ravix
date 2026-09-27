@@ -10,7 +10,6 @@ defmodule Ravix.Tracks.Sandbox.Store do
   thread updates. Provider effects belong to the lifecycle worker.
   """
   import Ecto.Query
-  alias Ecto.Adapters.SQL
   alias Ravix.Repo
   alias Ravix.Tracks.{Opening, Track}
   alias Ravix.Tracks.Sandbox.Operation
@@ -94,14 +93,14 @@ defmodule Ravix.Tracks.Sandbox.Store do
     end)
   end
 
-  @doc "Serialize shared allocation with retirement of the final shared machine."
+  @doc "Check the optional retirement fence without holding a connection across allocation."
   def shared_open(project_id, fun) do
-    shared_lock(project_id, fn ->
+    if Ravix.Config.retire_shared_machines?() do
       # ownership: Access.project_access admitted this shared allocation.
-      project = Ravix.Projects.Store.live_project(project_id)
-
-      shared_available(project, fun)
-    end)
+      shared_available(Ravix.Projects.Store.live_project(project_id), fun)
+    else
+      fun.()
+    end
   end
 
   defp shared_available(nil, _fun), do: {:error, :not_found}
@@ -114,35 +113,22 @@ defmodule Ravix.Tracks.Sandbox.Store do
 
   defp shared_available(_project, fun), do: fun.()
 
-  defp shared_lock(project_id, fun) do
-    Repo.checkout(
-      fn ->
-        SQL.query!(Repo, "SELECT pg_advisory_lock(hashtextextended($1, 7))", [
-          project_id
-        ])
-
-        try do
-          fun.()
-        after
-          SQL.query!(Repo, "SELECT pg_advisory_unlock(hashtextextended($1, 7))", [
-            project_id
-          ])
-        end
-      end,
-      timeout: 180_000
-    )
+  def close_shared(track, project) do
+    if Ravix.Config.retire_shared_machines?() do
+      close_shared_retiring(track, project)
+    else
+      Ravix.Tracks.Store.close_track(track.id)
+      {:ok, :ok}
+    end
   end
 
-  def close_shared(track, project),
-    do: shared_lock(project.id, fn -> close_shared_locked(track, project) end)
-
-  defp close_shared_locked(track, project) do
-    # ownership: Access.track_access admitted close; the project row fences shared allocation.
+  defp close_shared_retiring(track, project) do
+    # ownership: Access.track_access and require_owner_or_cutter admitted this retirement.
     Repo.transaction(fn ->
       # ownership: Access.track_access and require_owner_or_cutter admitted this close.
-      Repo.one!(
-        from p in Ravix.Projects.Project, where: p.id == ^track.project_id, lock: "FOR UPDATE"
-      )
+      Ravix.Projects.Store.lock_retirement(track.project_id)
+      row = Repo.one!(from t in Track, where: t.id == ^track.id, lock: "FOR UPDATE")
+      if row.closed_at, do: Repo.rollback(:already_closed)
 
       Ravix.Tracks.Store.close_track(track.id)
 
@@ -172,14 +158,16 @@ defmodule Ravix.Tracks.Sandbox.Store do
         })
         |> save!()
 
-        # ownership: no door — the final shared-track close owns project retirement.
-        Repo.update_all(from(p in Ravix.Projects.Project, where: p.id == ^track.project_id),
-          set: [shared_machine_retiring: true]
-        )
+        # ownership: Access.track_access and require_owner_or_cutter admitted retirement.
+        Ravix.Projects.Store.set_retiring(track.project_id, true)
       end
 
       :ok
     end)
+    |> case do
+      {:error, :already_closed} -> {:ok, :ok}
+      result -> result
+    end
   end
 
   defp shared_home_agent(%{shared_home_runtime: home, runtime: runtime, agent_id: id})
@@ -194,14 +182,23 @@ defmodule Ravix.Tracks.Sandbox.Store do
     end)
   end
 
-  def finish_shared(op, track) do
-    # ownership: no door — the durable final shared-track operation owns the project fence.
+  def finish_shared(op, track, error \\ nil) do
+    # ownership: the durable close was admitted by Access.track_access and require_owner_or_cutter.
     Repo.transaction(fn ->
-      {:ok, _} = progress(op, %{phase: "done", completed_at: DateTime.utc_now()})
-      # ownership: no door — the final shared-track operation owns the retirement fence.
-      Repo.update_all(from(p in Ravix.Projects.Project, where: p.id == ^track.project_id),
-        set: [shared_machine_retiring: false, shared_home_runtime: nil]
-      )
+      attrs = %{
+        phase: if(error, do: "failed", else: "done"),
+        completed_at: DateTime.utc_now(),
+        error: error
+      }
+
+      case progress(op, attrs) do
+        {:ok, _} ->
+          # ownership: the durable close was admitted by Access.track_access and require_owner_or_cutter.
+          Ravix.Projects.Store.finish_retirement(track.project_id, is_nil(error))
+
+        {:error, reason} ->
+          Repo.rollback(reason)
+      end
     end)
   end
 
@@ -210,7 +207,8 @@ defmodule Ravix.Tracks.Sandbox.Store do
 
   def context(op) do
     track = get_track(op.track_id)
-    # ownership: no door — the durable operation owns this track's resource cleanup.
+
+    # ownership: the durable operation was admitted by Access.track_access and require_owner_or_cutter.
     {track, Ravix.Projects.Store.live_project(track.project_id)}
   end
 

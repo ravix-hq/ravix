@@ -453,6 +453,46 @@ defmodule Ravix.TracksTest do
       client
     end
 
+    test "rollout off preserves shared close and reopen without lifecycle resources", ctx do
+      stub(Ravix.Config, :dedicated_opens_enabled?, fn _ -> false end)
+      stub(Ravix.Config, :retire_shared_machines?, fn -> false end)
+      track = insert_track(project: ctx.project, conversation_id: nil)
+      caller = self()
+
+      stub(Ravix.Previews.Lifecycle, :stop_service, fn _, :cleanup ->
+        send(caller, {:teardown, self()})
+        :ok
+      end)
+
+      client = opening_fountain(ctx.project, false)
+      assert :ok = Tracks.close(ctx.owner, track.id)
+      assert_receive {:teardown, pid}
+      ref = Process.monitor(pid)
+      assert_receive {:DOWN, ^ref, :process, ^pid, _}
+      assert Tracks.Sandbox.Store.operations(track.id) == []
+      refute Ravix.Projects.Store.live_project(ctx.project.id).shared_machine_retiring
+
+      assert {:ok, opened} =
+               Tracks.open(ctx.owner, ctx.project.id, %{"title" => "after-close"},
+                 opening_turn: :sync
+               )
+
+      assert opened.sandbox_layout == :shared
+      assert Tracks.Sandbox.Store.operations(opened.id) == []
+
+      refute Enum.any?(FakeTransport.calls(client), fn call ->
+               String.starts_with?(call.path, ["/api/sandboxes", "/api/vaults"])
+             end)
+    end
+
+    test "a shared close rollback is returned instead of crashing", ctx do
+      track = insert_track(project: ctx.project)
+      client = FakeTransport.client([])
+      stub(Ravix.Fountain, :client, fn -> client end)
+      expect(Tracks.Sandbox.Store, :close_shared, fn _, _ -> {:error, :lost_lease} end)
+      assert {:error, :lost_lease} = Tracks.close(ctx.owner, track.id)
+    end
+
     test "attaching to the machine that is there: the opening turn is a separate prompt", ctx do
       client = opening_fountain(ctx.project, true)
 

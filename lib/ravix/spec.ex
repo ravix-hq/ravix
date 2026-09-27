@@ -114,11 +114,21 @@ defmodule Ravix.Spec do
       "",
       "## The one rule",
       "",
-      "Each track owns one directory under #{work_root}. Its opening turn says which",
-      "directory and whether this is a shared project machine or this track's own machine.",
-      "Shared-machine tracks use git worktrees; an own-machine track uses an ordinary",
-      "clone with no worktrees. Follow the opening turn's layout for this track.",
-      "That directory is your working directory for the whole conversation.",
+      if(Ravix.Config.dedicated_rollout?(),
+        do: [
+          "Each track owns one directory under #{work_root}. Its opening turn says which",
+          "directory and whether this is a shared project machine or this track's own machine.",
+          "Shared-machine tracks use git worktrees; an own-machine track uses an ordinary",
+          "clone with no worktrees. Follow the opening turn's layout for this track.",
+          "That directory is your working directory for the whole conversation."
+        ],
+        else: [
+          "Every piece of work happens in its own git worktree under #{work_root}. Each",
+          "conversation you are in — Ravix calls it a *track* — owns exactly one of those",
+          "directories, and its first turn tells you which. That directory is your working",
+          "directory for the whole of that conversation."
+        ]
+      ),
       "",
       "Never edit, stage, commit or check out anything outside your own track's directory.",
       "In particular:",
@@ -139,9 +149,18 @@ defmodule Ravix.Spec do
       "",
       "## What is true of this machine",
       "",
-      "The disk persists for this track until it is closed or rebuilt.",
-      "On a shared machine, tracks take turns. On this track's own machine, threads",
-      "may run concurrently up to the runtime's capacity.",
+      if(Ravix.Config.dedicated_rollout?(),
+        do: [
+          "The disk persists for this track until it is closed or rebuilt.",
+          "On a shared machine, tracks take turns. On this track's own machine, threads",
+          "may run concurrently up to the runtime's capacity."
+        ],
+        else: [
+          "It persists. The disk is the same one next time, for every track. It runs one turn",
+          "at a time across all tracks, because it is one computer — if you are asked why a",
+          "track is waiting, that is why."
+        ]
+      ),
       ""
     ])
     |> append_if(repo_path, [
@@ -182,6 +201,7 @@ defmodule Ravix.Spec do
       "than a person. Follow those exactly, including any strings they ask you to write",
       "back verbatim."
     ])
+    |> List.flatten()
     |> Enum.join("\n")
   end
 
