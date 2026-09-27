@@ -1535,6 +1535,62 @@ defmodule RavixWeb.TrackLiveTest do
     assert render(ctx.view) =~ "File content is truncated"
   end
 
+  for {layout, label} <- [
+        shared: "Shared project machine (used by all of this project's tracks)",
+        dedicated: "This track's machine"
+      ] do
+    @layout layout
+    @machine_label label
+    test "#{layout} machine ownership is visible in the dock, terminal and Vitals", ctx do
+      Repo.update!(Ecto.Changeset.change(ctx.track, sandbox_layout: @layout))
+
+      stub(Terminal, :status, fn _, _, _ ->
+        {:ok, %Terminal.Status{available: true, why: nil, cwd: ctx.track.workdir}}
+      end)
+
+      stub(Vitals, :report, fn _, _ ->
+        {:ok, %Vitals.Report{available: false, why: :no_machine, readings: nil}}
+      end)
+
+      {:ok, parent, _} = live(ctx.conn, "/p/#{ctx.project.id}/t/#{ctx.track.id}")
+      view = find_live_child(parent, "track-host")
+      render_async(view)
+      assert has_element?(view, "#track-machine-label", @machine_label)
+      assert has_element?(view, "#track-machine-status", "The machine is running.")
+      view |> element("button[phx-click=dock][phx-value-name=terminal]") |> render_click()
+      assert has_element?(view, "#terminal-machine-label", @machine_label)
+      view |> element("button[phx-click=dock][phx-value-name=vitals]") |> render_click()
+      render_async(view)
+      assert has_element?(view, "#vitals-machine-label", @machine_label)
+      assert has_element?(view, ".dock-empty", "No machine is available yet.")
+    end
+  end
+
+  for {reason, sentence} <- [
+        no_machine: "No machine is available yet.",
+        no_token:
+          "Machine status is unavailable because the machine connection is not configured.",
+        no_sprite: "The machine is asleep or unreachable.",
+        unreachable: "The machine is asleep or unreachable.",
+        error: "Machine status is unavailable. Try again later."
+      ] do
+    @status_reason reason
+    @status_sentence sentence
+    test "machine status explains #{@status_reason} in plain language", ctx do
+      stub(Terminal, :status, fn _, _, _ ->
+        if @status_reason == :error,
+          do: {:error, :not_found},
+          else:
+            {:ok, %Terminal.Status{available: false, why: @status_reason, cwd: ctx.track.workdir}}
+      end)
+
+      {:ok, parent, _} = live(ctx.conn, "/p/#{ctx.project.id}/t/#{ctx.track.id}")
+      view = find_live_child(parent, "track-host")
+      render_async(view)
+      assert has_element?(view, "#track-machine-status", @status_sentence)
+    end
+  end
+
   test "terminal commands preserve cwd, stderr, and exit status", ctx do
     expect(Terminal, :exec, 2, fn user, id, attrs ->
       assert {user.id, id} == {ctx.user.id, ctx.track.id}
@@ -1582,8 +1638,8 @@ defmodule RavixWeb.TrackLiveTest do
 
     assert has_element?(
              view,
-             "#track-machine-status",
-             "The shared project machine is running (used by all of this project’s tracks)"
+             "#track-machine-label",
+             "Shared project machine (used by all of this project's tracks)"
            )
   end
 
@@ -1819,7 +1875,7 @@ defmodule RavixWeb.TrackLiveTest do
     render_async(ctx.view)
     # The reason is a sentence, not the atom `Vitals` answers with.
     assert has_element?(ctx.view, ".dock-empty h3", "No machine stats")
-    assert has_element?(ctx.view, ".dock-empty", "This project has no machine yet")
+    assert has_element?(ctx.view, ".dock-empty", "No machine is available yet")
     refute render(ctx.view) =~ "no_machine"
 
     # Asking again is the empty state's action, and it is a real second read.
@@ -1838,7 +1894,7 @@ defmodule RavixWeb.TrackLiveTest do
 
     ctx.view |> element(".dock-empty button", "Try again") |> render_click()
     render_async(ctx.view)
-    assert has_element?(ctx.view, ".dock-empty", "no Sprites token")
+    assert has_element?(ctx.view, ".dock-empty", "machine connection is not configured")
     refute has_element?(ctx.view, ".dock-empty button", "Try again")
 
     # Reachable but with nothing legible to report is its own sentence.

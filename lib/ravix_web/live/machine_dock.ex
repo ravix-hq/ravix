@@ -182,7 +182,7 @@ defmodule RavixWeb.Live.MachineDock do
     do: {:noreply, assign(socket, machine_status: status)}
 
   defp receive_async(:machine_status, _, socket),
-    do: {:noreply, assign(socket, machine_status: nil)}
+    do: {:noreply, assign(socket, machine_status: :unavailable)}
 
   defp receive_async(:vitals, {:ok, response}, socket),
     do: {:noreply, result(assign(socket, vitals_busy?: false), response, &assign(&1, vitals: &2))}
@@ -212,10 +212,10 @@ defmodule RavixWeb.Live.MachineDock do
     do: "The machine answered but reported no readings."
 
   defp vitals_reason(%Vitals.Report{why: :no_token}),
-    do: "This server has no Sprites token, so it cannot read machine stats."
+    do: "Machine stats are unavailable because the machine connection is not configured."
 
   defp vitals_reason(%Vitals.Report{why: :no_machine}),
-    do: "This project has no machine yet. One is built when a track first needs it."
+    do: "No machine is available yet."
 
   defp vitals_reason(%Vitals.Report{why: why}) when why in [:no_sprite, :unreachable],
     do: "The machine is asleep or unreachable. It wakes on the next turn."
@@ -226,35 +226,32 @@ defmodule RavixWeb.Live.MachineDock do
 
   # Whose machine this is matters as much as its state: a shared track's
   # terminal and files are the whole project's machine, a dedicated one's are not.
-  defp machine_status(status, {:ok, {_id, :dedicated, _sandbox, _generation}}),
-    do: machine_state(status, "This track’s machine")
+  defp machine_label({:ok, {_, :dedicated, _, _}}), do: "This track's machine"
 
-  defp machine_status(status, _identity),
-    do: machine_state(status, "The shared project machine") <> shared_note(status)
+  defp machine_label({:ok, {_, :shared, _, _}}),
+    do: "Shared project machine (used by all of this project's tracks)"
 
-  defp machine_state(nil, whose), do: "Checking " <> lowercase_first(whose) <> "…"
-  defp machine_state(%Terminal.Status{available: true}, whose), do: whose <> " is running"
+  defp machine_label(_), do: "Machine"
 
-  defp machine_state(%Terminal.Status{why: :no_machine}, _whose),
-    do: "This track has no machine yet"
+  defp machine_status(nil), do: "Checking machine status…"
+  defp machine_status(%Terminal.Status{available: true}), do: "The machine is running."
+  defp machine_status(%Terminal.Status{why: :no_machine}), do: "No machine is available yet."
 
-  defp machine_state(%Terminal.Status{why: :no_token}, _whose),
-    do: "Machine status is unavailable"
+  defp machine_status(%Terminal.Status{why: :no_token}),
+    do: "Machine status is unavailable because the machine connection is not configured."
 
-  defp machine_state(_status, whose), do: whose <> " is asleep or unreachable"
+  defp machine_status(%Terminal.Status{why: why}) when why in [:no_sprite, :unreachable],
+    do: "The machine is asleep or unreachable. It wakes on the next turn."
 
-  defp shared_note(%Terminal.Status{why: why}) when why in [:no_machine, :no_token], do: ""
-  defp shared_note(_status), do: " (used by all of this project’s tracks)"
-
-  defp lowercase_first(<<first::utf8, rest::binary>>),
-    do: String.downcase(<<first::utf8>>) <> rest
+  defp machine_status(_), do: "Machine status is unavailable. Try again later."
 
   @impl true
   def render(assigns) do
     ~H"""
     <div class="machine-dock-host">
+      <p id="track-machine-label">{machine_label(@machine_identity)}</p>
       <p id="track-machine-status" role="status">
-        {machine_status(@machine_status, @machine_identity)}
+        {machine_status(@machine_status)}
       </p>
       <nav class="workspace-tabs dock-tabs" aria-label="Machine panels">
         <button
@@ -285,6 +282,7 @@ defmodule RavixWeb.Live.MachineDock do
           phx-target={@myself}
           class="term workspace-terminal"
         >
+          <p id="terminal-machine-label">{machine_label(@machine_identity)}</p>
           <div class="term-scroll" data-terminal-output>
             <div :for={block <- @output}>
               <strong>$ {block.command}</strong><pre>{block.stdout}</pre><pre class="error">{block.stderr}</pre>
@@ -314,6 +312,7 @@ defmodule RavixWeb.Live.MachineDock do
           </div>
         </div>
         <div :if={@dock == :vitals} class="workspace-panel">
+          <p id="vitals-machine-label">{machine_label(@machine_identity)}</p>
           <.loading_status :if={@vitals_busy?}>Reading machine metrics…</.loading_status>
           <div :if={!@vitals_busy? && !(@vitals && @vitals.readings)} class="dock-empty">
             <.empty icon="machine" title="No machine stats" because={vitals_reason(@vitals)}>
