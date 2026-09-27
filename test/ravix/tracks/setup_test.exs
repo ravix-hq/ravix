@@ -25,6 +25,7 @@ defmodule Ravix.Tracks.SetupTest do
       )
 
     client = Client.new("https://fountain.test", "test-key")
+
     test = self()
     stub(Fountain, :client, fn -> client end)
     stub(Ravix.Projects, :prepare_machine, fn _, _ -> :ok end)
@@ -93,6 +94,41 @@ defmodule Ravix.Tracks.SetupTest do
       Tracks.prompt(ctx.user, ctx.track.id, %{prompt: text, request_id: Ecto.UUID.generate()})
 
     item
+  end
+
+  test "completed upstream opening with exhausted model retries records setup failure and backs off",
+       ctx do
+    ctx.project |> Ecto.Changeset.change(runtime: "codex") |> Repo.update!()
+    turn_status(ctx.track, "completed")
+    stub(Fountain, :events, fn _, _ -> {:ok, Ravix.AgentOutageFixture.events("opening")} end)
+
+    stub(Fountain, :listing, fn _, _, _ ->
+      flunk("an outage must not verify an old worktree")
+    end)
+
+    Setup.advance(ctx.client, ctx.track.id)
+    failed = row(ctx.track)
+    assert failed.setup_state == "retry"
+    assert failed.setup_error_code == "agent_provider_unreachable"
+    assert failed.setup_error =~ "Codex couldn't reach OpenAI"
+    assert DateTime.diff(failed.setup_retry_at, DateTime.utc_now()) >= 59
+
+    assert %{
+             stage: "setup",
+             state: "failed",
+             code: "agent_provider_unreachable",
+             reason: reason
+           } =
+             Repo.get_by!(Ravix.Tracks.TurnFailure,
+               conversation_id: "setup",
+               turn_id: "opening",
+               stage: "setup"
+             )
+
+    assert reason == failed.setup_error
+    Setup.advance(ctx.client, ctx.track.id)
+    assert row(ctx.track).setup_attempts == 1
+    refute_received {:prompt, _, _, _}
   end
 
   test "failed opening retries with backoff, and a different worker delivers only after verification",

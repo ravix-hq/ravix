@@ -16,6 +16,33 @@ defmodule Ravix.Tooling.TasksTest do
     %{user: user, p: p, project: project, track: track}
   end
 
+  test "provider outage persists a failed MCP task with the agent's public message", %{
+    p: p,
+    track: track
+  } do
+    Repo.get!(Ravix.Tracks.Thread, track.id)
+    |> Ecto.Changeset.change(runtime: "codex")
+    |> Repo.update!()
+
+    {:ok, task} = Tasks.send(p, track.id, "hello", "outage")
+    QueueStore.mark_delivered(task.id)
+    stub(Fountain, :turns, fn _, _ -> {:ok, [turn(task.id, "mine", "completed")]} end)
+
+    expect(Fountain, :events_page, fn _, _, _ ->
+      {:ok, %{events: Ravix.AgentOutageFixture.events(), next_cursor: 8, has_more: false}}
+    end)
+
+    assert {:ok, failed} = Tasks.get(p, task.id)
+    assert failed.state == "TASK_STATE_FAILED"
+    assert failed.failure_code == "agent_provider_unreachable"
+    assert failed.status_message =~ "Codex couldn't reach OpenAI"
+    assert failed.result == failed.status_message
+    assert {:ok, ^failed} = Tasks.get(p, task.id)
+    assert Tasks.present(failed).status.message.parts == [%{text: failed.status_message}]
+    assert Repo.get!(Task, task.id).failure_message == failed.status_message
+    assert Repo.get_by!(Ravix.Tracks.TurnFailure, turn_id: "mine").state == "failed"
+  end
+
   test "explicit thread delivery and polling stay in that conversation", %{p: p, track: track} do
     {:ok, thread} =
       Ravix.Tracks.Store.create_thread(%{
