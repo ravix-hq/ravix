@@ -1,8 +1,9 @@
 # Track sandbox schema (ADR 0006 phase 2)
 
-This release expands persistence and provides a dual-layout reader. It does not
-create dedicated tracks or change terminal, preview, file, Vitals or MachineDock
-routing. B5 must move those consumers before B7 activates dedicated writers.
+Phase 2 expands persistence and provides a dual-layout reader. Phase 3 now routes
+terminal, file/diff, Vitals, preview services/helpers/gateway destinations and
+MachineDock through the selected track. No dedicated writers are enabled.
+Deploy these readers everywhere before B7 activates dedicated opens.
 The existing thread association and default-thread compatibility trigger remain
 unchanged.
 
@@ -46,3 +47,24 @@ B7 must define lifecycle transitions, leases, retries, idempotency and provider
 reconciliation before invoking these primitives. Database revision fencing alone
 is not a provider-side lease. Do not put secrets or raw provider responses in
 operation maps.
+
+## Consumer safeguards (phase 3)
+
+Shared discovery excludes dedicated sandbox IDs and dedicated thread conversation
+IDs, including closed rows awaiting cleanup. An unresolved dedicated sandbox
+never falls back to project discovery. MachineDock reads passive Sprites status
+for the selected track, not a project's newest conversation. Its terminal and
+Vitals results, and the file/diff panel's results, are fenced by track ID, layout,
+sandbox ID and generation. Session and membership checks still run on completion.
+
+Preview startups re-read the track generation before publishing readiness. Agent
+helper grants carry the sandbox generation; old shared helper documents remain
+readable. Browser grants remain single-use/session-bound and track-scoped. The
+existing per-sprite port allocator and preview intent generations are preserved.
+
+Legacy project rebuild/delete (including runtime-switch rebuilds) refuse projects
+with any dedicated track before touching provider resources: deleting the shared
+home agent could otherwise delete dedicated siblings. Dedicated track close is
+also refused until B7 supplies durable sandbox cleanup. Shared row closure and
+project preview retirement filter to shared tracks. B8 must replace the legacy
+maintenance path with sandbox-specific deletion; this phase does not implement it.

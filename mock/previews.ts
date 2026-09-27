@@ -36,6 +36,9 @@ const server = Bun.serve<{ tcp?: Socket }>({ port: Number(process.env.MOCK_SPRIT
   async fetch(req, server) {
     if (req.headers.get("authorization") !== "Bearer sprites_mock") return new Response("unauthorized", { status: 401 });
     const url = new URL(req.url);
+    // Passive status reads must not execute a command or start a service.
+    if (req.method === "GET" && /^\/v1\/sprites\/ravix-[a-z0-9]+$/.test(url.pathname))
+      return Response.json({ status: "running" });
     const match = /^\/v1\/sprites\/([^/]+)\/(proxy|exec|services)(?:\/([^/]+))?(?:\/(start|stop))?$/.exec(url.pathname);
     if (!match) return new Response("missing", { status: 404 });
     if (match[2] === "proxy") return server.upgrade(req, { data: {} }) ? undefined : new Response("upgrade", { status: 400 });

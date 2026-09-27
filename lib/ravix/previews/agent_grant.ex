@@ -38,12 +38,13 @@ defmodule Ravix.Previews.AgentGrant do
     :sprite,
     :expires
   ]
-  defstruct @enforce_keys ++ [thread_id: nil]
+  defstruct @enforce_keys ++ [thread_id: nil, sandbox_generation: nil]
 
   @type t :: %__MODULE__{
           hash: String.t(),
           track_id: String.t(),
           thread_id: String.t() | nil,
+          sandbox_generation: non_neg_integer() | nil,
           user_id: String.t(),
           conversation_id: String.t() | nil,
           prompt_id: String.t(),
@@ -55,7 +56,7 @@ defmodule Ravix.Previews.AgentGrant do
   @doc "The `row` document for a grant."
   @spec encode(t()) :: map()
   def encode(%__MODULE__{} = grant) do
-    Map.new(@enforce_keys ++ [:thread_id], fn key ->
+    Map.new(@enforce_keys ++ [:thread_id, :sandbox_generation], fn key ->
       {Atom.to_string(key), Map.fetch!(grant, key)}
     end)
   end
@@ -72,7 +73,9 @@ defmodule Ravix.Previews.AgentGrant do
 
     struct!(
       __MODULE__,
-      Map.new(@enforce_keys ++ [:thread_id], fn key -> {key, row[Atom.to_string(key)]} end)
+      Map.new(@enforce_keys ++ [:thread_id, :sandbox_generation], fn key ->
+        {key, row[Atom.to_string(key)]}
+      end)
     )
   end
 end

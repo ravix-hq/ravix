@@ -280,6 +280,10 @@ defmodule Ravix.Projects.Machine do
   """
   @spec rebuild(Project.t(), Fountain.Client.t()) :: {:ok, Rebuild.t()} | {:error, term()}
   def rebuild(%Project{} = project, client) do
+    with :ok <- shared_lifecycle(project), do: rebuild_shared(project, client)
+  end
+
+  defp rebuild_shared(project, client) do
     quiesce(project)
 
     with {:ok, conversations} <- Fountain.list_conversations(client, project.agent_id),
@@ -347,8 +351,12 @@ defmodule Ravix.Projects.Machine do
   end
 
   @doc "The machine, its settings and its secrets, gone; the row archived; `tracks` published."
-  @spec destroy(Project.t(), Fountain.Client.t()) :: :ok
+  @spec destroy(Project.t(), Fountain.Client.t()) :: :ok | {:error, term()}
   def destroy(%Project{} = project, client) do
+    with :ok <- shared_lifecycle(project), do: destroy_shared(project, client)
+  end
+
+  defp destroy_shared(project, client) do
     quiesce(project)
 
     conversations =
@@ -368,6 +376,23 @@ defmodule Ravix.Projects.Machine do
     :ok
   end
 
+  # Deleting the home agent also deletes dedicated sandboxes. B8 replaces
+  # this legacy maintenance path; until then refuse before touching providers.
+  defp shared_lifecycle(project) do
+    # ownership: rebuild/destroy are behind Access.project_of; closed tracks
+    # can still have cleanup pending, so include them when protecting ownership.
+    if Enum.any?(
+         Ravix.Tracks.Store.tracks_of(project.id, :all),
+         &(&1.sandbox_layout == :dedicated)
+       ) do
+      {:error,
+       {:conflict, "dedicated_lifecycle_pending",
+        "This project has dedicated workspaces. Project-wide rebuild and deletion are not available yet."}}
+    else
+      :ok
+    end
+  end
+
   # Nothing queued may reach a machine that is about to go, and no preview
   # may keep it awake: cancel every open track's prompts and retire the
   # project's previews before Fountain is touched.
@@ -375,7 +400,7 @@ defmodule Ravix.Projects.Machine do
     # ownership: `quiesce/1` runs behind `Access.project_of/2` on a rebuild or
     # a destroy; the machine these prompts were queued for is going away.
     Enum.each(
-      Projects.Store.open_tracks(project.id),
+      Enum.filter(Projects.Store.open_tracks(project.id), &(&1.sandbox_layout == :shared)),
       &Ravix.PromptQueue.Store.cancel_track(&1.id)
     )
 
@@ -426,6 +451,7 @@ defmodule Ravix.Projects.Machine do
     with {:ok, client} <- Ravix.Providers.fountain(),
          {:ok, conversations} <- Ravix.MachineCache.conversations(client, project, []) do
       conversations
+      |> Ravix.MachineCache.shared_only(project)
       |> Enum.filter(&is_binary(&1.sandbox_id))
       |> Shapes.newest()
       |> machine_from()

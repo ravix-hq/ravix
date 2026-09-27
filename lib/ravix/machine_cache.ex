@@ -56,6 +56,7 @@ defmodule Ravix.MachineCache do
   alias Ravix.MachineCache.Machine
   alias Ravix.Memo
   alias Ravix.Projects.Project
+  alias Ravix.Tracks.Store, as: TracksStore
 
   @memo __MODULE__
   @ttl_ms 5_000
@@ -122,7 +123,7 @@ defmodule Ravix.MachineCache do
   @spec machine_of(Client.t(), Project.t(), opts()) ::
           {:ok, machine()} | {:error, Fountain.failure()}
   def machine_of(%Client{} = client, %Project{} = project, opts \\ []) do
-    with {:ok, all} <- conversations(client, project, opts) do
+    with {:ok, all} <- shared_conversations(client, project, opts) do
       newest =
         all
         |> Enum.filter(&(is_binary(&1.sandbox_id) and Shapes.live?(&1)))
@@ -130,6 +131,19 @@ defmodule Ravix.MachineCache do
 
       {:ok, if(newest, do: %Machine{sandbox_id: newest.sandbox_id})}
     end
+  end
+
+  @doc "Legacy discovery excludes dedicated ownership and dedicated threads, including closed tracks."
+  def shared_conversations(client, project, opts \\ []) do
+    with {:ok, all} <- conversations(client, project, opts), do: {:ok, shared_only(all, project)}
+  end
+
+  @doc "Filter an already-read conversation list to the project's legacy machine identities."
+  def shared_only(all, project) do
+    # ownership: callers supply the project after Access.track_access/2 or
+    # Access.project_access/2; the cache only filters this project's identities.
+    {sandboxes, conversations} = TracksStore.dedicated_identities(project.id)
+    Enum.reject(all, &(&1.sandbox_id in sandboxes or &1.id in conversations))
   end
 
   @doc "Resolve persisted dedicated ownership; only shared tracks use project discovery."

@@ -23,8 +23,8 @@ defmodule Ravix.Tracks do
   There are no exceptions to that; the rows themselves are
   `Ravix.Tracks.Store`, which takes ids and asks nobody.
 
-  Five functions here take no user, and each takes a subject another
-  context has already been let in to. `machine_of/2`, `sprite_for/1` and
+  Six functions here take no user, and each takes a subject another
+  context has already been let in to. `machine_of/2`, `machine_of_track/3`, `sprite_for/1` and
   `close_all_for_rebuild/2` are asked by `Ravix.Previews`, `Ravix.Terminal`,
   `Ravix.Vitals` and `Ravix.Projects` about a `%Project{}` or a sandbox id
   they hold; `present/2` and `origin_info/1` turn a row the caller already
@@ -934,6 +934,7 @@ defmodule Ravix.Tracks do
     with {:ok, %{track: track, project: project, role: role}} <-
            Access.track_access(user, track_id),
          :ok <- Access.require_owner_or_cutter(role, user, track, "close a track"),
+         :ok <- shared_close(track),
          {:ok, client} <- fountain() do
       # ownership: `Access.track_access/2` above admitted this caller to the
       # track being closed; prompts waiting to be delivered to it have nowhere
@@ -971,6 +972,14 @@ defmodule Ravix.Tracks do
     end
   end
 
+  defp shared_close(%Track{sandbox_layout: :shared}), do: :ok
+
+  defp shared_close(%Track{sandbox_layout: :dedicated}),
+    do:
+      {:error,
+       {:conflict, "dedicated_lifecycle_pending",
+        "Dedicated workspace cleanup is not available yet."}}
+
   # What a closed track leaves behind on the providers: the preview service,
   # the worktree (removed by a last turn) and the conversation. Each call is
   # made whether or not the one before it succeeded, because they are three
@@ -986,7 +995,7 @@ defmodule Ravix.Tracks do
       "preview of closed track #{track.id} did not stop"
     )
 
-    if track.conversation_id do
+    if track.sandbox_layout == :shared and track.conversation_id do
       prompt =
         Spec.close_track_prompt(project, track.slug,
           force: Keyword.get(opts, :force, false) == true,
@@ -1025,15 +1034,18 @@ defmodule Ravix.Tracks do
   """
   @spec close_all_for_rebuild(Project.t(), atom()) :: :ok
   def close_all_for_rebuild(%Project{id: project_id}, _reason) do
-    Enum.each(Store.tracks_of(project_id), fn track ->
-      # ownership: this takes no user because its callers are
-      # `Ravix.Projects.rebuild/2` and `destroy/2`, which admitted the owner
-      # through `Access.project_of/2` on this project before retiring its
-      # machine; every track on it is that project's, and prompts waiting to
-      # be delivered to them have nowhere to go.
-      Ravix.PromptQueue.Store.cancel_track(track.id)
-      Store.close_track(track.id)
-    end)
+    Enum.each(
+      Enum.filter(Store.tracks_of(project_id), &(&1.sandbox_layout == :shared)),
+      fn track ->
+        # ownership: this takes no user because its callers are
+        # `Ravix.Projects.rebuild/2` and `destroy/2`, which admitted the owner
+        # through `Access.project_of/2` on this project before retiring its
+        # machine; every track on it is that project's, and prompts waiting to
+        # be delivered to them have nowhere to go.
+        Ravix.PromptQueue.Store.cancel_track(track.id)
+        Store.close_track(track.id)
+      end
+    )
   end
 
   # ── reading a track's directory ───────────────────────────────────────
@@ -1123,7 +1135,7 @@ defmodule Ravix.Tracks do
   defp machine_read(user, track_id) do
     with {:ok, %{track: track, project: project}} <- Access.track_access(user, track_id),
          {:ok, client} <- fountain(),
-         {:ok, machine} <- MachineCache.machine_of(client, project),
+         {:ok, machine} <- MachineCache.machine_for_track(client, project, track),
          :ok <- check(machine, {:conflict, "no_machine", "This project has no machine yet."}) do
       {:ok, track, client, machine.sandbox_id}
     end
@@ -1193,6 +1205,29 @@ defmodule Ravix.Tracks do
          {:ok, client} <- fountain() do
       MachineCache.machine_for_track(client, project, track, opts)
     end
+  end
+
+  @doc "An access-checked workspace identity for rejecting stale asynchronous results."
+  @spec machine_identity(User.t(), String.t()) :: {:ok, tuple()} | {:error, :not_found}
+  def machine_identity(%User{} = user, track_id) do
+    with {:ok, %{track: track}} <- Access.track_access(user, track_id) do
+      {:ok, {track.id, track.sandbox_layout, track.sandbox_id, track.sandbox_generation}}
+    end
+  end
+
+  @doc "Resolve a track already admitted by the caller's access or lifecycle boundary."
+  @spec machine_of_track(Project.t(), Track.t(), keyword()) ::
+          {:ok, MachineCache.machine()} | {:error, reason()}
+  def machine_of_track(project, track, opts \\ [])
+
+  def machine_of_track(project, %Track{sandbox_layout: :shared}, []), do: machine_of(project)
+
+  def machine_of_track(project, %Track{sandbox_layout: :shared}, opts),
+    do: machine_of(project, opts)
+
+  def machine_of_track(project, %Track{sandbox_layout: :dedicated} = track, opts) do
+    with {:ok, client} <- fountain(),
+         do: MachineCache.machine_for_track(client, project, track, opts)
   end
 
   # ── the machine, for the panels ───────────────────────────────────────

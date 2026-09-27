@@ -119,7 +119,7 @@ defmodule Ravix.Previews.Agent do
   end
 
   defp install(track, project, user_id, prompt_id) do
-    with {:ok, %{sandbox_id: sandbox_id}} <- Ravix.Tracks.machine_of(project),
+    with {:ok, %{sandbox_id: sandbox_id}} <- Ravix.Tracks.machine_of_track(project, track),
          sprite when is_binary(sprite) <- Ravix.Tracks.sprite_for(sandbox_id) do
       token = Crypto.random_token()
       hash = Crypto.sha256(token)
@@ -132,6 +132,7 @@ defmodule Ravix.Previews.Agent do
         conversation_id: prompt_conversation(track, prompt_id),
         prompt_id: prompt_id,
         sandbox_id: sandbox_id,
+        sandbox_generation: track.sandbox_generation,
         sprite: sprite,
         expires: Clock.now_ms() + @grant_ms
       }
@@ -219,7 +220,7 @@ defmodule Ravix.Previews.Agent do
          :ok <- delivered_turn(track, grant, user),
          :ok <- available(),
          {:ok, action} <- action_of(body),
-         :ok <- same_machine(project, grant),
+         :ok <- same_machine(project, track, grant),
          :ok <- still_granted(grant),
          {:ok, _} <- access(user, track_id),
          :ok <- open(track_id),
@@ -332,9 +333,11 @@ defmodule Ravix.Previews.Agent do
 
   # Fresh, not memoised: this is the check that the helper's grant still
   # names the machine that is there, and a memo could vouch for one that is gone.
-  defp same_machine(project, grant) do
-    with {:ok, %{sandbox_id: sandbox_id}} when sandbox_id == grant.sandbox_id <-
-           Ravix.Tracks.machine_of(project, fresh: true),
+  defp same_machine(project, track, grant) do
+    with true <-
+           track.sandbox_layout == :shared or track.sandbox_generation == grant.sandbox_generation,
+         {:ok, %{sandbox_id: sandbox_id}} when sandbox_id == grant.sandbox_id <-
+           Ravix.Tracks.machine_of_track(project, track, fresh: true),
          sprite when sprite == grant.sprite <- Ravix.Tracks.sprite_for(sandbox_id) do
       :ok
     else

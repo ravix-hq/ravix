@@ -285,7 +285,7 @@ defmodule RavixWeb.TrackLive do
       {:noreply,
        socket
        |> update_panel(&%{&1 | directories: Map.put(&1.directories, path, {:loading, token})})
-       |> traced_async({:directory, path, token}, fn -> Tracks.files(user, id, path) end)}
+       |> workspace_async({:directory, path, token}, fn -> Tracks.files(user, id, path) end)}
     end
   end
 
@@ -301,7 +301,7 @@ defmodule RavixWeb.TrackLive do
     {:noreply,
      socket
      |> update_panel(&%{&1 | busy?: true, error: nil})
-     |> traced_async(:file, fn -> Tracks.file(user, id, path) end)}
+     |> workspace_async(:file, fn -> Tracks.file(user, id, path) end)}
   end
 
   # One clause per button, because the four are four different calls: two of
@@ -531,6 +531,21 @@ defmodule RavixWeb.TrackLive do
   # hear, so the held answer would still stand. The two extra queries buy the
   # test named "track revocation rejects a delayed provider result", which is
   # worth them.
+  def handle_async(name, {:ok, {:workspace, identity, response}}, socket) do
+    current = Tracks.machine_identity(socket.assigns.current_user, socket.assigns.track_id)
+
+    if current == identity and elem(current, 0) == :ok do
+      handle_async(name, {:ok, response}, socket)
+    else
+      {:noreply,
+       update_panel(socket, fn panel ->
+         Panel.new()
+         |> Panel.select(panel.tab)
+         |> Panel.failed("The workspace changed. Refresh to read its current files.")
+       end)}
+    end
+  end
+
   def handle_async(name, response, socket) do
     if authorized?(socket) do
       {:noreply, async_result(name, response, socket)}
@@ -1094,7 +1109,7 @@ defmodule RavixWeb.TrackLive do
 
     socket
     |> update_panel(&%{&1 | busy?: true})
-    |> traced_async(:preview_action, fn -> call.(user, id, hash) end)
+    |> workspace_async(:preview_action, fn -> call.(user, id, hash) end)
   end
 
   attr :model, :string, required: true, doc: "what the shown conversation runs"
@@ -1554,6 +1569,15 @@ defmodule RavixWeb.TrackLive do
     end
   end
 
+  defp workspace_async(socket, name, fun) do
+    %{current_user: user, track_id: id} = socket.assigns
+
+    traced_async(socket, name, fn ->
+      identity = Tracks.machine_identity(user, id)
+      {:workspace, identity, if(elem(identity, 0) == :ok, do: fun.(), else: {:error, :not_found})}
+    end)
+  end
+
   defp load_panel(socket, mark \\ &Panel.loading/1) do
     user = socket.assigns.current_user
     id = socket.assigns.track_id
@@ -1561,7 +1585,7 @@ defmodule RavixWeb.TrackLive do
 
     socket
     |> update_panel(mark)
-    |> traced_async(:panel, fn ->
+    |> workspace_async(:panel, fn ->
       case tab do
         :files -> Tracks.files(user, id, nil)
         :changes -> load_changes(user, id)
@@ -1593,7 +1617,7 @@ defmodule RavixWeb.TrackLive do
 
     socket
     |> update_panel(&%{&1 | metadata: Map.put(&1.metadata, listing.path, token)})
-    |> traced_async({:file_metadata, listing.path, token}, fn ->
+    |> workspace_async({:file_metadata, listing.path, token}, fn ->
       Tracks.file_metadata(user, id, listing)
     end)
   end

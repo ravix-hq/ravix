@@ -157,7 +157,7 @@ defmodule Ravix.Vitals do
   defp read(nil, _track, _project), do: out(:no_token)
 
   defp read(sprites, track, project) do
-    with {:ok, %{sandbox_id: sandbox_id}} <- machine(project),
+    with {:ok, %{sandbox_id: sandbox_id}} <- machine(project, track),
          sprite when is_binary(sprite) <- Tracks.sprite_for(sandbox_id) || :no_sprite,
          {:ok, raw} <-
            Sprites.exec(sprites, sprite, ["sh", "-lc", probe(track.workdir)], @probe_timeout_sec) do
@@ -169,8 +169,8 @@ defmodule Ravix.Vitals do
     end
   end
 
-  defp machine(project) do
-    case Tracks.machine_of(project) do
+  defp machine(project, track) do
+    case Tracks.machine_of_track(project, track) do
       {:ok, %Machine{} = machine} -> {:ok, machine}
       _ -> :no_machine
     end

@@ -22,7 +22,7 @@ defmodule Ravix.Previews.ServerFailureTest do
 
   test "a missing machine explains how to recover", ctx do
     configure(ctx)
-    stub(Tracks, :machine_of, fn _, _ -> {:ok, nil} end)
+    stub(Tracks, :machine_of_track, fn _, _, _ -> {:ok, nil} end)
     assert :ok = Lifecycle.start_service(ctx.track.id)
     assert %{state: :failed, error: message} = Lifecycle.info(ctx.track.id)
     assert message =~ "Open a track first"
@@ -30,7 +30,11 @@ defmodule Ravix.Previews.ServerFailureTest do
 
   test "provider errors settle startup instead of leaving the preview starting", ctx do
     configure(ctx)
-    stub(Tracks, :machine_of, fn _, _ -> {:error, {:unavailable, "Fountain is offline"}} end)
+
+    stub(Tracks, :machine_of_track, fn _, _, _ ->
+      {:error, {:unavailable, "Fountain is offline"}}
+    end)
+
     assert :ok = Lifecycle.start_service(ctx.track.id)
     assert %{state: :failed, error: "Fountain is offline"} = Lifecycle.info(ctx.track.id)
     refute Server.busy?(ctx.track.id)
@@ -40,7 +44,7 @@ defmodule Ravix.Previews.ServerFailureTest do
     configure(ctx)
     test_pid = self()
 
-    stub(Tracks, :machine_of, fn _, _ ->
+    stub(Tracks, :machine_of_track, fn _, _, _ ->
       send(test_pid, {:in_flight, self()})
       receive do: (:go -> :ok)
       {:error, {:unavailable, "Fountain is offline"}}
@@ -71,7 +75,7 @@ defmodule Ravix.Previews.ServerFailureTest do
     configure(ctx)
     test_pid = self()
 
-    stub(Tracks, :machine_of, fn _, _ ->
+    stub(Tracks, :machine_of_track, fn _, _, _ ->
       send(test_pid, {:in_flight, self()})
       Process.sleep(:infinity)
     end)
@@ -123,7 +127,7 @@ defmodule Ravix.Previews.ServerFailureTest do
   @tag capture_log: true
   test "an unexpected provider exception clears the busy marker", ctx do
     configure(ctx)
-    stub(Tracks, :machine_of, fn _, _ -> raise "unexpected failure" end)
+    stub(Tracks, :machine_of_track, fn _, _, _ -> raise "unexpected failure" end)
 
     assert {:error, %RuntimeError{message: "unexpected failure"}} =
              Lifecycle.start_service(ctx.track.id)
