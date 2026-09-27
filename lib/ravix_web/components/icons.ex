@@ -63,6 +63,12 @@ defmodule RavixWeb.Icons do
     "refresh" =>
       ~S(<path d="M20 11.5A8 8 0 0 0 6.3 6.3L4 8.5" /><path d="M4 4v4.5h4.5" /><path d="M4 12.5a8 8 0 0 0 13.7 5.2L20 15.5" /><path d="M20 20v-4.5h-4.5" />),
     "chevron" => ~S(<path d="m9.5 6 6 6-6 6" />),
+    # A page with one side drawn in. The bar sits on the side the button
+    # shows or hides: the project rail, then the inspector.
+    "panel-left" =>
+      ~S(<rect x="3" y="3.5" width="18" height="17" rx="2" /><path d="M9 3.5v17" />),
+    "panel-right" =>
+      ~S(<rect x="3" y="3.5" width="18" height="17" rx="2" /><path d="M15 3.5v17" />),
     # Three quarters of a ring, drawn open at the top so that it reads as
     # turning once something turns it. A circle that is missing a piece is
     # legible as activity even standing still, which is what a reader with

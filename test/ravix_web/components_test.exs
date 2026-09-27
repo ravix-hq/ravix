@@ -43,9 +43,9 @@ defmodule RavixWeb.ComponentsTest do
 
     test "every icon in the SPA's set has a name here" do
       spa = ~w(home plus search folder folder-plus file globe branch pull issue terminal play
-               wrench check x dot picture pencil clock chevron spinner arrow-up arrow-down external
-               settings sparkle info machine add-person github code document copy more
-               refresh person sign-out)
+               wrench check x dot picture pencil clock chevron panel-left panel-right spinner
+               arrow-up arrow-down external settings sparkle info machine add-person github code
+               document copy more refresh person sign-out)
 
       assert Enum.sort(spa) == RavixWeb.Icons.names()
     end
@@ -377,6 +377,19 @@ defmodule RavixWeb.ComponentsTest do
     test "the theme hook owns the same key the layout reads" do
       js = File.read!(Path.expand("../../assets/js/hooks/theme.js", __DIR__))
       assert js =~ ~s(THEME_KEY = "ravix.theme")
+    end
+
+    test "sidebar visibility is painted from the keys the toggle stores" do
+      bootstrap = File.read!("priv/static/theme.js")
+      hook = File.read!(Path.expand("../../assets/js/hooks/panel_toggle.js", __DIR__))
+
+      for key <- ["ravix.panel.yard", "ravix.panel.inspector"] do
+        assert bootstrap =~ key
+        assert hook =~ ~s("#{key}")
+      end
+
+      assert bootstrap =~ ~s(dataset.yard = "closed")
+      assert bootstrap =~ ~s(dataset.inspector = "closed")
     end
 
     test "every static file at the root is reachable once it has been digested" do

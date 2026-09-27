@@ -68,6 +68,19 @@ test("server patches restore the current accessible width", () => {
   expect(hook.el.getAttribute("aria-valuemin")).toBe("220")
 })
 
+test("the right handle measures the stage, not the column the inspector was lifted out of", () => {
+  document.body.innerHTML = `<div class="app"><div class="stage"><div class="split"><aside class="inspector"><div id="handle" data-side="right" data-var="--inspector-width" data-min="300" data-max="900" data-key="ravix.panel-width.right"></div></aside></div></div></div>`
+  dimensions(document.querySelector(".app"), {clientWidth: 1400})
+  dimensions(document.querySelector(".stage"), {clientWidth: 1100})
+  dimensions(document.querySelector(".split"), {clientWidth: 400})
+  document.querySelector(".inspector").getBoundingClientRect = () => ({width: 340})
+  const {hook} = mountHook(PanelResize, "#handle")
+  // Stage 1100, less the conversation's 420, not the narrowed split's 400.
+  key(hook.el, "End")
+  expect(hook.el.getAttribute("aria-valuemax")).toBe("680")
+  expect(hook.width).toBe(680)
+})
+
 test("the left handle measures the sidebar even when mounted in the main panel", () => {
   const app = document.querySelector(".app")
   const yard = document.createElement("aside")

@@ -451,7 +451,7 @@
           </form>
         </div>
       </section>
-      <aside class="inspector" aria-label="Track inspector">
+      <aside id="inspector" class="inspector" aria-label="Track inspector">
         <div
           id="inspector-resize"
           phx-hook="PanelResize"
@@ -468,6 +468,23 @@
         >
         </div>
         <nav class="workspace-tabs" aria-label="Inspector panels">
+          <button
+            type="button"
+            id="inspector-toggle"
+            phx-hook="PanelToggle"
+            class="ghost panel-toggle"
+            data-panel="inspector"
+            data-key="ravix.panel.inspector"
+            data-hide-label="Hide inspector"
+            data-show-label="Show inspector"
+            aria-controls="inspector"
+            aria-expanded="true"
+            title="Hide inspector"
+          >
+            <.icon name="panel-right" size={16} />
+            <span class="sr-only label-hide">Hide inspector</span>
+            <span class="sr-only label-show">Show inspector</span>
+          </button>
           <button
             :for={
               {tab, label} <- [

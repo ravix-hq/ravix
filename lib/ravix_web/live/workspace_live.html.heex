@@ -80,6 +80,23 @@
           </span>
           <.icon name="chevron" size={12} open={true} class="account-chevron" />
         </button>
+        <button
+          type="button"
+          id="yard-toggle"
+          phx-hook="PanelToggle"
+          class="ghost panel-toggle"
+          data-panel="yard"
+          data-key="ravix.panel.yard"
+          data-hide-label="Hide projects"
+          data-show-label="Show projects"
+          aria-controls="yard"
+          aria-expanded="true"
+          title="Hide projects"
+        >
+          <.icon name="panel-left" size={16} />
+          <span class="sr-only label-hide">Hide projects</span>
+          <span class="sr-only label-show">Show projects</span>
+        </button>
         <button type="button" class="x yard-close" phx-click="yard-close" aria-label="Close menu">
           <.icon name="x" size={16} />
         </button>

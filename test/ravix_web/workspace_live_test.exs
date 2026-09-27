@@ -1146,6 +1146,14 @@ defmodule RavixWeb.WorkspaceLiveTest do
              "@menuuser"
            )
 
+    assert has_element?(
+             view,
+             "#yard-toggle[phx-hook=PanelToggle][aria-controls=yard][aria-expanded=true]",
+             "Hide projects"
+           )
+
+    assert has_element?(view, "#yard-toggle .label-show", "Show projects")
+
     refute has_element?(view, ".workspace-account")
     menu = "#yard #account-menu[popover]"
 

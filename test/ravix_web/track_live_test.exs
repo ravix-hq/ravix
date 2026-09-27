@@ -1750,6 +1750,14 @@ defmodule RavixWeb.TrackLiveTest do
   end
 
   test "Refresh is an icon in the inspector's tab bar and reads the tab again", ctx do
+    assert has_element?(
+             ctx.view,
+             "#inspector-toggle[phx-hook=PanelToggle][aria-controls=inspector][aria-expanded=true]",
+             "Hide inspector"
+           )
+
+    assert has_element?(ctx.view, "#inspector-toggle .label-show", "Show inspector")
+
     button = "nav[aria-label='Inspector panels'] button.panel-refresh[aria-label=Refresh]"
     assert has_element?(ctx.view, "#{button} svg")
     refute has_element?(ctx.view, ".workspace-panel button", "Refresh")

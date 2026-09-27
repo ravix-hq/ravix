@@ -21,7 +21,8 @@
 //   data-axis   `x`; kept for a future horizontal divider
 //
 // The handle sits inside the panel it resizes, which is how it measures the
-// panel's current width; the grid it lives in is the nearest `.app`.
+// panel's current width. The yard's room is the app; the inspector is pinned
+// to the stage rather than sitting in the split, so its room is that stage.
 
 const RESERVE_WIDE = 700
 const RESERVE_NARROW = 420
@@ -43,10 +44,12 @@ export const PanelResize = {
     this.measure = () => {
       const app = this.app()
       const panel = this.panel()
+      // The inspector is pinned to the stage, so the column it used to share
+      // no longer contains the room it may take.
       const available =
         this.side === "left"
           ? app.clientWidth - (window.innerWidth > 1100 ? RESERVE_WIDE : RESERVE_NARROW)
-          : panel.parentElement.clientWidth - RESERVE_NARROW
+          : (this.el.closest(".stage") || panel.parentElement).clientWidth - RESERVE_NARROW
       this.maximum = Math.max(this.minimum, Math.min(this.ceiling, available))
       this.width = Math.round(panel.getBoundingClientRect().width)
       this.reflect()
@@ -55,6 +58,8 @@ export const PanelResize = {
     this.observer = new ResizeObserver(this.measure)
     this.observer.observe(this.app())
     this.observer.observe(this.panel())
+    const stage = this.side === "right" && this.el.closest(".stage")
+    if (stage) this.observer.observe(stage)
 
     this.el.addEventListener("pointerdown", e => {
       if (e.button !== 0 || !e.isPrimary) return
