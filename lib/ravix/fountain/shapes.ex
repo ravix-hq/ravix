@@ -144,9 +144,17 @@ defmodule Ravix.Fountain.Shapes do
     @moduledoc "A sandbox, as `GET /api/sandboxes/:id` serves it."
 
     @enforce_keys [:id, :sprite_name]
-    defstruct @enforce_keys
+    defstruct @enforce_keys ++ [:status, :agent_id, :environment_id, :vault_id, :user_id]
 
-    @type t :: %__MODULE__{id: String.t() | nil, sprite_name: String.t() | nil}
+    @type t :: %__MODULE__{
+            id: String.t() | nil,
+            sprite_name: String.t() | nil,
+            status: String.t() | nil,
+            agent_id: String.t() | nil,
+            environment_id: String.t() | nil,
+            vault_id: String.t() | nil,
+            user_id: String.t() | nil
+          }
   end
 
   defmodule Catalog do
@@ -257,7 +265,15 @@ defmodule Ravix.Fountain.Shapes do
   @doc "One sandbox, from the JSON Fountain sent."
   @spec sandbox(map()) :: Sandbox.t()
   def sandbox(raw) when is_map(raw),
-    do: %Sandbox{id: raw["id"], sprite_name: raw["sprite_name"]}
+    do: %Sandbox{
+      id: raw["id"],
+      sprite_name: raw["sprite_name"],
+      status: string_or_nil(raw["status"]),
+      agent_id: string_or_nil(raw["agent_id"]),
+      environment_id: string_or_nil(raw["environment_id"]),
+      vault_id: string_or_nil(raw["vault_id"]),
+      user_id: string_or_nil(raw["user_id"])
+    }
 
   @doc """
   The catalog, from the JSON Fountain sent.

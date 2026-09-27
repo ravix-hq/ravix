@@ -37,6 +37,13 @@ defmodule Ravix.MockContractTest do
              "anything the app needs belongs in lib/."
   end
 
+  test "the owner verification script has offline cleanup and redaction coverage" do
+    {output, status} =
+      System.cmd("python3", ["scripts/fountain-sandbox-check-test.py"], stderr_to_stdout: true)
+
+    assert status == 0, output
+  end
+
   defp string_const(source, name) do
     [_, value] = Regex.run(~r/export const #{name} = "([^"]*)"/, source)
     value

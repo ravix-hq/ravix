@@ -24,7 +24,10 @@ defmodule Ravix.Fountain.Launch do
   belongs --- in the encoding, not in whether the caller had to think about
   it.
 
-    * `agent_id`, `environment_id`, `vault_id` --- the identity.
+    * `agent_id`, `environment_id`, `vault_id` --- the home identity, or the
+      other runtime's guest agent with the same environment and vault. Fountain
+      checks that both agents belong to the same user. A second agent of the
+      same runtime is refused; multiple threads of one agent are allowed.
     * `sandbox_id` --- with one, the conversation attaches to that disk;
       without one it provisions, `sandbox_mode: "persistent"`.
     * `channel_id` --- the track's durable membership of its machine, the

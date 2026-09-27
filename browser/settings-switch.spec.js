@@ -8,7 +8,7 @@ test('the provider mock rejects attaching a changed runtime to the old machine i
     const response = await request.post(`${mock}/api/agents`, { data: { runtime: from } });
     const { data: agent } = await response.json();
     try {
-      const opened = await request.post(`${mock}/api/conversations`, { data: { agent_id: agent.id } });
+      const opened = await request.post(`${mock}/api/conversations`, { data: { agent_id: agent.id, prompt: "Initialize the disposable runtime-switch fixture." } });
       expect(opened.ok()).toBe(true);
       const { data: conversation } = await opened.json();
       await request.put(`${mock}/api/agents/${agent.id}`, { data: { runtime: to } });
