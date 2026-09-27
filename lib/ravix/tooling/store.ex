@@ -83,10 +83,29 @@ defmodule Ravix.Tooling.Store do
     Repo.all(from [t, q, thread, track, p] in pending(), distinct: true, select: thread.id)
   end
 
-  def due_threads(cursor, cutoff, limit) do
+  def record_reconciliation(id) do
+    now = DateTime.utc_now()
+    Repo.update_all(from(t in Task, where: t.id == ^id), set: [reconciled_at: now])
+    now
+  end
+
+  def due_threads(cursor, now, limit) do
+    short = DateTime.add(now, -3, :second)
+    long = DateTime.add(now, -45, :second)
+
     Repo.all(
       from [t, q, thread, track, p] in pending(),
-        where: t.updated_at < ^cutoff and thread.id > ^cursor,
+        where: thread.id > ^cursor,
+        where:
+          coalesce(t.reconciled_at, t.updated_at) <=
+            fragment(
+              "CASE WHEN ? = 'TASK_STATE_WORKING' AND ? IS NOT NULL AND ? = 'sent' THEN ? ELSE ? END",
+              t.state,
+              t.turn_id,
+              q.status,
+              type(^long, :utc_datetime_usec),
+              type(^short, :utc_datetime_usec)
+            ),
         distinct: true,
         order_by: thread.id,
         limit: ^limit,

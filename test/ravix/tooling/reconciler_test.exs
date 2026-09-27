@@ -1,6 +1,7 @@
 defmodule Ravix.Tooling.ReconcilerTest do
   use Ravix.DataCase, async: true
   use Mimic
+  import Ecto.Query
   import Ravix.ToolingFixture
   alias Ecto.Adapters.SQL.Sandbox
   alias Ravix.Fountain
@@ -91,8 +92,11 @@ defmodule Ravix.Tooling.ReconcilerTest do
         task
       end
 
+    # Receipts created before the expand migration have no reconciliation stamp.
+    ids = Enum.map(tasks, & &1.id)
+    Repo.update_all(from(t in Task, where: t.id in ^ids), set: [reconciled_at: nil])
     {:ok, _young} = Tasks.send(c.p, c.track.id, "hello", "young")
-    cutoff = DateTime.add(DateTime.utc_now(), -3, :second)
+    cutoff = DateTime.utc_now()
     [first, second] = Ravix.Tooling.Store.due_threads("", cutoff, 2)
     assert [third] = Ravix.Tooling.Store.due_threads(second, cutoff, 2)
     assert Enum.sort([first, second, third]) == Enum.sort(Enum.map(tasks, & &1.track_id))
@@ -106,6 +110,96 @@ defmodule Ravix.Tooling.ReconcilerTest do
     server = server()
     assert :ok = Reconciler.tick(server)
     assert %{state: "TASK_STATE_COMPLETED", result: "reply"} = Repo.get!(Task, task.id)
+  end
+
+  test "running turns use the long cadence while settlement bypasses it", c do
+    task = submit(c, "running")
+    age(task)
+    server = server()
+    running = %{turn(task) | status: "running"}
+
+    reads = :atomics.new(2, [])
+
+    stub(Fountain, :turns, fn _, _ ->
+      :atomics.add(reads, 1, 1)
+      {:ok, [running]}
+    end)
+
+    stub(Fountain, :events_page, fn _, _, _ ->
+      :atomics.add(reads, 2, 1)
+      {:ok, %{events: [], next_cursor: nil, has_more: false}}
+    end)
+
+    Reconciler.tick(server)
+    first = Repo.get!(Task, task.id)
+    assert first.state == "TASK_STATE_WORKING"
+    assert first.reconciled_at
+
+    # Simulate successive five-second sweeps without sleeping or mocking Tasks.
+    for elapsed <- 5..40//5 do
+      reconciled_ago(task, elapsed)
+      Reconciler.tick(server)
+      Reconciler.tick(server)
+      assert :atomics.get(reads, 1) == 1
+      assert :atomics.get(reads, 2) == 1
+    end
+
+    reconciled_ago(task, 46)
+    Reconciler.tick(server)
+    current = Repo.get!(Task, task.id)
+    assert :atomics.get(reads, 1) == 2
+    assert :atomics.get(reads, 2) == 2
+    assert current.updated_at == first.updated_at
+    assert DateTime.diff(DateTime.utc_now(), current.reconciled_at) < 3
+
+    expect_reply(task)
+    settle(c.track.id)
+    :sys.get_state(server)
+    assert Repo.get!(Task, task.id).state == "TASK_STATE_COMPLETED"
+  end
+
+  test "sent submitted receipts retry within five seconds even without a state change", c do
+    task = submit(c, "short")
+    age(task)
+    server = server()
+    expect(Fountain, :turns, fn _, _ -> {:ok, []} end)
+    Reconciler.tick(server)
+    current = Repo.get!(Task, task.id)
+    assert current.state == "TASK_STATE_SUBMITTED"
+    assert current.reconciled_at
+
+    reconciled_ago(task, 4)
+    expect_reply(task)
+    Reconciler.tick(server)
+    assert Repo.get!(Task, task.id).state == "TASK_STATE_COMPLETED"
+  end
+
+  for {state, queue_status} <- [
+        {"TASK_STATE_INPUT_REQUIRED", :sent},
+        {"TASK_STATE_WORKING", :sending}
+      ] do
+    test "#{state} with queue #{queue_status} retains the short cadence", c do
+      state = unquote(state)
+      queue_status = unquote(queue_status)
+      {:ok, task} = Tasks.send(c.p, c.track.id, "hello", state)
+
+      Repo.get!(Task, task.id)
+      |> Ecto.Changeset.change(state: state, turn_id: task.id)
+      |> Repo.update!()
+
+      Queue.set_status(task.id, queue_status)
+      reconciled_ago(task, 4)
+      expect_reply(task)
+      assert :ok = Reconciler.tick(server())
+      assert Repo.get!(Task, task.id).state == "TASK_STATE_COMPLETED"
+    end
+  end
+
+  defp reconciled_ago(task, seconds) do
+    Repo.update_all(
+      from(t in Task, where: t.id == ^task.id),
+      set: [reconciled_at: DateTime.add(DateTime.utc_now(), -seconds, :second)]
+    )
   end
 
   test "queue failures, unconfirmed delivery, retry and cancellation persist without reads", c do
@@ -152,8 +246,9 @@ defmodule Ravix.Tooling.ReconcilerTest do
     expect(Fountain, :turns, fn _, _ -> {:error, :unavailable} end)
     assert :ok = Reconciler.tick(server)
     assert Repo.get!(Task, task.id).state == "TASK_STATE_SUBMITTED"
-    # The bounded sweep wraps its cursor before revisiting earlier threads.
+    # A failed attempt is stamped too, so an immediate sweep does not retry.
     assert :ok = Reconciler.tick(server)
+    age(task)
     expect_reply(task)
     assert :ok = Reconciler.tick(server)
     assert Repo.get!(Task, task.id).state == "TASK_STATE_COMPLETED"
@@ -175,9 +270,17 @@ defmodule Ravix.Tooling.ReconcilerTest do
   end
 
   defp server do
-    pid = start_supervised!({Reconciler, interval: false})
+    pid = start_supervised!({Reconciler, interval: false, subscribe: false})
     Sandbox.allow(Repo, self(), pid)
     allow(Fountain, self(), pid)
+
+    # Subscribe only after sandbox/provider allowances exist. Other async tests
+    # can publish queue hints as soon as this process joins the global topic.
+    :sys.replace_state(pid, fn state ->
+      Phoenix.PubSub.subscribe(Ravix.PubSub, "tooling:queue")
+      state
+    end)
+
     pid
   end
 
@@ -189,7 +292,10 @@ defmodule Ravix.Tooling.ReconcilerTest do
 
   defp age(task) do
     task
-    |> Ecto.Changeset.change(updated_at: DateTime.add(DateTime.utc_now(), -10, :second))
+    |> Ecto.Changeset.change(
+      updated_at: DateTime.add(DateTime.utc_now(), -10, :second),
+      reconciled_at: DateTime.add(DateTime.utc_now(), -10, :second)
+    )
     |> Repo.update!()
   end
 

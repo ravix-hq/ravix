@@ -259,6 +259,7 @@ defmodule Ravix.Tooling.Tasks do
     rows =
       Enum.map(rows, fn {task, access} ->
         current = persist_queue(task)
+        current = %{current | reconciled_at: Store.record_reconciliation(task.id)}
 
         if current.state != task.state,
           do: publish(task.id)
@@ -327,12 +328,19 @@ defmodule Ravix.Tooling.Tasks do
     cursor = if finished, do: nil, else: task.cursor
 
     with {:ok, page, pages} <-
-           collect_pages(client, access.thread.conversation_id, turn, cursor,
-             %{events: [], seen: false}, pages),
+           collect_pages(
+             client,
+             access.thread.conversation_id,
+             turn,
+             cursor,
+             %{events: [], seen: false},
+             pages
+           ),
          runtime <- access.thread.runtime || access.project.runtime,
          text <- reply(page.events, turn.id, runtime) do
       blocks = Transcript.blocks_for_turn(page.events, runtime)
       failure = if finished, do: AgentFailure.detect(page.events, runtime, blocks)
+
       {:ok, saved} =
         Store.transaction(fn -> persist_outcome(task, access, turn, page, text, failure) end)
 
@@ -345,9 +353,12 @@ defmodule Ravix.Tooling.Tasks do
 
   defp persist_outcome(task, access, turn, page, text, failure) do
     if failure do
-      # ownership: internal reconciliation correlates this receipt's thread and turn.
+      # ownership: no door for bookkeeping; reconciliation correlates an existing receipt's thread and turn.
       Ravix.Tracks.Store.record_turn_failure(
-        access.thread.conversation_id, turn.id, "turn", failure
+        access.thread.conversation_id,
+        turn.id,
+        "turn",
+        failure
       )
     end
 
@@ -402,12 +413,11 @@ defmodule Ravix.Tooling.Tasks do
   end
 
   defp save_page(task, turn, page, text, failure) do
-    # ownership: internal bookkeeping locks queue before receipt to fence late reads.
+    # ownership: no door for bookkeeping of existing receipts; lock queue before receipt to fence late reads.
     {:ok, queue} = Ravix.PromptQueue.Store.lock_row(task.id, task.track_id)
     current = Store.lock_task(task.id)
 
-    if queue.status not in [:sent, :sending] or current.cursor != task.cursor or
-         terminal?(%{current | state: delivered_state(current)}) do
+    if stale_page?(task, current, queue) do
       current
     else
       state = if failure, do: "TASK_STATE_FAILED", else: turn_state(turn.status)
@@ -422,6 +432,11 @@ defmodule Ravix.Tooling.Tasks do
         failure_message: failure && failure.reason
       )
     end
+  end
+
+  defp stale_page?(task, current, queue) do
+    queue.status not in [:sent, :sending] or current.cursor != task.cursor or
+      terminal?(%{current | state: delivered_state(current)})
   end
 
   defp reply(events, turn_id, runtime) do

@@ -54,8 +54,10 @@ defmodule Ravix.Tooling.Reconciler do
 
   defp sweep(state) do
     state = subscribe(state)
-    cutoff = DateTime.add(DateTime.utc_now(), -3, :second)
-    ids = Store.due_threads(state.cursor, cutoff, 50)
+    now = DateTime.utc_now()
+    ids = Store.due_threads(state.cursor, now, 50)
+    # Wrap in this sweep rather than spending an empty tick at the end of the list.
+    ids = if ids == [] and state.cursor != "", do: Store.due_threads("", now, 50), else: ids
 
     Task.Supervisor.async_stream_nolink(
       Ravix.TaskSupervisor,
