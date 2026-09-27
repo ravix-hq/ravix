@@ -873,6 +873,10 @@ defmodule RavixWeb.WorkspaceManagementTest do
 
   test "a settings event after the owner lost the project is refused before any write", ctx do
     settings(ctx)
+    # Settle the initial rail before removing access: otherwise that earlier read
+    # can dismiss the dialog before the test submits the event it is exercising.
+    render_async(ctx.view, 1_000)
+    assert has_element?(ctx.view, "#secret-form")
     reject(&Projects.update_settings/3)
 
     ctx.project

@@ -172,6 +172,100 @@ defmodule RavixWeb.TrackLiveTest do
              ctx.view |> element("#track-agent-health-banner button") |> render_click()
   end
 
+  for {state, label} <- [
+        {"pending", "Setting up…"},
+        {"running", "Setting up…"},
+        {"retry", "Retrying (attempt 2 of 3"},
+        {"failed", "Setup failed"},
+        {"ready", "Ready"}
+      ] do
+    test "setup #{state} renders its persisted state and reason on Hub updates", ctx do
+      ctx.track
+      |> Ecto.Changeset.change(
+        setup_state: unquote(state),
+        setup_attempts: 1,
+        setup_error: "The runtime could not initialize.",
+        setup_retry_at: DateTime.add(DateTime.utc_now(), 30, :second)
+      )
+      |> Repo.update!()
+
+      send(ctx.view.pid, {:hub, Event.new(:turn, ctx.project.id, track_id: ctx.track.id)})
+      settle(ctx.view)
+
+      if unquote(state) == "ready" do
+        # A working track carries no setup line at all.
+        refute has_element?(ctx.view, "#track-setup-status")
+      else
+        assert has_element?(ctx.view, "#track-setup-status", unquote(label))
+        assert has_element?(ctx.view, "#track-setup-status", "The runtime could not initialize.")
+
+        assert has_element?(ctx.view, "#track-setup-status", "Prompts will wait") ==
+                 unquote(state) in ["pending", "running", "retry"]
+      end
+    end
+  end
+
+  test "retry after an idle page uses the current time for its countdown", ctx do
+    :sys.replace_state(ctx.view.pid, fn state ->
+      put_in(state.socket.assigns.setup_now, DateTime.add(DateTime.utc_now(), -120, :second))
+    end)
+
+    ctx.track
+    |> Ecto.Changeset.change(
+      setup_state: "retry",
+      setup_attempts: 1,
+      setup_retry_at: DateTime.add(DateTime.utc_now(), 30, :second)
+    )
+    |> Repo.update!()
+
+    send(ctx.view.pid, {:hub, Event.new(:turn, ctx.project.id, track_id: ctx.track.id)})
+    settle(ctx.view)
+    html = render(element(ctx.view, "#track-setup-status"))
+    assert [_, seconds] = Regex.run(~r/next in (\d+)s/, html)
+    assert String.to_integer(seconds) in 0..30
+  end
+
+  test "session loss is a visible system card and overlapping replay does not duplicate it",
+       ctx do
+    event = %{
+      "id" => 101,
+      "turn_id" => "restart",
+      "kind" => "stage",
+      "stage" => "adapter",
+      "state" => "restarted",
+      "data" => Jason.encode!(%{reason: "session_gone", message: "The session is gone."})
+    }
+
+    for _ <- 1..2 do
+      send(ctx.view.pid, {:transcript, ctx.track.id, event})
+      drawn(ctx.view)
+    end
+
+    assert has_element?(
+             ctx.view,
+             ".workspace-system-card",
+             "The agent lost its memory of earlier turns"
+           )
+
+    assert Enum.count(
+             LazyHTML.query(LazyHTML.from_document(render(ctx.view)), ".workspace-system-card")
+           ) == 1
+  end
+
+  test "revocation blocks setup updates and the retry action", ctx do
+    ctx.track |> Ecto.Changeset.change(setup_state: "failed") |> Repo.update!()
+    send(ctx.view.pid, {:hub, Event.new(:turn, ctx.project.id, track_id: ctx.track.id)})
+    settle(ctx.view)
+    Repo.delete_all(Session)
+
+    :sys.replace_state(ctx.view.pid, fn state ->
+      update_in(state.socket.assigns.session_guard, &%{&1 | stale?: true})
+    end)
+
+    assert {:error, {:redirect, %{to: "/login"}}} =
+             ctx.view |> element("button[phx-click=retry-track]") |> render_click()
+  end
+
   test "exhausted setup shows a Retry setup action", ctx do
     ctx.track
     |> Ecto.Changeset.change(setup_state: "failed", setup_error: "adapter_crashed")

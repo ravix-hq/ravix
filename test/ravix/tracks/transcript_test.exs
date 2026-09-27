@@ -448,6 +448,29 @@ defmodule Ravix.Tracks.TranscriptTest do
     end
   end
 
+  test "runtime messages take precedence over machine reason codes" do
+    for reason <- ["adapter_crashed", "session_gone"] do
+      event =
+        Event.from(%{"data" => Jason.encode!(%{reason: reason, message: "The agent restarted."})})
+
+      assert Transcript.failure_reason(event) == "The agent restarted."
+    end
+  end
+
+  test "session loss cards survive snapshot and live replay" do
+    event =
+      event(1, Jason.encode!(%{reason: "session_gone"}),
+        kind: "stage",
+        stage: "adapter",
+        state: "restarted"
+      )
+
+    page = Transcript.page([event], "codex") |> Transcript.add_event(event)
+    assert [turn] = Transcript.visible_turns(page)
+    assert [%Block.System{body: body}] = turn.blocks
+    assert body =~ "Ravix will restate the track's context on your next message"
+  end
+
   describe "a stage Fountain failed" do
     # The production deployment's first track: Sprites refused to build the
     # machine until the Fly organisation had a card, said so in a sentence with

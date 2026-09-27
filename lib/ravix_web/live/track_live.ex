@@ -127,7 +127,8 @@ defmodule RavixWeb.TrackLive do
         follower: nil,
         # Whether this person still reaches this track, and when that has to
         # be asked again. See `guard/2`.
-        track_guard: nil
+        track_guard: nil,
+        setup_now: DateTime.utc_now()
       )
 
     if authorized?(socket) do
@@ -148,6 +149,7 @@ defmodule RavixWeb.TrackLive do
       if connected?(socket) do
         Hub.subscribe(socket.assigns.project_id)
         Process.send_after(self(), :refresh, @refresh_ms)
+        Process.send_after(self(), :setup_clock, 1_000)
         announce(socket)
       end
 
@@ -472,6 +474,18 @@ defmodule RavixWeb.TrackLive do
     end
   end
 
+  # The countdown only moves while a retry is scheduled. Otherwise re-arm
+  # slowly and assign nothing, so an idle track page does not re-render.
+  def handle_info(:setup_clock, socket) do
+    if match?(%{setup_state: "retry"}, socket.assigns.track) do
+      Process.send_after(self(), :setup_clock, 1_000)
+      {:noreply, assign(socket, setup_now: DateTime.utc_now())}
+    else
+      Process.send_after(self(), :setup_clock, 15_000)
+      {:noreply, socket}
+    end
+  end
+
   def handle_info(:refresh_plan_items, socket), do: {:noreply, refresh_plan_items(socket)}
 
   def handle_info(:refresh, socket) do
@@ -562,6 +576,7 @@ defmodule RavixWeb.TrackLive do
     socket
     |> assign(
       track: detail.track,
+      setup_now: DateTime.utc_now(),
       threads: detail.threads,
       project: project,
       header: detail.header,
@@ -595,6 +610,7 @@ defmodule RavixWeb.TrackLive do
     do:
       assign(socket,
         track: detail.track,
+        setup_now: DateTime.utc_now(),
         header: detail.header,
         threads: detail.threads,
         models: detail.models
@@ -856,6 +872,7 @@ defmodule RavixWeb.TrackLive do
       threads: [],
       project_id: project.id,
       track: track,
+      setup_now: DateTime.utc_now(),
       project: project,
       header: nil,
       assigned_plan: %{items: [], plan: nil},
@@ -1410,6 +1427,19 @@ defmodule RavixWeb.TrackLive do
   defp pull_state_label(:closed), do: "Closed"
   defp pull_state_label(:open), do: "Open"
 
+  defp setup_label(%{status: :closed}, _now), do: "Closed"
+  defp setup_label(%{setup_state: "failed"}, _now), do: "Setup failed"
+  defp setup_label(%{setup_state: "ready"}, _now), do: "Ready"
+
+  defp setup_label(%{setup_state: "retry"} = track, now) do
+    seconds =
+      if track.setup_retry_at, do: max(0, DateTime.diff(track.setup_retry_at, now)), else: 0
+
+    "Retrying (attempt #{min(track.setup_attempts + 1, 3)} of 3, next in #{seconds}s)"
+  end
+
+  defp setup_label(_track, _now), do: "Setting up…"
+
   defp diff_status(status), do: %{added: "A", modified: "M", deleted: "D", renamed: "R"}[status]
 
   defp diff_status_label(status),
@@ -1794,6 +1824,7 @@ defmodule RavixWeb.TrackLive do
 
   defp folds?(%TranscriptBlock.Plan{}), do: false
   defp folds?(%TranscriptBlock.Failure{}), do: false
+  defp folds?(%TranscriptBlock.System{}), do: false
   defp folds?(_block), do: true
 
   attr :blocks, :list, required: true
@@ -2011,6 +2042,15 @@ defmodule RavixWeb.TrackLive do
   defp block(%{block: %TranscriptBlock.Raw{}} = assigns) do
     ~H"""
     <pre>{@block.body}</pre>
+    """
+  end
+
+  defp block(%{block: %TranscriptBlock.System{}} = assigns) do
+    ~H"""
+    <div class="workspace-system-card" role="status">
+      <strong>Agent session restarted</strong>
+      <p>{@block.body}</p>
+    </div>
     """
   end
 

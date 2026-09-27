@@ -570,19 +570,26 @@
             >
               <div class="row">
                 <span class="chip">
-                  {if track.status == :failed, do: "Failed turn", else: "Unread reply"}
+                  {if track.status in [:failed, :setup_failed],
+                    do: "Failed turn",
+                    else: "Unread reply"}
                 </span>
                 <span class="dim"><.project_name project={project} /></span><span class="spacer"></span><time
                   :if={track.last_active_at}
                   datetime={DateTime.to_iso8601(track.last_active_at)}
                 >{Calendar.strftime(track.last_active_at, "%b %-d, %H:%M UTC")}</time>
               </div>
-              <strong>{track.title}</strong><code class="dimmer">{track.branch}</code><span class="dim">{if track.status ==
-                                                                                                              :failed,
-                                                                                                            do:
-                                                                                                              "The agent needs a hand. Open the conversation to see what happened.",
-                                                                                                            else:
-                                                                                                              "The agent finished. Open the conversation to read its reply."}</span>
+              <strong>{track.title}</strong><code class="dimmer">{track.branch}</code>
+              <span class="dim">
+                <%= cond do %>
+                  <% track.status == :setup_failed -> %>
+                    Setup failed. {track.setup_error} Open the track to Retry setup.
+                  <% track.status == :failed -> %>
+                    The agent needs a hand. Open the conversation to see what happened.
+                  <% true -> %>
+                    The agent finished. Open the conversation to read its reply.
+                <% end %>
+              </span>
             </.link>
           </div>
         </div>

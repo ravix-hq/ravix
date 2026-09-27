@@ -1016,7 +1016,7 @@ defmodule RavixWeb.WorkspaceLive do
     wanting =
       for {_id, rows} <- tracks,
           track <- rows,
-          thread <- track.threads,
+          thread <- notice_threads(track),
           attention?(thread),
           into: %{},
           do: {thread.id, notice(track, thread, socket.assigns.projects)}
@@ -1035,6 +1035,14 @@ defmodule RavixWeb.WorkspaceLive do
         if fresh == [], do: socket, else: push_event(socket, "notify", %{tracks: fresh})
     end
   end
+
+  defp notice_threads(%{status: :setup_failed} = track),
+    do: [%{id: track.id, title: track.title, status: :failed}]
+
+  defp notice_threads(%{setup_state: state}) when state in ["pending", "running", "retry"],
+    do: []
+
+  defp notice_threads(track), do: track.threads
 
   defp notice(track, thread, projects) do
     project = Enum.find(projects, &(&1.id == track.project_id))
@@ -1134,17 +1142,21 @@ defmodule RavixWeb.WorkspaceLive do
     do:
       Enum.reduce(tracks, 0, fn {_id, rows}, count -> count + Enum.count(rows, &attention?/1) end)
 
-  defp attention?(track), do: track.status == :failed or (track.status == :ready and track.unread)
+  defp attention?(track),
+    do: track.status in [:failed, :setup_failed] or (track.status == :ready and track.unread)
 
   # A tab's dot, from what the rail already read: nothing new is asked of
   # Fountain to draw it. Idle, read tracks keep their ordinal instead.
-  defp tab_status(%{status: status}) when status in [:running, :opening, :failed], do: status
+  defp tab_status(%{status: status}) when status in [:running, :opening, :failed, :setup_failed],
+    do: status
+
   defp tab_status(%{status: :ready, unread: true}), do: :unread
   defp tab_status(_track), do: nil
 
   defp tab_status_label(:running), do: "Working"
-  defp tab_status_label(:opening), do: "Starting"
+  defp tab_status_label(:opening), do: "Setting up…"
   defp tab_status_label(:failed), do: "Error"
+  defp tab_status_label(:setup_failed), do: "Setup failed"
   defp tab_status_label(:unread), do: "Unread reply"
 
   defp tab_label(%{title: title}) do

@@ -220,7 +220,7 @@ defmodule Ravix.Tracks.Transcript do
   # can still be read; ordinary user prompts and other app turns remain intact.
   defp bootstrap?(turn) do
     app_turn_label(turn.prompt) == "Open this track. Make its working directory, then stop." and
-      not Enum.any?(turn.events, &Event.failed_stage?/1)
+      not Enum.any?(turn.events, &(Event.failed_stage?(&1) or session_gone?(&1)))
   end
 
   defp empty_acc, do: Turn.empty_fold()
@@ -294,11 +294,35 @@ defmodule Ravix.Tracks.Transcript do
   # the conversation had ended. The reason is Fountain's own text and is drawn
   # as such -- it named a billing page on the deployment that found this, which
   # is exactly the kind of sentence that must not be swallowed.
-  defp output(%Event{kind: :stage, state: "failed"} = event, _runtime, acc) do
-    [%Block.Failure{stage: event.stage, body: failure_reason(event)} | acc]
+  defp output(%Event{kind: :stage} = event, _runtime, acc) do
+    cond do
+      session_gone?(event) ->
+        [
+          %Block.System{
+            body:
+              "The agent lost its memory of earlier turns; Ravix will restate the track's context on your next message"
+          }
+          | acc
+        ]
+
+      Event.failed_stage?(event) ->
+        [%Block.Failure{stage: event.stage, body: failure_reason(event)} | acc]
+
+      true ->
+        acc
+    end
   end
 
   defp output(_event, _runtime, acc), do: acc
+
+  defp session_gone?(%Event{data: data}) when is_binary(data) do
+    case Jason.decode(data) do
+      {:ok, %{"reason" => "session_gone"}} -> true
+      _ -> false
+    end
+  end
+
+  defp session_gone?(_event), do: false
 
   @doc """
   What Fountain said about a stage that failed, or `""` when it said nothing.
@@ -313,6 +337,7 @@ defmodule Ravix.Tracks.Transcript do
   @spec failure_reason(Event.t()) :: String.t()
   def failure_reason(%Event{data: data}) when is_binary(data) do
     case Jason.decode(data) do
+      {:ok, %{"message" => message}} when is_binary(message) -> String.trim(message)
       {:ok, %{"reason" => reason}} when is_binary(reason) -> String.trim(reason)
       {:ok, %{}} -> ""
       _ -> String.trim(data)
