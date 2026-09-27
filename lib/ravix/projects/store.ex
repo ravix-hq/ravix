@@ -112,6 +112,20 @@ defmodule Ravix.Projects.Store do
     :ok
   end
 
+  @doc "Clear only the secret change the owner confirmed; snapshots remain invalidated."
+  def confirm_secret_change(id, generation) do
+    case Repo.update_all(
+           from(p in Project,
+             where: p.id == ^id and p.secrets_pending and p.secrets_generation == ^generation
+           ),
+           set: [secrets_pending: false],
+           inc: [rev: 1]
+         ) do
+      {1, _} -> :ok
+      {0, _} -> {:error, :stale_secret_confirmation}
+    end
+  end
+
   @doc "Insert a project. `rev` starts at 1; `created_at` is stamped."
   @spec create_project(map()) :: {:ok, Project.t()} | {:error, Ecto.Changeset.t()}
   def create_project(attrs) do

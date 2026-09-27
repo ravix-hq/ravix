@@ -321,6 +321,32 @@ defmodule Ravix.Projects do
     end
   end
 
+  @doc "Owner acknowledgement that an uncertain secret change has finished at Fountain."
+  @spec confirm_secret_change(User.t(), String.t(), integer()) :: :ok | {:error, term()}
+  def confirm_secret_change(%User{} = user, id, generation) do
+    with {:ok, _} <- Ravix.Accounts.Access.project_of(user, id) do
+      Ravix.Cluster.project_mutation(id, :secret_change, fn ->
+        confirm_secret_change_locked(user, id, generation)
+      end)
+    end
+  end
+
+  defp confirm_secret_change_locked(user, id, generation) do
+    with {:ok, _} <- Ravix.Accounts.Access.project_of(user, id),
+         :ok <- Store.confirm_secret_change(id, generation) do
+      Hub.publish(id, :settings)
+      :ok
+    else
+      {:error, :stale_secret_confirmation} ->
+        {:error,
+         {:conflict, "stale_secret_confirmation",
+          "This secret change is no longer awaiting confirmation. Reopen Settings to check the latest change."}}
+
+      error ->
+        error
+    end
+  end
+
   @doc """
   A new machine, the same settings. Owner only.
 

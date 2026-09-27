@@ -156,6 +156,32 @@ defmodule RavixWeb.Live.SettingsDialog do
      |> begin(:secret, fn -> Projects.update_settings(user, id, %{secret: secret}) end)}
   end
 
+  defp settings_event(
+         "confirm-secret-change",
+         %{"confirmed" => "true", "generation" => generation},
+         socket
+       )
+       when is_binary(generation) do
+    case Integer.parse(generation) do
+      {generation, ""} ->
+        user = user(socket)
+        id = project_id(socket)
+
+        {:noreply,
+         begin(socket, :secret_confirmation, fn ->
+           Projects.confirm_secret_change(user, id, generation)
+         end)}
+
+      _ ->
+        {:noreply, flash(socket, :error, "Reopen Settings to confirm the latest secret change.")}
+    end
+  end
+
+  defp settings_event("confirm-secret-change", _, socket),
+    do:
+      {:noreply,
+       flash(socket, :error, "Confirm that the previous secret change has finished first.")}
+
   defp settings_event("save-preview-defaults", params, socket) do
     fields = Map.get(params, "preview_defaults", %{})
     config = if Params.flag(params, "clear"), do: nil, else: fields
@@ -240,11 +266,24 @@ defmodule RavixWeb.Live.SettingsDialog do
   defp async_result(:secret, {:ok, response}, socket) do
     {:noreply,
      result(
-       settle(socket, :secret),
+       socket |> settle(:secret) |> refresh_secret_confirmation(),
        response,
        fn s, _ -> s |> load() |> saved() |> flash(:info, "Secret updated.") end,
        :secret_form
      )}
+  end
+
+  defp async_result(:secret_confirmation, {:ok, response}, socket) do
+    {:noreply,
+     result(settle(socket, :secret_confirmation), response, fn s, _ ->
+       s
+       |> load()
+       |> saved()
+       |> flash(
+         :info,
+         "Secret changes are unlocked. Save the intended value again if needed, then rebuild dedicated tracks to apply it."
+       )
+     end)}
   end
 
   defp async_result(:danger, {:ok, response}, socket) do
@@ -288,6 +327,21 @@ defmodule RavixWeb.Live.SettingsDialog do
     do: socket |> assign(save_state: "saved") |> update(:save_version, &(&1 + 1))
 
   # ── loading ───────────────────────────────────────────────────────────
+
+  defp refresh_secret_confirmation(socket) do
+    case Access.project_of(user(socket), project_id(socket)) do
+      {:ok, project} ->
+        update(socket, :settings, fn settings ->
+          Map.merge(settings, %{
+            secrets_pending: project.secrets_pending,
+            secrets_generation: project.secrets_generation
+          })
+        end)
+
+      _ ->
+        socket
+    end
+  end
 
   defp load(socket) do
     result(socket, Projects.settings(user(socket), project_id(socket)), fn s, settings ->
@@ -737,6 +791,27 @@ defmodule RavixWeb.Live.SettingsDialog do
               <p class="settings-help">
                 Use an existing key to replace it. Submit an empty value to remove it.
               </p>
+              <.form
+                :if={Map.get(@settings, :secrets_pending, false)}
+                for={%{}}
+                id="secret-confirmation-form"
+                phx-target={@myself}
+                phx-submit="confirm-secret-change"
+              >
+                <p role="status">
+                  The previous secret change could not be confirmed. Check in Fountain that it has
+                  finished before unlocking more changes. Values cannot be checked here. Save the
+                  intended value again if needed, then rebuild dedicated tracks to apply it.
+                </p>
+                <input type="hidden" name="generation" value={@settings.secrets_generation} />
+                <label>
+                  <input type="checkbox" name="confirmed" value="true" required />
+                  I confirmed the previous secret change has finished in Fountain.
+                </label>
+                <button type="submit" class="primary" disabled={:secret_confirmation in @pending}>
+                  Confirm and unlock secret changes
+                </button>
+              </.form>
               <div
                 :for={
                   {store, label, keys} <- [

@@ -480,7 +480,7 @@ defmodule Ravix.Tracks.Sandbox do
       },
       setup_error: Error.public_message(code),
       setup_error_code: code,
-      setup_state: if(code == "sandbox_outcome_unknown", do: "failed", else: "pending")
+      setup_state: if(code == "sandbox_outcome_unknown", do: "retry", else: "pending")
     )
 
     if code == "sandbox_outcome_unknown", do: publish(Store.get_track(op.track_id))

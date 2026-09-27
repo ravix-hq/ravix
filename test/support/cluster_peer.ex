@@ -13,6 +13,13 @@ defmodule Ravix.ClusterPeer do
   alias Ravix.Cluster.Singleton
   alias Ravix.PromptQueue.Store, as: PromptQueue
 
+  def hold_project_mutation(parent, id, kind) do
+    Ravix.Cluster.project_mutation(id, kind, fn ->
+      send(parent, {:mutation_locked, self()})
+      receive do: (:release -> :ok)
+    end)
+  end
+
   def claim_sandbox_operation(id) do
     Sandbox.unboxed_run(Ravix.Repo, fn -> Ravix.Tracks.Sandbox.Store.claim(id) end)
   end

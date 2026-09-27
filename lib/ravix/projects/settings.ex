@@ -48,9 +48,11 @@ defmodule Ravix.Projects.Settings do
     :model,
     :instructions
   ]
-  defstruct @enforce_keys
+  defstruct @enforce_keys ++ [secrets_pending: false, secrets_generation: 0]
 
   @type t :: %__MODULE__{
+          secrets_pending: boolean(),
+          secrets_generation: non_neg_integer(),
           name: String.t(),
           setup_script: String.t(),
           packages: %{optional(String.t()) => [String.t()]},
@@ -101,6 +103,8 @@ defmodule Ravix.Projects.Settings do
     with {:ok, env} <- Fountain.get_environment(client, project.environment_id) do
       {:ok,
        %__MODULE__{
+         secrets_pending: project.secrets_pending,
+         secrets_generation: project.secrets_generation,
          runtime: project.runtime,
          catalog: Projects.Machine.catalog(client),
          name: project.name,
@@ -345,7 +349,9 @@ defmodule Ravix.Projects.Settings do
 
   defp change_secret(project, client, store, target, key, value) do
     if Store.secret_snapshots?(project.id) do
-      change_snapshot_secret(project, client, store, target, key, value)
+      Ravix.Cluster.project_mutation(project.id, :secret_change, fn ->
+        change_snapshot_secret(project, client, store, target, key, value)
+      end)
     else
       secret_result(write_secret(client, store, target, key, value))
     end
@@ -362,7 +368,7 @@ defmodule Ravix.Projects.Settings do
       {:error, :secrets_pending} ->
         {:error,
          {:conflict, "secrets_pending",
-          "A previous secret change is still awaiting confirmation. Ask the project owner to check its status before saving again."}}
+          "A previous secret change is still awaiting confirmation. The project owner can confirm it has finished in Settings → Secrets before saving again."}}
 
       error ->
         error

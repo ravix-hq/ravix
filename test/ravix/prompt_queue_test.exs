@@ -422,6 +422,50 @@ defmodule Ravix.PromptQueueTest do
     assert [%{"prompt" => "send despite the stale warning"}] = posted(client)
   end
 
+  test "unknown allocation keeps saved prompts queued until reconciliation succeeds", f do
+    track =
+      Repo.update!(
+        Ecto.Changeset.change(f.track,
+          sandbox_layout: :dedicated,
+          sandbox_state: :provisioning,
+          conversation_id: nil,
+          setup_state: "pending"
+        )
+      )
+
+    {:ok, op} = Ravix.Tracks.Sandbox.Store.begin_operation(track.id, 0, :open)
+    {:ok, op} = Ravix.Tracks.Sandbox.Store.update_operation(op, %{phase: "launching"})
+
+    client =
+      fountain([
+        {%{method: "GET", path: "/api/sandboxes"}, {200, [], %{data: []}}},
+        read("idle"),
+        accept()
+      ])
+
+    {:ok, %Item{id: id}} = send_prompt(track, f.owner, "keep this while checking")
+    Ravix.Tracks.Sandbox.advance(client, op.id)
+    Server.tick(f.server)
+
+    assert %Item{status: :queued, error: nil} =
+             PromptQueue.Store.get(id)
+
+    assert posted(client) == []
+
+    Repo.update!(
+      Ecto.Changeset.change(Ravix.Tracks.Store.get_track(track.id),
+        setup_state: "ready",
+        sandbox_state: :ready,
+        conversation_id: "c1",
+        sandbox_id: "dedicated-disk"
+      )
+    )
+
+    Server.tick(f.server)
+    assert %Item{status: :sent} = PromptQueue.Store.get(id)
+    assert [%{"prompt" => "keep this while checking"}] = posted(client)
+  end
+
   test "old persisted setup failures expose sentences instead of tags and provider codes", f do
     {:ok, %Item{id: id}} = send_prompt(f.track, f.owner, "keep this")
 
