@@ -180,6 +180,9 @@ defmodule Ravix.DedicatedLifecycleTest do
         {%{method: "GET", path: "/api/conversations/conversation/turns"},
          {200, [],
           %{data: [%{id: "turn", prompt: "[ravix] Open this track", status: "completed"}]}}},
+        # Setup reads the opening turn's events for an agent outage (#285).
+        {%{method: "GET", path: "/api/conversations/conversation/events"},
+         {200, [], %{data: [], meta: %{has_more: false, next_cursor: nil}}}},
         {%{method: "GET", path: "/api/sandboxes/disk/files"},
          {200, [], %{data: %{path: track.workdir, entries: []}}}},
         {%{method: "POST", path: "/api/conversations/conversation/terminate"}, {200, [], %{}}},
