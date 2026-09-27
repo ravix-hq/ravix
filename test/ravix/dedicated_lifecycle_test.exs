@@ -45,7 +45,7 @@ defmodule Ravix.DedicatedLifecycleTest do
     Sandbox.advance(client, op.id)
 
     assert %{
-             setup_state: "failed",
+             setup_state: "retry",
              setup_error_code: "sandbox_outcome_unknown",
              setup_error: message
            } = Store.get_track(track.id)
@@ -418,6 +418,64 @@ defmodule Ravix.DedicatedLifecycleTest do
     assert Ravix.Projects.Store.live_project(project.id).secrets_pending
     assert :ok = Ravix.Projects.Store.finish_secret_change(project.id, 1)
     assert {:ok, 2} = Ravix.Projects.Store.begin_secret_change(project.id)
+  end
+
+  test "shared allocation and last close cannot cross the retirement fence" do
+    stub(Ravix.Config, :retire_shared_machines?, fn -> true end)
+    project = insert_project()
+    track = insert_track(project: project)
+    parent = self()
+
+    opening =
+      Task.async(fn ->
+        Store.shared_open(project.id, fn ->
+          refute Repo.in_transaction?()
+          send(parent, :allocating)
+
+          receive do
+            :finish -> insert_track(project: project)
+          end
+        end)
+      end)
+
+    assert_receive :allocating, 1_000
+
+    assert {:error, {:conflict, "project_change_in_progress", _}} =
+             Store.close_shared(track, project)
+
+    assert Store.operations(track.id) == []
+    refute Store.get_track(track.id).closed_at
+    send(opening.pid, :finish)
+    next = Task.await(opening)
+    assert {:ok, :ok} = Store.close_shared(track, project)
+    assert Store.operations(track.id) == []
+    assert {:ok, :ok} = Store.close_shared(next, project)
+    assert [%{action: :close}] = Store.operations(next.id)
+
+    assert {:error, {:conflict, "machine_cleanup_pending", _}} =
+             Store.shared_open(project.id, fn -> flunk("allocated across retirement") end)
+  end
+
+  test "retirement disabled does not acquire the shared mutation lock" do
+    stub(Ravix.Config, :retire_shared_machines?, fn -> false end)
+    project = insert_project()
+    track = insert_track(project: project)
+    parent = self()
+
+    holder =
+      Task.async(fn ->
+        Ravix.Cluster.project_mutation(project.id, :shared_machine, fn ->
+          send(parent, :locked)
+          receive do: (:finish -> :ok)
+        end)
+      end)
+
+    assert_receive :locked
+    assert :allowed = Store.shared_open(project.id, fn -> :allowed end)
+    assert {:ok, :ok} = Store.close_shared(track, project)
+    assert Store.operations(track.id) == []
+    send(holder.pid, :finish)
+    Task.await(holder)
   end
 
   test "legacy retirement fails after bounded retries and releases its fence" do
