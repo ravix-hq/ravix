@@ -37,7 +37,9 @@ class Api:
         payload = None if body is None else json.dumps(body).encode()
         request = Request(self.base + path, data=payload, method=method,
                           headers={"Authorization": "Bearer " + self.token,
-                                   "Content-Type": "application/json"})
+                                   "Content-Type": "application/json",
+                                   # Cloudflare refuses urllib's default agent (error 1010).
+                                   "User-Agent": "ravix-fountain-sandbox-check/1"})
         try:
             with self.opener.open(request, timeout=self.timeout) as response:
                 raw = response.read()
