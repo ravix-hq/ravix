@@ -68,7 +68,12 @@ defmodule Ravix.PromptQueueTest do
 
   # A scripted Fountain behind `Ravix.Fountain.client/0`.
   defp fountain(expectations, opts \\ []) do
-    client = FakeTransport.client(expectations, opts)
+    client =
+      FakeTransport.client(
+        expectations,
+        Keyword.put(opts, :transport, Ravix.QueueStreamTransport)
+      )
+
     stub(Ravix.Fountain, :client, fn -> client end)
     client
   end
@@ -689,6 +694,92 @@ defmodule Ravix.PromptQueueTest do
     # A follower broadcasts on its *thread's* topic, which is the track's only
     # for the first thread. A prompt waiting on a second thread is the case a
     # track-keyed subscription hears nothing about.
+    test "a queued prompt holds its follower with no browser and hears the provider settle", f do
+      {:ok, state} = Agent.start_link(fn -> "running" end)
+      fountain_hooks(fn -> Agent.get(state, & &1) end, fn -> :ok end)
+      {:ok, %Item{id: id}} = send_prompt(f.track, f.owner, "no watchers")
+      Server.tick(f.server)
+      follower = Follower.whereis(f.track.id)
+      assert is_pid(follower)
+      assert Map.has_key?(:sys.get_state(follower).subscribers, f.server)
+      Agent.update(state, fn _ -> "idle" end)
+
+      client = :sys.get_state(follower).client
+
+      wait_until(
+        fn -> is_pid(Ravix.QueueStreamTransport.whereis(client, "c1")) end,
+        System.monotonic_time(:millisecond) + 1_000
+      )
+
+      send(
+        Ravix.QueueStreamTransport.whereis(client, "c1"),
+        {:emit,
+         %{
+           "id" => 7,
+           "kind" => "stage",
+           "stage" => "turn",
+           "state" => "completed"
+         }}
+      )
+
+      assert_receive {:posted, "c1", _}, 1_000
+      assert delivered?(id)
+      Server.tick(f.server)
+      refute Map.has_key?(:sys.get_state(follower).subscribers, f.server)
+    end
+
+    test "a queued prompt reacquires a follower that dies", f do
+      fountain_hooks(fn -> "running" end, fn -> :ok end)
+      send_prompt(f.track, f.owner, "keep following")
+      Server.tick(f.server)
+      old = Follower.whereis(f.track.id)
+      Process.exit(old, :kill)
+
+      wait_until(
+        fn ->
+          pid = Follower.whereis(f.track.id)
+          is_pid(pid) and pid != old
+        end,
+        System.monotonic_time(:millisecond) + 1_000
+      )
+
+      fresh = Follower.whereis(f.track.id)
+      assert is_pid(fresh) and fresh != old
+      assert Map.has_key?(:sys.get_state(fresh).subscribers, f.server)
+    end
+
+    test "a dedicated second thread sends while running and retries capacity refusals", f do
+      Repo.update!(
+        Ecto.Changeset.change(f.track,
+          sandbox_layout: :dedicated,
+          sandbox_id: "dedicated",
+          vault_id: "track-vault"
+        )
+      )
+
+      second = thread(f.track, "c2")
+      {:ok, attempt} = Agent.start_link(fn -> 0 end)
+
+      fountain_hooks(fn -> "running" end, fn ->
+        if Agent.get_and_update(attempt, &{&1, &1 + 1}) == 0,
+          do: {:error, %Error{status: 409, code: "sandbox_at_capacity", kind: :api}},
+          else: :ok
+      end)
+
+      expect(Ravix.Projects, :prepare_machine, 2, fn project, _ ->
+        assert project.vault_id == "track-vault"
+        :ok
+      end)
+
+      {:ok, %Item{id: id}} = send_prompt(f.track, f.owner, "concurrent", thread: second.id)
+      Server.tick(f.server)
+      assert_receive {:posted, "c2", _}
+      assert status_of(id) == :queued
+      Server.tick(f.server)
+      assert_receive {:posted, "c2", _}
+      assert status_of(id) == :sent
+    end
+
     test "a second thread's turn settling delivers that thread's prompt", f do
       thread = thread(f.track, "c2")
       {:ok, state} = Agent.start_link(fn -> "running" end)
@@ -761,7 +852,7 @@ defmodule Ravix.PromptQueueTest do
       refute_receive :read, 200
     end
 
-    test "a prompt nobody is following still goes out on the timer, which relaxes after", f do
+    test "a missed settle event is caught by the backstop, which relaxes after", f do
       test = self()
       {:ok, state} = Agent.start_link(fn -> "running" end)
 
@@ -775,9 +866,8 @@ defmodule Ravix.PromptQueueTest do
 
       {:ok, %Item{id: id}} = send_prompt(f.track, f.owner, "no page open")
 
-      # Nothing follows this thread, so no event will ever arrive: the timer
-      # is the whole of the guarantee, and it is the near one while a prompt
-      # waits rather than the idle one.
+      # The provider stream stays quiet even when the conversation becomes idle.
+      # The backstop must recover delivery without a settle event.
       start_server(interval: 60_000, busy_interval: 20)
 
       assert_receive :read, 1_000

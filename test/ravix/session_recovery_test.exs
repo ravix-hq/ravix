@@ -465,7 +465,7 @@ defmodule Ravix.SessionRecoveryTest do
   end
 
   defp provider(script) do
-    client = FakeTransport.client(script, max_retries: 0)
+    client = FakeTransport.client(script, max_retries: 0, transport: Ravix.QueueStreamTransport)
     stub(Fountain, :client, fn -> client end)
     client
   end

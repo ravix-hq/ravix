@@ -222,6 +222,50 @@ defmodule Ravix.Cluster.DistributionTest do
     end)
   end
 
+  test "a queued prompt holds a follower hosted on another instance", ctx do
+    alias Ecto.Adapters.SQL.Sandbox
+    alias Ravix.PromptQueue.{Server, Store}
+    alias Ravix.Repo
+    import Ravix.Factory
+
+    Sandbox.unboxed_run(Repo, fn ->
+      user = insert_user()
+      project = insert_project(user: user)
+      track = insert_track(project: project, conversation_id: "peer-queued")
+
+      try do
+        {:ok, row} =
+          Store.enqueue(
+            track.id,
+            user.id,
+            user.login,
+            Ecto.UUID.generate(),
+            %Ravix.PromptQueue.Body{prompt: "no browser", images: []}
+          )
+
+        opts = Keyword.put(follow_opts(), :conversation_id, track.conversation_id)
+        {:ok, follower} = :erpc.call(ctx.node, Follower, :subscribe, [track.id, opts])
+        server = start_supervised!({Server, name: nil, interval: false})
+        Sandbox.allow(Repo, self(), server)
+        assert :ok = GenServer.call(server, {:heads, [row], false})
+        assert Follower.whereis(track.id) == follower
+        assert Map.has_key?(:sys.get_state(follower).subscribers, server)
+        assert node(follower) == ctx.node
+        assert :ok = GenServer.call(server, {:heads, [], false})
+
+        assert eventually(fn ->
+                 not Map.has_key?(:sys.get_state(follower).subscribers, server)
+               end)
+
+        GenServer.stop(server)
+      after
+        Repo.delete!(track)
+        Repo.delete!(project)
+        Repo.delete!(user)
+      end
+    end)
+  end
+
   # ── the cluster ───────────────────────────────────────────────────────
 
   defp distribute!(name \\ :"ravix_primary@127.0.0.1") do
