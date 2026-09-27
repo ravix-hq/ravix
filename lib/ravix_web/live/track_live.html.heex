@@ -224,9 +224,19 @@
           {@announcement}
         </div>
         <.loading_status :if={:interrupt in @pending}>Stopping agent…</.loading_status>
-        <p :if={@track.status == :setup_failed} role="alert">
-          Setup failed. Retry setup, then retry your saved prompts.
-        </p>
+        <div
+          id="track-setup-status"
+          role={if @track.status == :setup_failed, do: "alert", else: "status"}
+        >
+          <strong>{setup_label(@track, @setup_now)}</strong>
+          <span :if={@track.setup_error}>{@track.setup_error}</span>
+          <p :if={@track.setup_state in ["pending", "running", "retry"]}>
+            Prompts will wait until setup is ready.
+          </p>
+          <p :if={@track.status == :setup_failed}>
+            Retry setup, then retry your saved prompts.
+          </p>
+        </div>
         <.loading_status :if={:retry in @pending}>Retrying track…</.loading_status>
         <.loading_status :if={:add_thread in @pending}>Adding thread…</.loading_status>
         <.thread_tabs

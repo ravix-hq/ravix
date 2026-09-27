@@ -4,11 +4,13 @@ defmodule RavixWeb.WorkspaceLiveTest do
   import Phoenix.LiveViewTest
   import Mimic
   alias Ravix.{Accounts, Crypto, Hub, Previews, Projects, QueryCount, Repo, Tracks}
+  alias Ravix.Fountain.Client
+  alias Ravix.Fountain.Shapes, as: FountainShapes
   alias Ravix.Fountain.Shapes.Catalog
   alias Ravix.GitHub.{ChecksReport, Shapes}
   alias Ravix.Hub.Event
   alias Ravix.People.Store, as: People
-  alias Ravix.Tracks.{Diff, Files}
+  alias Ravix.Tracks.{Diff, Files, Setup}
   alias Ravix.Tracks.Transcript
   alias RavixWeb.Live.Guard
 
@@ -630,6 +632,72 @@ defmodule RavixWeb.WorkspaceLiveTest do
     refute render(view) =~ "Abandoned name"
   end
 
+  test "setup exhaustion appears once, survives sweeps, and clears on retry", %{conn: conn} do
+    user = insert_user()
+    project = insert_project(user: user)
+
+    track =
+      insert_track(
+        project: project,
+        setup_state: "running",
+        setup_attempts: 3,
+        opened_at: nil,
+        setup_request_id: "opening"
+      )
+
+    client = Client.new("https://fountain.test", "test-key")
+
+    stub(Ravix.Fountain, :get_conversation, fn _, _ ->
+      {:ok, FountainShapes.conversation(%{"id" => track.conversation_id, "status" => "idle"})}
+    end)
+
+    stub(Ravix.Fountain, :turns, fn _, _ ->
+      {:ok, [FountainShapes.turn(%{"status" => "failed", "client_request_id" => "opening"})]}
+    end)
+
+    stub(Ravix.Fountain, :events, fn _, _ -> {:ok, []} end)
+    {:ok, view, _} = live(log_in_user(conn, user), "/inbox")
+    render_async(view)
+    refute has_element?(view, ".inbox-item")
+
+    for _ <- 1..3 do
+      Setup.advance(client, track.id)
+      render(view)
+      render_async(view)
+      assert has_element?(view, ".inbox-item", "Setup failed")
+      assert has_element?(view, ".inbox-item", "Retry setup")
+      assert Enum.count(LazyHTML.query(LazyHTML.from_document(render(view)), ".inbox-item")) == 1
+    end
+
+    assert_push_event(view, "notify", %{tracks: [%{id: id}]})
+    assert id == track.id
+    refute_push_event(view, "notify", _)
+
+    assert Tracks.Store.retry_setup(track.id)
+    Hub.publish(project.id, :turn, track_id: track.id)
+    render(view)
+    render_async(view)
+    refute has_element?(view, ".inbox-item")
+  end
+
+  test "setup Inbox reasons stay scoped to their owner and revoked sessions cannot refresh", %{
+    conn: conn
+  } do
+    user = insert_user()
+    own = insert_project(user: user)
+    track = insert_track(project: own, setup_state: "failed", setup_error: "Own setup reason")
+    other = insert_project(user: insert_user())
+    insert_track(project: other, setup_state: "failed", setup_error: "Private setup reason")
+    {:ok, view, _} = live(log_in_user(conn, user), "/inbox")
+    render_async(view)
+    assert has_element?(view, ".inbox-item", "Own setup reason")
+    refute render(view) =~ "Private setup reason"
+    Repo.delete_all(Accounts.Session)
+    :sys.replace_state(view.pid, &age_session_guard/1)
+    send(view.pid, {:hub, Event.new(:turn, own.id, track_id: track.id)})
+    assert_redirect(view, "/login")
+  end
+
   test "inbox shows only failed and unread ready tracks", %{conn: conn} do
     user = insert_user()
     project = insert_project(user: user)
@@ -838,7 +906,8 @@ defmodule RavixWeb.WorkspaceLiveTest do
             {"ravix/booting", :opening, false},
             {"ravix/broken", :failed, false},
             {"ravix/answered", :ready, true},
-            {"feature/login", :ready, false}
+            {"feature/login", :ready, false},
+            {"ravix/setup-broken", :setup_failed, false}
           ] do
         insert_track(project: project, title: title)
         |> Tracks.present(project: project)
@@ -855,7 +924,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
     {:ok, view, _} = live(log_in_user(conn, user), "/p/#{project.id}")
     render_async(view)
     tab = fn track -> ".track-tabs a[href='/p/#{project.id}/t/#{track.id}']" end
-    [idle, busy, booting, broken, answered, feature] = tracks
+    [idle, busy, booting, broken, answered, feature, setup_broken] = tracks
 
     # The namespace every default title shares is left off the tab; the full
     # title is still its accessible name and tooltip.
@@ -871,9 +940,10 @@ defmodule RavixWeb.WorkspaceLiveTest do
 
     for {track, label} <- [
           {busy, "Working"},
-          {booting, "Starting"},
+          {booting, "Setting up…"},
           {broken, "Error"},
-          {answered, "Unread reply"}
+          {answered, "Unread reply"},
+          {setup_broken, "Setup failed"}
         ] do
       assert has_element?(view, "#{tab.(track)} .dot[role=img][aria-label='#{label}']")
       assert has_element?(view, "#{tab.(track)}[aria-label='#{track.title}, #{label}']")

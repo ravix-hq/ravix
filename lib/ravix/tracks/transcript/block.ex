@@ -151,8 +151,15 @@ defmodule Ravix.Tracks.Transcript.Block do
     def from_entries(_entries), do: nil
   end
 
-  @typedoc "Any of the six. Matched by struct, never by a tag field."
-  @type t :: Text.t() | Thinking.t() | Tool.t() | Raw.t() | Failure.t() | Plan.t()
+  defmodule System do
+    @moduledoc "A runtime lifecycle message that remains visible in the transcript."
+    @enforce_keys [:body]
+    defstruct [:body]
+    @type t :: %__MODULE__{body: String.t()}
+  end
+
+  @typedoc "Any of the seven. Matched by struct, never by a tag field."
+  @type t :: Text.t() | Thinking.t() | Tool.t() | Raw.t() | Failure.t() | Plan.t() | System.t()
 
   @doc "A tool call as it starts, before any result has been paired onto it."
   @spec tool(map(), String.t() | nil, Detail.t()) :: Tool.t()
