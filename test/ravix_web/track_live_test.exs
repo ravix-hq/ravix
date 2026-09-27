@@ -172,6 +172,26 @@ defmodule RavixWeb.TrackLiveTest do
              ctx.view |> element("#track-agent-health-banner button") |> render_click()
   end
 
+  test "exhausted setup shows a Retry setup action", ctx do
+    ctx.track
+    |> Ecto.Changeset.change(setup_state: "failed", setup_error: "adapter_crashed")
+    |> Repo.update!()
+
+    send(ctx.view.pid, {:hub, Event.new(:tracks, ctx.project.id, track_id: ctx.track.id)})
+    settle(ctx.view)
+    assert has_element?(ctx.view, "[role=alert]", "Setup failed")
+    assert has_element?(ctx.view, "button[phx-click=retry-track]", "Retry setup")
+
+    expect(Tracks, :retry, fn user, id ->
+      assert user.id == ctx.user.id
+      assert id == ctx.track.id
+      :ok
+    end)
+
+    ctx.view |> element("button[phx-click=retry-track]") |> render_click()
+    settle(ctx.view)
+  end
+
   test "switching threads changes transcript, composer, and delivery without changing tracks",
        ctx do
     client = FakeTransport.client([], verify: false)

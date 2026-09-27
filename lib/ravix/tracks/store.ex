@@ -170,6 +170,74 @@ defmodule Ravix.Tracks.Store do
     end
   end
 
+  @doc "Due setup checks, including tracks with no queued prompts or connected page."
+  def pending_setups do
+    now = DateTime.utc_now()
+
+    Repo.all(
+      from(t in Track,
+        where:
+          is_nil(t.closed_at) and t.setup_state in ["pending", "running", "retry"] and
+            (is_nil(t.setup_retry_at) or t.setup_retry_at <= ^now) and
+            (is_nil(t.setup_lease_until) or t.setup_lease_until < ^now),
+        select: t.id
+      )
+    )
+  end
+
+  @doc "A durable lease shared by initial send, retry and every instance's sweep."
+  def claim_setup(id) do
+    now = DateTime.utc_now()
+    token = Ecto.UUID.generate()
+
+    {_count, rows} =
+      Repo.update_all(
+        from(t in Track,
+          where:
+            t.id == ^id and is_nil(t.closed_at) and
+              t.setup_state in ["pending", "running", "retry"] and
+              (is_nil(t.setup_retry_at) or t.setup_retry_at <= ^now) and
+              (is_nil(t.setup_lease_until) or t.setup_lease_until < ^now),
+          select: t
+        ),
+        set: [setup_lease: token, setup_lease_until: DateTime.add(now, 360, :second)]
+      )
+
+    List.first(rows)
+  end
+
+  @doc "An expired worker cannot overwrite a newer setup generation."
+  def update_setup(track, attrs) do
+    {count, _} =
+      Repo.update_all(
+        from(t in Track,
+          where: t.id == ^track.id and t.setup_lease == ^track.setup_lease and is_nil(t.closed_at)
+        ),
+        set: attrs
+      )
+
+    count == 1
+  end
+
+  @doc "Only an explicit retry resets the exhausted failure budget."
+  def retry_setup(id) do
+    {count, _} =
+      Repo.update_all(
+        from(t in Track,
+          where: t.id == ^id and is_nil(t.closed_at) and t.setup_state in ["failed", "retry"]
+        ),
+        set: [
+          setup_state: "retry",
+          setup_attempts: 0,
+          setup_retry_at: DateTime.utc_now(),
+          setup_lease: nil,
+          setup_lease_until: nil
+        ]
+      )
+
+    count == 1
+  end
+
   @doc "The opening turn reported back. Idempotent: the first time stands."
   @spec mark_opened(String.t()) :: :ok
   def mark_opened(track_id) do

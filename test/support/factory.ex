@@ -192,6 +192,7 @@ defmodule Ravix.Factory do
       "title" => "Track #{n}",
       "branch" => "#{login}/#{slug}-#{id}",
       "workdir" => "/home/sprite/work/#{slug}",
+      "setup_state" => "ready",
       "origin_kind" => "blank",
       "origin_base" => nil,
       "origin_number" => nil,

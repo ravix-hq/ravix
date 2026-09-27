@@ -68,7 +68,7 @@ defmodule Ravix.PromptQueue.Server do
   alias Ravix.PromptQueue.Store
   alias Ravix.Repo
   alias Ravix.Trace
-  alias Ravix.Tracks.{Follower, TrackMember, Transcript}
+  alias Ravix.Tracks.{Follower, Setup, TrackMember, Transcript}
   alias Ravix.Tracks.Transcript.Event
 
   import Ecto.Query, only: [from: 2]
@@ -154,7 +154,10 @@ defmodule Ravix.PromptQueue.Server do
     {:noreply, start_sweep(%{state | callers: [from | state.callers]})}
   end
 
-  def handle_call({:heads, heads}, _from, state), do: {:reply, :ok, follow(state, heads)}
+  def handle_call({:heads, heads, due_setups?}, _from, state) do
+    state = follow(state, heads)
+    {:reply, :ok, %{state | waiting?: state.waiting? or due_setups?}}
+  end
 
   # Claim and POST permission are serialized with supervisor shutdown. Once
   # terminate starts no worker can pass either gate, even if readiness finishes.
@@ -289,15 +292,20 @@ defmodule Ravix.PromptQueue.Server do
   end
 
   defp deliver_heads(client, server) do
+    # ownership: no door — background setup recovery has no user in hand. Store lists
+    # only due live tracks; its durable leases serialize all instances and retries.
+    setups = MapSet.new(Ravix.Tracks.Store.pending_setups())
     heads = Store.heads()
-    # Before delivering, not after: a turn that settles while this sweep is
-    # asking Fountain whether the conversation is busy would otherwise be
-    # broadcast into a topic nobody here had joined yet, and the prompt would
-    # wait out the timer for a turn that had already ended.
-    :ok = GenServer.call(server, {:heads, heads})
+    # Subscribe before delivery so a settling turn cannot race the sweep.
+    :ok = GenServer.call(server, {:heads, heads, MapSet.size(setups) > 0})
+    represented = MapSet.new(heads, & &1.track_id)
+
+    jobs =
+      Enum.map(heads, &{:head, &1}) ++
+        Enum.map(MapSet.difference(setups, represented), &{:setup, &1})
 
     Ravix.TaskSupervisor
-    |> Task.Supervisor.async_stream_nolink(heads, &deliver(client, &1, server),
+    |> Task.Supervisor.async_stream_nolink(jobs, &run_job(client, &1, setups, server),
       ordered: false,
       timeout: @delivery_timeout,
       on_timeout: :kill_task
@@ -308,6 +316,13 @@ defmodule Ravix.PromptQueue.Server do
     end)
 
     :ok
+  end
+
+  defp run_job(client, {:setup, id}, _setups, _server), do: Setup.advance(client, id)
+
+  defp run_job(client, {:head, row}, setups, server) do
+    if MapSet.member?(setups, row.track_id), do: Setup.advance(client, row.track_id)
+    deliver(client, row, server)
   end
 
   # Which threads this server listens to, and whether anything is waiting at
@@ -376,9 +391,23 @@ defmodule Ravix.PromptQueue.Server do
 
   defp deliver(client, row, track, project, server) do
     cond do
-      unchecked?(row) -> confirm(client, row, track, project)
-      row.status != :queued -> :held
-      true -> deliver_queued(client, row, track, project, server)
+      unchecked?(row) ->
+        confirm(client, row, track, project)
+
+      row.status != :queued ->
+        :held
+
+      track.setup_state == "failed" ->
+        Store.fail_setup(
+          track.id,
+          Setup.failure_message() <> " " <> (track.setup_error || "")
+        )
+
+      track.setup_state != "ready" ->
+        :waiting
+
+      true ->
+        deliver_queued(client, row, track, project, server)
     end
   end
 

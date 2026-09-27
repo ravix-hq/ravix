@@ -403,6 +403,7 @@ async function act(prompt: string, emit: Emit, say: Say, conv: Conv): Promise<vo
       emit({ kind: "output", stream: "acp", data: tool("t2", `git worktree add ${dir}${branch ? ` -b ${branch}` : ""}`) });
       await sleep(400);
       const copied = copyTree(repoPath, dir);
+      state.files.set(`${dir}/.git`, `gitdir: ${repoPath}/.git/worktrees/${dir.split("/").at(-1)}\n`);
       emit({
         kind: "output",
         stream: "acp",

@@ -69,6 +69,9 @@ defmodule Ravix.Tracks.Opening do
   @spec track_attrs(t(), String.t()) :: map()
   def track_attrs(%__MODULE__{} = plan, conversation_id) do
     %{
+      setup_state: if(plan.conversation.prompt, do: "running", else: "pending"),
+      setup_attempts: if(plan.conversation.prompt, do: 1, else: 0),
+      setup_started_at: if(plan.conversation.prompt, do: DateTime.utc_now()),
       id: plan.id,
       project_id: plan.project_id,
       conversation_id: conversation_id,
