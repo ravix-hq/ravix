@@ -42,7 +42,8 @@ async function idle(id: string) {
   const deadline = Date.now() + 6000;
   while (Date.now() < deadline) {
     const result = await request("GET", `/api/conversations/${id}`);
-    if (result.body.data.status === "idle") return;
+    const turns = (await request("GET", `/api/conversations/${id}/turns`)).body.data;
+    if (result.body.data.status === "idle" && turns.length && turns.every((t: any) => t.status === "completed")) return;
     await Bun.sleep(10);
   }
   throw new Error("turn did not become idle");
@@ -90,6 +91,21 @@ test("vaults partition disks while home and guest threads share changes, and ter
   await request("POST", `/api/conversations/${guest.id}/terminate`);
   expect((await request("GET", `/api/sandboxes/${f.sandbox_id}${path}`)).status).toBe(200);
   expect((await request("GET", `/api/conversations/${f.first.id}`)).body.data.status).toBe("idle");
+});
+
+test("guest attach is idle before its launch turn exists and cannot accept the next prompt yet", async () => {
+  const f = await fixture();
+  const attached = await attach(f, f.guest.id, { prompt: "first guest work" });
+  const id = attached.body.data.id;
+  expect(attached.body.data.status).toBe("idle");
+  expect((await request("GET", `/api/conversations/${id}/turns`)).body.data).toEqual([]);
+  expect(await request("POST", `/api/conversations/${id}/prompts`, { prompt: "too soon" }))
+    .toMatchObject({ status: 409, body: { error: "conversation_busy" } });
+  await idle(id);
+  const turns = (await request("GET", `/api/conversations/${id}/turns`)).body.data;
+  expect(turns).toHaveLength(1);
+  expect(turns[0]).toMatchObject({ prompt: "first guest work", status: "completed" });
+  expect((await request("POST", `/api/conversations/${id}/prompts`, { prompt: "next" })).status).toBe(200);
 });
 
 test("capacity is reserved atomically per runtime, with no queue and no dropped launch prompts", async () => {

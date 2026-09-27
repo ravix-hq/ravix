@@ -54,6 +54,7 @@ defmodule Ravix.Tracks do
   alias Ravix.Previews.Lifecycle
   alias Ravix.Projects.Project
   alias Ravix.Projects.RuntimeAgents
+  alias Ravix.PromptQueue.Activity
   alias Ravix.PromptQueue.Body
   alias Ravix.PromptQueue.Body.Image
   alias Ravix.Spec
@@ -148,6 +149,7 @@ defmodule Ravix.Tracks do
 
     thread_rows = Store.threads_by_track(Enum.map(rows, & &1.id))
     thread_reads = Store.thread_reads(user.id, project.id)
+    receipts = delivery_receipts(thread_rows |> Map.values() |> List.flatten())
 
     Enum.map(rows, fn row ->
       threads =
@@ -156,7 +158,8 @@ defmodule Ravix.Tracks do
           Map.get(thread_rows, row.id, []),
           thread_reads,
           live,
-          project
+          project,
+          receipts
         )
 
       conversations = Enum.map(threads, &live[&1.conversation_id]) |> Enum.reject(&is_nil/1)
@@ -305,7 +308,29 @@ defmodule Ravix.Tracks do
         project
       )
 
-  defp thread_views(track_id, threads, reads, live, project) do
+  defp delivery_receipts(threads) do
+    # ownership: Access.track_access or Access.access_of scoped these track/thread rows.
+    Ravix.PromptQueue.Store.latest_delivered_for_threads(Enum.map(threads, & &1.id))
+  end
+
+  defp thread_activity(%{conversation_id: nil}, _conversation, _receipt), do: :pending
+
+  defp thread_activity(_thread, conversation, nil),
+    do: if(conversation, do: conversation.status, else: :ready)
+
+  defp thread_activity(thread, _conversation, receipt) do
+    with {:ok, client} <- Ravix.Providers.fountain(),
+         state when state != :unavailable <-
+           Activity.state(client, thread.conversation_id, receipt) do
+      state
+    else
+      _ -> :pending
+    end
+  end
+
+  defp thread_views(track_id, threads, reads, live, project, receipts \\ nil) do
+    receipts = receipts || delivery_receipts(threads)
+
     Enum.map(threads, fn thread ->
       conversation = live[thread.conversation_id]
 
@@ -317,10 +342,7 @@ defmodule Ravix.Tracks do
         default: thread.id == track_id,
         conversation_id: thread.conversation_id,
         status:
-          if(conversation && conversation.status in [:running, :pending, :failed],
-            do: conversation.status,
-            else: :ready
-          ),
+          thread_activity(thread, conversation, receipts[{thread.id, thread.conversation_id}]),
         unread: unread?(conversation && conversation.last_active_at, reads[thread.id])
       }
     end)

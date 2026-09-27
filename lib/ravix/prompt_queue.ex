@@ -7,7 +7,7 @@ defmodule Ravix.PromptQueue do
   attached images stay while another turn runs; closing a tab, changing
   tracks, or restarting the server does not discard waiting work.
   `Ravix.PromptQueue.Server` delivers the first live row per track to
-  Fountain when the conversation is idle.
+  Fountain after its preceding delivered turn settles.
 
   The functions here are the person's side: listing, delivery status,
   cancellation and retry all establish scoped access through `Ravix.Accounts.Access`.

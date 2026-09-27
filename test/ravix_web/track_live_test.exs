@@ -1154,6 +1154,49 @@ defmodule RavixWeb.TrackLiveTest do
     assert has_element?(ctx.view, "#threads-working", "is working in this checkout")
   end
 
+  test "a new delivery clears the previous idle event while its turn is still pending", ctx do
+    other = activity_thread(ctx)
+    tab = "#thread-switcher [data-thread-id='#{other.id}']"
+    broadcast_activity(other.id, "completed")
+    assert has_element?(ctx.view, tab <> "[aria-label='Thread 2 · Codex · Idle']")
+
+    stub(Tracks, :get, fn _, id, _opts ->
+      row = Repo.get!(Track, id)
+
+      threads =
+        Enum.map(thread_options(id), fn thread ->
+          if thread.id == other.id, do: Map.put(thread, :status, :pending), else: thread
+        end)
+
+      {:ok,
+       %{
+         track: Tracks.present(row, role: :owner),
+         header: blank_header(),
+         threads: threads,
+         starters: [],
+         models: []
+       }}
+    end)
+
+    send(
+      ctx.view.pid,
+      {:hub,
+       %Event{
+         name: :turn,
+         project_id: ctx.project.id,
+         track_id: ctx.track.id,
+         thread_id: other.id
+       }}
+    )
+
+    settle(ctx.view)
+    assert has_element?(ctx.view, tab <> "[aria-label='Thread 2 · Codex · Queued']")
+    broadcast_activity(other.id, "started")
+    assert has_element?(ctx.view, tab <> "[aria-label='Thread 2 · Codex · Running']")
+    broadcast_activity(other.id, "completed")
+    assert has_element?(ctx.view, tab <> "[aria-label='Thread 2 · Codex · Idle']")
+  end
+
   test "a single thread never warns about itself", ctx do
     send(
       ctx.view.pid,

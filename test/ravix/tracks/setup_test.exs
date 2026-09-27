@@ -54,6 +54,46 @@ defmodule Ravix.Tracks.SetupTest do
     %{user: user, project: project, track: track, client: client, server: server}
   end
 
+  test "idle before the opening turn appears or settles does not complete setup", ctx do
+    persist(ctx.track, opened_at: nil, setup_request_id: "opening")
+
+    for status <- [nil, "pending", "running"] do
+      stub(Fountain, :turns, fn _, _ ->
+        turns =
+          if status,
+            do: [
+              Shapes.turn(%{
+                "id" => "opening-turn",
+                "client_request_id" => "opening",
+                "status" => status
+              })
+            ],
+            else: []
+
+        {:ok, turns}
+      end)
+
+      due(ctx.track)
+      Setup.advance(ctx.client, ctx.track.id)
+      assert row(ctx.track).setup_state == "running"
+    end
+
+    stub(Fountain, :turns, fn _, _ ->
+      {:ok,
+       [
+         Shapes.turn(%{
+           "id" => "opening-turn",
+           "client_request_id" => "opening",
+           "status" => "completed"
+         })
+       ]}
+    end)
+
+    due(ctx.track)
+    Setup.advance(ctx.client, ctx.track.id)
+    assert row(ctx.track).setup_state == "ready"
+  end
+
   test "MCP retries failed setup, names recovery tools, and enforces grants and ownership", ctx do
     persist(ctx.track, setup_state: "failed", setup_error: "opening refused")
     {principal, _, _} = principal(ctx.user)
