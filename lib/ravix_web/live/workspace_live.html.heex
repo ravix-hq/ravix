@@ -424,6 +424,13 @@
           Settings
         </button>
       </div>
+      <p
+        :if={@project && @project.role != :owner && is_nil(@track_id)}
+        id="project-agent-owner"
+        class="settings-help"
+      >
+        This project runs on {@project.owner_login}'s {RavixWeb.AgentName.label(@project.runtime)}; every turn uses their subscription.
+      </p>
       <div :if={@project && @track_id} class="workspace-track-host">
         <%!-- A fixed id, so choosing another track moves this LiveView instead
           of replacing it. The session is its starting point and nothing more:
@@ -788,7 +795,7 @@
       </.form>
     </.dialog>
     <.live_component
-      :if={@dialog == :settings && @project}
+      :if={@dialog == :settings && @project && @project.role == :owner}
       module={RavixWeb.Live.SettingsDialog}
       id="settings-dialog-panel"
       project={@project}
