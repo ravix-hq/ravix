@@ -222,7 +222,7 @@ defmodule Ravix.Tooling.Tasks do
         status_message: message,
         error_code: queue.error_code,
         # Setup is a track state, not a replacement for the provider failure code.
-        setup_failed: track.setup_state == "failed",
+        setup_failed: match?(%{setup_state: "failed"}, track),
         queue_status: queue.status,
         blocked: not is_nil(queue.blocked_by)
     }
@@ -314,7 +314,9 @@ defmodule Ravix.Tooling.Tasks do
         {:ok, queue} = Ravix.PromptQueue.Store.lock_row(task.id, task.track_id)
         current = Store.lock_task(task.id)
         queue = Map.put(queue, :blocked_by, Ravix.PromptQueue.Store.held_before(queue))
-        view = queue_view(current, queue)
+        # The same receipt door: setup state only shapes MCP recovery guidance.
+        track = Ravix.Tracks.Store.get_track(task.track_id)
+        view = queue_view(current, queue, track)
         if view.state != current.state, do: Store.update(current, state: view.state)
         view
       end)
