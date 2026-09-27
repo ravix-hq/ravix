@@ -34,7 +34,7 @@ defmodule Ravix.Tracks.Setup do
           project = Ravix.Projects.Store.live_project(track.project_id)
 
           if project do
-            thread = Store.thread(track.id)
+            thread = if track.sandbox_layout == :dedicated, do: Store.thread(track.id)
 
             project =
               if thread && thread.runtime, do: %{project | runtime: thread.runtime}, else: project

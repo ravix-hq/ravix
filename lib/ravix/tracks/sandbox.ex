@@ -281,7 +281,7 @@ defmodule Ravix.Tracks.Sandbox do
       false ->
         Store.finish_shared(op, track, %{code: "retirement_disabled"})
 
-      _ when op.attempts >= 5 and not is_map_key(op.resource_ids, "maintenance") ->
+      _ when op.attempts >= 5 ->
         Store.finish_shared(op, track, %{code: "sandbox_cleanup_pending"})
 
       _ ->

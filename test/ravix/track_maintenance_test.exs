@@ -36,6 +36,65 @@ defmodule Ravix.TrackMaintenanceTest do
     client
   end
 
+  test "an old writer's runtime switch keeps the nullable home fallback usable with the cohort off",
+       ctx do
+    stub(Ravix.Config, :dedicated_opens_enabled?, fn _ -> false end)
+    stub(Ravix.Config, :dedicated_rollout?, fn -> false end)
+    assert is_nil(ctx.project.home_runtime)
+    ctx.project |> Ecto.Changeset.change(runtime: "codex", model: "codex-model") |> Repo.update!()
+    project = Projects.Store.get_project(ctx.project.id)
+    client = provider([])
+    stub(Ravix.Accounts.Inference, :usable?, fn _, "codex", _ -> {:ok, true} end)
+
+    assert is_nil(project.home_runtime)
+    assert Project.home_runtime(project) == "codex"
+    assert {:ok, "codex"} = RuntimeAgents.home_runtime(project, client, nil)
+
+    assert {:ok, %{runtime: "codex", agent_id: agent_id}} =
+             Tracks.Runtime.select(ctx.owner, project, client, %{})
+
+    assert agent_id == project.agent_id
+    assert FakeTransport.calls(client) == []
+  end
+
+  test "maintenance retirement exhausts retries and releases its fence", ctx do
+    track = insert_track(project: ctx.project, conversation_id: nil)
+    assert {:ok, :ok} = Store.retire_shared_tracks(ctx.project)
+    [op] = Store.operations(track.id)
+    assert op.resource_ids["maintenance"]
+
+    client =
+      provider(
+        List.duplicate(
+          {%{method: "GET", path: "/api/sandboxes"}, {503, [], %{error: "unavailable"}}},
+          5
+        )
+      )
+
+    for attempt <- 1..5 do
+      if attempt == 5 do
+        assert {:error, {:conflict, "machine_cleanup_failed", _}} =
+                 Projects.Deletion.retire_shared(ctx.project, client)
+      else
+        Sandbox.advance(client, op.id)
+      end
+
+      current = Store.get_operation(op.id)
+      assert current.attempts == attempt
+      if attempt < 5, do: Store.update_operation(current, %{retry_at: nil})
+    end
+
+    assert %{
+             phase: "failed",
+             completed_at: %DateTime{},
+             error: %{"code" => "sandbox_cleanup_pending"}
+           } =
+             Store.get_operation(op.id)
+
+    refute Projects.Store.get_project(ctx.project.id).shared_machine_retiring
+    refute op.id in Store.pending()
+  end
+
   test "defaults keep the home identity and existing threads, including old rows", ctx do
     track = insert_track(project: ctx.project, sandbox_layout: :dedicated, sandbox_state: :ready)
     stub(Ravix.Accounts.Inference, :usable?, fn _, "codex", _ -> {:ok, true} end)
@@ -404,6 +463,16 @@ defmodule Ravix.TrackMaintenanceTest do
     assert Projects.Store.get_project(ctx.project.id).deletion_requested_at
     refute Projects.Store.get_project(ctx.project.id).archived_at
     assert {:error, :not_found} = Tracks.get(ctx.owner, a.id)
+    member = insert_user()
+    guest = insert_user()
+    insert_project_member(ctx.project, member)
+    insert_track_member(a, guest)
+
+    for user <- [ctx.owner, member, guest] do
+      assert {:error, :not_found} = Projects.get(user, ctx.project.id)
+      assert Projects.list(user) == []
+    end
+
     assert Enum.all?([a, b], &(Store.get_track(&1.id).sandbox_state == :closing))
     Projects.Deletion.reconcile(client)
     assert FakeTransport.calls(client) == []

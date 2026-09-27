@@ -597,9 +597,11 @@ defmodule RavixWeb.Live.SettingsDialog do
                 Changes the default agent for new threads. Existing threads keep their agent.
               </p>
               <p :if={Map.get(@settings, :shared_tracks) not in [nil, 0]} class="settings-help">
-                {@settings.shared_tracks} tracks still share the project machine
+                {@settings.shared_tracks} {if @settings.shared_tracks == 1,
+                  do: "track still shares",
+                  else: "tracks still share"} the project machine
               </p>
-              <p class="settings-help">
+              <p :if={not Map.get(@settings, :default_only, false)} class="settings-help">
                 Switching agents rebuilds the machine, closes every track and loses unpushed work on its disk. Model and instruction changes apply to new tracks.
               </p>
               <div class="field" role="group" aria-label="Agent">

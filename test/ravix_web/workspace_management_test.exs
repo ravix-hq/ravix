@@ -969,6 +969,7 @@ defmodule RavixWeb.WorkspaceManagementTest do
            )
 
     refute has_element?(ctx.view, "#project-rebuild-form")
+    refute has_element?(ctx.view, "#settings-section-agent", "Switching agents rebuilds")
   end
 
   test "mixed settings name the shared tracks before destructive switching", ctx do
@@ -981,6 +982,18 @@ defmodule RavixWeb.WorkspaceManagementTest do
            )
 
     assert has_element?(ctx.view, "#project-rebuild-form")
+  end
+
+  test "one shared track uses singular wording", ctx do
+    settings(ctx, default_only: false, shared_tracks: 1)
+
+    assert has_element?(
+             ctx.view,
+             "#settings-section-agent",
+             "1 track still shares the project machine"
+           )
+
+    assert has_element?(ctx.view, "#settings-section-agent", "Switching agents rebuilds")
   end
 
   test "danger actions require the exact project name", ctx do

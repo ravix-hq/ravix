@@ -6,8 +6,6 @@ defmodule Ravix.Repo.Migrations.AddProjectHomeRuntimeAndDeletionIntent do
       add :home_runtime, :text
       add :deletion_requested_at, :utc_datetime_usec
     end
-
-    execute "UPDATE ravix.projects SET home_runtime = runtime WHERE home_runtime IS NULL"
   end
 
   def down do

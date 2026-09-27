@@ -155,7 +155,8 @@ defmodule Ravix.Projects.Store do
   def projects_of(user_id) do
     Repo.all(
       from(p in Project,
-        where: p.user_id == ^user_id and is_nil(p.archived_at),
+        where:
+          p.user_id == ^user_id and is_nil(p.archived_at) and is_nil(p.deletion_requested_at),
         order_by: p.created_at
       )
     )

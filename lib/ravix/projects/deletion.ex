@@ -27,16 +27,29 @@ defmodule Ravix.Projects.Deletion do
   def retire_shared_locked(project, client) do
     # ownership: Access.project_of admitted the shared-only rebuild.
     with {:ok, :ok} <- Sandbox.Store.retire_shared_tracks(project) do
-      for op <- Sandbox.Store.shared_retirements(project.id),
-          do: Sandbox.advance(client, op.id)
+      operations = Sandbox.Store.shared_retirements(project.id)
+      for op <- operations, do: Sandbox.advance(client, op.id)
+      retirement_result(project, operations)
+    end
+  end
 
-      if Store.get_project(project.id).shared_machine_retiring do
+  defp retirement_result(project, operations) do
+    # ownership: Access.project_of admitted these shared-only retirement operations.
+    failed? = Enum.any?(operations, &(Sandbox.Store.get_operation(&1.id).phase == "failed"))
+
+    cond do
+      Store.get_project(project.id).shared_machine_retiring ->
         {:error,
          {:conflict, "machine_cleanup_pending",
           "The shared machine is still being removed. Try again shortly. Dedicated tracks are unaffected."}}
-      else
+
+      failed? ->
+        {:error,
+         {:conflict, "machine_cleanup_failed",
+          "The shared machine could not be removed after repeated attempts. Dedicated tracks are unaffected."}}
+
+      true ->
         {:ok, %Projects.Machine.Rebuild{removed: ["shared machine"], failed: []}}
-      end
     end
   end
 
