@@ -27,9 +27,11 @@ test('vertical track tabs preserve keyboard navigation and the mobile drawer', a
   const strip = page.getByRole('tablist', { name: 'Project tracks' });
   await expect(strip).toHaveAttribute('aria-orientation', 'vertical');
   await expect(strip.locator('.track-num')).toHaveCount(0);
-  for (const width of [1280, 390]) {
+  await expect(strip.getByRole('tab').first()).toHaveText('Overview');
+  await expect(strip.getByRole('tab')).toHaveCount(8);
+  for (const width of [1280, 500, 390]) {
     await page.setViewportSize({ width, height: 600 });
-    if (width === 390) {
+    if (width < 760) {
       await expect(strip).not.toBeVisible();
       await page.getByRole('button', { name: 'Menu', exact: true }).click();
     }
@@ -59,23 +61,24 @@ test('vertical track tabs preserve keyboard navigation and the mobile drawer', a
     await expect(first).toBeFocused();
     await expect(first).toHaveAttribute('aria-selected', 'false');
     await first.press(' ');
-    if (width === 390) {
+    if (width < 760) {
       await expect(strip).not.toBeVisible();
       await page.getByRole('button', { name: 'Menu', exact: true }).click();
     }
     await expect(first).toHaveAttribute('aria-selected', 'true');
+    await expect(first).toHaveAttribute('aria-current', 'page');
     await first.focus();
     await first.press('End');
     await expect(last).toBeFocused();
     await last.press('Enter');
-    if (width === 390) {
+    if (width < 760) {
       await expect(strip).not.toBeVisible();
       await page.getByRole('button', { name: 'Menu', exact: true }).click();
     }
     await expect(last).toHaveAttribute('aria-selected', 'true');
     await page.reload();
     await expect(page.locator('[data-phx-main]')).toHaveClass(/phx-connected/);
-    if (width === 390) await page.getByRole('button', { name: 'Menu', exact: true }).click();
+    if (width < 760) await page.getByRole('button', { name: 'Menu', exact: true }).click();
     await expect(strip.locator('[aria-selected="true"]')).toBeInViewport({ ratio: 0.99 });
     const scroll = page.locator('.yard-scroll');
     await scroll.evaluate(el => { el.scrollTop = 0; });
@@ -87,7 +90,7 @@ test('vertical track tabs preserve keyboard navigation and the mobile drawer', a
     await expect(newTrack).toBeVisible();
     await page.keyboard.press('Escape');
     await expect(newTrack).not.toBeVisible();
-    if (width === 390) {
+    if (width < 760) {
       await expect(strip).not.toBeVisible();
       await page.getByRole('button', { name: 'Menu', exact: true }).click();
     }
@@ -95,7 +98,7 @@ test('vertical track tabs preserve keyboard navigation and the mobile drawer', a
     expect(result.violations).toEqual([]);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     await page.screenshot({ path: test.info().outputPath(`vertical-tabs-${width}.png`) });
-    if (width === 390) {
+    if (width < 760) {
       await page.getByRole('button', { name: 'Close menu', exact: true }).click();
       await expect(strip).not.toBeVisible();
       const collapsed = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze();

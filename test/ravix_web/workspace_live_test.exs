@@ -489,7 +489,21 @@ defmodule RavixWeb.WorkspaceLiveTest do
       refute render(view) =~ "hidden-owner"
       render_patch(view, "/p/#{project.id}")
       assert page_title(view) == label <> " · Ravix"
-      if user == guest, do: refute(render(view) =~ hidden_track.title)
+
+      assert has_element?(
+               view,
+               "#yard [role=tablist] > :first-child#project-overview-tab[aria-current=page]"
+             )
+
+      assert has_element?(view, "#yard [role=tablist] #project-track-tab-#{track.id}")
+
+      if user == guest do
+        refute render(view) =~ hidden_track.title
+        refute has_element?(view, "#yard #project-track-tab-#{hidden_track.id}")
+        refute has_element?(view, "#yard #project-track-navigation button", "New track")
+      else
+        assert has_element?(view, "#yard #project-track-tab-#{hidden_track.id}")
+      end
 
       render_click(view, "dialog", %{name: "search"})
       render_change(view, "search", %{q: "PROJECT-OWNER"})
