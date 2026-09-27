@@ -40,6 +40,7 @@ defmodule Ravix.Tracks.Transcript do
   alias Managoat.ACP.Blocks
   alias Managoat.ACP.Protocol
   alias Ravix.Fountain.Error
+  alias Ravix.Tracks.AgentFailure
   alias Ravix.Tracks.Transcript.{Block, Detail, Edit, Event, Page, Turn}
 
   @acp_runtimes ~w(claude codex opencode)
@@ -141,7 +142,7 @@ defmodule Ravix.Tracks.Transcript do
 
   # ── one turn ──────────────────────────────────────────────────────────
 
-  defp new_turn(%Turn{} = record, runtime), do: rebuild(record, runtime)
+  defp new_turn(%Turn{} = record, runtime), do: rebuild(%{record | runtime: runtime}, runtime)
 
   # The streaming case is asked first, and is the only one that repeats: the
   # event belongs after everything the turn already holds, so its blocks are
@@ -205,7 +206,9 @@ defmodule Ravix.Tracks.Transcript do
   # only one of them can afford to read the whole log for it.
   defp finish(%Turn{} = turn, acc) do
     blocks = blocks_of(acc)
-    visible = blocks |> Enum.filter(&visible_block?/1) |> timeout_reply(turn.settled?)
+    visible = blocks |> Enum.filter(&visible_block?/1) |> failure_reply(turn)
+    notice = AgentFailure.github_notice(turn.events, blocks)
+    visible = if notice, do: visible ++ [%Block.System{body: notice}], else: visible
 
     %{
       turn
@@ -213,24 +216,38 @@ defmodule Ravix.Tracks.Transcript do
         fold: acc,
         visible?:
           (has_text?(turn.prompt) or turn.image_count > 0 or visible != []) and
-            not bootstrap?(turn)
+            not bootstrap?(%{turn | blocks: visible})
     }
   end
 
-  # Some adapters deliver a timeout as a completed message chunk. Only replace
-  # an entire settled reply; streamed prefixes and discussions of timeouts are text.
-  defp timeout_reply([%Block.Text{body: body}] = blocks, true) do
-    if String.trim(body) == "request timed out",
-      do: [%Block.Failure{stage: "turn", body: "request timed out"}],
-      else: blocks
+  defp failure_reply(blocks, %{settled?: true} = turn) do
+    case AgentFailure.detect(turn.events, turn.runtime, blocks) do
+      nil ->
+        blocks
+
+      failure ->
+        retained = Enum.reject(blocks, &match?(%Block.Failure{}, &1))
+
+        retained = without_timeout_text(retained)
+
+        retained ++
+          [%Block.Failure{stage: "turn", body: failure.reason, details: Jason.encode!(failure)}]
+    end
   end
 
-  defp timeout_reply(blocks, _settled), do: blocks
+  defp failure_reply(blocks, _turn), do: blocks
+
+  defp without_timeout_text([%Block.Text{body: body}] = blocks) do
+    if String.trim(body) == "request timed out", do: [], else: blocks
+  end
+
+  defp without_timeout_text(blocks), do: blocks
 
   # The track ribbon represents setup. Keep failed setup visible so its error
   # can still be read; ordinary user prompts and other app turns remain intact.
   defp bootstrap?(turn) do
     app_turn_label(turn.prompt) == "Open this track. Make its working directory, then stop." and
+      not Enum.any?(turn.blocks, &match?(%Block.Failure{}, &1)) and
       not Enum.any?(turn.events, &(Event.failed_stage?(&1) or session_gone?(&1)))
   end
 

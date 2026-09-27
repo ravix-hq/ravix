@@ -5,6 +5,7 @@ defmodule Ravix.Tracks.Setup do
   survive a crash between POST and response. No browser or follower owns setup.
   """
   alias Ravix.{Fountain, Hub, Spec}
+  alias Ravix.Tracks.AgentFailure
   alias Ravix.Tracks.{Origin, Store, Transcript}
   alias Ravix.Tracks.Transcript.Event
 
@@ -157,9 +158,39 @@ defmodule Ravix.Tracks.Setup do
 
   defp reconcile_turn(client, track, project, conversation) do
     with {:ok, turns} <- Fountain.turns(client, track.conversation_id) do
-      outcome(client, track, project, conversation, opening_turn(turns, track))
+      turn = opening_turn(turns, track)
+
+      case agent_failure(client, track, project, turn) do
+        {:failed, failure} -> failed(track, failure.reason, failure.code)
+        :unavailable -> :ok
+        :ok -> outcome(client, track, project, conversation, turn)
+      end
     end
   end
+
+  defp agent_failure(client, track, project, %{id: id, status: status})
+       when status in ["completed", "ended", "done", "failed"] do
+    case Fountain.events(client, track.conversation_id) do
+      {:ok, events} ->
+        events = Enum.filter(events, &(Event.from(&1).turn_id == id))
+        blocks = Transcript.blocks_for_turn(events, project.runtime)
+
+        case AgentFailure.detect(events, project.runtime, blocks) do
+          nil ->
+            :ok
+
+          failure ->
+            Store.record_turn_failure(track.conversation_id, id, "turn", failure)
+            Store.record_turn_failure(track.conversation_id, id, "setup", failure)
+            {:failed, failure}
+        end
+
+      {:error, _} ->
+        :unavailable
+    end
+  end
+
+  defp agent_failure(_client, _track, _project, _turn), do: :ok
 
   defp opening_turn(turns, %{setup_request_id: nil}) do
     turns
@@ -237,7 +268,8 @@ defmodule Ravix.Tracks.Setup do
       setup_state: if(exhausted?, do: "failed", else: "retry"),
       setup_error: reason,
       setup_error_code: code,
-      setup_retry_at: DateTime.add(DateTime.utc_now(), backoff(track.setup_attempts), :second)
+      setup_retry_at:
+        DateTime.add(DateTime.utc_now(), backoff(track.setup_attempts, code), :second)
     ]
 
     if Store.update_setup(track, attrs) do
@@ -264,8 +296,11 @@ defmodule Ravix.Tracks.Setup do
     end
   end
 
-  defp backoff(1), do: 5
-  defp backoff(_), do: 30
+  defp backoff(attempt, "agent_provider_unreachable"),
+    do: min(300, 30 * Integer.pow(2, min(attempt, 3)))
+
+  defp backoff(1, _code), do: 5
+  defp backoff(_, _code), do: 30
   defp due?(nil), do: true
   defp due?(at), do: DateTime.compare(at, DateTime.utc_now()) != :gt
 

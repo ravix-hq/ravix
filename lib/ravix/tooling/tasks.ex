@@ -3,6 +3,7 @@ defmodule Ravix.Tooling.Tasks do
   alias Ravix.Accounts.Access
   alias Ravix.{Fountain, PromptQueue, Tracks}
   alias Ravix.Tooling.{Authorization, Store, Task, TaskPage}
+  alias Ravix.Tracks.AgentFailure
   alias Ravix.Tracks.Transcript
   alias Ravix.Tracks.Transcript.Block
 
@@ -194,7 +195,7 @@ defmodule Ravix.Tooling.Tasks do
           {"TASK_STATE_SUBMITTED", blocked_message(queue)}
 
         _ ->
-          {delivered_state(task), nil}
+          {delivered_state(task), task.failure_message}
       end
 
     %{
@@ -244,9 +245,27 @@ defmodule Ravix.Tooling.Tasks do
              events: [],
              seen: false
            }),
-         text <- reply(page.events, turn.id, access.thread.runtime || access.project.runtime) do
-      Store.transaction(fn -> save_page(task, turn, page, text) end)
+         runtime <- access.thread.runtime || access.project.runtime,
+         text <- reply(page.events, turn.id, runtime) do
+      blocks = Transcript.blocks_for_turn(page.events, runtime)
+      failure = if finished, do: AgentFailure.detect(page.events, runtime, blocks)
+
+      Store.transaction(fn -> persist_outcome(task, access, turn, page, text, failure) end)
     end
+  end
+
+  defp persist_outcome(task, access, turn, page, text, failure) do
+    if failure do
+      # ownership: Access.thread_access admitted this task's correlated conversation.
+      Ravix.Tracks.Store.record_turn_failure(
+        access.thread.conversation_id,
+        turn.id,
+        "turn",
+        failure
+      )
+    end
+
+    save_page(task, turn, page, text, failure)
   end
 
   defp collect_pages(client, conversation_id, turn, cursor, acc) do
@@ -287,20 +306,22 @@ defmodule Ravix.Tooling.Tasks do
     {Enum.reverse(events), seen, past}
   end
 
-  defp save_page(task, turn, page, text) do
+  defp save_page(task, turn, page, text, failure) do
     current = Store.lock_task(task.id)
 
     if current.cursor != task.cursor or terminal?(%{current | state: delivered_state(current)}) do
       current
     else
-      state = turn_state(turn.status)
+      state = if failure, do: "TASK_STATE_FAILED", else: turn_state(turn.status)
       result = if state in @terminal, do: text, else: current.result <> text
 
       Store.update(current,
         state: state,
         turn_id: turn.id,
         cursor: page.next_cursor || current.cursor,
-        result: String.slice(result, 0, 64_000)
+        result: String.slice(if(failure, do: failure.reason, else: result), 0, 64_000),
+        failure_code: failure && failure.code,
+        failure_message: failure && failure.reason
       )
     end
   end

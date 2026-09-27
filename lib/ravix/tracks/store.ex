@@ -20,6 +20,18 @@ defmodule Ravix.Tracks.Store do
   alias Ravix.Repo
   alias Ravix.Tracks.{Thread, ThreadRead, Track, TrackMember}
 
+  # The caller has scoped thread access, or holds the durable setup lease.
+  def record_turn_failure(conversation_id, turn_id, stage, failure) do
+    %Ravix.Tracks.TurnFailure{
+      conversation_id: conversation_id,
+      turn_id: turn_id,
+      stage: stage,
+      code: failure.code,
+      reason: failure.reason
+    }
+    |> Ravix.Repo.insert!(on_conflict: :nothing)
+  end
+
   @doc "A track row. The caller brings the id decided in the opening plan."
   @spec create_track(map()) :: {:ok, Track.t()} | {:error, Ecto.Changeset.t()}
   def create_track(attrs), do: %Track{} |> Track.changeset(attrs) |> Repo.insert()

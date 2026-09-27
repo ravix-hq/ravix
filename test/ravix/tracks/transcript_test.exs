@@ -472,13 +472,36 @@ defmodule Ravix.Tracks.TranscriptTest do
              Transcript.visible_turns(page)
   end
 
+  test "GitHub expiry notice appears once in both streamed and reloaded transcripts" do
+    call = tool_call("github", %{title: "gh pr create", kind: "execute"})
+
+    failed =
+      tool_done("github", %{
+        status: "failed",
+        rawOutput: "HTTP 401: Bad credentials (https://api.github.com/graphql)"
+      })
+
+    events = [event(1, call), event(2, failed, ts: "2026-09-09T12:00:00Z")]
+    page = Transcript.page(events, "codex")
+    assert [%{blocks: [%Block.Tool{}, %Block.System{body: notice}]}] = page.turns
+    assert notice =~ "GitHub access for this turn expired"
+    assert Transcript.add_events(Transcript.empty("codex"), events) == page
+    assert Transcript.add_events(page, events) == page
+  end
+
   test "a completed timeout-only reply becomes a failure in snapshots and live updates" do
     chunks = [event(1, text_chunk("request timed ")), event(2, text_chunk("out"))]
     settled = event(3, nil, kind: "stage", stage: "turn", state: "completed")
     page = Transcript.page(chunks, "codex")
     assert [%{blocks: [%Block.Text{}]}] = Transcript.visible_turns(page)
 
-    assert [%{blocks: [%Block.Failure{body: "request timed out"}]}] =
+    assert [
+             %{
+               blocks: [
+                 %Block.Failure{body: "Codex couldn't reach OpenAI. Nothing was changed. Retry."}
+               ]
+             }
+           ] =
              page |> Transcript.add_event(settled) |> Transcript.visible_turns()
 
     assert [%{blocks: [%Block.Failure{}]}] =
