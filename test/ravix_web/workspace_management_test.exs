@@ -200,7 +200,14 @@ defmodule RavixWeb.WorkspaceManagementTest do
 
       expect(Tracks, :open, fn user, id, attrs ->
         assert {user.id, id} == {ctx.user.id, ctx.project.id}
-        assert attrs == %{title: if(@kind == "pr", do: nil, else: "Work"), origin: @expected}
+
+        assert attrs == %{
+                 title: if(@kind == "pr", do: nil, else: "Work"),
+                 origin: @expected,
+                 runtime: nil,
+                 model: nil
+               }
+
         {:error, {:conflict, "busy", "Machine is busy"}}
       end)
 

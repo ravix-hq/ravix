@@ -59,6 +59,7 @@ defmodule Ravix.Tracks.Track do
     field :sandbox_state, Ecto.Enum,
       values: [:provisioning, :ready, :failed, :closing, :terminated]
 
+    field :last_runtime, :string
     field :vault_id, :string
     field :conversation_id, :string
     field :slug, :string
@@ -97,7 +98,7 @@ defmodule Ravix.Tracks.Track do
     has_one :preview, Ravix.Previews.Preview
   end
 
-  @fields ~w(sandbox_layout sandbox_id sandbox_generation sandbox_state vault_id id project_id conversation_id slug title branch branch_reserved workdir origin_kind origin_base
+  @fields ~w(last_runtime sandbox_layout sandbox_id sandbox_generation sandbox_state vault_id id project_id conversation_id slug title branch branch_reserved workdir origin_kind origin_base
              origin_number origin_title origin_url origin_plan_id origin_item_id rev setup_state setup_attempts setup_request_id setup_started_at setup_retry_at setup_error setup_error_code setup_lease setup_lease_until opened_at closed_at created_at created_by_login)a
   @required ~w(id project_id slug title branch workdir origin_kind rev created_at created_by_login)a
 

@@ -72,6 +72,8 @@ defmodule RavixWeb.TrackLive do
         thread_id: session["track_id"],
         thread_generation: 0,
         threads: [],
+        thread_options: nil,
+        thread_params: %{},
         project_id: session["project_id"],
         agent_refused: false,
         health_refresh: 0,
@@ -171,10 +173,33 @@ defmodule RavixWeb.TrackLive do
     end
   end
 
-  def handle_event("add-thread", _, socket) do
+  def handle_event("new-thread", _, socket) do
+    {:noreply, begin(socket, :thread_options, &Tracks.thread_options/2)}
+  end
+
+  def handle_event("cancel-thread", _, socket),
+    do:
+      {:noreply,
+       socket
+       |> cancel_async(:thread_options)
+       |> settle(:thread_options)
+       |> assign(thread_options: nil, thread_params: %{})}
+
+  def handle_event("edit-thread", %{"new_thread" => params}, socket) do
+    params =
+      if params["runtime"] != socket.assigns.thread_params["runtime"],
+        do: Map.delete(params, "model"),
+        else: params
+
+    {:noreply, assign(socket, thread_params: params)}
+  end
+
+  def handle_event("add-thread", params, socket) do
+    attrs = Map.get(params, "new_thread", %{})
+
     if MapSet.member?(socket.assigns.pending, :add_thread),
       do: {:noreply, socket},
-      else: {:noreply, begin(socket, :add_thread, &Tracks.add_thread/2)}
+      else: {:noreply, begin(socket, :add_thread, &Tracks.add_thread(&1, &2, attrs))}
   end
 
   def handle_event("narrow-view", %{"name" => name}, socket)
@@ -585,8 +610,17 @@ defmodule RavixWeb.TrackLive do
 
   defp async_result({:plan_items, _}, _response, socket), do: socket
 
+  defp async_result(:thread_options, {:ok, {:ok, options}}, socket),
+    do:
+      socket
+      |> settle(:thread_options)
+      |> assign(thread_options: options, thread_params: %{"runtime" => options.runtime})
+
+  defp async_result(:thread_options, {:ok, {:error, reason}}, socket),
+    do: socket |> settle(:thread_options) |> error(reason)
+
   defp async_result(:add_thread, {:ok, {:ok, thread}}, socket) do
-    socket = settle(socket, :add_thread)
+    socket = socket |> settle(:add_thread) |> assign(thread_options: nil, thread_params: %{})
 
     if thread.track_id == socket.assigns.track_id,
       do: switch_thread(socket, thread.id),
@@ -766,7 +800,7 @@ defmodule RavixWeb.TrackLive do
   # below: nothing was being loaded, and "could not finish loading" about a
   # Stop that crashed would be a sentence about the wrong thing.
   defp async_result(name, {:exit, reason}, socket)
-       when name in [:interrupt, :retry, :pull, :add_thread, :model],
+       when name in [:interrupt, :retry, :pull, :add_thread, :thread_options, :model],
        do: socket |> settle(name) |> exit(reason)
 
   # A background refresh that crashed leaves the page showing what it had.
@@ -1216,7 +1250,9 @@ defmodule RavixWeb.TrackLive do
         aria-current={if thread.id == @thread_id, do: "true"}
         title={thread.title}
       >
-        <span class="thread-tab-title">{thread.title}</span><span
+        <span class="thread-tab-title">{thread.title}</span><span :if={
+          Map.get(thread, :status) == :running
+        }> · Working</span><span
           :if={thread.unread && thread.id != @thread_id}
           class="thread-unread"
         ><span class="sr-only">(unread)</span></span>
@@ -1227,7 +1263,7 @@ defmodule RavixWeb.TrackLive do
         class="ghost thread-add"
         aria-label="Add thread"
         title="Add thread"
-        phx-click="add-thread"
+        phx-click="new-thread"
         disabled={@adding}
       >
         <.icon name="plus" size={14} />

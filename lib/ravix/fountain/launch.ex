@@ -17,7 +17,8 @@ defmodule Ravix.Fountain.Launch do
   were the same value, `nil`, arrived at two different ways --- and a caller
   that simply left the key out got the second meaning for free.
 
-  Every field is enforced, including the four that are genuinely optional.
+  The identity and launch fields are enforced, including fields whose values
+  may be nil. `model` is an optional per-conversation override (Fountain ADR 0061).
   That is the point: `vault_id: nil` is a sentence somebody wrote, and an
   absent `:vault_id` is not. `Ravix.Fountain.create_conversation/2` still
   leaves a nil or blank field off the wire, which is where "optional"
@@ -48,9 +49,10 @@ defmodule Ravix.Fountain.Launch do
     :title,
     :prompt
   ]
-  defstruct @enforce_keys
+  defstruct @enforce_keys ++ [model: nil]
 
   @type t :: %__MODULE__{
+          model: String.t() | nil,
           agent_id: String.t(),
           environment_id: String.t() | nil,
           vault_id: String.t() | nil,

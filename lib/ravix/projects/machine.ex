@@ -288,6 +288,7 @@ defmodule Ravix.Projects.Machine do
 
     with {:ok, conversations} <- Fountain.list_conversations(client, project.agent_id),
          {removed, failed} = terminate_live(client, conversations),
+         :ok <- Projects.RuntimeAgents.retire(project, client),
          :ok <- delete_old_agent(client, project.agent_id),
          set_id = owner_set(project),
          {:ok, agent} <- create_replacement(project, set_id, client) do
@@ -369,11 +370,13 @@ defmodule Ravix.Projects.Machine do
       Fountain.terminate(client, conversation.id)
     end
 
-    unwind(client, project)
-    Projects.Store.archive(project.id)
-    Ravix.MachineCache.forget_project(project.id)
-    Hub.publish(project.id, :tracks)
-    :ok
+    with :ok <- Projects.RuntimeAgents.retire(project, client) do
+      unwind(client, project)
+      Projects.Store.archive(project.id)
+      Ravix.MachineCache.forget_project(project.id)
+      Hub.publish(project.id, :tracks)
+      :ok
+    end
   end
 
   # Deleting the home agent also deletes dedicated sandboxes. B8 replaces

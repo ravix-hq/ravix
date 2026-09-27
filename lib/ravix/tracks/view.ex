@@ -60,7 +60,7 @@ defmodule Ravix.Tracks.View do
     :setup_retry_at
   ]
 
-  defstruct @enforce_keys ++ [threads: [], setup_error_code: nil]
+  defstruct @enforce_keys ++ [threads: [], setup_error_code: nil, runtime: nil, default_model: nil]
 
   @type t :: %__MODULE__{
           id: String.t(),
@@ -83,6 +83,8 @@ defmodule Ravix.Tracks.View do
           role: :owner | :member,
           unread: boolean(),
           model: String.t() | nil,
+          runtime: String.t() | nil,
+          default_model: String.t() | nil,
           threads: [map()],
           setup_state: String.t(),
           setup_attempts: non_neg_integer(),

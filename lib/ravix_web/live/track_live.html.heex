@@ -250,6 +250,24 @@
           </p>
         </div>
         <.loading_status :if={:retry in @pending}>Retrying track…</.loading_status>
+        <.loading_status :if={:thread_options in @pending}>Loading runtimes…</.loading_status>
+        <form
+          :if={@thread_options}
+          id="new-thread-form"
+          phx-change="edit-thread"
+          phx-submit="add-thread"
+        >
+          <RavixWeb.Live.RuntimePicker.fields
+            options={@thread_options}
+            params={@thread_params}
+            name="new_thread"
+          />
+          <p class="hint">
+            Threads share this checkout and can run concurrently. Coordinate edits to avoid collisions.
+          </p>
+          <button type="submit" class="primary" disabled={:add_thread in @pending}>Create thread</button>
+          <button type="button" class="ghost" phx-click="cancel-thread">Cancel</button>
+        </form>
         <.loading_status :if={:add_thread in @pending}>Adding thread…</.loading_status>
         <.thread_tabs
           threads={@threads}
@@ -333,8 +351,11 @@
                   <.icon name="picture" size={17} />
                 </button>
                 <.model_menu
-                  model={@track.model || @project.model}
-                  project_model={@project.model}
+                  model={@track.model || @track.default_model || @project.model}
+                  project_model={
+                    if is_nil(@track.runtime) or @track.runtime == @project.runtime,
+                      do: @project.model
+                  }
                   models={@models}
                   disabled={
                     is_nil(@track.conversation_id) or @track.status in [:running, :opening] or

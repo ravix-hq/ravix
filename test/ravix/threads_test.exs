@@ -11,13 +11,23 @@ defmodule Ravix.ThreadsTest do
 
   setup do
     user = insert_user()
-    project = insert_project(user: user)
+    project = insert_project(user: user, runtime: "claude")
 
     track =
       insert_track(project: project, conversation_id: "default", opened_at: DateTime.utc_now())
 
     client = FakeTransport.client([], verify: false)
     stub(Fountain, :client, fn -> client end)
+
+    stub(Ravix.Accounts.Inference, :usable?, fn owner, "claude", [fresh: true] ->
+      assert owner.id == user.id
+      {:ok, true}
+    end)
+
+    stub(Fountain, :catalog, fn _ ->
+      {:ok, %Shapes.Catalog{runtimes: ["claude"], models: %{"claude" => [project.model]}}}
+    end)
+
     %{user: user, project: project, track: track}
   end
 

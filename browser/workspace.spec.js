@@ -694,6 +694,8 @@ test('project, track, streaming, image upload, reconnect, and revocation', async
   const threadTab = id => threadTabs.locator(`button[data-thread-id="${id}"]`);
   const defaultThread = await currentThread.getAttribute('data-thread-id');
   await threadTabs.getByRole('button', { name: 'Add thread', exact: true }).click();
+  await expect(page.locator('#new-thread-form')).toBeVisible();
+  await page.locator('#new-thread-form').getByRole('button', { name: 'Create thread', exact: true }).click();
   await expect(currentThread).not.toHaveAttribute('data-thread-id', defaultThread);
   const nextThread = await currentThread.getAttribute('data-thread-id');
   await expect(composer).toHaveValue('');

@@ -395,9 +395,25 @@ defmodule Ravix.TracksTest do
       owner = insert_user(login: "Ana")
 
       project =
-        insert_project(user: owner, repo_full_name: "acme/ledger", default_branch: "main", rev: 2)
+        insert_project(
+          user: owner,
+          runtime: "claude",
+          repo_full_name: "acme/ledger",
+          default_branch: "main",
+          rev: 2
+        )
 
       stub(Ravix.Projects, :prepare_machine, fn _project, _client -> :ok end)
+
+      stub(Ravix.Accounts.Inference, :usable?, fn payer, "claude", [fresh: true] ->
+        assert payer.id == owner.id
+        {:ok, true}
+      end)
+
+      stub(Ravix.Fountain, :catalog, fn _ ->
+        {:ok, %Shapes.Catalog{runtimes: ["claude"], models: %{"claude" => [project.model]}}}
+      end)
+
       Hub.subscribe(project.id)
       {:ok, owner: owner, project: project}
     end
@@ -458,6 +474,7 @@ defmodule Ravix.TracksTest do
       assert create.body["channel_id"] == "ravix:#{ctx.project.id}:kyoto@r2:#{presented.id}"
       assert create.body["fresh"] == true
       assert create.body["agent_id"] == ctx.project.agent_id
+      assert create.body["model"] == ctx.project.model
       assert create.body["environment_id"] == ctx.project.environment_id
       assert create.body["vault_id"] == ctx.project.vault_id
       refute Map.has_key?(create.body, "prompt")
@@ -497,13 +514,15 @@ defmodule Ravix.TracksTest do
       opening_fountain(ctx.project, false)
 
       # The slugs in use were read with the names, so a popular name costs no
-      # query per candidate: the project, dedicated-identity exclusion,
-      # every track once for names, and the insert.
+      # query per candidate. Dedicated-identity exclusion, runtime ownership,
+      # and the atomic default thread write add fixed queries regardless of
+      # the number of occupied names.
       {result, queries} =
         QueryCount.count(fn -> Tracks.open(ctx.owner, ctx.project.id, %{title: "Kyoto"}) end)
 
       assert {:ok, %{slug: "kyoto-2"}} = result
-      assert queries == ["projects", "tracks", "tracks", "tracks"]
+      assert Enum.count(queries, &(&1 == "tracks")) == 3
+      assert Enum.count(queries, &(&1 == "threads")) == 1
     end
 
     # The one refusal `plan/4` cannot rule out: somebody opening a track with

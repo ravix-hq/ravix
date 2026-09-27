@@ -56,6 +56,7 @@ defmodule Ravix.MachineCache do
   alias Ravix.MachineCache.Machine
   alias Ravix.Memo
   alias Ravix.Projects.Project
+  alias Ravix.Projects.RuntimeAgents
   alias Ravix.Tracks.Store, as: TracksStore
 
   @memo __MODULE__
@@ -99,12 +100,25 @@ defmodule Ravix.MachineCache do
   @spec conversations(Client.t(), Project.t(), opts()) ::
           {:ok, [conversation()]} | {:error, Fountain.failure()}
   def conversations(%Client{} = client, %Project{} = project, opts \\ []) do
+    # ownership: the admitted project/track caller supplies this project.
+    agent_ids = RuntimeAgents.ids(project)
+
     memo(
       list_key(client, project),
-      fn -> Fountain.list_conversations(client, project.agent_id) end,
+      fn -> project_conversations(client, agent_ids) end,
       fn _ -> @ttl_ms end,
       opts
     )
+  end
+
+  # ownership: callers already passed Access.project_access/2 or Access.track_access/2.
+  defp project_conversations(client, agent_ids) do
+    Enum.reduce_while(agent_ids, {:ok, []}, fn id, {:ok, all} ->
+      case Fountain.list_conversations(client, id) do
+        {:ok, conversations} -> {:cont, {:ok, all ++ conversations}}
+        error -> {:halt, error}
+      end
+    end)
   end
 
   @doc """

@@ -468,7 +468,14 @@ defmodule RavixWeb.TrackLiveTest do
   end
 
   test "adding a thread persists and selects it", ctx do
-    client = FakeTransport.client([], verify: false)
+    client =
+      FakeTransport.client(
+        [
+          {%{method: "GET", path: "/api/conversations"}, {200, [], %{data: []}}}
+        ],
+        verify: false
+      )
+
     stub(Ravix.Fountain, :client, fn -> client end)
 
     stub(Ravix.Fountain, :get_conversation, fn _, _ ->
@@ -484,8 +491,23 @@ defmodule RavixWeb.TrackLiveTest do
       {:ok, Shapes.conversation(%{"id" => "added"})}
     end)
 
+    Repo.update!(Ecto.Changeset.change(ctx.project, runtime: "claude"))
+    stub(Ravix.Accounts.Inference, :usable?, fn _, "claude", _ -> {:ok, true} end)
+    stub(Ravix.Accounts.Inference, :usable_agents, fn _ -> {:ok, [:claude]} end)
+
+    stub(Ravix.MachineCache, :catalog, fn _ ->
+      {:ok, %Shapes.Catalog{runtimes: ["claude"], models: %{"claude" => [ctx.project.model]}}}
+    end)
+
+    stub(Ravix.MachineCache, :machine_of, fn _, _ -> {:ok, nil} end)
     ctx.view |> element("#thread-switcher button[aria-label='Add thread']") |> render_click()
     render_async(ctx.view, 2_000)
+    assert has_element?(ctx.view, "#new-thread-form")
+
+    ctx.view
+    |> form("#new-thread-form", new_thread: %{runtime: "claude", model: ctx.project.model})
+    |> render_submit()
+
     render_async(ctx.view, 2_000)
     [_, thread] = Tracks.Store.threads_of(ctx.track.id)
     assert thread.conversation_id == "added"

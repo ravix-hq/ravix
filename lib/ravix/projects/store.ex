@@ -118,7 +118,13 @@ defmodule Ravix.Projects.Store do
   """
   @spec rebind_agent(String.t(), String.t(), String.t() | nil) :: :ok
   def rebind_agent(id, agent_id, credential_set_id),
-    do: update_fields(id, agent_id: agent_id, credential_set_id: credential_set_id)
+    do:
+      update_fields(id,
+        agent_id: agent_id,
+        credential_set_id: credential_set_id,
+        runtime_agents_retiring: false,
+        shared_home_runtime: nil
+      )
 
   @doc """
   Record which of its owner's credential sets the project's agent now points
@@ -149,6 +155,72 @@ defmodule Ravix.Projects.Store do
   # `Access.project_of/2` before naming its tracks.
   @spec open_tracks(String.t()) :: [Track.t()]
   defdelegate open_tracks(project_id), to: Ravix.Tracks.Store, as: :tracks_of
+
+  def runtime_agents(project_id) do
+    Repo.all(from(a in Ravix.Projects.RuntimeAgent, where: a.project_id == ^project_id))
+  end
+
+  def reserve_runtime(project_id, runtime, expected_agent \\ nil) do
+    result =
+      Repo.transaction(fn ->
+        project = Repo.one(from(p in Project, where: p.id == ^project_id, lock: "FOR UPDATE"))
+
+        if is_nil(project) or project.runtime_agents_retiring or not is_nil(project.archived_at) or
+             (not is_nil(expected_agent) and project.agent_id != expected_agent),
+           do: Repo.rollback(:retiring)
+
+        {count, _} =
+          Repo.insert_all(
+            Ravix.Projects.RuntimeAgent,
+            [%{project_id: project_id, runtime: runtime}],
+            on_conflict: :nothing
+          )
+
+        if count == 1, do: :ok, else: Repo.rollback(:reserved)
+      end)
+
+    case result do
+      {:ok, :ok} -> :ok
+      error -> error
+    end
+  end
+
+  def claim_shared_home(project_id, runtime, expected_agent) do
+    Repo.transaction(fn ->
+      project = Repo.one(from(p in Project, where: p.id == ^project_id, lock: "FOR UPDATE"))
+
+      if is_nil(project) or project.runtime_agents_retiring or not is_nil(project.archived_at) or
+           project.agent_id != expected_agent,
+         do: Repo.rollback(:retiring)
+
+      home = project.shared_home_runtime || runtime
+
+      if is_nil(project.shared_home_runtime),
+        do: update_fields(project_id, shared_home_runtime: home)
+
+      home
+    end)
+  end
+
+  def retire_runtimes(project_id), do: update_fields(project_id, runtime_agents_retiring: true)
+
+  def bind_runtime(project_id, runtime, agent_id, credential_set_id) do
+    from(a in Ravix.Projects.RuntimeAgent,
+      where: a.project_id == ^project_id and a.runtime == ^runtime
+    )
+    |> Repo.update_all(set: [agent_id: agent_id, credential_set_id: credential_set_id])
+
+    :ok
+  end
+
+  def forget_runtime(project_id, runtime) do
+    from(a in Ravix.Projects.RuntimeAgent,
+      where: a.project_id == ^project_id and a.runtime == ^runtime
+    )
+    |> Repo.delete_all()
+
+    :ok
+  end
 
   defp update_fields(id, fields) do
     from(p in Project, where: p.id == ^id) |> Repo.update_all(set: fields)

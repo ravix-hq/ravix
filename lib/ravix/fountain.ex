@@ -394,6 +394,7 @@ defmodule Ravix.Fountain do
       |> sandbox_identity(launch.sandbox_id)
       |> optional("title", launch.title)
       |> optional("prompt", launch.prompt)
+      |> optional("model", launch.model)
 
     with {:ok, raw} <- data(client, "POST", "/api/conversations", body: body) do
       {:ok, Shapes.conversation(raw)}
