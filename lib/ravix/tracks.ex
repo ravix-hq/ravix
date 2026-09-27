@@ -346,15 +346,23 @@ defmodule Ravix.Tracks do
              {:conflict, "threads_disabled", "Threads are not enabled yet."}
            ),
          :ok <-
-           check(is_nil(track.closed_at), {:conflict, "closed_track", "This track is closed."}),
+           check(
+             is_nil(track.closed_at) and track.sandbox_state not in [:closing, :terminated],
+             {:conflict, "closed_track", "This track is closing or closed."}
+           ),
          {:ok, client} <- fountain(),
          {:ok, sandbox_id} <- thread_sandbox(client, track) do
       launch_thread(user, track, project, client, sandbox_id, stringify(attrs))
     end
   end
 
-  defp thread_sandbox(_client, %{sandbox_layout: :dedicated, sandbox_id: id}) when is_binary(id),
-    do: {:ok, id}
+  defp thread_sandbox(_client, %{
+         sandbox_layout: :dedicated,
+         sandbox_state: :ready,
+         sandbox_id: id
+       })
+       when is_binary(id),
+       do: {:ok, id}
 
   defp thread_sandbox(_client, %{sandbox_layout: :dedicated}), do: thread_not_open()
 
@@ -405,14 +413,17 @@ defmodule Ravix.Tracks do
                Access.track_access(user, track.id),
              :ok <- Runtime.gate(user, %{project | runtime: selection.home}, selection.runtime),
              do:
-               Store.create_thread(%{
-                 id: id,
-                 track_id: track.id,
-                 conversation_id: conversation_id,
-                 title: title,
-                 runtime: selection.runtime,
-                 model: selection.model
-               })
+               Store.create_thread(
+                 %{
+                   id: id,
+                   track_id: track.id,
+                   conversation_id: conversation_id,
+                   title: title,
+                   runtime: selection.runtime,
+                   model: selection.model
+                 },
+                 track.sandbox_generation
+               )
 
       case result do
         {:ok, %Ravix.Tracks.Thread{} = thread} ->
@@ -454,8 +465,49 @@ defmodule Ravix.Tracks do
   @spec open(User.t(), String.t(), map(), opening_turn: :async | :sync) ::
           {:ok, View.t()} | {:error, reason()}
   def open(%User{} = user, project_id, attrs, opts \\ []) do
-    attrs = stringify(attrs)
+    if Ravix.Config.dedicated_opens_enabled?(user),
+      do: open_dedicated(user, project_id, stringify(attrs)),
+      else: open_shared(user, project_id, stringify(attrs), opts)
+  end
 
+  defp open_dedicated(user, project_id, attrs) do
+    with {:ok, %{project: project, role: role}} <- Access.project_access(user, project_id),
+         :ok <- plan_origin_access(user, project_id, attrs["origin"]),
+         {:ok, client} <- fountain(),
+         {:ok, plan} <- plan(user, project, attrs, nil),
+         {:ok, selection} <- Runtime.select(user, project, client, attrs),
+         {:ok, _} <- Access.project_access(user, project_id),
+         :ok <-
+           check(
+             Ravix.Config.dedicated_opens_enabled?(user),
+             {:conflict, "dedicated_opens_disabled",
+              "Opening a track with its own machine is not enabled."}
+           ),
+         {:ok, track} <- Ravix.Tracks.Sandbox.Store.create(plan, selection, project) do
+      publish_tracks(project.id, track.id)
+
+      {:ok,
+       present(track,
+         project: project,
+         live: nil,
+         role: role,
+         owner_login: project_owner_login(project, user)
+       )}
+    else
+      {:error, %Ecto.Changeset{} = changeset} -> {:error, refusal(changeset)}
+      error -> error
+    end
+  end
+
+  defp open_shared(user, project_id, attrs, opts) do
+    with {:ok, _} <- Access.project_access(user, project_id) do
+      Ravix.Tracks.Sandbox.Store.shared_open(project_id, fn ->
+        open_shared_available(user, project_id, attrs, opts)
+      end)
+    end
+  end
+
+  defp open_shared_available(user, project_id, attrs, opts) do
     with {:ok, %{project: project, role: role}} <- Access.project_access(user, project_id),
          :ok <- plan_origin_access(user, project_id, attrs["origin"]),
          {:ok, client} <- fountain(),
@@ -679,10 +731,21 @@ defmodule Ravix.Tracks do
   def retry(%User{} = user, track_id, thread_id \\ nil) do
     with {:ok, %{track: track, project: project, thread: thread}} <-
            Access.thread_access(user, track_id, thread_id),
-         {:ok, client} <- fountain(),
-         :ok <- Ravix.Projects.prepare_machine(project, client) do
-      retry_track(client, track, project, thread)
+         {:ok, client} <- fountain() do
+      retry_layout(client, track, project, thread)
     end
+  end
+
+  defp retry_layout(_client, %{sandbox_layout: :dedicated} = track, project, _thread) do
+    with {:ok, _} <- Ravix.Tracks.Sandbox.Store.retry(track) do
+      publish_tracks(project.id, track.id)
+      :ok
+    end
+  end
+
+  defp retry_layout(client, track, project, thread) do
+    with :ok <- Ravix.Projects.prepare_machine(project, client),
+         do: retry_track(client, track, project, thread)
   end
 
   defp retry_track(client, %{setup_state: "ready"} = track, project, thread) do
@@ -755,11 +818,14 @@ defmodule Ravix.Tracks do
            ),
          :ok <-
            check(
-             thread.conversation_id,
+             thread.conversation_id || track.sandbox_layout == :dedicated,
              {:conflict, "not_open", "This track has no conversation yet."}
            ),
          :ok <-
-           check(is_nil(track.closed_at), {:conflict, "closed_track", "This track is closed."}) do
+           check(
+             is_nil(track.closed_at) and track.sandbox_state not in [:closing, :terminated],
+             {:conflict, "closed_track", "This track is closing or closed."}
+           ) do
       # Length and image count, never the prompt itself: it is the customer's
       # words, and `Ravix.Analytics` is where that rule is written down.
       Analytics.track(user, :prompt_sent, %{
@@ -844,7 +910,10 @@ defmodule Ravix.Tracks do
     with {:ok, %{track: track, project: project, thread: thread}} <-
            Access.thread_access(user, track_id, thread_id),
          :ok <-
-           check(is_nil(track.closed_at), {:conflict, "closed_track", "This track is closed."}),
+           check(
+             is_nil(track.closed_at) and track.sandbox_state not in [:closing, :terminated],
+             {:conflict, "closed_track", "This track is closing or closed."}
+           ),
          :ok <-
            check(
              thread.conversation_id,
@@ -1053,51 +1122,118 @@ defmodule Ravix.Tracks do
     with {:ok, %{track: track, project: project, role: role}} <-
            Access.track_access(user, track_id),
          :ok <- Access.require_owner_or_cutter(role, user, track, "close a track"),
-         :ok <- shared_close(track),
          {:ok, client} <- fountain() do
-      # ownership: `Access.track_access/2` above admitted this caller to the
-      # track being closed; prompts waiting to be delivered to it have nowhere
-      # to go.
-      Ravix.PromptQueue.Store.cancel_track(track.id)
-      Store.close_track(track.id)
-      MachineCache.forget_project(project.id)
+      close_track(user, track, project, client, opts)
+    end
+  end
+
+  @doc "Read-only close warning, scoped to the selected track's disk."
+  def close_info(%User{} = user, track_id) do
+    with {:ok, %{track: track, project: project, role: role}} <-
+           Access.track_access(user, track_id),
+         :ok <- Access.require_owner_or_cutter(role, user, track, "close a track") do
+      inspect_changes(user, track, project)
+    end
+  end
+
+  defp inspect_changes(user, track, project) do
+    if project.repo_full_name && track.sandbox_id do
+      command =
+        "git status --porcelain && echo RAVIX_COMMITS && (git rev-list --count '@{upstream}..HEAD' 2>/dev/null || echo unknown)"
+
+      user
+      |> Ravix.Terminal.exec(track.id, %{command: command, timeout_sec: 15})
+      |> changed_files()
+    else
+      {:ok, :unavailable}
+    end
+  end
+
+  defp changed_files({:ok, %{stdout: output, code: 0}}) do
+    case String.split(output, "RAVIX_COMMITS\n", parts: 2) do
+      [dirty, ahead] ->
+        {:ok, %{dirty: String.trim(dirty) != "", unpushed: unpushed_state(String.trim(ahead))}}
+
+      _ ->
+        {:ok, :unavailable}
+    end
+  end
+
+  defp changed_files(_), do: {:ok, :unavailable}
+  defp unpushed_state("unknown"), do: :unknown
+  defp unpushed_state("0"), do: false
+  defp unpushed_state(_), do: true
+
+  @doc "Rebuild an isolated machine only after explicit destructive confirmation."
+  def rebuild_machine(%User{} = user, track_id, force: true) do
+    with {:ok, %{track: %{sandbox_layout: :dedicated} = track, project: project, role: role}} <-
+           Access.track_access(user, track_id),
+         :ok <- Access.require_owner_or_cutter(role, user, track, "rebuild a machine"),
+         {:ok, _} <- Ravix.Tracks.Sandbox.Store.request_rebuild(track, project) do
       publish_tracks(project.id, track.id)
+      :ok
+    else
+      {:ok, _} -> {:error, :not_found}
+      error -> error
+    end
+  end
 
-      threads = Store.threads_of(track.id)
-
-      {:ok, _pid} =
-        Task.Supervisor.start_child(
-          Ravix.TaskSupervisor,
-          Ravix.Trace.link(fn ->
-            tear_down(client, track, project, opts, threads)
-          end)
-        )
-
-      Analytics.track(
-        user,
-        :track_closed,
-        Map.merge(Analytics.repo(track, project), %{
-          "ravix.forced" => Keyword.get(opts, :force, false) == true,
-          "ravix.branch_deleted" => Keyword.get(opts, :delete_branch, false) == true,
-          # How long the track lived. `turn_count` would be the better number and
-          # is not on this row -- it is computed on `Ravix.Tracks.View` from
-          # Fountain's conversation list, so reading it here would be a round
-          # trip on a close, or a `KeyError`.
-          "ravix.lifetime_sec" => lifetime_sec(track)
-        })
-      )
-
+  defp close_track(_user, %Track{sandbox_layout: :dedicated} = track, project, _client, opts) do
+    with :ok <-
+           check(
+             Keyword.get(opts, :force, false),
+             {:conflict, "confirm_machine_deletion",
+              "Confirm deletion of this track's machine, uncommitted changes and unpushed commits."}
+           ),
+         {:ok, :ok} <- Ravix.Tracks.Sandbox.Store.request_close(track) do
+      # ownership: Access.track_access and require_owner_or_cutter admitted this close.
+      Ravix.PromptQueue.Store.cancel_track(track.id)
+      publish_tracks(project.id, track.id)
       :ok
     end
   end
 
-  defp shared_close(%Track{sandbox_layout: :shared}), do: :ok
+  defp close_track(user, track, project, client, opts) do
+    with {:ok, :ok} <- Ravix.Tracks.Sandbox.Store.close_shared(track, project) do
+      finish_shared_close(user, track, project, client, opts)
+    end
+  end
 
-  defp shared_close(%Track{sandbox_layout: :dedicated}),
-    do:
-      {:error,
-       {:conflict, "dedicated_lifecycle_pending",
-        "Dedicated workspace cleanup is not available yet."}}
+  defp finish_shared_close(user, track, project, client, opts) do
+    # ownership: `Access.track_access/2` above admitted this caller to the
+    # track being closed; prompts waiting to be delivered to it have nowhere
+    # to go.
+    Ravix.PromptQueue.Store.cancel_track(track.id)
+
+    MachineCache.forget_project(project.id)
+    publish_tracks(project.id, track.id)
+
+    threads = Store.threads_of(track.id)
+
+    {:ok, _pid} =
+      Task.Supervisor.start_child(
+        Ravix.TaskSupervisor,
+        Ravix.Trace.link(fn ->
+          tear_down(client, track, project, opts, threads)
+        end)
+      )
+
+    Analytics.track(
+      user,
+      :track_closed,
+      Map.merge(Analytics.repo(track, project), %{
+        "ravix.forced" => Keyword.get(opts, :force, false) == true,
+        "ravix.branch_deleted" => Keyword.get(opts, :delete_branch, false) == true,
+        # How long the track lived. `turn_count` would be the better number and
+        # is not on this row -- it is computed on `Ravix.Tracks.View` from
+        # Fountain's conversation list, so reading it here would be a round
+        # trip on a close, or a `KeyError`.
+        "ravix.lifetime_sec" => lifetime_sec(track)
+      })
+    )
+
+    :ok
+  end
 
   # What a closed track leaves behind on the providers: the preview service,
   # the worktree (removed by a last turn) and the conversation. Each call is
@@ -1414,6 +1550,10 @@ defmodule Ravix.Tracks do
       workdir: row.workdir,
       origin: origin_info(row),
       status: status_of(row, live),
+      sandbox_layout: row.sandbox_layout,
+      sandbox_state: row.sandbox_state,
+      sandbox_stage: row.sandbox_stage,
+      repo_full_name: project && project.repo_full_name,
       setup_state: row.setup_state,
       setup_attempts: row.setup_attempts,
       setup_error: row.setup_error && Fountain.Error.reason_message(row.setup_error),

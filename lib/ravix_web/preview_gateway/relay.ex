@@ -18,6 +18,8 @@ defmodule RavixWeb.PreviewGateway.Relay do
 
   @behaviour WebSock
 
+  require Logger
+
   alias RavixWeb.PreviewGateway.{Frame, Watch}
 
   @backlog 2 * 1024 * 1024
@@ -26,7 +28,9 @@ defmodule RavixWeb.PreviewGateway.Relay do
           tunnel: term(),
           tunnel_module: module(),
           watch: pid(),
-          decoder: Frame.decoder()
+          decoder: Frame.decoder(),
+          backend: module(),
+          row: RavixWeb.PreviewGateway.Backend.row()
         }
 
   @impl true
@@ -37,7 +41,7 @@ defmodule RavixWeb.PreviewGateway.Relay do
     case Frame.decode(state.decoder, leftover) do
       {:ok, [], decoder} -> {:ok, %{state | decoder: decoder}}
       {:ok, frames, decoder} -> dispatch(frames, [], %{state | decoder: decoder})
-      {:error, _reason} -> {:stop, :normal, {1011, "Preview socket failed"}, state}
+      {:error, _reason} -> failed(state)
     end
   end
 
@@ -45,7 +49,7 @@ defmodule RavixWeb.PreviewGateway.Relay do
   def handle_in({data, opcode: opcode}, state) do
     case state.tunnel_module.send_data(state.tunnel, Frame.encode({opcode, data})) do
       :ok -> {:ok, state}
-      {:error, _reason} -> {:stop, :normal, {1011, "Preview socket failed"}, state}
+      {:error, _reason} -> failed(state)
     end
   end
 
@@ -57,27 +61,31 @@ defmodule RavixWeb.PreviewGateway.Relay do
     {data, size} = drain(tunnel, [data], byte_size(data))
 
     if size > @backlog do
-      {:stop, :normal, {1009, "Preview socket backlog"}, state}
+      close(state, {1009, "Preview socket backlog"})
     else
       case Frame.decode(state.decoder, IO.iodata_to_binary(data)) do
         {:ok, frames, decoder} -> dispatch(frames, [], %{state | decoder: decoder})
-        {:error, _reason} -> {:stop, :normal, {1011, "Preview socket failed"}, state}
+        {:error, _reason} -> failed(state)
       end
     end
   end
 
   def handle_info({:tunnel, tunnel, :closed}, %{tunnel: tunnel} = state),
-    do: {:stop, :normal, {1011, "Preview socket closed"}, state}
+    do: failed(state)
 
   def handle_info({:tunnel, tunnel, {:error, _}}, %{tunnel: tunnel} = state),
-    do: {:stop, :normal, {1011, "Preview socket failed"}, state}
+    do: failed(state)
 
   def handle_info({:preview_gateway, :close}, state),
-    do: {:stop, :normal, {1008, "Preview access ended"}, state}
+    do:
+      close(
+        state,
+        if(retired?(state), do: {1001, "Preview ended"}, else: {1008, "Preview access ended"})
+      )
 
   # The watcher died: without it revocation cannot be enforced, so fail closed.
   def handle_info({:EXIT, watch, _reason}, %{watch: watch} = state),
-    do: {:stop, :normal, {1011, "Preview socket closed"}, state}
+    do: failed(state)
 
   def handle_info(_other, state), do: {:ok, state}
 
@@ -108,7 +116,7 @@ defmodule RavixWeb.PreviewGateway.Relay do
         dispatch(rest, pushes, state)
 
       {:error, _} ->
-        {:stop, :normal, {1011, "Preview socket failed"}, Enum.reverse(pushes), state}
+        failed(state, pushes)
     end
   end
 
@@ -121,6 +129,32 @@ defmodule RavixWeb.PreviewGateway.Relay do
         do: {code, reason},
         else: {1011, "Preview socket closed"}
 
+    close(state, detail, pushes)
+  end
+
+  # Intent is persisted before the provider stops the service. Read it here too:
+  # the transport can disappear before Watch delivers its revocation message.
+  # Watch still owns when access/generation changes terminate a live connection.
+  defp retired?(%{backend: backend, row: row}) do
+    case backend.preview(row.track_id) do
+      nil -> false
+      current -> current.desired == :stopped or current.generation != row.generation
+    end
+  end
+
+  defp failed(state, pushes \\ []) do
+    detail =
+      if retired?(state),
+        do: {1001, "Preview ended"},
+        else: {1011, "Preview socket failed"}
+
+    close(state, detail, pushes)
+  end
+
+  # All relay exits use WebSock's normal stop with an explicit close detail.
+  # Bandit writes that frame and ends the browser side after cleanup.
+  defp close(state, {code, _reason} = detail, pushes \\ []) do
+    Logger.debug("Preview WebSocket close code=#{code} frames=#{length(pushes)}")
     {:stop, :normal, detail, Enum.reverse(pushes), state}
   end
 end

@@ -57,6 +57,36 @@ defmodule Ravix.Spec do
   """
   @type origin :: Origin.t()
 
+  @doc "Opening instructions for an isolated machine: an ordinary clone, never a worktree."
+  def open_dedicated_prompt(project, track) do
+    directory = shell_ref(track.workdir)
+    branch = shell_ref(track.branch)
+    source = shell_ref("https://github.com/#{project.repo_full_name}.git")
+    base = shell_ref(track.origin_base || project.default_branch || "main")
+
+    setup =
+      if project.repo_full_name do
+        """
+        This is this track's own machine. Create an ordinary clone, with no worktrees.
+        If #{directory} already exists, verify it is a Git clone on #{branch} and preserve
+        all existing work. Report error: if its directory or branch is inconsistent.
+        Otherwise run git clone #{source} #{directory}, then in that directory
+        fetch origin and check out #{branch} from origin/#{base}.
+        Run clone and fetch with network permissions on the first attempt.
+        """
+      else
+        "Create #{directory} if it does not exist. This is a scratch project; skip cloning."
+      end
+
+    """
+    [ravix] Open this track. Make its working directory, then stop.
+    #{setup}
+    Your working directory is #{directory} for this track's turns.
+    Reply with the directory and branch, or error: and the plain failure reason.
+    Preserve existing work. Never remove files to repair setup.
+    """
+  end
+
   @doc "What the machine writes to say what it did. Read with `GET /api/sandboxes/:id/file`."
   @spec receipt_path() :: String.t()
   def receipt_path, do: "#{Ids.state_dir()}/tracks.json"
@@ -84,10 +114,21 @@ defmodule Ravix.Spec do
       "",
       "## The one rule",
       "",
-      "Every piece of work happens in its own git worktree under #{work_root}. Each",
-      "conversation you are in — Ravix calls it a *track* — owns exactly one of those",
-      "directories, and its first turn tells you which. That directory is your working",
-      "directory for the whole of that conversation.",
+      if(Ravix.Config.dedicated_rollout?(),
+        do: [
+          "Each track owns one directory under #{work_root}. Its opening turn says which",
+          "directory and whether this is a shared project machine or this track's own machine.",
+          "Shared-machine tracks use git worktrees; an own-machine track uses an ordinary",
+          "clone with no worktrees. Follow the opening turn's layout for this track.",
+          "That directory is your working directory for the whole conversation."
+        ],
+        else: [
+          "Every piece of work happens in its own git worktree under #{work_root}. Each",
+          "conversation you are in — Ravix calls it a *track* — owns exactly one of those",
+          "directories, and its first turn tells you which. That directory is your working",
+          "directory for the whole of that conversation."
+        ]
+      ),
       "",
       "Never edit, stage, commit or check out anything outside your own track's directory.",
       "In particular:",
@@ -108,9 +149,18 @@ defmodule Ravix.Spec do
       "",
       "## What is true of this machine",
       "",
-      "It persists. The disk is the same one next time, for every track. It runs one turn",
-      "at a time across all tracks, because it is one computer — if you are asked why a",
-      "track is waiting, that is why.",
+      if(Ravix.Config.dedicated_rollout?(),
+        do: [
+          "The disk persists for this track until it is closed or rebuilt.",
+          "On a shared machine, tracks take turns. On this track's own machine, threads",
+          "may run concurrently up to the runtime's capacity."
+        ],
+        else: [
+          "It persists. The disk is the same one next time, for every track. It runs one turn",
+          "at a time across all tracks, because it is one computer — if you are asked why a",
+          "track is waiting, that is why."
+        ]
+      ),
       ""
     ])
     |> append_if(repo_path, [
@@ -151,6 +201,7 @@ defmodule Ravix.Spec do
       "than a person. Follow those exactly, including any strings they ask you to write",
       "back verbatim."
     ])
+    |> List.flatten()
     |> Enum.join("\n")
   end
 

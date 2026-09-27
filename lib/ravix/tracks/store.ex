@@ -66,19 +66,21 @@ defmodule Ravix.Tracks.Store do
     |> Enum.group_by(& &1.track_id)
   end
 
-  def create_thread(attrs) do
+  def create_thread(attrs, generation \\ nil) do
     changeset = Thread.changeset(%Thread{}, attrs)
 
     if changeset.valid?,
-      do: Repo.transaction(fn -> insert_thread_locked(changeset) end),
+      do: Repo.transaction(fn -> insert_thread_locked(changeset, generation) end),
       else: {:error, changeset}
   end
 
-  defp insert_thread_locked(changeset) do
+  defp insert_thread_locked(changeset, expected_generation) do
     track_id = Ecto.Changeset.get_field(changeset, :track_id)
 
-    with %Track{closed_at: nil} <-
+    with %Track{closed_at: nil, sandbox_state: state, sandbox_generation: generation}
+         when state not in [:closing, :terminated] <-
            Repo.one(from(t in Track, where: t.id == ^track_id, lock: "FOR UPDATE")),
+         true <- is_nil(expected_generation) or generation == expected_generation,
          {:ok, thread} <- Repo.insert(changeset) do
       remember_runtime(track_id, thread.runtime)
       thread
@@ -224,36 +226,29 @@ defmodule Ravix.Tracks.Store do
   end
 
   @doc "Due setup checks, including tracks with no queued prompts or connected page."
-  def pending_setups do
+  def pending_setups, do: Repo.all(from(t in setup_candidates(), select: t.id))
+
+  defp setup_candidates do
     now = DateTime.utc_now()
 
-    Repo.all(
-      from(t in Track,
-        where:
-          is_nil(t.closed_at) and t.setup_state in ["pending", "running", "retry"] and
-            (is_nil(t.setup_retry_at) or t.setup_retry_at <= ^now) and
-            (is_nil(t.setup_lease_until) or t.setup_lease_until < ^now),
-        select: t.id
-      )
-    )
+    from t in Track,
+      where:
+        is_nil(t.closed_at) and t.setup_state in ["pending", "running", "retry"] and
+          (is_nil(t.setup_retry_at) or t.setup_retry_at <= ^now) and
+          (is_nil(t.setup_lease_until) or t.setup_lease_until < ^now),
+      where:
+        t.sandbox_layout == :shared or
+          (t.sandbox_state == :provisioning and not is_nil(t.conversation_id))
   end
 
   @doc "A durable lease shared by initial send, retry and every instance's sweep."
   def claim_setup(id) do
-    now = DateTime.utc_now()
     token = Ecto.UUID.generate()
 
     {_count, rows} =
       Repo.update_all(
-        from(t in Track,
-          where:
-            t.id == ^id and is_nil(t.closed_at) and
-              t.setup_state in ["pending", "running", "retry"] and
-              (is_nil(t.setup_retry_at) or t.setup_retry_at <= ^now) and
-              (is_nil(t.setup_lease_until) or t.setup_lease_until < ^now),
-          select: t
-        ),
-        set: [setup_lease: token, setup_lease_until: DateTime.add(now, 360, :second)]
+        from(t in setup_candidates(), where: t.id == ^id, select: t),
+        set: [setup_lease: token, setup_lease_until: DateTime.add(DateTime.utc_now(), 360)]
       )
 
     List.first(rows)
@@ -264,7 +259,10 @@ defmodule Ravix.Tracks.Store do
     {count, _} =
       Repo.update_all(
         from(t in Track,
-          where: t.id == ^track.id and t.setup_lease == ^track.setup_lease and is_nil(t.closed_at)
+          where:
+            t.id == ^track.id and t.setup_lease == ^track.setup_lease and is_nil(t.closed_at) and
+              t.sandbox_generation == ^track.sandbox_generation and
+              (t.sandbox_layout == :shared or t.sandbox_state == :provisioning)
         ),
         set: attrs
       )

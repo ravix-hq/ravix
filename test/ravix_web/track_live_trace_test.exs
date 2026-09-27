@@ -85,15 +85,26 @@ defmodule RavixWeb.TrackLiveTraceTest do
     # The mount reads too, and `tracks.files` is one of the reads it does. This
     # test is about the *event*, so its assertions have to start from a clean
     # mailbox or they would match the mount's span and prove nothing.
+    render_async(view, 5_000)
     drain_spans()
+
+    caller = self()
+
+    expect(Tracks, :files, fn _user, track_id, path ->
+      Trace.span("tracks.files", %{"ravix.track_id" => track_id}, fn ->
+        send(caller, {:read_started, self()})
+        assert_receive :finish_read, 5_000
+        {:ok, %Files.Listing{path: path || "/w", truncated: false, entries: []}}
+      end)
+    end)
 
     render_click(view, "panel", %{"name" => "files"})
 
-    # In the order they end, which is not the order they nest: `start_async/3`
-    # returns immediately, so the event span closes while the read it started is
-    # still running. `await_span/1` discards what it passes over, so asking for
-    # the read first would throw the event away.
+    # Hold the read until the event has ended. Task scheduling alone does not
+    # guarantee span completion order, and await_span/1 discards other spans.
     event = await_span("RavixWeb.TrackLive.handle_event#panel")
+    assert_receive {:read_started, reader}, 5_000
+    send(reader, :finish_read)
     read = await_span("tracks.files")
 
     assert field(read, :parent_span_id) == field(event, :span_id),

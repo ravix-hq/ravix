@@ -42,6 +42,9 @@ defmodule Ravix.Projects.Project do
     # agent on the deployment's default. See
     # `Ravix.Projects.Machine.adopt_credentials/2`.
     field :credential_set_id, :string
+    field :secrets_generation, :integer, default: 0
+    field :secrets_pending, :boolean, default: false
+    field :shared_machine_retiring, :boolean, default: false
     field :rev, :integer, default: 1
     field :instructions, :string, default: ""
     field :created_at, :utc_datetime_usec

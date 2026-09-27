@@ -341,3 +341,33 @@ agent was created before removing the reservation. Do not clear a reservation
 merely because a request timed out. Shared rebuild/deletion fences new agent
 allocations and retires both runtime agents; unresolved reservations block that
 cleanup. Rebuilding successfully clears the retirement fence.
+
+Dedicated opens are disabled by default. Do not add anyone to
+`RAVIX_DEDICATED_OPEN_USER_IDS` until **managoat/fountain#2527 is deployed** and
+the owner has passed `scripts/fountain-sandbox-check.py` against real Fountain.
+The lifecycle is tested against the mock only. Each flagged open persists intent,
+copies the project's secrets server-side, refreshes repository access on that
+copy, and provisions one persistent machine with an ordinary clone. Scratch
+projects skip cloning. Setup holds saved prompts until the working directory is
+verified. The first thread selects the project's home-runtime agent for this disk.
+
+Secret copies are snapshots. Editing project secrets pauses dedicated tracks and
+shows **Secrets changed — rebuild to apply**; an explicitly confirmed rebuild
+replaces the machine and its copy. An unconfirmed source-secret write also holds
+new copies and overlapping saves. An operator must confirm an interrupted write's
+outcome before clearing its persisted pending generation; no database connection
+is held while writing to Fountain.
+Closing is durable and remains visible while cleanup retries. It ends every
+thread, deletes the machine, confirms its absence, and deletes the copied secrets.
+Shared open/close is unchanged by default. Only the separately enabled
+`RAVIX_RETIRE_SHARED_MACHINES=true` retires the old machine after the final shared
+track closes, retaining project secrets and runtime agents. Retirement gives up
+after five attempts, keeps a failed operation for inspection and releases the
+shared-open fence.
+
+Operation leases and generations fence workers across nodes. Lost allocation
+responses are reconciled by the operation's copy name and full machine identity.
+An empty provider listing after an uncertain mutation is not proof that it did
+nothing: the intent and cleanup obligation remain pending rather than allocating
+again. An operator must resolve persistent ambiguity at the provider; do not clear
+operation records or retry with a different identity to bypass it.

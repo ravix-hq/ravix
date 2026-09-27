@@ -47,6 +47,11 @@ defmodule Ravix.Application do
         {Ravix.Cluster.Singleton,
          key: "schedules",
          child: {Ravix.Schedules.Server, Application.get_env(:ravix, Ravix.Schedules.Server, [])}},
+        {Ravix.Cluster.Singleton,
+         key: "track.sandboxes",
+         child:
+           {Ravix.Tracks.Sandbox.Reconciler,
+            Application.get_env(:ravix, Ravix.Tracks.Sandbox.Reconciler, [])}},
         # Start to serve requests, typically the last entry
         RavixWeb.Endpoint,
         # Stop claiming before draining the endpoint (20s). Queue shutdown is

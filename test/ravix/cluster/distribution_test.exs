@@ -176,6 +176,47 @@ defmodule Ravix.Cluster.DistributionTest do
     end
   end
 
+  test "dedicated operations have one lease across nodes and fence a departed owner", ctx do
+    alias Ecto.Adapters.SQL.Sandbox
+    alias Ravix.Repo
+    alias Ravix.Tracks.Sandbox.{Operation, Store}
+    import Ravix.Factory
+    import Ecto.Query
+
+    Sandbox.unboxed_run(Repo, fn ->
+      user = insert_user()
+      project = insert_project(user: user)
+      track = insert_track(project: project, sandbox_layout: :dedicated)
+
+      try do
+        {:ok, op} = Store.begin_operation(track.id, 0, :open)
+        first = :erpc.call(ctx.node, Ravix.ClusterPeer, :claim_sandbox_operation, [op.id])
+        assert first.lease
+        assert Store.claim(op.id) == nil
+        stop_peer(ctx.peer, ctx.node)
+        assert Store.claim(op.id) == nil
+
+        Repo.update_all(from(o in Operation, where: o.id == ^op.id),
+          set: [lease_until: DateTime.add(DateTime.utc_now(), -1)]
+        )
+
+        second = Store.claim(op.id)
+        refute second.lease == first.lease
+
+        assert {:error, :lost_lease} =
+                 Store.progress(first, %{phase: "setup"}, sandbox_id: "late")
+
+        assert Store.get_track(track.id).sandbox_id == nil
+        assert :erpc.call(node(), Singleton, :whereis, ["track.sandboxes"])
+      after
+        Repo.delete_all(from(o in Operation, where: o.track_id == ^track.id))
+        Repo.delete!(track)
+        Repo.delete!(project)
+        Repo.delete!(user)
+      end
+    end)
+  end
+
   test "the next sweep recovers a departed node's fresh claim, but not a live node's", ctx do
     alias Ecto.Adapters.SQL.Sandbox
     alias Ravix.PromptQueue.Store

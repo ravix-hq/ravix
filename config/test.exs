@@ -1,5 +1,6 @@
 import Config
 config :ravix, :threads_enabled, true
+config :ravix, Ravix.Tracks.Sandbox.Reconciler, interval: false
 
 # Configure your database
 #

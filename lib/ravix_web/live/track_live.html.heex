@@ -55,6 +55,16 @@
         class="chip mono track-branch"
         title={@track.branch}
       >{@track.branch}</span>
+      <span
+        :if={
+          @track.sandbox_layout == :dedicated ||
+            Ravix.Config.dedicated_opens_enabled?(@current_user)
+        }
+        class="chip"
+        id="track-machine-scope"
+      >{if @track.sandbox_layout == :dedicated,
+        do: "Own machine",
+        else: "Shared project machine"}</span>
       <span class="spacer"></span><button
         class="ghost"
         phx-click={JS.push_focus() |> JS.push("dialog")}
@@ -246,10 +256,30 @@
           role={if @track.status == :setup_failed, do: "alert", else: "status"}
         >
           <strong>{setup_label(@track, @setup_now)}</strong>
+          <span :if={
+            @track.sandbox_layout == :dedicated ||
+              Ravix.Config.dedicated_opens_enabled?(@current_user)
+          }>{if @track.sandbox_layout == :dedicated,
+            do: "Own machine",
+            else: "Shared project machine"}</span>
           <span :if={@track.setup_error}>{@track.setup_error}</span>
           <p :if={@track.setup_state in ["pending", "running", "retry"]}>
             Prompts will wait until setup is ready.
           </p>
+          <form
+            :if={
+              @track.setup_error_code == "secrets_changed" &&
+                owner_or_creator?(@current_user, @track)
+            }
+            phx-submit="rebuild-machine"
+            id="rebuild-track-machine"
+          >
+            <p>
+              Secrets changed — rebuild to apply. Rebuilding deletes this track's machine, uncommitted changes and unpushed commits. Push work you want to keep first.
+            </p>
+            <label><input type="checkbox" name="force" value="true" required />Confirm deletion</label>
+            <button>Rebuild machine</button>
+          </form>
           <p :if={@track.status == :setup_failed}>
             Retry setup, then retry your saved prompts.
           </p>
@@ -291,7 +321,10 @@
           threads={@threads}
           states={@thread_states}
           thread_id={@thread_id}
-          adding={:add_thread in @pending}
+          adding={
+            :add_thread in @pending or
+              (@track.sandbox_layout == :dedicated and @track.sandbox_state != :ready)
+          }
           enabled={Ravix.Config.threads_enabled?()}
         />
         <div class="workspace-composer">
@@ -402,7 +435,8 @@
                 </button>
                 <button
                   :if={
-                    @track.setup_state == "failed" ||
+                    (@track.setup_state == "failed" &&
+                       @track.setup_error_code != "secrets_changed") ||
                       (@track.setup_state == "ready" && @track.status in [:failed, :opening])
                   }
                   type="button"
@@ -596,6 +630,10 @@
         <.live_component
           module={RavixWeb.Live.MachineDock}
           id="machine-dock-panel"
+          lifecycle={
+            if @track.sandbox_layout == :dedicated,
+              do: {@track.conversation_id, @track.sandbox_state}
+          }
           track_id={@track_id}
           workdir={@track.workdir}
           current_user={@current_user}
@@ -614,14 +652,42 @@
     </.dialog>
     <.dialog :if={@dialog == :close} id="close-dialog" title="Close track" on_close="dismiss">
       <p>
-        This closes the track for everyone and removes its worktree. Commit and push work you want to keep first.
+        <%= if @track.sandbox_layout == :dedicated do %>
+          This closes the track for everyone. This track's machine, its uncommitted changes and unpushed commits will be deleted. Commit and push work you want to keep first.
+        <% else %>
+          This closes the track for everyone and removes its worktree. Commit and push work you want to keep first.
+        <% end %>
+      </p>
+      <p :if={@track.sandbox_layout == :dedicated} id="close-machine-changes">
+        <%= case @close_info do %>
+          <% nil -> %>
+            Checking for uncommitted changes and unpushed commits…
+          <% :unavailable -> %>
+            The machine could not be checked. It may contain uncommitted changes or unpushed commits.
+          <% info -> %>
+            {if info.dirty,
+              do: "Uncommitted changes will be deleted.",
+              else: "No uncommitted changes found."}
+            <%= case info.unpushed do %>
+              <% :unknown -> %>
+                Unpushed commits could not be checked. The branch may have no upstream, or the check may have failed.
+              <% true -> %>
+                Unpushed commits will be deleted.
+              <% false -> %>
+                No unpushed commits found.
+            <% end %>
+        <% end %>
       </p>
       <form id="close-form" phx-submit="close">
         <.input
           name="force"
           id="close-force"
           type="checkbox"
-          label="Discard uncommitted changes"
+          label={
+            if @track.sandbox_layout == :dedicated,
+              do: "Delete machine, uncommitted changes and unpushed commits",
+              else: "Discard uncommitted changes"
+          }
           value={false}
         /><button class="danger" phx-disable-with="Closing…">Close track</button>
       </form>

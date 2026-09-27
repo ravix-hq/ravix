@@ -13,6 +13,10 @@ defmodule Ravix.ClusterPeer do
   alias Ravix.Cluster.Singleton
   alias Ravix.PromptQueue.Store, as: PromptQueue
 
+  def claim_sandbox_operation(id) do
+    Sandbox.unboxed_run(Ravix.Repo, fn -> Ravix.Tracks.Sandbox.Store.claim(id) end)
+  end
+
   @doc "Claim a committed queue row from this instance, outside a test transaction."
   def claim_prompt(id) do
     Sandbox.unboxed_run(Ravix.Repo, fn ->
