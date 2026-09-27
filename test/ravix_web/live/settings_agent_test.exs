@@ -56,7 +56,8 @@ defmodule RavixWeb.Live.SettingsAgentTest do
        ctx do
     {view, _} = open(log_in_user(ctx.conn, ctx.user), ctx.user, ctx.project)
     assert has_element?(view, "#settings-agent-claude[aria-pressed=true]", "Connected")
-    assert has_element?(view, "#settings-agent-codex", "Not connected - connect to use")
+    assert has_element?(view, "#settings-dialog", "subscription or API key")
+    assert has_element?(view, "#settings-agent-codex", "Not connected — connect to use")
     view |> element("#settings-agent-codex") |> render_click()
     render_async(view)
     assert has_element?(view, "#settings-connect-codex #chatgpt-connect")
@@ -113,7 +114,7 @@ defmodule RavixWeb.Live.SettingsAgentTest do
     render_click(view, "dialog", %{name: "settings"})
     render_async(view)
     assert has_element?(view, "#settings-agent-claude", "Connection status unavailable")
-    refute render(view) =~ "Not connected - connect to use"
+    refute render(view) =~ "Not connected — connect to use"
     view |> element("#settings-agent-codex") |> render_click()
     stub(Inference, :usable_agents, fn _ -> {:ok, [:codex]} end)
     view |> element("[phx-click=refresh-settings-agents]") |> render_click()
@@ -250,7 +251,7 @@ defmodule RavixWeb.Live.SettingsAgentTest do
       assert has_element?(
                view,
                "#project-agent-owner",
-               "This project runs on #{ctx.user.login}'s Claude Code; every turn uses their subscription."
+               "This project runs on #{ctx.user.login}'s Claude Code; every turn uses their subscription or API key."
              )
 
       render_click(view, "dialog", %{name: "settings"})

@@ -47,7 +47,7 @@
       <section :if={@live_action == :agent} id="welcome-agent" aria-labelledby="welcome-agent-h">
         <h1 id="welcome-agent-h">Connect your agents</h1>
         <p class="lede">
-          Connect Claude Code, Codex, or both using your own subscriptions or keys. Your first connection becomes the default for new projects. You can change the default here and choose a different connected agent for each project.
+          Connect Claude Code, Codex, or both using your own subscriptions or API keys. Your first connection becomes the default for new projects. You can change the default here and choose a different connected agent for each project.
         </p>
         <.live_component
           module={RavixWeb.Live.AgentPanel}
@@ -128,7 +128,7 @@
       >
         <h1 id="welcome-project-h">Create your first project</h1>
         <p class="lede">
-          Pick the repository to work in. Ravix builds its computer, clones the repository onto it, and opens your first conversation.
+          Pick the repository to work in. Ravix builds its machine, clones the repository onto it, and opens your first conversation.
         </p>
         <RavixWeb.Live.NewProject.render_form
           form_id="first-project-form"

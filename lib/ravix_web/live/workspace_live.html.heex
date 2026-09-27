@@ -428,7 +428,7 @@
         >
           This project runs on {@project.owner_login}'s {RavixWeb.AgentName.label(
             @project.runtime
-          )}; every turn uses their subscription.
+          )}; every turn uses their subscription or API key.
         </p>
         <div :if={@project && @track_id} class="workspace-track-host">
           <%!-- A fixed id, so choosing another track moves this LiveView instead
@@ -942,7 +942,7 @@
     </.dialog>
     <.dialog :if={@dialog == :account} id="account-dialog" title="Your account" on_close="dismiss">
       <p class="lede">
-        Signed in as <strong>@{@current_user.login}</strong>. Connect either or both agents and choose a default for new projects. Each project uses its selected agent, paid for by its owner’s subscription or key, whoever is working.
+        Signed in as <strong>@{@current_user.login}</strong>. Connect either or both agents and choose a default for new projects. Each project uses its selected agent, paid for by its owner’s subscription or API key, whoever is working.
       </p>
       <.live_component
         module={RavixWeb.Live.AgentPanel}

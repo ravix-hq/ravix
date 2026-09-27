@@ -103,7 +103,7 @@ defmodule RavixWeb.OnboardingLive do
   end
 
   defp step_title(:intro), do: "Welcome"
-  defp step_title(:agent), do: "Connect your agent"
+  defp step_title(:agent), do: "Connect your agents"
   defp step_title(:github), do: "Connect GitHub"
   defp step_title(:project), do: "Create your first project"
 

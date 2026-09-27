@@ -47,6 +47,48 @@ defmodule Ravix.ProjectHealthTest do
     assert {:ok, %{usable?: nil}} = Projects.agent_health(owner, project.id)
   end
 
+  test "only a held Codex subscription exposes a reset time, without account details" do
+    owner = insert_user()
+    project = insert_project(user: owner, runtime: "codex")
+    stub(Inference, :usable?, fn _, _, _ -> {:ok, true} end)
+    stub(Inference, :held, fn _ -> {:ok, [{:codex, :subscription}]} end)
+
+    expect(Inference, :subscription, fn caller ->
+      assert caller.id == owner.id
+
+      {:ok,
+       %{
+         status: "active",
+         exhausted_until: "2026-10-01T09:00:00Z",
+         account_email: "private@example.com"
+       }}
+    end)
+
+    assert {:ok, health} = Projects.agent_health(owner, project.id)
+    assert health.exhausted_until == "2026-10-01T09:00:00Z"
+    refute Map.has_key?(health, :account_email)
+
+    stub(Inference, :held, fn _ -> {:ok, [{:codex, :api_key}]} end)
+    reject(&Inference.subscription/1)
+    assert {:ok, %{exhausted_until: nil}} = Projects.agent_health(owner, project.id)
+  end
+
+  test "unavailable ChatGPT status does not produce a reset warning" do
+    owner = insert_user()
+    project = insert_project(user: owner, runtime: "codex")
+    stub(Inference, :usable?, fn _, _, _ -> {:ok, true} end)
+    stub(Inference, :held, fn _ -> {:ok, [{:codex, :subscription}]} end)
+
+    for response <- [
+          {:error, :offline},
+          {:ok, nil},
+          {:ok, %{status: "disconnected", exhausted_until: "old"}}
+        ] do
+      expect(Inference, :subscription, fn _ -> response end)
+      assert {:ok, %{exhausted_until: nil}} = Projects.agent_health(owner, project.id)
+    end
+  end
+
   test "disconnect impact excludes shared, foreign, archived and other-runtime projects" do
     owner = insert_user()
     own = insert_project(user: owner, runtime: "codex")

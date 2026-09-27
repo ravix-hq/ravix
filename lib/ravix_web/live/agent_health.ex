@@ -51,21 +51,32 @@ defmodule RavixWeb.Live.AgentHealth do
     ~H"""
     <div id={@id}>
       <div
-        :if={@health && (@health.usable? == false || @refused)}
+        :if={@health && (@health.usable? == false || @refused || @health.exhausted_until)}
         class="welcome-warning"
         role="status"
         id={@id <> "-banner"}
       >
-        <p>
-          This project runs on {@health.owner_login}'s {RavixWeb.AgentName.label(@health.runtime)}.
-          <%= if @refused do %>
-            Sending is paused because the owner's agent connection was refused. Reconnect, then retry the saved message.
+        <p :if={@health.exhausted_until}>
+          {@health.owner_login}'s ChatGPT usage resets at {@health.exhausted_until}.
+        </p>
+        <p :if={!@health.exhausted_until}>
+          <%= if @health.owner? do %>
+            <%= if @refused do %>
+              Sending is paused because your agent connection was refused. Reconnect, then retry your saved prompts.
+            <% else %>
+              Your agent connection appears to be missing. Connect your subscription or API key to resume.
+            <% end %>
           <% else %>
-            The owner's agent connection appears to be missing. Sending may be paused until it is reconnected.
+            This project runs on @{@health.owner_login}'s {RavixWeb.AgentName.label(@health.runtime)}.
+            <%= if @refused do %>
+              Sending is paused because their agent connection was refused. Your saved prompts can be retried after they reconnect.
+            <% else %>
+              Their agent connection appears to be missing. Sending may be paused until they reconnect their subscription or API key.
+            <% end %>
           <% end %>
         </p>
         <button
-          :if={@health.owner?}
+          :if={@health.owner? && !@health.exhausted_until}
           type="button"
           class="ghost"
           phx-click="reconnect"
@@ -73,7 +84,7 @@ defmodule RavixWeb.Live.AgentHealth do
         >
           Reconnect {RavixWeb.AgentName.label(@health.runtime)}
         </button>
-        <p :if={!@health.owner?}>
+        <p :if={!@health.owner? && !@health.exhausted_until}>
           Ask {@health.owner_login} to reconnect {RavixWeb.AgentName.label(@health.runtime)}.
         </p>
       </div>

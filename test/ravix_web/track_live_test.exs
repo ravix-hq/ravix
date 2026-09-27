@@ -267,6 +267,9 @@ defmodule RavixWeb.TrackLiveTest do
     send(ctx.view.pid, :refresh_agent_health)
     settle(ctx.view)
     assert has_element?(ctx.view, "#track-agent-health-banner", "Reconnect Claude Code")
+    assert has_element?(ctx.view, "#track-agent-health-banner", "Your agent connection")
+    assert has_element?(ctx.view, "#track-agent-health-banner", "subscription or API key")
+    refute has_element?(ctx.view, "#track-agent-owner")
     refute has_element?(ctx.view, "#composer-form button[type=submit][disabled]")
 
     expect(Tracks, :prompt, fn caller, id, %{prompt: "accepted"} ->
@@ -320,6 +323,14 @@ defmodule RavixWeb.TrackLiveTest do
     send(ctx.view.pid, :refresh)
     settle(ctx.view)
     assert has_element?(ctx.view, "#track-agent-health-banner", "Sending is paused")
+
+    assert has_element?(
+             ctx.view,
+             "#track-agent-health-banner",
+             "your agent connection was refused"
+           )
+
+    assert has_element?(ctx.view, "#track-agent-health-banner", "saved prompts")
     refute render(ctx.view) =~ "inference_credential_unusable"
   end
 
@@ -479,6 +490,46 @@ defmodule RavixWeb.TrackLiveTest do
     assert_push_event(ctx.view, "composer:retry", %{text: "Fix the outage", images: false})
   end
 
+  test "spent ChatGPT usage tells owners and members when the owner's plan resets", ctx do
+    ctx.project |> Ecto.Changeset.change(runtime: "codex") |> Repo.update!()
+    member = insert_user()
+    insert_project_member(ctx.project, member)
+    stub(Ravix.Accounts.Inference, :usable?, fn _, _, _ -> {:ok, true} end)
+
+    stub(Ravix.Accounts.Inference, :held, fn owner ->
+      assert owner.id == ctx.user.id
+      {:ok, [{:codex, :subscription}]}
+    end)
+
+    stub(Ravix.Accounts.Inference, :subscription, fn owner ->
+      assert owner.id == ctx.user.id
+
+      {:ok,
+       %{
+         status: "active",
+         exhausted_until: "2026-10-01T09:00:00Z",
+         account_email: "private@example.com"
+       }}
+    end)
+
+    for viewer <- [ctx.user, member] do
+      {:ok, parent, _} =
+        live(log_in_user(build_conn(), viewer), "/p/#{ctx.project.id}/t/#{ctx.track.id}")
+
+      view = find_live_child(parent, "track-host")
+      settle(view)
+
+      assert has_element?(
+               view,
+               "#track-agent-health-banner",
+               "#{ctx.user.login}'s ChatGPT usage resets at 2026-10-01T09:00:00Z"
+             )
+
+      refute has_element?(view, "#track-agent-health-banner button")
+      refute render(view) =~ "private@example.com"
+    end
+  end
+
   test "a member sees the owner's funding status and cannot open a connect form", ctx do
     guest = insert_user()
     insert_track_member(ctx.track, guest)
@@ -494,6 +545,8 @@ defmodule RavixWeb.TrackLiveTest do
     view = find_live_child(parent, "track-host")
     settle(view)
     assert has_element?(view, "#track-agent-health-banner", "Ask #{ctx.user.login}")
+    assert has_element?(view, "#track-agent-health-banner", "Their agent connection")
+    assert has_element?(view, "#track-agent-owner", "Runs on @#{ctx.user.login}'s Claude Code")
     refute has_element?(view, "#track-agent-health-banner button")
     view |> with_target("#track-agent-health") |> render_click("reconnect")
     render(view)

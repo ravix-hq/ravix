@@ -607,12 +607,12 @@ defmodule RavixWeb.Live.SettingsDialog do
                       usable?(@agents, agent) -> "Connected"
                       @agent_error -> "Connection status unavailable"
                       is_nil(@agents) -> "Checking connection…"
-                      true -> "Not connected - connect to use"
+                      true -> "Not connected — connect to use"
                     end}</small>
                   </button>
                 </div>
                 <p class="settings-help">
-                  Every turn in this project uses your {RavixWeb.AgentName.label(@runtime)} subscription, whoever is working.
+                  Every turn in this project uses your {RavixWeb.AgentName.label(@runtime)} subscription or API key, whoever is working.
                 </p>
                 <p :if={@agent_error} class="error">{@agent_error}</p>
                 <button

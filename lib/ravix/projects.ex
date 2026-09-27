@@ -192,12 +192,27 @@ defmodule Ravix.Projects do
          runtime: project.runtime,
          owner_login: owner && owner.login,
          owner?: access == :owner,
-         usable?: usable
+         usable?: usable,
+         exhausted_until: chatgpt_reset(owner, project.runtime, usable)
        }}
     else
       _ -> {:error, :not_found}
     end
   end
+
+  # Only expose the reset time, never the owner's account details.
+  defp chatgpt_reset(%User{} = owner, "codex", true) do
+    with {:ok, held} <- Inference.held(owner),
+         true <- {:codex, :subscription} in held,
+         {:ok, %{status: "active", exhausted_until: until}} when is_binary(until) <-
+           Inference.subscription(owner) do
+      until
+    else
+      _ -> nil
+    end
+  end
+
+  defp chatgpt_reset(_owner, _runtime, _usable), do: nil
 
   @doc "Owned projects affected by removing an agent; never includes shared projects."
   @spec projects_using_agent(User.t(), User.agent()) :: [Project.t()]

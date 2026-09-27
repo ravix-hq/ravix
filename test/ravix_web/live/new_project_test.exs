@@ -132,11 +132,12 @@ defmodule RavixWeb.Live.NewProjectTest do
   } do
     view = open(conn, user)
     assert has_element?(view, "#project-agent-claude[aria-pressed=true]", "Connected")
+    assert has_element?(view, ".new-project-fields", "subscription or API key")
 
     assert has_element?(
              view,
              "#project-agent-codex:not([disabled])",
-             "Not connected - connect to use"
+             "Not connected — connect to use"
            )
 
     view
@@ -226,7 +227,7 @@ defmodule RavixWeb.Live.NewProjectTest do
 
     view = open(conn, user)
     assert has_element?(view, "#project-agent-error", "Try the provider again")
-    refute render(view) =~ "Not connected - connect to use"
+    refute render(view) =~ "Not connected — connect to use"
     view |> form("#new-project-form", new_project: [name: "Draft"]) |> render_change()
     stub(Inference, :usable_agents, fn _ -> {:ok, [:claude]} end)
     render_click(view, "refresh-project-agents")

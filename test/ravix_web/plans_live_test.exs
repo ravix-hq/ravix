@@ -264,7 +264,7 @@ defmodule RavixWeb.PlansLiveTest do
 
     {:ok, view, _} = live(log_in_user(conn, user), "/p/#{project.id}?plan=#{plan.id}")
     render_async(view, 5_000)
-    assert has_element?(view, "#plan-assign", "owner's subscription")
+    assert has_element?(view, "#plan-assign", "owner's subscription or API key")
 
     assert has_element?(view, ".plan-assign-actions [role=status]", "0 selected")
     assert has_element?(view, ".plan-assign-actions button[disabled]")
