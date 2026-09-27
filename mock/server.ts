@@ -520,7 +520,9 @@ function deleteBox(box: Box): void {
   for (const conv of state.conversations) {
     if (conv.sandbox_id === box.id) endTurn(conv, "terminated");
   }
-  state.boxes.delete(box.id);
+  box.status = "terminated";
+  box.files.clear();
+  box.worktrees.clear();
 }
 
 /** No provider queue: reserve capacity before scheduling any async work. */
@@ -925,7 +927,8 @@ export async function fountain(req: Request, url: URL): Promise<Response | null>
       }
     } else {
       box = [...state.boxes.values()].find((box) => box.agent_id === agentId &&
-        box.user_id === userId && box.environment_id === environmentId && box.vault_id === vaultId);
+        box.user_id === userId && box.environment_id === environmentId && box.vault_id === vaultId &&
+        !["terminated", "failed"].includes(box.status));
       if (box && box.runtime !== runtime) return json({ error: "sandbox_runtime_mismatch" }, 422);
       if (!box) {
         if (!b.prompt?.trim()) return json({ error: "initial_prompt_required" }, 422);
@@ -1123,6 +1126,9 @@ export async function fountain(req: Request, url: URL): Promise<Response | null>
   const sbOne = /^\/api\/sandboxes\/([^/]+)$/.exec(p);
   if (sbOne && disk) {
     if (method === "DELETE") {
+      if (["terminated", "failed"].includes(disk.status)) {
+        return json({ error: "sandbox_not_resettable" }, 422);
+      }
       deleteBox(disk);
       return new Response(null, { status: 204 });
     }

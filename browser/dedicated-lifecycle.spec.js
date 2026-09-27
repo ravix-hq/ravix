@@ -49,7 +49,7 @@ test('a flagged track copies secrets, becomes ready, and deletes its own machine
   await expect(rebuild).toContainText('Sibling tracks are unaffected.');
   await rebuild.locator('input[type=checkbox]').check();
   await rebuild.getByRole('button', { name: 'Rebuild machine', exact: true }).click();
-  await expect.poll(async () => (await request.get(`${mock}/api/sandboxes/${box.id}`)).status(), { timeout: 30_000 }).toBe(404);
+  await expect.poll(async () => (await (await request.get(`${mock}/api/sandboxes/${box.id}`)).json()).data.status, { timeout: 30_000 }).toBe("terminated");
   await expect(page.locator('#track-setup-status')).toHaveCount(0, { timeout: 45_000 });
   expect((await request.get(`${mock}/api/sandboxes/${siblingBox.id}`)).status()).toBe(200);
   expect((await request.get(`${mock}/api/vaults/${siblingVault.id}`)).status()).toBe(200);
@@ -72,8 +72,12 @@ test('a flagged track copies secrets, becomes ready, and deletes its own machine
   await close.getByLabel('Delete machine, uncommitted changes and unpushed commits', { exact: true }).check();
   await close.getByRole('button', { name: 'Close track', exact: true }).click();
   await expect(page.locator('#track-setup-status')).toContainText('Closing… cleaning up this track\'s machine');
-  await expect.poll(async () => (await request.get(`${mock}/api/sandboxes/${rebuiltBox.id}`)).status(), { timeout: 30_000 }).toBe(404);
+  await expect.poll(async () => (await (await request.get(`${mock}/api/sandboxes/${rebuiltBox.id}`)).json()).data.status, { timeout: 30_000 }).toBe("terminated");
   await expect.poll(async () => (await request.get(`${mock}/api/vaults/${rebuiltVault.id}`)).status()).toBe(404);
+  const repeated = await request.delete(`${mock}/api/sandboxes/${rebuiltBox.id}`);
+  expect(repeated.status()).toBe(422);
+  expect((await repeated.json()).error).toBe('sandbox_not_resettable');
+  expect((await (await request.get(`${mock}/api/sandboxes/${rebuiltBox.id}`)).json()).data.status).toBe('terminated');
 });
 
 

@@ -158,7 +158,7 @@ defmodule Ravix.TrackMaintenanceTest do
           }}},
         {%{method: "DELETE", path: "/api/sandboxes/shared"}, {204, [], ""}},
         {%{method: "GET", path: "/api/sandboxes/shared"},
-         {404, [], %{error: "sandbox_not_found"}}}
+         {200, [], %{data: %{id: "shared", status: "terminated"}}}}
       ])
 
     assert {:ok, _} =
@@ -484,7 +484,7 @@ defmodule Ravix.TrackMaintenanceTest do
         provider([
           {%{method: "DELETE", path: "/api/sandboxes/#{disk}"}, {204, [], ""}},
           {%{method: "GET", path: "/api/sandboxes/#{disk}"},
-           {404, [], %{error: "sandbox_not_found"}}},
+           {200, [], %{data: %{id: "#{disk}", status: "terminated"}}}},
           {%{method: "DELETE", path: "/api/vaults/#{vault}"}, {204, [], ""}},
           {%{method: "GET", path: "/api/vaults/#{vault}"}, {404, [], %{error: "not_found"}}}
         ])

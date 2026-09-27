@@ -108,13 +108,14 @@ test("capacity is reserved atomically per runtime, with no queue and no dropped 
   expect((await request("GET", `/api/conversations/${one.id}/turns`)).body.data).toHaveLength(1);
 });
 
-test("delete ends all home/guest conversations, retains siblings, and reports already gone; rebuild creates a new disk", async () => {
+test("delete ends all home/guest conversations, retains siblings, and retains terminal rows; rebuild creates a new disk", async () => {
   const f = await fixture();
   const sibling = await fixture();
   const guest = (await attach(f, f.guest.id, { prompt: "[ravix] Open this track. /home/sprite/work/late" })).body.data;
   expect((await request("POST", `/api/sandboxes/${f.sandbox_id}`)).status).toBe(405);
   expect((await request("DELETE", `/api/sandboxes/${f.sandbox_id}`)).status).toBe(204);
-  expect(await request("DELETE", `/api/sandboxes/${f.sandbox_id}`)).toMatchObject({ status: 404, body: { error: "sandbox_not_found" } });
+  expect(await request("GET", `/api/sandboxes/${f.sandbox_id}`)).toMatchObject({ status: 200, body: { data: { status: "terminated" } } });
+  expect(await request("DELETE", `/api/sandboxes/${f.sandbox_id}`)).toMatchObject({ status: 422, body: { error: "sandbox_not_resettable" } });
   for (const id of [f.first.id, guest.id]) {
     expect((await request("GET", `/api/conversations/${id}`)).body.data.status).toBe("terminated");
   }
@@ -135,12 +136,12 @@ test("home agent deletion owns the lifecycle; deleting a guest only ends its con
   expect((await request("GET", `/api/conversations/${guest.id}`)).body.data.status).toBe("terminated");
   expect((await request("GET", `/api/sandboxes/${f.sandbox_id}`)).status).toBe(200);
   await request("DELETE", `/api/agents/${f.home.id}`);
-  expect((await request("GET", `/api/sandboxes/${f.sandbox_id}`)).status).toBe(404);
+  expect(await request("GET", `/api/sandboxes/${f.sandbox_id}`)).toMatchObject({ status: 200, body: { data: { status: "terminated" } } });
 });
 
 test("a discarded create response can be reconciled by full identity without allocating twice", async () => {
   const f = await fixture();
-  const before = (await request("GET", "/api/sandboxes")).body.data.length;
+  const before = (await request("GET", "/api/sandboxes?status=ready")).body.data.length;
   // Deliberately discard the conversation-create acknowledgement at the client boundary.
   await request("POST", "/api/conversations", { ...f.identity, vault_id: "lost-vault", channel_id: "operation-key", prompt: "lost reply" });
   const listed = (await request("GET", "/api/sandboxes?status=ready")).body.data;
@@ -176,7 +177,11 @@ test("vault copy is an atomic owned snapshot and never returns secret values", a
   expect(await request("POST", `/api/vaults/${source.id}/copy`, { name: crypto.randomUUID() }))
     .toMatchObject({ status: 422, body: { error: "secret_not_copyable", key: "BAD" } });
   expect(await request("GET", "/api/vaults")).toEqual(before);
-  for (const id of [source.id, result.body.data.id, foreign.id]) await request("DELETE", `/api/vaults/${id}`);
+  for (const id of [source.id, result.body.data.id, foreign.id]) {
+    expect((await request("DELETE", `/api/vaults/${id}`)).status).toBe(204);
+    expect((await request("GET", `/api/vaults/${id}`)).status).toBe(404);
+    expect((await request("DELETE", `/api/vaults/${id}`)).status).toBe(404);
+  }
 });
 
 test("an inference revision invalidates both runtimes; a connected runtime resumes on the same disk", async () => {
