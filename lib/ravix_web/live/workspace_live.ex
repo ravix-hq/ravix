@@ -28,6 +28,7 @@ defmodule RavixWeb.WorkspaceLive do
 
   # The workspace dialogs, as the buttons spell them and as this module does.
   @dialogs %{
+    "projects" => :projects,
     "sections" => :sections,
     "search" => :search,
     "new-project" => :new_project,
@@ -98,6 +99,7 @@ defmodule RavixWeb.WorkspaceLive do
         refs: [],
         origin_kind: :blank,
         query: "",
+        project_query: "",
         # Creating a project and creating a track, and nothing else. The
         # settings dialog owns its own; see `RavixWeb.Live.SettingsDialog`
         # for why one flag for the whole page could not answer "may I press
@@ -160,6 +162,8 @@ defmodule RavixWeb.WorkspaceLive do
   end
 
   defp open_url(socket, params) do
+    socket = recheck_rail(socket)
+
     project = Enum.find(socket.assigns.projects, &(&1.id == params["project"]))
     track_id = params["track"]
 
@@ -332,6 +336,11 @@ defmodule RavixWeb.WorkspaceLive do
        else: socket
      )}
   end
+
+  def handle_event("dismiss-switcher", _, socket), do: {:noreply, assign(socket, dialog: nil)}
+
+  def handle_event("search-projects", %{"q" => query}, socket),
+    do: {:noreply, socket |> recheck_rail() |> assign(project_query: query)}
 
   def handle_event("yard", _, socket),
     do: {:noreply, assign(socket, yard_open: !socket.assigns.yard_open)}
@@ -529,12 +538,7 @@ defmodule RavixWeb.WorkspaceLive do
   def handle_async({:tracks, id}, {:ok, {:ok, tracks}}, socket) do
     if Enum.any?(socket.assigns.projects, &(&1.id == id)) do
       tracks = Map.put(socket.assigns.tracks, id, tracks)
-
-      {:noreply,
-       socket
-       |> assign(tracks: tracks, attention: attention_count(tracks))
-       |> assign_page_title()
-       |> announce(tracks)}
+      {:noreply, apply_rail(socket, {socket.assigns.projects, tracks})}
     else
       {:noreply, socket}
     end
@@ -548,11 +552,12 @@ defmodule RavixWeb.WorkspaceLive do
   # listed is left, and a person whose last project just went is sent to the
   # walkthrough exactly as a mount would send them.
   def handle_async(:reload, {:ok, rail}, socket) do
+    previous_project = socket.assigns.project
     socket = apply_rail(socket, rail)
 
     cond do
-      socket.assigns.project &&
-          not Enum.any?(socket.assigns.projects, &(&1.id == socket.assigns.project.id)) ->
+      previous_project &&
+          not Enum.any?(socket.assigns.projects, &(&1.id == previous_project.id)) ->
         {:noreply, push_patch(socket, to: "/")}
 
       to = wrong_page(socket) ->
@@ -787,6 +792,18 @@ defmodule RavixWeb.WorkspaceLive do
   def handle_info({:hub, %Event{name: :read} = event}, socket),
     do: {:noreply, clear_unread(socket, event)}
 
+  def handle_info({:hub, %Event{name: name}}, socket) when name in [:people, :tracks] do
+    previous_project = socket.assigns.project
+    socket = recheck_rail(socket)
+
+    socket =
+      if previous_project && is_nil(socket.assigns.project),
+        do: push_patch(socket, to: "/"),
+        else: socket
+
+    {:noreply, reload_async(socket)}
+  end
+
   def handle_info({:hub, %Event{}}, socket), do: {:noreply, reload_async(socket)}
 
   defp clear_unread(
@@ -839,6 +856,23 @@ defmodule RavixWeb.WorkspaceLive do
     unsectioned = %{id: nil, name: "Other projects", collapsed: false}
     Enum.map(sections ++ [unsectioned], &{&1, Map.get(grouped, &1.id, [])})
   end
+
+  # Only the connected, already-loaded rail is revalidated here. Initial
+  # discovery remains in start_async; this reads membership, never providers.
+  defp recheck_rail(%{assigns: %{rail_loaded: true, current_user: %Accounts.User{}}} = socket),
+    do: apply_rail(socket, {socket.assigns.projects, socket.assigns.tracks})
+
+  defp recheck_rail(socket), do: socket
+
+  defp switcher_groups(projects, sections, placements, query) do
+    projects |> Enum.filter(&project_matches?(&1, query)) |> section_groups(sections, placements)
+  end
+
+  defp project_matches?(project, query),
+    do:
+      String.contains?(String.downcase(project.display_name), String.downcase(String.trim(query)))
+
+  defp project_attention(tracks, id), do: Enum.count(Map.get(tracks, id, []), &attention?/1)
 
   # start_async does not run on the disconnected render. The connected mount
   # starts the same traced read as subsequent refreshes, leaving the shell free
@@ -949,7 +983,7 @@ defmodule RavixWeb.WorkspaceLive do
 
     socket
     |> assign(
-      project: project || socket.assigns.project,
+      project: project,
       rail_loaded: true,
       rail_error: false,
       sections: sections,
@@ -1075,6 +1109,9 @@ defmodule RavixWeb.WorkspaceLive do
       advanced_track: false
     )
   end
+
+  defp open_dialog(socket, :projects),
+    do: socket |> recheck_rail() |> assign(dialog: :projects, project_query: "")
 
   defp open_dialog(socket, :sections), do: assign(socket, dialog: :sections)
 
