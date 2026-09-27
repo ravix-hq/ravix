@@ -184,6 +184,61 @@ defmodule Ravix.ToolingTest do
              })
   end
 
+  test "number-only PR origins resolve the GitHub head before opening", %{p: p, user: user} do
+    project = insert_project(runtime: "claude", user: user)
+    stub(Ravix.Projects, :prepare_machine, fn _, _ -> :ok end)
+    app = Ravix.GitHubFake.app()
+    stub(Ravix.Config, :github, fn -> app end)
+
+    Ravix.GitHubFake.install([
+      Ravix.GitHubFake.token_route(app),
+      {"GET", ~r{/pulls/261$},
+       {200,
+        %{
+          "number" => 261,
+          "title" => "Advance stored task state",
+          "state" => "open",
+          "head" => %{"ref" => "ravix/advance-stored-mcp-task-state-from-turn"}
+        }}}
+    ])
+
+    fountain([
+      {%{method: "GET", path: "/api/conversations"}, {200, [], %{data: []}}},
+      {%{method: "POST", path: "/api/conversations"},
+       {201, [], %{data: %{id: "pr-conversation"}}}}
+    ])
+
+    args = %{
+      "project_id" => project.id,
+      "origin" => %{"kind" => "pr", "number" => 261},
+      "request_id" => "pr"
+    }
+
+    assert {:ok, result} = Tooling.call(p, "create_track", args)
+    assert result.branch == "ravix/advance-stored-mcp-task-state-from-turn"
+    assert result.title == result.branch
+    assert Repo.get!(Track, result.id).origin_base == result.branch
+    {other, _, _} = principal(insert_user())
+    assert {:error, :not_found} = Tooling.call(other, "create_track", args)
+    OAuth.disconnect(user, p.grant.id)
+    assert {:error, :unauthenticated} = Tooling.call(p, "create_track", args)
+  end
+
+  test "PR lookup failures never open a default-branch track", %{p: p, user: user} do
+    project = insert_project(runtime: "claude", user: user)
+    stub(Ravix.Config, :github, fn -> Ravix.GitHubFake.app() end)
+    expect(Ravix.GitHub, :pull, fn _, _, _, 261 -> {:error, :not_found} end)
+
+    assert {:error, :not_found} =
+             Tooling.call(p, "create_track", %{
+               "project_id" => project.id,
+               "origin" => %{"kind" => "pr", "number" => 261},
+               "request_id" => "missing-pr"
+             })
+
+    assert Ravix.Tracks.Store.tracks_of(project.id) == []
+  end
+
   test "MCP creation rejects invalid and closed-track branch names", %{p: p, user: user} do
     project = insert_project(runtime: "claude", user: user)
     insert_track(project: project, branch: "ravix/spent", closed_at: DateTime.utc_now())

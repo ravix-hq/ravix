@@ -263,3 +263,20 @@ MCP tool failures include `structuredContent.error` with `code` and `message`.
 Invalid or unavailable names also include `field` (`branch_name` or `title`)
 and the same validation message as the web form. Retry a mutation with the same
 `request_id` and unchanged arguments to retrieve its original receipt.
+
+### Setup recovery and PR origins
+
+Call `retry_setup` with `track_id` to run the browser's scoped Retry setup action
+(`tracks:write`). Wait for setup to succeed, then call `retry_task` with the
+failed saved prompt's `task_id`; setup retry does not resend that prompt.
+Failed setup messages name both tools.
+
+`assign_items` accepts a new `request_id` for an item whose track has failed setup
+or is closed, including closure during a machine rebuild. Omit `track_id` to open
+a replacement track. Live tracks still return `item_assigned`; replaying the old
+request ID returns its original receipt.
+
+For `create_track`, an origin such as `{"kind":"pr","number":261}` resolves the
+head branch from GitHub before provisioning. A lookup failure returns an error;
+it never falls back to `main`. The browser's explicit `origin.base` remains
+supported for an already selected PR head.

@@ -7,7 +7,7 @@ defmodule Ravix.Tracks.SetupTest do
   alias Ravix.Fountain.{Client, Error, Shapes}
   alias Ravix.PromptQueue.{Item, Server}
   alias Ravix.PromptQueue.Store, as: QueueStore
-  alias Ravix.Tooling.{Tasks, Wait}
+  alias Ravix.Tooling.{OAuth, Tasks, Wait}
   alias Ravix.Tracks.{Setup, Thread, Track}
   import Ravix.ToolingFixture
 
@@ -52,6 +52,35 @@ defmodule Ravix.Tracks.SetupTest do
 
     server = server()
     %{user: user, project: project, track: track, client: client, server: server}
+  end
+
+  test "MCP retries failed setup, names recovery tools, and enforces grants and ownership", ctx do
+    persist(ctx.track, setup_state: "failed", setup_error: "opening refused")
+    {principal, _, _} = principal(ctx.user)
+    assert Setup.failure_message() =~ "retry_setup"
+    assert Setup.failure_message() =~ "retry_task"
+    other = insert_track(setup_state: "failed")
+
+    assert {:error, :not_found} =
+             Ravix.Tooling.call(principal, "retry_setup", %{"track_id" => other.id})
+
+    assert {:ok, %{retried: true}} =
+             Ravix.Tooling.call(principal, "retry_setup", %{"track_id" => ctx.track.id})
+
+    assert row(ctx.track).setup_state == "running"
+    assert_received {:prompt, "setup", _, _}
+
+    assert {:error, {:conflict, "setup_pending", _}} =
+             Ravix.Tooling.call(principal, "retry_setup", %{"track_id" => ctx.track.id})
+
+    OAuth.disconnect(ctx.user, principal.grant.id)
+    persist(row(ctx.track), setup_state: "failed")
+
+    assert {:error, :unauthenticated} =
+             Ravix.Tooling.call(principal, "retry_setup", %{"track_id" => ctx.track.id})
+
+    assert row(ctx.track).setup_state == "failed"
+    refute_received {:prompt, _, _, _}
   end
 
   defp server do
@@ -187,6 +216,8 @@ defmodule Ravix.Tracks.SetupTest do
              Tasks.get(principal, task.id)
 
     assert reason =~ "Track setup failed."
+    assert reason =~ "retry_setup"
+    assert reason =~ "retry_task"
 
     assert {:ok, %{changed: [changed_id], tasks: [reported]}} =
              Wait.wait(principal, %{
