@@ -468,8 +468,9 @@ html[data-inspector="closed"] #inspector-toggle .label-show { display: inline; }
 
 /* The track's page inside the stage. On a wide window the inspector is
    lifted out of the split and pinned to the stage, so it runs the full
-   window like the project rail; the tabs and the conversation keep a margin
-   of the same width. Each column still scrolls on its own. */
+   window like the project rail. The tab panel keeps a margin of the same
+   width, which is the column the conversation and its crumbs now live in.
+   Each column still scrolls on its own. */
 .workspace-track-host, .track-workspace, .track-workspace-body { display: flex; flex: 1; flex-direction: column; min-height: 0; overflow: hidden; }
 .workspace-track-host > div { display: flex; flex: 1; min-height: 0; }
 .track-view-switch.workspace-tabs { display: none; }
@@ -1383,13 +1384,13 @@ button.primary.home-action .ico { color: inherit; }
 @media (min-width: 1101px) {
   /* `100%` is the stage, the same horizontal room the split used to fill.
      The margin and the pinned panel share it, including when the rail is
-     closed down to the toggle. */
+     closed down to the toggle. The track list lives in the yard now, so the
+     stage's content column is the tab panel, not a sibling of the inspector. */
   .stage { --inspector-span: clamp(280px, var(--inspector-width, max(340px, 30vw)), min(800px, calc(100% - 420px))); }
-  .stage:has(.inspector) > .track-navigation,
-  .stage:has(.inspector) > .workspace-track-host { margin-right: var(--inspector-span); }
-  /* The track column clips overflow so its own scroller can shrink. The
-     inspector is positioned against the stage, above that column, and would
-     be cut off at the track tabs if those ancestors kept clipping it. */
+  .stage:has(.inspector) > .workspace-tabpanel { margin-right: var(--inspector-span); overflow: visible; }
+  /* Those ancestors clip overflow so their own scroller can shrink. The
+     inspector is positioned against the stage, past the crumbs, and would
+     be cut off at the tab panel if they kept clipping it. */
   .stage:has(.inspector) :is(.workspace-track-host, .workspace-track-host > div, .track-workspace, .track-workspace-body) { overflow: visible; }
   .stage:has(.inspector) .inspector {
     position: absolute; top: 0; right: 0; bottom: 0; z-index: 2;
