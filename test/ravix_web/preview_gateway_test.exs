@@ -16,7 +16,7 @@ defmodule RavixWeb.PreviewGatewayTest do
     %{port: Fake.start_front!()}
   end
 
-  setup %{port: port}, do: %{f: Fake.fixture(port)}
+  setup %{port: port} = context, do: %{f: Fake.fixture(port, context[:fixture_suffix])}
 
   # ── the TypeScript gateway tests ─────────────────────────────────────
 
@@ -482,6 +482,30 @@ defmodule RavixWeb.PreviewGatewayTest do
 
     assert_receive {:tunnel, ^owner, {:data, ^close}}
     assert_receive {:tunnel, ^owner, {:error, _}}
+  end
+
+  @tag fixture_suffix: "shutdown-t-race"
+  test "a real upstream server shutdown sends a close frame", %{f: f} do
+    {:ok, ws} = Client.ws_connect(f.port, "/hmr", ws_headers(f))
+    ws = Client.ws_send(ws, {:text, "ready to drain"})
+    assert {:ok, {:text, "ready to drain"}, ws} = Client.ws_recv(ws)
+
+    # Reproduce #207: the old test stripped *every* "t-", including one in
+    # the random suffix, and tolerated :not_found. No shutdown happened, and
+    # Client used to misreport the subsequent receive timeout as a TCP close.
+    wrong_id = {:preview_gateway_upstream, String.replace(f.row.hostname, "t-", "")}
+    assert wrong_id != f.upstream_id
+    assert {:error, :not_found} = stop_supervised(wrong_id)
+    assert {:error, :timeout, ws} = Client.ws_await_close(ws, 0)
+    ws = Client.ws_send(ws, {:text, "still open"})
+    assert {:ok, {:text, "still open"}, ws} = Client.ws_recv(ws)
+
+    # Stop the actual Bandit server, with an established WebSocket. Either
+    # relay its shutdown frame or synthesize one if its transport drops first.
+    assert :ok = stop_supervised(f.upstream_id)
+    assert {:close, code, _reason, ws} = Client.ws_await_close(ws)
+    assert code in [1000, 1001, 1011]
+    assert {:closed, _ws} = Client.ws_recv(ws)
   end
 
   test "an upstream close frame preserves its code and reason", %{f: f} do

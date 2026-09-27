@@ -53,15 +53,19 @@ defmodule Ravix.PreviewGatewayFake do
   preview session grant on it, a ready preview row pointing at a fresh
   upstream. Returns what tests name.
   """
-  @spec fixture(pos_integer()) :: map()
-  def fixture(port) do
-    s = Base.url_encode64(:crypto.strong_rand_bytes(6), padding: false) |> String.downcase()
+  @spec fixture(pos_integer(), String.t() | nil) :: map()
+  def fixture(port, suffix \\ nil) do
+    s =
+      suffix ||
+        Base.url_encode64(:crypto.strong_rand_bytes(6), padding: false) |> String.downcase()
+
+    upstream_id = {:preview_gateway_upstream, s}
 
     upstream =
       ExUnit.Callbacks.start_supervised!(
         Supervisor.child_spec(
           {Bandit, plug: {__MODULE__.Upstream, self()}, port: 0, ip: {127, 0, 0, 1}},
-          id: {:preview_gateway_upstream, s}
+          id: upstream_id
         )
       )
 
@@ -119,6 +123,7 @@ defmodule Ravix.PreviewGatewayFake do
     %{
       port: port,
       app_port: app_port,
+      upstream_id: upstream_id,
       row: row,
       other: other,
       owner: owner,
@@ -1028,7 +1033,7 @@ defmodule Ravix.PreviewGatewayFake do
       %{ws | conn: conn, websocket: websocket}
     end
 
-    @doc "The next frame: `{:ok, frame, ws}` or `{:closed, ws}`."
+    @doc "The next frame, TCP closure, or the actual receive error (including timeout)."
     def ws_recv(ws, timeout \\ @timeout)
     def ws_recv(%{frames: [frame | rest]} = ws, _timeout), do: {:ok, frame, %{ws | frames: rest}}
 
@@ -1041,12 +1046,13 @@ defmodule Ravix.PreviewGatewayFake do
         # A close frame and the TCP close can arrive in the same read; Mint
         # hands back what it read before the error, and dropping it turned a
         # clean close into a bare disconnect.
-        {:error, conn, _reason, responses} ->
+        {:error, conn, reason, responses} ->
           chunks = for {:data, _, data} <- responses, do: data
 
           case decode_buffered(%{ws | conn: conn}, chunks) do
             %{frames: [frame | rest]} = ws -> {:ok, frame, %{ws | frames: rest}}
-            ws -> {:closed, ws}
+            ws when reason == :closed -> {:closed, ws}
+            ws -> {:error, reason, ws}
           end
       end
     end
@@ -1057,6 +1063,7 @@ defmodule Ravix.PreviewGatewayFake do
         {:ok, {:close, code, reason}, ws} -> {:close, code, reason, ws}
         {:ok, _other, ws} -> ws_await_close(ws, timeout)
         {:closed, ws} -> {:closed, ws}
+        {:error, reason, ws} -> {:error, reason, ws}
       end
     end
 
