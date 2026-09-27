@@ -45,6 +45,11 @@ defmodule RavixWeb.WorkspaceMemoTest do
   end
 
   test "explicit refresh and turn events read live status despite a warm memo", %{conn: conn} do
+    # This test is about refresh inside the TTL, not scheduler speed. Pin
+    # that premise across the disconnected mount and its async rail, then
+    # advance one millisecond for each explicit refresh.
+    clock = start_supervised!({Agent, fn -> 1_000 end})
+    stub(Ravix.Clock, :now_ms, fn -> Agent.get(clock, & &1) end)
     user = insert_user()
     project = insert_project(user: user)
 
@@ -69,11 +74,13 @@ defmodule RavixWeb.WorkspaceMemoTest do
     refute has_element?(view, ".track-tab [aria-label='Working']")
     assert length(FakeTransport.calls(client)) == 1
 
+    Agent.update(clock, &(&1 + 1))
     render_click(view, "refresh")
     render_async(view, 5_000)
     assert has_element?(view, ".track-tab [aria-label='Working']")
     assert length(FakeTransport.calls(client)) == 2
 
+    Agent.update(clock, &(&1 + 1))
     send(view.pid, {:hub, Event.new(:turn, project.id, track_id: track.id)})
     render_async(view, 5_000)
     refute has_element?(view, ".track-tab [aria-label='Working']")

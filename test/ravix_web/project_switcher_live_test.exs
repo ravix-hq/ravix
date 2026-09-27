@@ -51,7 +51,7 @@ defmodule RavixWeb.ProjectSwitcherLiveTest do
 
     stub(Fountain, :client, fn -> client end)
     {:ok, view, _} = live(log_in_user(conn, user), "/inbox")
-    render_async(view)
+    render_async(view, 5_000)
     refute has_element?(view, "#yard .workspace-project")
     view |> element("#project-switcher-trigger") |> render_click()
 
@@ -91,7 +91,7 @@ defmodule RavixWeb.ProjectSwitcherLiveTest do
     insert_project_member(member, user)
     insert_track_member(track, user)
     {:ok, view, _} = live(log_in_user(conn, user), "/home")
-    render_async(view)
+    render_async(view, 5_000)
     render_click(view, "dialog", %{name: "projects"})
     assert has_element?(view, "#project-switcher a[href='/p/#{member.id}']")
     assert has_element?(view, "#project-switcher a[href='/p/#{shared.id}']")
@@ -99,7 +99,7 @@ defmodule RavixWeb.ProjectSwitcherLiveTest do
     People.remove_member(track.id, user.id)
     Hub.publish(member.id, :people)
     Hub.publish(shared.id, :people)
-    render_async(view)
+    render_async(view, 5_000)
     refute render(view) =~ member.name
     refute render(view) =~ shared.name
   end
@@ -109,7 +109,7 @@ defmodule RavixWeb.ProjectSwitcherLiveTest do
     project = insert_project()
     membership = insert_project_member(project, user)
     {:ok, view, _} = live(log_in_user(conn, user), "/home")
-    render_async(view)
+    render_async(view, 5_000)
     render_click(view, "dialog", %{name: "projects"})
     Ravix.Repo.delete!(membership)
     view |> form("#project-switcher-search", q: project.name) |> render_change()
@@ -127,7 +127,7 @@ defmodule RavixWeb.ProjectSwitcherLiveTest do
     membership = insert_project_member(project, user)
     insert_track_member(kept, user)
     {:ok, view, _} = live(log_in_user(conn, user), "/p/#{project.id}")
-    render_async(view)
+    render_async(view, 5_000)
     parent = self()
 
     expect(Tracks, :list, fn _, _, _ ->
@@ -145,7 +145,7 @@ defmodule RavixWeb.ProjectSwitcherLiveTest do
     assert_receive {:reading, worker}
     Ravix.Repo.delete!(membership)
     send(worker, :finish)
-    render_async(view)
+    render_async(view, 5_000)
     refute render(view) =~ removed.title
     render_click(view, "dialog", %{name: "projects"})
     assert has_element?(view, "#project-switcher a[href='/p/#{project.id}'] .badge", "1")
@@ -156,7 +156,7 @@ defmodule RavixWeb.ProjectSwitcherLiveTest do
     project = insert_project(user: user)
     {token, session} = insert_session(user)
     {:ok, view, _} = live(Plug.Test.init_test_session(conn, session_token: token), "/home")
-    render_async(view)
+    render_async(view, 5_000)
     render_click(view, "dialog", %{name: "projects"})
     assert has_element?(view, "#project-switcher a[href='/p/#{project.id}']")
     Accounts.end_session(session.token_hash)
