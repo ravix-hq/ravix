@@ -484,28 +484,79 @@ defmodule RavixWeb.PreviewGatewayTest do
     assert_receive {:tunnel, ^owner, {:error, _}}
   end
 
-  test "the sprite's WebSocket closing closes the browser's", %{f: f} do
+  test "an upstream close frame preserves its code and reason", %{f: f} do
     {:ok, ws} = Client.ws_connect(f.port, "/hmr", ws_headers(f))
-    # A 101 response can arrive before the upstream finishes switching its
-    # handler to WebSocket mode. Prove that transition before shutting it down
-    # and asserting the WebSocket close frame rather than an HTTP disconnect.
-    ws = Client.ws_send(ws, {:text, "ready to drain"})
-    assert {:ok, {:text, "ready to drain"}, ws} = Client.ws_recv(ws)
-    upstream = f.app_port
-    Store.update_row(f.t1, &%{&1 | port: upstream})
-    # The upstream is per test; stopping it drops every socket it holds.
-    # `stop_supervised/1` answers `{:error, :not_found}` when the child is
-    # already on its way down, which it intermittently is by the time this
-    # line runs -- and matching only `:ok` turned that into a MatchError
-    # rather than the outcome this test is actually about, which is the next
-    # assertion.
-    assert stop_supervised({:preview_gateway_upstream, String.replace(f.row.hostname, "t-", "")}) in [
-             :ok,
-             {:error, :not_found}
-           ]
+    assert_receive {:upstream_socket, upstream}
+    send(upstream, {:close, 4001, "app restarting"})
+    assert {:close, 4001, "app restarting", _ws} = Client.ws_await_close(ws)
+  end
 
-    # Bandit's shutdown sends the app's sockets a 1000, relayed as it came.
-    assert {:close, 1000, _reason, _ws} = Client.ws_await_close(ws)
+  test "an upstream socket killed without a close frame sends the browser 1011", %{f: f} do
+    {:ok, ws} = Client.ws_connect(f.port, "/hmr", ws_headers(f))
+    assert_receive {:upstream_socket, upstream}
+    ref = Process.monitor(upstream)
+    Process.exit(upstream, :kill)
+    assert_receive {:DOWN, ^ref, :process, ^upstream, :killed}
+    assert {:close, 1011, _reason, ws} = Client.ws_await_close(ws)
+    assert {:closed, _ws} = Client.ws_recv(ws)
+  end
+
+  for intent <- [:stop, :restart] do
+    @intent intent
+    test "an upstream drop during #{@intent} sends the browser 1001", %{f: f} do
+      {:ok, ws} = Client.ws_connect(f.port, "/hmr", ws_headers(f))
+      assert_receive {:upstream_socket, upstream}
+
+      Store.update_row(f.t1, fn row ->
+        %{
+          row
+          | generation: row.generation + 1,
+            desired: if(@intent == :stop, do: :stopped, else: :running)
+        }
+      end)
+
+      Process.exit(upstream, :kill)
+      assert {:close, 1001, _reason, _ws} = Client.ws_await_close(ws)
+    end
+  end
+
+  for {name, event, code} <- [
+        {"transport error", {:error, %Mint.TransportError{reason: :closed}}, 1011},
+        {"closed notification", :closed, 1011},
+        {"malformed frame", {:data, <<0x81, 0x80>>}, 1011},
+        {"backpressure", {:data, :binary.copy("x", 2 * 1024 * 1024 + 1)}, 1009}
+      ] do
+    @event event
+    @code code
+    test "#{name} sends a browser close frame", %{f: f} do
+      {:ok, ws} = Client.ws_connect(f.port, "/hmr", ws_headers(f))
+      tunnel = Store.connection(f.row.sprite)
+      :ok = Fake.Tunnel.deliver(tunnel, @event)
+      assert {:close, @code, _reason, _ws} = Client.ws_await_close(ws)
+    end
+  end
+
+  test "a failed write to the upstream sends a browser close frame", %{f: f} do
+    {:ok, ws} = Client.ws_connect(f.port, "/hmr", ws_headers(f))
+    :ok = Fake.Tunnel.fail_writes(Store.connection(f.row.sprite))
+    ws = Client.ws_send(ws, {:text, "write after drop"})
+    assert {:close, 1011, _reason, _ws} = Client.ws_await_close(ws)
+  end
+
+  test "a failed pong preserves preceding frames and sends a browser close frame", %{f: f} do
+    {:ok, ws} = Client.ws_connect(f.port, "/hmr", ws_headers(f))
+    tunnel = Store.connection(f.row.sprite)
+    :ok = Fake.Tunnel.fail_writes(tunnel)
+    :ok = Fake.Tunnel.deliver(tunnel, {:data, <<0x81, 2, "ok", 0x89, 0>>})
+    assert {:ok, {:text, "ok"}, ws} = Client.ws_recv(ws)
+    assert {:close, 1011, _reason, _ws} = Client.ws_await_close(ws)
+  end
+
+  test "generation invalidation sends 1001 without waiting for an upstream drop", %{f: f} do
+    {:ok, ws} = Client.ws_connect(f.port, "/hmr", ws_headers(f))
+    Store.update_row(f.t1, &%{&1 | generation: &1.generation + 1})
+    Hub.publish(f.project, :tracks)
+    assert {:close, 1001, _reason, _ws} = Client.ws_await_close(ws)
   end
 
   # ── the pieces on their own ──────────────────────────────────────────

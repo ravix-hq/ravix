@@ -181,12 +181,18 @@ defmodule Ravix.PreviewGatewayFake do
             projects: %{},
             members: MapSet.new(),
             tunnels: %{},
+            connections: %{},
             calls: []
           }
         end,
         name: __MODULE__
       )
     end
+
+    def put_connection(sprite, tunnel),
+      do: Agent.update(__MODULE__, &put_in(&1, [:connections, sprite], tunnel))
+
+    def connection(sprite), do: Agent.get(__MODULE__, &Map.fetch!(&1.connections, sprite))
 
     def set_port(port), do: Agent.update(__MODULE__, &%{&1 | port: port})
     def port, do: Agent.get(__MODULE__, & &1.port)
@@ -432,9 +438,14 @@ defmodule Ravix.PreviewGatewayFake do
     def open(config, sprite, port, _opts) do
       Store.tunnel_opened(sprite)
 
-      if config.token == @token,
-        do: GenServer.start(__MODULE__, {self(), port}),
-        else: {:error, :unauthorized}
+      if config.token == @token do
+        with {:ok, tunnel} <- GenServer.start(__MODULE__, {self(), port}) do
+          Store.put_connection(sprite, tunnel)
+          {:ok, tunnel}
+        end
+      else
+        {:error, :unauthorized}
+      end
     end
 
     def send_data(pid, data) do
@@ -448,6 +459,9 @@ defmodule Ravix.PreviewGatewayFake do
     catch
       :exit, _ -> :ok
     end
+
+    def deliver(pid, event), do: GenServer.call(pid, {:deliver, event})
+    def fail_writes(pid), do: GenServer.call(pid, :fail_writes)
 
     def take(pid), do: GenServer.call(pid, :take)
     def raw(pid, conn, ref), do: GenServer.call(pid, {:raw, conn, ref})
@@ -474,6 +488,17 @@ defmodule Ravix.PreviewGatewayFake do
     end
 
     @impl true
+    def handle_call({:deliver, event}, _from, state) do
+      send(state.owner, {:tunnel, self(), event})
+      {:reply, :ok, state}
+    end
+
+    def handle_call(:fail_writes, _from, state),
+      do: {:reply, :ok, Map.put(state, :fail_writes, true)}
+
+    def handle_call({:send, _data}, _from, %{fail_writes: true} = state),
+      do: {:reply, {:error, :closed}, state}
+
     def handle_call(:take, _from, %{mode: :http, conn: conn} = state) when not is_nil(conn),
       do: {:reply, {:ok, conn}, %{state | conn: nil}}
 
@@ -665,13 +690,13 @@ defmodule Ravix.PreviewGatewayFake do
         {:upstream, conn.method, conn.request_path, conn.query_string, conn.req_headers}
       )
 
-      if websocket?(conn), do: socket(conn), else: route(conn, conn.request_path)
+      if websocket?(conn), do: socket(conn, test_pid), else: route(conn, conn.request_path)
     end
 
     defp websocket?(conn),
       do: conn |> get_req_header("upgrade") |> List.first("") |> String.downcase() == "websocket"
 
-    defp socket(conn) do
+    defp socket(conn, test_pid) do
       if conn.request_path == "/refuse" do
         send_resp(conn, 403, "no sockets here")
       else
@@ -690,7 +715,7 @@ defmodule Ravix.PreviewGatewayFake do
         WebSockAdapter.upgrade(
           conn,
           Ravix.PreviewGatewayFake.Echo,
-          %{path: conn.request_path, host: host},
+          %{path: conn.request_path, host: host, test_pid: test_pid},
           compress: false
         )
       end
@@ -825,7 +850,11 @@ defmodule Ravix.PreviewGatewayFake do
 
     @impl true
     def init(%{path: "/chat"} = state), do: {:push, {:text, "welcome #{state.host}"}, state}
-    def init(state), do: {:ok, state}
+
+    def init(state) do
+      send(state.test_pid, {:upstream_socket, self()})
+      {:ok, state}
+    end
 
     @impl true
     def handle_in({data, opcode: :text}, %{path: "/chat"} = state),
@@ -837,6 +866,9 @@ defmodule Ravix.PreviewGatewayFake do
     def handle_in({data, opcode: opcode}, state), do: {:push, {opcode, data}, state}
 
     @impl true
+    def handle_info({:close, code, reason}, state),
+      do: {:stop, :normal, {code, reason}, state}
+
     def handle_info(_, state), do: {:ok, state}
   end
 
