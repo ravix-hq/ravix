@@ -167,8 +167,9 @@ defmodule Ravix.SessionRecoveryTest do
         other.id
       )
 
-    assert Store.claim(other_row.id)
-    Store.prepare_recovery(other_row.id, 100, 100)
+    token = Ecto.UUID.generate()
+    assert Store.claim(other_row.id, token)
+    assert Store.prepare_recovery(other_row.id, token, 100, 100)
     Store.mark_delivered(other_row.id)
     enqueue(ctx, "This thread")
     client = provider(delivery([stage(1)]))
@@ -367,6 +368,7 @@ defmodule Ravix.SessionRecoveryTest do
       |> Repo.update!()
 
       stub(Ravix.Config, :github, fn -> Ravix.GitHubFake.app() end)
+      stub(Ravix.GitHub, :plan_pulls, fn _, _, _ -> {:ok, %{pulls: [], complete: true}} end)
       stub(Ravix.GitHub, :pull_for_track, fn _, _, _, _, _ -> unquote(Macro.escape(report)) end)
       enqueue(ctx, "Continue")
       client = provider(delivery([stage(1)]))
@@ -377,6 +379,65 @@ defmodule Ravix.SessionRecoveryTest do
       assert prompt =~ "check git log and the track's PRs"
       assert prompt =~ "verify which items each PR covers"
     end
+  end
+
+  test "a superseded preparation cannot overwrite the next claim's recovery receipt", ctx do
+    row = enqueue(ctx, "Continue")
+    old_token = Ecto.UUID.generate()
+    new_token = Ecto.UUID.generate()
+    assert Store.claim(row.id, old_token)
+    Store.release_claim(row.id, old_token)
+    assert Store.claim(row.id, new_token)
+    assert Store.prepare_recovery(row.id, new_token, 10, 12)
+    refute Store.prepare_recovery(row.id, old_token, 20, 25)
+    assert Store.get(row.id).session_reset_id == 10
+    assert Store.get(row.id).session_scan_id == 12
+    assert Store.begin_post(row.id, new_token)
+    refute Store.prepare_recovery(row.id, new_token, 20, 25)
+  end
+
+  test "linked completed and active items on one track retain their individual statuses", ctx do
+    ctx.project
+    |> Ecto.Changeset.change(repo_full_name: "org/repo", installation_id: 1)
+    |> Repo.update!()
+
+    {:ok, _} =
+      Ravix.Plans.create(ctx.user, ctx.project.id, %{
+        "title" => "Mixed work",
+        "items" => [
+          %{"id" => "finished", "title" => "Finished item"},
+          %{"id" => "active", "title" => "Active item"}
+        ]
+      })
+
+    for id <- ["finished", "active"] do
+      Ravix.Plans.Item
+      |> Repo.get!(id)
+      |> Ecto.Changeset.change(track_id: ctx.track.id)
+      |> Repo.update!()
+    end
+
+    stub(Ravix.Config, :github, fn -> Ravix.GitHubFake.app() end)
+
+    stub(Ravix.GitHub, :plan_pulls, fn _, _, _ ->
+      {:ok,
+       %{
+         complete: true,
+         pulls: [
+           %{state: :merged, number: 1, plan_item_ids: ["finished"]},
+           %{state: :open, number: 2, plan_item_ids: ["active"]}
+         ]
+       }}
+    end)
+
+    reject(Ravix.GitHub, :pull_for_track, 5)
+    enqueue(ctx, "Continue remaining work")
+    client = provider(delivery([stage(1)]))
+    Server.tick(ctx.server)
+    assert [prompt] = prompts(client)
+    assert prompt =~ "Finished item (finished) — reported status: done"
+    assert prompt =~ "Active item (active) — reported status: in review"
+    assert prompt =~ "Skip items confirmed done"
   end
 
   defp server do

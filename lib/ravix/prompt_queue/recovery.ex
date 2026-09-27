@@ -21,7 +21,7 @@ defmodule Ravix.PromptQueue.Recovery do
 
   @doc "Scan new events and persist the context attached to this claimed delivery."
   @spec prepare(Fountain.Client.t(), Item.t(), Track.t(), Project.t()) ::
-          {:ok, String.t()} | {:error, :context_unavailable}
+          {:ok, String.t()} | :lost_claim | {:error, :context_unavailable}
   def prepare(client, row, track, project) do
     {cursor, baseline?} = Store.recovery_scan(row.thread_id)
     last = Store.delivered_reset(row.thread_id)
@@ -30,8 +30,10 @@ defmodule Ravix.PromptQueue.Recovery do
     with {:ok, scanned} <- scan(client, track.conversation_id, cursor, state) do
       preamble = if scanned.reset > last, do: preamble(track, project), else: ""
       reset = if preamble == "", do: nil, else: scanned.reset
-      Store.prepare_recovery(row.id, reset, scanned.scan)
-      {:ok, preamble}
+
+      if Store.prepare_recovery(row.id, row.claim_token, reset, scanned.scan),
+        do: {:ok, preamble},
+        else: :lost_claim
     end
   end
 

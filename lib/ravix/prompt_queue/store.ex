@@ -443,14 +443,19 @@ defmodule Ravix.PromptQueue.Store do
   end
 
   @doc "Prepare the scanned cursor and included reset; only a sent row commits either."
-  @spec prepare_recovery(String.t(), integer() | nil, non_neg_integer()) :: :ok
-  def prepare_recovery(id, reset_id, scan_id) do
-    {1, nil} =
-      Repo.update_all(from(p in Item, where: p.id == ^id and p.status == :sending),
+  @spec prepare_recovery(String.t(), String.t(), integer() | nil, non_neg_integer()) :: boolean()
+  def prepare_recovery(id, token, reset_id, scan_id) do
+    {count, _} =
+      Repo.update_all(
+        from(p in Item,
+          where:
+            p.id == ^id and p.status == :sending and p.claim_token == ^token and
+              is_nil(p.post_started_at)
+        ),
         set: [session_reset_id: reset_id, session_scan_id: scan_id]
       )
 
-    :ok
+    count == 1
   end
 
   @doc """
