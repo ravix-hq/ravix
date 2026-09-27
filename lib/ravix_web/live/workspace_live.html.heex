@@ -429,7 +429,7 @@
         id="project-agent-owner"
         class="settings-help"
       >
-        This project runs on {@project.owner_login}'s {RavixWeb.AgentName.label(@project.runtime)}. Ask them to reconnect it.
+        This project runs on {@project.owner_login}'s {RavixWeb.AgentName.label(@project.runtime)}; every turn uses their subscription.
       </p>
       <div :if={@project && @track_id} class="workspace-track-host">
         <%!-- A fixed id, so choosing another track moves this LiveView instead

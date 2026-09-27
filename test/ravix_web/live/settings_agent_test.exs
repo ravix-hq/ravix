@@ -249,7 +249,7 @@ defmodule RavixWeb.Live.SettingsAgentTest do
       assert has_element?(
                view,
                "#project-agent-owner",
-               "This project runs on #{ctx.user.login}'s Claude Code. Ask them to reconnect it."
+               "This project runs on #{ctx.user.login}'s Claude Code; every turn uses their subscription."
              )
 
       render_click(view, "dialog", %{name: "settings"})
