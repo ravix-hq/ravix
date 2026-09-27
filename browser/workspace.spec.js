@@ -999,7 +999,7 @@ test('composer Send stays compact and keeps its arrow after repeated submissions
     await expect(page.locator('#composer-form')).not.toContainText('to send');
     const model = page.locator('.composer-model');
     await expect(model).toHaveText(/^\S/);
-    expect(await model.getAttribute('title')).toMatch(/\//);
+    expect(await model.getAttribute('title')).toMatch(/^(Claude Code|Codex) · /);
     await expect(model).toHaveAccessibleName(await model.locator('.truncate').innerText());
     expect(await model.evaluate(el => getComputedStyle(el).fontFamily)).toContain('IBM Plex Sans');
     await fitsViewport(page);

@@ -7,6 +7,7 @@ defmodule RavixWeb.WorkspaceManagementTest do
   alias Ravix.Fountain.Shapes.Catalog
   alias Ravix.Hub.Event
   alias Ravix.Projects.Machine.Rebuild
+  alias RavixWeb.Live.ThreadConnect
 
   setup :verify_on_exit!
 
@@ -20,6 +21,72 @@ defmodule RavixWeb.WorkspaceManagementTest do
     project = insert_project(user: user)
     {:ok, view, _} = live(log_in_user(conn, user), "/p/#{project.id}")
     %{view: view, user: user, project: project}
+  end
+
+  test "the new-track picker connects an owner inline without losing the branch draft", ctx do
+    options = %{
+      runtime: "claude",
+      model: "anthropic/claude-opus-5",
+      owner_login: ctx.user.login,
+      owner?: true,
+      runtimes: [
+        %{runtime: "claude", connected: true, enabled: true, models: ["anthropic/claude-opus-5"]},
+        %{runtime: "codex", connected: false, enabled: true, models: ["openai/gpt-6-astra"]}
+      ]
+    }
+
+    stub(Tracks, :open_options, fn _, _ -> {:ok, options} end)
+    stub(Ravix.Accounts.Inference, :held, fn _ -> {:ok, []} end)
+    stub(Ravix.Accounts.Inference, :subscription, fn _ -> {:ok, nil} end)
+
+    stub(Ravix.Accounts.Inference, :link_status, fn _ ->
+      {:ok, %{enabled?: true, pending: nil}}
+    end)
+
+    render_click(ctx.view, "dialog", %{name: "new-track"})
+    render_async(ctx.view)
+
+    render_click(ctx.view, "edit", %{
+      "new_track" => %{"title" => "keep-my-branch", "runtime" => "claude"}
+    })
+
+    ctx.view
+    |> element("button[phx-click=connect-thread-agent][phx-value-runtime=codex]")
+    |> render_click()
+
+    render_async(ctx.view)
+    ctx.view |> element(".thread-connections button[phx-value-kind=api_key]") |> render_click()
+
+    expect(Ravix.Accounts.Inference, :connect, fn user, %{agent: :codex, value: "fixture"} ->
+      {:ok, user}
+    end)
+
+    expect(Tracks, :open_options, fn _, _ ->
+      {:ok, %{options | runtimes: Enum.map(options.runtimes, &%{&1 | connected: true})}}
+    end)
+
+    ctx.view
+    |> form(".thread-connections form", credential: %{value: "fixture"})
+    |> render_submit()
+
+    render_async(ctx.view)
+    render_async(ctx.view)
+    assert has_element?(ctx.view, "#new_track-runtime option[value=codex][selected]", "Connected")
+
+    assert :sys.get_state(ctx.view.pid).socket.assigns.track_form.params["title"] ==
+             "keep-my-branch"
+
+    refute has_element?(ctx.view, ".thread-connections form")
+  end
+
+  test "members cannot forge the inline owner connection action", ctx do
+    member = insert_user()
+    insert_project_member(ctx.project, member)
+    options = %{owner?: true, runtimes: [%{runtime: "codex", connected: false, enabled: true}]}
+    assert ThreadConnect.open(member, ctx.project.id, "codex", options) == nil
+    assert ThreadConnect.open(ctx.user, ctx.project.id, "other", options) == nil
+    connection = ThreadConnect.open(ctx.user, ctx.project.id, "codex", options)
+    refute ThreadConnect.active?(member, ctx.project.id, connection, connection.id)
   end
 
   test "settings and composer use the same friendly catalog labels", ctx do

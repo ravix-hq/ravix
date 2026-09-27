@@ -43,10 +43,11 @@ defmodule RavixWeb.Live.SettingsAgentTest do
   end
 
   defp open(conn, user, project) do
+    # Await the actual tasks; a 100ms default races loaded coverage/browser runs.
     {:ok, view, _} = live(conn, "/p/#{project.id}")
-    render_async(view)
+    render_async(view, 2_000)
     render_click(view, "dialog", %{name: "settings"})
-    render_async(view)
+    render_async(view, 2_000)
     assert has_element?(view, "#settings-dialog")
     {view, user}
   end

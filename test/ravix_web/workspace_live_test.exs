@@ -1542,11 +1542,10 @@ defmodule RavixWeb.WorkspaceLiveTest do
     child = find_live_child(parent, "track-host")
     render_async(child)
     child |> form("#composer-form", text: "Keep this draft") |> render_submit()
-    # The refusal is a toast, and the toasts are the workspace's: the nested
-    # page hands its flash up rather than drawing a second stack.
+    # A failed send stays next to the composer and its preserved draft.
     render(child)
-    assert has_element?(parent, "#flash-group[aria-live=polite] #flash-error", "Please try again")
-    refute render(child) =~ "Please try again"
+    assert has_element?(child, "#thread-error[role=alert]", "Please try again")
+    refute has_element?(parent, "#flash-group #flash-error", "Please try again")
     assert has_element?(child, "#composer-form")
     refute_push_event(child, "composer:clear", %{}, 50)
   end

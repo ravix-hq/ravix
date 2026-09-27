@@ -10,6 +10,7 @@ defmodule RavixWeb.WorkspaceLive do
   alias Ravix.Projects.Sections
   alias RavixWeb.Live.Form
   alias RavixWeb.Live.Guard
+  alias RavixWeb.Live.ThreadConnect
 
   # The four origins. One list rather than the three that had grown -- this
   # module's guard, the buttons in the template, and `Ravix.Tracks.Track`'s
@@ -92,6 +93,7 @@ defmodule RavixWeb.WorkspaceLive do
         project_mode: "github",
         track_form: Form.new(:new_track),
         track_options: nil,
+        thread_connect: nil,
         repos_loading: false,
         refs_loading: false,
         repos: [],
@@ -396,6 +398,20 @@ defmodule RavixWeb.WorkspaceLive do
   def handle_event("edit", %{"new_project" => params}, socket),
     do: {:noreply, NewProject.edit(socket, params)}
 
+  def handle_event("connect-thread-agent", %{"runtime" => runtime}, socket) do
+    connection =
+      if socket.assigns.dialog == :new_track,
+        do:
+          ThreadConnect.open(
+            socket.assigns.current_user,
+            project_id(socket),
+            runtime,
+            socket.assigns.track_options
+          )
+
+    {:noreply, assign(socket, thread_connect: connection)}
+  end
+
   def handle_event("edit", %{"new_track" => params}, socket) do
     params =
       if params["runtime"] != socket.assigns.track_form.params["runtime"],
@@ -695,6 +711,18 @@ defmodule RavixWeb.WorkspaceLive do
   def handle_info(:project_settings_saved, socket), do: {:noreply, reload_async(socket)}
 
   # The agent panel's clock; see `RavixWeb.Live.AgentPanel`.
+  def handle_info({:agent_panel, id, tick}, %{assigns: %{dialog: :new_track}} = socket) do
+    if ThreadConnect.active?(
+         socket.assigns.current_user,
+         project_id(socket),
+         socket.assigns.thread_connect,
+         id
+       ),
+       do: send_update(RavixWeb.Live.AgentPanel, id: id, tick: tick)
+
+    {:noreply, socket}
+  end
+
   def handle_info({:agent_panel, id, tick}, socket) do
     if (id == "agent-panel" and socket.assigns.dialog == :account) or
          (socket.assigns.dialog == :new_project and NewProject.active_panel?(socket, id)),
@@ -728,6 +756,42 @@ defmodule RavixWeb.WorkspaceLive do
       _ ->
         {:noreply, socket}
     end
+  end
+
+  def handle_info(
+        {:agent_connected, %Accounts.User{} = user, agent},
+        %{assigns: %{dialog: :new_track}} = socket
+      ) do
+    connection = socket.assigns.thread_connect
+
+    socket =
+      if connection &&
+           user.id == socket.assigns.current_user.id && to_string(agent) == connection.runtime &&
+           ThreadConnect.active?(
+             user,
+             project_id(socket),
+             connection,
+             connection.id
+           ) do
+        id = project_id(socket)
+
+        params =
+          socket.assigns.track_form.params
+          |> Map.put("runtime", connection.runtime)
+          |> Map.delete("model")
+
+        socket
+        |> assign(
+          current_user: user,
+          thread_connect: nil,
+          track_form: Form.new(:new_track, params)
+        )
+        |> traced_async({:track_options, id}, fn -> Tracks.open_options(user, id) end)
+      else
+        socket
+      end
+
+    {:noreply, socket}
   end
 
   def handle_info({:agent_connected, %Accounts.User{} = user, agent}, socket) do
@@ -1141,6 +1205,7 @@ defmodule RavixWeb.WorkspaceLive do
       dialog: :new_track,
       track_form: Form.new(:new_track),
       track_options: nil,
+      thread_connect: nil,
       origin_kind: :blank,
       refs: [],
       advanced_track: false

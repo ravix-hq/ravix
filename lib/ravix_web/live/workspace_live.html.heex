@@ -883,6 +883,12 @@
           {if @busy, do: "Opening track…", else: "Create track"}
         </button>
       </.form>
+      <RavixWeb.Live.ThreadConnect.panel
+        options={@track_options}
+        connection={@thread_connect}
+        current_user={@current_user}
+        session_hash={@session_hash}
+      />
     </.dialog>
     <.live_component
       :if={@dialog == :settings && @project && @project.role == :owner}

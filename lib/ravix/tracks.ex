@@ -151,7 +151,7 @@ defmodule Ravix.Tracks do
           Map.get(thread_rows, row.id, []),
           thread_reads,
           live,
-          project.runtime
+          project
         )
 
       conversations = Enum.map(threads, &live[&1.conversation_id]) |> Enum.reject(&is_nil/1)
@@ -227,7 +227,7 @@ defmodule Ravix.Tracks do
          {:ok, client} <- fountain() do
       live = conversations_of(project, fresh: fresh)
       reads = Store.thread_reads(user.id, project.id)
-      threads = thread_views(track_id, Store.threads_of(track_id), reads, live, project.runtime)
+      threads = thread_views(track_id, Store.threads_of(track_id), reads, live, project)
 
       environment =
         case MachineCache.environment(client, project.environment_id) do
@@ -297,17 +297,18 @@ defmodule Ravix.Tracks do
         Store.threads_of(track_id),
         Store.thread_reads(user.id, project.id),
         live,
-        project.runtime
+        project
       )
 
-  defp thread_views(track_id, threads, reads, live, project_runtime) do
+  defp thread_views(track_id, threads, reads, live, project) do
     Enum.map(threads, fn thread ->
       conversation = live[thread.conversation_id]
 
       %{
         id: thread.id,
         title: thread.title,
-        runtime: thread.runtime || project_runtime,
+        runtime: thread.runtime || project.runtime,
+        model: (conversation && conversation.model) || thread.model || project.model,
         default: thread.id == track_id,
         conversation_id: thread.conversation_id,
         status:

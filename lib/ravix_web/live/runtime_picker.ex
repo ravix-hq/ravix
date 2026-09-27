@@ -42,7 +42,7 @@ defmodule RavixWeb.Live.RuntimePicker do
   defp availability(%{connected: false}, %{owner?: true}), do: " — Connect to use"
 
   defp availability(%{connected: false}, options),
-    do: " — Not connected — #{options.owner_login} must connect it"
+    do: " — Not connected, #{options.owner_login} must connect it"
 
-  defp availability(_, _), do: ""
+  defp availability(_, _), do: " — Connected"
 end
