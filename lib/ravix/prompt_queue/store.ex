@@ -477,13 +477,22 @@ defmodule Ravix.PromptQueue.Store do
   cannot move a cancelled row, which is what stops a closed track's queue
   coming back to life.
   """
-  @spec mark_delivered(String.t()) :: :ok
-  def mark_delivered(id) do
+  @spec mark_delivered(String.t(), String.t() | nil) :: :ok
+  def mark_delivered(id, conversation_id \\ nil) do
     {_count, tracks} =
       Item
       |> where([p], p.id == ^id and p.status != :sent)
       |> select([p], p.track_id)
-      |> Repo.update_all(set: [status: :sent, error: nil, body: nil, payload: ""])
+      |> Repo.update_all(
+        set: [
+          status: :sent,
+          error: nil,
+          body: nil,
+          payload: "",
+          delivery_conversation_id: conversation_id,
+          delivered_at: DateTime.utc_now()
+        ]
+      )
 
     Enum.each(tracks, &publish_queue/1)
   end
@@ -496,6 +505,19 @@ defmodule Ravix.PromptQueue.Store do
   """
   @spec claim_timeout_ms() :: pos_integer()
   def claim_timeout_ms, do: @claim_timeout_ms
+
+  @doc "Latest accepted prompt in this exact conversation; old bindings cannot block a new one."
+  def latest_delivered(thread_id, conversation_id) do
+    Repo.one(
+      from p in Item,
+        where:
+          p.thread_id == ^thread_id and p.delivery_conversation_id == ^conversation_id and
+            p.status == :sent,
+        order_by: [desc: p.sequence],
+        limit: 1,
+        select: map(p, [:id, :delivered_at])
+    )
+  end
 
   @doc "Cancel everything on a track that has not been sent: the track closed, or its project went."
   @spec cancel_track(String.t()) :: :ok

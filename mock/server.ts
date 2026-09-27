@@ -328,7 +328,7 @@ const toolDone = (id: string, out: string) =>
  */
 type PromptImage = { data: string; media_type: string };
 
-async function runTurn(conv: Conv, prompt: string, clientRequestId: string | null, images: PromptImage[]): Promise<void> {
+async function runTurn(conv: Conv, prompt: string, clientRequestId: string | null, images: PromptImage[], attaching = false): Promise<void> {
   const generation = conv.turn_generation;
   const disk = state.boxes.get(conv.sandbox_id!);
   if (!disk) return;
@@ -337,6 +337,7 @@ async function runTurn(conv: Conv, prompt: string, clientRequestId: string | nul
     await sleep(ms);
     if (!alive()) throw cancelledTurn;
   };
+  if (attaching) await pause(250);
   const turn = `turn-${state.turnSeq++}`;
   const emit = (ev: Record<string, unknown>) => { if (alive()) push(conv.id, { turn_id: turn, ...ev }); };
   const say = async (body: string) => {
@@ -357,7 +358,7 @@ async function runTurn(conv: Conv, prompt: string, clientRequestId: string | nul
     // own `[ravix]` turns included; only a turn Fountain started itself is
     // `autonomous`, and those get no prompt on the feed.
     origin: "user",
-    status: "running",
+    status: attaching ? "pending" : "running",
     inserted_at: now(),
     // The sender's name for the prompt, copied back so it can tell which
     // turn was its own (the prompt queue sends its row id).
@@ -367,6 +368,10 @@ async function runTurn(conv: Conv, prompt: string, clientRequestId: string | nul
   };
   state.turns.set(conv.id, [...(state.turns.get(conv.id) ?? []), record]);
 
+  if (attaching) {
+    await pause(100);
+    record.status = "running";
+  }
   emit({ kind: "stage", stage: "turn", state: "started" });
   try {
     await pause(250);
@@ -520,7 +525,9 @@ function deleteBox(box: Box): void {
   for (const conv of state.conversations) {
     if (conv.sandbox_id === box.id) endTurn(conv, "terminated");
   }
-  state.boxes.delete(box.id);
+  box.status = "terminated";
+  box.files.clear();
+  box.worktrees.clear();
 }
 
 /** No provider queue: reserve capacity before scheduling any async work. */
@@ -531,7 +538,7 @@ function invalidateInference(set: { id: string; revision: number }): void {
   }
 }
 
-function accept(conv: Conv, prompt: string, clientRequestId: string | null = null, images: PromptImage[] = []): { error: string } | null {
+function accept(conv: Conv, prompt: string, clientRequestId: string | null = null, images: PromptImage[] = [], attaching = false): { error: string } | null {
   const source = state.credentialSets.find(s => s.id === conv.inference_credential_id);
   if (source && source.revision !== conv.inference_revision) return { error: "inference_source_changed" };
   if (source) {
@@ -548,8 +555,9 @@ function accept(conv: Conv, prompt: string, clientRequestId: string | null = nul
   if (holders.size >= limit) return { error: "sandbox_at_capacity" };
   holders.add(conv.id);
   state.busy.set(key, holders);
-  conv.status = "running";
-  void runTurn(conv, prompt, clientRequestId, images).catch(() => {
+  conv.status = attaching ? "idle" : "running";
+  void runTurn(conv, prompt, clientRequestId, images, attaching).catch((error) => {
+    if (error === cancelledTurn) return;
     if (conv.status !== "terminated") endTurn(conv, "failed");
     console.error("mock: turn failed");
   });
@@ -925,7 +933,8 @@ export async function fountain(req: Request, url: URL): Promise<Response | null>
       }
     } else {
       box = [...state.boxes.values()].find((box) => box.agent_id === agentId &&
-        box.user_id === userId && box.environment_id === environmentId && box.vault_id === vaultId);
+        box.user_id === userId && box.environment_id === environmentId && box.vault_id === vaultId &&
+        !["terminated", "failed"].includes(box.status));
       if (box && box.runtime !== runtime) return json({ error: "sandbox_runtime_mismatch" }, 422);
       if (!box) {
         if (!b.prompt?.trim()) return json({ error: "initial_prompt_required" }, 422);
@@ -969,7 +978,7 @@ export async function fountain(req: Request, url: URL): Promise<Response | null>
     // brand-new project's first track sitting in `opening` forever.
     const first = typeof b.prompt === "string" ? b.prompt : "";
     if (first.trim()) {
-      const refusal = accept(conv, first);
+      const refusal = accept(conv, first, null, [], Boolean(b.sandbox_id && box.agent_id !== agentId));
       if (refusal) return json(refusal, 409);
     }
     if (box.agent_id !== agentId) box.guest_agent_id = agentId;
@@ -1123,6 +1132,9 @@ export async function fountain(req: Request, url: URL): Promise<Response | null>
   const sbOne = /^\/api\/sandboxes\/([^/]+)$/.exec(p);
   if (sbOne && disk) {
     if (method === "DELETE") {
+      if (["terminated", "failed"].includes(disk.status)) {
+        return json({ error: "sandbox_not_resettable" }, 422);
+      }
       deleteBox(disk);
       return new Response(null, { status: 204 });
     }

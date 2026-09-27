@@ -210,7 +210,8 @@ defmodule Ravix.DedicatedLifecycleTest do
          {200, [], %{data: %{path: track.workdir, entries: []}}}},
         {%{method: "POST", path: "/api/conversations/conversation/terminate"}, {200, [], %{}}},
         {%{method: "DELETE", path: "/api/sandboxes/disk"}, {204, [], ""}},
-        {%{method: "GET", path: "/api/sandboxes/disk"}, {404, [], %{error: "sandbox_not_found"}}},
+        {%{method: "GET", path: "/api/sandboxes/disk"},
+         {200, [], %{data: %{id: "disk", status: "terminated"}}}},
         {%{method: "DELETE", path: "/api/vaults/copy"}, {204, [], ""}},
         {%{method: "GET", path: "/api/vaults/copy"}, {404, [], %{error: "not_found"}}}
       ])
@@ -234,6 +235,97 @@ defmodule Ravix.DedicatedLifecycleTest do
            )
   end
 
+  test "close confirms terminal rows and explicit absence, and repeated close is idempotent" do
+    for response <- [
+          {200, [], %{data: %{id: "disk", status: "terminated"}}},
+          {200, [], %{data: %{id: "disk", status: "failed"}}},
+          {404, [], %{error: "sandbox_not_found"}},
+          {410, [], %{error: "sandbox_gone"}}
+        ] do
+      disk = Ecto.UUID.generate()
+
+      response =
+        case response do
+          {200, headers, %{data: data}} -> {200, headers, %{data: %{data | id: disk}}}
+          other -> other
+        end
+
+      track = insert_track(sandbox_layout: :dedicated, sandbox_id: disk, conversation_id: nil)
+      assert {:ok, :ok} = Store.request_close(track)
+      [op] = Store.operations(track.id)
+
+      client =
+        FakeTransport.client([
+          {%{method: "DELETE", path: "/api/sandboxes/#{disk}"},
+           {422, [], %{error: "sandbox_not_resettable"}}},
+          {%{method: "GET", path: "/api/sandboxes/#{disk}"}, response}
+        ])
+
+      Sandbox.advance(client, op.id)
+
+      assert %{sandbox_state: :terminated, closed_at: %DateTime{}} =
+               closed = Store.get_track(track.id)
+
+      assert Store.get_operation(op.id).completed_at
+      calls = FakeTransport.calls(client)
+      assert {:ok, :ok} = Store.request_close(closed)
+      Sandbox.advance(client, op.id)
+      assert FakeTransport.calls(client) == calls
+      assert length(Store.operations(track.id)) == 1
+    end
+  end
+
+  test "a refused repeat DELETE must still confirm destruction before deleting the vault" do
+    for response <- [
+          {200, [], %{data: %{id: "disk", status: "ready"}}},
+          {200, [], %{data: %{id: "disk", status: "deleting"}}},
+          {404, [], %{error: "not_found"}},
+          {503, [], %{error: "unavailable"}}
+        ] do
+      disk = Ecto.UUID.generate()
+
+      response =
+        case response do
+          {200, headers, %{data: data}} -> {200, headers, %{data: %{data | id: disk}}}
+          other -> other
+        end
+
+      track =
+        insert_track(
+          sandbox_layout: :dedicated,
+          sandbox_id: disk,
+          vault_id: "copy",
+          conversation_id: nil
+        )
+
+      assert {:ok, :ok} = Store.request_close(track)
+      [op] = Store.operations(track.id)
+
+      client =
+        FakeTransport.client([
+          {%{method: "DELETE", path: "/api/sandboxes/#{disk}"},
+           {422, [], %{error: "sandbox_not_resettable"}}},
+          {%{method: "GET", path: "/api/sandboxes/#{disk}"}, response},
+          {%{method: "DELETE", path: "/api/sandboxes/#{disk}"},
+           {422, [], %{error: "sandbox_not_resettable"}}},
+          {%{method: "GET", path: "/api/sandboxes/#{disk}"},
+           {200, [], %{data: %{id: disk, status: "terminated"}}}},
+          {%{method: "DELETE", path: "/api/vaults/copy"}, {204, [], ""}},
+          {%{method: "GET", path: "/api/vaults/copy"}, {404, [], %{error: "not_found"}}}
+        ])
+
+      Sandbox.advance(client, op.id)
+      assert Store.get_track(track.id).closed_at == nil
+      pending = Store.get_operation(op.id)
+      assert pending.completed_at == nil
+      refute Enum.any?(FakeTransport.calls(client), &String.contains?(&1.path, "vaults"))
+      {:ok, _} = Store.update_operation(pending, %{retry_at: nil})
+      Sandbox.advance(client, op.id)
+      assert Store.get_track(track.id).closed_at
+      assert Store.get_operation(op.id).completed_at
+    end
+  end
+
   test "last shared close retains project secrets and gates a racing shared open until deletion" do
     stub(Ravix.Config, :retire_shared_machines?, fn -> true end)
     project = insert_project()
@@ -255,6 +347,20 @@ defmodule Ravix.DedicatedLifecycleTest do
           %{
             data: [
               %{
+                id: "old-terminated",
+                status: "terminated",
+                agent_id: project.agent_id,
+                environment_id: project.environment_id,
+                vault_id: project.vault_id
+              },
+              %{
+                id: "old-failed",
+                status: "failed",
+                agent_id: project.agent_id,
+                environment_id: project.environment_id,
+                vault_id: project.vault_id
+              },
+              %{
                 id: "shared",
                 agent_id: project.agent_id,
                 environment_id: project.environment_id,
@@ -270,7 +376,7 @@ defmodule Ravix.DedicatedLifecycleTest do
           }}},
         {%{method: "DELETE", path: "/api/sandboxes/shared"}, {204, [], ""}},
         {%{method: "GET", path: "/api/sandboxes/shared"},
-         {404, [], %{error: "sandbox_not_found"}}}
+         {200, [], %{data: %{id: "shared", status: "terminated"}}}}
       ])
 
     Sandbox.advance(client, op.id)
@@ -355,7 +461,8 @@ defmodule Ravix.DedicatedLifecycleTest do
     client =
       FakeTransport.client([
         {%{method: "DELETE", path: "/api/sandboxes/old"}, {204, [], ""}},
-        {%{method: "GET", path: "/api/sandboxes/old"}, {404, [], %{error: "sandbox_not_found"}}},
+        {%{method: "GET", path: "/api/sandboxes/old"},
+         {200, [], %{data: %{id: "old", status: "terminated"}}}},
         {%{method: "DELETE", path: "/api/vaults/old-copy"}, {204, [], ""}},
         {%{method: "GET", path: "/api/vaults/old-copy"}, {404, [], %{error: "not_found"}}},
         {%{method: "POST", path: "/api/vaults/#{project.vault_id}/copy"},
@@ -580,7 +687,8 @@ defmodule Ravix.DedicatedLifecycleTest do
             ]
           }}},
         {%{method: "DELETE", path: "/api/sandboxes/disk"}, {204, [], ""}},
-        {%{method: "GET", path: "/api/sandboxes/disk"}, {404, [], %{error: "sandbox_not_found"}}}
+        {%{method: "GET", path: "/api/sandboxes/disk"},
+         {200, [], %{data: %{id: "disk", status: "terminated"}}}}
       ])
 
     Sandbox.advance(client, op.id)

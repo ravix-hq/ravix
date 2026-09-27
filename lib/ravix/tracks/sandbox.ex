@@ -430,9 +430,14 @@ defmodule Ravix.Tracks.Sandbox do
   defp delete_box(_client, nil), do: :ok
 
   defp delete_box(client, id) do
-    with :ok <- Fountain.reset_sandbox(client, id),
+    with :ok <- accept_reset(Fountain.reset_sandbox(client, id)),
          do: confirm_deleted(Fountain.sandbox(client, id), &Error.sandbox_gone?/1)
   end
+
+  # A terminal retained row refuses another DELETE. This can also mean a
+  # non-persistent sandbox, so only the following GET confirms destruction.
+  defp accept_reset({:error, %Error{status: 422, code: "sandbox_not_resettable"}}), do: :ok
+  defp accept_reset(result), do: result
 
   defp delete_vault(_client, nil), do: :ok
 
@@ -443,6 +448,11 @@ defmodule Ravix.Tracks.Sandbox do
 
   defp accept_missing({:error, %Error{status: 404}}), do: :ok
   defp accept_missing(result), do: result
+
+  # Fountain retains destroyed sandbox rows; vault rows are actually deleted.
+  defp confirm_deleted({:ok, %Fountain.Shapes.Sandbox{status: status}}, _gone?)
+       when status in ["terminated", "failed"],
+       do: :ok
 
   defp confirm_deleted({:error, %Error{} = error}, gone?) do
     if gone?.(error), do: :ok, else: {:error, error}
@@ -491,7 +501,8 @@ defmodule Ravix.Tracks.Sandbox do
 
   defp identity?(box, op),
     do:
-      is_binary(op.resource_ids["agent_id"]) and box.agent_id == op.resource_ids["agent_id"] and
+      box.status not in ["terminated", "failed"] and
+        is_binary(op.resource_ids["agent_id"]) and box.agent_id == op.resource_ids["agent_id"] and
         box.environment_id == op.resource_ids["environment_id"] and
         box.vault_id == op.resource_ids["vault_id"]
 

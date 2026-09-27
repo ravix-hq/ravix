@@ -992,16 +992,14 @@ defmodule Ravix.FountainTest do
            {202, [], %{data: %{status: "deleting"}}}},
           {%{method: "GET", path: "/api/sandboxes/s1"},
            {200, [], %{data: %{id: "s1", status: "deleting"}}}},
-          {%{method: "GET", path: "/api/sandboxes/s1"}, {404, [], %{error: "sandbox_not_found"}}}
+          {%{method: "GET", path: "/api/sandboxes/s1"},
+           {200, [], %{data: %{id: "s1", status: "terminated"}}}}
         ])
 
       assert :ok = Fountain.reset_sandbox(client, "s1")
       assert {:ok, %Sandbox{status: "deleting"}} = Fountain.sandbox(client, "s1")
 
-      capture_log(fn ->
-        assert {:error, error} = Fountain.sandbox(client, "s1")
-        assert Error.sandbox_gone?(error)
-      end)
+      assert {:ok, %Sandbox{status: "terminated"}} = Fountain.sandbox(client, "s1")
     end
 
     test "lost create and reset acknowledgements stay unknown and are never automatically retried" do

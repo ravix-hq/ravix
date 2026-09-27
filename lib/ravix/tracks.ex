@@ -54,6 +54,7 @@ defmodule Ravix.Tracks do
   alias Ravix.Previews.Lifecycle
   alias Ravix.Projects.Project
   alias Ravix.Projects.RuntimeAgents
+  alias Ravix.PromptQueue.Activity
   alias Ravix.PromptQueue.Body
   alias Ravix.PromptQueue.Body.Image
   alias Ravix.Spec
@@ -233,6 +234,7 @@ defmodule Ravix.Tracks do
       live = conversations_of(project, fresh: fresh)
       reads = Store.thread_reads(user.id, project.id)
       threads = thread_views(track_id, Store.threads_of(track_id), reads, live, project)
+      threads = guest_thread_views(track, project, threads)
 
       environment =
         case MachineCache.environment(client, project.environment_id) do
@@ -290,8 +292,30 @@ defmodule Ravix.Tracks do
 
   @doc "The memoised conversations on a track, with this person's current unread state."
   def threads(%User{} = user, track_id) do
-    with {:ok, %{project: project}} <- Access.track_access(user, track_id) do
-      {:ok, thread_views(track_id, user, project, conversations_of(project, fresh: false))}
+    with {:ok, %{track: track, project: project}} <- Access.track_access(user, track_id) do
+      threads = thread_views(track_id, user, project, conversations_of(project, fresh: false))
+      {:ok, guest_thread_views(track, project, threads)}
+    end
+  end
+
+  defp guest_thread_views(track, project, threads) do
+    Enum.map(threads, fn thread ->
+      if Activity.guest?(track, project, thread), do: guest_thread_view(thread), else: thread
+    end)
+  end
+
+  defp guest_thread_view(%{conversation_id: nil} = thread), do: thread
+
+  defp guest_thread_view(thread) do
+    # ownership: Access.track_access/thread_access admitted these threads for detail reads.
+    receipt = Ravix.PromptQueue.Store.latest_delivered(thread.id, thread.conversation_id)
+
+    with {:ok, client} <- Ravix.Providers.fountain(),
+         status when status in [:pending, :running, :failed] <-
+           Activity.state(client, thread.conversation_id, receipt) do
+      %{thread | status: status}
+    else
+      _ -> thread
     end
   end
 

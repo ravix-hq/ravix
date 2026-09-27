@@ -515,6 +515,10 @@ defmodule Ravix.Tooling.Tasks do
     "#{task.status_message} Call retry_setup with track_id #{task.track_id}, then after setup succeeds call retry_task with task_id #{task.id}."
   end
 
+  defp task_message(%{queue_status: :failed} = task) do
+    "#{task.status_message} Call retry_task with task_id #{task.id}."
+  end
+
   defp task_message(task), do: task.status_message
 
   def id(principal, request_id),

@@ -41,6 +41,8 @@ defmodule Ravix.PromptQueue.Item do
     field :claimed_by, :string
     field :claim_token, :string
     field :post_started_at, :utc_datetime_usec
+    field :delivery_conversation_id, :string
+    field :delivered_at, :utc_datetime_usec
     field :session_reset_id, :integer
     field :session_scan_id, :integer
   end

@@ -99,7 +99,13 @@ defmodule Ravix.Tracks.AgentFailure do
 
   defp message(runtime, frames, blocks) do
     agent = Ravix.AgentName.label(runtime) || "The agent"
-    provider = if runtime == "codex", do: "OpenAI", else: "its model provider"
+
+    provider =
+      case runtime do
+        "codex" -> "OpenAI"
+        runtime when runtime in ["claude", "claude-code"] -> "Anthropic"
+        _ -> "its model provider"
+      end
 
     attempts =
       frames |> Enum.map(&retry_count/1) |> Enum.reject(&is_nil/1) |> Enum.max(fn -> nil end)

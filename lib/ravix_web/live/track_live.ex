@@ -2054,8 +2054,13 @@ defmodule RavixWeb.TrackLive do
 
   defp hub(%Event{name: :queue}, socket), do: refresh_queue(socket)
 
-  defp hub(%Event{name: :turn}, socket),
-    do: socket |> refresh_detail() |> refresh_queue() |> refresh_transcript()
+  defp hub(%Event{name: :turn, thread_id: thread_id}, socket),
+    do:
+      socket
+      |> update(:thread_states, &Map.delete(&1, thread_id))
+      |> refresh_detail()
+      |> refresh_queue()
+      |> refresh_transcript()
 
   defp hub(%Event{name: name}, socket) when name in [:people, :tracks, :settings],
     do: socket |> refresh_detail() |> refresh_plan_items()

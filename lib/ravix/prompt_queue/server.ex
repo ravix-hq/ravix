@@ -4,7 +4,7 @@ defmodule Ravix.PromptQueue.Server do
 
   No browser connection participates in delivery. A sweep takes the first
   live row of every thread, checks the sender still has access, asks
-  Fountain whether the conversation is idle, refreshes the clone credential,
+  Fountain whether the previous delivered turn settled, refreshes the clone credential,
   and only then claims the row and POSTs it. A claim is taken immediately
   before the POST; after a crash or an ambiguous response the payload is
   retained but never replayed blindly. The server serializes claims and POST
@@ -65,6 +65,7 @@ defmodule Ravix.PromptQueue.Server do
   alias Ravix.Hub
   alias Ravix.Projects.ProjectMember
   alias Ravix.PromptQueue
+  alias Ravix.PromptQueue.Activity
   alias Ravix.PromptQueue.Body
   alias Ravix.PromptQueue.Item
   alias Ravix.PromptQueue.Recovery
@@ -513,23 +514,62 @@ defmodule Ravix.PromptQueue.Server do
   defp readiness(client, track, project, row) do
     case Fountain.get_conversation(client, track.conversation_id) do
       {:ok, conversation} ->
+        guest? = guest_thread?(track, project, row)
+
         cond do
-          track.sandbox_layout == :shared and Shapes.busy?(conversation) and
-              not blank_thread?(client, row, conversation) ->
+          busy_conversation?(client, track, row, conversation, guest?) ->
             :busy
 
           Shapes.ended?(conversation) and
               not CredentialRecovery.enabled?(track, project) ->
             {:ended, ended_message(client, track, conversation)}
 
-          # Idle, or a status this version does not know: either way nothing
-          # is running, so whether a prompt can be sent is the machine's answer.
           true ->
-            machine_readiness(client, project, track)
+            receipt_readiness(client, project, track, row, guest?)
         end
 
       {:error, _reason} ->
         :unavailable
+    end
+  end
+
+  defp busy_conversation?(client, track, row, conversation, guest?) do
+    (track.sandbox_layout == :shared or guest?) and Shapes.busy?(conversation) and
+      not blank_thread?(client, row, conversation)
+  end
+
+  defp guest_thread?(%{sandbox_layout: :dedicated} = track, project, row) do
+    # ownership: access/1 established Access.thread_access for this queue row.
+    thread = Ravix.Tracks.Store.get_thread(row.thread_id)
+    Activity.guest?(track, project, thread)
+  end
+
+  defp guest_thread?(_track, _project, _row), do: false
+
+  defp receipt_readiness(client, project, track, _row, false),
+    do: machine_readiness(client, project, track)
+
+  defp receipt_readiness(client, project, track, row, true) do
+    receipt = Store.latest_delivered(row.thread_id, track.conversation_id)
+
+    case Activity.state(client, track.conversation_id, receipt) do
+      state when state in [:pending, :running] ->
+        :busy
+
+      :unavailable ->
+        :unavailable
+
+      :expired ->
+        Store.annotate(
+          row.id,
+          :queued,
+          "The previous turn has not appeared or started after two minutes. Using the conversation status to try this prompt."
+        )
+
+        machine_readiness(client, project, track)
+
+      _ ->
+        machine_readiness(client, project, track)
     end
   end
 
@@ -662,7 +702,7 @@ defmodule Ravix.PromptQueue.Server do
   defp settle(:lost_claim, _row, _track, _project), do: :lost_claim
 
   defp settle(:ok, row, track, project) do
-    Store.mark_delivered(row.id)
+    Store.mark_delivered(row.id, track.conversation_id)
     # ownership: access/1 established Access.thread_access before this confirmed delivery.
     if CredentialRecovery.enabled?(track, project),
       do: Ravix.Tracks.Store.credential_context_delivered(row.thread_id, track.conversation_id)

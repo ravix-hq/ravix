@@ -13,6 +13,7 @@ defmodule Ravix.PromptQueueTest do
   alias Ravix.PromptQueue
   alias Ravix.PromptQueue.{Item, Server}
   alias Ravix.QueryCount
+  alias Ravix.Tooling.Tasks
   alias Ravix.Tracks
   alias Ravix.Tracks.Follower
   alias Ravix.Tracks.TrackMember
@@ -187,11 +188,20 @@ defmodule Ravix.PromptQueueTest do
   test "acknowledged prompts and images survive a restart and deliver without a browser", f do
     image = %{"media_type" => "image/png", "data" => "aGVsbG8="}
 
+    first_id = request_id()
+
     client =
-      fountain([read("running"), read("idle"), accept(), read("running"), read("idle"), accept()])
+      fountain([
+        read("running"),
+        read("idle"),
+        accept(),
+        read("running"),
+        read("idle"),
+        accept()
+      ])
 
     assert {:ok, %Item{id: first, status: :queued}} =
-             send_prompt(f.track, f.owner, "first", images: [image])
+             send_prompt(f.track, f.owner, "first", images: [image], id: first_id)
 
     assert {:ok, %Item{id: second}} = send_prompt(f.track, f.owner, "second")
 
@@ -214,6 +224,168 @@ defmodule Ravix.PromptQueueTest do
     assert PromptQueue.Store.queued_prompts() == []
   end
 
+  test "idle guest conversation cannot finish a task or release its next prompt before the correlated turn",
+       f do
+    Repo.update!(
+      Ecto.Changeset.change(f.track,
+        sandbox_layout: :dedicated,
+        sandbox_state: :ready,
+        sandbox_id: "guest-disk"
+      )
+    )
+
+    guest = thread(f.track, "guest") |> Ecto.Changeset.change(runtime: "codex") |> Repo.update!()
+    fountain_hooks(fn -> "idle" end, fn -> :ok end)
+
+    stub(Ravix.MachineCache, :conversations, fn _, _, _ ->
+      {:ok, [conversation(%{"id" => "guest", "status" => "idle"})]}
+    end)
+
+    {principal, _, _} = Ravix.ToolingFixture.principal(f.owner)
+
+    {:ok, first} =
+      Tasks.send(principal, f.track.id, "first", "guest-first", guest.id)
+
+    {:ok, second} =
+      Tasks.send(principal, f.track.id, "second", "guest-second", guest.id)
+
+    {:ok, phase} = Agent.start_link(fn -> nil end)
+
+    stub(Ravix.Fountain, :turns, fn _, "guest" ->
+      turns =
+        case Agent.get(phase, & &1) do
+          nil ->
+            []
+
+          status ->
+            [
+              Shapes.turn(%{
+                "id" => "first-turn",
+                "client_request_id" => first.id,
+                "status" => status
+              })
+            ]
+        end
+
+      {:ok, turns}
+    end)
+
+    Server.tick(f.server)
+    assert_receive {:posted, "guest", _}
+    assert PromptQueue.Store.get(first.id).delivery_conversation_id == "guest"
+    restarted = start_server()
+
+    for {phase_value, expected} <- [{nil, :pending}, {"pending", :pending}, {"running", :running}] do
+      Agent.update(phase, fn _ -> phase_value end)
+      Server.tick(restarted)
+      refute_received {:posted, "guest", _}
+      assert status_of(second.id) == :queued
+      assert {:ok, task} = Tasks.get(principal, first.id)
+      refute Tasks.terminal?(task)
+      assert {:ok, threads} = Tracks.threads(f.owner, f.track.id)
+      assert Enum.find(threads, &(&1.id == guest.id)).status == expected
+    end
+
+    Agent.update(phase, fn _ -> "completed" end)
+    assert {:ok, %{state: "TASK_STATE_COMPLETED"}} = Tasks.get(principal, first.id)
+    assert {:ok, threads} = Tracks.threads(f.owner, f.track.id)
+    assert Enum.find(threads, &(&1.id == guest.id)).status == :ready
+    Server.tick(restarted)
+    assert_receive {:posted, "guest", _}
+    assert status_of(second.id) == :sent
+    assert PromptQueue.Store.latest_delivered(guest.id, "replacement-conversation") == nil
+  end
+
+  test "flag-off shared and dedicated home deliveries do not read turn receipts", f do
+    stub(Ravix.Config, :dedicated_opens_enabled?, fn _ -> false end)
+    reject(Ravix.Fountain, :turns, 2)
+    fountain_hooks(fn -> "idle" end, fn -> :ok end)
+
+    for layout <- [:shared, :dedicated] do
+      Repo.update!(
+        Ecto.Changeset.change(f.track,
+          sandbox_layout: layout,
+          sandbox_state: :ready,
+          sandbox_id: "home"
+        )
+      )
+
+      for prompt <- ["first", "next"] do
+        {:ok, row} = send_prompt(f.track, f.owner, prompt)
+        Server.tick(f.server)
+        assert status_of(row.id) == :sent
+      end
+    end
+  end
+
+  test "missing and pending guest turns expire but running turns still block", f do
+    Repo.update!(
+      Ecto.Changeset.change(f.track,
+        sandbox_layout: :dedicated,
+        sandbox_state: :ready,
+        sandbox_id: "guest-disk"
+      )
+    )
+
+    guest = thread(f.track, "guest") |> Ecto.Changeset.change(runtime: "codex") |> Repo.update!()
+    fountain_hooks(fn -> "idle" end, fn -> :ok end)
+    {:ok, first} = send_prompt(f.track, f.owner, "first", thread: guest.id)
+    Server.tick(f.server)
+    assert status_of(first.id) == :sent
+    assert %DateTime{} = PromptQueue.Store.get(first.id).delivered_at
+
+    for phase <- [nil, "pending"] do
+      {:ok, next} = send_prompt(f.track, f.owner, "next", thread: guest.id)
+      receipt = PromptQueue.Store.latest_delivered(guest.id, "guest")
+
+      stub(Ravix.Fountain, :turns, fn _, "guest" ->
+        {:ok,
+         if(phase,
+           do: [
+             Shapes.turn(%{"id" => "turn", "client_request_id" => receipt.id, "status" => phase})
+           ],
+           else: []
+         )}
+      end)
+
+      Server.tick(f.server)
+      assert status_of(next.id) == :queued
+
+      Repo.get_by!(Item, id: receipt.id)
+      |> Ecto.Changeset.change(delivered_at: DateTime.add(DateTime.utc_now(), -121))
+      |> Repo.update!()
+
+      stub(Ravix.Projects, :prepare_machine, fn _, _ ->
+        assert PromptQueue.Store.get(next.id).error =~ "after two minutes"
+        :ok
+      end)
+
+      Server.tick(f.server)
+      assert status_of(next.id) == :sent
+    end
+
+    receipt = PromptQueue.Store.latest_delivered(guest.id, "guest")
+
+    Repo.get_by!(Item, id: receipt.id)
+    |> Ecto.Changeset.change(delivered_at: DateTime.add(DateTime.utc_now(), -121))
+    |> Repo.update!()
+
+    stub(Ravix.Fountain, :turns, fn _, "guest" ->
+      {:ok,
+       [
+         Shapes.turn(%{
+           "id" => "running",
+           "client_request_id" => receipt.id,
+           "status" => "running"
+         })
+       ]}
+    end)
+
+    {:ok, next} = send_prompt(f.track, f.owner, "wait for running", thread: guest.id)
+    Server.tick(f.server)
+    assert status_of(next.id) == :queued
+  end
+
   test "existing conversations receive preview instructions, and helper failure does not strand a prompt",
        f do
     fountain_hooks(fn -> "idle" end, fn -> :ok end)
@@ -225,7 +397,7 @@ defmodule Ravix.PromptQueueTest do
 
     preview_hook(f.track, fn _row -> Agent.get(helper, & &1) end)
 
-    send_prompt(f.track, f.owner, "Set up a preview")
+    {:ok, _first} = send_prompt(f.track, f.owner, "Set up a preview")
     Server.tick(f.server)
     assert [%{"prompt" => prompt}] = hooked_posts()
     assert String.starts_with?(prompt, "[ravix preview tools for this turn]\n")
@@ -234,6 +406,8 @@ defmodule Ravix.PromptQueueTest do
     Agent.update(helper, fn _ ->
       "[ravix preview tools for this turn]\nThe preview helper could not be prepared this turn.\n[/ravix preview tools]"
     end)
+
+    reject(Ravix.Fountain, :turns, 2)
 
     send_prompt(f.track, f.owner, "Keep working")
     Server.tick(f.server)
@@ -841,7 +1015,7 @@ defmodule Ravix.PromptQueueTest do
       assert Map.has_key?(:sys.get_state(fresh).subscribers, f.server)
     end
 
-    test "a dedicated second thread sends while running and retries capacity refusals", f do
+    test "a dedicated guest thread waits while running and retries capacity refusals", f do
       Repo.update!(
         Ecto.Changeset.change(f.track,
           sandbox_layout: :dedicated,
@@ -851,10 +1025,12 @@ defmodule Ravix.PromptQueueTest do
         )
       )
 
-      second = thread(f.track, "c2")
+      second = thread(f.track, "c2") |> Ecto.Changeset.change(runtime: "codex") |> Repo.update!()
       {:ok, attempt} = Agent.start_link(fn -> 0 end)
 
-      fountain_hooks(fn -> "running" end, fn ->
+      {:ok, status} = Agent.start_link(fn -> "running" end)
+
+      fountain_hooks(fn -> Agent.get(status, & &1) end, fn ->
         if Agent.get_and_update(attempt, &{&1, &1 + 1}) == 0,
           do: {:error, %Error{status: 409, code: "sandbox_at_capacity", kind: :api}},
           else: :ok
@@ -866,6 +1042,9 @@ defmodule Ravix.PromptQueueTest do
       end)
 
       {:ok, %Item{id: id}} = send_prompt(f.track, f.owner, "concurrent", thread: second.id)
+      Server.tick(f.server)
+      refute_received {:posted, "c2", _}
+      Agent.update(status, fn _ -> "idle" end)
       Server.tick(f.server)
       assert_receive {:posted, "c2", _}
       assert status_of(id) == :queued

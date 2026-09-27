@@ -110,9 +110,14 @@ defmodule Ravix.Tracks.AgentFailureTest do
         })
     }
 
-    assert %{reason: reason} = AgentFailure.detect([event], "claude", [])
-    assert reason =~ "Claude Code couldn't reach its model provider"
-    refute reason =~ "OpenAI"
+    for runtime <- ["claude", "claude-code"] do
+      assert %{reason: reason} = AgentFailure.detect([event], runtime, [])
+      assert reason =~ "Claude Code couldn't reach Anthropic"
+      refute reason =~ "OpenAI"
+    end
+
+    assert %{reason: reason} = AgentFailure.detect([event], "acp", [])
+    assert reason =~ "couldn't reach its model provider"
   end
 
   test "approval transport failure is distinct from an ordinary permission request" do

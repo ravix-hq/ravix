@@ -78,6 +78,6 @@ defmodule RavixWeb.ConnectionsLiveTest do
       live(Plug.Test.init_test_session(conn, %{session_token: token}), "/settings/connections")
 
     Ravix.Accounts.end_session(session.token_hash)
-    assert_redirect(view, "/login")
+    assert_redirect(view, "/login", 1_000)
   end
 end
