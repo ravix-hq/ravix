@@ -448,6 +448,41 @@ defmodule Ravix.FountainTest do
   end
 
   describe "create_conversation/2" do
+    test "guest attach sends the other agent and complete identity; provider refusals survive" do
+      body = %{
+        agent_id: "guest",
+        environment_id: "env",
+        vault_id: "vault",
+        sandbox_id: "box",
+        channel_id: "ch",
+        fresh: true
+      }
+
+      client =
+        fake([
+          {%{method: "POST", path: "/api/conversations", body: body},
+           {200, [], %{data: %{id: "guest-thread", sandbox_id: "box", status: "idle"}}}},
+          {%{method: "POST", path: "/api/conversations", body: body},
+           {422, [], %{error: "sandbox_runtime_mismatch"}}},
+          {%{method: "POST", path: "/api/conversations", body: body},
+           {409, [], %{error: "sandbox_at_capacity"}}}
+        ])
+
+      guest =
+        launch(agent_id: "guest", environment_id: "env", vault_id: "vault", sandbox_id: "box")
+
+      assert {:ok, %Conversation{id: "guest-thread", sandbox_id: "box"}} =
+               Fountain.create_conversation(client, guest)
+
+      capture_log(fn ->
+        assert {:error, %Error{code: "sandbox_runtime_mismatch"}} =
+                 Fountain.create_conversation(client, guest)
+
+        assert {:error, error} = Fountain.create_conversation(client, guest)
+        assert Error.busy?(error)
+      end)
+    end
+
     test "provisioning: the whole identity, persistent mode, the opening prompt, fresh" do
       expected = %{
         agent_id: "agent-1",
@@ -856,6 +891,112 @@ defmodule Ravix.FountainTest do
   # ── reading the machine ─────────────────────────────────────────────────
 
   describe "sandboxes" do
+    test "list filters statuses and preserves reconciliation identity without inventing status" do
+      client =
+        fake([
+          {%{method: "GET", path: "/api/sandboxes", query: %{status: "ready,parked"}},
+           {200, [],
+            %{
+              data: [
+                %{
+                  id: "s1",
+                  status: "parked",
+                  agent_id: "home",
+                  environment_id: "env",
+                  vault_id: "track-vault",
+                  user_id: "owner"
+                },
+                %{id: "s2", status: 42}
+              ]
+            }}}
+        ])
+
+      assert {:ok, [first, second]} = Fountain.sandboxes(client, status: ["ready", "parked"])
+
+      assert %Sandbox{
+               id: "s1",
+               status: "parked",
+               agent_id: "home",
+               environment_id: "env",
+               vault_id: "track-vault",
+               user_id: "owner"
+             } = first
+
+      assert second.status == nil
+    end
+
+    test "reset escapes ids, accepts deletion and treats only explicit absence as already gone" do
+      client =
+        fake([
+          {%{method: "DELETE", path: "/api/sandboxes/s%2F1"}, {204, [], ""}},
+          {%{method: "DELETE", path: "/api/sandboxes/s1"},
+           {404, [], %{error: "sandbox_not_found"}}},
+          {%{method: "DELETE", path: "/api/sandboxes/gone"}, {410, [], %{error: "sandbox_gone"}}},
+          {%{method: "DELETE", path: "/api/sandboxes/unsupported"},
+           {404, [], %{error: "not_found"}}}
+        ])
+
+      capture_log(fn ->
+        assert :ok = Fountain.reset_sandbox(client, "s/1")
+        assert :ok = Fountain.reset_sandbox(client, "s1")
+        assert :ok = Fountain.reset_sandbox(client, "gone")
+
+        assert {:error, %Error{status: 404} = error} =
+                 Fountain.reset_sandbox(client, "unsupported")
+
+        refute Error.sandbox_gone?(error)
+      end)
+    end
+
+    test "a reset acknowledgement still needs a status read to confirm completion" do
+      client =
+        fake([
+          {%{method: "DELETE", path: "/api/sandboxes/s1"},
+           {202, [], %{data: %{status: "deleting"}}}},
+          {%{method: "GET", path: "/api/sandboxes/s1"},
+           {200, [], %{data: %{id: "s1", status: "deleting"}}}},
+          {%{method: "GET", path: "/api/sandboxes/s1"}, {404, [], %{error: "sandbox_not_found"}}}
+        ])
+
+      assert :ok = Fountain.reset_sandbox(client, "s1")
+      assert {:ok, %Sandbox{status: "deleting"}} = Fountain.sandbox(client, "s1")
+
+      capture_log(fn ->
+        assert {:error, error} = Fountain.sandbox(client, "s1")
+        assert Error.sandbox_gone?(error)
+      end)
+    end
+
+    test "lost create and reset acknowledgements stay unknown and are never automatically retried" do
+      for response <- [{:error, :timeout}, {408, [], %{}}, {503, [], %{error: "unavailable"}}] do
+        client =
+          fake([
+            {%{method: "POST", path: "/api/conversations"}, response},
+            {%{method: "DELETE", path: "/api/sandboxes/s1"}, response}
+          ])
+
+        capture_log(fn ->
+          assert {:error, create_error} =
+                   Fountain.create_conversation(client, launch(prompt: "open"))
+
+          assert Error.unknown_outcome?(create_error)
+          assert {:error, reset_error} = Fountain.reset_sandbox(client, "s1")
+          assert Error.unknown_outcome?(reset_error)
+        end)
+
+        assert length(FakeTransport.calls(client)) == 2
+      end
+
+      refute Error.unknown_outcome?(%Error{status: 422, code: "sandbox_runtime_mismatch"})
+      refute Error.unknown_outcome?(%Error{status: 409, code: "sandbox_at_capacity"})
+    end
+
+    test "unconfigured sandbox operations never send a request" do
+      client = Client.new("https://fountain.example", nil)
+      assert {:error, {:unconfigured, :fountain}} = Fountain.sandboxes(client)
+      assert {:error, {:unconfigured, :fountain}} = Fountain.reset_sandbox(client, "s1")
+    end
+
     test "sandbox, listing, file and diff" do
       client =
         fake([

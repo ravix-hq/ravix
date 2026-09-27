@@ -61,6 +61,16 @@ defmodule Ravix.Fountain.Error do
   def busy?(%__MODULE__{status: status, code: code}),
     do: status in 400..499 and code in @busy_codes
 
+  @doc "A resource-specific confirmation of absence; a generic route 404 is not proof."
+  @spec sandbox_gone?(t()) :: boolean()
+  def sandbox_gone?(%__MODULE__{status: status, code: code}),
+    do: status in [404, 410] and code in ["sandbox_not_found", "sandbox_gone"]
+
+  @doc "A mutation may have happened: reconcile before retrying or allocating again."
+  @spec unknown_outcome?(t()) :: boolean()
+  def unknown_outcome?(%__MODULE__{status: status} = error),
+    do: unreachable?(error) or status == 408 or status >= 500
+
   @doc "Fountain refused the request outright: a 4xx that is not a capacity problem."
   @spec rejected?(t()) :: boolean()
   def rejected?(%__MODULE__{status: status}), do: status in 400..499
@@ -97,7 +107,7 @@ defmodule Ravix.Fountain.Error do
     %{
       status: 409,
       code: "machine_busy",
-      message: "This machine is already taking a turn. One track at a time. Yours is queued."
+      message: "This runtime is at capacity on the machine. Your prompt is queued."
     }
   end
 

@@ -36,3 +36,13 @@ test('broken shared guides fail', () => {
 test('malformed skills fail', () => {
   expect(fixture(root => replace(root, '.agents/skills/ravix-testing/SKILL.md', 'name: ravix-testing', 'name: unrelated')).join()).toContain('invalid name');
 });
+
+test('the provider mock enforces sandbox lifecycle, identity and runtime capacity', () => {
+  const result = Bun.spawnSync([process.execPath, 'test', '--config', './bunfig.toml', './sandbox.test.ts'], {
+    cwd: new URL('../../mock/', import.meta.url).pathname,
+    stdout: 'pipe', stderr: 'pipe',
+  });
+  const output = result.stdout.toString() + result.stderr.toString();
+  expect(result.exitCode, output).toBe(0);
+  expect(output).toContain('7 pass');
+}, 30000);

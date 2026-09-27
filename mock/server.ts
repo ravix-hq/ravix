@@ -28,7 +28,7 @@ import { generateKeyPairSync } from "node:crypto";
 import { existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { WORKSPACE_ROOT, WORK_ROOT, RECEIPT_PATH, parseChannel } from "../shared/contract";
-import { updateMockPreview } from "./previews";
+let updateMockPreview = (_workdir: string): void => {};
 
 const PORT = Number(process.env.MOCK_PORT || 8793);
 const BASE = `http://localhost:${PORT}`;
@@ -62,9 +62,17 @@ interface Conv {
   inserted_at: string;
   /** The conversation's own model (Fountain ADR 0061); null follows the agent's. */
   model: string | null;
+  turn_generation: number;
 }
 
-interface Box {
+interface Disk {
+  files: Map<string, string>;
+  worktrees: Map<string, { branch: string | null; repoPath: string | null }>;
+}
+
+interface Box extends Disk {
+  user_id: string;
+  guest_agent_id: string | null;
   runtime: string;
   id: string;
   sprite_name: string;
@@ -117,16 +125,8 @@ const state = {
     expires_at: string;
   }[],
   conversations: [] as Conv[],
-  /**
-   * One box per agent, not one per account. Ravix's projects each get
-   * their own agent precisely so they each get their own machine, and a mock
-   * with a single global sandbox would make two projects look like one.
-   */
+  /** Sandboxes are keyed by id; home identity includes the per-track vault. */
   boxes: new Map<string, Box>(),
-  /** The disk, as far as anything here is concerned: absolute path → bytes. */
-  files: new Map<string, string>(),
-  /** What `git worktree list` would say, for the survey turn. */
-  worktrees: new Map<string, { branch: string | null; repoPath: string | null }>(),
   events: new Map<string, Record<string, unknown>[]>(),
   /**
    * The turn records, which are a second list beside the log and not a view of
@@ -135,10 +135,8 @@ const state = {
    * handler below reads it from here to do the same.
    */
   turns: new Map<string, Record<string, unknown>[]>(),
-  /** sandbox id → the conversation currently holding it. One turn per box. */
-  busy: new Map<string, string>(),
-  /** conversation id → its own queue, so a second prompt to it waits its turn. */
-  queues: new Map<string, Promise<void>>(),
+  /** Synchronously reserved turns, partitioned by sandbox and runtime. */
+  busy: new Map<string, Set<string>>(),
 };
 
 // ── the stream ─────────────────────────────────────────────────────────
@@ -212,12 +210,10 @@ function sse(conversationId: string): Response {
  * A repository, as Fountain leaves it after cloning an environment's
  * `repositories` into `/workspace/<name>`.
  *
- * Seeded when the environment is created rather than when a box is built,
- * because that is the moment ravix names the mount path and it is the
- * only moment the mock is told about it. An empty `/workspace` made the Files
- * panel look broken when it was merely accurate.
+ * Each newly provisioned sandbox gets its own copy from the environment.
+ * Reusing a home identity preserves that disk; a different vault does not.
  */
-function seedClone(root: string): void {
+function seedClone(disk: Disk, root: string): void {
   const name = root.split("/").pop() ?? "repo";
   const files: [string, string][] = [
     ["README.md", `# ${name}\n\nA service that does one thing. This tree is the mock's, not yours.\n\n    bun install\n    bun test\n`],
@@ -231,25 +227,25 @@ function seedClone(root: string): void {
     // that finds nothing to fix is a chip that makes the machine look broken.
     ["src/lib/window.ts", "// TODO: rounding here is wrong across a DST boundary — it assumes every\n// day is 86400 seconds, which costs an hour twice a year.\nexport function dayOf(ts: number): number {\n  return Math.floor(ts / 86_400);\n}\n"],
   ];
-  for (const [rel, body] of files) state.files.set(`${root}/${rel}`, body);
+  for (const [rel, body] of files) disk.files.set(`${root}/${rel}`, body);
 }
 
 /** Copy a directory, the way `git worktree add` populates a fresh checkout. */
-function copyTree(from: string, to: string): number {
+function copyTree(disk: Disk, from: string, to: string): number {
   let count = 0;
-  for (const [path, body] of [...state.files]) {
+  for (const [path, body] of [...disk.files]) {
     if (!path.startsWith(`${from}/`)) continue;
-    state.files.set(`${to}/${path.slice(from.length + 1)}`, body);
+    disk.files.set(`${to}/${path.slice(from.length + 1)}`, body);
     count++;
   }
   return count;
 }
 
-function removeTree(dir: string): number {
+function removeTree(disk: Disk, dir: string): number {
   let count = 0;
-  for (const path of [...state.files.keys()]) {
+  for (const path of [...disk.files.keys()]) {
     if (path === dir || path.startsWith(`${dir}/`)) {
-      state.files.delete(path);
+      disk.files.delete(path);
       count++;
     }
   }
@@ -330,16 +326,23 @@ const toolDone = (id: string, out: string) =>
 type PromptImage = { data: string; media_type: string };
 
 async function runTurn(conv: Conv, prompt: string, clientRequestId: string | null, images: PromptImage[]): Promise<void> {
+  const generation = conv.turn_generation;
+  const disk = state.boxes.get(conv.sandbox_id!);
+  if (!disk) return;
+  const alive = () => conv.turn_generation === generation && state.boxes.has(disk.id);
+  const pause = async (ms: number) => {
+    await sleep(ms);
+    if (!alive()) throw cancelledTurn;
+  };
   const turn = `turn-${state.turnSeq++}`;
-  const emit = (ev: Record<string, unknown>) => push(conv.id, { turn_id: turn, ...ev });
+  const emit = (ev: Record<string, unknown>) => { if (alive()) push(conv.id, { turn_id: turn, ...ev }); };
   const say = async (body: string) => {
     for (const chunk of body.match(/[\s\S]{1,48}/g) ?? []) {
       emit({ kind: "output", stream: "acp", data: text(chunk) });
-      await sleep(40);
+      await pause(40);
     }
   };
 
-  if (conv.sandbox_id) state.busy.set(conv.sandbox_id, conv.id);
   conv.status = "running";
   conv.turn_count += 1;
   conv.last_active_at = now();
@@ -362,17 +365,20 @@ async function runTurn(conv: Conv, prompt: string, clientRequestId: string | nul
   state.turns.set(conv.id, [...(state.turns.get(conv.id) ?? []), record]);
 
   emit({ kind: "stage", stage: "turn", state: "started" });
-  await sleep(250);
-
   try {
-    await act(prompt, emit, say, conv);
+    await pause(250);
+    await act(prompt, emit, say, conv, disk, pause);
+    await pause(150);
+  } catch (error) {
+    if (error !== cancelledTurn) throw error;
   } finally {
-    await sleep(150);
-    conv.status = "idle";
-    conv.last_active_at = now();
-    record.status = "completed";
-    emit({ kind: "stage", stage: "turn", state: "completed" });
-    if (conv.sandbox_id && state.busy.get(conv.sandbox_id) === conv.id) state.busy.delete(conv.sandbox_id);
+    if (alive()) {
+      conv.status = "idle";
+      conv.last_active_at = now();
+      record.status = "completed";
+      emit({ kind: "stage", stage: "turn", state: "completed" });
+      releaseTurn(conv);
+    }
   }
 }
 
@@ -389,7 +395,7 @@ type Say = (body: string) => Promise<void>;
  * closing one really does take it away, which is how a stale panel would show
  * up in development instead of in production.
  */
-async function act(prompt: string, emit: Emit, say: Say, conv: Conv): Promise<void> {
+async function act(prompt: string, emit: Emit, say: Say, conv: Conv, disk: Disk, pause: (ms: number) => Promise<void>): Promise<void> {
   const dir = /\/home\/sprite\/work\/[A-Za-z0-9._-]+/.exec(prompt)?.[0] ?? null;
 
   if (prompt.startsWith("[ravix] Open this track") && dir) {
@@ -398,12 +404,12 @@ async function act(prompt: string, emit: Emit, say: Say, conv: Conv): Promise<vo
 
     if (repoPath) {
       emit({ kind: "output", stream: "acp", data: tool("t1", `cd ${repoPath} && git fetch origin --prune`) });
-      await sleep(300);
+      await pause(300);
       emit({ kind: "output", stream: "acp", data: toolDone("t1", "From github.com:mockuser/repo\n * [new branch]  main -> origin/main") });
       emit({ kind: "output", stream: "acp", data: tool("t2", `git worktree add ${dir}${branch ? ` -b ${branch}` : ""}`) });
-      await sleep(400);
-      const copied = copyTree(repoPath, dir);
-      state.files.set(`${dir}/.git`, `gitdir: ${repoPath}/.git/worktrees/${dir.split("/").at(-1)}\n`);
+      await pause(400);
+      const copied = copyTree(disk, repoPath, dir);
+      disk.files.set(`${dir}/.git`, `gitdir: ${repoPath}/.git/worktrees/${dir.split("/").at(-1)}\n`);
       emit({
         kind: "output",
         stream: "acp",
@@ -411,11 +417,11 @@ async function act(prompt: string, emit: Emit, say: Say, conv: Conv): Promise<vo
       });
     } else {
       emit({ kind: "output", stream: "acp", data: tool("t1", `mkdir -p ${dir}`) });
-      await sleep(300);
+      await pause(300);
       emit({ kind: "output", stream: "acp", data: toolDone("t1", "") });
-      state.files.set(`${dir}/.keep`, "");
+      disk.files.set(`${dir}/.keep`, "");
     }
-    state.worktrees.set(dir, { branch, repoPath });
+    disk.worktrees.set(dir, { branch, repoPath });
     // One line, exactly as the contract asks: the app parses nothing out of it,
     // but a person reads it as the machine's receipt for the directory.
     await say(branch ? `${dir} on ${branch}` : dir);
@@ -423,15 +429,15 @@ async function act(prompt: string, emit: Emit, say: Say, conv: Conv): Promise<vo
   }
 
   if (prompt.startsWith("[ravix] Close this track") && dir) {
-    const removed = removeTree(dir);
+    const removed = removeTree(disk, dir);
     // A track on a bare machine is a plain directory rather than a worktree,
     // and the prompt asks for `rm -rf` accordingly. Echoing `git worktree
     // remove` at it would put a command in the transcript that was never sent.
     const worktree = prompt.includes("git worktree remove");
     emit({ kind: "output", stream: "acp", data: tool("t1", worktree ? `git worktree remove ${dir}` : `rm -rf ${dir}`) });
-    await sleep(300);
+    await pause(300);
     emit({ kind: "output", stream: "acp", data: toolDone("t1", "") });
-    state.worktrees.delete(dir);
+    disk.worktrees.delete(dir);
     await say(
       worktree
         ? `Removed ${dir} (${removed} files) and pruned the worktree record. The branch is untouched.`
@@ -441,12 +447,12 @@ async function act(prompt: string, emit: Emit, say: Say, conv: Conv): Promise<vo
   }
 
   if (prompt.startsWith("[ravix] Report what is on this machine")) {
-    const worktrees = [...state.worktrees].map(([path, w]) => ({ path, branch: w.branch, dirty: false }));
-    const repos = [...new Set([...state.worktrees.values()].map((w) => w.repoPath).filter((p): p is string => !!p))];
+    const worktrees = [...disk.worktrees].map(([path, w]) => ({ path, branch: w.branch, dirty: false }));
+    const repos = [...new Set([...disk.worktrees.values()].map((w) => w.repoPath).filter((p): p is string => !!p))];
     emit({ kind: "output", stream: "acp", data: tool("t1", `ls -1 ${WORKSPACE_ROOT} && git worktree list`) });
-    await sleep(300);
+    await pause(300);
     emit({ kind: "output", stream: "acp", data: toolDone("t1", worktrees.map((w) => `${w.path}  ${w.branch ?? "(detached)"}`).join("\n")) });
-    state.files.set(RECEIPT_PATH, JSON.stringify({ surveyed_at: now(), repos, worktrees }, null, 2));
+    disk.files.set(RECEIPT_PATH, JSON.stringify({ surveyed_at: now(), repos, worktrees }, null, 2));
     await say(worktrees.map((w) => `${w.path} ${w.branch ?? "(no branch)"}`).join("\n") || "No worktrees on this machine.");
     return;
   }
@@ -456,17 +462,17 @@ async function act(prompt: string, emit: Emit, say: Say, conv: Conv): Promise<vo
   // prompt spends its whole length on and a fake that wandered elsewhere would
   // be modelling the failure rather than the behaviour.
   const slug = parseChannel(conv.channel_id)?.trackSlug;
-  const home = slug && state.worktrees.has(`${WORK_ROOT}/${slug}`) ? `${WORK_ROOT}/${slug}` : [...state.worktrees.keys()].find((d) => hasFilesUnder(d)) ?? WORK_ROOT;
+  const home = slug && disk.worktrees.has(`${WORK_ROOT}/${slug}`) ? `${WORK_ROOT}/${slug}` : [...disk.worktrees.keys()].find((d) => hasFilesUnder(disk, d)) ?? WORK_ROOT;
   updateMockPreview(home);
   // A checklist, as ACP reports one: the whole list every time, never a diff.
   emit({ kind: "output", stream: "acp", data: plan([["Look for open TODOs", "in_progress"], ["Say what is worth fixing", "pending"]]) });
   emit({ kind: "output", stream: "acp", data: thought("Start with whatever the code already admits is unfinished.") });
   emit({ kind: "output", stream: "acp", data: tool("x1", `rg -n "TODO|FIXME"`, home) });
-  await sleep(400);
+  await pause(400);
   emit({ kind: "output", stream: "acp", data: toolDone("x1", "src/lib/window.ts:1:// TODO: rounding here is wrong across a DST boundary") });
   emit({ kind: "output", stream: "acp", data: thought("One hit. Read it before judging it.") });
   emit({ kind: "output", stream: "acp", data: tool("x2", "sed -n 1,20p src/lib/window.ts", home) });
-  await sleep(300);
+  await pause(300);
   emit({ kind: "output", stream: "acp", data: toolDone("x2", "// TODO: rounding here is wrong across a DST boundary\nexport const dayOf = (ms: number) => Math.floor(ms / 86400000);") });
   emit({ kind: "output", stream: "acp", data: plan([["Look for open TODOs", "completed"], ["Say what is worth fixing", "in_progress"]]) });
   await say(
@@ -475,29 +481,53 @@ async function act(prompt: string, emit: Emit, say: Say, conv: Conv): Promise<vo
   );
 }
 
-function hasFilesUnder(dir: string): boolean {
-  for (const path of state.files.keys()) if (path.startsWith(`${dir}/`)) return true;
+function hasFilesUnder(disk: Disk, dir: string): boolean {
+  for (const path of disk.files.keys()) if (path.startsWith(`${dir}/`)) return true;
   return false;
 }
 
-/**
- * Accept a prompt, or refuse it the way Fountain does.
- *
- * The box runs one turn at a time across every conversation on it, and that is
- * not an implementation detail ravix can paper over — it is the fact the
- * whole "one machine, several tracks" design is built around. A second track
- * prompted mid-turn gets 409 `sandbox_at_capacity`; a second prompt to the
- * *same* track queues behind its own turn, which is what a person typing twice
- * in a row expects.
- */
+const cancelledTurn = Symbol("cancelled turn");
+const capacityKey = (conv: Conv) => `${conv.sandbox_id}:${conv.runtime}`;
+
+function releaseTurn(conv: Conv): void {
+  const key = capacityKey(conv);
+  const holders = state.busy.get(key);
+  holders?.delete(conv.id);
+  if (holders?.size === 0) state.busy.delete(key);
+}
+
+function endTurn(conv: Conv, status: string): void {
+  conv.turn_generation++;
+  conv.status = status;
+  releaseTurn(conv);
+  for (const turn of state.turns.get(conv.id) ?? []) {
+    if (turn.status === "running") turn.status = "interrupted";
+  }
+}
+
+function deleteBox(box: Box): void {
+  for (const conv of state.conversations) {
+    if (conv.sandbox_id === box.id) endTurn(conv, "terminated");
+  }
+  state.boxes.delete(box.id);
+}
+
+/** No provider queue: reserve capacity before scheduling any async work. */
 function accept(conv: Conv, prompt: string, clientRequestId: string | null = null, images: PromptImage[] = []): { error: string } | null {
-  const holder = conv.sandbox_id ? state.busy.get(conv.sandbox_id) : undefined;
-  if (holder && holder !== conv.id) return { error: "sandbox_at_capacity" };
-  const tail = state.queues.get(conv.id) ?? Promise.resolve();
-  const next = tail.then(() => runTurn(conv, prompt, clientRequestId, images)).catch((err: unknown) => {
-    console.error("mock: turn blew up:", err);
+  if (conv.status === "terminated") return { error: "conversation_terminated" };
+  if (!state.boxes.has(conv.sandbox_id!)) return { error: "sandbox_not_found" };
+  const key = capacityKey(conv);
+  const holders = state.busy.get(key) ?? new Set<string>();
+  if (holders.has(conv.id)) return { error: "conversation_busy" };
+  const limit = Math.max(1, Number(process.env.MOCK_RUNTIME_CAPACITY || 1));
+  if (holders.size >= limit) return { error: "sandbox_at_capacity" };
+  holders.add(conv.id);
+  state.busy.set(key, holders);
+  conv.status = "running";
+  void runTurn(conv, prompt, clientRequestId, images).catch(() => {
+    if (conv.status !== "terminated") endTurn(conv, "failed");
+    console.error("mock: turn failed");
   });
-  state.queues.set(conv.id, next);
   return null;
 }
 
@@ -522,7 +552,7 @@ function secretsFor(parent: string, id: string): Map<string, string> {
 
 // ── Fountain ───────────────────────────────────────────────────────────
 
-async function fountain(req: Request, url: URL): Promise<Response | null> {
+export async function fountain(req: Request, url: URL): Promise<Response | null> {
   const p = url.pathname;
   const method = req.method;
   // The bearer token is read and ignored on purpose: ravix holds exactly
@@ -740,13 +770,6 @@ async function fountain(req: Request, url: URL): Promise<Response | null> {
       if (method === "POST") {
         const record = { id: `${collection[0]}${list.length + 1}-${Math.random().toString(36).slice(2, 8)}`, ...body };
         list.push(record);
-        // The clone lands on disk when the environment names it, which is the
-        // only moment this mock is told a mount path at all.
-        if (collection === "environments") {
-          for (const repo of (body.repositories as { mount_path?: string }[] | undefined) ?? []) {
-            if (repo.mount_path) seedClone(repo.mount_path);
-          }
-        }
         return json({ data: record });
       }
     }
@@ -761,7 +784,17 @@ async function fountain(req: Request, url: URL): Promise<Response | null> {
         // Retiring the agent is what costs the disk — the identity moved, so
         // the box built for it is gone. Reproducing that is the point of
         // "rebuild" having a confirmation dialog in front of it.
-        if (collection === "agents") state.boxes.delete(id);
+        if (collection === "agents") {
+          for (const box of state.boxes.values()) {
+            if (box.agent_id === id) deleteBox(box);
+            else if (box.guest_agent_id === id) {
+              for (const conv of state.conversations) {
+                if (conv.agent_id === id && conv.sandbox_id === box.id) endTurn(conv, "terminated");
+              }
+              box.guest_agent_id = null;
+            }
+          }
+        }
         return new Response(null, { status: 204 });
       }
       if (method === "PUT") Object.assign(record, body);
@@ -809,43 +842,46 @@ async function fountain(req: Request, url: URL): Promise<Response | null> {
     const agentId = b.agent_id;
     if (!agentId) return json({ error: "validation_failed", errors: { agent_id: ["can't be blank"] } }, 422);
 
-    const agent = state.agents.find((a) => a.id === agentId) as { runtime?: string } | undefined;
-    const runtime = agent?.runtime ?? "claude";
-    let box = state.boxes.get(agentId);
+    const agent = state.agents.find((a) => a.id === agentId);
+    if (!agent) return json({ error: "agent_not_found" }, 404);
+    const runtime = String(agent.runtime ?? "claude");
+    const userId = String(agent.user_id ?? "mock-user");
+    const environmentId = b.environment_id ?? null;
+    const vaultId = b.vault_id ?? null;
+    let box: Box | undefined;
     if (b.sandbox_id) {
-      // The rule that costs the most to get wrong, so the fake enforces it.
-      // A disk is built for (agent, environment, vault) *by id*, and naming
-      // only some of them asks for a different identity — one with no
-      // environment and no vault. Fountain answers 422; ravix's bug was
-      // that nothing local ever did, so the attach silently built a second
-      // machine and the first one's worktrees vanished from the UI.
-      if (!box || box.id !== b.sandbox_id) return json({ error: "sandbox_not_found" }, 404);
-      const wanted = { environment_id: b.environment_id ?? null, vault_id: b.vault_id ?? null };
-      if ((box.environment_id ?? null) !== wanted.environment_id || (box.vault_id ?? null) !== wanted.vault_id) {
-        return json(
-          { error: "sandbox_identity_mismatch", message: "That machine was built for a different agent, environment or vault." },
-          422,
-        );
+      box = state.boxes.get(b.sandbox_id);
+      if (!box) return json({ error: "sandbox_not_found" }, 404);
+      if (box.user_id !== userId || box.environment_id !== environmentId || box.vault_id !== vaultId) {
+        return json({ error: "sandbox_identity_mismatch" }, 422);
       }
-      // Fountain Machines.Binding.attachable/5 refuses the old disk after
-      // an agent runtime edit. A PUT alone does not make a switch work.
-      if (box.runtime !== runtime) {
-        return json({ error: "sandbox_runtime_mismatch" }, 422);
+      if (box.agent_id === agentId) {
+        if (box.runtime !== runtime) return json({ error: "sandbox_runtime_mismatch" }, 422);
+      } else {
+        if (box.runtime === runtime || (box.guest_agent_id && box.guest_agent_id !== agentId)) {
+          return json({ error: "sandbox_runtime_mismatch" }, 422);
+        }
       }
-    } else if (!box) {
-      box = {
-        runtime,
-        id: `sb-${agentId}`,
-        sprite_name: `ravix-${Math.random().toString(36).slice(2, 8)}`,
-        status: "ready",
-        provider: "mock",
-        mode: "persistent",
-        agent_id: agentId,
-        environment_id: b.environment_id ?? null,
-        vault_id: b.vault_id ?? null,
-        url: null,
-      };
-      state.boxes.set(agentId, box);
+    } else {
+      box = [...state.boxes.values()].find((box) => box.agent_id === agentId &&
+        box.user_id === userId && box.environment_id === environmentId && box.vault_id === vaultId);
+      if (box && box.runtime !== runtime) return json({ error: "sandbox_runtime_mismatch" }, 422);
+      if (!box) {
+        if (!b.prompt?.trim()) return json({ error: "initial_prompt_required" }, 422);
+        box = {
+          runtime, user_id: userId, guest_agent_id: null,
+          id: `sb-${crypto.randomUUID()}`,
+          sprite_name: `ravix-${Math.random().toString(36).slice(2, 8)}`,
+          status: "ready", provider: "mock", mode: "persistent",
+          agent_id: agentId, environment_id: environmentId, vault_id: vaultId, url: null,
+          files: new Map(), worktrees: new Map(),
+        };
+        const environment = state.environments.find((env) => env.id === environmentId);
+        for (const repo of (environment?.repositories as {mount_path?: string}[] | undefined) ?? []) {
+          if (repo.mount_path) seedClone(box, repo.mount_path);
+        }
+        state.boxes.set(box.id, box);
+      }
     }
 
     const conv: Conv = {
@@ -855,23 +891,26 @@ async function fountain(req: Request, url: URL): Promise<Response | null> {
       agent_id: agentId,
       vault_id: b.vault_id ?? null,
       environment_id: b.environment_id ?? null,
-      runtime: agent?.runtime ?? "claude",
-      status: "pending",
+      runtime,
+      turn_generation: 0,
+      status: "idle",
       channel_id: b.channel_id ?? null,
       turn_count: 0,
       last_active_at: null,
       inserted_at: now(),
       model: typeof b.model === "string" ? b.model : null,
     };
-    state.conversations.push(conv);
     // A prompt sent with the launch is the first turn. Ravix sends the
     // opening turn this way on the launch that *provisions* the box and
     // separately on an attach, so a mock that ignored it would leave every
     // brand-new project's first track sitting in `opening` forever.
     const first = typeof b.prompt === "string" ? b.prompt : "";
-    if (first.trim() && accept(conv, first)) {
-      console.warn(`mock: the launch prompt for ${conv.id} arrived while ${box!.id} was mid-turn and was dropped`);
+    if (first.trim()) {
+      const refusal = accept(conv, first);
+      if (refusal) return json(refusal, 409);
     }
+    if (box.agent_id !== agentId) box.guest_agent_id = agentId;
+    state.conversations.push(conv);
     return json({ data: withBox(conv) });
   }
 
@@ -945,11 +984,10 @@ async function fountain(req: Request, url: URL): Promise<Response | null> {
   }
 
   const convAction = /^\/api\/conversations\/([^/]+)\/(interrupt|terminate)$/.exec(p);
-  if (convAction) {
+  if (convAction && method === "POST") {
     const conv = state.conversations.find((c) => c.id === convAction[1]);
     if (conv) {
-      conv.status = convAction[2] === "terminate" ? "terminated" : "idle";
-      if (conv.sandbox_id && state.busy.get(conv.sandbox_id) === conv.id) state.busy.delete(conv.sandbox_id);
+      endTurn(conv, convAction[2] === "terminate" ? "terminated" : "idle");
     }
     return json({ status: "ok" });
   }
@@ -960,13 +998,26 @@ async function fountain(req: Request, url: URL): Promise<Response | null> {
     return conv ? json({ data: withBox(conv) }) : json({ error: "not_found" }, 404);
   }
 
+  if (p === "/api/sandboxes") {
+    if (method !== "GET") return json({ error: "method_not_allowed" }, 405);
+    const statuses = url.searchParams.get("status")?.split(",");
+    return json({ data: [...state.boxes.values()].filter(box => !statuses || statuses.includes(box.status)).map(publicBox) });
+  }
+
+  const boxPath = /^\/api\/sandboxes\/([^/]+)(?:\/.*)?$/.exec(p);
+  const disk = boxPath ? state.boxes.get(decodeURIComponent(boxPath[1]!)) : undefined;
+  if (boxPath && !disk) return json({ error: "sandbox_not_found" }, 404);
+  if (boxPath && p !== `/api/sandboxes/${boxPath[1]}` && method !== "GET") {
+    return json({ error: "method_not_allowed" }, 405);
+  }
+
   // ── the box, read-only ───────────────────────────────────────────────
 
   const sbFiles = /^\/api\/sandboxes\/([^/]+)\/files$/.exec(p);
-  if (sbFiles) {
+  if (sbFiles && disk) {
     const dir = (url.searchParams.get("path") ?? "/").replace(/\/+$/, "");
     const seen = new Map<string, { name: string; type: string; size: number | null }>();
-    for (const [path, content] of state.files) {
+    for (const [path, content] of disk.files) {
       if (!path.startsWith(`${dir}/`)) continue;
       const rest = path.slice(dir.length + 1);
       const slash = rest.indexOf("/");
@@ -980,17 +1031,17 @@ async function fountain(req: Request, url: URL): Promise<Response | null> {
   }
 
   const sbFile = /^\/api\/sandboxes\/([^/]+)\/file$/.exec(p);
-  if (sbFile) {
+  if (sbFile && disk) {
     const path = url.searchParams.get("path") ?? "";
-    const content = state.files.get(path);
+    const content = disk.files.get(path);
     if (content === undefined) return json({ error: "not_found" }, 404);
     return json({ data: { path, size: content.length, truncated: false, encoding: "utf8", content } });
   }
 
   const sbDiff = /^\/api\/sandboxes\/([^/]+)\/diff$/.exec(p);
-  if (sbDiff) {
+  if (sbDiff && disk) {
     const path = url.searchParams.get("path") ?? "";
-    const worktree = state.worktrees.get(path);
+    const worktree = disk.worktrees.get(path);
     return json({
       data: {
         path,
@@ -1007,15 +1058,26 @@ async function fountain(req: Request, url: URL): Promise<Response | null> {
   }
 
   const sbOne = /^\/api\/sandboxes\/([^/]+)$/.exec(p);
-  if (sbOne) {
-    const box = [...state.boxes.values()].find((b) => b.id === sbOne[1]);
-    return box ? json({ data: box }) : json({ error: "not_found" }, 404);
+  if (sbOne && disk) {
+    if (method === "DELETE") {
+      deleteBox(disk);
+      return new Response(null, { status: 204 });
+    }
+    if (method === "GET") return json({ data: publicBox(disk) });
+    return json({ error: "method_not_allowed" }, 405);
   }
 
   return null;
 }
 
-const withBox = (c: Conv) => ({ ...c, sandbox: c.sandbox_id ? (state.boxes.get(c.agent_id) ?? null) : null });
+function publicBox(box: Box) {
+  const { files: _files, worktrees: _worktrees, ...record } = box;
+  return record;
+}
+const withBox = (c: Conv) => {
+  const box = c.sandbox_id ? state.boxes.get(c.sandbox_id) : null;
+  return { ...c, sandbox: box ? publicBox(box) : null };
+};
 
 // ── GitHub, as fixtures ────────────────────────────────────────────────
 
@@ -1348,6 +1410,8 @@ function githubWeb(req: Request, url: URL, webBody: Record<string, unknown> = {}
 
 // ── the port ───────────────────────────────────────────────────────────
 
+if (import.meta.main) {
+({ updateMockPreview } = await import("./previews"));
 Bun.serve({
   port: PORT,
   // A track's transcript stream stays open as long as its tab is; the default
@@ -1437,3 +1501,5 @@ console.log(
     "",
   ].join("\n"),
 );
+
+}

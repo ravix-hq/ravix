@@ -341,7 +341,7 @@ defmodule Ravix.Fountain do
   end
 
   @doc """
-  Open a conversation on a project's machine.
+  Open a conversation on a sandbox.
 
   The whole identity goes on every attach, not half of it. A disk is built for
   `(agent, environment, vault)`, and naming only the agent asks for a
@@ -349,6 +349,13 @@ defmodule Ravix.Fountain do
   refuses as `sandbox_identity_mismatch`. This is the single most expensive
   thing to get wrong in the app: it does not fail loudly, it hands you a
   second machine.
+
+  An other-runtime project agent may attach as a guest with `sandbox_id` and
+  the same user, environment and vault. Another agent of the home's runtime is
+  refused; many conversations of the home agent are allowed. The provider
+  enforces this rule, not a client-side guess from cached runtime metadata.
+  A failed create with `Error.unknown_outcome?/1` must be reconciled before
+  retrying: `fresh: true` does not make allocation idempotent.
 
   `Ravix.Fountain.Launch` names all seven fields and enforces every one of
   them, including the ones that are optional *on the wire*: the identity
@@ -575,6 +582,45 @@ defmodule Ravix.Fountain do
   def sandbox(client, id) do
     with {:ok, raw} <- data(client, "GET", "/api/sandboxes/#{escape(id)}") do
       {:ok, Shapes.sandbox(raw)}
+    end
+  end
+
+  @doc """
+  `GET /api/sandboxes`, optionally filtered by provider status strings.
+
+  Identity fields let lifecycle callers reconcile an uncertain create against
+  their persisted intent. Listing is evidence, not an allocation idempotency key.
+  """
+  @spec sandboxes(Client.t(), keyword()) :: result([Shapes.Sandbox.t()])
+  def sandboxes(client, opts \\ []) do
+    status = opts[:status]
+    status = if is_list(status), do: Enum.join(status, ","), else: status
+
+    with {:ok, raw} <- list(client, "/api/sandboxes", query: [status: status]) do
+      {:ok, Enum.map(raw, &Shapes.sandbox/1)}
+    end
+  end
+
+  @doc """
+  `DELETE /api/sandboxes/:id`, the SDK's `reset_sandbox/2` endpoint.
+
+  `:ok` means the request succeeded or Fountain explicitly said this sandbox
+  is already gone. Confirm completion with `sandbox/2` before provisioning a
+  replacement; an accepted request is not proof that deletion has completed.
+  A generic 404 may mean the endpoint is unsupported and is not success.
+
+  Connection errors, timeouts and 5xx have unknown outcomes. No mutation is
+  automatically retried here. Callers persist intent and reconcile status;
+  `Error.unknown_outcome?/1` identifies errors needing that treatment.
+  """
+  @spec reset_sandbox(Client.t(), id()) :: outcome()
+  def reset_sandbox(client, id) do
+    case void(client, "DELETE", "/api/sandboxes/#{escape(id)}") do
+      {:error, %Error{} = error} = failure ->
+        if Error.sandbox_gone?(error), do: :ok, else: failure
+
+      result ->
+        result
     end
   end
 
