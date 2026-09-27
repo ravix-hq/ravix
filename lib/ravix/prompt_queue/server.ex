@@ -416,10 +416,18 @@ defmodule Ravix.PromptQueue.Server do
   # may send: what to send it to, without a second read of either.
   defp deliver_queued(client, row, track, project, server) do
     case readiness(client, track, project, row) do
-      :ready -> claim_and_send(client, row, track, project, server)
-      :busy -> :waiting
-      {:ended, message} -> Store.set_status(row.id, :failed, message)
-      :unavailable -> hold(row)
+      :ready ->
+        claim_and_send(client, row, track, project, server)
+
+      :busy ->
+        Store.annotate(row.id, :queued, "Waiting for the current turn to finish")
+        :waiting
+
+      {:ended, message} ->
+        Store.set_status(row.id, :failed, message)
+
+      :unavailable ->
+        hold(row)
     end
   end
 
@@ -622,10 +630,17 @@ defmodule Ravix.PromptQueue.Server do
   # refusal needs a person; anything else may or may not have arrived.
   defp settle({:error, %Error{} = error}, row, _track, _project) do
     cond do
-      Error.credential?(error) -> Store.set_status(row.id, :failed, Error.credential_message())
-      Error.busy?(error) -> Store.set_status(row.id, :queued)
-      Error.rejected?(error) -> Store.set_status(row.id, :failed, @refused)
-      true -> Store.set_status(row.id, :unconfirmed, @unconfirmed)
+      Error.credential?(error) ->
+        Store.set_status(row.id, :failed, Error.credential_message())
+
+      Error.busy?(error) ->
+        Store.set_status(row.id, :queued, "The agent is at capacity; will retry")
+
+      Error.rejected?(error) ->
+        Store.set_status(row.id, :failed, @refused)
+
+      true ->
+        Store.set_status(row.id, :unconfirmed, @unconfirmed)
     end
   end
 

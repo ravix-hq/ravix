@@ -51,6 +51,7 @@ defmodule RavixWeb.TrackLive do
   alias Ravix.GitHub.ChecksReport
   alias Ravix.{Hub, Previews, PromptQueue, Tracks}
   alias Ravix.Hub.Event
+  alias Ravix.PromptQueue.Recovery
   alias Ravix.Tracks.{Diff, Files, Follower}
   alias Ravix.Tracks.Transcript
   alias Ravix.Tracks.Transcript.Block, as: TranscriptBlock
@@ -830,23 +831,15 @@ defmodule RavixWeb.TrackLive do
         request_id: Ecto.UUID.generate()
       })
 
-    case response do
-      {:error, %Ravix.Fountain.Error{} = reason} ->
-        if Ravix.Fountain.Error.credential?(reason),
-          do: {:noreply, assign(socket, agent_refused: true)},
-          else: {:noreply, error(socket, reason)}
+    {:noreply,
+     result(socket, response, fn s, _ ->
+       Tracks.mark_read(s.assigns.current_user, s.assigns.track_id, s.assigns.thread_id)
 
-      _ ->
-        {:noreply,
-         result(socket, response, fn s, _ ->
-           Tracks.mark_read(s.assigns.current_user, s.assigns.track_id, s.assigns.thread_id)
-
-           s
-           |> assign(attached_images: [], agent_refused: false)
-           |> push_event("composer:clear", %{})
-           |> refresh_queue()
-         end)}
-    end
+       s
+       |> assign(attached_images: [], agent_refused: false)
+       |> push_event("composer:clear", %{})
+       |> refresh_queue()
+     end)}
   end
 
   # Tell the page hosting this one where it is, so that choosing another track
@@ -1636,6 +1629,11 @@ defmodule RavixWeb.TrackLive do
 
   defp update_panel(socket, fun), do: assign(socket, panel: fun.(socket.assigns.panel))
 
+  defp queue_label(:queued), do: "Waiting"
+  defp queue_label(:sending), do: "Sending…"
+  defp queue_label(:failed), do: "Needs attention"
+  defp queue_label(:unconfirmed), do: "Not confirmed"
+
   defp queued(socket, call, id) do
     response = call.(socket.assigns.current_user, socket.assigns.track_id, id)
     result(socket, response, fn s, _ -> refresh_queue(s) end)
@@ -2072,7 +2070,7 @@ defmodule RavixWeb.TrackLive do
   defp block(%{block: %TranscriptBlock.System{}} = assigns) do
     ~H"""
     <div class="workspace-system-card" role="status">
-      <strong>Agent session restarted</strong>
+      <strong>Session restarted</strong>
       <p>{@block.body}</p>
     </div>
     """
@@ -2140,13 +2138,15 @@ defmodule RavixWeb.TrackLive do
   attr :turn_id, :string, required: true
 
   defp prompt_message(assigns) do
-    prompt = Ravix.Previews.Agent.visible_prompt(assigns.prompt)
+    {prompt, restored?} = Recovery.visible_prompt(assigns.prompt)
+    prompt = Ravix.Previews.Agent.visible_prompt(prompt)
     {speaker, body} = prompt_author(prompt)
-    assigns = assign(assigns, speaker: speaker, body: body)
+    assigns = assign(assigns, speaker: speaker, body: body, restored?: restored?)
 
     ~H"""
     <div class="said">
       <span class="speaker">{@speaker}</span>
+      <span :if={@restored?} class="chip">Context restored</span>
       <div :if={@body != ""} class="workspace-prompt">{@body}</div>
       <div :if={@image_count > 0} class="prompt-images" role="group" aria-label="Attached images">
         <a

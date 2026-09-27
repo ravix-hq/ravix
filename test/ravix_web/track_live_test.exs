@@ -92,22 +92,6 @@ defmodule RavixWeb.TrackLiveTest do
     assert has_element?(ctx.parent, "#agent-claude[aria-pressed=true]")
   end
 
-  for code <- ~w(chatgpt_grant_unusable inference_credential_unusable) do
-    @code code
-    test "turn refusal #{@code} uses the funding banner", ctx do
-      expect(Tracks, :prompt, fn _, _, _ ->
-        {:error,
-         %Ravix.Fountain.Error{status: 409, code: @code, message: "private provider detail"}}
-      end)
-
-      ctx.view |> form("#composer-form", text: "preserve my draft") |> render_submit()
-      settle(ctx.view)
-      assert has_element?(ctx.view, "#track-agent-health-banner", "Sending is paused")
-      refute render(ctx.view) =~ "private provider detail"
-      refute_push_event(ctx.view, "composer:clear", %{})
-    end
-  end
-
   test "a queued credential refusal shows the same banner", ctx do
     stub(PromptQueue, :list, fn _, _, _ ->
       {:ok,
@@ -245,6 +229,14 @@ defmodule RavixWeb.TrackLiveTest do
              ctx.view,
              ".workspace-system-card",
              "The agent lost its memory of earlier turns"
+           )
+
+    assert has_element?(ctx.view, ".workspace-system-card strong", "Session restarted")
+
+    assert has_element?(
+             ctx.view,
+             ".workspace-system-card p",
+             "The agent lost its memory of earlier turns; Ravix will restate the track's context on your next message."
            )
 
     assert Enum.count(
@@ -2786,6 +2778,104 @@ defmodule RavixWeb.TrackLiveTest do
     refute has_element?(ctx.view, "#turns-bootstrap")
     assert has_element?(ctx.view, ".workspace-welcome", "What would you like to work on?")
     assert has_element?(ctx.view, ~s|.jump-latest svg path[d="M12 5v14M6 13l6 6 6-6"]|)
+  end
+
+  test "restored context and preview instructions stay out of an authored prompt", ctx do
+    preview =
+      Ravix.Previews.Agent.start_marker() <>
+        "\nhidden tools\n" <>
+        Ravix.Previews.Agent.end_marker()
+
+    prompt =
+      Enum.join(
+        [
+          Ravix.Spec.session_recovery_prompt(ctx.track, []),
+          preview,
+          PromptQueue.with_author("teammate", "Continue my work")
+        ],
+        "\n\n"
+      )
+
+    send(ctx.view.pid, {:transcript, ctx.track.id, opened(100, "restored", prompt)})
+    drawn(ctx.view)
+    assert has_element?(ctx.view, "#turns-restored .speaker", "@teammate")
+    assert has_element?(ctx.view, "#turns-restored .workspace-prompt", "Continue my work")
+    assert has_element?(ctx.view, "#turns-restored .chip", "Context restored")
+    html = render(ctx.view)
+    refute html =~ "Earlier turns may be missing"
+    refute html =~ "hidden tools"
+    refute html =~ "[from @"
+
+    page = Transcript.page([opened(100, "restored", prompt)], "claude")
+    stub(Tracks, :events, fn _, _, _ -> {:ok, page} end)
+    render_click(ctx.view, "retry-load")
+    render_async(ctx.view)
+    assert has_element?(ctx.view, "#turns-restored .speaker", "@teammate")
+    assert has_element?(ctx.view, "#turns-restored .chip", "Context restored")
+    refute render(ctx.view) =~ "Earlier turns may be missing"
+  end
+
+  test "saved prompts explain statuses, busy waits and a held head", ctx do
+    ids =
+      for {status, reason} <- [
+            queued: "Waiting for the current turn to finish",
+            sending: nil,
+            failed: "Refused",
+            unconfirmed: "Unknown",
+            queued: nil
+          ] do
+        id = Ecto.UUID.generate()
+
+        {:ok, _} =
+          PromptQueue.Store.enqueue(ctx.track.id, ctx.user.id, ctx.user.login, id, %{
+            prompt: id,
+            images: []
+          })
+
+        PromptQueue.Store.set_status(id, status, reason)
+        id
+      end
+
+    refresh = fn ->
+      send(ctx.view.pid, {:hub, Event.new(:queue, ctx.project.id, track_id: ctx.track.id)})
+      render_async(ctx.view)
+    end
+
+    refresh.()
+
+    for label <- ["Waiting", "Sending…", "Needs attention", "Not confirmed"] do
+      assert has_element?(ctx.view, ".workspace-queue .chip", label)
+    end
+
+    for raw <- ~w(queued sending failed unconfirmed) do
+      refute has_element?(ctx.view, ".workspace-queue .chip", raw)
+    end
+
+    assert has_element?(ctx.view, ".workspace-queue p", "Waiting for the current turn to finish")
+    PromptQueue.Store.set_status(hd(ids), :queued, "The agent is at capacity; will retry")
+    refresh.()
+    assert has_element?(ctx.view, ".workspace-queue p", "The agent is at capacity; will retry")
+    Enum.each(Enum.take(ids, 2), &PromptQueue.Store.set_status(&1, :sent))
+    refresh.()
+
+    for head <- Enum.slice(ids, 2, 2) do
+      assert {:ok, %{blocked_by: %{id: ^head}}} =
+               PromptQueue.status(ctx.user, ctx.track.id, List.last(ids))
+
+      assert {:ok, queue} = PromptQueue.list(ctx.user, ctx.track.id)
+      assert List.last(queue).blocked_by.id == head
+
+      assert has_element?(
+               ctx.view,
+               ".workspace-queue > div:last-child p",
+               "Waiting behind a prompt that needs attention"
+             )
+
+      PromptQueue.Store.set_status(head, :sent)
+      refresh.()
+    end
+
+    refute has_element?(ctx.view, ".workspace-queue p")
   end
 
   test "shared transcript messages name their senders in snapshots and live updates", ctx do

@@ -25,7 +25,7 @@ defmodule Ravix.PromptQueue.View do
     :can_cancel
   ]
 
-  defstruct @enforce_keys
+  defstruct @enforce_keys ++ [blocked_by: nil, wait_reason: nil]
 
   @type t :: %__MODULE__{
           id: String.t(),
@@ -35,6 +35,8 @@ defmodule Ravix.PromptQueue.View do
           created_at: DateTime.t(),
           status: Item.status(),
           error: String.t() | nil,
+          blocked_by: %{id: String.t(), status: Item.status()} | nil,
+          wait_reason: String.t() | nil,
           can_cancel: boolean()
         }
 end

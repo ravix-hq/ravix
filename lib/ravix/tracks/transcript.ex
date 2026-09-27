@@ -300,7 +300,7 @@ defmodule Ravix.Tracks.Transcript do
         [
           %Block.System{
             body:
-              "The agent lost its memory of earlier turns; Ravix will restate the track's context on your next message"
+              "The agent lost its memory of earlier turns; Ravix will restate the track's context on your next message."
           }
           | acc
         ]

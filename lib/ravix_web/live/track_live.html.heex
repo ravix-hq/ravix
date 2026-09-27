@@ -195,8 +195,9 @@
         </div>
         <div :if={@queue != []} class="workspace-queue">
           <div :for={item <- @queue}>
-            <span class="chip">{item.status}</span> {item.prompt}
-            <span :if={item.error}>{item.error}</span>
+            <span class="chip">{queue_label(item.status)}</span> {item.prompt}
+            <p :if={item.wait_reason}>{item.wait_reason}</p>
+            <span :if={item.error && item.status != :queued}>{item.error}</span>
             <button
               :if={item.can_cancel}
               class="ghost"
