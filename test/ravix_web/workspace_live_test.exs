@@ -409,6 +409,65 @@ defmodule RavixWeb.WorkspaceLiveTest do
     refute html =~ "Removed share"
   end
 
+  test "flag-off shared Tracks.list preserves unread inbox and notifications without turn reads",
+       %{conn: conn} do
+    user = insert_user()
+    project = insert_project(user: user)
+
+    row =
+      insert_track(
+        project: project,
+        conversation_id: "shared",
+        title: "Shared work",
+        opened_at: DateTime.utc_now()
+      )
+
+    stub(Ravix.Config, :dedicated_opens_enabled?, fn _ -> false end)
+    reject(Ravix.Fountain, :turns, 2)
+    stub(Ravix.Fountain, :client, fn -> Client.new("http://fountain.test", "test") end)
+    {:ok, phase} = Agent.start_link(fn -> "running" end)
+
+    stub(Ravix.MachineCache, :conversations, fn _, _, _ ->
+      {:ok,
+       [
+         FountainShapes.conversation(%{
+           "id" => "shared",
+           "status" => Agent.get(phase, & &1),
+           "last_active_at" => DateTime.to_iso8601(DateTime.utc_now())
+         })
+       ]}
+    end)
+
+    {:ok, receipt} =
+      Ravix.PromptQueue.Store.enqueue(
+        row.id,
+        user.id,
+        user.login,
+        Ecto.UUID.generate(),
+        %{prompt: "sent prompt"},
+        row.id
+      )
+
+    Ravix.PromptQueue.Store.mark_delivered(receipt.id, "shared")
+    {:ok, view, _} = live(log_in_user(conn, user), "/inbox")
+    render_async(view)
+    refute_push_event(view, "notify", %{})
+
+    Agent.update(phase, fn _ -> "idle" end)
+    send(view.pid, {:hub, Event.new(:turn, project.id, track_id: row.id)})
+    render_async(view, 1_000)
+    id = row.id
+    assert_push_event(view, "notify", %{tracks: [%{id: ^id, thread_id: ^id, status: :ready}]})
+    assert has_element?(view, ".inbox-item", "Shared work")
+    assert has_element?(view, ~s|a[href="/inbox"] .badge|, "1")
+
+    for status <- ["idle", "terminated"] do
+      Agent.update(phase, fn _ -> status end)
+      assert {:ok, [listed]} = Tracks.list(user, project.id)
+      assert [%{status: :ready, unread: true}] = listed.threads
+    end
+  end
+
   test "notifications are independent for two threads on one track", %{conn: conn} do
     user = insert_user()
     project = insert_project(user: user, name: "Ravix")

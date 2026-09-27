@@ -149,7 +149,6 @@ defmodule Ravix.Tracks do
 
     thread_rows = Store.threads_by_track(Enum.map(rows, & &1.id))
     thread_reads = Store.thread_reads(user.id, project.id)
-    receipts = delivery_receipts(thread_rows |> Map.values() |> List.flatten())
 
     Enum.map(rows, fn row ->
       threads =
@@ -158,8 +157,7 @@ defmodule Ravix.Tracks do
           Map.get(thread_rows, row.id, []),
           thread_reads,
           live,
-          project,
-          receipts
+          project
         )
 
       conversations = Enum.map(threads, &live[&1.conversation_id]) |> Enum.reject(&is_nil/1)
@@ -236,6 +234,7 @@ defmodule Ravix.Tracks do
       live = conversations_of(project, fresh: fresh)
       reads = Store.thread_reads(user.id, project.id)
       threads = thread_views(track_id, Store.threads_of(track_id), reads, live, project)
+      threads = guest_thread_views(track, project, threads)
 
       environment =
         case MachineCache.environment(client, project.environment_id) do
@@ -293,8 +292,30 @@ defmodule Ravix.Tracks do
 
   @doc "The memoised conversations on a track, with this person's current unread state."
   def threads(%User{} = user, track_id) do
-    with {:ok, %{project: project}} <- Access.track_access(user, track_id) do
-      {:ok, thread_views(track_id, user, project, conversations_of(project, fresh: false))}
+    with {:ok, %{track: track, project: project}} <- Access.track_access(user, track_id) do
+      threads = thread_views(track_id, user, project, conversations_of(project, fresh: false))
+      {:ok, guest_thread_views(track, project, threads)}
+    end
+  end
+
+  defp guest_thread_views(track, project, threads) do
+    Enum.map(threads, fn thread ->
+      if Activity.guest?(track, project, thread), do: guest_thread_view(thread), else: thread
+    end)
+  end
+
+  defp guest_thread_view(%{conversation_id: nil} = thread), do: thread
+
+  defp guest_thread_view(thread) do
+    # ownership: Access.track_access/thread_access admitted these threads for detail reads.
+    receipt = Ravix.PromptQueue.Store.latest_delivered(thread.id, thread.conversation_id)
+
+    with {:ok, client} <- Ravix.Providers.fountain(),
+         status when status in [:pending, :running, :failed] <-
+           Activity.state(client, thread.conversation_id, receipt) do
+      %{thread | status: status}
+    else
+      _ -> thread
     end
   end
 
@@ -308,29 +329,7 @@ defmodule Ravix.Tracks do
         project
       )
 
-  defp delivery_receipts(threads) do
-    # ownership: Access.track_access or Access.access_of scoped these track/thread rows.
-    Ravix.PromptQueue.Store.latest_delivered_for_threads(Enum.map(threads, & &1.id))
-  end
-
-  defp thread_activity(%{conversation_id: nil}, _conversation, _receipt), do: :pending
-
-  defp thread_activity(_thread, conversation, nil),
-    do: if(conversation, do: conversation.status, else: :ready)
-
-  defp thread_activity(thread, _conversation, receipt) do
-    with {:ok, client} <- Ravix.Providers.fountain(),
-         state when state != :unavailable <-
-           Activity.state(client, thread.conversation_id, receipt) do
-      state
-    else
-      _ -> :pending
-    end
-  end
-
-  defp thread_views(track_id, threads, reads, live, project, receipts \\ nil) do
-    receipts = receipts || delivery_receipts(threads)
-
+  defp thread_views(track_id, threads, reads, live, project) do
     Enum.map(threads, fn thread ->
       conversation = live[thread.conversation_id]
 
@@ -342,7 +341,10 @@ defmodule Ravix.Tracks do
         default: thread.id == track_id,
         conversation_id: thread.conversation_id,
         status:
-          thread_activity(thread, conversation, receipts[{thread.id, thread.conversation_id}]),
+          if(conversation && conversation.status in [:running, :pending, :failed],
+            do: conversation.status,
+            else: :ready
+          ),
         unread: unread?(conversation && conversation.last_active_at, reads[thread.id])
       }
     end)

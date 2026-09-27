@@ -347,6 +347,20 @@ defmodule Ravix.DedicatedLifecycleTest do
           %{
             data: [
               %{
+                id: "old-terminated",
+                status: "terminated",
+                agent_id: project.agent_id,
+                environment_id: project.environment_id,
+                vault_id: project.vault_id
+              },
+              %{
+                id: "old-failed",
+                status: "failed",
+                agent_id: project.agent_id,
+                environment_id: project.environment_id,
+                vault_id: project.vault_id
+              },
+              %{
                 id: "shared",
                 agent_id: project.agent_id,
                 environment_id: project.environment_id,

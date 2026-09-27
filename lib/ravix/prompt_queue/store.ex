@@ -489,7 +489,8 @@ defmodule Ravix.PromptQueue.Store do
           error: nil,
           body: nil,
           payload: "",
-          delivery_conversation_id: conversation_id
+          delivery_conversation_id: conversation_id,
+          delivered_at: DateTime.utc_now()
         ]
       )
 
@@ -505,20 +506,6 @@ defmodule Ravix.PromptQueue.Store do
   @spec claim_timeout_ms() :: pos_integer()
   def claim_timeout_ms, do: @claim_timeout_ms
 
-  @doc "Latest receipts grouped by thread and conversation for a scoped thread list."
-  def latest_delivered_for_threads(thread_ids) do
-    Repo.all(
-      from p in Item,
-        where:
-          p.thread_id in ^thread_ids and p.status == :sent and
-            not is_nil(p.delivery_conversation_id),
-        distinct: [p.thread_id, p.delivery_conversation_id],
-        order_by: [p.thread_id, p.delivery_conversation_id, desc: p.sequence],
-        select: {{p.thread_id, p.delivery_conversation_id}, p.id}
-    )
-    |> Map.new()
-  end
-
   @doc "Latest accepted prompt in this exact conversation; old bindings cannot block a new one."
   def latest_delivered(thread_id, conversation_id) do
     Repo.one(
@@ -528,7 +515,7 @@ defmodule Ravix.PromptQueue.Store do
             p.status == :sent,
         order_by: [desc: p.sequence],
         limit: 1,
-        select: p.id
+        select: map(p, [:id, :delivered_at])
     )
   end
 

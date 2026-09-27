@@ -501,7 +501,8 @@ defmodule Ravix.Tracks.Sandbox do
 
   defp identity?(box, op),
     do:
-      is_binary(op.resource_ids["agent_id"]) and box.agent_id == op.resource_ids["agent_id"] and
+      box.status not in ["terminated", "failed"] and
+        is_binary(op.resource_ids["agent_id"]) and box.agent_id == op.resource_ids["agent_id"] and
         box.environment_id == op.resource_ids["environment_id"] and
         box.vault_id == op.resource_ids["vault_id"]
 

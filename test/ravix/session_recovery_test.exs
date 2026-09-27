@@ -41,7 +41,7 @@ defmodule Ravix.SessionRecoveryTest do
     first = enqueue(ctx, "Continue the gate")
     second = enqueue(ctx, "Then restore context")
     events = replay()
-    client = provider(delivery(events) ++ delivery([], accepted(), 5, first.id))
+    client = provider(delivery(events) ++ delivery([], accepted(), 5))
     Server.tick(ctx.server)
     assert Store.delivered_reset(ctx.track.id) == 4
     assert Store.get(first.id).status == :sent
@@ -84,9 +84,9 @@ defmodule Ravix.SessionRecoveryTest do
   end
 
   test "a later reset needs another preamble, including a reset during the previous POST", ctx do
-    first_row = enqueue(ctx, "First")
+    enqueue(ctx, "First")
     enqueue(ctx, "Second")
-    client = provider(delivery([stage(1)]) ++ delivery([stage(2)], accepted(), 1, first_row.id))
+    client = provider(delivery([stage(1)]) ++ delivery([stage(2)], accepted(), 1))
     Server.tick(ctx.server)
     Server.tick(ctx.server)
     assert Enum.all?(prompts(client), &String.contains?(&1, "session context restored"))
@@ -103,7 +103,7 @@ defmodule Ravix.SessionRecoveryTest do
           [
             {%{method: "GET", path: "/api/conversations/reset-thread/turns"},
              {200, [], %{data: [%{id: "t1", status: "completed", client_request_id: first.id}]}}}
-          ] ++ delivery([], accepted(), 7, first.id)
+          ] ++ delivery([], accepted(), 7)
       )
 
     Server.tick(ctx.server)
@@ -180,7 +180,7 @@ defmodule Ravix.SessionRecoveryTest do
   end
 
   test "competing workers cannot send two preambles for one reset", ctx do
-    first_row = enqueue(ctx, "First")
+    enqueue(ctx, "First")
     enqueue(ctx, "Second")
     test = self()
 
@@ -192,9 +192,7 @@ defmodule Ravix.SessionRecoveryTest do
       end
     end
 
-    client =
-      provider(delivery([stage(11)], delayed) ++ delivery([], accepted(), 11, first_row.id))
-
+    client = provider(delivery([stage(11)], delayed) ++ delivery([], accepted(), 11))
     another = server()
     pending = Task.async(fn -> Server.tick(ctx.server) end)
     assert_receive {:posting, sender}, 2_000
@@ -238,7 +236,7 @@ defmodule Ravix.SessionRecoveryTest do
     first = enqueue(ctx, "First after deploy")
     second = enqueue(ctx, "After a new reset")
     old_reset = Map.put(stage(20), "ts", "2026-01-01T00:00:00Z")
-    client = provider(delivery([old_reset]) ++ delivery([stage(21)], accepted(), 20, first.id))
+    client = provider(delivery([old_reset]) ++ delivery([stage(21)], accepted(), 20))
 
     Server.tick(ctx.server)
     assert prompts(client) == ["First after deploy"]
@@ -255,7 +253,7 @@ defmodule Ravix.SessionRecoveryTest do
 
   test "multiple pages commit their tail and the next delivery reads only after that cursor",
        ctx do
-    first_row = enqueue(ctx, "First")
+    enqueue(ctx, "First")
     enqueue(ctx, "Second")
 
     client =
@@ -265,7 +263,7 @@ defmodule Ravix.SessionRecoveryTest do
           page([stage(2)], 0, %{has_more: true, next_cursor: 2}),
           page([%{"id" => 3, "kind" => "output", "data" => "reply"}], 2),
           post(accepted())
-        ] ++ delivery([stage(2)], accepted(), 3, first_row.id)
+        ] ++ delivery([stage(2)], accepted(), 3)
       )
 
     Server.tick(ctx.server)
@@ -318,9 +316,9 @@ defmodule Ravix.SessionRecoveryTest do
   test "an empty legacy baseline commits zero so the next reset is not baselined away", ctx do
     legacy = enqueue(ctx, "Legacy")
     Store.mark_delivered(legacy.id)
-    baseline = enqueue(ctx, "Baseline")
+    enqueue(ctx, "Baseline")
     enqueue(ctx, "After reset")
-    client = provider(delivery([]) ++ delivery([stage(1)], accepted(), 0, baseline.id))
+    client = provider(delivery([]) ++ delivery([stage(1)]))
     Server.tick(ctx.server)
     assert Store.recovery_scan(ctx.track.id) == {0, false}
     Server.tick(server())
@@ -499,19 +497,8 @@ defmodule Ravix.SessionRecoveryTest do
 
   defp accepted, do: {202, [], %{data: %{ok: true}}}
 
-  defp delivery(events, response \\ accepted(), cursor \\ 0, previous \\ nil) do
-    completed =
-      if previous do
-        [
-          {%{method: "GET", path: "/api/conversations/reset-thread/turns"},
-           {200, [],
-            %{data: [%{id: "previous-turn", client_request_id: previous, status: "completed"}]}}}
-        ]
-      else
-        []
-      end
-
-    [idle()] ++ completed ++ [page(events, cursor), post(response)]
+  defp delivery(events, response \\ accepted(), cursor \\ 0) do
+    [idle(), page(events, cursor), post(response)]
   end
 
   defp post(response),
