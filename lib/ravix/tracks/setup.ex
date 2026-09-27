@@ -290,7 +290,7 @@ defmodule Ravix.Tracks.Setup do
       # ownership: no door — this setup lease belongs to this track; only queued rows
       # are failed, preserving bodies and leaving already-delivered turns alone.
       if exhausted?,
-        do: Ravix.PromptQueue.Store.fail_setup(track.id, @failure <> " " <> reason)
+        do: Ravix.PromptQueue.Store.fail_setup(track.id, @failure <> " " <> reason, code)
 
       publish(track)
     end

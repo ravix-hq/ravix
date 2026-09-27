@@ -162,6 +162,28 @@ defmodule Ravix.Tracks.SetupTest do
     refute_received {:prompt, _, _, _}
   end
 
+  test "exhausted provider setup keeps its queue code and MCP recovery guidance", ctx do
+    {principal, _, _} = principal(ctx.user)
+    {:ok, task} = Tasks.send(principal, ctx.track.id, "saved work", "provider-setup")
+    persist(row(ctx.track), setup_attempts: 3)
+    turn_status(ctx.track, "completed")
+    stub(Fountain, :events, fn _, _ -> {:ok, Ravix.AgentOutageFixture.events("opening")} end)
+
+    Setup.advance(ctx.client, ctx.track.id)
+    saved = QueueStore.get(task.id)
+    assert saved.status == :failed
+    assert saved.error_code == "agent_provider_unreachable"
+    refute saved.error =~ "retry_setup"
+    assert {:ok, failed} = Tasks.get(principal, task.id)
+    assert failed.error_code == "agent_provider_unreachable"
+    assert hd(Tasks.present(failed).status.message.parts).text =~ "retry_setup"
+
+    persist(row(ctx.track), setup_state: "ready")
+    assert {:ok, recovered} = Tasks.get(principal, task.id)
+    assert recovered.error_code == "agent_provider_unreachable"
+    refute hd(Tasks.present(recovered).status.message.parts).text =~ "retry_setup"
+  end
+
   test "failed opening retries with backoff, and a different worker delivers only after verification",
        ctx do
     item = queue(ctx)

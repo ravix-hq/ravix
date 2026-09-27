@@ -269,7 +269,7 @@ and the same validation message as the web form. Retry a mutation with the same
 Call `retry_setup` with `track_id` to run the browser's scoped Retry setup action
 (`tracks:write`). Wait for setup to succeed, then call `retry_task` with the
 failed saved prompt's `task_id`; setup retry does not resend that prompt.
-MCP task presentation names both tools for `setup_failed` errors; browser messages retain human recovery guidance.
+MCP task presentation names both tools for failed queued prompts while their track setup is failed; browser messages retain human recovery guidance. The queue preserves the specific provider or sandbox error code, falling back to `setup_failed` only when no specific code is available. Once setup recovers, MCP no longer asks callers to retry setup.
 
 `assign_items` accepts a new `request_id` for an item whose track has failed setup
 or is closed, including closure during a machine rebuild. Omit `track_id` to open

@@ -366,7 +366,8 @@ defmodule Ravix.Tracks.Sandbox do
       # ownership: the durable operation was admitted by Access.track_access and require_owner_or_cutter.
       Ravix.PromptQueue.Store.fail_setup(
         track.id,
-        Setup.failure_message() <> " " <> error.message
+        Setup.failure_message() <> " " <> error.message,
+        code
       )
 
       publish(track)

@@ -427,7 +427,8 @@ defmodule Ravix.PromptQueue.Server do
       track.setup_state == "failed" ->
         Store.fail_setup(
           track.id,
-          Setup.failure_message() <> " " <> Fountain.Error.reason_message(track.setup_error)
+          Setup.failure_message() <> " " <> Fountain.Error.reason_message(track.setup_error),
+          track.setup_error_code
         )
 
       track.setup_state != "ready" or

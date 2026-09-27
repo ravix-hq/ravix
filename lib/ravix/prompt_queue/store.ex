@@ -368,7 +368,7 @@ defmodule Ravix.PromptQueue.Store do
   end
 
   @doc "Fail every unsent prompt, retaining its body for explicit retry."
-  def fail_setup(track_id, reason) do
+  def fail_setup(track_id, reason, code \\ nil) do
     # ownership: no door — a setup worker holds this track's lease. Recheck
     # its persisted failure so an older worker cannot refuse work after recovery.
     {count, _} =
@@ -378,7 +378,7 @@ defmodule Ravix.PromptQueue.Store do
           on: t.id == p.track_id,
           where: p.track_id == ^track_id and p.status == :queued and t.setup_state == "failed"
         ),
-        set: [status: :failed, error: reason, error_code: "setup_failed"]
+        set: [status: :failed, error: reason, error_code: code || "setup_failed"]
       )
 
     if count > 0, do: publish_queue(track_id)

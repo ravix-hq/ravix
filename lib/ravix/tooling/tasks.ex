@@ -164,7 +164,7 @@ defmodule Ravix.Tooling.Tasks do
     with %Task{user_id: ^user_id, client_id: ^client_id} = task <- Store.task(id),
          {:ok, queue} <- PromptQueue.status(principal.user, task.track_id, task.id),
          {:ok, access} <- Access.thread_access(principal.user, task.track_id, queue.thread_id) do
-      {:ok, queue_view(task, queue), access}
+      {:ok, queue_view(task, queue, access.track), access}
     else
       _ -> {:error, :not_found}
     end
@@ -177,7 +177,7 @@ defmodule Ravix.Tooling.Tasks do
 
   defp refresh(task, _access), do: {:ok, task}
 
-  defp queue_view(task, queue) do
+  defp queue_view(task, queue, track) do
     {state, message} =
       case queue.status do
         :cancelled ->
@@ -203,6 +203,8 @@ defmodule Ravix.Tooling.Tasks do
       | state: state,
         status_message: message,
         error_code: queue.error_code,
+        # Setup is a track state, not a replacement for the provider failure code.
+        setup_failed: track.setup_state == "failed",
         queue_status: queue.status,
         blocked: not is_nil(queue.blocked_by)
     }
@@ -375,7 +377,7 @@ defmodule Ravix.Tooling.Tasks do
     end
   end
 
-  defp task_message(%{queue_status: :failed, error_code: "setup_failed"} = task) do
+  defp task_message(%{queue_status: :failed, setup_failed: true} = task) do
     "#{task.status_message} Call retry_setup with track_id #{task.track_id}, then after setup succeeds call retry_task with task_id #{task.id}."
   end
 
