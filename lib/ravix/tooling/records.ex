@@ -66,6 +66,7 @@ defmodule Ravix.Tooling.Task do
     field :state, :string, default: "TASK_STATE_SUBMITTED"
     field :queue_status, :any, virtual: true
     field :status_message, :string, virtual: true
+    field :reconciled_at, :utc_datetime_usec
     field :failure_code, :string
     field :failure_message, :string
     field :error_code, :string, virtual: true

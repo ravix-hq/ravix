@@ -42,6 +42,10 @@ defmodule Ravix.Application do
         Ravix.GitHub.Cache,
         {Ravix.Memo, name: Ravix.GitHub.Cache.Checks},
         {Ravix.Memo, name: Ravix.GitHub.Reads},
+        {Ravix.Cluster.Singleton,
+         key: "tooling.tasks",
+         child:
+           {Ravix.Tooling.Reconciler, Application.get_env(:ravix, Ravix.Tooling.Reconciler, [])}},
         # One process per track preview, its registry, and the reconciler tick.
         Ravix.Previews.child_specs(),
         {Ravix.Cluster.Singleton,
