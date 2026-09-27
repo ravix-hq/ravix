@@ -119,31 +119,16 @@ test('a project plan assigns coordinated tracks and works at phone width', async
   await expect(panel.locator('.chip', { hasText: 'in progress' })).toHaveCount(2);
   const result = await new AxeBuilder({ page }).include('#plans-panel').withTags(['wcag2a', 'wcag2aa']).analyze();
   expect(result.violations).toEqual([]);
-  // Project tracks remain side by side; narrow screens scroll the strip
-  // instead of stacking tabs or widening the page.
-  const tabs = page.getByRole('navigation', { name: 'Project tracks', exact: true }).locator('.track-tabs');
-  const assertHorizontalTabs = async () => {
-    const boxes = await tabs.locator(':scope > a').evaluateAll(links =>
-      links.map(link => {
-        const { x, y, width, height } = link.getBoundingClientRect();
-        return { x, y, width, height };
-      })
-    );
-    expect(boxes.length).toBeGreaterThanOrEqual(3);
-    for (let i = 1; i < boxes.length; i++) {
-      expect(Math.abs(boxes[i].y - boxes[0].y)).toBeLessThan(1);
-      expect(boxes[i].x).toBeGreaterThanOrEqual(boxes[i - 1].x + boxes[i - 1].width);
-    }
-  };
-  await assertHorizontalTabs();
+  // Track navigation lives in the sidebar and follows its mobile collapse.
+  await page.setViewportSize({ width: 1280, height: 844 });
+  const tabs = page.getByRole('tablist', { name: 'Project tracks' });
+  await expect(tabs).toHaveAttribute('aria-orientation', 'vertical');
+  await expect(tabs.getByRole('tab', { name: /ravix\/build-ui/ })).toBeVisible();
   await page.setViewportSize({ width: 390, height: 844 });
-  await assertHorizontalTabs();
-  expect(await tabs.evaluate(el => el.scrollWidth > el.clientWidth)).toBe(true);
-  // Without the redundant Plan badges the last track can already be visible.
-  // Exercise the strip's overflow rather than assuming this link needs a scroll.
-  await tabs.evaluate(el => el.scrollTo({ left: el.scrollWidth, behavior: 'instant' }));
-  await expect(tabs.getByRole('link', { name: /ravix\/build-ui/ })).toBeInViewport();
-  expect(await tabs.evaluate(el => el.scrollLeft)).toBeGreaterThan(0);
+  await expect(tabs).not.toBeVisible();
+  await page.getByRole('button', { name: 'Menu', exact: true }).click();
+  await expect(tabs.getByRole('tab', { name: /ravix\/build-ui/ })).toBeInViewport();
+  await page.getByRole('button', { name: 'Close menu', exact: true }).click();
 
   await expect(panel).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);

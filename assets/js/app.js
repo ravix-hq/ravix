@@ -17,7 +17,7 @@
 //   Terminal        the shell panel: history, Ctrl+L, output that follows itself
 //   Notify          desktop notifications when a track needs you and you are not looking
 //   SettingsSections section navigation and unsaved input warnings
-//   TrackTabs       horizontal scrolling and selected track visibility
+//   TrackTabs       vertical keyboard navigation and selected track visibility
 //   ProjectSections drag a sidebar project onto one of your sections
 //   ProjectFormFocus synchronous dialog focus that never steals later typing
 //   CopyCode        copy a Help example exactly, with success or failure feedback

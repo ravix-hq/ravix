@@ -256,6 +256,62 @@
             </div>
           </section>
         </div>
+        <nav
+          :if={@project}
+          id="project-track-navigation"
+          phx-hook="TrackTabs"
+          class="track-navigation"
+          aria-label="Project tracks"
+        >
+          <div
+            id="project-track-tabs"
+            class="track-tabs"
+            role="tablist"
+            aria-label="Project tracks"
+            aria-orientation="vertical"
+          >
+            <.link
+              id="project-overview-tab"
+              role="tab"
+              aria-controls="project-tabpanel"
+              aria-selected={to_string(is_nil(@track_id))}
+              tabindex={if is_nil(@track_id), do: "0", else: "-1"}
+              patch={"/p/#{@project.id}"}
+              class={["track-tab", is_nil(@track_id) && "selected"]}
+              aria-current={if is_nil(@track_id), do: "page"}
+            >Overview</.link>
+            <.link
+              :for={track <- @tracks[@project.id] || []}
+              id={"project-track-tab-#{track.id}"}
+              role="tab"
+              aria-controls="project-tabpanel"
+              aria-selected={to_string(@track_id == track.id)}
+              tabindex={if @track_id == track.id, do: "0", else: "-1"}
+              patch={"/p/#{@project.id}/t/#{track.id}"}
+              class={["workspace-track track-tab", @track_id == track.id && "selected"]}
+              aria-current={if @track_id == track.id, do: "page"}
+              aria-label={tab_name(track)}
+              title={track.title}
+            >
+              <span
+                :if={tab_status(track)}
+                class={"dot #{tab_status(track)}"}
+                role="img"
+                aria-label={tab_status_label(tab_status(track))}
+                title={tab_status_label(tab_status(track))}
+              ></span>
+              <%!-- Without the `ravix/` namespace every default title shares:
+              the full title is the tab's name and its tooltip. --%>
+              <span class="track-title">{tab_label(track)}</span>
+            </.link>
+          </div>
+          <button
+            :if={@project.access != :tracks}
+            class="ghost track-tab"
+            phx-click={JS.push_focus() |> JS.push("dialog")}
+            phx-value-name="new-track"
+          ><.icon name="plus" size={13} />New track</button>
+        </nav>
       </div>
     </aside>
     <main class="stage" id="workspace-stage">
@@ -313,245 +369,206 @@
         data-side="left"
       >
       </div>
-      <nav
-        :if={@project}
-        id="project-track-navigation"
-        phx-hook="TrackTabs"
-        class="track-navigation"
-        aria-label="Project tracks"
+      <div
+        class="workspace-tabpanel"
+        id="project-tabpanel"
+        role={@project && "tabpanel"}
+        aria-labelledby={
+          @project &&
+            if(@track_id, do: "project-track-tab-#{@track_id}", else: "project-overview-tab")
+        }
+        tabindex={@project && "0"}
       >
-        <button
-          type="button"
-          class="ghost track-scroll"
-          data-scroll-left
-          aria-label="Scroll tracks left"
-          aria-controls="project-track-tabs"
-          disabled
-        >‹</button>
-        <div id="project-track-tabs" class="track-tabs">
-          <.link
-            patch={"/p/#{@project.id}"}
-            class={["track-tab", is_nil(@track_id) && "selected"]}
-            aria-current={if is_nil(@track_id), do: "page"}
-          >Overview</.link>
-          <.link
-            :for={track <- @tracks[@project.id] || []}
-            patch={"/p/#{@project.id}/t/#{track.id}"}
-            class={["workspace-track track-tab", @track_id == track.id && "selected"]}
-            aria-current={if @track_id == track.id, do: "page"}
-            aria-label={tab_name(track)}
-            title={track.title}
-          >
-            <span
-              :if={tab_status(track)}
-              class={"dot #{tab_status(track)}"}
-              role="img"
-              aria-label={tab_status_label(tab_status(track))}
-              title={tab_status_label(tab_status(track))}
-            ></span>
-            <%!-- Without the `ravix/` namespace every default title shares:
-              the full title is the tab's name and its tooltip. --%>
-            <span class="track-title">{tab_label(track)}</span>
-          </.link>
+        <div :if={@project && is_nil(@track_id)} class="crumbs">
+          <span class="project-mark" aria-hidden="true">
+            {String.first(@project.name) |> String.upcase()}
+          </span>
+          <strong><.project_name project={@project} /></strong><span
+            :if={@project.repo}
+            class="chip mono"
+          >{@project.repo}</span><span class="spacer"></span>
           <button
             :if={@project.access != :tracks}
-            class="ghost track-tab"
+            class="ghost"
             phx-click={JS.push_focus() |> JS.push("dialog")}
-            phx-value-name="new-track"
-          ><.icon name="plus" size={13} />New track</button>
+            phx-value-name="people"
+          >
+            People
+          </button>
+          <button
+            :if={@project.role == :owner}
+            class="ghost"
+            phx-click={JS.push_focus() |> JS.push("dialog")}
+            phx-value-name="settings"
+          >
+            Settings
+          </button>
         </div>
-        <button
-          type="button"
-          class="ghost track-scroll"
-          data-scroll-right
-          aria-label="Scroll tracks right"
-          aria-controls="project-track-tabs"
-          disabled
-        >›</button>
-      </nav>
-      <div :if={@project && is_nil(@track_id)} class="crumbs">
-        <span class="project-mark" aria-hidden="true">
-          {String.first(@project.name) |> String.upcase()}
-        </span>
-        <strong><.project_name project={@project} /></strong><span
-          :if={@project.repo}
-          class="chip mono"
-        >{@project.repo}</span><span class="spacer"></span>
-        <button
-          :if={@project.access != :tracks}
-          class="ghost"
-          phx-click={JS.push_focus() |> JS.push("dialog")}
-          phx-value-name="people"
+        <p
+          :if={@project && @project.role != :owner && is_nil(@track_id)}
+          id="project-agent-owner"
+          class="settings-help"
         >
-          People
-        </button>
-        <button
-          :if={@project.role == :owner}
-          class="ghost"
-          phx-click={JS.push_focus() |> JS.push("dialog")}
-          phx-value-name="settings"
-        >
-          Settings
-        </button>
-      </div>
-      <p
-        :if={@project && @project.role != :owner && is_nil(@track_id)}
-        id="project-agent-owner"
-        class="settings-help"
-      >
-        This project runs on {@project.owner_login}'s {RavixWeb.AgentName.label(@project.runtime)}; every turn uses their subscription.
-      </p>
-      <div :if={@project && @track_id} class="workspace-track-host">
-        <%!-- A fixed id, so choosing another track moves this LiveView instead
+          This project runs on {@project.owner_login}'s {RavixWeb.AgentName.label(
+            @project.runtime
+          )}; every turn uses their subscription.
+        </p>
+        <div :if={@project && @track_id} class="workspace-track-host">
+          <%!-- A fixed id, so choosing another track moves this LiveView instead
           of replacing it. The session is its starting point and nothing more:
           it is read once, at mount, and every switch after that arrives as
           `{:select_track, project, track}`. See `hand_over/4`. --%>
-        {live_render(@socket, RavixWeb.TrackLive,
-          id: "track-host",
-          session: %{
-            "session_token" => @session_token,
-            "track_id" => @track_id,
-            "project_id" => @project.id
-          }
-        )}
-      </div>
-      <.live_component
-        :if={@project && is_nil(@track_id)}
-        module={RavixWeb.Live.AgentHealth}
-        id={"project-agent-health-#{@project.id}"}
-        current_user={@current_user}
-        session_hash={@session_hash}
-        project_id={@project.id}
-        refresh={@health_refresh}
-      />
-      <.live_component
-        :if={@project && is_nil(@track_id) && @project.access != :tracks}
-        module={RavixWeb.Live.PlansPanel}
-        id={"plans-#{@project.id}"}
-        current_user={@current_user}
-        session_hash={@session_hash}
-        project={@project}
-        plan_id={@selected_plan_id}
-        new_plan={@new_plan}
-        tracks={@tracks[@project.id] || []}
-      />
-      <div
-        :if={@project && is_nil(@track_id) && @project.access == :tracks}
-        class="workspace-project-empty"
-      >
-        <span class="empty-icon"><.icon name="machine" size={20} /></span>
-        <h2>Pick a track</h2>
-        <p>
-          Each track is its own worktree on this project's machine, with its own branch and its own conversation.
-        </p>
-        <button
-          :if={@project.access != :tracks}
-          class="primary"
-          phx-click={JS.push_focus() |> JS.push("dialog")}
-          phx-value-name="new-track"
+          {live_render(@socket, RavixWeb.TrackLive,
+            id: "track-host",
+            session: %{
+              "session_token" => @session_token,
+              "track_id" => @track_id,
+              "project_id" => @project.id
+            }
+          )}
+        </div>
+        <.live_component
+          :if={@project && is_nil(@track_id)}
+          module={RavixWeb.Live.AgentHealth}
+          id={"project-agent-health-#{@project.id}"}
+          current_user={@current_user}
+          session_hash={@session_hash}
+          project_id={@project.id}
+          refresh={@health_refresh}
+        />
+        <.live_component
+          :if={@project && is_nil(@track_id) && @project.access != :tracks}
+          module={RavixWeb.Live.PlansPanel}
+          id={"plans-#{@project.id}"}
+          current_user={@current_user}
+          session_hash={@session_hash}
+          project={@project}
+          plan_id={@selected_plan_id}
+          new_plan={@new_plan}
+          tracks={@tracks[@project.id] || []}
+        />
+        <div
+          :if={@project && is_nil(@track_id) && @project.access == :tracks}
+          class="workspace-project-empty"
         >
-          New track
-        </button>
-        <p :if={@project.access == :tracks}>Choose a track shared with you in the tabs above.</p>
-      </div>
-      <div :if={is_nil(@project) && @live_action == :projects} class="centred workspace-home">
-        <div class="hero">
-          <div class="home-heading">
-            <h1 :if={@rail_loaded}>
-              {if @projects == [], do: "What will you build?", else: "Pick up where you left off"}
-            </h1>
-            <p :if={@rail_loaded && @projects == []} class="hero-sub">
-              Start from a repository, or a scratch machine.
-            </p>
-          </div>
-          <div class="home-actions">
-            <button
-              class="primary home-action"
-              phx-click={JS.push_focus() |> JS.push("dialog")}
-              phx-value-name="new-project"
-            >
-              <.icon name="plus" size={16} class="ico" /> New project
-            </button>
-          </div>
-          <section :if={@projects != []} class="home-recent" aria-label="Recent projects">
-            <h2>Recent</h2>
-            <.link
-              :for={project <- Enum.take(@projects, 8)}
-              patch={"/p/#{project.id}"}
-              class="pick-row"
-            >
-              <span class="project-mark" aria-hidden="true">
-                {String.first(project.name) |> String.upcase()}
-              </span>
-              <.project_name project={project} /><span class="meta mono">{project.repo ||
-                "no repository"}</span>
-            </.link>
-          </section>
+          <span class="empty-icon"><.icon name="machine" size={20} /></span>
+          <h2>Pick a track</h2>
+          <p>
+            Each track is its own worktree on this project's machine, with its own branch and its own conversation.
+          </p>
+          <button
+            :if={@project.access != :tracks}
+            class="primary"
+            phx-click={JS.push_focus() |> JS.push("dialog")}
+            phx-value-name="new-track"
+          >
+            New track
+          </button>
+          <p :if={@project.access == :tracks}>
+            Choose a track shared with you in the tabs above.
+          </p>
         </div>
-      </div>
-      <.live_component
-        :if={@live_action == :schedules}
-        module={RavixWeb.Live.SchedulesPanel}
-        id="schedules"
-        current_user={@current_user}
-        session_hash={@session_hash}
-        projects={@projects}
-      />
-      <.live_component
-        :if={@live_action == :connections}
-        module={RavixWeb.Live.ConnectionsPanel}
-        id="connections"
-        current_user={@current_user}
-        session_hash={@session_hash}
-      />
-      <div
-        :if={is_nil(@project) && @live_action not in [:projects, :schedules, :connections]}
-        class="inbox"
-      >
-        <header>
-          <div class="row">
-            <h1>
-              Inbox <span :if={@attention > 0} class="badge">{@attention}</span>
-            </h1>
-          </div>
-          <p>Replies and failed turns across all your projects.</p>
-        </header>
-        <div :if={@attention == 0} class="inbox-empty">
-          <h2>You're all caught up</h2>
-          <p>When a track needs your attention, it will appear here.</p>
-        </div>
-        <div class="inbox-list">
-          <div :for={project <- @projects}>
-            <.link
-              :for={track <- Enum.filter(@tracks[project.id] || [], &attention?/1)}
-              patch={inbox_path(project, track)}
-              class="inbox-item"
-            >
-              <div class="row">
-                <span class="chip">
-                  {case track.status do
-                    :setup_failed -> "Setup failed"
-                    :failed -> "Failed turn"
-                    _ -> "Unread reply"
-                  end}
+        <div :if={is_nil(@project) && @live_action == :projects} class="centred workspace-home">
+          <div class="hero">
+            <div class="home-heading">
+              <h1 :if={@rail_loaded}>
+                {if @projects == [],
+                  do: "What will you build?",
+                  else: "Pick up where you left off"}
+              </h1>
+              <p :if={@rail_loaded && @projects == []} class="hero-sub">
+                Start from a repository, or a scratch machine.
+              </p>
+            </div>
+            <div class="home-actions">
+              <button
+                class="primary home-action"
+                phx-click={JS.push_focus() |> JS.push("dialog")}
+                phx-value-name="new-project"
+              >
+                <.icon name="plus" size={16} class="ico" /> New project
+              </button>
+            </div>
+            <section :if={@projects != []} class="home-recent" aria-label="Recent projects">
+              <h2>Recent</h2>
+              <.link
+                :for={project <- Enum.take(@projects, 8)}
+                patch={"/p/#{project.id}"}
+                class="pick-row"
+              >
+                <span class="project-mark" aria-hidden="true">
+                  {String.first(project.name) |> String.upcase()}
                 </span>
-                <span class="dim"><.project_name project={project} /></span><span class="spacer"></span><time
-                  :if={track.last_active_at}
-                  datetime={DateTime.to_iso8601(track.last_active_at)}
-                >{Calendar.strftime(track.last_active_at, "%b %-d, %H:%M UTC")}</time>
-              </div>
-              <strong>{track.title}</strong><code class="dimmer">{track.branch}</code>
-              <span class="dim">
-                <%= cond do %>
-                  <% track.status == :setup_failed -> %>
-                    Setup failed. {track.setup_error} Open the track to Retry setup.
-                  <% track.status == :failed -> %>
-                    The agent needs a hand. Open the conversation to see what happened.
-                  <% true -> %>
-                    The agent finished. Open the conversation to read its reply.
-                <% end %>
-              </span>
-            </.link>
+                <.project_name project={project} /><span class="meta mono">{project.repo ||
+                  "no repository"}</span>
+              </.link>
+            </section>
+          </div>
+        </div>
+        <.live_component
+          :if={@live_action == :schedules}
+          module={RavixWeb.Live.SchedulesPanel}
+          id="schedules"
+          current_user={@current_user}
+          session_hash={@session_hash}
+          projects={@projects}
+        />
+        <.live_component
+          :if={@live_action == :connections}
+          module={RavixWeb.Live.ConnectionsPanel}
+          id="connections"
+          current_user={@current_user}
+          session_hash={@session_hash}
+        />
+        <div
+          :if={is_nil(@project) && @live_action not in [:projects, :schedules, :connections]}
+          class="inbox"
+        >
+          <header>
+            <div class="row">
+              <h1>
+                Inbox <span :if={@attention > 0} class="badge">{@attention}</span>
+              </h1>
+            </div>
+            <p>Replies and failed turns across all your projects.</p>
+          </header>
+          <div :if={@attention == 0} class="inbox-empty">
+            <h2>You're all caught up</h2>
+            <p>When a track needs your attention, it will appear here.</p>
+          </div>
+          <div class="inbox-list">
+            <div :for={project <- @projects}>
+              <.link
+                :for={track <- Enum.filter(@tracks[project.id] || [], &attention?/1)}
+                patch={inbox_path(project, track)}
+                class="inbox-item"
+              >
+                <div class="row">
+                  <span class="chip">
+                    {case track.status do
+                      :setup_failed -> "Setup failed"
+                      :failed -> "Failed turn"
+                      _ -> "Unread reply"
+                    end}
+                  </span>
+                  <span class="dim"><.project_name project={project} /></span><span class="spacer"></span><time
+                    :if={track.last_active_at}
+                    datetime={DateTime.to_iso8601(track.last_active_at)}
+                  >{Calendar.strftime(track.last_active_at, "%b %-d, %H:%M UTC")}</time>
+                </div>
+                <strong>{track.title}</strong><code class="dimmer">{track.branch}</code>
+                <span class="dim">
+                  <%= cond do %>
+                    <% track.status == :setup_failed -> %>
+                      Setup failed. {track.setup_error} Open the track to Retry setup.
+                    <% track.status == :failed -> %>
+                      The agent needs a hand. Open the conversation to see what happened.
+                    <% true -> %>
+                      The agent finished. Open the conversation to read its reply.
+                  <% end %>
+                </span>
+              </.link>
+            </div>
           </div>
         </div>
       </div>
