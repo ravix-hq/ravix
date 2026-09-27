@@ -42,7 +42,9 @@ class Provider:
                     self.rows["sandboxes"][sandbox] = {
                         "id": sandbox, **{key: body[key] for key in ("agent_id", "vault_id", "environment_id")}}
                     self.disk[sandbox] = ""
-                row.update(sandbox_id=sandbox, status="idle")
+                # Like Fountain: a new conversation reads idle before its turn exists.
+                row.update(sandbox_id=sandbox, status="idle",
+                           turns=[{"status": "completed"}] if body.get("prompt") else [])
                 prompt = body.get("prompt", "")
                 for marker in ("FIRST", "SECOND", "GUEST", "THREAD"):
                     if marker in prompt:
@@ -61,7 +63,9 @@ class Provider:
             if row_id not in rows:
                 raise check.ApiFailure(404, collection == "sandboxes")
             if parts[-1] == "file":
-                return {"data": {"encoding": "utf8", "content": self.disk[row_id]}}
+                return {"data": {"encoding": "utf-8", "content": self.disk[row_id]}}
+            if parts[-1] == "turns":
+                return {"data": rows[row_id].get("turns", [])}
             return {"data": rows[row_id]}
         if method == "POST" and parts[-1] == "terminate":
             rows[row_id]["status"] = "terminated"
@@ -69,11 +73,20 @@ class Provider:
         if method == "DELETE":
             if row_id not in rows:
                 raise check.ApiFailure(404, collection == "sandboxes")
+            if collection == "sandboxes":
+                # Like Fountain: the row stays, terminated; a repeat is not resettable.
+                if rows[row_id].get("status") == "terminated":
+                    raise check.ApiFailure(422, False, "sandbox_not_resettable")
+                rows[row_id]["status"] = "terminated"
+                if self.fail == "delete":
+                    self.fail = None
+                    raise check.ApiFailure(0)
+                return None
             del rows[row_id]
             if collection == "agents":
                 for box_id, box in list(self.rows["sandboxes"].items()):
                     if box["agent_id"] == row_id:
-                        del self.rows["sandboxes"][box_id]
+                        box["status"] = "terminated"
             if self.fail == "delete":
                 self.fail = None
                 raise check.ApiFailure(0)
@@ -87,8 +100,10 @@ class SandboxCheckTest(unittest.TestCase):
                                 "--claude-model", "claude-model", "--codex-model", "codex-model"])
 
     def assert_clean(self, provider):
-        for name in ("agents", "vaults", "environments", "sandboxes"):
+        for name in ("agents", "vaults", "environments"):
             self.assertEqual(provider.rows[name], {}, name)
+        for box in provider.rows["sandboxes"].values():
+            self.assertEqual(box.get("status"), "terminated", box["id"])
 
     def test_dry_run_never_builds_a_client(self):
         with patch.object(check, "Api", side_effect=AssertionError("must not connect")), contextlib.redirect_stdout(io.StringIO()) as out:
@@ -162,7 +177,7 @@ class SandboxCheckTest(unittest.TestCase):
         self.assertIn("resource cleanup failed", failures[0])
         self.assertEqual(provider.rows["environments"], {})
         self.assertEqual(provider.rows["agents"], {})
-        self.assertEqual(provider.rows["sandboxes"], {})
+        self.assertTrue(all(box.get("status") == "terminated" for box in provider.rows["sandboxes"].values()))
 
     def test_main_cleans_on_failure_and_never_prints_secret_exception_details(self):
         provider = Provider()

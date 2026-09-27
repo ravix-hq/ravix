@@ -42,9 +42,11 @@ Checks:
    and writes to the home disk, without changing the other track's disk.
 3. A second home thread sees and extends that same disk.
 4. Terminating the guest thread preserves the disk and its contents.
-5. DELETE is followed by reads until a resource-specific `sandbox_not_found`
-   or `sandbox_gone` confirms removal. A generic route 404 is not proof. The
-   sibling disk remains readable. An accepted DELETE alone is not completion.
+5. DELETE is followed by reads until Fountain reports the sandbox `terminated`
+   (it keeps the row and answers 200) or a resource-specific `sandbox_not_found`
+   or `sandbox_gone`. A generic route 404 is not proof. The sibling disk remains
+   readable. An accepted DELETE alone is not completion. Marker files live under
+   `/home/sprite`, the only root Fountain's file API reads.
 6. A create acknowledgement is deliberately discarded, then sandboxes and
    conversations are listed to identify exactly one allocation by home identity
    and the unique channel. No second create is sent. Missing identity/channel

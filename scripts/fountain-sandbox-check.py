@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Owner-run, disposable Fountain sandbox contract check. See fountain-sandbox-check.md."""
 import argparse
+import base64
 import json
 import os
 import signal
@@ -17,10 +18,11 @@ class CheckFailure(Exception):
 
 
 class ApiFailure(CheckFailure):
-    def __init__(self, status, gone=False):
+    def __init__(self, status, gone=False, code=None):
         super().__init__(f"HTTP {status}" if status else "transport outcome unknown")
         self.status = status
         self.gone = gone
+        self.code = code
 
 
 class NoRedirect(HTTPRedirectHandler):
@@ -37,7 +39,9 @@ class Api:
         payload = None if body is None else json.dumps(body).encode()
         request = Request(self.base + path, data=payload, method=method,
                           headers={"Authorization": "Bearer " + self.token,
-                                   "Content-Type": "application/json"})
+                                   "Content-Type": "application/json",
+                                   # Cloudflare refuses urllib's default agent (error 1010).
+                                   "User-Agent": "ravix-fountain-sandbox-check/1"})
         try:
             with self.opener.open(request, timeout=self.timeout) as response:
                 raw = response.read()
@@ -49,7 +53,8 @@ class Api:
             except (ValueError, AttributeError):
                 code = None
             raise ApiFailure(error.code, error.code in (404, 410) and
-                             code in ("sandbox_not_found", "sandbox_gone")) from None
+                             code in ("sandbox_not_found", "sandbox_gone"),
+                             code if isinstance(code, str) else None) from None
         except (URLError, TimeoutError, OSError, ValueError):
             raise ApiFailure(0) from None
 
@@ -70,7 +75,8 @@ class Check:
         self.sandboxes = set()
         self.conversations = set()
         self.results = []
-        self.path = "/tmp/" + self.prefix
+        # Fountain's file API only reads under the sandbox home (/home/sprite).
+        self.path = "/home/sprite/" + self.prefix
 
     def request(self, method, path, body=None):
         return data(self.api.request(method, path, body))
@@ -95,11 +101,17 @@ class Check:
         raise CheckFailure(description + " did not complete before deadline")
 
     def idle(self, conversation):
+        # A guest attach reports `idle` before its first turn starts, so wait on the
+        # turn itself (pending/running/completed/failed/interrupted), not the status.
         def inspect():
-            status = self.request("GET", "/api/conversations/" + segment(conversation)).get("status")
-            if status in ("failed", "terminated"):
-                raise CheckFailure("verification conversation ended before completing its turn")
-            return status == "idle"
+            turns = self.request("GET", "/api/conversations/" + segment(conversation) + "/turns")
+            turns = turns if isinstance(turns, list) else []
+            if not turns:
+                return False
+            status = turns[-1].get("status")
+            if status in ("failed", "interrupted"):
+                raise CheckFailure("verification turn " + str(status))
+            return status == "completed"
         self.wait_for(inspect, "turn")
 
     def launch(self, agent, vault, prompt=None, sandbox=None, channel=None, discard=False):
@@ -128,21 +140,30 @@ class Check:
     def content(self, sandbox):
         record = self.request("GET", "/api/sandboxes/" + segment(sandbox) +
                               "/file?" + urlencode({"path": self.path}))
-        if record.get("encoding") != "utf8":
-            raise CheckFailure("marker was not readable as UTF-8")
-        return record.get("content", "")
+        encoding = record.get("encoding")
+        if encoding in ("utf-8", "utf8"):
+            return record.get("content", "")
+        if encoding == "base64":
+            try:
+                return base64.b64decode(record.get("content", "")).decode("utf-8")
+            except (ValueError, UnicodeDecodeError):
+                pass
+        raise CheckFailure("marker was not readable as UTF-8")
 
     def remove_sandbox(self, sandbox):
         try:
             self.request("DELETE", "/api/sandboxes/" + segment(sandbox))
         except ApiFailure as error:
-            if not error.gone and error.status not in (0, 408) and error.status < 500:
+            # A sandbox already terminated cannot be reset again; confirm it below.
+            if (not error.gone and error.code != "sandbox_not_resettable"
+                    and error.status not in (0, 408) and error.status < 500):
                 raise
             # An uncertain DELETE is reconciled, never counted as complete by itself.
         def absent():
             try:
-                self.request("GET", "/api/sandboxes/" + segment(sandbox))
-                return False
+                # Fountain keeps a destroyed sandbox's row: 200 with status terminated.
+                record = self.request("GET", "/api/sandboxes/" + segment(sandbox))
+                return isinstance(record, dict) and record.get("status") in ("terminated", "failed")
             except ApiFailure as error:
                 if error.gone:
                     return True
@@ -163,13 +184,21 @@ class Check:
         first = self.launch(home, first_vault, f"Write exactly FIRST to {self.path}. Do nothing else.")
         second = self.launch(home, second_vault, f"Write exactly SECOND to {self.path}. Do nothing else.")
         box, sibling = first["sandbox_id"], second["sandbox_id"]
-        if box == sibling or self.content(box).strip() != "FIRST" or self.content(sibling).strip() != "SECOND":
-            raise CheckFailure("per-vault disks were not distinct")
+        if box == sibling:
+            raise CheckFailure("per-vault disks were not distinct: both vaults got one sandbox id")
+        if self.content(box).strip() != "FIRST":
+            raise CheckFailure("per-vault disks: first marker missing or unexpected")
+        if self.content(sibling).strip() != "SECOND":
+            raise CheckFailure("per-vault disks: second marker missing or unexpected")
         self.results.append(("distinct vault identities / disks", "PASS"))
         attached = self.launch(guest, first_vault, sandbox=box,
                                prompt=f"Append a newline and GUEST to {self.path}. Do nothing else.")
-        if "GUEST" not in self.content(box) or "GUEST" in self.content(sibling):
-            raise CheckFailure("guest did not share only the home disk")
+        if attached.get("sandbox_id") != box:
+            raise CheckFailure("guest attached to a different sandbox")
+        if "GUEST" not in self.content(box):
+            raise CheckFailure("guest write not visible on the home disk")
+        if "GUEST" in self.content(sibling):
+            raise CheckFailure("guest write leaked to the sibling disk")
         self.results.append(("other-runtime guest attach", "PASS"))
         self.launch(home, first_vault, sandbox=box,
                     prompt=f"Append a newline and THREAD to {self.path}. Do nothing else.")
