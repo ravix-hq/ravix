@@ -576,6 +576,7 @@ defmodule RavixWeb.TrackLive do
     socket
     |> assign(
       track: detail.track,
+      setup_now: DateTime.utc_now(),
       threads: detail.threads,
       project: project,
       header: detail.header,
@@ -609,6 +610,7 @@ defmodule RavixWeb.TrackLive do
     do:
       assign(socket,
         track: detail.track,
+        setup_now: DateTime.utc_now(),
         header: detail.header,
         threads: detail.threads,
         models: detail.models
@@ -870,6 +872,7 @@ defmodule RavixWeb.TrackLive do
       threads: [],
       project_id: project.id,
       track: track,
+      setup_now: DateTime.utc_now(),
       project: project,
       header: nil,
       assigned_plan: %{items: [], plan: nil},

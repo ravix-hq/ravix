@@ -205,6 +205,26 @@ defmodule RavixWeb.TrackLiveTest do
     end
   end
 
+  test "retry after an idle page uses the current time for its countdown", ctx do
+    :sys.replace_state(ctx.view.pid, fn state ->
+      put_in(state.socket.assigns.setup_now, DateTime.add(DateTime.utc_now(), -120, :second))
+    end)
+
+    ctx.track
+    |> Ecto.Changeset.change(
+      setup_state: "retry",
+      setup_attempts: 1,
+      setup_retry_at: DateTime.add(DateTime.utc_now(), 30, :second)
+    )
+    |> Repo.update!()
+
+    send(ctx.view.pid, {:hub, Event.new(:turn, ctx.project.id, track_id: ctx.track.id)})
+    settle(ctx.view)
+    html = render(element(ctx.view, "#track-setup-status"))
+    assert [_, seconds] = Regex.run(~r/next in (\d+)s/, html)
+    assert String.to_integer(seconds) in 0..30
+  end
+
   test "session loss is a visible system card and overlapping replay does not duplicate it",
        ctx do
     event = %{
