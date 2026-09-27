@@ -228,7 +228,7 @@ defmodule Ravix.Spec do
     Work only in this track's directory. Do not edit, stage, commit, or check out files in the shared clone or another track's worktree.
     The assigned plan items, in order, are:
     #{if assignments == "", do: "No plan items assigned.", else: assignments}
-    Before resuming, check git log and the track's PRs against each plan-item ID. Reported status comes from the track's cached PR evidence; verify which items each PR covers.
+    Before resuming, check git log and the track's PRs against each plan-item ID. Reported status comes from cached GitHub PR evidence; verify which items each PR covers.
     Skip items confirmed done. For items in review, address feedback rather than reimplementing them. Continue only unfinished work in the assigned order.
     Treat the following prompt as additional direction unless it explicitly cancels or replaces earlier work.
     [/ravix: session context restored]
