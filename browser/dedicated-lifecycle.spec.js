@@ -6,7 +6,7 @@ import { signIn, connectClaude } from './sign-in.js';
 const mock = `http://localhost:${process.env.MOCK_PORT || 8893}`;
 
 test('a flagged track copies secrets, becomes ready, and deletes its own machine and secrets on close', async ({ page, request }) => {
-  test.setTimeout(120_000);
+  test.setTimeout(180_000);
   await signIn(page, 'threadruntime', '/home');
   await connectClaude(page);
   await page.getByRole('button', { name: 'Add a project', exact: true }).first().click();
@@ -28,14 +28,52 @@ test('a flagged track copies secrets, becomes ready, and deletes its own machine
   const boxes = (await (await request.get(`${mock}/api/sandboxes`)).json()).data;
   const box = boxes.find(b => b.vault_id === vaultId);
   expect(box).toBeTruthy();
+  const firstUrl = page.url();
+  await page.getByRole('navigation', { name: 'Project tracks', exact: true })
+    .getByRole('button', { name: 'New track', exact: true }).click();
+  await page.getByRole('button', { name: 'Create track', exact: true }).click();
+  await expect(page).not.toHaveURL(firstUrl);
+  await expect(page.locator('#track-machine-scope')).toHaveText('Own machine');
+  await expect(page.locator('#track-setup-status')).toHaveCount(0, { timeout: 45_000 });
+  const siblingId = new URL(page.url()).pathname.split('/t/')[1];
+  const siblingCopies = (await (await request.get(`${mock}/api/vaults`)).json()).data;
+  const siblingVault = siblingCopies.find(v => v.metadata?.ravix?.track === siblingId);
+  expect(siblingVault).toBeTruthy();
+  const siblingBoxes = (await (await request.get(`${mock}/api/sandboxes`)).json()).data;
+  const siblingBox = siblingBoxes.find(b => b.vault_id === siblingVault.id);
+  expect(siblingBox).toBeTruthy();
+  await page.goto(firstUrl);
+  await expect(page.locator('[data-phx-main]')).toHaveClass(/phx-connected/);
+  const rebuild = page.locator('#rebuild-track-machine');
+  await expect(rebuild).toContainText("Rebuilding deletes only this track's machine");
+  await expect(rebuild).toContainText('Sibling tracks are unaffected.');
+  await rebuild.locator('input[type=checkbox]').check();
+  await rebuild.getByRole('button', { name: 'Rebuild machine', exact: true }).click();
+  await expect.poll(async () => (await request.get(`${mock}/api/sandboxes/${box.id}`)).status(), { timeout: 30_000 }).toBe(404);
+  await expect(page.locator('#track-setup-status')).toHaveCount(0, { timeout: 45_000 });
+  expect((await request.get(`${mock}/api/sandboxes/${siblingBox.id}`)).status()).toBe(200);
+  expect((await request.get(`${mock}/api/vaults/${siblingVault.id}`)).status()).toBe(200);
+  const rebuiltCopies = (await (await request.get(`${mock}/api/vaults`)).json()).data;
+  const rebuiltVault = rebuiltCopies.find(v => v.metadata?.ravix?.track === trackId);
+  expect(rebuiltVault.id).not.toBe(vaultId);
+  const rebuiltBoxes = (await (await request.get(`${mock}/api/sandboxes`)).json()).data;
+  const rebuiltBox = rebuiltBoxes.find(b => b.vault_id === rebuiltVault.id);
+  expect(rebuiltBox.id).not.toBe(box.id);
+
+  await page.locator('.track-crumbs').getByRole('button', { name: 'Project settings', exact: true }).click();
+  const settings = page.getByRole('dialog', { name: 'Project settings', exact: true });
+  await settings.getByRole('button', { name: 'Agent', exact: true }).click();
+  await expect(settings).toContainText('Changes the default agent for new threads. Existing threads keep their agent.');
+  await expect(settings.locator('#project-rebuild-form')).toHaveCount(0);
+  await settings.getByRole('button', { name: 'Close', exact: true }).click();
   await page.getByRole('button', { name: 'Close track', exact: true }).click();
   const close = page.getByRole('dialog', { name: 'Close track', exact: true });
   await expect(close).toContainText('uncommitted changes and unpushed commits will be deleted');
   await close.getByLabel('Delete machine, uncommitted changes and unpushed commits', { exact: true }).check();
   await close.getByRole('button', { name: 'Close track', exact: true }).click();
   await expect(page.locator('#track-setup-status')).toContainText('Closing… cleaning up this track\'s machine');
-  await expect.poll(async () => (await request.get(`${mock}/api/sandboxes/${box.id}`)).status(), { timeout: 30_000 }).toBe(404);
-  await expect.poll(async () => (await request.get(`${mock}/api/vaults/${vaultId}`)).status()).toBe(404);
+  await expect.poll(async () => (await request.get(`${mock}/api/sandboxes/${rebuiltBox.id}`)).status(), { timeout: 30_000 }).toBe(404);
+  await expect.poll(async () => (await request.get(`${mock}/api/vaults/${rebuiltVault.id}`)).status()).toBe(404);
 });
 
 

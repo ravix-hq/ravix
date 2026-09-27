@@ -317,6 +317,8 @@ defmodule Ravix.ThreadRuntimeTest do
 
   test "dedicated thread attach and options use persisted ownership, never the shared machine",
        ctx do
+    Repo.update!(Ecto.Changeset.change(ctx.project, repo_full_name: nil, installation_id: nil))
+
     Repo.update!(
       Ecto.Changeset.change(ctx.track,
         sandbox_layout: :dedicated,

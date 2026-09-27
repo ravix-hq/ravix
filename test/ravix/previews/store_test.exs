@@ -3,6 +3,17 @@ defmodule Ravix.Previews.StoreTest do
 
   alias Ravix.Previews.{AgentGrant, Config, Grant, Preview, PreviewAgentGrant, Row, Store}
 
+  test "dedicated tracks reuse one port across sprites and never fall back on collision" do
+    Mimic.stub(Ravix.Config, :dedicated_rollout?, fn -> true end)
+    a = insert_track(sandbox_layout: :dedicated)
+    b = insert_track(sandbox_layout: :dedicated)
+    assert {:ok, %Row{port: 20_000}} = Store.allocate(a.id, "dedicated-a", "dedicated-sprite-a")
+    assert {:ok, %Row{port: 20_000}} = Store.allocate(b.id, "dedicated-b", "dedicated-sprite-b")
+    assert {:error, :no_ports} = Store.allocate(b.id, "dedicated-a", "dedicated-sprite-a")
+    assert Store.get(a.id).sprite == "dedicated-sprite-a"
+    assert Store.get(b.id).sprite == "dedicated-sprite-b"
+  end
+
   describe "rows" do
     test "ensure creates a stopped row once and get reads it back by track and by host" do
       track = insert_track()

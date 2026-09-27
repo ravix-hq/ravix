@@ -20,6 +20,12 @@ defmodule Ravix.ClusterPeer do
     end)
   end
 
+  def attempt_credential_recovery(thread) do
+    Sandbox.unboxed_run(Ravix.Repo, fn ->
+      Ravix.Tracks.Store.attempt_credential_recovery(thread)
+    end)
+  end
+
   def claim_sandbox_operation(id) do
     Sandbox.unboxed_run(Ravix.Repo, fn -> Ravix.Tracks.Sandbox.Store.claim(id) end)
   end

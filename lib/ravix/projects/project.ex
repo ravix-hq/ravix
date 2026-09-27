@@ -32,6 +32,8 @@ defmodule Ravix.Projects.Project do
     field :default_branch, :string
     field :installation_id, :integer
     field :shared_home_runtime, :string
+    field :home_runtime, :string
+    field :deletion_requested_at, :utc_datetime_usec
     field :runtime_agents_retiring, :boolean, default: false
     field :agent_id, :string
     field :environment_id, :string
@@ -61,6 +63,13 @@ defmodule Ravix.Projects.Project do
              agent_id environment_id vault_id runtime model credential_set_id rev instructions
              created_at archived_at)a
   @required ~w(id user_id name agent_id environment_id runtime model rev created_at)a
+
+  @doc "Provider identity of agent_id; runtime remains the default for new threads."
+  def home_runtime(project), do: project.home_runtime || project.runtime
+
+  @doc "Maintenance rollout follows the project owner, including member-triggered work."
+  def maintenance?(project),
+    do: Ravix.Config.dedicated_opens_enabled?(%Ravix.Accounts.User{id: project.user_id})
 
   @doc "A project with its three Fountain ids. Mints the id and `created_at` when absent."
   @spec changeset(t(), map()) :: Ecto.Changeset.t()

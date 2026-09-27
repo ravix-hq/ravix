@@ -17,6 +17,7 @@ defmodule Ravix.Previews.Store do
 
   alias Ravix.Accounts.Session
   alias Ravix.Clock
+  alias Ravix.Tracks.Store, as: TrackStore
 
   alias Ravix.Previews.{
     AgentGrant,
@@ -218,7 +219,7 @@ defmodule Ravix.Previews.Store do
     %Row{} = row = ensure(track_id)
 
     with false <- row.sprite == sprite and row.port != nil,
-         {:ok, port} <- free_port(sprite),
+         {:ok, port} <- free_port(sprite, track_id),
          row = %Row{row | sprite: sprite, sandbox_id: sandbox_id, port: port, applied_config: nil},
          :ok <- save(row) do
       row
@@ -228,13 +229,20 @@ defmodule Ravix.Previews.Store do
     end
   end
 
-  defp free_port(sprite) do
+  defp free_port(sprite, track_id) do
+    # ownership: Access.track_access admitted this preview before allocating its service.
+    dedicated? =
+      Ravix.Config.dedicated_rollout?() and
+        match?(%{sandbox_layout: :dedicated}, TrackStore.get_track(track_id))
+
     used =
       Repo.all(
         from p in Preview, where: p.sprite == ^sprite and not is_nil(p.port), select: p.port
       )
 
-    case Enum.find(@first_port..@last_port, &(&1 not in used)) do
+    ports = if dedicated?, do: [@first_port], else: @first_port..@last_port
+
+    case Enum.find(ports, &(&1 not in used)) do
       nil -> {:error, :no_ports}
       port -> {:ok, port}
     end

@@ -67,6 +67,9 @@ defmodule RavixWeb.TrackLive do
 
   @impl true
   def mount(_params, session, socket) do
+    if connected?(socket) and Ravix.Config.dedicated_rollout?(),
+      do: Phoenix.PubSub.subscribe(Ravix.PubSub, "inference:credentials")
+
     socket =
       assign(socket,
         track_id: session["track_id"],
@@ -515,6 +518,9 @@ defmodule RavixWeb.TrackLive do
     if socket.parent_pid, do: send(socket.parent_pid, {:reconnect_agent, project_id})
     {:noreply, socket}
   end
+
+  def handle_info({:invalidate, _owner_id}, socket),
+    do: handle_info(:refresh_agent_health, socket)
 
   def handle_info(:refresh_agent_health, socket),
     do: {:noreply, socket |> assign(agent_refused: false) |> update(:health_refresh, &(&1 + 1))}
@@ -1036,7 +1042,7 @@ defmodule RavixWeb.TrackLive do
     |> unfollow()
     |> drop_attachments()
     |> update(:thread_generation, &(&1 + 1))
-    |> assign(thread_id: id)
+    |> assign(thread_id: id, agent_refused: false)
     |> load()
   end
 

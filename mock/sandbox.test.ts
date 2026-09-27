@@ -178,3 +178,36 @@ test("vault copy is an atomic owned snapshot and never returns secret values", a
   expect(await request("GET", "/api/vaults")).toEqual(before);
   for (const id of [source.id, result.body.data.id, foreign.id]) await request("DELETE", `/api/vaults/${id}`);
 });
+
+test("an inference revision invalidates both runtimes; a connected runtime resumes on the same disk", async () => {
+  const root = "/api/account/inference-credential-sets";
+  const set = (await request("POST", root, { name: `revision-${crypto.randomUUID()}` })).body.data;
+  await request("PUT", `${root}/${set.id}/credentials/anthropic_api_key`, { value: "fixture-claude" });
+  await request("PUT", `${root}/${set.id}/credentials/openai_api_key`, { value: "fixture-codex" });
+  const home = await create("agents", { runtime: "claude", inference_credential_id: set.id });
+  const guest = await create("agents", { runtime: "codex", inference_credential_id: set.id });
+  const opening = await request("POST", "/api/conversations", { agent_id: home.id, prompt: "initialize" });
+  const first = opening.body.data;
+  owned.push(first.sandbox_id);
+  await request("POST", `/api/conversations/${first.id}/interrupt`);
+  const second = (await request("POST", "/api/conversations", {
+    agent_id: guest.id, sandbox_id: first.sandbox_id,
+  })).body.data;
+  await request("DELETE", `${root}/${set.id}/credentials/openai_api_key`);
+  for (const id of [first.id, second.id]) {
+    expect((await request("GET", `/api/conversations/${id}`)).body.data.status).toBe("terminated");
+    expect(await request("POST", `/api/conversations/${id}/prompts`, { prompt: "resume" }))
+      .toMatchObject({ status: 409, body: { error: "inference_source_changed" } });
+  }
+  const renewed = await request("POST", "/api/conversations", {
+    agent_id: home.id, sandbox_id: first.sandbox_id, inference_credential_id: set.id, channel_id: "revision-recovery",
+  });
+  expect(renewed.status).toBe(200);
+  expect(renewed.body.data.sandbox_id).toBe(first.sandbox_id);
+  expect((await request("POST", `/api/conversations/${renewed.body.data.id}/prompts`, { prompt: "resume" })).status).toBe(200);
+  const disconnected = (await request("POST", "/api/conversations", {
+    agent_id: guest.id, sandbox_id: first.sandbox_id, inference_credential_id: set.id,
+  })).body.data;
+  expect(await request("POST", `/api/conversations/${disconnected.id}/prompts`, { prompt: "resume" }))
+    .toMatchObject({ status: 409, body: { error: "inference_credential_unusable" } });
+});

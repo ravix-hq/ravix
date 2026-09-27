@@ -130,6 +130,11 @@ defmodule Ravix.Tracks.SetupTest do
   test "completed upstream opening with exhausted model retries records setup failure and backs off",
        ctx do
     ctx.project |> Ecto.Changeset.change(runtime: "codex") |> Repo.update!()
+    # Shared setup follows the project even if an old thread carries a different runtime.
+    Tracks.Store.thread(ctx.track.id)
+    |> Ecto.Changeset.change(runtime: "claude")
+    |> Repo.update!()
+
     turn_status(ctx.track, "completed")
     stub(Fountain, :events, fn _, _ -> {:ok, Ravix.AgentOutageFixture.events("opening")} end)
 
@@ -160,6 +165,18 @@ defmodule Ravix.Tracks.SetupTest do
     Setup.advance(ctx.client, ctx.track.id)
     assert row(ctx.track).setup_attempts == 1
     refute_received {:prompt, _, _, _}
+  end
+
+  test "dedicated setup reads the opening thread runtime after the project default changes",
+       ctx do
+    persist(ctx.track, sandbox_layout: :dedicated, sandbox_state: :provisioning)
+    Tracks.Store.thread(ctx.track.id) |> Ecto.Changeset.change(runtime: "codex") |> Repo.update!()
+    turn_status(ctx.track, "completed")
+    stub(Fountain, :events, fn _, _ -> {:ok, Ravix.AgentOutageFixture.events("opening")} end)
+
+    Setup.advance(ctx.client, ctx.track.id)
+    assert row(ctx.track).setup_state == "retry"
+    assert row(ctx.track).setup_error =~ "Codex couldn't reach OpenAI"
   end
 
   test "exhausted provider setup keeps its queue code and MCP recovery guidance", ctx do

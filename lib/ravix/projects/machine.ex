@@ -280,7 +280,9 @@ defmodule Ravix.Projects.Machine do
   """
   @spec rebuild(Project.t(), Fountain.Client.t()) :: {:ok, Rebuild.t()} | {:error, term()}
   def rebuild(%Project{} = project, client) do
-    with :ok <- shared_lifecycle(project), do: rebuild_shared(project, client)
+    if Project.maintenance?(project),
+      do: Projects.Deletion.retire_shared(project, client),
+      else: with(:ok <- shared_lifecycle(project), do: rebuild_shared(project, client))
   end
 
   defp rebuild_shared(project, client) do
@@ -296,7 +298,7 @@ defmodule Ravix.Projects.Machine do
       # and when it moves, every track on the old disk is gone. What pays for
       # it moves with it: the new agent was built on the owner's set as it is
       # today.
-      Projects.Store.rebind_agent(project.id, agent["id"], set_id)
+      Projects.Store.rebind_agent(project.id, agent["id"], set_id, project.runtime)
       Ravix.MachineCache.forget_project(project.id)
       Ravix.Tracks.close_all_for_rebuild(project, :rebuild)
       Hub.publish(project.id, :tracks)
@@ -354,7 +356,9 @@ defmodule Ravix.Projects.Machine do
   @doc "The machine, its settings and its secrets, gone; the row archived; `tracks` published."
   @spec destroy(Project.t(), Fountain.Client.t()) :: :ok | {:error, term()}
   def destroy(%Project{} = project, client) do
-    with :ok <- shared_lifecycle(project), do: destroy_shared(project, client)
+    if Project.maintenance?(project),
+      do: Projects.Deletion.request(project),
+      else: with(:ok <- shared_lifecycle(project), do: destroy_shared(project, client))
   end
 
   defp destroy_shared(project, client) do

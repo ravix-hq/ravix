@@ -10,6 +10,7 @@ defmodule Ravix.Tracks.Sandbox.Store do
   thread updates. Provider effects belong to the lifecycle worker.
   """
   import Ecto.Query
+  alias Ravix.Projects.Project
   alias Ravix.Repo
   alias Ravix.Tracks.{Opening, Track}
   alias Ravix.Tracks.Sandbox.Operation
@@ -61,8 +62,11 @@ defmodule Ravix.Tracks.Sandbox.Store do
   end
 
   @doc "Persist the row, default thread and open intent atomically, before provider allocation."
+  # ownership: Access.project_access admitted this dedicated open before reserving its project.
   def create(plan, selection, project) do
     Repo.transaction(fn ->
+      current = Ravix.Projects.Store.lock_retirement(project.id)
+      if current.deletion_requested_at || current.archived_at, do: Repo.rollback(:not_found)
       attrs = Opening.track_attrs(plan, nil)
 
       attrs =
@@ -95,7 +99,15 @@ defmodule Ravix.Tracks.Sandbox.Store do
 
   @doc "Serialize the opt-in fence check and allocation with last-shared retirement."
   def shared_open(project_id, fun) do
-    if Ravix.Config.retire_shared_machines?() do
+    # ownership: Access.project_access admitted this shared allocation.
+    maintenance? =
+      Ravix.Config.dedicated_rollout?() and
+        case Ravix.Projects.Store.live_project(project_id) do
+          nil -> false
+          project -> Project.maintenance?(project)
+        end
+
+    if Ravix.Config.retire_shared_machines?() or maintenance? do
       Ravix.Cluster.project_mutation(project_id, :shared_machine, fn ->
         # ownership: Access.project_access admitted this shared allocation.
         shared_available(Ravix.Projects.Store.live_project(project_id), fun)
@@ -174,16 +186,18 @@ defmodule Ravix.Tracks.Sandbox.Store do
     end
   end
 
-  defp shared_home_agent(%{shared_home_runtime: home, runtime: runtime, agent_id: id})
-       when is_nil(home) or home == runtime, do: id
-
   defp shared_home_agent(project) do
-    # ownership: Access.track_access admitted closing this project's final shared track.
-    project.id
-    |> Ravix.Projects.Store.runtime_agents()
-    |> Enum.find_value(fn agent ->
-      if agent.runtime == project.shared_home_runtime, do: agent.agent_id
-    end)
+    if is_nil(project.shared_home_runtime) or
+         project.shared_home_runtime == Project.home_runtime(project) do
+      project.agent_id
+    else
+      # ownership: Access.track_access admitted closing this project's final shared track.
+      project.id
+      |> Ravix.Projects.Store.runtime_agents()
+      |> Enum.find_value(fn agent ->
+        if agent.runtime == project.shared_home_runtime, do: agent.agent_id
+      end)
+    end
   end
 
   def finish_shared(op, track, error \\ nil) do
@@ -213,7 +227,7 @@ defmodule Ravix.Tracks.Sandbox.Store do
     track = get_track(op.track_id)
 
     # ownership: the durable operation was admitted by Access.track_access and require_owner_or_cutter.
-    {track, Ravix.Projects.Store.live_project(track.project_id)}
+    {track, Ravix.Projects.Store.get_project(track.project_id)}
   end
 
   def pending do
@@ -272,6 +286,12 @@ defmodule Ravix.Tracks.Sandbox.Store do
         set: attrs
       )
 
+    if count == 1 and Keyword.has_key?(attrs, :conversation_id) do
+      Repo.update_all(from(t in Ravix.Tracks.Thread, where: t.id == ^op.track_id),
+        set: [credential_recovery: nil, recovery_context_pending: false]
+      )
+    end
+
     if count == 1 and Keyword.has_key?(attrs, :closed_at) do
       Repo.update_all(from(t in Ravix.Tracks.Thread, where: t.track_id == ^op.track_id),
         set: [closed_at: Keyword.fetch!(attrs, :closed_at)]
@@ -285,6 +305,96 @@ defmodule Ravix.Tracks.Sandbox.Store do
     )
 
     :ok
+  end
+
+  def close_project(project) do
+    for track <- Ravix.Tracks.Store.tracks_of(project.id, :all),
+        track.sandbox_layout == :dedicated and track.sandbox_state != :terminated do
+      # ownership: Access.project_of admitted durable deletion of this project.
+      Ravix.PromptQueue.Store.cancel_track(track.id)
+      unwrap!(request_close(track))
+    end
+
+    unwrap!(retire_shared_tracks(project))
+  end
+
+  # ownership: Access.project_of admitted this project’s shared-only rebuild or deletion.
+  def retire_shared_tracks(project), do: Repo.transaction(fn -> retire_shared_locked(project) end)
+
+  # ownership: Access.project_of admitted this project’s shared-only rebuild or deletion.
+  defp retire_shared_locked(project) do
+    # ownership: Access.project_of admitted this shared-only rebuild or deletion.
+    Ravix.Projects.Store.lock_retirement(project.id)
+
+    tracks =
+      Repo.all(
+        from t in Track,
+          where:
+            t.project_id == ^project.id and t.sandbox_layout == :shared and is_nil(t.closed_at),
+          lock: "FOR UPDATE"
+      )
+
+    if tracks != [] do
+      for track <- tracks do
+        Ravix.Tracks.Store.close_track(track.id)
+        # ownership: Access.project_of admitted retiring these shared tracks.
+        Ravix.PromptQueue.Store.cancel_track(track.id)
+      end
+
+      track = List.first(tracks)
+      generation = track.sandbox_generation + 1
+
+      Repo.update_all(from(t in Track, where: t.id == ^track.id),
+        set: [sandbox_generation: generation]
+      )
+
+      %Operation{}
+      |> Operation.changeset(%{
+        track_id: track.id,
+        generation: generation,
+        action: :close,
+        resource_ids: %{
+          "legacy" => true,
+          "maintenance" => true,
+          "shared_tracks" => Enum.map(tracks, & &1.id),
+          "agent_id" => shared_home_agent(project),
+          "environment_id" => project.environment_id,
+          "vault_id" => project.vault_id
+        }
+      })
+      |> save!()
+
+      # ownership: Access.project_of admitted the retirement fence before provider effects.
+      Ravix.Projects.Store.set_retiring(project.id, true)
+    end
+
+    :ok
+  end
+
+  def shared_retirements(project_id) do
+    Repo.all(
+      from o in Operation,
+        join: t in Track,
+        on: t.id == o.track_id,
+        where:
+          t.project_id == ^project_id and t.sandbox_layout == :shared and is_nil(o.completed_at) and
+            o.phase != "failed"
+    )
+  end
+
+  def project_clean?(id) do
+    tracks = from(t in Track, where: t.project_id == ^id, select: t.id)
+
+    not Repo.exists?(
+      from t in Track,
+        where:
+          t.project_id == ^id and t.sandbox_layout == :dedicated and
+            t.sandbox_state != :terminated
+    ) and
+      not Repo.exists?(
+        from o in Operation,
+          where: o.track_id in subquery(tracks) and is_nil(o.completed_at) and o.phase != "failed"
+      )
   end
 
   def request_close(track) do

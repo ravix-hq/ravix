@@ -112,6 +112,55 @@ defmodule RavixWeb.TrackLiveTest do
     assert has_element?(ctx.view, "#close-machine-changes", "could not be checked")
   end
 
+  test "ready dedicated rebuild wording names only this machine and protects siblings", ctx do
+    stub(Ravix.Config, :dedicated_opens_enabled?, fn _ -> true end)
+
+    Repo.update!(
+      Ecto.Changeset.change(ctx.track, sandbox_layout: :dedicated, sandbox_state: :ready)
+    )
+
+    {:ok, parent, _} = live(ctx.conn, "/p/#{ctx.project.id}/t/#{ctx.track.id}")
+    view = find_live_child(parent, "track-host")
+    settle(view)
+    assert render(view) =~ "Rebuilding deletes only this track&#39;s machine"
+    assert render(view) =~ "Sibling tracks are unaffected."
+  end
+
+  test "disconnect health follows the selected thread rather than its project default", ctx do
+    stub(Ravix.Config, :dedicated_opens_enabled?, fn _ -> true end)
+    stub(Ravix.Config, :dedicated_rollout?, fn -> true end)
+
+    Repo.update!(
+      Ecto.Changeset.change(ctx.track, sandbox_layout: :dedicated, sandbox_state: :ready)
+    )
+
+    {:ok, second} =
+      Tracks.Store.create_thread(%{
+        track_id: ctx.track.id,
+        title: "Codex",
+        runtime: "codex",
+        conversation_id: "codex"
+      })
+
+    stub(Ravix.Accounts.Inference, :usable?, fn _, runtime, _ -> {:ok, runtime != "codex"} end)
+    {:ok, parent, _} = live(ctx.conn, "/p/#{ctx.project.id}/t/#{ctx.track.id}")
+    view = find_live_child(parent, "track-host")
+    settle(view)
+    refute has_element?(view, "#track-agent-health-banner")
+    render_click(view, "select-thread", %{"thread_id" => second.id})
+    settle(view)
+
+    assert has_element?(
+             view,
+             "#track-agent-health-banner",
+             "This thread uses Codex, which #{ctx.user.login} has disconnected."
+           )
+
+    render_click(view, "select-thread", %{"thread_id" => ctx.track.id})
+    settle(view)
+    refute has_element?(view, "#track-agent-health-banner")
+  end
+
   test "a dedicated binding refreshes mount reads and the dock without waiting for the backstop",
        ctx do
     row =

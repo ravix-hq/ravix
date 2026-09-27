@@ -10,6 +10,9 @@ defmodule Ravix.Tracks.Thread do
   schema "threads" do
     belongs_to :track, Ravix.Tracks.Track
     field :conversation_id, :string
+    field :previous_conversation_ids, {:array, :string}, default: []
+    field :credential_recovery, :map
+    field :recovery_context_pending, :boolean, default: false
     field :runtime, :string
     field :model, :string
     field :title, :string

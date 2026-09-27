@@ -48,7 +48,8 @@ test('cohort threads attach the other runtime to the home disk and reuse its pro
     for (let n = 1; n <= 2; n++) {
       await page.getByRole('button', { name: 'Add thread', exact: true }).click();
       const form = page.locator('#new-thread-form');
-      await expect(form.getByLabel('Agent', { exact: true })).toHaveValue(n === 1 ? home : guest);
+      // All-dedicated projects use the saved project default for each new thread.
+      await expect(form.getByLabel('Agent', { exact: true })).toHaveValue(home);
       if (home === 'claude' && n === 1) {
         const dialog = page.getByRole('dialog', { name: 'New thread', exact: true });
         await dialog.getByRole('button', { name: 'Connect to use Codex', exact: true }).click();

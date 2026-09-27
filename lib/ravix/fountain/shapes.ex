@@ -110,7 +110,7 @@ defmodule Ravix.Fountain.Shapes do
       :turn_count,
       :model
     ]
-    defstruct @enforce_keys
+    defstruct @enforce_keys ++ [:channel_id]
 
     @typedoc """
     Fountain's own words for where a conversation is, plus `:other` for one
@@ -237,6 +237,7 @@ defmodule Ravix.Fountain.Shapes do
   def conversation(raw) when is_map(raw) do
     %Conversation{
       id: raw["id"],
+      channel_id: string_or_nil(raw["channel_id"]),
       status: Map.get(@statuses, raw["status"], :other),
       sandbox_id: raw["sandbox_id"],
       sprite_name: get_in(raw, ["sandbox", "sprite_name"]),

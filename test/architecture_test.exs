@@ -272,7 +272,11 @@ defmodule Ravix.ArchitectureTest do
     end
 
     # And the doors are one read, not one per caller.
-    live = for path <- lib, File.read!(path) =~ ~r/archived_at: nil\} = project ->/, do: path
+    live =
+      for path <- lib,
+          File.read!(path) =~ ~r/%Project\{[^}]*archived_at: nil[^}]*\} = project ->/,
+          do: path
+
     assert live == ["lib/ravix/projects/store.ex"]
   end
 

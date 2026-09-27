@@ -49,10 +49,11 @@ defmodule Ravix.Fountain.Launch do
     :title,
     :prompt
   ]
-  defstruct @enforce_keys ++ [model: nil]
+  defstruct @enforce_keys ++ [model: nil, inference_credential_id: nil]
 
   @type t :: %__MODULE__{
           model: String.t() | nil,
+          inference_credential_id: String.t() | nil,
           agent_id: String.t(),
           environment_id: String.t() | nil,
           vault_id: String.t() | nil,

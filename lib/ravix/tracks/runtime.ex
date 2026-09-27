@@ -4,7 +4,7 @@ defmodule Ravix.Tracks.Runtime do
   alias Ravix.AgentName
   alias Ravix.Fountain.Shapes.Catalog
   alias Ravix.MachineCache
-  alias Ravix.Projects.RuntimeAgents
+  alias Ravix.Projects.{RuntimeAgents, Settings}
 
   def options(user, project, client, last_runtime \\ nil, machine \\ :discover) do
     owner = RuntimeAgents.owner(project)
@@ -23,7 +23,10 @@ defmodule Ravix.Tracks.Runtime do
           }
         end)
 
-      default = last_runtime || project.runtime
+      default =
+        if Settings.default_only?(project),
+          do: project.runtime,
+          else: last_runtime || project.runtime
 
       default =
         if Enum.any?(runtimes, &(&1.runtime == default and &1.enabled)), do: default, else: home
@@ -43,15 +46,20 @@ defmodule Ravix.Tracks.Runtime do
   defp options_machine(client, project, :discover), do: MachineCache.machine_of(client, project)
   defp options_machine(_client, _project, machine), do: {:ok, machine}
 
-  def select(user, project, client, attrs, last_runtime \\ nil, sandbox_id \\ nil) do
-    runtime = nonblank(attrs["runtime"]) || last_runtime || project.runtime
+  def select(user, project, client, attrs, last_runtime \\ nil, sandbox_id \\ nil, opts \\ []) do
+    fallback =
+      if Settings.default_only?(project),
+        do: project.runtime,
+        else: last_runtime || project.runtime
+
+    runtime = nonblank(attrs["runtime"]) || fallback
     model = nonblank(attrs["model"])
 
     with {:ok, home} <- RuntimeAgents.home_runtime(project, client, sandbox_id),
          :ok <- gate(user, %{project | runtime: home}, runtime),
          {:ok, true} <- Inference.usable?(RuntimeAgents.owner(project), runtime, fresh: true),
          {:ok, selected_model} <- select_model(client, project, runtime, model),
-         {:ok, agent_id} <- RuntimeAgents.ensure(project, client, runtime, selected_model) do
+         {:ok, agent_id} <- RuntimeAgents.ensure(project, client, runtime, selected_model, opts) do
       {:ok, %{runtime: runtime, model: selected_model, agent_id: agent_id, home: home}}
     else
       {:ok, false} ->

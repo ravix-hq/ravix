@@ -32,7 +32,7 @@ defmodule Ravix.Projects.Store do
   @spec live_project(String.t() | nil) :: Project.t() | nil
   def live_project(project_id) when is_binary(project_id) do
     case Repo.get(Project, project_id) do
-      %Project{archived_at: nil} = project -> project
+      %Project{archived_at: nil, deletion_requested_at: nil} = project -> project
       _ -> nil
     end
   end
@@ -155,7 +155,8 @@ defmodule Ravix.Projects.Store do
   def projects_of(user_id) do
     Repo.all(
       from(p in Project,
-        where: p.user_id == ^user_id and is_nil(p.archived_at),
+        where:
+          p.user_id == ^user_id and is_nil(p.archived_at) and is_nil(p.deletion_requested_at),
         order_by: p.created_at
       )
     )
@@ -171,7 +172,50 @@ defmodule Ravix.Projects.Store do
 
   @doc "Record the harness the agent now runs. Unscoped, as `rename/2`."
   @spec set_harness(String.t(), String.t(), String.t()) :: :ok
-  def set_harness(id, runtime, model), do: update_fields(id, runtime: runtime, model: model)
+  def set_harness(id, runtime, model),
+    do: update_fields(id, runtime: runtime, model: model, home_runtime: runtime)
+
+  # ownership: Access.project_of admitted preserving this project’s existing tracks and threads.
+  def set_defaults(id, runtime, model) do
+    Repo.transaction(fn ->
+      project = lock_retirement(id)
+      # ownership: Access.project_of admitted preserving existing threads while changing defaults.
+      tracks = from(t in Track, where: t.project_id == ^id, select: t.id)
+
+      Repo.update_all(
+        from(th in Ravix.Tracks.Thread,
+          where: th.track_id in subquery(tracks),
+          update: [
+            set: [
+              runtime: fragment("COALESCE(?, ?)", th.runtime, ^Project.home_runtime(project)),
+              model: fragment("COALESCE(?, ?)", th.model, ^project.model)
+            ]
+          ]
+        ),
+        []
+      )
+
+      update_fields(id,
+        runtime: runtime,
+        model: model,
+        home_runtime: Project.home_runtime(project)
+      )
+
+      bump_rev(id)
+    end)
+
+    :ok
+  end
+
+  def shared_track_count(id) do
+    # ownership: Access.project_of or Access.track_access admitted reading this project’s layout.
+    Repo.aggregate(
+      from(t in Track,
+        where: t.project_id == ^id and t.sandbox_layout == :shared and is_nil(t.closed_at)
+      ),
+      :count
+    )
+  end
 
   @doc """
   Bump the settings revision, and return the new one.
@@ -204,10 +248,11 @@ defmodule Ravix.Projects.Store do
   with it for the reason `set_credential_set/2` exists at all.
   """
   @spec rebind_agent(String.t(), String.t(), String.t() | nil) :: :ok
-  def rebind_agent(id, agent_id, credential_set_id),
+  def rebind_agent(id, agent_id, credential_set_id, runtime \\ nil),
     do:
       update_fields(id,
         agent_id: agent_id,
+        home_runtime: runtime || get_project(id).runtime,
         credential_set_id: credential_set_id,
         runtime_agents_retiring: false,
         shared_home_runtime: nil
@@ -221,6 +266,27 @@ defmodule Ravix.Projects.Store do
   @spec set_credential_set(String.t(), String.t()) :: :ok
   def set_credential_set(id, credential_set_id),
     do: update_fields(id, credential_set_id: credential_set_id)
+
+  # ownership: Access.project_of admitted the owner deleting this project and all its tracks.
+  def request_deletion(project) do
+    Repo.transaction(fn ->
+      current = lock_retirement(project.id)
+
+      if is_nil(current.deletion_requested_at) do
+        update_fields(project.id, deletion_requested_at: DateTime.utc_now())
+        # ownership: Access.project_of admitted the owner deleting this project.
+        Ravix.Tracks.Sandbox.Store.close_project(current)
+      end
+
+      :ok
+    end)
+  end
+
+  def pending_deletions do
+    Repo.all(
+      from p in Project, where: not is_nil(p.deletion_requested_at) and is_nil(p.archived_at)
+    )
+  end
 
   @doc "Archive a project, cancelling whatever its open tracks still had queued."
   @spec archive(String.t()) :: :ok
@@ -247,12 +313,19 @@ defmodule Ravix.Projects.Store do
     Repo.all(from(a in Ravix.Projects.RuntimeAgent, where: a.project_id == ^project_id))
   end
 
+  defp unavailable?(nil), do: true
+
+  defp unavailable?(project),
+    do:
+      project.runtime_agents_retiring or not is_nil(project.archived_at) or
+        not is_nil(project.deletion_requested_at)
+
   def reserve_runtime(project_id, runtime, expected_agent \\ nil) do
     result =
       Repo.transaction(fn ->
         project = Repo.one(from(p in Project, where: p.id == ^project_id, lock: "FOR UPDATE"))
 
-        if is_nil(project) or project.runtime_agents_retiring or not is_nil(project.archived_at) or
+        if unavailable?(project) or
              (not is_nil(expected_agent) and project.agent_id != expected_agent),
            do: Repo.rollback(:retiring)
 
@@ -276,7 +349,7 @@ defmodule Ravix.Projects.Store do
     Repo.transaction(fn ->
       project = Repo.one(from(p in Project, where: p.id == ^project_id, lock: "FOR UPDATE"))
 
-      if is_nil(project) or project.runtime_agents_retiring or not is_nil(project.archived_at) or
+      if unavailable?(project) or
            project.agent_id != expected_agent,
          do: Repo.rollback(:retiring)
 

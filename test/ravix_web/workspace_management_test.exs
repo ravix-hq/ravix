@@ -959,6 +959,43 @@ defmodule RavixWeb.WorkspaceManagementTest do
     refute has_element?(ctx.view, "#settings-agent-acp")
   end
 
+  test "all-dedicated agent settings explain defaults and hide project rebuild", ctx do
+    settings(ctx, default_only: true, shared_tracks: 0)
+
+    assert has_element?(
+             ctx.view,
+             "#settings-section-agent",
+             "Changes the default agent for new threads. Existing threads keep their agent."
+           )
+
+    refute has_element?(ctx.view, "#project-rebuild-form")
+    refute has_element?(ctx.view, "#settings-section-agent", "Switching agents rebuilds")
+  end
+
+  test "mixed settings name the shared tracks before destructive switching", ctx do
+    settings(ctx, default_only: false, shared_tracks: 2)
+
+    assert has_element?(
+             ctx.view,
+             "#settings-section-agent",
+             "2 tracks still share the project machine"
+           )
+
+    assert has_element?(ctx.view, "#project-rebuild-form")
+  end
+
+  test "one shared track uses singular wording", ctx do
+    settings(ctx, default_only: false, shared_tracks: 1)
+
+    assert has_element?(
+             ctx.view,
+             "#settings-section-agent",
+             "1 track still shares the project machine"
+           )
+
+    assert has_element?(ctx.view, "#settings-section-agent", "Switching agents rebuilds")
+  end
+
   test "danger actions require the exact project name", ctx do
     settings(ctx)
     assert has_element?(ctx.view, "#delete-confirm[required]")

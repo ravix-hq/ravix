@@ -119,7 +119,7 @@ defmodule Ravix.Projects do
 
     {guest, _seen} =
       Enum.reduce(whole ++ partial, {[], seen}, fn
-        %Project{archived_at: nil} = project, {acc, seen} ->
+        %Project{archived_at: nil, deletion_requested_at: nil} = project, {acc, seen} ->
           if MapSet.member?(seen, project.id),
             do: {acc, seen},
             else: {[project | acc], MapSet.put(seen, project.id)}
@@ -155,7 +155,7 @@ defmodule Ravix.Projects do
   """
   @spec get(User.t(), String.t()) :: {:ok, View.t()} | {:error, :not_found}
   def get(%User{} = user, id) do
-    with %Project{archived_at: nil} = project <- Store.get_project(id) || {:error, :not_found},
+    with %Project{archived_at: nil} = project <- Store.live_project(id) || {:error, :not_found},
          access when not is_nil(access) <- access_of(user.id, project) do
       {:ok, present(project, access, Machine.state(project), owner_of(project, user))}
     else

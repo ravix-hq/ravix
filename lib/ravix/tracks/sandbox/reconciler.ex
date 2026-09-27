@@ -1,6 +1,7 @@
 defmodule Ravix.Tracks.Sandbox.Reconciler do
   @moduledoc "Singleton sweep; PostgreSQL leases also fence overlapping node takeovers."
   use GenServer
+  alias Ravix.Projects.Deletion
   alias Ravix.Tracks.Sandbox
 
   def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
@@ -15,6 +16,8 @@ defmodule Ravix.Tracks.Sandbox.Reconciler do
       ordered: false
     )
     |> Stream.run()
+
+    Deletion.reconcile(client)
   end
 
   @impl true
