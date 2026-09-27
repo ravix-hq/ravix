@@ -57,8 +57,10 @@ defmodule Ravix.Tracks.SetupTest do
   test "MCP retries failed setup, names recovery tools, and enforces grants and ownership", ctx do
     persist(ctx.track, setup_state: "failed", setup_error: "opening refused")
     {principal, _, _} = principal(ctx.user)
-    assert Setup.failure_message() =~ "retry_setup"
-    assert Setup.failure_message() =~ "retry_task"
+
+    assert Setup.failure_message() ==
+             "Track setup failed. Retry setup, then retry this saved prompt."
+
     other = insert_track(setup_state: "failed")
 
     assert {:error, :not_found} =
@@ -216,8 +218,8 @@ defmodule Ravix.Tracks.SetupTest do
              Tasks.get(principal, task.id)
 
     assert reason =~ "Track setup failed."
-    assert reason =~ "retry_setup"
-    assert reason =~ "retry_task"
+    refute reason =~ "retry_setup"
+    assert QueueStore.get(task.id).error_code == "setup_failed"
 
     assert {:ok, %{changed: [changed_id], tasks: [reported]}} =
              Wait.wait(principal, %{
@@ -229,6 +231,8 @@ defmodule Ravix.Tracks.SetupTest do
     assert changed_id == task.id
     assert reported.status.state == "TASK_STATE_FAILED"
     assert hd(reported.status.message.parts).text =~ "Track setup failed."
+    assert hd(reported.status.message.parts).text =~ "retry_setup"
+    assert hd(reported.status.message.parts).text =~ "retry_task"
 
     refute_received {:prompt, _, "user work", _}
     refute_received {:prompt, _, "MCP work", _}

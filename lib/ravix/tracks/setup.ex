@@ -12,7 +12,7 @@ defmodule Ravix.Tracks.Setup do
 
   @max_attempts 3
   @settle_seconds 600
-  @failure "Track setup failed. Call retry_setup with this track_id, then after setup succeeds call retry_task with this saved prompt's task_id."
+  @failure "Track setup failed. Retry setup, then retry this saved prompt."
 
   def failure_message, do: @failure
 
@@ -290,7 +290,7 @@ defmodule Ravix.Tracks.Setup do
       # ownership: no door — this setup lease belongs to this track; only queued rows
       # are failed, preserving bodies and leaving already-delivered turns alone.
       if exhausted?,
-        do: Ravix.PromptQueue.Store.fail_setup(track.id, @failure <> " " <> reason, code)
+        do: Ravix.PromptQueue.Store.fail_setup(track.id, @failure <> " " <> reason)
 
       publish(track)
     end

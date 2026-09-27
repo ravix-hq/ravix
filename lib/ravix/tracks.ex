@@ -1625,6 +1625,7 @@ defmodule Ravix.Tracks do
            {:ok, app} <- Ravix.Providers.github(),
            {:ok, pull} <-
              Ravix.GitHub.pull(app, project.installation_id, project.repo_full_name, n),
+           :ok <- same_pr_repository(pull, project),
            head when is_binary(head) and head != "" <- pull.head_ref do
         {:ok,
          Map.put(attrs, "origin", Map.merge(origin, %{"base" => head, "title" => pull.title}))}
@@ -1636,6 +1637,15 @@ defmodule Ravix.Tracks do
   end
 
   defp resolve_pr_origin(_project, attrs), do: {:ok, attrs}
+
+  defp same_pr_repository(%{head_repo: repo}, %{repo_full_name: repo}) when is_binary(repo),
+    do: :ok
+
+  defp same_pr_repository(_, _),
+    do:
+      {:error,
+       {:unprocessable, "invalid_pr",
+        "The pull request head must belong to this project's repository; fork PRs are not supported."}}
 
   defp read_origin(raw, project) when is_map(raw) do
     raw = stringify(raw)

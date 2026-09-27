@@ -148,9 +148,9 @@ material and notes, without summary or dependency IDs.
 
 Status is derived at read time: independent items start **unassigned**, unmet
 prerequisites are **blocked**, and completing all prerequisites makes a dependent
-item **ready**. Assigned open tracks are **in progress**; their branch's open PR
+item **ready**. Assigned open tracks are **in progress**; an open PR explicitly naming the item with `Plan-Item: <id>`
 means **in review**, a merged PR means **done**, and an unmerged closed PR or track
-means **closed without merge**. Notes cannot change status. GitHub reports share
+means **closed without merge**. A track branch match alone never links a PR or completes an item. Notes cannot change status. GitHub reports share
 the existing five-minute cache and are fetched in bounded batches; unavailable
 reports are flagged. Refresh the workspace panel to check dependencies again.
 There is no automatic assignment.
@@ -269,7 +269,7 @@ and the same validation message as the web form. Retry a mutation with the same
 Call `retry_setup` with `track_id` to run the browser's scoped Retry setup action
 (`tracks:write`). Wait for setup to succeed, then call `retry_task` with the
 failed saved prompt's `task_id`; setup retry does not resend that prompt.
-Failed setup messages name both tools.
+MCP task presentation names both tools for `setup_failed` errors; browser messages retain human recovery guidance.
 
 `assign_items` accepts a new `request_id` for an item whose track has failed setup
 or is closed, including closure during a machine rebuild. Omit `track_id` to open
@@ -278,5 +278,5 @@ request ID returns its original receipt.
 
 For `create_track`, an origin such as `{"kind":"pr","number":261}` resolves the
 head branch from GitHub before provisioning. A lookup failure returns an error;
-it never falls back to `main`. The browser's explicit `origin.base` remains
+it never falls back to `main`. Fork heads are refused because their branches are not in the project repository. The browser's explicit `origin.base` remains
 supported for an already selected PR head.

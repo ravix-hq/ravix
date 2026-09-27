@@ -3,6 +3,7 @@ defmodule Ravix.ToolingTest do
   use Mimic
   alias Ravix.Fountain
   alias Ravix.Fountain.{Client, FakeTransport}
+  alias Ravix.GitHub.Shapes, as: GitHubShapes
   alias Ravix.Projects.Project
   alias Ravix.Tooling
   alias Ravix.Tooling.OAuth
@@ -198,7 +199,10 @@ defmodule Ravix.ToolingTest do
           "number" => 261,
           "title" => "Advance stored task state",
           "state" => "open",
-          "head" => %{"ref" => "ravix/advance-stored-mcp-task-state-from-turn"}
+          "head" => %{
+            "ref" => "ravix/advance-stored-mcp-task-state-from-turn",
+            "repo" => %{"full_name" => project.repo_full_name}
+          }
         }}}
     ])
 
@@ -222,6 +226,28 @@ defmodule Ravix.ToolingTest do
     assert {:error, :not_found} = Tooling.call(other, "create_track", args)
     OAuth.disconnect(user, p.grant.id)
     assert {:error, :unauthenticated} = Tooling.call(p, "create_track", args)
+  end
+
+  test "PR origins refuse fork heads before creating a track", %{p: p, user: user} do
+    project = insert_project(runtime: "claude", user: user)
+    stub(Ravix.Config, :github, fn -> Ravix.GitHubFake.app() end)
+
+    expect(Ravix.GitHub, :pull, fn _, _, _, 261 ->
+      {:ok,
+       GitHubShapes.pull_ref(%{
+         "head" => %{"ref" => "feature", "repo" => %{"full_name" => "fork/repo"}}
+       })}
+    end)
+
+    assert {:error, {:unprocessable, "invalid_pr", message}} =
+             Tooling.call(p, "create_track", %{
+               "project_id" => project.id,
+               "origin" => %{"kind" => "pr", "number" => 261},
+               "request_id" => "fork"
+             })
+
+    assert message =~ "fork PRs are not supported"
+    assert Ravix.Tracks.Store.tracks_of(project.id) == []
   end
 
   test "PR lookup failures never open a default-branch track", %{p: p, user: user} do

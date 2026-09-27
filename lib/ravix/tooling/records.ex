@@ -68,6 +68,7 @@ defmodule Ravix.Tooling.Task do
     field :status_message, :string, virtual: true
     field :failure_code, :string
     field :failure_message, :string
+    field :error_code, :string, virtual: true
     field :blocked, :boolean, virtual: true, default: false
     field :turn_id, :string
     field :cursor, :integer
