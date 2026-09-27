@@ -78,6 +78,11 @@ defmodule Ravix.ProjectCreationGateTest do
     client = fountain([catalog(), held(["claude_code_oauth_token"]) | writes()])
     assert {:ok, project} = Projects.create(owner, %{name: "Scratch", runtime: "claude"})
     assert_runtime(client, project.id, "claude")
+
+    refute Enum.any?(
+             PostHog.Test.all_captured(),
+             &(&1.event == "project created non default agent")
+           )
   end
 
   test "absence is agent-specific, including a person with no set" do
@@ -128,6 +133,15 @@ defmodule Ravix.ProjectCreationGateTest do
     assert {:ok, project} = Projects.create(owner, %{name: "Scratch", runtime: "codex"})
     assert_runtime(client, project.id, "codex")
     assert Repo.get!(Ravix.Accounts.User, owner.id).agent == :claude
+
+    assert [%{properties: properties}] =
+             Enum.filter(
+               PostHog.Test.all_captured(),
+               &(&1.event == "project created non default agent")
+             )
+
+    assert properties["ravix.agent"] == "codex"
+    assert properties["ravix.default_agent"] == "claude"
   end
 
   test "without a saved choice the checked and provisioned runtime is the catalog default" do

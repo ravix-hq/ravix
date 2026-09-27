@@ -8,7 +8,7 @@ defmodule RavixWeb.Live.NewProject do
   """
   use RavixWeb, :html
 
-  alias Ravix.Accounts.Inference
+  alias Ravix.Accounts.{Inference, User}
   alias RavixWeb.Live.{Async, Form}
 
   def init(socket, mode \\ "github") do
@@ -16,6 +16,7 @@ defmodule RavixWeb.Live.NewProject do
     |> assign(
       project_form: Form.new(:new_project),
       project_agents: nil,
+      project_picker_tracked: false,
       project_agent_error: nil,
       project_mode: mode,
       project_generation: System.unique_integer([:positive])
@@ -39,6 +40,8 @@ defmodule RavixWeb.Live.NewProject do
         do: Map.put(params, "runtime", chosen && to_string(chosen)),
         else: params
 
+    socket = track_picker(socket, agents)
+
     assign(socket,
       project_agents: agents,
       project_agent_error: nil,
@@ -52,6 +55,21 @@ defmodule RavixWeb.Live.NewProject do
         project_agents: nil,
         project_agent_error: RavixWeb.Error.from(reason).message
       )
+
+  # Availability arrives once the picker is visible; retries and renders are
+  # still the same opening. A new form generation resets this observation.
+  defp track_picker(socket, agents) do
+    if picker_visible?(socket) and not socket.assigns.project_picker_tracked and
+         Enum.any?(User.agents(), &(&1 not in agents)) do
+      Ravix.Analytics.track(socket.assigns.current_user, :agent_picker_shown_unconnected)
+      assign(socket, project_picker_tracked: true)
+    else
+      socket
+    end
+  end
+
+  defp picker_visible?(%{assigns: %{dialog: dialog}}), do: dialog == :new_project
+  defp picker_visible?(socket), do: socket.assigns.live_action == :project
 
   def edit(socket, params),
     do:

@@ -27,6 +27,44 @@ test('connect Codex inline without losing the new project draft', async ({ page 
   await expect(page.locator('.crumbs')).toContainText('Credential gate');
 });
 
+test('connect ChatGPT inline by device code and preserve the project draft', async ({ page }) => {
+  await signIn(page, 'dana', '/home');
+  // Clear any existing Codex connection through the real UI so this scenario
+  // also exercises the device flow when run independently.
+  await page.locator('#account-trigger').click();
+  await page.locator('#open-account').click();
+  const account = page.getByRole('dialog', { name: 'Your account' });
+  await expect(account.locator('#agent-codex-status')).toContainText(/(Connected|Not connected)/);
+  for (const kind of ['api_key', 'subscription']) {
+    const remove = account.locator(`#remove-codex-${kind}`);
+    if (await remove.count()) {
+      await remove.click();
+      await account.locator('#confirm-agent-disconnect').click();
+      await expect(remove).toHaveCount(0);
+      await expect(account.locator('#agent-codex-status')).toContainText(/(Connected|Not connected)/);
+    }
+  }
+  await page.keyboard.press('Escape');
+  await expect(account).not.toBeVisible();
+  await page.getByRole('button', { name: /^Quick start/ }).click();
+  const dialog = page.getByRole('dialog', { name: 'New project' });
+  await dialog.getByLabel('Project name', { exact: true }).fill('ChatGPT inline');
+  await dialog.locator('#project-agent-codex').click();
+  await expect(dialog.getByRole('button', { name: 'Create project', exact: true })).toBeDisabled();
+  await dialog.getByRole('button', { name: 'Connect ChatGPT', exact: true }).click();
+  await expect(dialog.locator('#chatgpt-user-code')).toHaveText('MOCK-CODE');
+  await expect(dialog.locator('#chatgpt-verification')).toHaveAttribute('href', 'https://auth.openai.com/codex/device');
+  // Fountain's mock approves on the third poll; the app must attach the grant
+  // and notify this inline panel through its normal polling path.
+  await expect(dialog.locator('#project-connect-codex')).toHaveCount(0);
+  await expect(dialog.locator('#project-agent-codex')).toContainText('Connected');
+  await expect(dialog.locator('#project-agent-codex')).toHaveAttribute('aria-pressed', 'true');
+  await expect(dialog.getByLabel('Project name', { exact: true })).toHaveValue('ChatGPT inline');
+  await dialog.getByRole('button', { name: 'Create project', exact: true }).click();
+  await expect(dialog).not.toBeVisible();
+  await expect(page.locator('.crumbs')).toContainText('ChatGPT inline');
+});
+
 test('late dialog focus never steals typing from the project name', async ({ page }) => {
   await signIn(page, 'dana', '/home');
   await page.getByRole('button', { name: /^Open a GitHub project/ }).click();

@@ -89,6 +89,7 @@
         <.live_component
           module={RavixWeb.Live.AgentPanel}
           id="agent-panel"
+          onboarding={true}
           current_user={@current_user}
           session_hash={@session_hash}
         />
@@ -102,7 +103,7 @@
             id="agent-later"
           >
             {if Inference.connected?(@current_user),
-              do: "Continue",
+              do: "Continue to GitHub",
               else: "I'll do this later"}
           </.link>
         </div>

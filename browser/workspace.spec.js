@@ -183,7 +183,9 @@ test('a first visit is walked through how it works, the agent, and GitHub', asyn
   await expect(page.getByRole('link', { name: 'https://auth.openai.com/codex/device' })).toHaveAttribute('target', '_blank');
   await accessible(page);
   await capture(page, 'welcome-chatgpt');
-  await expect(page).toHaveURL(/\/welcome\/github$/, { timeout: 15_000 });
+  await expect(page.locator('#second-agent-nudge')).toContainText('Connect Claude Code too (optional)');
+  await page.getByRole('link', { name: 'Continue to GitHub', exact: true }).click();
+  await expect(page).toHaveURL(/\/welcome\/github$/);
   expect(await page.content()).not.toContain('MOCK-CODE');
 
   // Back to the agent step by hand: Claude Code takes a pasted token.
@@ -206,6 +208,9 @@ test('a first visit is walked through how it works, the agent, and GitHub', asyn
 
   await page.getByLabel('Subscription token', { exact: true }).fill('sk-ant-oat01-mock');
   await page.getByRole('button', { name: 'Connect Claude Code', exact: true }).click();
+  await expect(page.locator('#second-agent-nudge')).toHaveCount(0);
+  await expect(page.locator('#agent-claude-status')).toContainText('Connected');
+  await page.getByRole('link', { name: 'Continue to GitHub', exact: true }).click();
   await expect(page).toHaveURL(/\/welcome\/github$/);
   // Adding Claude leaves the first connected agent (Codex) as the default.
   await page.goto('/welcome/agent');

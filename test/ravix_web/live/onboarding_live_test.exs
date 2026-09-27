@@ -165,11 +165,15 @@ defmodule RavixWeb.OnboardingLiveTest do
       refute has_element?(view, "#credential-form")
     end
 
-    test "connecting sends the value to the context and nowhere else, then moves on", %{
+    test "connecting offers an optional second agent and can continue without it", %{
       conn: conn
     } do
       user = fresh()
       github([])
+
+      stub(Inference, :held, fn user ->
+        {:ok, if(user.agent, do: [{user.agent, :subscription}], else: [])}
+      end)
 
       expect(Inference, :connect, fn caller, attrs ->
         assert caller.id == user.id
@@ -191,6 +195,10 @@ defmodule RavixWeb.OnboardingLiveTest do
 
       refute render(view) =~ "sk-ant-oat01-private"
       render_async(view)
+      render_async(view)
+      assert has_element?(view, "#second-agent-nudge", "Connect Codex too (optional)")
+      assert has_element?(view, "#welcome-agent")
+      view |> element("#agent-later") |> render_click()
       assert_patch(view, "/welcome/github")
       refute render(view) =~ "sk-ant-oat01-private"
     end
@@ -319,6 +327,8 @@ defmodule RavixWeb.OnboardingLiveTest do
       send(view.pid, {:agent_panel, "agent-panel", :poll_link})
       assert_receive {:polled, 2}
       render_async(view)
+      assert has_element?(view, "#welcome-agent")
+      view |> element("#agent-later") |> render_click()
       assert_patch(view, "/welcome/github")
       assert %User{agent: :codex, credential_kind: :subscription} = Repo.get!(User, user.id)
     end
