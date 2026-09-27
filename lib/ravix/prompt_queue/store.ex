@@ -162,7 +162,7 @@ defmodule Ravix.PromptQueue.Store do
     Repo.one(
       from p in Item,
         where: p.track_id == ^track_id and p.id == ^id,
-        select: map(p, [:id, :thread_id, :sequence, :status, :error])
+        select: map(p, [:id, :thread_id, :sequence, :status, :error, :error_code])
     )
   end
 
@@ -378,7 +378,7 @@ defmodule Ravix.PromptQueue.Store do
           on: t.id == p.track_id,
           where: p.track_id == ^track_id and p.status == :queued and t.setup_state == "failed"
         ),
-        set: [status: :failed, error: reason, error_code: code]
+        set: [status: :failed, error: reason, error_code: code || "setup_failed"]
       )
 
     if count > 0, do: publish_queue(track_id)

@@ -16,6 +16,9 @@ defmodule RavixWeb.WorkspaceRefsTest do
     {:ok, view, _} = live(log_in_user(conn, user), "/p/#{project.id}")
     render_click(view, "dialog", %{name: "new-track"})
     view |> element("button[phx-click=advanced-track]") |> render_click()
+    # Initial track options also report errors through the flash; settle them
+    # before exercising refs so their result cannot overwrite the refs error.
+    render_async(view)
     %{app: app, project: project, user: user, view: view}
   end
 

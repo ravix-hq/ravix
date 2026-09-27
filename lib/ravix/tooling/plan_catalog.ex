@@ -44,7 +44,7 @@ defmodule Ravix.Tooling.PlanCatalog do
       ),
       tool(
         "assign_items",
-        "People only: open or attach tracks and prompt them, spending the project owner's subscription. Requires plans:write and tracks:write. Retry the same request_id to retrieve receipts.",
+        "People only: open or attach tracks and prompt them, spending the project owner's subscription. Requires plans:write and tracks:write. Retry the same request_id to retrieve receipts. Use a new request_id to reassign items from setup_failed or closed tracks; omit track_id to open a new track. Live tracks still refuse reassignment.",
         "plans:write",
         %{
           "plan_id" => string(),

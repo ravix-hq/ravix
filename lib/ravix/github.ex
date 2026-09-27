@@ -339,6 +339,18 @@ defmodule Ravix.GitHub do
     end
   end
 
+  @doc "Resolve one pull request by number, including its head branch."
+  @spec pull(app(), installation_id(), String.t(), pos_integer()) ::
+          {:ok, Shapes.PullRef.t()} | error()
+  def pull(nil, _, _, _), do: {:error, {:unconfigured, :github}}
+
+  def pull(%GitHubApp{} = app, installation_id, full_name, number) do
+    with {:ok, raw} <-
+           as_installation(app, installation_id, :get, "/repos/#{full_name}/pulls/#{number}") do
+      {:ok, Shapes.pull_ref(raw)}
+    end
+  end
+
   @doc "Open pull requests, most recently updated first."
   @spec pulls(app(), installation_id(), String.t()) :: {:ok, [Shapes.PullRef.t()]} | error()
   def pulls(nil, _installation_id, _full_name), do: {:error, {:unconfigured, :github}}
