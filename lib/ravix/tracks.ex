@@ -55,6 +55,7 @@ defmodule Ravix.Tracks do
   alias Ravix.PromptQueue.Body.Image
   alias Ravix.Spec
   alias Ravix.Trace
+  alias Ravix.Tracks.AgentFailure
 
   require Logger
 
@@ -1039,6 +1040,8 @@ defmodule Ravix.Tracks do
          {:ok, turns} <- Fountain.turns(client, conversation_id) do
       page = log |> Transcript.page(runtime) |> Transcript.with_images(turns)
 
+      Enum.each(page.turns, &record_turn_failure(&1, conversation_id, runtime))
+
       # How much transcript came back, on the span that fetched it. A slow
       # first paint is either Fountain being slow or a conversation being long,
       # and a duration alone cannot say which.
@@ -1050,6 +1053,16 @@ defmodule Ravix.Tracks do
       {:ok, page}
     end
   end
+
+  defp record_turn_failure(%{settled?: true} = turn, conversation_id, runtime) do
+    blocks = Transcript.blocks_for_turn(Enum.reverse(turn.events), runtime)
+
+    if failure = AgentFailure.detect(turn.events, runtime, blocks) do
+      Store.record_turn_failure(conversation_id, turn.id, "turn", failure)
+    end
+  end
+
+  defp record_turn_failure(_turn, _conversation_id, _runtime), do: :ok
 
   @doc """
   Rename the label, and only the label.

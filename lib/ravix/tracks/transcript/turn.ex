@@ -55,6 +55,7 @@ defmodule Ravix.Tracks.Transcript.Turn do
   defstruct [
     :id,
     :prompt,
+    :runtime,
     image_count: 0,
     events: [],
     blocks: [],
@@ -66,6 +67,7 @@ defmodule Ravix.Tracks.Transcript.Turn do
   @type t :: %__MODULE__{
           id: String.t() | nil,
           prompt: String.t() | nil,
+          runtime: String.t() | nil,
           image_count: non_neg_integer(),
           events: [Event.t()],
           blocks: [Block.t()],

@@ -1134,6 +1134,28 @@ defmodule Ravix.TracksTest do
   end
 
   describe "events/3" do
+    test "outage correction is scoped and recorded once when the transcript is read" do
+      owner = insert_user()
+      project = insert_project(user: owner, runtime: "codex")
+      track = insert_track(project: project, conversation_id: "outage-history")
+      client = Client.new("https://fountain.test", "test-key")
+      stub(Ravix.Fountain, :client, fn -> client end)
+
+      stub(Ravix.Fountain, :events, fn _, "outage-history", _ ->
+        {:ok, Ravix.AgentOutageFixture.events()}
+      end)
+
+      stub(Ravix.Fountain, :turns, fn _, "outage-history" -> {:ok, []} end)
+      assert {:error, :not_found} = Tracks.events(insert_user(), track.id)
+
+      for _ <- 1..2 do
+        assert {:ok, %{turns: [%{blocks: [%Block.Failure{}]}]}} = Tracks.events(owner, track.id)
+      end
+
+      assert [%{code: "agent_provider_unreachable", state: "failed"}] =
+               Repo.all(Ravix.Tracks.TurnFailure)
+    end
+
     test "the feed and retained image counts form a page; unopened tracks are empty" do
       owner = insert_user()
       project = insert_project(user: owner, runtime: "claude")

@@ -423,10 +423,35 @@ defmodule RavixWeb.TrackLiveTest do
     stub(Tracks, :events, fn _, _, _ -> {:ok, page} end)
     render_click(ctx.view, "retry-load")
     render_async(ctx.view)
-    assert has_element?(ctx.view, "#turns-timeout .workspace-failure", "did not respond in time")
+
+    assert has_element?(
+             ctx.view,
+             "#turns-timeout .workspace-failure",
+             "Claude Code couldn't reach its model provider"
+           )
+
     refute has_element?(ctx.view, "#turns-timeout .md", "request timed out")
     ctx.view |> element("button[phx-click=retry-turn]", "Retry message") |> render_click()
     assert_push_event(ctx.view, "composer:retry", %{text: "Do the work", images: false})
+  end
+
+  test "structured Codex outage renders a named failure and preserves retry", ctx do
+    [start | events] = Ravix.AgentOutageFixture.events("outage")
+    start = Map.put(start, "blocks", [%{"kind" => "prompt", "body" => "Fix the outage"}])
+    page = Transcript.page([start | events], "codex")
+    stub(Tracks, :events, fn _, _, _ -> {:ok, page} end)
+    render_click(ctx.view, "retry-load")
+    render_async(ctx.view)
+
+    assert has_element?(
+             ctx.view,
+             "#turns-outage .workspace-failure",
+             "Codex couldn't reach OpenAI"
+           )
+
+    assert has_element?(ctx.view, "#turns-outage .workspace-failure", "after 5 retries")
+    ctx.view |> element("button[phx-click=retry-turn]", "Retry message") |> render_click()
+    assert_push_event(ctx.view, "composer:retry", %{text: "Fix the outage", images: false})
   end
 
   test "a member sees the owner's funding status and cannot open a connect form", ctx do
