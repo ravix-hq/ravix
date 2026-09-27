@@ -73,6 +73,8 @@ defmodule RavixWeb.TrackLive do
         thread_id: session["track_id"],
         thread_generation: 0,
         threads: [],
+        sibling_followers: %{},
+        thread_states: %{},
         thread_options: nil,
         thread_connect: nil,
         thread_error: nil,
@@ -505,6 +507,8 @@ defmodule RavixWeb.TrackLive do
     do: handle_info({:transcript, id, TranscriptEvent.from(raw)}, socket)
 
   def handle_info({:transcript, id, %TranscriptEvent{} = event}, socket) do
+    socket = thread_activity(socket, id, event)
+
     if id == socket.assigns.thread_id,
       do: {:noreply, socket |> absorb(event) |> schedule_flush() |> after_turn(event)},
       else: {:noreply, socket}
@@ -613,7 +617,8 @@ defmodule RavixWeb.TrackLive do
 
       {:noreply, socket |> follow(socket.assigns.page) |> refresh_transcript()}
     else
-      {:noreply, socket}
+      siblings = Map.reject(socket.assigns.sibling_followers, fn {_id, held} -> held == ref end)
+      {:noreply, socket |> assign(sibling_followers: siblings) |> follow_siblings()}
     end
   end
 
@@ -723,6 +728,7 @@ defmodule RavixWeb.TrackLive do
     # again here, into the container that finally exists. When the transcript
     # is the one still outstanding this is an empty reset, and its own result
     # inserts into a container that is by then real.
+    |> follow_siblings()
     |> memoize()
     |> stream(:turns, Transcript.visible_turns(socket.assigns.page), reset: true)
   end
@@ -745,6 +751,7 @@ defmodule RavixWeb.TrackLive do
         threads: detail.threads,
         models: detail.models
       )
+      |> follow_siblings()
 
   defp async_result(:detail, {:ok, {:error, reason}}, socket), do: error(socket, reason)
 
@@ -989,6 +996,7 @@ defmodule RavixWeb.TrackLive do
   # project rather than a track, so it is only exchanged when the project is.
   defp switch_thread(socket, id) do
     socket
+    |> unfollow_siblings()
     |> unfollow()
     |> drop_attachments()
     |> update(:thread_generation, &(&1 + 1))
@@ -1003,6 +1011,7 @@ defmodule RavixWeb.TrackLive do
     end
 
     socket
+    |> unfollow_siblings()
     |> unfollow()
     |> drop_pending()
     |> drop_attachments()
@@ -1011,6 +1020,7 @@ defmodule RavixWeb.TrackLive do
       thread_id: track.id,
       thread_generation: socket.assigns.thread_generation + 1,
       threads: [],
+      thread_states: %{},
       project_id: project.id,
       track: track,
       setup_now: DateTime.utc_now(),
@@ -1212,6 +1222,69 @@ defmodule RavixWeb.TrackLive do
     end
   end
 
+  # Each subscription uses the scoped context and shares the existing Follower.
+  # Sibling frames only update tab state; they never enter this thread's transcript.
+  defp follow_siblings(socket) do
+    wanted =
+      for thread <- socket.assigns.threads, thread.id != socket.assigns.thread_id, do: thread.id
+
+    held =
+      Map.reject(socket.assigns.sibling_followers, fn {id, ref} ->
+        if id in wanted do
+          false
+        else
+          Follower.unsubscribe(id)
+          Process.demonitor(ref, [:flush])
+          true
+        end
+      end)
+
+    held =
+      Enum.reduce(wanted, held, fn id, acc ->
+        if Map.has_key?(acc, id) do
+          acc
+        else
+          follow_sibling(socket, id, acc)
+        end
+      end)
+
+    assign(socket, sibling_followers: held)
+  end
+
+  defp follow_sibling(socket, id, held) do
+    case Tracks.follow(socket.assigns.current_user, socket.assigns.track_id, thread_id: id) do
+      {:ok, pid} -> Map.put(held, id, Process.monitor(pid))
+      {:error, _} -> held
+    end
+  end
+
+  defp unfollow_siblings(socket) do
+    for {id, ref} <- socket.assigns.sibling_followers do
+      Follower.unsubscribe(id)
+      Process.demonitor(ref, [:flush])
+    end
+
+    assign(socket, sibling_followers: %{})
+  end
+
+  defp thread_activity(socket, id, %TranscriptEvent{kind: :stage, stage: "turn"} = event) do
+    if Enum.any?(socket.assigns.threads, &(&1.id == id)) do
+      status =
+        case event.state do
+          "started" -> :running
+          "queued" -> :queued
+          "failed" -> :failed
+          _ -> :idle
+        end
+
+      update(socket, :thread_states, &Map.put(&1, id, status))
+    else
+      socket
+    end
+  end
+
+  defp thread_activity(socket, _id, _event), do: socket
+
   defp refresh_transcript(socket) do
     user = socket.assigns.current_user
     id = socket.assigns.track_id
@@ -1361,6 +1434,7 @@ defmodule RavixWeb.TrackLive do
 
   attr :threads, :list, required: true
   attr :thread_id, :string, required: true
+  attr :states, :map, default: %{}
   attr :adding, :boolean, default: false
   attr :enabled, :boolean, required: true
 
@@ -1374,6 +1448,15 @@ defmodule RavixWeb.TrackLive do
   thread's dot has a spoken label.
   """
   def thread_tabs(assigns) do
+    assigns =
+      assign(
+        assigns,
+        :working,
+        Enum.filter(assigns.threads, fn thread ->
+          thread.id != assigns.thread_id and thread_status(thread, assigns.states) == "Running"
+        end)
+      )
+
     ~H"""
     <nav
       :if={length(@threads) > 1 or @enabled}
@@ -1390,12 +1473,12 @@ defmodule RavixWeb.TrackLive do
         data-thread-id={thread.id}
         aria-current={if thread.id == @thread_id, do: "true"}
         title={thread.title <> " · " <> agent_model(Map.get(thread, :runtime), Map.get(thread, :model))}
-        aria-label={thread.title <> " · " <> agent_model(Map.get(thread, :runtime), Map.get(thread, :model)) <> if(Map.get(thread, :status) == :running, do: " · Working", else: "") <> if(thread.unread && thread.id != @thread_id, do: " (unread)", else: "")}
+        aria-label={thread.title <> " · " <> agent_model(Map.get(thread, :runtime), Map.get(thread, :model)) <> " · " <> thread_status(thread, @states) <> if(thread.unread && thread.id != @thread_id, do: " (unread)", else: "")}
       >
         <span class="thread-tab-title">{thread.title}</span><span class="thread-tab-agent"> · {agent_model(
           Map.get(thread, :runtime),
           Map.get(thread, :model)
-        )}</span><span :if={Map.get(thread, :status) == :running}> · Working</span><span
+        )}</span><span class="thread-tab-state"> · {thread_status(thread, @states)}</span><span
           :if={thread.unread && thread.id != @thread_id}
           class="thread-unread"
         ><span class="sr-only">(unread)</span></span>
@@ -1412,7 +1495,21 @@ defmodule RavixWeb.TrackLive do
         <.icon name="plus" size={14} />
       </button>
     </nav>
+    <p :if={@working != []} id="threads-working" class="threads-working" role="status">
+      {Enum.map_join(@working, "; ", fn thread ->
+        "#{thread.title} (#{Ravix.AgentName.label(Map.get(thread, :runtime)) || "Agent"}) is working in this checkout"
+      end)}.
+    </p>
     """
+  end
+
+  defp thread_status(thread, states) do
+    case Map.get(states, thread.id, Map.get(thread, :status)) do
+      :running -> "Running"
+      status when status in [:pending, :queued] -> "Queued"
+      :failed -> "Failed"
+      _ -> "Idle"
+    end
   end
 
   attr :count, :any, required: true, doc: "`Panel`'s `change_count`: `{files, truncated?}` or nil"

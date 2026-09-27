@@ -312,7 +312,7 @@ defmodule Ravix.Tracks do
         default: thread.id == track_id,
         conversation_id: thread.conversation_id,
         status:
-          if(conversation && conversation.status in [:running, :failed],
+          if(conversation && conversation.status in [:running, :pending, :failed],
             do: conversation.status,
             else: :ready
           ),
