@@ -66,6 +66,9 @@ defmodule Ravix.Fountain.Error do
   def sandbox_gone?(%__MODULE__{status: status, code: code}),
     do: status in [404, 410] and code in ["sandbox_not_found", "sandbox_gone"]
 
+  @doc "The vault endpoints deliberately conflate malformed, foreign and missing IDs."
+  def vault_gone?(%__MODULE__{status: status}), do: status in [404, 410]
+
   @doc "A mutation may have happened: reconcile before retrying or allocating again."
   @spec unknown_outcome?(t()) :: boolean()
   def unknown_outcome?(%__MODULE__{status: status} = error),
@@ -148,6 +151,29 @@ defmodule Ravix.Fountain.Error do
 
   def public_message(code) when code in @busy_codes,
     do: "The machine is busy with other turns. Try again in a moment."
+
+  def public_message("clone_auth_failed"),
+    do:
+      "Repository access could not be prepared. Check the project's GitHub App access, then retry setup."
+
+  def public_message("secret_not_copyable"),
+    do:
+      "A project secret could not be copied securely. Save it again in project settings, then retry setup."
+
+  def public_message("secrets_changed"),
+    do:
+      "Secrets changed — rebuild to apply. Prompts are paused until this track uses the new secrets."
+
+  def public_message("vault_copy_failed"),
+    do:
+      "The project's credentials could not be copied for this track. Check project settings and retry setup."
+
+  def public_message("sandbox_outcome_unknown"),
+    do:
+      "Machine creation is being checked after a lost response. Your prompts are saved; no second machine will be created."
+
+  def public_message("sandbox_cleanup_pending"),
+    do: "Closing… cleaning up this track's machine. Cleanup will retry automatically."
 
   def public_message("adapter_crashed"), do: "The agent crashed and was restarted."
   def public_message("session_gone"), do: "The agent session ended. Wake the agent to continue."

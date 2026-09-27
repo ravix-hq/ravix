@@ -431,7 +431,8 @@ defmodule Ravix.PromptQueue.Server do
           track.setup_error_code
         )
 
-      track.setup_state != "ready" ->
+      track.setup_state != "ready" or
+          (track.sandbox_layout == :dedicated and track.sandbox_state != :ready) ->
         :waiting
 
       true ->
@@ -752,12 +753,26 @@ defmodule Ravix.PromptQueue.Server do
 
   defp open?(track),
     do:
-      is_nil(track.closed_at) and is_binary(track.conversation_id) and track.conversation_id != ""
+      is_nil(track.closed_at) and track.sandbox_state not in [:closing, :terminated] and
+        (track.sandbox_layout == :dedicated or
+           (is_binary(track.conversation_id) and track.conversation_id != ""))
 
   # The same question asked again, where only the answer matters: membership
   # and cancellation may change during the network calls, so it is asked once
   # more before the claim and once more before the POST. The rows those
   # steps use are the ones `access/1` loaded; a change to either since then
   # is a change to who may send, which this is what catches.
-  defp authorized?(row), do: match?({:ok, _track, _project}, access(row))
+  defp authorized?(row) do
+    case access(row) do
+      {:ok, %{sandbox_layout: :dedicated} = track, project} ->
+        track.setup_state == "ready" and track.secrets_generation == project.secrets_generation and
+          not project.secrets_pending
+
+      {:ok, _track, _project} ->
+        true
+
+      _ ->
+        false
+    end
+  end
 end

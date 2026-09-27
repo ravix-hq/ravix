@@ -64,6 +64,69 @@ defmodule RavixWeb.TrackLiveTest do
     %{conn: conn, parent: parent, view: view, user: user, project: project, track: track}
   end
 
+  test "dedicated lifecycle stages and close warnings stay visible", ctx do
+    assert has_element?(ctx.view, "#track-machine-scope", "Shared project machine")
+
+    for {stage, state, text} <- [
+          {"creating", :provisioning, "Creating this track's machine…"},
+          {"cloning", :provisioning, "Cloning"},
+          {"setup", :provisioning, "Running setup…"},
+          {"closing", :closing, "Closing… cleaning up this track's machine"}
+        ] do
+      Repo.update!(
+        Ecto.Changeset.change(Repo.get!(Track, ctx.track.id),
+          sandbox_layout: :dedicated,
+          sandbox_stage: stage,
+          sandbox_state: state,
+          setup_state: "pending"
+        )
+      )
+
+      send(
+        ctx.view.pid,
+        {:hub, %Event{name: :tracks, project_id: ctx.project.id, track_id: ctx.track.id}}
+      )
+
+      render(ctx.view)
+      render_async(ctx.view)
+      assert has_element?(ctx.view, "#track-setup-status", text)
+      assert has_element?(ctx.view, "#track-machine-scope", "Own machine")
+      assert has_element?(ctx.view, ".thread-add[disabled]")
+    end
+
+    render_click(ctx.view, "dialog", %{name: "close"})
+    render_async(ctx.view)
+
+    assert has_element?(
+             ctx.view,
+             "#close-dialog",
+             "uncommitted changes and unpushed commits will be deleted"
+           )
+
+    assert has_element?(ctx.view, "#close-machine-changes", "could not be checked")
+  end
+
+  test "stale secret snapshots explain the required destructive rebuild", ctx do
+    Repo.update!(
+      Ecto.Changeset.change(ctx.track,
+        sandbox_layout: :dedicated,
+        setup_state: "failed",
+        setup_error_code: "secrets_changed",
+        setup_error: "Secrets changed — rebuild to apply"
+      )
+    )
+
+    send(
+      ctx.view.pid,
+      {:hub, %Event{name: :tracks, project_id: ctx.project.id, track_id: ctx.track.id}}
+    )
+
+    render(ctx.view)
+    render_async(ctx.view)
+    assert has_element?(ctx.view, "#rebuild-track-machine", "Secrets changed — rebuild to apply")
+    assert has_element?(ctx.view, "#rebuild-track-machine input[required]")
+  end
+
   test "cached missing funding warns the owner but does not prevent an accepted send", ctx do
     stub(Ravix.Accounts.Inference, :usable?, fn owner, runtime, opts ->
       assert owner.id == ctx.user.id

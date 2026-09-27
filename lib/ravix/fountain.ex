@@ -98,6 +98,26 @@ defmodule Ravix.Fountain do
   @spec create_vault(Client.t(), map()) :: result(record())
   def create_vault(client, body), do: data(client, "POST", "/api/vaults", body: body)
 
+  @doc "Atomic server-side secret snapshot. Values are never returned. Requires Fountain #2527."
+  @spec copy_vault(Client.t(), id(), map()) :: result(Shapes.Vault.t())
+  def copy_vault(client, id, attrs) do
+    with {:ok, raw} <- data(client, "POST", "/api/vaults/#{escape(id)}/copy", body: attrs),
+         do: {:ok, Shapes.vault(raw)}
+  end
+
+  @doc "List owned credential containers for operation-identity reconciliation."
+  @spec vaults(Client.t()) :: result([Shapes.Vault.t()])
+  def vaults(client) do
+    with {:ok, rows} <- list(client, "/api/vaults"),
+         do: {:ok, Enum.map(rows, &Shapes.vault/1)}
+  end
+
+  @doc "Read a credential container without returning values."
+  def get_vault(client, id) do
+    with {:ok, raw} <- data(client, "GET", "/api/vaults/#{escape(id)}"),
+         do: {:ok, Shapes.vault(raw)}
+  end
+
   @doc "`DELETE /api/vaults/:id`."
   @spec delete_vault(Client.t(), id()) :: outcome()
   def delete_vault(client, id), do: void(client, "DELETE", "/api/vaults/#{escape(id)}")

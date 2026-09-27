@@ -113,6 +113,7 @@ defmodule RavixWeb.TrackLive do
         preview_form: Form.new(:preview_config),
         preview_url: nil,
         dialog: nil,
+        close_info: nil,
         rename_form: Form.new(:rename_track),
         pull: nil,
         # The ribbon's three writes that are out --- `:interrupt`, `:retry`,
@@ -412,6 +413,20 @@ defmodule RavixWeb.TrackLive do
      )}
   end
 
+  def handle_event("rebuild-machine", %{"force" => "true"}, socket) do
+    {:noreply,
+     result(
+       socket,
+       Tracks.rebuild_machine(socket.assigns.current_user, socket.assigns.track_id, force: true),
+       fn s, _ -> s |> assign(dialog: nil) |> refresh_detail() end
+     )}
+  end
+
+  def handle_event("rebuild-machine", _params, socket),
+    do:
+      {:noreply,
+       put_flash(socket, :error, "Confirm deletion before rebuilding this track's machine.")}
+
   def handle_event("close", params, socket) do
     {:noreply,
      result(
@@ -419,7 +434,11 @@ defmodule RavixWeb.TrackLive do
        Tracks.close(socket.assigns.current_user, socket.assigns.track_id,
          force: Params.flag(params, "force")
        ),
-       fn s, _ -> redirect(s, to: "/p/#{s.assigns.project_id}") end
+       fn s, _ ->
+         if s.assigns.track.sandbox_layout == :dedicated,
+           do: s |> assign(dialog: nil) |> refresh_detail(),
+           else: redirect(s, to: "/p/#{s.assigns.project_id}")
+       end
      )}
   end
 
@@ -434,6 +453,15 @@ defmodule RavixWeb.TrackLive do
   # Rename opens on the name the track has now, so the dialog is a correction
   # rather than a blank box. The form is rebuilt each time it opens, which is
   # also what discards a refusal from the last attempt.
+  defp open_dialog(%{assigns: %{track: %{sandbox_layout: :dedicated}}} = socket, :close) do
+    user = socket.assigns.current_user
+    id = socket.assigns.track_id
+
+    socket
+    |> assign(dialog: :close, close_info: nil)
+    |> workspace_async(:close_info, fn -> Tracks.close_info(user, id) end)
+  end
+
   defp open_dialog(socket, :rename),
     do:
       assign(socket,
@@ -754,6 +782,12 @@ defmodule RavixWeb.TrackLive do
       |> follow_siblings()
 
   defp async_result(:detail, {:ok, {:error, reason}}, socket), do: error(socket, reason)
+
+  defp async_result(:close_info, {:ok, {:ok, info}}, socket),
+    do: socket |> settle(:close_info) |> assign(close_info: info)
+
+  defp async_result(:close_info, _response, socket),
+    do: socket |> settle(:close_info) |> assign(close_info: :unavailable)
 
   defp async_result(:queue, {:ok, {:ok, queue}}, socket), do: assign(socket, queue: queue)
 
@@ -1726,6 +1760,17 @@ defmodule RavixWeb.TrackLive do
   defp pull_state_label(:merged), do: "Merged"
   defp pull_state_label(:closed), do: "Closed"
   defp pull_state_label(:open), do: "Open"
+
+  defp setup_label(%{sandbox_state: :closing}, _now),
+    do: "Closing… cleaning up this track's machine"
+
+  defp setup_label(%{sandbox_stage: "creating"}, _now), do: "Creating this track's machine…"
+
+  defp setup_label(%{sandbox_stage: "cloning", repo_full_name: repo}, _now),
+    do: "Cloning #{repo}…"
+
+  defp setup_label(%{sandbox_stage: "setup", setup_state: state}, _now) when state != "ready",
+    do: "Running setup…"
 
   defp setup_label(%{status: :closed}, _now), do: "Closed"
   defp setup_label(%{setup_state: "failed"}, _now), do: "Setup failed"

@@ -754,6 +754,7 @@ defmodule Ravix.PromptQueueTest do
         Ecto.Changeset.change(f.track,
           sandbox_layout: :dedicated,
           sandbox_id: "dedicated",
+          sandbox_state: :ready,
           vault_id: "track-vault"
         )
       )

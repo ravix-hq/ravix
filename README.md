@@ -341,3 +341,28 @@ agent was created before removing the reservation. Do not clear a reservation
 merely because a request timed out. Shared rebuild/deletion fences new agent
 allocations and retires both runtime agents; unresolved reservations block that
 cleanup. Rebuilding successfully clears the retirement fence.
+
+Dedicated opens are disabled by default. Do not add anyone to
+`RAVIX_DEDICATED_OPEN_USER_IDS` until **managoat/fountain#2527 is deployed** and
+the owner has passed `scripts/fountain-sandbox-check.py` against real Fountain.
+The lifecycle is tested against the mock only. Each flagged open persists intent,
+copies the project's secrets server-side, refreshes repository access on that
+copy, and provisions one persistent machine with an ordinary clone. Scratch
+projects skip cloning. Setup holds saved prompts until the working directory is
+verified. The first thread selects the project's home-runtime agent for this disk.
+
+Secret copies are snapshots. Editing project secrets pauses dedicated tracks and
+shows **Secrets changed — rebuild to apply**; an explicitly confirmed rebuild
+replaces the machine and its copy. An unconfirmed source-secret write also holds
+new copies; explicitly saving the secret again can recover an interrupted writer.
+Closing is durable and remains visible while cleanup retries. It ends every
+thread, deletes the machine, confirms its absence, and deletes the copied secrets.
+The final shared track also retires the old shared machine, retaining project
+secrets and runtime agents for future tracks.
+
+Operation leases and generations fence workers across nodes. Lost allocation
+responses are reconciled by the operation's copy name and full machine identity.
+An empty provider listing after an uncertain mutation is not proof that it did
+nothing: the intent and cleanup obligation remain pending rather than allocating
+again. An operator must resolve persistent ambiguity at the provider; do not clear
+operation records or retry with a different identity to bypass it.

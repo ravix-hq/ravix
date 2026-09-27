@@ -5,6 +5,7 @@ defmodule Ravix.Tracks.Setup do
   survive a crash between POST and response. No browser or follower owns setup.
   """
   alias Ravix.{Fountain, Hub, Spec}
+  alias Ravix.Projects.Machine
   alias Ravix.Tracks.{Origin, Store, Transcript}
   alias Ravix.Tracks.Transcript.Event
 
@@ -63,14 +64,27 @@ defmodule Ravix.Tracks.Setup do
 
     if Store.update_setup(track, attrs) do
       track = struct(track, attrs)
-      prompt = Spec.open_track_prompt(project, Origin.from_row(track), track.slug, track.branch)
+
+      prompt =
+        if track.sandbox_layout == :dedicated,
+          do: Spec.open_dedicated_prompt(project, track),
+          else: Spec.open_track_prompt(project, Origin.from_row(track), track.slug, track.branch)
 
       post_opening(client, track, project, prompt)
     end
   end
 
   defp post_opening(client, track, project, prompt) do
-    case Ravix.Projects.prepare_machine(project, client) do
+    preparation =
+      if track.sandbox_layout == :dedicated,
+        do:
+          Machine.prepare_machine(
+            %{project | vault_id: track.vault_id},
+            client
+          ),
+        else: Ravix.Projects.prepare_machine(project, client)
+
+    case preparation do
       :ok ->
         client
         |> Fountain.prompt(track.conversation_id, prompt, [],

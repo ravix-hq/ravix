@@ -133,7 +133,7 @@ defmodule Ravix.DualLayoutConsumersTest do
     assert %{sandbox_id: "shared-disk"} = Projects.Machine.state(ctx.project)
   end
 
-  test "legacy rebuild, runtime switch, delete and track cleanup refuse dedicated ownership",
+  test "project rebuild, runtime switch and delete refuse dedicated ownership; track close requires confirmation",
        ctx do
     client = FakeTransport.client([])
     stub(Ravix.Fountain, :client, fn -> client end)
@@ -148,8 +148,11 @@ defmodule Ravix.DualLayoutConsumersTest do
 
     [track | _] = ctx.tracks
 
-    assert {:error, {:conflict, "dedicated_lifecycle_pending", _}} =
+    assert {:error, {:conflict, "confirm_machine_deletion", _}} =
              Tracks.close(ctx.owner, track.id)
+
+    assert :ok = Tracks.close(ctx.owner, track.id, force: true)
+    assert Repo.get!(Track, track.id).sandbox_state == :closing
 
     shared = insert_track(project: ctx.project)
     assert :ok = Tracks.close_all_for_rebuild(ctx.project, :rebuild)
