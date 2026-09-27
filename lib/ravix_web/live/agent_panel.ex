@@ -472,13 +472,19 @@ defmodule RavixWeb.Live.AgentPanel do
   defp subscription_tone(%{status: "active"}), do: "ok"
   defp subscription_tone(_subscription), do: "bad"
 
-  defp subscription_line(%{exhausted_until: until} = sub) when is_binary(until),
-    do: "#{describe(sub)} Its plan is spent until #{until}; Codex runs are refused until then."
-
-  defp subscription_line(%{status: "active"} = sub), do: describe(sub)
-
-  defp subscription_line(sub),
-    do: "#{describe(sub)} Codex runs on your projects are refused until you sign in again."
+  defp subscription_line(assigns) do
+    ~H"""
+    {describe(@subscription)}
+    <%= cond do %>
+      <% is_binary(@subscription.exhausted_until) -> %>
+        Its plan is spent until
+        <.provider_time value={@subscription.exhausted_until} />; Codex runs are refused until then.
+      <% @subscription.status == "active" -> %>
+      <% true -> %>
+        Codex runs on your projects are refused until you sign in again.
+    <% end %>
+    """
+  end
 
   defp describe(%{plan_type: plan, account_email: email}) do
     plan = if is_binary(plan), do: "ChatGPT #{String.capitalize(plan)}", else: "ChatGPT"
@@ -647,7 +653,7 @@ defmodule RavixWeb.Live.AgentPanel do
           id="chatgpt-subscription"
         >
           <span class={["chip", subscription_tone(@subscription)]}>{subscription_state(@subscription)}</span>
-          <span>{subscription_line(@subscription)}</span>
+          <span><.subscription_line subscription={@subscription} /></span>
         </p>
 
         <ol :if={@agent == :claude && @kind == :subscription} class="agent-howto">

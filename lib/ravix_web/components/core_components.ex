@@ -20,6 +20,23 @@ defmodule RavixWeb.CoreComponents do
   alias Phoenix.HTML.Form
   alias Phoenix.LiveView.JS
 
+  @doc "A provider timestamp in UTC, preserving unknown formats as supplied."
+  attr :value, :string, required: true
+
+  def provider_time(assigns) do
+    label =
+      case DateTime.from_iso8601(assigns.value) do
+        {:ok, dt, _offset} -> Calendar.strftime(dt, "%b %d at %H:%M UTC")
+        {:error, _} -> assigns.value
+      end
+
+    assigns = assign(assigns, :label, label)
+
+    ~H"""
+    <time datetime={@value}>{@label}</time>
+    """
+  end
+
   @doc "Visible, politely announced feedback for work awaiting a response."
   attr :id, :string, default: nil
   slot :inner_block, required: true

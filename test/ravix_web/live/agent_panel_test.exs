@@ -82,36 +82,47 @@ defmodule RavixWeb.Live.AgentPanelTest do
     assert has_element?(view, "#held-claude-api_key", "API key")
   end
 
-  test "a ChatGPT subscription is shown as Fountain reports it", %{conn: conn} do
-    user = insert_user(agent: :codex, credential_kind: :subscription, credential_set_id: "s")
-    stub(Inference, :link_status, fn _ -> {:ok, %{enabled?: true, pending: nil}} end)
+  for {raw, label} <- [
+        {"2026-09-22T09:00:00Z", "Sep 22 at 09:00 UTC"},
+        {"unknown reset", "unknown reset"},
+        {"2026-09-22T11:00:00+02:00", "Sep 22 at 09:00 UTC"}
+      ] do
+    test "a ChatGPT subscription reset shows #{raw}", %{conn: conn} do
+      user = insert_user(agent: :codex, credential_kind: :subscription, credential_set_id: "s")
+      stub(Inference, :link_status, fn _ -> {:ok, %{enabled?: true, pending: nil}} end)
 
-    expect(Inference, :subscription, fn caller ->
-      assert caller.id == user.id
+      expect(Inference, :subscription, fn caller ->
+        assert caller.id == user.id
 
-      {:ok,
-       %{
-         id: "g-1",
-         status: "active",
-         plan_type: "plus",
-         account_email: "me@example.com",
-         exhausted_until: "2026-09-22T09:00:00Z"
-       }}
-    end)
+        {:ok,
+         %{
+           id: "g-1",
+           status: "active",
+           plan_type: "plus",
+           account_email: "me@example.com",
+           exhausted_until: unquote(raw)
+         }}
+      end)
 
-    view = open_account(conn, user)
-    html = render_async(view)
-    assert has_element?(view, "#chatgpt-subscription .chip.warn", "Usage spent")
-    assert html =~ "ChatGPT Plus, me@example.com."
-    assert html =~ "spent until 2026-09-22T09:00:00Z"
+      view = open_account(conn, user)
+      html = render_async(view)
+      assert has_element?(view, "#chatgpt-subscription .chip.warn", "Usage spent")
+      assert html =~ "ChatGPT Plus, me@example.com."
 
-    # Choosing the other agent and back re-reads nothing; the row is about
-    # the person, not the choice. A reconnect would.
-    reject(&Inference.subscription/1)
-    view |> element("#agent-claude") |> render_click()
-    refute has_element?(view, "#chatgpt-subscription")
-    view |> element("#agent-codex") |> render_click()
-    assert render(view) =~ "Usage spent"
+      assert has_element?(
+               view,
+               ~s(#chatgpt-subscription time[datetime="#{unquote(raw)}"]),
+               unquote(label)
+             )
+
+      # Choosing the other agent and back re-reads nothing; the row is about
+      # the person, not the choice. A reconnect would.
+      reject(&Inference.subscription/1)
+      view |> element("#agent-claude") |> render_click()
+      refute has_element?(view, "#chatgpt-subscription")
+      view |> element("#agent-codex") |> render_click()
+      assert render(view) =~ "Usage spent"
+    end
   end
 
   test "connecting through the dialog changes the person on the page and says so", %{conn: conn} do

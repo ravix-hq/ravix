@@ -202,10 +202,10 @@ defmodule Ravix.Projects do
 
   # Only expose the reset time, never the owner's account details.
   defp chatgpt_reset(%User{} = owner, "codex", true) do
-    with {:ok, held} <- Inference.held(owner),
+    with {:ok, held} <- Inference.cached_held(owner),
          true <- {:codex, :subscription} in held,
          {:ok, %{status: "active", exhausted_until: until}} when is_binary(until) <-
-           Inference.subscription(owner) do
+           Inference.cached_subscription(owner) do
       until
     else
       _ -> nil

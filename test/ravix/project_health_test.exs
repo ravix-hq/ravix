@@ -4,6 +4,7 @@ defmodule Ravix.ProjectHealthTest do
 
   alias Ravix.{Accounts, Projects}
   alias Ravix.Accounts.Inference
+  alias Ravix.Fountain.FakeTransport
 
   test "funding is scoped to the project owner for owners, project members and track guests" do
     owner = insert_user(credential_set_id: "owner-set")
@@ -51,9 +52,9 @@ defmodule Ravix.ProjectHealthTest do
     owner = insert_user()
     project = insert_project(user: owner, runtime: "codex")
     stub(Inference, :usable?, fn _, _, _ -> {:ok, true} end)
-    stub(Inference, :held, fn _ -> {:ok, [{:codex, :subscription}]} end)
+    stub(Inference, :cached_held, fn _ -> {:ok, [{:codex, :subscription}]} end)
 
-    expect(Inference, :subscription, fn caller ->
+    expect(Inference, :cached_subscription, fn caller ->
       assert caller.id == owner.id
 
       {:ok,
@@ -68,8 +69,8 @@ defmodule Ravix.ProjectHealthTest do
     assert health.exhausted_until == "2026-10-01T09:00:00Z"
     refute Map.has_key?(health, :account_email)
 
-    stub(Inference, :held, fn _ -> {:ok, [{:codex, :api_key}]} end)
-    reject(&Inference.subscription/1)
+    stub(Inference, :cached_held, fn _ -> {:ok, [{:codex, :api_key}]} end)
+    reject(&Inference.cached_subscription/1)
     assert {:ok, %{exhausted_until: nil}} = Projects.agent_health(owner, project.id)
   end
 
@@ -77,16 +78,69 @@ defmodule Ravix.ProjectHealthTest do
     owner = insert_user()
     project = insert_project(user: owner, runtime: "codex")
     stub(Inference, :usable?, fn _, _, _ -> {:ok, true} end)
-    stub(Inference, :held, fn _ -> {:ok, [{:codex, :subscription}]} end)
+    stub(Inference, :cached_held, fn _ -> {:ok, [{:codex, :subscription}]} end)
 
     for response <- [
           {:error, :offline},
           {:ok, nil},
           {:ok, %{status: "disconnected", exhausted_until: "old"}}
         ] do
-      expect(Inference, :subscription, fn _ -> response end)
+      expect(Inference, :cached_subscription, fn _ -> response end)
       assert {:ok, %{exhausted_until: nil}} = Projects.agent_health(owner, project.id)
     end
+  end
+
+  test "health reuses credential and subscription reads, and invalidation refreshes both" do
+    owner = insert_user(credential_set_id: "health-set")
+    project = insert_project(user: owner, runtime: "codex")
+    sets = "/api/account/inference-credential-sets"
+    subscriptions = "/api/account/chatgpt-subscriptions"
+
+    client =
+      FakeTransport.client(
+        List.duplicate(
+          [
+            {%{method: "GET", path: sets},
+             {200, [], %{data: [%{id: "health-set", providers: [], chatgpt_grant_id: "grant"}]}}},
+            {%{method: "GET", path: subscriptions},
+             {200, [],
+              %{
+                data: [
+                  %{
+                    id: "grant",
+                    name: "ravix:#{owner.id}",
+                    status: "active",
+                    exhausted_until: "2026-10-01T09:00:00Z"
+                  }
+                ]
+              }}}
+          ],
+          2
+        )
+        |> List.flatten()
+      )
+
+    stub(Ravix.Fountain, :client, fn -> client end)
+
+    assert {:ok, true} = Inference.usable?(owner, "codex")
+    assert length(FakeTransport.calls(client)) == 1
+
+    assert {:ok, %{exhausted_until: "2026-10-01T09:00:00Z"}} =
+             Projects.agent_health(owner, project.id)
+
+    assert length(FakeTransport.calls(client)) == 2
+
+    assert {:ok, %{exhausted_until: "2026-10-01T09:00:00Z"}} =
+             Projects.agent_health(owner, project.id)
+
+    assert length(FakeTransport.calls(client)) == 2
+
+    Inference.Cache.invalidate(owner)
+
+    assert {:ok, %{exhausted_until: "2026-10-01T09:00:00Z"}} =
+             Projects.agent_health(owner, project.id)
+
+    assert length(FakeTransport.calls(client)) == 4
   end
 
   test "disconnect impact excludes shared, foreign, archived and other-runtime projects" do

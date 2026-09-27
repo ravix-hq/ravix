@@ -25,8 +25,10 @@ defmodule Ravix.Accounts.Inference.Cache do
   def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
 
   @doc false
-  def fetch(%User{id: id, credential_set_id: set_id}, load) do
-    Memo.fetch(@memo, {id, set_id}, load, fn
+  def fetch(%User{id: id, credential_set_id: set_id}, load, kind \\ :held) do
+    key = if kind == :held, do: {id, set_id}, else: {id, {set_id, kind}}
+
+    Memo.fetch(@memo, key, load, fn
       {:ok, _}, started -> started + @ttl_ms
       {:error, _}, _started -> nil
     end)

@@ -82,7 +82,8 @@ defmodule RavixWeb.Live.AgentHealth do
         id={@id <> "-banner"}
       >
         <p :if={@health.exhausted_until}>
-          {@health.owner_login}'s ChatGPT usage resets at {@health.exhausted_until}.
+          {@health.owner_login}'s ChatGPT usage resets at
+          <.provider_time value={@health.exhausted_until} />.
         </p>
         <p :if={!@health.exhausted_until && Map.get(@health, :scope) == :thread}>
           <%= if @health.usable? == false do %>

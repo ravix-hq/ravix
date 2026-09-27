@@ -539,43 +539,65 @@ defmodule RavixWeb.TrackLiveTest do
     assert_push_event(ctx.view, "composer:retry", %{text: "Fix the outage", images: false})
   end
 
-  test "spent ChatGPT usage tells owners and members when the owner's plan resets", ctx do
-    ctx.project |> Ecto.Changeset.change(runtime: "codex") |> Repo.update!()
-    member = insert_user()
-    insert_project_member(ctx.project, member)
-    stub(Ravix.Accounts.Inference, :usable?, fn _, _, _ -> {:ok, true} end)
+  for {raw, label} <- [
+        {"2026-10-01T09:00:00Z", "Oct 01 at 09:00 UTC"},
+        {"unknown reset", "unknown reset"}
+      ] do
+    test "spent ChatGPT usage shows #{label} to owners and members", ctx do
+      ctx.project |> Ecto.Changeset.change(runtime: "codex") |> Repo.update!()
+      member = insert_user()
+      insert_project_member(ctx.project, member)
+      stub(Ravix.Accounts.Inference, :usable?, fn _, _, _ -> {:ok, true} end)
 
-    stub(Ravix.Accounts.Inference, :held, fn owner ->
-      assert owner.id == ctx.user.id
-      {:ok, [{:codex, :subscription}]}
-    end)
+      stub(Ravix.Accounts.Inference, :cached_held, fn owner ->
+        assert owner.id == ctx.user.id
+        {:ok, [{:codex, :subscription}]}
+      end)
 
-    stub(Ravix.Accounts.Inference, :subscription, fn owner ->
-      assert owner.id == ctx.user.id
+      stub(Ravix.Accounts.Inference, :cached_subscription, fn owner ->
+        assert owner.id == ctx.user.id
 
-      {:ok,
-       %{
-         status: "active",
-         exhausted_until: "2026-10-01T09:00:00Z",
-         account_email: "private@example.com"
-       }}
-    end)
+        {:ok,
+         %{
+           status: "active",
+           exhausted_until: unquote(raw),
+           account_email: "private@example.com"
+         }}
+      end)
 
-    for viewer <- [ctx.user, member] do
-      {:ok, parent, _} =
-        live(log_in_user(build_conn(), viewer), "/p/#{ctx.project.id}/t/#{ctx.track.id}")
+      for viewer <- [ctx.user, member] do
+        {:ok, parent, _} =
+          live(log_in_user(build_conn(), viewer), "/p/#{ctx.project.id}/t/#{ctx.track.id}")
 
-      view = find_live_child(parent, "track-host")
-      settle(view)
+        view = find_live_child(parent, "track-host")
+        settle(view)
 
-      assert has_element?(
-               view,
-               "#track-agent-health-banner",
-               "#{ctx.user.login}'s ChatGPT usage resets at 2026-10-01T09:00:00Z"
-             )
+        assert has_element?(
+                 view,
+                 "#track-agent-health-banner",
+                 "#{ctx.user.login}'s ChatGPT usage resets at"
+               )
 
-      refute has_element?(view, "#track-agent-health-banner button")
-      refute render(view) =~ "private@example.com"
+        assert has_element?(
+                 view,
+                 ~s(#track-agent-health-banner time[datetime="#{unquote(raw)}"]),
+                 unquote(label)
+               )
+
+        {:ok, overview, _} =
+          live(log_in_user(build_conn(), viewer), "/p/#{ctx.project.id}")
+
+        render_async(overview)
+
+        assert has_element?(
+                 overview,
+                 ~s(#project-agent-health-#{ctx.project.id}-banner time[datetime="#{unquote(raw)}"]),
+                 unquote(label)
+               )
+
+        refute has_element?(view, "#track-agent-health-banner button")
+        refute render(view) =~ "private@example.com"
+      end
     end
   end
 
