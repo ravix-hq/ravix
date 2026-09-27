@@ -224,18 +224,37 @@ defmodule RavixWeb.Live.MachineDock do
   defp retry_vitals?(%Vitals.Report{why: :no_token}), do: false
   defp retry_vitals?(_), do: true
 
-  defp machine_status(nil), do: "Checking this track’s machine…"
-  defp machine_status(%Terminal.Status{available: true}), do: "This track’s machine is running"
-  defp machine_status(%Terminal.Status{why: :no_machine}), do: "This track has no machine"
-  defp machine_status(%Terminal.Status{why: :no_token}), do: "Machine status is unavailable"
-  defp machine_status(_), do: "This track’s machine is asleep or unreachable"
+  # Whose machine this is matters as much as its state: a shared track's
+  # terminal and files are the whole project's machine, a dedicated one's are not.
+  defp machine_status(status, {:ok, {_id, :dedicated, _sandbox, _generation}}),
+    do: machine_state(status, "This track’s machine")
+
+  defp machine_status(status, _identity),
+    do: machine_state(status, "The shared project machine") <> shared_note(status)
+
+  defp machine_state(nil, whose), do: "Checking " <> lowercase_first(whose) <> "…"
+  defp machine_state(%Terminal.Status{available: true}, whose), do: whose <> " is running"
+
+  defp machine_state(%Terminal.Status{why: :no_machine}, _whose),
+    do: "This track has no machine yet"
+
+  defp machine_state(%Terminal.Status{why: :no_token}, _whose),
+    do: "Machine status is unavailable"
+
+  defp machine_state(_status, whose), do: whose <> " is asleep or unreachable"
+
+  defp shared_note(%Terminal.Status{why: why}) when why in [:no_machine, :no_token], do: ""
+  defp shared_note(_status), do: " (used by all of this project’s tracks)"
+
+  defp lowercase_first(<<first::utf8, rest::binary>>),
+    do: String.downcase(<<first::utf8>>) <> rest
 
   @impl true
   def render(assigns) do
     ~H"""
     <div class="machine-dock-host">
       <p id="track-machine-status" role="status">
-        {machine_status(@machine_status)}
+        {machine_status(@machine_status, @machine_identity)}
       </p>
       <nav class="workspace-tabs dock-tabs" aria-label="Machine panels">
         <button

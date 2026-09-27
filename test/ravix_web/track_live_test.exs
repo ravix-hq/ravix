@@ -1576,6 +1576,25 @@ defmodule RavixWeb.TrackLiveTest do
     refute has_element?(ctx.view, "input[data-terminal-input][disabled]")
   end
 
+  test "the machine status says a shared track runs on the whole project's machine", ctx do
+    stub(Ravix.Terminal, :status, fn _, _, _ ->
+      {:ok, %Ravix.Terminal.Status{available: true, why: nil, cwd: ctx.track.workdir}}
+    end)
+
+    {:ok, parent, _} =
+      live(log_in_user(build_conn(), ctx.user), "/p/#{ctx.project.id}/t/#{ctx.track.id}")
+
+    view = find_live_child(parent, "track-host")
+    settle(view)
+    render_async(view, 1_000)
+
+    assert has_element?(
+             view,
+             "#track-machine-status",
+             "The shared project machine is running (used by all of this project’s tracks)"
+           )
+  end
+
   test "Commands combines standalone execution in one clearly named dock tab", ctx do
     ctx.view
     |> element("button[phx-click=dock][phx-value-name=terminal]", "Commands")
