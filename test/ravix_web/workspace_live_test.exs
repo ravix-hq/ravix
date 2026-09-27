@@ -861,7 +861,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
     insert_track(project: project)
     {:ok, view, _} = live(log_in_user(conn, user), "/home")
     render_async(view)
-    refute has_element?(view, "#yard .workspace-track")
+    refute has_element?(view, "#yard [role=tablist] .workspace-track")
     refute has_element?(view, ".track-tabs")
     render_patch(view, "/p/#{project.id}")
     view |> element("a.project-add") |> render_click()
@@ -893,7 +893,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
              ".track-tabs a[aria-current='page'][href='/p/#{project.id}/t/#{track.id}']"
            )
 
-    refute has_element?(view, "#yard .workspace-track")
+    assert has_element?(view, "#yard [role=tablist] .workspace-track")
     refute has_element?(view, ".track-tabs a[href='/p/#{other.id}/t/#{other_track.id}']")
     render_click(view, "dialog", %{name: "projects"})
 
@@ -933,7 +933,11 @@ defmodule RavixWeb.WorkspaceLiveTest do
     stub(Tracks, :list, fn _user, _project_id, _opts -> {:ok, tracks} end)
     {:ok, view, _} = live(log_in_user(conn, user), "/p/#{project.id}")
     render_async(view)
-    tab = fn track -> ".track-tabs a[href='/p/#{project.id}/t/#{track.id}']" end
+
+    tab = fn track ->
+      "#yard [role=tablist] a[role=tab][href='/p/#{project.id}/t/#{track.id}']"
+    end
+
     [idle, busy, booting, broken, answered, feature, setup_broken] = tracks
 
     # The namespace every default title shares is left off the tab; the full
@@ -962,6 +966,40 @@ defmodule RavixWeb.WorkspaceLiveTest do
     # Idle and active tracks alike omit decorative numbering.
     refute has_element?(view, "#{tab.(idle)} [role=img]")
     refute has_element?(view, ".track-tabs .track-num")
+  end
+
+  test "project tabs live in the collapsible sidebar with one selected tab", %{conn: conn} do
+    user = insert_user()
+    project = insert_project(user: user)
+    track = insert_track(project: project)
+    {:ok, view, _} = live(log_in_user(conn, user), "/p/#{project.id}")
+    render_async(view)
+
+    assert has_element?(view, "#yard [role=tablist][aria-orientation=vertical]")
+    refute has_element?(view, "#workspace-stage [role=tablist]")
+    assert has_element?(view, "#project-overview-tab[aria-selected=true][tabindex='0']")
+
+    assert has_element?(
+             view,
+             "#project-track-tab-#{track.id}[aria-selected=false][tabindex='-1']"
+           )
+
+    assert has_element?(
+             view,
+             "#project-tabpanel[role=tabpanel][aria-labelledby=project-overview-tab]"
+           )
+
+    assert has_element?(view, "#yard #project-track-navigation button", "New track")
+    refute has_element?(view, "[role=tablist] button")
+
+    render_click(view, "yard")
+    assert has_element?(view, "#yard.forced")
+    view |> element("#project-track-tab-#{track.id}") |> render_click()
+    render_async(view)
+    refute has_element?(view, "#yard.forced")
+    assert has_element?(view, "#project-track-tab-#{track.id}[aria-selected=true][tabindex='0']")
+    assert has_element?(view, "#project-overview-tab[aria-selected=false][tabindex='-1']")
+    assert has_element?(view, "#project-tabpanel[aria-labelledby=project-track-tab-#{track.id}]")
   end
 
   test "hiding advanced options drops the origin they carried", %{conn: conn} do

@@ -1,79 +1,64 @@
 import {beforeEach, expect, test} from 'bun:test'
 import {TrackTabs} from '../js/hooks/track_tabs.js'
-import {dimensions, mountHook} from './setup.js'
+import {key, mountHook} from './setup.js'
 
-let strip, selected, revealed
+let tabs, revealed
 beforeEach(() => {
-  document.body.innerHTML = `<nav id="tabs"><button data-scroll-left></button><div class="track-tabs"><a href="/one" aria-current="page">One</a></div><button data-scroll-right></button></nav>`
-  strip = document.querySelector('.track-tabs')
-  dimensions(strip, {clientWidth: 200, scrollWidth: 800})
-  let offset = 0
-  Object.defineProperty(strip, 'scrollLeft', {configurable: true, get: () => offset, set: value => { offset = Math.max(0, Math.min(600, value)) }})
-  strip.scrollBy = ({left}) => { strip.scrollLeft += left; strip.dispatchEvent(new Event('scroll')) }
-  selected = strip.querySelector('a')
+  document.body.innerHTML = `<nav id="tabs"><div role="tablist"><a role="tab" href="/one" aria-selected="true">One</a><a role="tab" href="/two" aria-selected="false">Two</a><a role="tab" href="/three" aria-selected="false">Three</a></div><button>New track</button></nav>`
+  tabs = [...document.querySelectorAll('[role="tab"]')]
   revealed = 0
-  selected.scrollIntoView = () => { revealed++ }
+  for (const tab of tabs) tab.scrollIntoView = () => { revealed++ }
 })
-const wheel = options => {
-  const event = new WheelEvent('wheel', {deltaY: 50, cancelable: true, ...options})
-  // Happy DOM's WheelEvent omits modifier keys.
-  Object.defineProperties(event, {ctrlKey: {value: !!options.ctrlKey}, shiftKey: {value: !!options.shiftKey}})
-  strip.dispatchEvent(event)
-  return event
-}
 
-test('mouse wheels scroll pixels, lines, and pages without intercepting native gestures or boundaries', () => {
+test('vertical arrows wrap, Home/End rove, and activation waits for Enter or Space', () => {
   mountHook(TrackTabs, '#tabs')
-  expect(wheel({}).defaultPrevented).toBe(true)
-  expect(strip.scrollLeft).toBe(50)
-  wheel({deltaMode: 1, deltaY: 2})
-  expect(strip.scrollLeft).toBe(82)
-  wheel({deltaMode: 2, deltaY: 1})
-  expect(strip.scrollLeft).toBe(282)
-  for (const options of [{ctrlKey: true}, {shiftKey: true}, {deltaX: 20}, {deltaY: 0}]) {
-    expect(wheel(options).defaultPrevented).toBe(false)
-    expect(strip.scrollLeft).toBe(282)
+  tabs[0].focus()
+  let clicks = 0
+  tabs[2].addEventListener('click', event => { event.preventDefault(); clicks++ })
+  key(tabs[0], 'ArrowUp')
+  expect(document.activeElement).toBe(tabs[2])
+  expect(tabs.map(tab => tab.tabIndex)).toEqual([-1, -1, 0])
+  expect(clicks).toBe(0)
+  key(tabs[2], 'ArrowDown')
+  expect(document.activeElement).toBe(tabs[0])
+  key(tabs[0], 'End')
+  expect(document.activeElement).toBe(tabs[2])
+  expect(key(tabs[2], ' ').defaultPrevented).toBe(true)
+  expect(clicks).toBe(1)
+  key(tabs[2], 'Home')
+  expect(document.activeElement).toBe(tabs[0])
+  for (const [name, options] of [['ArrowLeft', {}], ['Enter', {}], ['ArrowDown', {ctrlKey: true}], ['ArrowDown', {altKey: true}], ['ArrowDown', {metaKey: true}]]) {
+    expect(key(tabs[0], name, options).defaultPrevented).toBe(false)
   }
-  strip.scrollLeft = 600
-  expect(wheel({}).defaultPrevented).toBe(false)
-  expect(wheel({deltaY: -50}).defaultPrevented).toBe(true)
-  expect(strip.scrollLeft).toBe(550)
 })
 
-test('controls reflect scroll limits and stop listening when destroyed', () => {
+test('patches retain roving focus and only reveal a changed selection', () => {
   const {hook} = mountHook(TrackTabs, '#tabs')
-  expect(hook.left.disabled).toBe(true)
-  expect(hook.right.disabled).toBe(false)
-  hook.right.click()
-  expect(strip.scrollLeft).toBe(160)
-  expect(hook.left.disabled).toBe(false)
-  hook.left.click()
-  expect(strip.scrollLeft).toBe(0)
-  strip.scrollLeft = 600
-  strip.dispatchEvent(new Event('scroll'))
-  expect(hook.right.disabled).toBe(true)
+  expect(revealed).toBe(1)
+  tabs[1].focus()
+  tabs[1].tabIndex = -1
+  hook.updated()
+  expect(tabs[1].tabIndex).toBe(0)
+  expect(revealed).toBe(1)
+  tabs[0].setAttribute('aria-selected', 'false')
+  tabs[2].setAttribute('aria-selected', 'true')
+  tabs[1].blur()
+  hook.updated()
+  expect(revealed).toBe(2)
+  expect(tabs.map(tab => tab.tabIndex)).toEqual([-1, -1, 0])
+  tabs[2].setAttribute('aria-selected', 'false')
+  hook.updated()
+  expect(revealed).toBe(2)
+  expect(tabs.every(tab => tab.tabIndex === -1)).toBe(true)
+})
+
+test('non-tab keys are ignored and listeners are removed on teardown', () => {
+  const {hook} = mountHook(TrackTabs, '#tabs')
+  expect(key(hook.strip, 'Home').defaultPrevented).toBe(false)
+  hook.focus({target: hook.strip})
   hook.destroyed()
-  hook.left.click()
-  wheel({deltaY: -10})
-  expect(strip.scrollLeft).toBe(600)
-})
-
-test('navigation reveals the selected tab while unrelated patches preserve manual scrolling', () => {
-  const {hook} = mountHook(TrackTabs, '#tabs')
-  expect(revealed).toBe(1)
-  strip.scrollLeft = 100
-  hook.updated()
-  expect(revealed).toBe(1)
-  expect(strip.scrollLeft).toBe(100)
-  selected.setAttribute('href', '/two')
-  hook.updated()
-  expect(revealed).toBe(2)
-  selected.removeAttribute('aria-current')
-  hook.updated()
-  expect(revealed).toBe(2)
-  dimensions(strip, {scrollWidth: 200})
-  strip.scrollLeft = 0
-  hook.measure()
-  expect(hook.left.disabled).toBe(true)
-  expect(hook.right.disabled).toBe(true)
+  tabs[0].focus()
+  key(tabs[0], 'ArrowDown')
+  expect(document.activeElement).toBe(tabs[0])
+  expect(tabs[1].tabIndex).toBe(-1)
 })

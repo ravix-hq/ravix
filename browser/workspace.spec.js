@@ -584,7 +584,7 @@ test('project, track, streaming, image upload, reconnect, and revocation', async
   const firstTrackTab = page.locator('.track-tabs .workspace-track[aria-current="page"]');
   await expect(firstTrackTab).toBeVisible();
   const firstTrackName = (await firstTrackTab.locator('.track-title').textContent()).trim();
-  await expect(page.locator('#yard .workspace-track')).toHaveCount(0);
+  await expect(page.locator('#yard [role=tablist] .workspace-track')).toHaveCount(1);
   // Personal sections persist across reloads and never delete the projects inside.
   await page.locator('#project-switcher-trigger').click();
   await page.getByRole('button', { name: 'Manage sections', exact: true }).click();
@@ -801,7 +801,7 @@ test('project, track, streaming, image upload, reconnect, and revocation', async
   await expect(page.locator('#transcript-turns')).not.toContainText('Draft survives reconnect');
   await accessible(page);
 
-  await page.locator('.track-tabs').getByRole('link').filter({ hasText: firstTrackName }).click();
+  await page.getByRole('tablist', { name: 'Project tracks' }).getByRole('tab').filter({ hasText: firstTrackName }).click();
   await expect(page.locator('.track-crumbs')).toContainText(firstTrackName);
   await expect(page.locator('#transcript-scroll')).toHaveAttribute('data-track', firstLane);
   await expect(page.locator('#transcript-turns')).toContainText('Draft survives reconnect');

@@ -51,7 +51,7 @@ test('project switcher searches, patches and restores focus at desktop and phone
     await picker.locator(`a[href='${projects[1].path}']`).click();
     await expect(page).toHaveURL(new RegExp(`${projects[1].path}$`));
     const nav = page.locator(width === 500 ? '.workspace-mobile-nav' : '.yard-nav');
-    await nav.getByRole('link', { name: 'Inbox', exact: true }).click();
+    await nav.getByRole('link', { name: /^Inbox(?: \d+)?$/ }).click();
     await expect(page).toHaveURL(/\/inbox$/);
     await expect(trigger).toHaveText('Projects');
     await nav.getByRole('link', { name: 'Schedules', exact: true }).click();
