@@ -512,7 +512,7 @@ defmodule RavixWeb.TrackLiveTest do
     assert has_element?(
              ctx.view,
              "#turns-timeout .workspace-failure",
-             "Claude Code couldn't reach its model provider"
+             "Claude Code couldn't reach Anthropic"
            )
 
     refute has_element?(ctx.view, "#turns-timeout .md", "request timed out")

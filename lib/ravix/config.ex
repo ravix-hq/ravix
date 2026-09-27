@@ -2,7 +2,8 @@ defmodule Ravix.Config do
   @doc "Rollout eligibility only; dedicated writers remain unshipped until ADR 0006 phase 4."
   @spec dedicated_opens_enabled?(Ravix.Accounts.User.t()) :: boolean()
   def dedicated_opens_enabled?(%Ravix.Accounts.User{id: id}) do
-    id in Application.get_env(:ravix, :dedicated_open_user_ids, [])
+    cohort = Application.get_env(:ravix, :dedicated_open_user_ids, [])
+    "*" in cohort or id in cohort
   end
 
   @doc "Retire final shared machines only after explicit operator enablement."

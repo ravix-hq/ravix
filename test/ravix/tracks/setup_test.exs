@@ -198,7 +198,14 @@ defmodule Ravix.Tracks.SetupTest do
     persist(row(ctx.track), setup_state: "ready")
     assert {:ok, recovered} = Tasks.get(principal, task.id)
     assert recovered.error_code == "agent_provider_unreachable"
-    refute hd(Tasks.present(recovered).status.message.parts).text =~ "retry_setup"
+    message = hd(Tasks.present(recovered).status.message.parts).text
+    refute message =~ "retry_setup"
+    assert recovered.queue_status == :failed
+    assert message =~ "Call retry_task with task_id #{task.id}"
+
+    QueueStore.get(task.id) |> Ecto.Changeset.change(status: :queued) |> Repo.update!()
+    assert {:ok, queued} = Tasks.get(principal, task.id)
+    refute (hd(Tasks.present(queued).status.message.parts).text || "") =~ "retry_task"
   end
 
   test "failed opening retries with backoff, and a different worker delivers only after verification",

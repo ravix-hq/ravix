@@ -55,8 +55,9 @@ defmodule Ravix.Tooling.Store do
   def task(id), do: Repo.get(Task, id)
   def lock_task(id), do: Repo.one(from t in Task, where: t.id == ^id, lock: "FOR UPDATE")
 
-  # ownership: no user door on server bookkeeping. These joins correlate
-  # existing receipts to their queue/thread/project; no new work is submitted
+  # ownership: Access.track_access, via Access.thread_access in Tasks.send
+  # (send_prompt), authorized creation of these receipts. These joins correlate them to their
+  # queue/thread/project; no new work is submitted
   # and no result is returned to a client. Public reads remain scoped in Tasks.
   defp pending do
     from t in Task,
