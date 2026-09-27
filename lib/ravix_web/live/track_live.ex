@@ -757,6 +757,7 @@ defmodule RavixWeb.TrackLive do
     # is the one still outstanding this is an empty reset, and its own result
     # inserts into a container that is by then real.
     |> follow_siblings()
+    |> refresh_bound_machine(socket.assigns.track)
     |> memoize()
     |> stream(:turns, Transcript.visible_turns(socket.assigns.page), reset: true)
   end
@@ -780,6 +781,7 @@ defmodule RavixWeb.TrackLive do
         models: detail.models
       )
       |> follow_siblings()
+      |> refresh_bound_machine(socket.assigns.track)
 
   defp async_result(:detail, {:ok, {:error, reason}}, socket), do: error(socket, reason)
 
@@ -1318,6 +1320,21 @@ defmodule RavixWeb.TrackLive do
   end
 
   defp thread_activity(socket, _id, _event), do: socket
+
+  # Allocation can finish after the mount's empty reads. A binding change must
+  # repair those reads immediately; the minute-long backstop is not readiness.
+  defp refresh_bound_machine(socket, previous) do
+    track = socket.assigns.track
+
+    if (track.sandbox_layout == :dedicated and previous) &&
+         {track.conversation_id, track.sandbox_state} !=
+           {previous.conversation_id, previous.sandbox_state} do
+      socket = socket |> unfollow() |> refresh_transcript()
+      if track.sandbox_state == :ready, do: load_panel(socket), else: socket
+    else
+      socket
+    end
+  end
 
   defp refresh_transcript(socket) do
     user = socket.assigns.current_user

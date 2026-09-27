@@ -613,6 +613,10 @@
         <.live_component
           module={RavixWeb.Live.MachineDock}
           id="machine-dock-panel"
+          lifecycle={
+            if @track.sandbox_layout == :dedicated,
+              do: {@track.conversation_id, @track.sandbox_state}
+          }
           track_id={@track_id}
           workdir={@track.workdir}
           current_user={@current_user}

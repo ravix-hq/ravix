@@ -1,5 +1,6 @@
 defmodule RavixWeb.ErrorTest do
-  use ExUnit.Case, async: true
+  # CaptureLog observes global logging; unrelated async warning tests must finish first.
+  use ExUnit.Case, async: false
   alias Ravix.Previews
   alias Ravix.Terminal.Request
   alias RavixWeb.Error

@@ -112,6 +112,62 @@ defmodule RavixWeb.TrackLiveTest do
     assert has_element?(ctx.view, "#close-machine-changes", "could not be checked")
   end
 
+  test "a dedicated binding refreshes mount reads and the dock without waiting for the backstop",
+       ctx do
+    row =
+      Repo.update!(
+        Ecto.Changeset.change(ctx.track,
+          sandbox_layout: :dedicated,
+          sandbox_state: :provisioning,
+          conversation_id: nil,
+          setup_state: "pending"
+        )
+      )
+
+    send(
+      ctx.view.pid,
+      {:hub, %Event{name: :tracks, project_id: ctx.project.id, track_id: ctx.track.id}}
+    )
+
+    settle(ctx.view)
+    caller = self()
+
+    expect(Tracks, :events, fn _, _, _ ->
+      send(caller, :transcript_refreshed)
+      {:ok, Transcript.empty("claude")}
+    end)
+
+    expect(Tracks, :files, fn _, _, _ ->
+      send(caller, :files_refreshed)
+      {:ok, %Files.Listing{path: ctx.track.workdir, truncated: false, entries: []}}
+    end)
+
+    stub(Terminal, :status, fn _, _, opts ->
+      if opts == [passive: true], do: send(caller, :dock_refreshed)
+      {:ok, %Terminal.Status{available: true, why: nil, cwd: ctx.track.workdir}}
+    end)
+
+    Repo.update!(
+      Ecto.Changeset.change(row,
+        sandbox_state: :ready,
+        sandbox_id: "new-disk",
+        conversation_id: "new-conversation",
+        setup_state: "ready"
+      )
+    )
+
+    send(
+      ctx.view.pid,
+      {:hub, %Event{name: :tracks, project_id: ctx.project.id, track_id: ctx.track.id}}
+    )
+
+    settle(ctx.view)
+    assert_receive :transcript_refreshed
+    assert_receive :files_refreshed
+    assert_receive :dock_refreshed
+    refute has_element?(ctx.view, "#track-setup-status")
+  end
+
   test "stale secret snapshots explain the required destructive rebuild", ctx do
     Repo.update!(
       Ecto.Changeset.change(ctx.track,
