@@ -36,6 +36,10 @@ defmodule Ravix.Tracks.SetupTest do
 
     stub(Fountain, :events, fn _, _ -> {:ok, []} end)
 
+    stub(Fountain, :events_page, fn _, _, _ ->
+      {:ok, %{events: [], next_cursor: nil, has_more: false}}
+    end)
+
     stub(Fountain, :listing, fn _, "sandbox", path ->
       {:ok, %{"path" => path, "entries" => [%{"name" => ".git"}]}}
     end)

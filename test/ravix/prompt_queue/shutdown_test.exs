@@ -11,6 +11,11 @@ defmodule Ravix.PromptQueue.ShutdownTest do
     project = insert_project(user: user, repo_full_name: nil, vault_id: nil, installation_id: nil)
     stub(Fountain, :client, fn -> Fountain.Client.new("https://fountain.test", "test") end)
     stub(Ravix.Projects, :prepare_machine, fn _, _ -> :ok end)
+
+    stub(Fountain, :events_page, fn _, _, _ ->
+      {:ok, %{events: [], next_cursor: nil, has_more: false}}
+    end)
+
     %{user: user, project: project}
   end
 

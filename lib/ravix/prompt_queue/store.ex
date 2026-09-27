@@ -414,6 +414,50 @@ defmodule Ravix.PromptQueue.Store do
     tracks |> Enum.uniq() |> Enum.each(&publish_queue/1)
   end
 
+  @doc "Last reset whose preamble was confirmed delivered on this thread."
+  @spec delivered_reset(String.t()) :: non_neg_integer()
+  def delivered_reset(thread_id) do
+    Repo.one(
+      from p in Item,
+        where: p.thread_id == ^thread_id and p.status == :sent and not is_nil(p.session_reset_id),
+        select: max(p.session_reset_id)
+    ) || 0
+  end
+
+  @doc "The committed event cursor, or a first-scan baseline for legacy sent history."
+  @spec recovery_scan(String.t()) :: {non_neg_integer(), boolean()}
+  def recovery_scan(thread_id) do
+    cursor =
+      Repo.one(
+        from p in Item,
+          where:
+            p.thread_id == ^thread_id and p.status == :sent and not is_nil(p.session_scan_id),
+          select: max(p.session_scan_id)
+      )
+
+    baseline? =
+      is_nil(cursor) and
+        Repo.exists?(from p in Item, where: p.thread_id == ^thread_id and p.status == :sent)
+
+    {cursor || 0, baseline?}
+  end
+
+  @doc "Prepare the scanned cursor and included reset; only a sent row commits either."
+  @spec prepare_recovery(String.t(), String.t(), integer() | nil, non_neg_integer()) :: boolean()
+  def prepare_recovery(id, token, reset_id, scan_id) do
+    {count, _} =
+      Repo.update_all(
+        from(p in Item,
+          where:
+            p.id == ^id and p.status == :sending and p.claim_token == ^token and
+              is_nil(p.post_started_at)
+        ),
+        set: [session_reset_id: reset_id, session_scan_id: scan_id]
+      )
+
+    count == 1
+  end
+
   @doc """
   Record a prompt as delivered, even if the track closed while it was in
   flight.

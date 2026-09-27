@@ -65,6 +65,7 @@ defmodule Ravix.PromptQueue.Server do
   alias Ravix.PromptQueue
   alias Ravix.PromptQueue.Body
   alias Ravix.PromptQueue.Item
+  alias Ravix.PromptQueue.Recovery
   alias Ravix.PromptQueue.Store
   alias Ravix.Repo
   alias Ravix.Trace
@@ -569,9 +570,11 @@ defmodule Ravix.PromptQueue.Server do
     body = row.id |> Store.get() |> Map.fetch!(:body) |> Body.decode()
     instructions = Ravix.Previews.prepare_agent_preview(row)
 
-    if authorized?(row) do
-      prompt = Body.in_thread(body.prompt, row, track)
-      text = compose(instructions, authored(row, track, project, prompt))
+    prompt = Body.in_thread(body.prompt, row, track)
+
+    with {:ok, preamble} <- Recovery.prepare(client, row, track, project),
+         true <- authorized?(row) do
+      text = compose(preamble, compose(instructions, authored(row, track, project, prompt)))
 
       if GenServer.call(server, {:post, row.claim_token}) do
         Fountain.prompt(client, track.conversation_id, text, body.images,
@@ -585,7 +588,8 @@ defmodule Ravix.PromptQueue.Server do
         :lost_claim
       end
     else
-      :revoked
+      false -> :revoked
+      error -> error
     end
   end
 
@@ -596,6 +600,14 @@ defmodule Ravix.PromptQueue.Server do
     Hub.publish(project.id, :turn, track_id: track.id, thread_id: row.thread_id)
     delivered(row, track, project)
   end
+
+  defp settle({:error, :context_unavailable}, row, _track, _project),
+    do:
+      Store.set_status(
+        row.id,
+        :queued,
+        "Waiting for the thread's session history before sending."
+      )
 
   defp settle(:revoked, row, track, _project) do
     cancel(row)
