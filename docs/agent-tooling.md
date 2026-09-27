@@ -148,9 +148,9 @@ material and notes, without summary or dependency IDs.
 
 Status is derived at read time: independent items start **unassigned**, unmet
 prerequisites are **blocked**, and completing all prerequisites makes a dependent
-item **ready**. Assigned open tracks are **in progress**; their branch's open PR
+item **ready**. Assigned open tracks are **in progress**; an open PR explicitly naming the item with `Plan-Item: <id>`
 means **in review**, a merged PR means **done**, and an unmerged closed PR or track
-means **closed without merge**. Notes cannot change status. GitHub reports share
+means **closed without merge**. A track branch match alone never links a PR or completes an item. Notes cannot change status. GitHub reports share
 the existing five-minute cache and are fetched in bounded batches; unavailable
 reports are flagged. Refresh the workspace panel to check dependencies again.
 There is no automatic assignment.
@@ -291,3 +291,20 @@ external event arrives during the refresh. It is false for wholly terminal or
 held snapshots. Missing events and provider outages can delay persistence until
 a successful backstop pass; `stale: false` is not a provider freshness timestamp.
 All reads still require the submitting principal and OAuth client.
+
+### Setup recovery and PR origins
+
+Call `retry_setup` with `track_id` to run the browser's scoped Retry setup action
+(`tracks:write`). Wait for setup to succeed, then call `retry_task` with the
+failed saved prompt's `task_id`; setup retry does not resend that prompt.
+MCP task presentation names both tools for failed queued prompts while their track setup is failed; browser messages retain human recovery guidance. The queue preserves the specific provider or sandbox error code, falling back to `setup_failed` only when no specific code is available. Once setup recovers, MCP no longer asks callers to retry setup.
+
+`assign_items` accepts a new `request_id` for an item whose track has failed setup
+or is closed, including closure during a machine rebuild. Omit `track_id` to open
+a replacement track. Live tracks still return `item_assigned`; replaying the old
+request ID returns its original receipt.
+
+For `create_track`, an origin such as `{"kind":"pr","number":261}` resolves the
+head branch from GitHub before provisioning. A lookup failure returns an error;
+it never falls back to `main`. Fork heads are refused because their branches are not in the project repository. The browser's explicit `origin.base` remains
+supported for an already selected PR head.

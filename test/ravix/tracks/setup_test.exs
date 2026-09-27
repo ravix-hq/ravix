@@ -7,7 +7,7 @@ defmodule Ravix.Tracks.SetupTest do
   alias Ravix.Fountain.{Client, Error, Shapes}
   alias Ravix.PromptQueue.{Item, Server}
   alias Ravix.PromptQueue.Store, as: QueueStore
-  alias Ravix.Tooling.{Tasks, Wait}
+  alias Ravix.Tooling.{OAuth, Tasks, Wait}
   alias Ravix.Tracks.{Setup, Thread, Track}
   import Ravix.ToolingFixture
 
@@ -52,6 +52,37 @@ defmodule Ravix.Tracks.SetupTest do
 
     server = server()
     %{user: user, project: project, track: track, client: client, server: server}
+  end
+
+  test "MCP retries failed setup, names recovery tools, and enforces grants and ownership", ctx do
+    persist(ctx.track, setup_state: "failed", setup_error: "opening refused")
+    {principal, _, _} = principal(ctx.user)
+
+    assert Setup.failure_message() ==
+             "Track setup failed. Retry setup, then retry this saved prompt."
+
+    other = insert_track(setup_state: "failed")
+
+    assert {:error, :not_found} =
+             Ravix.Tooling.call(principal, "retry_setup", %{"track_id" => other.id})
+
+    assert {:ok, %{retried: true}} =
+             Ravix.Tooling.call(principal, "retry_setup", %{"track_id" => ctx.track.id})
+
+    assert row(ctx.track).setup_state == "running"
+    assert_received {:prompt, "setup", _, _}
+
+    assert {:error, {:conflict, "setup_pending", _}} =
+             Ravix.Tooling.call(principal, "retry_setup", %{"track_id" => ctx.track.id})
+
+    OAuth.disconnect(ctx.user, principal.grant.id)
+    persist(row(ctx.track), setup_state: "failed")
+
+    assert {:error, :unauthenticated} =
+             Ravix.Tooling.call(principal, "retry_setup", %{"track_id" => ctx.track.id})
+
+    assert row(ctx.track).setup_state == "failed"
+    refute_received {:prompt, _, _, _}
   end
 
   defp server do
@@ -131,6 +162,28 @@ defmodule Ravix.Tracks.SetupTest do
     refute_received {:prompt, _, _, _}
   end
 
+  test "exhausted provider setup keeps its queue code and MCP recovery guidance", ctx do
+    {principal, _, _} = principal(ctx.user)
+    {:ok, task} = Tasks.send(principal, ctx.track.id, "saved work", "provider-setup")
+    persist(row(ctx.track), setup_attempts: 3)
+    turn_status(ctx.track, "completed")
+    stub(Fountain, :events, fn _, _ -> {:ok, Ravix.AgentOutageFixture.events("opening")} end)
+
+    Setup.advance(ctx.client, ctx.track.id)
+    saved = QueueStore.get(task.id)
+    assert saved.status == :failed
+    assert saved.error_code == "agent_provider_unreachable"
+    refute saved.error =~ "retry_setup"
+    assert {:ok, failed} = Tasks.get(principal, task.id)
+    assert failed.error_code == "agent_provider_unreachable"
+    assert hd(Tasks.present(failed).status.message.parts).text =~ "retry_setup"
+
+    persist(row(ctx.track), setup_state: "ready")
+    assert {:ok, recovered} = Tasks.get(principal, task.id)
+    assert recovered.error_code == "agent_provider_unreachable"
+    refute hd(Tasks.present(recovered).status.message.parts).text =~ "retry_setup"
+  end
+
   test "failed opening retries with backoff, and a different worker delivers only after verification",
        ctx do
     item = queue(ctx)
@@ -187,6 +240,8 @@ defmodule Ravix.Tracks.SetupTest do
              Tasks.get(principal, task.id)
 
     assert reason =~ "Track setup failed."
+    refute reason =~ "retry_setup"
+    assert QueueStore.get(task.id).error_code == "setup_failed"
 
     assert {:ok, %{changed: [changed_id], tasks: [reported]}} =
              Wait.wait(principal, %{
@@ -198,6 +253,8 @@ defmodule Ravix.Tracks.SetupTest do
     assert changed_id == task.id
     assert reported.status.state == "TASK_STATE_FAILED"
     assert hd(reported.status.message.parts).text =~ "Track setup failed."
+    assert hd(reported.status.message.parts).text =~ "retry_setup"
+    assert hd(reported.status.message.parts).text =~ "retry_task"
 
     refute_received {:prompt, _, "user work", _}
     refute_received {:prompt, _, "MCP work", _}

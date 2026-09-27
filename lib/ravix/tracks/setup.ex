@@ -12,7 +12,7 @@ defmodule Ravix.Tracks.Setup do
 
   @max_attempts 3
   @settle_seconds 600
-  @failure "Track setup failed. Retry track setup, then retry this saved prompt."
+  @failure "Track setup failed. Retry setup, then retry this saved prompt."
 
   def failure_message, do: @failure
 

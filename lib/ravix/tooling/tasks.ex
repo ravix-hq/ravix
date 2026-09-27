@@ -181,7 +181,7 @@ defmodule Ravix.Tooling.Tasks do
     with %Task{user_id: ^user_id, client_id: ^client_id} = task <- Store.task(id),
          {:ok, queue} <- PromptQueue.status(principal.user, task.track_id, task.id),
          {:ok, access} <- Access.thread_access(principal.user, task.track_id, queue.thread_id) do
-      {:ok, queue_view(task, queue), access}
+      {:ok, queue_view(task, queue, access.track), access}
     else
       _ -> {:error, :not_found}
     end
@@ -195,7 +195,7 @@ defmodule Ravix.Tooling.Tasks do
 
   defp refresh(task, _access), do: {:ok, persist_queue(task)}
 
-  defp queue_view(task, queue) do
+  defp queue_view(task, queue, track) do
     {state, message} =
       case queue.status do
         :cancelled ->
@@ -220,6 +220,9 @@ defmodule Ravix.Tooling.Tasks do
       task
       | state: state,
         status_message: message,
+        error_code: queue.error_code,
+        # Setup is a track state, not a replacement for the provider failure code.
+        setup_failed: track.setup_state == "failed",
         queue_status: queue.status,
         blocked: not is_nil(queue.blocked_by)
     }
@@ -241,7 +244,7 @@ defmodule Ravix.Tooling.Tasks do
   def held_or_terminal?(task),
     do: terminal?(task) or task.state == "TASK_STATE_INPUT_REQUIRED" or task.blocked
 
-  def version(task), do: digest({task.state, task.status_message})
+  def version(task), do: digest({task.state, task_message(task)})
 
   @doc false
   def reconcile_rows(rows) do
@@ -476,16 +479,22 @@ defmodule Ravix.Tooling.Tasks do
       timestamp: DateTime.to_iso8601(task.updated_at)
     }
 
-    if task.status_message do
+    if message = task_message(task) do
       Map.put(status, :message, %{
         role: "ROLE_AGENT",
         messageId: version(task),
-        parts: [%{text: task.status_message}]
+        parts: [%{text: message}]
       })
     else
       status
     end
   end
+
+  defp task_message(%{queue_status: :failed, setup_failed: true} = task) do
+    "#{task.status_message} Call retry_setup with track_id #{task.track_id}, then after setup succeeds call retry_task with task_id #{task.id}."
+  end
+
+  defp task_message(task), do: task.status_message
 
   def id(principal, request_id),
     do: digest({principal.user.id, principal.grant.client_id, request_id})

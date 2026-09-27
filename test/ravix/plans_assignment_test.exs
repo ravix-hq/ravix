@@ -87,6 +87,60 @@ defmodule Ravix.PlansAssignmentTest do
              Assignment.assign(user, p, plan.id, assignments, "another")
   end
 
+  for state <- [:failed, :rebuild] do
+    @state state
+    test "reassigns #{@state} tracks with a new receipt and preserves live-track refusal", ctx do
+      old = insert_track(project: ctx.project, setup_state: "failed", sandbox_layout: :shared)
+
+      Repo.get!(Item, "api")
+      |> Ecto.Changeset.change(track_id: old.id, assignment_request: "old-assignment")
+      |> Repo.update!()
+
+      if @state == :rebuild do
+        old |> Ecto.Changeset.change(setup_state: "ready") |> Repo.update!()
+        stub(Fountain, :list_conversations, fn _, _ -> {:ok, []} end)
+        stub(Fountain, :delete_agent, fn _, _ -> :ok end)
+        stub(Fountain, :catalog, fn _ -> {:error, :unavailable} end)
+        stub(Fountain, :create_agent, fn _, _ -> {:ok, %{"id" => "rebuilt-agent"}} end)
+        assert {:ok, _} = Ravix.Projects.rebuild(ctx.user, ctx.project.id)
+        assert Repo.get!(Track, old.id).closed_at
+        assert {:ok, %{items: items}} = Plans.get(ctx.user, ctx.plan.id)
+        assert Enum.find(items, &(&1.id == "api")).status == :closed_without_merge
+      end
+
+      client =
+        FakeTransport.client([
+          {%{method: "GET", path: "/api/conversations"}, {200, [], %{data: []}}},
+          {%{method: "POST", path: "/api/conversations"},
+           {201, [], %{data: %{id: "replacement"}}}}
+        ])
+
+      stub(Fountain, :client, fn -> client end)
+
+      args = %{
+        "plan_id" => ctx.plan.id,
+        "assignments" => [%{"item_id" => "api"}],
+        "request_id" => "replacement"
+      }
+
+      {foreign, _, _} = principal(insert_user())
+      assert {:error, :not_found} = Tooling.call(foreign, "assign_items", args)
+      assert {:ok, %{items: [receipt]}} = Tooling.call(ctx.p, "assign_items", args)
+      assert receipt.track_id != old.id
+      assert Repo.get!(Item, "api").track_id == receipt.track_id
+      assert Repo.get!(Track, old.id)
+      assert {:ok, replay} = Tooling.call(ctx.p, "assign_items", args)
+      assert hd(replay["items"])["track_id"] == receipt.track_id
+      assert length(FakeTransport.calls(client)) == 2
+
+      assert {:error, {:conflict, "item_assigned", _}} =
+               Tooling.call(ctx.p, "assign_items", Map.put(args, "request_id", "live"))
+
+      OAuth.disconnect(ctx.user, ctx.p.grant.id)
+      assert {:error, :unauthenticated} = Tooling.call(ctx.p, "assign_items", args)
+    end
+  end
+
   test "an item's prose title becomes a reserved branch, told apart from its twin", %{
     p: p,
     user: user,

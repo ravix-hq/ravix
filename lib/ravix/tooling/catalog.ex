@@ -56,7 +56,7 @@ defmodule Ravix.Tooling.Catalog do
       ),
       tool(
         "create_track",
-        "Open a track. Supply branch_name (or the compatibility alias title) without the fixed ravix/ prefix; returns the full branch. PR origins keep their existing branch.",
+        "Open a track. Supply branch_name (or the compatibility alias title) without the fixed ravix/ prefix; returns the full branch. PR origins keep their existing branch; supply the PR number to resolve its head from GitHub.",
         "tracks:write",
         %{
           "project_id" => string(),
@@ -106,6 +106,13 @@ defmodule Ravix.Tooling.Catalog do
           "timeout_ms" => %{"type" => "integer", "minimum" => 0, "maximum" => 50_000}
         },
         ["task_ids"]
+      ),
+      tool(
+        "retry_setup",
+        "Retry track setup using the same action as Retry setup in the browser. After setup succeeds, call retry_task to resend a failed saved prompt.",
+        "tracks:write",
+        %{"track_id" => string()},
+        ["track_id"]
       ),
       tool(
         "retry_task",

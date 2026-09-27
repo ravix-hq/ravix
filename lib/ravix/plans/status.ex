@@ -5,8 +5,7 @@ defmodule Ravix.Plans.Status do
   def items(project, items) do
     tracks = Store.tracks(Enum.flat_map(items, &if(&1.track_id, do: [&1.track_id], else: [])))
     linked = linked_pulls(project, items)
-    reports = reports(project, fallback_tracks(tracks, items, linked))
-    item_reports = Map.new(items, &{&1.id, item_report(&1, linked, reports)})
+    item_reports = Map.new(items, &{&1.id, item_report(&1, linked)})
     tracks = Map.new(tracks, &{&1.id, &1})
 
     completed =
@@ -37,18 +36,10 @@ defmodule Ravix.Plans.Status do
 
   defp linked_pulls(_, _), do: {:ok, %{pulls: [], complete: true}}
 
-  defp fallback_tracks(tracks, items, {:ok, %{pulls: pulls, complete: true}}) do
-    linked_ids = MapSet.new(Enum.flat_map(pulls, & &1.plan_item_ids))
-    ids = MapSet.new(Enum.reject(items, &MapSet.member?(linked_ids, &1.id)), & &1.track_id)
-    Enum.filter(tracks, &MapSet.member?(ids, &1.id))
-  end
-
-  defp fallback_tracks(_, _, _), do: []
-
-  defp item_report(item, {:ok, %{pulls: pulls, complete: complete}}, reports) do
+  defp item_report(item, {:ok, %{pulls: pulls, complete: complete}}) do
     case Enum.filter(pulls, &(item.id in &1.plan_item_ids)) do
       [] ->
-        if complete, do: reports[item.track_id], else: :unavailable
+        if complete, do: nil, else: :unavailable
 
       linked ->
         pull = Enum.min_by(linked, &priority/1)
@@ -56,7 +47,7 @@ defmodule Ravix.Plans.Status do
     end
   end
 
-  defp item_report(_, _, _), do: :unavailable
+  defp item_report(_, _), do: :unavailable
 
   defp priority(%{state: :merged, number: number}), do: {0, -number}
   defp priority(%{state: :open, number: number}), do: {1, -number}
@@ -85,36 +76,6 @@ defmodule Ravix.Plans.Status do
     end
   end
 
-  defp reports(%{repo_full_name: repo, installation_id: installation}, tracks)
-       when is_binary(repo) and is_integer(installation) do
-    case Ravix.Providers.github() do
-      {:ok, app} ->
-        Task.Supervisor.async_stream_nolink(
-          Ravix.TaskSupervisor,
-          tracks,
-          Ravix.Trace.link_each(fn track ->
-            {track.id,
-             Ravix.GitHub.pull_for_track(app, installation, repo, track.branch, %{
-               created_at: track.created_at,
-               origin_number: if(track.origin_kind == :pr, do: track.origin_number)
-             })}
-          end),
-          max_concurrency: 4,
-          timeout: 30_000,
-          on_timeout: :kill_task
-        )
-        |> Enum.zip(tracks)
-        |> Map.new(fn
-          {{:ok, {id, {:ok, pull}}}, _} -> {id, %{pull: pull}}
-          {_, track} -> {track.id, :unavailable}
-        end)
-
-      _ ->
-        Map.new(tracks, &{&1.id, :unavailable})
-    end
-  end
-
-  defp reports(_, _), do: %{}
   defp pull_state(%{pull: %{state: state}}), do: state
   defp pull_state(_), do: nil
 end

@@ -28,16 +28,15 @@ defmodule Ravix.PlansStatusTest do
 
     stub(Ravix.Config, :github, fn -> Ravix.GitHubFake.app() end)
 
-    stub(GitHub, :plan_pulls, fn _, _, _ -> {:ok, %{pulls: [], complete: true}} end)
-
-    stub(GitHub, :pull_for_track, fn _, _, _, branch, _ ->
-      case branch do
-        "branch-a" -> {:ok, pull(1, :merged)}
-        "branch-c" -> {:ok, pull(2, :open)}
-        "branch-d" -> {:ok, pull(3, :closed)}
-        "branch-e" -> {:error, :unavailable}
-      end
+    stub(GitHub, :plan_pulls, fn _, _, _ ->
+      {:ok,
+       %{
+         pulls: [pull(1, :merged, ["a"]), pull(2, :open, ["c"]), pull(3, :closed, ["d"])],
+         complete: true
+       }}
     end)
+
+    reject(GitHub, :pull_for_track, 5)
 
     assert {:ok, %{items: [a, b, c, d, e]}} = Plans.get(user, plan.id)
     assert a.status == :done
@@ -45,7 +44,10 @@ defmodule Ravix.PlansStatusTest do
     assert c.status == :in_review
     assert d.status == :closed_without_merge
     assert e.status == :in_progress
-    refute e.status_available
+    assert e.status_available
+    stub(GitHub, :plan_pulls, fn _, _, _ -> {:error, :unavailable} end)
+    assert {:ok, %{items: unavailable}} = Plans.get(user, plan.id)
+    assert Enum.all?(unavailable, &(not &1.status_available))
     assert a.track_url =~ "/p/#{project.id}/t/"
   end
 
@@ -73,29 +75,24 @@ defmodule Ravix.PlansStatusTest do
       {"GET", "/repos/o/r/pulls",
        fn conn ->
          conn = Plug.Conn.fetch_query_params(conn)
-         branch = String.replace_prefix(conn.query_params["head"] || "", "o:", "")
+         refute Map.has_key?(conn.query_params, "head")
 
-         Req.Test.json(
-           conn,
-           if(branch == "",
-             do: [],
-             else: [
-               %{
-                 number: 1,
-                 head: %{ref: branch},
-                 state: "closed",
-                 created_at: "2030-01-01T00:00:00Z",
-                 merged_at: "2030-01-02T00:00:00Z"
-               }
-             ]
-           )
-         )
+         Req.Test.json(conn, [
+           %{
+             number: 1,
+             head: %{ref: "shared", repo: %{full_name: "o/r"}},
+             state: "closed",
+             body: Enum.map_join(ids, "\n", &"Plan-Item: #{&1}"),
+             created_at: "2030-01-01T00:00:00Z",
+             merged_at: "2030-01-02T00:00:00Z"
+           }
+         ])
        end}
     ])
 
     assert {:ok, %{items: items}} = Plans.get(user, plan.id)
     assert Enum.all?(items, &(&1.status == :done and &1.status_available))
-    assert Ravix.GitHubFake.request_count("/repos/") == 13
+    assert Ravix.GitHubFake.request_count("/repos/") == 1
     assert {:ok, %{items: ^items}} = Plans.get(user, plan.id)
     assert Ravix.GitHubFake.request_count() == 0
     track_id = hd(items).track_url |> String.split("/t/") |> List.last()
@@ -116,7 +113,7 @@ defmodule Ravix.PlansStatusTest do
     assert {:error, :not_found} = Plans.track_summary(insert_user(), track_id)
   end
 
-  test "item trailers override a merged track PR and dependencies use each item's evidence" do
+  test "only item trailers link PRs, ignoring a merged track PR and dependencies use each item's evidence" do
     user = insert_user()
     project = insert_project(user: user)
     track = insert_track(project: project)
@@ -152,8 +149,8 @@ defmodule Ravix.PlansStatusTest do
 
     stub(GitHub, :plan_pulls, fn _, _, _ -> {:ok, %{pulls: linked, complete: true}} end)
     assert {:ok, %{items: [a, b, c, d, e, f, g]}} = Plans.get(user, plan.id)
-    assert {a.status, b.status, c.status} == {:done, :in_review, :done}
-    assert {a.pull.number, b.pull.number, c.pull.number} == {218, 225, 219}
+    assert {a.status, b.status, c.status} == {:in_progress, :in_review, :done}
+    assert {a.pull, b.pull.number, c.pull.number} == {nil, 225, 219}
 
     assert {d.status, e.status, f.status, g.status} ==
              {:blocked, :ready, :closed_without_merge, :in_review}
@@ -162,6 +159,42 @@ defmodule Ravix.PlansStatusTest do
     stub(GitHub, :plan_pulls, fn _, _, _ -> {:ok, %{pulls: linked, complete: true}} end)
     assert {:ok, %{items: [_, b, _, d, _, _, g]}} = Plans.get(user, plan.id)
     assert {b.status, d.status, g.status, g.pull.number} == {:done, :ready, :done, 226}
+  end
+
+  test "an unrelated merged ADR PR does not complete r3-vertical-track-tabs" do
+    user = insert_user()
+    project = insert_project(user: user)
+    track = insert_track(project: project)
+
+    {:ok, plan} =
+      Plans.create(user, project.id, %{
+        "title" => "Track tabs",
+        "items" => [
+          %{"id" => "r3-vertical-track-tabs", "title" => "Vertical tabs"},
+          %{
+            "id" => "dependent",
+            "title" => "Follow-up",
+            "dependencies" => ["r3-vertical-track-tabs"]
+          }
+        ]
+      })
+
+    Repo.get!(Item, "r3-vertical-track-tabs")
+    |> Ecto.Changeset.change(track_id: track.id)
+    |> Repo.update!()
+
+    stub(Ravix.Config, :github, fn -> Ravix.GitHubFake.app() end)
+
+    stub(GitHub, :plan_pulls, fn _, _, _ ->
+      {:ok, %{pulls: [pull(265, :merged)], complete: true}}
+    end)
+
+    reject(GitHub, :pull_for_track, 5)
+    assert {:ok, %{items: [item, dependent]}} = Plans.get(user, plan.id)
+    assert item.status == :in_progress
+    assert item.pull == nil
+    assert dependent.status == :blocked
+    assert {:error, :not_found} = Plans.get(insert_user(), plan.id)
   end
 
   test "unavailable or capped item lookup cannot falsely complete an item via fallback" do

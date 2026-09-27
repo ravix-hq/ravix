@@ -69,6 +69,8 @@ defmodule Ravix.Tooling.Task do
     field :reconciled_at, :utc_datetime_usec
     field :failure_code, :string
     field :failure_message, :string
+    field :error_code, :string, virtual: true
+    field :setup_failed, :boolean, virtual: true, default: false
     field :blocked, :boolean, virtual: true, default: false
     field :turn_id, :string
     field :cursor, :integer

@@ -3,6 +3,7 @@ defmodule Ravix.ToolingTest do
   use Mimic
   alias Ravix.Fountain
   alias Ravix.Fountain.{Client, FakeTransport}
+  alias Ravix.GitHub.Shapes, as: GitHubShapes
   alias Ravix.Projects.Project
   alias Ravix.Tooling
   alias Ravix.Tooling.OAuth
@@ -182,6 +183,99 @@ defmodule Ravix.ToolingTest do
                "settings" => %{},
                "request_id" => "x"
              })
+  end
+
+  for dedicated <- [false, true] do
+    @dedicated dedicated
+    test "number-only PR origins resolve the GitHub head before opening (dedicated: #{dedicated})",
+         %{p: p, user: user} do
+      stub(Ravix.Config, :dedicated_opens_enabled?, fn _ -> @dedicated end)
+      project = insert_project(runtime: "claude", user: user)
+      stub(Ravix.Projects, :prepare_machine, fn _, _ -> :ok end)
+      app = Ravix.GitHubFake.app()
+      stub(Ravix.Config, :github, fn -> app end)
+
+      Ravix.GitHubFake.install([
+        Ravix.GitHubFake.token_route(app),
+        {"GET", ~r{/pulls/261$},
+         {200,
+          %{
+            "number" => 261,
+            "title" => "Advance stored task state",
+            "state" => "open",
+            "head" => %{
+              "ref" => "ravix/advance-stored-mcp-task-state-from-turn",
+              "repo" => %{"full_name" => project.repo_full_name}
+            }
+          }}}
+      ])
+
+      if @dedicated do
+        fountain([])
+      else
+        fountain([
+          {%{method: "GET", path: "/api/conversations"}, {200, [], %{data: []}}},
+          {%{method: "POST", path: "/api/conversations"},
+           {201, [], %{data: %{id: "pr-conversation"}}}}
+        ])
+      end
+
+      args = %{
+        "project_id" => project.id,
+        "origin" => %{"kind" => "pr", "number" => 261},
+        "request_id" => "pr"
+      }
+
+      assert {:ok, result} = Tooling.call(p, "create_track", args)
+      assert result.branch == "ravix/advance-stored-mcp-task-state-from-turn"
+      assert result.title == result.branch
+
+      assert Repo.get!(Track, result.id).sandbox_layout ==
+               if(@dedicated, do: :dedicated, else: :shared)
+
+      assert Repo.get!(Track, result.id).origin_base == result.branch
+      {other, _, _} = principal(insert_user())
+      assert {:error, :not_found} = Tooling.call(other, "create_track", args)
+      OAuth.disconnect(user, p.grant.id)
+      assert {:error, :unauthenticated} = Tooling.call(p, "create_track", args)
+    end
+  end
+
+  test "PR origins refuse fork heads before creating a track", %{p: p, user: user} do
+    project = insert_project(runtime: "claude", user: user)
+    stub(Ravix.Config, :github, fn -> Ravix.GitHubFake.app() end)
+
+    expect(Ravix.GitHub, :pull, fn _, _, _, 261 ->
+      {:ok,
+       GitHubShapes.pull_ref(%{
+         "head" => %{"ref" => "feature", "repo" => %{"full_name" => "fork/repo"}}
+       })}
+    end)
+
+    assert {:error, {:unprocessable, "invalid_pr", message}} =
+             Tooling.call(p, "create_track", %{
+               "project_id" => project.id,
+               "origin" => %{"kind" => "pr", "number" => 261},
+               "request_id" => "fork"
+             })
+
+    assert message =~ "fork PRs are not supported"
+    assert Ravix.Tracks.Store.tracks_of(project.id) == []
+  end
+
+  test "PR lookup failures never open a default-branch track", %{p: p, user: user} do
+    project = insert_project(runtime: "claude", user: user)
+    stub(Ravix.Config, :github, fn -> Ravix.GitHubFake.app() end)
+    expect(Ravix.GitHub, :pull, fn _, _, _, 261 -> {:error, :not_found} end)
+
+    assert {:error, :not_found} =
+             Tooling.call(p, "create_track", %{
+               "project_id" => project.id,
+               "origin" => %{"kind" => "pr", "number" => 261},
+               "request_id" => "missing-pr"
+             })
+
+    assert Ravix.Tracks.Store.tracks_of(project.id) == []
   end
 
   test "MCP creation rejects invalid and closed-track branch names", %{p: p, user: user} do
