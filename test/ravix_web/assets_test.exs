@@ -69,7 +69,7 @@ defmodule RavixWeb.AssetsTest do
   end
 
   test "the script registers the six hooks and nothing else", %{js: js} do
-    for hook <- ~w(Theme PanelResize TranscriptTail Composer Terminal Notify) do
+    for hook <- ~w(Theme PanelResize PanelToggle TranscriptTail Composer Terminal Notify) do
       assert js =~ hook
     end
 

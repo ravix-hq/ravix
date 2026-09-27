@@ -449,8 +449,27 @@ h4 { font-size: 12px; color: var(--dim); font-weight: 500; letter-spacing: 0; }
 .panel-resize-handle:hover, .panel-resize-handle:focus-visible, .panel-resize-handle[data-dragging="true"] { background: var(--accent); outline: none; }
 .app:has(.panel-resize-handle[data-dragging="true"]) { user-select: none; cursor: col-resize; }
 
-/* The track's page inside the stage: a header strip, then the conversation
-   beside the inspector, each column scrolling on its own. */
+/* Show or hide a sidebar. The icon is the page with that side drawn in;
+   the button stays on the side it controls, so closing the panel leaves a
+   rail wide enough for the same control. Which name is read depends on
+   `data-yard` / `data-inspector` on `<html>` — set before paint by theme.js
+   and kept there by PanelToggle. The narrow section is what declines to
+   collapse a panel that is no longer beside the page. */
+.panel-toggle {
+  position: relative; flex: none; display: inline-grid; place-items: center;
+  width: 28px; height: 28px; padding: 0; color: var(--dimmer);
+}
+.panel-toggle:hover:not(:disabled) { color: var(--ink); }
+.panel-toggle .label-show { display: none; }
+html[data-yard="closed"] #yard-toggle .label-hide,
+html[data-inspector="closed"] #inspector-toggle .label-hide { display: none; }
+html[data-yard="closed"] #yard-toggle .label-show,
+html[data-inspector="closed"] #inspector-toggle .label-show { display: inline; }
+
+/* The track's page inside the stage. On a wide window the inspector is
+   lifted out of the split and pinned to the stage, so it runs the full
+   window like the project rail; the tabs and the conversation keep a margin
+   of the same width. Each column still scrolls on its own. */
 .workspace-track-host, .track-workspace, .track-workspace-body { display: flex; flex: 1; flex-direction: column; min-height: 0; overflow: hidden; }
 .workspace-track-host > div { display: flex; flex: 1; min-height: 0; }
 .track-view-switch.workspace-tabs { display: none; }
@@ -946,6 +965,11 @@ h4 { font-size: 12px; color: var(--dim); font-weight: 500; letter-spacing: 0; }
    while a read it would repeat is out. */
 .workspace-tabs .panel-refresh { margin-left: auto; display: inline-grid; place-items: center; width: 26px; height: 26px; padding: 0; color: var(--dim); }
 .workspace-tabs .panel-refresh:hover:not(:disabled) { color: var(--ink); }
+.workspace-tabs .panel-toggle,
+.workspace-tabs .panel-toggle:hover:not(:disabled) {
+  width: 26px; height: 26px; padding: 0; border: 0; border-radius: var(--radius); color: var(--dimmer);
+}
+.workspace-tabs .panel-toggle:hover:not(:disabled) { background: var(--surface-hover); color: var(--ink); }
 .workspace-tabs .panel-refresh.busy svg { animation: request-spin 900ms linear infinite; }
 @media (prefers-reduced-motion: reduce) { .workspace-tabs .panel-refresh.busy svg { animation: none; } }
 .tab-count {
@@ -1340,11 +1364,51 @@ button.primary.home-action .ico { color: inherit; }
    The rules that used to sit at 850px, 700px and 600px are folded into the
    neighbour above: the 850px block was already overridden by the 1100px one
    in every property but one, and the 700px/600px rules only ever wrapped or
-   stacked something, which is never wrong to do a little earlier. */
+   stacked something, which is never wrong to do a little earlier.
+
+   Collapsing is the exception that faces the other way. It only applies
+   while that panel is still a sidebar: the yard from 761px up, the inspector
+   from 1101px up. Narrower than that, the existing blocks already replace
+   each of them, and the toggle is hidden so a reader cannot close a panel
+   they would then have no way to open. */
+
+@media (min-width: 761px) {
+  html[data-yard="closed"] .app { grid-template-columns: 44px minmax(0, 1fr); }
+  html[data-yard="closed"] .yard > :not(.yard-top) { display: none; }
+  html[data-yard="closed"] .yard-account { display: none; }
+  html[data-yard="closed"] .yard-top { justify-content: center; padding: 8px 4px; }
+  html[data-yard="closed"] #yard-resize { display: none; }
+}
+
+@media (min-width: 1101px) {
+  /* `100%` is the stage, the same horizontal room the split used to fill.
+     The margin and the pinned panel share it, including when the rail is
+     closed down to the toggle. */
+  .stage { --inspector-span: clamp(280px, var(--inspector-width, max(340px, 30vw)), min(800px, calc(100% - 420px))); }
+  .stage:has(.inspector) > .track-navigation,
+  .stage:has(.inspector) > .workspace-track-host { margin-right: var(--inspector-span); }
+  /* The track column clips overflow so its own scroller can shrink. The
+     inspector is positioned against the stage, above that column, and would
+     be cut off at the track tabs if those ancestors kept clipping it. */
+  .stage:has(.inspector) :is(.workspace-track-host, .workspace-track-host > div, .track-workspace, .track-workspace-body) { overflow: visible; }
+  .stage:has(.inspector) .inspector {
+    position: absolute; top: 0; right: 0; bottom: 0; z-index: 2;
+    width: var(--inspector-span);
+  }
+  .split:has(.inspector) { grid-template-columns: minmax(0, 1fr); }
+  html[data-inspector="closed"] .stage:has(.inspector) { --inspector-span: 44px; }
+  html[data-inspector="closed"] #inspector { align-items: center; }
+  html[data-inspector="closed"] #inspector > :not(.workspace-tabs) { display: none; }
+  html[data-inspector="closed"] #inspector .workspace-tabs {
+    justify-content: center; width: 100%; padding: 8px 4px; border-bottom: 0;
+  }
+  html[data-inspector="closed"] #inspector .workspace-tabs > :not(#inspector-toggle) { display: none; }
+}
 
 @media (max-width: 1100px) {
   .app { grid-template-columns: clamp(220px, var(--yard-width, var(--rail)), min(480px, calc(100vw - 420px))) minmax(0, 1fr); }
   .panel-resize-handle.right { display: none; }
+  #inspector-toggle { display: none; }
   .split { display: flex; flex-direction: column; overflow: auto; }
   .inspector { width: 100%; min-height: 560px; border-top: 1px solid var(--line); }
   .track-conversation { min-height: 65vh; }
@@ -1366,6 +1430,7 @@ button.primary.home-action .ico { color: inherit; }
   [data-narrow-view="terminal"] .machine-dock { flex: 1; height: auto; }
   [data-narrow-view="terminal"] .dock-toggle { display: none; }
   .panel-resize-handle { display: none; }
+  #yard-toggle { display: none; }
   .app { grid-template-columns: 1fr; }
   .yard { display: none; }
   .yard.forced { display: flex; position: fixed; inset: 0 auto 0 0; width: var(--rail); z-index: 30; box-shadow: 0 12px 40px var(--shadow); }

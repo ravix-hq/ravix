@@ -12,6 +12,7 @@
 //
 //   Theme           the palette picker (reads and writes `ravix.theme`)
 //   PanelResize     the drag handle between the rail, the stage and the inspector
+//   PanelToggle     whether those sidebars are open; a preference of this browser
 //   TranscriptTail  a scrollback that follows new output while you are at the bottom
 //   Composer        the prompt box: Enter sends, pasted images become uploads
 //   Terminal        the shell panel: history, Ctrl+L, output that follows itself
@@ -31,6 +32,7 @@ import {Socket} from "phoenix"
 import {LiveSocket} from "phoenix_live_view"
 import {Theme} from "./hooks/theme"
 import {PanelResize} from "./hooks/panel_resize"
+import {PanelToggle} from "./hooks/panel_toggle"
 import {TranscriptTail} from "./hooks/transcript_tail"
 import {Composer} from "./hooks/composer"
 import {Terminal} from "./hooks/terminal"
@@ -42,7 +44,7 @@ import {ProjectSections} from "./hooks/project_sections"
 import {ProjectFormFocus} from "./hooks/project_form_focus"
 import {CopyCode} from "./hooks/copy_code"
 
-const hooks = {AgentConfirmation, Theme, PanelResize, TranscriptTail, Composer, Terminal, Notify, SettingsSections, TrackTabs, ProjectSections, CopyCode, ProjectFormFocus}
+const hooks = {AgentConfirmation, Theme, PanelResize, PanelToggle, TranscriptTail, Composer, Terminal, Notify, SettingsSections, TrackTabs, ProjectSections, CopyCode, ProjectFormFocus}
 
 const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
 const liveSocket = new LiveSocket("/live", Socket, {
