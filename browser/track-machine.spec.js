@@ -37,7 +37,7 @@ test('machine status follows the selected dedicated track, never its shared proj
   for (const index of [0, 1, 0]) {
     await page.goto(paths[index]);
     await expect(page.locator('#track-machine-status')).toHaveText(index === 0
-      ? 'This track’s machine is running'
-      : 'This track’s machine is asleep or unreachable');
+      ? 'The machine is running.'
+      : 'The machine is asleep or unreachable. It wakes on the next turn.');
   }
 });
