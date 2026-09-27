@@ -172,7 +172,7 @@ test('a first visit is walked through how it works, the agent, and GitHub', asyn
 
   await page.getByRole('link', { name: 'Set up your agent', exact: true }).click();
   await expect(page).toHaveURL(/\/welcome\/agent$/);
-  await expect(page).toHaveTitle('Connect your agent · Ravix');
+  await expect(page).toHaveTitle('Connect your agents · Ravix');
 
   // Codex on a ChatGPT subscription is a sign-in, not a paste: the page shows
   // the code the mock Fountain hands out and notices the approval by itself

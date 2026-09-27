@@ -59,6 +59,29 @@ defmodule RavixWeb.Live.AgentPanelTest do
     end
   end
 
+  test "each agent describes its held credentials despite stale single-agent metadata", %{
+    conn: conn
+  } do
+    user = insert_user(agent: :claude, credential_kind: :subscription, credential_set_id: "s")
+
+    stub(Inference, :held, fn _ ->
+      {:ok, [{:claude, :api_key}, {:codex, :subscription}, {:codex, :api_key}]}
+    end)
+
+    view = open_account(conn, user)
+    render_async(view)
+    assert has_element?(view, "#agent-claude small", "Connected with your API key.")
+
+    assert has_element?(
+             view,
+             "#agent-codex small",
+             "Connected with your ChatGPT subscription and API key."
+           )
+
+    refute has_element?(view, "#agent-claude small", "your subscription")
+    assert has_element?(view, "#held-claude-api_key", "API key")
+  end
+
   test "a ChatGPT subscription is shown as Fountain reports it", %{conn: conn} do
     user = insert_user(agent: :codex, credential_kind: :subscription, credential_set_id: "s")
     stub(Inference, :link_status, fn _ -> {:ok, %{enabled?: true, pending: nil}} end)
@@ -86,6 +109,7 @@ defmodule RavixWeb.Live.AgentPanelTest do
     # the person, not the choice. A reconnect would.
     reject(&Inference.subscription/1)
     view |> element("#agent-claude") |> render_click()
+    refute has_element?(view, "#chatgpt-subscription")
     view |> element("#agent-codex") |> render_click()
     assert render(view) =~ "Usage spent"
   end

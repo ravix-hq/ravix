@@ -197,7 +197,7 @@ defmodule RavixWeb.Live.NewProject do
               usable?(@project_agents, agent) -> "Connected"
               @project_agent_error -> "Connection status unavailable"
               is_nil(@project_agents) -> "Checking connection…"
-              true -> "Not connected - connect to use"
+              true -> "Not connected — connect to use"
             end}</small>
           </button>
         </div>
@@ -212,7 +212,7 @@ defmodule RavixWeb.Live.NewProject do
           phx-click="refresh-project-agents"
         >Check connections again</button>
         <p :if={@runtime in ["claude", "codex"]} class="hint">
-          Every turn in this project uses your {RavixWeb.AgentName.label(@runtime)} subscription, whoever is working.
+          Every turn in this project uses your {RavixWeb.AgentName.label(@runtime)} subscription or API key, whoever is working.
         </p>
       </div>
       <div

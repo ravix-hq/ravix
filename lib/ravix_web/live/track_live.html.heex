@@ -65,6 +65,11 @@
       >{if @track.sandbox_layout == :dedicated,
         do: "Own machine",
         else: "Shared project machine"}</span>
+      <span :if={@project.role != :owner} id="track-agent-owner" class="dim">
+        Runs on @{@project.owner_login}'s {RavixWeb.AgentName.label(
+          @track.runtime || @project.runtime
+        )}
+      </span>
       <span class="spacer"></span><button
         class="ghost"
         phx-click={JS.push_focus() |> JS.push("dialog")}

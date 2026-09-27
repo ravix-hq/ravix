@@ -61,9 +61,11 @@ defmodule RavixWeb.HelpComponents do
       </details>
       <details>
         <summary>Plan work across tracks</summary>
-        <p>Open a project to create a plan with a Markdown rationale, ordered items, briefs,
+        <p>
+          Open a project to create a plan with a Markdown rationale, ordered items, briefs,
           acceptance notes and dependencies. Select items and choose new or existing tracks,
-          then press Assign selected items. Assignment spends the project owner's subscription.</p>
+          then press Assign selected items. Assignment spends the project owner's subscription or API key.
+        </p>
         <p>MCP tools: create_plan, get_plan, list_plans, update_plan, assign_items and note_item.
           Request plans:read and plans:write; assignment also requires tracks:write.
           Edits carry expected_version. Retry assignments with the same request_id and arguments.</p>
@@ -137,7 +139,7 @@ defmodule RavixWeb.HelpComponents do
         <p>
           Connections act as you, within the permissions you approve, across projects and tracks
           you can access, including future ones. They cannot bypass sharing permissions.
-          Setup scripts and agent instructions can execute code using the project's agent subscription.
+          Setup scripts and agent instructions can execute code using the project's agent subscription or API key.
         </p>
         <p>
           Accepted work keeps running after your desktop disconnects. Reconnect with the same

@@ -21,12 +21,18 @@ defmodule RavixWeb.OnboardingLiveTest do
 
     for {path, title} <- [
           {"/welcome", "Welcome"},
-          {"/welcome/agent", "Connect your agent"},
+          {"/welcome/agent", "Connect your agents"},
           {"/welcome/github", "Connect GitHub"},
           {"/welcome/project", "Create your first project"}
         ] do
       {:ok, direct, _} = live(conn, path)
       assert page_title(direct) == title <> " · Ravix"
+      assert has_element?(direct, "h1", title)
+
+      if path == "/welcome/project" do
+        assert has_element?(direct, "#welcome-project", "Ravix builds its machine")
+      end
+
       render_patch(view, path)
       render_async(view)
       assert page_title(view) == title <> " · Ravix"
@@ -627,7 +633,7 @@ defmodule RavixWeb.OnboardingLiveTest do
       stub(Inference, :usable_agents, fn _ -> {:ok, []} end)
       {:ok, view, _} = live(log_in_user(conn, fresh()), "/welcome/project")
       render_async(view)
-      assert has_element?(view, "#project-agent-codex", "Not connected - connect to use")
+      assert has_element?(view, "#project-agent-codex", "Not connected — connect to use")
       refute has_element?(view, "#project-runtime [aria-pressed=true]")
       assert has_element?(view, "#first-project-form button[disabled]")
     end

@@ -393,8 +393,7 @@ defmodule RavixWeb.Live.AgentPanel do
 
   # ── what the template asks ───────────────────────────────────────────
 
-  defp agent_name(:claude), do: "Claude Code"
-  defp agent_name(:codex), do: "Codex"
+  defp agent_name(agent), do: Ravix.AgentName.label(to_string(agent))
 
   defp kind_name(:subscription), do: "Subscription"
   defp kind_name(:api_key), do: "API key"
@@ -403,6 +402,16 @@ defmodule RavixWeb.Live.AgentPanel do
   defp paid_by(:codex, :subscription), do: "ChatGPT subscription"
   defp paid_by(_agent, :subscription), do: "subscription"
   defp paid_by(_agent, :api_key), do: "API key"
+
+  defp credential_description(held, agent) when is_list(held) do
+    case for {^agent, kind} <- held, do: paid_by(agent, kind) do
+      [] -> credential_description(nil, agent)
+      kinds -> "Connected with your " <> Enum.join(kinds, " and ") <> "."
+    end
+  end
+
+  defp credential_description(nil, :claude), do: "Claude subscription or Anthropic API key."
+  defp credential_description(nil, :codex), do: "ChatGPT subscription or OpenAI API key."
 
   defp replace_hint(agent, kind) do
     if Inference.pasted?(agent, kind),
@@ -521,12 +530,7 @@ defmodule RavixWeb.Live.AgentPanel do
             disabled={@busy}
           >
             <strong>{agent_name(agent)}</strong>
-            <small :if={agent == :claude}>
-              Claude subscription or Anthropic API key.
-            </small>
-            <small :if={agent == :codex}>
-              ChatGPT subscription or OpenAI API key.
-            </small>
+            <small>{credential_description(@held, agent)}</small>
           </button>
           <p id={"agent-#{agent}-status"}>
             <span :if={is_list(@held)}>{if connected_agent?(@held, agent),
@@ -577,10 +581,7 @@ defmodule RavixWeb.Live.AgentPanel do
         <p :if={missing?(@current_user, @held)} class="welcome-warning" id="held-missing">
           <.icon name="info" size={14} class="ico" />
           <span>
-            Nothing is stored for {agent_name(@current_user.agent)} any more: its {paid_by(
-              @current_user.agent,
-              @current_user.credential_kind
-            )} was removed outside this page. Projects using this agent need a connected credential to run.
+            Nothing is stored for {agent_name(@current_user.agent)} any more: its subscription or API key was removed outside this page. Projects using this agent need a connected credential to run.
           </span>
         </p>
         <ul :if={@held != []} class="agent-held-list">
@@ -640,7 +641,11 @@ defmodule RavixWeb.Live.AgentPanel do
           </span>
         </p>
 
-        <p :if={@subscription} class="agent-subscription" id="chatgpt-subscription">
+        <p
+          :if={@agent == :codex && @subscription}
+          class="agent-subscription"
+          id="chatgpt-subscription"
+        >
           <span class={["chip", subscription_tone(@subscription)]}>{subscription_state(@subscription)}</span>
           <span>{subscription_line(@subscription)}</span>
         </p>
