@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import AxeBuilder from '@axe-core/playwright';
 import { signIn } from './sign-in.js';
 
 const mock = `http://localhost:${process.env.MOCK_PORT || 8893}`;
@@ -36,6 +37,7 @@ test('cohort threads attach the other runtime to the home disk and reuse its pro
     await expect(track.getByLabel('Agent', { exact: true })).toHaveValue(home);
     await track.getByRole('button', { name: 'Create track', exact: true }).click();
     await expect(page.getByRole('textbox', { name: 'Message', exact: true })).toBeEnabled({ timeout: 30_000 });
+    await expect(page.locator('#transcript-status')).toHaveText('Agent replied', { timeout: 30_000 });
     const homeAgent = (await list('agents')).find(a => a.metadata?.ravix?.project === projectId);
     expect(homeAgent.runtime).toBe(home);
     const homeConversation = (await list('conversations')).find(c => c.agent_id === homeAgent.id);
@@ -62,6 +64,34 @@ test('cohort threads attach the other runtime to the home disk and reuse its pro
       await expect(form).toHaveCount(0);
       await expect(page.locator('.composer-model')).toContainText(guest === 'codex' ? 'Codex · ' : 'Claude Code · ');
       await expect(page.locator('.thread-tab[aria-current=true] .thread-tab-agent')).toContainText(guest === 'codex' ? 'Codex · ' : 'Claude Code · ');
+      if (home === 'claude' && n === 1) {
+        const homeTab = page.locator('.thread-tab').first();
+        const notice = page.locator('#threads-working');
+        const composer = page.getByRole('textbox', { name: 'Message', exact: true });
+        await composer.fill('Draft stays available while another thread works');
+        const changeState = async status => {
+          const response = await request.post(`${mock}/__browser/conversation-state`, {
+            data: { id: homeConversation.id, status, emit: true },
+          });
+          expect(response.ok()).toBe(true);
+        };
+        await changeState('running');
+        await expect(homeTab).toHaveAccessibleName(/Running/);
+        await expect(notice).toContainText('(Claude Code) is working in this checkout');
+        for (const width of [1280, 500]) {
+          await page.setViewportSize({ width, height: 900 });
+          await expect(composer).toBeEnabled();
+          await expect(composer).toHaveValue('Draft stays available while another thread works');
+          const axe = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze();
+          expect(axe.violations).toEqual([]);
+        }
+        for (const [status, label] of [['pending', 'Queued'], ['failed', 'Failed'], ['idle', 'Idle']]) {
+          await changeState(status);
+          await expect(homeTab).toHaveAccessibleName(new RegExp(label));
+          await expect(notice).toHaveCount(0);
+        }
+        await page.setViewportSize({ width: 1280, height: 900 });
+      }
       const agents = (await list('agents')).filter(a => a.metadata?.ravix?.project === projectId);
       expect(agents.filter(a => a.runtime === guest)).toHaveLength(1);
       const guestAgent = agents.find(a => a.runtime === guest);

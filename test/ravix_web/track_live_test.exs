@@ -2,13 +2,13 @@ defmodule RavixWeb.TrackLiveTest do
   use RavixWeb.ConnCase, async: true
   import Phoenix.LiveViewTest
   import Mimic
-  alias Ravix.Accounts.Session
+  alias Ravix.Accounts.{Access, Session}
   alias Ravix.Fountain.Error, as: FountainError
   alias Ravix.Fountain.{FakeTransport, Shapes}
   alias Ravix.Hub.Event
   alias Ravix.{People, Previews, PromptQueue, QueryCount, Repo, Terminal, Tracks, Vitals}
   alias Ravix.PromptQueue.View, as: QueuedPrompt
-  alias Ravix.Tracks.{Diff, Files, Track, TrackMember, Transcript}
+  alias Ravix.Tracks.{Diff, Files, Follower, Track, TrackMember, Transcript}
   alias RavixWeb.Live.Guard
 
   alias Ravix.Plans.Progress
@@ -622,7 +622,7 @@ defmodule RavixWeb.TrackLiveTest do
 
     assert has_element?(
              ctx.view,
-             "#thread-switcher button[title='Review · Codex · GPT-6 Astra'][aria-label='Review · Codex · GPT-6 Astra · Working']"
+             "#thread-switcher button[title='Review · Codex · GPT-6 Astra'][aria-label='Review · Codex · GPT-6 Astra · Running']"
            )
   end
 
@@ -768,11 +768,129 @@ defmodule RavixWeb.TrackLiveTest do
     refute has_element?(ctx.view, selected <> " .thread-unread")
     assert has_element?(ctx.view, unread <> ":not([aria-current]) .thread-unread", "(unread)")
     assert has_element?(ctx.view, unread, "Review")
-    assert has_element?(ctx.view, unread <> "[aria-label='Review · Agent (unread)']")
+    assert has_element?(ctx.view, unread <> "[aria-label='Review · Agent · Idle (unread)']")
 
     reject(&Tracks.events/3)
     ctx.view |> element(selected) |> render_click()
     assert has_element?(ctx.view, "#composer-#{ctx.track.id}")
+  end
+
+  test "Follower events update other thread states without disabling or replacing the composer",
+       ctx do
+    other = activity_thread(ctx)
+    tab = "#thread-switcher [data-thread-id='#{other.id}']"
+    refute has_element?(ctx.view, "#threads-working")
+
+    for {state, label} <- [
+          {"queued", "Queued"},
+          {"started", "Running"},
+          {"failed", "Failed"},
+          {"started", "Running"},
+          {"completed", "Idle"}
+        ] do
+      broadcast_activity(other.id, state)
+      assert has_element?(ctx.view, tab <> "[aria-label='Thread 2 · Codex · #{label}']")
+      assert has_element?(ctx.view, "#composer-#{ctx.track.id}:not([disabled])")
+
+      if state == "started" do
+        assert has_element?(
+                 ctx.view,
+                 "#threads-working[role=status]",
+                 "Thread 2 (Codex) is working in this checkout"
+               )
+      else
+        refute has_element?(ctx.view, "#threads-working")
+      end
+    end
+
+    broadcast_activity(other.id, "started")
+    render(ctx.view)
+    render_click(ctx.view, "select-thread", %{thread_id: other.id})
+    settle(ctx.view)
+    refute has_element?(ctx.view, "#threads-working")
+    assert has_element?(ctx.view, "#composer-#{other.id}:not([disabled])")
+    broadcast_activity(ctx.track.id, "started")
+    assert has_element?(ctx.view, "#threads-working", "is working in this checkout")
+  end
+
+  test "a single thread never warns about itself", ctx do
+    send(
+      ctx.view.pid,
+      {:transcript, ctx.track.id, %{"kind" => "stage", "stage" => "turn", "state" => "started"}}
+    )
+
+    refute has_element?(ctx.view, "#threads-working")
+  end
+
+  test "a track-only member follows only threads in the shared track", ctx do
+    owner = insert_user()
+    project = insert_project(user: owner)
+    track = insert_track(project: project, conversation_id: "shared")
+    private = insert_track(project: project, conversation_id: "private")
+    People.Store.add_member(track.id, ctx.user.id, owner.id)
+    stub_activity_follow()
+
+    {:ok, other} =
+      Tracks.Store.create_thread(%{
+        track_id: track.id,
+        title: "Shared thread",
+        runtime: "codex",
+        conversation_id: "shared-other"
+      })
+
+    {:ok, parent, _} = live(ctx.conn, "/p/#{project.id}/t/#{track.id}")
+    view = find_live_child(parent, "track-host")
+    settle(view)
+    broadcast_activity(other.id, "started")
+    assert has_element?(view, "#threads-working", "Shared thread")
+
+    send(
+      view.pid,
+      {:transcript, private.id, %{"kind" => "stage", "stage" => "turn", "state" => "started"}}
+    )
+
+    refute has_element?(view, "[data-thread-id='#{private.id}']")
+    refute render(view) =~ private.title
+  end
+
+  test "a revoked session cannot receive sibling activity", ctx do
+    other = activity_thread(ctx)
+    token = Plug.Conn.get_session(ctx.conn, :session_token)
+    Ravix.Accounts.end_session(Ravix.Crypto.sha256(token))
+    broadcast_activity(other.id, "started")
+    assert_redirect(ctx.parent, "/login", 1_000)
+  end
+
+  defp activity_thread(ctx) do
+    {:ok, thread} =
+      Tracks.Store.create_thread(%{
+        track_id: ctx.track.id,
+        title: "Thread 2",
+        runtime: "codex",
+        conversation_id: "activity-other"
+      })
+
+    stub_activity_follow()
+    send(ctx.view.pid, :refresh)
+    settle(ctx.view)
+    thread
+  end
+
+  defp stub_activity_follow do
+    stub(Tracks, :follow, fn user, track_id, opts ->
+      id = opts[:thread_id]
+      assert {:ok, _} = Access.thread_access(user, track_id, id)
+      Phoenix.PubSub.subscribe(Ravix.PubSub, Follower.topic(id))
+      {:ok, self()}
+    end)
+  end
+
+  defp broadcast_activity(id, state) do
+    Phoenix.PubSub.broadcast(
+      Ravix.PubSub,
+      Follower.topic(id),
+      {:transcript, id, %{"kind" => "stage", "stage" => "turn", "state" => state}}
+    )
   end
 
   test "the thread row is absent with one thread when threads cannot be added" do
@@ -935,7 +1053,10 @@ defmodule RavixWeb.TrackLiveTest do
   end
 
   defp thread_options(id) do
-    Enum.map(Tracks.Store.threads_of(id), &%{id: &1.id, title: &1.title, unread: false})
+    Enum.map(
+      Tracks.Store.threads_of(id),
+      &%{id: &1.id, title: &1.title, runtime: &1.runtime, unread: false}
+    )
   end
 
   test "assigned items occupy one collapsed row and reveal status-ordered lines and details",

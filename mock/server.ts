@@ -1433,10 +1433,12 @@ Bun.serve({
 
     // Deterministic provider states for the real-browser composer matrix.
     if (p === "/__browser/conversation-state" && req.method === "POST" && process.env.RAVIX_BROWSER_TEST === "1") {
-      const { id, status } = await req.json() as { id: string; status: string };
+      const { id, status, emit = false } = await req.json() as { id: string; status: string; emit?: boolean };
       const conv = state.conversations.find(c => c.id === id);
-      if (!conv || !["idle", "running", "failed"].includes(status)) return json({ error: "invalid_fixture" }, 400);
+      if (!conv || !["idle", "pending", "running", "failed"].includes(status)) return json({ error: "invalid_fixture" }, 400);
       conv.status = status;
+      if (emit) push(id, { kind: "stage", stage: "turn", turn_id: "browser-activity",
+        state: ({ idle: "completed", pending: "queued", running: "started", failed: "failed" } as Record<string, string>)[status] });
       return json({ status: "ok" });
     }
 
