@@ -1,4 +1,10 @@
 defmodule Ravix.Config do
+  @doc "Rollout eligibility only; dedicated writers remain unshipped until ADR 0006 phase 4."
+  @spec dedicated_opens_enabled?(Ravix.Accounts.User.t()) :: boolean()
+  def dedicated_opens_enabled?(%Ravix.Accounts.User{id: id}) do
+    id in Application.get_env(:ravix, :dedicated_open_user_ids, [])
+  end
+
   @doc "Enable new threads only after old queue workers have drained."
   def threads_enabled?, do: Application.get_env(:ravix, :threads_enabled, false)
 

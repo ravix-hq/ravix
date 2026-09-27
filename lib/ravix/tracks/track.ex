@@ -9,7 +9,12 @@ defmodule Ravix.Tracks.Track do
   and caching them here is how a UI ends up confidently showing a machine
   that died an hour ago.
 
-  Setup is the exception: its durable state records Ravix's verified opening
+  Sandbox ownership is persisted for both layouts. Shared is the database
+  default, including inserts from older releases. Dedicated ownership never
+  derives from conversation liveness; sandbox_state records lifecycle intent,
+  not provider health.
+
+  Setup is another exception: its durable state records Ravix's verified opening
   outcome, attempt budget, retry deadline and worker lease. `opened_at` is set
   only after completion and a worktree check; old accepted-only rows are
   reconciled by `Tracks.Setup` before queued work may be claimed.
@@ -47,6 +52,14 @@ defmodule Ravix.Tracks.Track do
 
   schema "tracks" do
     belongs_to :project, Ravix.Projects.Project
+    field :sandbox_layout, Ecto.Enum, values: [:shared, :dedicated], default: :shared
+    field :sandbox_id, :string
+    field :sandbox_generation, :integer, default: 0
+
+    field :sandbox_state, Ecto.Enum,
+      values: [:provisioning, :ready, :failed, :closing, :terminated]
+
+    field :vault_id, :string
     field :conversation_id, :string
     field :slug, :string
     field :title, :string
@@ -83,7 +96,7 @@ defmodule Ravix.Tracks.Track do
     has_one :preview, Ravix.Previews.Preview
   end
 
-  @fields ~w(id project_id conversation_id slug title branch branch_reserved workdir origin_kind origin_base
+  @fields ~w(sandbox_layout sandbox_id sandbox_generation sandbox_state vault_id id project_id conversation_id slug title branch branch_reserved workdir origin_kind origin_base
              origin_number origin_title origin_url origin_plan_id origin_item_id rev setup_state setup_attempts setup_request_id setup_started_at setup_retry_at setup_error setup_lease setup_lease_until opened_at closed_at created_at created_by_login)a
   @required ~w(id project_id slug title branch workdir origin_kind rev created_at created_by_login)a
 
@@ -104,6 +117,9 @@ defmodule Ravix.Tracks.Track do
     |> Ravix.Schema.stamp(:created_at)
     |> validate_required(@required)
     |> validate_number(:rev, greater_than_or_equal_to: 1)
+    |> validate_required([:sandbox_layout, :sandbox_generation])
+    |> validate_number(:sandbox_generation, greater_than_or_equal_to: 0)
+    |> unique_constraint(:sandbox_id, name: :tracks_dedicated_sandbox_id)
     |> foreign_key_constraint(:project_id)
     |> unique_constraint([:project_id, :branch], name: :tracks_branch, error_key: :branch)
     |> unique_constraint(:id, name: :tracks_pkey)

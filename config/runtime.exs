@@ -1,5 +1,14 @@
 import Config
 
+# Explicit user-id cohort; blank/unset disables new dedicated opens. Readers
+# must never consult this flag. B7 wires this eligibility into provisioning.
+config :ravix,
+       :dedicated_open_user_ids,
+       (System.get_env("RAVIX_DEDICATED_OPEN_USER_IDS") || "")
+       |> String.split(",", trim: true)
+       |> Enum.map(&String.trim/1)
+       |> Enum.reject(&(&1 == ""))
+
 config :ravix,
        :threads_enabled,
        System.get_env(
