@@ -137,3 +137,26 @@ test("tearing down a composer whose textarea has already left the document", () 
   box.dispatchEvent(new Event("dragover"))
   expect(box.classList.contains("dragging")).toBe(false)
 })
+
+
+test("retry preserves drafts and attachments, then restores a message for review", () => {
+  const {hook, receive} = mountHook(Composer, "textarea")
+  hook.el.value = "Unsent work"
+  receive("composer:retry", {text: "Earlier message", images: false})
+  expect(hook.el.value).toBe("Unsent work")
+  expect(document.querySelector("[data-composer-note]").textContent).toContain("Your draft is still here")
+  hook.el.value = ""
+  const retained = document.createElement("button")
+  retained.setAttribute("phx-click", "clear-attachments")
+  hook.box().appendChild(retained)
+  receive("composer:retry", {text: "Earlier message", images: false})
+  expect(hook.el.value).toBe("")
+  retained.remove()
+  receive("composer:retry", {text: "Earlier message", images: true})
+  expect(hook.el.value).toBe("Earlier message")
+  expect(localStorage.getItem("ravix.draft.track:a")).toBe("Earlier message")
+  expect(document.querySelector("[data-composer-note]").textContent).toContain("reattach its images")
+  receive("composer:clear")
+  receive("composer:retry", {text: "Text only", images: false})
+  expect(document.querySelector("[data-composer-note]").textContent).toBe("Review your message, then send to retry.")
+})

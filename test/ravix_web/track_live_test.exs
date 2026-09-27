@@ -103,7 +103,8 @@ defmodule RavixWeb.TrackLiveTest do
            author_login: ctx.user.login,
            created_at: DateTime.utc_now(),
            status: :failed,
-           error: FountainError.credential_message(),
+           error: "A different reconnect explanation.",
+           error_code: "inference_credential_unusable",
            can_cancel: true
          }
        ]}
@@ -113,6 +114,142 @@ defmodule RavixWeb.TrackLiveTest do
     settle(ctx.view)
     assert has_element?(ctx.view, "#track-agent-health-banner", "Sending is paused")
     assert has_element?(ctx.view, "[phx-value-id=funding]", "Retry")
+  end
+
+  test "setup credential refusal raises the banner independently of message text", ctx do
+    ctx.track
+    |> Ecto.Changeset.change(
+      setup_state: "failed",
+      setup_error: "Reconnect the owner’s agent in account settings.",
+      setup_error_code: "inference_credential_unusable"
+    )
+    |> Repo.update!()
+
+    send(ctx.view.pid, :refresh)
+    settle(ctx.view)
+    assert has_element?(ctx.view, "#track-agent-health-banner", "Sending is paused")
+    refute render(ctx.view) =~ "inference_credential_unusable"
+  end
+
+  test "capacity is a wait with a reason, and setup in progress cannot be woken", ctx do
+    for state <- ["pending", "running", "retry"] do
+      ctx.track
+      |> Ecto.Changeset.change(
+        setup_state: state,
+        setup_error_code: "sandbox_at_capacity",
+        setup_error: "The machine is busy with other turns; trying again shortly."
+      )
+      |> Repo.update!()
+
+      send(ctx.view.pid, :refresh)
+      settle(ctx.view)
+      refute has_element?(ctx.view, "button[phx-click=retry-track]")
+    end
+
+    assert has_element?(ctx.view, "#track-setup-status", "Waiting for capacity")
+    assert has_element?(ctx.view, "#track-setup-status", "busy with other turns")
+    refute has_element?(ctx.view, "#track-setup-status", "attempt")
+  end
+
+  test "wake and interrupt refusals give actionable toasts without provider codes", ctx do
+    for {event, function} <- [{"retry-track", :retry}, {"interrupt", :interrupt}] do
+      expect(Tracks, function, fn _, _, _ ->
+        {:error, %FountainError{status: 409, code: "sandbox_at_capacity"}}
+      end)
+
+      render_click(ctx.view, event)
+      render_async(ctx.view)
+      html = render(ctx.parent)
+      assert html =~ "The machine is busy with other turns. Try again in a moment."
+      refute html =~ "Your prompt is queued"
+      refute html =~ "machine_busy"
+    end
+  end
+
+  test "add-thread capacity refusal says to try again without claiming a queued prompt", ctx do
+    expect(Tracks, :add_thread, fn _, _ ->
+      {:error, %FountainError{status: 409, code: "sandbox_at_capacity"}}
+    end)
+
+    render_click(ctx.view, "add-thread")
+    render_async(ctx.view)
+    html = render(ctx.parent)
+    assert html =~ "The machine is busy with other turns. Try again in a moment."
+    refute html =~ "Your prompt is queued"
+    refute html =~ "machine_busy"
+  end
+
+  test "failure cards explain codes and keep diagnostics collapsed", ctx do
+    for {code, sentence} <- [
+          {"adapter_crashed", "The agent crashed and was restarted."},
+          {"session_gone", "The agent session ended."}
+        ] do
+      page =
+        Transcript.page(
+          [
+            opened(1, "failure", "Do the work"),
+            %{
+              "id" => 2,
+              "turn_id" => "failure",
+              "kind" => "stage",
+              "stage" => "turn",
+              "state" => "failed",
+              "data" => Jason.encode!(%{reason: code})
+            }
+          ],
+          "codex"
+        )
+
+      stub(Tracks, :events, fn _, _, _ -> {:ok, page} end)
+      render_click(ctx.view, "retry-load")
+      render_async(ctx.view)
+      assert has_element?(ctx.view, ".workspace-failure p", sentence)
+      refute has_element?(ctx.view, ".workspace-failure p", code)
+      assert has_element?(ctx.view, ".workspace-failure details:not([open]) pre", code)
+      assert has_element?(ctx.view, ".workspace-failure p", "your message")
+    end
+  end
+
+  test "a timeout-only completed reply offers review and retry", ctx do
+    page =
+      Transcript.page(
+        [
+          opened(1, "timeout", "Do the work"),
+          %{
+            "id" => 2,
+            "turn_id" => "timeout",
+            "kind" => "output",
+            "stream" => "acp",
+            "data" =>
+              Jason.encode!(%{
+                jsonrpc: "2.0",
+                method: "session/update",
+                params: %{
+                  update: %{
+                    sessionUpdate: "agent_message_chunk",
+                    content: %{type: "text", text: "request timed out"}
+                  }
+                }
+              })
+          },
+          %{
+            "id" => 3,
+            "turn_id" => "timeout",
+            "kind" => "stage",
+            "stage" => "turn",
+            "state" => "completed"
+          }
+        ],
+        "claude"
+      )
+
+    stub(Tracks, :events, fn _, _, _ -> {:ok, page} end)
+    render_click(ctx.view, "retry-load")
+    render_async(ctx.view)
+    assert has_element?(ctx.view, "#turns-timeout .workspace-failure", "did not respond in time")
+    refute has_element?(ctx.view, "#turns-timeout .md", "request timed out")
+    ctx.view |> element("button[phx-click=retry-turn]", "Retry message") |> render_click()
+    assert_push_event(ctx.view, "composer:retry", %{text: "Do the work", images: false})
   end
 
   test "a member sees the owner's funding status and cannot open a connect form", ctx do
@@ -268,7 +405,7 @@ defmodule RavixWeb.TrackLiveTest do
     assert has_element?(ctx.view, "[role=alert]", "Setup failed")
     assert has_element?(ctx.view, "button[phx-click=retry-track]", "Retry setup")
 
-    expect(Tracks, :retry, fn user, id ->
+    expect(Tracks, :retry, fn user, id, _thread_id ->
       assert user.id == ctx.user.id
       assert id == ctx.track.id
       :ok
@@ -1181,7 +1318,7 @@ defmodule RavixWeb.TrackLiveTest do
   end
 
   test "wake and interrupt call the scoped track context and refresh state", ctx do
-    expect(Tracks, :retry, fn user, id ->
+    expect(Tracks, :retry, fn user, id, _thread_id ->
       assert {user.id, id} == {ctx.user.id, ctx.track.id}
       :ok
     end)
@@ -2728,7 +2865,7 @@ defmodule RavixWeb.TrackLiveTest do
     })
 
     html = render(drawn(ctx.view))
-    assert html =~ "provision failed"
+    assert html =~ "Machine setup failed"
     assert html =~ "Add a credit card"
 
     # Fountain's words, escaped rather than trusted: the reason is upstream text.

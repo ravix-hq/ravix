@@ -94,20 +94,27 @@ defmodule Ravix.Fountain.Error do
   one sentence beside the other two providers'.
   """
   @spec as_http(t(), String.t()) :: http()
+  def as_http(%__MODULE__{code: code, status: status}, _what_for) when code in @credential_codes,
+    do: %{
+      status: if(status in 400..499, do: status, else: 502),
+      code: code,
+      message: credential_message()
+    }
+
   def as_http(%__MODULE__{status: status}, _what_for) when status in [401, 403] do
     %{
       status: 502,
       code: "fountain_rejected",
       message:
-        "Fountain rejected this deployment's key. Ravix cannot build machines until that is fixed."
+        "The machine service rejected this deployment’s key. Ask the administrator to restore the connection."
     }
   end
 
-  def as_http(%__MODULE__{code: "sandbox_at_capacity"}, _what_for) do
+  def as_http(%__MODULE__{code: code}, _what_for) when code in @busy_codes do
     %{
       status: 409,
       code: "machine_busy",
-      message: "This runtime is at capacity on the machine. Your prompt is queued."
+      message: "The machine is busy with other turns. Try again in a moment."
     }
   end
 
@@ -116,7 +123,7 @@ defmodule Ravix.Fountain.Error do
       status: 409,
       code: "identity_mismatch",
       message:
-        "This project's machine no longer matches its identity. Rebuild it from the project menu."
+        "This project's machine no longer matches its identity. Rebuild it in Project settings › Danger zone."
     }
   end
 
@@ -125,15 +132,62 @@ defmodule Ravix.Fountain.Error do
       %{
         status: 502,
         code: "fountain_unreachable",
-        message: "Could not reach Fountain to #{what_for}."
+        message: "Could not reach the machine service to #{what_for}. Try again in a moment."
       }
     else
       %{
         status: if(error.status >= 500, do: 502, else: error.status),
         code: error.code || "fountain_error",
-        message: error.message
+        message: public_message(error.code)
       }
     end
+  end
+
+  @doc "Public explanations never echo provider codes or untrusted provider messages."
+  def public_message(code) when code in @credential_codes, do: credential_message()
+
+  def public_message(code) when code in @busy_codes,
+    do: "The machine is busy with other turns. Try again in a moment."
+
+  def public_message("adapter_crashed"), do: "The agent crashed and was restarted."
+  def public_message("session_gone"), do: "The agent session ended. Wake the agent to continue."
+
+  def public_message(code) when code in ["request timed out", "request_timeout", "timeout"],
+    do: "The agent did not respond in time. Retry your message."
+
+  def public_message(code) when code in ["sandbox_not_found", "sandbox_gone"],
+    do: "The machine is no longer available. Rebuild it in Project settings › Danger zone."
+
+  def public_message("conversation_not_found"),
+    do: "The agent session is no longer available. Wake the agent to continue."
+
+  def public_message("inference_source_changed"),
+    do: "The agent connection changed. Wake the agent to continue."
+
+  def public_message(_),
+    do: "The machine service could not complete the request. Try again in a moment."
+
+  @doc "Translate a transcript reason while retaining useful human explanations."
+  def reason_message(nil), do: ""
+  def reason_message(""), do: ""
+
+  def reason_message(reason) do
+    reason = String.trim(reason)
+    # Older machine setup errors wrapped a human service response in an Elixir
+    # tuple. Extract only the quoted error sentence; never evaluate provider text.
+    reason =
+      case Regex.run(~r/%\{"error" => "([^"\n]+)"\}/, reason) do
+        [_, message] -> message
+        _ -> reason
+      end
+
+    if reason in ["request timed out", "timeout"] or
+         Regex.match?(
+           ~r/^[a-z][a-z0-9]*(?:_[a-z0-9]+)+$|^Opening prompt was refused:|^setup_failed:|Fountain|\{:/,
+           reason
+         ),
+       do: public_message(reason),
+       else: reason
   end
 
   defp message_of(%Fountain.Error{body: %{"message" => message}}) when is_binary(message),

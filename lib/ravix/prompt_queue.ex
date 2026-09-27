@@ -114,7 +114,8 @@ defmodule Ravix.PromptQueue do
       author_login: row.author_login,
       created_at: row.created_at,
       status: row.status,
-      error: row.error,
+      error: row.error && String.replace_prefix(row.error, "setup_failed: ", ""),
+      error_code: Map.get(row, :error_code),
       can_cancel: row.status != :sending and (role == :owner or row.user_id == user_id)
     }
   end

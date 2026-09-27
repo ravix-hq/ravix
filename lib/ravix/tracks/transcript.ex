@@ -39,6 +39,7 @@ defmodule Ravix.Tracks.Transcript do
 
   alias Managoat.ACP.Blocks
   alias Managoat.ACP.Protocol
+  alias Ravix.Fountain.Error
   alias Ravix.Tracks.Transcript.{Block, Detail, Edit, Event, Page, Turn}
 
   @acp_runtimes ~w(claude codex opencode)
@@ -204,7 +205,7 @@ defmodule Ravix.Tracks.Transcript do
   # only one of them can afford to read the whole log for it.
   defp finish(%Turn{} = turn, acc) do
     blocks = blocks_of(acc)
-    visible = Enum.filter(blocks, &visible_block?/1)
+    visible = blocks |> Enum.filter(&visible_block?/1) |> timeout_reply(turn.settled?)
 
     %{
       turn
@@ -215,6 +216,16 @@ defmodule Ravix.Tracks.Transcript do
             not bootstrap?(turn)
     }
   end
+
+  # Some adapters deliver a timeout as a completed message chunk. Only replace
+  # an entire settled reply; streamed prefixes and discussions of timeouts are text.
+  defp timeout_reply([%Block.Text{body: body}] = blocks, true) do
+    if String.trim(body) == "request timed out",
+      do: [%Block.Failure{stage: "turn", body: "request timed out"}],
+      else: blocks
+  end
+
+  defp timeout_reply(blocks, _settled), do: blocks
 
   # The track ribbon represents setup. Keep failed setup visible so its error
   # can still be read; ordinary user prompts and other app turns remain intact.
@@ -292,11 +303,10 @@ defmodule Ravix.Tracks.Transcript do
   # last successful stage and then nothing: the track looked like it was still
   # thinking, and the only red thing on the page was a queued prompt claiming
   # the conversation had ended. The reason is Fountain's own text and is drawn
-  # as such -- it named a billing page on the deployment that found this, which
-  # is exactly the kind of sentence that must not be swallowed.
+  # as diagnostics, with a separate public explanation and next step.
   defp output(%Event{kind: :stage} = event, _runtime, acc) do
     cond do
-      session_gone?(event) ->
+      session_gone?(event) and not Event.failed_stage?(event) ->
         [
           %Block.System{
             body:
@@ -306,7 +316,10 @@ defmodule Ravix.Tracks.Transcript do
         ]
 
       Event.failed_stage?(event) ->
-        [%Block.Failure{stage: event.stage, body: failure_reason(event)} | acc]
+        [
+          %Block.Failure{stage: event.stage, body: raw_failure_reason(event), details: event.data}
+          | acc
+        ]
 
       true ->
         acc
@@ -334,8 +347,8 @@ defmodule Ravix.Tracks.Transcript do
   reason: a prompt held behind a conversation that never started should say why,
   and both places must agree on where "why" lives (#35).
   """
-  @spec failure_reason(Event.t()) :: String.t()
-  def failure_reason(%Event{data: data}) when is_binary(data) do
+  @spec raw_failure_reason(Event.t()) :: String.t()
+  def raw_failure_reason(%Event{data: data}) when is_binary(data) do
     case Jason.decode(data) do
       {:ok, %{"message" => message}} when is_binary(message) -> String.trim(message)
       {:ok, %{"reason" => reason}} when is_binary(reason) -> String.trim(reason)
@@ -344,7 +357,23 @@ defmodule Ravix.Tracks.Transcript do
     end
   end
 
-  def failure_reason(_event), do: ""
+  def raw_failure_reason(_event), do: ""
+
+  @doc "A readable explanation, without provider codes, for setup and saved prompts."
+  @spec failure_reason(Event.t()) :: String.t()
+  def failure_reason(event),
+    do: event |> raw_failure_reason() |> Error.reason_message()
+
+  def failure_label("provision"), do: "Machine setup failed"
+  def failure_label("setup"), do: "Setup failed"
+  def failure_label("adapter"), do: "Agent stopped"
+  def failure_label("turn"), do: "Reply failed"
+  def failure_label(_), do: "Agent operation failed"
+
+  def failure_next_step(%Block.Failure{body: "session_gone"}),
+    do: "Wake the agent, then retry your message."
+
+  def failure_next_step(_), do: "Retry your message when the machine is ready."
 
   @doc "A block worth drawing: any tool, a failure, or text that is not blank."
   @spec visible_block?(Block.t()) :: boolean()

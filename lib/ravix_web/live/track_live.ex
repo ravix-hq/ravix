@@ -220,6 +220,19 @@ defmodule RavixWeb.TrackLive do
     end
   end
 
+  def handle_event("retry-turn", %{"turn" => id}, socket) do
+    with %{prompt: prompt} = turn when is_binary(prompt) <-
+           Enum.find(socket.assigns.page.turns, &(&1.id == id)),
+         true <- Enum.any?(turn.blocks, &match?(%TranscriptBlock.Failure{}, &1)) do
+      {_speaker, body} = prompt |> Ravix.Previews.Agent.visible_prompt() |> prompt_author()
+
+      {:noreply,
+       push_event(socket, "composer:retry", %{text: body, images: turn.image_count > 0})}
+    else
+      _ -> {:noreply, socket}
+    end
+  end
+
   def handle_event("starter", %{"prompt" => prompt}, socket),
     do: {:noreply, push_event(socket, "composer:insert", %{text: prompt})}
 
@@ -241,8 +254,10 @@ defmodule RavixWeb.TrackLive do
       else: {:noreply, begin(socket, :model, &Tracks.set_model(&1, &2, thread_id, model))}
   end
 
-  def handle_event("retry-track", _, socket),
-    do: {:noreply, begin(socket, :retry, &Tracks.retry/2)}
+  def handle_event("retry-track", _, socket) do
+    thread_id = socket.assigns.thread_id
+    {:noreply, begin(socket, :retry, &Tracks.retry(&1, &2, thread_id))}
+  end
 
   def handle_event("queue", %{"action" => "cancel", "id" => id}, socket),
     do: {:noreply, queued(socket, &PromptQueue.cancel/3, id)}
@@ -1439,6 +1454,9 @@ defmodule RavixWeb.TrackLive do
   defp setup_label(%{setup_state: "failed"}, _now), do: "Setup failed"
   defp setup_label(%{setup_state: "ready"}, _now), do: "Ready"
 
+  defp setup_label(%{setup_state: "retry", setup_error_code: code}, _now)
+       when code in ["sandbox_at_capacity", "conversation_busy"], do: "Waiting for capacity"
+
   defp setup_label(%{setup_state: "retry"} = track, now) do
     seconds =
       if track.setup_retry_at, do: max(0, DateTime.diff(track.setup_retry_at, now)), else: 0
@@ -2079,8 +2097,13 @@ defmodule RavixWeb.TrackLive do
   defp block(%{block: %TranscriptBlock.Failure{}} = assigns) do
     ~H"""
     <div class="workspace-failure" role="status">
-      <strong>{@block.stage} failed</strong>
-      <pre :if={@block.body != ""}>{@block.body}</pre>
+      <strong>{Transcript.failure_label(@block.stage)}</strong>
+      <p :if={@block.body != ""}>{Ravix.Fountain.Error.reason_message(@block.body)}</p>
+      <p>{Transcript.failure_next_step(@block)}</p>
+      <details :if={@block.body != ""}>
+        <summary>Technical details</summary>
+        <pre>{@block.details || @block.body}</pre>
+      </details>
     </div>
     """
   end

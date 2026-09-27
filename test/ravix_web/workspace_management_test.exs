@@ -271,6 +271,8 @@ defmodule RavixWeb.WorkspaceManagementTest do
 
   test "secrets are scoped and values are absent from the rendered page", ctx do
     settings(ctx)
+    assert render(ctx.view) =~ "the machine service substitutes"
+    refute render(ctx.view) =~ "Fountain"
 
     expect(Projects, :update_settings, fn user, id, attrs ->
       assert {user.id, id} == {ctx.user.id, ctx.project.id}

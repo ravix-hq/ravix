@@ -10,7 +10,7 @@ defmodule Ravix.Tracks.Setup do
 
   @max_attempts 3
   @settle_seconds 600
-  @failure "setup_failed: Track setup failed after automatic retries. Retry track setup, then retry this saved prompt."
+  @failure "Track setup failed. Retry track setup, then retry this saved prompt."
 
   def failure_message, do: @failure
 
@@ -57,7 +57,8 @@ defmodule Ravix.Tracks.Setup do
       setup_request_id: Ecto.UUID.generate(),
       setup_started_at: DateTime.utc_now(),
       setup_retry_at: DateTime.add(DateTime.utc_now(), 5, :second),
-      setup_error: nil
+      setup_error: nil,
+      setup_error_code: nil
     ]
 
     if Store.update_setup(track, attrs) do
@@ -75,33 +76,58 @@ defmodule Ravix.Tracks.Setup do
         |> Fountain.prompt(track.conversation_id, prompt, [],
           client_request_id: track.setup_request_id
         )
-        |> sent(track)
+        |> sent(track, project)
 
       {:error, _} ->
         failed(track, "The machine could not be prepared for setup.")
     end
   end
 
-  defp sent({:error, %Fountain.Error{} = error}, track) do
+  defp sent({:error, %Fountain.Error{} = error}, track, project) do
     cond do
+      Fountain.Error.credential?(error) ->
+        # ownership: no door — the setup lease authorizes this project and its funding owner.
+        owner = Ravix.Accounts.Store.get_user(project.user_id)
+
+        agent =
+          Map.get(
+            %{
+              "claude" => "Claude Code",
+              "claude-code" => "Claude Code",
+              "codex" => "Codex",
+              "gemini" => "Gemini CLI",
+              "opencode" => "OpenCode"
+            },
+            project.runtime,
+            "agent"
+          )
+
+        reason =
+          "#{owner.login}'s #{agent} connection isn't working; reconnect it in account settings."
+
+        failed(track, reason, error.code, true)
+        {:error, error}
+
       Fountain.Error.busy?(error) ->
         Store.update_setup(track,
           setup_state: "retry",
           setup_attempts: track.setup_attempts - 1,
+          setup_error: "The machine is busy with other turns; trying again shortly.",
+          setup_error_code: error.code,
           setup_retry_at: DateTime.add(DateTime.utc_now(), 30, :second)
         )
 
         publish(track)
 
       Fountain.Error.rejected?(error) ->
-        failed(track, "Opening prompt was refused: #{error.code}")
+        failed(track, Fountain.Error.public_message(error.code), error.code)
 
       true ->
         publish(track)
     end
   end
 
-  defp sent(_outcome, track), do: publish(track)
+  defp sent(_outcome, track, _project), do: publish(track)
 
   defp reconcile(client, track, project) do
     # Persist the next check before I/O, including provider failures. The lease
@@ -153,7 +179,8 @@ defmodule Ravix.Tracks.Setup do
              setup_state: "ready",
              setup_retry_at: nil,
              opened_at: DateTime.utc_now(),
-             setup_error: nil
+             setup_error: nil,
+             setup_error_code: nil
            ),
            do: publish(track)
 
@@ -203,19 +230,22 @@ defmodule Ravix.Tracks.Setup do
     end
   end
 
-  defp failed(track, reason) do
-    exhausted? = track.setup_attempts >= @max_attempts
+  defp failed(track, reason, code \\ nil, terminal? \\ false) do
+    exhausted? = terminal? or track.setup_attempts >= @max_attempts
 
     attrs = [
       setup_state: if(exhausted?, do: "failed", else: "retry"),
       setup_error: reason,
+      setup_error_code: code,
       setup_retry_at: DateTime.add(DateTime.utc_now(), backoff(track.setup_attempts), :second)
     ]
 
     if Store.update_setup(track, attrs) do
       # ownership: no door — this setup lease belongs to this track; only queued rows
       # are failed, preserving bodies and leaving already-delivered turns alone.
-      if exhausted?, do: Ravix.PromptQueue.Store.fail_setup(track.id, @failure <> " " <> reason)
+      if exhausted?,
+        do: Ravix.PromptQueue.Store.fail_setup(track.id, @failure <> " " <> reason, code)
+
       publish(track)
     end
   end

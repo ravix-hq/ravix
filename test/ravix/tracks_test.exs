@@ -10,7 +10,7 @@ defmodule Ravix.TracksTest do
   alias Ravix.PromptQueue.Body
   alias Ravix.QueryCount
   alias Ravix.Tracks
-  alias Ravix.Tracks.{Diff, Files, Names, Origin, Track}
+  alias Ravix.Tracks.{Diff, Files, Names, Origin, Setup, Track}
   alias Ravix.Tracks.Transcript.{Block, Turn}
 
   @root "/home/sprite/work/kyoto"
@@ -791,7 +791,13 @@ defmodule Ravix.TracksTest do
       assert_receive {:hub, %Event{name: :turn, track_id: ^track_id}}
       refute Repo.get!(Track, track_id).opened_at
 
-      assert :ok = Tracks.retry(ctx.owner, track_id)
+      assert {:error, {:conflict, "setup_pending", _}} = Tracks.retry(ctx.owner, track_id)
+
+      Repo.get!(Track, track_id)
+      |> Ecto.Changeset.change(setup_retry_at: DateTime.add(DateTime.utc_now(), -1, :second))
+      |> Repo.update!()
+
+      Setup.advance(client, track_id)
       assert_receive {:hub, %Event{name: :turn, track_id: ^track_id}}
       refute Repo.get!(Track, track_id).opened_at
       assert Repo.get!(Track, track_id).setup_state == "running"

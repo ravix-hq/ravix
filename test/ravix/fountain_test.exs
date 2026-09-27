@@ -882,7 +882,8 @@ defmodule Ravix.FountainTest do
       assert %{
                status: 502,
                code: "fountain_unreachable",
-               message: "Could not reach Fountain to watch this track."
+               message:
+                 "Could not reach the machine service to watch this track. Try again in a moment."
              } =
                Error.as_http(error, "watch this track")
     end
@@ -1082,6 +1083,25 @@ defmodule Ravix.FountainTest do
       assert %Error{status: 0, code: nil, kind: :connection} = Error.from_sdk(down)
     end
 
+    test "public failures explain capacity and never echo bare provider codes" do
+      for action <- ["add a thread", "retry", "interrupt"] do
+        response = Error.as_http(%Error{status: 409, code: "sandbox_at_capacity"}, action)
+        assert response.message == "The machine is busy with other turns. Try again in a moment."
+      end
+
+      for code <- [
+            "adapter_crashed",
+            "session_gone",
+            "inference_credential_unusable",
+            "unknown_code"
+          ] do
+        response = Error.as_http(%Error{status: 422, code: code, message: code}, "send")
+        refute response.message =~ code
+        refute response.message =~ "Fountain"
+        assert response.message =~ "."
+      end
+    end
+
     test "as_http mirrors asHttpError" do
       # A deployment with no Fountain is not a Fountain failure: that is
       # `{:unconfigured, :fountain}`, sentenced once in `RavixWeb.Error`.
@@ -1099,16 +1119,27 @@ defmodule Ravix.FountainTest do
       assert %{status: 409, code: "identity_mismatch"} =
                Error.as_http(%Error{status: 409, code: "sandbox_identity_mismatch"}, "x")
 
-      assert %{status: 502, code: "fountain_error", message: "boom"} =
+      assert %{
+               status: 502,
+               code: "fountain_error",
+               message:
+                 "The machine service could not complete the request. Try again in a moment."
+             } =
                Error.as_http(%Error{status: 500, message: "boom"}, "x")
 
-      assert %{status: 404, code: "not_found", message: "gone"} =
+      assert %{
+               status: 404,
+               code: "not_found",
+               message:
+                 "The machine service could not complete the request. Try again in a moment."
+             } =
                Error.as_http(%Error{status: 404, code: "not_found", message: "gone"}, "x")
 
       assert %{
                status: 502,
                code: "fountain_unreachable",
-               message: "Could not reach Fountain to build this project."
+               message:
+                 "Could not reach the machine service to build this project. Try again in a moment."
              } =
                Error.as_http(%Error{status: 0, kind: :connection}, "build this project")
     end

@@ -40,6 +40,7 @@ defmodule Ravix.PromptQueue.Store do
           created_at: DateTime.t(),
           status: Item.status(),
           error: String.t() | nil,
+          error_code: String.t() | nil,
           prompt: String.t() | nil,
           image_count: non_neg_integer()
         }
@@ -246,6 +247,7 @@ defmodule Ravix.PromptQueue.Store do
       created_at: p.created_at,
       status: p.status,
       error: p.error,
+      error_code: p.error_code,
       prompt: fragment("? ->> 'prompt'", p.body),
       image_count: p.image_count
     })
@@ -261,8 +263,8 @@ defmodule Ravix.PromptQueue.Store do
   the server calls it on rows it is delivering, `cancel/3` and `retry/3`
   call it inside a transaction that established the person's right to.
   """
-  @spec set_status(String.t(), Item.status(), String.t() | nil) :: :ok
-  def set_status(id, status, error \\ nil) do
+  @spec set_status(String.t(), Item.status(), String.t() | nil, String.t() | nil) :: :ok
+  def set_status(id, status, error \\ nil, code \\ nil) do
     released = if status in @done, do: [body: nil, payload: ""], else: []
 
     {_count, tracks} =
@@ -274,9 +276,13 @@ defmodule Ravix.PromptQueue.Store do
       # page re-read its transcript from Fountain -- so an unguarded write
       # turns a 15-second poll into a 2-second one against a dependency that
       # is already failing, per viewer, for as long as the outage lasts.
-      |> where([p], p.status != ^status or fragment("? IS DISTINCT FROM ?", p.error, ^error))
+      |> where(
+        [p],
+        p.status != ^status or fragment("? IS DISTINCT FROM ?", p.error, ^error) or
+          fragment("? IS DISTINCT FROM ?", p.error_code, ^code)
+      )
       |> select([p], p.track_id)
-      |> Repo.update_all(set: [status: status, error: error] ++ released)
+      |> Repo.update_all(set: [status: status, error: error, error_code: code] ++ released)
 
     Enum.each(tracks, &publish_queue/1)
   end
@@ -362,7 +368,7 @@ defmodule Ravix.PromptQueue.Store do
   end
 
   @doc "Fail every unsent prompt, retaining its body for explicit retry."
-  def fail_setup(track_id, reason) do
+  def fail_setup(track_id, reason, code \\ nil) do
     # ownership: no door — a setup worker holds this track's lease. Recheck
     # its persisted failure so an older worker cannot refuse work after recovery.
     {count, _} =
@@ -372,7 +378,7 @@ defmodule Ravix.PromptQueue.Store do
           on: t.id == p.track_id,
           where: p.track_id == ^track_id and p.status == :queued and t.setup_state == "failed"
         ),
-        set: [status: :failed, error: reason]
+        set: [status: :failed, error: reason, error_code: code]
       )
 
     if count > 0, do: publish_queue(track_id)

@@ -346,7 +346,7 @@ defmodule Ravix.Accounts.InferenceTest do
          }, "already connected to somebody else"},
         {%{state: "failed", failure: %{reason: "invalid_sign_in"}}, "refused the code"},
         {%{state: "failed", failure: %{reason: "exchange_failed"}}, "did not complete"},
-        {%{state: "failed", failure: %{reason: "internal_error"}}, "Fountain's side"},
+        {%{state: "failed", failure: %{reason: "internal_error"}}, "machine service"},
         {%{state: "expired"}, "fifteen minutes"},
         {%{state: "cancelled"}, "cancelled"}
       ]
@@ -375,7 +375,8 @@ defmodule Ravix.Accounts.InferenceTest do
 
       fountain([{read, done}, {name, {404, [], %{error: "not_found"}}}])
       assert {:error, {:unavailable, message}} = Inference.poll_link(me, link("s"))
-      assert message =~ "v0.17"
+      assert message =~ "machine service needs an update"
+      refute message =~ "Fountain"
 
       fountain([{read, done}, {name, {500, [], %{error: "down"}}}])
       assert {:error, %Ravix.Fountain.Error{status: 500}} = Inference.poll_link(me, link("s"))
@@ -596,7 +597,8 @@ defmodule Ravix.Accounts.InferenceTest do
       assert {:error, {:unavailable, message}} =
                Inference.connect(insert_user(), %{agent: :claude, kind: :api_key, value: "k"})
 
-      assert message =~ "v0.17"
+      assert message =~ "machine service needs an update"
+      refute message =~ "Fountain"
     end
 
     test "nothing pasted, something far too long, and a pairing nobody offers never reach Fountain" do
