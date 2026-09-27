@@ -99,10 +99,22 @@ defmodule Ravix.Tracks.Transcript.Event do
   @spec pending() :: String.t()
   def pending, do: @pending
 
-  @doc "Did this event end a turn? A turn stage in any state but `started`."
+  @doc "Did this event end a turn? Includes machine suspension without a turn-done stage."
   @spec settles?(t()) :: boolean()
   def settles?(%__MODULE__{kind: :stage, stage: "turn", state: state}), do: state != "started"
-  def settles?(%__MODULE__{}), do: false
+  def settles?(%__MODULE__{} = event), do: not is_nil(suspension(event))
+
+  @doc "Structured sandbox suspension metadata, never text from agent or tool output."
+  @spec suspension(t()) :: map() | nil
+  def suspension(%__MODULE__{kind: :stage, stage: "sandbox", state: "done", data: data})
+      when is_binary(data) do
+    case Jason.decode(data) do
+      {:ok, %{"event" => "suspended"} = metadata} -> metadata
+      _ -> nil
+    end
+  end
+
+  def suspension(%__MODULE__{}), do: nil
 
   @doc "Did this event report a stage that failed?"
   @spec failed_stage?(t()) :: boolean()

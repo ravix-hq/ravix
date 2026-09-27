@@ -11,10 +11,44 @@ defmodule Ravix.Tracks.AgentFailure do
   def detect(events, runtime, blocks) do
     frames = Enum.flat_map(events, &frames/1)
 
-    if outage?(frames) or timeout_reply?(blocks) do
-      %{code: @code, reason: message(runtime, frames, blocks)}
+    suspension(events) ||
+      if outage?(frames) or timeout_reply?(blocks) do
+        %{code: @code, reason: message(runtime, frames, blocks)}
+      end
+  end
+
+  @doc "Suspension closes a turn even while the provider's turn status is catching up."
+  def suspension(events) do
+    events = Enum.map(events, &Event.from/1)
+
+    case Enum.find(events, &(not is_nil(Event.suspension(&1)))) do
+      nil -> nil
+      event -> suspension_failure(event, events)
     end
   end
+
+  defp suspension_failure(event, events) do
+    # A machine also sleeps between turns. Do not rewrite a reply which had
+    # already ended before this sandbox-wide notice arrived.
+    closed = Enum.any?(events, &(&1.stage == "turn" and Event.settles?(&1) and &1.id < event.id))
+
+    unless closed do
+      %{
+        code: "machine_suspended",
+        reason:
+          "The machine went to sleep during this turn#{idle_detail(Event.suspension(event))}. Send another message to continue."
+      }
+    end
+  end
+
+  defp idle_detail(%{"reason" => "idle", "message" => message}) when is_binary(message) do
+    case Regex.run(~r/after (\d+) minutes idle/, message) do
+      [_, minutes] -> " (idle for #{minutes} minutes)"
+      _ -> ""
+    end
+  end
+
+  defp idle_detail(_), do: ""
 
   defp outage?(frames) do
     terminal? = Enum.any?(frames, &system_error?/1)

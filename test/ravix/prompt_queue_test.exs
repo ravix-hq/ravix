@@ -1071,6 +1071,19 @@ defmodule Ravix.PromptQueueTest do
       assert delivered?(id)
     end
 
+    test "sandbox suspension wakes queued delivery without a turn-done event", f do
+      {:ok, state} = Agent.start_link(fn -> "running" end)
+      fountain_hooks(fn -> Agent.get(state, & &1) end, fn -> :ok end)
+      {:ok, %Item{id: id}} = send_prompt(f.track, f.owner, "continue after sleep")
+      Server.tick(f.server)
+      assert status_of(id) == :queued
+
+      Agent.update(state, fn _ -> "idle" end)
+      broadcast(f.track.id, List.last(Ravix.SuspensionFixture.events()))
+      assert_receive {:posted, _, _}, 1_000
+      assert delivered?(id)
+    end
+
     test "a thread is joined once, however many sweeps find it waiting", f do
       test = self()
 

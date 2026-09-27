@@ -201,7 +201,7 @@ defmodule Ravix.Tooling.Wait do
   def handle_info({:transcript, thread_id, %Event{kind: :stage} = event}, state) do
     relevant =
       Map.has_key?(state.followers, thread_id) and
-        (event.stage == "turn" or Event.failed_stage?(event))
+        (event.stage == "turn" or Event.settles?(event) or Event.failed_stage?(event))
 
     {:noreply, if(relevant, do: refresh(state), else: state)}
   end

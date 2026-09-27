@@ -52,7 +52,7 @@ defmodule RavixWeb.TrackLive do
   alias Ravix.{Hub, Previews, PromptQueue, Tracks}
   alias Ravix.Hub.Event
   alias Ravix.PromptQueue.Recovery
-  alias Ravix.Tracks.{Diff, Files, Follower}
+  alias Ravix.Tracks.{AgentFailure, Diff, Files, Follower}
   alias Ravix.Tracks.Transcript
   alias Ravix.Tracks.Transcript.Block, as: TranscriptBlock
   alias Ravix.Tracks.Transcript.Event, as: TranscriptEvent
@@ -953,11 +953,23 @@ defmodule RavixWeb.TrackLive do
   defp repair(socket, page) do
     was = Transcript.visible_turns(socket.assigns.page)
     now = Transcript.visible_turns(page)
-    socket = memoize(assign(socket, page: page))
+    socket = socket |> assign(page: page) |> replay_thread_activity(page) |> memoize()
 
     if appended_to?(was, now),
       do: Enum.reduce(now, socket, &insert_changed(&2, was, &1)),
       else: stream(socket, :turns, now, reset: true)
+  end
+
+  defp replay_thread_activity(socket, page) do
+    case List.last(page.turns) do
+      %{settled?: true, events: events} ->
+        if AgentFailure.suspension(events),
+          do: update(socket, :thread_states, &Map.put(&1, socket.assigns.thread_id, :failed)),
+          else: socket
+
+      _ ->
+        socket
+    end
   end
 
   # Are the turns on screen still the leading turns of the new page, in the
@@ -1166,9 +1178,16 @@ defmodule RavixWeb.TrackLive do
   # a turn that starts, runs and ends inside one window is three reasons to
   # re-read the track and one re-read.
   defp absorb(socket, event) do
+    page = Transcript.add_event(socket.assigns.page, event)
+
+    dirty =
+      if TranscriptEvent.suspension(event),
+        do: Enum.reduce(page.turns, socket.assigns.dirty_turns, &MapSet.put(&2, &1.id)),
+        else: MapSet.put(socket.assigns.dirty_turns, event.turn_id)
+
     assign(socket,
-      page: Transcript.add_event(socket.assigns.page, event),
-      dirty_turns: MapSet.put(socket.assigns.dirty_turns, event.turn_id),
+      page: page,
+      dirty_turns: dirty,
       stage_seen?: socket.assigns.stage_seen? or event.kind == :stage,
       announcement: announce_turn(event, socket.assigns.announcement)
     )
@@ -1181,10 +1200,17 @@ defmodule RavixWeb.TrackLive do
   # of output --- leaves it alone.
   defp announce_turn(%TranscriptEvent{} = event, current) do
     cond do
-      TranscriptEvent.starts_turn?(event) -> nil
-      not TranscriptEvent.settles?(event) -> current
-      TranscriptEvent.failed_stage?(event) -> "Turn failed"
-      true -> "Agent replied"
+      TranscriptEvent.starts_turn?(event) ->
+        nil
+
+      not TranscriptEvent.settles?(event) ->
+        current
+
+      TranscriptEvent.failed_stage?(event) or not is_nil(TranscriptEvent.suspension(event)) ->
+        "Turn failed"
+
+      true ->
+        "Agent replied"
     end
   end
 
@@ -1325,7 +1351,12 @@ defmodule RavixWeb.TrackLive do
     end
   end
 
-  defp thread_activity(socket, _id, _event), do: socket
+  defp thread_activity(socket, id, %TranscriptEvent{} = event) do
+    if not is_nil(TranscriptEvent.suspension(event)) and
+         Map.get(socket.assigns.thread_states, id) == :running,
+       do: update(socket, :thread_states, &Map.put(&1, id, :failed)),
+       else: socket
+  end
 
   # Allocation can finish after the mount's empty reads. A binding change must
   # repair those reads immediately; the minute-long backstop is not readiness.

@@ -5,7 +5,7 @@ defmodule Ravix.Tooling.Tasks do
   alias Ravix.Tooling.{Authorization, Store, Task, TaskPage}
   alias Ravix.Tracks.AgentFailure
   alias Ravix.Tracks.Transcript
-  alias Ravix.Tracks.Transcript.Block
+  alias Ravix.Tracks.Transcript.{Block, Event}
 
   @terminal ~w(TASK_STATE_COMPLETED TASK_STATE_FAILED TASK_STATE_CANCELED TASK_STATE_REJECTED)
   def topic(id), do: "tooling:task:" <> id
@@ -338,13 +338,17 @@ defmodule Ravix.Tooling.Tasks do
              access.thread.conversation_id,
              turn,
              cursor,
-             %{events: [], seen: false},
+             %{events: [], seen: not is_nil(cursor) and task.turn_id == turn.id},
              pages
            ),
          runtime <- access.thread.runtime || access.project.runtime,
          text <- reply(page.events, turn.id, runtime) do
       blocks = Transcript.blocks_for_turn(page.events, runtime)
-      failure = if finished, do: AgentFailure.detect(page.events, runtime, blocks)
+
+      failure =
+        if finished,
+          do: AgentFailure.detect(page.events, runtime, blocks),
+          else: AgentFailure.suspension(page.events)
 
       {:ok, saved} =
         Store.transaction(fn -> persist_outcome(task, access, turn, page, text, failure) end)
@@ -407,14 +411,27 @@ defmodule Ravix.Tooling.Tasks do
     {events, seen, past} =
       Enum.reduce_while(events, {[], seen, false}, fn event, {events, seen, false} ->
         case event["turn_id"] do
-          ^turn_id -> {:cont, {[event | events], true, false}}
-          nil -> {:cont, {events, seen, false}}
-          _ when seen -> {:halt, {events, seen, true}}
-          _ -> {:cont, {events, seen, false}}
+          ^turn_id ->
+            {:cont, {[event | events], true, false}}
+
+          nil ->
+            {:cont, {include_suspension(event, events, turn_id, seen), seen, false}}
+
+          _ when seen ->
+            {:halt, {events, seen, true}}
+
+          _ ->
+            {:cont, {events, seen, false}}
         end
       end)
 
     {Enum.reverse(events), seen, past}
+  end
+
+  defp include_suspension(event, events, turn_id, seen) do
+    if seen and Event.suspension(Event.from(event)),
+      do: [Map.put(event, "turn_id", turn_id) | events],
+      else: events
   end
 
   defp save_page(task, turn, page, text, failure) do
@@ -459,7 +476,9 @@ defmodule Ravix.Tooling.Tasks do
   defp turn_state(status) when status in ["ended", "completed", "done"],
     do: "TASK_STATE_COMPLETED"
 
-  defp turn_state("failed"), do: "TASK_STATE_FAILED"
+  defp turn_state(status) when status in ["failed", "interrupted", "suspended"],
+    do: "TASK_STATE_FAILED"
+
   defp turn_state(status) when status in ["canceled", "cancelled"], do: "TASK_STATE_CANCELED"
   defp turn_state(_), do: "TASK_STATE_WORKING"
 
