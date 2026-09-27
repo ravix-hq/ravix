@@ -1185,6 +1185,16 @@ defmodule Ravix.Tracks do
     end
   end
 
+  @doc "The selected track's machine, after track membership is established."
+  @spec machine_for_track(User.t(), String.t(), keyword()) ::
+          {:ok, MachineCache.machine()} | {:error, reason()}
+  def machine_for_track(%User{} = user, track_id, opts \\ []) do
+    with {:ok, %{track: track, project: project}} <- Access.track_access(user, track_id),
+         {:ok, client} <- fountain() do
+      MachineCache.machine_for_track(client, project, track, opts)
+    end
+  end
+
   # ── the machine, for the panels ───────────────────────────────────────
 
   @doc """

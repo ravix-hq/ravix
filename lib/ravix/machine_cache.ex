@@ -132,6 +132,17 @@ defmodule Ravix.MachineCache do
     end
   end
 
+  @doc "Resolve persisted dedicated ownership; only shared tracks use project discovery."
+  @spec machine_for_track(Client.t(), Project.t(), Ravix.Tracks.Track.t(), opts()) ::
+          {:ok, machine()} | {:error, Fountain.failure()}
+  def machine_for_track(client, project, track, opts \\ [])
+
+  def machine_for_track(_client, _project, %{sandbox_layout: :dedicated, sandbox_id: id}, _opts),
+    do: {:ok, if(is_binary(id) and id != "", do: %Machine{sandbox_id: id})}
+
+  def machine_for_track(client, project, %{sandbox_layout: :shared}, opts),
+    do: machine_of(client, project, opts)
+
   @doc """
   The sprite behind a sandbox, or nil if it is not on Sprites at all.
 
