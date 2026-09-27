@@ -160,6 +160,16 @@
                     </div>
                   <% end %>
                 </div>
+                <button
+                  :if={
+                    turn.prompt && !String.starts_with?(turn.prompt, "[ravix]") &&
+                      Enum.any?(turn.blocks, &match?(%TranscriptBlock.Failure{}, &1))
+                  }
+                  type="button"
+                  class="ghost"
+                  phx-click="retry-turn"
+                  phx-value-turn={turn.id}
+                >Retry message</button>
                 <.turn_footer :if={turn.settled?} turn={turn} workdir={@track.workdir} />
               </section>
             </article>
@@ -256,9 +266,14 @@
             project_id={@project.id}
             refused={
               @agent_refused ||
+                @track.setup_error_code in [
+                  "inference_credential_unusable",
+                  "chatgpt_grant_unusable"
+                ] ||
                 Enum.any?(
                   @queue,
-                  &(&1.status == :failed && &1.error == Ravix.Fountain.Error.credential_message())
+                  &(&1.status == :failed &&
+                      &1.error_code in ["inference_credential_unusable", "chatgpt_grant_unusable"])
                 )
             }
             refresh={@health_refresh}
@@ -345,7 +360,10 @@
                   Stop
                 </button>
                 <button
-                  :if={@track.status in [:failed, :opening, :setup_failed]}
+                  :if={
+                    @track.setup_state == "failed" ||
+                      (@track.setup_state == "ready" && @track.status in [:failed, :opening])
+                  }
                   type="button"
                   class="ghost"
                   phx-click="retry-track"

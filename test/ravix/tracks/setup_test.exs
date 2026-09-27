@@ -8,7 +8,7 @@ defmodule Ravix.Tracks.SetupTest do
   alias Ravix.PromptQueue.{Item, Server}
   alias Ravix.PromptQueue.Store, as: QueueStore
   alias Ravix.Tooling.{Tasks, Wait}
-  alias Ravix.Tracks.{Setup, Track}
+  alias Ravix.Tracks.{Setup, Thread, Track}
   import Ravix.ToolingFixture
 
   setup do
@@ -144,13 +144,13 @@ defmodule Ravix.Tracks.SetupTest do
 
     assert row(ctx.track).setup_state == "failed"
 
-    assert %{status: :failed, error: "setup_failed:" <> _, body: %{"prompt" => "user work"}} =
+    assert %{status: :failed, error: "Track setup failed." <> _, body: %{"prompt" => "user work"}} =
              QueueStore.get(item.id)
 
     assert {:ok, %{state: "TASK_STATE_FAILED", status_message: reason}} =
              Tasks.get(principal, task.id)
 
-    assert reason =~ "setup_failed:"
+    assert reason =~ "Track setup failed."
 
     assert {:ok, %{changed: [changed_id], tasks: [reported]}} =
              Wait.wait(principal, %{
@@ -161,7 +161,7 @@ defmodule Ravix.Tracks.SetupTest do
 
     assert changed_id == task.id
     assert reported.status.state == "TASK_STATE_FAILED"
-    assert hd(reported.status.message.parts).text =~ "setup_failed:"
+    assert hd(reported.status.message.parts).text =~ "Track setup failed."
 
     refute_received {:prompt, _, "user work", _}
     refute_received {:prompt, _, "MCP work", _}
@@ -267,6 +267,61 @@ defmodule Ravix.Tracks.SetupTest do
     assert row(ctx.track).setup_attempts == 1
   end
 
+  test "credential refusal ends setup immediately with a reconnect instruction", ctx do
+    persist(ctx.track, setup_state: "pending", setup_attempts: 0)
+    item = queue(ctx)
+
+    expect(Fountain, :prompt, fn _, _, _, _, _ ->
+      {:error, %Error{status: 422, code: "inference_credential_unusable"}}
+    end)
+
+    Setup.advance(ctx.client, ctx.track.id)
+    assert row(ctx.track).setup_state == "failed"
+    assert row(ctx.track).setup_error =~ "connection isn't working"
+    assert row(ctx.track).setup_error =~ "account settings"
+    refute row(ctx.track).setup_error =~ "inference_credential_unusable"
+    assert QueueStore.get(item.id).status == :failed
+    due(ctx.track)
+    Setup.advance(ctx.client, ctx.track.id)
+    assert row(ctx.track).setup_attempts == 1
+  end
+
+  test "a refused wake is returned to its caller", ctx do
+    persist(ctx.track, setup_state: "ready", opened_at: DateTime.utc_now())
+    refusal = %Error{status: 409, code: "sandbox_at_capacity"}
+    expect(Fountain, :prompt, fn _, _, _ -> {:error, refusal} end)
+    assert {:error, ^refusal} = Tracks.retry(ctx.user, ctx.track.id)
+  end
+
+  test "wake addresses the selected thread and rejects another track's thread", ctx do
+    persist(ctx.track, setup_state: "ready")
+
+    thread =
+      %Thread{}
+      |> Thread.changeset(%{
+        track_id: ctx.track.id,
+        conversation_id: "selected",
+        title: "Other"
+      })
+      |> Repo.insert!()
+
+    expect(Fountain, :prompt, fn _, "selected", _ -> :ok end)
+    assert :ok = Tracks.retry(ctx.user, ctx.track.id, thread.id)
+    other = insert_track(project: ctx.project)
+    assert {:error, :not_found} = Tracks.retry(ctx.user, other.id, thread.id)
+    assert {:error, :not_found} = Tracks.retry(insert_user(), ctx.track.id, thread.id)
+  end
+
+  test "pending setup rejects wake without resetting its budget", ctx do
+    for state <- ["pending", "running", "retry"] do
+      persist(ctx.track, setup_state: state)
+      assert {:error, {:conflict, "setup_pending", _}} = Tracks.retry(ctx.user, ctx.track.id)
+      assert row(ctx.track).setup_attempts == 1
+    end
+
+    refute_received {:prompt, _, _, _}
+  end
+
   test "capacity rejection waits without exhausting the setup budget", ctx do
     persist(ctx.track, setup_state: "pending", setup_attempts: 0)
 
@@ -277,6 +332,10 @@ defmodule Ravix.Tracks.SetupTest do
     Setup.advance(ctx.client, ctx.track.id)
     assert row(ctx.track).setup_state == "retry"
     assert row(ctx.track).setup_attempts == 0
+
+    assert row(ctx.track).setup_error ==
+             "The machine is busy with other turns; trying again shortly."
+
     assert DateTime.compare(row(ctx.track).setup_retry_at, DateTime.utc_now()) == :gt
   end
 

@@ -94,11 +94,11 @@ defmodule Ravix.PromptQueue.Server do
   # machine could not be built: the new track fails the same way (#35).
   @never_started "The machine for this track could not be started, so the prompt was not sent."
   @waiting "Waiting for the machine connection. Your prompt is saved and will retry automatically."
-  @refused "Delivery was refused. Check the machine and account settings, then retry this prompt."
+  @refused "The machine service refused this prompt. Retry it in a moment; if it is refused again, contact the project owner."
   @unconfirmed "Delivery could not be confirmed. Check the transcript before sending this again."
   # Only what was looked for, not a verdict: a prompt sent before rows carried
   # their id (or by an older instance mid-deploy) has none to find.
-  @not_arrived "Fountain has no turn carrying this prompt's id. Check the transcript, then retry it if it is still needed."
+  @not_arrived "The machine service has no record of receiving this prompt. Check the transcript, then retry it if it is still needed."
 
   @type option ::
           {:name, GenServer.name() | nil}
@@ -401,7 +401,8 @@ defmodule Ravix.PromptQueue.Server do
       track.setup_state == "failed" ->
         Store.fail_setup(
           track.id,
-          Setup.failure_message() <> " " <> (track.setup_error || "")
+          Setup.failure_message() <> " " <> Fountain.Error.reason_message(track.setup_error),
+          track.setup_error_code
         )
 
       track.setup_state != "ready" ->
@@ -631,7 +632,7 @@ defmodule Ravix.PromptQueue.Server do
   defp settle({:error, %Error{} = error}, row, _track, _project) do
     cond do
       Error.credential?(error) ->
-        Store.set_status(row.id, :failed, Error.credential_message())
+        Store.set_status(row.id, :failed, Error.credential_message(), error.code)
 
       Error.busy?(error) ->
         Store.set_status(row.id, :queued, "The agent is at capacity; will retry")

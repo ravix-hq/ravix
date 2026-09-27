@@ -732,7 +732,7 @@ defmodule RavixWeb.Live.SettingsDialog do
                 Values are write-only and never shown again. Changes apply to tracks opened after you save; open tracks keep their settings.
               </p>
               <p class="settings-help">
-                Environment secrets are available as environment variables on the machine. Vault secrets stay off the machine: Fountain’s egress broker substitutes them into outgoing requests. Choose the store your integration uses; the same key can exist in both.
+                Environment secrets are available as environment variables on the machine. Vault secrets stay off the machine: the machine service substitutes them into outgoing requests. Choose the store your integration uses; the same key can exist in both.
               </p>
               <p class="settings-help">
                 Add a new key, or enter an existing key to replace it. To remove a key, enter its name and store and submit an empty value.

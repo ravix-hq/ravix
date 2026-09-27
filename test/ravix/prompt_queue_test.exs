@@ -371,7 +371,10 @@ defmodule Ravix.PromptQueueTest do
     Server.tick(f.server)
     assert length(posted(client)) == count
 
-    assert %Item{status: :unconfirmed, error: "Fountain has no turn carrying" <> _} =
+    assert %Item{
+             status: :unconfirmed,
+             error: "The machine service has no record of receiving" <> _
+           } =
              PromptQueue.Store.get(id)
 
     # Once: the next sweep does not read the turns again (the script would
@@ -390,7 +393,9 @@ defmodule Ravix.PromptQueueTest do
     {:ok, %Item{id: id}} = send_prompt(f.track, f.owner, "refused")
 
     capture_log(fn -> Server.tick(f.server) end)
-    assert %Item{status: :failed, error: "Delivery was refused." <> _} = PromptQueue.Store.get(id)
+
+    assert %Item{status: :failed, error: "The machine service refused this prompt." <> _} =
+             PromptQueue.Store.get(id)
 
     assert :ok = PromptQueue.retry(f.owner, f.track.id, id)
     Server.tick(f.server)
@@ -411,6 +416,26 @@ defmodule Ravix.PromptQueueTest do
     assert [%{"prompt" => "send despite the stale warning"}] = posted(client)
   end
 
+  test "old persisted setup failures expose sentences instead of tags and provider codes", f do
+    {:ok, %Item{id: id}} = send_prompt(f.track, f.owner, "keep this")
+
+    for reason <- ["adapter_crashed", "Opening prompt was refused: inference_credential_unusable"] do
+      PromptQueue.Store.set_status(
+        id,
+        :failed,
+        "setup_failed: Track setup failed after automatic retries. Retry track setup, then retry this saved prompt. " <>
+          reason
+      )
+
+      assert {:ok, [view]} = PromptQueue.list(f.owner, f.track.id)
+      assert view.error =~ "Track setup failed"
+      refute view.error =~ "setup_failed:"
+      refute view.error =~ "adapter_crashed"
+      refute view.error =~ "inference_credential_unusable"
+      assert view.prompt == "keep this"
+    end
+  end
+
   for code <- ~w(chatgpt_grant_unusable inference_credential_unusable) do
     @code code
     test "credential refusal #{@code} retains the prompt for reconnect and retry", f do
@@ -419,6 +444,7 @@ defmodule Ravix.PromptQueueTest do
       Server.tick(f.server)
       assert %Item{status: :failed, error: message} = PromptQueue.Store.get(id)
       assert message == Error.credential_message()
+      assert PromptQueue.Store.get(id).error_code == @code
       assert :ok = PromptQueue.retry(f.owner, f.track.id, id)
       Server.tick(f.server)
       assert %Item{status: :sent} = PromptQueue.Store.get(id)
@@ -525,7 +551,10 @@ defmodule Ravix.PromptQueueTest do
     Server.tick(start_server())
     assert posted(client) == []
 
-    assert %Item{status: :unconfirmed, error: "Fountain has no turn carrying" <> _} =
+    assert %Item{
+             status: :unconfirmed,
+             error: "The machine service has no record of receiving" <> _
+           } =
              PromptQueue.Store.get(id)
 
     assert PromptQueue.Store.get(id).payload != ""
@@ -560,7 +589,10 @@ defmodule Ravix.PromptQueueTest do
 
     Server.tick(f.server)
 
-    assert %Item{status: :unconfirmed, error: "Fountain has no turn carrying" <> _} =
+    assert %Item{
+             status: :unconfirmed,
+             error: "The machine service has no record of receiving" <> _
+           } =
              PromptQueue.Store.get(id)
   end
 

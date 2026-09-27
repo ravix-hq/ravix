@@ -144,6 +144,21 @@ export const Composer = {
       this.grow()
       this.el.focus()
     })
+    this.handleEvent("composer:retry", ({text, images}) => {
+      if (this.el.value.trim() || this.picker()?.files?.length ||
+          this.box().querySelector(".workspace-upload, [phx-click='clear-attachments']")) {
+        this.note("Your draft is still here. Send or clear it before retrying an earlier message.")
+        this.el.focus()
+        return
+      }
+      this.el.value = text
+      this.save()
+      this.grow()
+      this.el.focus()
+      this.note(images
+        ? "Review your message and reattach its images, then send to retry."
+        : "Review your message, then send to retry.")
+    })
     this.handleEvent("composer:clear", () => {
       this.el.value = ""
       this.forget()

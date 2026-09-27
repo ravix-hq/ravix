@@ -176,7 +176,8 @@ defmodule RavixWeb.Error do
   end
 
   defp unconfigured(:fountain),
-    do: "This Ravix deployment has no Fountain account configured, so it cannot build machines."
+    do:
+      "This Ravix deployment has no machine service account configured, so it cannot build machines. Ask the administrator to connect it."
 
   defp unconfigured(:github),
     do: "This Ravix deployment has no GitHub App configured, so it cannot see repositories."

@@ -583,27 +583,37 @@ defmodule Ravix.Tracks do
   once (the box runs one turn at a time), so an opening turn that did not
   send is not the failure it looks like. But a track whose worktree was never
   cut is one a person needs to be able to retry, which this is for. The
-  outcome is published as a `turn` event either way; `:ok` means the retry
-  was made, not that it landed.
+  selected thread is woken once setup is ready. A refused wake is returned to
+  the caller; setup can be explicitly retried only after it has failed.
   """
-  @spec retry(User.t(), String.t()) :: :ok | {:error, reason()}
-  def retry(%User{} = user, track_id) do
-    with {:ok, %{track: track, project: project}} <- Access.track_access(user, track_id),
+  @spec retry(User.t(), String.t(), String.t() | nil) :: :ok | {:error, reason()}
+  def retry(%User{} = user, track_id, thread_id \\ nil) do
+    with {:ok, %{track: track, project: project, thread: thread}} <-
+           Access.thread_access(user, track_id, thread_id),
          {:ok, client} <- fountain(),
          :ok <- Ravix.Projects.prepare_machine(project, client) do
-      if track.setup_state == "ready" do
-        # Preserve Wake / retry for an established track whose session stopped.
-        prompt = opening_prompt(track.slug, track.branch, project, Origin.from_row(track))
-        discard(Fountain.prompt(client, track.conversation_id, prompt), "track wake was refused")
-        Hub.publish(project.id, :turn, track_id: track.id)
-      else
-        Store.retry_setup(track.id)
-        send_opening_turn(client, track, project, Origin.from_row(track), :sync)
-      end
+      retry_track(client, track, project, thread)
+    end
+  end
 
+  defp retry_track(client, %{setup_state: "ready"} = track, project, thread) do
+    prompt = opening_prompt(track.slug, track.branch, project, Origin.from_row(track))
+
+    with :ok <- Fountain.prompt(client, thread.conversation_id, prompt) do
+      Hub.publish(project.id, :turn, track_id: track.id, thread_id: thread.id)
       :ok
     end
   end
+
+  defp retry_track(client, %{setup_state: "failed"} = track, _project, _thread) do
+    Store.retry_setup(track.id)
+    Setup.advance(client, track.id)
+  end
+
+  defp retry_track(_client, _track, _project, _thread),
+    do:
+      {:error,
+       {:conflict, "setup_pending", "Setup is still in progress. Please wait for it to finish."}}
 
   defp send_opening_turn(_client, %Track{conversation_id: nil}, _project, _origin, _mode), do: :ok
 
@@ -1297,7 +1307,8 @@ defmodule Ravix.Tracks do
       status: status_of(row, live),
       setup_state: row.setup_state,
       setup_attempts: row.setup_attempts,
-      setup_error: row.setup_error,
+      setup_error: row.setup_error && Fountain.Error.reason_message(row.setup_error),
+      setup_error_code: row.setup_error_code,
       setup_retry_at: row.setup_retry_at,
       stale: not is_nil(project) and row.rev < project.rev,
       opened_at: row.opened_at,

@@ -153,7 +153,7 @@ defmodule Ravix.Accounts.Inference do
   # The account's default set, when Ravix has to make one. Deliberately empty.
   @house_set "ravix:house"
 
-  @no_sets "This Fountain is too old to hold a credential per person (it needs v0.17 or newer). " <>
+  @no_sets "The machine service needs an update before it can connect individual agents. " <>
              "Ask whoever runs this Ravix deployment to upgrade it."
 
   @doc "The ways `agent` can be paid for, the preferred one first."
@@ -900,7 +900,7 @@ defmodule Ravix.Accounts.Inference do
   defp link_failure(_failure),
     do:
       {:unprocessable, "link_failed",
-       "The sign-in could not finish on Fountain's side, the service that runs the machines. Start again."}
+       "The sign-in could not finish with the machine service. Start again."}
 
   defp refused(message), do: {:error, {:unprocessable, "link_failed", message}}
 

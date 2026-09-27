@@ -448,6 +448,49 @@ defmodule Ravix.Tracks.TranscriptTest do
     end
   end
 
+  test "bare failure codes become public explanations" do
+    for {code, sentence} <- [
+          {"adapter_crashed", "The agent crashed and was restarted."},
+          {"session_gone", "The agent session ended. Wake the agent to continue."}
+        ] do
+      ev = Event.from(%{"data" => Jason.encode!(%{reason: code})})
+      assert Transcript.failure_reason(ev) == sentence
+      assert Transcript.raw_failure_reason(ev) == code
+    end
+  end
+
+  test "a human stage message retains the original code in diagnostics" do
+    data = Jason.encode!(%{reason: "adapter_crashed", message: "The agent restarted."})
+
+    page =
+      Transcript.page(
+        [event(1, data, kind: "stage", stage: "adapter", state: "failed")],
+        "claude"
+      )
+
+    assert [%{blocks: [%Block.Failure{body: "The agent restarted.", details: ^data}]}] =
+             Transcript.visible_turns(page)
+  end
+
+  test "a completed timeout-only reply becomes a failure in snapshots and live updates" do
+    chunks = [event(1, text_chunk("request timed ")), event(2, text_chunk("out"))]
+    settled = event(3, nil, kind: "stage", stage: "turn", state: "completed")
+    page = Transcript.page(chunks, "codex")
+    assert [%{blocks: [%Block.Text{}]}] = Transcript.visible_turns(page)
+
+    assert [%{blocks: [%Block.Failure{body: "request timed out"}]}] =
+             page |> Transcript.add_event(settled) |> Transcript.visible_turns()
+
+    assert [%{blocks: [%Block.Failure{}]}] =
+             Transcript.page(chunks ++ [settled], "codex") |> Transcript.visible_turns()
+
+    for reply <- ["The request timed out yesterday.", "request timed out; retrying now"] do
+      assert [%{blocks: [%Block.Text{}]}] =
+               Transcript.page([event(1, text_chunk(reply)), settled], "codex")
+               |> Transcript.visible_turns()
+    end
+  end
+
   test "runtime messages take precedence over machine reason codes" do
     for reason <- ["adapter_crashed", "session_gone"] do
       event =

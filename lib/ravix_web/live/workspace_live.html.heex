@@ -539,9 +539,11 @@
             >
               <div class="row">
                 <span class="chip">
-                  {if track.status in [:failed, :setup_failed],
-                    do: "Failed turn",
-                    else: "Unread reply"}
+                  {case track.status do
+                    :setup_failed -> "Setup failed"
+                    :failed -> "Failed turn"
+                    _ -> "Unread reply"
+                  end}
                 </span>
                 <span class="dim"><.project_name project={project} /></span><span class="spacer"></span><time
                   :if={track.last_active_at}

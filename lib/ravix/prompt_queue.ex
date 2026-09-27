@@ -22,6 +22,7 @@ defmodule Ravix.PromptQueue do
   """
 
   alias Ravix.Accounts.{Access, User}
+  alias Ravix.Fountain.Error
   alias Ravix.{Hub, Repo}
   alias Ravix.PromptQueue.{Store, View}
 
@@ -114,10 +115,21 @@ defmodule Ravix.PromptQueue do
       author_login: row.author_login,
       created_at: row.created_at,
       status: row.status,
-      error: row.error,
+      error: saved_error(row.error),
+      error_code: Map.get(row, :error_code),
       can_cancel: row.status != :sending and (role == :owner or row.user_id == user_id)
     }
   end
+
+  # Old setup failures embedded both a tag and a raw provider reason in prose.
+  # Translate each sentence at the read boundary without changing saved bodies.
+  defp saved_error("setup_failed: " <> message) do
+    message
+    |> String.split(~r/(?<=\.)\s+/)
+    |> Enum.map_join(" ", &Error.reason_message/1)
+  end
+
+  defp saved_error(message), do: message
 
   @doc """
   The prompt as the agent receives it on a shared track: `[from @login] ...`.

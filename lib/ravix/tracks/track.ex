@@ -80,6 +80,7 @@ defmodule Ravix.Tracks.Track do
     field :setup_started_at, :utc_datetime_usec
     field :setup_retry_at, :utc_datetime_usec
     field :setup_error, :string
+    field :setup_error_code, :string
     field :setup_lease, :string
     field :setup_lease_until, :utc_datetime_usec
     field :opened_at, :utc_datetime_usec
@@ -97,7 +98,7 @@ defmodule Ravix.Tracks.Track do
   end
 
   @fields ~w(sandbox_layout sandbox_id sandbox_generation sandbox_state vault_id id project_id conversation_id slug title branch branch_reserved workdir origin_kind origin_base
-             origin_number origin_title origin_url origin_plan_id origin_item_id rev setup_state setup_attempts setup_request_id setup_started_at setup_retry_at setup_error setup_lease setup_lease_until opened_at closed_at created_at created_by_login)a
+             origin_number origin_title origin_url origin_plan_id origin_item_id rev setup_state setup_attempts setup_request_id setup_started_at setup_retry_at setup_error setup_error_code setup_lease setup_lease_until opened_at closed_at created_at created_by_login)a
   @required ~w(id project_id slug title branch workdir origin_kind rev created_at created_by_login)a
 
   @doc "The four things a track can be started from."

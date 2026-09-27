@@ -665,7 +665,8 @@ defmodule RavixWeb.WorkspaceLiveTest do
       Setup.advance(client, track.id)
       render(view)
       render_async(view)
-      assert has_element?(view, ".inbox-item", "Setup failed")
+      assert has_element?(view, ".inbox-item .chip", "Setup failed")
+      refute has_element?(view, ".inbox-item .chip", "Failed turn")
       assert has_element?(view, ".inbox-item", "Retry setup")
       assert Enum.count(LazyHTML.query(LazyHTML.from_document(render(view)), ".inbox-item")) == 1
     end

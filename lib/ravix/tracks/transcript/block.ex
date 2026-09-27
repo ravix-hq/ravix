@@ -94,9 +94,9 @@ defmodule Ravix.Tracks.Transcript.Block do
     """
 
     @enforce_keys [:stage, :body]
-    defstruct [:stage, :body]
+    defstruct [:stage, :body, :details]
 
-    @type t :: %__MODULE__{stage: String.t() | nil, body: String.t()}
+    @type t :: %__MODULE__{stage: String.t() | nil, body: String.t(), details: String.t() | nil}
   end
 
   defmodule Plan do

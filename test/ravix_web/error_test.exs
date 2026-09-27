@@ -43,7 +43,7 @@ defmodule RavixWeb.ErrorTest do
       # be four shapes from five modules, and the same missing key was
       # `unavailable` from one page and `no_fountain` from the next.
       for {provider, code, words} <- [
-            {:fountain, "no_fountain", "no Fountain account"},
+            {:fountain, "no_fountain", "no machine service account"},
             {:github, "no_github", "no GitHub App"},
             {:sprites, "no_sprites", "no Sprites token"}
           ] do
