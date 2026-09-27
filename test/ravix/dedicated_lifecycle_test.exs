@@ -2,7 +2,9 @@ defmodule Ravix.DedicatedLifecycleTest do
   use Ravix.DataCase, async: true
   import Mimic
   setup :verify_on_exit!
+  alias Ravix.Accounts.Store, as: AccountsStore
   alias Ravix.Fountain.FakeTransport
+  alias Ravix.PromptQueue.Store, as: QueueStore
   alias Ravix.Tracks.Sandbox
   alias Ravix.Tracks.Sandbox.{Operation, Store}
 
@@ -58,6 +60,7 @@ defmodule Ravix.DedicatedLifecycleTest do
 
   test "a rejected allocation deletes the copied secrets and retains actionable failure" do
     {project, track, op} = operation()
+    prompt = insert_prompt(track: track, user: AccountsStore.get_user(project.user_id))
 
     client =
       FakeTransport.client([
@@ -88,6 +91,11 @@ defmodule Ravix.DedicatedLifecycleTest do
              Store.get_track(track.id)
 
     assert Store.pending() == []
+    saved = QueueStore.get(prompt.id)
+    assert saved.status == :failed
+    assert saved.error_code == "setup_failed"
+    assert saved.error =~ "Retry setup, then retry this saved prompt."
+    refute saved.error =~ "retry_setup"
   end
 
   test "lost copy response recovers its named snapshot and never issues a second copy" do

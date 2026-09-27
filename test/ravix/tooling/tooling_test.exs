@@ -185,47 +185,60 @@ defmodule Ravix.ToolingTest do
              })
   end
 
-  test "number-only PR origins resolve the GitHub head before opening", %{p: p, user: user} do
-    project = insert_project(runtime: "claude", user: user)
-    stub(Ravix.Projects, :prepare_machine, fn _, _ -> :ok end)
-    app = Ravix.GitHubFake.app()
-    stub(Ravix.Config, :github, fn -> app end)
+  for dedicated <- [false, true] do
+    @dedicated dedicated
+    test "number-only PR origins resolve the GitHub head before opening (dedicated: #{dedicated})",
+         %{p: p, user: user} do
+      stub(Ravix.Config, :dedicated_opens_enabled?, fn _ -> @dedicated end)
+      project = insert_project(runtime: "claude", user: user)
+      stub(Ravix.Projects, :prepare_machine, fn _, _ -> :ok end)
+      app = Ravix.GitHubFake.app()
+      stub(Ravix.Config, :github, fn -> app end)
 
-    Ravix.GitHubFake.install([
-      Ravix.GitHubFake.token_route(app),
-      {"GET", ~r{/pulls/261$},
-       {200,
-        %{
-          "number" => 261,
-          "title" => "Advance stored task state",
-          "state" => "open",
-          "head" => %{
-            "ref" => "ravix/advance-stored-mcp-task-state-from-turn",
-            "repo" => %{"full_name" => project.repo_full_name}
-          }
-        }}}
-    ])
+      Ravix.GitHubFake.install([
+        Ravix.GitHubFake.token_route(app),
+        {"GET", ~r{/pulls/261$},
+         {200,
+          %{
+            "number" => 261,
+            "title" => "Advance stored task state",
+            "state" => "open",
+            "head" => %{
+              "ref" => "ravix/advance-stored-mcp-task-state-from-turn",
+              "repo" => %{"full_name" => project.repo_full_name}
+            }
+          }}}
+      ])
 
-    fountain([
-      {%{method: "GET", path: "/api/conversations"}, {200, [], %{data: []}}},
-      {%{method: "POST", path: "/api/conversations"},
-       {201, [], %{data: %{id: "pr-conversation"}}}}
-    ])
+      if @dedicated do
+        fountain([])
+      else
+        fountain([
+          {%{method: "GET", path: "/api/conversations"}, {200, [], %{data: []}}},
+          {%{method: "POST", path: "/api/conversations"},
+           {201, [], %{data: %{id: "pr-conversation"}}}}
+        ])
+      end
 
-    args = %{
-      "project_id" => project.id,
-      "origin" => %{"kind" => "pr", "number" => 261},
-      "request_id" => "pr"
-    }
+      args = %{
+        "project_id" => project.id,
+        "origin" => %{"kind" => "pr", "number" => 261},
+        "request_id" => "pr"
+      }
 
-    assert {:ok, result} = Tooling.call(p, "create_track", args)
-    assert result.branch == "ravix/advance-stored-mcp-task-state-from-turn"
-    assert result.title == result.branch
-    assert Repo.get!(Track, result.id).origin_base == result.branch
-    {other, _, _} = principal(insert_user())
-    assert {:error, :not_found} = Tooling.call(other, "create_track", args)
-    OAuth.disconnect(user, p.grant.id)
-    assert {:error, :unauthenticated} = Tooling.call(p, "create_track", args)
+      assert {:ok, result} = Tooling.call(p, "create_track", args)
+      assert result.branch == "ravix/advance-stored-mcp-task-state-from-turn"
+      assert result.title == result.branch
+
+      assert Repo.get!(Track, result.id).sandbox_layout ==
+               if(@dedicated, do: :dedicated, else: :shared)
+
+      assert Repo.get!(Track, result.id).origin_base == result.branch
+      {other, _, _} = principal(insert_user())
+      assert {:error, :not_found} = Tooling.call(other, "create_track", args)
+      OAuth.disconnect(user, p.grant.id)
+      assert {:error, :unauthenticated} = Tooling.call(p, "create_track", args)
+    end
   end
 
   test "PR origins refuse fork heads before creating a track", %{p: p, user: user} do

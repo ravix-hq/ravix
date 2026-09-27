@@ -473,6 +473,7 @@ defmodule Ravix.Tracks do
   defp open_dedicated(user, project_id, attrs) do
     with {:ok, %{project: project, role: role}} <- Access.project_access(user, project_id),
          :ok <- plan_origin_access(user, project_id, attrs["origin"]),
+         {:ok, attrs} <- resolve_pr_origin(project, attrs),
          {:ok, client} <- fountain(),
          {:ok, plan} <- plan(user, project, attrs, nil),
          {:ok, selection} <- Runtime.select(user, project, client, attrs),
