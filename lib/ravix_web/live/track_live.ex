@@ -956,7 +956,8 @@ defmodule RavixWeb.TrackLive do
 
         message =
           if error.code == "agent_not_connected",
-            do: "This project's owner hasn't connected #{RavixWeb.AgentName.label(runtime)}.",
+            do:
+              "#{socket.assigns.project.owner_login} hasn't connected #{RavixWeb.AgentName.label(runtime)}.",
             else: error.message
 
         {:noreply, assign(socket, thread_error: message)}
@@ -1329,7 +1330,7 @@ defmodule RavixWeb.TrackLive do
 
     case error.code do
       "agent_not_connected" ->
-        "This project's owner hasn't connected #{agent}."
+        "#{socket.assigns.project.owner_login} hasn't connected #{agent}."
 
       code when code in ["sandbox_at_capacity", "conversation_busy", "machine_busy"] ->
         "#{agent} is at capacity on this machine; try again in a moment."

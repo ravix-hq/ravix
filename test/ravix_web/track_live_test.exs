@@ -548,7 +548,7 @@ defmodule RavixWeb.TrackLiveTest do
 
     for {owner?, reason} <- [
           {true, "Connect to use"},
-          {false, "Not connected, #{ctx.user.login} must connect it"}
+          {false, "Not connected — #{ctx.user.login} must connect it"}
         ] do
       render_click(ctx.view, "cancel-thread")
 
@@ -628,7 +628,7 @@ defmodule RavixWeb.TrackLiveTest do
 
   test "thread errors name the agent and owner in plain words", ctx do
     for {code, message} <- [
-          {"agent_not_connected", "This project's owner hasn't connected Codex."},
+          {"agent_not_connected", "#{ctx.user.login} hasn't connected Codex."},
           {"guest_runtime_disabled", "Codex threads on this project aren't available yet."},
           {"invalid_runtime", "Choose Claude Code or Codex."},
           {"invalid_model", "Choose one of Codex's models."}
@@ -650,7 +650,7 @@ defmodule RavixWeb.TrackLiveTest do
     assert has_element?(
              ctx.view,
              "#thread-error",
-             "This project's owner hasn't connected Claude Code."
+             "#{ctx.user.login} hasn't connected Claude Code."
            )
 
     refute render(ctx.view) =~ "internal connection details"
