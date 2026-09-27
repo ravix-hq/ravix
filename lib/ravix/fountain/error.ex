@@ -169,6 +169,10 @@ defmodule Ravix.Fountain.Error do
 
   @doc "Translate a transcript reason while retaining useful human explanations."
   def reason_message(nil), do: ""
+
+  def reason_message("Opening prompt was refused: " <> code),
+    do: public_message(String.trim(code))
+
   def reason_message(""), do: ""
 
   def reason_message(reason) do

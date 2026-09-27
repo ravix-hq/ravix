@@ -416,6 +416,26 @@ defmodule Ravix.PromptQueueTest do
     assert [%{"prompt" => "send despite the stale warning"}] = posted(client)
   end
 
+  test "old persisted setup failures expose sentences instead of tags and provider codes", f do
+    {:ok, %Item{id: id}} = send_prompt(f.track, f.owner, "keep this")
+
+    for reason <- ["adapter_crashed", "Opening prompt was refused: inference_credential_unusable"] do
+      PromptQueue.Store.set_status(
+        id,
+        :failed,
+        "setup_failed: Track setup failed after automatic retries. Retry track setup, then retry this saved prompt. " <>
+          reason
+      )
+
+      assert {:ok, [view]} = PromptQueue.list(f.owner, f.track.id)
+      assert view.error =~ "Track setup failed"
+      refute view.error =~ "setup_failed:"
+      refute view.error =~ "adapter_crashed"
+      refute view.error =~ "inference_credential_unusable"
+      assert view.prompt == "keep this"
+    end
+  end
+
   for code <- ~w(chatgpt_grant_unusable inference_credential_unusable) do
     @code code
     test "credential refusal #{@code} retains the prompt for reconnect and retry", f do
