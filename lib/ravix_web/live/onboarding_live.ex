@@ -36,8 +36,8 @@ defmodule RavixWeb.OnboardingLive do
   Is `RavixWeb.Live.AgentPanel`, which the workspace's account dialog also
   renders, so the walkthrough and the place somebody comes back to weeks
   later cannot drift. What the page keeps is what a component cannot do:
-  hand the panel its polling tick, and move on to GitHub once the panel says
-  the person is connected.
+  hand the panel its polling tick and let the person continue to GitHub,
+  with an optional second connection after the first.
   """
   use RavixWeb, :live_view
 
@@ -160,11 +160,11 @@ defmodule RavixWeb.OnboardingLive do
     {:noreply, socket}
   end
 
-  # The panel connected something. That was the step; on to GitHub.
+  # Keep the optional second connection visible; Continue always reaches GitHub.
   def handle_info({:agent_connected, %User{} = user, agent}, socket) do
     if socket.assigns.live_action == :project,
       do: {:noreply, NewProject.connected(socket, user, agent)},
-      else: {:noreply, socket |> assign(current_user: user) |> push_patch(to: @paths[:github])}
+      else: {:noreply, assign(socket, current_user: user)}
   end
 
   def handle_info({:agent_default_changed, %User{} = user}, socket),

@@ -31,7 +31,7 @@ defmodule RavixWeb.Live.AgentPanel do
 
     * **What happens after.** Connecting changes the person, and the page is
       what holds `current_user`. The panel sends `{:agent_connected, user, agent}`;
-      the standalone walkthrough step moves on to GitHub; an inline connection
+      the standalone walkthrough offers another connection; an inline connection
       keeps the project draft and selected agent. Pages route clock messages only
       while that panel is visible. Each dialog opening and panel mount has its
       own identity, so an old tick cannot poll a later sign-in.
@@ -80,6 +80,7 @@ defmodule RavixWeb.Live.AgentPanel do
        # What the set holds, as Fountain reports it: nil until it has answered.
        held: nil,
        scoped_agent: nil,
+       onboarding: false,
        poll_token: make_ref(),
        disconnect_confirmation: nil
      )}
@@ -205,10 +206,14 @@ defmodule RavixWeb.Live.AgentPanel do
       when event in ["choose-agent", "choose-kind", "disconnect", "make-default"],
       do: {:noreply, socket}
 
+  def handle_event("connect", _params, %{assigns: %{busy: true}} = socket),
+    do: {:noreply, socket}
+
   def handle_event("connect", %{"credential" => %{"value" => value}}, socket)
       when is_binary(value) do
     %{current_user: user, agent: agent, kind: kind} = socket.assigns
     attrs = %{agent: agent, kind: kind, value: value}
+    track_inline(socket, :inline_connect_started, agent, kind)
 
     # The field is given back empty, not absent: `used_input?/1` is what lets a
     # refusal show beside it, and it reads whether the field was submitted.
@@ -220,6 +225,7 @@ defmodule RavixWeb.Live.AgentPanel do
 
   def handle_event("begin-link", _params, %{assigns: %{link: nil, busy: false}} = socket) do
     user = socket.assigns.current_user
+    track_inline(socket, :inline_connect_started, :codex, :subscription)
 
     {:noreply,
      socket
@@ -319,12 +325,22 @@ defmodule RavixWeb.Live.AgentPanel do
   # The person changed. The panel shows what they now have, and the page is
   # told, since it is the page that holds them.
   defp connected(socket, %User{} = user, agent, kind) do
+    track_inline(socket, :inline_connect_completed, agent, kind)
     send(self(), {:agent_connected, user, agent})
 
     socket
     |> assign(current_user: user, agent: agent, kind: kind)
     |> read_subscription()
     |> read_held()
+  end
+
+  defp track_inline(%{assigns: %{scoped_agent: nil}}, _event, _agent, _kind), do: :ok
+
+  defp track_inline(socket, event, agent, kind) do
+    Ravix.Analytics.track(socket.assigns.current_user, event, %{
+      "ravix.agent" => to_string(agent),
+      "ravix.paid_by" => to_string(kind)
+    })
   end
 
   # Something the person held has gone. The choice on the page stays where it
@@ -422,6 +438,16 @@ defmodule RavixWeb.Live.AgentPanel do
 
   defp connected_agent?(_held, _agent), do: false
 
+  defp other_agent(held) when is_list(held) do
+    case Enum.uniq_by(held, &elem(&1, 0)) do
+      [{:claude, _}] -> :codex
+      [{:codex, _}] -> :claude
+      _ -> nil
+    end
+  end
+
+  defp other_agent(_held), do: nil
+
   # The subscription's state in a word, as a chip, and the rest in a line.
   defp subscription_state(%{status: "active", exhausted_until: until}) when is_binary(until),
     do: "Usage spent"
@@ -452,6 +478,8 @@ defmodule RavixWeb.Live.AgentPanel do
 
   @impl true
   def render(assigns) do
+    assigns = assign(assigns, other_agent: other_agent(assigns.held))
+
     ~H"""
     <div class="agent-panel" id={@id} phx-hook="AgentConfirmation">
       <div
@@ -521,6 +549,22 @@ defmodule RavixWeb.Live.AgentPanel do
           </button>
         </div>
       </div>
+
+      <section :if={is_nil(@scoped_agent) and @other_agent} id="second-agent-nudge" class="agent-held">
+        <strong>{if @onboarding,
+          do: "Connect #{agent_name(@other_agent)} too (optional)",
+          else: "Also connect #{agent_name(@other_agent)}"}</strong>
+        <p class="hint">Choose the agent that fits each project without changing your default.</p>
+        <button
+          type="button"
+          class="ghost"
+          id="connect-second-agent"
+          phx-click="choose-agent"
+          phx-target={@myself}
+          phx-value-agent={@other_agent}
+          disabled={@busy}
+        >Set up {agent_name(@other_agent)}</button>
+      </section>
 
       <section
         :if={

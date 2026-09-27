@@ -8,6 +8,9 @@ defmodule RavixWeb.Live.NewProjectTest do
   setup :verify_on_exit!
 
   setup do
+    # Establish ownership before the LiveView captures its first event.
+    PostHog.Test.all_captured()
+
     user =
       insert_user(agent: :claude, credential_kind: :subscription, credential_set_id: "set-owner")
 
@@ -38,6 +41,89 @@ defmodule RavixWeb.Live.NewProjectTest do
     render_click(view, "dialog", %{name: "new-project"})
     render_async(view)
     view
+  end
+
+  defp events(name), do: Enum.filter(PostHog.Test.all_captured(), &(&1.event == name))
+
+  test "picker exposure counts openings, not renders, choices, edits or refreshes", %{
+    conn: conn,
+    user: user
+  } do
+    view = open(conn, user)
+    assert length(events("agent picker shown unconnected")) == 1
+    render(view)
+    view |> form("#new-project-form", new_project: [name: "Draft"]) |> render_change()
+    render_click(view, "refresh-project-agents")
+    render_async(view)
+    assert length(events("agent picker shown unconnected")) == 1
+    render_click(view, "dismiss")
+    render_click(view, "dialog", %{name: "new-project"})
+    render_async(view)
+    assert length(events("agent picker shown unconnected")) == 2
+  end
+
+  test "a dismissed picker does not record a late availability answer", %{conn: conn, user: user} do
+    owner = self()
+
+    expect(Inference, :usable_agents, fn _ ->
+      send(owner, {:reading_agents, self()})
+
+      receive do
+        :finish -> {:ok, [:claude]}
+      end
+    end)
+
+    {:ok, view, _} = live(log_in_user(conn, user), "/home")
+    render_async(view)
+    render_click(view, "dialog", %{name: "new-project"})
+    assert_receive {:reading_agents, task}
+    render_click(view, "dismiss")
+    send(task, :finish)
+    render_async(view)
+    assert events("agent picker shown unconnected") == []
+  end
+
+  test "fully connected picker does not report an unconnected option", %{conn: conn, user: user} do
+    stub(Inference, :usable_agents, fn _ -> {:ok, [:claude, :codex]} end)
+    view = open(conn, user)
+    render(view)
+    assert events("agent picker shown unconnected") == []
+  end
+
+  test "failed inline attempt counts once, duplicate submit is ignored, retry completes once", %{
+    conn: conn,
+    user: user
+  } do
+    owner = self()
+
+    expect(Inference, :connect, fn _, _ ->
+      send(owner, {:connecting, self()})
+
+      receive do
+        :finish -> {:error, {:unprocessable, "bad_credential", "Try again"}}
+      end
+    end)
+
+    view = open(conn, user)
+    view |> element("#project-agent-codex") |> render_click()
+    view |> element("#kind-api_key") |> render_click()
+    form(view, "#credential-form", credential: [value: "private-key"]) |> render_submit()
+    assert_receive {:connecting, task}
+    form(view, "#credential-form", credential: [value: "private-key"]) |> render_submit()
+    assert length(events("inline connect started")) == 1
+    assert events("inline connect completed") == []
+    send(task, :finish)
+    render_async(view)
+    assert has_element?(view, "#credential-form", "Try again")
+    expect(Inference, :connect, fn _, _ -> {:ok, user} end)
+    form(view, "#credential-form", credential: [value: "private-key"]) |> render_submit()
+    render_async(view)
+    render(view)
+    assert length(events("inline connect started")) == 2
+    assert [%{properties: properties}] = events("inline connect completed")
+    assert properties["ravix.agent"] == "codex"
+    assert properties["ravix.paid_by"] == "api_key"
+    refute inspect(PostHog.Test.all_captured()) =~ "private-key"
   end
 
   test "Claude-only owner sees Codex and can connect it without losing the draft", %{
@@ -78,6 +164,8 @@ defmodule RavixWeb.Live.NewProjectTest do
     refute has_element?(view, "#new-project-form button[disabled]")
     refute has_element?(view, "#project-connect-codex")
     refute render(view) =~ "sk-test"
+    assert length(events("inline connect started")) == 1
+    assert length(events("inline connect completed")) == 1
   end
 
   test "onboarding uses the identical ordered fields and keeps inline connection on the project step",
@@ -250,6 +338,9 @@ defmodule RavixWeb.Live.NewProjectTest do
     view |> element("#chatgpt-connect") |> render_click()
     render_async(view)
     render_async(view)
+
+    assert length(events("inline connect started")) == 1
+    assert length(events("inline connect completed")) == 1
 
     assert has_element?(
              view,

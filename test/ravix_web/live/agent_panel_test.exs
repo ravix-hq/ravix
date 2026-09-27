@@ -35,6 +35,30 @@ defmodule RavixWeb.Live.AgentPanelTest do
     assert has_element?(view, "a[href='/api/auth/install']")
   end
 
+  for {first, second, label} <- [{:claude, :codex, "Codex"}, {:codex, :claude, "Claude Code"}] do
+    test "#{first}-only account offers #{second}, and the card disappears after connecting", %{
+      conn: conn
+    } do
+      first = unquote(first)
+      second = unquote(second)
+      user = insert_user(agent: first, credential_kind: :api_key, credential_set_id: "s")
+      stub(Inference, :subscription, fn _ -> {:ok, nil} end)
+      stub(Inference, :link_status, fn _ -> {:ok, %{enabled?: true, pending: nil}} end)
+      expect(Inference, :held, fn _ -> {:ok, [{first, :api_key}]} end)
+      view = open_account(conn, user)
+      render_async(view)
+      assert has_element?(view, "#second-agent-nudge", "Also connect " <> unquote(label))
+      view |> element("#connect-second-agent") |> render_click()
+      assert has_element?(view, "#agent-#{second}[aria-pressed=true]")
+      expect(Inference, :connect, fn _, %{agent: ^second} -> {:ok, user} end)
+      expect(Inference, :held, fn _ -> {:ok, [{first, :api_key}, {second, :api_key}]} end)
+      view |> form("#credential-form", credential: [value: "test-key"]) |> render_submit()
+      render_async(view)
+      render_async(view)
+      refute has_element?(view, "#second-agent-nudge")
+    end
+  end
+
   test "a ChatGPT subscription is shown as Fountain reports it", %{conn: conn} do
     user = insert_user(agent: :codex, credential_kind: :subscription, credential_set_id: "s")
     stub(Inference, :link_status, fn _ -> {:ok, %{enabled?: true, pending: nil}} end)

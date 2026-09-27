@@ -16,7 +16,7 @@ defmodule Ravix.Analytics do
   customer's source code. A replay would ship it to a third party behind a
   masking configuration that has to be right every time a template changes.
 
-  So every event is captured here, from a context, where the code already knows
+  So every event is captured here, from a context or a LiveView action, where the code knows
   who did what and can decide what to say about it. LiveView already knows which
   page somebody is on, so nothing is lost by not asking a browser.
 
@@ -75,6 +75,10 @@ defmodule Ravix.Analytics do
           | :agent_disconnected
           | :onboarding_finished
           | :project_created
+          | :agent_picker_shown_unconnected
+          | :inline_connect_started
+          | :inline_connect_completed
+          | :project_created_non_default_agent
           | :track_opened
           | :track_closed
           | :prompt_sent
@@ -89,6 +93,10 @@ defmodule Ravix.Analytics do
     agent_disconnected: "agent disconnected",
     onboarding_finished: "onboarding finished",
     project_created: "project created",
+    agent_picker_shown_unconnected: "agent picker shown unconnected",
+    inline_connect_started: "inline connect started",
+    inline_connect_completed: "inline connect completed",
+    project_created_non_default_agent: "project created non default agent",
     track_opened: "track opened",
     track_closed: "track closed",
     prompt_sent: "prompt sent",

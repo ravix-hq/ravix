@@ -56,7 +56,7 @@ export async function connectClaude(page) {
   if (!(await page.locator('#welcome-connected').isVisible())) {
     await page.getByLabel('Subscription token', { exact: true }).fill('sk-ant-oat01-browser-fixture');
     await page.getByRole('button', { name: 'Connect Claude Code', exact: true }).click();
-    await expect(page).toHaveURL(/\/welcome\/github$/);
+    await expect(page.locator('#welcome-connected')).toContainText('Claude Code is connected');
   }
   await page.goto(returnTo);
   await expect(page.locator('[data-phx-main]')).toHaveClass(/phx-connected/);

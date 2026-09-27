@@ -262,6 +262,13 @@ defmodule Ravix.Projects do
         Map.merge(Analytics.repo(nil, project), %{"ravix.repo_private" => project.repo_private})
       )
 
+      if user.agent && project.runtime != Inference.runtime(user) do
+        Analytics.track(user, :project_created_non_default_agent, %{
+          "ravix.agent" => project.runtime,
+          "ravix.default_agent" => Inference.runtime(user)
+        })
+      end
+
       {:ok, present(project, :owner, Machine.none(), user)}
     end
   end
