@@ -88,7 +88,7 @@ defmodule RavixWeb.WorkspaceRailTest do
     monitor = Process.monitor(provider)
     on_exit(fn -> send(provider, :release) end)
     render_async(view, 7_000)
-    assert has_element?(view, ".workspace-project-name[href='/p/#{slow.id}']")
+    assert has_element?(view, "a[href='/p/#{slow.id}']")
     render_patch(view, "/p/#{slow.id}")
     render_async(view)
     refute has_element?(view, ".track-tab", slow_track.title)
@@ -122,7 +122,8 @@ defmodule RavixWeb.WorkspaceRailTest do
     render_async(view, 2_000)
 
     for project <- projects do
-      assert has_element?(view, ".workspace-project-name[href='/p/#{project.id}']")
+      render_click(view, "dialog", %{name: "projects"})
+      assert has_element?(view, "a[href='/p/#{project.id}']")
       render_patch(view, "/p/#{project.id}")
       render_async(view)
       assert has_element?(view, ".track-tab", track.title) == (project.id == good.id)
@@ -157,8 +158,10 @@ defmodule RavixWeb.WorkspaceRailTest do
 
     render_async(view)
 
+    render_click(view, "dialog", %{name: "projects"})
+
     for project <- projects,
-        do: assert(has_element?(view, ".workspace-project-name[href='/p/#{project.id}']"))
+        do: assert(has_element?(view, "a[href='/p/#{project.id}']"))
 
     refute has_element?(view, "#rail-loading")
   end

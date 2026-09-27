@@ -173,139 +173,107 @@
         </button>
       </div>
       <div class="yard-scroll">
-        <div class="yard-label">
-          <span>Projects</span><span class="spacer"></span>
-          <div class="row">
-            <button
-              type="button"
-              class="ghost"
-              id="manage-sections"
-              aria-label="Manage sections"
-              title="Manage sections"
-              phx-click={JS.push_focus() |> JS.push("dialog")}
-              phx-value-name="sections"
-            ><.icon name="settings" size={13} /></button>
-            <button
-              class="ghost"
-              aria-label="Add a project"
-              phx-click={JS.push_focus() |> JS.push("dialog")}
-              phx-value-name="new-project"
-            ><.icon name="plus" size={13} /></button>
-          </div>
-        </div>
-        <div
-          id="project-sections"
-          phx-hook="ProjectSections"
-          aria-busy={to_string(!@rail_loaded && !@rail_error)}
+        <button
+          type="button"
+          id="project-switcher-trigger"
+          class="project-switcher-trigger"
+          aria-label={
+            if @project, do: "Switch project: #{@project.display_name}", else: "Switch project"
+          }
+          aria-haspopup="dialog"
+          aria-expanded={to_string(@dialog == :projects)}
+          phx-click={JS.push_focus() |> JS.push("dialog")}
+          phx-value-name="projects"
         >
+          <span class="truncate">{if @project, do: @project.display_name, else: "Projects"}</span>
+          <.icon name="chevron" size={14} open={@dialog == :projects} />
+        </button>
+        <div id="project-sections" aria-busy={to_string(!@rail_loaded && !@rail_error)}>
           <p :if={!@rail_loaded && !@rail_error} id="rail-loading" class="hint" role="status">
             Loading projects…
           </p>
           <div :if={@rail_error} id="rail-error" role="alert">
-            <p class="hint">Projects could not be loaded.</p>
-            <button type="button" class="btn" phx-click="refresh">Retry</button>
+            <p>Projects could not be loaded.</p>
+            <button type="button" phx-click="refresh">Retry</button>
           </div>
-          <div
-            :for={
-              {section, projects} <- section_groups(@projects, @sections, @section_placements)
-            }
-            :if={section.id || projects != [] || @sections != []}
-            class={[
-              "project-section",
-              !section.id && projects == [] && "project-section-idle"
-            ]}
-            id={"section-#{section.id || "other"}"}
-            data-section-drop={section.id || ""}
+          <section
+            :for={project <- List.wrap(@project)}
+            class={["workspace-project", @project && @project.id == project.id && "current"]}
+            data-project-id={project.id}
           >
-            <div :if={section.id || @sections != []} class="section-label">
-              <button
-                :if={section.id}
-                class="ghost section-toggle"
-                phx-click="toggle-section"
-                phx-value-id={section.id}
-                phx-value-collapsed={to_string(!section.collapsed)}
-                aria-expanded={to_string(!section.collapsed)}
-                aria-controls={"section-projects-#{section.id}"}
+            <div class="workspace-project-row">
+              <.link
+                patch={"/p/#{project.id}"}
+                class={[
+                  "workspace-project-name",
+                  @project && @project.id == project.id && "selected"
+                ]}
               >
-                <.icon name="chevron" size={12} open={!section.collapsed} />
-                <span class="truncate">{section.name}</span><span class="dim">{length(projects)}</span>
-              </button>
-              <span :if={!section.id} class="section-name">{section.name}</span>
+                <span class="project-mark" aria-hidden="true">
+                  {String.first(project.name) |> String.upcase()}
+                </span>
+                <span class="truncate"><.project_name project={project} /></span>
+              </.link>
+              <%!-- These actions belong only to the selected project;
+                    the switcher handles navigation to other projects. --%>
+              <div class="project-actions">
+                <button
+                  :if={@project && @project.id == project.id && project.access != :tracks}
+                  type="button"
+                  class="project-action"
+                  aria-label={"People in #{project.display_name}"}
+                  title="People"
+                  phx-click={JS.push_focus() |> JS.push("dialog")}
+                  phx-value-name="people"
+                >
+                  <.icon name="add-person" size={13} />
+                </button>
+                <button
+                  :if={
+                    @project && @project.id == project.id && project.access != :tracks &&
+                      project.role == :owner
+                  }
+                  type="button"
+                  class="project-action"
+                  aria-label={"Project settings for #{project.display_name}"}
+                  title="Project settings"
+                  phx-click={JS.push_focus() |> JS.push("dialog")}
+                  phx-value-name="settings"
+                >
+                  <.icon name="settings" size={13} />
+                </button>
+                <.link
+                  :if={project.access != :tracks}
+                  patch={"/p/#{project.id}?new=track"}
+                  class="project-action project-add"
+                  aria-label={"New track in #{project.display_name}"}
+                  title="New track"
+                >
+                  <.icon name="plus" size={13} />
+                </.link>
+              </div>
             </div>
-            <div id={"section-projects-#{section.id || "other"}"} hidden={section.collapsed}>
-              <p :if={section.id && projects == []} class="hint section-empty">
-                No projects. Drag one here.
-              </p>
-              <p :if={!section.id && projects == []} class="hint section-empty">
-                Drag a project here to take it out of its section.
-              </p>
-              <section
-                :for={project <- projects}
-                class={["workspace-project", @project && @project.id == project.id && "current"]}
-                draggable={to_string(@sections != [])}
-                data-project-id={project.id}
-              >
-                <div class="workspace-project-row">
-                  <.link
-                    patch={"/p/#{project.id}"}
-                    class={[
-                      "workspace-project-name",
-                      @project && @project.id == project.id && "selected"
-                    ]}
-                  >
-                    <span class="project-mark" aria-hidden="true">
-                      {String.first(project.name) |> String.upcase()}
-                    </span>
-                    <span class="truncate"><.project_name project={project} /></span>
-                  </.link>
-                  <%!-- The open project's own dialogs act on `@project`, so
-                    they are offered on its row only; every row offers a new
-                    track, which names its project in the URL. --%>
-                  <div class="project-actions">
-                    <button
-                      :if={@project && @project.id == project.id && project.access != :tracks}
-                      type="button"
-                      class="project-action"
-                      aria-label={"People in #{project.display_name}"}
-                      title="People"
-                      phx-click={JS.push_focus() |> JS.push("dialog")}
-                      phx-value-name="people"
-                    >
-                      <.icon name="add-person" size={13} />
-                    </button>
-                    <button
-                      :if={
-                        @project && @project.id == project.id && project.access != :tracks &&
-                          project.role == :owner
-                      }
-                      type="button"
-                      class="project-action"
-                      aria-label={"Project settings for #{project.display_name}"}
-                      title="Project settings"
-                      phx-click={JS.push_focus() |> JS.push("dialog")}
-                      phx-value-name="settings"
-                    >
-                      <.icon name="settings" size={13} />
-                    </button>
-                    <.link
-                      :if={project.access != :tracks}
-                      patch={"/p/#{project.id}?new=track"}
-                      class="project-action project-add"
-                      aria-label={"New track in #{project.display_name}"}
-                      title="New track"
-                    >
-                      <.icon name="plus" size={13} />
-                    </.link>
-                  </div>
-                </div>
-              </section>
-            </div>
-          </div>
+          </section>
         </div>
       </div>
     </aside>
     <main class="stage" id="workspace-stage">
       <nav class="workspace-mobile-nav" aria-label="Workspace navigation">
+        <button
+          type="button"
+          id="mobile-project-switcher-trigger"
+          class="project-switcher-trigger"
+          aria-label={
+            if @project, do: "Switch project: #{@project.display_name}", else: "Switch project"
+          }
+          aria-haspopup="dialog"
+          aria-expanded={to_string(@dialog == :projects)}
+          phx-click={JS.push_focus() |> JS.push("dialog")}
+          phx-value-name="projects"
+        >
+          <span class="truncate">{if @project, do: @project.display_name, else: "Projects"}</span>
+          <.icon name="chevron" size={14} open={@dialog == :projects} />
+        </button>
         <button
           type="button"
           class="ghost yard-menu"
@@ -316,6 +284,7 @@
           <.icon name="chevron" size={13} open={@yard_open} class="ico" />Menu
         </button>
         <.link patch="/home" aria-current={@live_action == :projects && "page"}>Home</.link>
+        <.link patch="/schedules">Schedules</.link>
         <.link patch="/inbox" aria-current={@live_action in [:home, :inbox] && "page"}>Inbox</.link>
         <button
           class="ghost"
@@ -596,12 +565,118 @@
       </div>
     </main>
     <.dialog
+      :if={@dialog == :projects}
+      id="project-switcher"
+      title="Projects"
+      on_close="dismiss-switcher"
+      initial_focus="#project-query"
+    >
+      <form id="project-switcher-search" phx-change="search-projects" phx-submit="search-projects">
+        <.input
+          name="q"
+          id="project-query"
+          value={@project_query}
+          label="Find a project"
+          phx-debounce="150"
+        />
+      </form>
+      <div
+        id="switcher-sections"
+        phx-hook="ProjectSections"
+        aria-busy={to_string(!@rail_loaded && !@rail_error)}
+      >
+        <p :if={!@rail_loaded && !@rail_error} role="status">Loading projects…</p>
+        <div :if={@rail_error} role="alert">
+          <p>Projects could not be loaded.</p>
+          <button type="button" phx-click="refresh">Retry</button>
+        </div>
+        <div
+          :for={
+            {section, projects} <-
+              switcher_groups(@projects, @sections, @section_placements, @project_query)
+          }
+          :if={@project_query == "" || projects != []}
+          class={[
+            "project-section",
+            !section.id && projects == [] && "project-section-idle"
+          ]}
+          id={"section-#{section.id || "other"}"}
+          data-section-drop={section.id || ""}
+        >
+          <div :if={section.id || @sections != []} class="section-label">
+            <button
+              :if={section.id}
+              class="ghost section-toggle"
+              phx-click="toggle-section"
+              phx-value-id={section.id}
+              phx-value-collapsed={to_string(!(section.collapsed && @project_query == ""))}
+              aria-expanded={to_string(!(section.collapsed && @project_query == ""))}
+              aria-controls={"section-projects-#{section.id}"}
+            >
+              <.icon name="chevron" size={12} open={!(section.collapsed && @project_query == "")} />
+              <span class="truncate">{section.name}</span><span class="dim">{length(projects)}</span>
+            </button>
+            <span :if={!section.id} class="section-name">{section.name}</span>
+          </div>
+          <div
+            id={"section-projects-#{section.id || "other"}"}
+            hidden={section.collapsed && @project_query == ""}
+          >
+            <p :if={section.id && projects == []} class="hint section-empty">
+              No projects. Drag one here.
+            </p>
+            <p :if={!section.id && projects == []} class="hint section-empty">
+              Drag a project here to take it out of its section.
+            </p>
+            <section
+              :for={project <- projects}
+              class={["workspace-project", @project && @project.id == project.id && "current"]}
+              draggable={to_string(@sections != [])}
+              data-project-id={project.id}
+            >
+              <div class="workspace-project-row">
+                <.link
+                  patch={"/p/#{project.id}"}
+                  class={[
+                    "workspace-project-name",
+                    @project && @project.id == project.id && "selected"
+                  ]}
+                >
+                  <span class="project-mark" aria-hidden="true">
+                    {String.first(project.name) |> String.upcase()}
+                  </span>
+                  <span class="truncate"><.project_name project={project} /></span>
+                  <span
+                    class="badge"
+                    aria-label={"#{project_attention(@tracks, project.id)} unread"}
+                  >
+                    {project_attention(@tracks, project.id)}
+                  </span>
+                </.link>
+              </div>
+            </section>
+          </div>
+        </div>
+
+        <p
+          :if={@rail_loaded && !Enum.any?(@projects, &project_matches?(&1, @project_query))}
+          role="status"
+        >
+          No projects found.
+        </p>
+      </div>
+      <:footer>
+        <button type="button" id="manage-sections" phx-click="dialog" phx-value-name="sections">Manage sections</button>
+        <button type="button" phx-click="dialog" phx-value-name="new-project">Add a project</button>
+      </:footer>
+    </.dialog>
+    <.dialog
       :if={@dialog == :sections}
       id="sections-dialog"
       title="Project sections"
       on_close="dismiss"
     >
-      <p class="hint">Organize your sidebar. Sections are visible only to you.</p>
+      <p class="hint">Organize your project switcher. Sections are visible only to you.</p>
       <form id="new-section-form" phx-submit="create-section">
         <.input
           name="section[name]"
@@ -631,11 +706,11 @@
       <p :if={@sections != []} class="hint">
         Removing a section keeps its projects in Other projects.
       </p>
-      <%!-- Dragging in the sidebar is the quick way; this is the way that
+      <%!-- Dragging in the project switcher is the quick way; this is the way that
       needs no pointer. --%>
       <div :if={@sections != [] && @projects != []} class="section-editor">
         <h3>Move projects</h3>
-        <p class="hint">Or drag a project onto a section in the sidebar.</p>
+        <p class="hint">Or drag a project onto a section in the project switcher.</p>
         <form
           :for={project <- @projects}
           id={"move-project-#{project.id}"}

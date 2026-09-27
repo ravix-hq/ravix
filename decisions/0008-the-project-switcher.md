@@ -1,21 +1,23 @@
 ---
 type: ADR
 title: "The project switcher"
-description: "Replace the open project list with a searchable switcher, preserving track-only access and cross-project activity; the navigation changes are not yet built."
+description: "A searchable project switcher replaces the open project list, preserving track-only access, personal sections and cross-project activity."
 tags: [navigation, projects, access]
 status: stable
 adr: "0008"
 adr_status: "Accepted"
 date: 2026-09-27
-generated: { by: process:codex, at: 2026-09-27T00:00:00Z }
-stale_after: 2026-10-27
+generated: { by: process:codex, at: 2026-09-27T00:47:18Z }
+verified: { by: process:codex, at: 2026-09-27T00:47:18Z }
 ---
 
 # 0008 — The project switcher
 
-**Status:** Accepted, not yet built. This ADR records the navigation contract;
-implementation and its regression tests belong to the switcher follow-up.
-The existing rail, Home and mobile navigation were inspected at `b23b71a`.
+**Status:** Accepted and implemented in `WorkspaceLive`. The switcher uses the
+existing asynchronous rail, scoped project/track reads and shared dialog focus
+behavior. LiveView regressions cover membership, unread counts, revocation and
+late results; browser coverage checks desktop and 500px navigation, keyboard
+focus and accessibility. Sandbox lifecycle work remains independent.
 
 ## Context
 
@@ -91,8 +93,8 @@ with every project. Personal organization survives in the picker. Restricted
 projects need a useful landing view without assuming project membership.
 Counts and discovery must share access rules across Home, navigation and
 async updates. Browser tests should exercise selection, focus, overflow and
-global navigation at phone widths as well as desktop. This documentation
-change implements none of those behaviors and changes no sandbox lifecycle.
+global navigation at phone widths as well as desktop. The implementation
+changes no sandbox lifecycle.
 
 ## Alternatives considered
 

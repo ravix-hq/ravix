@@ -413,8 +413,10 @@ test('mobile navigation marks the current page and names Search consistently', a
   await expect(nav.locator('[aria-current="page"]')).toHaveCount(1);
   const gaps = await nav.evaluate(el => {
     const boxes = Array.from(el.children, child => child.getBoundingClientRect());
-    return boxes.slice(1).map((box, i) => box.left - boxes[i].right);
+    return boxes.slice(1).flatMap((box, i) =>
+      Math.abs(box.top - boxes[i].top) < 1 ? [box.left - boxes[i].right] : []);
   });
+  expect(gaps.length).toBeGreaterThan(1);
   expect(Math.max(...gaps) - Math.min(...gaps)).toBeLessThan(1);
   await capture(page, 'mobile-nav-home-500');
   await nav.getByRole('link', { name: 'Inbox', exact: true }).click();
@@ -576,6 +578,7 @@ test('project, track, streaming, image upload, reconnect, and revocation', async
   const firstTrackName = (await firstTrackTab.locator('.track-title').textContent()).trim();
   await expect(page.locator('#yard .workspace-track')).toHaveCount(0);
   // Personal sections persist across reloads and never delete the projects inside.
+  await page.locator('#project-switcher-trigger').click();
   await page.getByRole('button', { name: 'Manage sections', exact: true }).click();
   await page.getByLabel('New section', { exact: true }).fill('Browser work');
   await page.getByRole('button', { name: 'Create section', exact: true }).click();
@@ -583,12 +586,14 @@ test('project, track, streaming, image upload, reconnect, and revocation', async
   await expect(sectionsDialog.getByLabel('Section name', { exact: true })).toHaveValue('Browser work');
   await page.keyboard.press('Escape');
   await expect(page.getByRole('combobox', { name: 'Section for Browser quality', exact: true })).toHaveCount(0);
+  await page.locator('#project-switcher-trigger').click();
   const sectionGroup = page.locator('.project-section').filter({ has: page.locator('.section-toggle', { hasText: 'Browser work' }) });
-  await page.locator('.workspace-project', { hasText: 'Browser quality' }).dragTo(sectionGroup);
+  await page.locator('#project-switcher .workspace-project', { hasText: 'Browser quality' }).dragTo(sectionGroup);
   await expect(sectionGroup.locator('.workspace-project-name')).toContainText('Browser quality');
   await sectionGroup.locator('.section-toggle').click();
   await expect(sectionGroup.locator('.workspace-project-name')).toBeHidden();
   await page.reload();
+  await page.locator('#project-switcher-trigger').click();
   await expect(sectionGroup.locator('.section-toggle')).toHaveAttribute('aria-expanded', 'false');
   await sectionGroup.locator('.section-toggle').click();
   await expect(sectionGroup.locator('.workspace-project-name')).toBeVisible();
@@ -597,12 +602,15 @@ test('project, track, streaming, image upload, reconnect, and revocation', async
   await page.getByRole('button', { name: 'Manage sections', exact: true }).click();
   await sectionsDialog.getByLabel('Section name', { exact: true }).fill('Renamed work');
   await sectionsDialog.getByRole('button', { name: 'Rename', exact: true }).click();
-  await expect(page.locator('.section-toggle')).toContainText('Renamed work');
+  await expect(sectionsDialog.getByLabel('Section name', { exact: true })).toHaveValue('Renamed work');
   await sectionsDialog.getByRole('button', { name: 'Remove section', exact: true }).click();
   await expect(sectionsDialog.getByLabel('Section name', { exact: true })).toHaveCount(0);
   await page.keyboard.press('Escape');
+  await page.locator('#project-switcher-trigger').click();
   await expect(page.locator('#section-other .workspace-project-name', { hasText: 'Browser quality' })).toBeVisible();
 
+
+  await page.keyboard.press('Escape');
 
   await expect(page.getByLabel('Command', { exact: true })).not.toBeVisible();
   await page.getByRole('button', { name: 'Commands', exact: true }).click();

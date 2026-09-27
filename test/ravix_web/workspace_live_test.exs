@@ -203,7 +203,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
     send(worker, :release_rail)
     render_async(view)
     refute has_element?(view, "#rail-loading")
-    assert has_element?(view, ".workspace-project-name[href='/p/#{project.id}']")
+    assert has_element?(view, "a[href='/p/#{project.id}']")
   end
 
   test "a transient initial rail crash recovers automatically once", %{conn: conn} do
@@ -218,7 +218,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
     {:ok, view, _} = live(log_in_user(conn, user), "/home")
     render_async(view, 5_000)
     render_async(view, 5_000)
-    assert has_element?(view, ".workspace-project-name[href='/p/#{project.id}']")
+    assert has_element?(view, "a[href='/p/#{project.id}']")
     refute has_element?(view, "#rail-loading")
     refute has_element?(view, "#rail-error")
   end
@@ -480,6 +480,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
         ] do
       {:ok, view, _} = live(log_in_user(conn, user), "/home")
       render_async(view)
+      render_click(view, "dialog", %{name: "projects"})
       selector = ".workspace-project-name[href='/p/#{project.id}'] .project-label"
       assert has_element?(view, selector, label)
       assert has_element?(view, ".home-recent .project-label", label)
@@ -842,10 +843,12 @@ defmodule RavixWeb.WorkspaceLiveTest do
     track = insert_track(project: own, title: "My work")
     {:ok, view, _} = live(log_in_user(conn, user), "/")
     render_async(view)
-    assert has_element?(view, "a", "My project")
+    render_click(view, "dialog", %{name: "projects"})
+    assert has_element?(view, "#project-switcher a", "My project")
     refute has_element?(view, "#yard a", "My work")
     refute render(view) =~ "Someone else"
-    view |> element("a.workspace-project-name") |> render_click()
+    render_click(view, "dialog", %{name: "projects"})
+    view |> element("#project-switcher a.workspace-project-name") |> render_click()
     assert_patch(view, "/p/#{own.id}")
     assert has_element?(view, "button", "New track")
     assert has_element?(view, "a[href='/p/#{own.id}/t/#{track.id}']")
@@ -859,6 +862,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
     render_async(view)
     refute has_element?(view, "#yard .workspace-track")
     refute has_element?(view, ".track-tabs")
+    render_patch(view, "/p/#{project.id}")
     view |> element("a.project-add") |> render_click()
     assert_patch(view, "/p/#{project.id}?new=track")
     assert has_element?(view, "#new-track-form")
@@ -890,7 +894,12 @@ defmodule RavixWeb.WorkspaceLiveTest do
 
     refute has_element?(view, "#yard .workspace-track")
     refute has_element?(view, ".track-tabs a[href='/p/#{other.id}/t/#{other_track.id}']")
-    view |> element(".workspace-project-name[href='/p/#{other.id}']") |> render_click()
+    render_click(view, "dialog", %{name: "projects"})
+
+    view
+    |> element("#project-switcher .workspace-project-name[href='/p/#{other.id}']")
+    |> render_click()
+
     assert has_element?(view, ".track-tabs a[href='/p/#{other.id}/t/#{other_track.id}']")
     refute has_element?(view, ".track-tabs a[href='/p/#{project.id}/t/#{track.id}']")
   end
@@ -1033,11 +1042,11 @@ defmodule RavixWeb.WorkspaceLiveTest do
     assert has_element?(view, "#{row} button[aria-label='People in Mine']")
     assert has_element?(view, "#{row} button[aria-label='Project settings for Mine']")
     assert has_element?(view, "#{row} a.project-add[aria-label='New track in Mine']")
-    # Every row offers a new track; only the open one has dialogs to open,
-    # because they act on the open project.
+    # Only the selected project remains in the rail. Other projects are
+    # reached through the switcher before their actions are available.
     closed = "#yard [data-project-id='#{other.id}']"
     refute has_element?(view, "#{closed}.current")
-    assert has_element?(view, "#{closed} a.project-add")
+    refute has_element?(view, "#{closed} a.project-add")
     refute has_element?(view, "#{closed} button.project-action")
     # The nested links under the open project are gone.
     refute has_element?(view, ".project-links")
@@ -1278,7 +1287,12 @@ defmodule RavixWeb.WorkspaceLiveTest do
     html = render_async(view)
 
     assert html =~ "Alpha two"
-    view |> element(".workspace-project-name[href='/p/#{b.id}']") |> render_click()
+    render_click(view, "dialog", %{name: "projects"})
+
+    view
+    |> element("#project-switcher .workspace-project-name[href='/p/#{b.id}']")
+    |> render_click()
+
     assert render(view) =~ "Beta one"
     refute html =~ "Beta two"
   end
