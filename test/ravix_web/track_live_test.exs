@@ -214,7 +214,11 @@ defmodule RavixWeb.TrackLiveTest do
     page =
       Transcript.page(
         [
-          opened(1, "timeout", "Do the work"),
+          opened(
+            1,
+            "timeout",
+            "[ravix: session context restored]\nhidden context\n[/ravix: session context restored]\n\n[from @teammate] Do the work"
+          ),
           %{
             "id" => 2,
             "turn_id" => "timeout",

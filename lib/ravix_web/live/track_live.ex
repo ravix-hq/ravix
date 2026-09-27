@@ -224,6 +224,7 @@ defmodule RavixWeb.TrackLive do
     with %{prompt: prompt} = turn when is_binary(prompt) <-
            Enum.find(socket.assigns.page.turns, &(&1.id == id)),
          true <- Enum.any?(turn.blocks, &match?(%TranscriptBlock.Failure{}, &1)) do
+      {prompt, _restored?} = Recovery.visible_prompt(prompt)
       {_speaker, body} = prompt |> Ravix.Previews.Agent.visible_prompt() |> prompt_author()
 
       {:noreply,
