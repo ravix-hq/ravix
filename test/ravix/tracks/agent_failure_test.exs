@@ -4,6 +4,49 @@ defmodule Ravix.Tracks.AgentFailureTest do
   alias Ravix.Tracks.Transcript.{Block, Detail}
   import Ravix.AgentOutageFixture
 
+  test "idle suspension settles streamed and replayed turns without a turn-done event" do
+    events = Ravix.SuspensionFixture.events()
+    message = Ravix.SuspensionFixture.message()
+    page = Transcript.page(events, "plain")
+    assert [%{settled?: true, blocks: blocks}] = page.turns
+    assert Enum.any?(blocks, &match?(%Block.Failure{body: ^message}, &1))
+    assert Enum.reduce(events, Transcript.empty("plain"), &Transcript.add_event(&2, &1)) == page
+
+    assert %{code: "machine_suspended", reason: ^message} =
+             AgentFailure.detect(events, "plain", [])
+  end
+
+  test "sleeping after a completed turn does not fail a successful reply" do
+    [started, output, suspended] = Ravix.SuspensionFixture.events()
+    completed = %{started | "id" => 3, "state" => "done"}
+    suspended = %{suspended | "id" => 4}
+    events = [started, output, completed, suspended]
+    assert [%{settled?: true, blocks: [%Block.Text{}]}] = Transcript.page(events, "plain").turns
+    assert AgentFailure.suspension(events) == nil
+  end
+
+  test "only structured sandbox completion signals suspension" do
+    event = List.last(Ravix.SuspensionFixture.events())
+
+    for other <- [
+          %{event | "kind" => "output"},
+          %{event | "stage" => "turn", "state" => "started"},
+          %{event | "state" => "started"},
+          %{event | "data" => "not JSON"},
+          %{event | "data" => ~s({"event":"resumed"})}
+        ] do
+      assert AgentFailure.suspension([other]) == nil
+    end
+
+    for reason <- [%{event: "suspended"}, %{event: "suspended", reason: "idle", message: "Idle"}] do
+      assert %{
+               reason:
+                 "The machine went to sleep during this turn. Send another message to continue."
+             } =
+               AgentFailure.suspension([%{event | "data" => Jason.encode!(reason)}])
+    end
+  end
+
   test "five retry notifications followed by systemError beat a misleading end_turn" do
     events = events()
 

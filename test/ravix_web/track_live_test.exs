@@ -1154,6 +1154,36 @@ defmodule RavixWeb.TrackLiveTest do
     assert has_element?(ctx.view, "#threads-working", "is working in this checkout")
   end
 
+  test "suspension settles the transcript and thread tab without a turn-done event", ctx do
+    activity_thread(ctx)
+    events = Ravix.SuspensionFixture.events()
+    tab = "#thread-switcher [data-thread-id='#{ctx.track.id}']"
+    send(ctx.view.pid, {:transcript, ctx.track.id, hd(events)})
+    assert has_element?(ctx.view, tab, "Running")
+
+    stub(Tracks, :events, fn _, _, _ -> {:ok, Transcript.page(events, "plain")} end)
+    for event <- tl(events), do: send(ctx.view.pid, {:transcript, ctx.track.id, event})
+    render_async(drawn(ctx.view))
+    assert has_element?(ctx.view, tab, "Failed")
+    assert has_element?(ctx.view, "#transcript-status", "Turn failed")
+    assert render(ctx.view) =~ Ravix.SuspensionFixture.message()
+    refute has_element?(ctx.view, "#threads-working")
+  end
+
+  test "opening a suspended transcript restores the failed thread tab", ctx do
+    activity_thread(ctx)
+
+    stub(Tracks, :events, fn _, _, _ ->
+      {:ok, Transcript.page(Ravix.SuspensionFixture.events(), "plain")}
+    end)
+
+    {:ok, parent, _} = live(ctx.conn, "/p/#{ctx.project.id}/t/#{ctx.track.id}")
+    view = find_live_child(parent, "track-host")
+    settle(view)
+    assert has_element?(view, "#thread-switcher [data-thread-id='#{ctx.track.id}']", "Failed")
+    assert render(view) =~ Ravix.SuspensionFixture.message()
+  end
+
   test "a single thread never warns about itself", ctx do
     send(
       ctx.view.pid,
