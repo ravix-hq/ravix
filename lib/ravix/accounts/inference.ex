@@ -245,7 +245,11 @@ defmodule Ravix.Accounts.Inference do
     end
   end
 
-  defp cached_held(user) do
+  @doc "Credential choices from the same short cache used by usable?/3."
+  @spec cached_held(User.t()) :: {:ok, [credential()]} | {:error, reason()}
+  def cached_held(%User{credential_set_id: nil}), do: {:ok, []}
+
+  def cached_held(%User{} = user) do
     with {:ok, client} <- fountain() do
       Cache.fetch(user, fn -> held_from(client, user.credential_set_id) end)
     end
@@ -691,9 +695,20 @@ defmodule Ravix.Accounts.Inference do
   """
   @spec subscription(User.t()) :: {:ok, subscription() | nil} | {:error, reason()}
   def subscription(%User{} = user) do
-    with {:ok, client} <- fountain(),
-         {:ok, grant} <- own_grant(client, user) do
+    with {:ok, client} <- fountain(), do: subscription_from(client, user)
+  end
+
+  defp subscription_from(client, user) do
+    with {:ok, grant} <- own_grant(client, user) do
       {:ok, grant && subscription_of(grant)}
+    end
+  end
+
+  @doc "Subscription status cached for five seconds; credential writes invalidate it."
+  @spec cached_subscription(User.t()) :: {:ok, subscription() | nil} | {:error, reason()}
+  def cached_subscription(%User{} = user) do
+    with {:ok, client} <- fountain() do
+      Cache.fetch(user, fn -> subscription_from(client, user) end, :subscription)
     end
   end
 
