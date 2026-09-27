@@ -320,7 +320,7 @@ defmodule RavixWeb.Live.NewProjectTest do
       attempt_id: "fast",
       user_code: "CODE",
       verification_url: "https://example.com",
-      poll_interval: 0,
+      poll_interval: 60,
       trusted?: false
     }
 
@@ -337,6 +337,17 @@ defmodule RavixWeb.Live.NewProjectTest do
     render_async(view)
     view |> element("#chatgpt-connect") |> render_click()
     render_async(view)
+    # Drive the timer message explicitly: render_async cannot await a timer
+    # that has not yet started its asynchronous poll.
+    {components, _, _} = :sys.get_state(view.pid).components
+
+    {_, panel_id, assigns, _, _} =
+      Enum.find_value(components, fn {_, {_, id, _, _, _} = component} ->
+        if String.starts_with?(id, "project-connect-codex-"), do: component
+      end)
+
+    send(view.pid, {:agent_panel, panel_id, {:poll_link, assigns.poll_token}})
+    render(view)
     render_async(view)
 
     assert length(events("inline connect started")) == 1

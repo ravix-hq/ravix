@@ -365,6 +365,7 @@ defmodule Ravix.PromptQueueTest do
     capture_log(fn -> Server.tick(f.server) end)
     assert status_of(id) == :queued
     assert PromptQueue.Store.get(id).error == "The agent is at capacity; will retry"
+    assert PromptQueue.Store.get(id).error_code == "sandbox_at_capacity"
 
     capture_log(fn -> Server.tick(f.server) end)
 

@@ -315,3 +315,29 @@ for the required checks, local commands, and the boundaries each guard proves.
 ### User-facing changelog
 
 When a change is visible to people using Ravix, add a reviewed entry to `Ravix.Changelog` in `lib/ravix/changelog.ex`. Entries use a plain-language title and body, a date, and one of `new`, `improved`, or `fixed`; keep them concise and include an action when it helps someone try the change.
+
+### Thread runtimes
+
+Each new thread records its runtime and model. The new-track form chooses the
+first thread; subsequent threads default to the track's last runtime, then the
+project default. Nullable legacy threads retain the project's runtime/model.
+Threads share a checkout and may work concurrently; the tabs identify those
+mid-turn, and users coordinate conflicting edits.
+
+Pickers use the **project owner's** connected runtimes. Other-runtime threads
+(on shared machines too) require the initiating user to be in
+`RAVIX_DEDICATED_OPEN_USER_IDS`, the same cohort as dedicated opens. The server
+checks this gate independently. Keep that cohort empty until the owner completes
+`scripts/fountain-sandbox-check.py` against real Fountain. Home-runtime threads
+and model choices do not require the cohort flag.
+
+A project reuses one agent per runtime. The first shared-machine launch pins its
+home runtime atomically; a competing other-runtime launch waits for that machine
+instead of provisioning another disk. `project_runtime_agents` reserves an
+additional runtime before its create request. An interrupted or uncertain create
+leaves `agent_id` null and refuses further allocation; an operator must reconcile
+the provider agent by its project metadata/runtime and bind its ID, or prove no
+agent was created before removing the reservation. Do not clear a reservation
+merely because a request timed out. Shared rebuild/deletion fences new agent
+allocations and retires both runtime agents; unresolved reservations block that
+cleanup. Rebuilding successfully clears the retirement fence.

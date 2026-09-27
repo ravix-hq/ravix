@@ -68,11 +68,39 @@ defmodule Ravix.Tracks.Store do
     with %Track{closed_at: nil} <-
            Repo.one(from(t in Track, where: t.id == ^track_id, lock: "FOR UPDATE")),
          {:ok, thread} <- Repo.insert(changeset) do
+      remember_runtime(track_id, thread.runtime)
       thread
     else
       {:error, reason} -> Repo.rollback(reason)
       _ -> Repo.rollback(:not_found)
     end
+  end
+
+  def create_track(attrs, selection) do
+    Repo.transaction(fn ->
+      case create_track(Map.put(attrs, :last_runtime, selection.runtime)) do
+        {:ok, track} ->
+          from(t in Thread, where: t.id == ^track.id)
+          |> Repo.update_all(set: [runtime: selection.runtime, model: selection.model])
+
+          track
+
+        {:error, reason} ->
+          Repo.rollback(reason)
+      end
+    end)
+  end
+
+  def set_thread_model(id, model) do
+    from(t in Thread, where: t.id == ^id) |> Repo.update_all(set: [model: model])
+    :ok
+  end
+
+  defp remember_runtime(_id, nil), do: :ok
+
+  defp remember_runtime(id, runtime) do
+    from(t in Track, where: t.id == ^id) |> Repo.update_all(set: [last_runtime: runtime])
+    :ok
   end
 
   def mark_thread_read(thread_id, user_id, at) do

@@ -694,6 +694,8 @@ test('project, track, streaming, image upload, reconnect, and revocation', async
   const threadTab = id => threadTabs.locator(`button[data-thread-id="${id}"]`);
   const defaultThread = await currentThread.getAttribute('data-thread-id');
   await threadTabs.getByRole('button', { name: 'Add thread', exact: true }).click();
+  await expect(page.locator('#new-thread-form')).toBeVisible();
+  await page.locator('#new-thread-form').getByRole('button', { name: 'Create thread', exact: true }).click();
   await expect(currentThread).not.toHaveAttribute('data-thread-id', defaultThread);
   const nextThread = await currentThread.getAttribute('data-thread-id');
   await expect(composer).toHaveValue('');
@@ -997,7 +999,7 @@ test('composer Send stays compact and keeps its arrow after repeated submissions
     await expect(page.locator('#composer-form')).not.toContainText('to send');
     const model = page.locator('.composer-model');
     await expect(model).toHaveText(/^\S/);
-    expect(await model.getAttribute('title')).toMatch(/\//);
+    expect(await model.getAttribute('title')).toMatch(/^(Claude Code|Codex) · /);
     await expect(model).toHaveAccessibleName(await model.locator('.truncate').innerText());
     expect(await model.evaluate(el => getComputedStyle(el).fontFamily)).toContain('IBM Plex Sans');
     await fitsViewport(page);

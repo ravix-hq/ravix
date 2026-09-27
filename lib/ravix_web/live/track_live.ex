@@ -61,6 +61,7 @@ defmodule RavixWeb.TrackLive do
   alias RavixWeb.Live.Guard
   alias RavixWeb.Live.Panel
   alias RavixWeb.Live.Params
+  alias RavixWeb.Live.ThreadConnect
   alias RavixWeb.Markdown
   alias RavixWeb.ModelName
 
@@ -72,6 +73,10 @@ defmodule RavixWeb.TrackLive do
         thread_id: session["track_id"],
         thread_generation: 0,
         threads: [],
+        thread_options: nil,
+        thread_connect: nil,
+        thread_error: nil,
+        thread_params: %{},
         project_id: session["project_id"],
         agent_refused: false,
         health_refresh: 0,
@@ -171,10 +176,49 @@ defmodule RavixWeb.TrackLive do
     end
   end
 
-  def handle_event("add-thread", _, socket) do
+  def handle_event("connect-thread-agent", %{"runtime" => runtime}, socket) do
+    connection =
+      ThreadConnect.open(
+        socket.assigns.current_user,
+        socket.assigns.project_id,
+        runtime,
+        socket.assigns.thread_options
+      )
+
+    {:noreply, assign(socket, thread_connect: connection)}
+  end
+
+  def handle_event("new-thread", _, socket) do
+    {:noreply, begin(socket, :thread_options, &Tracks.thread_options/2)}
+  end
+
+  def handle_event("cancel-thread", _, socket),
+    do:
+      {:noreply,
+       socket
+       |> cancel_async(:thread_options)
+       |> settle(:thread_options)
+       |> assign(thread_options: nil, thread_params: %{}, thread_connect: nil, thread_error: nil)}
+
+  def handle_event("edit-thread", %{"new_thread" => params}, socket) do
+    params =
+      if params["runtime"] != socket.assigns.thread_params["runtime"],
+        do: Map.delete(params, "model"),
+        else: params
+
+    {:noreply, assign(socket, thread_params: params)}
+  end
+
+  def handle_event("add-thread", params, socket) do
+    attrs = Map.get(params, "new_thread", %{})
+
     if MapSet.member?(socket.assigns.pending, :add_thread),
       do: {:noreply, socket},
-      else: {:noreply, begin(socket, :add_thread, &Tracks.add_thread/2)}
+      else:
+        {:noreply,
+         socket
+         |> assign(thread_params: attrs, thread_error: nil)
+         |> begin(:add_thread, &Tracks.add_thread(&1, &2, attrs))}
   end
 
   def handle_event("narrow-view", %{"name" => name}, socket)
@@ -398,6 +442,45 @@ defmodule RavixWeb.TrackLive do
   defp open_dialog(socket, dialog), do: assign(socket, dialog: dialog)
 
   @impl true
+  def handle_info({:agent_panel, id, tick}, socket) do
+    if ThreadConnect.active?(
+         socket.assigns.current_user,
+         socket.assigns.project_id,
+         socket.assigns.thread_connect,
+         id
+       ),
+       do: send_update(RavixWeb.Live.AgentPanel, id: id, tick: tick)
+
+    {:noreply, socket}
+  end
+
+  def handle_info({:agent_connected, user, agent}, socket) do
+    connection = socket.assigns.thread_connect
+
+    if connection && user.id == socket.assigns.current_user.id &&
+         to_string(agent) == connection.runtime &&
+         ThreadConnect.active?(
+           user,
+           socket.assigns.project_id,
+           connection,
+           connection.id
+         ) do
+      {:noreply,
+       socket
+       |> assign(
+         current_user: user,
+         thread_connect: nil,
+         thread_params:
+           socket.assigns.thread_params
+           |> Map.put("runtime", connection.runtime)
+           |> Map.delete("model")
+       )
+       |> begin(:thread_options, &Tracks.thread_options/2)}
+    else
+      {:noreply, socket}
+    end
+  end
+
   def handle_info({:reconnect_agent, project_id}, socket) do
     if socket.parent_pid, do: send(socket.parent_pid, {:reconnect_agent, project_id})
     {:noreply, socket}
@@ -585,8 +668,23 @@ defmodule RavixWeb.TrackLive do
 
   defp async_result({:plan_items, _}, _response, socket), do: socket
 
+  defp async_result(:thread_options, {:ok, {:ok, options}}, socket),
+    do:
+      socket
+      |> settle(:thread_options)
+      |> assign(
+        thread_options: options,
+        thread_params: Map.put_new(socket.assigns.thread_params, "runtime", options.runtime)
+      )
+
+  defp async_result(:thread_options, {:ok, {:error, reason}}, socket),
+    do: socket |> settle(:thread_options) |> error(reason)
+
   defp async_result(:add_thread, {:ok, {:ok, thread}}, socket) do
-    socket = settle(socket, :add_thread)
+    socket =
+      socket
+      |> settle(:add_thread)
+      |> assign(thread_options: nil, thread_params: %{}, thread_connect: nil, thread_error: nil)
 
     if thread.track_id == socket.assigns.track_id,
       do: switch_thread(socket, thread.id),
@@ -594,7 +692,7 @@ defmodule RavixWeb.TrackLive do
   end
 
   defp async_result(:add_thread, {:ok, {:error, reason}}, socket),
-    do: socket |> settle(:add_thread) |> error(reason)
+    do: socket |> settle(:add_thread) |> assign(thread_error: thread_failure(socket, reason))
 
   defp async_result(:load, {:ok, {:ok, detail, project}}, socket) do
     Tracks.beat(socket.assigns.current_user, socket.assigns.track_id, :watching)
@@ -765,8 +863,12 @@ defmodule RavixWeb.TrackLive do
   # One of the ribbon's writes that did not answer. Not the loading clause
   # below: nothing was being loaded, and "could not finish loading" about a
   # Stop that crashed would be a sentence about the wrong thing.
+  defp async_result(:add_thread, {:exit, _reason}, socket),
+    do:
+      socket |> settle(:add_thread) |> assign(thread_error: thread_failure(socket, :unavailable))
+
   defp async_result(name, {:exit, reason}, socket)
-       when name in [:interrupt, :retry, :pull, :add_thread, :model],
+       when name in [:interrupt, :retry, :pull, :thread_options, :model],
        do: socket |> settle(name) |> exit(reason)
 
   # A background refresh that crashed leaves the page showing what it had.
@@ -847,15 +949,30 @@ defmodule RavixWeb.TrackLive do
         request_id: Ecto.UUID.generate()
       })
 
-    {:noreply,
-     result(socket, response, fn s, _ ->
-       Tracks.mark_read(s.assigns.current_user, s.assigns.track_id, s.assigns.thread_id)
+    case response do
+      {:error, reason} ->
+        runtime = socket.assigns.track.runtime || socket.assigns.project.runtime
+        error = RavixWeb.Error.from(reason)
 
-       s
-       |> assign(attached_images: [], agent_refused: false)
-       |> push_event("composer:clear", %{})
-       |> refresh_queue()
-     end)}
+        message =
+          if error.code == "agent_not_connected",
+            do:
+              "#{socket.assigns.project.owner_login} hasn't connected #{RavixWeb.AgentName.label(runtime)}.",
+            else: error.message
+
+        {:noreply, assign(socket, thread_error: message)}
+
+      _ ->
+        {:noreply,
+         result(socket, response, fn s, _ ->
+           Tracks.mark_read(s.assigns.current_user, s.assigns.track_id, s.assigns.thread_id)
+
+           s
+           |> assign(attached_images: [], agent_refused: false, thread_error: nil)
+           |> push_event("composer:clear", %{})
+           |> refresh_queue()
+         end)}
+    end
   end
 
   # Tell the page hosting this one where it is, so that choosing another track
@@ -902,6 +1019,10 @@ defmodule RavixWeb.TrackLive do
       assigned_plan: %{items: [], plan: nil},
       starters: [],
       queue: [],
+      thread_options: nil,
+      thread_connect: nil,
+      thread_params: %{},
+      thread_error: nil,
       present: [],
       narrow_view: "conversation",
       panel: Panel.new(),
@@ -952,6 +1073,10 @@ defmodule RavixWeb.TrackLive do
     socket
     |> assign(
       loading: true,
+      thread_error: nil,
+      thread_options: nil,
+      thread_connect: nil,
+      thread_params: %{},
       agent_refused: false,
       transcript_loading: true,
       page: Transcript.empty(""),
@@ -1121,6 +1246,7 @@ defmodule RavixWeb.TrackLive do
     |> workspace_async(:preview_action, fn -> call.(user, id, hash) end)
   end
 
+  attr :runtime, :string, default: nil
   attr :model, :string, required: true, doc: "what the shown conversation runs"
   attr :project_model, :string, required: true
   attr :models, :list, required: true, doc: "the catalog's models for the project's runtime"
@@ -1138,7 +1264,7 @@ defmodule RavixWeb.TrackLive do
   """
   def model_menu(%{models: []} = assigns) do
     ~H"""
-    <span class="composer-model" title={@model}>{ModelName.friendly(@model)}</span>
+    <span class="composer-model" title={agent_model(@runtime, @model)}>{agent_model(@runtime, @model)}</span>
     """
   end
 
@@ -1151,10 +1277,10 @@ defmodule RavixWeb.TrackLive do
       id="model-trigger"
       class="composer-model model-trigger"
       popovertarget="model-menu"
-      aria-label={ModelName.friendly(@model)}
-      title={@model}
+      aria-label={agent_model(@runtime, @model)}
+      title={agent_model(@runtime, @model)}
       disabled={@disabled}
-    ><span class="truncate">{ModelName.friendly(@model)}</span><span class="sr-only">, change model</span><.icon
+    ><span class="truncate">{agent_model(@runtime, @model)}</span><span class="sr-only">, change model</span><.icon
       name="chevron"
       size={10}
       open={true}
@@ -1170,7 +1296,7 @@ defmodule RavixWeb.TrackLive do
         popovertargetaction="hide"
         phx-click="set-model"
         phx-value-model={choice}
-        title={choice}
+        title={ModelName.friendly(choice)}
       >
         <span class="truncate">{ModelName.friendly(choice)}</span><small :if={
           choice == @project_model
@@ -1182,6 +1308,55 @@ defmodule RavixWeb.TrackLive do
       </button>
     </div>
     """
+  end
+
+  defp thread_failure(socket, reason) do
+    runtime =
+      socket.assigns.thread_params["runtime"] || socket.assigns.track.runtime ||
+        socket.assigns.project.runtime
+
+    agent = RavixWeb.AgentName.label(runtime)
+
+    fallback =
+      RavixWeb.AgentName.label(
+        Map.get(
+          socket.assigns.thread_options || %{},
+          :home_runtime,
+          socket.assigns.project.runtime
+        )
+      )
+
+    error = RavixWeb.Error.from(reason)
+
+    case error.code do
+      "agent_not_connected" ->
+        "#{socket.assigns.project.owner_login} hasn't connected #{agent}."
+
+      code when code in ["sandbox_at_capacity", "conversation_busy", "machine_busy"] ->
+        "#{agent} is at capacity on this machine; try again in a moment."
+
+      code when code in ["guest_runtime_disabled", "invalid_runtime", "invalid_model"] ->
+        error.message
+
+      _ ->
+        "Couldn't start a #{agent} thread on this machine; try again or use #{fallback}."
+    end
+  end
+
+  defp queue_feedback(item, runtime) do
+    if item.status == :queued && item.error_code in ["sandbox_at_capacity", "conversation_busy"],
+      do:
+        "#{RavixWeb.AgentName.label(runtime)} is at capacity on this machine; your prompt is queued.",
+      else: item.wait_reason
+  end
+
+  defp agent_model(nil, model) when is_binary(model) and model != "",
+    do: ModelName.friendly(model)
+
+  defp agent_model(runtime, model) do
+    [RavixWeb.AgentName.label(runtime) || "Agent", ModelName.friendly(model)]
+    |> Enum.reject(&(&1 == ""))
+    |> Enum.join(" · ")
   end
 
   attr :threads, :list, required: true
@@ -1214,9 +1389,13 @@ defmodule RavixWeb.TrackLive do
         phx-value-thread_id={thread.id}
         data-thread-id={thread.id}
         aria-current={if thread.id == @thread_id, do: "true"}
-        title={thread.title}
+        title={thread.title <> " · " <> agent_model(Map.get(thread, :runtime), Map.get(thread, :model))}
+        aria-label={thread.title <> " · " <> agent_model(Map.get(thread, :runtime), Map.get(thread, :model)) <> if(Map.get(thread, :status) == :running, do: " · Working", else: "") <> if(thread.unread && thread.id != @thread_id, do: " (unread)", else: "")}
       >
-        <span class="thread-tab-title">{thread.title}</span><span
+        <span class="thread-tab-title">{thread.title}</span><span class="thread-tab-agent"> · {agent_model(
+          Map.get(thread, :runtime),
+          Map.get(thread, :model)
+        )}</span><span :if={Map.get(thread, :status) == :running}> · Working</span><span
           :if={thread.unread && thread.id != @thread_id}
           class="thread-unread"
         ><span class="sr-only">(unread)</span></span>
@@ -1227,7 +1406,7 @@ defmodule RavixWeb.TrackLive do
         class="ghost thread-add"
         aria-label="Add thread"
         title="Add thread"
-        phx-click="add-thread"
+        phx-click="new-thread"
         disabled={@adding}
       >
         <.icon name="plus" size={14} />

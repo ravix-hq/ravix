@@ -167,14 +167,20 @@ defmodule RavixWeb.TrackLiveTest do
   end
 
   test "add-thread capacity refusal says to try again without claiming a queued prompt", ctx do
-    expect(Tracks, :add_thread, fn _, _ ->
+    expect(Tracks, :add_thread, fn _, _, _ ->
       {:error, %FountainError{status: 409, code: "sandbox_at_capacity"}}
     end)
 
-    render_click(ctx.view, "add-thread")
+    render_click(ctx.view, "add-thread", %{"new_thread" => %{"runtime" => "codex"}})
     render_async(ctx.view)
     html = render(ctx.parent)
-    assert html =~ "The machine is busy with other turns. Try again in a moment."
+
+    assert has_element?(
+             ctx.view,
+             "#thread-error",
+             "Codex is at capacity on this machine; try again in a moment."
+           )
+
     refute html =~ "Your prompt is queued"
     refute html =~ "machine_busy"
   end
@@ -468,7 +474,14 @@ defmodule RavixWeb.TrackLiveTest do
   end
 
   test "adding a thread persists and selects it", ctx do
-    client = FakeTransport.client([], verify: false)
+    client =
+      FakeTransport.client(
+        [
+          {%{method: "GET", path: "/api/conversations"}, {200, [], %{data: []}}}
+        ],
+        verify: false
+      )
+
     stub(Ravix.Fountain, :client, fn -> client end)
 
     stub(Ravix.Fountain, :get_conversation, fn _, _ ->
@@ -484,12 +497,247 @@ defmodule RavixWeb.TrackLiveTest do
       {:ok, Shapes.conversation(%{"id" => "added"})}
     end)
 
+    Repo.update!(Ecto.Changeset.change(ctx.project, runtime: "claude"))
+    stub(Ravix.Accounts.Inference, :usable?, fn _, "claude", _ -> {:ok, true} end)
+    stub(Ravix.Accounts.Inference, :usable_agents, fn _ -> {:ok, [:claude]} end)
+
+    stub(Ravix.MachineCache, :catalog, fn _ ->
+      {:ok, %Shapes.Catalog{runtimes: ["claude"], models: %{"claude" => [ctx.project.model]}}}
+    end)
+
+    stub(Ravix.MachineCache, :machine_of, fn _, _ -> {:ok, nil} end)
     ctx.view |> element("#thread-switcher button[aria-label='Add thread']") |> render_click()
     render_async(ctx.view, 2_000)
+    assert has_element?(ctx.view, "#new-thread-form")
+
+    ctx.view
+    |> form("#new-thread-form", new_thread: %{runtime: "claude", model: ctx.project.model})
+    |> render_submit()
+
     render_async(ctx.view, 2_000)
     [_, thread] = Tracks.Store.threads_of(ctx.track.id)
     assert thread.conversation_id == "added"
     assert has_element?(ctx.view, "#composer-#{thread.id}")
+  end
+
+  test "thread picker explains unavailable agents and uses product and model names", ctx do
+    base = %{
+      runtime: "claude",
+      model: "anthropic/claude-opus-5",
+      owner_login: ctx.user.login,
+      owner?: true,
+      runtimes: [
+        %{runtime: "claude", connected: true, enabled: true, models: ["anthropic/claude-opus-5"]},
+        %{runtime: "codex", connected: true, enabled: false, models: ["openai/gpt-6-astra"]}
+      ]
+    }
+
+    stub(Tracks, :thread_options, fn _, _ -> {:ok, base} end)
+    render_click(ctx.view, "new-thread")
+    render_async(ctx.view)
+    assert has_element?(ctx.view, "label[for=new_thread-runtime]", "Agent")
+    assert has_element?(ctx.view, "#new_thread-runtime option[value=claude]", "Claude Code")
+
+    assert has_element?(
+             ctx.view,
+             "#new_thread-runtime option[value=codex][disabled]",
+             "Codex threads on this project aren't available yet"
+           )
+
+    assert has_element?(ctx.view, "#new_thread-model option", "Claude Opus 5")
+
+    for {owner?, reason} <- [
+          {true, "Connect to use"},
+          {false, "Not connected — #{ctx.user.login} must connect it"}
+        ] do
+      render_click(ctx.view, "cancel-thread")
+
+      options = %{
+        base
+        | owner?: owner?,
+          runtimes:
+            Enum.map(base.runtimes, &%{&1 | enabled: true, connected: &1.runtime == "claude"})
+      }
+
+      stub(Tracks, :thread_options, fn _, _ -> {:ok, options} end)
+      render_click(ctx.view, "new-thread")
+      render_async(ctx.view)
+      assert has_element?(ctx.view, "#new_thread-runtime option[value=codex][disabled]", reason)
+    end
+  end
+
+  test "selected thread names its agent in the composer and accessible tab", ctx do
+    stub(Tracks, :get, fn _, id, _ ->
+      {:ok,
+       %{
+         track: %{
+           Tracks.present(ctx.track, role: :owner)
+           | runtime: "codex",
+             model: "openai/gpt-6-astra"
+         },
+         header: blank_header(),
+         threads: [
+           %{
+             id: id,
+             title: "Review",
+             unread: false,
+             runtime: "codex",
+             model: "openai/gpt-6-astra",
+             status: :running
+           }
+         ],
+         starters: [],
+         models: ["openai/gpt-6-astra"]
+       }}
+    end)
+
+    stub(PromptQueue, :list, fn _, _, _ ->
+      {:ok,
+       [
+         %QueuedPrompt{
+           id: "codex-capacity",
+           prompt: "waiting",
+           image_count: 0,
+           author_login: ctx.user.login,
+           created_at: DateTime.utc_now(),
+           status: :queued,
+           error: "capacity",
+           error_code: "sandbox_at_capacity",
+           can_cancel: true
+         }
+       ]}
+    end)
+
+    send(ctx.view.pid, :refresh)
+    settle(ctx.view)
+
+    assert has_element?(
+             ctx.view,
+             ".workspace-queue p",
+             "Codex is at capacity on this machine; your prompt is queued."
+           )
+
+    assert has_element?(ctx.view, ".composer-model", "Codex · GPT-6 Astra")
+    assert has_element?(ctx.view, ".composer-model", "GPT-6 Astra")
+
+    assert has_element?(
+             ctx.view,
+             "#thread-switcher button[title='Review · Codex · GPT-6 Astra'][aria-label='Review · Codex · GPT-6 Astra · Working']"
+           )
+  end
+
+  test "thread errors name the agent and owner in plain words", ctx do
+    for {code, message} <- [
+          {"agent_not_connected", "#{ctx.user.login} hasn't connected Codex."},
+          {"guest_runtime_disabled", "Codex threads on this project aren't available yet."},
+          {"invalid_runtime", "Choose Claude Code or Codex."},
+          {"invalid_model", "Choose one of Codex's models."}
+        ] do
+      expect(Tracks, :add_thread, fn _, _, _ -> {:error, {:conflict, code, message}} end)
+      render_click(ctx.view, "add-thread", %{"new_thread" => %{"runtime" => "codex"}})
+      render_async(ctx.view)
+      assert has_element?(ctx.view, "#thread-error[role=alert]", message)
+    end
+  end
+
+  test "a disconnected agent refuses a prompt beside the composer without clearing it", ctx do
+    expect(Tracks, :prompt, fn _, _, %{prompt: "keep this draft"} ->
+      {:error, {:conflict, "agent_not_connected", "internal connection details"}}
+    end)
+
+    render_submit(ctx.view, "send", %{"text" => "keep this draft"})
+
+    assert has_element?(
+             ctx.view,
+             "#thread-error",
+             "#{ctx.user.login} hasn't connected Claude Code."
+           )
+
+    refute render(ctx.view) =~ "internal connection details"
+    refute_push_event(ctx.view, "composer:clear", %{})
+  end
+
+  test "failed guest attachment explains the retry and home-agent alternative", ctx do
+    expect(Tracks, :add_thread, fn _, _, _ ->
+      {:error,
+       %FountainError{status: 422, code: "sandbox_runtime_mismatch", message: "provider details"}}
+    end)
+
+    render_click(ctx.view, "add-thread", %{"new_thread" => %{"runtime" => "codex"}})
+    render_async(ctx.view)
+
+    assert has_element?(
+             ctx.view,
+             "#thread-error[role=alert]",
+             "Couldn't start a Codex thread on this machine; try again or use Claude Code."
+           )
+
+    refute render(ctx.view) =~ "sandbox_runtime_mismatch"
+    refute render(ctx.view) =~ "provider details"
+  end
+
+  test "owners connect inline before creating a thread and late ticks are discarded", ctx do
+    options = %{
+      runtime: "claude",
+      model: "anthropic/claude-opus-5",
+      owner_login: ctx.user.login,
+      owner?: true,
+      runtimes: [
+        %{runtime: "claude", connected: true, enabled: true, models: ["anthropic/claude-opus-5"]},
+        %{runtime: "codex", connected: false, enabled: true, models: ["openai/gpt-6-astra"]}
+      ]
+    }
+
+    stub(Tracks, :thread_options, fn _, _ -> {:ok, options} end)
+    stub(Ravix.Accounts.Inference, :held, fn _ -> {:ok, []} end)
+    stub(Ravix.Accounts.Inference, :subscription, fn _ -> {:ok, nil} end)
+
+    stub(Ravix.Accounts.Inference, :link_status, fn _ ->
+      {:ok, %{enabled?: true, pending: nil}}
+    end)
+
+    render_click(ctx.view, "new-thread")
+    render_async(ctx.view)
+    assert has_element?(ctx.view, "#new-thread-dialog", "You are creating a Claude Code thread.")
+
+    ctx.view
+    |> element("button[phx-click=connect-thread-agent][phx-value-runtime=codex]")
+    |> render_click()
+
+    render_async(ctx.view)
+
+    ctx.view
+    |> element(".thread-connections button[phx-click=choose-kind][phx-value-kind=api_key]")
+    |> render_click()
+
+    expect(Ravix.Accounts.Inference, :connect, fn user, %{agent: :codex, value: "fixture"} ->
+      assert user.id == ctx.user.id
+      {:ok, user}
+    end)
+
+    expect(Tracks, :thread_options, fn _, _ ->
+      {:ok, %{options | runtimes: Enum.map(options.runtimes, &%{&1 | connected: true})}}
+    end)
+
+    ctx.view
+    |> form(".thread-connections form", credential: %{value: "fixture"})
+    |> render_submit()
+
+    render_async(ctx.view)
+    render_async(ctx.view)
+
+    assert has_element?(
+             ctx.view,
+             "#new_thread-runtime option[value=codex][selected]",
+             "Connected"
+           )
+
+    assert has_element?(ctx.view, "#new-thread-dialog", "You are creating a Codex thread.")
+    refute has_element?(ctx.view, ".thread-connections form")
+    render_click(ctx.view, "cancel-thread")
+    send(ctx.view.pid, {:agent_panel, "thread-connect-old", {:poll_link, make_ref()}})
+    render(ctx.view)
+    refute has_element?(ctx.view, "#new-thread-dialog")
   end
 
   test "thread tabs mark the selected thread and unread ones, and pressing the current tab stays put",
@@ -520,6 +768,7 @@ defmodule RavixWeb.TrackLiveTest do
     refute has_element?(ctx.view, selected <> " .thread-unread")
     assert has_element?(ctx.view, unread <> ":not([aria-current]) .thread-unread", "(unread)")
     assert has_element?(ctx.view, unread, "Review")
+    assert has_element?(ctx.view, unread <> "[aria-label='Review · Agent (unread)']")
 
     reject(&Tracks.events/3)
     ctx.view |> element(selected) |> render_click()
@@ -548,7 +797,7 @@ defmodule RavixWeb.TrackLiveTest do
     refute has_element?(ctx.view, "#composer-#{foreign.id}")
   end
 
-  for event <- ["select-thread", "add-thread"] do
+  for event <- ["select-thread", "add-thread", "connect-thread-agent"] do
     @thread_event event
     test "revoked session rejects #{event}", ctx do
       token = Plug.Conn.get_session(ctx.conn, :session_token)
@@ -560,7 +809,7 @@ defmodule RavixWeb.TrackLiveTest do
       end)
 
       assert {:error, {:redirect, %{to: "/login"}}} =
-               render_hook(ctx.view, @thread_event, %{thread_id: ctx.track.id})
+               render_hook(ctx.view, @thread_event, %{thread_id: ctx.track.id, runtime: "codex"})
 
       assert length(Tracks.Store.threads_of(ctx.track.id)) == 1
     end
@@ -1267,7 +1516,7 @@ defmodule RavixWeb.TrackLiveTest do
 
       assert has_element?(
                ctx.view,
-               ".composer-model[title='anthropic/claude-sonnet-5']",
+               ".composer-model[title='Claude Code · Claude Sonnet 5']",
                "Claude Sonnet 5"
              )
     end
@@ -3051,9 +3300,22 @@ defmodule RavixWeb.TrackLiveTest do
     end
 
     assert has_element?(ctx.view, ".workspace-queue p", "Waiting for the current turn to finish")
-    PromptQueue.Store.set_status(hd(ids), :queued, "The agent is at capacity; will retry")
+
+    PromptQueue.Store.set_status(
+      hd(ids),
+      :queued,
+      "The agent is at capacity; will retry",
+      "sandbox_at_capacity"
+    )
+
     refresh.()
-    assert has_element?(ctx.view, ".workspace-queue p", "The agent is at capacity; will retry")
+
+    assert has_element?(
+             ctx.view,
+             ".workspace-queue p",
+             "Claude Code is at capacity on this machine; your prompt is queued."
+           )
+
     Enum.each(Enum.take(ids, 2), &PromptQueue.Store.set_status(&1, :sent))
     refresh.()
 

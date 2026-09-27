@@ -672,7 +672,7 @@ defmodule Ravix.PromptQueue.Server do
         Store.set_status(row.id, :failed, Error.credential_message(), error.code)
 
       Error.busy?(error) ->
-        Store.set_status(row.id, :queued, "The agent is at capacity; will retry")
+        Store.set_status(row.id, :queued, "The agent is at capacity; will retry", error.code)
 
       Error.rejected?(error) ->
         Store.set_status(row.id, :failed, @refused)

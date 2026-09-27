@@ -66,6 +66,7 @@ defmodule Ravix.Tracks do
     Names,
     Opening,
     Origin,
+    Runtime,
     Setup,
     Store,
     Track,
@@ -144,7 +145,15 @@ defmodule Ravix.Tracks do
     thread_reads = Store.thread_reads(user.id, project.id)
 
     Enum.map(rows, fn row ->
-      threads = thread_views(row.id, Map.get(thread_rows, row.id, []), thread_reads, live)
+      threads =
+        thread_views(
+          row.id,
+          Map.get(thread_rows, row.id, []),
+          thread_reads,
+          live,
+          project
+        )
+
       conversations = Enum.map(threads, &live[&1.conversation_id]) |> Enum.reject(&is_nil/1)
 
       active =
@@ -218,7 +227,7 @@ defmodule Ravix.Tracks do
          {:ok, client} <- fountain() do
       live = conversations_of(project, fresh: fresh)
       reads = Store.thread_reads(user.id, project.id)
-      threads = thread_views(track_id, Store.threads_of(track_id), reads, live)
+      threads = thread_views(track_id, Store.threads_of(track_id), reads, live, project)
 
       environment =
         case MachineCache.environment(client, project.environment_id) do
@@ -253,11 +262,13 @@ defmodule Ravix.Tracks do
              people: People.Store.people_of(track.id, project.user_id, project.id),
              role: role,
              last_read: reads[thread.id]
-           ),
+           )
+           |> Map.put(:runtime, thread.runtime || project.runtime)
+           |> Map.put(:default_model, thread.model || project.model),
          threads: threads,
          header: header,
-         starters: Spec.starters(project),
-         models: models_of(client, project)
+         starters: Spec.starters(%{project | runtime: thread.runtime || project.runtime}),
+         models: models_of(client, %{project | runtime: thread.runtime || project.runtime})
        }}
     end
   end
@@ -285,16 +296,19 @@ defmodule Ravix.Tracks do
         track_id,
         Store.threads_of(track_id),
         Store.thread_reads(user.id, project.id),
-        live
+        live,
+        project
       )
 
-  defp thread_views(track_id, threads, reads, live) do
+  defp thread_views(track_id, threads, reads, live, project) do
     Enum.map(threads, fn thread ->
       conversation = live[thread.conversation_id]
 
       %{
         id: thread.id,
         title: thread.title,
+        runtime: thread.runtime || project.runtime,
+        model: (conversation && conversation.model) || thread.model || project.model,
         default: thread.id == track_id,
         conversation_id: thread.conversation_id,
         status:
@@ -307,8 +321,23 @@ defmodule Ravix.Tracks do
     end)
   end
 
+  def thread_options(%User{} = user, track_id) do
+    with {:ok, %{track: track, project: project}} <- Access.track_access(user, track_id),
+         {:ok, client} <- fountain(),
+         {:ok, machine} <- MachineCache.machine_for_track(client, project, track) do
+      Runtime.options(user, project, client, track.last_runtime, machine)
+    end
+  end
+
+  def open_options(%User{} = user, project_id) do
+    with {:ok, %{project: project}} <- Access.project_access(user, project_id),
+         {:ok, client} <- fountain() do
+      Runtime.options(user, project, client)
+    end
+  end
+
   @doc "Attach a blank conversation to the track's existing sandbox."
-  def add_thread(%User{} = user, track_id) do
+  def add_thread(%User{} = user, track_id, attrs \\ %{}) do
     with {:ok, %{track: track, project: project}} <- Access.track_access(user, track_id),
          :ok <-
            check(
@@ -318,23 +347,51 @@ defmodule Ravix.Tracks do
          :ok <-
            check(is_nil(track.closed_at), {:conflict, "closed_track", "This track is closed."}),
          {:ok, client} <- fountain(),
-         {:ok, %{sandbox_id: sandbox_id}} when is_binary(sandbox_id) <-
-           Fountain.get_conversation(client, track.conversation_id) do
-      launch_thread(user, track, project, client, sandbox_id)
-    else
-      {:ok, _} -> {:error, {:conflict, "not_open", "The track's machine is not ready."}}
+         {:ok, sandbox_id} <- thread_sandbox(client, track) do
+      launch_thread(user, track, project, client, sandbox_id, stringify(attrs))
+    end
+  end
+
+  defp thread_sandbox(_client, %{sandbox_layout: :dedicated, sandbox_id: id}) when is_binary(id),
+    do: {:ok, id}
+
+  defp thread_sandbox(_client, %{sandbox_layout: :dedicated}), do: thread_not_open()
+
+  defp thread_sandbox(client, track) do
+    case Fountain.get_conversation(client, track.conversation_id) do
+      {:ok, %{sandbox_id: id}} when is_binary(id) -> {:ok, id}
+      {:ok, _} -> thread_not_open()
       error -> error
     end
   end
 
-  defp launch_thread(user, track, project, client, sandbox_id) do
+  defp thread_not_open,
+    do: {:error, {:conflict, "not_open", "The track's machine is not ready."}}
+
+  defp launch_thread(user, track, project, client, sandbox_id, attrs) do
+    with {:ok, selection} <-
+           Runtime.select(
+             user,
+             project,
+             client,
+             attrs,
+             track.last_runtime,
+             sandbox_id
+           ) do
+      launch_selected_thread(user, track, project, client, sandbox_id, selection)
+    end
+  end
+
+  defp launch_selected_thread(user, track, project, client, sandbox_id, selection) do
     id = Ecto.UUID.generate()
     title = "Thread #{length(Store.threads_of(track.id)) + 1}"
 
     launch = %Launch{
-      agent_id: project.agent_id,
+      agent_id: selection.agent_id,
+      model: selection.model,
       environment_id: project.environment_id,
-      vault_id: project.vault_id,
+      vault_id:
+        if(track.sandbox_layout == :dedicated, do: track.vault_id, else: project.vault_id),
       sandbox_id: sandbox_id,
       title: title,
       channel_id: Ids.track_channel(project.id, track.slug, track.rev, id),
@@ -343,13 +400,17 @@ defmodule Ravix.Tracks do
 
     with {:ok, %Conversation{id: conversation_id}} <- Fountain.create_conversation(client, launch) do
       result =
-        with {:ok, %{track: %{closed_at: nil}}} <- Access.track_access(user, track.id),
+        with {:ok, %{track: %{closed_at: nil}, project: %{runtime_agents_retiring: false}}} <-
+               Access.track_access(user, track.id),
+             :ok <- Runtime.gate(user, %{project | runtime: selection.home}, selection.runtime),
              do:
                Store.create_thread(%{
                  id: id,
                  track_id: track.id,
                  conversation_id: conversation_id,
-                 title: title
+                 title: title,
+                 runtime: selection.runtime,
+                 model: selection.model
                })
 
       case result do
@@ -400,7 +461,25 @@ defmodule Ravix.Tracks do
          :ok <- Ravix.Projects.prepare_machine(project, client),
          {:ok, machine} <- MachineCache.machine_of(client, project),
          {:ok, plan} <- plan(user, project, attrs, machine),
-         {:ok, track} <- cut(client, plan) do
+         {:ok, selection} <-
+           Runtime.select(
+             user,
+             project,
+             client,
+             attrs,
+             nil,
+             machine && machine.sandbox_id
+           ),
+         :ok <- Runtime.pin_shared_home(project, selection, machine),
+         plan = %{
+           plan
+           | conversation: %{
+               plan.conversation
+               | agent_id: selection.agent_id,
+                 model: selection.model
+             }
+         },
+         {:ok, track} <- cut(client, plan, selection, user, project) do
       if machine do
         send_opening_turn(
           client,
@@ -421,7 +500,7 @@ defmodule Ravix.Tracks do
         :track_opened,
         Map.merge(Analytics.repo(track, project), %{
           "ravix.origin" => track.origin_kind,
-          "ravix.runtime" => project.runtime
+          "ravix.runtime" => selection.runtime
         })
       )
 
@@ -534,16 +613,25 @@ defmodule Ravix.Tracks do
   # is ended before the refusal is reported -- the same shape as
   # `Ravix.Projects` unwinding a machine whose row did not save. Best effort:
   # a terminate that fails is logged, and the refusal is reported either way.
-  defp cut(client, %Opening{} = plan) do
+  defp cut(client, %Opening{} = plan, selection, user, project) do
     with {:ok, %Conversation{id: conversation_id}} <-
            Fountain.create_conversation(client, plan.conversation) do
-      case Store.create_track(Opening.track_attrs(plan, conversation_id)) do
+      result =
+        with {:ok, _} <- Access.project_access(user, project.id),
+             :ok <- Runtime.gate(user, %{project | runtime: selection.home}, selection.runtime),
+             do: Store.create_track(Opening.track_attrs(plan, conversation_id), selection)
+
+      case result do
         {:ok, track} ->
           {:ok, track}
 
         {:error, %Ecto.Changeset{} = changeset} ->
           unwind_conversation(client, conversation_id)
           {:error, refusal(changeset)}
+
+        {:error, reason} ->
+          unwind_conversation(client, conversation_id)
+          {:error, reason}
       end
     end
   end
@@ -762,9 +850,11 @@ defmodule Ravix.Tracks do
              {:conflict, "not_open", "This track has no conversation yet."}
            ),
          {:ok, client} <- fountain(),
-         {:ok, override} <- model_override(client, project, model),
+         {:ok, override} <-
+           thread_model(client, project, thread, model),
          {:ok, %Conversation{model: ^override}} <-
            Fountain.set_model(client, thread.conversation_id, override) do
+      Store.set_thread_model(thread.id, override || project.model)
       MachineCache.forget_project(project.id)
       publish_tracks(project.id, track.id)
       {:ok, override}
@@ -789,6 +879,12 @@ defmodule Ravix.Tracks do
         error
     end
   end
+
+  defp thread_model(client, project, %{runtime: nil}, model),
+    do: model_override(client, project, model)
+
+  defp thread_model(client, project, thread, model),
+    do: Runtime.select_model(client, project, thread.runtime, model)
 
   defp model_override(_client, %{model: model}, model), do: {:ok, nil}
   defp model_override(_client, _project, nil), do: {:ok, nil}
@@ -846,8 +942,8 @@ defmodule Ravix.Tracks do
            Access.thread_access(user, track_id, thread_id),
          {:ok, client} <- fountain() do
       if thread.conversation_id,
-        do: read_transcript(client, thread.conversation_id, project.runtime),
-        else: {:ok, Transcript.empty(project.runtime)}
+        do: read_transcript(client, thread.conversation_id, thread.runtime || project.runtime),
+        else: {:ok, Transcript.empty(thread.runtime || project.runtime)}
     end
   end
 

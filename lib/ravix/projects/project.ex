@@ -31,6 +31,8 @@ defmodule Ravix.Projects.Project do
     field :repo_private, :boolean, default: false
     field :default_branch, :string
     field :installation_id, :integer
+    field :shared_home_runtime, :string
+    field :runtime_agents_retiring, :boolean, default: false
     field :agent_id, :string
     field :environment_id, :string
     field :vault_id, :string

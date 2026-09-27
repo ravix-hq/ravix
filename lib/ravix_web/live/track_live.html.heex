@@ -206,7 +206,9 @@
         <div :if={@queue != []} class="workspace-queue">
           <div :for={item <- @queue}>
             <span class="chip">{queue_label(item.status)}</span> {item.prompt}
-            <p :if={item.wait_reason}>{item.wait_reason}</p>
+            <p :if={queue_feedback(item, @track.runtime || @project.runtime)}>
+              {queue_feedback(item, @track.runtime || @project.runtime)}
+            </p>
             <span :if={item.error && item.status != :queued}>{item.error}</span>
             <button
               :if={item.can_cancel}
@@ -250,6 +252,37 @@
           </p>
         </div>
         <.loading_status :if={:retry in @pending}>Retrying track…</.loading_status>
+        <.loading_status :if={:thread_options in @pending}>Loading agents…</.loading_status>
+        <div :if={@thread_options} role="dialog" aria-label="New thread" id="new-thread-dialog">
+          <p>
+            You are creating a {RavixWeb.AgentName.label(
+              @thread_params["runtime"] || @thread_options.runtime
+            )} thread.
+          </p>
+          <form
+            id="new-thread-form"
+            phx-change="edit-thread"
+            phx-submit="add-thread"
+          >
+            <RavixWeb.Live.RuntimePicker.fields
+              options={@thread_options}
+              params={@thread_params}
+              name="new_thread"
+            />
+            <p class="hint">
+              Threads share this checkout and can run concurrently. Coordinate edits to avoid collisions.
+            </p>
+            <button type="submit" class="primary" disabled={:add_thread in @pending}>Create thread</button>
+            <button type="button" class="ghost" phx-click="cancel-thread">Cancel</button>
+          </form>
+          <RavixWeb.Live.ThreadConnect.panel
+            options={@thread_options}
+            connection={@thread_connect}
+            current_user={@current_user}
+            session_hash={@session_hash}
+          />
+        </div>
+        <p :if={@thread_error} id="thread-error" role="alert">{@thread_error}</p>
         <.loading_status :if={:add_thread in @pending}>Adding thread…</.loading_status>
         <.thread_tabs
           threads={@threads}
@@ -333,8 +366,12 @@
                   <.icon name="picture" size={17} />
                 </button>
                 <.model_menu
-                  model={@track.model || @project.model}
-                  project_model={@project.model}
+                  runtime={@track.runtime || @project.runtime}
+                  model={@track.model || @track.default_model || @project.model}
+                  project_model={
+                    if is_nil(@track.runtime) or @track.runtime == @project.runtime,
+                      do: @project.model
+                  }
                   models={@models}
                   disabled={
                     is_nil(@track.conversation_id) or @track.status in [:running, :opening] or

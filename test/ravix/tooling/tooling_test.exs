@@ -11,13 +11,23 @@ defmodule Ravix.ToolingTest do
   import Ravix.ToolingFixture
 
   setup do
+    stub(Ravix.Accounts.Inference, :usable?, fn owner, runtime, opts ->
+      if runtime == "claude",
+        do: {:ok, true},
+        else: Mimic.call_original(Ravix.Accounts.Inference, :usable?, [owner, runtime, opts])
+    end)
+
     user = insert_user()
     {p, _, _} = principal(user)
     %{user: user, p: p}
   end
 
   test "MCP thread arguments scope both reads and sends", %{p: p, user: user} do
-    track = insert_track(project: insert_project(user: user), conversation_id: "default")
+    track =
+      insert_track(
+        project: insert_project(runtime: "claude", user: user),
+        conversation_id: "default"
+      )
 
     {:ok, thread} =
       Ravix.Tracks.Store.create_thread(%{
@@ -54,14 +64,14 @@ defmodule Ravix.ToolingTest do
     user: owner,
     p: owner_principal
   } do
-    project = insert_project(user: owner, name: "ravix")
+    project = insert_project(runtime: "claude", user: owner, name: "ravix")
     track = insert_track(project: project)
     sibling = insert_track(project: project)
     member = insert_user()
     guest = insert_user()
     insert_project_member(project, member)
     insert_track_member(track, guest)
-    hidden = insert_project(user: insert_user(), name: "ravix")
+    hidden = insert_project(runtime: "claude", user: insert_user(), name: "ravix")
     stub(Ravix.MachineCache, :conversations, fn _, _, _ -> {:ok, []} end)
 
     for {user, ids} <- [
@@ -138,7 +148,7 @@ defmodule Ravix.ToolingTest do
     p: p,
     user: user
   } do
-    project = insert_project(user: user)
+    project = insert_project(runtime: "claude", user: user)
     stub(Ravix.Projects, :prepare_machine, fn _, _ -> :ok end)
 
     client =
@@ -175,7 +185,7 @@ defmodule Ravix.ToolingTest do
   end
 
   test "MCP creation rejects invalid and closed-track branch names", %{p: p, user: user} do
-    project = insert_project(user: user)
+    project = insert_project(runtime: "claude", user: user)
     insert_track(project: project, branch: "ravix/spent", closed_at: DateTime.utc_now())
     stub(Fountain, :client, fn -> Client.new("https://fountain.test", "key") end)
     stub(Ravix.Projects, :prepare_machine, fn _, _ -> :ok end)
@@ -196,7 +206,13 @@ defmodule Ravix.ToolingTest do
     user: user
   } do
     project =
-      insert_project(user: user, environment_id: "env", vault_id: "vault", agent_id: "agent")
+      insert_project(
+        runtime: "claude",
+        user: user,
+        environment_id: "env",
+        vault_id: "vault",
+        agent_id: "agent"
+      )
 
     fountain([
       {%{method: "GET", path: "/api/environments/env"},
@@ -234,7 +250,7 @@ defmodule Ravix.ToolingTest do
     p: p,
     user: user
   } do
-    project = insert_project(user: user)
+    project = insert_project(runtime: "claude", user: user)
     track = insert_track(project: project, conversation_id: "conversation")
     stub(Fountain, :client, fn -> Client.new("https://fountain.test", "key") end)
 
@@ -304,7 +320,7 @@ defmodule Ravix.ToolingTest do
     @branch branch
     @kind kind
     test "MCP creates and retries #{label}", %{p: p, user: user} do
-      project = insert_project(user: user)
+      project = insert_project(runtime: "claude", user: user)
       stub(Ravix.Projects, :prepare_machine, fn _, _ -> :ok end)
 
       client =
@@ -341,7 +357,7 @@ defmodule Ravix.ToolingTest do
   end
 
   test "MCP invalid names expose the field and the web form's typed rule", %{p: p, user: user} do
-    project = insert_project(user: user)
+    project = insert_project(runtime: "claude", user: user)
     stub(Fountain, :client, fn -> Client.new("https://fountain.test", "key") end)
     stub(Ravix.Projects, :prepare_machine, fn _, _ -> :ok end)
     stub(Ravix.MachineCache, :machine_of, fn _, _ -> {:ok, nil} end)

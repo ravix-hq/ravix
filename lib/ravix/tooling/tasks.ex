@@ -244,7 +244,7 @@ defmodule Ravix.Tooling.Tasks do
              events: [],
              seen: false
            }),
-         text <- reply(page.events, turn.id, access.project.runtime) do
+         text <- reply(page.events, turn.id, access.thread.runtime || access.project.runtime) do
       Store.transaction(fn -> save_page(task, turn, page, text) end)
     end
   end

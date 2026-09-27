@@ -11,8 +11,12 @@ defmodule Ravix.PlansAssignmentTest do
   alias RavixWeb.Tooling.MCP
 
   setup do
+    stub(Ravix.Accounts.Inference, :usable?, fn _, "claude", [fresh: true] -> {:ok, true} end)
     user = insert_user()
-    project = insert_project(user: user, repo_full_name: nil, installation_id: nil)
+
+    project =
+      insert_project(runtime: "claude", user: user, repo_full_name: nil, installation_id: nil)
+
     {p, _, _} = principal(user)
 
     {:ok, plan} =
@@ -157,7 +161,7 @@ defmodule Ravix.PlansAssignmentTest do
         conversation_id: "side"
       })
 
-    other = insert_track(project: insert_project(user: user))
+    other = insert_track(project: insert_project(runtime: "claude", user: user))
     closed = insert_track(project: project, closed_at: DateTime.utc_now())
 
     for id <- [other.id, closed.id, "missing"] do

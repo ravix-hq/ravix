@@ -1,17 +1,9 @@
 defmodule RavixWeb.AgentName do
   @moduledoc "Shared product names and project creation choices for coding agents."
 
-  @names %{
-    "claude" => "Claude Code",
-    "claude-code" => "Claude Code",
-    "codex" => "Codex",
-    "gemini" => "Gemini CLI",
-    "opencode" => "OpenCode",
-    "acp" => "ACP"
-  }
   @creatable ~w(claude codex)
 
-  def label(runtime), do: Map.get(@names, runtime, runtime)
+  defdelegate label(runtime), to: Ravix.AgentName
 
   def options, do: Enum.map(@creatable, &{label(&1), &1})
 

@@ -1,5 +1,6 @@
 defmodule Ravix.MemoTraceTest do
   use Ravix.TraceCase, async: false
+  use Ravix.DataCase, async: false
 
   alias Ravix.Fountain.FakeTransport
   alias Ravix.MachineCache

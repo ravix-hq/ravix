@@ -800,6 +800,12 @@
         phx-submit="create-track"
         phx-change="edit"
       >
+        <RavixWeb.Live.RuntimePicker.fields
+          :if={@track_options}
+          options={@track_options}
+          params={@track_form.params}
+          name="new_track"
+        />
         <p :if={!@advanced_track} class="hint">
           New worktree from {@project.default_branch || "the default branch"}, with an automatic name.
         </p>
@@ -877,6 +883,12 @@
           {if @busy, do: "Opening track…", else: "Create track"}
         </button>
       </.form>
+      <RavixWeb.Live.ThreadConnect.panel
+        options={@track_options}
+        connection={@thread_connect}
+        current_user={@current_user}
+        session_hash={@session_hash}
+      />
     </.dialog>
     <.live_component
       :if={@dialog == :settings && @project && @project.role == :owner}
