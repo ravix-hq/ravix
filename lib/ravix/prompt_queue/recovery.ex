@@ -19,6 +19,18 @@ defmodule Ravix.PromptQueue.Recovery do
   alias Ravix.Spec
   alias Ravix.Tracks.Track
 
+  @doc "Remove a complete leading recovery block and report whether context was restored."
+  @spec visible_prompt(String.t()) :: {String.t(), boolean()}
+  def visible_prompt(prompt) do
+    case Regex.run(
+           ~r/\A\[ravix: session context restored\]\n.*?\n\[\/ravix: session context restored\]\n\n(.*)\z/s,
+           prompt
+         ) do
+      [_, body] -> {body, true}
+      nil -> {prompt, false}
+    end
+  end
+
   @doc "Scan new events and persist the context attached to this claimed delivery."
   @spec prepare(Fountain.Client.t(), Item.t(), Track.t(), Project.t()) ::
           {:ok, String.t()} | :lost_claim | {:error, :context_unavailable}

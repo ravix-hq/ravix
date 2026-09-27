@@ -37,7 +37,30 @@ defmodule Ravix.PromptQueue do
   @spec list(User.t(), String.t(), String.t() | nil) :: {:ok, [View.t()]} | {:error, reason()}
   def list(%User{} = user, track_id, thread_id \\ nil) do
     with {:ok, %{role: role, thread: thread}} <- Access.thread_access(user, track_id, thread_id) do
-      {:ok, Store.summaries(track_id, thread.id) |> Enum.map(&present(&1, role, user))}
+      rows = Store.summaries(track_id, thread.id)
+      head = List.first(rows)
+      {:ok, Enum.map(rows, &queue_view(&1, head, role, user))}
+    end
+  end
+
+  # The ordered live summaries have the same head used by status/3's
+  # Store.held_before/1, without one database lookup per waiting prompt.
+  defp queue_view(row, head, role, user) do
+    view = present(row, role, user)
+
+    if row.status == :queued do
+      blocked =
+        if head.id != row.id and head.status in [:failed, :unconfirmed],
+          do: Map.take(head, [:id, :status])
+
+      reason =
+        if blocked,
+          do: "Waiting behind a prompt that needs attention",
+          else: row.error || head.error
+
+      %{view | blocked_by: blocked, wait_reason: reason}
+    else
+      view
     end
   end
 

@@ -359,6 +359,7 @@ defmodule Ravix.PromptQueueTest do
 
     capture_log(fn -> Server.tick(f.server) end)
     assert status_of(id) == :queued
+    assert PromptQueue.Store.get(id).error == "The agent is at capacity; will retry"
 
     capture_log(fn -> Server.tick(f.server) end)
 
@@ -647,6 +648,7 @@ defmodule Ravix.PromptQueueTest do
     assert [%{method: "GET", path: "/api/conversations/c1"}] = FakeTransport.calls(client)
 
     waiting = PromptQueue.Store.queued_prompts(f.track.id)
+    assert hd(waiting).error == "Waiting for the current turn to finish"
     assert length(waiting) == 5
     assert Enum.all?(waiting, &(&1.status == :queued))
   end
