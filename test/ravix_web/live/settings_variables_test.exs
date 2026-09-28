@@ -100,7 +100,6 @@ defmodule RavixWeb.Live.SettingsVariablesTest do
     render_async(view, 2_000)
     assert render(view) =~ "Each variable needs a name and a string value."
     assert Agent.get(env, & &1) == %{}
-    assert render(view) =~ "next track starts cold and reruns setup"
   end
 
   defp component(view) do

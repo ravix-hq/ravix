@@ -22,9 +22,6 @@ conversion to a map. Errors contain validation codes and explanations, never
 values. Phoenix filters `env_vars` parameters, settings and editable-row inspection redact them,
 and environment API failures omit response text from logs.
 
-Changing variables clears Fountain's warm-start checkpoint; the next track starts
-cold and reruns setup.
-
 A changed map bumps `project.rev` and invalidates the cached environment.
 Fountain injects the latest map when a conversation starts. Running conversations
 keep their previous values until restarted or rebuilt. Dedicated tracks reference
