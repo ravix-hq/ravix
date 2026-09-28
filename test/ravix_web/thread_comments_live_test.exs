@@ -133,6 +133,21 @@ defmodule RavixWeb.ThreadCommentsLiveTest do
     assert has_element?(view, "#composer-mode-comment[aria-pressed=true]")
   end
 
+  test "a draft thread has nothing to comment on: no toggle, and Comment mode is left", ctx do
+    stub(Tracks, :thread_options, fn _, _ -> {:error, :not_found} end)
+    {_parent, view} = open(ctx, ctx.owner)
+    comment_mode(view)
+    assert has_element?(view, ".composer-box.commenting")
+
+    render_click(view, "draft-thread", %{})
+    refute has_element?(view, "#composer-mode-comment")
+    refute has_element?(view, ".composer-box.commenting")
+    # A forged toggle while drafting changes nothing.
+    render_click(view, "composer-mode", %{"mode" => "comment"})
+    refute has_element?(view, ".composer-box.commenting")
+    refute has_element?(view, "#mention-options")
+  end
+
   test "the mention list offers only the people who can reach the track", ctx do
     {_parent, view} = open(ctx, ctx.member)
     comment_mode(view)
