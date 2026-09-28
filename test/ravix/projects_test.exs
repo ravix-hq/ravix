@@ -705,7 +705,7 @@ defmodule Ravix.ProjectsTest do
 
       assert {:ok, project} = Projects.create(me, %{repo: "owner/repo", installation_id: 1})
 
-      assert %Project{vault_id: nil, runtime: "claude", model: "anthropic/claude-opus-5"} =
+      assert %Project{vault_id: nil, runtime: "claude", model: "anthropic/claude-opus-5-5"} =
                Repo.get!(Project, project.id)
 
       refute Map.has_key?(body_of(client, "POST", "/api/agents"), "vault_id")
