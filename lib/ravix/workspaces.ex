@@ -424,6 +424,119 @@ defmodule Ravix.Workspaces do
     end
   end
 
+  # ── moving a project between workspaces ───────────────────────────────
+
+  @typedoc "Where a project's owner may move it, from `move_targets/2`."
+  @type move_targets :: %{
+          current: Workspace.t() | nil,
+          targets: [Workspace.t()],
+          duplicate_of: String.t() | nil
+        }
+
+  @doc """
+  The workspace a project is in (nil for a legacy project) and the ones its
+  owner may move it into: live workspaces where they are an owner or admin
+  (`:manage_projects`), other than the current one. None for a legacy
+  duplicate, which `move_project/3` refuses; `duplicate_of` names its
+  canonical project. The project's owner only, and not found for everybody
+  while `RAVIX_WORKSPACE_ACCESS` is off.
+  """
+  @spec move_targets(User.t(), String.t()) :: {:ok, move_targets()} | {:error, :not_found}
+  def move_targets(%User{} = user, project_id) do
+    with true <- enabled?() || {:error, :not_found},
+         {:ok, project} <- Access.project_of(user, project_id) do
+      targets =
+        for {workspace, role} <- Store.workspaces_of(user.id),
+            not legacy_duplicate?(project),
+            workspace.id != project.workspace_id,
+            Access.can?(role, :manage_projects),
+            do: workspace
+
+      {:ok,
+       %{
+         current: Store.live_workspace(project.workspace_id),
+         targets: targets,
+         duplicate_of: project.legacy_duplicate_of
+       }}
+    end
+  end
+
+  @doc """
+  Move a project into another workspace, keeping its tracks.
+
+  Its owner only (`Access.project_of/2`), and only into a workspace where
+  they are an owner or admin (`Access.workspace_grant/3` with
+  `:manage_projects`); a member-only workspace is refused. A target that
+  already has a project for the same repository is refused with that
+  project, so the caller can point to it (the one-project-per-repository
+  index, `projects_workspace_repo`). A marked legacy duplicate is refused
+  too: that index does not count it, so a moved duplicate would reserve
+  nothing in its target and leave two projects for one repository there.
+
+  Tracks, threads, legacy project and track members and permission rows
+  stay as they are. A permission row counts only in the workspace it was
+  granted in, so a private track stays private: after the move it admits
+  its creator and legacy members, and the target's members see only its
+  workspace-visible tracks.
+
+  After the move has committed, both workspaces' pages and every project in
+  them are told (`members_changed/1`), so open rails and track pages
+  re-read who can reach what. Do not call this inside an outer transaction.
+  """
+  @spec move_project(User.t(), String.t(), String.t()) ::
+          {:ok, Project.t()}
+          | {:error,
+             :not_found
+             | {:forbidden, String.t()}
+             | {:conflict, String.t(), String.t()}
+             | {:repository_taken, %{id: String.t(), name: String.t(), workspace: String.t()}}}
+  def move_project(%User{} = user, project_id, workspace_id) do
+    with {:ok, project} <- Access.project_of(user, project_id),
+         {:ok, %{workspace: target}} <-
+           Access.workspace_grant(user, workspace_id, :manage_projects),
+         :ok <- not_duplicate(project),
+         :ok <- elsewhere(project, target),
+         {:ok, moved} <- store_move(project, target) do
+      if project.workspace_id, do: members_changed(project.workspace_id)
+      members_changed(target.id)
+      {:ok, moved}
+    end
+  end
+
+  defp not_duplicate(%Project{legacy_duplicate_of: canonical} = project) do
+    if legacy_duplicate?(project),
+      do:
+        {:error,
+         {:conflict, "legacy_duplicate",
+          "This project is a legacy duplicate of project #{canonical}, so it cannot be moved. " <>
+            "Keep working in that one, or ask for the duplicate to be resolved first."}},
+      else: :ok
+  end
+
+  defp elsewhere(%Project{workspace_id: id}, %Workspace{id: id, name: name}),
+    do: {:error, {:conflict, "same_workspace", "The project is already in #{name}."}}
+
+  defp elsewhere(%Project{}, %Workspace{}), do: :ok
+
+  defp store_move(project, target) do
+    case Store.move_owned_project(project.id, project.user_id, project.workspace_id, target.id) do
+      {:ok, moved} ->
+        {:ok, moved}
+
+      {:error, {:taken, %Project{} = holder}} ->
+        {:error, {:repository_taken, %{id: holder.id, name: holder.name, workspace: target.name}}}
+
+      {:error, {:taken, nil}} ->
+        {:error,
+         {:conflict, "repository_taken",
+          "#{target.name} already has a project for this repository."}}
+
+      # Moved, archived or deleted by somebody else since it was read.
+      {:error, :not_found} ->
+        {:error, :not_found}
+    end
+  end
+
   @doc """
   Whether a legacy duplicate holds `repo` back from the caller's legacy
   creation path. Read-only in this release: project creation does not

@@ -27,7 +27,9 @@ defmodule Ravix.WorkspaceSharingTest do
       for login <- ~w(owner creator colleague holder outsider legacy pendingmember),
           do: insert_user(login: "#{login}#{System.unique_integer([:positive])}", name: login)
 
-    {:ok, workspace} = Store.ensure_personal_workspace(owner)
+    # A team workspace: a personal one has nobody else in it, and the cutover
+    # leaves projects there alone.
+    {:ok, workspace} = Store.create_team_workspace(owner.id, "Team")
     for user <- [creator, colleague, holder], do: member!(workspace, user)
 
     project = in_workspace(insert_project(user: owner, name: "Team"), workspace)
@@ -420,6 +422,39 @@ defmodule Ravix.WorkspaceSharingTest do
 
       assert {:ok, %{tracks: []}} = Cutover.run(apply: true)
       assert {:ok, %{tracks: []}} = Cutover.run()
+    end
+
+    test "leaves a project in a personal workspace as it is, and says so", ctx do
+      {:ok, personal} = Store.ensure_personal_workspace(ctx.owner)
+      mine = in_workspace(insert_project(user: ctx.owner, name: "Mine"), personal)
+      insert_project_member(mine, ctx.outsider)
+      track = insert_track(project: mine, title: "Mine work", created_by: ctx.owner.id)
+      insert_track_member(track, ctx.pending_member)
+      old_link(track, ctx.owner)
+
+      assert {:ok, %{tracks: tracks, skipped: [skipped]}} = Cutover.run()
+      assert skipped == %{track_id: track.id, title: "Mine work", project_id: mine.id}
+      refute Enum.any?(tracks, &(&1.track_id == track.id))
+
+      text =
+        Enum.join(Cutover.format(%{applied: false, tracks: tracks, skipped: [skipped]}), "\n")
+
+      assert text =~ "1 track(s) on projects in a personal workspace left as they are."
+      assert text =~ "#{track.id} \"Mine work\": skipped, project #{mine.id} is in a personal"
+
+      assert {:ok, %{applied: true, skipped: [_]}} = Cutover.run(apply: true)
+      assert {:ok, %{skipped: [_]}} = Cutover.run(apply: true)
+
+      # The seat and the project membership still admit, and nothing was noted.
+      assert Repo.exists?(
+               where(TrackMember, track_id: ^track.id, user_id: ^ctx.pending_member.id)
+             )
+
+      assert reaches?(ctx.pending_member, track)
+      assert {:ok, %{role: :member}} = Access.project_access(ctx.outsider, mine.id)
+      refute Repo.exists?(where(AccessNotice, track_id: ^track.id))
+      # Meanwhile the team project's seats were retired as before.
+      refute Repo.exists?(where(TrackMember, track_id: ^ctx.secret.id))
     end
 
     test "a member's seat on a project-visible track becomes no row to wake later", ctx do

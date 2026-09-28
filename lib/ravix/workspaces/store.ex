@@ -1136,6 +1136,167 @@ defmodule Ravix.Workspaces.Store do
     count
   end
 
+  # ── the personal-workspace assignment (ADR 0009 follow-up) ────────────
+
+  @doc """
+  Every project with no workspace, with its legacy owner's login and live
+  personal workspace (nil when they have none), oldest first. Archived,
+  deleting and legacy-duplicate rows are included so the operator step can
+  say it skipped them.
+  """
+  @spec unassigned_projects() :: [
+          %{project: Project.t(), login: String.t() | nil, workspace_id: String.t() | nil}
+        ]
+  def unassigned_projects do
+    # ownership: no door -- the operator data step `Ravix.Workspaces.PersonalAssignment`.
+    Repo.all(
+      from p in Project,
+        left_join: u in User,
+        on: u.id == p.user_id,
+        left_join: w in Workspace,
+        on: w.personal_user_id == p.user_id and w.kind == :personal and is_nil(w.archived_at),
+        where: is_nil(p.workspace_id),
+        order_by: [asc: p.created_at, asc: p.id],
+        select: %{project: p, login: u.login, workspace_id: w.id}
+    )
+  end
+
+  @doc """
+  The project each of `workspace_ids` counts for a repository in
+  `projects_workspace_repo` (every row but a marked legacy duplicate), as
+  `{workspace_id, normalized_repo} => %{id: project_id, state: state}`,
+  where `state` is `:live`, `:archived` or `:deleting`: an archived or
+  deleting project still holds the slot.
+  """
+  @spec index_holders([String.t()]) :: %{
+          {String.t(), String.t()} => %{id: String.t(), state: :live | :archived | :deleting}
+        }
+  def index_holders([]), do: %{}
+
+  def index_holders(workspace_ids) do
+    # ownership: no door -- the operator data step, as `unassigned_projects/0`.
+    Repo.all(
+      from p in Project,
+        where:
+          p.workspace_id in ^workspace_ids and not is_nil(p.normalized_repo_full_name) and
+            is_nil(p.legacy_duplicate_at),
+        order_by: [asc: p.created_at, asc: p.id],
+        select: {{p.workspace_id, p.normalized_repo_full_name}, p}
+    )
+    |> Enum.reverse()
+    |> Map.new(fn {key, project} -> {key, %{id: project.id, state: holder_state(project)}} end)
+  end
+
+  defp holder_state(%Project{archived_at: %DateTime{}}), do: :archived
+  defp holder_state(%Project{deletion_requested_at: %DateTime{}}), do: :deleting
+  defp holder_state(%Project{}), do: :live
+
+  @doc """
+  Put a legacy project into its owner's personal workspace, for the
+  personal-workspace assignment. Written only while the row is still
+  unassigned, live and not a marked duplicate, re-checked by the update
+  itself: `:skipped` when it no longer is (0 rows), `:collision` when the
+  workspace gained a project for its repository since the plan was made.
+  """
+  @spec assign_personal(String.t(), String.t()) :: :moved | :skipped | :collision
+  def assign_personal(project_id, workspace_id) do
+    # ownership: no door -- the operator data step `Ravix.Workspaces.PersonalAssignment`.
+    {count, _} =
+      Repo.update_all(
+        from(p in Project,
+          where:
+            p.id == ^project_id and is_nil(p.workspace_id) and is_nil(p.archived_at) and
+              is_nil(p.deletion_requested_at) and is_nil(p.legacy_duplicate_at),
+          update: [
+            set: [
+              workspace_id: ^workspace_id,
+              created_by_user_id: coalesce(p.created_by_user_id, p.user_id),
+              normalized_repo_full_name:
+                fragment(
+                  "coalesce(?, nullif(lower(btrim(?, E' \\t\\r\\n')), ''))",
+                  p.normalized_repo_full_name,
+                  p.repo_full_name
+                )
+            ]
+          ]
+        ),
+        []
+      )
+
+    if count == 1, do: :moved, else: :skipped
+  rescue
+    error in Postgrex.Error ->
+      if error.postgres[:code] == :unique_violation,
+        do: :collision,
+        else: reraise(error, __STACKTRACE__)
+  end
+
+  @doc "Which of `workspace_ids` are personal workspaces."
+  @spec personal_ids([String.t()]) :: MapSet.t(String.t())
+  def personal_ids(workspace_ids) do
+    Repo.all(
+      from w in Workspace, where: w.id in ^workspace_ids and w.kind == :personal, select: w.id
+    )
+    |> MapSet.new()
+  end
+
+  @doc """
+  Move `project_id` from `from` (a workspace id, or nil for the legacy
+  layout) into `to`, for its legacy owner `owner_id`. Under the project's
+  row lock it re-checks that it is still that owner's, still in `from` and
+  live, and that `to` has no project for its repository; the partial unique
+  index answers a concurrent admission the same way. Tracks, threads,
+  permission rows and legacy members are other tables' rows and stay as
+  they are. The GitHub connection is `from`'s, so it is cleared.
+  """
+  @spec move_owned_project(String.t(), String.t(), String.t() | nil, String.t()) ::
+          {:ok, Project.t()} | {:error, :not_found | {:taken, Project.t() | nil}}
+  def move_owned_project(project_id, owner_id, from, to) do
+    # ownership: `Ravix.Workspaces.move_project/3` went through
+    # `Access.project_of/2` and `Access.workspace_grant/3` for `to`.
+    Repo.transaction(fn ->
+      # ownership: as above; the row is locked so the checks hold at the write.
+      project =
+        Repo.one(
+          from p in Project,
+            where:
+              p.id == ^project_id and p.user_id == ^owner_id and is_nil(p.archived_at) and
+                is_nil(p.deletion_requested_at) and is_nil(p.legacy_duplicate_at),
+            lock: "FOR UPDATE"
+        )
+
+      with {:here, %Project{workspace_id: ^from}} <- {:here, project},
+           normalized = repo_key(project),
+           {:free, nil} <- {:free, normalized && index_holder(to, normalized)},
+           {:ok, moved} <- put_workspace(project, to, normalized) do
+        moved
+      else
+        {:free, %Project{} = holder} -> Repo.rollback({:taken, holder})
+        {:here, _gone_or_moved} -> Repo.rollback(:not_found)
+        # The failed statement aborted the transaction; the holder is read after.
+        {:error, %Ecto.Changeset{}} -> Repo.rollback({:raced, repo_key(project)})
+      end
+    end)
+    |> case do
+      {:error, {:raced, normalized}} -> {:error, {:taken, index_holder(to, normalized)}}
+      result -> result
+    end
+  end
+
+  defp put_workspace(project, to, normalized) do
+    project
+    |> Ecto.Changeset.change(
+      workspace_id: to,
+      workspace_installation_id: nil,
+      normalized_repo_full_name: normalized,
+      created_by_user_id: project.created_by_user_id || project.user_id
+    )
+    |> Ecto.Changeset.unique_constraint(:normalized_repo_full_name,
+      name: :projects_workspace_repo
+    )
+    |> Repo.update()
+  end
+
   # ── the backfill ─────────────────────────────────────────────────────
 
   @doc """

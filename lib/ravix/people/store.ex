@@ -479,6 +479,101 @@ defmodule Ravix.People.Store do
     )
   end
 
+  @typedoc "Who else a legacy project is shared with, for an operator report. No tokens."
+  @type inventory :: %{
+          members: [String.t()],
+          seats: [String.t()],
+          invites: [String.t()],
+          links: non_neg_integer()
+        }
+
+  @doc """
+  For each of `projects`, who besides its owner holds anything on it: project
+  members and track seats (by login, a seat's holder once however many
+  tracks), waiting project and track invitations (by login), and how many
+  project and track links have not expired. Only counts and logins: a link's
+  hash is never read.
+  """
+  @spec inventory([Project.t()]) :: %{String.t() => inventory()}
+  def inventory([]), do: %{}
+
+  def inventory(projects) do
+    ids = Enum.map(projects, & &1.id)
+    owners = Map.new(projects, &{&1.id, &1.user_id})
+    now = DateTime.utc_now()
+    others = fn {project_id, user_id, _login} -> owners[project_id] != user_id end
+
+    members =
+      Repo.all(
+        from(m in ProjectMember,
+          join: u in assoc(m, :user),
+          where: m.project_id in ^ids,
+          select: {m.project_id, u.id, u.login}
+        )
+      )
+
+    seats =
+      Repo.all(
+        from(m in TrackMember,
+          join: t in assoc(m, :track),
+          join: u in assoc(m, :user),
+          where: t.project_id in ^ids,
+          select: {t.project_id, u.id, u.login}
+        )
+      )
+
+    # ownership: no door -- the operator report
+    # `Ravix.Workspaces.PersonalAssignment`; the track only names its project.
+    invites =
+      Repo.all(
+        from(i in ProjectInvite, where: i.project_id in ^ids, select: {i.project_id, i.login})
+      ) ++
+        Repo.all(
+          from(i in TrackInvite,
+            join: t in Track,
+            on: t.id == i.track_id,
+            where: t.project_id in ^ids,
+            select: {t.project_id, i.login}
+          )
+        )
+
+    project_links =
+      Repo.all(
+        from(l in ProjectLink,
+          where: l.project_id in ^ids and l.expires_at > ^now,
+          select: l.project_id
+        )
+      )
+
+    # ownership: no door -- the operator report
+    # `Ravix.Workspaces.PersonalAssignment`; the track only names its project.
+    track_links =
+      Repo.all(
+        from(l in TrackLink,
+          join: t in Track,
+          on: t.id == l.track_id,
+          where: t.project_id in ^ids and l.expires_at > ^now,
+          select: t.project_id
+        )
+      )
+
+    links = project_links ++ track_links
+
+    logins = fn rows, project_id ->
+      for {^project_id, _user_id, login} = row <- rows, others.(row), uniq: true, do: login
+    end
+
+    Map.new(ids, fn id ->
+      {id,
+       %{
+         members: logins.(members, id),
+         seats: logins.(seats, id),
+         invites: for({^id, login} <- invites, uniq: true, do: login),
+         links: Enum.count(links, &(&1 == id))
+       }}
+    end)
+  end
+
   @doc "Withdraw every invitation waiting on a track. How many there were."
   @spec drop_invites(String.t()) :: non_neg_integer()
   def drop_invites(track_id) do

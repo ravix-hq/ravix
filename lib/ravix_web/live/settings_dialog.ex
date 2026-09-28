@@ -16,6 +16,7 @@ defmodule RavixWeb.Live.SettingsDialog do
   alias Ravix.Projects.EnvironmentVariables.Row
   alias Ravix.Projects.Machine.Rebuild
   alias Ravix.Tracks
+  alias Ravix.Workspaces
   alias RavixWeb.Live.Form
   alias RavixWeb.Live.Hooks
   alias RavixWeb.Live.Params
@@ -37,7 +38,10 @@ defmodule RavixWeb.Live.SettingsDialog do
          save_version: 0,
          switching_agent: false,
          switch_confirmation: nil,
-         confirmations: %{}
+         confirmations: %{},
+         move_targets: nil,
+         move_confirmation: nil,
+         move_taken: nil
        )}
 
   @impl true
@@ -245,6 +249,31 @@ defmodule RavixWeb.Live.SettingsDialog do
     end
   end
 
+  defp settings_event("choose-move-target", %{"workspace" => id}, socket) do
+    case socket.assigns.move_targets &&
+           Enum.find(socket.assigns.move_targets.targets, &(&1.id == id)) do
+      nil -> {:noreply, socket}
+      target -> {:noreply, assign(socket, move_confirmation: target, move_taken: nil)}
+    end
+  end
+
+  defp settings_event("cancel-move", _, socket),
+    do: {:noreply, assign(socket, move_confirmation: nil)}
+
+  defp settings_event("confirm-move", _, socket) do
+    case socket.assigns.move_confirmation do
+      %{id: workspace_id} ->
+        user = user(socket)
+        id = project_id(socket)
+
+        {:noreply,
+         begin(socket, :move, fn -> Workspaces.move_project(user, id, workspace_id) end)}
+
+      nil ->
+        {:noreply, socket}
+    end
+  end
+
   defp settings_event("confirm-danger", %{"action" => action, "confirm" => name}, socket)
        when action in ["rebuild", "delete"] do
     {:noreply, update(socket, :confirmations, &Map.put(&1, action, name))}
@@ -351,6 +380,29 @@ defmodule RavixWeb.Live.SettingsDialog do
      end)}
   end
 
+  # The target already has this repository: say which project, so the owner
+  # can open that one instead, rather than a bare refusal.
+  defp async_result(:move, {:ok, {:error, {:repository_taken, taken}}}, socket),
+    do: {:noreply, socket |> settle(:move) |> assign(move_confirmation: nil, move_taken: taken)}
+
+  defp async_result(:move, {:ok, response}, socket) do
+    {:noreply,
+     result(settle(socket, :move), response, fn s, _moved ->
+       target = s.assigns.move_confirmation
+       # The rail lists projects by workspace, so it re-reads.
+       send(self(), :project_settings_saved)
+
+       s
+       |> assign(move_confirmation: nil, move_taken: nil)
+       |> load()
+       |> saved()
+       |> flash(
+         :info,
+         "Moved to #{if target, do: workspace_label(target), else: "the workspace"}."
+       )
+     end)}
+  end
+
   defp async_result(name, {:exit, reason}, socket),
     do: {:noreply, socket |> settle(name) |> exit(reason)}
 
@@ -437,7 +489,16 @@ defmodule RavixWeb.Live.SettingsDialog do
       # nothing to read back, and a key left in the box from the last save
       # invites somebody to overwrite a secret they meant to add beside.
       |> assign(secret_form: Form.new(:secret, %{"store" => "env"}))
+      |> assign(move_targets: move_targets(s))
     end)
+  end
+
+  # Nil while workspaces are switched off, which hides the section.
+  defp move_targets(socket) do
+    case Workspaces.move_targets(user(socket), project_id(socket)) do
+      {:ok, targets} -> targets
+      {:error, _} -> nil
+    end
   end
 
   defp edit_agent(socket, params) do
@@ -552,16 +613,21 @@ defmodule RavixWeb.Live.SettingsDialog do
   defp user(socket), do: socket.assigns.current_user
   defp project_id(socket), do: socket.assigns.project.id
 
-  defp sections,
-    do: [
-      {"general", "General"},
-      {"agent", "Agent"},
-      {"environment", "Environment"},
-      {"variables", "Environment variables"},
-      {"secrets", "Secrets"},
-      {"previews", "Run script"},
-      {"danger", "Danger zone"}
-    ]
+  defp sections(move_targets),
+    do:
+      [
+        {"general", "General"},
+        {"agent", "Agent"},
+        {"environment", "Environment"},
+        {"variables", "Environment variables"},
+        {"secrets", "Secrets"},
+        {"previews", "Run script"}
+      ] ++
+        if(move_targets, do: [{"workspace", "Workspace"}], else: []) ++
+        [{"danger", "Danger zone"}]
+
+  defp workspace_label(%{kind: :personal}), do: "your personal workspace"
+  defp workspace_label(%{name: name}), do: name
 
   defp model_options(values, current) do
     Enum.map(Enum.uniq(values ++ List.wrap(current)), &{ModelName.friendly(&1), &1})
@@ -605,7 +671,7 @@ defmodule RavixWeb.Live.SettingsDialog do
         >
           <nav class="settings-nav" aria-label="Settings sections">
             <button
-              :for={{key, title} <- sections()}
+              :for={{key, title} <- sections(@move_targets)}
               type="button"
               class="ghost"
               data-settings-section={key}
@@ -1082,6 +1148,98 @@ defmodule RavixWeb.Live.SettingsDialog do
                   class="ghost"
                 >Clear defaults</button>
               </.form>
+            </section>
+            <section
+              :if={@move_targets}
+              id="settings-section-workspace"
+              data-settings-panel="workspace"
+              aria-labelledby="settings-workspace-title"
+              hidden
+            >
+              <h3 id="settings-workspace-title" tabindex="-1">Workspace</h3>
+              <p class="settings-help">
+                {if @move_targets.current,
+                  do: "This project is in #{workspace_label(@move_targets.current)}.",
+                  else: "This project is not in a workspace yet."} Moving it keeps its tracks, threads, machine, settings and secrets.
+              </p>
+              <p :if={@move_targets.duplicate_of} id="move-duplicate" class="settings-help">
+                This project is a legacy duplicate of
+                <.link navigate={"/p/#{@move_targets.duplicate_of}"}>another project</.link>
+                for the same repository, so it cannot be moved. Keep working in that one, or resolve the duplicate first.
+              </p>
+              <p
+                :if={@move_targets.targets == [] and is_nil(@move_targets.duplicate_of)}
+                id="move-no-targets"
+                class="settings-help"
+              >
+                You can move it only into a workspace where you are an owner or admin, and you are not one of any other.
+              </p>
+              <div
+                :if={@move_targets.targets != []}
+                id="move-targets"
+                role="group"
+                aria-label="Move to workspace"
+              >
+                <button
+                  :for={workspace <- @move_targets.targets}
+                  id={"move-to-#{workspace.id}"}
+                  type="button"
+                  class="ghost"
+                  phx-click="choose-move-target"
+                  phx-value-workspace={workspace.id}
+                  phx-target={@myself}
+                  aria-pressed={
+                    to_string(@move_confirmation != nil and @move_confirmation.id == workspace.id)
+                  }
+                  disabled={MapSet.size(@pending) > 0}
+                >
+                  Move to {workspace_label(workspace)}…
+                </button>
+              </div>
+              <p :if={@move_taken} id="move-taken" role="alert">
+                {@move_taken.workspace} already has a project for this repository: <.link navigate={"/p/#{@move_taken.id}"}>{@move_taken.name}</.link>. Open that one instead, or move or delete it first.
+              </p>
+              <div
+                :if={@move_confirmation}
+                id="move-confirmation"
+                role="alertdialog"
+                aria-labelledby="move-confirmation-title"
+                aria-describedby="move-confirmation-body"
+              >
+                <h4 id="move-confirmation-title">
+                  Move {@project.name} to {workspace_label(@move_confirmation)}?
+                </h4>
+                <ul id="move-confirmation-body">
+                  <li>
+                    Members of {workspace_label(@move_confirmation)} will see this project and its workspace-visible tracks, and can start tracks of their own.
+                  </li>
+                  <li>Private tracks stay private.</li>
+                  <li>
+                    People you added to the project or to a track keep their access.
+                  </li>
+                  <li>
+                    Invitations nobody has accepted yet and invite links stop working. From then on you can share only with members of {workspace_label(
+                      @move_confirmation
+                    )}.
+                  </li>
+                  <li :if={@move_targets.current}>
+                    Members of {workspace_label(@move_targets.current)} who were not added to the project or a track lose access, including private tracks shared with them there.
+                  </li>
+                </ul>
+                <button
+                  id="confirm-move"
+                  class="primary"
+                  phx-click="confirm-move"
+                  phx-target={@myself}
+                  phx-mounted={Phoenix.LiveView.JS.focus()}
+                  disabled={MapSet.size(@pending) > 0}
+                >
+                  Move project
+                </button>
+                <button type="button" phx-click="cancel-move" phx-target={@myself}>
+                  Cancel
+                </button>
+              </div>
             </section>
             <section
               id="settings-section-danger"

@@ -33,7 +33,7 @@ defmodule RavixWeb.ShareDialogTest do
     holder = insert_user(login: "shareholder", name: "Holly Holder")
     colleague = insert_user(login: "sharecolleague")
     outsider = insert_user(login: "shareoutsider")
-    {:ok, workspace} = Store.ensure_personal_workspace(owner)
+    {:ok, workspace} = Store.create_team_workspace(owner.id, "Team")
     for user <- [creator, holder, colleague], do: member!(workspace, user)
 
     project = in_workspace(insert_project(user: owner, name: "Team repo"), workspace)

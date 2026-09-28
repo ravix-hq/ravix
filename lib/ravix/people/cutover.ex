@@ -21,6 +21,15 @@ defmodule Ravix.People.Cutover do
       Inbox note to the track's creator (`Ravix.People.AccessNotice`),
       pointing at the workspace's people page to invite them there.
 
+  Projects in a **personal** workspace are skipped and reported, seats,
+  invitations and links untouched. A personal workspace has no other members,
+  so there a seat or a legacy project membership is the only way anybody
+  but its owner reaches the project: the one-time move of legacy projects
+  into their owners' personal workspaces
+  (`Ravix.Workspaces.PersonalAssignment`) keeps them, and a cutover run
+  after it must not take them away. They are retired when the owner moves
+  the project into a team workspace and the cutover runs again.
+
   Somebody is listed as having lost access only if they no longer reach
   the track at all -- a legacy project member on a project-visible track
   keeps it through the project, and is not.
@@ -52,7 +61,9 @@ defmodule Ravix.People.Cutover do
           seats: %{convert: [String.t()], remove: [String.t()]}
         }
 
-  @type summary :: %{applied: boolean(), tracks: [track_line()]}
+  @type skipped_line :: %{track_id: String.t(), title: String.t(), project_id: String.t()}
+
+  @type summary :: %{applied: boolean(), tracks: [track_line()], skipped: [skipped_line()]}
 
   @doc "Work out the cutover, and write it when `apply: true`."
   @spec run(keyword()) :: {:ok, summary()} | {:error, :switch_off}
@@ -61,10 +72,22 @@ defmodule Ravix.People.Cutover do
 
     if Ravix.Config.workspace_access?() do
       # ownership: no door -- an operator step run as nobody; see the moduledoc.
-      lines =
-        Enum.map(Store.cutover_tracks(), fn {track, project} -> step(track, project, apply?) end)
+      candidates = Store.cutover_tracks()
+      personal = Workspaces.personal_ids(Enum.map(candidates, &elem(&1, 1).workspace_id))
 
-      {:ok, %{applied: apply?, tracks: lines}}
+      {skipped, retired} =
+        Enum.split_with(candidates, fn {_track, project} ->
+          MapSet.member?(personal, project.workspace_id)
+        end)
+
+      lines = Enum.map(retired, fn {track, project} -> step(track, project, apply?) end)
+
+      skipped =
+        Enum.map(skipped, fn {track, project} ->
+          %{track_id: track.id, title: track.title, project_id: project.id}
+        end)
+
+      {:ok, %{applied: apply?, tracks: lines, skipped: skipped}}
     else
       {:error, :switch_off}
     end
@@ -164,7 +187,8 @@ defmodule Ravix.People.Cutover do
 
   @doc "The summary as lines to print: ids, titles and logins, no secrets."
   @spec format(summary()) :: [String.t()]
-  def format(%{applied: applied, tracks: tracks}) do
+  def format(%{applied: applied, tracks: tracks} = summary) do
+    skipped = Map.get(summary, :skipped, [])
     count = fn key -> tracks |> Enum.map(&length(Map.fetch!(&1, key))) |> Enum.sum() end
 
     header = [
@@ -176,7 +200,8 @@ defmodule Ravix.People.Cutover do
       "#{count.(:converted)} seat(s) become permission rows; " <>
         "#{count.(:revoked)} person(s) lose access; " <>
         "#{count.(:withdrawn)} waiting invitation(s) withdrawn; " <>
-        "#{Enum.count(tracks, & &1.link)} link(s) invalidated."
+        "#{Enum.count(tracks, & &1.link)} link(s) invalidated.",
+      "#{length(skipped)} track(s) on projects in a personal workspace left as they are."
     ]
 
     header ++
@@ -191,6 +216,10 @@ defmodule Ravix.People.Cutover do
             ],
             "; "
           )
+      end) ++
+      Enum.map(skipped, fn t ->
+        "  #{t.track_id} #{inspect(t.title)}: skipped, project #{t.project_id} is in a " <>
+          "personal workspace; seats and project members kept"
       end)
   end
 
