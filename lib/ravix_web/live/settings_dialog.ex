@@ -1103,6 +1103,7 @@ defmodule RavixWeb.Live.SettingsDialog do
                 </p>
                 <.input
                   name="confirm"
+                  id="close-orphaned-private-confirm"
                   value=""
                   label={"Type #{@project.name} to confirm closing orphaned tracks"}
                   required

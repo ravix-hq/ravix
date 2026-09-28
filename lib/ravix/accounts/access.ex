@@ -215,12 +215,13 @@ defmodule Ravix.Accounts.Access do
     do: is_binary(creator) and creator == id and is_nil(Map.get(track, :creator_revoked_at))
 
   @doc "Sharing controls belong to the creator, or the owner of a project-visible track."
-  def require_track_manager(role, user, track, what) do
-    if (track.visibility == :private and creator?(user, track)) or
-         (role == :owner and track.visibility == :project),
-       do: :ok,
-       else: {:error, {:forbidden, "Only the track creator can #{what}."}}
+  def require_track_manager(_role, user, %{visibility: :private} = track, what) do
+    if creator?(user, track),
+      do: :ok,
+      else: {:error, {:forbidden, "Only the track creator can #{what}."}}
   end
+
+  def require_track_manager(role, _user, _track, what), do: require_owner(role, what)
 
   @doc """
   How `user_id` reaches `project`, or nil when they do not.

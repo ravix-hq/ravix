@@ -3305,6 +3305,30 @@ defmodule RavixWeb.TrackLiveTest do
     ctx.view |> element("button[phx-click=queue]", "Cancel") |> render_click()
   end
 
+  test "a private invitee who owns the project sees no creator management controls", ctx do
+    creator = insert_user()
+    insert_project_member(ctx.project, creator)
+    insert_track_member(ctx.track, ctx.user)
+
+    Repo.update!(
+      Ecto.Changeset.change(ctx.track,
+        created_by: creator.id,
+        visibility: :private,
+        sandbox_layout: :dedicated,
+        sandbox_state: :ready
+      )
+    )
+
+    send(ctx.view.pid, {:hub, Event.new(:people, ctx.project.id, track_id: ctx.track.id)})
+    settle(ctx.view)
+    refute has_element?(ctx.view, "[phx-value-name=rename]")
+    refute has_element?(ctx.view, "[phx-value-name=close]")
+    refute has_element?(ctx.view, "#rebuild-track-machine")
+    render_click(ctx.view, "dialog", %{name: "people"})
+    refute has_element?(ctx.view, "#track-visibility-form")
+    refute has_element?(ctx.view, "[phx-submit=invite-person]")
+  end
+
   test "shared track sharing explains and refuses private visibility", ctx do
     Repo.update!(Ecto.Changeset.change(ctx.track, created_by: ctx.user.id))
     send(ctx.view.pid, {:hub, Event.new(:people, ctx.project.id, track_id: ctx.track.id)})

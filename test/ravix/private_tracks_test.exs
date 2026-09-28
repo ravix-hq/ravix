@@ -8,6 +8,7 @@ defmodule Ravix.PrivateTracksTest do
   alias Ravix.Plans
   alias Ravix.Tooling
   alias Ravix.Tooling.OAuth
+  alias Ravix.Tooling.Tasks
   alias Ravix.ToolingFixture
   alias Ravix.Tracks
 
@@ -241,6 +242,29 @@ defmodule Ravix.PrivateTracksTest do
     assert Repo.get!(Ravix.Tracks.Track, c.track.id).sandbox_state == :closing
     assert {:ok, 0} = Tracks.orphan_private_count(c.owner, c.project.id)
     assert {:error, :not_found} = Tracks.get(c.owner, c.track.id)
+  end
+
+  test "removed creators disappear from task pagination while other private participants remain",
+       c do
+    {principal, _, _} = ToolingFixture.principal(c.creator)
+
+    assert {:ok, task} =
+             Tasks.send(principal, c.track.id, "private work", "request")
+
+    assert {:ok, %{totalSize: 1}} = Tasks.list(principal, %{})
+    assert {:ok, _} = People.remove_project(c.owner, c.project.id, c.creator.login)
+
+    assert {:ok, %{tasks: [], totalSize: 0, nextPageToken: ""}} =
+             Tasks.list(principal, %{})
+
+    assert {:error, :not_found} = Tasks.get(principal, task.id)
+    assert {:ok, _} = Tracks.get(c.invited, c.track.id)
+    assert {:ok, 0} = Tracks.orphan_private_count(c.owner, c.project.id)
+    # A fresh explicit share restores only that share, never old creator access.
+    other = insert_track(project: c.project)
+    assert {:ok, _} = People.add(c.owner, other.id, c.creator.login)
+    assert {:ok, [%{id: id}]} = Tracks.list(c.creator, c.project.id)
+    assert id == other.id
   end
 
   test "shared tracks cannot become private or be created private", c do

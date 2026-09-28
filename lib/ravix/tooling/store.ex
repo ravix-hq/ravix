@@ -383,7 +383,8 @@ defmodule Ravix.Tooling.Store do
     member =
       dynamic(
         [_, track, _, tm, pm],
-        (track.visibility == :private and track.created_by == ^user_id) or not is_nil(tm.user_id) or
+        (track.visibility == :private and track.created_by == ^user_id and
+           is_nil(track.creator_revoked_at)) or not is_nil(tm.user_id) or
           (track.visibility == :project and not is_nil(pm.user_id))
       )
 
