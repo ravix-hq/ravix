@@ -15,7 +15,7 @@ defmodule Ravix.Release do
   """
   alias Ravix.People.Cutover
   alias Ravix.Tracks.Billing
-  alias Ravix.Workspaces.{Backfill, RaviSeed}
+  alias Ravix.Workspaces.{Backfill, PersonalAssignment, RaviSeed}
 
   @app :ravix
 
@@ -47,6 +47,34 @@ defmodule Ravix.Release do
       {:error, reason} ->
         raise "Seed refused: " <> RaviSeed.describe_error(reason)
     end
+  end
+
+  @doc """
+  Put every legacy project into its owner's personal workspace
+  (`Ravix.Workspaces.PersonalAssignment`), for a release with no Mix: a dry
+  run unless `apply?`. Prints its summary, no secrets, and returns it.
+
+  Starts the `Ravix.Repo` and nothing else, so it can run as a one-off job
+  beside the serving release without a second copy of its singletons,
+  endpoint or queue:
+
+      bin/ravix eval "Ravix.Release.assign_personal_workspaces(false)"
+  """
+  def assign_personal_workspaces(apply? \\ false) do
+    load_app()
+    summary = with_repo_only(fn -> PersonalAssignment.run(apply: apply?) end)
+    Enum.each(PersonalAssignment.format(summary), &IO.puts/1)
+    summary
+  end
+
+  @doc false
+  # A data step's repository, without the application: `Ecto.Migrator.with_repo/2`
+  # starts the repo alone (or uses the one already running) and stops what it started.
+  def with_repo_only(fun) do
+    {:ok, {:ok, result}, _apps} =
+      Ecto.Migrator.with_repo(Ravix.Repo, fn _repo -> fun.() end)
+
+    result
   end
 
   @doc """
