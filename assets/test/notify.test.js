@@ -170,3 +170,11 @@ test("a server patch that redraws the label gets the state back", () => {
   hook.updated()
   expect(label(hook)).toBe("On")
 })
+
+test("a mention says who named you, rather than that the agent finished", () => {
+  FakeNotification.permission = "granted"
+  localStorage.setItem(NOTIFY_KEY, "on")
+  const {receive} = mount()
+  receive("notify", {tracks: [{...finished, mention: "alice"}]})
+  expect(FakeNotification.shown[0].options.body).toBe("@alice mentioned you in Ravix.")
+})

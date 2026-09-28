@@ -187,6 +187,17 @@
           >
             {if @earlier_loading, do: "Loading earlier…", else: "Load earlier"}
           </button>
+          <div
+            :if={!@thread_draft[:selected?] && leading_comments(assigns) != []}
+            id="transcript-leading-comments"
+          >
+            <.thread_comment
+              :for={comment <- leading_comments(assigns)}
+              comment={comment}
+              current_user={@current_user}
+              editing={@comment_editing}
+            />
+          </div>
           <div :if={!@thread_draft[:selected?]} id="transcript-turns" phx-update="stream">
             <article :for={{dom_id, turn} <- @streams.turns} id={dom_id} class="workspace-turn">
               <.prompt_message
@@ -226,6 +237,12 @@
                 >Retry message</button>
                 <.turn_footer :if={turn.settled?} turn={turn} workdir={@track.workdir} />
               </section>
+              <.thread_comment
+                :for={comment <- comments_after(@comments, turn.id)}
+                comment={comment}
+                current_user={@current_user}
+                editing={@comment_editing}
+              />
             </article>
           </div>
           <%!-- Shown by `assets/js/hooks/transcript_tail.js` once the reader
@@ -381,9 +398,23 @@
             debounce that says what is true: the server has no use for this
             box until it is submitted, and the draft is kept in the browser
             by `assets/js/hooks/composer.js` meanwhile. --%>
+          <%!-- Ask agent / Comment. A comment goes to people and never to
+            the agent, so the whole box says which one it is: its colour, its
+            placeholder, its accessible name and the send button's. Images
+            are for prompts; any already attached wait for Ask agent. --%>
           <form id="composer-form" phx-submit="send" phx-change="validate">
-            <div class="composer-box" data-composer-box>
+            <div
+              class={["composer-box", @composer_mode == :comment && "commenting"]}
+              data-composer-box
+            >
               <div class="composer-note" role="status" data-composer-note hidden></div>
+              <p
+                :if={@composer_mode == :comment}
+                id="composer-mode-hint"
+                class="composer-mode-hint"
+              >
+                <.icon name="person" size={12} />Comment — not sent to the agent
+              </p>
               <textarea
                 :if={@thread_draft[:selected?]}
                 id={"composer-draft-#{@thread_draft.id}"}
@@ -404,14 +435,46 @@
                 name="text"
                 rows="2"
                 phx-debounce="blur"
-                placeholder="Ask to make changes…"
-                aria-label="Message"
+                placeholder={
+                  if @composer_mode == :comment,
+                    do: "Comment for people on this thread. @ to mention…",
+                    else: "Ask to make changes…"
+                }
+                aria-label={if @composer_mode == :comment, do: "Comment", else: "Message"}
+                aria-describedby={@composer_mode == :comment && "composer-mode-hint"}
+                aria-autocomplete={@composer_mode == :comment && "list"}
+                aria-controls={@composer_mode == :comment && "mention-options"}
+                data-mode={@composer_mode}
                 data-draft-key={"track:#{@track.id}:thread:#{@thread_id}"}
                 data-typing-event="typing"
-                disabled={is_nil(@track.conversation_id)}
+                disabled={@composer_mode == :ask && is_nil(@track.conversation_id)}
               ></textarea>
+              <ul
+                :if={@composer_mode == :comment}
+                id="mention-options"
+                class="mention-options"
+                role="listbox"
+                aria-label="People to mention"
+                phx-update="ignore"
+                data-mention-options
+              >
+                <li
+                  :for={person <- @mentionable}
+                  id={"mention-option-#{person.login}"}
+                  role="option"
+                  aria-selected="false"
+                  data-login={person.login}
+                >
+                  <strong>@{person.login}</strong>
+                  <span :if={person.name} class="dim">{person.name}</span>
+                </li>
+              </ul>
               <.live_file_input upload={@uploads.images} aria-label="Attach images" />
-              <div :for={entry <- @uploads.images.entries} class="workspace-upload">
+              <div
+                :for={entry <- @uploads.images.entries}
+                :if={@composer_mode == :ask}
+                class="workspace-upload"
+              >
                 <span>{entry.client_name} ({entry.progress}%)</span><button
                   type="button"
                   class="ghost"
@@ -422,15 +485,47 @@
                   {upload_error(err)}
                 </p>
               </div>
-              <p :for={err <- upload_errors(@uploads.images)} role="alert">{upload_error(err)}</p>
-              <p :if={@attached_images != []}>
+              <p
+                :for={err <- upload_errors(@uploads.images)}
+                :if={@composer_mode == :ask}
+                role="alert"
+              >
+                {upload_error(err)}
+              </p>
+              <p :if={@attached_images != [] && @composer_mode == :ask}>
                 {length(@attached_images)} attached image(s) retained for retry.
                 <button type="button" class="ghost" phx-click="clear-attachments">
                   Remove retained images
                 </button>
               </p>
               <div class="workspace-actions">
+                <div
+                  :if={!@thread_draft[:selected?]}
+                  class="composer-mode"
+                  role="group"
+                  aria-label="Send to"
+                >
+                  <button
+                    type="button"
+                    id="composer-mode-ask"
+                    aria-pressed={to_string(@composer_mode == :ask)}
+                    phx-click="composer-mode"
+                    phx-value-mode="ask"
+                  >
+                    Ask agent
+                  </button>
+                  <button
+                    type="button"
+                    id="composer-mode-comment"
+                    aria-pressed={to_string(@composer_mode == :comment)}
+                    phx-click="composer-mode"
+                    phx-value-mode="comment"
+                  >
+                    Comment
+                  </button>
+                </div>
                 <button
+                  :if={@composer_mode == :ask}
                   type="button"
                   class="ghost"
                   aria-label="Choose images"
@@ -460,7 +555,7 @@
                   <p class="hint draft-default-hint">Also your default for new threads</p>
                 </div>
                 <.model_menu
-                  :if={!@thread_draft[:selected?]}
+                  :if={!@thread_draft[:selected?] && @composer_mode == :ask}
                   runtime={@track.runtime || @project.runtime}
                   model={@track.model || @track.default_model || @project.model}
                   project_model={
@@ -476,12 +571,13 @@
                 <button
                   type="submit"
                   class="primary composer-send"
-                  aria-label="Send"
-                  title="Send"
+                  aria-label={if @composer_mode == :comment, do: "Post comment", else: "Send"}
+                  title={if @composer_mode == :comment, do: "Post comment", else: "Send"}
                   disabled={
-                    is_nil(@track.conversation_id) or
-                      (@thread_draft[:selected?] &&
-                         (is_nil(@thread_draft.options) or :start_thread in @pending))
+                    @composer_mode == :ask &&
+                      (is_nil(@track.conversation_id) or
+                         (@thread_draft[:selected?] &&
+                            (is_nil(@thread_draft.options) or :start_thread in @pending)))
                   }
                 >
                   <.icon name="arrow-up" size={16} />

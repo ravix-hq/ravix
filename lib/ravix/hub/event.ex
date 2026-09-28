@@ -25,10 +25,10 @@ defmodule Ravix.Hub.Event do
       track ignores an event naming a different one; `nil` it must not
       ignore.
     * `present` -- who is looking, for `:here` and nothing else.
-    * `user_id` -- whose read mark moved, for `:read` and nothing else. A
-      read mark is one person's own, and the reader routes on it the way
-      it routes on `track_id`: a rail belonging to anybody else has nothing
-      to do.
+    * `user_id` -- whose read mark moved, for `:read`, or who wrote the
+      comment, for `:comment`. A read mark is one person's own, and the
+      reader routes on it the way it routes on `track_id`: a rail belonging
+      to anybody else has nothing to do.
 
   What is deliberately *not* here is `turn`'s status and `settings`'s
   revision. No reader ever took them, and a reader that wanted either would
@@ -54,12 +54,16 @@ defmodule Ravix.Hub.Event do
       -- which every rail on the project used to make, whenever anybody
       opened a track -- was a Fountain round trip per reader for a fact the
       event already carries.
+    * `:comment` -- somebody (`user_id`) posted, edited or deleted a comment
+      on `thread_id`. Nothing on Fountain moved either: a track page re-reads
+      that thread's comments, and a rail re-reads the project's unread marks
+      from its memo.
   """
 
-  @names [:people, :tracks, :turn, :queue, :settings, :here, :read]
+  @names [:people, :tracks, :turn, :queue, :settings, :here, :read, :comment]
 
-  @typedoc "Which of the seven things happened."
-  @type name :: :people | :tracks | :turn | :queue | :settings | :here | :read
+  @typedoc "Which of the eight things happened."
+  @type name :: :people | :tracks | :turn | :queue | :settings | :here | :read | :comment
 
   @type t :: %__MODULE__{
           name: name(),

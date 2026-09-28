@@ -900,6 +900,52 @@ html[data-inspector="closed"] #inspector-toggle .label-show { display: inline; }
 }
 .workspace-composer .composer-send svg { flex: none; }
 .workspace-composer .composer-send:disabled { opacity: 0.65; }
+/* Ask agent / Comment. In Comment mode the box takes the warning colour, so
+   nobody mistakes a note for people for an instruction to the agent. */
+.composer-mode {
+  display: inline-flex; flex: none; padding: 2px; gap: 2px;
+  border: 1px solid var(--line-strong); border-radius: var(--radius);
+}
+.composer-mode button {
+  height: 26px; padding: 0 9px; font-size: 12px; border: 0; background: transparent; color: var(--dim);
+}
+.composer-mode button[aria-pressed="true"] { background: var(--surface-active); color: var(--ink); }
+.composer-box { position: relative; }
+.composer-box.commenting, .composer-box.commenting:focus-within {
+  border-color: var(--warn); background: var(--warn-soft);
+}
+.composer-box.commenting .composer-send { background: var(--warn); border-color: var(--warn); color: var(--bg); }
+.composer-mode-hint {
+  display: flex; align-items: center; gap: 6px; margin: 0; padding: 8px 12px 0;
+  color: var(--warn); font-size: 12px;
+}
+.mention-options {
+  position: absolute; left: 8px; bottom: calc(100% + 4px); z-index: 5;
+  display: none; min-width: 220px; max-width: calc(100% - 16px); max-height: 220px; overflow-y: auto;
+  margin: 0; padding: 4px; list-style: none; color: var(--ink); background: var(--panel);
+  border: 1px solid var(--line); border-radius: var(--radius-lg); box-shadow: 0 8px 28px var(--shadow);
+}
+.mention-options[data-open] { display: block; }
+.mention-options li { display: flex; gap: 8px; align-items: baseline; padding: 5px 8px; border-radius: var(--radius); cursor: pointer; }
+.mention-options li[aria-selected="true"], .mention-options li:hover { background: var(--surface-hover); }
+
+/* A person's comment in the transcript: neither the prompt bubble on the
+   right nor the reply on the left, but a card across the width. */
+.thread-comment {
+  margin: 12px 0 0; padding: 8px 12px; border: 1px solid var(--line-strong);
+  border-left: 3px solid var(--warn); border-radius: var(--radius); background: var(--surface);
+}
+#transcript-leading-comments .thread-comment { margin: 0 0 18px; }
+.thread-comment-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 12px; color: var(--dim); }
+.thread-comment-head strong { color: var(--ink); }
+.thread-comment-head .spacer { flex: 1; }
+.thread-comment-edited { font-style: italic; }
+.thread-comment-body { margin-top: 4px; font-size: 13.5px; }
+.thread-comment-deleted { margin: 4px 0 0; color: var(--dim); font-style: italic; }
+.thread-comment-edit textarea { width: 100%; margin-top: 6px; }
+.thread-comment-actions { display: flex; gap: 6px; margin-top: 6px; }
+.thread-comment-actions button { height: 26px; padding: 0 8px; font-size: 12px; }
+
 /* The model is a name, not code: sans, quiet, and the raw id in its title. */
 .composer-model {
   color: var(--dimmer); font: 12px/1 var(--sans); max-width: 45%;
@@ -1712,6 +1758,7 @@ body:has(.phx-error) #request-progress { display: none; }
 /* A reply waiting to be read: still, where working pulses. */
 .track-tab .dot { width: 7px; height: 7px; }
 .dot.unread { background: var(--accent); }
+.dot.commented { background: var(--warn); }
 
 /* Recurring project prompts. */
 .schedules-page { overflow-y: auto; }

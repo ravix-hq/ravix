@@ -133,7 +133,8 @@ defmodule Ravix.Tooling.Catalog do
       ),
       tool(
         "read_track",
-        "Read a bounded page of track events. Pass next_cursor as after to continue.",
+        "Read a bounded page of track events. Pass next_cursor as after to continue. " <>
+          "People's comments on the thread are not included: they are never agent context.",
         "tracks:read",
         %{
           "track_id" => string(),

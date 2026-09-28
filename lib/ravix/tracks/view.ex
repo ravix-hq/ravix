@@ -5,6 +5,12 @@ defmodule Ravix.Tracks.View do
   `owner_login` identifies the project owner, independently of who created
   the track. It is taken from the already-scoped people list.
 
+  `unread` is the rail's dot: the agent replied or somebody else commented
+  since this person last looked. `reply_unread` is the agent's half alone,
+  and `mention` the newest unread comment naming this person; those two are
+  what the Inbox lists. `reply_unread` is nil where only the agent's side
+  was read (a single `present/2`), and then means the same as `unread`.
+
   `model` is the model the shown conversation runs instead of its agent's,
   read live off Fountain like the status, and nil when it follows the
   project's model.
@@ -74,7 +80,9 @@ defmodule Ravix.Tracks.View do
                 threads: [],
                 setup_error_code: nil,
                 runtime: nil,
-                default_model: nil
+                default_model: nil,
+                reply_unread: nil,
+                mention: nil
               ]
 
   @type t :: %__MODULE__{
@@ -99,6 +107,8 @@ defmodule Ravix.Tracks.View do
           people: [Person.t()],
           role: :owner | :member,
           unread: boolean(),
+          reply_unread: boolean() | nil,
+          mention: %{comment_id: String.t(), author_login: String.t(), at: DateTime.t()} | nil,
           model: String.t() | nil,
           runtime: String.t() | nil,
           default_model: String.t() | nil,

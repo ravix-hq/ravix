@@ -54,6 +54,7 @@ defmodule RavixWeb.TrackLive do
   @flush_ms 100
 
   alias Ravix.Accounts.Access
+  alias Ravix.Comments
   alias Ravix.GitHub.ChecksReport
   alias Ravix.{Hub, Previews, PromptQueue, Tracks}
   alias Ravix.Hub.Event
@@ -133,6 +134,14 @@ defmodule RavixWeb.TrackLive do
         # `begin/3`.
         pending: MapSet.new(),
         attached_images: [],
+        # People's comments on the shown thread, oldest first, and which one
+        # its author is editing. Never sent to the agent; see `Ravix.Comments`.
+        comments: [],
+        comment_editing: nil,
+        # What the composer sends: a prompt to the agent (`:ask`) or a comment
+        # for people (`:comment`), and who a comment there can @-mention.
+        composer_mode: :ask,
+        mentionable: [],
         # The turns that have taken an event since the last time the page drew,
         # and whether any of those events ended a stage. See `absorb/2`.
         dirty_turns: MapSet.new(),
@@ -320,6 +329,12 @@ defmodule RavixWeb.TrackLive do
   def handle_event("clear-attachments", _, socket),
     do: {:noreply, assign(socket, attached_images: [])}
 
+  # Comment mode sends to people, never to the agent: nothing here reaches
+  # `Tracks.prompt/3`, and any images waiting in the composer stay for the
+  # next prompt.
+  def handle_event("send", %{"text" => text}, %{assigns: %{composer_mode: :comment}} = socket),
+    do: post_comment(socket, text)
+
   def handle_event("send", %{"text" => text}, socket) do
     {complete, pending} = uploaded_entries(socket, :images)
 
@@ -339,6 +354,41 @@ defmodule RavixWeb.TrackLive do
       true ->
         send_prompt(socket, text)
     end
+  end
+
+  def handle_event("composer-mode", %{"mode" => "comment"}, socket) do
+    if drafting?(socket),
+      do: {:noreply, socket},
+      else: {:noreply, comment_mode(socket)}
+  end
+
+  def handle_event("composer-mode", _, socket),
+    do: {:noreply, assign(socket, composer_mode: :ask)}
+
+  def handle_event("edit-comment", %{"id" => id}, socket),
+    do: {:noreply, socket |> assign(comment_editing: id) |> redraw_comments([id])}
+
+  def handle_event("cancel-comment-edit", _, socket) do
+    editing = socket.assigns.comment_editing
+    {:noreply, socket |> assign(comment_editing: nil) |> redraw_comments([editing])}
+  end
+
+  def handle_event("save-comment", %{"comment_id" => id, "body" => body}, socket) do
+    user = socket.assigns.current_user
+
+    {:noreply,
+     result(socket, Comments.edit(user, socket.assigns.track_id, id, body), fn s, _ ->
+       s |> assign(comment_editing: nil) |> load_comments()
+     end)}
+  end
+
+  def handle_event("delete-comment", %{"id" => id}, socket) do
+    user = socket.assigns.current_user
+
+    {:noreply,
+     result(socket, Comments.delete(user, socket.assigns.track_id, id), fn s, _ ->
+       s |> assign(comment_editing: nil) |> load_comments()
+     end)}
   end
 
   def handle_event("retry-turn", %{"turn" => id}, socket) do
@@ -1228,7 +1278,8 @@ defmodule RavixWeb.TrackLive do
     |> drop_attachments()
     |> update(:thread_generation, &(&1 + 1))
     |> update(:thread_draft, &%{&1 | selected?: true})
-    |> assign(thread_error: nil, agent_refused: false)
+    # A draft has no thread to comment on yet; its first message is a prompt.
+    |> assign(thread_error: nil, agent_refused: false, composer_mode: :ask, comment_editing: nil)
     |> follow_siblings()
   end
 
@@ -1302,6 +1353,90 @@ defmodule RavixWeb.TrackLive do
            |> push_event("composer:clear", %{})
            |> refresh_queue()
          end)}
+    end
+  end
+
+  defp comment_mode(socket) do
+    mentionable =
+      case Comments.mentionable(socket.assigns.current_user, socket.assigns.track_id) do
+        {:ok, people} -> people
+        _ -> []
+      end
+
+    assign(socket, composer_mode: :comment, mentionable: mentionable)
+  end
+
+  # A comment is placed after the last turn on screen, which is what the
+  # person commenting was looking at. The composer returns to asking the
+  # agent, so the next Enter is not a comment by accident.
+  defp post_comment(socket, text) do
+    %{current_user: user, track_id: track_id, thread_id: thread_id, page: page} = socket.assigns
+
+    anchor = %{
+      anchor_turn_id: page |> Transcript.visible_turns() |> List.last() |> then(&(&1 && &1.id)),
+      anchor_event_id: page.last_event_id
+    }
+
+    case Comments.post(user, track_id, thread_id, text, anchor) do
+      {:ok, _comment} ->
+        {:noreply,
+         socket
+         |> assign(composer_mode: :ask, thread_error: nil)
+         |> push_event("composer:clear", %{})
+         |> load_comments()}
+
+      {:error, reason} ->
+        {:noreply, assign(socket, thread_error: RavixWeb.Error.from(reason).message)}
+    end
+  end
+
+  # The shown thread's comments, read again. Comments live inside the turn
+  # they follow, and a stream item is only drawn when it is inserted, so the
+  # turns whose comments changed are inserted again; everything else stays.
+  defp load_comments(%{assigns: %{track_id: nil}} = socket), do: socket
+
+  defp load_comments(socket) do
+    %{current_user: user, track_id: track_id, thread_id: thread_id} = socket.assigns
+
+    comments =
+      case Comments.list(user, track_id, thread_id) do
+        {:ok, comments} -> comments
+        {:error, _} -> []
+      end
+
+    was = socket.assigns.comments
+    changed = (comments -- was) ++ (was -- comments)
+
+    socket
+    |> assign(comments: comments)
+    |> redraw_comments(Enum.map(changed, & &1.id), changed)
+  end
+
+  defp redraw_comments(socket, ids, known \\ []) do
+    anchors =
+      (known ++ socket.assigns.comments)
+      |> Enum.filter(&(&1.id in ids))
+      |> MapSet.new(& &1.anchor_turn_id)
+
+    socket.assigns.page
+    |> Transcript.visible_turns()
+    |> Enum.filter(&MapSet.member?(anchors, &1.id))
+    |> Enum.reduce(socket, &stream_insert(&2, :turns, &1))
+  end
+
+  # Comments after a turn, and the ones before the first: posted on an empty
+  # thread, or after a turn the transcript no longer has. Those wait until
+  # there is no earlier history left to load, so that a comment never sits
+  # above turns that were posted before it.
+  defp comments_after(comments, turn_id),
+    do: Enum.filter(comments, &(&1.anchor_turn_id == turn_id))
+
+  defp leading_comments(%{page: page, comments: comments, transcript_loading: loading}) do
+    if loading or Transcript.History.more?(page.history) do
+      []
+    else
+      shown = MapSet.new(Transcript.visible_turns(page), & &1.id)
+      Enum.reject(comments, &(&1.anchor_turn_id && MapSet.member?(shown, &1.anchor_turn_id)))
     end
   end
 
@@ -1411,8 +1546,12 @@ defmodule RavixWeb.TrackLive do
       transcript_loading: true,
       earlier_loading: false,
       page: Transcript.empty(""),
-      rendered: %{}
+      rendered: %{},
+      comments: [],
+      comment_editing: nil,
+      composer_mode: :ask
     )
+    |> load_comments()
     |> drop_pending()
     |> stream(:turns, [], reset: true)
     # A load starts the page's transcript over from nothing, so the
@@ -2445,6 +2584,17 @@ defmodule RavixWeb.TrackLive do
   # trips, on every load, stage and send of every other page on this track.
   defp hub(%Event{name: :read}, socket), do: socket
 
+  # A comment on the shown thread is drawn and, since this person is looking
+  # at it, read. One on a sibling thread moves only that tab's dot.
+  defp hub(%Event{name: :comment, thread_id: thread_id}, socket) do
+    if thread_id == socket.assigns.thread_id do
+      Tracks.mark_read(socket.assigns.current_user, socket.assigns.track_id, thread_id)
+      load_comments(socket)
+    else
+      refresh_detail(socket)
+    end
+  end
+
   # The configuration form always shows what would actually be used --- the
   # track's override if it has one, the project's default otherwise --- so
   # it is rebuilt whenever the preview is, rather than being a box somebody
@@ -3003,6 +3153,88 @@ defmodule RavixWeb.TrackLive do
         </a>
       </div>
     </div>
+    """
+  end
+
+  # A person's note, drawn as neither a prompt (the bubble on the right) nor
+  # a reply (the page on the left): a bordered card across the transcript,
+  # labelled as a comment, with its author and time. The body is markdown
+  # through the one escaping renderer. Edit and delete are the author's.
+  attr :comment, :map, required: true
+  attr :current_user, :map, required: true
+  attr :editing, :any, default: nil
+
+  defp thread_comment(assigns) do
+    comment = assigns.comment
+
+    assigns =
+      assign(assigns,
+        login: (comment.author && comment.author.login) || "someone",
+        deleted?: not is_nil(comment.deleted_at),
+        mine?: comment.author_id == assigns.current_user.id,
+        editing?: assigns.editing == comment.id
+      )
+
+    ~H"""
+    <aside
+      id={"comment-#{@comment.id}"}
+      class={["thread-comment", @deleted? && "deleted"]}
+      aria-label={"Comment by @#{@login}"}
+    >
+      <header class="thread-comment-head">
+        <.icon name="person" size={13} />
+        <strong>@{@login}</strong>
+        <span class="chip">Comment · not sent to the agent</span>
+        <span class="spacer"></span>
+        <time datetime={DateTime.to_iso8601(@comment.inserted_at)}>
+          {Calendar.strftime(@comment.inserted_at, "%b %-d, %H:%M UTC")}
+        </time>
+        <span :if={@comment.edited_at && !@deleted?} class="thread-comment-edited">edited</span>
+      </header>
+      <p :if={@deleted?} class="thread-comment-deleted">Comment deleted</p>
+      <div :if={!@deleted? && !@editing?} class="md thread-comment-body">
+        {Markdown.render_safe(@comment.body)}
+      </div>
+      <form
+        :if={!@deleted? && @editing?}
+        id={"comment-edit-#{@comment.id}"}
+        class="thread-comment-edit"
+        phx-submit="save-comment"
+      >
+        <input type="hidden" name="comment_id" value={@comment.id} />
+        <textarea
+          name="body"
+          rows="3"
+          maxlength={Ravix.Comments.Comment.max_body()}
+          aria-label="Edit comment"
+        >{@comment.body}</textarea>
+        <div class="thread-comment-actions">
+          <button type="submit" class="primary">Save</button>
+          <button type="button" class="ghost" phx-click="cancel-comment-edit">Cancel</button>
+        </div>
+      </form>
+      <div :if={@mine? && !@deleted? && !@editing?} class="thread-comment-actions">
+        <button
+          type="button"
+          class="ghost"
+          phx-click="edit-comment"
+          phx-value-id={@comment.id}
+          aria-label="Edit your comment"
+        >
+          Edit
+        </button>
+        <button
+          type="button"
+          class="ghost"
+          phx-click="delete-comment"
+          phx-value-id={@comment.id}
+          data-confirm="Delete this comment?"
+          aria-label="Delete your comment"
+        >
+          Delete
+        </button>
+      </div>
+    </aside>
     """
   end
 

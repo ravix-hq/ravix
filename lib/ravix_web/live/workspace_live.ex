@@ -268,7 +268,8 @@ defmodule RavixWeb.WorkspaceLive do
 
   defp inbox_path(project, track) do
     thread =
-      Enum.find(track.threads, &(&1.unread && attention?(&1))) ||
+      Enum.find(track.threads, &Map.get(&1, :mention)) ||
+        Enum.find(track.threads, &(&1.unread && attention?(&1))) ||
         Enum.find(track.threads, &attention?/1)
 
     thread_id = if thread, do: thread.id, else: track.id
@@ -1020,6 +1021,11 @@ defmodule RavixWeb.WorkspaceLive do
   def handle_info({:hub, %Event{name: :turn, project_id: id}}, socket),
     do: {:noreply, refresh_tracks(socket, id)}
 
+  # A comment moves unread marks and mentions, which are this database's, not
+  # Fountain's; so the project's tracks are re-read from the memo.
+  def handle_info({:hub, %Event{name: :comment, project_id: id}}, socket),
+    do: {:noreply, refresh_tracks(socket, id, fresh: false)}
+
   # A read mark is one person's own, and the only thing on this page it can
   # move is that person's unread dot on the track it names. So it is applied
   # to the rail in hand and reads nothing: not Fountain, not the database.
@@ -1071,8 +1077,22 @@ defmodule RavixWeb.WorkspaceLive do
   defp clear_unread(socket, _somebody_elses), do: socket
 
   defp clear_thread_unread(%{id: id} = row, id, thread_id) do
-    threads = Enum.map(row.threads, &if(&1.id == thread_id, do: %{&1 | unread: false}, else: &1))
-    %{row | threads: threads, unread: Enum.any?(threads, & &1.unread)}
+    threads =
+      Enum.map(
+        row.threads,
+        &if(&1.id == thread_id,
+          do: Map.merge(&1, %{unread: false, reply_unread: false, mention: nil}),
+          else: &1
+        )
+      )
+
+    %{
+      row
+      | threads: threads,
+        unread: Enum.any?(threads, & &1.unread),
+        reply_unread: Enum.any?(threads, &reply_unread?/1),
+        mention: Enum.find_value(threads, &Map.get(&1, :mention))
+    }
   end
 
   defp clear_thread_unread(row, _track_id, _thread_id), do: row
@@ -1152,19 +1172,23 @@ defmodule RavixWeb.WorkspaceLive do
     apply_rail(socket, {socket.assigns.projects, tracks})
   end
 
-  defp refresh_tracks(%{assigns: %{current_user: nil}} = socket, _id), do: socket
+  defp refresh_tracks(socket, project_id, opts \\ [fresh: true])
 
-  defp refresh_tracks(socket, project_id) do
+  defp refresh_tracks(%{assigns: %{current_user: nil}} = socket, _id, _opts), do: socket
+
+  defp refresh_tracks(socket, project_id, opts) do
     if Enum.any?(socket.assigns.projects, &(&1.id == project_id)) do
       user = socket.assigns.current_user
 
       socket =
         assign(socket, :track_loading, MapSet.put(socket.assigns.track_loading, project_id))
 
+      fresh = Keyword.get(opts, :fresh, true)
+
       opts =
         if MapSet.member?(socket.assigns.closed_projects, project_id),
-          do: [fresh: true, closed: closed_fetch(socket.assigns.closed_pages, project_id)],
-          else: [fresh: true]
+          do: [fresh: fresh, closed: closed_fetch(socket.assigns.closed_pages, project_id)],
+          else: [fresh: fresh]
 
       traced_async(socket, {:tracks, project_id}, fn -> Tracks.list(user, project_id, opts) end)
     else
@@ -1348,7 +1372,8 @@ defmodule RavixWeb.WorkspaceLive do
       thread_id: thread.id,
       title: if(thread.id == track.id, do: track.title, else: "#{track.title} · #{thread.title}"),
       project: project && project.display_name,
-      status: thread.status
+      status: thread.status,
+      mention: Map.get(thread, :mention) && thread.mention.author_login
     }
   end
 
@@ -1518,15 +1543,36 @@ defmodule RavixWeb.WorkspaceLive do
     do:
       Enum.reduce(tracks, 0, fn {_id, rows}, count -> count + Enum.count(rows, &attention?/1) end)
 
+  # A mention is dated by the comment; everything else by the agent.
+  defp inbox_time(%{status: status, mention: %{at: at}})
+       when status not in [:failed, :setup_failed],
+       do: at
+
+  defp inbox_time(track), do: track.last_active_at
+
+  # What the Inbox lists: a failure, a reply nobody has read, or a comment
+  # naming this person. A comment that names nobody moves only the dot.
   defp attention?(track),
-    do: track.status in [:failed, :setup_failed] or (track.status == :ready and track.unread)
+    do:
+      track.status in [:failed, :setup_failed] or
+        (track.status == :ready and reply_unread?(track)) or
+        Map.get(track, :mention) != nil
+
+  defp reply_unread?(track) do
+    case Map.get(track, :reply_unread) do
+      nil -> track.unread
+      value -> value
+    end
+  end
 
   # A tab's dot, from what the rail already read: nothing new is asked of
   # Fountain to draw it. Idle, read tracks keep their ordinal instead.
   defp tab_status(%{status: status}) when status in [:running, :opening, :failed, :setup_failed],
     do: status
 
-  defp tab_status(%{status: :ready, unread: true}), do: :unread
+  defp tab_status(%{status: :ready, unread: true} = track),
+    do: if(reply_unread?(track), do: :unread, else: :commented)
+
   defp tab_status(_track), do: nil
 
   defp tab_status_label(:running), do: "Working"
@@ -1534,6 +1580,7 @@ defmodule RavixWeb.WorkspaceLive do
   defp tab_status_label(:failed), do: "Error"
   defp tab_status_label(:setup_failed), do: "Setup failed"
   defp tab_status_label(:unread), do: "Unread reply"
+  defp tab_status_label(:commented), do: "New comment"
 
   defp tab_label(%{title: title}) do
     namespace = Ids.branch_namespace()
