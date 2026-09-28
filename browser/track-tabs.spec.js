@@ -14,7 +14,7 @@ test('project track links scroll vertically and preserve the mobile drawer', asy
   await project.getByLabel('Repository', { exact: true }).fill('mockuser/atlas-api');
   await project.getByRole('button', { name: 'Create project' }).click();
   await expect(project).not.toBeVisible();
-  for (let index = 0; index < 7; index++) {
+  for (let index = 0; index < 12; index++) {
     await page.locator('#yard .workspace-project.current .project-add').click();
     const dialog = page.getByRole('dialog', { name: 'New track', exact: true });
     await dialog.getByRole('button', { name: 'Advanced', exact: true }).click();
@@ -27,7 +27,7 @@ test('project track links scroll vertically and preserve the mobile drawer', asy
   for (const width of [1280, 500, 390]) {
     await page.setViewportSize({ width, height: 600 });
     if (width < 760) await page.getByRole('button', { name: 'Menu', exact: true }).click();
-    await expect(strip.getByRole('link')).toHaveCount(7);
+    await expect(strip.getByRole('link')).toHaveCount(12);
     const first = strip.getByRole('link').first();
     await first.focus();
     await first.press('Enter');
@@ -56,7 +56,7 @@ test('project track links scroll vertically and preserve the mobile drawer', asy
   // The direct action still confirms and restores focus when dismissed.
   const header = page.locator('.track-crumbs');
   const close = header.getByRole('button', { name: 'Close track', exact: true });
-  await expect(header.getByRole('button', { name: 'Project settings', exact: true })).toHaveAttribute('title', 'Project settings');
+  await expect(header.getByRole('button', { name: 'Project settings', exact: true })).toHaveCount(0);
   await expect(header.getByRole('button', { name: /^Track sharing/ })).toHaveAttribute('title', /viewing now/);
   await expect(close).toBeVisible();
   await close.click();

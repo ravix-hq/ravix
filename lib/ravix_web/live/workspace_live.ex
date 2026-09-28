@@ -237,10 +237,15 @@ defmodule RavixWeb.WorkspaceLive do
 
     socket = assign_page_title(socket, track)
 
-    if params["new"] == "track" && project && project.access != :tracks do
-      open_dialog(socket, :new_track)
-    else
-      socket
+    cond do
+      params["new"] == "track" && project && project.access != :tracks ->
+        open_dialog(socket, :new_track)
+
+      params["settings"] == "true" && project && project.role == :owner ->
+        open_dialog(socket, :settings)
+
+      true ->
+        socket
     end
   end
 
@@ -377,6 +382,44 @@ defmodule RavixWeb.WorkspaceLive do
 
   def handle_event("move-project", %{"project" => id, "section" => section_id}, socket) do
     section_result(socket, Sections.move(socket.assigns.current_user, id, section_id))
+  end
+
+  def handle_event("top-new-track", _, socket) do
+    socket = recheck_rail(socket)
+    project = socket.assigns.project
+
+    project =
+      if project && project.access != :tracks,
+        do: project,
+        else: Enum.find(socket.assigns.projects, &(&1.access != :tracks))
+
+    suffix =
+      if project && project.id == project_id(socket),
+        do: track_suffix(socket.assigns.track_id),
+        else: ""
+
+    if project,
+      do:
+        {:noreply,
+         push_patch(socket,
+           to: "/p/#{project.id}#{suffix}?new=track"
+         )},
+      else: {:noreply, open_dialog(socket, :new_project)}
+  end
+
+  def handle_event(event, %{"project" => id}, socket)
+      when event in ["new-track-project", "project-settings"] do
+    socket = recheck_rail(socket)
+    project = Enum.find(socket.assigns.projects, &(&1.id == id))
+
+    if project && project.access != :tracks &&
+         (event == "new-track-project" || project.role == :owner) do
+      suffix = if id == project_id(socket), do: track_suffix(socket.assigns.track_id), else: ""
+      query = if event == "project-settings", do: "settings=true", else: "new=track"
+      {:noreply, push_patch(socket, to: "/p/#{id}#{suffix}?#{query}")}
+    else
+      {:noreply, flash(socket, :error, "Project not available.")}
+    end
   end
 
   def handle_event("advanced-track", _, socket) do

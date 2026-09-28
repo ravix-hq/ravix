@@ -11,7 +11,7 @@ test('project run script is inherited: run, ready, restart, stop and plain overr
   await page.getByRole('button', { name: 'Create track', exact: true }).click();
   await expect(page.getByRole('textbox', { name: 'Message', exact: true })).toBeEnabled();
 
-  await page.locator('.track-crumbs').getByRole('button', { name: 'Project settings', exact: true }).click();
+  await page.locator('#yard .workspace-project.current button[title="Project settings"]').click();
   const settings = page.getByRole('dialog', { name: 'Project settings', exact: true });
   await settings.getByRole('button', { name: 'Run script', exact: true }).click();
   await settings.locator('#default-directory').fill('.');

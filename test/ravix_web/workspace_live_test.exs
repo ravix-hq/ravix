@@ -1155,7 +1155,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
     render_async(view, 5_000)
     refute has_element?(view, "#new-track-form")
     refute has_element?(view, "a.project-add")
-    refute has_element?(view, "button", "New track")
+    refute has_element?(view, ".workspace-project.current .project-add")
     refute has_element?(view, "#yard button.project-action")
   end
 
@@ -1170,14 +1170,13 @@ defmodule RavixWeb.WorkspaceLiveTest do
 
     row = "#yard [data-project-id='#{mine.id}'].current"
     assert has_element?(view, ".crumbs button[phx-value-name=people]")
-    assert has_element?(view, ".crumbs button[phx-value-name=settings]")
+    refute has_element?(view, ".crumbs button[phx-value-name=settings]")
     assert has_element?(view, "#{row} a.project-add[aria-label='New track in Mine']")
-    # Only the selected project remains in the rail. Other projects are
-    # reached through the switcher before their actions are available.
+    # Every owned project exposes its settings directly on its own row.
     closed = "#yard [data-project-id='#{other.id}']"
     refute has_element?(view, "#{closed}.current")
     assert has_element?(view, "#{closed} a.project-add")
-    refute has_element?(view, "#{closed} button.project-action")
+    assert has_element?(view, "#{closed} button[title='Project settings']")
     # The nested links under the open project are gone.
     refute has_element?(view, ".project-links")
 
@@ -1200,7 +1199,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
        }}
     end)
 
-    view |> element(".crumbs button[phx-value-name=settings]") |> render_click()
+    view |> element("#{row} button[title='Project settings']") |> render_click()
     assert has_element?(view, "#settings-dialog")
 
     # A member who does not own the project has its people but not its settings.
@@ -1209,6 +1208,59 @@ defmodule RavixWeb.WorkspaceLiveTest do
     row = "#yard [data-project-id='#{shared.id}'].current"
     assert has_element?(view, "#{row} button[aria-label='People in sharer / Shared']")
     refute has_element?(view, "#{row} button[aria-label^='Project settings']")
+    render_hook(view, "project-settings", %{project: shared.id})
+    refute has_element?(view, "#settings-dialog")
+    render_patch(view, "/p/#{shared.id}?settings=true")
+    refute has_element?(view, "#settings-dialog")
+  end
+
+  test "top New track defaults to the current project and switches scoped projects", %{conn: conn} do
+    user = insert_user()
+    first = insert_project(user: user, name: "First")
+    second = insert_project(user: user, name: "Second")
+    foreign = insert_project(user: insert_user(login: "elsewhere"))
+    {:ok, view, _} = live(log_in_user(conn, user), "/p/#{first.id}")
+    render_async(view)
+    view |> element("#top-new-track") |> render_click()
+    render_async(view)
+    assert has_element?(view, "#new-track-dialog")
+    assert has_element?(view, "#new-track-project option[value='#{first.id}'][selected]")
+    assert has_element?(view, "#new-track-project option[value='#{second.id}']")
+    refute has_element?(view, "#new-track-project option[value='#{foreign.id}']")
+    view |> element("#new-track-project-form") |> render_change(%{project: second.id})
+    render_async(view)
+    assert has_element?(view, "#new-track-project option[value='#{second.id}'][selected]")
+    render_hook(view, "new-track-project", %{project: foreign.id})
+    assert has_element?(view, "#new-track-project option[value='#{second.id}'][selected]")
+    render_hook(view, "project-settings", %{project: foreign.id})
+    refute has_element?(view, "#settings-dialog")
+
+    stub(Projects, :settings, fn _, _ ->
+      {:ok,
+       %{
+         name: "First",
+         runtime: "claude",
+         model: "model",
+         instructions: "",
+         setup_script: "",
+         packages: %{},
+         env_keys: [],
+         vault_keys: [],
+         catalog: Catalog.empty()
+       }}
+    end)
+
+    render_patch(view, "/p/#{first.id}?settings=true")
+    render_async(view)
+    assert has_element?(view, "#settings-dialog")
+  end
+
+  test "top New track offers project creation when there are no projects", %{conn: conn} do
+    user = insert_user()
+    {:ok, view, _} = live(log_in_user(conn, user), "/home")
+    render_async(view)
+    view |> element("#top-new-track") |> render_click()
+    assert has_element?(view, "#new-project-dialog")
   end
 
   test "the account menu holds preferences, help and signing out", %{conn: conn} do
@@ -1232,6 +1284,12 @@ defmodule RavixWeb.WorkspaceLiveTest do
     assert has_element?(view, "#yard-toggle .label-show", "Show projects")
 
     refute has_element?(view, ".workspace-account")
+
+    assert has_element?(
+             view,
+             "#yard .yard-footer #account-trigger[aria-label='Account and app settings']"
+           )
+
     menu = "#yard #account-menu[popover]"
 
     for item <- [
@@ -1350,7 +1408,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
     People.add_project_member(project.id, user.id, owner.id)
     {:ok, view, _} = live(log_in_user(conn, user), "/p/#{project.id}")
     render_async(view)
-    refute has_element?(view, "button", "Settings")
+    refute has_element?(view, "#yard button[title='Project settings']")
     People.remove_project_member(project.id, user.id)
     Hub.publish(project.id, :people)
     # `:people` is one of the three that can change which projects exist at
@@ -1698,7 +1756,10 @@ defmodule RavixWeb.WorkspaceLiveTest do
 
     {:ok, view, _} = live(log_in_user(conn, user), "/p/#{project.id}")
     render_async(view)
-    view |> element("button", "Settings") |> render_click()
+
+    view
+    |> element("#yard .workspace-project.current button[title='Project settings']")
+    |> render_click()
 
     view
     |> form("#environment-settings-form", settings: [apt: "git curl"])
@@ -1796,7 +1857,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
     assert render_async(child, 5_000) =~ "CI passed"
 
     child
-    |> element("button[phx-click=panel][phx-value-name=preview]", "Run")
+    |> element("button[phx-click=panel][phx-value-name=preview]", "Preview")
     |> render_click()
 
     assert render_async(child, 5_000) =~ "stopped"

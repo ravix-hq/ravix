@@ -1637,7 +1637,7 @@ defmodule RavixWeb.TrackLive do
   attr :enabled, :boolean, required: true
 
   @doc """
-  The track's threads as a row of tabs above the composer, with "+" at the
+  The track's threads as a row of tabs above the conversation, with "+" at the
   end when threads can be added. A track with one thread that cannot gain
   another has nothing to switch between, so the row is not drawn at all.
 
@@ -1660,8 +1660,20 @@ defmodule RavixWeb.TrackLive do
       :if={length(@threads) > 1 or @enabled}
       id="thread-switcher"
       class="thread-tabs"
+      phx-hook="ThreadTabs"
       aria-label="Threads"
     >
+      <form id="thread-picker-form" class="thread-picker" phx-change="select-thread">
+        <label for="thread-picker" class="sr-only">Thread</label>
+        <select id="thread-picker" name="thread_id">
+          <option :for={thread <- @threads} value={thread.id} selected={thread.id == @thread_id}>
+            {thread.title} · {agent_model(Map.get(thread, :runtime), Map.get(thread, :model))} · {thread_status(
+              thread,
+              @states
+            )}{if thread.unread && thread.id != @thread_id, do: " (unread)"}
+          </option>
+        </select>
+      </form>
       <button
         :for={thread <- @threads}
         type="button"

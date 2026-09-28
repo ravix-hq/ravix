@@ -79,16 +79,6 @@
         title={"Track sharing (#{length(@present)} viewing now)"}
       ><.icon name="add-person" size={15} /><span>{length(@present)}</span></button>
       <button
-        :if={@project.role == :owner}
-        class="ghost icon-button"
-        phx-click={JS.push_focus() |> JS.push("dialog", target: "#workspace-stage")}
-        phx-value-name="settings"
-        aria-label="Project settings"
-        title="Project settings"
-      >
-        <.icon name="settings" size={15} />
-      </button>
-      <button
         :if={rebuildable?(@current_user, @track)}
         class="ghost icon-button"
         aria-label="Rebuild machine"
@@ -131,6 +121,16 @@
           moves rather than being rebuilt --- so without it a reader who had
           scrolled up in one track would arrive part-way up the next one. See
           `assets/js/hooks/transcript_tail.js`. --%>
+        <.thread_tabs
+          threads={@threads}
+          states={@thread_states}
+          thread_id={@thread_id}
+          adding={
+            :add_thread in @pending or
+              (@track.sandbox_layout == :dedicated and @track.sandbox_state != :ready)
+          }
+          enabled={Ravix.Config.threads_enabled?()}
+        />
         <div
           id="transcript-scroll"
           phx-hook="TranscriptTail"
@@ -341,16 +341,6 @@
         </div>
         <p :if={@thread_error} id="thread-error" role="alert">{@thread_error}</p>
         <.loading_status :if={:add_thread in @pending}>Adding thread…</.loading_status>
-        <.thread_tabs
-          threads={@threads}
-          states={@thread_states}
-          thread_id={@thread_id}
-          adding={
-            :add_thread in @pending or
-              (@track.sandbox_layout == :dedicated and @track.sandbox_state != :ready)
-          }
-          enabled={Ravix.Config.threads_enabled?()}
-        />
         <div class="workspace-composer">
           <.live_component
             module={RavixWeb.Live.AgentHealth}
@@ -514,10 +504,10 @@
           <button
             :for={
               {tab, label} <- [
-                {:files, "All files"},
+                {:files, "Files"},
                 {:changes, "Changes"},
                 {:checks, "Checks"},
-                {:preview, "Run"}
+                {:preview, "Preview"}
               ]
             }
             class={if @panel.tab == tab, do: "selected", else: "ghost"}

@@ -66,7 +66,7 @@ test('a flagged track copies secrets, becomes ready, and deletes its own machine
   const rebuiltBox = rebuiltBoxes.find(b => b.vault_id === rebuiltVault.id);
   expect(rebuiltBox.id).not.toBe(box.id);
 
-  await page.locator('.track-crumbs').getByRole('button', { name: 'Project settings', exact: true }).click();
+  await page.locator('#yard .workspace-project.current button[title="Project settings"]').click();
   const settings = page.getByRole('dialog', { name: 'Project settings', exact: true });
   await settings.getByRole('button', { name: 'Agent', exact: true }).click();
   await expect(settings).toContainText('Changes the default agent for new threads. Existing threads keep their agent.');
@@ -102,7 +102,7 @@ test('an owner confirms an uncertain secret change and can save again', async ({
   const sql = query => execFileSync('psql', [`${server}/${database}`, '-XAtq', '-v', 'ON_ERROR_STOP=1', '-c', query], { encoding: 'utf8' }).trim();
   // Persisted state after a provider timeout or worker loss. Only this harness's database.
   sql(`UPDATE ravix.projects SET secrets_pending = true, secrets_generation = 1 WHERE id = '${projectId}'`);
-  await page.locator('.crumbs').getByRole('button', { name: 'Settings', exact: true }).click();
+  await page.locator('#yard .workspace-project.current button[title="Project settings"]').click();
   const settings = page.getByRole('dialog', { name: 'Project settings', exact: true });
   await settings.getByRole('button', { name: 'Secrets', exact: true }).click();
   const confirmation = page.locator('#secret-confirmation-form');
