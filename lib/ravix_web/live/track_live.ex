@@ -2837,22 +2837,13 @@ defmodule RavixWeb.TrackLive do
   defp work(assigns) do
     tools = for %TranscriptBlock.Tool{} = tool <- assigns.blocks, do: tool
 
-    errors = Enum.filter(tools, &(&1.status == :error))
-    turn = assigns.turn
-
-    normal? =
-      Enum.any?(turn.events, &match?(%{kind: :stage, stage: "turn", state: "completed"}, &1)) and
-        not Enum.any?(turn.blocks, &match?(%TranscriptBlock.Failure{}, &1))
-
-    # A later block proves the agent continued; completion alone does not.
-    last = List.last(turn.blocks)
-    recovered = if normal?, do: Enum.count(errors, &(&1 != last)), else: 0
-
+    # No failure count on the folded line: agents usually recover from a
+    # failing tool call, and a red "N failed" reads as the turn failing. A
+    # turn that really fails says so with its own failure block; each call's
+    # own status is still inside the fold, in the same muted tone.
     assigns =
       assign(assigns,
-        recovered: recovered,
         label: work_label(assigns.blocks, length(tools)),
-        failed: length(errors) - recovered,
         now: tools |> Enum.reverse() |> Enum.find(&(&1.status == :running))
       )
 
@@ -2860,10 +2851,6 @@ defmodule RavixWeb.TrackLive do
     <details class="workspace-work" phx-mounted={JS.ignore_attributes("open")}>
       <summary>
         <span>{@label}</span>
-        <span :if={@failed > 0} class="chip tool-error">{@failed} failed</span>
-        <span :if={@recovered > 0} class="chip tool-recovered">
-          {counted(@recovered, "recovered tool error")}
-        </span>
         <span :if={@now} class="work-now">{@now.name}</span>
       </summary>
       <div class="workspace-work-body">

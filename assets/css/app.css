@@ -827,8 +827,9 @@ html[data-inspector="closed"] #inspector-toggle .label-show { display: inline; }
 .workspace-tool summary, .workspace-thinking summary { display: list-item; padding: 5px 8px; color: var(--dim); cursor: pointer; overflow-wrap: anywhere; }
 .workspace-tool .chip { border-radius: 3px; }
 .workspace-tool .tool-summary { color: var(--dimmer); }
-.chip.tool-recovered { color: var(--dim); }
-.chip.tool-error { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 35%, var(--line)); background: var(--bad-soft); }
+/* A tool call's own error is information, not an alarm: agents usually
+   recover, and a turn that really fails has its own failure block. */
+.chip.tool-error { color: var(--dim); }
 .diff-add { color: var(--ok); }
 .diff-del { color: var(--bad); }
 
