@@ -4754,7 +4754,8 @@ defmodule RavixWeb.TrackLiveTest do
       repair(ctx, page)
       parent = self()
 
-      expect(Tracks, :earlier_events, fn user, id, ^page, opts ->
+      expect(Tracks, :earlier_events, fn user, id, %Transcript.History{} = request, opts ->
+        assert request == Transcript.History.request(history)
         assert user.id == ctx.user.id and id == ctx.track.id
         assert opts[:thread_id] == ctx.track.id
         send(parent, {:earlier_started, self()})
@@ -4766,7 +4767,7 @@ defmodule RavixWeb.TrackLiveTest do
             oldest_event_id: 1
         }
 
-        {:ok, Transcript.prepend_history(page, older)}
+        {:ok, older}
       end)
 
       render_click(ctx.view, "load-earlier", %{})
@@ -4786,6 +4787,39 @@ defmodule RavixWeb.TrackLiveTest do
       refute has_element?(ctx.view, "#load-earlier")
       assert has_element?(ctx.view, "#transcript-turns > article:first-child", "earlier")
       assert has_element?(ctx.view, "#transcript-turns > article:last-child", "Live prompt")
+    end
+
+    test "each earlier task receives only the next raw chunk and returns only new turns", ctx do
+      history = %Transcript.History{chunks: [[%{"id" => 10}], [%{"id" => 1}]], source: :fixture}
+      page = %{transcript([{"new", "held tail"}], from: 20) | history: history}
+      repair(ctx, page)
+
+      expect(Tracks, :earlier_events, fn _,
+                                         _,
+                                         %Transcript.History{chunks: [[%{"id" => 10}]]} = request,
+                                         _ ->
+        {:ok,
+         %{transcript([{"middle", "middle chunk"}], from: 10) | history: %{request | chunks: []}}}
+      end)
+
+      render_click(ctx.view, "load-earlier", %{})
+      render_async(ctx.view)
+      assert has_element?(ctx.view, "#load-earlier:not([disabled])")
+      assert has_element?(ctx.view, "#transcript-turns > article:first-child", "middle chunk")
+      assert has_element?(ctx.view, "#transcript-turns > article:last-child", "held tail")
+
+      expect(Tracks, :earlier_events, fn _,
+                                         _,
+                                         %Transcript.History{chunks: [[%{"id" => 1}]]} = request,
+                                         _ ->
+        {:ok, %{transcript([{"old", "oldest chunk"}]) | history: %{request | chunks: []}}}
+      end)
+
+      render_click(ctx.view, "load-earlier", %{})
+      render_async(ctx.view)
+      refute has_element?(ctx.view, "#load-earlier")
+      assert has_element?(ctx.view, "#transcript-turns > article:first-child", "oldest chunk")
+      assert has_element?(ctx.view, "#transcript-turns > article:last-child", "held tail")
     end
 
     for revoked <- [:session, :track] do

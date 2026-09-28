@@ -255,12 +255,13 @@ defmodule RavixWeb.TrackLive do
       track_id = socket.assigns.track_id
       thread_id = socket.assigns.thread_id
       key = {:earlier, thread_id, socket.assigns.thread_generation, history_cursor(page)}
+      history = Transcript.History.request(page.history)
 
       {:noreply,
        socket
        |> assign(earlier_loading: true)
        |> traced_async(key, fn ->
-         Tracks.earlier_events(user, track_id, page, thread_id: thread_id)
+         Tracks.earlier_events(user, track_id, history, thread_id: thread_id)
        end)}
     end
   end
@@ -846,9 +847,11 @@ defmodule RavixWeb.TrackLive do
 
       case response do
         {:ok, {:ok, chunk}} when cursor == current_cursor ->
+          history = Transcript.History.advance(socket.assigns.page.history, chunk.history)
+          chunk = %{chunk | history: history}
           page = Transcript.prepend_history(socket.assigns.page, chunk)
           held = MapSet.new(socket.assigns.page.turns, & &1.id)
-          earlier = Enum.reject(Transcript.visible_turns(chunk), &MapSet.member?(held, &1.id))
+          earlier = Enum.reject(Transcript.visible_turns(page), &MapSet.member?(held, &1.id))
           socket = socket |> assign(page: page) |> memoize()
           Enum.reduce(Enum.reverse(earlier), socket, &stream_insert(&2, :turns, &1, at: 0))
 

@@ -1,10 +1,26 @@
-# Transcript history (RAV-28)
+# Transcript history (partial RAV-28)
+
+This is an interim step. The initial download is unchanged until
+[managoat/fountain#2531](https://github.com/managoat/fountain/issues/2531) ships.
 
 Opening a thread renders the newest ten complete turn groups in its current
 conversation. Load earlier prepends another group without re-parsing the visible
 tail. Interleaved turns stay together, so a chunk may exceed ten turns. A single
 large turn is never truncated. Older conversation IDs are visited newest first,
 only when the current conversation's earlier chunks have been exhausted.
+Contiguous runs of turn-less output get distinct identities; early setup and
+late turn-less output cannot join every intervening turn into a single chunk.
+
+Each load-earlier task receives only its next raw chunk and history cursor;
+loaded turns and remaining chunks stay in the LiveView. The task returns only
+the new parsed chunk. Fetching an archived conversation also returns that
+conversation's unread remainder once.
+
+The full fetched log schedules supervised background classification, including
+settled turns outside the visible page. A background scan performs the build;
+the read does not wait for it. Classification retains the per-turn global
+registration and durable idempotency check used by live settlement, so concurrent
+reads and reopening do not repeat completed classifications or fetch events again.
 
 The live cursor remains `Page.last_event_id`, in the current conversation.
 `oldest_conversation_id` and `oldest_event_id` identify the loaded history edge.

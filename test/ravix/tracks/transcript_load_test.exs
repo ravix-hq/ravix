@@ -219,8 +219,8 @@ defmodule Ravix.Tracks.TranscriptLoadTest do
       page =
         if mode == :archived do
           assert page.turns == []
-          assert {:ok, older} = Tracks.earlier_events(owner, track.id, page)
-          older
+          assert {:ok, older} = Tracks.earlier_events(owner, track.id, page.history)
+          Transcript.prepend_history(page, older)
         else
           page
         end
@@ -253,6 +253,55 @@ defmodule Ravix.Tracks.TranscriptLoadTest do
       assert [%{blocks: [%Transcript.Block.Failure{}], visible?: true}] = repaired.turns
       refute_receive {:classifying, _}
     end
+  end
+
+  test "unscrolled settled turns classify asynchronously from the fetched log without another provider read" do
+    owner = insert_user()
+    project = insert_project(user: owner, runtime: "codex")
+    track = insert_track(project: project, conversation_id: "unscrolled")
+    client = Fountain.Client.new("https://fountain.test", "key")
+    stub(Fountain, :client, fn -> client end)
+    stub(Fountain, :turns, fn _, "unscrolled" -> {:ok, []} end)
+
+    log =
+      Ravix.AgentOutageFixture.events() ++
+        Enum.map(1..30, fn id ->
+          Fixture.output(100 + id, Fixture.text("newer"), "new-#{id}")
+        end)
+
+    expect(Fountain, :events, 2, fn _, "unscrolled", [prompts: true] -> {:ok, log} end)
+    parent = self()
+
+    stub(Trace, :span, fn name, attributes, fun ->
+      if name == "transcript.background", do: await_background(parent)
+      if name == "transcript.classification_scan", do: send(parent, {:scanning, self()})
+      Mimic.call_original(Trace, :span, [name, attributes, fun])
+    end)
+
+    expect(AgentFailure, :detect, fn events, runtime, blocks ->
+      Mimic.call_original(AgentFailure, :detect, [events, runtime, blocks])
+    end)
+
+    assert {:ok, page} = Tracks.events(owner, track.id)
+    refute Enum.any?(page.turns, &(&1.id == "mine"))
+    assert_receive {:scanning, worker}, 1_000
+    assert_receive {:classifying, ^worker}, 1_000
+    monitor = Process.monitor(worker)
+    send(worker, :finish)
+    assert_receive {:DOWN, ^monitor, :process, ^worker, :normal}, 2_000
+
+    assert Enum.any?(
+             Repo.all(TurnFailure),
+             &(&1.turn_id == "mine" and &1.code == "agent_provider_unreachable")
+           )
+
+    # Reopening skips the durable classification, even without ever loading earlier.
+    assert {:ok, _} = Tracks.events(owner, track.id)
+    assert_receive {:scanning, second}, 1_000
+    monitor = Process.monitor(second)
+    assert_receive {:DOWN, ^monitor, :process, ^second, reason}, 2_000
+    assert reason in [:normal, :noproc]
+    refute_receive {:classifying, _}
   end
 
   test "historical backfill is explicit, idempotent and keeps live turns unclassified" do

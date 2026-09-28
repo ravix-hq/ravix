@@ -15,6 +15,35 @@ defmodule Ravix.Tracks.Settlement do
     end)
   end
 
+  @doc "Classify every settled turn in a fetched snapshot, including turns outside the visible page."
+  def enqueue_log(log, conversation_id, runtime, binding) do
+    if Enum.any?(log, &(Event.from(&1) |> Event.settles?())) do
+      Task.Supervisor.start_child(
+        Ravix.TaskSupervisor,
+        Trace.link(fn -> classify_log(log, conversation_id, runtime, binding) end)
+      )
+    end
+
+    :ok
+  end
+
+  defp classify_log(log, conversation_id, runtime, binding) do
+    Trace.span("transcript.classification_scan", %{"ravix.event_count" => length(log)}, fn ->
+      # ownership: Access.thread_access authorized the snapshot that scheduled this task.
+      classified = Store.turn_classifications([conversation_id]).classified
+      page = Transcript.page(log, runtime, %{})
+
+      for turn <- page.turns,
+          turn.settled?,
+          not MapSet.member?(classified, {conversation_id, turn.id}) do
+        key = conversation_id <> "/" <> turn.id
+        # The same per-turn global registration and durable transaction as live
+        # settlement deduplicate overlapping snapshots and concurrent readers.
+        background(key, conversation_id, turn.id, turn.events, runtime, binding)
+      end
+    end)
+  end
+
   defp enqueue_turn(turn, binding) do
     key = turn.conversation_id <> "/" <> turn.id
 

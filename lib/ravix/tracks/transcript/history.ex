@@ -16,20 +16,9 @@ defmodule Ravix.Tracks.Transcript.History do
 
   @spec new([map()], list(), String.t(), list(), term()) :: t()
   def new(events, records, conversation_id, conversations, source) do
-    # A lifecycle event without a turn belongs beside the preceding turn;
-    # splitting it off would lose suspension/failure classification context.
-    {tagged, _} =
-      Enum.map_reduce(events, Event.pending(), fn raw, current ->
-        event = Event.from(raw)
-
-        id =
-          if event.turn_id == Event.pending() and Event.suspension(event),
-            do: current,
-            else: event.turn_id
-
-        next = if id == Event.pending(), do: current, else: id
-        {{raw, id}, next}
-      end)
+    # Runs of unbound output must not connect setup to a late unbound event.
+    # Suspension still travels with the preceding real turn for classification.
+    {tagged, _} = Enum.map_reduce(events, {Event.pending(), nil}, &tag_event/2)
 
     indexed = Enum.with_index(tagged)
     ends = Map.new(indexed, fn {{_raw, id}, index} -> {id, index} end)
@@ -56,6 +45,40 @@ defmodule Ravix.Tracks.Transcript.History do
       source: source
     }
   end
+
+  defp tag_event(raw, {current, run}) do
+    event = Event.from(raw)
+
+    cond do
+      event.turn_id != Event.pending() ->
+        {{raw, event.turn_id}, {event.turn_id, nil}}
+
+      Event.suspension(event) ->
+        {{raw, current}, {current, nil}}
+
+      true ->
+        run = run || "pending:#{event.id}"
+        # Keep separate runs distinct in the rendered transcript as well as
+        # the partition, or prepend would discard one as a duplicate.
+        {{%{event | turn_id: run}, run}, {current, run}}
+    end
+  end
+
+  @doc "Only the next retained chunk crosses the async task boundary."
+  @spec request(t()) :: t()
+  def request(%{chunks: []} = history), do: %{history | records: []}
+
+  def request(%{chunks: [chunk | _]} = history) do
+    ids = MapSet.new(chunk, &Event.from(&1).turn_id)
+    records = Enum.filter(history.records, &MapSet.member?(ids, &1.id))
+    %{history | chunks: [chunk], records: records}
+  end
+
+  @doc "Retain unread chunks locally; a newly fetched archive supplies its own remainder."
+  @spec advance(t(), t()) :: t()
+  def advance(%{chunks: [_ | rest]} = held, _returned), do: %{held | chunks: rest}
+  def advance(%{chunks: [], conversations: []} = held, _returned), do: held
+  def advance(%{chunks: []}, returned), do: returned
 
   @spec more?(t() | nil) :: boolean()
   def more?(nil), do: false

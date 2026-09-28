@@ -61,17 +61,17 @@ defmodule Ravix.Tracks.TranscriptHistoryTest do
     assert attributes(initial)["ravix.event_pages"] == 7
     assert attributes(initial)["ravix.events_fetched"] == 7000
     calls = FakeTransport.calls(client)
-    assert {:error, :not_found} = Tracks.earlier_events(insert_user(), track.id, page)
-    assert {:ok, page} = Tracks.earlier_events(owner, track.id, page)
+    assert {:error, :not_found} = Tracks.earlier_events(insert_user(), track.id, page.history)
+    assert {:ok, page} = earlier(owner, track.id, page)
     assert comparable(page.turns) == comparable(Enum.take(full.turns, -20))
     assert page.last_event_id == 7000
     assert_receive {:span, span(name: "tracks.events.earlier")}
-    assert {:ok, page} = Tracks.earlier_events(owner, track.id, page)
-    assert {:ok, page} = Tracks.earlier_events(owner, track.id, page)
+    assert {:ok, page} = earlier(owner, track.id, page)
+    assert {:ok, page} = earlier(owner, track.id, page)
     refute Transcript.History.more?(page.history)
     assert comparable(page.turns) == comparable(full.turns)
     assert page.oldest_event_id == 1
-    assert {:ok, ^page} = Tracks.earlier_events(owner, track.id, page)
+    assert {:ok, ^page} = earlier(owner, track.id, page)
     assert FakeTransport.calls(client) == calls
     page = Transcript.add_event(page, Fixture.output(7001, Fixture.text("live"), "live"))
     assert List.last(page.turns).id == "live"
@@ -95,23 +95,23 @@ defmodule Ravix.Tracks.TranscriptHistoryTest do
     assert {:ok, page} = Tracks.events(owner, track.id)
     assert Enum.map(page.turns, & &1.id) == ["new-turn"]
     other = insert_track(project: project, conversation_id: "other")
-    assert {:error, :not_found} = Tracks.earlier_events(owner, other.id, page)
+    assert {:error, :not_found} = Tracks.earlier_events(owner, other.id, page.history)
     forged = %{page | history: %{page.history | conversations: ["someone-else"]}}
-    assert {:error, :not_found} = Tracks.earlier_events(owner, track.id, forged)
+    assert {:error, :not_found} = Tracks.earlier_events(owner, track.id, forged.history)
     expect(Fountain, :events, fn _, "middle", [prompts: true] -> {:error, :offline} end)
-    assert {:error, :offline} = Tracks.earlier_events(owner, track.id, page)
+    assert {:error, :offline} = earlier(owner, track.id, page)
 
     expect(Fountain, :events, fn _, "middle", [prompts: true] ->
       {:ok, [Fixture.output(50, Fixture.text("middle"), "middle-turn")]}
     end)
 
-    assert {:ok, page} = Tracks.earlier_events(owner, track.id, page)
+    assert {:ok, page} = earlier(owner, track.id, page)
 
     expect(Fountain, :events, fn _, "old", [prompts: true] ->
       {:ok, [Fixture.output(1, Fixture.text("old"), "old-turn")]}
     end)
 
-    assert {:ok, page} = Tracks.earlier_events(owner, track.id, page)
+    assert {:ok, page} = earlier(owner, track.id, page)
     assert Enum.map(page.turns, & &1.id) == ["old-turn", "middle-turn", "new-turn"]
     assert page.conversation_id == "new"
     assert page.last_event_id == 100
@@ -139,7 +139,13 @@ defmodule Ravix.Tracks.TranscriptHistoryTest do
         Transcript.prepend_history(page, chunk)
       end)
 
-    assert comparable(combined.turns) == comparable(Transcript.page(log, "codex", %{}).turns)
+    assert comparable(Enum.reject(combined.turns, &String.starts_with?(&1.id, "pending"))) ==
+             comparable(
+               Enum.reject(Transcript.page(log, "codex", %{}).turns, &(&1.id == "pending"))
+             )
+
+    assert List.last(combined.turns).blocks ==
+             List.last(Transcript.page(log, "codex", %{}).turns).blocks
   end
 
   test "unbound setup output from separate conversations has distinct stable identities" do
@@ -160,6 +166,48 @@ defmodule Ravix.Tracks.TranscriptHistoryTest do
     assert Enum.map(page.turns, & &1.id) == ["old:pending", "pending"]
     assert Transcript.prepend_history(page, old) == page
     assert Enum.map(page.turns, fn turn -> hd(turn.blocks).body end) == ["old setup", "new setup"]
+  end
+
+  test "early setup and late turn-less runs do not join the entire conversation into one chunk" do
+    unbound = fn id, body -> Map.put(Fixture.output(id, Fixture.text(body)), "turn_id", nil) end
+    middle = Enum.map(events(35, 3), &Map.update!(&1, "id", fn id -> id + 2 end))
+
+    log =
+      [unbound.(1, "setup "), unbound.(2, "ready")] ++
+        middle ++
+        [unbound.(108, "late "), unbound.(109, "notice")]
+
+    history = Transcript.History.new(log, [], "c", [], :fixture)
+    assert length(history.chunks) == 4
+    [latest | _] = history.chunks
+    assert length(latest) < 40
+    newest = Transcript.page(latest, "codex", %{})
+    assert Enum.any?(newest.turns, &(&1.id == "t35"))
+    refute Enum.any?(newest.turns, &(&1.id == "t1"))
+
+    combined =
+      Enum.reduce(history.chunks, Transcript.empty("codex"), fn events, page ->
+        Transcript.prepend_history(page, Transcript.page(events, "codex", %{}))
+      end)
+
+    assert Enum.map(combined.turns, & &1.id) ==
+             ["pending:1"] ++ Enum.map(1..35, &"t#{&1}") ++ ["pending:108"]
+
+    assert hd(hd(combined.turns).blocks).body == "setup ready"
+    assert hd(List.last(combined.turns).blocks).body == "late notice"
+  end
+
+  defp earlier(owner, track_id, page) do
+    request = Transcript.History.request(page.history)
+
+    with {:ok, chunk} <- Tracks.earlier_events(owner, track_id, request) do
+      # The response contains only the newly parsed chunk, never the held tail
+      # or the remaining raw chunks for this conversation.
+      assert length(chunk.turns) <= 10
+      if page.history.chunks != [], do: assert(chunk.history.chunks == [])
+      chunk = %{chunk | history: Transcript.History.advance(page.history, chunk.history)}
+      {:ok, Transcript.prepend_history(page, chunk)}
+    end
   end
 
   defp comparable(turns), do: Enum.map(turns, &Map.from_struct(%{&1 | conversation_id: nil}))

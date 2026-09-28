@@ -118,6 +118,10 @@ defmodule Ravix.Tracks.Transcript do
        when is_binary(id) and id != current,
        do: %{turn | id: "#{id}:pending"}
 
+  defp archive_pending(%Turn{id: "pending:" <> _ = turn_id, conversation_id: id} = turn, current)
+       when is_binary(id) and id != current,
+       do: %{turn | id: "#{id}:#{turn_id}"}
+
   defp archive_pending(turn, _current), do: turn
 
   @doc "An empty page for a track with no conversation yet."

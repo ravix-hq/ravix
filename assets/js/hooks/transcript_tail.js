@@ -8,7 +8,7 @@
 // expects, on the scroll container:
 //
 //   <div phx-hook="TranscriptTail" id="transcript-scroll" class="transcript-scroll"
-//        data-track={@track.id} data-older-event="older">
+//        data-track={@thread_id} data-older-event="older">
 //     <div>… anything above the turns …</div>
 //     <div id="transcript-turns" phx-update="stream">… the turns …</div>
 //     <button type="button" class="jump-latest" data-jump-latest>Jump to latest</button>
@@ -19,7 +19,7 @@
 //   shows it only under `.transcript-scroll.unpinned` (or `.scroll.unpinned`),
 //   which is the class this hook toggles.
 //
-//   data-track        changes when the reader is somewhere new, which re-pins
+//   data-track        holds the selected thread id; changing it re-pins
 //                     the panel to the bottom whatever they had scrolled to
 //   data-older-event  optional; pushed to the LiveView when the reader nears
 //                     the top, so a page of older turns can be laid in above.
