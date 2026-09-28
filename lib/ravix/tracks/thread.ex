@@ -18,6 +18,11 @@ defmodule Ravix.Tracks.Thread do
     field :title, :string
     field :created_at, :utc_datetime_usec
     field :closed_at, :utc_datetime_usec
+    # ADR 0009, expand only: unwritten until starter billing. Nil in all three
+    # is a legacy thread its project owner pays for, which is every thread.
+    field :started_by, :string
+    field :payer_user_id, :string
+    field :billing_policy, Ecto.Enum, values: [:legacy_owner, :starter]
   end
 
   @title_length 40

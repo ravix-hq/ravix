@@ -1,0 +1,64 @@
+defmodule Ravix.Workspaces.Backfill do
+  @moduledoc """
+  The personal-workspace backfill (ADR 0009, phase 2).
+
+  Gives every user a personal workspace with themselves as its owner, and
+  fills the two project fields whose meaning is the same as a legacy
+  column's (`created_by_user_id`, `normalized_repo_full_name`). It does not
+  move any project into a workspace and admits nobody to anything: that is
+  an explicit, consented admission in a later phase.
+
+  Resumable by construction rather than by a checkpoint. Each batch selects
+  only what is still missing (see `Ravix.Workspaces.Store`), so a run cut
+  off halfway, a second run, a run on another instance at the same moment
+  and a run after an older release has inserted more rows all pick up
+  exactly the remainder. The unique personal-workspace index and
+  `ON CONFLICT DO NOTHING` make the concurrent case safe as well as correct.
+
+  `Ravix.Release.migrate/0` runs it after every migration, so each deploy
+  reconciles whatever the previous release wrote while this one rolled out.
+  """
+
+  require Logger
+
+  alias Ravix.Workspaces.Store
+
+  @batch 500
+
+  @typedoc "How many rows each step wrote in this run."
+  @type result :: %{
+          workspaces: non_neg_integer(),
+          memberships: non_neg_integer(),
+          projects: non_neg_integer()
+        }
+
+  @doc """
+  Run every step until it has nothing left, or until `:max_batches` batches
+  per step (for a bounded run; the next one resumes). `:batch_size` defaults
+  to #{@batch}.
+  """
+  @spec run(keyword()) :: result()
+  def run(opts \\ []) do
+    batch = Keyword.get(opts, :batch_size, @batch)
+    max = Keyword.get(opts, :max_batches, :infinity)
+
+    result = %{
+      workspaces: drain(fn -> Store.insert_personal_workspaces(batch) end, max),
+      memberships: drain(fn -> Store.insert_owner_memberships(batch) end, max),
+      projects: drain(fn -> Store.fill_project_attribution(batch) end, max)
+    }
+
+    Logger.info("workspace backfill: #{inspect(result)}")
+    result
+  end
+
+  defp drain(step, max, total \\ 0, done \\ 0)
+  defp drain(_step, max, total, max), do: total
+
+  defp drain(step, max, total, done) do
+    case step.() do
+      0 -> total
+      count -> drain(step, max, total + count, done + 1)
+    end
+  end
+end
