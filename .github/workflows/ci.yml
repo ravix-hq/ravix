@@ -215,14 +215,17 @@ jobs:
   # app, provider mocks and database (browser/server.py), sharing nothing.
   # Playwright splits by test (`fullyParallel`), so the one long file does
   # not decide the wall clock. `browser smoke` below is the required check.
+  # A fourth entry runs the specs that need RAVIX_WORKSPACE_ACCESS on
+  # (`test:browser:workspace-access`); the switch is app-wide, so they get
+  # their own app rather than a shard of the default (switch-off) run.
   browser-shard:
-    name: browser smoke ${{ matrix.shard }}/3
+    name: browser smoke ${{ matrix.shard == 'access' && 'workspace access' || format('{0}/3', matrix.shard) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3]
+        shard: ['1', '2', '3', 'access']
     env:
       MIX_ENV: prod
     services:
@@ -272,7 +275,10 @@ jobs:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}
       - run: bunx playwright install --with-deps chromium
-      - run: bun run test:browser -- --shard=${{ matrix.shard }}/3
+      - if: matrix.shard != 'access'
+        run: bun run test:browser -- --shard=${{ matrix.shard }}/3
+      - if: matrix.shard == 'access'
+        run: bun run test:browser:workspace-access
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: failure()
         with:
