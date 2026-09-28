@@ -1438,6 +1438,18 @@ function githubApi(req: Request, url: URL, body: Record<string, unknown>): Respo
   // with an expiry an hour out, because `installationToken` caches until a
   // minute before it and a token that looks already-expired makes every call
   // re-mint.
+  // What it does check is where a JWT is sent, because GitHub does: the App's
+  // JWT is accepted on `/app/...` and nowhere else ("Bad credentials").
+  const bearer = /^Bearer (\S+)$/.exec(req.headers.get("authorization") ?? "")?.[1] ?? "";
+  if (!p.startsWith("/app/") && /^eyJ[\w-]*\.[\w-]+\.[\w-]+$/.test(bearer)) {
+    return json({ message: "Bad credentials" }, 401);
+  }
+
+  /** The App's installations, listed as the App: only the one this mock has. */
+  if (p === "/app/installations") {
+    return json([{ id: INSTALLATION_ID, account: { login: VIEWER.login, avatar_url: VIEWER.avatar_url } }]);
+  }
+
   const token = /^\/app\/installations\/(\d+)\/access_tokens$/.exec(p);
   if (token) return json({ token: "ghs_mock", expires_at: new Date(Date.now() + 3_600_000).toISOString() });
 

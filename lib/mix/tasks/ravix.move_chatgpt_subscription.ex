@@ -22,7 +22,9 @@ defmodule Mix.Tasks.Ravix.MoveChatgptSubscription do
 
   @impl true
   def run([operator_id, from_id, to_id]) do
-    Mix.Task.run("app.start")
+    # Not app.start: see `Ravix.Release`, no singletons or endpoint for a task.
+    Mix.Task.run("app.config")
+    Ravix.Release.start_services()
 
     case Inference.move_subscription_as(operator_id, from_id, to_id) do
       {:ok, user} ->

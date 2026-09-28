@@ -15,7 +15,9 @@ defmodule Mix.Tasks.Ravix.BackfillTurnFailures do
   def run([]), do: Mix.raise("Supply at least one thread ID")
 
   def run(ids) do
-    Mix.Task.run("app.start")
+    # Not app.start: see `Ravix.Release`, no singletons or endpoint for a task.
+    Mix.Task.run("app.config")
+    Ravix.Release.start_services()
 
     Enum.each(ids, fn id ->
       case Settlement.backfill(id) do

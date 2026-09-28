@@ -88,4 +88,32 @@ defmodule Ravix.ClusterPeer do
     Ravix.Presence.beat(track_id, project_id, user, :watching)
     Process.sleep(:infinity)
   end
+
+  @doc """
+  Run a release task the way `bin/ravix eval` does, on a node where `:ravix`
+  was never started, and report what was running while it did. The task's
+  output is captured rather than printed, and returned with its result.
+  """
+  @spec release_task(atom(), [term()]) :: map()
+  def release_task(fun, args) do
+    {:ok, io} = StringIO.open("")
+    Process.group_leader(self(), io)
+    result = apply(Ravix.Release, fun, args)
+    # Taken while the task's services are still linked to this process.
+    %{
+      result: result,
+      output: io |> StringIO.contents() |> elem(1),
+      ravix_started?: List.keymember?(Application.started_applications(), :ravix, 0),
+      repo: Ravix.Repo.query!("select 1").rows,
+      registered: Process.registered(),
+      initial_calls: for(pid <- Process.list(), call = initial_call(pid), do: call) |> Enum.uniq()
+    }
+  end
+
+  defp initial_call(pid) do
+    case Process.info(pid, :dictionary) do
+      {:dictionary, dictionary} -> Keyword.get(dictionary, :"$initial_call")
+      nil -> nil
+    end
+  end
 end

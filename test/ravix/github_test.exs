@@ -195,28 +195,94 @@ defmodule Ravix.GitHubTest do
   end
 
   describe "user_by_login/2 and viewer/2" do
-    test "read an account as the App, and nil for a login nobody has", %{app: app} do
-      Fake.install([
-        {"GET", "/users/octo%40cat",
-         fn conn ->
-           ["Bearer " <> jwt] = Plug.Conn.get_req_header(conn, "authorization")
-           Fake.verify_app_jwt!(jwt)
+    test "GitHub refuses the App JWT on /users/:login, as the fake does", %{app: app} do
+      Fake.install([Fake.users_route(%{"dana" => {9001, "dana"}})])
 
-           Req.Test.json(conn, %{
-             id: 5,
-             login: "octo@cat",
-             name: nil,
-             avatar_url: "https://a/5",
-             extra: 1
-           })
-         end},
-        {"GET", "/users/nobody", {404, %{message: "Not Found"}}}
-      ])
+      # The production 401: what `user_by_login/2` used to send.
+      assert {:error, %Error{status: 401, message: "Bad credentials"}} =
+               GitHub.HTTP.request(app, :get, "/users/dana",
+                 auth: "Bearer " <> GitHub.app_jwt(app)
+               )
+
+      # The fake has no opinion on an installation token or no token at all.
+      assert {:ok, %{"id" => 9001}} =
+               GitHub.HTTP.request(app, :get, "/users/dana", auth: "Bearer ghs_x")
+    end
+
+    test "read an account with any installation's token, and nil for a login nobody has",
+         %{app: app} do
+      test = self()
+
+      Fake.install(
+        Fake.app_reader_routes([7, 8]) ++
+          [
+            {"GET", "/users/octo%40cat",
+             fn conn ->
+               send(test, {:auth, Plug.Conn.get_req_header(conn, "authorization")})
+
+               Req.Test.json(conn, %{
+                 id: 5,
+                 login: "octo@cat",
+                 name: nil,
+                 avatar_url: "https://a/5",
+                 extra: 1
+               })
+             end},
+            {"GET", "/users/nobody", {404, %{message: "Not Found"}}}
+          ]
+      )
 
       assert {:ok, %{id: 5, login: "octo@cat", name: nil, avatar_url: "https://a/5"}} =
                GitHub.user_by_login(app, "octo@cat")
 
+      assert_received {:auth, ["Bearer token-1"]}
       assert {:ok, nil} = GitHub.user_by_login(app, "nobody")
+
+      # The installation and its token are both remembered: one listing, one
+      # mint, then only the reads.
+      assert [
+               {"GET", "/app/installations"},
+               {"POST", "/app/installations/7/access_tokens"},
+               {"GET", "/users/octo%40cat"},
+               {"GET", "/users/nobody"}
+             ] = Fake.requests()
+    end
+
+    test "an installation that stopped minting is forgotten and another found", %{app: app} do
+      Cache.put_any_installation(app.app_id, 404)
+
+      Fake.install(
+        [
+          {"POST", "/app/installations/404/access_tokens", {404, %{message: "Not Found"}}}
+          | Fake.app_reader_routes([7])
+        ] ++ [Fake.users_route(%{"dana" => {9001, "dana"}})]
+      )
+
+      assert {:ok, %{id: 9001}} = GitHub.user_by_login(app, "dana")
+      assert {:ok, 7} = Cache.any_installation(app.app_id)
+    end
+
+    test "an App with no installations reads unauthenticated", %{app: app} do
+      test = self()
+
+      Fake.install([
+        Fake.installations_route([]),
+        {"GET", "/users/dana",
+         fn conn ->
+           send(test, {:auth, Plug.Conn.get_req_header(conn, "authorization")})
+           Req.Test.json(conn, %{id: 9001, login: "dana", avatar_url: nil})
+         end}
+      ])
+
+      assert {:ok, %{id: 9001}} = GitHub.user_by_login(app, "dana")
+      assert_received {:auth, []}
+      # Nothing to remember: the next lookup asks again.
+      assert :error = Cache.any_installation(app.app_id)
+    end
+
+    test "a failed installation listing is the lookup's error", %{app: app} do
+      Fake.install([{"GET", "/app/installations", {500, %{message: "boom"}}}])
+      assert {:error, %Error{status: 500}} = GitHub.user_by_login(app, "dana")
     end
 
     test "viewer reads /user with the person's token", %{app: app} do

@@ -20,7 +20,9 @@ defmodule Mix.Tasks.Ravix.SeedRaviWorkspace do
   def run(argv) do
     case OptionParser.parse(argv, strict: [apply: :boolean]) do
       {opts, [], []} ->
-        Mix.Task.run("app.start")
+        # Not app.start: see `Ravix.Release`, no singletons or endpoint for a task.
+        Mix.Task.run("app.config")
+        Ravix.Release.start_services()
         report(RaviSeed.run(apply: Keyword.get(opts, :apply, false)))
 
       _ ->

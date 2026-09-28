@@ -30,7 +30,9 @@ defmodule Mix.Tasks.Ravix.ProviderSecrets do
 
   @impl true
   def run(argv) do
-    Mix.Task.run("app.start")
+    # Not app.start: see `Ravix.Release`, no singletons or endpoint for a task.
+    Mix.Task.run("app.config")
+    Ravix.Release.start_services()
 
     if "--close-allowlists" in argv do
       Enum.each(Ravix.Release.allowlist_lines(close: true), fn line -> Mix.shell().info(line) end)
