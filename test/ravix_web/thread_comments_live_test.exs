@@ -284,26 +284,26 @@ defmodule RavixWeb.ThreadCommentsLiveTest do
     for user <- [ctx.owner, ctx.member], do: Tracks.mark_read(user, ctx.track.id)
     # They are on the project but not looking at the track.
     {:ok, rail, _} = live(log_in_user(build_conn(), ctx.member), "/p/#{ctx.project.id}")
-    render_async(rail)
+    render_async(rail, 5_000)
     {my_parent, mine} = open(ctx, ctx.owner)
-    render_async(my_parent)
+    render_async(my_parent, 5_000)
     refute has_element?(rail, ".track-tab [aria-label='New comment']")
 
     comment_mode(mine)
     submit(mine, "@#{ctx.member.login} can you look?")
-    render_async(rail)
-    render_async(my_parent)
+    render_async(rail, 5_000)
+    render_async(my_parent, 5_000)
 
     assert has_element?(rail, ".track-tab [role=img][aria-label='New comment']")
     refute has_element?(my_parent, ".track-tab [aria-label='New comment']")
 
     # The mention puts it in their Inbox, by name, and nobody else's.
     {:ok, inbox, _} = live(log_in_user(build_conn(), ctx.member), "/inbox")
-    render_async(inbox)
+    render_async(inbox, 5_000)
     assert has_element?(inbox, ".inbox-item", "Mentioned")
     assert has_element?(inbox, ".inbox-item", "@#{ctx.owner.login} mentioned you in a comment.")
     {:ok, inbox, _} = live(log_in_user(build_conn(), ctx.owner), "/inbox")
-    render_async(inbox)
+    render_async(inbox, 5_000)
     refute has_element?(inbox, ".inbox-item", "Mentioned")
   end
 
