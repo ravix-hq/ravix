@@ -1,24 +1,38 @@
 ---
 type: ADR
-title: "Workspaces own repositories; a thread names who pays"
-description: "Accepts workspaces as the tenant boundary, one project per repository within each workspace, project/workspace-visible tracks by default with dedicated-only private opt-in, and thread-starter billing with a single-payer restriction for Codex threads on one track. Records owner decisions, manual duplicate cleanup and a compatible staged migration."
+title: "Workspaces own repositories; a track's creator pays"
+description: "Amended: workspaces own repository projects, sharing is workspace-only, and the track creator pays for every thread and runtime on a dedicated track. Workspace audit and departed-member private-track handling are deferred; implementation remains staged with legacy project-owner billing preserved."
 tags: [architecture, workspaces, access, billing, fountain]
 status: stable
 adr: "0009"
 adr_status: "Accepted"
 date: 2026-09-28
-generated: { by: process:codex, at: 2026-09-28T05:30:19Z }
+generated: { by: process:codex, at: 2026-09-28T06:35:13Z }
 stale_after: 2026-10-28
 ---
 
-# 0009 — Workspaces own repositories; a thread names who pays
+# 0009 — Workspaces own repositories; a track's creator pays
 
-**Status:** Accepted. The owner resolved the remaining questions in the
-2026-09-28 design interview for RAV-23. The decisions below include external
-guests, departure, audit retention, workspace scratch, spend consent and GitHub
-attribution. This acceptance changes documentation only; the phases below
-define subsequent implementation work. No migration, authorization change or
-billing change ships with this ADR.
+**Status:** Accepted, amended after Raunak's review and the owner's 2026-09-28
+follow-up for RAV-23 and RAV-17. The workspace and billing policy below remains
+implementation work; this amendment changes documentation only. No migration,
+authorization change or billing change ships here.
+
+## Amended 2026-09-28 — track creator billing and workspace-only sharing
+
+Raunak clarified RAV-17: the track creator pays for every thread and runtime,
+whoever prompts. Under ADR 0006 each track has its own sandbox, owned by its
+creator, so every harness on that machine uses that creator's credentials.
+This removes per-thread payer selection and the Codex different-starter refusal
+rule. Legacy/shared-machine tracks keep project-owner billing until retired.
+
+The owner also replaced external guest invitations with workspace-member
+selection and the track's ordinary URL, deferred the workspace audit log, and
+deferred handling departed members' private tracks. The previously accepted
+1-year audit log and 30-day orphan auto-close are dropped. #299's existing
+owner-only orphan count and blind close remain unchanged. The decisions and
+phases are amended inline below; repository identity, workspace scratch and
+visibility defaults remain as accepted.
 
 ## Context
 
@@ -36,9 +50,9 @@ were not independently reachable from this track:
 - **RAV-5:** proposed access even without individual GitHub repository access;
   alternatives hide the repository or show it without allowing track creation.
 - **RAV-20:** tracks are not shared, shared with the workspace, or shared with
-  specifically invited people.
-- **RAV-17:** prompting spends the thread starter's subscription/API tokens,
-  regardless of who prompts; project ownership does not select the payer.
+  specifically selected workspace members.
+- **RAV-17:** as Raunak clarified, all inference on a track spends its creator's
+  subscription/API tokens, across every thread and runtime, whoever prompts.
 
 RAV-23 is the workspace decision that ties these requests together. The
 reported `ravix`, `ravix2` through `ravix10` projects on `ravix-hq/ravix` are
@@ -74,8 +88,9 @@ that revision, rather than assertions about a later deployment:
 
 This decision **amends [0005](0005-each-person-brings-their-own-agent.md)**:
 its project-owner payer, owner-only agent credential binding and owner-runtime
-selection decisions change for newly enabled starter-paid threads. Owner-paid
-operation remains unchanged until that feature ships and for legacy threads.
+selection decisions change for newly enabled creator-paid dedicated tracks.
+Project-owner billing remains unchanged until that feature ships and for
+legacy/shared-machine tracks until retired.
 Its personal credential sets, revision invalidation and prohibition on reading
 credential values remain; the changed invalidation scope is specified below.
 It **amends
@@ -97,10 +112,10 @@ full by this decision.
 creator-controlled private tracks, removal that revokes private access and
 stops the removed person's spending, and an owner-only orphan count and blind
 close. These are the project-scope precursor of this workspace policy, not
-workspace support. The workspace rollout extends them to owners/admins and
-adds the 30-day automatic close and the creator-removed case with remaining
-invitees (RAV-27). The code citations in Context describe the earlier pinned
-revision; their project-wide access assumptions predate #299.
+workspace support. Keep #299's existing owner-only count and blind close as
+they are; this amendment does not extend them to admins or add automatic
+closure. Further departed-member private-track handling is deferred. The code
+citations in Context describe the earlier pinned revision; their project-wide access assumptions predate #299.
 
 ### A workspace is the tenant, not a machine
 
@@ -117,7 +132,7 @@ transfer or deletion. Admins manage invitations, repository connections and
 project settings/secrets. Members discover workspace repositories, create tracks
 and work on tracks whose visibility admits them. Administration does not
 implicitly grant private transcript or terminal access. Provider cleanup may
-still require an audited destructive administrative action; it is not a read
+still require an explicitly authorized destructive administrative action; it is not a read
 permission. Payer identity is separate from all three roles.
 
 A workspace connects **one or more GitHub App installations**, including several
@@ -144,7 +159,7 @@ Adding an already connected repository returns its existing project, including
 concurrent adds through a unique constraint and conflict lookup. It does not
 create another machine template or overwrite settings. `projects.user_id`
 remains the legacy ownership field during compatibility; copy attribution to
-`created_by_user_id`. In the new layout the creator is audit history, not the
+`created_by_user_id`. In the new layout the creator is attribution history, not the
 project owner or payer. Workspace capabilities govern administration.
 
 **Scratch projects remain supported as workspace scratch.** They sit outside
@@ -160,8 +175,8 @@ Ravix's GitHub App installation is the authority, as with Conductor or Vercel
 teams. **A workspace invite grants effective access to every repository in that
 workspace**, including repositories added later. Invitation creation and
 acceptance must say this plainly, distinguish a workspace invite from a narrow
-track invite, and show the workspace and current repository scope. Repository
-connection UI must explain that all workspace members receive access. This fits
+track share among existing members, and show the workspace and current
+repository scope. Repository connection UI must explain that all workspace members receive access. This fits
 RAV-12 and avoids a shared catalog that members cannot use. It does not
 grant a personal GitHub permission or make every GitHub action possible as that
 person; clone/push and actor attribution must use the authorized installation
@@ -169,28 +184,31 @@ contract. Repository revocation must stop new provider operations.
 
 `Access` remains the single scoped door. Replace the inference that
 `project_access` implies every track with separate project capabilities and a
-track visibility predicate. Retain explicit track-only access for guests;
-a guest is not silently made a workspace member. A share grants the named track
-and the minimum project label needed to navigate it, never project settings,
-the repository catalog, sibling tracks or track creation.
+track visibility predicate. **Sharing is workspace-only; no external guests.**
+The creator picks existing workspace members using a Slack-style mention/picker;
+each share is a permission row on the track. Workspace membership is necessary
+but does not bypass private-track visibility. The track's own URL is the link:
+there are no track invite links, link-revocation UI or guest logins in the
+workspace model. Today's #299 track invite links remain until workspace
+membership ships, then the member picker replaces them and the invite-link
+flow is removed. Do not turn existing link holders into workspace members.
 
 **RAV-20 visibility is decided in the owner's 2026-09-28 interview:** new
 tracks default to visible to the project, becoming the workspace on workspace
 admission. Private is an explicit opt-in and hides the track from everyone not
-invited, including owners and admins. Persist the creator and one of three modes:
+selected, including owners and admins. Persist the creator and one of three modes:
 
 - **Project/workspace (default):** current project members, becoming current
   workspace members, may read/work on it.
 - **Not shared (private opt-in):** only the creator may read/work on the track.
-- **Invited people:** the creator and specifically invited users may read/work
-  on it. Track invitations may admit external guests, who receive only the
-  narrow track grant described above. Guests cannot create private tracks.
+- **Selected workspace members:** the creator and specifically selected current
+  workspace members may read/work on it.
 
 Only the creator controls these sharing modes; changing to Not shared revokes
-invitations and outstanding links. Workspace administration alone does not
+the selected-member permission rows. Workspace administration alone does not
 bypass visibility. Legacy tracks retain their existing project/member access
-until explicitly converted; do not label them private. Currently “no individual
-track members” is not private: project members already see every track
+until explicitly converted; do not label them private. At the pinned revision,
+“no individual track members” was not private: project members saw every track
 (`lib/ravix/people.ex:18`). Stop deleting explicit track membership on project
 promotion in the new layout, since the two now answer different questions.
 
@@ -203,161 +221,98 @@ project secrets are also available to code running in a permitted track; private
 mode is not isolation from the provider operator or a promise to hide pushed work.
 
 Workspace removal invalidates all that person's workspace-derived permissions
-and explicit grants within it, including creator access, so removal cannot leave
-an invisible guest route back in. Keep creator attribution. An intentional later
-guest invitation is a new audited grant. Removal stops the removed person's
-spending; it never transfers their billing obligation to an admin.
+and explicit track grants within it, including creator access. Keep creator
+attribution. Removal stops their spending; it never transfers their billing
+obligation to an admin. A track URL cannot grant access without membership.
 
-**Departure means revoke, then close blind; there is no content recovery.**
-Owners/admins see orphaned private tracks only as a count and can close them
-without reading their content. Automatically close orphans after **30 days**
-from creator removal. A private track whose creator was removed is an orphan
-even if invitees remain (RAV-27); their remaining grants do not exempt it from
-blind closure or the 30-day deadline. This count is a deliberate administrative
-exception to hiding private-track counts, not a discovery or read permission.
+**Handling a departed member's private tracks is deferred.** Do not delete
+those tracks as a new departure policy, and do not build admin recovery or
+visibility. Drop the 30-day auto-close and any new retention deadline. #299's
+existing owner-only orphan count and blind close stay as they are, including
+their current scope; this amendment neither expands nor removes them. Further
+handling, including tracks with remaining selected members, needs a later
+product decision. Access and spending revocation still apply immediately.
 
 ### Audit and GitHub attribution
 
-Keep a content-free workspace audit log for **1 year**, viewable and exportable
-by owners and admins in workspace settings. Record invitations sent, accepted
-and revoked; repositories connected and disconnected; members removed; and
-visibility changes. Repository connection events and the connection UI make
-later expansion of members' repository access visible without exposing private
-track content.
+**No workspace audit log for now.** The previously accepted 1-year owner/admin
+log, settings viewer and export are deferred; they are not rollout requirements.
 
 **The Ravix GitHub App is the author and pushes commits.** Include a
 `Co-authored-by` trailer for the thread starter; PRs name who started the track.
 Use installation authority, with no per-user GitHub tokens.
 
-### The thread starter pays as far as Fountain allows
+### The track creator pays for every thread and runtime
 
-**RAV-17 is decided: the thread starter pays, as far as Fountain allows. Until
-it ships, the project owner keeps paying under ADR 0005 unchanged.** Claude
-threads can bill different starters on one track today under the supplied
-Fountain contract. Codex threads on that track must use one resolved source and
-revision. Do not block Claude billing on a future Codex isolation feature.
+**RAV-17: the track creator pays for all inference on a dedicated track, whoever
+prompts.** Every thread and every runtime—Claude, Codex and later Cursor—uses
+the creator's credentials. Under ADR 0006 a track is its own sandbox, owned by
+its creator; every harness on that machine logs in with the same person's
+credentials. Starting a thread or delivering a collaborator's prompt never
+selects a different subscription. Authorization still checks whoever acts, but
+payer selection does not depend on that person or on the thread starter.
 
-The owner's 2026-09-28 Fountain source review establishes these contracts:
+Until creator billing ships, existing project-owner billing stays active.
+**Legacy/shared-machine tracks retain ADR 0005 project-owner billing until
+retired.** Preserve their named sponsor rather than silently migrating a running
+shared machine to a track creator's credentials.
 
-- Conversation creation accepts `inference_credential_id` in
-  `apps/fountain/lib/fountain_web/schemas.ex` (approximately line 752), and
-  pins that source across wakes. `Fountain.Conversations.resolve_inference_credential_id/3`
-  (approximately line 3697) requires ownership by the calling Fountain account
-  (`404 inference_credential_not_found`) and, when configured, admission by the
-  agent's `allowed_inference_credential_ids` (`422 inference_credential_not_allowed`).
-- Fountain ADR 0053, decision 6, excludes the credential from sandbox identity:
-  conversations differing only in credential set share the machine, with the
-  credential delivered as process environment. This permits distinct Claude
-  payers; it is not a promise of hostile-process isolation on a shared disk.
-- A shared Codex sandbox requires the **same resolved source and revision**;
-  otherwise Fountain returns `409 codex_inference_conflict`. ADR 0006's threads
-  share a sandbox, so separate tracks remove cross-track conflicts only.
-
-**The calling account is Ravix's, not the person signed in with GitHub.**
-`Config.fountain/0` supplies one server key (`lib/ravix/config.ex:169`);
-`Inference` uses the common provider client (`lib/ravix/accounts/inference.ex:502`,
-`lib/ravix/providers.ex:36`) and creates each person's named set on that account
-(`lib/ravix/accounts/inference.ex:520`, `lib/ravix/accounts/inference.ex:548`).
-Thus the sets Ravix creates for its users are owned by the same Fountain caller,
-which satisfies upstream ownership without moving users' credentials. This
-verifies the application path, not an inventory of production sets. A missing
-or foreign-account set fails closed, with no fallback source.
-
-**Choose an explicit allowlist, not unrestricted overrides.** Base agent creation
-currently sets `allowed_inference_credential_ids: []`
-(`lib/ravix/projects/machine.ex:556`). The newer runtime path creates an agent on
-the owner's set and can add only the owner's source to its allowlist
-(`lib/ravix/projects/runtime_agents.ex:104`,
-`lib/ravix/projects/runtime_agents.ex:155`); it is not a member billing policy.
-Ravix already sends a conversation override
-(`lib/ravix/tracks/sandbox/maintenance.ex:52`, `lib/ravix/fountain.ex:418`).
-Extend this to allow the workspace members' usable sets on each project/runtime
-agent. Explicitly authorized track guests may contribute only their own usable
-sets for threads they start in that project; this is not workspace membership.
-Always select the source from the durable payer binding, never a browser-supplied
-set id. Reconcile allowlists through serialized, durable project/runtime updates
-so concurrent membership changes cannot overwrite one another. Recheck membership
-at launch and delivery, and remove obsolete entries on revocation. An allowlist
-is an extra provider boundary, not permission to charge any member arbitrarily.
-
-Leaving overrides unrestricted avoids reconciliation and accommodates new members
-immediately, but all users' sets share one Fountain account: a wrong set id could
-then spend outside the workspace. Accept the reconciliation cost and fail closed
-while a newly authorized set is not yet admitted. Keep at most one agent per
-runtime per project; do not mutate its default before each prompt.
-
-**For Codex, refuse a different starter on an already bound track.** The first
-new-policy Codex thread atomically reserves the track sandbox generation's Codex
-payer/source/revision before provider launch. Later Codex threads may be started
-only by that same payer using the compatible source and revision. Other people
-can still prompt the existing thread, billed to its starter. A different starter
-sees: “Codex on this track uses another starter's credentials. Prompt an existing
-thread, start a Claude thread with your own credentials, or start a new track.”
-Do not create a billable conversation for a refused launch. The first Codex
-starter need not be the track creator if the track began with Claude. Reconcile
-ambiguous launches before releasing a reservation; concurrent first starts must
-not both win. An existing Codex disk must adopt only a verified compatible
-binding, never acquire a different source merely because its database field is
-empty. Closing its last Codex thread does not clear the disk's source binding.
-
-This keeps every admitted new-policy thread starter-paid and preserves the shared
-checkout. Charging all Codex threads to the track starter would silently change
-whose money a new thread spends; a guest sandbox per thread would break the
-shared-disk contract and add lifecycle/copy costs. Fully independent Codex payers
-on one track remain infeasible today. Removing that restriction later requires
-upstream support for multiple resolved Codex sources/revisions on one persistent
-sandbox, with safe concurrent authentication and resume behavior. That upstream
-change is **not** a prerequisite for the restricted policy chosen here.
-
-| Option | Fountain/Codex requirements | Decision |
+| Option | Requirements | Decision |
 |---|---|---|
-| Project owner pays | Existing agent/set binding and one source per Codex disk suffice. Preserve the named legacy sponsor when workspace ownership replaces `user_id`. | Unchanged until starter billing ships; retained for legacy threads. |
-| Thread starter pays | Existing conversation overrides plus member allowlists support Claude. Codex admission must enforce one payer/source/revision per track sandbox generation. Unrestricted Codex payers need upstream isolation changes. | Selected, with a clear refusal for a different Codex starter. |
-| Workspace pays | A common workspace set on agents/disks fits Codex's single-source rule. Ravix would need workspace credential administration and consent; workspace subscription grants and source-change recovery need provider verification. | Not selected: it charges a workspace rather than the thread starter. |
+| Track creator pays | Bind the dedicated track and every harness/thread to its creator's credentials, with source and revision checks before launch/resume. | Selected: one creator owns the sandbox and pays for all its inference, regardless of runtime, thread starter or prompter. |
+| Project owner pays | Preserve the existing agent/set binding and named legacy sponsor. | Retained for legacy/shared-machine tracks until retired and for existing operation until creator billing ships. |
+| Thread starter pays | Select credentials per thread, reconcile multiple payers on a shared track disk and handle runtime authentication conflicts. | Not selected: a track's sandbox belongs to its creator; per-thread payer selection adds complexity and conflicts with every harness using the creator's credentials. |
+| Workspace pays | Administer a common workspace inference credential set and consent. | Not selected for inference: the creator pays. Sandbox compute/storage remain billed to the workspace owner. |
 
-Add a durable, immutable **`started_by` user-id column** to threads, which have
-no creator today (`lib/ravix/tracks/thread.ex:10`). The default thread's starter
-is the track creator; subsequent threads record the authenticated creator.
-Persist `payer_user_id`, billing policy and credential-set identity before
-launch. For new-policy threads the payer equals `started_by`; recording both
-also describes legacy sponsor-paid threads without inventing a starter. The
-starter consents to paying for all collaborators' prompts. Starting a thread
-in a shared track shows: `This thread uses your <subscription>; collaborators' prompts here also use it.` There are no spend caps yet. Sandbox compute and
-storage are billed to the workspace owner, separately from inference. Queue delivery,
-scheduled continuations, retries, wakes and replacement conversations keep that
-binding; never charge whoever triggers a retry. Runtime choices use that payer's
-usable credentials, subject to the Codex restriction. Revocation, expiry, removal
-or exhaustion pauses paid work with a reason; no fallback to owner, workspace or
-deployment funds. Backfill known default-thread starters from track creators;
-leave unknown historical starters null and keep their legacy owner-paid policy,
-rather than inferring authorship from a transcript.
+Persist the track creator, billing policy, payer and credential-set binding
+before launching paid work. For new-policy tracks the payer is the creator.
+All threads, queue delivery, scheduled continuations, retries, wakes and
+replacement conversations preserve that binding. Do not change the project's
+agent default before each prompt. Shared project/runtime agents admit only
+authorized creator credential overrides; serialize durable allowlist updates
+and fail closed while a creator's set is not admitted. Never take a credential
+set id from the browser or leave overrides unrestricted across Ravix's shared
+Fountain account. Keep at most one agent per runtime per project.
 
-**ADR 0005 is amended in three decisions, not deleted:** a new-policy thread
-spends its starter's set rather than its project owner's; project agents admit
-authorized payer overrides rather than only the owner's source; and thread
-runtime eligibility follows its payer rather than its owner. Lazy adoption of
-owner credentials remains only for legacy billing. Personal sets, the reserved
-empty house default, private credential writes and the agent connection UI remain.
+Thread `started_by` remains attribution, including for `Co-authored-by`; it is
+not a payer selector. Record the authenticated thread starter, use the track
+creator for known default-thread attribution, and leave unknown historical
+starters null rather than inferring authorship from transcripts. Changing who
+starts a Claude or Codex thread does not change the payer and is not a reason
+to refuse that thread. The former Codex single-payer reservation and
+different-starter refusal policy are removed; the same creator's credentials
+serve every runtime on the track.
 
-**Any write to a credential set still ends conversations bound to its old
-revision.** That now reaches collaborators working in the payer's threads in
-other people's projects/workspaces, not just projects the payer owns. It also
-invalidates legacy owner-paid threads started by other people on that same set.
-Warn the payer about this scope before replacement/removal, notify affected collaborators
-without exposing credentials or private thread names, pause queued prompts and
-stop retrying refused old conversations. Retain thread/history and disk records.
-Recovery keeps the same payer, creates a replacement conversation only when
-compatible, and never silently rebills another person. Codex's revision rule
-also prevents assuming that a new conversation fixes the old disk: verify
-compatibility, or require an explicit rebuild/new track with dirty-work warnings.
-Do not reset a shared track while sibling Claude threads are working.
+**The creator consents when sharing the track:**
+`Sharing this track means collaborators' prompts use your <subscription>.`
+There are no spend caps yet. Name the creator as the payer to collaborators.
+Sandbox compute and storage are billed to the workspace owner, separately from
+inference. Runtime eligibility follows the creator's usable credentials.
+Revocation, expiry, member removal or exhaustion pauses paid work with a reason;
+never fall back to the thread starter, prompter, workspace or deployment funds.
 
-Project/environment/vault inference secrets can override credential sets under
-ADR 0005. Before enabling starter billing, reject those override names for
-new-policy launches, identify existing overrides without exposing values, and
-require removal or an explicitly legacy billing mode. Verify selected-source
-precedence on the deployed Fountain. Sandbox compute/storage charges follow
-the workspace-owner policy above, separately from inference.
+**ADR 0005 is amended, not deleted:** dedicated tracks spend their creator's
+set, project agents admit authorized creator overrides, and runtime eligibility
+follows the track creator. Legacy billing keeps the project owner's set.
+Personal credential sets, the reserved empty house default, private credential
+writes and the agent connection UI remain.
+
+Any credential-set write still ends conversations bound to its old revision,
+including collaborators' threads on the creator's tracks and legacy work billed
+to that set. Warn the payer about this scope, notify collaborators without
+exposing credentials or private names, and pause queued work. Preserve history
+and disks; recovery keeps the same payer. Verify source/revision compatibility
+on resume, particularly for Codex disks after credential rotation. If a rebuild
+or new track is needed, warn about dirty work and do not reset a track while
+sibling threads are working. These are credential recovery checks, not a rule
+refusing a different thread starter.
+
+Before enabling creator billing, verify the deployed Fountain override,
+allowlist, source precedence and revision/recovery contracts. Project/environment/
+vault inference secrets can override credential sets under ADR 0005: reject
+those override names for new-policy launches, inventory existing overrides
+without reading values, and require removal or explicit legacy billing. The
+owner's earlier Fountain source review is not a live provider verification.
 
 ### Compatibility is part of the model
 
@@ -437,7 +392,8 @@ Keep ADR 0008's minimal track-only project entries in the pending sidebar tree
 and Cmd/Ctrl-K quick-jump amendment. The tree, quick-jump search, Recent, Inbox,
 Schedules and badges use the same visibility predicate, with no hidden
 track counts. Workspace selection filters repository/project discovery; global
-Inbox and Schedules remain across accessible workspaces and guest tracks.
+Inbox and Schedules remain across accessible workspaces. Retain narrow legacy
+track entries only while legacy access remains active; they do not grant workspace membership.
 Use ADR 0003's cluster naming/singleton rules for any new exclusive reconciler,
 and durable database claims for backfill and billing operations. Node-local
 state is not membership authority. Test two instances, removal during async work,
@@ -452,25 +408,27 @@ Manual cleanup reduces the duplicate inventory before migration. The remaining
 later-created duplicate survives as legacy work because its tracks, plans, disks
 and secrets cannot safely be merged by repository name.
 
-Owner-paid billing continues until starter billing ships. Claude can then use
-per-thread payers; Codex admission stays narrower than unrestricted RAV-17. The
-UI must name the actual payer and explain refused Codex starts. This ADR records
-the supplied upstream contract, not a live verification or confirmation of
-subscription-provider terms. Infrastructure cost allocation is decided above.
+Project-owner billing continues until creator billing ships and remains on
+legacy/shared-machine tracks until retired. A dedicated track then has one
+creator payer across every thread and runtime, simplifying credential selection
+and making sharing consent explicit. Workspace membership precedes the removal
+of track invite links. Audit and departed-member private-track handling are
+deferred, with #299's existing maintenance unchanged. This ADR records policy,
+not live provider verification or confirmation of subscription-provider terms.
 
 ## Phased implementation plan
 
 These are separately shippable PR boundaries under the accepted policy.
-Implementation follows this acceptance PR; this PR remains documentation only.
+Implementation follows this amendment; this PR remains documentation only.
 
 1. **Contract and inventory (RAV-23, RAV-17).** The owner decisions are
    recorded above. Verify manual drain/deletion of
    `ravix3`–`ravix10`, identify the earlier canonical project in the remaining
    pair, and inventory legacy access/secret overrides without reading values.
    Run and record deployed Fountain override/allowlist, source precedence,
-   Codex source/revision conflict and dirty-work recovery checks before billing
+   creator source/revision compatibility and dirty-work recovery checks before billing
    activation; confirm subscription-provider terms for the rollout.
-   Workspace work and starter billing retain independent rollout gates.
+   Workspace work and track-creator billing retain independent rollout gates.
 2. **Expand and dual readers (RAV-12/13).** Add workspace/membership/installation
    tables and nullable attribution/policy fields. Add the workspace repository
    partial unique constraint, legacy-duplicate markers/reservations, resumable
@@ -478,44 +436,45 @@ Implementation follows this acceptance PR; this PR remains documentation only.
    Exercise old-writer rows, interrupted backfills and mixed-release reads.
    Keep existing authorization and writes active everywhere.
 3. **Access boundaries before activation (RAV-5/20).** Implement workspace
-   capabilities, external track-only guest grants (minimal project label, no
-   catalog, sibling tracks, settings or private-track creation), explicit track
-   visibility, session/revocation guards and filtered discovery behind a gate. Test cross-tenant ids, private
-   sibling names/counts, preview/terminal access, lost notifications and peer-node
+   capabilities, selected-member track permission rows, explicit visibility,
+   session/revocation guards and filtered discovery behind a gate. Reject
+   external users in workspace shares. Test cross-tenant ids, private sibling
+   names/counts, preview/terminal access, lost notifications and peer-node
    revocation. Deploy to every instance and drain incompatible queue workers
    before activating any new-policy row.
 4. **Repository admission and navigation (RAV-12/13/10).** Ship explicit workspace
    creation/joining and authorized multi-installation connection, canonical
    project admission and atomic re-add lookup. Present one repository list for
    new tracks and a separate workspace scratch sidebar group, outside repository
-   deduplication and the picker. Add the content-free, 1-year audit log with
-   owner/admin viewing and export in workspace settings for invitations
-   sent/accepted/revoked, repository connections/disconnections, member removals
-   and visibility changes. Attribute commits to the Ravix GitHub App with the
-   thread starter's `Co-authored-by` trailer, and name the track starter in PRs;
-   use no per-user GitHub tokens. Test concurrent adds, normalization, rename
-   collisions, revoked installations and a member without personal GitHub access. Browser checks
-   cover the sidebar tree, quick-jump, workspace selection, guest landing, global
-   activity and mobile navigation.
-5. **Sharing controls (RAV-20).** Enable the three modes only on dedicated tracks,
-   with project/workspace visibility as the default, explicit private opt-in,
-   consent and explicit legacy conversion. Extend #299's project-scope revocation,
-   spending stop, orphan count and blind close to workspace owners/admins. Add
-   automatic orphan closure 30 days after creator removal, including tracks with
-   remaining invitees (RAV-27), with no content recovery. Test the deadline and
-   count-only administrative access as well as member removal, share
-   revocation, creator departure, old invite links and stale async results.
+   deduplication and the picker. Attribute commits to the Ravix GitHub App with
+   the thread starter's `Co-authored-by` trailer, and name the track starter in
+   PRs; use no per-user GitHub tokens. Test concurrent adds, normalization,
+   rename collisions, revoked installations and a member without personal
+   GitHub access. Browser checks cover the sidebar tree, quick-jump, workspace
+   selection, global activity and mobile navigation. No workspace audit log,
+   settings viewer or export is included.
+5. **Sharing controls after membership (RAV-20).** Enable the three modes only
+   on dedicated tracks, keeping project/workspace visibility as the default,
+   private opt-in, creator spend consent and explicit legacy conversion. Once
+   workspace membership ships, replace #299's track invite links with the
+   workspace-member mention/picker and track permission rows. Remove track
+   invite links and link-revocation UI; use the track's own URL, with no guest
+   logins. Old links must not bypass membership or admit external users after
+   cutover; do not broaden legacy grants into workspace membership. Test member
+   removal, permission-row removal, creator departure, old links and stale async
+   results. Preserve #299's existing owner-only orphan count and blind close;
+   add no departure-triggered deletion, auto-close, admin recovery or visibility.
    Browser tests prove private tracks do not leak through search or badges.
-6. **Thread payer binding (RAV-17).** Add `started_by`, immutable payer bindings,
-   explicit legacy sponsor labels and reconciled agent allowlists. Show the exact
-   shared-track subscription consent note above; introduce no spend caps. Bill
-   sandbox compute/storage to the workspace owner separately from inference.
-   Enforce Claude starter billing and atomic Codex source/revision reservations with
-   refusal of a different starter. Verify distinct Claude payers, same-payer
-   Codex threads, conflicting Codex starts and mixed runtimes live; test retry,
-   queue, member/guest allowlists, revocation and cross-workspace revision
-   invalidation. Enable after these contract checks, without waiting for
-   unrestricted Codex isolation. Keep legacy billing and avoid implicit migration.
+6. **Track creator payer binding (RAV-17).** Bind all inference on each dedicated
+   track to its creator, for every thread and runtime regardless of who starts
+   or prompts it. Keep thread-starter attribution separate from billing. Show
+   creator sharing consent and payer labels; introduce no spend caps. Bill
+   sandbox compute/storage to the workspace owner separately. Verify creator
+   credentials across Claude, Codex and future harnesses, concurrent threads
+   started by different members, retries, queue delivery, allowlist updates,
+   revocation and credential rotation/recovery. There is no different-starter
+   Codex refusal or per-thread payer selection. Enable after provider contract
+   checks; preserve project-owner billing on legacy/shared machines until retired.
 7. **Observe and contract later.** Reconcile old-writer rows and pending provider
    operations; retain legacy duplicates and both sandbox layouts. Remove only
    fields unused by all deployed readers. Any duplicate merge or removal of dual
@@ -523,12 +482,12 @@ Implementation follows this acceptance PR; this PR remains documentation only.
 
 ## Open questions
 
-None remain for the owner policy. Deployed Fountain verification, dirty-work
-recovery checks, subscription-provider terms, installation-authority UX and
-rename/transfer/revocation checks remain implementation validation before their
-respective rollout gates, as specified above; acceptance does not claim those
-checks have run. Future multi-source Codex support is not required for this
-restricted rollout.
+Departed-member private-track handling remains deferred, including tracks with
+remaining members; no new deletion, recovery, admin visibility or retention
+policy is authorized here. A workspace audit log is also deferred. Deployed
+Fountain verification, credential rotation and dirty-work recovery checks,
+subscription-provider terms, installation-authority UX and rename/transfer/
+revocation checks remain implementation validation before their rollout gates.
 
 ## Alternatives considered
 
@@ -541,8 +500,8 @@ restricted rollout.
   RAV-20 and leaks both transcript metadata and shared-machine files.
 - **Switch the project agent's credential before each prompt:** races concurrent
   threads, changes sibling behavior and does not lift Codex's disk restriction.
-- **Charge every Codex thread to the track starter:** changes the payer for a
-  thread started by somebody else; refuse that new Codex thread instead.
+- **Thread-starter billing:** requires per-thread credential selection and
+  runtime conflict handling on a sandbox whose creator should pay throughout.
 - **Unrestricted agent credential overrides:** simpler membership updates, but
   the shared Fountain account makes a wrong set id a cross-workspace billing risk.
 - **One sandbox or agent per payer/thread:** changes ADR 0006's shared track
