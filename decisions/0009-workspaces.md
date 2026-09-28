@@ -7,7 +7,7 @@ status: stable
 adr: "0009"
 adr_status: "Accepted"
 date: 2026-09-28
-generated: { by: process:codex, at: 2026-09-28T06:35:13Z }
+generated: { by: process:codex, at: 2026-09-28T06:50:31Z }
 stale_after: 2026-10-28
 ---
 
@@ -166,6 +166,11 @@ project owner or payer. Workspace capabilities govern administration.
 the repository catalog, are not deduplicated and never appear in the repository
 picker. Give them their own sidebar group within the workspace, retaining
 existing repository-less work through the compatible migration.
+
+**2026-09-28 — planned replacement (Linear RAV-29):** a starter-repository
+onboarding flow will let a new user start from a small public `ravix-hq` starter
+repository. Workspace scratch remains as described above for now. When RAV-29
+ships, stop offering new scratch projects; existing scratch projects keep working.
 
 ### Repository membership is not track visibility
 
