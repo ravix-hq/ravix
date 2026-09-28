@@ -128,7 +128,7 @@ defmodule Ravix.Tracks.SetupTest do
   defp server do
     pid =
       start_supervised!(
-        Supervisor.child_spec({Server, name: nil, interval: false},
+        Supervisor.child_spec({Server, name: nil, interval: false, wake: false},
           id: make_ref()
         )
       )

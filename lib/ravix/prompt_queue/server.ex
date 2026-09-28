@@ -13,6 +13,7 @@ defmodule Ravix.PromptQueue.Server do
   It stops before the endpoint, with an explicit five-second child budget.
 
   Sweeps run every thirty seconds as a backstop and immediately whenever a
+  prompt is saved or retried (`wake/0`, heard by every instance) or a
   thread with a waiting prompt says a turn has settled. The worker holds a
   real follower subscription for each queued head, even without a browser.
   A prompt held back by a busy agent
@@ -48,7 +49,9 @@ defmodule Ravix.PromptQueue.Server do
   in milliseconds between sweeps that find nothing waiting (default 30000;
   `false` for no timer at all, for tests), and `:busy_interval`, the shorter
   gap used while a prompt waits (default 30000, and never longer than
-  `:interval`).
+  `:interval`), and `:wake` (default true), whether to sweep on `wake/0`;
+  tests that drive `tick/1` turn it off so another test's save cannot
+  start a sweep under them.
   """
 
   use GenServer, shutdown: 5_000
@@ -91,6 +94,7 @@ defmodule Ravix.PromptQueue.Server do
   # here cannot settle its claim. Store.recover detects departed owners or
   # waits six minutes on a live owner, marking it unconfirmed, never replaying it.
   @delivery_timeout 5 * 60_000
+  @wake_topic "prompt_queue:wake"
 
   @ended "This conversation has ended. Add a new thread and copy this prompt there."
   # For a conversation that failed before it ever ran a turn. `@ended` tells
@@ -109,6 +113,7 @@ defmodule Ravix.PromptQueue.Server do
           {:name, GenServer.name() | nil}
           | {:interval, pos_integer() | false}
           | {:busy_interval, pos_integer()}
+          | {:wake, boolean()}
 
   @doc "Start the worker. See the module for the options."
   @spec start_link([option()]) :: GenServer.on_start()
@@ -127,6 +132,16 @@ defmodule Ravix.PromptQueue.Server do
   @spec tick(GenServer.server()) :: :ok
   def tick(server \\ __MODULE__), do: GenServer.call(server, :tick, @delivery_timeout + 1_000)
 
+  @doc """
+  Tell every instance's worker a prompt is waiting, so it sweeps now rather
+  than on its timer. Without this a prompt on an idle thread -- no earlier
+  head followed, so no settle event coming -- sat until the next backstop
+  tick, up to thirty seconds. Every instance hears it and sweeps, and
+  `Store.claim/1` still decides which one sends.
+  """
+  @spec wake() :: :ok
+  def wake, do: Phoenix.PubSub.broadcast(Ravix.PubSub, @wake_topic, :prompt_queued)
+
   @doc "Stop claiming, release preparers, and drain in-flight POSTs within the shutdown budget."
   @spec stop(GenServer.server()) :: :ok
   def stop(server \\ __MODULE__), do: GenServer.stop(server, :shutdown)
@@ -136,12 +151,16 @@ defmodule Ravix.PromptQueue.Server do
   @impl true
   def init(opts) do
     Process.flag(:trap_exit, true)
+    if Keyword.get(opts, :wake, true), do: Phoenix.PubSub.subscribe(Ravix.PubSub, @wake_topic)
 
     state = %{
       interval: Keyword.get(opts, :interval, @interval),
       busy_interval: Keyword.get(opts, :busy_interval, @busy_interval),
       following: %{},
       running: nil,
+      # A wake that arrives mid-sweep may name a row that sweep already
+      # missed, so it earns one more sweep as soon as this one finishes.
+      again?: false,
       timer: nil,
       callers: [],
       claims: %{},
@@ -190,6 +209,7 @@ defmodule Ravix.PromptQueue.Server do
 
   @impl true
   def handle_info(:tick, state), do: {:noreply, start_sweep(state)}
+  def handle_info(:prompt_queued, state), do: {:noreply, wake_sweep(state)}
 
   def handle_info({ref, _result}, %{running: %{ref: ref}} = state) do
     Process.demonitor(ref, [:flush])
@@ -223,7 +243,7 @@ defmodule Ravix.PromptQueue.Server do
   # the sweep is idempotent and already claims each row before it sends, so a
   # broadcast both instances hear still sends once.
   def handle_info({:transcript, _thread_id, %Event{} = event}, state) do
-    if Event.settles?(event), do: {:noreply, start_sweep(state)}, else: {:noreply, state}
+    if Event.settles?(event), do: {:noreply, wake_sweep(state)}, else: {:noreply, state}
   end
 
   # A topic this server has just left can still have a message in flight, and
@@ -264,9 +284,16 @@ defmodule Ravix.PromptQueue.Server do
 
   defp start_sweep(state), do: state
 
+  defp wake_sweep(%{running: nil} = state), do: start_sweep(state)
+  defp wake_sweep(state), do: %{state | again?: true}
+
   defp finish_sweep(state) do
     Enum.each(state.callers, &GenServer.reply(&1, :ok))
-    schedule(%{state | running: nil, callers: []})
+    state = %{state | running: nil, callers: []}
+
+    if state.again?,
+      do: start_sweep(%{state | again?: false}),
+      else: schedule(state)
   end
 
   defp schedule(%{interval: false} = state), do: state

@@ -463,7 +463,7 @@ defmodule Ravix.SessionRecoveryTest do
   defp server do
     pid =
       start_supervised!(
-        Supervisor.child_spec({Server, name: nil, interval: false}, id: make_ref())
+        Supervisor.child_spec({Server, name: nil, interval: false, wake: false}, id: make_ref())
       )
 
     Sandbox.allow(Repo, self(), pid)

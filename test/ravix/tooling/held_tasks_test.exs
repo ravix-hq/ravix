@@ -150,7 +150,7 @@ defmodule Ravix.Tooling.HeldTasksTest do
         :ok
       end)
 
-      server = start_supervised!({Server, name: nil, interval: false})
+      server = start_supervised!({Server, name: nil, interval: false, wake: false})
       Sandbox.allow(Repo, self(), server)
       for mod <- [Fountain, Ravix.Projects, Ravix.Previews], do: allow(mod, self(), server)
       Server.tick(server)

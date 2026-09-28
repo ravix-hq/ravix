@@ -26,6 +26,7 @@ defmodule Ravix.PromptQueue.Store do
   alias Ravix.PromptQueue
   alias Ravix.PromptQueue.Body
   alias Ravix.PromptQueue.Item
+  alias Ravix.PromptQueue.Server
   alias Ravix.Repo
   alias Ravix.Tracks.Store, as: Tracks
   alias Ravix.Tracks.Track
@@ -94,7 +95,11 @@ defmodule Ravix.PromptQueue.Store do
            Repo.transaction(fn ->
              enqueue_locked(track_id, user_id, author_login, id, encoded, thread_id)
            end) do
-      if inserted?, do: publish_queue(track_id)
+      if inserted? do
+        publish_queue(track_id)
+        Server.wake()
+      end
+
       {:ok, item}
     end
   end

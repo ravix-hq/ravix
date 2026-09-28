@@ -24,7 +24,7 @@ defmodule Ravix.PromptQueue do
   alias Ravix.Accounts.{Access, User}
   alias Ravix.Fountain.Error
   alias Ravix.{Hub, Repo}
-  alias Ravix.PromptQueue.{Store, View}
+  alias Ravix.PromptQueue.{Server, Store, View}
 
   @type reason ::
           :not_found
@@ -102,6 +102,7 @@ defmodule Ravix.PromptQueue do
            Access.track_access(user, track_id),
          {:ok, :ok} <- Repo.transaction(fn -> retry_locked(id, track, role, user) end) do
       Hub.publish(project.id, :queue, track_id: track_id)
+      Server.wake()
     end
   end
 
