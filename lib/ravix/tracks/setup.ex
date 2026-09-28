@@ -314,7 +314,7 @@ defmodule Ravix.Tracks.Setup do
   defp suspended(%{sandbox_layout: :dedicated} = track), do: wake(track)
 
   defp suspended(track) do
-    # ownership: the setup lease names this track; this reads whether its own queue waits.
+    # ownership: no door — the setup lease holds this track; this only reads whether its queue waits.
     if Ravix.PromptQueue.Store.waiting?(track.id), do: wake(track), else: park(track)
   end
 
