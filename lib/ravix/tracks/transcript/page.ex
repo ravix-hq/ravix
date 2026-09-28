@@ -8,7 +8,9 @@ defmodule Ravix.Tracks.Transcript.Page do
   has arrived yet and is not the same as `0`.
 
   `oldest_conversation_id` and `oldest_event_id` identify the history edge;
-  `history` holds unread chunks and archived conversations, never a live cursor.
+  `history` is where Load earlier reads next (a newest-first `before` cursor,
+  or an older Fountain's unread chunks) and the archived conversations, never
+  a live cursor.
 
   `runtime` decides how output is parsed -- an ACP runtime's stdout is
   dropped because the same content arrives structured -- and is carried on

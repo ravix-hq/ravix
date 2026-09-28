@@ -378,7 +378,10 @@ defmodule Ravix.ThreadRuntimeTest do
     assert {:error, {:unprocessable, "invalid_model", "Choose one of Codex's models."}} =
              Tracks.set_model(ctx.owner, ctx.track.id, thread.id, ctx.project.model)
 
-    expect(Fountain, :events, fn _, "codex-conversation", _ -> {:ok, []} end)
+    expect(Fountain, :events_page, fn _, "codex-conversation", opts ->
+      Ravix.TranscriptFixture.events_page([], opts)
+    end)
+
     expect(Fountain, :turns, fn _, "codex-conversation" -> {:ok, []} end)
 
     assert {:ok, %{runtime: "codex"}} =

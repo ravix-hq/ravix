@@ -6,7 +6,7 @@ defmodule Ravix.Tracks.TranscriptLoadTest do
   alias Ravix.Fountain.FakeTransport
   alias Ravix.Trace
   alias Ravix.Tracks
-  alias Ravix.Tracks.{AgentFailure, Settlement, Thread, Transcript, TurnFailure}
+  alias Ravix.Tracks.{AgentFailure, Settlement, Store, Thread, Transcript, TurnFailure}
   alias Ravix.TranscriptFixture, as: Fixture
 
   setup :verify_on_exit!
@@ -194,6 +194,10 @@ defmodule Ravix.Tracks.TranscriptLoadTest do
 
       stub(Fountain, :events, fn _, id, _opts -> {:ok, if(id == target_id, do: log, else: [])} end)
 
+      stub(Fountain, :events_page, fn _, id, opts ->
+        Fixture.events_page(if(id == target_id, do: log, else: []), opts)
+      end)
+
       stub(Fountain, :turns, fn _, _ -> {:ok, []} end)
       parent = self()
 
@@ -255,21 +259,57 @@ defmodule Ravix.Tracks.TranscriptLoadTest do
     end
   end
 
-  test "unscrolled settled turns classify asynchronously from the fetched log without another provider read" do
+  test "classification pages back only to the first classified settled turn, and not at all once it is there" do
+    owner = insert_user()
+    project = insert_project(user: owner, runtime: "codex")
+    track = insert_track(project: project, conversation_id: "scan")
+    base = "/api/conversations/scan"
+    # Three whole-turn pages: t5-t6, t3-t4, t1-t2.
+    log = settled_turns(6, 600)
+    assert [p1, p2, _p3] = Fixture.desc_routes(base <> "/events", log)
+    {:ok, _} = Store.classify_turn_once("scan", "t3", fn -> {:ok, nil} end)
+    turns = {%{method: "GET", path: base <> "/turns"}, {200, [], %{data: []}}}
+    client = FakeTransport.client([p1, turns, p2])
+    stub(Fountain, :client, fn -> client end)
+    parent = self()
+
+    stub(Trace, :span, fn name, attributes, fun ->
+      if name == "transcript.classification_scan", do: send(parent, {:scanning, self()})
+      Mimic.call_original(Trace, :span, [name, attributes, fun])
+    end)
+
+    assert {:ok, page} = Tracks.events(owner, track.id)
+    assert Enum.map(page.turns, & &1.id) == ["t5", "t6"]
+    await_scan()
+    # The read took one page and the scan one more, stopping at t3: t1 and t2
+    # were never read.
+    assert event_paths(client) == [base <> "/events", base <> "/events"]
+    assert classified("scan") == ~w(t3 t4 t5 t6)
+
+    FakeTransport.expect(client, elem(p1, 0), elem(p1, 1))
+    FakeTransport.expect(client, elem(turns, 0), elem(turns, 1))
+    assert {:ok, _} = Tracks.events(owner, track.id)
+    await_scan()
+    # Everything on the newest page is classified: no request beyond the read.
+    assert length(event_paths(client)) == 3
+    assert classified("scan") == ~w(t3 t4 t5 t6)
+  end
+
+  test "unscrolled settled turns on older pages classify in the background, bounded and off the read" do
     owner = insert_user()
     project = insert_project(user: owner, runtime: "codex")
     track = insert_track(project: project, conversation_id: "unscrolled")
-    client = Fountain.Client.new("https://fountain.test", "key")
-    stub(Fountain, :client, fn -> client end)
-    stub(Fountain, :turns, fn _, "unscrolled" -> {:ok, []} end)
+    base = "/api/conversations/unscrolled"
 
     log =
       Ravix.AgentOutageFixture.events() ++
-        Enum.map(1..30, fn id ->
-          Fixture.output(100 + id, Fixture.text("newer"), "new-#{id}")
-        end)
+        (settled_turns(3, 600) |> Enum.map(&Map.update!(&1, "id", fn id -> id + 100 end)))
 
-    expect(Fountain, :events, 2, fn _, "unscrolled", [prompts: true] -> {:ok, log} end)
+    assert [first, second] = Fixture.desc_routes(base <> "/events", log)
+    refute Enum.any?(elem(elem(first, 1), 2)["data"], &(&1["turn_id"] == "mine"))
+    turns = {%{method: "GET", path: base <> "/turns"}, {200, [], %{data: []}}}
+    client = FakeTransport.client([first, turns, second])
+    stub(Fountain, :client, fn -> client end)
     parent = self()
 
     stub(Trace, :span, fn name, attributes, fun ->
@@ -278,30 +318,19 @@ defmodule Ravix.Tracks.TranscriptLoadTest do
       Mimic.call_original(Trace, :span, [name, attributes, fun])
     end)
 
-    expect(AgentFailure, :detect, fn events, runtime, blocks ->
-      Mimic.call_original(AgentFailure, :detect, [events, runtime, blocks])
-    end)
-
     assert {:ok, page} = Tracks.events(owner, track.id)
     refute Enum.any?(page.turns, &(&1.id == "mine"))
     assert_receive {:scanning, worker}, 1_000
-    assert_receive {:classifying, ^worker}, 1_000
     monitor = Process.monitor(worker)
-    send(worker, :finish)
-    assert_receive {:DOWN, ^monitor, :process, ^worker, :normal}, 2_000
+    # Each classification waits on the test; the read already returned. Two
+    # pages, four settled turns: t2 and t3, then t1 and "mine".
+    assert release_classifications(worker, monitor, 0) == 4
+    assert length(event_paths(client)) == 2
 
     assert Enum.any?(
              Repo.all(TurnFailure),
              &(&1.turn_id == "mine" and &1.code == "agent_provider_unreachable")
            )
-
-    # Reopening skips the durable classification, even without ever loading earlier.
-    assert {:ok, _} = Tracks.events(owner, track.id)
-    assert_receive {:scanning, second}, 1_000
-    monitor = Process.monitor(second)
-    assert_receive {:DOWN, ^monitor, :process, ^second, reason}, 2_000
-    assert reason in [:normal, :noproc]
-    refute_receive {:classifying, _}
   end
 
   test "historical backfill is explicit, idempotent and keeps live turns unclassified" do
@@ -326,6 +355,56 @@ defmodule Ravix.Tracks.TranscriptLoadTest do
     assert :ok = Settlement.backfill(track.id, client)
     assert Repo.all(TurnFailure) == rows
     assert {:error, :not_found} = Settlement.backfill(Ecto.UUID.generate(), client)
+  end
+
+  defp release_classifications(worker, monitor, count) do
+    receive do
+      {:classifying, ^worker} ->
+        send(worker, :finish)
+        release_classifications(worker, monitor, count + 1)
+
+      {:DOWN, ^monitor, :process, ^worker, :normal} ->
+        count
+    after
+      2_000 -> flunk("the scan neither classified nor finished")
+    end
+  end
+
+  defp await_scan do
+    assert_receive {:scanning, worker}, 1_000
+    monitor = Process.monitor(worker)
+    assert_receive {:DOWN, ^monitor, :process, ^worker, reason}, 5_000
+    assert reason in [:normal, :noproc]
+  end
+
+  defp event_paths(client),
+    do:
+      for(
+        %{path: path} <- FakeTransport.calls(client),
+        String.ends_with?(path, "/events"),
+        do: path
+      )
+
+  defp classified(conversation_id),
+    do:
+      Store.turn_classifications([conversation_id]).classified
+      |> Enum.map(&elem(&1, 1))
+      |> Enum.sort()
+
+  # Settled turns on sparse ids: opened, `size - 2` outputs, completed.
+  defp settled_turns(count, size) do
+    Enum.flat_map(1..count, fn turn ->
+      first = (turn - 1) * size + 1
+      id = &(&1 * 3 + 2)
+      turn_id = "t#{turn}"
+
+      [Map.put(Fixture.stage(id.(first), "started"), "turn_id", turn_id)] ++
+        Enum.map(
+          (first + 1)..(first + size - 2),
+          &Fixture.output(id.(&1), Fixture.text("x "), turn_id)
+        ) ++
+        [Map.put(Fixture.stage(id.(first + size - 1), "completed"), "turn_id", turn_id)]
+    end)
   end
 
   defp retry_background(worker, owner, track) do

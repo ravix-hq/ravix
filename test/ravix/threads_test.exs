@@ -90,9 +90,9 @@ defmodule Ravix.ThreadsTest do
   test "transcripts and interrupt use the selected conversation", ctx do
     other = thread(ctx.track)
 
-    expect(Fountain, :events, fn _, id, [prompts: true] ->
+    expect(Fountain, :events_page, fn _, id, opts ->
       assert id == other.conversation_id
-      {:ok, []}
+      Ravix.TranscriptFixture.events_page([], opts)
     end)
 
     expect(Fountain, :interrupt, fn _, id ->

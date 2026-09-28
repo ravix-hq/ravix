@@ -188,6 +188,35 @@ function push(conversationId: string, ev: Record<string, unknown>) {
 }
 
 /**
+ * One newest-first page, as Fountain's `_unsafe_list_log_events_backward`
+ * builds it: the newest `limit` events, then, with `whole_turns`, down to
+ * the first event of every turn on the page (and of every turn that brings
+ * in), at most 5,000 events.
+ */
+function backwardPage(ascending: Record<string, unknown>[], limit: number, wholeTurns: boolean) {
+  const rows = [...ascending].reverse();
+  if (rows.length <= limit) return { page: rows, hasMore: false, turnSplit: false };
+  let page = rows.slice(0, limit);
+  if (!wholeTurns) return { page, hasMore: true, turnSplit: false };
+  const firstOf = new Map<unknown, number>();
+  for (const ev of ascending) if (ev.turn_id != null && !firstOf.has(ev.turn_id)) firstOf.set(ev.turn_id, ev.id as number);
+  let floor = page[page.length - 1]!.id as number;
+  let fresh = page;
+  for (;;) {
+    const starts = [...new Set(fresh.map((ev) => ev.turn_id).filter((t) => t != null))].map((t) => firstOf.get(t)!);
+    const start = starts.length ? Math.min(...starts) : Infinity;
+    if (!(start < floor)) break;
+    const room = 5000 - page.length;
+    const extra = rows.filter((ev) => (ev.id as number) >= start && (ev.id as number) < floor);
+    if (extra.length > room) return { page: page.concat(extra.slice(0, room)), hasMore: true, turnSplit: true };
+    page = page.concat(extra);
+    fresh = extra;
+    floor = start;
+  }
+  return { page, hasMore: rows.some((ev) => (ev.id as number) < floor), turnSplit: false };
+}
+
+/**
  * One conversation's transcript as server-sent events.
  *
  * The `: ping` comment every fifteen seconds is not decoration. A track's tab
@@ -1081,12 +1110,22 @@ export async function fountain(req: Request, url: URL): Promise<Response | null>
     const conversationId = convEvents[1]!;
     // Oldest first after the cursor, a page at a time, the way Fountain pages
     // it: `next_cursor` is the last id served, and a reader follows it until
-    // `has_more` is false. That is how a track worked in for an hour reads its
-    // whole scrollback, and how the follower reads back the one event it needs.
+    // `has_more` is false. That is how the follower reads back the one event
+    // it needs. `order=desc` is managoat/fountain#2531: the newest events
+    // first, below `before`, and with `whole_turns=true` never ending a page
+    // inside a turn (up to 5,000 events, then `page.turn_split`).
     const after = Number(url.searchParams.get("after") ?? 0) || 0;
+    const beforeParam = url.searchParams.get("before");
+    const before = beforeParam ? Number(beforeParam) : Infinity;
     const limit = Math.min(Number(url.searchParams.get("limit") ?? 100) || 100, 1000);
-    const rest = (state.events.get(conversationId) ?? []).filter((ev) => (ev.id as number) > after);
-    const page = rest.slice(0, limit);
+    const order = url.searchParams.get("order") === "desc" ? "desc" : "asc";
+    const wholeTurns = url.searchParams.get("whole_turns") === "true";
+    if (wholeTurns && order !== "desc") return json({ error: "invalid_parameters", message: "whole_turns requires order=desc." }, 422);
+    const all = (state.events.get(conversationId) ?? []).filter((ev) => (ev.id as number) > after && (ev.id as number) < before);
+    const { page, hasMore, turnSplit } = order === "desc"
+      ? backwardPage(all, limit, wholeTurns)
+      : { page: all.slice(0, limit), hasMore: all.length > limit, turnSplit: false };
+    const ids = page.map((ev) => ev.id as number);
     const blocks = url.searchParams.get("blocks") === "true";
     const prompts = blocks && url.searchParams.get("prompts") === "true";
     const turns = state.turns.get(conversationId) ?? [];
@@ -1103,7 +1142,13 @@ export async function fountain(req: Request, url: URL): Promise<Response | null>
       : page;
     return json({
       data,
-      meta: { has_more: rest.length > limit, next_cursor: page.length ? page[page.length - 1]!.id : after || null },
+      meta: { limit, has_more: hasMore, next_cursor: page.length ? page[page.length - 1]!.id : null },
+      page: {
+        order,
+        oldest_cursor: ids.length ? Math.min(...ids) : null,
+        newest_cursor: ids.length ? Math.max(...ids) : null,
+        turn_split: turnSplit,
+      },
     });
   }
 

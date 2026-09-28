@@ -28,8 +28,9 @@ test('newest turns render first and loading earlier preserves the visible turn',
   expect(seeded.ok()).toBe(true);
   await page.goto(url);
   const turns = page.locator('#transcript-turns > article');
-  await expect(turns).toHaveCount(10);
-  await expect(turns.first()).toContainText('History prompt 26');
+  // One newest-first page: a thousand events of 200-event turns is five whole turns.
+  await expect(turns).toHaveCount(5);
+  await expect(turns.first()).toContainText('History prompt 31');
   await expect(turns.last()).toContainText('History prompt 35');
   await expect(page.getByText('History answer 35: line 197.', { exact: true })).toBeInViewport();
   const scroller = page.locator('#transcript-scroll');
@@ -39,9 +40,9 @@ test('newest turns render first and loading earlier preserves the visible turn',
   const id = await anchor.getAttribute('id');
   const before = await anchor.evaluate(el => el.getBoundingClientRect().top);
   await page.locator('#load-earlier').click();
-  await expect(turns).toHaveCount(20);
-  await expect(turns.first()).toContainText('History prompt 16');
+  await expect(turns).toHaveCount(10);
+  await expect(turns.first()).toContainText('History prompt 26');
   await expect(turns.last()).toContainText('History prompt 35');
   await expect.poll(async () => Math.abs(await page.locator(`[id="${id}"]`).evaluate(el => el.getBoundingClientRect().top) - before)).toBeLessThan(3);
-  expect(new Set(await turns.evaluateAll(nodes => nodes.map(n => n.id))).size).toBe(20);
+  expect(new Set(await turns.evaluateAll(nodes => nodes.map(n => n.id))).size).toBe(10);
 });

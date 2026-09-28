@@ -5242,6 +5242,74 @@ defmodule RavixWeb.TrackLiveTest do
       assert has_element?(ctx.view, "#transcript-turns > article:last-child", "held tail")
     end
 
+    test "newest-first history hands each task its cursor and keeps what it loaded across a fresh read",
+         ctx do
+      records = [
+        %Ravix.Fountain.Shapes.Turn{
+          id: "old",
+          image_count: 1,
+          prompt: nil,
+          origin: nil,
+          status: nil,
+          inserted_at: nil,
+          client_request_id: nil
+        }
+      ]
+
+      history = %Transcript.History{
+        before: 20,
+        records: records,
+        conversation_id: "live-conversation",
+        source: :fixture
+      }
+
+      page = %{
+        transcript([{"new", "newest"}], from: 20)
+        | history: history,
+          conversation_id: "live-conversation",
+          oldest_event_id: 20
+      }
+
+      repair(ctx, page)
+
+      expect(Tracks, :earlier_events, fn _, _, %Transcript.History{} = request, _ ->
+        # A cursor crosses the task boundary whole: the next page's images
+        # are among its records.
+        assert request == history
+
+        {:ok,
+         %{
+           transcript([{"middle", "middle page"}], from: 10)
+           | history: %{request | before: 10},
+             oldest_event_id: 10
+         }}
+      end)
+
+      render_click(ctx.view, "load-earlier", %{})
+      render_async(ctx.view)
+      assert has_element?(ctx.view, "#load-earlier:not([disabled])")
+      assert has_element?(ctx.view, "#transcript-turns > article:first-child", "middle page")
+
+      expect(Tracks, :earlier_events, fn _, _, %Transcript.History{before: 10} = request, _ ->
+        {:ok,
+         %{
+           transcript([{"old", "oldest page"}])
+           | history: %{request | before: nil},
+             oldest_event_id: 1
+         }}
+      end)
+
+      render_click(ctx.view, "load-earlier", %{})
+      render_async(ctx.view)
+      refute has_element?(ctx.view, "#load-earlier")
+      # A read that starts the thread over from its newest page keeps the
+      # turns already loaded behind it, and the exhausted cursor.
+      repair(ctx, page)
+      refute has_element?(ctx.view, "#load-earlier")
+      assert has_element?(ctx.view, "#transcript-turns > article:first-child", "oldest page")
+      assert has_element?(ctx.view, "#transcript-turns > article:last-child", "newest")
+    end
+
     for revoked <- [:session, :track] do
       test "#{revoked} revocation rejects an earlier-history result", ctx do
         page = %{transcript([{"new", "newest"}]) | history: %Transcript.History{chunks: [[]]}}

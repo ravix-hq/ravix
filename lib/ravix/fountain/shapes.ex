@@ -248,6 +248,46 @@ defmodule Ravix.Fountain.Shapes do
     def models_for(%__MODULE__{models: models}, runtime), do: Map.get(models, runtime, [])
   end
 
+  defmodule EventWindow do
+    @moduledoc """
+    The `page` object of `GET /api/conversations/:id/events`: the window one
+    page covers (managoat/fountain#2531).
+
+    `order` is the order of the page's `data`. `newest_cursor` of the first
+    newest-first page is where an SSE follow resumes. `turn_split` says a
+    `whole_turns` page reached Fountain's ceiling inside a turn, whose older
+    events are on the next page. A Fountain older than #2531 sends no `page`,
+    which `Ravix.Fountain.events_page/3` reports as `nil` rather than as a
+    window it did not describe.
+    """
+
+    @enforce_keys [:order, :oldest_cursor, :newest_cursor, :turn_split]
+    defstruct @enforce_keys
+
+    @type t :: %__MODULE__{
+            order: :asc | :desc,
+            oldest_cursor: integer() | nil,
+            newest_cursor: integer() | nil,
+            turn_split: boolean()
+          }
+  end
+
+  @doc "A page's window, or `nil` from a Fountain that does not describe one."
+  @spec event_window(term()) :: EventWindow.t() | nil
+  def event_window(%{"order" => order} = raw) when order in ["asc", "desc"] do
+    %EventWindow{
+      order: if(order == "desc", do: :desc, else: :asc),
+      oldest_cursor: integer_or_nil(raw["oldest_cursor"]),
+      newest_cursor: integer_or_nil(raw["newest_cursor"]),
+      turn_split: raw["turn_split"] == true
+    }
+  end
+
+  def event_window(_raw), do: nil
+
+  defp integer_or_nil(value) when is_integer(value), do: value
+  defp integer_or_nil(_value), do: nil
+
   @statuses %{
     "pending" => :pending,
     "idle" => :idle,
