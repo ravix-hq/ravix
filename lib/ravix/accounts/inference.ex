@@ -149,14 +149,17 @@ defmodule Ravix.Accounts.Inference do
       * `:reconnect` --- the grant is this person's, by name or because their
         own set names it. Signing in again *against that grant id* is the
         repair, and Fountain allows it.
-      * `:remove` --- the grant is disconnected, no set names it, and no Ravix
-        login is named on it. It can be deleted and the sign-in started again.
+      * `:remove` --- the grant has stopped working (`disconnected` or
+        `revoked`), no set names it, and no Ravix login is named on it. It can
+        be deleted and the sign-in started again.
       * `:elsewhere` --- it is another Ravix login's, or something here is
         still using it. Nothing self-serve to do, and the message says so
         *without naming whose it is*: the name is `ravix:<their id>`, which
         says who, to somebody who has no business knowing.
-      * `:unknown` --- Fountain did not say which grant, or would not describe
-        it. The message says what happened and claims nothing further.
+      * `:unknown` --- Fountain named no grant, which is what it does when the
+        grant is not this Fountain account's at all, or named one this account
+        does not list, or would not describe its account. The message says the
+        ChatGPT account is taken and claims nothing about by whom.
 
     `grant_id` is set only for the two resolutions that act on a grant, so a
     refusal nobody may act on carries nothing to act with. It is an id and
@@ -966,19 +969,15 @@ defmodule Ravix.Accounts.Inference do
     end
   end
 
-  # Fountain writes the refusal on the attempt two ways --- nested under
-  # `failure`, and flat as `failure_reason` with `conflict_grant_id` --- and
-  # which one arrives depends on the deployment's version. Both are read, so
-  # the classification does not turn on that.
+  # Fountain writes a failed attempt's `failure` as `{reason, grant_id, grant}`
+  # (`link_attempts.ex`, `chatgpt_subscription_json.ex`). `grant` is the
+  # conflicting grant's *name*, which is `ravix:<their id>` and is read nowhere
+  # here: it says who, to somebody who has no business knowing. `grant_id` is
+  # null when the grant is not this Fountain account's at all, which is a
+  # conflict this Ravix cannot see into and classifies as `:unknown`.
   defp failure(attempt) do
     nested = if is_map(attempt["failure"]), do: attempt["failure"], else: %{}
-
-    %{
-      reason: text(nested["reason"]) || text(attempt["failure_reason"]),
-      grant_id:
-        text(nested["conflict_grant_id"]) || text(nested["grant_id"]) ||
-          text(attempt["conflict_grant_id"])
-    }
+    %{reason: text(nested["reason"]), grant_id: text(nested["grant_id"])}
   end
 
   defp text(value) when is_binary(value) and value != "", do: value
@@ -1011,9 +1010,9 @@ defmodule Ravix.Accounts.Inference do
                         "A ChatGPT account can only pay for one. Disconnect it from that login, " <>
                         "or ask whoever runs this Ravix to move it, then start again."
 
-  @unknown_conflict "That ChatGPT account is already connected on this Ravix, and it can only be " <>
-                      "connected once. Sign in as a different ChatGPT account, or ask whoever runs " <>
-                      "this Ravix which login holds it."
+  @unknown_conflict "That ChatGPT account is already connected somewhere and can only be connected " <>
+                      "once, and this Ravix cannot see where. Sign in as a different ChatGPT " <>
+                      "account, or ask whoever runs this Ravix to look."
 
   # The refusal classified. A Fountain that will not describe its own account
   # is not guessed at: `:unknown` says only what the attempt said.
@@ -1033,10 +1032,14 @@ defmodule Ravix.Accounts.Inference do
     end
   end
 
+  # A grant Fountain will not serve a run on: it has stopped working and
+  # reconnecting it is the only thing that would change that.
+  @spent ~w(disconnected revoked)
+
   # Ours, ours-but-renamed, nobody's, or not to be touched --- in that order,
   # because each later test is only safe once the earlier ones have failed.
   # A grant named `ravix:<somebody>` is never removed or renamed from here
-  # however disconnected it looks: that name is a person.
+  # however spent it looks: that name is a person.
   defp classify(user, grant_id, grants, sets) do
     grant = Enum.find(grants, &(&1["id"] == grant_id))
     mine = set_name(user)
@@ -1048,7 +1051,7 @@ defmodule Ravix.Accounts.Inference do
       Enum.any?(naming, &(&1["name"] == mine)) -> conflict_of(:reconnect, grant_id)
       ravix_name?(grant["name"]) -> conflict_of(:elsewhere)
       naming != [] -> conflict_of(:elsewhere)
-      grant["status"] == "disconnected" -> conflict_of(:remove, grant_id)
+      grant["status"] in @spent -> conflict_of(:remove, grant_id)
       true -> conflict_of(:elsewhere)
     end
   end
@@ -1171,6 +1174,17 @@ defmodule Ravix.Accounts.Inference do
   saying a subscription pays for Codex, and the target's set and default are
   recorded the way `poll_link/2` records them. This ends the conversations
   running on either set, like any write to a set.
+
+  **Running it again finishes a run that stopped half-way.** There is no
+  transaction across four Fountain writes, and the step that cannot be undone
+  by repetition is the rename: once the grant carries the target's name, the
+  source's name has gone and a second run would find nothing to move. So a
+  grant carrying the target's name, while the source has none, is recognised
+  as a move in that state and the remaining steps are done. Every other step
+  is idempotent on its own --- unnaming a set that names nothing, parking a
+  name nothing holds, pointing a set where it already points --- so a re-run
+  from anywhere is safe. When there is nothing left to do at all, that is said
+  rather than reported as a move.
   """
   @spec move_subscription(User.t(), String.t(), String.t()) ::
           {:ok, User.t()} | {:error, reason()}
@@ -1188,16 +1202,16 @@ defmodule Ravix.Accounts.Inference do
          {:ok, client} <- fountain(),
          {:ok, to_set_id} <- ensure_set(client, to),
          {:ok, grants} <- all_grants(client),
-         {:ok, grant_id} <- movable_grant(grants, from),
          {:ok, sets} <- all_sets(client),
+         {:ok, grant_id, step} <- movable_grant(grants, sets, from, to, to_set_id),
          :ok <- release_grant(client, sets, to_set_id, grant_id),
-         :ok <- free_name(client, grants, grant_id, to),
-         {:ok, _grant} <- rename_grant(client, grant_id, set_name(to)),
+         :ok <- take_name(client, step, grants, grant_id, to),
          {:ok, _set} <- point_set(client, to_set_id, grant_id),
          {:ok, _from} <- forget(from, :codex, :subscription),
          {:ok, moved} <- remember_connection(to, :codex, :subscription, to_set_id, false) do
       Logger.info(
-        "chatgpt subscription moved: grant=#{grant_id} from_user=#{from.id} " <>
+        "chatgpt subscription #{if step == :resume, do: "move finished", else: "moved"}: " <>
+          "grant=#{grant_id} from_user=#{from.id} " <>
           "to_user=#{to.id} to_set=#{to_set_id} by_user=#{admin.id}"
       )
 
@@ -1252,16 +1266,51 @@ defmodule Ravix.Accounts.Inference do
     end
   end
 
-  defp movable_grant(grants, from) do
-    case Enum.find(grants, &(&1["name"] == set_name(from))) do
-      %{"id" => id} when is_binary(id) ->
-        {:ok, id}
+  @nothing_to_move "That person has no ChatGPT subscription on this Ravix to move."
 
-      _ ->
-        {:error,
-         {:unprocessable, "no_subscription",
-          "That person has no ChatGPT subscription on this Ravix to move."}}
+  @already_moved "That person has no ChatGPT subscription on this Ravix to move, and the other " <>
+                   "person's credential set already names one. Nothing is left half-moved."
+
+  # The grant to move, and whether this is a move or the rest of one that
+  # stopped half-way.
+  #
+  # Names are unique on the account, so a grant carrying the *target's* name
+  # while the source has none is a move that got as far as the rename and no
+  # further: the source's name has already gone, and finishing is the only way
+  # to finish it. That reading is also true of a target who linked a
+  # subscription of their own and whose set stopped naming it --- but the
+  # ending is the one both want, their set naming the grant that carries their
+  # name, and an operator asked for it by name.
+  defp movable_grant(grants, sets, from, to, to_set_id) do
+    case Enum.find(grants, &(&1["name"] == set_name(from))) do
+      %{"id" => id} when is_binary(id) -> {:ok, id, :move}
+      _ -> half_moved_grant(grants, sets, to, to_set_id)
     end
+  end
+
+  defp half_moved_grant(grants, sets, to, to_set_id) do
+    case Enum.find(grants, &(&1["name"] == set_name(to) and is_binary(&1["id"]))) do
+      %{"id" => id} ->
+        # Already pointed at is a move with nothing left of it, and saying so
+        # is more use than doing the last step again.
+        if Enum.any?(sets, &(&1["id"] == to_set_id and &1["chatgpt_grant_id"] == id)),
+          do: {:error, {:unprocessable, "no_subscription", @already_moved}},
+          else: {:ok, id, :resume}
+
+      nil ->
+        {:error, {:unprocessable, "no_subscription", @nothing_to_move}}
+    end
+  end
+
+  # A move takes the target's name for the grant, parking whatever held it.
+  # The rest of a half-finished move has nothing to take: the name is already
+  # on the grant, which is how it was recognised.
+  defp take_name(_client, :resume, _grants, _grant_id, _to), do: :ok
+
+  defp take_name(client, :move, grants, grant_id, to) do
+    with :ok <- free_name(client, grants, grant_id, to),
+         {:ok, _grant} <- rename_grant(client, grant_id, set_name(to)),
+         do: :ok
   end
 
   # The grant leaves every set that names it, except the one it is going to:

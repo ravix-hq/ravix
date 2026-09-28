@@ -74,7 +74,7 @@ defmodule Ravix.Accounts.InferenceMoveTest do
     client =
       fountain([
         grants([
-          %{id: "g-1", name: "ravix:#{from.id}", status: "active"},
+          %{id: "g-1", name: "ravix:#{from.id}", status: "connected"},
           %{id: "g-old", name: "ravix:#{to.id}", status: "disconnected"}
         ]),
         sets([
@@ -86,7 +86,7 @@ defmodule Ravix.Accounts.InferenceMoveTest do
         {%{method: "PATCH", path: "#{@chatgpt}/g-old"},
          {200, [], %{data: %{id: "g-old", status: "disconnected"}}}},
         {%{method: "PATCH", path: "#{@chatgpt}/g-1", body: %{name: "ravix:#{to.id}"}},
-         {200, [], %{data: %{id: "g-1", name: "ravix:#{to.id}", status: "active"}}}},
+         {200, [], %{data: %{id: "g-1", name: "ravix:#{to.id}", status: "connected"}}}},
         {%{method: "PATCH", path: "#{@sets}/set-to", body: %{chatgpt_grant_id: "g-1"}},
          {200, [], %{data: %{id: "set-to"}}}}
       ])
@@ -128,7 +128,7 @@ defmodule Ravix.Accounts.InferenceMoveTest do
         {%{method: "GET", path: @sets}, {200, [], %{data: [%{id: "house", is_default: true}]}}},
         {%{method: "POST", path: @sets, body: %{name: "ravix:#{to.id}"}},
          {201, [], %{data: %{id: "set-new", name: "ravix:#{to.id}"}}}},
-        grants([%{id: "g-1", name: "ravix:#{from.id}", status: "active"}]),
+        grants([%{id: "g-1", name: "ravix:#{from.id}", status: "connected"}]),
         sets([%{id: "set-from", name: "ravix:#{from.id}", chatgpt_grant_id: "g-1"}]),
         {%{method: "PATCH", path: "#{@sets}/set-from", body: %{chatgpt_grant_id: nil}},
          {200, [], %{data: %{id: "set-from"}}}},
@@ -185,13 +185,107 @@ defmodule Ravix.Accounts.InferenceMoveTest do
     from = insert_user()
     to = insert_user(credential_set_id: "set-to")
 
-    fountain([grants([%{id: "g-else", name: "ravix:someone", status: "active"}])])
+    fountain([
+      grants([%{id: "g-else", name: "ravix:someone", status: "connected"}]),
+      sets([%{id: "set-to", name: "ravix:#{to.id}", chatgpt_grant_id: nil}])
+    ])
 
     assert {:error, {:unprocessable, "no_subscription", message}} =
              Inference.move_subscription(ctx.admin, from.id, to.id)
 
     assert message =~ "no ChatGPT subscription on this Ravix to move"
+    refute message =~ "already names one"
     assert %User{credential_set_id: "set-to", agent: nil} = Repo.get!(User, to.id)
+  end
+
+  test "a move that stopped after the rename is finished by running it again", ctx do
+    from =
+      insert_user(agent: :codex, credential_kind: :subscription, credential_set_id: "set-from")
+
+    to = insert_user(credential_set_id: "set-to")
+
+    # The first run gets as far as renaming the grant and is refused pointing
+    # the target's set at it.
+    fountain([
+      grants([%{id: "g-1", name: "ravix:#{from.id}", status: "connected"}]),
+      sets([%{id: "set-from", name: "ravix:#{from.id}", chatgpt_grant_id: "g-1"}]),
+      {%{method: "PATCH", path: "#{@sets}/set-from"}, {200, [], %{data: %{id: "set-from"}}}},
+      {%{method: "PATCH", path: "#{@chatgpt}/g-1"}, {200, [], %{data: %{id: "g-1"}}}},
+      {%{method: "PATCH", path: "#{@sets}/set-to"}, {404, [], %{error: "not_found"}}}
+    ])
+
+    assert {:error, {:unprocessable, "no_subscription", _}} =
+             Inference.move_subscription(ctx.admin, from.id, to.id)
+
+    assert %User{credential_kind: :subscription} = Repo.get!(User, from.id)
+    assert %User{agent: nil} = Repo.get!(User, to.id)
+
+    # The account now has no grant under the source's name at all, which is
+    # what used to make the second run say there was nothing to move.
+    client =
+      fountain([
+        grants([%{id: "g-1", name: "ravix:#{to.id}", status: "connected"}]),
+        sets([%{id: "set-from", name: "ravix:#{from.id}", chatgpt_grant_id: nil}]),
+        {%{method: "PATCH", path: "#{@sets}/set-to", body: %{chatgpt_grant_id: "g-1"}},
+         {200, [], %{data: %{id: "set-to"}}}}
+      ])
+
+    log =
+      capture_audit(fn ->
+        assert {:ok, %User{agent: :codex, credential_kind: :subscription}} =
+                 Inference.move_subscription(ctx.admin, from.id, to.id)
+      end)
+
+    # The name is already on the grant, so it is not renamed a second time, and
+    # the source's set is already released, so it is not written to again.
+    assert requests(client) == [{"GET", @chatgpt}, {"GET", @sets}, {"PATCH", "#{@sets}/set-to"}]
+    assert log =~ "chatgpt subscription move finished: grant=g-1"
+    assert %User{agent: :codex, credential_kind: nil} = Repo.get!(User, from.id)
+    assert %User{credential_set_id: "set-to"} = Repo.get!(User, to.id)
+  end
+
+  test "a move with nothing left of it is said as that rather than reported as a move", ctx do
+    from = insert_user()
+    to = insert_user(agent: :codex, credential_kind: :subscription, credential_set_id: "set-to")
+
+    fountain([
+      grants([%{id: "g-1", name: "ravix:#{to.id}", status: "connected"}]),
+      sets([%{id: "set-to", name: "ravix:#{to.id}", chatgpt_grant_id: "g-1"}])
+    ])
+
+    assert {:error, {:unprocessable, "no_subscription", message}} =
+             Inference.move_subscription(ctx.admin, from.id, to.id)
+
+    assert message =~ "already names one"
+    assert message =~ "Nothing is left half-moved"
+  end
+
+  test "a move that stopped before the rename is simply run again", ctx do
+    from =
+      insert_user(agent: :codex, credential_kind: :subscription, credential_set_id: "set-from")
+
+    to = insert_user(credential_set_id: "set-to")
+
+    # The source's set has already been released; the grant still carries the
+    # source's name, so this is an ordinary move that repeats a no-op unname.
+    client =
+      fountain([
+        grants([%{id: "g-1", name: "ravix:#{from.id}", status: "connected"}]),
+        sets([%{id: "set-from", name: "ravix:#{from.id}", chatgpt_grant_id: nil}]),
+        {%{method: "PATCH", path: "#{@chatgpt}/g-1", body: %{name: "ravix:#{to.id}"}},
+         {200, [], %{data: %{id: "g-1"}}}},
+        {%{method: "PATCH", path: "#{@sets}/set-to", body: %{chatgpt_grant_id: "g-1"}},
+         {200, [], %{data: %{id: "set-to"}}}}
+      ])
+
+    log =
+      capture_audit(fn ->
+        assert {:ok, %User{agent: :codex}} =
+                 Inference.move_subscription(ctx.admin, from.id, to.id)
+      end)
+
+    refute {"PATCH", "#{@sets}/set-from"} in requests(client)
+    assert log =~ "chatgpt subscription moved: grant=g-1"
   end
 
   test "a rename the machine service will not do stops the move and says so", ctx do
@@ -201,7 +295,7 @@ defmodule Ravix.Accounts.InferenceMoveTest do
     to = insert_user(credential_set_id: "set-to")
 
     fountain([
-      grants([%{id: "g-1", name: "ravix:#{from.id}", status: "active"}]),
+      grants([%{id: "g-1", name: "ravix:#{from.id}", status: "connected"}]),
       sets([%{id: "set-from", name: "ravix:#{from.id}", chatgpt_grant_id: "g-1"}]),
       {%{method: "PATCH", path: "#{@sets}/set-from"}, {200, [], %{data: %{id: "set-from"}}}},
       {%{method: "PATCH", path: "#{@chatgpt}/g-1"}, {422, [], %{error: "validation_failed"}}}
@@ -223,7 +317,7 @@ defmodule Ravix.Accounts.InferenceMoveTest do
     to = insert_user(credential_set_id: "set-to")
 
     fountain([
-      grants([%{id: "g-1", name: "ravix:#{from.id}", status: "active"}]),
+      grants([%{id: "g-1", name: "ravix:#{from.id}", status: "connected"}]),
       sets([%{id: "set-from", name: "ravix:#{from.id}", chatgpt_grant_id: "g-1"}]),
       {%{method: "PATCH", path: "#{@sets}/set-from"}, {200, [], %{data: %{id: "set-from"}}}},
       {%{method: "PATCH", path: "#{@chatgpt}/g-1"}, {200, [], %{data: %{id: "g-1"}}}},
@@ -244,7 +338,7 @@ defmodule Ravix.Accounts.InferenceMoveTest do
     to = insert_user(credential_set_id: "set-to")
 
     fountain([
-      grants([%{id: "g-1", name: "ravix:#{from.id}", status: "active"}]),
+      grants([%{id: "g-1", name: "ravix:#{from.id}", status: "connected"}]),
       sets([%{id: "set-from", name: "ravix:#{from.id}", chatgpt_grant_id: "g-1"}]),
       {%{method: "PATCH", path: "#{@sets}/set-from"}, {200, [], %{data: %{id: "set-from"}}}},
       {%{method: "PATCH", path: "#{@chatgpt}/g-1"}, {200, [], %{data: %{id: "g-1"}}}},

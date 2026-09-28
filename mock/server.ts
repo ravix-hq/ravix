@@ -124,7 +124,7 @@ const state = {
     state: string;
     polls: number;
     result_grant_id: string | null;
-    failure: { reason: string; conflict_grant_id?: string } | null;
+    failure: { reason: string; grant_id?: string | null; grant?: string | null } | null;
     expires_at: string;
   }[],
   conversations: [] as Conv[],
@@ -704,10 +704,9 @@ export async function fountain(req: Request, url: URL): Promise<Response | null>
     auth_unreachable: false,
     expires_at: a.expires_at,
     result_grant_id: a.result_grant_id,
+    // Fountain writes a failure as {reason, grant_id, grant}: the conflicting
+    // grant's id and its name, and both null when it is not this account's.
     failure: a.failure,
-    // Fountain writes a refusal both nested and flat, and Ravix reads either.
-    failure_reason: a.failure?.reason ?? null,
-    conflict_grant_id: a.failure?.conflict_grant_id ?? null,
   });
   if (p === CHATGPT && method === "GET") {
     return json({ data: state.chatgptGrants, count: state.chatgptGrants.length, limit: 5, linking_enabled: true });
@@ -774,7 +773,7 @@ export async function fountain(req: Request, url: URL): Promise<Response | null>
           const held = state.chatgptGrants.find((g) => g.account_email === MOCK_CHATGPT_EMAIL);
           if (held) {
             attempt.state = "failed";
-            attempt.failure = { reason: "account_already_linked", conflict_grant_id: held.id };
+            attempt.failure = { reason: "account_already_linked", grant_id: held.id, grant: held.name };
           } else {
             const grant = {
               id: `grant${state.chatgptGrants.length + 1}-${Math.random().toString(36).slice(2, 8)}`,
