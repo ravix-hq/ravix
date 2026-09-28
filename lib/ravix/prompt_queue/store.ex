@@ -614,6 +614,15 @@ defmodule Ravix.PromptQueue.Store do
     end
   end
 
+  @doc "Lock delivery state without loading the prompt or attachments."
+  def lock_status(id, track_id) do
+    query =
+      from p in Item,
+        select: struct(p, [:id, :track_id, :thread_id, :sequence, :status, :error, :error_code])
+
+    lock_row(query, id, track_id)
+  end
+
   @doc """
   The row, locked for the rest of the caller's transaction, if it is on this
   track.
@@ -623,8 +632,10 @@ defmodule Ravix.PromptQueue.Store do
   refused *after* the row is held, so two callers cannot both pass.
   """
   @spec lock_row(String.t(), String.t()) :: {:ok, Item.t()} | {:error, :not_found}
-  def lock_row(id, track_id) do
-    Item
+  def lock_row(id, track_id), do: lock_row(Item, id, track_id)
+
+  defp lock_row(query, id, track_id) do
+    query
     |> where([p], p.id == ^id)
     |> lock("FOR UPDATE")
     |> Repo.one()

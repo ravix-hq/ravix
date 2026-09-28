@@ -129,7 +129,7 @@ defmodule Ravix.Tooling.TasksTest do
     assert :ok = Tasks.reconcile_rows(stale_rows)
 
     assert %{result: "new", cursor: 1, cursor_conversation_id: "replacement"} =
-             Repo.get!(Task, task.id)
+             Ravix.Tooling.Store.task(task.id)
 
     expect(Fountain, :turns, fn _, "replacement" ->
       {:ok, [turn(task.id, "second", "completed")]}

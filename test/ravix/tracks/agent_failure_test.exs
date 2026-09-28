@@ -176,6 +176,57 @@ defmodule Ravix.Tracks.AgentFailureTest do
              Transcript.visible_turns(Transcript.page([start | rest], "codex"))
   end
 
+  test "bounded summaries match full-turn classification across every page boundary" do
+    for events <- [events(), List.delete_at(events(), 6), Ravix.SuspensionFixture.events()],
+        split <- 0..length(events) do
+      {first, last} = Enum.split(events, split)
+
+      summary =
+        Enum.reduce([first, last], %{}, fn page, summary ->
+          AgentFailure.accumulate(summary, page, Transcript.blocks_for_turn(page, "codex"))
+        end)
+
+      assert AgentFailure.from_summary(summary, "codex", true) ==
+               AgentFailure.detect(events, "codex", Transcript.blocks_for_turn(events, "codex"))
+
+      assert byte_size(Jason.encode!(summary)) < 1024
+    end
+  end
+
+  test "timeout evidence is bounded and does not forget earlier ordinary text or tools" do
+    for chunks <- [[" request", " timed ", "out  "], ["request timed out"]] do
+      summary =
+        Enum.reduce(chunks, %{}, fn text, summary ->
+          AgentFailure.accumulate(summary, [], [struct(Block.Text, body: text)])
+        end)
+
+      assert AgentFailure.from_summary(summary, "plain", true)
+      refute AgentFailure.from_summary(summary, "plain", false)
+    end
+
+    for first <- [
+          struct(Block.Text, body: String.duplicate("ordinary", 10_000)),
+          tool("edit", "ok")
+        ] do
+      summary = AgentFailure.accumulate(%{}, [], [first])
+
+      summary =
+        AgentFailure.accumulate(summary, [], [struct(Block.Text, body: "request timed out")])
+
+      refute AgentFailure.from_summary(summary, "plain", true)
+      assert byte_size(Jason.encode!(summary)) < 1024
+    end
+  end
+
+  test "a completed turn on an earlier page suppresses later sandbox suspension" do
+    [started, output, suspended] = Ravix.SuspensionFixture.events()
+    completed = %{started | "id" => 3, "state" => "done"}
+    first = [started, output, completed]
+    summary = AgentFailure.accumulate(%{}, first, Transcript.blocks_for_turn(first, "plain"))
+    summary = AgentFailure.accumulate(summary, [%{suspended | "id" => 4}], [])
+    refute AgentFailure.from_summary(summary, "plain", true)
+  end
+
   defp tool(name, output) do
     %Block.Tool{
       id: "tool",

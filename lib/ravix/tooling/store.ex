@@ -2,12 +2,42 @@ defmodule Ravix.Tooling.Store do
   @moduledoc "Persistence for OAuth grants, mutation receipts and delegated tasks. Callers establish access."
   import Ecto.Query
   alias Ravix.Repo
-  alias Ravix.Tooling.{Client, Credential, Grant, Receipt, Task, ThreadCheckpoint}
+
+  alias Ravix.Tooling.{
+    Client,
+    Credential,
+    Grant,
+    Receipt,
+    ReplyChunk,
+    Task,
+    Tasks,
+    ThreadCheckpoint
+  }
 
   def client(id) when is_binary(id), do: Repo.get(Client, id)
   def client(_), do: nil
   def insert(row), do: Repo.insert!(row)
-  def update(row, attrs), do: row |> Ecto.Changeset.change(attrs) |> Repo.update!()
+
+  def update(row, attrs) do
+    changeset = Ecto.Changeset.change(row, attrs)
+    changeset = force_payload(changeset, attrs)
+
+    if match?(%Task{}, row), do: payload(:written, changeset.changes)
+    Repo.update!(changeset)
+  end
+
+  # Large columns are absent from hot selects. Defaults aren't stored values,
+  # so explicit resets must be forced even when they equal a schema default.
+  defp force_payload(%{data: %Task{}} = changeset, attrs) do
+    Enum.reduce(attrs, changeset, fn {key, value}, cs ->
+      if key in [:result, :reply_events, :reply_prefix],
+        do: Ecto.Changeset.force_change(cs, key, value),
+        else: cs
+    end)
+  end
+
+  defp force_payload(changeset, _attrs), do: changeset
+
   def transaction(fun), do: Repo.transaction(fun)
   def rollback(reason), do: Repo.rollback(reason)
   def grant(id), do: Repo.get(Grant, id)
@@ -52,8 +82,116 @@ defmodule Ravix.Tooling.Store do
   end
 
   def receipt(id), do: Repo.get(Receipt, id)
-  def task(id), do: Repo.get(Task, id)
-  def lock_task(id), do: Repo.one(from t in Task, where: t.id == ^id, lock: "FOR UPDATE")
+
+  @small ~w(id track_id user_id client_id fingerprint state reconciled_at failure_code failure_message
+            turn_id cursor cursor_conversation_id turn_seen reply_compacted reply_size reply_bytes failure_evidence
+            inserted_at updated_at)a
+  def task(id) do
+    case Repo.one(from t in Task, where: t.id == ^id, select: struct(t, ^(@small ++ [:result]))) do
+      %Task{reply_compacted: true, state: state} = task
+      when state not in [
+             "TASK_STATE_COMPLETED",
+             "TASK_STATE_FAILED",
+             "TASK_STATE_CANCELED",
+             "TASK_STATE_REJECTED"
+           ] ->
+        %{task | result: reply(task.id)}
+
+      task ->
+        task
+    end
+  end
+
+  def small_task(id),
+    do: read_small(from(t in Task, where: t.id == ^id, select: struct(t, ^@small)))
+
+  def lock_task(id),
+    do:
+      read_small(
+        from(t in Task, where: t.id == ^id, select: struct(t, ^@small), lock: "FOR UPDATE")
+      )
+
+  defp read_small(query) do
+    task = Repo.one(query)
+    if task, do: payload(:read, Map.take(task, @small))
+    task
+  end
+
+  def legacy_reply(id) do
+    row =
+      Repo.one(
+        from t in Task,
+          where: t.id == ^id,
+          select: map(t, [:result, :reply_events, :reply_prefix])
+      )
+
+    payload(:read, row)
+    row
+  end
+
+  def append_reply(id, cursor, body) do
+    if body != "" do
+      payload(:written, %{task_id: id, cursor: cursor, body: body})
+      Repo.insert!(%ReplyChunk{task_id: id, cursor: cursor, body: body})
+    end
+  end
+
+  def clear_reply(id), do: Repo.delete_all(from c in ReplyChunk, where: c.task_id == ^id)
+
+  def reply(id) do
+    chunks =
+      Repo.all(from c in ReplyChunk, where: c.task_id == ^id, order_by: c.cursor, select: c.body)
+
+    Enum.each(chunks, &payload(:read, &1))
+    Enum.join(chunks)
+  end
+
+  # Bounded batches also clean terminal/held receipts, which aren't due threads.
+  # ownership: no door for internal maintenance of receipts created through Tasks.send; no data is returned to a user.
+  def legacy_tasks do
+    Repo.all(
+      from t in Task,
+        join: q in Ravix.PromptQueue.Item,
+        on: q.id == t.id,
+        join: thread in Ravix.Tracks.Thread,
+        on: thread.id == q.thread_id,
+        join: track in Ravix.Tracks.Track,
+        on: track.id == thread.track_id,
+        join: project in Ravix.Projects.Project,
+        on: project.id == track.project_id,
+        where: not t.reply_compacted,
+        order_by: t.id,
+        limit: 5,
+        select: {t.id, coalesce(thread.runtime, project.runtime)}
+    )
+  end
+
+  def measure(rows, fun) do
+    previous = Process.put({__MODULE__, :payload}, %{read: 0, written: 0})
+
+    try do
+      Enum.each(rows, fn {task, _} -> payload(:read, Map.take(task, @small)) end)
+      fun.()
+    after
+      counts = Process.get({__MODULE__, :payload})
+
+      Ravix.Trace.annotate(%{
+        "ravix.task_payload_bytes_read" => counts.read,
+        "ravix.task_payload_bytes_written" => counts.written
+      })
+
+      if previous,
+        do: Process.put({__MODULE__, :payload}, previous),
+        else: Process.delete({__MODULE__, :payload})
+    end
+  end
+
+  defp payload(direction, value) do
+    if counts = Process.get({__MODULE__, :payload}) do
+      bytes = value |> Jason.encode_to_iodata!() |> IO.iodata_length()
+      Process.put({__MODULE__, :payload}, Map.update!(counts, direction, &(&1 + bytes)))
+    end
+  end
 
   # ownership: Access.track_access, via Access.thread_access in Tasks.send
   # (send_prompt), authorized creation of these receipts. These joins correlate them to their
@@ -86,6 +224,7 @@ defmodule Ravix.Tooling.Store do
 
   def record_reconciliation(id) do
     now = DateTime.utc_now()
+    payload(:written, %{reconciled_at: now})
     Repo.update_all(from(t in Task, where: t.id == ^id), set: [reconciled_at: now])
     now
   end
@@ -207,7 +346,12 @@ defmodule Ravix.Tooling.Store do
 
     Repo.all(
       from [t, q, thread, track, project] in query,
-        select: {t, %{thread: thread, project: project}}
+        select:
+          {struct(t, ^@small),
+           %{
+             thread: map(thread, [:id, :conversation_id, :runtime]),
+             project: map(project, [:runtime])
+           }}
     )
   end
 
@@ -252,10 +396,17 @@ defmodule Ravix.Tooling.Store do
 
     rows =
       Repo.all(
-        from t in page, order_by: [desc: t.updated_at, desc: t.id], limit: ^(opts.limit + 1)
+        from t in page,
+          select: struct(t, ^(@small ++ [:result])),
+          order_by: [desc: t.updated_at, desc: t.id],
+          limit: ^(opts.limit + 1)
       )
 
-    {rows, total}
+    {Enum.map(rows, fn row ->
+       if row.reply_compacted and not Tasks.terminal?(row),
+         do: %{row | result: reply(row.id)},
+         else: row
+     end), total}
   end
 
   defp filter_tasks(query, opts) do
