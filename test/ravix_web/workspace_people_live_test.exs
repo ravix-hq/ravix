@@ -169,12 +169,20 @@ defmodule RavixWeb.WorkspacePeopleLiveTest do
       refute has_element?(view, "#workspace-invite-form")
     end
 
-    test "the switcher on the page names the current workspace and creates another", ctx do
+    test "the switcher on the page names the viewer's current workspace and creates another",
+         ctx do
+      # The page shows Acme; the switcher shows what the app is scoped to.
       {:ok, view, _html} = live(log_in_user(build_conn(), ctx.owner), "/w/#{ctx.team.id}")
-      assert view |> element("#workspace-switcher-trigger") |> render() =~ "Acme"
+      assert has_element?(view, "#workspace-title", "Acme")
+      assert view |> element("#workspace-switcher-trigger") |> render() =~ "owner"
+      assert has_element?(view, "#workspace-select-#{ctx.personal.id}[aria-current=true]")
+      refute has_element?(view, "#workspace-select-#{ctx.team.id}[aria-current]")
+      assert has_element?(view, ~s(#workspace-settings[href="/w/#{ctx.personal.id}"]))
 
+      {:ok, owner} = Ravix.Accounts.put_current_workspace(ctx.owner, ctx.team.id)
+      {:ok, view, _html} = live(log_in_user(build_conn(), owner), "/w/#{ctx.personal.id}")
       assert has_element?(view, "#workspace-select-#{ctx.team.id}[aria-current=true]")
-      assert has_element?(view, ~s(#workspace-settings[href="/w/#{ctx.team.id}"]))
+      assert view |> element("#workspace-switcher-trigger") |> render() =~ "Acme"
 
       assert {:error, {:live_redirect, %{to: "/w/" <> _}}} =
                view |> form("#new-workspace-form", name: "Gamma") |> render_submit()

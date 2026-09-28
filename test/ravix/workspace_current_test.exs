@@ -29,13 +29,21 @@ defmodule Ravix.WorkspaceCurrentTest do
     %{me: me, personal: personal}
   end
 
-  test "the default is the first team workspace, else the personal one", ctx do
+  test "the default is the personal workspace; a team one only for somebody without it", ctx do
     assert {:ok, %{workspace: %{id: id}, role: :owner}} = Workspaces.current(ctx.me)
     assert id == ctx.personal.id
 
-    {:ok, first} = Workspaces.create(ctx.me, "First")
+    {:ok, _first} = Workspaces.create(ctx.me, "First")
     {:ok, _second} = Workspaces.create(ctx.me, "Second")
     assert {:ok, %{workspace: %{id: id}}} = Workspaces.current(ctx.me)
+    assert id == ctx.personal.id
+
+    # No personal workspace yet (the backfill has not reached them): the
+    # first team workspace, as a last resort.
+    loner = insert_user(login: "loner")
+    {:ok, first} = Workspaces.create(loner, "Loner First")
+    {:ok, _second} = Workspaces.create(loner, "Loner Second")
+    assert {:ok, %{workspace: %{id: id}}} = Workspaces.current(loner)
     assert id == first.id
 
     assert {:error, :not_found} = Workspaces.current(insert_user())

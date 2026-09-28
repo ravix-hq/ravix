@@ -98,7 +98,9 @@ defmodule Ravix.Workspaces do
   The one they last chose (`Ravix.Accounts.put_current_workspace/2`), read
   again through `Access.workspace_access/2` every time, so a membership
   revoked or a workspace archived since then is never current. Failing
-  that, the default: their first team workspace, else their personal one.
+  that -- never chosen, or removed from the one they chose -- the default:
+  their own personal workspace (RAV-33), and only for somebody without one
+  their first team workspace.
   Not found for somebody in no workspace at all, and for everybody while
   `RAVIX_WORKSPACE_ACCESS` is off, which is what leaves the page unscoped.
 
@@ -116,8 +118,8 @@ defmodule Ravix.Workspaces do
   end
 
   defp default(user, listed) do
-    case Enum.find(listed, &(&1.workspace.kind == :team)) ||
-           Enum.find(listed, &own_personal?(&1, user)) do
+    case Enum.find(listed, &own_personal?(&1, user)) ||
+           Enum.find(listed, &(&1.workspace.kind == :team)) do
       nil -> {:error, :not_found}
       entry -> {:ok, entry}
     end

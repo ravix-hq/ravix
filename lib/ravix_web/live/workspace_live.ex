@@ -71,6 +71,9 @@ defmodule RavixWeb.WorkspaceLive do
         # you" in their personal workspace; and the Inbox items elsewhere.
         current_workspace: nil,
         watched_workspace: nil,
+        # A project a URL named before the rail arrived, for that rail to
+        # follow into its workspace; see `open_url/2`.
+        url_project: nil,
         shared_ids: MapSet.new(),
         other_attention: 0,
         rail_loaded: false,
@@ -196,12 +199,16 @@ defmodule RavixWeb.WorkspaceLive do
 
   # Before the rail arrives, database-backed access is enough to mount the
   # selected child. An unavailable URL waits for the rail's normal decision.
+  # The project the URL named is remembered for that rail, which scopes the
+  # page to its workspace (`scope_rail/2`).
   defp open_url(%{assigns: %{rail_loaded: false}} = socket, %{"project" => id} = params) do
     user = socket.assigns.current_user
 
     with {:ok, project} <- Projects.get(user, id),
          {:ok, track} <- requested_track(user, id, params["track"]) do
-      select_project(socket, project, params["track"], params, track)
+      socket
+      |> assign(url_project: project.id)
+      |> select_project(project, params["track"], params, track)
     else
       _ -> assign(socket, pending_url: params)
     end
@@ -404,20 +411,19 @@ defmodule RavixWeb.WorkspaceLive do
   # The switcher makes a workspace current and the page shows it: the rail
   # already holds every workspace's projects and tracks, so it is scoped
   # again from those, with membership and visibility re-read and no provider
-  # asked. A project left open from the workspace being left is closed
-  # first, or scoping would follow it straight back (`scope_rail/2`).
+  # asked. A project left open from the workspace being left is closed, for
+  # the new workspace's home.
   def handle_event("workspace-select", %{"workspace" => id}, socket) do
     case WorkspaceSwitcher.select(socket, id) do
       {:ok, socket} ->
         open = socket.assigns.project
-        socket = socket |> assign(project: nil) |> recheck_rail()
+        socket = recheck_rail(socket)
 
         {:noreply,
-         case open && Enum.find(socket.assigns.projects, &(&1.id == open.id)) do
-           nil when is_nil(open) -> socket
-           nil -> push_patch(socket, to: "/home")
-           project -> assign(socket, project: project)
-         end}
+         if(open && is_nil(socket.assigns.project),
+           do: push_patch(socket, to: "/home"),
+           else: socket
+         )}
 
       {:error, socket} ->
         {:noreply, recheck_rail(socket)}
@@ -1527,7 +1533,8 @@ defmodule RavixWeb.WorkspaceLive do
       closed_projects: closed_projects,
       track_errors: track_errors
     )
-    |> scope_rail()
+    |> scope_rail(socket.assigns.url_project)
+    |> assign(url_project: nil)
     |> refresh_picker()
     |> assign_page_title()
     |> announce(tracks)
@@ -1541,15 +1548,16 @@ defmodule RavixWeb.WorkspaceLive do
   # default. Nothing is read from a provider and nothing is granted: the
   # projects are `Projects.list/2`'s, already admitted one by one.
   #
-  # `follow` is a project the page is showing or a URL named. When it is one
-  # the viewer reaches but sits in another of their workspaces, that
-  # workspace becomes current, so a `/p/:id` link from somewhere else opens
-  # where it lives rather than as "not found".
-  defp scope_rail(socket, follow \\ nil) do
+  # `follow` is a project a URL just named, on mount or a patch, and only
+  # then. When it is one the viewer reaches but sits in another of their
+  # workspaces, that workspace becomes current, so a `/p/:id` link from
+  # somewhere else opens where it lives rather than as "not found". A
+  # background read never follows: a project its owner moved elsewhere
+  # while it was open leaves the page, and the choice stays the viewer's.
+  defp scope_rail(socket, follow) do
     user = socket.assigns.current_user
     listed = WorkspaceSwitcher.list(user)
     all = socket.assigns.all_projects
-    follow = follow || (socket.assigns.project && socket.assigns.project.id)
 
     current =
       case Workspaces.current(user, listed) do
