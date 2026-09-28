@@ -228,6 +228,31 @@ defmodule Ravix.Workspaces.Store do
     )
   end
 
+  @doc """
+  Live members of a workspace whose login or name starts with `prefix`
+  (case-insensitive), leaving out `except` ids, by login, at most `limit`.
+  The Share dialog's @-mention list: nobody outside the workspace is in it.
+  """
+  @spec search_members(String.t(), String.t(), [String.t()], pos_integer()) :: [User.t()]
+  def search_members(workspace_id, prefix, except, limit) do
+    like = String.downcase(prefix) |> String.replace(~r/[\\%_]/, "\\\\\\0") |> Kernel.<>("%")
+
+    # ownership: `Ravix.People.share_candidates/3` admitted the caller as the
+    # track's manager through `Access.track_access/2` and `Access.workspace_grant/3`.
+    Repo.all(
+      from u in User,
+        join: m in Membership,
+        on: m.user_id == u.id,
+        where: m.workspace_id == ^workspace_id and is_nil(m.revoked_at),
+        where: u.id not in ^except,
+        where:
+          fragment("LOWER(?) LIKE ?", u.login, ^like) or
+            fragment("LOWER(COALESCE(?, '')) LIKE ?", u.name, ^like),
+        order_by: [asc: u.login],
+        limit: ^limit
+    )
+  end
+
   @doc "Whether anybody besides `user_id` holds a live membership of the workspace."
   @spec others_in?(String.t(), String.t()) :: boolean()
   def others_in?(workspace_id, user_id) do

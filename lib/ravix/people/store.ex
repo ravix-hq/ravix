@@ -40,7 +40,7 @@ defmodule Ravix.People.Store do
   import Ecto.Query
 
   alias Ravix.Accounts.User
-  alias Ravix.People.{Invite, Person, Profile}
+  alias Ravix.People.{AccessNotice, Invite, Person, Profile}
   alias Ravix.Projects.{Project, ProjectInvite, ProjectLink, ProjectMember}
   alias Ravix.Projects.Store, as: Projects
   alias Ravix.Repo
@@ -401,6 +401,10 @@ defmodule Ravix.People.Store do
           # ownership: no door yet -- this is sign-in, and the invitation row
           # naming this track is the only claim the person has.
           %Track{closed_at: nil} = track <- [Tracks.get_track(track_id)],
+          # A workspace project's invitations are retired with its links
+          # (ADR 0009 phase 5): dropped below, never honoured.
+          # ownership: sign-in, as above; the project is read for its workspace.
+          not workspace_shared?(track.project_id),
           track.visibility == :private or not project_member?(track.project_id, user_id) do
         add_member(track.id, user_id, "invite")
         track
@@ -408,6 +412,15 @@ defmodule Ravix.People.Store do
 
     Repo.delete_all(from(i in TrackInvite, where: i.github_id == ^github_id))
     tracks
+  end
+
+  # `Ravix.People.workspace_sharing?/1` for a project id, read here because
+  # sign-in has no door to go through first.
+  defp workspace_shared?(project_id) do
+    # ownership: no door -- sign-in, as `claim_track_invites/2` says; the
+    # project is read for its workspace alone.
+    Ravix.Config.workspace_access?() and
+      match?(%Project{workspace_id: id} when is_binary(id), Projects.live_project(project_id))
   end
 
   # ── the link ───────────────────────────────────────────────────
@@ -437,6 +450,81 @@ defmodule Ravix.People.Store do
     else
       _ -> nil
     end
+  end
+
+  # ── retiring the links for workspace sharing (ADR 0009 phase 5) ──────
+
+  @doc """
+  Every track on a workspace project still holding a legacy seat, a waiting
+  invitation or a link, with its project, oldest first: what
+  `Ravix.People.Cutover` has left to do. Empty once it has run.
+  """
+  @spec cutover_tracks() :: [{Track.t(), Project.t()}]
+  def cutover_tracks do
+    ids =
+      [TrackMember, TrackInvite, TrackLink]
+      |> Enum.flat_map(&Repo.all(from(r in &1, distinct: true, select: r.track_id)))
+      |> Enum.uniq()
+
+    # ownership: no door -- an operator step run as nobody, over every
+    # workspace project; the project is read for its workspace and owner.
+    Repo.all(
+      from(t in Track,
+        join: p in Project,
+        on: p.id == t.project_id,
+        where: t.id in ^ids and not is_nil(p.workspace_id),
+        order_by: [asc: t.created_at, asc: t.id],
+        select: {t, p}
+      )
+    )
+  end
+
+  @doc "Withdraw every invitation waiting on a track. How many there were."
+  @spec drop_invites(String.t()) :: non_neg_integer()
+  def drop_invites(track_id) do
+    {n, _} = Repo.delete_all(from(i in TrackInvite, where: i.track_id == ^track_id))
+    n
+  end
+
+  @doc """
+  Leave `attrs.user_id` an Inbox note about who lost access to a track.
+  One per track and recipient: a second is not written, which is what makes
+  the cutover safe to run again.
+  """
+  @spec put_notice(map()) :: :ok
+  def put_notice(attrs) do
+    %AccessNotice{}
+    |> AccessNotice.changeset(attrs)
+    |> Repo.insert!(on_conflict: :nothing, conflict_target: [:track_id, :user_id])
+
+    :ok
+  end
+
+  @doc "A person's undismissed access notices, newest first, each with its track."
+  @spec notices_for(String.t()) :: [{AccessNotice.t(), Track.t()}]
+  def notices_for(user_id) do
+    Repo.all(
+      from(n in AccessNotice,
+        join: t in assoc(n, :track),
+        where: n.user_id == ^user_id and is_nil(n.dismissed_at),
+        order_by: [desc: n.created_at, desc: n.id],
+        select: {n, t}
+      )
+    )
+  end
+
+  @doc "Dismiss a notice, only its recipient's. True when there was one."
+  @spec dismiss_notice(String.t(), String.t()) :: boolean()
+  def dismiss_notice(id, user_id) do
+    {n, _} =
+      Repo.update_all(
+        from(n in AccessNotice,
+          where: n.id == ^id and n.user_id == ^user_id and is_nil(n.dismissed_at)
+        ),
+        set: [dismissed_at: DateTime.utc_now()]
+      )
+
+    n > 0
   end
 
   # ── who else is in a project ───────────────────────────────────

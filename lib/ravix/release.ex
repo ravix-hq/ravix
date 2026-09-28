@@ -3,6 +3,7 @@ defmodule Ravix.Release do
   Used for executing DB release tasks when run in production without Mix
   installed.
   """
+  alias Ravix.People.Cutover
   alias Ravix.Tracks.Billing
   alias Ravix.Workspaces.{Backfill, RaviSeed}
 
@@ -36,6 +37,20 @@ defmodule Ravix.Release do
 
       {:error, reason} ->
         raise "Seed refused: " <> RaviSeed.describe_error(reason)
+    end
+  end
+
+  @doc """
+  The invite-link cutover (`Ravix.People.Cutover`), for a release with no
+  Mix: a dry run unless `apply?`. Prints its summary, no secrets.
+  """
+  def sharing_cutover(apply? \\ false) do
+    load_app()
+    {:ok, _} = Application.ensure_all_started(@app)
+
+    case Cutover.run(apply: apply?) do
+      {:ok, summary} -> Enum.each(Cutover.format(summary), &IO.puts/1)
+      {:error, :switch_off} -> raise "Cutover refused: RAVIX_WORKSPACE_ACCESS is off."
     end
   end
 

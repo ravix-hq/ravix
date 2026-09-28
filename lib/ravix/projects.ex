@@ -644,7 +644,8 @@ defmodule Ravix.Projects do
       created_at: project.created_at,
       owner_login: owner_login,
       role: if(access == :owner, do: :owner, else: :member),
-      access: access
+      access: access,
+      workspace_id: project.workspace_id
     }
   end
 

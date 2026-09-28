@@ -162,7 +162,9 @@ defmodule RavixWeb.ThreadCommentsLiveTest do
     assert stored(ctx.track) == []
 
     send(reader, :release)
-    render_async(view)
+    # The default 100ms is too short for a transcript read under the gate's
+    # parallel, instrumented run; it once timed out there with nothing wrong.
+    render_async(view, 5_000)
     refute has_element?(view, "button.composer-send[disabled]")
     submit(view, "In place")
     assert [%{anchor_turn_id: "t1"}] = stored(ctx.track)

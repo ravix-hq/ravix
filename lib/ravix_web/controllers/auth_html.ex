@@ -67,4 +67,29 @@ defmodule RavixWeb.AuthHTML do
     </div>
     """
   end
+
+  @doc """
+  An old track invite link, after workspace sharing replaced them (ADR 0009
+  phase 5). Nothing is joined and nothing about the track is named: the
+  link opens nothing now, whatever it once opened.
+  """
+  def retired(assigns) do
+    ~H"""
+    <div class="landing">
+      <header class="landing-nav">
+        <strong>Ravix</strong>
+      </header>
+
+      <main class="invite">
+        <h1 id="invite-title">This invite link no longer works</h1>
+        <p class="landing-intro">
+          Tracks are now shared with members of their workspace. Ask the track's creator to add you.
+        </p>
+        <div class="landing-actions">
+          <a href="/">Go to Ravix</a>
+        </div>
+      </main>
+    </div>
+    """
+  end
 end

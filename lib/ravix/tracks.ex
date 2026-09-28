@@ -589,6 +589,14 @@ defmodule Ravix.Tracks do
     |> Enum.any?(&(&1.via != :pending and &1.login != track.created_by_login))
   end
 
+  @doc """
+  The words of that note, for the Share dialog (ADR 0009 phase 5), which
+  shows it before the creator shares rather than after; nothing is recorded.
+  The dialog records it through `Ravix.People.consent_sharing/2`.
+  """
+  @spec billing_notice_text(User.t()) :: String.t()
+  def billing_notice_text(%User{} = user), do: notice_text(user)
+
   defp notice_text(user) do
     label =
       case Inference.usable_agents(user) do

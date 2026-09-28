@@ -1880,6 +1880,27 @@ body:has(.phx-error) #request-progress { display: none; }
 .people-identity { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 10px; flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .people-identity small { color: var(--dim); }
 .people-row button { flex: none; }
+
+/* The Share dialog (ADR 0009 phase 5): visibility, the @-mention box over
+   workspace members, and the track's own link. */
+.share-dialog { display: flex; flex-direction: column; gap: 14px; }
+.share-dialog h3 { margin: 0 0 6px; font-size: 13px; }
+.share-visibility { display: flex; flex-direction: column; gap: 6px; margin: 0; padding: 0; border: 0; }
+.share-visibility legend { margin-bottom: 6px; font-weight: 600; }
+.share-visibility label { display: flex; align-items: center; gap: 8px; }
+.share-consent { padding: 10px 12px; border: 1px solid var(--line); border-left: 3px solid var(--warn); border-radius: var(--radius); }
+.share-consent p { margin: 0 0 6px; }
+.share-mention { position: relative; display: flex; flex-direction: column; gap: 4px; }
+.share-mention [role="listbox"] {
+  margin: 0; padding: 4px; list-style: none; max-height: 220px; overflow-y: auto;
+  color: var(--ink); background: var(--panel); border: 1px solid var(--line);
+  border-radius: var(--radius-lg); box-shadow: 0 8px 28px var(--shadow);
+}
+.share-mention [role="listbox"][hidden] { display: none; }
+.share-mention [role="option"] { display: flex; gap: 8px; align-items: baseline; padding: 5px 8px; border-radius: var(--radius); cursor: pointer; }
+.share-mention [role="option"][aria-selected="true"], .share-mention [role="option"]:hover { background: var(--surface-hover); }
+.share-link { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.share-link code { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .account-connections { display: flex; flex-direction: column; gap: 4px; }
 .account-connections a { text-decoration: underline; text-underline-offset: 2px; }
 
