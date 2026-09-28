@@ -12,6 +12,7 @@ defmodule RavixWeb.WorkspaceLive do
   alias RavixWeb.Live.Form
   alias RavixWeb.Live.Guard
   alias RavixWeb.Live.ThreadConnect
+  alias RavixWeb.Live.WorkspaceSwitcher
 
   # The four origins. One list rather than the three that had grown -- this
   # module's guard, the buttons in the template, and `Ravix.Tracks.Track`'s
@@ -120,7 +121,10 @@ defmodule RavixWeb.WorkspaceLive do
         # settings dialog owns its own; see `RavixWeb.Live.SettingsDialog`
         # for why one flag for the whole page could not answer "may I press
         # this".
-        busy: false
+        busy: false,
+        # The sidebar's workspace switcher; empty while RAVIX_WORKSPACE_ACCESS
+        # is off, which draws nothing. See `RavixWeb.Live.WorkspaceSwitcher`.
+        workspaces: WorkspaceSwitcher.list(socket.assigns[:current_user])
       )
 
     {:ok, if(socket.assigns.current_user, do: socket |> unseen() |> reload_async(), else: socket)}
@@ -345,6 +349,9 @@ defmodule RavixWeb.WorkspaceLive do
   end
 
   def handle_event("refresh", _, socket), do: {:noreply, reload_async(socket, fresh: true)}
+
+  def handle_event("workspace-create", %{"name" => name}, socket),
+    do: {:noreply, WorkspaceSwitcher.create(socket, name)}
 
   def handle_event("dismiss", _, socket) do
     socket = assign(socket, dialog: nil)

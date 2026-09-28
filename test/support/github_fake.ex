@@ -13,6 +13,7 @@ defmodule Ravix.GitHubFake do
   `{Ravix.GitHubFake, method, path}`, so a test can count them.
   """
 
+  alias Ravix.Accounts.Store, as: Accounts
   alias Ravix.Config.GitHubApp
 
   @stub Ravix.ReqFake
@@ -169,6 +170,34 @@ defmodule Ravix.GitHubFake do
 
   defp path_matches?(%Regex{} = re, path), do: Regex.match?(re, path)
   defp path_matches?(exact, path) when is_binary(exact), do: exact == path
+
+  @doc """
+  A `GET /users/:login` route: GitHub's current answer for a login.
+
+  `accounts` maps a lowercased login to `{github_id, login}` for accounts
+  GitHub knows that are not, or are no longer, the local user of that login
+  (a rename, somebody who never signed in here). Anything else is the local
+  user holding the login, and otherwise 404.
+  """
+  @spec users_route(%{String.t() => {String.t() | integer(), String.t()}}) :: route()
+  def users_route(accounts \\ %{}) do
+    {"GET", ~r{^/users/[^/]+$},
+     fn conn ->
+       login = conn.request_path |> String.split("/") |> List.last()
+
+       case Map.get(accounts, String.downcase(login)) ||
+              local(Accounts.user_by_login(login)) do
+         {id, name} ->
+           Req.Test.json(conn, %{id: id, login: name, avatar_url: "https://a/#{id}"})
+
+         nil ->
+           conn |> Plug.Conn.put_status(404) |> Req.Test.json(%{message: "Not Found"})
+       end
+     end}
+  end
+
+  defp local(nil), do: nil
+  defp local(user), do: {String.to_integer(user.github_id), user.login}
 
   defp respond(conn, fun) when is_function(fun, 1), do: fun.(conn)
 

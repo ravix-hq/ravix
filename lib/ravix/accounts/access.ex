@@ -510,6 +510,19 @@ defmodule Ravix.Accounts.Access do
     end
   end
 
+  @doc """
+  Whether the caller may create a team workspace (ADR 0009, phase 4a).
+
+  Anybody signed in may, and becomes its owner; there is no workspace to
+  look up yet, so the only question is the switch. While
+  `Ravix.Config.workspace_access?/0` is off this answers not found, as
+  `workspace_grant/3` does.
+  """
+  @spec workspace_creation(User.t()) :: :ok | {:error, :not_found}
+  def workspace_creation(%User{id: id}) when is_binary(id) do
+    if Ravix.Config.workspace_access?(), do: :ok, else: {:error, :not_found}
+  end
+
   @doc "The refusal for a workspace role without `capability`."
   @spec require_capability(workspace_role(), workspace_capability()) ::
           :ok | {:error, {:forbidden, String.t()}}

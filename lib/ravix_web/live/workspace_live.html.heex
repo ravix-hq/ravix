@@ -57,6 +57,7 @@
       <%!-- Account preferences live in the sidebar footer; the native popover
         retains light dismiss, Escape and focus return. --%>
       <div class="yard-top">
+        <RavixWeb.Live.WorkspaceSwitcher.switcher workspaces={@workspaces} />
         <button
           id="quick-jump-trigger"
           type="button"

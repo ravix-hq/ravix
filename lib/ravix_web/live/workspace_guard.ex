@@ -23,9 +23,8 @@ defmodule RavixWeb.Live.WorkspaceGuard do
   own hooks (`RavixWeb.Live.Hooks`) run before these, so an ended session
   is still the sign-in page's business.
 
-  No page holds a workspace yet: the first is the workspace selector of
-  phase 4. It lives here now so the revocation contract ships, tested,
-  ahead of anything that depends on it.
+  `RavixWeb.WorkspacePeopleLive`, the workspace page the sidebar's
+  switcher opens (phase 4a), is the first page to hold one.
   """
 
   import Phoenix.Component, only: [assign: 2]
@@ -46,15 +45,24 @@ defmodule RavixWeb.Live.WorkspaceGuard do
   For a page mounted at the router: it hooks `handle_params/3`, which
   LiveView only allows there. Nested and isolated pages have no URL to
   patch, and none holds a workspace.
+
+  `notify: true` passes the hub notice on to the page once the membership
+  has been re-read and still admits it, for a page that shows the
+  workspace's people and redraws them when they change.
   """
-  @spec hold(Socket.t(), String.t()) :: {:ok, Socket.t()} | {:error, :not_found}
-  def hold(%Socket{} = socket, workspace_id) do
+  @spec hold(Socket.t(), String.t(), notify: boolean()) ::
+          {:ok, Socket.t()} | {:error, :not_found}
+  def hold(%Socket{} = socket, workspace_id, opts \\ []) do
     with {:ok, access} <- Access.workspace_access(socket.assigns.current_user, workspace_id) do
       if connected?(socket), do: Hub.subscribe_workspace(access.workspace.id)
 
       {:ok,
        socket
-       |> assign(workspace_access: access, workspace_guard: renew(socket))
+       |> assign(
+         workspace_access: access,
+         workspace_guard: renew(socket),
+         workspace_notify: Keyword.get(opts, :notify, false)
+       )
        |> attach_hook(:workspace_params, :handle_params, fn _, _, s -> recheck(s) end)
        |> attach_hook(:workspace_event, :handle_event, fn _, _, s -> recheck(s) end)
        |> attach_hook(:workspace_message, :handle_info, &message/2)
@@ -62,14 +70,14 @@ defmodule RavixWeb.Live.WorkspaceGuard do
     end
   end
 
-  # The notice is this hook's and no page's, so it stops here either way.
+  # The notice is this hook's, and stops here unless the page asked for it
+  # and is still admitted.
   defp message({:workspace_hub, id, :members}, socket) do
-    {_, socket} =
-      if id == socket.assigns.workspace_access.workspace.id,
-        do: recheck(socket),
-        else: {:cont, socket}
-
-    {:halt, socket}
+    case id == socket.assigns.workspace_access.workspace.id && recheck(socket) do
+      {:cont, socket} -> {if(socket.assigns.workspace_notify, do: :cont, else: :halt), socket}
+      {:halt, socket} -> {:halt, socket}
+      false -> {:halt, socket}
+    end
   end
 
   defp message(_message, socket) do

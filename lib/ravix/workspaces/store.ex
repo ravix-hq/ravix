@@ -10,10 +10,12 @@ defmodule Ravix.Workspaces.Store do
 
   import Ecto.Query
 
+  require Logger
+
   alias Ravix.Accounts.User
   alias Ravix.Projects.Project
   alias Ravix.Repo
-  alias Ravix.Workspaces.{Membership, RepositoryReservation, Workspace}
+  alias Ravix.Workspaces.{Invite, Membership, RepositoryReservation, Workspace}
 
   @doc "A workspace that exists and has not been archived, or nil."
   @spec live_workspace(String.t() | nil) :: Workspace.t() | nil
@@ -238,6 +240,296 @@ defmodule Ravix.Workspaces.Store do
     )
   end
 
+  # ── team workspaces and their people (phase 4a) ──────────────────────
+
+  @doc """
+  Create a team workspace with `user_id` as its one owner, in one
+  transaction: nobody ever sees a workspace without an owner.
+  """
+  @spec create_team_workspace(String.t(), String.t()) ::
+          {:ok, Workspace.t()} | {:error, Ecto.Changeset.t()}
+  def create_team_workspace(user_id, name) do
+    Repo.transaction(fn ->
+      with {:ok, workspace} <-
+             %Workspace{}
+             |> Workspace.changeset(%{name: name, kind: :team, created_by_user_id: user_id})
+             |> Repo.insert(),
+           {:ok, _owner} <-
+             %Membership{}
+             |> Membership.changeset(%{
+               workspace_id: workspace.id,
+               user_id: user_id,
+               role: :owner
+             })
+             |> Repo.insert() do
+        workspace
+      else
+        {:error, changeset} -> Repo.rollback(changeset)
+      end
+    end)
+  end
+
+  @doc """
+  A workspace's live members with their users, owners first, then admins,
+  then members, each by login.
+  """
+  @spec members(String.t()) :: [%{user: User.t(), role: Membership.role()}]
+  def members(workspace_id) do
+    # ownership: no door -- the user rows of a workspace's own memberships;
+    # `Ravix.Workspaces.people/2` reads this behind `Access.workspace_access/2`.
+    Repo.all(
+      from m in Membership,
+        join: u in User,
+        on: u.id == m.user_id,
+        where: m.workspace_id == ^workspace_id and is_nil(m.revoked_at),
+        order_by: [
+          asc: fragment("CASE ? WHEN 'owner' THEN 0 WHEN 'admin' THEN 1 ELSE 2 END", m.role),
+          asc: fragment("lower(?)", u.login)
+        ],
+        select: %{user: u, role: m.role}
+    )
+  end
+
+  @doc "A workspace's waiting invitations, by login."
+  @spec invites(String.t()) :: [Invite.t()]
+  def invites(workspace_id) do
+    Repo.all(
+      from i in Invite, where: i.workspace_id == ^workspace_id, order_by: [asc: i.login_key]
+    )
+  end
+
+  @doc """
+  Make `user_id` a member of `workspace_id` with `role`, on `invited_by`'s
+  word. Somebody removed earlier is let back in with the new role; somebody
+  already a live member is left exactly as they are, and answered
+  `:already_member`.
+  """
+  @spec add_member(String.t(), String.t(), Membership.role(), String.t() | nil) ::
+          :ok | {:error, :already_member}
+  def add_member(workspace_id, user_id, role, invited_by) do
+    case insert_membership(workspace_id, user_id, role, invited_by) do
+      1 -> :ok
+      0 -> {:error, :already_member}
+    end
+  end
+
+  # One statement, so two invitations landing at once cannot write two rows
+  # or reinstate over a live one: a live row matches the conflict and fails
+  # the `WHERE`, and nothing is written.
+  defp insert_membership(workspace_id, user_id, role, invited_by) do
+    now = DateTime.utc_now()
+
+    reinstate =
+      from m in Membership,
+        where: not is_nil(m.revoked_at),
+        update: [
+          set: [
+            role: ^role,
+            revoked_at: nil,
+            invited_by_user_id: ^invited_by,
+            created_at: ^now
+          ]
+        ]
+
+    {count, _} =
+      Repo.insert_all(
+        Membership,
+        [
+          %{
+            workspace_id: workspace_id,
+            user_id: user_id,
+            role: role,
+            invited_by_user_id: invited_by,
+            created_at: now
+          }
+        ],
+        on_conflict: reinstate,
+        conflict_target: [:workspace_id, :user_id]
+      )
+
+    count
+  end
+
+  @doc """
+  Record an invitation for somebody not signed in here, on `actor_id`'s
+  word, or update the one already waiting on the same login (its role, and
+  its GitHub id when that has become known).
+
+  The actor's membership is read again under a share lock, and the waiting
+  invitation under an update lock, so a demotion or a second invitation at
+  the same moment waits. An invitation an owner sent, or one for an owner or
+  admin, is changed by an owner only (`Invite.protected?/1`).
+  """
+  @spec put_invite(map(), String.t()) ::
+          {:ok, Invite.t()} | {:error, :actor_gone | :owner_only | Ecto.Changeset.t()}
+  def put_invite(%{workspace_id: workspace_id, login: login} = attrs, actor_id) do
+    Repo.transaction(fn ->
+      with {:ok, actor} <- actor(workspace_id, actor_id),
+           :ok <- may_touch(waiting_invite(workspace_id, login), actor) do
+        attrs
+        |> Map.merge(%{invited_by_user_id: actor_id, invited_by_role: actor.role})
+        |> insert_invite()
+      end
+      |> case do
+        {:ok, invite} -> invite
+        {:error, reason} -> Repo.rollback(reason)
+      end
+    end)
+  end
+
+  defp insert_invite(attrs) do
+    %Invite{}
+    |> Invite.changeset(attrs)
+    |> Repo.insert(
+      on_conflict:
+        {:replace,
+         [:login, :github_id, :avatar_url, :role, :invited_by_user_id, :invited_by_role]},
+      conflict_target: [:workspace_id, :login_key],
+      returning: true
+    )
+  end
+
+  @doc """
+  Withdraw the invitation waiting on `login` in `workspace_id`, on
+  `actor_id`'s word, under the same locks and rule as `put_invite/2`.
+  """
+  @spec delete_invite(String.t(), String.t(), String.t()) ::
+          :ok | {:error, :not_found | :actor_gone | :owner_only}
+  def delete_invite(workspace_id, login, actor_id) do
+    Repo.transaction(fn ->
+      with {:ok, actor} <- actor(workspace_id, actor_id),
+           %Invite{} = invite <- waiting_invite(workspace_id, login) || {:error, :not_found},
+           :ok <- may_touch(invite, actor) do
+        Repo.delete!(invite)
+      end
+      |> case do
+        %Invite{} -> :ok
+        {:error, reason} -> Repo.rollback(reason)
+      end
+    end)
+    |> case do
+      {:ok, :ok} -> :ok
+      error -> error
+    end
+  end
+
+  defp actor(workspace_id, actor_id) do
+    case Repo.one(
+           from m in Membership,
+             where:
+               m.workspace_id == ^workspace_id and m.user_id == ^actor_id and
+                 is_nil(m.revoked_at),
+             lock: "FOR SHARE"
+         ) do
+      %Membership{} = membership -> {:ok, membership}
+      nil -> {:error, :actor_gone}
+    end
+  end
+
+  defp waiting_invite(workspace_id, login) do
+    key = Invite.login_key(login)
+
+    Repo.one(
+      from i in Invite,
+        where: i.workspace_id == ^workspace_id and i.login_key == ^key,
+        lock: "FOR UPDATE"
+    )
+  end
+
+  defp may_touch(nil, _actor), do: :ok
+  defp may_touch(%Invite{}, %Membership{role: :owner}), do: :ok
+
+  defp may_touch(%Invite{} = invite, _actor),
+    do: if(Invite.protected?(invite), do: {:error, :owner_only}, else: :ok)
+
+  @doc """
+  Turn the invitations waiting on `user` into memberships, and return the
+  workspaces they joined.
+
+  Called by `Ravix.Accounts.upsert_user/1` inside the sign-in's own
+  transaction, so the person and their memberships commit together. An
+  invitation that carries a GitHub id matches that id and nothing else; one
+  written without (no GitHub App to ask) matches the login,
+  case-insensitively. Accepted invitations are deleted. A live membership
+  already there keeps its role; an archived workspace's invitation is
+  dropped without admitting anybody.
+  """
+  @spec accept_invites(User.t()) :: [String.t()]
+  def accept_invites(%User{id: user_id, github_id: github_id, login: login}) do
+    key = Invite.login_key(login || "")
+
+    # Only the invitation rows are locked: a sign-in must not hold the
+    # workspace rows, which every other writer of that workspace reads.
+    waiting =
+      Repo.all(
+        from i in Invite,
+          where: i.github_id == ^github_id or (is_nil(i.github_id) and i.login_key == ^key),
+          order_by: [asc: i.id],
+          lock: "FOR UPDATE"
+      )
+
+    workspace_ids = Enum.map(waiting, & &1.workspace_id)
+
+    live =
+      Repo.all(
+        from w in Workspace,
+          where: w.id in ^workspace_ids and is_nil(w.archived_at),
+          select: w.id
+      )
+      |> MapSet.new()
+
+    joined =
+      for invite <- waiting,
+          MapSet.member?(live, invite.workspace_id),
+          insert_membership(invite.workspace_id, user_id, invite.role, invite.invited_by_user_id) ==
+            1,
+          do: invite.workspace_id
+
+    Repo.delete_all(from i in Invite, where: i.id in ^Enum.map(waiting, & &1.id))
+    joined
+  end
+
+  @doc """
+  Change `user_id`'s role in `workspace_id` on behalf of `actor_id`.
+
+  Under the same lock as `revoke_membership/3`, and for the same reasons:
+  the actor is read again under it, and only a live owner changes roles.
+  The last owner cannot be demoted.
+  """
+  @spec set_role(String.t(), String.t(), Membership.role(), String.t()) ::
+          {:ok, Membership.t()}
+          | {:error, :not_found | :actor_gone | :not_owner | :last_owner}
+  def set_role(workspace_id, user_id, role, actor_id) do
+    Repo.transaction(fn ->
+      live =
+        Repo.all(
+          from m in Membership,
+            where: m.workspace_id == ^workspace_id and is_nil(m.revoked_at),
+            order_by: m.user_id,
+            lock: "FOR UPDATE"
+        )
+
+      owners = Enum.count(live, &(&1.role == :owner))
+
+      with {:ok, actor} <- live_member(live, actor_id, :actor_gone),
+           :ok <- owner(actor),
+           {:ok, target} <- live_member(live, user_id, :not_found),
+           :ok <- demotable(target, role, owners) do
+        target |> Ecto.Changeset.change(role: role) |> Repo.update!()
+      else
+        {:error, reason} -> Repo.rollback(reason)
+      end
+    end)
+  end
+
+  defp owner(%Membership{role: :owner}), do: :ok
+  defp owner(%Membership{}), do: {:error, :not_owner}
+
+  defp demotable(%Membership{role: :owner}, role, owners) when role != :owner and owners <= 1,
+    do: {:error, :last_owner}
+
+  defp demotable(_target, _role, _owners), do: :ok
+
   @typedoc """
   Whose creation path a reservation holds back: a workspace's, or, for a
   duplicate still in the legacy layout, its owner's. A reservation row has
@@ -286,8 +578,13 @@ defmodule Ravix.Workspaces.Store do
 
   The reservation is scoped as the duplicate is: to its workspace when it
   has one, otherwise to its legacy owner (see `t:scope/0`).
+
+  `canonical: :explicit` is for an operator task carrying an owner's
+  decision that the *later* project is canonical (ADR 0009 phase 4a, the
+  Ravi seed): it skips the creation-order check, and logs that it did.
+  Every other check still applies.
   """
-  @spec mark_legacy_duplicate(String.t(), String.t()) ::
+  @spec mark_legacy_duplicate(String.t(), String.t(), canonical: :first_created | :explicit) ::
           {:ok, Project.t()}
           | {:error,
              :not_found
@@ -297,9 +594,13 @@ defmodule Ravix.Workspaces.Store do
              | :not_later
              | :already_marked
              | :canonical_is_duplicate}
-  def mark_legacy_duplicate(id, id), do: {:error, :same_project}
+  def mark_legacy_duplicate(duplicate_id, canonical_id, opts \\ [])
 
-  def mark_legacy_duplicate(duplicate_id, canonical_id) do
+  def mark_legacy_duplicate(id, id, _opts), do: {:error, :same_project}
+
+  def mark_legacy_duplicate(duplicate_id, canonical_id, opts) do
+    order = Keyword.get(opts, :canonical, :first_created)
+
     # ownership: no door -- a reviewed migration's operator is the authority
     # here, never a signed-in person; see the doc above.
     Repo.transaction(fn ->
@@ -317,7 +618,7 @@ defmodule Ravix.Workspaces.Store do
 
       with {:ok, repo} <- same_repository(duplicate, canonical),
            :ok <- markable(duplicate, canonical),
-           :ok <- later(duplicate, canonical) do
+           :ok <- later(duplicate, canonical, order) do
         mark(duplicate, canonical, repo)
       else
         {:error, reason} -> Repo.rollback(reason)
@@ -344,7 +645,16 @@ defmodule Ravix.Workspaces.Store do
   defp markable(%Project{legacy_duplicate_of: id}, %Project{id: id}), do: :ok
   defp markable(_duplicate, _canonical), do: {:error, :already_marked}
 
-  defp later(duplicate, canonical) do
+  defp later(duplicate, canonical, :explicit) do
+    Logger.warning(
+      "Marking project #{duplicate.id} a legacy duplicate of #{canonical.id} by explicit " <>
+        "canonical choice, not creation order"
+    )
+
+    :ok
+  end
+
+  defp later(duplicate, canonical, :first_created) do
     case DateTime.compare(duplicate.created_at, canonical.created_at) do
       :gt -> :ok
       :eq -> {:error, :ambiguous_order}
@@ -398,6 +708,124 @@ defmodule Ravix.Workspaces.Store do
 
   defp repo_key(%Project{} = project),
     do: project.normalized_repo_full_name || Project.normalize_repo(project.repo_full_name)
+
+  # ── operator data steps (the Ravi seed) ───────────────────────────────
+  #
+  # `Ravix.Workspaces.RaviSeed` and nothing else: an operator's reviewed data
+  # step, run as no user, which is its whole authorization.
+
+  @doc """
+  Live team workspaces called `name` in which any of `user_ids` holds a
+  membership row, live or revoked, oldest first.
+  """
+  @spec team_workspaces_named(String.t(), [String.t()]) :: [Workspace.t()]
+  def team_workspaces_named(name, user_ids) do
+    Repo.all(
+      from w in Workspace,
+        as: :workspace,
+        where:
+          w.kind == :team and w.name == ^name and is_nil(w.archived_at) and
+            exists(
+              from m in Membership,
+                where: m.workspace_id == parent_as(:workspace).id and m.user_id in ^user_ids,
+                select: 1
+            ),
+        order_by: [asc: w.created_at, asc: w.id]
+    )
+  end
+
+  @doc "`user_id`'s membership row in `workspace_id`, revoked or not, or nil."
+  @spec membership_row(String.t(), String.t()) :: Membership.t() | nil
+  def membership_row(workspace_id, user_id),
+    do: Repo.get_by(Membership, workspace_id: workspace_id, user_id: user_id)
+
+  @doc """
+  Make `user_id` an owner of `workspace_id` unless they hold any membership
+  row there already. The seed refuses first when that row is revoked, so
+  this never reports somebody as an owner who is not one.
+  """
+  @spec ensure_owner(String.t(), String.t()) :: :ok
+  def ensure_owner(workspace_id, user_id) do
+    Repo.insert_all(
+      Membership,
+      [
+        %{
+          workspace_id: workspace_id,
+          user_id: user_id,
+          role: :owner,
+          created_at: DateTime.utc_now()
+        }
+      ],
+      on_conflict: :nothing
+    )
+
+    :ok
+  end
+
+  @doc """
+  The live projects of `owner_ids` whose repository is under `org`
+  (compared lowercased), oldest first, and the named projects in `ids`
+  whatever their state, so the seed can say what is wrong with one.
+  """
+  @spec seed_projects([String.t()], String.t(), [String.t()]) :: [Project.t()]
+  def seed_projects(owner_ids, org, ids) do
+    prefix = String.downcase(org) <> "/%"
+
+    # ownership: no door -- the operator data step above.
+    Repo.all(
+      from p in Project,
+        where:
+          p.id in ^ids or
+            (p.user_id in ^owner_ids and is_nil(p.archived_at) and
+               is_nil(p.deletion_requested_at) and
+               like(
+                 fragment("lower(btrim(?, E' \\t\\r\\n'))", p.repo_full_name),
+                 ^prefix
+               )),
+        order_by: [asc: p.created_at, asc: p.id]
+    )
+  end
+
+  @doc """
+  Move a legacy project into `workspace_id`, filling its attribution. The
+  legacy owner stays `user_id`, so every legacy door still admits whoever it
+  admitted. A project already in a workspace is left alone (0).
+  """
+  @spec move_project(String.t(), String.t()) :: 0 | 1
+  def move_project(project_id, workspace_id) do
+    # ownership: no door -- the operator data step above.
+    {count, _} =
+      Repo.update_all(
+        from(p in Project,
+          where: p.id == ^project_id and is_nil(p.workspace_id),
+          update: [
+            set: [
+              workspace_id: ^workspace_id,
+              created_by_user_id: coalesce(p.created_by_user_id, p.user_id),
+              normalized_repo_full_name:
+                fragment(
+                  "coalesce(?, nullif(lower(btrim(?, E' \\t\\r\\n')), ''))",
+                  p.normalized_repo_full_name,
+                  p.repo_full_name
+                )
+            ]
+          ]
+        ),
+        []
+      )
+
+    count
+  end
+
+  @doc "Rename a project. The operator data step only."
+  @spec rename_project(String.t(), String.t()) :: 0 | 1
+  def rename_project(project_id, name) do
+    # ownership: no door -- the operator data step above.
+    {count, _} =
+      Repo.update_all(from(p in Project, where: p.id == ^project_id), set: [name: name])
+
+    count
+  end
 
   # ── the backfill ─────────────────────────────────────────────────────
 

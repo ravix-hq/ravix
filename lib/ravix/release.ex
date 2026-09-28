@@ -3,7 +3,7 @@ defmodule Ravix.Release do
   Used for executing DB release tasks when run in production without Mix
   installed.
   """
-  alias Ravix.Workspaces.Backfill
+  alias Ravix.Workspaces.{Backfill, RaviSeed}
 
   @app :ravix
 
@@ -18,6 +18,23 @@ defmodule Ravix.Release do
           # Idempotent and resumable; reconciles what the previous release wrote.
           Backfill.run()
         end)
+    end
+  end
+
+  @doc """
+  The Ravi workspace seed (`Ravix.Workspaces.RaviSeed`), for a release with
+  no Mix: a dry run unless `apply?`. Prints its summary, no secrets.
+  """
+  def seed_ravi_workspace(apply? \\ false) do
+    load_app()
+    {:ok, _} = Application.ensure_all_started(@app)
+
+    case RaviSeed.run(apply: apply?) do
+      {:ok, summary} ->
+        Enum.each(RaviSeed.format(summary), &IO.puts/1)
+
+      {:error, reason} ->
+        raise "Seed refused: " <> RaviSeed.describe_error(reason)
     end
   end
 

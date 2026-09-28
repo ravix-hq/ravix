@@ -41,7 +41,8 @@ env = dict(os.environ, MIX_ENV="prod", PORT=str(ports[0]), PHX_SERVER="true",
                                          "00000000-0000-4000-8000-000000009009",
            # ADR 0009's switch, off as in production unless the run asks:
            # `bun run test:browser:workspace-access` turns it on for the
-           # specs that need it (workspace-visibility.spec.js).
+           # specs that need it (workspace-visibility.spec.js,
+           # workspace-teams.spec.js).
            RAVIX_WORKSPACE_ACCESS=os.environ.get("RAVIX_WORKSPACE_ACCESS", "false"))
 # Only a generated database name is ever created/dropped. Credentials can differ locally.
 base = os.environ.get("BROWSER_DATABASE_SERVER", "postgres://postgres:postgres@localhost:5432")
