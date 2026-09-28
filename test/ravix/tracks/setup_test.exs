@@ -727,19 +727,120 @@ defmodule Ravix.Tracks.SetupTest do
     assert Tracks.Store.retry_setup(ctx.track.id)
   end
 
-  test "suspended responses on shared setup keep the existing unavailable behavior", ctx do
-    turn_status(ctx.track, "completed")
+  defp asleep do
+    {:error, %Error{status: 409, code: "sandbox_not_ready", sandbox_status: "suspended"}}
+  end
 
-    expect(Fountain, :listing, 2, fn _, _, _ ->
-      {:error, %Error{status: 409, code: "sandbox_not_ready", sandbox_status: "suspended"}}
+  # The shape of every track that was open before setup was verified: opened,
+  # reset to pending by the migration, and now on a machine that fell asleep.
+  defp legacy_asleep(ctx) do
+    persist(ctx.track,
+      setup_state: "pending",
+      opened_at: DateTime.utc_now(),
+      created_at: DateTime.add(DateTime.utc_now(), -86_400, :second),
+      setup_request_id: nil
+    )
+
+    stub(Fountain, :turns, fn _, _ -> {:ok, []} end)
+  end
+
+  test "idle shared setup parks on a sleeping machine instead of waking it", ctx do
+    legacy_asleep(ctx)
+    test = self()
+
+    stub(Fountain, :listing, fn _, _, _ ->
+      send(test, :suspended_listing)
+      asleep()
     end)
 
     Setup.advance(ctx.client, ctx.track.id)
-    assert row(ctx.track).setup_state == "running"
-    assert row(ctx.track).setup_error_code == nil
+    assert_receive :suspended_listing
+    parked = row(ctx.track)
+    assert parked.setup_state == "running"
+    assert parked.setup_error_code == "sandbox_suspended"
+    assert parked.setup_error =~ "asleep"
+    assert DateTime.diff(parked.setup_retry_at, DateTime.utc_now()) in 59..60
+
+    # Not due yet: nobody polls. Due: it rechecks, and still does not wake it.
+    Setup.advance(ctx.client, ctx.track.id)
+    refute_received :suspended_listing
     due(ctx.track)
     Setup.advance(ctx.client, ctx.track.id)
+    assert_receive :suspended_listing
     assert row(ctx.track).setup_state == "running"
+    refute_received {:prompt, _, _, _}
+
+    # Once the machine answers, the parked track verifies with no new turn.
+    stub(Fountain, :listing, fn _, "sandbox", path ->
+      {:ok, %{"path" => path, "entries" => [%{"name" => ".git"}]}}
+    end)
+
+    due(ctx.track)
+    Setup.advance(ctx.client, ctx.track.id)
+    assert row(ctx.track).setup_state == "ready"
+    assert row(ctx.track).setup_error_code == nil
+    refute_received {:prompt, _, _, _}
+  end
+
+  test "a prompt waiting on a parked shared track wakes the machine, spread out", ctx do
+    legacy_asleep(ctx)
+    stub(Fountain, :listing, fn _, _, _ -> asleep() end)
+    Setup.advance(ctx.client, ctx.track.id)
+    assert row(ctx.track).setup_state == "running"
+
+    item = queue(ctx)
+    due(ctx.track)
+    Setup.advance(ctx.client, ctx.track.id)
+    woken = row(ctx.track)
+    assert woken.setup_state == "retry"
+    assert woken.setup_error_code == "sandbox_suspended"
+    assert DateTime.diff(woken.setup_retry_at, DateTime.utc_now()) in 5..60
+    assert woken.setup_attempts == 1
+    refute_received {:prompt, _, _, _}
+
+    due(ctx.track)
+    Setup.advance(ctx.client, ctx.track.id)
+    assert_receive {:prompt, "setup", "[ravix] Open this track" <> _, request_id}
+    assert is_binary(request_id)
+    assert QueueStore.get(item.id).status == :queued
+
+    turn_status(ctx.track, "completed")
+
+    stub(Fountain, :listing, fn _, "sandbox", path ->
+      {:ok, %{"path" => path, "entries" => [%{"name" => ".git"}]}}
+    end)
+
+    due(ctx.track)
+    Setup.advance(ctx.client, ctx.track.id)
+    assert row(ctx.track).setup_state == "ready"
+    Server.tick(ctx.server)
+    assert_receive {:prompt, "setup", "user work", _}
+    assert QueueStore.get(item.id).status == :sent
+  end
+
+  test "waking a parked shared track sends the opening turn; others cannot", ctx do
+    legacy_asleep(ctx)
+    stub(Fountain, :listing, fn _, _, _ -> asleep() end)
+    Setup.advance(ctx.client, ctx.track.id)
+
+    stranger = insert_user()
+    assert {:error, _} = Tracks.retry(stranger, ctx.track.id)
+    assert row(ctx.track).setup_state == "running"
+    refute_received {:prompt, _, _, _}
+
+    assert :ok = Tracks.retry(ctx.user, ctx.track.id)
+    assert_receive {:prompt, "setup", "[ravix] Open this track" <> _, _}
+    assert row(ctx.track).setup_state == "running"
+    assert row(ctx.track).setup_attempts == 2
+  end
+
+  test "wake refuses setup that is not parked, without resetting its budget", ctx do
+    persist(ctx.track, setup_attempts: 2)
+    refute Tracks.Store.wake_setup(ctx.track.id)
+
+    assert {:error, {:conflict, "setup_pending", _}} = Tracks.retry(ctx.user, ctx.track.id)
+    assert row(ctx.track).setup_attempts == 2
+    refute_received {:prompt, _, _, _}
   end
 
   test "legacy accepted tracks are verified and closed tracks never retry", ctx do

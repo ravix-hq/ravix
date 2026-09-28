@@ -11,7 +11,7 @@ test('readable project variables add, edit, reject auth names and remove through
   await create.getByLabel('Project name', { exact: true }).fill('Readable variables browser');
   await create.getByRole('button', { name: 'Create project', exact: true }).click();
   await expect(create).not.toBeVisible();
-  await page.locator('.crumbs').getByRole('button', { name: 'Settings', exact: true }).click();
+  await page.locator('#yard .workspace-project.current button[title="Project settings"]').click();
   const dialog = page.getByRole('dialog', { name: 'Project settings', exact: true });
   await dialog.getByRole('button', { name: 'Environment variables', exact: true }).click();
   await expect(dialog).toContainText('Running conversations keep the old values');

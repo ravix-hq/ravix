@@ -11,7 +11,7 @@ test('project run script is inherited: run, ready, restart, stop and plain overr
   await page.getByRole('button', { name: 'Create track', exact: true }).click();
   await expect(page.getByRole('textbox', { name: 'Message', exact: true })).toBeEnabled();
 
-  await page.locator('.track-crumbs').getByRole('button', { name: 'Project settings', exact: true }).click();
+  await page.locator('#yard .workspace-project.current button[title="Project settings"]').click();
   const settings = page.getByRole('dialog', { name: 'Project settings', exact: true });
   await settings.getByRole('button', { name: 'Run script', exact: true }).click();
   await settings.locator('#default-directory').fill('.');
@@ -39,6 +39,9 @@ test('project run script is inherited: run, ready, restart, stop and plain overr
   await expect(status).toHaveText('Status: stopped');
 
   await page.getByText('Run script override', { exact: true }).click();
+  // Open by the reader and left open by every patch that follows: a status
+  // refresh landing here used to collapse the section mid-edit.
+  await expect(page.locator('#preview-path')).toBeVisible();
   await page.locator('#preview-path').fill('');
   await page.locator('#preview-config-form').getByRole('button', { name: 'Save', exact: true }).click();
   await expect(page.locator('#run-keeps-awake')).toHaveText("Keeps this track's machine awake while running");

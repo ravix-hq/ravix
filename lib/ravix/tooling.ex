@@ -106,7 +106,11 @@ defmodule Ravix.Tooling do
   defp mutate(p, "create_track", a),
     do:
       map_result(
-        Tracks.open(p.user, a["project_id"], Map.drop(a, ["project_id", "request_id"])),
+        Tracks.open(
+          p.user,
+          a["project_id"],
+          Map.drop(a, ["project_id", "request_id", "preference_explicit"])
+        ),
         &track/1
       )
 

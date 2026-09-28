@@ -239,7 +239,7 @@ defmodule Ravix.Fountain do
   # person signs in to ChatGPT with a device code, Fountain keeps the tokens
   # and renews them, and the subscription is a *grant* on this account that a
   # set names by id. Fountain's `docs/build/chatgpt-subscriptions.md` is the
-  # contract these six functions follow.
+  # contract these eight functions follow.
 
   @chatgpt "/api/account/chatgpt-subscriptions"
 
@@ -311,6 +311,35 @@ defmodule Ravix.Fountain do
   @spec disconnect_chatgpt_subscription(Client.t(), id()) :: result(record())
   def disconnect_chatgpt_subscription(client, grant_id),
     do: data(client, "POST", "#{@chatgpt}/#{escape(grant_id)}/disconnect")
+
+  @doc """
+  `DELETE /api/account/chatgpt-subscriptions/:id`: forget the subscription
+  altogether, the row included.
+
+  Unlike `disconnect_chatgpt_subscription/2` this leaves nothing to reconnect,
+  and it frees the ChatGPT account to be linked again --- which is the only
+  reason Ravix calls it. A grant a set still names must not be deleted: the
+  set goes on naming an id that is gone, and Codex on it refuses every run.
+  `Ravix.Accounts.Inference` therefore deletes only a grant it has just
+  confirmed no set names and no Ravix login is named on.
+  """
+  @spec delete_chatgpt_subscription(Client.t(), id()) :: outcome()
+  def delete_chatgpt_subscription(client, grant_id),
+    do: void(client, "DELETE", "#{@chatgpt}/#{escape(grant_id)}")
+
+  @doc """
+  `PATCH /api/account/chatgpt-subscriptions/:id` with `name`: rename the
+  subscription, without touching what it holds or which sets name it.
+
+  Names are how Ravix tells one person's grant from another's
+  (`ravix:<ravix user id>`), and a set names a grant by *id*, so a rename
+  changes who a grant is understood to belong to and nothing about what it
+  can do. The one caller is the operator hand-over in
+  `Ravix.Accounts.Inference.move_subscription/3`.
+  """
+  @spec rename_chatgpt_subscription(Client.t(), id(), String.t()) :: result(record())
+  def rename_chatgpt_subscription(client, grant_id, name) when is_binary(name),
+    do: data(client, "PATCH", "#{@chatgpt}/#{escape(grant_id)}", body: %{"name" => name})
 
   @doc """
   `PATCH /api/account/inference-credential-sets/:id` with `chatgpt_grant_id`:

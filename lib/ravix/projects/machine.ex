@@ -28,25 +28,6 @@ defmodule Ravix.Projects.Machine do
 
   @default_runtime "claude"
 
-  # Provider-prefixed, because Fountain's are.
-  #
-  # `POST /api/agents` validates `model` against `^[a-z0-9_-]+/[a-z0-9._-]+$`,
-  # and the catalog lists `anthropic/claude-opus-5`. A bare `claude-opus-5`
-  # survived here for a while only because `pick_runtime` falls through to
-  # "whatever in the catalog has opus in the name", so the wrong constant was
-  # invisible until the catalog call failed, at which point every project
-  # creation would have 422'd on a field nobody was looking at.
-  #
-  # Opus and not the newest model in the catalog, for a second reason now:
-  # Fountain knowingly refuses `claude-fable-5-1` on a subscription's token, and
-  # a subscription is what most people connect.
-  @default_model "anthropic/claude-opus-5"
-
-  # What a runtime falls to when the catalog lists it without any models. Only
-  # the runtimes a person can choose (`Ravix.Accounts.User.agents/0`) need one:
-  # `anthropic/...` on a Codex agent is a project that fails its first turn.
-  @default_models %{"claude" => @default_model, "codex" => "openai/gpt-6-astra"}
-
   # ── creation ──────────────────────────────────────────────────────────
 
   @doc """
@@ -498,8 +479,7 @@ defmodule Ravix.Projects.Machine do
   @spec pick_runtime(Catalog.t(), String.t() | nil) :: Harness.t()
   def pick_runtime(%Catalog{runtimes: runtimes} = catalog, wanted \\ nil) do
     runtime = runtime_from(runtimes, wanted)
-    default = Map.get(@default_models, runtime, @default_model)
-    %Harness{runtime: runtime, model: model_from(Catalog.models_for(catalog, runtime), default)}
+    %Harness{runtime: runtime, model: Catalog.default_model(catalog, runtime)}
   end
 
   # `wanted` is the agent the owner chose at sign-up, which is the one question
@@ -515,15 +495,6 @@ defmodule Ravix.Projects.Machine do
       @default_runtime in runtimes -> @default_runtime
       runtimes != [] -> hd(runtimes)
       true -> @default_runtime
-    end
-  end
-
-  defp model_from(models, default) do
-    cond do
-      default in models -> default
-      opus = Enum.find(models, &String.contains?(&1, "opus")) -> opus
-      models != [] -> hd(models)
-      true -> default
     end
   end
 

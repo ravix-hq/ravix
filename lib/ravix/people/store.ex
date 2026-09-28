@@ -341,50 +341,63 @@ defmodule Ravix.People.Store do
   Remove every form of access and pending work for this person in the project.
 
   As with `remove_member/2`, the hub is told from here: this is where the
-  access goes, so this is what announces it.
+  access goes, so this is what announces it --- and only once the transaction
+  has committed. A page told to re-read while the removal is still open reads
+  the access it is about to lose and draws it back.
+
+  One statement per kind of row, not one per track: a project with fifty
+  tracks was fifty round trips of revoke, fifty of the agent grant and fifty
+  of the queue, inside the transaction holding all fifty track rows locked.
   """
   @spec remove_project_member(String.t(), String.t()) :: :ok
   def remove_project_member(project_id, user_id) do
     # ownership: Access.project_access and the removal guard admitted the owner or departing member.
     # Lock the same track rows as queue submission and orphan cleanup.
-    Repo.transaction(fn ->
-      tracks =
-        Repo.all(
-          from t in Track, where: t.project_id == ^project_id, order_by: t.id, lock: "FOR UPDATE"
+    {:ok, cancelled} =
+      Repo.transaction(fn ->
+        tracks =
+          Repo.all(
+            from t in Track,
+              where: t.project_id == ^project_id,
+              order_by: t.id,
+              lock: "FOR UPDATE"
+          )
+
+        ids = Enum.map(tracks, & &1.id)
+        # ownership: Access.project_access admitted removal of this project participant.
+        user = Repo.get!(User, user_id)
+
+        Repo.delete_all(
+          from m in ProjectMember, where: m.project_id == ^project_id and m.user_id == ^user_id
         )
 
-      ids = Enum.map(tracks, & &1.id)
-      # ownership: Access.project_access admitted removal of this project participant.
-      user = Repo.get!(User, user_id)
+        Repo.delete_all(
+          from m in TrackMember, where: m.track_id in ^ids and m.user_id == ^user_id
+        )
 
-      Repo.delete_all(
-        from m in ProjectMember, where: m.project_id == ^project_id and m.user_id == ^user_id
-      )
+        Repo.delete_all(
+          from i in TrackInvite,
+            where:
+              i.track_id in ^ids and (i.invited_by == ^user_id or i.github_id == ^user.github_id)
+        )
 
-      Repo.delete_all(from m in TrackMember, where: m.track_id in ^ids and m.user_id == ^user_id)
+        Repo.delete_all(
+          from l in TrackLink, where: l.track_id in ^ids and l.created_by == ^user_id
+        )
 
-      Repo.delete_all(
-        from i in TrackInvite,
-          where:
-            i.track_id in ^ids and (i.invited_by == ^user_id or i.github_id == ^user.github_id)
-      )
+        # ownership: Access.project_access admitted revocation of this creator in the project.
+        Repo.update_all(
+          from(t in Track, where: t.project_id == ^project_id and t.created_by == ^user_id),
+          set: [creator_revoked_at: DateTime.utc_now()]
+        )
 
-      Repo.delete_all(from l in TrackLink, where: l.track_id in ^ids and l.created_by == ^user_id)
-
-      # ownership: Access.project_access admitted revocation of this creator in the project.
-      Repo.update_all(
-        from(t in Track, where: t.project_id == ^project_id and t.created_by == ^user_id),
-        set: [creator_revoked_at: DateTime.utc_now()]
-      )
-
-      # ownership: Access.project_access and the removal guard revoke sessions and queued work.
-      Enum.each(ids, fn id ->
-        Ravix.Previews.Store.revoke(id, user_id)
-        Ravix.Previews.Store.revoke_agent(id, user_id)
-        Ravix.PromptQueue.Store.cancel_user_track(id, user_id)
+        # ownership: Access.project_access and the removal guard revoke sessions and queued work.
+        Ravix.Previews.Store.revoke_tracks(ids, user_id)
+        Ravix.Previews.Store.revoke_agent_tracks(ids, user_id)
+        Ravix.PromptQueue.Store.cancel_user_tracks(ids, user_id)
       end)
-    end)
 
+    Ravix.PromptQueue.Store.publish_queues(cancelled)
     Ravix.Hub.publish(project_id, :people)
     :ok
   end

@@ -14,6 +14,26 @@ defmodule Ravix.Config do
   @doc "Enable new threads only after old queue workers have drained."
   def threads_enabled?, do: Application.get_env(:ravix, :threads_enabled, false)
 
+  @doc """
+  Whether this person may run an operator action, as the deployment says.
+
+  There is no admin column and nothing here promotes anybody: Ravix's people
+  are GitHub logins, so who may repair the account is the deployment's answer
+  rather than the database's (`RAVIX_ADMIN_GITHUB_IDS`). By GitHub's numeric
+  id, like `Ravix.Accounts.User` itself, because a login is renameable and a
+  freed login can be taken by somebody else --- an allowlist by name would
+  hand the ability to whoever claimed the name next.
+
+  There is deliberately no `*`: a cohort flag that can be widened to everybody
+  is a rollout switch, and this is not one. Unset means nobody, which is what
+  every deployment that has not been told otherwise wants.
+  """
+  @spec admin?(Ravix.Accounts.User.t() | nil) :: boolean()
+  def admin?(%Ravix.Accounts.User{github_id: github_id}) when is_binary(github_id),
+    do: github_id in Application.get_env(:ravix, :admin_github_ids, [])
+
+  def admin?(_user), do: false
+
   @moduledoc """
   The server's configuration, from the environment.
 

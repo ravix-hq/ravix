@@ -191,6 +191,25 @@ defmodule Ravix.Fountain.Shapes do
     caller reaching into the map with whichever spelling it has to hand.
     """
 
+    # Provider-prefixed, because Fountain's are.
+    #
+    # `POST /api/agents` validates `model` against `^[a-z0-9_-]+/[a-z0-9._-]+$`,
+    # and the catalog lists `anthropic/claude-opus-5`. A bare `claude-opus-5`
+    # survived here for a while only because `pick_runtime` falls through to
+    # "whatever in the catalog has opus in the name", so the wrong constant was
+    # invisible until the catalog call failed, at which point every project
+    # creation would have 422'd on a field nobody was looking at.
+    #
+    # Opus and not the newest model in the catalog, for a second reason now:
+    # Fountain knowingly refuses `claude-fable-5-1` on a subscription's token, and
+    # a subscription is what most people connect.
+    @default_model "anthropic/claude-opus-5"
+
+    # What a runtime falls to when the catalog lists it without any models. Only
+    # the runtimes a person can choose (`Ravix.Accounts.User.agents/0`) need one:
+    # `anthropic/...` on a Codex agent is a project that fails its first turn.
+    @default_models %{"claude" => @default_model, "codex" => "openai/gpt-6-astra"}
+
     @enforce_keys [:runtimes, :models]
     defstruct @enforce_keys
 
@@ -209,6 +228,20 @@ defmodule Ravix.Fountain.Shapes do
     """
     @spec empty() :: t()
     def empty, do: %__MODULE__{runtimes: [], models: %{}}
+
+    @doc "The runtime's known default, then an Opus model, then the first catalog model."
+    @spec default_model(t(), String.t()) :: String.t()
+    def default_model(catalog, runtime) do
+      models = models_for(catalog, runtime)
+      default = Map.get(@default_models, runtime, @default_model)
+
+      cond do
+        default in models -> default
+        opus = Enum.find(models, &String.contains?(&1, "opus")) -> opus
+        models != [] -> hd(models)
+        true -> default
+      end
+    end
 
     @doc "The models this catalog offers for `runtime`, or `[]` for a runtime it does not list."
     @spec models_for(t(), String.t()) :: [String.t()]

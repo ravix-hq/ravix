@@ -30,6 +30,9 @@ defmodule Ravix.Accounts.User do
     # The default agent for new projects and its last recorded payment kind.
     # The Fountain set can hold credentials for both agents; only its id is
     # ever here. Connectivity comes from `Ravix.Accounts.Inference.held/1`.
+    field :preferred_runtime, Ecto.Enum, values: [:claude, :codex]
+    field :preferred_model, :string
+    field :credential_connected_at, :map, default: %{}
     field :agent, Ecto.Enum, values: [:claude, :codex]
     field :credential_set_id, :string
     field :credential_kind, Ecto.Enum, values: [:subscription, :api_key]
@@ -75,7 +78,13 @@ defmodule Ravix.Accounts.User do
   @spec setup_changeset(t(), map()) :: Ecto.Changeset.t()
   def setup_changeset(user, attrs) do
     user
-    |> cast(attrs, [:agent, :credential_set_id, :credential_kind, :onboarded_at])
+    |> cast(attrs, [
+      :agent,
+      :credential_set_id,
+      :credential_kind,
+      :onboarded_at,
+      :credential_connected_at
+    ])
     |> check_constraint(:agent, name: :users_agent)
     |> check_constraint(:credential_kind, name: :users_credential_kind)
   end

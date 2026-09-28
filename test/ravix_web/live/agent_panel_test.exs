@@ -11,6 +11,7 @@ defmodule RavixWeb.Live.AgentPanelTest do
 
   alias Ravix.{Accounts, Repo}
   alias Ravix.Accounts.{Inference, User}
+  alias Ravix.Fountain.FakeTransport
 
   setup :verify_on_exit!
 
@@ -18,6 +19,66 @@ defmodule RavixWeb.Live.AgentPanelTest do
     {:ok, view, _} = live(log_in_user(conn, user), "/home")
     view |> element("#open-account") |> render_click()
     view
+  end
+
+  test "the thread default round trips and offers only connected runtimes", %{conn: conn} do
+    user = insert_user()
+
+    catalog = %Ravix.Fountain.Shapes.Catalog{
+      runtimes: ["claude", "codex"],
+      models: %{
+        "claude" => ["anthropic/claude-sonnet-5", "anthropic/claude-opus-5-5"],
+        "codex" => ["openai/gpt-6-astra"]
+      }
+    }
+
+    stub(Ravix.Fountain, :client, fn -> FakeTransport.client([], verify: false) end)
+
+    stub(Ravix.MachineCache, :catalog, fn _ -> {:ok, catalog} end)
+    stub(Inference, :held, fn _ -> {:ok, [{:claude, :api_key}]} end)
+    stub(Inference, :usable?, fn _, runtime, _ -> {:ok, runtime == "claude"} end)
+    view = open_account(conn, user)
+    render_async(view)
+    render_async(view)
+
+    assert has_element?(
+             view,
+             "#thread-default-choice option[value='claude|anthropic/claude-opus-5-5']"
+           )
+
+    refute has_element?(view, "#thread-default-choice option[value='codex|openai/gpt-6-astra']")
+
+    view
+    |> form("#thread-default-form", preference: %{choice: "claude|anthropic/claude-opus-5-5"})
+    |> render_submit()
+
+    render_async(view)
+    assert Repo.get!(User, user.id).preferred_model == "anthropic/claude-opus-5-5"
+    assert has_element?(view, "#thread-default-form [role=status]", "Thread default saved.")
+
+    view
+    |> form("#thread-default-form", preference: %{choice: "claude|anthropic/claude-sonnet-5"})
+    |> render_change()
+
+    refute has_element?(view, "#thread-default-form [role=status]")
+    stub(Inference, :usable?, fn _, _, _ -> {:ok, false} end)
+
+    view
+    |> form("#thread-default-form", preference: %{choice: "claude|anthropic/claude-sonnet-5"})
+    |> render_submit()
+
+    render_async(view)
+    assert has_element?(view, "#thread-default-form [role=alert]", "Connect this agent first.")
+    refute has_element?(view, "#thread-default-form [role=status]")
+
+    view = open_account(conn, user)
+    render_async(view)
+    render_async(view)
+
+    assert has_element?(
+             view,
+             "#thread-default-choice option[value='claude|anthropic/claude-opus-5-5'][selected]"
+           )
   end
 
   test "opens from the rail, shows what is connected, and says who pays", %{conn: conn} do
@@ -452,5 +513,177 @@ defmodule RavixWeb.Live.AgentPanelTest do
 
     assert {:error, {:redirect, %{to: "/login"}}} =
              view |> element("#confirm-agent-disconnect") |> render_click()
+  end
+
+  # ── a ChatGPT account already linked here ─────────────────────────────
+
+  defp link(attempt_id) do
+    %Inference.Link{
+      attempt_id: attempt_id,
+      set_id: "s",
+      user_code: "WXYZ-1234",
+      verification_url: "https://auth.openai.com/codex/device",
+      trusted?: true,
+      poll_interval: 60
+    }
+  end
+
+  # Up to the refused poll: the panel is showing a code and has just been told
+  # why the sign-in could not finish.
+  defp refuse_with(conn, user, conflict) do
+    stub(Inference, :link_status, fn _ -> {:ok, %{enabled?: true, pending: nil}} end)
+    expect(Inference, :begin_link, fn _ -> {:ok, link("att-1")} end)
+    expect(Inference, :poll_link, fn _, _ -> {:error, {:link_conflict, conflict}} end)
+
+    view = open_account(conn, user)
+    view |> element("#agent-codex") |> render_click()
+    view |> element("#kind-subscription") |> render_click()
+    view |> element("#chatgpt-connect") |> render_click()
+    render_async(view)
+    send(view.pid, {:agent_panel, "agent-panel", :poll_link})
+    render(view)
+    render_async(view)
+    view
+  end
+
+  for {resolution, label, words} <- [
+        {:reconnect, "Reconnect it", "under your own earlier sign-in"},
+        {:remove, "Remove the old connection and try again", "nothing is using"}
+      ] do
+    test "a #{resolution} conflict says why and offers one button", %{conn: conn} do
+      user = insert_user()
+      resolution = unquote(resolution)
+
+      conflict = %Inference.Conflict{
+        resolution: resolution,
+        grant_id: "g-1",
+        message: "That ChatGPT account is already connected here, #{unquote(words)}."
+      }
+
+      view = refuse_with(conn, user, conflict)
+
+      assert has_element?(view, "#link-error", unquote(words))
+      assert has_element?(view, "#chatgpt-resolve-conflict", unquote(label))
+      refute has_element?(view, "#chatgpt-code")
+
+      # The button hands the context the conflict the *panel* is holding: a
+      # grant id from a browser is a grant id anybody could name.
+      expect(Inference, :resolve_conflict, fn caller, held ->
+        assert caller.id == user.id
+        assert held == conflict
+        {:ok, link("att-2")}
+      end)
+
+      view |> element("#chatgpt-resolve-conflict") |> render_click()
+      html = render_async(view)
+      assert html =~ "WXYZ-1234"
+      refute has_element?(view, "#chatgpt-conflict")
+      refute has_element?(view, "#link-error")
+    end
+  end
+
+  test "a second press while the first is still asking starts nothing", %{conn: conn} do
+    user = insert_user()
+    parent = self()
+
+    conflict = %Inference.Conflict{
+      resolution: :reconnect,
+      grant_id: "g-1",
+      message: "Reconnect it rather than connecting it twice."
+    }
+
+    # Once, however many times the button is pressed: the repair is a write on
+    # Fountain and two of them is one too many.
+    expect(Inference, :resolve_conflict, 1, fn _, _ ->
+      send(parent, {:resolving, self()})
+
+      receive do
+        :finish -> {:ok, link("att-2")}
+      end
+    end)
+
+    view = refuse_with(conn, user, conflict)
+    view |> element("#chatgpt-resolve-conflict") |> render_click()
+    assert_receive {:resolving, task}
+
+    # Sent past the disabled button, because a disabled button is a browser's
+    # courtesy and the guard has to be the server's.
+    render_click(with_target(view, "#agent-panel"), "resolve-conflict", %{})
+    send(task, :finish)
+    assert render_async(view) =~ "WXYZ-1234"
+  end
+
+  test "another Ravix login's subscription is said, with no name and no button", %{conn: conn} do
+    user = insert_user()
+    other = insert_user()
+    reject(&Inference.resolve_conflict/2)
+
+    conflict = %Inference.Conflict{
+      resolution: :elsewhere,
+      message:
+        "This ChatGPT account is already connected to a different Ravix login. " <>
+          "Disconnect it from that login, or ask whoever runs this Ravix to move it."
+    }
+
+    view = refuse_with(conn, user, conflict)
+
+    assert has_element?(view, "#link-error", "already connected to a different Ravix login")
+    refute has_element?(view, "#chatgpt-conflict")
+    refute render(view) =~ other.id
+    refute render(view) =~ "ravix:"
+
+    # A button that is not drawn is still a message somebody can send, so the
+    # refusal is the panel's own: there is nothing here for it to act on.
+    render_click(with_target(view, "#agent-panel"), "resolve-conflict", %{})
+    refute has_element?(view, "#chatgpt-code")
+    assert has_element?(view, "#link-error", "already connected to a different Ravix login")
+  end
+
+  test "starting over after a conflict clears the refusal and its button", %{conn: conn} do
+    user = insert_user()
+
+    conflict = %Inference.Conflict{
+      resolution: :reconnect,
+      grant_id: "g-1",
+      message: "Reconnect it rather than connecting it twice."
+    }
+
+    view = refuse_with(conn, user, conflict)
+    assert has_element?(view, "#chatgpt-resolve-conflict")
+
+    expect(Inference, :begin_link, fn _ -> {:ok, link("att-3")} end)
+    view |> element("#chatgpt-connect") |> render_click()
+    render_async(view)
+    refute has_element?(view, "#chatgpt-conflict")
+    refute has_element?(view, "#link-error")
+    assert has_element?(view, "#chatgpt-code")
+  end
+
+  test "an ordinary refusal leaves no button behind", %{conn: conn} do
+    user = insert_user()
+    reject(&Inference.resolve_conflict/2)
+
+    view =
+      refuse_with(conn, user, %Inference.Conflict{
+        resolution: :reconnect,
+        grant_id: "g-1",
+        message: "own"
+      })
+
+    assert has_element?(view, "#chatgpt-resolve-conflict")
+
+    expect(Inference, :begin_link, fn _ -> {:ok, link("att-4")} end)
+
+    expect(Inference, :poll_link, fn _, _ ->
+      {:error, {:unprocessable, "link_failed", "ChatGPT refused the code."}}
+    end)
+
+    view |> element("#chatgpt-connect") |> render_click()
+    render_async(view)
+    send(view.pid, {:agent_panel, "agent-panel", :poll_link})
+    render(view)
+    render_async(view)
+    assert has_element?(view, "#link-error", "ChatGPT refused the code")
+    refute has_element?(view, "#chatgpt-conflict")
   end
 end

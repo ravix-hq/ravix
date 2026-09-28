@@ -53,6 +53,17 @@ afterEach(async () => {
   for (const id of owned.splice(0)) await request("DELETE", `/api/sandboxes/${id}`);
 });
 
+test("reapply changes a model, omission preserves it, and null clears it", async () => {
+  const f = await fixture();
+  const path = `/api/conversations/${f.first.id}/reapply`;
+  const model = "anthropic/claude-opus-5";
+  expect(await request("POST", path, { model })).toMatchObject({
+    status: 200, body: { data: { model } },
+  });
+  expect((await request("POST", path, {})).body.data.model).toBe(model);
+  expect((await request("POST", path, { model: null })).body.data.model).toBeNull();
+});
+
 for (const runtime of ["claude", "codex"]) {
   test(`${runtime} home accepts the other runtime and many home threads, refusing identity and runtime mismatches`, async () => {
     const f = await fixture(runtime);

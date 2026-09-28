@@ -213,7 +213,12 @@ defmodule RavixWeb.TrackLive do
        |> settle(:thread_options)
        |> assign(thread_options: nil, thread_params: %{}, thread_connect: nil, thread_error: nil)}
 
-  def handle_event("edit-thread", %{"new_thread" => params}, socket) do
+  def handle_event("edit-thread", %{"new_thread" => params} = event, socket) do
+    params =
+      if event["_target"] in [["new_thread", "runtime"], ["new_thread", "model"]],
+        do: Map.put(params, "preference_explicit", "true"),
+        else: params
+
     params =
       if params["runtime"] != socket.assigns.thread_params["runtime"],
         do: Map.delete(params, "model"),
@@ -327,6 +332,7 @@ defmodule RavixWeb.TrackLive do
   # disabled while a turn runs, which Fountain would refuse anyway.
   def handle_event("set-model", %{"model" => model}, socket) when is_binary(model) do
     thread_id = socket.assigns.thread_id
+    model = if model == "", do: nil, else: model
 
     if MapSet.member?(socket.assigns.pending, :model),
       do: {:noreply, socket},
@@ -1557,6 +1563,7 @@ defmodule RavixWeb.TrackLive do
       open={true}
     /></button>
     <div id="model-menu" class="model-menu" popover role="menu" aria-label="Model">
+      <p class="model-default-hint">Also your default for new threads</p>
       <button
         :for={choice <- @choices}
         type="button"
@@ -1566,7 +1573,7 @@ defmodule RavixWeb.TrackLive do
         popovertarget="model-menu"
         popovertargetaction="hide"
         phx-click="set-model"
-        phx-value-model={choice}
+        phx-value-model={if choice == @project_model, do: "", else: choice}
         title={ModelName.friendly(choice)}
       >
         <span class="truncate">{ModelName.friendly(choice)}</span><small :if={
@@ -1637,13 +1644,12 @@ defmodule RavixWeb.TrackLive do
   attr :enabled, :boolean, required: true
 
   @doc """
-  The track's threads as a row of tabs above the composer, with "+" at the
+  The track's threads as a row of tabs above the conversation, with "+" at the
   end when threads can be added. A track with one thread that cannot gain
   another has nothing to switch between, so the row is not drawn at all.
 
-  Plain buttons in a labelled nav: each is reachable with Tab and fires on
-  Enter or Space, the selected one carries `aria-current`, and an unread
-  thread's dot has a spoken label.
+  Manual-activation tabs use roving focus, Enter/Space selection, and one
+  associated transcript panel. Narrow screens use the native picker.
   """
   def thread_tabs(assigns) do
     assigns =
@@ -1660,27 +1666,43 @@ defmodule RavixWeb.TrackLive do
       :if={length(@threads) > 1 or @enabled}
       id="thread-switcher"
       class="thread-tabs"
+      phx-hook="ThreadTabs"
       aria-label="Threads"
     >
-      <button
-        :for={thread <- @threads}
-        type="button"
-        class="thread-tab"
-        phx-click="select-thread"
-        phx-value-thread_id={thread.id}
-        data-thread-id={thread.id}
-        aria-current={if thread.id == @thread_id, do: "true"}
-        title={thread.title <> " · " <> agent_model(Map.get(thread, :runtime), Map.get(thread, :model))}
-        aria-label={thread.title <> " · " <> agent_model(Map.get(thread, :runtime), Map.get(thread, :model)) <> " · " <> thread_status(thread, @states) <> if(thread.unread && thread.id != @thread_id, do: " (unread)", else: "")}
-      >
-        <span class="thread-tab-title">{thread.title}</span><span class="thread-tab-agent"> · {agent_model(
-          Map.get(thread, :runtime),
-          Map.get(thread, :model)
-        )}</span><span class="thread-tab-state"> · {thread_status(thread, @states)}</span><span
-          :if={thread.unread && thread.id != @thread_id}
-          class="thread-unread"
-        ><span class="sr-only">(unread)</span></span>
-      </button>
+      <form id="thread-picker-form" class="thread-picker" phx-change="select-thread">
+        <label for="thread-picker" class="sr-only">Thread</label>
+        <select id="thread-picker" name="thread_id">
+          <option :for={thread <- @threads} value={thread.id} selected={thread.id == @thread_id}>
+            {thread_option_label(thread, @states, @thread_id)}
+          </option>
+        </select>
+      </form>
+      <div id="thread-tablist" class="thread-tablist" role="tablist" aria-label="Threads">
+        <button
+          :for={thread <- @threads}
+          type="button"
+          id={"thread-tab-#{thread.id}"}
+          role="tab"
+          aria-selected={to_string(thread.id == @thread_id)}
+          aria-controls="transcript-scroll"
+          tabindex={if thread.id == @thread_id, do: "0", else: "-1"}
+          class="thread-tab"
+          phx-click="select-thread"
+          phx-value-thread_id={thread.id}
+          data-thread-id={thread.id}
+          title={thread.title <> " · " <> agent_model(Map.get(thread, :runtime), Map.get(thread, :model))}
+          aria-label={thread.title <> " · " <> agent_model(Map.get(thread, :runtime), Map.get(thread, :model)) <> " · " <> thread_status(thread, @states) <> if(thread.unread && thread.id != @thread_id, do: " (unread)", else: "")}
+        >
+          <.status_dot status={String.downcase(thread_status(thread, @states))} />
+          <span class="thread-tab-title">{thread.title}</span><span class="thread-tab-agent"> · {agent_model(
+            Map.get(thread, :runtime),
+            Map.get(thread, :model)
+          )}</span><span class="thread-tab-state"> · {thread_status(thread, @states)}</span><span
+            :if={thread.unread && thread.id != @thread_id}
+            class="thread-unread"
+          ><span class="sr-only">(unread)</span></span>
+        </button>
+      </div>
       <button
         :if={@enabled}
         type="button"
@@ -1699,6 +1721,15 @@ defmodule RavixWeb.TrackLive do
       end)}.
     </p>
     """
+  end
+
+  defp thread_option_label(thread, states, current_id) do
+    label =
+      thread.title <> " · " <> agent_model(Map.get(thread, :runtime), Map.get(thread, :model))
+
+    status = thread_status(thread, states)
+    label = if status == "Idle", do: label, else: label <> " · " <> status
+    label <> if(thread.unread && thread.id != current_id, do: " (unread)", else: "")
   end
 
   defp thread_status(thread, states) do
@@ -1927,6 +1958,11 @@ defmodule RavixWeb.TrackLive do
     """
   end
 
+  # Setup is waiting on a sleeping shared machine that it will not wake by
+  # itself; a prompt or the wake button does. See `Ravix.Tracks.Setup`.
+  defp parked?(track),
+    do: track.setup_state == "running" and track.setup_error_code == "sandbox_suspended"
+
   defp pull_state_label(:merged), do: "Merged"
   defp pull_state_label(:closed), do: "Closed"
   defp pull_state_label(:open), do: "Open"
@@ -1947,6 +1983,10 @@ defmodule RavixWeb.TrackLive do
 
   defp setup_label(%{status: :closed}, _now), do: "Closed"
   defp setup_label(%{setup_state: "failed"}, _now), do: "Setup failed"
+
+  defp setup_label(%{setup_state: "running", setup_error_code: "sandbox_suspended"}, _now),
+    do: "Machine asleep"
+
   defp setup_label(%{setup_state: "ready"}, _now), do: "Ready"
 
   defp setup_label(%{setup_state: "retry", setup_error_code: code}, _now)

@@ -20,6 +20,22 @@ defmodule RavixWeb.CoreComponents do
   alias Phoenix.HTML.Form
   alias Phoenix.LiveView.JS
 
+  @doc "The shared track/thread activity marker; one place for the harness-logo follow-up."
+  attr :status, :string, required: true
+  attr :label, :string, default: nil
+
+  def status_dot(assigns) do
+    ~H"""
+    <span
+      class={"dot #{@status}"}
+      role={if @label, do: "img"}
+      aria-label={@label}
+      aria-hidden={if is_nil(@label), do: "true"}
+      title={@label}
+    ></span>
+    """
+  end
+
   @doc "A provider timestamp in UTC, preserving unknown formats as supplied."
   attr :value, :string, required: true
 

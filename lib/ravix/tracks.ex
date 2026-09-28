@@ -41,6 +41,7 @@ defmodule Ravix.Tracks do
 
   alias Ravix.Accounts.Access
   alias Ravix.Accounts.Inference
+  alias Ravix.Accounts.ThreadPreference
   alias Ravix.Accounts.User
   alias Ravix.Analytics
   alias Ravix.Fountain
@@ -125,14 +126,24 @@ defmodule Ravix.Tracks do
   """
   @spec list(User.t(), String.t(), fresh: boolean()) :: {:ok, [View.t()]} | {:error, :not_found}
   def list(%User{} = user, project_id, opts \\ []) do
-    with %Project{} = project <- live_project(project_id),
-         access when access != nil <- Access.access_of(user.id, project) do
-      rows = Access.open_tracks(user, [project.id]) |> Enum.map(&elem(&1, 0))
-
-      {:ok,
-       present_all(rows, project, user, if(access == :owner, do: :owner, else: :member), opts)}
-    else
+    case live_project(project_id) do
+      %Project{} = project -> listing(user, project, opts)
       _ -> {:error, :not_found}
+    end
+  end
+
+  # The scoped rows first, and then `access_of/3` is answered *from* them. Its
+  # third question is "are they on any track of this project", which is the
+  # query that produced these rows: asking the database for the rows and then
+  # asking it the same thing again is the pair #302's `open_tracks/2`
+  # consolidation removed elsewhere and this caller still paid for.
+  defp listing(user, project, opts) do
+    rows = Enum.map(Access.open_tracks(user, [project.id]), &elem(&1, 0))
+
+    case Access.access_of(user.id, project, tracks: rows) do
+      nil -> {:error, :not_found}
+      :owner -> {:ok, present_all(rows, project, user, :owner, opts)}
+      _member -> {:ok, present_all(rows, project, user, :member, opts)}
     end
   end
 
@@ -879,7 +890,8 @@ defmodule Ravix.Tracks do
   send is not the failure it looks like. But a track whose worktree was never
   cut is one a person needs to be able to retry, which this is for. The
   selected thread is woken once setup is ready. A refused wake is returned to
-  the caller; setup can be explicitly retried only after it has failed.
+  the caller; setup can be explicitly retried only after it has failed, or
+  woken while it waits on a sleeping shared machine.
   """
   @spec retry(User.t(), String.t(), String.t() | nil) :: :ok | {:error, reason()}
   def retry(%User{} = user, track_id, thread_id \\ nil) do
@@ -913,6 +925,16 @@ defmodule Ravix.Tracks do
 
   defp retry_track(client, %{setup_state: "failed"} = track, _project, _thread) do
     Store.retry_setup(track.id)
+    Setup.advance(client, track.id)
+  end
+
+  defp retry_track(
+         client,
+         %{setup_state: "running", setup_error_code: "sandbox_suspended"} = track,
+         _project,
+         _thread
+       ) do
+    Store.wake_setup(track.id)
     Setup.advance(client, track.id)
   end
 
@@ -1074,10 +1096,24 @@ defmodule Ravix.Tracks do
              {:conflict, "not_open", "This track has no conversation yet."}
            ),
          {:ok, client} <- fountain(),
+         {:ok, catalog} <- MachineCache.catalog(client),
          {:ok, override} <-
            thread_model(client, project, thread, model),
+         :ok <-
+           ThreadPreference.validate(
+             thread.runtime || project.runtime,
+             override || project.model,
+             catalog
+           ),
          {:ok, %Conversation{model: ^override}} <-
-           Fountain.set_model(client, thread.conversation_id, override) do
+           Fountain.set_model(client, thread.conversation_id, override),
+         {:ok, _} <-
+           ThreadPreference.remember_model(
+             user,
+             thread.runtime || project.runtime,
+             if(is_nil(model), do: nil, else: override || project.model),
+             catalog
+           ) do
       Store.set_thread_model(thread.id, override || project.model)
       MachineCache.forget_project(project.id)
       publish_tracks(project.id, track.id)

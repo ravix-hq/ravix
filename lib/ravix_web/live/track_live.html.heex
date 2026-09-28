@@ -79,16 +79,6 @@
         title={"Track sharing (#{length(@present)} viewing now)"}
       ><.icon name="add-person" size={15} /><span>{length(@present)}</span></button>
       <button
-        :if={@project.role == :owner}
-        class="ghost icon-button"
-        phx-click={JS.push_focus() |> JS.push("dialog", target: "#workspace-stage")}
-        phx-value-name="settings"
-        aria-label="Project settings"
-        title="Project settings"
-      >
-        <.icon name="settings" size={15} />
-      </button>
-      <button
         :if={rebuildable?(@current_user, @track)}
         class="ghost icon-button"
         aria-label="Rebuild machine"
@@ -131,8 +121,24 @@
           moves rather than being rebuilt --- so without it a reader who had
           scrolled up in one track would arrive part-way up the next one. See
           `assets/js/hooks/transcript_tail.js`. --%>
+        <.thread_tabs
+          threads={@threads}
+          states={@thread_states}
+          thread_id={@thread_id}
+          adding={
+            :add_thread in @pending or
+              (@track.sandbox_layout == :dedicated and @track.sandbox_state != :ready)
+          }
+          enabled={Ravix.Config.threads_enabled?()}
+        />
         <div
           id="transcript-scroll"
+          role={if length(@threads) > 1 or Ravix.Config.threads_enabled?(), do: "tabpanel"}
+          aria-labelledby={
+            if length(@threads) > 1 or Ravix.Config.threads_enabled?(),
+              do: "thread-tab-#{@thread_id}"
+          }
+          tabindex="0"
           phx-hook="TranscriptTail"
           class="transcript-scroll"
           data-track={@thread_id}
@@ -289,7 +295,7 @@
             do: "Own machine",
             else: "Shared project machine"}</span>
           <span :if={@track.setup_error}>{@track.setup_error}</span>
-          <p :if={@track.setup_state in ["pending", "running", "retry"]}>
+          <p :if={@track.setup_state in ["pending", "running", "retry"] and not parked?(@track)}>
             Prompts will wait until setup is ready.
           </p>
 
@@ -341,16 +347,6 @@
         </div>
         <p :if={@thread_error} id="thread-error" role="alert">{@thread_error}</p>
         <.loading_status :if={:add_thread in @pending}>Adding thread…</.loading_status>
-        <.thread_tabs
-          threads={@threads}
-          states={@thread_states}
-          thread_id={@thread_id}
-          adding={
-            :add_thread in @pending or
-              (@track.sandbox_layout == :dedicated and @track.sandbox_state != :ready)
-          }
-          enabled={Ravix.Config.threads_enabled?()}
-        />
         <div class="workspace-composer">
           <.live_component
             module={RavixWeb.Live.AgentHealth}
@@ -463,14 +459,19 @@
                   :if={
                     (@track.setup_state == "failed" &&
                        @track.setup_error_code != "secrets_changed") ||
-                      (@track.setup_state == "ready" && @track.status in [:failed, :opening])
+                      (@track.setup_state == "ready" && @track.status in [:failed, :opening]) ||
+                      parked?(@track)
                   }
                   type="button"
                   class="ghost"
                   phx-click="retry-track"
                   disabled={:retry in @pending}
                 >
-                  {if @track.status == :setup_failed, do: "Retry setup", else: "Wake / retry"}
+                  {cond do
+                    @track.status == :setup_failed -> "Retry setup"
+                    parked?(@track) -> "Wake machine"
+                    true -> "Wake / retry"
+                  end}
                 </button>
               </div>
             </div>
@@ -514,10 +515,10 @@
           <button
             :for={
               {tab, label} <- [
-                {:files, "All files"},
+                {:files, "Files"},
                 {:changes, "Changes"},
                 {:checks, "Checks"},
-                {:preview, "Run"}
+                {:preview, "Preview"}
               ]
             }
             class={if @panel.tab == tab, do: "selected", else: "ghost"}
@@ -640,7 +641,11 @@
               <summary>Show logs</summary>
               <pre>{RavixWeb.PreviewPresentation.logs(@preview.logs) |> then(&if(&1 == "", do: "No logs yet.", else: &1))}</pre>
             </details>
-            <details>
+            <!-- Open by the reader, not by the server, and the same
+            `ignore_attributes` as the logs above it: a status patch arriving
+            while somebody is typing in here used to collapse the section
+            under them. -->
+            <details id="preview-config" phx-mounted={JS.ignore_attributes(["open"])}>
               <summary>Run script override</summary>
               <.form
                 :let={f}

@@ -60,7 +60,7 @@ test('settings explicitly rebuilds when switching agents and the next track work
     if (previousAgent) expect(agent.id).not.toBe(previousAgent);
     previousAgent = agent.id;
     // #243 named the track header's gear for what it opens.
-    await page.locator('.track-crumbs').getByRole('button', { name: 'Project settings', exact: true }).click();
+    await page.locator('#yard .workspace-project.current button[title="Project settings"]').click();
     const settings = page.getByRole('dialog', { name: 'Project settings', exact: true });
     await expect(settings.locator('[data-confirm]')).toHaveCount(0);
     await settings.getByRole('button', { name: 'Agent', exact: true }).click();
@@ -98,7 +98,7 @@ test('settings connects an unavailable agent inline, retains the draft, and can 
   await create.locator('#project-agent-claude').click();
   await create.getByRole('button', { name: 'Create project', exact: true }).click();
   await expect(create).not.toBeVisible();
-  await page.locator('.crumbs').getByRole('button', { name: 'Settings', exact: true }).click();
+  await page.locator('#yard .workspace-project.current button[title="Project settings"]').click();
   const settings = page.getByRole('dialog', { name: 'Project settings', exact: true });
   await settings.getByRole('button', { name: 'Agent', exact: true }).click();
   await settings.locator('#settings-agent-codex').click();

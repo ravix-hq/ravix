@@ -116,6 +116,23 @@ const state = {
    * turns down, so that the refusal can be seen without a real account.
    */
   chatgptGrants: [] as { id: string; name: string; status: string; plan_type: string; account_email: string }[],
+  /**
+   * Which ChatGPT account a sign-in is signing in as.
+   *
+   * Fountain refuses a second link *of the same ChatGPT account*
+   * (`account_already_linked`), so the mock needs an account identity to
+   * refuse against. Each sign-in is its own by default, keyed by the name the
+   * link carries (`ravix:<user id>`), because several people linking here is
+   * ordinary and must not collide: a spec that signs in three users and links
+   * each would otherwise be refused for the second, and which spec hits that
+   * would depend on which shard it landed in.
+   *
+   * The conflict is opt-in. `POST /__browser/chatgpt-account {"identity": ...}`
+   * pins every later sign-in to one account, which is what makes two Ravix
+   * logins fight over one ChatGPT account on purpose; `null` restores the
+   * per-person default.
+   */
+  chatgptIdentity: null as string | null,
   chatgptAttempts: [] as {
     id: string;
     kind: "link" | "reconnect";
@@ -124,7 +141,7 @@ const state = {
     state: string;
     polls: number;
     result_grant_id: string | null;
-    failure: { reason: string } | null;
+    failure: { reason: string; grant_id?: string | null; grant?: string | null } | null;
     expires_at: string;
   }[],
   conversations: [] as Conv[],
@@ -689,6 +706,10 @@ export async function fountain(req: Request, url: URL): Promise<Response | null>
   // ── ChatGPT subscriptions ────────────────────────────────────────────
 
   const CHATGPT = "/api/account/chatgpt-subscriptions";
+  // The ChatGPT account a sign-in under `name` is signing in as: this
+  // person's own, unless a test has pinned every sign-in to one account.
+  const chatgptAccount = (name: string) =>
+    state.chatgptIdentity ?? `${name.replace(/[^a-zA-Z0-9]+/g, "-")}@chatgpt.example`;
   const attemptView = (a: (typeof state.chatgptAttempts)[number]) => ({
     id: a.id,
     kind: a.kind,
@@ -701,6 +722,8 @@ export async function fountain(req: Request, url: URL): Promise<Response | null>
     auth_unreachable: false,
     expires_at: a.expires_at,
     result_grant_id: a.result_grant_id,
+    // Fountain writes a failure as {reason, grant_id, grant}: the conflicting
+    // grant's id and its name, and both null when it is not this account's.
     failure: a.failure,
   });
   if (p === CHATGPT && method === "GET") {
@@ -762,16 +785,26 @@ export async function fountain(req: Request, url: URL): Promise<Response | null>
           attempt.state = "completed";
           attempt.result_grant_id = grant.id;
         } else {
-          const grant = {
-            id: `grant${state.chatgptGrants.length + 1}-${Math.random().toString(36).slice(2, 8)}`,
-            name: attempt.name!,
-            status: "active",
-            plan_type: "plus",
-            account_email: "mockuser@example.com",
-          };
-          state.chatgptGrants.push(grant);
-          attempt.state = "completed";
-          attempt.result_grant_id = grant.id;
+          // Fountain refuses a second link of the same ChatGPT *account*, so
+          // that is what is looked for --- not a second link of any kind. Each
+          // sign-in is its own account unless a test pinned them together.
+          const email = chatgptAccount(attempt.name!);
+          const held = state.chatgptGrants.find((g) => g.account_email === email);
+          if (held) {
+            attempt.state = "failed";
+            attempt.failure = { reason: "account_already_linked", grant_id: held.id, grant: held.name };
+          } else {
+            const grant = {
+              id: `grant${state.chatgptGrants.length + 1}-${Math.random().toString(36).slice(2, 8)}`,
+              name: attempt.name!,
+              status: "active",
+              plan_type: "plus",
+              account_email: email,
+            };
+            state.chatgptGrants.push(grant);
+            attempt.state = "completed";
+            attempt.result_grant_id = grant.id;
+          }
         }
       }
       return json({ data: attemptView(attempt) });
@@ -783,6 +816,30 @@ export async function fountain(req: Request, url: URL): Promise<Response | null>
     if (!grant) return json({ error: "not_found" }, 404);
     grant.status = "disconnected";
     for (const set of state.credentialSets) if (set.chatgpt_grant_id === grant.id) invalidateInference(set);
+    return json({ data: grant });
+  }
+  const grantOne = new RegExp(`^${CHATGPT}/([^/]+)$`).exec(p);
+  if (grantOne && grantOne[1] !== "attempts" && (method === "DELETE" || method === "PATCH")) {
+    const grant = state.chatgptGrants.find((g) => g.id === grantOne[1]);
+    if (!grant) return json({ error: "not_found" }, 404);
+    if (method === "DELETE") {
+      // Gone entirely, which is what frees the ChatGPT account to be linked
+      // again. A set left naming it stops being able to run Codex.
+      state.chatgptGrants = state.chatgptGrants.filter((g) => g.id !== grant.id);
+      for (const set of state.credentialSets) {
+        if (set.chatgpt_grant_id === grant.id) {
+          set.chatgpt_grant_id = null;
+          invalidateInference(set);
+        }
+      }
+      return new Response(null, { status: 204 });
+    }
+    const name = typeof body.name === "string" ? body.name.trim() : null;
+    if (!name) return json({ error: "validation_failed", errors: { name: ["is required"] } }, 422);
+    if (state.chatgptGrants.some((g) => g.id !== grant.id && g.name === name)) {
+      return json({ error: "validation_failed", errors: { name: ["already names a subscription"] } }, 422);
+    }
+    grant.name = name;
     return json({ data: grant });
   }
   const credential = new RegExp(`^${SETS}/([^/]+)/credentials/([a-z_]+)$`).exec(p);
@@ -1070,7 +1127,7 @@ export async function fountain(req: Request, url: URL): Promise<Response | null>
     if (!conv) return json({ error: "not_found", message: "Conversation not found" }, 404);
     if (conv.status === "running" || conv.status === "pending")
       return json({ error: "conversation_busy", message: "A turn is running" }, 409);
-    const b = (await req.json().catch(() => ({}))) as { model?: unknown };
+    const b = body as { model?: unknown };
     if ("model" in b) conv.model = typeof b.model === "string" ? b.model : null;
     return json({ data: withBox(conv) });
   }
@@ -1556,6 +1613,19 @@ Bun.serve({
       }
       state.turns.set(id, records);
       conv.turn_count += 35;
+      return json({ status: "ok" });
+    }
+
+    // Make two Ravix logins sign in as one ChatGPT account, which is the only
+    // way `account_already_linked` happens. Off by default: every sign-in is
+    // its own account, so ordinary specs that link several people never
+    // collide. `{"identity": null}` puts that default back.
+    if (p === "/__browser/chatgpt-account" && req.method === "POST" && process.env.RAVIX_BROWSER_TEST === "1") {
+      const { identity } = await req.json() as { identity?: string | null };
+      if (identity !== null && (typeof identity !== "string" || identity === "")) {
+        return json({ error: "invalid_fixture" }, 400);
+      }
+      state.chatgptIdentity = identity;
       return json({ status: "ok" });
     }
 

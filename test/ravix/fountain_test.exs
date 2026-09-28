@@ -421,6 +421,37 @@ defmodule Ravix.FountainTest do
                Fountain.disconnect_chatgpt_subscription(client, "g-1")
     end
 
+    test "deleting a subscription frees the ChatGPT account; renaming changes only whose it is" do
+      client =
+        fake([
+          {%{method: "DELETE", path: "/api/account/chatgpt-subscriptions/g-1"}, {204, [], nil}},
+          {%{method: "PATCH", path: "/api/account/chatgpt-subscriptions/g-2", body: %{name: "x"}},
+           {200, [], %{data: %{id: "g-2", name: "x", status: "active"}}}}
+        ])
+
+      assert :ok = Fountain.delete_chatgpt_subscription(client, "g-1")
+
+      assert {:ok, %{"id" => "g-2", "name" => "x"}} =
+               Fountain.rename_chatgpt_subscription(client, "g-2", "x")
+
+      # A grant is renamed, never un-named: a set names a grant by id, so a
+      # nameless grant is one nothing here can find again.
+      assert_raise FunctionClauseError, fn ->
+        Fountain.rename_chatgpt_subscription(fake([]), "g-2", nil)
+      end
+    end
+
+    test "a subscription id from outside cannot walk out of its route" do
+      client =
+        fake([
+          {%{method: "DELETE", path: "/api/account/chatgpt-subscriptions/..%2F..%2Fagents"},
+           {404, [], %{error: "not_found"}}}
+        ])
+
+      assert {:error, %Ravix.Fountain.Error{status: 404}} =
+               Fountain.delete_chatgpt_subscription(client, "../../agents")
+    end
+
     test "a provider Fountain has no slot for never becomes a path" do
       assert_raise FunctionClauseError, fn ->
         Fountain.put_credential(fake([]), "set-1", :"../../agents", "v")

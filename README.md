@@ -100,6 +100,7 @@ under [#12](https://github.com/ravix-hq/ravix/issues/12).
 | `SPRITES_TOKEN`, `SPRITES_URL` | Sprites API credentials and optional origin override |
 | `PREVIEW_DOMAIN` | Wildcard preview domain routed to the same service |
 | `RAVIX_DEDICATED_OPEN_USER_IDS` | Comma-separated user IDs eligible for dedicated sandboxes, or `*` for everyone; empty or unset disables new dedicated opens |
+| `RAVIX_ADMIN_GITHUB_IDS` | Comma-separated **GitHub numeric ids** allowed to run operator actions, currently `mix ravix.move_chatgpt_subscription`. By id rather than login, because a login is renameable and a freed one can be taken by somebody else. No wildcard; unset means nobody |
 | `POOL_SIZE` | Production database pool size; defaults to 10 |
 | `HONEYCOMB_API_KEY` | Sends OpenTelemetry traces to Honeycomb; unset means no exporter and no traces leave the process (ADR 0004) |
 | `HONEYCOMB_SAMPLE_RATIO` | Fraction of traces to keep, `0.0`--`1.0`; defaults to `1.0` |
@@ -322,8 +323,24 @@ When a change is visible to people using Ravix, add a reviewed entry to `Ravix.C
 ### Thread runtimes
 
 Each new thread records its runtime and model. The new-track form chooses the
-first thread; subsequent threads default to the track's last runtime, then the
-project default. Nullable legacy threads retain the project's runtime/model.
+first thread. New threads use the starter's preferred runtime/model if the
+project owner's credentials and runtime gates allow it, then the track's last
+runtime, then the project default. The dialog labels the source. Set **Default
+agent for new threads** in Your account; explicit dialog or composer model picks
+also save that person's preference. Choosing the project model in the composer
+clears the saved preference, restoring derivation from connected credentials.
+MCP runtime/model arguments never change a person's preference. Existing threads retain their runtime.
+
+Until explicitly chosen, the preference uses the most recently connected held
+credential (ChatGPT link, API key, or Claude token) and that runtime's default
+model: the catalog's known default (`anthropic/claude-opus-5` or
+`openai/gpt-6-astra`), otherwise an Opus model, otherwise the first listed model.
+Successful connections record timestamps locally. Pre-existing
+connections lack historical timestamps: they use the account's recorded agent,
+then the connected credential order, until reconnected or explicitly chosen.
+MCP `create_track` shares this resolver when runtime is omitted; `send_prompt`
+continues its existing thread without changing its runtime/model. Nullable legacy
+threads retain the project's runtime/model.
 Threads share a checkout and may work concurrently; the tabs identify those
 mid-turn, and users coordinate conflicting edits.
 

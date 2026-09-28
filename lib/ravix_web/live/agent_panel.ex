@@ -52,10 +52,19 @@ defmodule RavixWeb.Live.AgentPanel do
   write worked or not. A ChatGPT sign-in has nothing to paste; what is
   assigned is the code and the attempt's id, which is what Fountain shows to
   anybody holding the account key anyway.
+
+  ## An account already linked
+
+  A refused ChatGPT sign-in is usually the person's own subscription in the way
+  (`Ravix.Accounts.Inference.Conflict`). The classified refusal is held here so
+  the repair can be a button: the *panel* says which repair it is and which
+  grant, never the browser, and the context classifies it again from Fountain
+  before it writes. A refusal about another Ravix login's subscription gets a
+  sentence and no button, because there is nothing on this page they may press.
   """
   use RavixWeb, :live_component
 
-  alias Ravix.Accounts.{Inference, User}
+  alias Ravix.Accounts.{Inference, ThreadPreference, User}
   alias RavixWeb.Live.Form
 
   # What the buttons send, as the atoms this module and the context use. Two
@@ -72,13 +81,18 @@ defmodule RavixWeb.Live.AgentPanel do
        busy: false,
        # The ChatGPT sign-in that is open, if one is; whether this Fountain
        # lets anybody start one (`nil` until asked); why the last one ended,
-       # when it ended badly; and the subscription as Fountain reports it.
+       # when it ended badly; the classified "already linked" refusal, when
+       # that is why; and the subscription as Fountain reports it.
        link: nil,
        linking: nil,
        link_error: nil,
+       link_conflict: nil,
        subscription: nil,
        # What the set holds, as Fountain reports it: nil until it has answered.
        held: nil,
+       thread_defaults: nil,
+       thread_default_error: nil,
+       thread_default_saved: false,
        scoped_agent: nil,
        onboarding: false,
        poll_token: make_ref(),
@@ -129,6 +143,33 @@ defmodule RavixWeb.Live.AgentPanel do
   end
 
   @impl true
+  def handle_event(
+        "save-thread-default",
+        %{"preference" => %{"choice" => choice}},
+        %{assigns: %{busy: false, scoped_agent: nil, thread_defaults: %{}}} = socket
+      )
+      when is_binary(choice) do
+    case String.split(choice, "|", parts: 2) do
+      [runtime, model] ->
+        user = socket.assigns.current_user
+
+        {:noreply,
+         socket
+         |> assign(busy: true, thread_default_saved: false, thread_default_error: nil)
+         |> traced_async(:thread_default, fn ->
+           ThreadPreference.save(user, runtime, model)
+         end)}
+
+      _ ->
+        {:noreply, socket}
+    end
+  end
+
+  def handle_event("change-thread-default", _params, socket),
+    do: {:noreply, assign(socket, thread_default_saved: false, thread_default_error: nil)}
+
+  def handle_event("save-thread-default", _params, socket), do: {:noreply, socket}
+
   def handle_event("choose-agent", _, %{assigns: %{scoped_agent: agent}} = socket)
       when not is_nil(agent), do: {:noreply, socket}
 
@@ -229,11 +270,36 @@ defmodule RavixWeb.Live.AgentPanel do
 
     {:noreply,
      socket
-     |> assign(busy: true, link_error: nil)
+     |> assign(busy: true, link_error: nil, link_conflict: nil)
      |> traced_async(:begin_link, fn -> Inference.begin_link(user) end)}
   end
 
   def handle_event("begin-link", _params, socket), do: {:noreply, socket}
+
+  # The repair for an "already linked" refusal: reconnect the person's own
+  # grant, or remove a stray one and start over. Which of the two, and which
+  # grant, is the conflict the panel is holding and never anything the browser
+  # sent: a grant id from a form is a grant id anybody could name. The context
+  # classifies it again before it touches Fountain, so a stale one here can
+  # only be refused, not acted on.
+  def handle_event(
+        "resolve-conflict",
+        _params,
+        %{assigns: %{busy: false, link_conflict: %Inference.Conflict{} = conflict}} = socket
+      )
+      when conflict.resolution in [:reconnect, :remove] do
+    user = socket.assigns.current_user
+
+    # The conflict stays until the answer comes back, so the button is still
+    # there to be disabled rather than vanishing under the press. `busy` is
+    # what stops a second press starting a second attempt.
+    {:noreply,
+     socket
+     |> assign(busy: true, link_error: nil)
+     |> traced_async(:begin_link, fn -> Inference.resolve_conflict(user, conflict) end)}
+  end
+
+  def handle_event("resolve-conflict", _params, socket), do: {:noreply, socket}
 
   def handle_event("cancel-link", _params, %{assigns: %{link: %Inference.Link{} = link}} = socket) do
     user = socket.assigns.current_user
@@ -283,10 +349,18 @@ defmodule RavixWeb.Live.AgentPanel do
   def handle_async(:link_status, _other, socket), do: {:noreply, socket}
 
   def handle_async(:begin_link, {:ok, {:ok, %Inference.Link{} = link}}, socket),
-    do: {:noreply, socket |> assign(busy: false) |> show_link(link)}
+    do: {:noreply, socket |> assign(busy: false, link_conflict: nil) |> show_link(link)}
 
+  # Whatever the refusal was, the conflict the page was holding is spent: the
+  # context has just read the account again and this is what it says now.
   def handle_async(:begin_link, {:ok, {:error, reason}}, socket),
-    do: {:noreply, assign(socket, busy: false, link_error: RavixWeb.Error.from(reason).message)}
+    do:
+      {:noreply,
+       assign(socket,
+         busy: false,
+         link_conflict: nil,
+         link_error: RavixWeb.Error.from(reason).message
+       )}
 
   def handle_async(:poll_link, {:ok, {:ok, :pending}}, socket),
     do: {:noreply, schedule_poll(socket)}
@@ -294,8 +368,26 @@ defmodule RavixWeb.Live.AgentPanel do
   def handle_async(:poll_link, {:ok, {:ok, %User{} = user}}, socket),
     do: {:noreply, socket |> assign(link: nil) |> connected(user, :codex, :subscription)}
 
+  # The ChatGPT account is held by a grant on this Fountain. The sentence says
+  # whose, as far as this person may be told; the conflict is kept so the
+  # button that repairs it has something to repair.
+  def handle_async(
+        :poll_link,
+        {:ok, {:error, {:link_conflict, %Inference.Conflict{} = conflict}}},
+        socket
+      ),
+      do:
+        {:noreply,
+         assign(socket, link: nil, link_conflict: conflict, link_error: conflict.message)}
+
   def handle_async(:poll_link, {:ok, {:error, reason}}, socket),
-    do: {:noreply, assign(socket, link: nil, link_error: RavixWeb.Error.from(reason).message)}
+    do:
+      {:noreply,
+       assign(socket,
+         link: nil,
+         link_conflict: nil,
+         link_error: RavixWeb.Error.from(reason).message
+       )}
 
   # Nothing to draw for a cancel: the code is already gone from the panel.
   def handle_async(:cancel_link, {:ok, _result}, socket), do: {:noreply, socket}
@@ -306,8 +398,51 @@ defmodule RavixWeb.Live.AgentPanel do
   # Nothing to say about a subscription Fountain would not describe.
   def handle_async(:subscription, _other, socket), do: {:noreply, socket}
 
-  def handle_async(:held, {:ok, {:ok, held}}, socket) when is_list(held),
-    do: {:noreply, assign(socket, held: held)}
+  def handle_async(:held, {:ok, {:ok, held}}, socket) when is_list(held) do
+    user = socket.assigns.current_user
+
+    {:noreply,
+     socket
+     |> assign(held: held)
+     |> traced_async(:thread_defaults, fn ->
+       ThreadPreference.options(user, held)
+     end)}
+  end
+
+  def handle_async(:thread_defaults, {:ok, {:ok, defaults}}, socket),
+    do: {:noreply, assign(socket, thread_defaults: defaults)}
+
+  def handle_async(:thread_defaults, _result, socket), do: {:noreply, socket}
+
+  def handle_async(:thread_default, {:ok, {:ok, user}}, socket) do
+    send(self(), {:agent_default_changed, user})
+
+    defaults = %{
+      socket.assigns.thread_defaults
+      | preference: %{
+          runtime: to_string(user.preferred_runtime),
+          model: user.preferred_model
+        }
+    }
+
+    {:noreply,
+     assign(socket,
+       current_user: user,
+       busy: false,
+       thread_defaults: defaults,
+       thread_default_error: nil,
+       thread_default_saved: true
+     )}
+  end
+
+  def handle_async(:thread_default, {:ok, {:error, reason}}, socket),
+    do:
+      {:noreply,
+       assign(socket,
+         busy: false,
+         thread_default_saved: false,
+         thread_default_error: RavixWeb.Error.from(reason).message
+       )}
 
   # A set Fountain would not list is not drawn as empty: empty is a claim.
   def handle_async(:held, _other, socket), do: {:noreply, socket}
@@ -413,6 +548,18 @@ defmodule RavixWeb.Live.AgentPanel do
   defp credential_description(nil, :claude), do: "Claude subscription or Anthropic API key."
   defp credential_description(nil, :codex), do: "ChatGPT subscription or OpenAI API key."
 
+  # An "already linked" refusal this person can do something about. The other
+  # two classifications say what happened and offer no button, because there is
+  # nothing here they may press: another Ravix login's subscription is theirs
+  # to disconnect, not this page's to take.
+  defp resolvable?(%Inference.Conflict{resolution: resolution}),
+    do: resolution in [:reconnect, :remove]
+
+  defp resolvable?(_conflict), do: false
+
+  defp conflict_action(:reconnect), do: "Reconnect it"
+  defp conflict_action(:remove), do: "Remove the old connection and try again"
+
   defp replace_hint(agent, kind) do
     if Inference.pasted?(agent, kind),
       do: "Paste a new one to replace it",
@@ -497,6 +644,30 @@ defmodule RavixWeb.Live.AgentPanel do
 
     ~H"""
     <div class="agent-panel" id={@id} phx-hook="AgentConfirmation">
+      <form
+        :if={is_nil(@scoped_agent) && @thread_defaults && @thread_defaults.choices != []}
+        id="thread-default-form"
+        phx-submit="save-thread-default"
+        phx-change="change-thread-default"
+        phx-target={@myself}
+      >
+        <label for="thread-default-choice">Default agent for new threads</label>
+        <select id="thread-default-choice" name="preference[choice]" disabled={@busy}>
+          <option
+            :for={choice <- @thread_defaults.choices}
+            value={choice.runtime <> "|" <> choice.model}
+            selected={choice == @thread_defaults.preference}
+          >
+            {RavixWeb.AgentName.label(choice.runtime)} · {RavixWeb.ModelName.friendly(choice.model)}
+          </option>
+        </select>
+        <button type="submit" disabled={@busy}>Save thread default</button>
+        <p>
+          Used when the project's payer has connected this agent. Existing threads keep their agent.
+        </p>
+        <p :if={@thread_default_saved} role="status">Thread default saved.</p>
+        <p :if={@thread_default_error} role="alert">{@thread_default_error}</p>
+      </form>
       <div
         :if={@disconnect_confirmation}
         id="agent-disconnect-confirmation"
@@ -691,6 +862,20 @@ defmodule RavixWeb.Live.AgentPanel do
             <li>This page notices the approval and moves on.</li>
           </ol>
           <p :if={@link_error} class="error" id="link-error" role="alert">{@link_error}</p>
+          <div
+            :if={resolvable?(@link_conflict)}
+            class="workspace-actions"
+            id="chatgpt-conflict"
+          >
+            <button
+              type="button"
+              class="primary"
+              phx-click="resolve-conflict"
+              phx-target={@myself}
+              disabled={@busy}
+              id="chatgpt-resolve-conflict"
+            >{conflict_action(@link_conflict.resolution)}</button>
+          </div>
           <p :if={@linking == false && is_nil(@link)} class="welcome-warning" id="linking-off">
             <.icon name="info" size={14} class="ico" />
             <span>

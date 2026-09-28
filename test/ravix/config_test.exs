@@ -31,6 +31,37 @@ defmodule Ravix.ConfigTest do
     assert Config.retire_shared_machines?()
   end
 
+  test "an operator is named by GitHub id, and nobody is one unless the deployment says so" do
+    previous = Application.fetch_env(:ravix, :admin_github_ids)
+
+    on_exit(fn ->
+      case previous do
+        {:ok, value} -> Application.put_env(:ravix, :admin_github_ids, value)
+        :error -> Application.delete_env(:ravix, :admin_github_ids)
+      end
+    end)
+
+    user = %Ravix.Accounts.User{id: "u-1", github_id: "4242", login: "dana"}
+
+    Application.delete_env(:ravix, :admin_github_ids)
+    refute Config.admin?(user)
+    refute Config.admin?(nil)
+
+    # By the id GitHub will not reissue, never the login: a freed login can be
+    # taken by somebody else, and an allowlist by name would follow the name.
+    Application.put_env(:ravix, :admin_github_ids, ["dana"])
+    refute Config.admin?(user)
+
+    # And no wildcard: this is not a rollout cohort.
+    Application.put_env(:ravix, :admin_github_ids, ["*"])
+    refute Config.admin?(user)
+
+    Application.put_env(:ravix, :admin_github_ids, ["1", "4242"])
+    assert Config.admin?(user)
+    refute Config.admin?(%Ravix.Accounts.User{id: "u-2", github_id: "9"})
+    refute Config.admin?(%Ravix.Accounts.User{id: "u-3", github_id: nil})
+  end
+
   describe "github/0" do
     @required [github_app_id: "1", github_client_id: "Iv1.x", github_client_secret: "s"]
 

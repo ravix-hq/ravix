@@ -12,6 +12,16 @@ defmodule RavixWeb.Live.RuntimePicker do
     assigns = assign(assigns, runtime: runtime, models: if(choice, do: choice.models, else: []))
 
     ~H"""
+    <input
+      type="hidden"
+      name={@name <> "[preference_explicit]"}
+      value={@params["preference_explicit"] || "false"}
+    />
+    <p :if={Map.has_key?(@options, :source)} class="thread-default-source">
+      {source_label(@options.source)}: {RavixWeb.AgentName.label(@options.runtime)} · {RavixWeb.ModelName.friendly(
+        @options.model
+      )}
+    </p>
     <label for={@name <> "-runtime"}>Agent</label>
     <select id={@name <> "-runtime"} name={@name <> "[runtime]"}>
       <option
@@ -35,6 +45,10 @@ defmodule RavixWeb.Live.RuntimePicker do
     </select>
     """
   end
+
+  defp source_label(:person), do: "Your default"
+  defp source_label(:track), do: "Track's last choice"
+  defp source_label(:project), do: "Project default"
 
   defp availability(%{enabled: false, runtime: runtime}, _options),
     do: " — #{RavixWeb.AgentName.label(runtime)} threads on this project aren't available yet"

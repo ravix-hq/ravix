@@ -29,6 +29,20 @@ defmodule RavixWeb.ErrorTest do
     assert Error.from(:not_found, noun: "project").message == "No such project."
   end
 
+  test "a classified ChatGPT link conflict carries its own sentence and nothing else" do
+    conflict = %Ravix.Accounts.Inference.Conflict{
+      resolution: :reconnect,
+      grant_id: "g-1",
+      message: "That ChatGPT account is already connected here, under your own earlier sign-in."
+    }
+
+    assert %Error{status: 422, code: "link_failed", message: message} =
+             Error.from({:link_conflict, conflict})
+
+    assert message == conflict.message
+    refute message =~ "g-1"
+  end
+
   test "unknown errors hide internal details and typed errors pass through" do
     error = %Error{status: 409, code: "busy", message: "Try again"}
     assert Error.from(error) == error
