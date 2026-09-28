@@ -119,6 +119,58 @@ defmodule Ravix.PrivateTracksTest do
     assert {:error, :not_found} = Access.track_access(c.owner, c.track.id)
   end
 
+  for removal <- [:owner, :self] do
+    @removal removal
+    test "private invitations preserve work and previews through promotion and #{@removal} removal",
+         c do
+      guest = c.joiner
+      public = insert_track(project: c.project)
+      assert {:ok, _} = People.add(c.creator, c.track.id, guest.login)
+      assert {:error, :not_found} = Tracks.get(guest, public.id)
+
+      assert {:ok, _} =
+               Tracks.prompt(guest, c.track.id, %{
+                 prompt: "Before promotion",
+                 request_id: Ecto.UUID.generate()
+               })
+
+      {_token, session} = insert_session(guest)
+      grant = insert_preview_grant(c.track, session)
+      assert {:ok, _} = People.add_project(c.owner, c.project.id, guest.login)
+      assert Access.member?(c.track.id, guest.id)
+      assert {:ok, _} = Tracks.get(guest, c.track.id)
+      assert {:ok, _} = Tracks.get(guest, public.id)
+
+      assert {:ok, _} =
+               Tracks.prompt(guest, c.track.id, %{
+                 prompt: "After promotion",
+                 request_id: Ecto.UUID.generate()
+               })
+
+      remover = if @removal == :owner, do: c.owner, else: guest
+      assert {:ok, _} = People.remove_project(remover, c.project.id, guest.login)
+      assert {:error, :not_found} = Access.project_access(guest, c.project.id)
+      assert {:error, :not_found} = Tracks.get(guest, public.id)
+      assert Access.member?(c.track.id, guest.id)
+      assert {:ok, _} = Tracks.get(guest, c.track.id)
+      assert {:ok, tracks} = Tracks.list(guest, c.project.id)
+      assert Enum.map(tracks, & &1.id) == [c.track.id]
+
+      assert {:ok, _} =
+               Tracks.prompt(guest, c.track.id, %{
+                 prompt: "After project removal",
+                 request_id: Ecto.UUID.generate()
+               })
+
+      assert Repo.get(Ravix.Previews.PreviewGrant, grant.hash)
+
+      assert {:ok, _} = People.remove(c.creator, c.track.id, guest.login)
+      assert {:error, :not_found} = Tracks.get(guest, c.track.id)
+      assert {:error, :not_found} = Tracks.prompt(guest, c.track.id, %{prompt: "Revoked"})
+      refute Repo.get(Ravix.Previews.PreviewGrant, grant.hash)
+    end
+  end
+
   test "shared tracks cannot become private or be created private", c do
     shared = insert_track(project: c.project, created_by: c.creator.id)
 

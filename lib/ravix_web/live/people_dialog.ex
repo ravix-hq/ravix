@@ -16,9 +16,8 @@ defmodule RavixWeb.Live.PeopleDialog do
   came to hold twenty-eight of them.
 
   `scope` picks the unit. What that changes is real and the dialog says so:
-  a project member reaches every track on the machine, so its dialog
-  explains that and its "leave" is worded for a machine rather than a
-  branch.
+  a project member reaches project-visible tracks; private invitations remain
+  separate, including when the person leaves the project.
   """
   use RavixWeb, :live_component
 

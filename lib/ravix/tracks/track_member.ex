@@ -8,9 +8,9 @@ defmodule Ravix.Tracks.TrackMember do
   line paddock draws around a terminal, drawn around a branch instead.
   `Ravix.Projects.ProjectMember` is the wider one, and the two are separate
   tables rather than one with a nullable track_id because they answer
-  different questions and are read in different places. They are not,
-  however, held at once for one person on one project: the wider grant
-  deletes the narrower ones.
+  different questions and are read in different places. Private track seats
+  coexist with project membership and survive joining or leaving the project.
+  On project-visible tracks, promotion still replaces the narrower seats.
   """
   use Ecto.Schema
   import Ecto.Changeset

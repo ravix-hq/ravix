@@ -37,7 +37,7 @@ defmodule Ravix.People do
   It is worth being exact, because the invite dialogs say it and this is
   where the sentence is true or not.
 
-  A track is a shell on a machine that also holds every *other* track. The
+  A legacy shared track is a shell on a machine that also holds other shared tracks. The
   worktrees are separate directories, and the agent is told three times
   over to stay in its own, but that is a rule the agent follows, not a
   boundary the kernel enforces. Somebody who can prompt a track can ask the
@@ -46,8 +46,9 @@ defmodule Ravix.People do
   means those secrets.
 
   Which is the honest reason project-level sharing is not the leap it looks
-  like: a track invitation *already* costs most of what a project invitation
-  costs, because they run on one box. What the wider one adds is the
+  like on legacy machines: a shared-track invitation already costs most of what a project
+  invitation costs, because they run on one box. Private tracks require their
+  own dedicated machine. What the wider invitation adds is the
   ability to read the other transcripts and to open tracks: real, and worth
   a separate act by the owner, but not a different order of trust.
 
@@ -345,11 +346,9 @@ defmodule Ravix.People do
   @doc """
   The owner removing somebody from a project, or somebody leaving.
 
-  This gives up **every track on the project**, in one go and including
-  any the person was named on individually before they were let into the
-  whole thing; those rows were deleted when they were promoted. It is a
-  bigger door than leaving one track, which is why the dialog asks twice
-  and says so in the sentence above the button.
+  This gives up project-visible tracks, including invitations superseded
+  by promotion. Private track memberships and creator access remain intact:
+  they must be revoked separately on the private track.
 
   Returns the project's people, or `{:ok, :left}` when the caller has just
   removed their own access.

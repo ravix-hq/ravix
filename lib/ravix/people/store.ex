@@ -335,8 +335,8 @@ defmodule Ravix.People.Store do
   end
 
   @doc """
-  Take `user_id` off a project: the row, and every preview grant on every
-  open track of it.
+  Take `user_id` off a project and revoke its project-visible preview grants.
+  Private invitations and their preview grants are independent of this seat.
 
   As with `remove_member/2`, the hub is told from here: this is where the
   access goes, so this is what announces it.
@@ -344,10 +344,10 @@ defmodule Ravix.People.Store do
   @spec remove_project_member(String.t(), String.t()) :: :ok
   def remove_project_member(project_id, user_id) do
     # ownership: `Ravix.People.remove_project/3` admitted the caller through
-    # `Access.project_access/2`. Taking somebody off a project takes away every
-    # track on it, so the open ones have to be named to revoke their previews;
+    # `Access.project_access/2`. Taking somebody off a project takes away its
+    # project-visible tracks, so name the open ones to revoke their previews;
     # `open_tracks/1` is the projects context's own read of that list.
-    tracks = Projects.open_tracks(project_id)
+    tracks = Enum.filter(Projects.open_tracks(project_id), &(&1.visibility == :project))
 
     # ownership: the same `Access.project_access/2` door. The seat being
     # deleted below is what let this person onto every one of those tracks,
@@ -388,11 +388,11 @@ defmodule Ravix.People.Store do
   @doc """
   The same promotion, for somebody who has not arrived yet.
 
-  A pending track invitation on this project is dropped with it, for the
+  A pending invitation to a project-visible track is dropped with it, for the
   reason the memberships are: it would grant nothing on the sign-in that
   honoured them both, and until then it sits in the track's people list as
   a row whose remove control cancels an invitation that was already
-  superseded.
+  superseded. Private track invitations remain independent and are preserved.
   """
   @spec add_project_invite(%{
           project_id: String.t(),
