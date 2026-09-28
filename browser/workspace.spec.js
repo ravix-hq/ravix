@@ -450,7 +450,7 @@ test('find a track focuses its search field and explains no matches', async ({ p
   await open.press('Enter');
   await expect(query).toBeFocused();
   await page.keyboard.type('no-track-could-match-this-query');
-  await expect(dialog.getByRole('status')).toHaveText('No tracks match');
+  await expect(dialog.getByRole('status')).toHaveText('No projects or tracks match');
   await expect(dialog.locator('a')).toHaveCount(0);
   await expect(query).toBeFocused();
   await page.keyboard.press('Escape');
@@ -489,6 +489,7 @@ test('project, track, streaming, image upload, reconnect, and revocation', async
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
   await signIn(page);
+  await connectClaude(page);
   await page.getByRole('button', { name: 'Add a project', exact: true }).first().click();
   const projectDialog = page.getByRole('dialog', { name: 'New project' });
   await expect(projectDialog).toBeVisible();
@@ -497,7 +498,7 @@ test('project, track, streaming, image upload, reconnect, and revocation', async
   await page.getByLabel('Repository', { exact: true }).fill('mockuser/atlas-api');
   await projectDialog.getByRole('button', { name: 'Create project' }).click();
   await expect(projectDialog).not.toBeVisible();
-  await page.getByRole('navigation', { name: 'Project tracks', exact: true }).getByRole('button', { name: 'New track', exact: true }).click();
+  await page.locator('#yard .workspace-project.current .project-add').click();
   const newTrack = page.getByRole('dialog', { name: 'New track', exact: true });
   await expect(newTrack.getByLabel('Branch name')).toHaveValue('');
   await newTrack.getByRole('button', { name: 'Advanced', exact: true }).click();
@@ -538,7 +539,7 @@ test('project, track, streaming, image upload, reconnect, and revocation', async
   await page.getByRole('button', { name: 'Create track', exact: true }).click();
   const composer = page.getByRole('textbox', { name: 'Message', exact: true });
   await expect(composer).toBeEnabled({ timeout: 30_000 });
-  const selectedTrackTitle = await page.locator('.track-tabs [aria-current="page"]').getAttribute('title');
+  const selectedTrackTitle = await page.locator('.project-tree-tracks [aria-current="page"]').getAttribute('title');
   await expect(page).toHaveTitle(`${selectedTrackTitle} · Browser quality · Ravix`);
   // The composer enables once the conversation exists, before the opening
   // turn has made the worktree. A diff read then is honestly empty and the
@@ -581,12 +582,11 @@ test('project, track, streaming, image upload, reconnect, and revocation', async
 
   await accessible(page);
   await expect(page.locator('.crumbs')).toHaveCount(1);
-  const firstTrackTab = page.locator('.track-tabs .workspace-track[aria-current="page"]');
+  const firstTrackTab = page.locator('.project-tree-tracks .workspace-track[aria-current="page"]');
   await expect(firstTrackTab).toBeVisible();
   const firstTrackName = (await firstTrackTab.locator('.track-title').textContent()).trim();
-  await expect(page.locator('#yard [role=tablist] .workspace-track')).toHaveCount(1);
+  await expect(page.locator('#yard .project-tree-tracks .workspace-track')).toHaveCount(1);
   // Personal sections persist across reloads and never delete the projects inside.
-  await page.locator('#project-switcher-trigger').click();
   await page.getByRole('button', { name: 'Manage sections', exact: true }).click();
   await page.getByLabel('New section', { exact: true }).fill('Browser work');
   await page.getByRole('button', { name: 'Create section', exact: true }).click();
@@ -594,14 +594,12 @@ test('project, track, streaming, image upload, reconnect, and revocation', async
   await expect(sectionsDialog.getByLabel('Section name', { exact: true })).toHaveValue('Browser work');
   await page.keyboard.press('Escape');
   await expect(page.getByRole('combobox', { name: 'Section for Browser quality', exact: true })).toHaveCount(0);
-  await page.locator('#project-switcher-trigger').click();
   const sectionGroup = page.locator('.project-section').filter({ has: page.locator('.section-toggle', { hasText: 'Browser work' }) });
-  await page.locator('#project-switcher .workspace-project', { hasText: 'Browser quality' }).dragTo(sectionGroup);
+  await page.locator('#project-tree .workspace-project', { hasText: 'Browser quality' }).dragTo(sectionGroup);
   await expect(sectionGroup.locator('.workspace-project-name')).toContainText('Browser quality');
   await sectionGroup.locator('.section-toggle').click();
   await expect(sectionGroup.locator('.workspace-project-name')).toBeHidden();
   await page.reload();
-  await page.locator('#project-switcher-trigger').click();
   await expect(sectionGroup.locator('.section-toggle')).toHaveAttribute('aria-expanded', 'false');
   await sectionGroup.locator('.section-toggle').click();
   await expect(sectionGroup.locator('.workspace-project-name')).toBeVisible();
@@ -614,7 +612,6 @@ test('project, track, streaming, image upload, reconnect, and revocation', async
   await sectionsDialog.getByRole('button', { name: 'Remove section', exact: true }).click();
   await expect(sectionsDialog.getByLabel('Section name', { exact: true })).toHaveCount(0);
   await page.keyboard.press('Escape');
-  await page.locator('#project-switcher-trigger').click();
   await expect(page.locator('#section-other .workspace-project-name', { hasText: 'Browser quality' })).toBeVisible();
 
 
@@ -643,7 +640,7 @@ test('project, track, streaming, image upload, reconnect, and revocation', async
   await expect(page.getByLabel('Command', { exact: true })).toHaveValue('echo draft');
   await page.getByRole('button', { name: 'Collapse the dock' }).click();
   await composer.fill('A draft while opening workspace dialogs');
-  const newTrackTrigger = page.getByRole('navigation', { name: 'Project tracks', exact: true }).getByRole('button', { name: 'New track', exact: true });
+  const newTrackTrigger = page.locator('#yard .workspace-project.current .project-add');
   await newTrackTrigger.click();
   await expect(newTrack).toBeVisible();
   await page.keyboard.press('Escape');
@@ -695,7 +692,7 @@ test('project, track, streaming, image upload, reconnect, and revocation', async
   // A new thread is blank and retains the track's branch, URL, and default draft.
   const trackUrl = page.url();
   // A new track is titled with its branch, which the header then shows once.
-  const branch = (await page.locator('.track-tabs [aria-current="page"] .track-title').textContent()).trim();
+  const branch = (await page.locator('.project-tree-tracks [aria-current="page"] .track-title').textContent()).trim();
   await expect(page.locator('.track-crumbs')).toContainText(branch);
   const threadTabs = page.getByRole('navigation', { name: 'Threads', exact: true });
   const currentThread = threadTabs.locator('[aria-current="true"]');
@@ -789,7 +786,7 @@ test('project, track, streaming, image upload, reconnect, and revocation', async
   // answer for fifteen seconds, so anything inserted ahead of it moves what
   // that test is actually measuring.
   const firstLane = await page.locator('#transcript-scroll').getAttribute('data-track');
-  await page.getByRole('navigation', { name: 'Project tracks', exact: true }).getByRole('button', { name: 'New track', exact: true }).click();
+  await page.locator('#yard .workspace-project.current .project-add').click();
   await expect(newTrack).toBeVisible();
   await newTrack.getByRole('button', { name: 'Advanced', exact: true }).click();
   await page.getByLabel('Branch name').fill('second-lane');
@@ -801,7 +798,7 @@ test('project, track, streaming, image upload, reconnect, and revocation', async
   await expect(page.locator('#transcript-turns')).not.toContainText('Draft survives reconnect');
   await accessible(page);
 
-  await page.getByRole('tablist', { name: 'Project tracks' }).getByRole('tab').filter({ hasText: firstTrackName }).click();
+  await page.locator('#yard .workspace-project.current .project-tree-tracks').getByRole('link').filter({ hasText: firstTrackName }).click();
   await expect(page.locator('.track-crumbs')).toContainText(firstTrackName);
   await expect(page.locator('#transcript-scroll')).toHaveAttribute('data-track', firstLane);
   await expect(page.locator('#transcript-turns')).toContainText('Draft survives reconnect');
@@ -972,7 +969,7 @@ test('composer Send stays compact and keeps its arrow after repeated submissions
   await projectDialog.getByLabel('Project name', { exact: true }).fill('Send regression');
   await projectDialog.getByRole('button', { name: 'Create project', exact: true }).click();
   await expect(projectDialog).toHaveCount(0);
-  await page.getByRole('navigation', { name: 'Project tracks', exact: true }).getByRole('button', { name: 'New track', exact: true }).click();
+  await page.locator('#yard .workspace-project.current .project-add').click();
   // New tracks are named after their reserved ravix/ branch (#154).
   const newTrack = page.getByRole('dialog', { name: 'New track', exact: true });
   await newTrack.getByRole('button', { name: 'Advanced', exact: true }).click();

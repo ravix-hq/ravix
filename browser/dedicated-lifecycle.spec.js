@@ -14,8 +14,7 @@ test('a flagged track copies secrets, becomes ready, and deletes its own machine
   await project.getByLabel('Project name', { exact: true }).fill('Dedicated lifecycle');
   await project.getByRole('button', { name: 'Create project', exact: true }).click();
   await expect(project).toHaveCount(0);
-  await page.getByRole('navigation', { name: 'Project tracks', exact: true })
-    .getByRole('button', { name: 'New track', exact: true }).click();
+  await page.locator('#yard .workspace-project.current .project-add').click();
   await page.getByRole('button', { name: 'Create track', exact: true }).click();
   await expect(page.locator('#track-machine-scope')).toHaveText('Own machine');
   await expect(page.locator('#track-setup-status')).toContainText('Prompts will wait until setup is ready.');
@@ -29,8 +28,7 @@ test('a flagged track copies secrets, becomes ready, and deletes its own machine
   const box = boxes.find(b => b.vault_id === vaultId);
   expect(box).toBeTruthy();
   const firstUrl = page.url();
-  await page.getByRole('navigation', { name: 'Project tracks', exact: true })
-    .getByRole('button', { name: 'New track', exact: true }).click();
+  await page.locator('#yard .workspace-project.current .project-add').click();
   await page.getByRole('button', { name: 'Create track', exact: true }).click();
   await expect(page).not.toHaveURL(firstUrl);
   await expect(page.locator('#track-machine-scope')).toHaveText('Own machine');

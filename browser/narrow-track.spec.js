@@ -18,7 +18,7 @@ test('narrow track views give the conversation space and preserve drafts', async
   await expect(page.locator('#project-repositories option')).not.toHaveCount(0);
   await repository.fill('mockuser/atlas-api');
   await page.getByRole('button', { name: 'Create project', exact: true }).click();
-  await page.getByRole('navigation', { name: 'Project tracks', exact: true }).getByRole('button', { name: 'New track', exact: true }).click();
+  await page.locator('#yard .workspace-project.current .project-add').click();
   await page.getByRole('button', { name: 'Create track', exact: true }).click();
   const composer = page.getByRole('textbox', { name: 'Message', exact: true });
   await expect(composer).toBeEnabled();

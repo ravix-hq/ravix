@@ -16,6 +16,17 @@ defmodule RavixWeb.WorkspaceLiveTest do
 
   setup :verify_on_exit!
 
+  setup do
+    stub(Tracks, :list_many, fn user, ids, opts ->
+      Map.new(ids, fn id ->
+        {:ok, rows} = Tracks.list(user, id, opts)
+        {id, rows}
+      end)
+    end)
+
+    :ok
+  end
+
   test "mobile navigation marks only the current destination on every workspace route", %{
     conn: conn
   } do
@@ -539,7 +550,6 @@ defmodule RavixWeb.WorkspaceLiveTest do
         ] do
       {:ok, view, _} = live(log_in_user(conn, user), "/home")
       render_async(view)
-      render_click(view, "dialog", %{name: "projects"})
       selector = ".workspace-project-name[href='/p/#{project.id}'] .project-label"
       assert has_element?(view, selector, label)
       assert has_element?(view, ".home-recent .project-label", label)
@@ -551,15 +561,15 @@ defmodule RavixWeb.WorkspaceLiveTest do
 
       assert has_element?(
                view,
-               "#yard [role=tablist] > :first-child#project-overview-tab[aria-current=page]"
+               "#project-link-#{project.id}[aria-current=page]"
              )
 
-      assert has_element?(view, "#yard [role=tablist] #project-track-tab-#{track.id}")
+      assert has_element?(view, "#yard .project-tree-tracks #project-track-tab-#{track.id}")
 
       if user == guest do
         refute render(view) =~ hidden_track.title
         refute has_element?(view, "#yard #project-track-tab-#{hidden_track.id}")
-        refute has_element?(view, "#yard #project-track-navigation button", "New track")
+        refute has_element?(view, "#yard [data-project-id='#{project.id}'] .project-add")
       else
         assert has_element?(view, "#yard #project-track-tab-#{hidden_track.id}")
       end
@@ -917,14 +927,12 @@ defmodule RavixWeb.WorkspaceLiveTest do
     track = insert_track(project: own, title: "My work")
     {:ok, view, _} = live(log_in_user(conn, user), "/")
     render_async(view)
-    render_click(view, "dialog", %{name: "projects"})
-    assert has_element?(view, "#project-switcher a", "My project")
-    refute has_element?(view, "#yard a", "My work")
+    assert has_element?(view, "#project-tree a", "My project")
+    assert has_element?(view, "#yard a", "My work")
     refute render(view) =~ "Someone else"
-    render_click(view, "dialog", %{name: "projects"})
-    view |> element("#project-switcher a.workspace-project-name") |> render_click()
+    view |> element("#project-tree a.workspace-project-name") |> render_click()
     assert_patch(view, "/p/#{own.id}")
-    assert has_element?(view, "button", "New track")
+    assert has_element?(view, "a.project-add")
     assert has_element?(view, "a[href='/p/#{own.id}/t/#{track.id}']")
   end
 
@@ -945,13 +953,13 @@ defmodule RavixWeb.WorkspaceLiveTest do
     insert_track(project: project)
     {:ok, view, _} = live(log_in_user(conn, user), "/home")
     render_async(view)
-    refute has_element?(view, "#yard [role=tablist] .workspace-track")
-    refute has_element?(view, ".track-tabs")
+    assert has_element?(view, "#yard .project-tree-tracks .workspace-track")
+    assert has_element?(view, ".project-tree-tracks")
     render_patch(view, "/p/#{project.id}")
     view |> element("a.project-add") |> render_click()
     assert_patch(view, "/p/#{project.id}?new=track")
     assert has_element?(view, "#new-track-form")
-    assert has_element?(view, ".track-tabs .workspace-track")
+    assert has_element?(view, ".project-tree-tracks .workspace-track")
     view |> form("#new-track-form", new_track: [title: "Keep this name"]) |> render_change()
     view |> element("button", "Advanced") |> render_click()
     refute has_element?(view, "#track-advanced[hidden]")
@@ -974,19 +982,18 @@ defmodule RavixWeb.WorkspaceLiveTest do
 
     assert has_element?(
              view,
-             ".track-tabs a[aria-current='page'][href='/p/#{project.id}/t/#{track.id}']"
+             ".project-tree-tracks a[aria-current='page'][href='/p/#{project.id}/t/#{track.id}']"
            )
 
-    assert has_element?(view, "#yard [role=tablist] .workspace-track")
-    refute has_element?(view, ".track-tabs a[href='/p/#{other.id}/t/#{other_track.id}']")
-    render_click(view, "dialog", %{name: "projects"})
+    assert has_element?(view, "#yard .project-tree-tracks .workspace-track")
+    assert has_element?(view, ".project-tree-tracks a[href='/p/#{other.id}/t/#{other_track.id}']")
 
     view
-    |> element("#project-switcher .workspace-project-name[href='/p/#{other.id}']")
+    |> element("#project-tree .workspace-project-name[href='/p/#{other.id}']")
     |> render_click()
 
-    assert has_element?(view, ".track-tabs a[href='/p/#{other.id}/t/#{other_track.id}']")
-    refute has_element?(view, ".track-tabs a[href='/p/#{project.id}/t/#{track.id}']")
+    assert has_element?(view, ".project-tree-tracks a[href='/p/#{other.id}/t/#{other_track.id}']")
+    assert has_element?(view, ".project-tree-tracks a[href='/p/#{project.id}/t/#{track.id}']")
   end
 
   test "track tabs omit ordinals across mixed states and show each track's state", %{conn: conn} do
@@ -1019,7 +1026,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
     render_async(view)
 
     tab = fn track ->
-      "#yard [role=tablist] a[role=tab][href='/p/#{project.id}/t/#{track.id}']"
+      "#yard .project-tree-tracks a[href='/p/#{project.id}/t/#{track.id}']"
     end
 
     [idle, busy, booting, broken, answered, feature, setup_broken] = tracks
@@ -1049,40 +1056,35 @@ defmodule RavixWeb.WorkspaceLiveTest do
 
     # Idle and active tracks alike omit decorative numbering.
     refute has_element?(view, "#{tab.(idle)} [role=img]")
-    refute has_element?(view, ".track-tabs .track-num")
+    refute has_element?(view, ".project-tree-tracks .track-num")
   end
 
-  test "project tabs live in the collapsible sidebar with one selected tab", %{conn: conn} do
+  test "project tree marks navigation and closes the mobile drawer", %{conn: conn} do
     user = insert_user()
     project = insert_project(user: user)
     track = insert_track(project: project)
     {:ok, view, _} = live(log_in_user(conn, user), "/p/#{project.id}")
     render_async(view)
-
-    assert has_element?(view, "#yard [role=tablist][aria-orientation=vertical]")
-    refute has_element?(view, "#workspace-stage [role=tablist]")
-    assert has_element?(view, "#project-overview-tab[aria-selected=true][tabindex='0']")
+    assert has_element?(view, "#project-link-#{project.id}[aria-current=page]")
 
     assert has_element?(
              view,
-             "#project-track-tab-#{track.id}[aria-selected=false][tabindex='-1']"
+             "#project-tracks-#{project.id} a[href='/p/#{project.id}/t/#{track.id}']"
            )
 
     assert has_element?(
              view,
-             "#project-tabpanel[role=tabpanel][aria-labelledby=project-overview-tab]"
+             "#project-tabpanel[role=region][aria-labelledby=project-link-#{project.id}]"
            )
 
-    assert has_element?(view, "#yard #project-track-navigation button", "New track")
-    refute has_element?(view, "[role=tablist] button")
-
+    assert has_element?(view, "a.project-add")
     render_click(view, "yard")
     assert has_element?(view, "#yard.forced")
     view |> element("#project-track-tab-#{track.id}") |> render_click()
     render_async(view)
     refute has_element?(view, "#yard.forced")
-    assert has_element?(view, "#project-track-tab-#{track.id}[aria-selected=true][tabindex='0']")
-    assert has_element?(view, "#project-overview-tab[aria-selected=false][tabindex='-1']")
+    assert has_element?(view, "#project-track-tab-#{track.id}[aria-current=page]")
+    refute has_element?(view, "#project-link-#{project.id}[aria-current]")
     assert has_element?(view, "#project-tabpanel[aria-labelledby=project-track-tab-#{track.id}]")
   end
 
@@ -1162,19 +1164,19 @@ defmodule RavixWeb.WorkspaceLiveTest do
     render_async(view)
 
     row = "#yard [data-project-id='#{mine.id}'].current"
-    assert has_element?(view, "#{row} button[aria-label='People in Mine']")
-    assert has_element?(view, "#{row} button[aria-label='Project settings for Mine']")
+    assert has_element?(view, ".crumbs button[phx-value-name=people]")
+    assert has_element?(view, ".crumbs button[phx-value-name=settings]")
     assert has_element?(view, "#{row} a.project-add[aria-label='New track in Mine']")
     # Only the selected project remains in the rail. Other projects are
     # reached through the switcher before their actions are available.
     closed = "#yard [data-project-id='#{other.id}']"
     refute has_element?(view, "#{closed}.current")
-    refute has_element?(view, "#{closed} a.project-add")
+    assert has_element?(view, "#{closed} a.project-add")
     refute has_element?(view, "#{closed} button.project-action")
     # The nested links under the open project are gone.
     refute has_element?(view, ".project-links")
 
-    view |> element("#{row} button[aria-label='People in Mine']") |> render_click()
+    view |> element(".crumbs button[phx-value-name=people]") |> render_click()
     assert has_element?(view, "#people-dialog")
     render_click(view, "dismiss")
 
@@ -1193,7 +1195,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
        }}
     end)
 
-    view |> element("#{row} button[aria-label='Project settings for Mine']") |> render_click()
+    view |> element(".crumbs button[phx-value-name=settings]") |> render_click()
     assert has_element?(view, "#settings-dialog")
 
     # A member who does not own the project has its people but not its settings.
@@ -1418,10 +1420,9 @@ defmodule RavixWeb.WorkspaceLiveTest do
     html = render_async(view)
 
     assert html =~ "Alpha two"
-    render_click(view, "dialog", %{name: "projects"})
 
     view
-    |> element("#project-switcher .workspace-project-name[href='/p/#{b.id}']")
+    |> element("#project-tree .workspace-project-name[href='/p/#{b.id}']")
     |> render_click()
 
     assert render(view) =~ "Beta one"
@@ -1474,7 +1475,8 @@ defmodule RavixWeb.WorkspaceLiveTest do
     # Both of the reader's tabs cleared the dot from the event alone...
     refute has_element?(tab_a, ".track-tab [role=img][aria-label='Unread reply']")
     refute has_element?(tab_b, ".track-tab [role=img][aria-label='Unread reply']")
-    refute has_element?(tab_a, ".badge")
+    refute has_element?(tab_a, ".yard-nav .badge")
+    assert has_element?(tab_a, ".workspace-project-name .badge", "0")
 
     # ...somebody else's rail kept its own mark, which the event says nothing
     # about...

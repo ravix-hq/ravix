@@ -29,7 +29,6 @@ defmodule RavixWeb.WorkspaceLive do
 
   # The workspace dialogs, as the buttons spell them and as this module does.
   @dialogs %{
-    "projects" => :projects,
     "sections" => :sections,
     "search" => :search,
     "new-project" => :new_project,
@@ -102,7 +101,6 @@ defmodule RavixWeb.WorkspaceLive do
         refs: [],
         origin_kind: :blank,
         query: "",
-        project_query: "",
         # Creating a project and creating a track, and nothing else. The
         # settings dialog owns its own; see `RavixWeb.Live.SettingsDialog`
         # for why one flag for the whole page could not answer "may I press
@@ -341,9 +339,6 @@ defmodule RavixWeb.WorkspaceLive do
   end
 
   def handle_event("dismiss-switcher", _, socket), do: {:noreply, assign(socket, dialog: nil)}
-
-  def handle_event("search-projects", %{"q" => query}, socket),
-    do: {:noreply, socket |> recheck_rail() |> assign(project_query: query)}
 
   def handle_event("yard", _, socket),
     do: {:noreply, assign(socket, yard_open: !socket.assigns.yard_open)}
@@ -962,10 +957,6 @@ defmodule RavixWeb.WorkspaceLive do
 
   defp recheck_rail(socket), do: socket
 
-  defp switcher_groups(projects, sections, placements, query) do
-    projects |> Enum.filter(&project_matches?(&1, query)) |> section_groups(sections, placements)
-  end
-
   defp project_matches?(project, query),
     do:
       String.contains?(String.downcase(project.display_name), String.downcase(String.trim(query)))
@@ -1011,60 +1002,36 @@ defmodule RavixWeb.WorkspaceLive do
     end
   end
 
-  # Reads only, so that it can run in a task. A project's tracks that cannot
-  # be read are an empty group rather than a missing key, which is what keeps
-  # the rail drawing the project. Each project gets a bounded worker and its
-  # own deadline. Ordered results keep failures paired with their project;
-  # neither a timeout nor a crashed worker can take down the complete rail.
+  # Discover projects and tracks off the LiveView process. Tracks batches the
+  # scoped database read and bounds provider presentation independently per
+  # project. The rail does not display machine state; reading it again here
+  # would repeat timed-out requests or expire a fast project's memo while
+  # another project is still answering.
   defp read_rail(user, opts \\ []) do
     projects = Projects.list(user, include_machine: false)
-
-    groups =
-      Ravix.TaskSupervisor
-      |> Task.Supervisor.async_stream_nolink(
-        projects,
-        Ravix.Trace.link_each(&read_project(user, &1, opts)),
-        max_concurrency: 8,
-        timeout: 5_000,
-        on_timeout: :kill_task,
-        ordered: true
-      )
-      |> Enum.zip(projects)
-      |> Enum.map(fn
-        {{:ok, {:ok, project, tracks}}, _} -> {project, tracks}
-        {_, project} -> {project, []}
-      end)
-
-    {Enum.map(groups, &elem(&1, 0)),
-     Map.new(groups, fn {project, tracks} -> {project.id, tracks} end)}
-  end
-
-  # Tracks uses the memo or refreshes it when asked. Read machine state from
-  # that same answer inside the worker, keeping cold reads within its budget.
-  defp read_project(user, project, opts) do
-    with {:ok, tracks} <- Tracks.list(user, project.id, opts),
-         {:ok, project} <- Projects.get(user, project.id) do
-      {:ok, project, tracks}
-    end
+    tracks = Tracks.list_many(user, Enum.map(projects, & &1.id), opts)
+    {projects, tracks}
   end
 
   # Subscribing is this process's to do --- `Phoenix.PubSub` registers the
   # caller --- so it happens here rather than beside the reads above.
-  defp apply_rail(socket, {loaded_projects, tracks}) do
+  defp apply_rail(socket, {_loaded_projects, tracks}) do
     # The session hook runs before handle_async. Membership may also have
     # changed while Fountain was answering, before this page subscribed.
     # This authorization recheck must not restart timed-out provider reads.
-    loaded = Map.new(loaded_projects, &{&1.id, &1})
-
     projects =
       socket.assigns.current_user
       |> Projects.list(include_machine: false)
-      |> Enum.map(&%{&1 | machine: Map.get(loaded, &1.id, &1).machine})
+
+    visible =
+      socket.assigns.current_user
+      |> Access.open_tracks(Enum.map(projects, & &1.id))
+      |> MapSet.new(fn {row, _project} -> row.id end)
 
     tracks =
       Map.new(projects, fn project ->
         rows = Map.get(tracks, project.id, [])
-        rows = accessible_rows(socket.assigns.current_user, project, rows)
+        rows = Enum.filter(rows, &MapSet.member?(visible, &1.id))
         {project.id, rows}
       end)
 
@@ -1092,10 +1059,6 @@ defmodule RavixWeb.WorkspaceLive do
     )
     |> assign_page_title()
     |> announce(tracks)
-  end
-
-  defp accessible_rows(user, project, rows) do
-    Access.visible_tracks(user.id, rows, project)
   end
 
   # Use the scoped rail already held by the workspace, including after a
@@ -1213,9 +1176,6 @@ defmodule RavixWeb.WorkspaceLive do
     |> traced_async({:track_options, id}, fn -> Tracks.open_options(user, id) end)
   end
 
-  defp open_dialog(socket, :projects),
-    do: socket |> recheck_rail() |> assign(dialog: :projects, project_query: "")
-
   defp open_dialog(socket, :sections), do: assign(socket, dialog: :sections)
 
   defp open_dialog(socket, :search),
@@ -1322,22 +1282,32 @@ defmodule RavixWeb.WorkspaceLive do
       for project <- assigns.projects,
           tracks =
             Enum.filter(assigns.tracks[project.id] || [], &matching?(&1, project, assigns.query)),
-          tracks != [],
+          tracks != [] || project_matches?(project, assigns.query),
           do: {project, tracks}
 
     assigns = assign(assigns, :results, results)
 
     ~H"""
-    <p :if={@results == []} role="status">No tracks match</p>
+    <p :if={@results == []} role="status">No projects or tracks match</p>
     <section :for={{project, tracks} <- @results} aria-labelledby={"search-project-#{project.id}"}>
-      <h3 id={"search-project-#{project.id}"}><.project_name project={project} /></h3>
+      <h3 id={"search-project-#{project.id}"}>
+        <.link :if={project_matches?(project, @query)} patch={"/p/#{project.id}"} data-jump-result>
+          {project.display_name}
+          <span class="badge" aria-label={"#{project_attention(@tracks, project.id)} unread"}>{project_attention(
+            @tracks,
+            project.id
+          )}</span>
+        </.link>
+        <span :if={!project_matches?(project, @query)}>{project.display_name}</span>
+      </h3>
       <.link
         :for={track <- tracks}
         patch={"/p/#{project.id}/t/#{track.id}"}
         class="workspace-track"
+        data-jump-result
       >
-        {track.title}
-        <span :if={track.visibility == :private}><.icon name="lock" /> Private</span>
+        {track.title}<span :if={track.visibility == :private}><.icon name="lock" /> Private</span>
+        <span :if={attention?(track)} class="badge" aria-label="1 unread">1</span>
       </.link>
     </section>
     """

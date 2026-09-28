@@ -10,7 +10,7 @@ test('assigned plan items stay compact across widths and themes', async ({ page 
   await page.getByRole('button', { name: /^New project/ }).click();
   await page.getByLabel('Project name', { exact: true }).fill('Assigned items');
   await page.getByRole('button', { name: 'Create project', exact: true }).click();
-  await page.getByRole('navigation', { name: 'Project tracks', exact: true }).getByRole('button', { name: 'New track', exact: true }).click();
+  await page.locator('#yard .workspace-project.current .project-add').click();
   await page.getByRole('button', { name: 'Create track', exact: true }).click();
   await expect(page.getByRole('textbox', { name: 'Message', exact: true })).toBeEnabled();
   const track = new URL(page.url()).pathname.split('/t/')[1];

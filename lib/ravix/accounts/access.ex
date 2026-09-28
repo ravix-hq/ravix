@@ -63,6 +63,29 @@ defmodule Ravix.Accounts.Access do
   @typedoc "What `track_access/2` answers. See `Ravix.Accounts.TrackAccess`."
   @type track_access :: TrackAccess.t()
 
+  @doc "All open tracks in the requested projects admitted by this viewer's memberships."
+  @spec open_tracks(User.t(), [String.t()]) :: [{Track.t(), Project.t()}]
+  # ownership: no door before this one; this query establishes project and track membership.
+  def open_tracks(%User{id: user_id}, project_ids) do
+    import Ecto.Query
+
+    Repo.all(
+      from(t in Track,
+        join: p in Project,
+        on: p.id == t.project_id,
+        left_join: pm in Ravix.Projects.ProjectMember,
+        on: pm.project_id == p.id and pm.user_id == ^user_id,
+        left_join: tm in Ravix.Tracks.TrackMember,
+        on: tm.track_id == t.id and tm.user_id == ^user_id,
+        where: p.id in ^project_ids and is_nil(p.archived_at) and is_nil(p.deletion_requested_at),
+        where: is_nil(t.closed_at),
+        where: p.user_id == ^user_id or not is_nil(pm.user_id) or not is_nil(tm.user_id),
+        order_by: [asc: t.created_at, asc: t.id],
+        select: {t, p}
+      )
+    )
+  end
+
   @doc "A thread is reached only through membership of its specified track."
   @spec thread_access(User.t(), String.t(), String.t() | nil) ::
           {:ok, map()} | {:error, :not_found}

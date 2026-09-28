@@ -18,7 +18,8 @@
 //   Terminal        the shell panel: history, Ctrl+L, output that follows itself
 //   Notify          desktop notifications when a track needs you and you are not looking
 //   SettingsSections section navigation and unsaved input warnings
-//   TrackTabs       vertical keyboard navigation and selected track visibility
+//   ProjectTree     viewer-local collapse preferences for project and section rows
+//   QuickJump       Cmd/Ctrl-K and keyboard selection in navigation search
 //   ProjectSections drag a sidebar project onto one of your sections
 //   ProjectFormFocus synchronous dialog focus that never steals later typing
 //   CopyCode        copy a Help example exactly, with success or failure feedback
@@ -37,14 +38,15 @@ import {TranscriptTail} from "./hooks/transcript_tail"
 import {Composer} from "./hooks/composer"
 import {Terminal} from "./hooks/terminal"
 import {Notify} from "./hooks/notify"
-import {TrackTabs} from "./hooks/track_tabs"
+import {ProjectTree} from "./hooks/project_tree"
+import {QuickJump} from "./hooks/quick_jump"
 import {AgentConfirmation} from "./hooks/agent_confirmation"
 import {SettingsSections} from "./hooks/settings_sections"
 import {ProjectSections} from "./hooks/project_sections"
 import {ProjectFormFocus} from "./hooks/project_form_focus"
 import {CopyCode} from "./hooks/copy_code"
 
-const hooks = {AgentConfirmation, Theme, PanelResize, PanelToggle, TranscriptTail, Composer, Terminal, Notify, SettingsSections, TrackTabs, ProjectSections, CopyCode, ProjectFormFocus}
+const hooks = {AgentConfirmation, Theme, PanelResize, PanelToggle, TranscriptTail, Composer, Terminal, Notify, SettingsSections, ProjectTree, QuickJump, ProjectSections, CopyCode, ProjectFormFocus}
 
 const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
 const liveSocket = new LiveSocket("/live", Socket, {

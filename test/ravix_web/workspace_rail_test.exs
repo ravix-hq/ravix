@@ -3,7 +3,7 @@ defmodule RavixWeb.WorkspaceRailTest do
   import Phoenix.LiveViewTest
   import Mimic
 
-  alias Ravix.{Fountain, Tracks}
+  alias Ravix.{Fountain, MachineCache}
   alias Ravix.Fountain.FakeTransport
 
   setup :verify_on_exit!
@@ -105,15 +105,15 @@ defmodule RavixWeb.WorkspaceRailTest do
   test "a failed or crashed project cannot discard successful rail groups", %{conn: conn} do
     user = insert_user()
     projects = for _ <- 1..3, do: insert_project(user: user)
-    [failed, crashed, good] = projects
+    [_empty, crashed, good] = projects
+    insert_track(project: crashed)
     track = insert_track(project: good, title: "Survived")
 
-    stub(Tracks, :list, fn _, id, _opts ->
-      cond do
-        id == failed.id -> {:error, :not_found}
-        id == crashed.id -> exit(:rail_test_crash)
-        true -> {:ok, [Tracks.present(track)]}
-      end
+    client = FakeTransport.client([])
+    stub(Fountain, :client, fn -> client end)
+
+    stub(MachineCache, :conversations, fn _, project, _ ->
+      if project.id == crashed.id, do: exit(:rail_test_crash), else: {:ok, []}
     end)
 
     {:ok, view, _} = live(log_in_user(conn, user), "/home")
@@ -122,23 +122,32 @@ defmodule RavixWeb.WorkspaceRailTest do
     render_async(view, 2_000)
 
     for project <- projects do
-      render_click(view, "dialog", %{name: "projects"})
       assert has_element?(view, "a[href='/p/#{project.id}']")
       render_patch(view, "/p/#{project.id}")
       render_async(view)
-      assert has_element?(view, ".track-tab", track.title) == (project.id == good.id)
+      assert has_element?(view, "#project-tracks-#{good.id} .track-tab", track.title)
+      refute has_element?(view, "#project-tracks-#{crashed.id} .track-tab")
     end
   end
 
   test "at most eight project reads run at once", %{conn: conn} do
     user = insert_user()
     projects = for _ <- 1..10, do: insert_project(user: user)
+    Enum.each(projects, &insert_track(project: &1))
     test_pid = self()
 
-    stub(Tracks, :list, fn _, id, _opts ->
-      send(test_pid, {:worker, self(), id})
-      receive do: (:release -> {:ok, []})
-    end)
+    client =
+      FakeTransport.client(
+        for project <- projects do
+          {request(project),
+           fn _ ->
+             send(test_pid, {:worker, self(), project.id})
+             receive do: (:release -> {200, [], %{data: []}})
+           end}
+        end
+      )
+
+    stub(Fountain, :client, fn -> client end)
 
     {:ok, view, _} = live(log_in_user(conn, user), "/home")
 
@@ -157,8 +166,6 @@ defmodule RavixWeb.WorkspaceRailTest do
     end
 
     render_async(view)
-
-    render_click(view, "dialog", %{name: "projects"})
 
     for project <- projects,
         do: assert(has_element?(view, "a[href='/p/#{project.id}']"))

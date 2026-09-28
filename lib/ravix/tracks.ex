@@ -126,10 +126,7 @@ defmodule Ravix.Tracks do
   def list(%User{} = user, project_id, opts \\ []) do
     with %Project{} = project <- live_project(project_id),
          access when access != nil <- Access.access_of(user.id, project) do
-      rows =
-        if access == :tracks,
-          do: Store.member_tracks_of(user.id, project.id),
-          else: Store.tracks_of(project.id)
+      rows = Access.open_tracks(user, [project.id]) |> Enum.map(&elem(&1, 0))
 
       rows = Access.visible_tracks(user.id, rows, project)
 
@@ -140,9 +137,34 @@ defmodule Ravix.Tracks do
     end
   end
 
+  @doc "The rail's open tracks, discovered in one scoped query across projects."
+  @spec list_many(User.t(), [String.t()], keyword()) :: %{String.t() => [View.t()]}
+  def list_many(%User{} = user, project_ids, opts \\ []) do
+    groups =
+      Access.open_tracks(user, project_ids) |> Enum.group_by(fn {_row, project} -> project end)
+
+    Ravix.TaskSupervisor
+    |> Task.Supervisor.async_stream_nolink(
+      groups,
+      Ravix.Trace.link_each(fn {project, entries} ->
+        rows = Enum.map(entries, &elem(&1, 0))
+        role = if project.user_id == user.id, do: :owner, else: :member
+        {project.id, present_all(rows, project, user, role, opts)}
+      end),
+      max_concurrency: 8,
+      timeout: 5_000,
+      on_timeout: :kill_task
+    )
+    |> Enum.flat_map(fn
+      {:ok, entry} -> [entry]
+      {:exit, _reason} -> []
+    end)
+    |> Map.new()
+  end
+
   defp present_all(rows, project, user, role, opts) do
     live = conversations_of(project, fresh: Keyword.get(opts, :fresh, false))
-    # ownership: list/3 established this user's membership with Access.access_of/2;
+    # ownership: list/3 and list_many/3 admitted these rows through Access.open_tracks/2;
     # these are read markers on tracks within that project.
     reads = People.Store.reads_of(user.id, project.id)
     # Both of these are read for the whole list rather than per row: the

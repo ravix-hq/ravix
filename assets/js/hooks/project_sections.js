@@ -1,4 +1,4 @@
-// Dragging a project onto a switcher section files it there. A drag never
+// Dragging a project onto a sidebar section files it there. A drag never
 // round-trips while it is in flight, so only the drop reaches the server,
 // which still checks that the project and section belong to this person.
 const TYPE = 'application/x-ravix-project'
@@ -55,7 +55,7 @@ export const ProjectSections = {
       link.focus({preventScroll: true})
     }
   },
-  // Only a project dragged from this switcher has a section to land in.
+  // Only a project dragged from this sidebar has a section to land in.
   target(event) {
     if (!this.dragged) return null
     return event.target.closest?.('[data-section-drop]') ?? null
