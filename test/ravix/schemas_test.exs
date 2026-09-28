@@ -686,7 +686,7 @@ defmodule Ravix.SchemasTest do
   # -- the declared graph ---------------------------------------------------
 
   describe "associations" do
-    # Thirty-nine `belongs_to`/`has_many`/`has_one` declarations, and until
+    # Fifty-odd `belongs_to`/`has_many`/`has_one` declarations, and until
     # this test nothing exercised most of them: there is no `Repo.preload/2`
     # anywhere in `lib/`, and `assoc/2` appears in one file. The read paths are
     # hand-written joins, deliberately -- `Ravix.Tracks.present_all/4` batches
@@ -716,12 +716,14 @@ defmodule Ravix.SchemasTest do
     test "the walk found the whole graph, so a green run is not an empty one" do
       found = declared_associations()
 
-      assert length(found) == 43
+      assert length(found) == 56
       assert {Ravix.Tracks.Sandbox.Operation, :track} in found
       assert {Track, :project} in found
       assert {Project, :tracks} in found
       assert {Preview, :track} in found
       assert {Ravix.Plans.Item, :notes} in found
+      assert {Project, :workspace} in found
+      assert {Ravix.Workspaces.Membership, :workspace} in found
     end
 
     defp declared_associations do

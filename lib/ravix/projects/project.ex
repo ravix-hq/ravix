@@ -51,6 +51,18 @@ defmodule Ravix.Projects.Project do
     field :instructions, :string, default: ""
     field :created_at, :utc_datetime_usec
     field :archived_at, :utc_datetime_usec
+    # ADR 0009, expand only. A nil `workspace_id` is the legacy layout, and
+    # nothing authorizes through any of these yet; see `Ravix.Workspaces`.
+    # `created_by_user_id` is attribution copied from `user_id`, which stays
+    # the legacy owner. The two legacy-duplicate fields are written only by
+    # a reviewed migration, so `changeset/2` does not cast them.
+    belongs_to :workspace, Ravix.Workspaces.Workspace
+    field :created_by_user_id, :string
+    field :normalized_repo_full_name, :string
+    field :github_repo_id, :integer
+    field :workspace_installation_id, :string
+    field :legacy_duplicate_of, :string
+    field :legacy_duplicate_at, :utc_datetime_usec
 
     has_many :tracks, Ravix.Tracks.Track
     has_many :members, Ravix.Projects.ProjectMember
@@ -81,11 +93,50 @@ defmodule Ravix.Projects.Project do
     # Instructions may be cleared; the column is NOT NULL DEFAULT '' and
     # `cast/3` turns "" into nil, so put the empty string back.
     |> update_change(:instructions, &(&1 || ""))
+    |> put_attribution()
     |> validate_required(@required)
     |> validate_number(:rev, greater_than_or_equal_to: 1)
     |> foreign_key_constraint(:user_id)
     |> unique_constraint(:id, name: :projects_pkey)
+    |> unique_constraint(:repo_full_name,
+      name: :projects_workspace_repo,
+      message: "is already a project in this workspace"
+    )
   end
+
+  # The dual write for the two ADR 0009 fields whose meaning is the same as
+  # a legacy column's. An older release inserts nulls here instead, which
+  # `Ravix.Workspaces.Backfill` fills and `Ravix.Workspaces` reads around.
+  defp put_attribution(changeset) do
+    changeset =
+      if get_field(changeset, :created_by_user_id),
+        do: changeset,
+        else: put_change(changeset, :created_by_user_id, get_field(changeset, :user_id))
+
+    put_change(
+      changeset,
+      :normalized_repo_full_name,
+      normalize_repo(get_field(changeset, :repo_full_name))
+    )
+  end
+
+  @doc """
+  The comparison form of a repository name: trimmed of spaces, tabs and
+  line breaks, and lowercased, as
+  GitHub compares `owner/repository`. The display casing stays in
+  `repo_full_name`. Nil for a scratch project, which has no repository.
+  """
+  @spec normalize_repo(String.t() | nil) :: String.t() | nil
+  def normalize_repo(repo) when is_binary(repo) do
+    # Exactly the characters the backfill's `btrim(?, E' \t\r\n')` strips,
+    # so a row reads the same whichever of the two normalized it.
+    case repo |> String.replace(~r/\A[ \t\r\n]+|[ \t\r\n]+\z/, "") |> String.downcase() do
+      "" -> nil
+      normalized -> normalized
+    end
+  end
+
+  def normalize_repo(_repo), do: nil
 
   @doc """
   Where the shared clone sits on the machine, or nil for a project with no

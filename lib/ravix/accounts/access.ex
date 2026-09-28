@@ -184,6 +184,30 @@ defmodule Ravix.Accounts.Access do
   end
 
   @doc """
+  A workspace the caller is an unrevoked member of, and their role in it.
+
+  ADR 0009's fourth door, added before anything goes through it: in this
+  release a workspace membership admits the caller to the workspace row and
+  nothing else. `project_access/2` and `track_access/2` above do not consult
+  it, so a project with a `workspace_id` is still reached only through its
+  legacy owner and members. Somebody else's workspace, a revoked membership,
+  an archived workspace and an id that does not exist all answer not found.
+  """
+  @spec workspace_access(User.t(), String.t()) ::
+          {:ok, %{workspace: Ravix.Workspaces.Workspace.t(), role: atom()}}
+          | {:error, :not_found}
+  def workspace_access(%User{id: user_id}, workspace_id) do
+    # ownership: no door before this one -- it is the door, as `member?/2` is.
+    with %{} = workspace <- Ravix.Workspaces.Store.live_workspace(workspace_id),
+         # ownership: no door before this one; this membership read is the door.
+         %{role: role} <- Ravix.Workspaces.Store.membership(workspace.id, user_id) do
+      {:ok, %{workspace: workspace, role: role}}
+    else
+      _ -> {:error, :not_found}
+    end
+  end
+
+  @doc """
   A track the caller may reach, and in what capacity.
 
   Two ways in, and the order they are tried in is the order of how much they

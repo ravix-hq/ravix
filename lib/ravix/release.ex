@@ -3,6 +3,8 @@ defmodule Ravix.Release do
   Used for executing DB release tasks when run in production without Mix
   installed.
   """
+  alias Ravix.Workspaces.Backfill
+
   @app :ravix
 
   def migrate do
@@ -13,6 +15,8 @@ defmodule Ravix.Release do
         Ecto.Migrator.with_repo(repo, fn repo ->
           Ravix.Repo.prepare_schema(repo)
           Ecto.Migrator.run(repo, :up, all: true, prefix: "ravix")
+          # Idempotent and resumable; reconciles what the previous release wrote.
+          Backfill.run()
         end)
     end
   end
