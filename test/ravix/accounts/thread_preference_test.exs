@@ -68,10 +68,10 @@ defmodule Ravix.Accounts.ThreadPreferenceTest do
 
     user = insert_user(agent: :claude, credential_set_id: "set")
     stub(Inference, :cached_held, fn _ -> {:ok, [{:claude, :subscription}]} end)
-    assert {:ok, %{model: "anthropic/claude-opus-5"}} = ThreadPreference.get(user, catalog)
+    assert {:ok, %{model: "anthropic/claude-opus-5-5"}} = ThreadPreference.get(user, catalog)
 
     assert Machine.pick_runtime(catalog, "claude").model ==
-             "anthropic/claude-opus-5"
+             "anthropic/claude-opus-5-5"
 
     assert {:ok, _} = ThreadPreference.put(user, "claude", "anthropic/claude-opus-5-5", catalog)
 

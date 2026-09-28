@@ -251,7 +251,10 @@ defmodule Ravix.ThreadRuntimeTest do
         assert launch.environment_id == project.environment_id
 
         assert launch.model ==
-                 if(guest == "claude", do: "anthropic/claude-opus-5", else: "openai/gpt-6-astra")
+                 if(guest == "claude",
+                   do: "anthropic/claude-opus-5-5",
+                   else: "openai/gpt-6-astra"
+                 )
 
         {:ok, Shapes.conversation(%{"id" => Ecto.UUID.generate(), "sandbox_id" => "disk"})}
       end)
