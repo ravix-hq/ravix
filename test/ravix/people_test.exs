@@ -350,21 +350,21 @@ defmodule Ravix.PeopleTest do
 
       revoked = :ets.new(:revoked, [:public, :bag])
 
-      expect(Ravix.Previews.Store, :revoke, 3, fn t, ^guest_id ->
-        :ets.insert(revoked, {:revoke, t})
+      # Once for all three tracks, not once per track: the removal holds every
+      # track row of the project locked while it runs.
+      expect(Ravix.Previews.Store, :revoke_tracks, 1, fn ids, ^guest_id ->
+        :ets.insert(revoked, {:revoke, Enum.sort(ids)})
       end)
 
-      expect(Ravix.Previews.Store, :revoke_agent, 3, fn t, ^guest_id ->
-        :ets.insert(revoked, {:agent, t})
+      expect(Ravix.Previews.Store, :revoke_agent_tracks, 1, fn ids, ^guest_id ->
+        :ets.insert(revoked, {:agent, Enum.sort(ids)})
       end)
 
       People.Store.remove_project_member(ctx.project.id, guest_id)
+      every = Enum.sort([shared_id, private_id, closed.id])
 
-      assert Enum.sort(:ets.lookup(revoked, :revoke)) ==
-               Enum.sort([{:revoke, shared_id}, {:revoke, private_id}, {:revoke, closed.id}])
-
-      assert Enum.sort(:ets.lookup(revoked, :agent)) ==
-               Enum.sort([{:agent, shared_id}, {:agent, private_id}, {:agent, closed.id}])
+      assert :ets.lookup(revoked, :revoke) == [{:revoke, every}]
+      assert :ets.lookup(revoked, :agent) == [{:agent, every}]
     end
 
     test "the owner is never a member of their own project", ctx do
@@ -1015,8 +1015,12 @@ defmodule Ravix.PeopleTest do
       People.Store.add_project_member(ctx.project.id, guest_id, "owner")
       Ravix.Hub.subscribe(ctx.project.id)
 
-      expect(Ravix.Previews.Store, :revoke, 2, fn _track, ^guest_id -> :ok end)
-      expect(Ravix.Previews.Store, :revoke_agent, 2, fn _track, ^guest_id -> :ok end)
+      expect(Ravix.Previews.Store, :revoke_tracks, 1, fn ids, ^guest_id ->
+        assert length(ids) == 2
+        :ok
+      end)
+
+      expect(Ravix.Previews.Store, :revoke_agent_tracks, 1, fn _ids, ^guest_id -> :ok end)
 
       assert {:ok, people} = People.remove_project(ctx.owner, ctx.project.id, "@Bo")
       assert logins(people) == ["ana"]

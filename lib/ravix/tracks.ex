@@ -126,14 +126,24 @@ defmodule Ravix.Tracks do
   """
   @spec list(User.t(), String.t(), fresh: boolean()) :: {:ok, [View.t()]} | {:error, :not_found}
   def list(%User{} = user, project_id, opts \\ []) do
-    with %Project{} = project <- live_project(project_id),
-         access when access != nil <- Access.access_of(user.id, project) do
-      rows = Access.open_tracks(user, [project.id]) |> Enum.map(&elem(&1, 0))
-
-      {:ok,
-       present_all(rows, project, user, if(access == :owner, do: :owner, else: :member), opts)}
-    else
+    case live_project(project_id) do
+      %Project{} = project -> listing(user, project, opts)
       _ -> {:error, :not_found}
+    end
+  end
+
+  # The scoped rows first, and then `access_of/3` is answered *from* them. Its
+  # third question is "are they on any track of this project", which is the
+  # query that produced these rows: asking the database for the rows and then
+  # asking it the same thing again is the pair #302's `open_tracks/2`
+  # consolidation removed elsewhere and this caller still paid for.
+  defp listing(user, project, opts) do
+    rows = Enum.map(Access.open_tracks(user, [project.id]), &elem(&1, 0))
+
+    case Access.access_of(user.id, project, tracks: rows) do
+      nil -> {:error, :not_found}
+      :owner -> {:ok, present_all(rows, project, user, :owner, opts)}
+      _member -> {:ok, present_all(rows, project, user, :member, opts)}
     end
   end
 

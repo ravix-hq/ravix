@@ -636,7 +636,11 @@
               <summary>Show logs</summary>
               <pre>{RavixWeb.PreviewPresentation.logs(@preview.logs) |> then(&if(&1 == "", do: "No logs yet.", else: &1))}</pre>
             </details>
-            <details>
+            <!-- Open by the reader, not by the server, and the same
+            `ignore_attributes` as the logs above it: a status patch arriving
+            while somebody is typing in here used to collapse the section
+            under them. -->
+            <details id="preview-config" phx-mounted={JS.ignore_attributes(["open"])}>
               <summary>Run script override</summary>
               <.form
                 :let={f}
