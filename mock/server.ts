@@ -1340,7 +1340,7 @@ function githubApi(req: Request, url: URL, body: Record<string, unknown>): Respo
     const login = decodeURIComponent(byLogin[1]!).toLowerCase();
     const known: Record<string, number> = { octocat: 583231, hubot: 5153, dana: 9001, eli: 9002 };
     if (login === VIEWER.login.toLowerCase()) return json(VIEWER);
-    const id = known[login];
+    const id = known[login] ?? PEOPLE.find(person => person.login.toLowerCase() === login)?.id;
     if (id === undefined) return json({ message: "Not Found" }, 404);
     return json({ id, login, name: null, avatar_url: `${BASE}/ghweb/avatar.svg` });
   }
