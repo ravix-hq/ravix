@@ -13,7 +13,8 @@ defmodule RavixWeb.WorkspaceScopeLiveTest do
 
   import Phoenix.LiveViewTest
 
-  alias Ravix.{Accounts, QueryCount, Repo, Tracks, Workspaces}
+  alias Ravix.{Accounts, Projects, QueryCount, Repo, Tracks, Workspaces}
+  alias Ravix.Fountain.Shapes.Catalog
   alias Ravix.Workspaces.Store
 
   setup do
@@ -250,9 +251,44 @@ defmodule RavixWeb.WorkspaceScopeLiveTest do
     assert Repo.reload!(ctx.me).current_workspace_id == here.id
   end
 
-  test "the owner's own move of an open project takes the page with it", ctx do
+  test "the owner's move from another tab leaves this page, and its choice stands", ctx do
     {:ok, _} = Accounts.put_current_workspace(ctx.me, ctx.team.id)
     view = open(ctx.conn, "/p/#{ctx.team_project.id}")
+
+    move(ctx.team_project, ctx.personal.id)
+    render(view)
+    render_async(view)
+
+    assert_patch(view, "/")
+    assert has_element?(view, "#workspace-switcher-trigger", "Team")
+    refute has_element?(view, "#project-row-#{ctx.team_project.id}")
+    assert Repo.reload!(ctx.me).current_workspace_id == ctx.team.id
+
+    # It is in the target's rail once the owner switches there.
+    view |> element("#workspace-select-#{ctx.personal.id}") |> render_click()
+    assert has_element?(view, "#project-row-#{ctx.team_project.id}")
+  end
+
+  test "the page moving a project from its settings goes with it", ctx do
+    stub(Projects, :settings, fn _, _ ->
+      {:ok,
+       %{
+         name: ctx.team_project.name,
+         runtime: "claude",
+         model: "model",
+         instructions: "",
+         setup_script: "",
+         packages: %{},
+         env_keys: [],
+         vault_keys: [],
+         catalog: Catalog.empty()
+       }}
+    end)
+
+    {:ok, _} = Accounts.put_current_workspace(ctx.me, ctx.team.id)
+    view = open(ctx.conn, "/p/#{ctx.team_project.id}")
+    render_click(view, "dialog", %{name: "settings"})
+    render_async(view)
 
     move(ctx.team_project, ctx.personal.id)
     render(view)
