@@ -76,6 +76,7 @@ defmodule Ravix.PromptQueue.Server do
   alias Ravix.PromptQueue.Store
   alias Ravix.Repo
   alias Ravix.Trace
+  alias Ravix.Tracks.Attribution
   alias Ravix.Tracks.Billing
   alias Ravix.Tracks.CredentialRecovery
   alias Ravix.Tracks.Follower
@@ -766,7 +767,15 @@ defmodule Ravix.PromptQueue.Server do
 
     with {:ok, preamble} <- Recovery.prepare(client, row, track, project),
          true <- authorized?(row) do
-      text = compose(preamble, compose(instructions, authored(row, track, project, prompt)))
+      # Who the thread's commits credit (ADR 0009 phase 4c); "" to leave the
+      # prompt as it was.
+      attribution = Attribution.delivery_block(track, row.thread_id)
+
+      text =
+        compose(
+          preamble,
+          compose(instructions, compose(attribution, authored(row, track, project, prompt)))
+        )
 
       if GenServer.call(server, {:post, row.claim_token}) do
         Fountain.prompt(client, track.conversation_id, text, body.images,

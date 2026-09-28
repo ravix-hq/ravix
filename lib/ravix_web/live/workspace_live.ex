@@ -4,11 +4,12 @@ defmodule RavixWeb.WorkspaceLive do
 
   alias RavixWeb.Live.NewProject
 
-  alias Ravix.{Accounts, Hub, Ids, People, Projects, Tracks}
+  alias Ravix.{Accounts, Hub, Ids, People, Projects, Tracks, Workspaces}
   alias Ravix.Accounts.Access
   alias Ravix.Hub.Event
   alias Ravix.Projects.Sections
   alias Ravix.Tracks.MachineState
+  alias Ravix.Workspaces.{Picker, Repositories}
   alias RavixWeb.Live.Form
   alias RavixWeb.Live.Guard
   alias RavixWeb.Live.ThreadConnect
@@ -127,7 +128,12 @@ defmodule RavixWeb.WorkspaceLive do
         busy: false,
         # The sidebar's workspace switcher; empty while RAVIX_WORKSPACE_ACCESS
         # is off, which draws nothing. See `RavixWeb.Live.WorkspaceSwitcher`.
-        workspaces: WorkspaceSwitcher.list(socket.assigns[:current_user])
+        workspaces: WorkspaceSwitcher.list(socket.assigns[:current_user]),
+        # The New track repository list (RAV-10) while RAVIX_WORKSPACE_ACCESS
+        # is on; nil draws today's project select. See `Ravix.Workspaces.Picker`.
+        picker: nil,
+        # Scratch projects in their own rail group, with the same switch.
+        scratch_group: Workspaces.enabled?()
       )
 
     {:ok, if(socket.assigns.current_user, do: socket |> unseen() |> reload_async(), else: socket)}
@@ -501,15 +507,82 @@ defmodule RavixWeb.WorkspaceLive do
     socket = recheck_rail(socket)
     project = socket.assigns.project
 
-    project =
-      if project && project.access != :tracks,
-        do: project,
-        else: Enum.find(socket.assigns.projects, &(&1.access != :tracks))
-
-    if project,
-      do: {:noreply, new_track_dialog(socket, project)},
-      else: {:noreply, open_dialog(socket, :new_project)}
+    if Workspaces.enabled?() do
+      anchor = if project && project.access != :tracks, do: project
+      {:noreply, picker_dialog(socket, anchor)}
+    else
+      {:noreply, top_new_track(socket, project)}
+    end
   end
+
+  # ── the New track repository list (RAV-10) ────────────────────────────
+
+  def handle_event("picker-filter", %{"q" => q}, %{assigns: %{picker: %Picker{}}} = socket),
+    do: {:noreply, update(socket, :picker, &%{&1 | query: String.slice(to_string(q), 0, 200)})}
+
+  def handle_event("picker-pick", %{"project" => id}, %{assigns: %{picker: %Picker{}}} = socket) do
+    picker = socket.assigns.picker
+    listed = Enum.map(picker.entries, & &1.project) ++ picker.scratch
+
+    case Enum.find(listed, &(&1.id == id)) do
+      _ when socket.assigns.busy -> {:noreply, socket}
+      nil -> {:noreply, flash(socket, :error, "Project not available.")}
+      project -> {:noreply, choose_track_project(socket, project)}
+    end
+  end
+
+  # Enter in the query without the browser hook: the first match for what
+  # was typed.
+  def handle_event("picker-submit", params, %{assigns: %{picker: %Picker{} = picker}} = socket) do
+    picker = if is_binary(params["q"]), do: %{picker | query: params["q"]}, else: picker
+    socket = assign(socket, picker: picker)
+
+    case Picker.matches(picker) do
+      [%{project: project} | _] -> handle_event("picker-pick", %{"project" => project.id}, socket)
+      [] -> {:noreply, socket}
+    end
+  end
+
+  def handle_event("picker-scratch", _params, %{assigns: %{picker: %Picker{}}} = socket) do
+    case socket.assigns.picker.scratch do
+      [project | _] ->
+        handle_event("picker-pick", %{"project" => project.id}, socket)
+
+      [] ->
+        {:noreply,
+         socket
+         |> assign(picker: nil)
+         |> open_dialog(:new_project)
+         |> assign(project_mode: "scratch")}
+    end
+  end
+
+  def handle_event(
+        "picker-add-open",
+        _params,
+        %{assigns: %{picker: %Picker{can_add: true}}} = socket
+      ) do
+    picker = Picker.load_addable(socket.assigns.picker, socket.assigns.current_user)
+    {:noreply, assign(socket, picker: %{picker | mode: :add, query: ""})}
+  end
+
+  def handle_event("picker-add-back", _params, %{assigns: %{picker: %Picker{}}} = socket),
+    do: {:noreply, update(socket, :picker, &%{&1 | mode: :repos, query: ""})}
+
+  def handle_event(
+        "picker-add",
+        %{"repo" => repo},
+        %{assigns: %{picker: %Picker{can_add: true, adding: nil, workspace: workspace}}} = socket
+      ) do
+    user = socket.assigns.current_user
+
+    {:noreply,
+     socket
+     |> update(:picker, &%{&1 | adding: repo})
+     |> start_async(:picker_add, fn -> Repositories.add(user, workspace.id, repo) end)}
+  end
+
+  def handle_event("picker-" <> _, _params, socket), do: {:noreply, socket}
 
   def handle_event("new-track-project", %{"project" => id}, socket) do
     socket = recheck_rail(socket)
@@ -681,6 +754,42 @@ defmodule RavixWeb.WorkspaceLive do
     if id == track_project_id(socket) && socket.assigns.dialog == :new_track,
       do: {:noreply, put_flash(socket, :error, RavixWeb.Error.from(reason).message)},
       else: {:noreply, socket}
+  end
+
+  # The add flow's answer: the repository's project, new or the one the
+  # workspace already had, becomes the selected repository. The rail is read
+  # again so it lists a new project too.
+  def handle_async(:picker_add, {:ok, {:ok, %{project: %{id: id}}}}, socket) do
+    user = socket.assigns.current_user
+
+    # The rail's own database read: the new project, as the caller reaches it.
+    views = Projects.list(user, include_machine: false)
+
+    with %Picker{} <- socket.assigns.picker,
+         true <- socket.assigns.dialog == :new_track,
+         %{} = view <- Enum.find(views, &(&1.id == id && &1.access != :tracks)) do
+      {:noreply,
+       socket
+       |> assign(picker: %{Picker.build(user, views, view) | query: "", mode: :repos})
+       |> choose_track_project(view)
+       |> recheck_rail()}
+    else
+      _ -> {:noreply, update_picker_adding(socket)}
+    end
+  end
+
+  def handle_async(:picker_add, {:ok, {:error, reason}}, socket) do
+    {:noreply,
+     socket
+     |> update_picker_adding()
+     |> put_flash(:error, RavixWeb.Error.from(reason, noun: "repository").message)}
+  end
+
+  def handle_async(:picker_add, _other, socket) do
+    {:noreply,
+     socket
+     |> update_picker_adding()
+     |> put_flash(:error, "The repository could not be added. Try again.")}
   end
 
   def handle_async(:project_agents, {:ok, response}, socket),
@@ -1152,11 +1261,29 @@ defmodule RavixWeb.WorkspaceLive do
   # Projects heading is never followed straight away by a second heading
   # saying "Other projects"; with no named sections at all the group has no
   # heading and its projects sit directly under Projects.
-  defp section_groups(projects, sections, placements) do
-    grouped = Enum.group_by(projects, &Map.get(placements, &1.id))
+  # With `scratch_group` (RAVIX_WORKSPACE_ACCESS on), scratch projects leave
+  # the sections for a group of their own after them (ADR 0009 phase 4c),
+  # outside repository deduplication and the New track repository list.
+  defp section_groups(projects, sections, placements, scratch_group) do
+    {scratch, repos} =
+      if scratch_group, do: Enum.split_with(projects, &is_nil(&1.repo)), else: {[], projects}
+
+    grouped = Enum.group_by(repos, &Map.get(placements, &1.id))
     unsectioned = %{id: nil, name: "Other projects", collapsed: false}
-    Enum.map(sections ++ [unsectioned], &{&1, Map.get(grouped, &1.id, [])})
+    groups = Enum.map(sections ++ [unsectioned], &{&1, Map.get(grouped, &1.id, [])})
+
+    if scratch == [],
+      do: groups,
+      else: groups ++ [{%{id: nil, name: "Scratch", collapsed: false, scratch: true}, scratch}]
   end
+
+  # The scratch group is a map standing in for a section; real sections are
+  # `Ravix.Projects.Section` structs, which do not answer `section[:key]`.
+  defp scratch_section?(section), do: Map.get(section, :scratch) == true
+
+  defp section_key(%{scratch: true}), do: "scratch"
+  defp section_key(%{id: nil}), do: "other"
+  defp section_key(%{id: id}), do: id
 
   # Only the connected, already-loaded rail is revalidated here. Initial
   # discovery remains in start_async; this reads membership, never providers.
@@ -1327,9 +1454,34 @@ defmodule RavixWeb.WorkspaceLive do
       access_notices: notices,
       attention: attention_count(tracks) + length(notices)
     )
+    |> refresh_picker()
     |> assign_page_title()
     |> announce(tracks)
   end
+
+  # The repository list is the rail's, so it is read again with the rail: a
+  # project gained, lost or renamed shows there too, and the query, the add
+  # step and a pending add carry over.
+  defp refresh_picker(
+         %{
+           assigns: %{picker: %Picker{} = picker, dialog: :new_track, track_project: %{} = anchor}
+         } =
+           socket
+       ) do
+    rebuilt = Picker.build(socket.assigns.current_user, socket.assigns.projects, anchor)
+
+    assign(socket,
+      picker: %{
+        rebuilt
+        | query: picker.query,
+          mode: picker.mode,
+          addable: picker.addable,
+          adding: picker.adding
+      }
+    )
+  end
+
+  defp refresh_picker(socket), do: socket
 
   # Use the scoped rail already held by the workspace, including after a
   # background reload or rename, so the browser tab follows the visible page.
@@ -1497,12 +1649,70 @@ defmodule RavixWeb.WorkspaceLive do
   defp track_suffix(nil), do: ""
   defp track_suffix(id), do: "/t/#{id}"
 
+  # Today's New track, while RAVIX_WORKSPACE_ACCESS is off.
+  defp top_new_track(socket, project) do
+    project =
+      if project && project.access != :tracks,
+        do: project,
+        else: Enum.find(socket.assigns.projects, &(&1.access != :tracks))
+
+    if project,
+      do: new_track_dialog(socket, project),
+      else: open_dialog(socket, :new_project)
+  end
+
+  defp update_picker_adding(%{assigns: %{picker: %Picker{} = picker}} = socket),
+    do: assign(socket, picker: %{picker | adding: nil})
+
+  defp update_picker_adding(socket), do: socket
+
   defp new_track_dialog(socket, project) when is_nil(project) or project.access == :tracks,
     do: flash(socket, :error, "Project not available.")
 
   defp new_track_dialog(socket, project) do
+    if Workspaces.enabled?(),
+      do: picker_dialog(socket, project),
+      else: legacy_new_track_dialog(socket, project)
+  end
+
+  # RAV-10: the current workspace's repositories, the anchor (or the most
+  # recently used) preselected. Nothing to preselect at all is today's
+  # answer to a person with no project: the New project dialog.
+  defp picker_dialog(socket, anchor) do
+    # A deep link (`?new=track`) can open this before the rail has arrived;
+    # the project it names is listed meanwhile, and `refresh_picker/1` fills
+    # in the rest when the rail lands.
+    views =
+      if anchor,
+        do: [anchor | Enum.reject(socket.assigns.projects, &(&1.id == anchor.id))],
+        else: socket.assigns.projects
+
+    picker = Picker.build(socket.assigns.current_user, views, anchor)
+
+    case Picker.preselect(picker, anchor) do
+      nil ->
+        socket |> assign(picker: nil) |> open_dialog(:new_project)
+
+      project ->
+        socket
+        |> assign(
+          dialog: :new_track,
+          track_form: Form.new(:new_track),
+          advanced_track: false,
+          picker: picker
+        )
+        |> choose_track_project(project)
+    end
+  end
+
+  defp legacy_new_track_dialog(socket, project) do
     socket
-    |> assign(dialog: :new_track, track_form: Form.new(:new_track), advanced_track: false)
+    |> assign(
+      dialog: :new_track,
+      track_form: Form.new(:new_track),
+      advanced_track: false,
+      picker: nil
+    )
     |> choose_track_project(project)
   end
 

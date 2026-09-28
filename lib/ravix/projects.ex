@@ -645,7 +645,8 @@ defmodule Ravix.Projects do
       owner_login: owner_login,
       role: if(access == :owner, do: :owner, else: :member),
       access: access,
-      workspace_id: project.workspace_id
+      workspace_id: project.workspace_id,
+      legacy_duplicate: not is_nil(project.legacy_duplicate_at)
     }
   end
 

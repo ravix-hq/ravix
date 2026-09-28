@@ -563,6 +563,17 @@ html[data-yard="closed"] .workspace-trigger > :not(.workspace-mark) { display: n
 .workspace-people { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
 .workspace-people li { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border: 1px solid var(--line); border-radius: var(--radius); }
 .workspace-people small { color: var(--dim); }
+/* The New track repository list (RAV-10). */
+.repo-picker { display: grid; gap: 6px; margin-bottom: 12px; }
+.repo-picker label small { color: var(--dim); font-weight: normal; margin-left: 4px; }
+.repo-picker input[type="search"] { width: 100%; }
+.repo-picker-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; max-height: min(40vh, 280px); overflow-y: auto; }
+.repo-picker-list .hint { padding: 6px 8px; }
+.repo-option { display: flex; align-items: center; gap: 8px; width: 100%; min-width: 0; padding: 6px 8px; text-align: left; color: var(--ink); background: transparent; border: 1px solid transparent; border-radius: var(--radius); }
+.repo-option:hover:not(:disabled), .repo-option:focus-visible { background: var(--surface-hover); }
+.repo-option.on { border-color: var(--line); background: var(--surface); }
+.repo-option small { color: var(--dim); }
+.repo-scratch { border-top: 1px solid var(--line); border-radius: 0; margin-top: 2px; padding-top: 8px; }
 .workspace-github-actions { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
 .workspace-github-actions a { display: inline-flex; align-items: center; gap: 6px; }
 .workspace-page h3 { margin: 12px 0 6px; font-size: 13px; }

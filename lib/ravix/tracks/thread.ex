@@ -67,7 +67,8 @@ defmodule Ravix.Tracks.Thread do
       :created_at,
       :closed_at,
       :runtime,
-      :model
+      :model,
+      :started_by
     ])
     |> Ravix.Schema.put_new_id()
     |> Ravix.Schema.stamp(:created_at)

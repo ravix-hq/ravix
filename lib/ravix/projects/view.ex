@@ -11,7 +11,10 @@ defmodule Ravix.Projects.View do
   list, never persisted -- see `Ravix.MachineCache` for why. `role` and
   `access` are the two different questions the UI asks about the caller:
   `role` is owner-or-not, which almost every gate wants, and `access` is how
-  they got here, which two places want.
+  they got here, which two places want. `workspace_id` and
+  `legacy_duplicate` are ADR 0009's: which workspace the project is the
+  repository of, and whether a reviewed migration marked it a duplicate
+  that pickers leave out.
 
   A struct with `@enforce_keys` rather than the bare map it was, so a field
   added here and forgotten in `present/4` raises where it is built instead
@@ -42,9 +45,10 @@ defmodule Ravix.Projects.View do
     :access
   ]
 
-  # The project's workspace (ADR 0009), nil for a legacy project. Optional,
-  # so a view built without it reads as legacy.
-  defstruct @enforce_keys ++ [workspace_id: nil]
+  # The project's workspace (ADR 0009), nil for a legacy project, and
+  # whether a reviewed migration marked it a legacy duplicate. Optional, so a
+  # view built without them reads as legacy and canonical.
+  defstruct @enforce_keys ++ [workspace_id: nil, legacy_duplicate: false]
 
   @type t :: %__MODULE__{
           id: String.t(),
@@ -62,6 +66,7 @@ defmodule Ravix.Projects.View do
           owner_login: String.t(),
           role: :owner | :member,
           access: access(),
-          workspace_id: String.t() | nil
+          workspace_id: String.t() | nil,
+          legacy_duplicate: boolean()
         }
 end

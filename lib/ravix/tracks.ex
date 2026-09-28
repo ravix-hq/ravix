@@ -67,6 +67,7 @@ defmodule Ravix.Tracks do
   require Logger
 
   alias Ravix.Tracks.{
+    Attribution,
     Billing,
     Diff,
     Files,
@@ -799,7 +800,9 @@ defmodule Ravix.Tracks do
                    conversation_id: conversation_id,
                    title: title,
                    runtime: selection.runtime,
-                   model: selection.model
+                   model: selection.model,
+                   # Attribution only (`Co-authored-by`), never the payer.
+                   started_by: user.id
                  },
                  track,
                  user,
@@ -2397,16 +2400,25 @@ defmodule Ravix.Tracks do
     with {:ok, app} <- github(),
          {:ok, %{track: track, project: project}} <- Access.track_access(user, track_id),
          :ok <- require_repo(project, "This project has no repository.") do
+      body =
+        text(attrs["body"], 20_000) |> non_empty() || "Opened from Ravix track `#{track.slug}`."
+
       Ravix.GitHub.open_pull(app, project.installation_id, project.repo_full_name, %{
         head: track.branch,
         base: text(attrs["base"], 200) |> non_empty() || project.default_branch || "main",
         title: text(attrs["title"], 200) |> non_empty() || track.title,
-        body:
-          text(attrs["body"], 20_000) |> non_empty() || "Opened from Ravix track `#{track.slug}`.",
+        body: Attribution.pr_body(body, track_starter(track)),
         draft: attrs["draft"] != false
       })
     end
   end
+
+  # ownership: the track's own creator, read after `Access.track_access/2`
+  # admitted the caller to it; named in the pull request (ADR 0009 phase 4c).
+  defp track_starter(%Track{created_by: id}) when is_binary(id),
+    do: Ravix.Accounts.Store.get_user(id)
+
+  defp track_starter(_track), do: nil
 
   @doc "The selected track's machine, after track membership is established."
   @spec machine_for_track(User.t(), String.t(), keyword()) ::
