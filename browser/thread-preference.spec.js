@@ -41,7 +41,7 @@ test('an account default selects the model for a new thread and leaves the exist
   await tabs.getByRole('button', { name: 'Add thread', exact: true }).click();
   await expect(form.locator('.thread-default-source')).toContainText('Your default:');
   await expect(form.locator('#new_thread-model')).not.toHaveValue(selected.value.split('|')[1]);
-  await page.getByRole('dialog', { name: 'New thread', exact: true }).getByRole('button', { name: 'Close', exact: true }).click();
+  await page.getByRole('dialog', { name: 'New thread', exact: true }).getByRole('button', { name: 'Cancel', exact: true }).click();
   await tabs.locator(`button[data-thread-id="${original}"]`).click();
   await expect(page.locator('#model-trigger')).toHaveAttribute('title', originalModel);
 });
