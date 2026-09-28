@@ -66,10 +66,14 @@ defmodule Ravix.Tooling.CatalogTest do
     {:ok, %{tools: read_tools}} =
       MCP.call(%{grant: %{scopes: ["tracks:read"]}}, %{"id" => 1, "method" => "tools/list"})
 
-    refute Enum.any?(read_tools, &(&1.name in ["retry_setup", "retry_task", "cancel_task"]))
+    refute Enum.any?(
+             read_tools,
+             &(&1.name in ["retry_setup", "retry_task", "cancel_task", "close_track"])
+           )
 
     for {scope, name} <- [
           {"tracks:write", "retry_setup"},
+          {"tracks:write", "close_track"},
           {"tracks:write", "retry_task"},
           {"tracks:cancel", "cancel_task"}
         ] do

@@ -83,6 +83,18 @@ defmodule Ravix.Tooling.Catalog do
         ["track_id", "prompt", "request_id"]
       ),
       tool(
+        "close_track",
+        "Close a track as its creator or the project owner, exactly as Close in the browser does (a private track only by its creator). Irreversible: the track's machine or worktree is discarded, uncommitted and unpushed work with it, and its queued prompts are cancelled. Refuses a track with a running turn (track_running) or queued prompts (prompts_queued) unless force is true; force also discards uncommitted changes in a shared worktree. require_merged refuses unless the track's pull request is merged (pr_not_merged). Returns closed and pr {number, state}, state being merged, open, closed, none or unknown. Reuse request_id only to retry the same close.",
+        "tracks:write",
+        %{
+          "track_id" => string(),
+          "force" => %{"type" => "boolean"},
+          "require_merged" => %{"type" => "boolean"},
+          "request_id" => string(100)
+        },
+        ["track_id", "request_id"]
+      ),
+      tool(
         "get_task",
         "Read the state and reply of a task submitted by this client.",
         "tracks:read",
@@ -212,7 +224,7 @@ defmodule Ravix.Tooling.Catalog do
       inputSchema: object(properties, required),
       annotations: %{
         readOnlyHint: String.ends_with?(scope, ":read") or name == "get_project_settings",
-        destructiveHint: scope in ["projects:write", "tracks:cancel"],
+        destructiveHint: scope in ["projects:write", "tracks:cancel"] or name == "close_track",
         openWorldHint: true
       }
     }

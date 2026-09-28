@@ -1692,6 +1692,123 @@ defmodule Ravix.Tracks do
     end
   end
 
+  @typedoc "A track's pull request as a close reports it: `state` is merged, open, closed, none or unknown."
+  @type pull_summary :: %{number: pos_integer() | nil, state: String.t()}
+
+  @doc """
+  `close/3` for a caller that is not looking at the track: the MCP
+  `close_track` tool. Same door (`Access.track_access/2` and
+  `Access.require_owner_or_cutter/4`), same durable close, with the checks a
+  person makes by looking at the page done here instead.
+
+  Without `force: true` a track with a turn running on any of its threads,
+  or a prompt queued or being sent, is refused, and so is one whose running
+  state Fountain cannot tell us: this fails closed. `require_merged: true`
+  refuses unless the track's pull request is merged, and an unreadable pull
+  request is not merged. The pull request comes back either way.
+
+  Calling this is the confirmation a dedicated machine's close asks for; a
+  shared worktree is removed with `--force` only when `force` is given.
+  """
+  @spec close_finished(User.t(), String.t(), force: boolean(), require_merged: boolean()) ::
+          {:ok, %{pr: pull_summary()}} | {:error, reason()}
+  def close_finished(%User{} = user, track_id, opts \\ []) do
+    force = Keyword.get(opts, :force, false) == true
+
+    with {:ok, %{track: track, project: project, role: role}} <-
+           Access.track_access(user, track_id),
+         :ok <- Access.require_owner_or_cutter(role, user, track, "close a track"),
+         :ok <- require_not_closed(track),
+         {:ok, client} <- fountain(),
+         :ok <- if(force, do: :ok, else: require_idle(client, track, project)),
+         pr = pull_summary(track, project),
+         :ok <- require_merged(pr, Keyword.get(opts, :require_merged, false) == true),
+         :ok <-
+           close_track(user, track, project, client,
+             force: force or track.sandbox_layout == :dedicated
+           ) do
+      {:ok, %{pr: pr}}
+    end
+  end
+
+  defp require_not_closed(%Track{closed_at: nil, sandbox_state: state})
+       when state not in [:closing, :terminated],
+       do: :ok
+
+  defp require_not_closed(_track),
+    do: {:error, {:conflict, "track_closed", "This track is already closed."}}
+
+  defp require_idle(client, track, project) do
+    conversation_ids =
+      [track.conversation_id | Enum.map(Store.threads_of(track.id), & &1.conversation_id)]
+      |> Enum.filter(&is_binary/1)
+
+    # ownership: `close_finished/3` admitted this caller through
+    # `Access.track_access/2` and `require_owner_or_cutter/4` on this track.
+    queued = Ravix.PromptQueue.Store.pending?(track.id)
+
+    case MachineCache.conversations(client, project, fresh: true) do
+      {:ok, all} ->
+        cond do
+          Enum.any?(all, &(&1.id in conversation_ids and Fountain.Shapes.busy?(&1))) ->
+            {:error,
+             {:conflict, "track_running",
+              "A turn is running on this track. Wait for it, or pass force to close anyway."}}
+
+          queued ->
+            {:error,
+             {:conflict, "prompts_queued",
+              "Prompts are queued on this track. Wait for them, or pass force to close anyway."}}
+
+          true ->
+            :ok
+        end
+
+      _ ->
+        {:error,
+         {:conflict, "status_unavailable",
+          "Could not read whether a turn is running on this track. Retry, or pass force to close anyway."}}
+    end
+  end
+
+  defp require_merged(_pr, false), do: :ok
+  defp require_merged(%{state: "merged"}, true), do: :ok
+
+  defp require_merged(%{state: state}, true),
+    do:
+      {:error,
+       {:conflict, "pr_not_merged",
+        "This track's pull request is not merged (#{state}); it was left open."}}
+
+  # A GitHub that cannot answer is reported as "unknown" rather than stopping
+  # a close that did not ask about merging.
+  defp pull_summary(%Track{branch: branch} = track, project)
+       when is_binary(branch) and branch != "" do
+    with :ok <- require_repo(project, ""),
+         {:ok, app} <- github(),
+         {:ok, pull} <-
+           Ravix.GitHub.pull_for_track(
+             app,
+             project.installation_id,
+             project.repo_full_name,
+             branch,
+             %{
+               created_at: track.created_at,
+               origin_number: if(track.origin_kind == :pr, do: track.origin_number)
+             }
+           ) do
+      case pull do
+        nil -> %{number: nil, state: "none"}
+        pull -> %{number: pull.number, state: Atom.to_string(pull.state)}
+      end
+    else
+      {:error, {:conflict, "no_repo", _}} -> %{number: nil, state: "none"}
+      _ -> %{number: nil, state: "unknown"}
+    end
+  end
+
+  defp pull_summary(_track, _project), do: %{number: nil, state: "none"}
+
   @doc "Owner-only count of private tracks with no remaining participants; no track metadata."
   def orphan_private_count(%User{} = user, project_id) do
     with {:ok, _} <- Access.project_of(user, project_id) do

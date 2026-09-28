@@ -83,6 +83,12 @@ defmodule Ravix.Tooling.Store do
 
   def receipt(id), do: Repo.get(Receipt, id)
 
+  @doc "Drop a claim that never recorded a result, so its request ID can be used again."
+  def release_receipt(%Receipt{id: id}) do
+    Repo.delete_all(from r in Receipt, where: r.id == ^id and is_nil(r.result))
+    :ok
+  end
+
   @small ~w(id track_id user_id client_id fingerprint state reconciled_at failure_code failure_message
             turn_id cursor cursor_conversation_id turn_seen reply_compacted reply_size reply_bytes failure_evidence
             inserted_at updated_at)a
