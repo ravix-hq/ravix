@@ -502,6 +502,7 @@ defmodule RavixWeb.WorkspaceLive do
 
     attrs = %{
       title: params["title"],
+      visibility: params["visibility"] || "project",
       origin: origin,
       runtime: params["runtime"],
       model: params["model"]

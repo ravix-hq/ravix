@@ -131,6 +131,8 @@ defmodule Ravix.Tracks do
           do: Store.member_tracks_of(user.id, project.id),
           else: Store.tracks_of(project.id)
 
+      rows = Access.visible_tracks(user.id, rows, project)
+
       {:ok,
        present_all(rows, project, user, if(access == :owner, do: :owner, else: :member), opts)}
     else
@@ -682,11 +684,35 @@ defmodule Ravix.Tracks do
     name = attrs["branch_name"] || attrs["title"] || ""
     name = if name == "", do: default_title(origin, taken), else: name
 
-    with :ok <- validate_name(origin, name),
+    with {:ok, visibility} <- visibility(attrs["visibility"] || "project"),
+         :ok <- validate_name(origin, name),
          branch = if(origin.kind == :pr, do: origin.base, else: Ids.branch_for(name)),
          :ok <- available_branch(origin, rows, branch) do
       slug = free_slug(open_slugs, if(origin.kind == :pr, do: branch, else: name))
-      {:ok, build_plan(user, project, machine, id, origin, slug, branch)}
+
+      {:ok,
+       %{build_plan(user, project, machine, id, origin, slug, branch) | visibility: visibility}}
+    end
+  end
+
+  defp visibility(value) when value in [:project, "project"], do: {:ok, :project}
+  defp visibility(value) when value in [:private, "private"], do: {:ok, :private}
+  defp visibility(_), do: {:error, {:unprocessable, "visibility", "Choose project or private."}}
+
+  @doc "Only the creator can change a track's visibility."
+  def set_visibility(%User{} = user, track_id, value) do
+    with {:ok, %{track: track}} <- Access.track_access(user, track_id),
+         true <- Access.creator?(user, track),
+         {:ok, visibility} <- visibility(value),
+         {:ok, updated} <- Store.set_visibility(track, visibility) do
+      # ownership: Access.track_access and the creator check admitted this visibility change.
+      Ravix.Previews.Store.revoke(track.id)
+      Ravix.Previews.Store.revoke_agent(track.id)
+      Ravix.Hub.publish(track.project_id, :people, track_id: track.id)
+      {:ok, updated.visibility}
+    else
+      false -> {:error, :not_found}
+      error -> error
     end
   end
 
@@ -733,6 +759,7 @@ defmodule Ravix.Tracks do
       title: title,
       branch: branch,
       workdir: Ids.workdir_for(slug),
+      created_by: user.id,
       created_by_login: user.login,
       origin: origin,
       conversation: %Launch{
@@ -1696,6 +1723,8 @@ defmodule Ravix.Tracks do
       last_active_at: last_active,
       turn_count: (live && live.turn_count) || 0,
       created_at: row.created_at,
+      created_by: row.created_by,
+      visibility: row.visibility,
       created_by_login: row.created_by_login,
       people: Keyword.get(opts, :people, []),
       threads: Keyword.get(opts, :threads, []),

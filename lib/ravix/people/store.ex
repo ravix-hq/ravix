@@ -125,9 +125,10 @@ defmodule Ravix.People.Store do
   @spec member_tracks(String.t()) :: [Track.t()]
   def member_tracks(user_id) do
     Repo.all(
-      from(m in TrackMember,
-        join: t in assoc(m, :track),
-        where: m.user_id == ^user_id and is_nil(t.closed_at),
+      from(t in Track,
+        left_join: m in TrackMember,
+        on: m.track_id == t.id and m.user_id == ^user_id,
+        where: (not is_nil(m.user_id) or t.created_by == ^user_id) and is_nil(t.closed_at),
         order_by: t.created_at,
         select: t
       )
@@ -146,9 +147,12 @@ defmodule Ravix.People.Store do
   @spec track_member_of?(String.t(), String.t()) :: boolean()
   def track_member_of?(project_id, user_id) do
     Repo.exists?(
-      from(m in TrackMember,
-        join: t in assoc(m, :track),
-        where: m.user_id == ^user_id and t.project_id == ^project_id and is_nil(t.closed_at)
+      from(t in Track,
+        left_join: m in TrackMember,
+        on: m.track_id == t.id and m.user_id == ^user_id,
+        where:
+          (not is_nil(m.user_id) or t.created_by == ^user_id) and t.project_id == ^project_id and
+            is_nil(t.closed_at)
       )
     )
   end
@@ -261,7 +265,7 @@ defmodule Ravix.People.Store do
           # ownership: no door yet -- this is sign-in, and the invitation row
           # naming this track is the only claim the person has.
           %Track{closed_at: nil} = track <- [Tracks.get_track(track_id)],
-          not project_member?(track.project_id, user_id) do
+          track.visibility == :private or not project_member?(track.project_id, user_id) do
         add_member(track.id, user_id, "invite")
         track
       end
@@ -564,7 +568,11 @@ defmodule Ravix.People.Store do
   defp live?(expires_at), do: DateTime.compare(expires_at, DateTime.utc_now()) == :gt
 
   defp track_ids_of(project_id),
-    do: from(t in Track, where: t.project_id == ^project_id, select: t.id)
+    do:
+      from(t in Track,
+        where: t.project_id == ^project_id and t.visibility == :project,
+        select: t.id
+      )
 
   # ── what you have not read ─────────────────────────────────────
 
@@ -668,12 +676,15 @@ defmodule Ravix.People.Store do
   def people_of(track_id, owner_id, project_id) do
     wide = project_members_of(project_id)
 
-    assemble(
-      shared_people(owner_id, wide),
-      MapSet.new(wide, & &1.id),
-      members_of(track_id),
-      invites_of(track_id)
-    )
+    people =
+      assemble(
+        shared_people(owner_id, wide),
+        MapSet.new(wide, & &1.id),
+        members_of(track_id),
+        invites_of(track_id)
+      )
+
+    private_people(track_id, people)
   end
 
   @doc """
@@ -700,15 +711,39 @@ defmodule Ravix.People.Store do
     members = members_by_track(track_ids)
     invites = invites_by_track(track_ids)
 
+    # ownership: callers authorized these track IDs before presenting their people.
+    tracks = Map.new(Tracks.get_tracks(track_ids), &{&1.id, &1})
+
     Map.new(track_ids, fn track_id ->
       {track_id,
-       assemble(
-         shared,
-         seen,
-         Map.get(members, track_id, []),
-         Map.get(invites, track_id, [])
+       private_people(
+         tracks[track_id],
+         assemble(
+           shared,
+           seen,
+           Map.get(members, track_id, []),
+           Map.get(invites, track_id, [])
+         )
        )}
     end)
+  end
+
+  # ownership: callers passed Access.track_access or filtered their track list.
+  defp private_people(track_id, people) do
+    track = if is_binary(track_id), do: Tracks.get_track(track_id), else: track_id
+
+    case track do
+      %Track{id: id, visibility: :private, created_by: creator} ->
+        members = members_of(id)
+
+        creator_people =
+          if creator, do: Enum.map(owner_entry(creator), &%{&1 | via: :creator}), else: []
+
+        assemble(creator_people, MapSet.new([creator]), members, invites_of(id))
+
+      _ ->
+        people
+    end
   end
 
   # The half of the list that is the same for every track on a project.

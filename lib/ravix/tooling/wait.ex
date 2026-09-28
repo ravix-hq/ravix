@@ -195,7 +195,14 @@ defmodule Ravix.Tooling.Wait do
       event.project_id in state.projects and event.name in [:turn, :queue, :people, :tracks] and
         Enum.any?(state.rows, &(is_nil(event.track_id) or event.track_id == &1.track_id))
 
-    {:noreply, if(relevant, do: refresh(follow(state)), else: state)}
+    if relevant do
+      case Tasks.observe(state.principal, state.ids) do
+        {:ok, _} -> {:noreply, refresh(follow(state))}
+        {:error, _} = error -> finish(state, error)
+      end
+    else
+      {:noreply, state}
+    end
   end
 
   def handle_info({:transcript, thread_id, %Event{kind: :stage} = event}, state) do

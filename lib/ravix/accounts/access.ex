@@ -147,13 +147,17 @@ defmodule Ravix.Accounts.Access do
     with %Track{} = track <- get_track(track_id),
          %Project{} = project <- live_project(track.project_id) do
       cond do
+        not visible_track?(user_id, track, project) ->
+          {:error, :not_found}
+
         project.user_id == user_id ->
           {:ok, %TrackAccess{track: track, project: project, role: :owner}}
 
         track.closed_at != nil ->
           {:error, :not_found}
 
-        member?(track.id, user_id) or project_member?(project.id, user_id) ->
+        creator?(%User{id: user_id}, track) or member?(track.id, user_id) or
+            project_member?(project.id, user_id) ->
           {:ok, %TrackAccess{track: track, project: project, role: :member}}
 
         true ->
@@ -162,6 +166,36 @@ defmodule Ravix.Accounts.Access do
     else
       _ -> {:error, :not_found}
     end
+  end
+
+  @doc "Whether a track row is visible through this user's project or track membership."
+  def visible_track?(user_id, %Track{} = track, %Project{} = project) do
+    # ADR 0009: :project becomes workspace visibility when workspaces land.
+    track.created_by == user_id or member?(track.id, user_id) or
+      (track.visibility == :project and
+         (project.user_id == user_id or project_member?(project.id, user_id)))
+  end
+
+  @doc "Filter a listing with one membership read, independent of its size."
+  def visible_tracks(user_id, tracks, project) do
+    wide = project.user_id == user_id or project_member?(project.id, user_id)
+    # ownership: this is the listing access door, not an unchecked content read.
+    invited = MapSet.new(People.member_tracks(user_id), & &1.id)
+
+    Enum.filter(tracks, fn track ->
+      (wide and track.visibility == :project) or track.created_by == user_id or
+        MapSet.member?(invited, track.id)
+    end)
+  end
+
+  @doc "Stable creator identity; login is presentation only."
+  def creator?(%User{id: id}, %{created_by: creator}), do: is_binary(creator) and creator == id
+
+  @doc "Sharing controls belong to the creator, or the owner of a project-visible track."
+  def require_track_manager(role, user, track, what) do
+    if creator?(user, track) or (role == :owner and track.visibility == :project),
+      do: :ok,
+      else: {:error, {:forbidden, "Only the track creator can #{what}."}}
   end
 
   @doc """
@@ -231,6 +265,8 @@ defmodule Ravix.Accounts.Access do
   """
   @spec require_owner_or_cutter(role(), User.t(), Track.t(), String.t()) ::
           :ok | {:error, {:forbidden, String.t()}}
+  def require_owner_or_cutter(_role, _user, %Track{visibility: :private}, _what), do: :ok
+
   def require_owner_or_cutter(:owner, _user, _track, _what), do: :ok
 
   def require_owner_or_cutter(_role, %User{login: login}, %Track{created_by_login: cutter}, what) do

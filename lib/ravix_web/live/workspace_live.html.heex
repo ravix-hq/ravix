@@ -320,6 +320,7 @@
               <%!-- Without the `ravix/` namespace every default title shares:
               the full title is the tab's name and its tooltip. --%>
               <span class="track-title">{tab_label(track)}</span>
+              <span :if={track.visibility == :private}><.icon name="lock" /> Private</span>
             </.link>
           </div>
           <button
@@ -573,7 +574,8 @@
                     datetime={DateTime.to_iso8601(track.last_active_at)}
                   >{Calendar.strftime(track.last_active_at, "%b %-d, %H:%M UTC")}</time>
                 </div>
-                <strong>{track.title}</strong><code class="dimmer">{track.branch}</code>
+                <strong>{track.title}</strong>
+                <span :if={track.visibility == :private}><.icon name="lock" /> Private</span><code class="dimmer">{track.branch}</code>
                 <span class="dim">
                   <%= cond do %>
                     <% track.status == :setup_failed -> %>
@@ -825,6 +827,13 @@
         phx-submit="create-track"
         phx-change="edit"
       >
+        <.input
+          field={f[:visibility]}
+          type="select"
+          label="Sharing"
+          options={[{"Everyone in this project", "project"}, {"Only people I invite", "private"}]}
+          value={f[:visibility].value || "project"}
+        />
         <RavixWeb.Live.RuntimePicker.fields
           :if={@track_options}
           options={@track_options}

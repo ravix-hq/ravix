@@ -653,7 +653,7 @@ defmodule RavixWeb.Live.SettingsDialog do
                   else: "tracks still share"} the project machine
               </p>
               <p :if={not Map.get(@settings, :default_only, false)} class="settings-help">
-                Switching agents rebuilds the machine, closes every track and loses unpushed work on its disk. Model and instruction changes apply to new tracks.
+                These actions also affect private tracks you cannot see. Switching agents rebuilds the machine, closes every track and loses unpushed work on its disk. Model and instruction changes apply to new tracks.
               </p>
               <div class="field" role="group" aria-label="Agent">
                 <div class="agent-choices">
@@ -1074,7 +1074,7 @@ defmodule RavixWeb.Live.SettingsDialog do
                 Deleting the project deletes all its tracks’ machines, uncommitted changes, unpushed commits, settings and secrets. Cleanup continues until deletion is confirmed.
               </p>
               <p :if={Map.get(@settings, :shared_tracks) == nil}>
-                Rebuilding discards the machine’s disk and closes every track, keeping project settings and secrets for the next machine. Unpushed work on that disk is lost. Deleting also removes the project settings and secrets. These actions cannot be undone.
+                These actions also affect private tracks you cannot see. Rebuilding discards the machine’s disk and closes every track, keeping project settings and secrets for the next machine. Unpushed work on that disk is lost. Deleting also removes the project settings and secrets. These actions cannot be undone.
               </p>
               <form
                 :for={

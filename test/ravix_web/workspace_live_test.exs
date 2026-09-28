@@ -1498,6 +1498,26 @@ defmodule RavixWeb.WorkspaceLiveTest do
     assert_push_event(child, "composer:clear", %{})
   end
 
+  test "switching to private removes a connected project member", %{conn: conn} do
+    creator = insert_user()
+    user = insert_user()
+    project = insert_project(user: creator)
+    insert_project_member(project, user)
+
+    track =
+      insert_track(project: project, created_by: creator.id, conversation_id: "conversation-test")
+
+    stub_track(track)
+    {:ok, parent, _} = live(log_in_user(conn, user), "/p/#{project.id}/t/#{track.id}")
+    render_async(parent)
+    child = find_live_child(parent, "track-host")
+    render_async(child)
+    monitor = Process.monitor(child.pid)
+    assert {:ok, :private} = Tracks.set_visibility(creator, track.id, "private")
+    assert_redirect(parent, "/", 1000)
+    assert_receive {:DOWN, ^monitor, :process, _, _}
+  end
+
   test "track membership revocation redirects before processing transcript data", %{conn: conn} do
     owner = insert_user()
     user = insert_user()

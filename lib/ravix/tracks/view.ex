@@ -62,6 +62,8 @@ defmodule Ravix.Tracks.View do
 
   defstruct @enforce_keys ++
               [
+                visibility: :project,
+                created_by: nil,
                 sandbox_layout: :shared,
                 sandbox_state: nil,
                 sandbox_stage: nil,

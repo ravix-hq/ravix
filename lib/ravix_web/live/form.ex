@@ -98,7 +98,7 @@ defmodule RavixWeb.Live.Form do
          "agent_not_connected" => :runtime
        }},
     new_track:
-      {%{title: :string, ref: :string, runtime: :string, model: :string},
+      {%{title: :string, ref: :string, runtime: :string, model: :string, visibility: :string},
        %{"no_title" => :title, "invalid_branch" => :title, "branch_taken" => :title}},
     rename_track: {%{title: :string}, %{"no_title" => :title}},
     preview_config: @preview_config,

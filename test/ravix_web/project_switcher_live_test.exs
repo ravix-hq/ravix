@@ -29,6 +29,17 @@ defmodule RavixWeb.ProjectSwitcherLiveTest do
       end
 
     [_, _, visible, hidden] = rows
+    creator = insert_user()
+
+    for project <- [owned, member] do
+      insert_track(
+        project: project,
+        visibility: :private,
+        created_by: creator.id,
+        title: "Private omitted #{project.id}"
+      )
+    end
+
     insert_track_member(visible, user)
 
     client =
@@ -59,6 +70,7 @@ defmodule RavixWeb.ProjectSwitcherLiveTest do
       assert has_element?(view, "#project-switcher a[href='/p/#{project.id}'] .badge", "1")
     end
 
+    refute render(view) =~ "Private omitted"
     refute render(view) =~ foreign.name
     refute render(view) =~ hidden.title
     assert has_element?(view, ".yard-nav a[href='/inbox'] .badge", "3")
@@ -76,6 +88,7 @@ defmodule RavixWeb.ProjectSwitcherLiveTest do
     assert has_element?(view, ".workspace-mobile-nav a[href='/schedules']")
     render_patch(view, "/p/#{foreign.id}")
     assert_patch(view, "/home")
+    refute render(view) =~ "Private omitted"
     refute render(view) =~ foreign.name
     render_patch(view, "/p/#{shared.id}/t/#{hidden.id}")
     assert_patch(view, "/p/#{shared.id}")

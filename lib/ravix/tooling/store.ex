@@ -377,8 +377,10 @@ defmodule Ravix.Tooling.Store do
         task.user_id == ^user_id and task.client_id == ^client_id and
           is_nil(project.archived_at),
       where:
-        project.user_id == ^user_id or
-          (is_nil(track.closed_at) and (not is_nil(tm.user_id) or not is_nil(pm.user_id)))
+        (track.visibility == :project and project.user_id == ^user_id) or
+          (is_nil(track.closed_at) and
+             (track.created_by == ^user_id or not is_nil(tm.user_id) or
+                (track.visibility == :project and not is_nil(pm.user_id))))
   end
 
   defp paginate_tasks(query, opts) do

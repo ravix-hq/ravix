@@ -2224,7 +2224,7 @@ defmodule RavixWeb.TrackLive do
   end
 
   defp owner_or_creator?(user, track),
-    do: track.role == :owner or track.created_by_login == user.login
+    do: track.visibility == :private or track.role == :owner or Access.creator?(user, track)
 
   # The markdown of every block on the page, rendered once per body.
   #

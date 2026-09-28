@@ -45,7 +45,7 @@ defmodule Ravix.Tracks.Opening do
     :origin,
     :conversation
   ]
-  defstruct @enforce_keys
+  defstruct @enforce_keys ++ [created_by: nil, visibility: :project]
 
   @type t :: %__MODULE__{
           id: String.t(),
@@ -89,6 +89,8 @@ defmodule Ravix.Tracks.Opening do
       origin_plan_id: plan.origin.plan_id,
       origin_item_id: plan.origin.item_id,
       rev: plan.rev,
+      created_by: plan.created_by,
+      visibility: plan.visibility,
       created_by_login: plan.created_by_login
     }
   end

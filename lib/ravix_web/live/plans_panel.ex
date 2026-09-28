@@ -25,7 +25,7 @@ defmodule RavixWeb.Live.PlansPanel do
 
   @impl true
   def update(assigns, socket) do
-    socket = assign(socket, assigns)
+    socket = assign(socket, assigns) |> redact_detail()
 
     case Access.project_access(assigns.current_user, assigns.project.id) do
       {:ok, _} ->
@@ -204,7 +204,8 @@ defmodule RavixWeb.Live.PlansPanel do
   def handle_async(name, result, socket) do
     with {:ok, _, _} <- Accounts.open_session(socket.assigns.session_hash),
          {:ok, _} <- Access.project_access(socket.assigns.current_user, socket.assigns.project.id) do
-      settled(name, result, socket)
+      {:noreply, socket} = settled(name, result, socket)
+      {:noreply, redact_detail(socket)}
     else
       _ ->
         {:noreply,
@@ -217,6 +218,14 @@ defmodule RavixWeb.Live.PlansPanel do
          )}
     end
   end
+
+  defp redact_detail(%{assigns: %{detail: %{items: items} = detail}} = socket),
+    do:
+      assign(socket,
+        detail: %{detail | items: Plans.redact_items(items, socket.assigns.current_user)}
+      )
+
+  defp redact_detail(socket), do: socket
 
   defp settled(:progress, {:ok, {project_id, {:ok, plans}}}, socket) do
     if project_id == socket.assigns.project.id do
@@ -327,7 +336,7 @@ defmodule RavixWeb.Live.PlansPanel do
   defp blank_plan, do: %{"title" => "", "summary" => "", "items" => [blank_item()]}
 
   defp assigned_items?(nil), do: false
-  defp assigned_items?(detail), do: Enum.any?(detail.items, & &1.track_id)
+  defp assigned_items?(detail), do: Enum.any?(detail.items, &(&1.track_id || &1.private_track))
 
   defp blank_item,
     do: %{

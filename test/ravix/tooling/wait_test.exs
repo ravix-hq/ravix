@@ -210,6 +210,31 @@ defmodule Ravix.Tooling.WaitTest do
     assert {:ok, {:error, :unauthenticated}} = Task.yield(waiter, 1000)
   end
 
+  test "privacy revokes a wait even while its provider read is blocked", ctx do
+    creator = insert_user()
+    insert_project_member(ctx.project, creator)
+    Repo.update!(Ecto.Changeset.change(ctx.track, created_by: creator.id))
+    owner = self()
+
+    stub(Fountain, :turns, fn _, _ ->
+      send(owner, {:blocked_read, self()})
+
+      receive do
+        :release -> {:ok, []}
+      end
+    end)
+
+    waiter = start_wait(ctx)
+    assert_receive {:subscribed, server}
+    assert_receive {:blocked_read, worker}
+    monitor = Process.monitor(worker)
+    assert {:ok, :private} = Tracks.set_visibility(creator, ctx.track.id, "private")
+    assert {:ok, {:error, :not_found}} = Task.yield(waiter, 1000)
+    assert_receive {:DOWN, ^monitor, :process, ^worker, _}
+    ref = Process.monitor(server)
+    assert_receive {:DOWN, ^ref, :process, ^server, _}
+  end
+
   test "queued cancellation through the scoped context wakes a waiter", ctx do
     {:ok, queued} = Tasks.send(ctx.p, ctx.track.id, "queued", "cancelled")
     waiter = start_wait(ctx, %{"task_ids" => [queued.id]})

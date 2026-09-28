@@ -20,6 +20,34 @@ defmodule RavixWeb.PlansLiveTest do
     %{user: user, project: project}
   end
 
+  test "an open plan redacts a newly private assignment on every subsequent update", ctx do
+    creator = insert_user()
+    insert_project_member(ctx.project, creator)
+    track = insert_track(project: ctx.project, created_by: creator.id, title: "Hidden plan work")
+
+    {:ok, plan} =
+      Plans.create(ctx.user, ctx.project.id, %{
+        "title" => "Privacy plan",
+        "items" => [%{"id" => "private-item", "title" => "Work"}]
+      })
+
+    Repo.get!(Ravix.Plans.Item, "private-item")
+    |> Ecto.Changeset.change(track_id: track.id)
+    |> Repo.update!()
+
+    {:ok, view, _} = live(log_in_user(ctx.conn, ctx.user), "/p/#{ctx.project.id}?plan=#{plan.id}")
+    render_async(view)
+    assert has_element?(view, "a[href='/p/#{ctx.project.id}/t/#{track.id}']")
+    assert {:ok, :private} = Ravix.Tracks.set_visibility(creator, track.id, "private")
+    render_async(view)
+    refute has_element?(view, "a[href='/p/#{ctx.project.id}/t/#{track.id}']")
+    assert render(view) =~ "a private track"
+    Ravix.Hub.publish(ctx.project.id, :people)
+    render_async(view)
+    assert render(view) =~ "a private track"
+    refute render(view) =~ track.title
+  end
+
   test "list is available while status loads, then list and detail show the same counts", %{
     conn: conn,
     user: user

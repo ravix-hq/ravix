@@ -23,7 +23,7 @@ defmodule Ravix.People.Person do
   alias Ravix.People.Profile
 
   @typedoc "How this person comes to be in the list."
-  @type via :: :owner | :project | :track | :pending
+  @type via :: :owner | :creator | :project | :track | :pending
 
   @enforce_keys [:login, :name, :avatar_url, :via]
   defstruct @enforce_keys
@@ -39,7 +39,7 @@ defmodule Ravix.People.Person do
   @spec new(Profile.t() | User.t(), via()) :: t()
   def new(%User{} = user, via), do: user |> Profile.from_user() |> new(via)
 
-  def new(%Profile{} = profile, via) when via in [:owner, :project, :track, :pending],
+  def new(%Profile{} = profile, via) when via in [:owner, :creator, :project, :track, :pending],
     do: %__MODULE__{
       login: profile.login,
       name: profile.name,
