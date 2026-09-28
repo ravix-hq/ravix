@@ -1,5 +1,5 @@
 defmodule Ravix.Tracks.SetupTest do
-  use Ravix.DataCase, async: true
+  use Ravix.DataCase, async: false
   use Mimic
 
   alias Ecto.Adapters.SQL.Sandbox
@@ -592,6 +592,112 @@ defmodule Ravix.Tracks.SetupTest do
     stub(Fountain, :listing, fn _, _, _ -> {:error, %Error{status: 404}} end)
     Setup.advance(ctx.client, ctx.track.id)
     assert row(ctx.track).setup_state == "retry"
+  end
+
+  test "suspended dedicated setup backs off across workers and wakes despite a queued prompt",
+       ctx do
+    persist(ctx.track, sandbox_layout: :dedicated, sandbox_state: :provisioning)
+    {:ok, op} = Ravix.Tracks.Sandbox.Store.begin_operation(ctx.track.id, 0, :open)
+    {:ok, op} = Ravix.Tracks.Sandbox.Store.update_operation(op, %{phase: "setup"})
+    turn_status(ctx.track, "completed")
+    item = queue(ctx)
+    test = self()
+
+    stub(Fountain, :listing, fn _, _, _ ->
+      send(test, :suspended_listing)
+      {:error, %Error{status: 409, code: "sandbox_not_ready", sandbox_status: "suspended"}}
+    end)
+
+    other = server()
+
+    previous_level = Logger.level()
+    Logger.configure(level: :info)
+    on_exit(fn -> Logger.configure(level: previous_level) end)
+
+    log =
+      ExUnit.CaptureLog.capture_log([level: :info], fn ->
+        Setup.advance(ctx.client, ctx.track.id)
+        assert_receive :suspended_listing
+        assert row(ctx.track).setup_state == "retry"
+        assert row(ctx.track).setup_error_code == "sandbox_suspended"
+        assert DateTime.diff(row(ctx.track).setup_retry_at, DateTime.utc_now()) in 299..300
+
+        for _ <- 1..3 do
+          Server.tick(other)
+          Setup.advance(ctx.client, ctx.track.id)
+        end
+
+        refute_received :suspended_listing
+        refute_received {:prompt, _, _, _}
+        assert QueueStore.get(item.id).status == :queued
+      end)
+
+    assert length(String.split(log, "setup suspended track=#{ctx.track.id}")) == 2
+
+    # Advance the persisted clock rather than sleeping. Setup sends its own
+    # wake turn even though the user's queued prompt is gated on setup.
+    due(ctx.track)
+    Server.tick(other)
+    assert_receive {:prompt, "setup", "[ravix] Open this track" <> _, request_id}
+    assert is_binary(request_id)
+    assert row(ctx.track).setup_state == "running"
+    assert QueueStore.get(item.id).status == :queued
+    refute_received :suspended_listing
+
+    expect(Fountain, :listing, fn _, "sandbox", path ->
+      {:ok, %{"path" => path, "entries" => [%{"name" => ".git"}]}}
+    end)
+
+    due(ctx.track)
+    Setup.advance(ctx.client, ctx.track.id)
+    assert row(ctx.track).setup_state == "ready"
+    assert row(ctx.track).setup_error_code == nil
+    assert row(ctx.track).setup_retry_at == nil
+
+    Ravix.Tracks.Sandbox.advance(ctx.client, op.id)
+    assert row(ctx.track).sandbox_state == :ready
+    Server.tick(other)
+    assert_receive {:prompt, "setup", "user work", _}
+    assert QueueStore.get(item.id).status == :sent
+  end
+
+  test "suspension recovery retains the finite setup budget and preserves saved prompts", ctx do
+    persist(ctx.track,
+      sandbox_layout: :dedicated,
+      sandbox_state: :provisioning,
+      setup_attempts: 3
+    )
+
+    turn_status(ctx.track, "completed")
+    item = queue(ctx)
+
+    expect(Fountain, :listing, fn _, _, _ ->
+      {:error, %Error{status: 409, code: "sandbox_not_ready", sandbox_status: "suspended"}}
+    end)
+
+    Setup.advance(ctx.client, ctx.track.id)
+    assert row(ctx.track).setup_state == "failed"
+    assert QueueStore.get(item.id).status == :failed
+    assert QueueStore.get(item.id).error_code == "sandbox_suspended"
+    due(ctx.track)
+    Setup.advance(ctx.client, ctx.track.id)
+    refute_received {:prompt, _, _, _}
+    assert Tracks.Store.retry_setup(ctx.track.id)
+  end
+
+  test "suspended responses on shared setup keep the existing unavailable behavior", ctx do
+    turn_status(ctx.track, "completed")
+
+    expect(Fountain, :listing, 2, fn _, _, _ ->
+      {:error, %Error{status: 409, code: "sandbox_not_ready", sandbox_status: "suspended"}}
+    end)
+
+    Setup.advance(ctx.client, ctx.track.id)
+    assert row(ctx.track).setup_state == "running"
+    assert row(ctx.track).setup_error_code == nil
+    due(ctx.track)
+    Setup.advance(ctx.client, ctx.track.id)
+    assert row(ctx.track).setup_state == "running"
   end
 
   test "legacy accepted tracks are verified and closed tracks never retry", ctx do

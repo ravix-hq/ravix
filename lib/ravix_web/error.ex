@@ -57,7 +57,7 @@ defmodule RavixWeb.Error do
     do: %__MODULE__{
       status: 409,
       code: "machine_asleep",
-      message: "This track's machine is asleep. Files load when it wakes."
+      message: "This track's machine is asleep. It wakes on the next turn."
     }
 
   def from(:not_found, opts) do
