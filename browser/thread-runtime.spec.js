@@ -31,8 +31,7 @@ test('cohort threads attach the other runtime to the home disk and reuse its pro
     await project.getByRole('button', { name: 'Create project', exact: true }).click();
     await expect(project).toHaveCount(0);
     const projectId = new URL(page.url()).pathname.split('/')[2];
-    await page.getByRole('navigation', { name: 'Project tracks', exact: true })
-      .getByRole('button', { name: 'New track', exact: true }).click();
+    await page.locator('#yard .workspace-project.current .project-add').click();
     const track = page.getByRole('dialog', { name: 'New track', exact: true });
     await expect(track.getByLabel('Agent', { exact: true })).toHaveValue(home);
     await track.getByRole('button', { name: 'Create track', exact: true }).click();

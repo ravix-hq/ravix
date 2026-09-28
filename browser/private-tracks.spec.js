@@ -16,7 +16,7 @@ test('private tracks are hidden from project members until invited', async ({ pa
   await page.getByRole('button', { name: 'Invite', exact: true }).click();
   await expect(page.locator('#people-dialog')).toContainText('@privacyguest');
   await page.keyboard.press('Escape');
-  await page.getByRole('navigation', { name: 'Project tracks', exact: true }).getByRole('button', { name: 'New track', exact: true }).click();
+  await page.locator('#yard .workspace-project.current .project-add').click();
   const track = page.getByRole('dialog', { name: 'New track', exact: true });
   await expect(track.getByLabel('Sharing', { exact: true })).toHaveValue('project');
   await track.getByLabel('Sharing', { exact: true }).selectOption('private');
@@ -33,6 +33,10 @@ test('private tracks are hidden from project members until invited', async ({ pa
     await signIn(guest, 'privacyguest', projectPath);
     await expect(guest.locator('#project-sections[aria-busy="false"]')).toBeAttached();
     await expect(guest.locator('body')).not.toContainText('secret-investigation');
+    await guest.locator('#quick-jump-trigger').click();
+    await guest.getByLabel('Search projects and tracks').fill('secret-investigation');
+    await expect(guest.locator('#search-dialog [data-jump-result]')).toHaveCount(0);
+    await guest.keyboard.press('Escape');
     await guest.goto(trackPath);
     await expect(guest).toHaveURL(new RegExp(`${projectPath}$`));
     await expect(guest.locator('body')).not.toContainText('secret-investigation');

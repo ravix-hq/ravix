@@ -121,13 +121,13 @@ test('a project plan assigns coordinated tracks and works at phone width', async
   expect(result.violations).toEqual([]);
   // Track navigation lives in the sidebar and follows its mobile collapse.
   await page.setViewportSize({ width: 1280, height: 844 });
-  const tabs = page.getByRole('tablist', { name: 'Project tracks' });
-  await expect(tabs).toHaveAttribute('aria-orientation', 'vertical');
-  await expect(tabs.getByRole('tab', { name: /ravix\/build-ui/ })).toBeVisible();
+  const tabs = page.locator('#yard .workspace-project.current .project-tree-tracks');
+  await expect(tabs).toHaveAttribute('aria-label', /^Tracks in /);
+  await expect(tabs.getByRole('link', { name: /ravix\/build-ui/ })).toBeVisible();
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(tabs).not.toBeVisible();
   await page.getByRole('button', { name: 'Menu', exact: true }).click();
-  await expect(tabs.getByRole('tab', { name: /ravix\/build-ui/ })).toBeInViewport();
+  await expect(tabs.getByRole('link', { name: /ravix\/build-ui/ })).toBeInViewport();
   await page.getByRole('button', { name: 'Close menu', exact: true }).click();
 
   await expect(panel).toBeVisible();

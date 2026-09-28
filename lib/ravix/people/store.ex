@@ -729,7 +729,7 @@ defmodule Ravix.People.Store do
     members = members_by_track(track_ids)
     invites = invites_by_track(track_ids)
 
-    # ownership: Access.track_access or Access.visible_tracks admitted these track IDs.
+    # ownership: Access.track_access or Access.open_tracks admitted these track IDs.
     tracks = Map.new(Tracks.get_tracks(track_ids), &{&1.id, &1})
 
     Map.new(track_ids, fn track_id ->

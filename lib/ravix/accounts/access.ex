@@ -63,6 +63,42 @@ defmodule Ravix.Accounts.Access do
   @typedoc "What `track_access/2` answers. See `Ravix.Accounts.TrackAccess`."
   @type track_access :: TrackAccess.t()
 
+  @doc "All open tracks in the requested projects admitted by this viewer's memberships."
+  @spec open_tracks(User.t(), [String.t()]) :: [{Track.t(), Project.t()}]
+  # ownership: no door before this one; this query establishes project and track membership.
+  def open_tracks(%User{id: user_id}, project_ids) do
+    import Ecto.Query
+
+    visibility = listing_visibility(user_id)
+
+    Repo.all(
+      from(t in Track,
+        join: p in Project,
+        on: p.id == t.project_id,
+        left_join: pm in Ravix.Projects.ProjectMember,
+        on: pm.project_id == p.id and pm.user_id == ^user_id,
+        left_join: tm in Ravix.Tracks.TrackMember,
+        on: tm.track_id == t.id and tm.user_id == ^user_id,
+        where: p.id in ^project_ids and is_nil(p.archived_at) and is_nil(p.deletion_requested_at),
+        where: is_nil(t.closed_at),
+        where: ^visibility,
+        order_by: [asc: t.created_at, asc: t.id],
+        select: {t, p}
+      )
+    )
+  end
+
+  defp listing_visibility(user_id) do
+    import Ecto.Query
+
+    dynamic(
+      [t, p, pm, tm],
+      not is_nil(tm.user_id) or
+        (t.visibility == :private and t.created_by == ^user_id and is_nil(t.creator_revoked_at)) or
+        (t.visibility == :project and (p.user_id == ^user_id or not is_nil(pm.user_id)))
+    )
+  end
+
   @doc "A thread is reached only through membership of its specified track."
   @spec thread_access(User.t(), String.t(), String.t() | nil) ::
           {:ok, map()} | {:error, :not_found}
@@ -177,37 +213,6 @@ defmodule Ravix.Accounts.Access do
       member?(track.id, user_id) or
       (track.visibility == :project and
          (project.user_id == user_id or project_member?(project.id, user_id)))
-  end
-
-  @doc "Filter a listing with one membership read, independent of its size."
-  def visible_tracks(user_id, tracks, %Project{} = project) do
-    wide = project.user_id == user_id or project_member?(project.id, user_id)
-    # ownership: no door before this one; this query establishes listing access.
-    invited = MapSet.new(People.member_tracks(user_id), & &1.id)
-
-    # ownership: no door before this one; current rows authorize late async results.
-    ids = Enum.map(tracks, & &1.id)
-
-    current =
-      Repo.all(Ecto.Query.from(t in Track, where: t.id in ^ids and t.project_id == ^project.id))
-
-    allowed =
-      current
-      |> Enum.filter(fn track ->
-        (wide and track.visibility == :project) or
-          (track.visibility == :private and creator?(%User{id: user_id}, track)) or
-          MapSet.member?(invited, track.id)
-      end)
-      |> MapSet.new(& &1.id)
-
-    Enum.filter(tracks, &MapSet.member?(allowed, &1.id))
-  end
-
-  def visible_tracks(user_id, tracks, %{id: id}) do
-    case live_project(id) do
-      nil -> []
-      project -> visible_tracks(user_id, tracks, project)
-    end
   end
 
   @doc "Stable creator identity; login is presentation only."

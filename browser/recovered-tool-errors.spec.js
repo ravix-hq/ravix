@@ -11,8 +11,7 @@ test('recovered tool errors are muted while expanded errors retain their status'
   await project.getByRole('button', { name: 'Create project', exact: true }).click();
   await expect(project).toHaveCount(0);
   const projectId = new URL(page.url()).pathname.split("/")[2];
-  await page.getByRole('navigation', { name: 'Project tracks', exact: true })
-    .getByRole('button', { name: 'New track', exact: true }).click();
+  await page.locator('#yard .workspace-project.current .project-add').click();
   await page.getByRole('dialog', { name: 'New track', exact: true })
     .getByRole('button', { name: 'Create track', exact: true }).click();
   const composer = page.getByRole('textbox', { name: 'Message', exact: true });

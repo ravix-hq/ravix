@@ -13,7 +13,7 @@ test('machine status follows the selected dedicated track, never its shared proj
   const paths = [];
   for (let i = 0; i < 2; i++) {
     const previousPath = new URL(page.url()).pathname;
-    await page.getByRole('navigation', { name: 'Project tracks', exact: true }).getByRole('button', { name: 'New track', exact: true }).click();
+    await page.locator('#yard .workspace-project.current .project-add').click();
     await page.getByRole('button', { name: 'Create track', exact: true }).click();
     await expect.poll(() => new URL(page.url()).pathname).not.toBe(previousPath);
     await expect(page.getByRole('textbox', { name: 'Message', exact: true })).toBeEnabled();

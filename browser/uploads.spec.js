@@ -10,8 +10,7 @@ test('images upload before Send and remain visible in conversation history', asy
   await project.getByLabel('Project name', { exact: true }).fill('Image uploads');
   await project.getByRole('button', { name: 'Create project' }).click();
   await expect(project).not.toBeVisible();
-  await page.getByRole('navigation', { name: 'Project tracks', exact: true })
-    .getByRole('button', { name: 'New track', exact: true }).click();
+  await page.locator('#yard .workspace-project.current .project-add').click();
   await page.getByRole('dialog', { name: 'New track', exact: true })
     .getByRole('button', { name: 'Create track', exact: true }).click();
   const composer = page.getByRole('textbox', { name: 'Message', exact: true });

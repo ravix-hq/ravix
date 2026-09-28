@@ -14,9 +14,9 @@ test('a flagged track copies secrets, becomes ready, and deletes its own machine
   await project.getByLabel('Project name', { exact: true }).fill('Dedicated lifecycle');
   await project.getByRole('button', { name: 'Create project', exact: true }).click();
   await expect(project).toHaveCount(0);
-  await page.getByRole('navigation', { name: 'Project tracks', exact: true })
-    .getByRole('button', { name: 'New track', exact: true }).click();
+  await page.locator('#yard .workspace-project.current .project-add').click();
   await page.getByRole('button', { name: 'Create track', exact: true }).click();
+  await expect(page.getByRole('dialog', { name: 'New track', exact: true })).toHaveCount(0);
   await expect(page.locator('#track-machine-scope')).toHaveText('Own machine');
   await expect(page.locator('#track-setup-status')).toContainText('Prompts will wait until setup is ready.');
   await expect(page.locator('#track-setup-status')).toHaveCount(0, { timeout: 45_000 });
@@ -29,10 +29,12 @@ test('a flagged track copies secrets, becomes ready, and deletes its own machine
   const box = boxes.find(b => b.vault_id === vaultId);
   expect(box).toBeTruthy();
   const firstUrl = page.url();
-  await page.getByRole('navigation', { name: 'Project tracks', exact: true })
-    .getByRole('button', { name: 'New track', exact: true }).click();
+  await page.locator('#yard .workspace-project.current .project-add').click();
   await page.getByRole('button', { name: 'Create track', exact: true }).click();
-  await expect(page).not.toHaveURL(firstUrl);
+  await expect(page.getByRole('dialog', { name: 'New track', exact: true })).toHaveCount(0);
+  // The New track dialog also changes the URL with ?new=track. Wait for a
+  // distinct track path before recording the sibling's machine and vault.
+  await expect(page).toHaveURL(url => url.pathname !== new URL(firstUrl).pathname && url.pathname.includes('/t/') && !url.search);
   await expect(page.locator('#track-machine-scope')).toHaveText('Own machine');
   await expect(page.locator('#track-setup-status')).toHaveCount(0, { timeout: 45_000 });
   const siblingId = new URL(page.url()).pathname.split('/t/')[1];
@@ -42,6 +44,8 @@ test('a flagged track copies secrets, becomes ready, and deletes its own machine
   const siblingBoxes = (await (await request.get(`${mock}/api/sandboxes`)).json()).data;
   const siblingBox = siblingBoxes.find(b => b.vault_id === siblingVault.id);
   expect(siblingBox).toBeTruthy();
+  expect(siblingBox.id).not.toBe(box.id);
+  expect(siblingVault.id).not.toBe(vaultId);
   await page.goto(firstUrl);
   await expect(page.locator('[data-phx-main]')).toHaveClass(/phx-connected/);
   const rebuild = page.locator('#rebuild-track-machine');

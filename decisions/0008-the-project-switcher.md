@@ -1,7 +1,7 @@
 ---
 type: ADR
 title: "The project switcher"
-description: "A searchable project switcher replaces the open project list, preserving track-only access, personal sections and cross-project activity."
+description: "Amended: a persistent project/track tree and keyboard quick-jump preserve scoped access, personal sections and cross-project activity."
 tags: [navigation, projects, access]
 status: stable
 adr: "0008"
@@ -18,6 +18,41 @@ existing asynchronous rail, scoped project/track reads and shared dialog focus
 behavior. LiveView regressions cover membership, unread counts, revocation and
 late results; browser coverage checks desktop and 500px navigation, keyboard
 focus and accessibility. Sandbox lifecycle work remains independent.
+
+## Amendment — 2026-09-28: persistent project and track tree
+
+The owner reversed the rail decision in the 2026-09-28 design interview.
+This amendment supersedes the switcher and rail portions below, addressing
+RAV-11 and the navigation portion of RAV-9.
+
+- Show every accessible project in the rail, grouped by the viewer's existing
+  personal sections and order, with unsectioned projects last. Sections and
+  projects collapse independently. Named sections use the viewer's saved section
+  preferences across devices; project rows and the synthetic unsectioned group
+  use local browser preferences. Neither is shared project state.
+- Each project appears once, with its unread badge and a new-track action only
+  for viewers who may create tracks. Its expanded children are the open tracks
+  that viewer can access. Highlight the current project and track. This tree
+  replaces both the switcher control and the separate selected-project track list.
+- Search becomes quick-jump over accessible projects and tracks, opened by
+  Cmd-K on macOS, Ctrl-K elsewhere, or the visible Search button. Shortcuts
+  preserve editing keys inside text fields and terminals. Arrow keys and Enter select results;
+  Escape dismisses the shared dialog and returns focus to its trigger.
+- Keep Home, Inbox with its global unread total, Schedules, Add a project and
+  Manage sections reachable. Mobile uses the same tree in its navigation drawer;
+  selecting a destination closes the drawer. Preserve Conversation/Files/Commands.
+
+All original access, unread, asynchronous discovery, narrow-width and
+accessibility requirements still apply, now to the tree and quick-jump.
+Track-only access reveals only the viewer's tracks, including in badges and
+search. Removing the last membership removes the project live; async results
+must not restore revoked access. Discovery remains asynchronous with loading,
+error and retry states; bulk track discovery uses the scoped Access path.
+Private-track policy belongs to that same access boundary. Navigation must fit
+the viewport without horizontal overflow and remain keyboard accessible.
+
+The original decision below is retained as history; its rail and picker choices
+are superseded by this amendment.
 
 ## Context
 

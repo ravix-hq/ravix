@@ -50,8 +50,7 @@ test('settings explicitly rebuilds when switching agents and the next track work
   for (const target of ['codex', 'claude']) {
     await page.goto(projectUrl);
     await expect(page.locator('[data-phx-main]')).toHaveClass(/phx-connected/);
-    await page.getByRole('navigation', { name: 'Project tracks', exact: true })
-      .getByRole('button', { name: 'New track', exact: true }).click();
+    await page.locator('#yard .workspace-project.current .project-add').click();
     await page.getByRole('dialog', { name: 'New track', exact: true })
       .getByRole('button', { name: 'Create track', exact: true }).click();
     await expect(page.getByRole('textbox', { name: 'Message', exact: true })).toBeEnabled({ timeout: 30_000 });
@@ -83,8 +82,7 @@ test('settings explicitly rebuilds when switching agents and the next track work
   }
   await page.goto(projectUrl);
   await expect(page.locator('[data-phx-main]')).toHaveClass(/phx-connected/);
-  await page.getByRole('navigation', { name: 'Project tracks', exact: true })
-    .getByRole('button', { name: 'New track', exact: true }).click();
+  await page.locator('#yard .workspace-project.current .project-add').click();
   await page.getByRole('dialog', { name: 'New track', exact: true })
     .getByRole('button', { name: 'Create track', exact: true }).click();
   await expect(page.getByRole('textbox', { name: 'Message', exact: true })).toBeEnabled({ timeout: 30_000 });

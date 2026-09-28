@@ -29,7 +29,6 @@ defmodule RavixWeb.WorkspaceLive do
 
   # The workspace dialogs, as the buttons spell them and as this module does.
   @dialogs %{
-    "projects" => :projects,
     "sections" => :sections,
     "search" => :search,
     "new-project" => :new_project,
@@ -62,6 +61,8 @@ defmodule RavixWeb.WorkspaceLive do
         sections: [],
         section_placements: %{},
         tracks: %{},
+        track_errors: MapSet.new(),
+        track_loading: MapSet.new(),
         # How many tracks across every project want somebody. Counted where
         # the rail is read rather than in the template, which asked for it
         # four times a render --- twice in the sidebar badge and twice in the
@@ -102,7 +103,6 @@ defmodule RavixWeb.WorkspaceLive do
         refs: [],
         origin_kind: :blank,
         query: "",
-        project_query: "",
         # Creating a project and creating a track, and nothing else. The
         # settings dialog owns its own; see `RavixWeb.Live.SettingsDialog`
         # for why one flag for the whole page could not answer "may I press
@@ -342,9 +342,6 @@ defmodule RavixWeb.WorkspaceLive do
 
   def handle_event("dismiss-switcher", _, socket), do: {:noreply, assign(socket, dialog: nil)}
 
-  def handle_event("search-projects", %{"q" => query}, socket),
-    do: {:noreply, socket |> recheck_rail() |> assign(project_query: query)}
-
   def handle_event("yard", _, socket),
     do: {:noreply, assign(socket, yard_open: !socket.assigns.yard_open)}
 
@@ -359,6 +356,12 @@ defmodule RavixWeb.WorkspaceLive do
       socket,
       Sections.update(socket.assigns.current_user, id, Map.take(attrs, ["name"]))
     )
+  end
+
+  def handle_event("retry-tracks", %{"id" => id}, socket) do
+    if MapSet.member?(socket.assigns.track_loading, id),
+      do: {:noreply, socket},
+      else: {:noreply, socket |> recheck_rail() |> refresh_tracks(id)}
   end
 
   def handle_event("toggle-section", %{"id" => id, "collapsed" => collapsed}, socket) do
@@ -586,15 +589,18 @@ defmodule RavixWeb.WorkspaceLive do
   # One project's tracks, in the place the rail keeps them. A project that has
   # gone since the read started is not put back.
   def handle_async({:tracks, id}, {:ok, {:ok, tracks}}, socket) do
+    socket = finish_track_load(socket, id)
+
     if Enum.any?(socket.assigns.projects, &(&1.id == id)) do
-      tracks = Map.put(socket.assigns.tracks, id, tracks)
+      tracks = Map.put(rail_tracks(socket), id, tracks)
       {:noreply, apply_rail(socket, {socket.assigns.projects, tracks})}
     else
       {:noreply, socket}
     end
   end
 
-  def handle_async({:tracks, _id}, {:ok, {:error, _reason}}, socket), do: {:noreply, socket}
+  def handle_async({:tracks, id}, {:ok, {:error, _reason}}, socket),
+    do: {:noreply, track_load_failed(socket, id)}
 
   # The rail is what `handle_params/3` decides from, and a rail that arrived
   # on its own has no patch coming to decide again. So the two decisions a
@@ -639,7 +645,8 @@ defmodule RavixWeb.WorkspaceLive do
   def handle_async(:reload, {:exit, _reason}, socket),
     do: {:noreply, assign(socket, rail_error: !socket.assigns.rail_loaded)}
 
-  def handle_async({:tracks, _id}, {:exit, _reason}, socket), do: {:noreply, socket}
+  def handle_async({:tracks, id}, {:exit, _reason}, socket),
+    do: {:noreply, track_load_failed(socket, id)}
 
   def handle_async(name, {:exit, reason}, socket) when name in [:refs, :repos] do
     flag = if name == :refs, do: :refs_loading, else: :repos_loading
@@ -958,13 +965,9 @@ defmodule RavixWeb.WorkspaceLive do
   # Only the connected, already-loaded rail is revalidated here. Initial
   # discovery remains in start_async; this reads membership, never providers.
   defp recheck_rail(%{assigns: %{rail_loaded: true, current_user: %Accounts.User{}}} = socket),
-    do: apply_rail(socket, {socket.assigns.projects, socket.assigns.tracks})
+    do: apply_rail(socket, {socket.assigns.projects, rail_tracks(socket)})
 
   defp recheck_rail(socket), do: socket
-
-  defp switcher_groups(projects, sections, placements, query) do
-    projects |> Enum.filter(&project_matches?(&1, query)) |> section_groups(sections, placements)
-  end
 
   defp project_matches?(project, query),
     do:
@@ -997,11 +1000,29 @@ defmodule RavixWeb.WorkspaceLive do
   defp created({:ok, value}, user), do: {:ok, {value, read_rail(user)}}
   defp created(response, _user), do: response
 
+  defp rail_tracks(socket) do
+    Enum.reduce(socket.assigns.track_errors, socket.assigns.tracks, fn id, tracks ->
+      Map.put(tracks, id, {:error, :unavailable})
+    end)
+  end
+
+  defp finish_track_load(socket, id),
+    do: assign(socket, :track_loading, MapSet.delete(socket.assigns.track_loading, id))
+
+  defp track_load_failed(socket, id) do
+    socket = finish_track_load(socket, id)
+    tracks = Map.put(rail_tracks(socket), id, {:error, :unavailable})
+    apply_rail(socket, {socket.assigns.projects, tracks})
+  end
+
   defp refresh_tracks(%{assigns: %{current_user: nil}} = socket, _id), do: socket
 
   defp refresh_tracks(socket, project_id) do
     if Enum.any?(socket.assigns.projects, &(&1.id == project_id)) do
       user = socket.assigns.current_user
+
+      socket =
+        assign(socket, :track_loading, MapSet.put(socket.assigns.track_loading, project_id))
 
       traced_async(socket, {:tracks, project_id}, fn ->
         Tracks.list(user, project_id, fresh: true)
@@ -1011,60 +1032,45 @@ defmodule RavixWeb.WorkspaceLive do
     end
   end
 
-  # Reads only, so that it can run in a task. A project's tracks that cannot
-  # be read are an empty group rather than a missing key, which is what keeps
-  # the rail drawing the project. Each project gets a bounded worker and its
-  # own deadline. Ordered results keep failures paired with their project;
-  # neither a timeout nor a crashed worker can take down the complete rail.
+  # Discover projects and tracks off the LiveView process. Tracks batches the
+  # scoped database read and bounds provider presentation independently per
+  # project. The rail does not display machine state; reading it again here
+  # would repeat timed-out requests or expire a fast project's memo while
+  # another project is still answering.
   defp read_rail(user, opts \\ []) do
     projects = Projects.list(user, include_machine: false)
-
-    groups =
-      Ravix.TaskSupervisor
-      |> Task.Supervisor.async_stream_nolink(
-        projects,
-        Ravix.Trace.link_each(&read_project(user, &1, opts)),
-        max_concurrency: 8,
-        timeout: 5_000,
-        on_timeout: :kill_task,
-        ordered: true
-      )
-      |> Enum.zip(projects)
-      |> Enum.map(fn
-        {{:ok, {:ok, project, tracks}}, _} -> {project, tracks}
-        {_, project} -> {project, []}
-      end)
-
-    {Enum.map(groups, &elem(&1, 0)),
-     Map.new(groups, fn {project, tracks} -> {project.id, tracks} end)}
-  end
-
-  # Tracks uses the memo or refreshes it when asked. Read machine state from
-  # that same answer inside the worker, keeping cold reads within its budget.
-  defp read_project(user, project, opts) do
-    with {:ok, tracks} <- Tracks.list(user, project.id, opts),
-         {:ok, project} <- Projects.get(user, project.id) do
-      {:ok, project, tracks}
-    end
+    tracks = Tracks.list_many(user, Enum.map(projects, & &1.id), opts)
+    {projects, tracks}
   end
 
   # Subscribing is this process's to do --- `Phoenix.PubSub` registers the
   # caller --- so it happens here rather than beside the reads above.
-  defp apply_rail(socket, {loaded_projects, tracks}) do
+  defp apply_rail(socket, {_loaded_projects, tracks}) do
     # The session hook runs before handle_async. Membership may also have
     # changed while Fountain was answering, before this page subscribed.
     # This authorization recheck must not restart timed-out provider reads.
-    loaded = Map.new(loaded_projects, &{&1.id, &1})
-
     projects =
       socket.assigns.current_user
       |> Projects.list(include_machine: false)
-      |> Enum.map(&%{&1 | machine: Map.get(loaded, &1.id, &1).machine})
+
+    visible =
+      socket.assigns.current_user
+      |> Access.open_tracks(Enum.map(projects, & &1.id))
+      |> MapSet.new(fn {row, _project} -> row.id end)
+
+    track_errors =
+      projects
+      |> Enum.filter(&(Map.get(tracks, &1.id) == {:error, :unavailable}))
+      |> MapSet.new(& &1.id)
 
     tracks =
       Map.new(projects, fn project ->
-        rows = Map.get(tracks, project.id, [])
-        rows = accessible_rows(socket.assigns.current_user, project, rows)
+        rows =
+          if MapSet.member?(track_errors, project.id),
+            do: [],
+            else: Map.get(tracks, project.id, [])
+
+        rows = Enum.filter(rows, &MapSet.member?(visible, &1.id))
         {project.id, rows}
       end)
 
@@ -1088,14 +1094,11 @@ defmodule RavixWeb.WorkspaceLive do
       section_placements: placements,
       projects: projects,
       tracks: tracks,
+      track_errors: track_errors,
       attention: attention_count(tracks)
     )
     |> assign_page_title()
     |> announce(tracks)
-  end
-
-  defp accessible_rows(user, project, rows) do
-    Access.visible_tracks(user.id, rows, project)
   end
 
   # Use the scoped rail already held by the workspace, including after a
@@ -1213,9 +1216,6 @@ defmodule RavixWeb.WorkspaceLive do
     |> traced_async({:track_options, id}, fn -> Tracks.open_options(user, id) end)
   end
 
-  defp open_dialog(socket, :projects),
-    do: socket |> recheck_rail() |> assign(dialog: :projects, project_query: "")
-
   defp open_dialog(socket, :sections), do: assign(socket, dialog: :sections)
 
   defp open_dialog(socket, :search),
@@ -1322,22 +1322,46 @@ defmodule RavixWeb.WorkspaceLive do
       for project <- assigns.projects,
           tracks =
             Enum.filter(assigns.tracks[project.id] || [], &matching?(&1, project, assigns.query)),
-          tracks != [],
+          tracks != [] || project_matches?(project, assigns.query),
           do: {project, tracks}
 
     assigns = assign(assigns, :results, results)
 
     ~H"""
-    <p :if={@results == []} role="status">No tracks match</p>
-    <section :for={{project, tracks} <- @results} aria-labelledby={"search-project-#{project.id}"}>
-      <h3 id={"search-project-#{project.id}"}><.project_name project={project} /></h3>
+    <p :if={@results == []} role="status">No projects or tracks match</p>
+    <section
+      :for={{project, tracks} <- @results}
+      id={"search-group-#{project.id}"}
+      aria-labelledby={"search-project-#{project.id}"}
+    >
+      <h3 id={"search-project-#{project.id}"}>
+        <.link
+          :if={project_matches?(project, @query)}
+          id={"search-project-link-#{project.id}"}
+          patch={"/p/#{project.id}"}
+          data-jump-result
+        >
+          {project.display_name}
+          <span
+            :if={project_attention(@tracks, project.id) > 0}
+            class="badge"
+            aria-label={"#{project_attention(@tracks, project.id)} unread"}
+          >{project_attention(
+            @tracks,
+            project.id
+          )}</span>
+        </.link>
+        <span :if={!project_matches?(project, @query)}>{project.display_name}</span>
+      </h3>
       <.link
         :for={track <- tracks}
+        id={"search-track-link-#{track.id}"}
         patch={"/p/#{project.id}/t/#{track.id}"}
         class="workspace-track"
+        data-jump-result
       >
-        {track.title}
-        <span :if={track.visibility == :private}><.icon name="lock" /> Private</span>
+        {track.title}<span :if={track.visibility == :private}><.icon name="lock" /> Private</span>
+        <span :if={attention?(track)} class="badge" aria-label="1 unread">1</span>
       </.link>
     </section>
     """
