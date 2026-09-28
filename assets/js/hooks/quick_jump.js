@@ -2,8 +2,11 @@
 // push/pop focus stack. Arrow keys move through native navigation links.
 export const QuickJump = {
   mounted() {
+    const mac = /Mac|iPhone|iPad|iPod/.test(navigator.userAgentData?.platform || navigator.platform)
     this.onKey = event => {
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+      const modifier = mac ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey
+      if (modifier && !event.altKey && event.key.toLowerCase() === 'k') {
+        if (event.target.closest?.('input, textarea, select, [contenteditable]:not([contenteditable="false"]), [role="textbox"], .xterm')) return
         if (this.el.querySelector('[role="dialog"]')) return
         const trigger = [...this.el.querySelectorAll('[data-quick-jump-trigger]')]
           .find(button => button.getClientRects().length > 0)

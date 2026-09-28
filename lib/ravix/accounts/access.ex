@@ -69,6 +69,8 @@ defmodule Ravix.Accounts.Access do
   def open_tracks(%User{id: user_id}, project_ids) do
     import Ecto.Query
 
+    visibility = listing_visibility(user_id)
+
     Repo.all(
       from(t in Track,
         join: p in Project,
@@ -79,10 +81,21 @@ defmodule Ravix.Accounts.Access do
         on: tm.track_id == t.id and tm.user_id == ^user_id,
         where: p.id in ^project_ids and is_nil(p.archived_at) and is_nil(p.deletion_requested_at),
         where: is_nil(t.closed_at),
-        where: p.user_id == ^user_id or not is_nil(pm.user_id) or not is_nil(tm.user_id),
+        where: ^visibility,
         order_by: [asc: t.created_at, asc: t.id],
         select: {t, p}
       )
+    )
+  end
+
+  defp listing_visibility(user_id) do
+    import Ecto.Query
+
+    dynamic(
+      [t, p, pm, tm],
+      not is_nil(tm.user_id) or
+        (t.visibility == :private and t.created_by == ^user_id) or
+        (t.visibility == :project and (p.user_id == ^user_id or not is_nil(pm.user_id)))
     )
   end
 

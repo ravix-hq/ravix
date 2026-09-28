@@ -64,7 +64,7 @@ defmodule RavixWeb.WorkspaceRailTest do
     assert length(FakeTransport.calls(client)) == 3
   end
 
-  test "a timed-out project stays empty while another project's tracks render", %{conn: conn} do
+  test "a timed-out project shows a retry while another project's tracks render", %{conn: conn} do
     user = insert_user()
     slow = insert_project(user: user)
     fast = insert_project(user: user)
@@ -92,6 +92,7 @@ defmodule RavixWeb.WorkspaceRailTest do
     render_patch(view, "/p/#{slow.id}")
     render_async(view)
     refute has_element?(view, ".track-tab", slow_track.title)
+    assert has_element?(view, "#project-tracks-#{slow.id}", "Couldn't load tracks")
     render_patch(view, "/p/#{fast.id}")
     render_async(view)
     assert has_element?(view, ".track-tab", fast_track.title)
@@ -127,6 +128,7 @@ defmodule RavixWeb.WorkspaceRailTest do
       render_async(view)
       assert has_element?(view, "#project-tracks-#{good.id} .track-tab", track.title)
       refute has_element?(view, "#project-tracks-#{crashed.id} .track-tab")
+      assert has_element?(view, "#project-tracks-#{crashed.id}", "Couldn't load tracks")
     end
   end
 

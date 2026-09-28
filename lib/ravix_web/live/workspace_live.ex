@@ -61,6 +61,7 @@ defmodule RavixWeb.WorkspaceLive do
         sections: [],
         section_placements: %{},
         tracks: %{},
+        track_errors: MapSet.new(),
         # How many tracks across every project want somebody. Counted where
         # the rail is read rather than in the template, which asked for it
         # four times a render --- twice in the sidebar badge and twice in the
@@ -356,6 +357,9 @@ defmodule RavixWeb.WorkspaceLive do
     )
   end
 
+  def handle_event("retry-tracks", %{"id" => id}, socket),
+    do: {:noreply, socket |> recheck_rail() |> refresh_tracks(id)}
+
   def handle_event("toggle-section", %{"id" => id, "collapsed" => collapsed}, socket) do
     section_result(
       socket,
@@ -582,14 +586,15 @@ defmodule RavixWeb.WorkspaceLive do
   # gone since the read started is not put back.
   def handle_async({:tracks, id}, {:ok, {:ok, tracks}}, socket) do
     if Enum.any?(socket.assigns.projects, &(&1.id == id)) do
-      tracks = Map.put(socket.assigns.tracks, id, tracks)
+      tracks = Map.put(rail_tracks(socket), id, tracks)
       {:noreply, apply_rail(socket, {socket.assigns.projects, tracks})}
     else
       {:noreply, socket}
     end
   end
 
-  def handle_async({:tracks, _id}, {:ok, {:error, _reason}}, socket), do: {:noreply, socket}
+  def handle_async({:tracks, id}, {:ok, {:error, _reason}}, socket),
+    do: {:noreply, track_load_failed(socket, id)}
 
   # The rail is what `handle_params/3` decides from, and a rail that arrived
   # on its own has no patch coming to decide again. So the two decisions a
@@ -634,7 +639,8 @@ defmodule RavixWeb.WorkspaceLive do
   def handle_async(:reload, {:exit, _reason}, socket),
     do: {:noreply, assign(socket, rail_error: !socket.assigns.rail_loaded)}
 
-  def handle_async({:tracks, _id}, {:exit, _reason}, socket), do: {:noreply, socket}
+  def handle_async({:tracks, id}, {:exit, _reason}, socket),
+    do: {:noreply, track_load_failed(socket, id)}
 
   def handle_async(name, {:exit, reason}, socket) when name in [:refs, :repos] do
     flag = if name == :refs, do: :refs_loading, else: :repos_loading
@@ -953,7 +959,7 @@ defmodule RavixWeb.WorkspaceLive do
   # Only the connected, already-loaded rail is revalidated here. Initial
   # discovery remains in start_async; this reads membership, never providers.
   defp recheck_rail(%{assigns: %{rail_loaded: true, current_user: %Accounts.User{}}} = socket),
-    do: apply_rail(socket, {socket.assigns.projects, socket.assigns.tracks})
+    do: apply_rail(socket, {socket.assigns.projects, rail_tracks(socket)})
 
   defp recheck_rail(socket), do: socket
 
@@ -987,6 +993,17 @@ defmodule RavixWeb.WorkspaceLive do
   # not promise.
   defp created({:ok, value}, user), do: {:ok, {value, read_rail(user)}}
   defp created(response, _user), do: response
+
+  defp rail_tracks(socket) do
+    Enum.reduce(socket.assigns.track_errors, socket.assigns.tracks, fn id, tracks ->
+      Map.put(tracks, id, {:error, :unavailable})
+    end)
+  end
+
+  defp track_load_failed(socket, id) do
+    tracks = Map.put(rail_tracks(socket), id, {:error, :unavailable})
+    apply_rail(socket, {socket.assigns.projects, tracks})
+  end
 
   defp refresh_tracks(%{assigns: %{current_user: nil}} = socket, _id), do: socket
 
@@ -1028,9 +1045,18 @@ defmodule RavixWeb.WorkspaceLive do
       |> Access.open_tracks(Enum.map(projects, & &1.id))
       |> MapSet.new(fn {row, _project} -> row.id end)
 
+    track_errors =
+      projects
+      |> Enum.filter(&(Map.get(tracks, &1.id) == {:error, :unavailable}))
+      |> MapSet.new(& &1.id)
+
     tracks =
       Map.new(projects, fn project ->
-        rows = Map.get(tracks, project.id, [])
+        rows =
+          if MapSet.member?(track_errors, project.id),
+            do: [],
+            else: Map.get(tracks, project.id, [])
+
         rows = Enum.filter(rows, &MapSet.member?(visible, &1.id))
         {project.id, rows}
       end)
@@ -1055,6 +1081,7 @@ defmodule RavixWeb.WorkspaceLive do
       section_placements: placements,
       projects: projects,
       tracks: tracks,
+      track_errors: track_errors,
       attention: attention_count(tracks)
     )
     |> assign_page_title()
@@ -1293,7 +1320,11 @@ defmodule RavixWeb.WorkspaceLive do
       <h3 id={"search-project-#{project.id}"}>
         <.link :if={project_matches?(project, @query)} patch={"/p/#{project.id}"} data-jump-result>
           {project.display_name}
-          <span class="badge" aria-label={"#{project_attention(@tracks, project.id)} unread"}>{project_attention(
+          <span
+            :if={project_attention(@tracks, project.id) > 0}
+            class="badge"
+            aria-label={"#{project_attention(@tracks, project.id)} unread"}
+          >{project_attention(
             @tracks,
             project.id
           )}</span>

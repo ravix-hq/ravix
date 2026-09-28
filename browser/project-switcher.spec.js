@@ -56,6 +56,11 @@ test('project tree and quick-jump navigate with keyboard and fit desktop and pho
     if (width === 500) await page.getByRole('button', { name: 'Close menu', exact: true }).click();
     const trigger = page.locator(width === 500 ? '#mobile-quick-jump-trigger' : '#quick-jump-trigger');
     if (width === 1280) await page.locator('#yard-toggle').click();
+    // Editing shortcuts belong to the composer, even while global search is available.
+    await page.locator('textarea').first().focus();
+    await page.keyboard.press('Control+k');
+    await expect(page.locator('#search-dialog')).toHaveCount(0);
+    await trigger.focus();
     await page.keyboard.press('Control+k');
     const picker = page.getByRole('dialog', { name: 'Search', exact: true });
     const search = picker.getByLabel('Search projects and tracks');
@@ -68,10 +73,11 @@ test('project tree and quick-jump navigate with keyboard and fit desktop and pho
     await page.keyboard.press('Enter');
     await expect(page).toHaveURL(new RegExp(`${projects[1].track}$`));
     await expect(picker).toHaveCount(0);
-    await page.keyboard.press('Meta+k');
+    await trigger.focus();
+    await page.keyboard.press('Control+k');
     await expect(search).toBeFocused();
     await search.fill('Tree Alpha');
-    await expect(picker.locator(`a[href='${projects[0].path}'] .badge`)).toHaveText('0');
+    await expect(picker.locator(`a[href='${projects[0].path}'] .badge`)).toHaveCount(0);
     expect((await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze()).violations).toEqual([]);
     await page.keyboard.press('Escape');
     await expect(picker).toHaveCount(0);

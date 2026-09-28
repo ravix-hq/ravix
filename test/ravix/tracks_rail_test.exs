@@ -22,14 +22,44 @@ defmodule Ravix.TracksRailTest do
     insert_track(project: foreign)
     insert_track(project: archived)
     insert_track(project: owned, closed_at: DateTime.utc_now())
+
+    private =
+      insert_track(
+        project: owned,
+        visibility: :private,
+        created_by: insert_user().id,
+        sandbox_layout: :dedicated
+      )
+
+    own_private =
+      insert_track(
+        project: member,
+        visibility: :private,
+        created_by: viewer.id,
+        sandbox_layout: :dedicated
+      )
+
+    invited_private =
+      insert_track(
+        project: shared,
+        visibility: :private,
+        created_by: insert_user().id,
+        sandbox_layout: :dedicated
+      )
+
+    insert_track_member(invited_private, viewer)
+    assert {:error, :not_found} = Access.track_access(viewer, private.id)
     ids = Enum.map([owned, member, shared, foreign, archived], & &1.id)
     {rows, queries} = QueryCount.count(fn -> Access.open_tracks(viewer, ids) end)
     assert length(queries) == 1
-    assert MapSet.new(rows, fn {track, _} -> track.id end) == MapSet.new([a.id, b.id, c.id])
+
+    assert MapSet.new(rows, fn {track, _} -> track.id end) ==
+             MapSet.new([a.id, b.id, c.id, own_private.id, invited_private.id])
+
     assert Access.open_tracks(insert_user(), ids) == []
     tracks = Tracks.list_many(viewer, ids)
     assert Enum.sort(Map.keys(tracks)) == Enum.sort([owned.id, member.id, shared.id])
-    assert Enum.map(tracks[shared.id], & &1.id) == [c.id]
+    assert MapSet.new(tracks[shared.id], & &1.id) == MapSet.new([c.id, invited_private.id])
 
     for project <- [owned, member, shared] do
       assert {:ok, expected} = Tracks.list(viewer, project.id)
@@ -58,6 +88,6 @@ defmodule Ravix.TracksRailTest do
 
     result = Tracks.list_many(viewer, [broken.id, healthy.id])
     assert Enum.map(result[healthy.id], & &1.id) == [track.id]
-    refute Map.has_key?(result, broken.id)
+    assert result[broken.id] == {:error, :unavailable}
   end
 end

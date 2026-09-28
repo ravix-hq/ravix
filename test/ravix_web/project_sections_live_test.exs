@@ -32,7 +32,15 @@ defmodule RavixWeb.ProjectSectionsLiveTest do
     |> render_hook("move-project", %{project: project.id, section: section.id})
 
     assert has_element?(view, "#section-#{section.id} a[href='/p/#{project.id}']")
-    assert has_element?(view, "#section-#{section.id} [data-collapse][aria-expanded=true]")
+
+    assert has_element?(
+             view,
+             "#section-#{section.id} [phx-click=toggle-section][aria-expanded=true]"
+           )
+
+    view |> element("#section-#{section.id} .section-toggle") |> render_click()
+    assert {[%{collapsed: true}], _} = Sections.list(user)
+    refute has_element?(view, "#section-#{section.id} .section-toggle[data-collapse]")
     render_click(view, "dialog", %{name: "search"})
     view |> form("#search-form", q: "SECTION") |> render_change()
     assert has_element?(view, "#search-dialog a[href='/p/#{project.id}']")
@@ -40,6 +48,7 @@ defmodule RavixWeb.ProjectSectionsLiveTest do
     assert has_element?(view, "#search-dialog", "No projects or tracks match")
     {:ok, reloaded, _} = live(conn, "/p/#{project.id}")
     render_async(reloaded)
+    assert has_element?(reloaded, "#section-projects-#{section.id}[hidden]")
     assert has_element?(reloaded, "#section-#{section.id} a[href='/p/#{project.id}']")
     reloaded |> element("#manage-sections") |> render_click()
     reloaded |> form("#move-project-#{project.id}", section: "") |> render_change()

@@ -115,7 +115,8 @@ defmodule Ravix.Tracks do
   @doc """
   Every track on a project that the caller may see: the sidebar's list.
 
-  The owner and anybody invited to the whole project see all of its tracks.
+  Project-visible tracks are available to the owner and project members.
+  Private tracks are available only to their creator and explicit invitees.
   Somebody invited to particular tracks sees those and is not told there
   are others. Same function, because the sidebar asks the same question
   whichever of the three is asking. Ordinary lists use the short conversation
@@ -128,8 +129,6 @@ defmodule Ravix.Tracks do
          access when access != nil <- Access.access_of(user.id, project) do
       rows = Access.open_tracks(user, [project.id]) |> Enum.map(&elem(&1, 0))
 
-      rows = Access.visible_tracks(user.id, rows, project)
-
       {:ok,
        present_all(rows, project, user, if(access == :owner, do: :owner, else: :member), opts)}
     else
@@ -138,10 +137,13 @@ defmodule Ravix.Tracks do
   end
 
   @doc "The rail's open tracks, discovered in one scoped query across projects."
-  @spec list_many(User.t(), [String.t()], keyword()) :: %{String.t() => [View.t()]}
+  @spec list_many(User.t(), [String.t()], keyword()) ::
+          %{String.t() => [View.t()] | {:error, :unavailable}}
   def list_many(%User{} = user, project_ids, opts \\ []) do
     groups =
-      Access.open_tracks(user, project_ids) |> Enum.group_by(fn {_row, project} -> project end)
+      Access.open_tracks(user, project_ids)
+      |> Enum.group_by(fn {_row, project} -> project end)
+      |> Enum.to_list()
 
     Ravix.TaskSupervisor
     |> Task.Supervisor.async_stream_nolink(
@@ -155,9 +157,10 @@ defmodule Ravix.Tracks do
       timeout: 5_000,
       on_timeout: :kill_task
     )
-    |> Enum.flat_map(fn
-      {:ok, entry} -> [entry]
-      {:exit, _reason} -> []
+    |> Enum.zip(groups)
+    |> Enum.map(fn
+      {{:ok, entry}, _group} -> entry
+      {{:exit, _reason}, {project, _entries}} -> {project.id, {:error, :unavailable}}
     end)
     |> Map.new()
   end

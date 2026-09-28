@@ -1480,7 +1480,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
     refute has_element?(tab_a, ".track-tab [role=img][aria-label='Unread reply']")
     refute has_element?(tab_b, ".track-tab [role=img][aria-label='Unread reply']")
     refute has_element?(tab_a, ".yard-nav .badge")
-    assert has_element?(tab_a, ".workspace-project-name .badge", "0")
+    refute has_element?(tab_a, ".workspace-project-name .badge")
 
     # ...somebody else's rail kept its own mark, which the event says nothing
     # about...

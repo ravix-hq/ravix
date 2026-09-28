@@ -105,6 +105,100 @@ defmodule RavixWeb.ProjectTreeLiveTest do
     refute render(view) =~ hidden.title
   end
 
+  test "private tracks appear only for their creator and invitees in tree, counts and search", %{
+    conn: conn
+  } do
+    owner = insert_user()
+    creator = insert_user()
+    invitee = insert_user()
+    member = insert_user()
+    project = insert_project(user: owner)
+    insert_project_member(project, creator)
+    insert_project_member(project, member)
+
+    track =
+      insert_track(
+        project: project,
+        title: "Secret work",
+        visibility: :private,
+        sandbox_layout: :dedicated,
+        created_by: creator.id
+      )
+
+    insert_track_member(track, invitee)
+    # Presentation supplies activity, while the real bulk Access query decides visibility.
+    stub(Tracks, :list_many, fn user, ids, _opts ->
+      Ravix.Accounts.Access.open_tracks(user, ids)
+      |> Enum.group_by(fn {_row, project} -> project.id end, fn {row, _} ->
+        %{Tracks.present(row) | status: :ready, unread: true}
+      end)
+    end)
+
+    for {viewer, visible?} <- [{owner, false}, {member, false}, {creator, true}, {invitee, true}] do
+      {:ok, view, _} = live(log_in_user(conn, viewer), "/home")
+      render_async(view, 5_000)
+      assert has_element?(view, "#project-track-tab-#{track.id}") == visible?
+      assert has_element?(view, "#project-link-#{project.id} .badge", "1") == visible?
+      assert has_element?(view, ".yard-nav a[href='/inbox'] .badge", "1") == visible?
+      render_click(view, "dialog", %{name: "search"})
+      view |> form("#search-form", q: "Secret work") |> render_change()
+
+      assert has_element?(view, "#search-dialog a[href='/p/#{project.id}/t/#{track.id}']") ==
+               visible?
+
+      view |> form("#search-form", q: "") |> render_change()
+
+      assert has_element?(view, "#search-dialog a[href='/p/#{project.id}'] .badge", "1") ==
+               visible?
+
+      unless visible?, do: refute(render(view) =~ "Secret work")
+      GenServer.stop(view.pid)
+    end
+  end
+
+  test "a failed project offers scoped retry and recovers without reloading other projects", %{
+    conn: conn
+  } do
+    user = insert_user()
+    project = insert_project(user: user)
+    other = insert_project(user: user)
+    track = insert_track(project: project)
+
+    stub(Tracks, :list_many, fn _, _, _ ->
+      %{project.id => {:error, :unavailable}, other.id => []}
+    end)
+
+    {:ok, view, _} = live(log_in_user(conn, user), "/home")
+    render_async(view, 5_000)
+    panel = "#project-tracks-#{project.id}"
+    assert has_element?(view, panel, "Couldn't load tracks")
+    refute has_element?(view, panel, "No open tracks")
+    assert has_element?(view, "#project-tracks-#{other.id}", "No open tracks")
+    render_click(view, "dialog", %{name: "search"})
+    render_click(view, "dismiss")
+    assert has_element?(view, panel, "Couldn't load tracks")
+
+    expect(Tracks, :list, fn ^user, id, [fresh: true] ->
+      assert id == project.id
+      {:error, :not_found}
+    end)
+
+    view |> element(panel <> " button", "Retry") |> render_click()
+    render_async(view, 5_000)
+    assert has_element?(view, panel, "Couldn't load tracks")
+
+    expect(Tracks, :list, fn ^user, id, [fresh: true] ->
+      assert id == project.id
+      {:ok, [Tracks.present(track)]}
+    end)
+
+    view |> element(panel <> " button", "Retry") |> render_click()
+    render_async(view, 5_000)
+    assert has_element?(view, "#project-track-tab-#{track.id}")
+    refute has_element?(view, panel, "Couldn't load tracks")
+    render_click(view, "retry-tracks", %{id: insert_project().id})
+  end
+
   test "new-track action on the current project preserves the selected track", %{conn: conn} do
     user = insert_user()
     project = insert_project(user: user)

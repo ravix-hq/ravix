@@ -229,7 +229,10 @@
                 :if={section.id || @sections != []}
                 type="button"
                 class="ghost section-toggle"
-                data-collapse={"section-#{section.id || "other"}"}
+                data-collapse={if is_nil(section.id), do: "section-other"}
+                phx-click={if section.id, do: "toggle-section"}
+                phx-value-id={section.id}
+                phx-value-collapsed={to_string(!section.collapsed)}
                 aria-expanded={to_string(!section.collapsed)}
                 aria-controls={"section-projects-#{section.id || "other"}"}
               >
@@ -267,6 +270,7 @@
                     >
                       <span class="truncate"><.project_name project={project} /></span>
                       <span
+                        :if={project_attention(@tracks, project.id) > 0}
                         class="badge"
                         aria-label={"#{project_attention(@tracks, project.id)} unread"}
                       >{project_attention(@tracks, project.id)}</span>
@@ -332,7 +336,22 @@
                       <span class="track-title">{tab_label(track)}</span>
                       <span :if={track.visibility == :private}><.icon name="lock" /> Private</span>
                     </.link>
-                    <p :if={@rail_loaded && (@tracks[project.id] || []) == []} class="hint">
+                    <div :if={MapSet.member?(@track_errors, project.id)} role="status">
+                      <p class="hint">Couldn't load tracks</p>
+                      <button
+                        type="button"
+                        class="ghost"
+                        phx-click="retry-tracks"
+                        phx-value-id={project.id}
+                      >Retry</button>
+                    </div>
+                    <p
+                      :if={
+                        @rail_loaded && !MapSet.member?(@track_errors, project.id) &&
+                          (@tracks[project.id] || []) == []
+                      }
+                      class="hint"
+                    >
                       No open tracks
                     </p>
                   </nav>

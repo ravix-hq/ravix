@@ -27,14 +27,16 @@ RAV-11 and the navigation portion of RAV-9.
 
 - Show every accessible project in the rail, grouped by the viewer's existing
   personal sections and order, with unsectioned projects last. Sections and
-  projects collapse independently. Collapse is a per-viewer browser preference,
-  never shared project state.
+  projects collapse independently. Named sections use the viewer's saved section
+  preferences across devices; project rows and the synthetic unsectioned group
+  use local browser preferences. Neither is shared project state.
 - Each project appears once, with its unread badge and a new-track action only
   for viewers who may create tracks. Its expanded children are the open tracks
   that viewer can access. Highlight the current project and track. This tree
   replaces both the switcher control and the separate selected-project track list.
 - Search becomes quick-jump over accessible projects and tracks, opened by
-  Cmd/Ctrl-K or the visible Search button. Arrow keys and Enter select results;
+  Cmd-K on macOS, Ctrl-K elsewhere, or the visible Search button. Shortcuts
+  preserve editing keys inside text fields and terminals. Arrow keys and Enter select results;
   Escape dismisses the shared dialog and returns focus to its trigger.
 - Keep Home, Inbox with its global unread total, Schedules, Add a project and
   Manage sections reachable. Mobile uses the same tree in its navigation drawer;
