@@ -115,16 +115,21 @@ defmodule Ravix.Tracks.Transcript do
           Enum.map(Enum.reverse(order), fn id ->
             turn = Map.fetch!(turns, id)
 
-            turn =
-              if is_map(failures) and turn.settled?,
-                do: %{turn | failure: Map.get(failures, id)},
-                else: turn
-
+            turn = with_stored_failure(turn, failures)
             finish(turn, turn.fold)
           end),
         last_event_id: last
     }
   end
+
+  # Catch-up reads corrections for the active conversation only. Retain
+  # corrections already attached to archived conversations on this page.
+  defp with_stored_failure(%Turn{settled?: true} = turn, failures) when is_map(failures),
+    do: %{turn | failure: Map.get(failures, turn.id, known_failure(turn.failure))}
+
+  defp with_stored_failure(turn, _failures), do: turn
+  defp known_failure(:unclassified), do: nil
+  defp known_failure(failure), do: failure
 
   defp batch_event(%Event{id: id} = event, runtime, {turns, order, last}) when is_integer(id) do
     event = bind_suspension(event, turns, order)

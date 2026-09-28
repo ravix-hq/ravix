@@ -32,6 +32,19 @@ defmodule Ravix.Tracks.TranscriptLoadTest do
     missed = Fixture.output(2, Fixture.text("missed "))
     newest = Fixture.output(3, Fixture.text("latest"))
     page = %{Transcript.page([first], "codex") | conversation_id: "catch-up"}
+
+    old_events = [
+      Fixture.output(1, Fixture.text("old"), "archived"),
+      Map.put(Fixture.stage(2, "completed"), "turn_id", "archived")
+    ]
+
+    [historical] =
+      Transcript.page(old_events, "codex", %{
+        "archived" => %{code: "agent_provider_unreachable", reason: "Retained failure"}
+      }).turns
+
+    historical = %{historical | image_count: 2}
+    page = %{page | turns: [historical | page.turns]}
     base = "/api/conversations/catch-up"
 
     client =
@@ -54,7 +67,8 @@ defmodule Ravix.Tracks.TranscriptLoadTest do
     assert FakeTransport.calls(client) == []
     assert {:ok, result} = Tracks.events(owner, track.id, page: page)
     assert result.last_event_id == 3
-    assert [%{blocks: [%{body: "hello missed latest"}]}] = result.turns
+    assert [retained, %{blocks: [%{body: "hello missed latest"}]}] = result.turns
+    assert retained == historical
     assert_receive {:span, build = span(name: "transcript.build", parent_span_id: parent)}
     assert attributes(build)["ravix.event_count"] == 2
     assert_receive {:span, span(name: "transcript.images", parent_span_id: ^parent)}
