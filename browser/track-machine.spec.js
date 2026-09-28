@@ -17,7 +17,13 @@ test('machine status follows the selected dedicated track, never its shared proj
     await page.getByRole('button', { name: 'Create track', exact: true }).click();
     await expect.poll(() => new URL(page.url()).pathname).not.toBe(previousPath);
     await expect(page.getByRole('textbox', { name: 'Message', exact: true })).toBeEnabled();
-    // Setup finishes on the shared layout the fixture then rewrites.
+    // Setup finishes on the shared layout the fixture then rewrites, so wait
+    // for the chip to say so: Idle is drawn only once setup is ready and the
+    // opening turn has settled. The queue's sweep confirms setup about five
+    // seconds after the opening turn is sent, and every few seconds after
+    // (`Ravix.Tracks.Setup`); the margin is for a loaded runner. Before the
+    // queue was woken for it, the first check waited out the sweep's 30s
+    // backstop, which is what this wait used to race.
     await expect(page.locator('#track-machine-state')).toHaveText('Idle', { timeout: 30_000 });
     paths.push(new URL(page.url()).pathname);
   }

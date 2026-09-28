@@ -527,6 +527,7 @@ defmodule Ravix.TracksTest do
 
     test "attaching to the machine that is there: the opening turn is a separate prompt", ctx do
       client = opening_fountain(ctx.project, true)
+      Phoenix.PubSub.subscribe(Ravix.PubSub, "prompt_queue:wake")
 
       assert {:ok, presented} =
                Tracks.open(ctx.owner, ctx.project.id, %{"title" => "Kyoto"}, opening_turn: :sync)
@@ -566,11 +567,17 @@ defmodule Ravix.TracksTest do
       # Named with the track it opened, so a page showing a sibling track of
       # the same project can leave it alone.
       assert_receive {:hub, %Event{name: :tracks, project_id: ^project_id, track_id: ^track_id}}
+      # Setup's next check is the queue's sweep, which must hear of it now
+      # rather than at its backstop.
+      assert_receive :prompt_queued
     end
 
     test "provisioning: the opening turn rides along with the launch", ctx do
       client = opening_fountain(ctx.project, false)
+      Phoenix.PubSub.subscribe(Ravix.PubSub, "prompt_queue:wake")
       assert {:ok, presented} = Tracks.open(ctx.owner, ctx.project.id, %{title: "Kyoto"})
+      # The queue's sweep reconciles this setup, so it is woken to.
+      assert_receive :prompt_queued
 
       [_list, create] = FakeTransport.calls(client)
       assert create.body["sandbox_mode"] == "persistent"

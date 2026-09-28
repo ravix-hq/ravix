@@ -1070,6 +1070,11 @@ defmodule Ravix.Tracks do
           plan.origin,
           Keyword.get(opts, :opening_turn, :async)
         )
+      else
+        # A first track has no machine yet to open on, so the queue's sweep
+        # sends its opening turn; tell it there is one rather than leave it
+        # to the backstop.
+        QueueServer.wake()
       end
 
       # A first track provisions the machine, so what the memo holds is out
@@ -1323,7 +1328,7 @@ defmodule Ravix.Tracks do
 
   defp retry_track(client, %{setup_state: "failed"} = track, _project, _thread) do
     Store.retry_setup(track.id)
-    Setup.advance(client, track.id)
+    advance_setup(client, track.id)
   end
 
   defp retry_track(
@@ -1333,7 +1338,7 @@ defmodule Ravix.Tracks do
          _thread
        ) do
     Store.wake_setup(track.id)
-    Setup.advance(client, track.id)
+    advance_setup(client, track.id)
   end
 
   defp retry_track(_client, _track, _project, _thread),
@@ -1356,8 +1361,18 @@ defmodule Ravix.Tracks do
   end
 
   defp send_opening_turn(client, track, _project, _origin, :sync) do
-    Setup.advance(client, track.id)
+    advance_setup(client, track.id)
     :ok
+  end
+
+  # Setup's later checks are the queue's sweep, which learns when the next
+  # one falls due only from a sweep of its own. Advancing from here leaves a
+  # check due in seconds that the sweep does not know about, so without a
+  # wake it waits out its backstop interval.
+  defp advance_setup(client, id) do
+    result = Setup.advance(client, id)
+    QueueServer.wake()
+    result
   end
 
   defp opening_prompt(slug, branch, project, origin),
