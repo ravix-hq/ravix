@@ -79,7 +79,9 @@ defmodule RavixWeb.Live.PeopleDialogTest do
   defp track_page_with_parent(conn, user, project, track) do
     {:ok, parent, _} = live(log_in_user(conn, user), "/p/#{project.id}/t/#{track.id}")
     view = find_live_child(parent, "track-host")
-    render_async(view)
+    # The child loads alongside the asynchronous rail; the default 100ms
+    # deadline is not a reliable bound under coverage and concurrent tests.
+    render_async(view, 5_000)
     {view, parent}
   end
 
