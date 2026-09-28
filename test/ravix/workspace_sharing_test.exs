@@ -392,6 +392,62 @@ defmodule Ravix.WorkspaceSharingTest do
       assert Repo.aggregate(AccessNotice, :count) == 2
     end
 
+    test "the owner's and the creator's own seats go too, and a second run finds nothing", ctx do
+      # #299 let a creator seat the project's owner on a private track, and
+      # a link could seat the creator on their own.
+      insert_track_member(ctx.secret, ctx.owner)
+      insert_track_member(ctx.secret, ctx.creator)
+      # The owner is no longer in the workspace.
+      Repo.update_all(
+        where(Membership, workspace_id: ^ctx.workspace.id, user_id: ^ctx.owner.id),
+        set: [revoked_at: DateTime.utc_now()]
+      )
+
+      assert reaches?(ctx.owner, ctx.secret)
+      {:ok, %{tracks: tracks}} = Cutover.run(apply: true)
+      secret = Enum.find(tracks, &(&1.track_id == ctx.secret.id))
+
+      refute reaches?(ctx.owner, ctx.secret)
+      assert ctx.owner.login in secret.revoked
+      refute ctx.creator.login in secret.revoked
+      refute ctx.creator.login in secret.converted
+      assert reaches?(ctx.creator, ctx.secret)
+      refute Repo.exists?(where(TrackMember, track_id: ^ctx.secret.id))
+
+      refute Repo.exists?(
+               where(TrackPermission, track_id: ^ctx.secret.id, user_id: ^ctx.creator.id)
+             )
+
+      assert {:ok, %{tracks: []}} = Cutover.run(apply: true)
+      assert {:ok, %{tracks: []}} = Cutover.run()
+    end
+
+    test "a member's seat on a project-visible track becomes no row to wake later", ctx do
+      insert_track_member(ctx.open, ctx.colleague)
+      {:ok, _} = Cutover.run(apply: true)
+
+      assert reaches?(ctx.colleague, ctx.open)
+      refute Repo.exists?(where(TrackPermission, track_id: ^ctx.open.id))
+
+      # Made private later, it reaches only whom the creator then chooses.
+      Repo.update_all(where(Track, id: ^ctx.open.id),
+        set: [visibility: :private, sandbox_layout: :dedicated]
+      )
+
+      refute reaches?(ctx.colleague, ctx.open)
+    end
+
+    test "a member of a different workspace is not converted", ctx do
+      {:ok, _theirs} = Store.ensure_personal_workspace(ctx.outsider)
+      {:ok, %{tracks: tracks}} = Cutover.run(apply: true)
+      secret = Enum.find(tracks, &(&1.track_id == ctx.secret.id))
+
+      refute ctx.outsider.login in secret.converted
+      assert ctx.outsider.login in secret.revoked
+      refute Repo.exists?(where(TrackPermission, user_id: ^ctx.outsider.id))
+      refute reaches?(ctx.outsider, ctx.secret)
+    end
+
     test "a converted holder loses the track when they leave the workspace", ctx do
       {:ok, _} = Cutover.run(apply: true)
       assert reaches?(ctx.holder, ctx.secret)

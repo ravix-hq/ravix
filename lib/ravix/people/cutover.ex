@@ -6,13 +6,15 @@ defmodule Ravix.People.Cutover do
   For every track on a workspace project that still holds a legacy seat
   (`Ravix.Tracks.TrackMember`), a waiting invitation or a link:
 
-    * a seat whose holder is a live member of the track's workspace becomes
-      a permission row (`Ravix.Tracks.TrackPermission`) and the seat goes.
-      Nothing is widened: a permission row admits only while its holder
-      stays in the workspace, which is narrower than the seat was.
-    * a seat whose holder is not a member is taken away, with its preview
-      grants. Nobody is made a workspace member by it, and no legacy grant
-      is broadened into one.
+    * every seat goes, the project owner's and the creator's included.
+    * on a private track, a seat whose holder is a live member of the
+      track's workspace (and not its creator) becomes a permission row
+      (`Ravix.Tracks.TrackPermission`). Nothing is widened: the row admits
+      only while its holder stays in the workspace, which is narrower than
+      the seat was. A project-visible track gets no rows: its members
+      reach it through the workspace already.
+    * any other seat is taken away, with its preview grants. Nobody is made
+      a workspace member by it, and no legacy grant is broadened into one.
     * waiting invitations are withdrawn and the link is deleted, so an old
       link URL admits nobody (`Ravix.People.claim_link/2` also refuses it).
     * whoever lost access, or had an invitation withdrawn, is listed in one
@@ -76,42 +78,60 @@ defmodule Ravix.People.Cutover do
 
   defp plan(track, project) do
     workspace_id = project.workspace_id
-    creator = track.created_by || project.user_id
+    notify = track.created_by || project.user_id
 
     # ownership: no door -- an operator step run as nobody; these rows are
     # the track's own seats and their holders' memberships.
-    {converted, gone} =
-      track.id
-      |> Store.members_of()
-      |> Enum.reject(&(&1.id in [creator, project.user_id]))
-      |> Enum.split_with(&(Workspaces.membership(workspace_id, &1.id) != nil))
+    seats =
+      Enum.map(Store.members_of(track.id), fn user ->
+        {user, Workspaces.membership(workspace_id, user.id) != nil}
+      end)
 
-    revoked = Enum.reject(gone, &keeps_it?(&1, track, project))
-    withdrawn = Enum.map(Store.invites_of(track.id), & &1.login)
+    # Every seat goes, the owner's and the creator's included: with the
+    # switch on a seat admits whatever the workspace says, so one left
+    # behind would outlive its holder's membership. Only a live member on a
+    # private track, other than its creator, becomes a permission row; on a
+    # project-visible track a row would turn into a grant the creator never
+    # chose the day they made it private, and the creator needs none.
+    {converted, removed} =
+      Enum.split_with(seats, fn {user, member?} ->
+        member? and track.visibility == :private and user.id != track.created_by
+      end)
+
+    revoked =
+      for {user, member?} <- removed,
+          user.id != notify,
+          not keeps_it?(user, member?, track, project),
+          do: user
 
     %{
       track_id: track.id,
       title: track.title,
       project_id: project.id,
       workspace_id: workspace_id,
-      converted: Enum.map(converted, & &1.login),
+      converted: Enum.map(converted, &elem(&1, 0).login),
       revoked: Enum.map(revoked, & &1.login),
-      withdrawn: withdrawn,
+      withdrawn: Enum.map(Store.invites_of(track.id), & &1.login),
       link: Store.link_of(track.id) != nil,
       # A closed track has nothing left to lose access to, and no page to
       # say so from; its seats and links still go.
-      notify: if(is_nil(track.closed_at), do: creator),
-      seats: %{convert: Enum.map(converted, & &1.id), remove: Enum.map(gone, & &1.id)}
+      notify: if(is_nil(track.closed_at), do: notify),
+      seats: %{
+        convert: Enum.map(converted, &elem(&1, 0).id),
+        remove: Enum.map(removed, &elem(&1, 0).id)
+      }
     }
   end
 
-  # Whether somebody whose seat goes still reaches the track without it:
-  # `Access.visible_track?/3` with the switch on, for a non-member of the
-  # workspace, admits only a legacy project member, and only to a
-  # project-visible track. They keep it and are not listed as losing it.
-  defp keeps_it?(user, track, project) do
+  # Whether somebody whose seat goes still reaches the track without it, as
+  # `Access.visible_track?/3` decides with the switch on: a project-visible
+  # track is still theirs through the workspace, or through a legacy grant
+  # (the project's owner, a project member). A private one is not, since
+  # the only non-creator way in is the permission row they did not get.
+  defp keeps_it?(user, member?, track, project) do
     # ownership: no door -- an operator step; is this seat their only way in?
-    track.visibility == :project and Access.project_member?(project.id, user.id)
+    track.visibility == :project and
+      (member? or user.id == project.user_id or Access.project_member?(project.id, user.id))
   end
 
   # Resumable rather than one transaction: every step is idempotent, and the

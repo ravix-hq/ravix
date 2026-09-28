@@ -81,12 +81,13 @@ defmodule RavixWeb.ShareDialogTest do
     stub(Tracks, :mark_read, fn _, _, _ -> :ok end)
   end
 
-  defp present(_user, id) do
+  defp present(user, id) do
     row = Repo.get!(Track, id)
+    role = if Repo.get!(Project, row.project_id).user_id == user.id, do: :owner, else: :member
 
     {:ok,
      %{
-       track: Tracks.present(row, role: :member),
+       track: Tracks.present(row, role: role),
        header: %Tracks.Header{
          copy_of: nil,
          branched_from: nil,
@@ -205,14 +206,25 @@ defmodule RavixWeb.ShareDialogTest do
                "/p/#{ctx.project.id}/t/#{ctx.secret.id}"
     end
 
-    test "a holder reads who it is shared with, and may leave but not manage", ctx do
+    test "only whoever manages sharing sees Share; a holder and a member do not", ctx do
       :ok = People.share(ctx.creator, ctx.secret.id, ctx.holder.id)
-      view = ctx.holder |> track_page(ctx.secret) |> open_share()
+      holder = track_page(ctx.holder, ctx.secret)
+      refute has_element?(holder, "#track-share-button")
+      render_click(holder, "dialog", %{"name" => "people"})
+      refute has_element?(holder, "#track-share-dialog")
+      refute has_element?(holder, "#track-people-invite-form")
 
-      refute has_element?(view, "#share-visibility-form")
-      refute has_element?(view, "#share-person-form")
-      assert render(view) =~ "Only the creator and the people it is shared with"
-      assert has_element?(view, "button[aria-label='Leave this track']")
+      open =
+        insert_track(
+          project: ctx.project,
+          title: "Open work",
+          created_by: ctx.creator.id,
+          created_by_login: ctx.creator.login
+        )
+
+      refute has_element?(track_page(ctx.colleague, open), "#track-share-button")
+      # The project's owner manages a project-visible track, as in #299.
+      assert has_element?(track_page(ctx.owner, open), "#track-share-button")
     end
 
     test "the creator's consent note shows on a track they pay for, until acknowledged", ctx do

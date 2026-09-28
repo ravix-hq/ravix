@@ -82,7 +82,9 @@
         )}
       </span>
       <span class="spacer"></span><button
-        :if={Ravix.People.workspace_sharing?(@project)}
+        :if={
+          Ravix.People.workspace_sharing?(@project) && owner_or_creator?(@current_user, @track)
+        }
         id="track-share-button"
         class="ghost"
         phx-click={JS.push_focus() |> JS.push("dialog")}
@@ -932,7 +934,10 @@
       </form>
     </.dialog>
     <.live_component
-      :if={@dialog == :people && Ravix.People.workspace_sharing?(@project)}
+      :if={
+        @dialog == :people && Ravix.People.workspace_sharing?(@project) &&
+          owner_or_creator?(@current_user, @track)
+      }
       module={RavixWeb.Live.ShareDialog}
       id="track-share"
       track_id={@track_id}

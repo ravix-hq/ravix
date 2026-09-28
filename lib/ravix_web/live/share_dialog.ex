@@ -6,8 +6,10 @@ defmodule RavixWeb.Live.ShareDialog do
   and every project while the switch is off, keeps that dialog, its
   invitations and its links.
 
-  Three parts, each drawn only when `Ravix.People.sharing/2` says the
-  caller may use it:
+  Only whoever manages the track's sharing opens it -- its creator, or the
+  project's owner on a project-visible track, as #299 had it -- and within
+  it each of three parts is drawn only when `Ravix.People.sharing/2` says
+  the caller may use it:
 
     * **Visibility** -- "Everyone in <workspace>" or "Only people I add".
       The creator's choice; private needs a dedicated machine (#299).
@@ -75,7 +77,7 @@ defmodule RavixWeb.Live.ShareDialog do
     {:noreply,
      result(socket, People.unshare_login(user, id, login), fn s, _ ->
        send(self(), {:person_removed, :track, login})
-       if login == user.login, do: s, else: load(s)
+       load(s)
      end)}
   end
 
@@ -199,19 +201,15 @@ defmodule RavixWeb.Live.ShareDialog do
                   <small :if={person.name}>{person.name}</small>
                 </div>
                 <button
-                  :if={@sharing.manage_people or person.login == @current_user.login}
+                  :if={@sharing.manage_people}
                   type="button"
                   class="ghost"
                   phx-click="remove"
                   phx-value-login={person.login}
                   phx-target={@myself}
-                  aria-label={
-                    if person.login == @current_user.login,
-                      do: "Leave this track",
-                      else: "Remove @#{person.login}"
-                  }
+                  aria-label={"Remove @#{person.login}"}
                 >
-                  {if person.login == @current_user.login, do: "Leave", else: "Remove"}
+                  Remove
                 </button>
               </li>
             </ul>
