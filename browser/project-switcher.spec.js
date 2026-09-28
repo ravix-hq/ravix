@@ -2,6 +2,16 @@ import { test, expect } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import { signIn, connectClaude } from './sign-in.js';
 
+// Phoenix LiveView 1.2's JS.focus runs immediately and again in two animation
+// frames. Wait for that mount command to finish before exercising focus across
+// a search-result patch; otherwise its deferred focus can steal the selected row.
+async function searchReady(search) {
+  await expect(search).toBeFocused();
+  await search.evaluate(() => new Promise(resolve =>
+    requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  await expect(search).toBeFocused();
+}
+
 test('project tree and quick-jump navigate with keyboard and fit desktop and phone', async ({ page }) => {
   test.setTimeout(120_000);
   await signIn(page, 'eli', '/home');
@@ -64,7 +74,7 @@ test('project tree and quick-jump navigate with keyboard and fit desktop and pho
     await page.keyboard.press('Control+k');
     const picker = page.getByRole('dialog', { name: 'Search', exact: true });
     const search = picker.getByLabel('Search projects and tracks');
-    await expect(search).toBeFocused();
+    await searchReady(search);
     await search.fill('beta-work');
     await expect(picker.locator(`a[href='${projects[1].track}']`)).toBeVisible();
     await expect(picker.locator(`a[href='${projects[0].path}']`)).toHaveCount(0);
@@ -75,7 +85,7 @@ test('project tree and quick-jump navigate with keyboard and fit desktop and pho
     await expect(picker).toHaveCount(0);
     await trigger.focus();
     await page.keyboard.press('Control+k');
-    await expect(search).toBeFocused();
+    await searchReady(search);
     await search.fill('Tree Alpha');
     await expect(picker.locator(`a[href='${projects[0].path}'] .badge`)).toHaveCount(0);
     expect((await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze()).violations).toEqual([]);
@@ -83,6 +93,7 @@ test('project tree and quick-jump navigate with keyboard and fit desktop and pho
     await expect(picker).toHaveCount(0);
     await expect(trigger).toBeFocused();
     await trigger.press('Enter');
+    await searchReady(search);
     await search.fill('Tree Beta');
     const betaProject = picker.locator(`a[href='${projects[1].path}']`);
     // Blur sends a pending search change; the selected row moves past Alpha.
