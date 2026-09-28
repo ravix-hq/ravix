@@ -144,7 +144,7 @@ defmodule RavixWeb.Live.AgentPanel do
 
         {:noreply,
          socket
-         |> assign(busy: true)
+         |> assign(busy: true, thread_default_saved: false, thread_default_error: nil)
          |> traced_async(:thread_default, fn ->
            ThreadPreference.save(user, runtime, model)
          end)}
@@ -153,6 +153,9 @@ defmodule RavixWeb.Live.AgentPanel do
         {:noreply, socket}
     end
   end
+
+  def handle_event("change-thread-default", _params, socket),
+    do: {:noreply, assign(socket, thread_default_saved: false, thread_default_error: nil)}
 
   def handle_event("save-thread-default", _params, socket), do: {:noreply, socket}
 
@@ -373,7 +376,11 @@ defmodule RavixWeb.Live.AgentPanel do
   def handle_async(:thread_default, {:ok, {:error, reason}}, socket),
     do:
       {:noreply,
-       assign(socket, busy: false, thread_default_error: RavixWeb.Error.from(reason).message)}
+       assign(socket,
+         busy: false,
+         thread_default_saved: false,
+         thread_default_error: RavixWeb.Error.from(reason).message
+       )}
 
   # A set Fountain would not list is not drawn as empty: empty is a claim.
   def handle_async(:held, _other, socket), do: {:noreply, socket}
@@ -567,6 +574,7 @@ defmodule RavixWeb.Live.AgentPanel do
         :if={is_nil(@scoped_agent) && @thread_defaults && @thread_defaults.choices != []}
         id="thread-default-form"
         phx-submit="save-thread-default"
+        phx-change="change-thread-default"
         phx-target={@myself}
       >
         <label for="thread-default-choice">Default agent for new threads</label>

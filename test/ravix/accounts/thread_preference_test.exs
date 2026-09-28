@@ -5,12 +5,13 @@ defmodule Ravix.Accounts.ThreadPreferenceTest do
   alias Ravix.Accounts.{Inference, ThreadPreference}
   alias Ravix.Fountain.FakeTransport
   alias Ravix.Fountain.Shapes.Catalog
+  alias Ravix.Projects.Machine
 
   @catalog %Catalog{
     runtimes: ["claude", "codex"],
     models: %{
-      "claude" => ["sonnet", "opus"],
-      "codex" => ["gpt"]
+      "claude" => ["anthropic/claude-sonnet-5", "anthropic/claude-opus-5-5"],
+      "codex" => ["openai/gpt-6-astra"]
     }
   }
 
@@ -30,7 +31,8 @@ defmodule Ravix.Accounts.ThreadPreferenceTest do
       {:ok, [{:claude, :subscription}, {:codex, :api_key}, {:codex, :subscription}]}
     end)
 
-    assert {:ok, %{runtime: "codex", model: "gpt"}} = ThreadPreference.get(user, @catalog)
+    assert {:ok, %{runtime: "codex", model: "openai/gpt-6-astra"}} =
+             ThreadPreference.get(user, @catalog)
 
     {:ok, user} =
       Ravix.Accounts.save_setup(user, %{
@@ -42,9 +44,59 @@ defmodule Ravix.Accounts.ThreadPreferenceTest do
           )
       })
 
-    assert {:ok, %{runtime: "claude", model: "sonnet"}} = ThreadPreference.get(user, @catalog)
-    assert {:ok, _} = ThreadPreference.put(user, "claude", "opus", @catalog)
-    assert {:ok, %{runtime: "claude", model: "opus"}} = ThreadPreference.get(user, @catalog)
+    assert {:ok, %{runtime: "claude", model: "anthropic/claude-opus-5-5"}} =
+             ThreadPreference.get(user, @catalog)
+
+    assert {:ok, _} = ThreadPreference.put(user, "claude", "anthropic/claude-opus-5-5", @catalog)
+
+    assert {:ok, %{runtime: "claude", model: "anthropic/claude-opus-5-5"}} =
+             ThreadPreference.get(user, @catalog)
+  end
+
+  test "subscription defaults and removed saved models avoid Fable even when it is first" do
+    catalog = %Catalog{
+      runtimes: ["claude", "codex"],
+      models: %{
+        "claude" => [
+          "anthropic/claude-fable-5-1",
+          "anthropic/claude-opus-5-5",
+          "anthropic/claude-opus-5"
+        ],
+        "codex" => ["openai/gpt-6-astra"]
+      }
+    }
+
+    user = insert_user(agent: :claude, credential_set_id: "set")
+    stub(Inference, :cached_held, fn _ -> {:ok, [{:claude, :subscription}]} end)
+    assert {:ok, %{model: "anthropic/claude-opus-5"}} = ThreadPreference.get(user, catalog)
+
+    assert Machine.pick_runtime(catalog, "claude").model ==
+             "anthropic/claude-opus-5"
+
+    assert {:ok, _} = ThreadPreference.put(user, "claude", "anthropic/claude-opus-5-5", catalog)
+
+    removed = %{
+      catalog
+      | models:
+          Map.put(catalog.models, "claude", [
+            "anthropic/claude-fable-5-1",
+            "anthropic/claude-opus-5"
+          ])
+    }
+
+    assert {:ok, %{model: "anthropic/claude-opus-5"}} = ThreadPreference.get(user, removed)
+
+    newer = %{
+      catalog
+      | models:
+          Map.put(catalog.models, "claude", [
+            "anthropic/claude-fable-5-1",
+            "anthropic/claude-opus-5-5"
+          ])
+    }
+
+    assert {:ok, _} = ThreadPreference.clear(user)
+    assert {:ok, %{model: "anthropic/claude-opus-5-5"}} = ThreadPreference.get(user, newer)
   end
 
   test "only held credentials count and empty accounts have no preference" do
@@ -54,17 +106,24 @@ defmodule Ravix.Accounts.ThreadPreferenceTest do
     stub(Inference, :cached_held, fn _ -> {:ok, []} end)
     assert {:ok, nil} = ThreadPreference.get(user, @catalog)
     stub(Inference, :cached_held, fn _ -> {:ok, [{:claude, :api_key}]} end)
-    assert {:ok, %{runtime: "claude", model: "sonnet"}} = ThreadPreference.get(user, @catalog)
+
+    assert {:ok, %{runtime: "claude", model: "anthropic/claude-opus-5-5"}} =
+             ThreadPreference.get(user, @catalog)
   end
 
   test "invalid runtimes/models are refused, and an explicit preference changes only its person" do
     user = insert_user()
     other = insert_user()
-    assert {:error, _} = ThreadPreference.put(user, "unknown", "opus", @catalog)
-    assert {:error, _} = ThreadPreference.put(user, "codex", "opus", @catalog)
-    assert {:ok, _} = ThreadPreference.put(user, "claude", "opus", @catalog)
+
+    assert {:error, _} =
+             ThreadPreference.put(user, "unknown", "anthropic/claude-opus-5-5", @catalog)
+
+    assert {:error, _} =
+             ThreadPreference.put(user, "codex", "anthropic/claude-opus-5-5", @catalog)
+
+    assert {:ok, _} = ThreadPreference.put(user, "claude", "anthropic/claude-opus-5-5", @catalog)
     assert {:ok, nil} = ThreadPreference.get(other, @catalog)
-    assert {:ok, %{model: "opus"}} = ThreadPreference.get(user, @catalog)
+    assert {:ok, %{model: "anthropic/claude-opus-5-5"}} = ThreadPreference.get(user, @catalog)
   end
 
   test "account setting refuses disconnected agents and persists a validated choice" do
@@ -72,7 +131,7 @@ defmodule Ravix.Accounts.ThreadPreferenceTest do
     stub(Inference, :usable?, fn _, _, _ -> {:ok, false} end)
 
     assert {:error, {:unprocessable, "agent_not_connected", _}} =
-             ThreadPreference.save(user, "codex", "gpt")
+             ThreadPreference.save(user, "codex", "openai/gpt-6-astra")
 
     stub(Inference, :usable?, fn _, _, _ -> {:ok, true} end)
 
@@ -80,7 +139,7 @@ defmodule Ravix.Accounts.ThreadPreferenceTest do
 
     stub(Ravix.MachineCache, :catalog, fn _ -> {:ok, @catalog} end)
 
-    assert {:ok, %{preferred_runtime: :codex, preferred_model: "gpt"}} =
-             ThreadPreference.save(user, "codex", "gpt")
+    assert {:ok, %{preferred_runtime: :codex, preferred_model: "openai/gpt-6-astra"}} =
+             ThreadPreference.save(user, "codex", "openai/gpt-6-astra")
   end
 end

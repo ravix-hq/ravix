@@ -427,22 +427,15 @@ defmodule Ravix.Accounts.Inference do
     current = Accounts.Store.get_user(user.id)
     choose? = is_nil(current.agent) or make_default?
 
-    attrs = %{
-      credential_set_id: set_id,
-      credential_connected_at:
-        Map.put(
-          current.credential_connected_at,
-          "#{agent}:#{kind}",
-          DateTime.to_iso8601(DateTime.utc_now())
-        )
-    }
+    attrs = %{credential_set_id: set_id}
 
     attrs =
       if choose? or current.agent == agent,
         do: Map.merge(attrs, %{agent: agent, credential_kind: kind}),
         else: attrs
 
-    with {:ok, updated} <- Accounts.save_setup(current, attrs) do
+    with {:ok, updated} <-
+           Accounts.Store.save_connection(current, attrs, "#{agent}:#{kind}") do
       if choose? and current.agent != agent, do: track_default(updated)
       {:ok, updated}
     end

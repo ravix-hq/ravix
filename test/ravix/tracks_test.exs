@@ -392,6 +392,14 @@ defmodule Ravix.TracksTest do
 
   describe "open/4" do
     setup do
+      stub(Ravix.MachineCache, :catalog, fn _ ->
+        {:ok,
+         %Ravix.Fountain.Shapes.Catalog{
+           runtimes: ["claude"],
+           models: %{"claude" => ["anthropic/claude-opus-5"]}
+         }}
+      end)
+
       owner = insert_user(login: "Ana")
 
       project =
@@ -1065,6 +1073,8 @@ defmodule Ravix.TracksTest do
                Tracks.set_model(ctx.owner, ctx.track.id, nil, "anthropic/claude-opus-5")
 
       assert {:ok, nil} = Tracks.set_model(ctx.owner, ctx.track.id, nil, nil)
+      assert Ravix.Accounts.Store.get_user(ctx.owner.id).preferred_runtime == nil
+      assert Ravix.Accounts.Store.get_user(ctx.owner.id).preferred_model == nil
     end
 
     test "a model the catalog does not offer this runtime is refused before Fountain", ctx do

@@ -1580,6 +1580,8 @@ defmodule RavixWeb.TrackLiveTest do
     end
 
     test "names what the conversation runs and marks the project's model as the default", ctx do
+      assert has_element?(ctx.view, ".model-default-hint", "Also your default for new threads")
+      assert has_element?(ctx.view, "#model-menu [phx-value-model=\"\"]", "Project default")
       assert has_element?(ctx.view, "#model-trigger:not([disabled])", "Claude Sonnet 5")
 
       assert has_element?(
@@ -1622,6 +1624,12 @@ defmodule RavixWeb.TrackLiveTest do
 
       render_async(ctx.view)
       assert has_element?(ctx.view, "#model-trigger:not([disabled])")
+    end
+
+    test "choosing the project default clears the personal preference through the context", ctx do
+      expect(Tracks, :set_model, fn _, _, _, nil -> {:ok, nil} end)
+      ctx.view |> element(~s(#model-menu [phx-value-model=""])) |> render_click()
+      render_async(ctx.view)
     end
 
     test "a refusal is said, and the page keeps the model it had", ctx do

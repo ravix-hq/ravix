@@ -80,20 +80,6 @@ defmodule Ravix.Tracks.Runtime do
        do: {:ok, %{runtime: runtime, model: nil}}
 
   defp default_selection(user, project, client, _attrs, last, home) do
-    with {:ok, preference} <- ThreadPreference.candidate(user) do
-      if preference do
-        preferred_selection(user, project, client, last, home)
-      else
-        {:ok, %{runtime: fallback_runtime(project, last), model: nil}}
-      end
-    end
-  end
-
-  defp fallback_runtime(project, last) do
-    if Settings.default_only?(project), do: project.runtime, else: last || project.runtime
-  end
-
-  defp preferred_selection(user, project, client, last, home) do
     with {:ok, usable} <- Inference.usable_agents(payer(project), fresh: true),
          {:ok, catalog} <- MachineCache.catalog(client),
          {:ok, preference} <- ThreadPreference.get(user, catalog) do
@@ -127,10 +113,10 @@ defmodule Ravix.Tracks.Runtime do
   defp fallback_model(%{runtime: runtime, model: model}, _catalog, runtime), do: model
 
   defp fallback_model(_project, catalog, runtime),
-    do: List.first(Catalog.models_for(catalog, runtime))
+    do: Catalog.default_model(catalog, runtime)
 
   defp remember_pick(user, client, attrs, runtime, model) do
-    if attrs["preference_explicit"] != "false" and
+    if attrs["preference_explicit"] == "true" and
          (nonblank(attrs["runtime"]) || nonblank(attrs["model"])),
        do: ThreadPreference.remember(user, runtime, model, client),
        else: :ok
@@ -161,7 +147,11 @@ defmodule Ravix.Tracks.Runtime do
       models = Catalog.models_for(catalog, runtime)
 
       selected =
-        wanted || if(runtime == project.runtime, do: project.model, else: List.first(models))
+        wanted ||
+          if(runtime == project.runtime,
+            do: project.model,
+            else: Catalog.default_model(catalog, runtime)
+          )
 
       if is_binary(selected) and selected in models,
         do: {:ok, selected},

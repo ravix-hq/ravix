@@ -332,6 +332,7 @@ defmodule RavixWeb.TrackLive do
   # disabled while a turn runs, which Fountain would refuse anyway.
   def handle_event("set-model", %{"model" => model}, socket) when is_binary(model) do
     thread_id = socket.assigns.thread_id
+    model = if model == "", do: nil, else: model
 
     if MapSet.member?(socket.assigns.pending, :model),
       do: {:noreply, socket},
@@ -1562,6 +1563,7 @@ defmodule RavixWeb.TrackLive do
       open={true}
     /></button>
     <div id="model-menu" class="model-menu" popover role="menu" aria-label="Model">
+      <p class="model-default-hint">Also your default for new threads</p>
       <button
         :for={choice <- @choices}
         type="button"
@@ -1571,7 +1573,7 @@ defmodule RavixWeb.TrackLive do
         popovertarget="model-menu"
         popovertargetaction="hide"
         phx-click="set-model"
-        phx-value-model={choice}
+        phx-value-model={if choice == @project_model, do: "", else: choice}
         title={ModelName.friendly(choice)}
       >
         <span class="truncate">{ModelName.friendly(choice)}</span><small :if={

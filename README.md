@@ -326,11 +326,15 @@ first thread. New threads use the starter's preferred runtime/model if the
 project owner's credentials and runtime gates allow it, then the track's last
 runtime, then the project default. The dialog labels the source. Set **Default
 agent for new threads** in Your account; explicit dialog or composer model picks
-also save that person's preference. Existing threads retain their runtime.
+also save that person's preference. Choosing the project model in the composer
+clears the saved preference, restoring derivation from connected credentials.
+MCP runtime/model arguments never change a person's preference. Existing threads retain their runtime.
 
 Until explicitly chosen, the preference uses the most recently connected held
-credential (ChatGPT link, API key, or Claude token) and that runtime's first
-catalog model. Successful connections record timestamps locally. Pre-existing
+credential (ChatGPT link, API key, or Claude token) and that runtime's default
+model: the catalog's known default (`anthropic/claude-opus-5` or
+`openai/gpt-6-astra`), otherwise an Opus model, otherwise the first listed model.
+Successful connections record timestamps locally. Pre-existing
 connections lack historical timestamps: they use the account's recorded agent,
 then the connected credential order, until reconnected or explicitly chosen.
 MCP `create_track` shares this resolver when runtime is omitted; `send_prompt`
