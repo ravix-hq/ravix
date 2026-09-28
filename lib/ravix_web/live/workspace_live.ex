@@ -1316,9 +1316,18 @@ defmodule RavixWeb.WorkspaceLive do
 
     ~H"""
     <p :if={@results == []} role="status">No projects or tracks match</p>
-    <section :for={{project, tracks} <- @results} aria-labelledby={"search-project-#{project.id}"}>
+    <section
+      :for={{project, tracks} <- @results}
+      id={"search-group-#{project.id}"}
+      aria-labelledby={"search-project-#{project.id}"}
+    >
       <h3 id={"search-project-#{project.id}"}>
-        <.link :if={project_matches?(project, @query)} patch={"/p/#{project.id}"} data-jump-result>
+        <.link
+          :if={project_matches?(project, @query)}
+          id={"search-project-link-#{project.id}"}
+          patch={"/p/#{project.id}"}
+          data-jump-result
+        >
           {project.display_name}
           <span
             :if={project_attention(@tracks, project.id) > 0}
@@ -1333,6 +1342,7 @@ defmodule RavixWeb.WorkspaceLive do
       </h3>
       <.link
         :for={track <- tracks}
+        id={"search-track-link-#{track.id}"}
         patch={"/p/#{project.id}/t/#{track.id}"}
         class="workspace-track"
         data-jump-result

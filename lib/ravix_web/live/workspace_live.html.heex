@@ -242,6 +242,7 @@
               <div id={"section-projects-#{section.id || "other"}"} hidden={section.collapsed}>
                 <section
                   :for={project <- projects}
+                  id={"project-row-#{project.id}"}
                   class={["workspace-project", @project && @project.id == project.id && "current"]}
                   draggable={to_string(@sections != [])}
                   data-project-id={project.id}

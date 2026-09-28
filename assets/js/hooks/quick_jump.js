@@ -34,5 +34,16 @@ export const QuickJump = {
     }
     window.addEventListener('keydown', this.onKey)
   },
+  beforeUpdate() {
+    const active = document.activeElement
+    this.focusedLink = this.el.contains(active) && active.matches('[data-jump-result][id]') ? active.id : null
+  },
+  updated() {
+    // Filtering can move a selected row. Restore lost focus without overriding
+    // a field or another result the person selected while the response arrived.
+    const link = this.focusedLink && document.getElementById(this.focusedLink)
+    this.focusedLink = null
+    if (document.activeElement === document.body && link && this.el.contains(link)) link.focus({preventScroll: true})
+  },
   destroyed() { window.removeEventListener('keydown', this.onKey) },
 }

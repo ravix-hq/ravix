@@ -82,6 +82,16 @@ test('project tree and quick-jump navigate with keyboard and fit desktop and pho
     await page.keyboard.press('Escape');
     await expect(picker).toHaveCount(0);
     await expect(trigger).toBeFocused();
+    await trigger.press('Enter');
+    await search.fill('Tree Beta');
+    const betaProject = picker.locator(`a[href='${projects[1].path}']`);
+    // Blur sends a pending search change; the selected row moves past Alpha.
+    await betaProject.focus();
+    await expect(picker.locator(`a[href='${projects[0].path}']`)).toHaveCount(0);
+    await expect(betaProject).toBeFocused();
+    await betaProject.press('Enter');
+    await expect(page).toHaveURL(new RegExp(`${projects[1].path}$`));
+    await expect(picker).toHaveCount(0);
     if (width === 1280) await page.locator('#yard-toggle').click();
     const nav = page.locator(width === 500 ? '.workspace-mobile-nav' : '.yard-nav');
     await nav.getByRole('link', { name: /^Inbox(?: \d+)?$/ }).click();

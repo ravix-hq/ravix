@@ -93,3 +93,16 @@ for (const [platform, modifier, other] of [['MacIntel', 'metaKey', 'ctrlKey'], [
     Object.defineProperty(navigator, 'platform', {value: 'Linux x86_64', configurable: true})
   })
 }
+
+test('quick-jump keeps selected result focus when filtering moves its row', () => {
+  document.body.innerHTML = `<div id="workspace"><input id="search-query"><a id="result" data-jump-result href="#project">Project</a></div>`
+  const {hook} = mountHook(QuickJump, '#workspace')
+  const input = document.querySelector('input'), link = document.querySelector('a')
+  link.focus(); hook.beforeUpdate()
+  link.remove(); document.querySelector('#workspace').append(link)
+  hook.updated(); expect(document.activeElement).toBe(link)
+  hook.beforeUpdate(); input.focus(); hook.updated(); expect(document.activeElement).toBe(input)
+  hook.beforeUpdate(); hook.updated(); expect(document.activeElement).toBe(input)
+  link.focus(); hook.beforeUpdate(); link.remove(); hook.updated()
+  expect(document.activeElement).toBe(document.body)
+})
