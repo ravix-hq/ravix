@@ -2,6 +2,16 @@ defmodule Ravix.Release do
   @moduledoc """
   Used for executing DB release tasks when run in production without Mix
   installed.
+
+  None of these starts the application. `bin/ravix eval` runs a node of its
+  own (`nonode@nohost`) beside production, and the whole application there
+  would start a second copy of every `Ravix.Cluster.Singleton` -- schedules,
+  sandbox and preview reconcilers, tooling tasks -- that sees no cluster and
+  so defers to nobody, plus an endpoint. `migrate/0` and `rollback/2` start
+  only the Repo, through `Ecto.Migrator.with_repo/2`; every other task calls
+  `start_services/0`, which starts `:ravix`'s dependencies and
+  `Ravix.Application.services/0` and nothing else. The `mix ravix.*` tasks
+  that reach a context do the same.
   """
   alias Ravix.People.Cutover
   alias Ravix.Tracks.Billing
@@ -28,8 +38,7 @@ defmodule Ravix.Release do
   no Mix: a dry run unless `apply?`. Prints its summary, no secrets.
   """
   def seed_ravi_workspace(apply? \\ false) do
-    load_app()
-    {:ok, _} = Application.ensure_all_started(@app)
+    start_services()
 
     case RaviSeed.run(apply: apply?) do
       {:ok, summary} ->
@@ -45,8 +54,7 @@ defmodule Ravix.Release do
   Mix: a dry run unless `apply?`. Prints its summary, no secrets.
   """
   def sharing_cutover(apply? \\ false) do
-    load_app()
-    {:ok, _} = Application.ensure_all_started(@app)
+    start_services()
 
     case Cutover.run(apply: apply?) do
       {:ok, summary} -> Enum.each(Cutover.format(summary), &IO.puts/1)
@@ -70,6 +78,7 @@ defmodule Ravix.Release do
       bin/ravix rpc 'Ravix.Release.provider_secrets()'
   """
   def provider_secrets do
+    start_services()
     lines = provider_secret_lines() ++ allowlist_lines()
 
     case lines do
@@ -89,6 +98,7 @@ defmodule Ravix.Release do
   Returns how many agents are still open afterwards (0 when all closed).
   """
   def close_open_allowlists do
+    start_services()
     lines = allowlist_lines(close: true)
     Enum.each(lines, &IO.puts/1)
     Enum.count(lines, &(not String.ends_with?(&1, ": closed")))
@@ -120,6 +130,28 @@ defmodule Ravix.Release do
   defp describe([]), do: "none"
   defp describe(names) when is_list(names), do: Enum.join(names, ", ")
   defp describe({:error, reason}), do: "unreadable (#{inspect(reason)})"
+
+  @doc """
+  Start what a one-off task needs to call a context: the dependencies of
+  `:ravix` (Ecto, Finch for Req, PubSub's registry) and
+  `Ravix.Application.services/0` under a supervisor linked to the caller.
+  The application itself, and with it every singleton, the endpoint and the
+  prompt queue, is not started.
+
+  A no-op where the application is already running -- `bin/ravix rpc` into
+  a serving node, or the test suite -- since everything is there already.
+  """
+  @spec start_services() :: :ok
+  def start_services do
+    if List.keymember?(Application.started_applications(), @app, 0) do
+      :ok
+    else
+      load_app()
+      {:ok, _} = Application.ensure_all_started(Application.spec(@app, :applications))
+      {:ok, _} = Supervisor.start_link(Ravix.Application.services(), strategy: :one_for_one)
+      :ok
+    end
+  end
 
   defp repos do
     Application.fetch_env!(@app, :ecto_repos)

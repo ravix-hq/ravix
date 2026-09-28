@@ -29,7 +29,7 @@ defmodule RavixWeb.WorkspacePeopleLiveTest do
 
     # GitHub knows @dana, who has not signed in here, and whoever holds a
     # login locally; anything else is a 404.
-    Fake.install([Fake.users_route(%{"dana" => {9001, "dana"}})])
+    Fake.install(Fake.app_reader_routes() ++ [Fake.users_route(%{"dana" => {9001, "dana"}})])
 
     stub(Ravix.Config, :github, fn -> Fake.app() end)
 

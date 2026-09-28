@@ -11,6 +11,11 @@ defmodule Ravix.GitHubFake do
 
   Every request is also reported to the test process as
   `{Ravix.GitHubFake, method, path}`, so a test can count them.
+
+  One rule holds before any route is consulted, because GitHub holds it: an
+  App JWT is refused with 401 "Bad credentials" anywhere outside `/app/...`.
+  A mock that accepted any token let `user_by_login/2` ship sending the JWT
+  to `/users/:login`, and every invite by login failed in production.
   """
 
   alias Ravix.Accounts.Store, as: Accounts
@@ -53,8 +58,30 @@ defmodule Ravix.GitHubFake do
 
     Req.Test.stub(@stub, fn conn ->
       send(owner, {__MODULE__, conn.method, conn.request_path})
-      respond(conn, find_route(routes, conn))
+
+      if app_jwt_outside_app?(conn),
+        do: respond(conn, {401, %{message: "Bad credentials"}}),
+        else: respond(conn, find_route(routes, conn))
     end)
+  end
+
+  defp app_jwt_outside_app?(conn) do
+    not String.starts_with?(conn.request_path, "/app/") and
+      case Plug.Conn.get_req_header(conn, "authorization") do
+        ["Bearer " <> token] -> app_jwt?(token)
+        _ -> false
+      end
+  end
+
+  # A JWT this fake's App key signed. Installation and user tokens in the
+  # suite are plain strings, so the shape check spares them the verify.
+  defp app_jwt?(token) do
+    length(String.split(token, ".")) == 3 and
+      try do
+        is_map(verify_app_jwt!(token))
+      rescue
+        _ -> false
+      end
   end
 
   defp find_route(routes, %Plug.Conn{method: method, request_path: path} = conn) do
@@ -79,17 +106,19 @@ defmodule Ravix.GitHubFake do
   The token endpoint: mints `token-1`, `token-2`, ... on each call, after
   checking the App JWT the way GitHub would (RS256 by the App's public key,
   `iss` naming the App).
+
+  With no App, any App the fake's key signed for is accepted: for suites
+  that stub `Ravix.Config.github/0` with a fresh `app/0` on every call.
   """
-  @spec token_route(GitHubApp.t()) :: route()
-  def token_route(%GitHubApp{} = app) do
+  @spec token_route(GitHubApp.t() | nil) :: route()
+  def token_route(app \\ nil) do
     counter = :counters.new(1, [])
 
     {"POST", ~r{^/app/installations/\d+/access_tokens$},
      fn conn ->
-       ["Bearer " <> jwt] = Plug.Conn.get_req_header(conn, "authorization")
-       claims = verify_app_jwt!(jwt)
+       claims = app_claims!(conn)
 
-       if claims["iss"] != app.app_id,
+       if app && claims["iss"] != app.app_id,
          do: raise("App JWT names #{inspect(claims["iss"])}, not #{inspect(app.app_id)}")
 
        :counters.add(counter, 1, 1)
@@ -97,6 +126,32 @@ defmodule Ravix.GitHubFake do
        expires = DateTime.utc_now() |> DateTime.add(3600, :second) |> DateTime.to_iso8601()
        Req.Test.json(conn, %{token: "token-#{n}", expires_at: expires})
      end}
+  end
+
+  @doc """
+  `GET /app/installations`, listed as the App: one installation per id, in
+  order. What `Ravix.GitHub` reads to find any installation to make the
+  App's own reads outside `/app/...` with.
+  """
+  @spec installations_route([integer()]) :: route()
+  def installations_route(ids \\ [1]) do
+    {"GET", "/app/installations",
+     fn conn ->
+       app_claims!(conn)
+       Req.Test.json(conn, Enum.map(ids, &%{id: &1, account: %{login: "org-#{&1}"}}))
+     end}
+  end
+
+  @doc """
+  The routes a read on the App's behalf needs before the read itself: its
+  installations (`ids`) and a token for them. See `installations_route/1`.
+  """
+  @spec app_reader_routes([integer()]) :: [route()]
+  def app_reader_routes(ids \\ [1]), do: [installations_route(ids), token_route()]
+
+  defp app_claims!(conn) do
+    ["Bearer " <> jwt] = Plug.Conn.get_req_header(conn, "authorization")
+    verify_app_jwt!(jwt)
   end
 
   @doc "The claims of an App JWT this fake's key signed; raises when the signature is bad."

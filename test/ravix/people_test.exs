@@ -761,20 +761,24 @@ defmodule Ravix.PeopleTest do
     setup :seed
 
     setup do
-      # Nobody on GitHub but @dana, and the App is configured.
-      Fake.install([
-        {"GET", "/users/dana",
-         fn conn ->
-           Req.Test.json(conn, %{
-             id: 9001,
-             login: "dana",
-             name: "Dana",
-             avatar_url: "https://a/9001"
-           })
-         end},
-        {"GET", "/users/nobody", {404, %{message: "Not Found"}}},
-        {"GET", "/users/broken", {401, %{message: "Bad credentials"}}}
-      ])
+      # Nobody on GitHub but @dana, and the App is configured. The App reads
+      # them with an installation's token: the fake refuses its JWT there.
+      Fake.install(
+        Fake.app_reader_routes() ++
+          [
+            {"GET", "/users/dana",
+             fn conn ->
+               Req.Test.json(conn, %{
+                 id: 9001,
+                 login: "dana",
+                 name: "Dana",
+                 avatar_url: "https://a/9001"
+               })
+             end},
+            {"GET", "/users/nobody", {404, %{message: "Not Found"}}},
+            {"GET", "/users/broken", {401, %{message: "Bad credentials"}}}
+          ]
+      )
 
       stub(Ravix.Config, :github, fn -> Fake.app() end)
       :ok
@@ -946,12 +950,15 @@ defmodule Ravix.PeopleTest do
     setup :seed
 
     setup do
-      Fake.install([
-        {"GET", "/users/dana",
-         fn conn ->
-           Req.Test.json(conn, %{id: 9001, login: "dana", name: nil, avatar_url: nil})
-         end}
-      ])
+      Fake.install(
+        Fake.app_reader_routes() ++
+          [
+            {"GET", "/users/dana",
+             fn conn ->
+               Req.Test.json(conn, %{id: 9001, login: "dana", name: nil, avatar_url: nil})
+             end}
+          ]
+      )
 
       stub(Ravix.Config, :github, fn -> Fake.app() end)
       :ok

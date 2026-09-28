@@ -2,13 +2,15 @@ defmodule Ravix.GitHub.Cache do
   @moduledoc """
   What the GitHub client remembers between calls.
 
-  Three things, all keyed by the App id so two configured Apps never share:
+  Four things, all keyed by the App id so two configured Apps never share:
 
     * **Installation tokens**, cached until a minute before they expire. A
       minute of slack rather than none because the token is handed to a
       machine that then uses it: a token that was valid when it left here and
       expired in flight fails as `fatal: Authentication failed`, which reads
       like a permissions problem and is not one.
+    * **Any one installation** of the App, for reads the App makes on its own
+      behalf outside `/app/...`, where GitHub refuses the App JWT.
     * **Rate limits**, per installation or user credential. Once GitHub says stop, every read for
       that installation is refused locally until the reset, so twenty mounted
       rows do not each discover the limit for themselves. The limit is GitHub's
@@ -74,6 +76,29 @@ defmodule Ravix.GitHub.Cache do
   @spec put_token(app_id(), installation_id(), String.t(), integer()) :: :ok
   def put_token(app_id, installation_id, token, expires_at_ms) do
     :ets.insert(@table, {{:token, app_id, installation_id}, token, expires_at_ms})
+    :ok
+  end
+
+  @doc "The installation remembered for reads made on the App's behalf, if any."
+  @spec any_installation(app_id()) :: {:ok, installation_id()} | :error
+  def any_installation(app_id) do
+    case :ets.lookup(@table, {:any_installation, app_id}) do
+      [{_, installation_id}] -> {:ok, installation_id}
+      [] -> :error
+    end
+  end
+
+  @doc "Remember an installation to make the App's own reads with."
+  @spec put_any_installation(app_id(), installation_id()) :: :ok
+  def put_any_installation(app_id, installation_id) do
+    :ets.insert(@table, {{:any_installation, app_id}, installation_id})
+    :ok
+  end
+
+  @doc "Forget it, because its token no longer mints."
+  @spec forget_any_installation(app_id()) :: :ok
+  def forget_any_installation(app_id) do
+    :ets.delete(@table, {:any_installation, app_id})
     :ok
   end
 

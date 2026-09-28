@@ -213,7 +213,7 @@ defmodule Ravix.GitHub do
   end
 
   @doc """
-  One GitHub account, by login, read as the App itself. `{:ok, nil}` when
+  One GitHub account, by login, read on the App's behalf. `{:ok, nil}` when
   there is no such account.
 
   Used to invite somebody who has never signed in here: without this, an
@@ -222,17 +222,76 @@ defmodule Ravix.GitHub do
   rather than as the caller means the answer does not depend on whose token
   asked, and the numeric id it returns is what the invitation is stored
   against (see `track_invites`).
+
+  Not with the App JWT itself: GitHub accepts that only on `/app/...` and
+  answers 401 "Bad credentials" everywhere else. So the read goes out with
+  an installation token from any installation the App has (see
+  `any_installation/1`). An App with no installations at all reads
+  unauthenticated, which GitHub allows for `/users/:login` at 60 requests an
+  hour per IP address: enough for inviting people, and only until the first
+  installation exists.
   """
   @spec user_by_login(app(), String.t()) :: {:ok, Shapes.Account.t() | nil} | error()
   def user_by_login(nil, _login), do: {:error, {:unconfigured, :github}}
 
   def user_by_login(%GitHubApp{} = app, login) do
-    case HTTP.request(app, :get, "/users/#{encode(login)}", auth: "Bearer " <> app_jwt(app)) do
+    case read_as_any_installation(app, "/users/#{encode(login)}", :retry) do
       {:ok, raw} -> {:ok, Shapes.account(raw)}
       {:error, %Error{status: 404}} -> {:ok, nil}
       {:error, _} = error -> error
     end
   end
+
+  # The token is minted apart from the read so that a 404 from the read still
+  # means "no such account" and never "that installation is gone". An
+  # installation that has gone (uninstalled, suspended) is forgotten and
+  # another looked up, once.
+  defp read_as_any_installation(app, path, retry) do
+    with {:ok, installation_id} <- any_installation(app) do
+      case installation_id && installation_token(app, installation_id) do
+        nil ->
+          HTTP.request(app, :get, path)
+
+        {:ok, token} ->
+          HTTP.request(app, :get, path,
+            auth: "Bearer " <> token,
+            installation_id: installation_id
+          )
+
+        {:error, %Error{status: status}} when status in [401, 403, 404] and retry == :retry ->
+          Cache.forget_any_installation(app.app_id)
+          read_as_any_installation(app, path, :once)
+
+        {:error, _} = error ->
+          error
+      end
+    end
+  end
+
+  # Which installation reads on the App's behalf does not matter: the reads
+  # that need one are of public data. The first `GET /app/installations`
+  # lists is remembered until its token stops minting. None is not
+  # remembered, so the first installation is picked up as soon as it exists.
+  defp any_installation(app) do
+    case Cache.any_installation(app.app_id) do
+      {:ok, installation_id} ->
+        {:ok, installation_id}
+
+      :error ->
+        with {:ok, body} <-
+               HTTP.request(app, :get, "/app/installations?per_page=1",
+                 auth: "Bearer " <> app_jwt(app)
+               ),
+             do: {:ok, remember_first_installation(app, body)}
+    end
+  end
+
+  defp remember_first_installation(app, [%{"id" => id} | _]) when is_integer(id) do
+    Cache.put_any_installation(app.app_id, id)
+    id
+  end
+
+  defp remember_first_installation(_app, _body), do: nil
 
   @doc "The person a user token belongs to."
   @spec viewer(app(), String.t()) :: {:ok, Shapes.Account.t()} | error()

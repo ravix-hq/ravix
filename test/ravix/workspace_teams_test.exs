@@ -37,12 +37,16 @@ defmodule Ravix.WorkspaceTeamsTest do
   end
 
   # GitHub knows @dana (9001), who has not signed in here, plus `accounts`,
-  # and otherwise whoever holds a login locally; @broken refuses.
+  # and otherwise whoever holds a login locally; @broken refuses. Read with
+  # an installation's token, as GitHub requires: the fake refuses the App JWT.
   defp github(accounts) do
-    Fake.install([
-      {"GET", "/users/broken", {401, %{message: "Bad credentials"}}},
-      Fake.users_route(Map.merge(%{"dana" => {9001, "dana"}}, accounts))
-    ])
+    Fake.install(
+      Fake.app_reader_routes() ++
+        [
+          {"GET", "/users/broken", {401, %{message: "Bad credentials"}}},
+          Fake.users_route(Map.merge(%{"dana" => {9001, "dana"}}, accounts))
+        ]
+    )
   end
 
   defp switch(on?), do: Application.put_env(:ravix, :workspace_access, on?)
