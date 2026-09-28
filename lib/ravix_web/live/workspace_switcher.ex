@@ -2,19 +2,25 @@ defmodule RavixWeb.Live.WorkspaceSwitcher do
   @moduledoc """
   The workspace switcher at the top of the sidebar (ADR 0009, phase 4a).
 
-  Lists the viewer's personal workspace, then their team workspaces, each a
-  link to that workspace's page (`RavixWeb.WorkspacePeopleLive`), and a
-  "New workspace" form. Drawn only while `RAVIX_WORKSPACE_ACCESS` is on:
-  with it off, `list/1` answers nothing and the component renders nothing.
+  Lists the viewer's personal workspace, then their team workspaces, and a
+  "New workspace" form. Picking one makes it the viewer's *current*
+  workspace (`Ravix.Accounts.put_current_workspace/2`), which is what the
+  sidebar, quick-jump, badges, the Inbox and New track then show: an event,
+  not a navigation. The gear beside the current workspace's name opens its
+  settings and members (`RavixWeb.WorkspacePeopleLive`). Drawn only while
+  `RAVIX_WORKSPACE_ACCESS` is on: with it off, `list/1` answers nothing and
+  the component renders nothing.
 
-  Self-contained on purpose. A host page assigns `list/1`'s answer, renders
-  `switcher/1`, and routes the form's `"workspace-create"` event to
-  `create/2`; nothing else on the page depends on it.
+  A host page assigns `list/1`'s answer and the current workspace's id,
+  renders `switcher/1`, routes the form's `"workspace-create"` event to
+  `create/2`, and routes `"workspace-select"` to `select/2`, then shows
+  whatever the new choice means for it.
   """
   use RavixWeb, :html
 
   import Phoenix.LiveView, only: [push_navigate: 2, put_flash: 3]
 
+  alias Ravix.Accounts
   alias Ravix.Accounts.User
   alias Ravix.Workspaces
 
@@ -28,15 +34,39 @@ defmodule RavixWeb.Live.WorkspaceSwitcher do
 
   def list(_user), do: []
 
-  @doc "Create a team workspace from the switcher's form and go to it."
+  @doc """
+  Create a team workspace from the switcher's form, make it current, and
+  go to its settings to invite people.
+  """
   @spec create(Phoenix.LiveView.Socket.t(), term()) :: Phoenix.LiveView.Socket.t()
   def create(socket, name) do
-    case Workspaces.create(socket.assigns.current_user, name) do
+    user = socket.assigns.current_user
+
+    case Workspaces.create(user, name) do
       {:ok, workspace} ->
+        _ = Accounts.put_current_workspace(user, workspace.id)
         push_navigate(socket, to: "/w/#{workspace.id}")
 
       {:error, reason} ->
         put_flash(socket, :error, RavixWeb.Error.from(reason, noun: "workspace").message)
+    end
+  end
+
+  @doc """
+  Make the picked workspace current. The page's `current_user` carries the
+  choice from then on; a workspace the viewer is not in is refused with a
+  flash and changes nothing.
+  """
+  @spec select(Phoenix.LiveView.Socket.t(), term()) ::
+          {:ok, Phoenix.LiveView.Socket.t()} | {:error, Phoenix.LiveView.Socket.t()}
+  def select(socket, workspace_id) do
+    case Accounts.put_current_workspace(socket.assigns.current_user, workspace_id) do
+      {:ok, user} ->
+        {:ok, assign(socket, current_user: user)}
+
+      {:error, reason} ->
+        {:error,
+         put_flash(socket, :error, RavixWeb.Error.from(reason, noun: "workspace").message)}
     end
   end
 
@@ -64,20 +94,34 @@ defmodule RavixWeb.Live.WorkspaceSwitcher do
         <span class="truncate">{@current.name}</span>
         <.icon name="chevron" size={12} />
       </button>
+      <.link
+        id="workspace-settings"
+        navigate={"/w/#{@current.id}"}
+        class="ghost workspace-gear"
+        aria-label={"Settings and members of #{@current.name}"}
+        title="Workspace settings and members"
+      >
+        <.icon name="settings" size={14} />
+      </.link>
       <div id="workspace-menu" class="workspace-menu" popover>
-        <nav aria-label="Workspaces">
-          <.link
+        <div role="group" aria-label="Workspaces">
+          <button
             :for={%{workspace: workspace} <- @workspaces}
-            navigate={"/w/#{workspace.id}"}
+            type="button"
+            id={"workspace-select-#{workspace.id}"}
             class="account-item"
-            aria-current={if workspace.id == @current.id, do: "page"}
+            popovertarget="workspace-menu"
+            popovertargetaction="hide"
+            phx-click="workspace-select"
+            phx-value-workspace={workspace.id}
+            aria-current={if workspace.id == @current.id, do: "true"}
           >
             <span class="workspace-mark" aria-hidden="true">{initial(workspace.name)}</span>
             <span class="truncate">{workspace.name}</span>
             <span class="spacer"></span>
             <small :if={workspace.kind == :personal}>Personal</small>
-          </.link>
-        </nav>
+          </button>
+        </div>
         <hr />
         <form id="new-workspace-form" class="new-workspace" phx-submit="workspace-create">
           <label for="new-workspace-name">New workspace</label>

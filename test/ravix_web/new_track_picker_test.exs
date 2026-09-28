@@ -36,8 +36,11 @@ defmodule RavixWeb.NewTrackPickerTest do
     end)
 
     user = insert_user(login: "me", credential_set_id: "set-me")
-    {:ok, _personal} = Store.ensure_personal_workspace(user)
+    {:ok, personal} = Store.ensure_personal_workspace(user)
     {:ok, team} = Workspaces.create(user, "Team")
+    # A team member's default is their team; these start from the personal
+    # workspace, as somebody who picked it in the switcher does.
+    {:ok, user} = Ravix.Accounts.put_current_workspace(user, personal.id)
     %{user: user, team: team, conn: log_in_user(build_conn(), user)}
   end
 

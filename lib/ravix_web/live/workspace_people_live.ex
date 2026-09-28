@@ -1,7 +1,8 @@
 defmodule RavixWeb.WorkspacePeopleLive do
   @moduledoc """
   One workspace's page: who is in it, who is invited, and the invite box
-  (ADR 0009, phase 4a). Where the sidebar's workspace switcher goes.
+  (ADR 0009, phase 4a). Where the gear beside the switcher's current
+  workspace goes.
 
   Behind `RAVIX_WORKSPACE_ACCESS`: with the switch off every workspace is
   not found here, as `Ravix.Workspaces.people/2` answers. The page holds its
@@ -97,6 +98,15 @@ defmodule RavixWeb.WorkspacePeopleLive do
   @impl true
   def handle_event("workspace-create", %{"name" => name}, socket),
     do: {:noreply, WorkspaceSwitcher.create(socket, name)}
+
+  # The switcher scopes the app, and this page is not the app: picking a
+  # workspace here makes it current and goes back to its projects.
+  def handle_event("workspace-select", %{"workspace" => id}, socket) do
+    case WorkspaceSwitcher.select(socket, id) do
+      {:ok, socket} -> {:noreply, push_navigate(socket, to: "/home")}
+      {:error, socket} -> {:noreply, socket}
+    end
+  end
 
   def handle_event("suggest", %{"login" => q}, socket) do
     suggestions = if manager?(socket), do: People.search(socket.assigns.current_user, q), else: []

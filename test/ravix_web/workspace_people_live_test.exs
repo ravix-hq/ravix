@@ -45,7 +45,7 @@ defmodule RavixWeb.WorkspacePeopleLiveTest do
     test "lists the personal workspace first, then teams, and creates one", ctx do
       {:ok, view, _html} = live(log_in_user(build_conn(), ctx.owner), "/home")
 
-      links = view |> element("#workspace-menu nav") |> render()
+      links = view |> element("#workspace-menu [role=group]") |> render()
       assert links =~ "Personal"
       [personal_at, team_at] = Enum.map([ctx.personal.id, ctx.team.id], &:binary.match(links, &1))
       assert personal_at < team_at
@@ -54,6 +54,8 @@ defmodule RavixWeb.WorkspacePeopleLiveTest do
                view |> form("#new-workspace-form", name: "Beta") |> render_submit()
 
       assert {:ok, %{workspace: %{name: "Beta"}, role: :owner}} = Workspaces.people(ctx.owner, id)
+      # The new workspace is the one the app now shows.
+      assert Ravix.Repo.reload!(ctx.owner).current_workspace_id == id
     end
 
     test "an empty name is refused where it was typed", ctx do
@@ -171,13 +173,20 @@ defmodule RavixWeb.WorkspacePeopleLiveTest do
       {:ok, view, _html} = live(log_in_user(build_conn(), ctx.owner), "/w/#{ctx.team.id}")
       assert view |> element("#workspace-switcher-trigger") |> render() =~ "Acme"
 
-      assert has_element?(
-               view,
-               ~s(#workspace-menu a[aria-current=page][href="/w/#{ctx.team.id}"])
-             )
+      assert has_element?(view, "#workspace-select-#{ctx.team.id}[aria-current=true]")
+      assert has_element?(view, ~s(#workspace-settings[href="/w/#{ctx.team.id}"]))
 
       assert {:error, {:live_redirect, %{to: "/w/" <> _}}} =
                view |> form("#new-workspace-form", name: "Gamma") |> render_submit()
+    end
+
+    test "picking a workspace on its page makes it current and goes back to the app", ctx do
+      {:ok, view, _html} = live(log_in_user(build_conn(), ctx.owner), "/w/#{ctx.team.id}")
+
+      assert {:error, {:live_redirect, %{to: "/home"}}} =
+               view |> element("#workspace-select-#{ctx.personal.id}") |> render_click()
+
+      assert Ravix.Repo.reload!(ctx.owner).current_workspace_id == ctx.personal.id
     end
   end
 end

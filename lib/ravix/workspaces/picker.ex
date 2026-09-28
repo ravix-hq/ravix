@@ -4,11 +4,13 @@ defmodule Ravix.Workspaces.Picker do
 
   One list, for one workspace, with no organisation step:
 
-    * **The current workspace.** The workspace of the project New track was
-      opened from, when the caller is a member of it; otherwise their
-      personal workspace, which also holds their legacy (workspace-less)
-      projects, so a person nobody has moved into a workspace sees exactly
-      the projects they see today.
+    * **The current workspace.** The caller's current workspace, whose
+      projects the page's rail already holds (`Ravix.Workspaces.current/2`).
+      Without one, the workspace of the project New track was opened from,
+      when the caller is a member of it; otherwise their personal workspace,
+      which also holds their legacy (workspace-less) projects, so a person
+      nobody has moved into a workspace sees exactly the projects they see
+      today.
     * **Its repositories**: the canonical project of each repository in
       that workspace the caller may open a track in. Marked legacy
       duplicates are left out, and two legacy rows of one repository are
@@ -60,13 +62,22 @@ defmodule Ravix.Workspaces.Picker do
   @doc """
   The list for `user`, from the rail's `views`, anchored on the project New
   track was opened from (nil for the top button).
+
+  `current` is the caller's current workspace (`Ravix.Workspaces.current/2`),
+  when the page has scoped its rail to it: then `views` are that scope
+  already, and the list is that workspace's whatever the anchor. Without one
+  the workspace is the anchor's, as above.
   """
-  @spec build(User.t(), [View.t()], View.t() | nil) :: t()
-  def build(%User{} = user, views, anchor) do
-    {workspace, role} = workspace_for(user, anchor)
+  @spec build(User.t(), [View.t()], View.t() | nil, Workspaces.entry() | nil) :: t()
+  def build(%User{} = user, views, anchor, current \\ nil) do
+    {workspace, role} =
+      case current do
+        %{workspace: %Workspace{} = workspace, role: role} -> {workspace, role}
+        nil -> workspace_for(user, anchor)
+      end
 
     candidates =
-      Enum.filter(views, &(&1.access != :tracks and in_scope?(&1, workspace)))
+      Enum.filter(views, &(&1.access != :tracks and (current != nil or in_scope?(&1, workspace))))
 
     # ownership: the project ids are the caller's own rail (`Projects.list/2`,
     # which admitted each through `Access.access_of/3`); only their own

@@ -57,7 +57,10 @@
       <%!-- Account preferences live in the sidebar footer; the native popover
         retains light dismiss, Escape and focus return. --%>
       <div class="yard-top">
-        <RavixWeb.Live.WorkspaceSwitcher.switcher workspaces={@workspaces} />
+        <RavixWeb.Live.WorkspaceSwitcher.switcher
+          workspaces={@workspaces}
+          current_id={@current_workspace && @current_workspace.workspace.id}
+        />
         <button
           id="quick-jump-trigger"
           type="button"
@@ -221,7 +224,13 @@
             <section
               :for={
                 {section, projects} <-
-                  section_groups(@projects, @sections, @section_placements, @scratch_group)
+                  section_groups(
+                    @projects,
+                    @sections,
+                    @section_placements,
+                    @scratch_group,
+                    @shared_ids
+                  )
               }
               id={"section-#{section_key(section)}"}
               class="project-section"
@@ -693,7 +702,7 @@
           id="schedules"
           current_user={@current_user}
           session_hash={@session_hash}
-          projects={@projects}
+          projects={@all_projects}
         />
         <.live_component
           :if={@live_action == :connections}
@@ -712,7 +721,15 @@
                 Inbox <span :if={@attention > 0} class="badge">{@attention}</span>
               </h1>
             </div>
-            <p>Replies, mentions, failed turns and sharing changes across all your projects.</p>
+            <p :if={is_nil(@current_workspace)}>
+              Replies, mentions, failed turns and sharing changes across all your projects.
+            </p>
+            <p :if={@current_workspace}>
+              Replies, mentions, failed turns and sharing changes in {@current_workspace.workspace.name}.
+            </p>
+            <p :if={@other_attention > 0} id="inbox-elsewhere" class="hint">
+              {@other_attention} in other workspaces. Switch workspace to see them.
+            </p>
           </header>
           <div :if={@attention == 0} class="inbox-empty">
             <h2>You're all caught up</h2>

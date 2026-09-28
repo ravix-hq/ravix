@@ -23,6 +23,7 @@ defmodule Ravix.Accounts do
   import Ecto.Query
 
   alias Ravix.Accounts.{
+    Access,
     Capabilities,
     Inference,
     OAuthState,
@@ -175,6 +176,28 @@ defmodule Ravix.Accounts do
 
   def put_rail_scope(%User{}, _scope),
     do: {:error, {:unprocessable, "rail_scope", "Choose Mine or Everyone."}}
+
+  @doc """
+  Make a workspace this person's current one: what the sidebar, quick-jump,
+  badges, the Inbox and New track show (ADR 0009). Remembered per person.
+
+  Only a workspace they are a live member of, through
+  `Access.workspace_access/2`; anything else answers not found, as does
+  everything while `RAVIX_WORKSPACE_ACCESS` is off. The choice is navigation
+  state and grants nothing: `Ravix.Workspaces.current/1` checks it again on
+  every read.
+  """
+  @spec put_current_workspace(User.t(), term()) :: {:ok, User.t()} | {:error, :not_found}
+  def put_current_workspace(%User{} = user, workspace_id) when is_binary(workspace_id) do
+    with true <- Config.workspace_access?() || {:error, :not_found},
+         {:ok, %{workspace: workspace}} <- Access.workspace_access(user, workspace_id) do
+      if user.current_workspace_id == workspace.id,
+        do: {:ok, user},
+        else: user |> Ecto.Changeset.change(current_workspace_id: workspace.id) |> Repo.update()
+    end
+  end
+
+  def put_current_workspace(%User{}, _workspace_id), do: {:error, :not_found}
 
   # ── what a person set up ──────────────────────────────────────────────
 
