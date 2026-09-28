@@ -202,8 +202,10 @@ defmodule Ravix.Fountain.Shapes do
     #
     # Opus and not the newest model in the catalog, for a second reason now:
     # Fountain knowingly refuses `claude-fable-5-1` on a subscription's token, and
-    # a subscription is what most people connect.
-    @default_model "anthropic/claude-opus-5"
+    # a subscription is what most people connect. Opus 5.5 since 2026-09-28 (the
+    # catalog id has a dash, `claude-opus-5-5`; there is no `claude-opus-5.5`); a
+    # catalog without it still falls to its first Opus model below.
+    @default_model "anthropic/claude-opus-5-5"
 
     # What a runtime falls to when the catalog lists it without any models. Only
     # the runtimes a person can choose (`Ravix.Accounts.User.agents/0`) need one:
