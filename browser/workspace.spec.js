@@ -484,7 +484,7 @@ test('keyboard users can resize panels and close dialogs with focus restored', a
 });
 
 test('project, track, streaming, image upload, reconnect, and revocation', async ({ page, context }) => {
-  // Two independent idle queue sweeps plus the navigation/reconnect checks.
+  // Several streamed replies plus the navigation/reconnect checks.
   test.setTimeout(120_000);
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
@@ -674,8 +674,8 @@ test('project, track, streaming, image upload, reconnect, and revocation', async
   // prompt back, so the transcript contains these words even when the prompt
   // never arrived. It reaches the live page on the turn's opening event, which
   // the follower reads back from the feed because the stream never carries it.
-  // With no prior queued head, the worker may be on its 30-second idle sweep.
-  await expect(page.locator('#transcript-turns .said .workspace-prompt').filter({ hasText: 'Explain this project for the browser smoke test' })).toHaveCount(1, { timeout: 45_000 });
+  // Saving wakes the queue worker, so this does not wait on its backstop timer.
+  await expect(page.locator('#transcript-turns .said .workspace-prompt').filter({ hasText: 'Explain this project for the browser smoke test' })).toHaveCount(1, { timeout: 20_000 });
   await expect(page.locator('.workspace-turn').filter({ hasText: 'Explain this project for the browser smoke test' }).locator('.agent-terminal-output > div > .md')).toContainText('There is one TODO worth doing here');
   // The agent's checklist, as it last stood: one plan, both lines, the first done.
   await expect(page.locator('.workspace-plan')).toHaveCount(1);
@@ -728,9 +728,9 @@ test('project, track, streaming, image upload, reconnect, and revocation', async
   await expect(page.locator('.workspace-upload')).toContainText('pixel.png (100%)');
   await page.getByRole('button', { name: 'Send', exact: true }).click();
   await expect(page.locator('.workspace-upload')).toHaveCount(0);
-  // Reconnecting can leave the queue worker idle with no followed heads. Its
-  // documented backstop is 30 seconds; allow that sweep plus the streamed reply.
-  await expect(page.locator('.workspace-turn').filter({ hasText: 'Draft survives reconnect' }).locator('.agent-terminal-output > div > .md')).toContainText('There is one TODO worth doing here', { timeout: 45_000 });
+  // Reconnecting can leave the queue worker with no followed heads; the save
+  // itself wakes it, so this waits only on the streamed reply.
+  await expect(page.locator('.workspace-turn').filter({ hasText: 'Draft survives reconnect' }).locator('.agent-terminal-output > div > .md')).toContainText('There is one TODO worth doing here', { timeout: 20_000 });
   await capture(page, 'track-Ravix');
   await chooseTheme(page, 'Daylight');
   await accessible(page);
@@ -961,7 +961,7 @@ test('project settings navigate, warn before discarding, and save sections acces
 });
 
 test('composer Send stays compact and keeps its arrow after repeated submissions in every theme', async ({ page, request }) => {
-  // Allow two idle queue sweeps and the five-state theme/viewport matrix.
+  // Two streamed replies and the five-state theme/viewport matrix.
   test.setTimeout(150_000);
   await signIn(page);
   await page.getByRole('button', { name: 'Add a project', exact: true }).first().click();
@@ -1009,6 +1009,54 @@ test('composer Send stays compact and keeps its arrow after repeated submissions
     expect(await model.evaluate(el => getComputedStyle(el).fontFamily)).toContain('IBM Plex Sans');
     await fitsViewport(page);
   };
+  // The same checks for the 220-cell theme/viewport matrix, read in one
+  // round trip per cell: the button is already settled there, so auto-waiting
+  // locators only cost time. `checkSend` still runs once per status.
+  const matrixSend = async () => {
+    const m = await page.evaluate(() => {
+      const send = document.querySelector('#composer-form button[aria-label="Send"]');
+      const svg = send?.querySelector('svg');
+      const path = svg?.querySelector('path');
+      const images = document.querySelector('#composer-form [aria-label="Choose images"] svg');
+      const model = document.querySelector('.composer-model');
+      const visible = el => !!el && el.getClientRects().length > 0 && getComputedStyle(el).visibility !== 'hidden';
+      const box = send?.getBoundingClientRect();
+      const style = send && getComputedStyle(send);
+      return {
+        visible: visible(send), width: box?.width, height: box?.height,
+        text: send?.textContent.trim(), title: send?.getAttribute('title'),
+        svgVisible: visible(svg), viewBox: svg?.getAttribute('viewBox'), d: path?.getAttribute('d'),
+        namespace: svg?.namespaceURI,
+        ink: style?.color, background: style?.backgroundColor, opacity: Number(style?.opacity),
+        stroke: svg && getComputedStyle(svg).stroke,
+        imagesVisible: visible(images),
+        formText: document.querySelector('#composer-form').textContent,
+        modelText: model?.textContent.trim(), modelTitle: model?.getAttribute('title'),
+        modelFont: model && getComputedStyle(model).fontFamily,
+        fits: document.documentElement.scrollWidth <= window.innerWidth,
+      };
+    });
+    expect(m.visible).toBe(true);
+    expect(m.width).toBeLessThanOrEqual(80);
+    expect(m.height).toBeLessThanOrEqual(44);
+    expect(m.width).toBeGreaterThanOrEqual(32);
+    expect(m.height).toBeGreaterThanOrEqual(32);
+    expect(m.text).toBe('');
+    expect(m.title).toBe('Send');
+    expect(m.svgVisible).toBe(true);
+    expect(m.viewBox).toBe('0 0 24 24');
+    expect(m.d).toBe('M12 19V5M6 11l6-6 6 6');
+    expect(m.namespace).toBe('http://www.w3.org/2000/svg');
+    expect(m.ink).not.toBe(m.background);
+    expect(m.stroke).toBe(m.ink);
+    expect(m.opacity).toBeGreaterThanOrEqual(0.6);
+    expect(m.imagesVisible).toBe(true);
+    expect(m.formText).not.toContain('to send');
+    expect(m.modelText).toMatch(/^\S/);
+    expect(m.modelTitle).toMatch(/^(Claude Code|Codex) · /);
+    expect(m.modelFont).toContain('IBM Plex Sans');
+    expect(m.fits).toBe(true);
+  };
   await chooseTheme(page, 'Bubblegum');
   // Sending previously destroyed the SVG. Exercise both mouse and Enter, and
   // inspect during the LiveView acknowledgement window as well as afterwards.
@@ -1026,26 +1074,31 @@ test('composer Send stays compact and keeps its arrow after repeated submissions
     await page.evaluate(() => window.liveSocket.disableLatencySim());
     // Acknowledgement clears the input before the agent finishes. Keep this
     // button-rendering regression sequential instead of queuing another turn.
-    // An idle sweep can consume 30 seconds before the reply even begins.
-    await expect(page.locator('#transcript-turns .turn-footer')).toHaveCount(++completedAnswers, { timeout: 45_000 });
+    await expect(page.locator('#transcript-turns .turn-footer')).toHaveCount(++completedAnswers, { timeout: 20_000 });
     await expect(page.locator('#composer-form').getByRole('button', { name: 'Stop', exact: true })).toHaveCount(0, { timeout: 30_000 });
   }
   await page.evaluate(() => window.liveSocket.disableLatencySim());
-  // Setup and delivery share the worker's 30-second idle backstop.
-  await expect(page.locator('#transcript-turns')).toContainText('Send regression Enter', { timeout: 45_000 });
+  await expect(page.locator('#transcript-turns')).toContainText('Send regression Enter', { timeout: 20_000 });
   await expect(page.locator('#composer-form').getByRole('button', { name: 'Stop', exact: true })).toHaveCount(0, { timeout: 30_000 });
   const fixture = composerFixture(new URL(page.url()).pathname.split('/').pop());
   const palettes = await page.locator('[data-theme-choice]').evaluateAll(els => [...new Set(els.map(el => el.dataset.themeChoice))]);
   expect(palettes).toHaveLength(22);
   for (const [status, connected] of [['opening', false], ['opening', true], ['running', true], ['ready', true], ['failed', true]]) {
     await fixture.state(request, status, connected);
-    await page.reload();
-    await expect(page.locator('[data-phx-main]')).toHaveClass(/phx-connected/);
+    // An opening page reads the conversation memo (`MachineCache`, five
+    // seconds), and nothing tells it the fixture moved the conversation. This
+    // step used to pass only because the previous one outlasted the memo, so
+    // reload until the page shows the new status instead of relying on that.
+    await expect(async () => {
+      await page.reload();
+      await expect(page.locator('[data-phx-main]')).toHaveClass(/phx-connected/);
+      await expect(page.locator('#composer-form').getByRole('button', { name: 'Stop', exact: true })).toHaveCount(['opening', 'running'].includes(status) ? 1 : 0, { timeout: 1_000 });
+      await expect(page.locator('#composer-form').getByRole('button', { name: 'Wake / retry', exact: true })).toHaveCount(['opening', 'failed'].includes(status) ? 1 : 0, { timeout: 1_000 });
+    }).toPass({ timeout: 15_000 });
     await expect(send).toBeVisible();
     if (connected) await expect(send).toBeEnabled();
     else await expect(send).toBeDisabled();
-    await expect(page.locator('#composer-form').getByRole('button', { name: 'Stop', exact: true })).toHaveCount(['opening', 'running'].includes(status) ? 1 : 0);
-    await expect(page.locator('#composer-form').getByRole('button', { name: 'Wake / retry', exact: true })).toHaveCount(['opening', 'failed'].includes(status) ? 1 : 0);
+    await checkSend();
     for (const theme of palettes) {
       // The picker is hidden behind Menu on phones; set its public palette
       // attribute directly so the matrix measures the same CSS in both sizes.
@@ -1056,7 +1109,7 @@ test('composer Send stays compact and keeps its arrow after repeated submissions
           await new Promise(requestAnimationFrame);
           await Promise.all(document.getAnimations().filter(a => a instanceof CSSTransition).map(a => a.finished.catch(() => {})));
         });
-        await test.step(`${status}, connected=${connected}, ${theme}, ${width}px`, checkSend);
+        await test.step(`${status}, connected=${connected}, ${theme}, ${width}px`, matrixSend);
         if (theme === 'bubblegum') await page.screenshot({ path: test.info().outputPath(`send-${status}-${connected}-${width}.png`), fullPage: true });
       }
     }

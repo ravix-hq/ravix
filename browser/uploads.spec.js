@@ -45,8 +45,8 @@ test('images upload before Send and remain visible in conversation history', asy
 
   const message = page.locator('.workspace-turn').filter({ hasText: 'Describe these images' });
   const images = message.locator('.said img');
-  // Delivery may wait for the queue's 30-second idle sweep.
-  await expect(images).toHaveCount(2, { timeout: 45_000 });
+  // Saving wakes the queue worker; the margin is for the upload and reply.
+  await expect(images).toHaveCount(2, { timeout: 20_000 });
   for (const image of await images.all()) {
     await expect.poll(() => image.evaluate(el => el.complete && el.naturalWidth > 0)).toBe(true);
   }

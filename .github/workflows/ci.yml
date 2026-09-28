@@ -211,10 +211,18 @@ jobs:
           cache-to: type=gha,mode=max
       - run: scripts/release-smoke.sh ravix-elixir-check
 
-  browser:
-    name: browser smoke
+  # The suite is the slowest job, so it runs as shards, each with its own
+  # app, provider mocks and database (browser/server.py), sharing nothing.
+  # Playwright splits by test (`fullyParallel`), so the one long file does
+  # not decide the wall clock. `browser smoke` below is the required check.
+  browser-shard:
+    name: browser smoke ${{ matrix.shard }}/3
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
     env:
       MIX_ENV: prod
     services:
@@ -264,12 +272,26 @@ jobs:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}
       - run: bunx playwright install --with-deps chromium
-      - run: bun run test:browser
+      - run: bun run test:browser -- --shard=${{ matrix.shard }}/3
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: failure()
         with:
-          name: browser-failures
+          name: browser-failures-${{ matrix.shard }}
           path: |
             test-results/
             playwright-report/
           retention-days: 7
+
+  # Branch protection and Render's deploy wait on this name, whatever the
+  # shard count. `always()` so a failed or cancelled shard reports as a
+  # failure here rather than a skip, which protection would not accept.
+  browser:
+    name: browser smoke
+    needs: browser-shard
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - if: needs.browser-shard.result != 'success'
+        run: echo "A browser shard did not pass (${{ needs.browser-shard.result }})." && exit 1
+      - run: echo "Every browser shard passed."
