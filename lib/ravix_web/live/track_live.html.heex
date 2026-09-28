@@ -89,6 +89,16 @@
         <.icon name="settings" size={15} />
       </button>
       <button
+        :if={rebuildable?(@current_user, @track)}
+        class="ghost icon-button"
+        aria-label="Rebuild machine"
+        title="Rebuild machine"
+        phx-click={JS.push_focus() |> JS.push("dialog")}
+        phx-value-name="rebuild"
+      >
+        <.icon name="refresh" size={15} />
+      </button>
+      <button
         :if={owner_or_creator?(@current_user, @track)}
         class="ghost icon-button"
         aria-label="Close track"
@@ -274,28 +284,21 @@
             Prompts will wait until setup is ready.
           </p>
 
-          <p :if={@track.status == :setup_failed}>
+          <p :if={@track.status == :setup_failed && @track.setup_error_code != "secrets_changed"}>
             Retry setup, then retry your saved prompts.
           </p>
+          <button
+            :if={
+              @track.setup_error_code == "secrets_changed" &&
+                rebuildable?(@current_user, @track)
+            }
+            id="secrets-changed-rebuild"
+            phx-click={JS.push_focus() |> JS.push("dialog")}
+            phx-value-name="rebuild"
+          >
+            Rebuild machine…
+          </button>
         </div>
-        <form
-          :if={
-            (@track.setup_error_code == "secrets_changed" ||
-               (@track.sandbox_layout == :dedicated &&
-                  Ravix.Config.dedicated_opens_enabled?(@current_user) &&
-                  @track.sandbox_state == :ready)) &&
-              owner_or_creator?(@current_user, @track)
-          }
-          phx-submit="rebuild-machine"
-          id="rebuild-track-machine"
-        >
-          <p>
-            <span :if={@track.setup_error_code == "secrets_changed"}>Secrets changed — rebuild to apply.</span>
-            Rebuilding deletes only this track's machine, uncommitted changes and unpushed commits. Sibling tracks are unaffected. Push work you want to keep first.
-          </p>
-          <label><input type="checkbox" name="force" value="true" required />Confirm deletion</label>
-          <button>Rebuild machine</button>
-        </form>
         <.loading_status :if={:retry in @pending}>Retrying track…</.loading_status>
         <.loading_status :if={:thread_options in @pending}>Loading agents…</.loading_status>
         <div :if={@thread_options} role="dialog" aria-label="New thread" id="new-thread-dialog">
@@ -698,26 +701,11 @@
           This closes the track for everyone and removes its worktree. Commit and push work you want to keep first.
         <% end %>
       </p>
-      <p :if={@track.sandbox_layout == :dedicated} id="close-machine-changes">
-        <%= case @close_info do %>
-          <% nil -> %>
-            Checking for uncommitted changes and unpushed commits…
-          <% :unavailable -> %>
-            The machine could not be checked. It may contain uncommitted changes or unpushed commits.
-          <% info -> %>
-            {if info.dirty,
-              do: "Uncommitted changes will be deleted.",
-              else: "No uncommitted changes found."}
-            <%= case info.unpushed do %>
-              <% :unknown -> %>
-                Unpushed commits could not be checked. The branch may have no upstream, or the check may have failed.
-              <% true -> %>
-                Unpushed commits will be deleted.
-              <% false -> %>
-                No unpushed commits found.
-            <% end %>
-        <% end %>
-      </p>
+      <.machine_changes
+        :if={@track.sandbox_layout == :dedicated}
+        id="close-machine-changes"
+        info={@close_info}
+      />
       <form id="close-form" phx-submit="close">
         <.input
           name="force"
@@ -730,6 +718,30 @@
           }
           value={false}
         /><button class="danger" phx-disable-with="Closing…">Close track</button>
+      </form>
+    </.dialog>
+    <.dialog
+      :if={@dialog == :rebuild}
+      id="rebuild-dialog"
+      title="Rebuild machine"
+      on_close="dismiss"
+    >
+      <p :if={@track.setup_error_code == "secrets_changed"}>
+        This track's secrets changed. Rebuilding gives it a new machine with the current secrets.
+      </p>
+      <p>
+        Rebuilding deletes only this track's machine, its uncommitted changes and unpushed commits. Sibling tracks are unaffected. Commit and push work you want to keep first.
+      </p>
+      <.machine_changes id="rebuild-machine-changes" info={@close_info} />
+      <form id="rebuild-track-machine" phx-submit="rebuild-machine">
+        <.input
+          name="force"
+          id="rebuild-force"
+          type="checkbox"
+          label="Delete machine, uncommitted changes and unpushed commits"
+          value={false}
+          required
+        /><button class="danger" phx-disable-with="Rebuilding…">Rebuild machine</button>
       </form>
     </.dialog>
     <.live_component
