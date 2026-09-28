@@ -7,7 +7,8 @@ test('project switcher searches, patches and restores focus at desktop and phone
   await signIn(page, 'eli', '/home');
   await connectClaude(page);
   const projects = [];
-  for (const name of ['Switcher Alpha', 'Switcher Beta with a long project name to fit a phone']) {
+  // Keep an unmatched row before Alpha so filtering changes its list position.
+  for (const name of ['Before switcher', 'Switcher Alpha', 'Switcher Beta with a long project name to fit a phone']) {
     await page.goto('/home');
     await expect(page.locator('[data-phx-main]')).toHaveClass(/phx-connected/);
     await page.getByRole('button', { name: /^New project/ }).click();
@@ -16,6 +17,7 @@ test('project switcher searches, patches and restores focus at desktop and phone
     await expect(page.getByRole('heading', { name: 'Plans', exact: true })).toBeVisible();
     projects.push({ name, path: new URL(page.url()).pathname });
   }
+  projects.shift();
 
   for (const width of [1280, 500]) {
     await page.setViewportSize({ width, height: 900 });
@@ -41,6 +43,10 @@ test('project switcher searches, patches and restores focus at desktop and phone
     await trigger.press('Enter');
     await search.fill('switcher alpha');
     await alpha.focus();
+    // Blurring search delivers its pending change. Filtering must retain the
+    // selected link and keyboard focus before Enter activates it.
+    await expect(picker.locator(`a[href='${projects[1].path}']`)).toHaveCount(0);
+    await expect(alpha).toBeFocused();
     await alpha.press('Enter');
     await expect(page).toHaveURL(new RegExp(`${projects[0].path}$`));
     await expect(picker).toHaveCount(0);

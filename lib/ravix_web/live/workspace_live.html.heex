@@ -597,9 +597,15 @@
       id="project-switcher"
       title="Projects"
       on_close="dismiss-switcher"
-      initial_focus="#project-query"
+      focus_on_mount={false}
     >
-      <form id="project-switcher-search" phx-change="search-projects" phx-submit="search-projects">
+      <form
+        id="project-switcher-search"
+        phx-hook="ProjectFormFocus"
+        data-focus="#project-query"
+        phx-change="search-projects"
+        phx-submit="search-projects"
+      >
         <.input
           name="q"
           id="project-query"
@@ -658,12 +664,14 @@
             </p>
             <section
               :for={project <- projects}
+              id={"switcher-project-#{project.id}"}
               class={["workspace-project", @project && @project.id == project.id && "current"]}
               draggable={to_string(@sections != [])}
               data-project-id={project.id}
             >
               <div class="workspace-project-row">
                 <.link
+                  id={"switcher-project-link-#{project.id}"}
                   patch={"/p/#{project.id}"}
                   class={[
                     "workspace-project-name",
