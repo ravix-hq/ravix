@@ -412,8 +412,8 @@ defmodule RavixWeb.WorkspaceLive do
   # already holds every workspace's projects and tracks, so it is scoped
   # again from those, with membership and visibility re-read and no provider
   # asked. A project left open from the workspace being left is closed, for
-  # the new workspace's home; closed first, or an owned one would be
-  # followed straight back (`scope_rail/2`).
+  # the new workspace's home; closed first, or one whose settings are open
+  # would be followed straight back (`scope_rail/2`).
   def handle_event("workspace-select", %{"workspace" => id}, socket) do
     case WorkspaceSwitcher.select(socket, id) do
       {:ok, socket} ->
@@ -1558,15 +1558,16 @@ defmodule RavixWeb.WorkspaceLive do
   # one the viewer reaches but sits in another of their workspaces, that
   # workspace becomes current, so a `/p/:id` link from somewhere else opens
   # where it lives rather than as "not found". A background read follows
-  # only a project the viewer owns and has open: only its owner can move a
-  # project, so that is their own move, from this page or another. Anybody
-  # else's project moved elsewhere while open leaves the page, and their
-  # choice of workspace stays theirs.
+  # only the project whose settings this page has open: a project is moved
+  # there, by its owner, so that is this page's own move ("Move to
+  # workspace…"). Anything else moved elsewhere while open -- anybody's,
+  # or the owner's own from another tab -- leaves the page, and the choice
+  # of workspace stays as it was.
   defp scope_rail(socket, follow) do
     user = socket.assigns.current_user
     listed = WorkspaceSwitcher.list(user)
     all = socket.assigns.all_projects
-    follow = follow || owned_open_project(socket)
+    follow = follow || moving_here(socket)
 
     current =
       case Workspaces.current(user, listed) do
@@ -1607,11 +1608,11 @@ defmodule RavixWeb.WorkspaceLive do
     |> derive_scope()
   end
 
-  defp owned_open_project(%{assigns: %{project: %{id: id}, all_projects: all}}) do
+  defp moving_here(%{assigns: %{dialog: :settings, project: %{id: id}, all_projects: all}}) do
     if Enum.any?(all, &(&1.id == id and &1.access == :owner)), do: id
   end
 
-  defp owned_open_project(_socket), do: nil
+  defp moving_here(_socket), do: nil
 
   # A `/p/:id` link to a project the viewer reaches in another of their
   # workspaces switches to it; anything else is left to `open_url/2`.
