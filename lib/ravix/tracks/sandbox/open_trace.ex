@@ -20,7 +20,7 @@ defmodule Ravix.Tracks.Sandbox.OpenTrace do
     )
   end
 
-  defp start_mode({:ok, events}) do
+  defp start_mode({:ok, %{events: events, has_more: more?}}) do
     events
     |> Enum.map(&Event.from/1)
     |> Enum.filter(&match?(%Event{kind: :stage, stage: "checkpoint_restore"}, &1))
@@ -28,7 +28,9 @@ defmodule Ravix.Tracks.Sandbox.OpenTrace do
     |> case do
       %Event{state: "done"} -> "warm"
       %Event{state: "started"} -> "unknown"
-      _ -> "cold"
+      %Event{state: "failed"} -> "cold"
+      nil when not more? -> "cold"
+      _ -> "unknown"
     end
   end
 

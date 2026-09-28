@@ -131,18 +131,19 @@ defmodule Ravix.Tracks.Sandbox do
     cond do
       track.sandbox_generation != op.generation ->
         retire(client, op, track, project)
+        publish(track)
 
       track.setup_state == "ready" ->
         record_ready(client, op, track)
 
       track.setup_state == "failed" ->
         fail(client, op, track, project, track.setup_error_code || "setup_failed")
+        publish(track)
 
       true ->
         pause(op)
+        publish(track)
     end
-
-    publish(track)
   end
 
   defp open_step(client, %{phase: "cleanup"} = op, track, project),
@@ -151,12 +152,13 @@ defmodule Ravix.Tracks.Sandbox do
   defp open_step(_client, _op, _track, _project), do: :ok
 
   defp record_ready(client, op, track) do
-    case Store.ready(op) do
-      {:ok, completed} ->
-        OpenTrace.record(completed, Fountain.events(client, track.conversation_id))
+    result = Store.ready(op)
+    # Readiness must reach subscribers even if best-effort tracing stalls or dies.
+    publish(track)
 
-      error ->
-        error
+    with {:ok, completed} <- result do
+      OpenTrace.record(completed, Fountain.events_page(client, track.conversation_id, limit: 100))
+      result
     end
   end
 

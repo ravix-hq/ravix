@@ -61,16 +61,18 @@ span now uses `Ravix.Trace` and the existing Honeycomb `ravix` configuration.
 transition, including queue waits, retries and process restarts. Filter by
 `ravix.open_action` (`open` versus `rebuild`) and group by `ravix.start_mode`:
 `warm` only for a completed restore, `cold` for no restore or failed restore,
-`unknown` for unavailable event history or an unfinished restore. No checkpoint
+`unknown` for unavailable event history, an unfinished restore, or a first page
+that contains no restore evidence but has more pages. No checkpoint
 IDs or event bodies are exported. Span wall time is emission time; use the duration
 attribute for comparisons. Closed/failed operations have no ready measurement.
-The event-history read adds a paginated provider history read on successful opening; exporter
-loss or a crash after the ready commit can lose the measurement (best effort,
+Readiness is broadcast before tracing reads the first 100 events (one provider
+request, never subsequent pages); exporter loss or a crash after the ready commit can lose the measurement (best effort,
 not an audit ledger). Reconciliation does not re-emit completed operations.
 
 To enable project warm starts, Sprites must offer cross-Sprite fork/import from a
 checkpoint, and Fountain must use that API, safely restore project setup while
 refreshing per-machine identity/secrets, then enable checkpoint creation. Ravix
 can then surface the existing stage events; it does not need its own snapshot
-system. Restoring a checkpoint onto the original Sprite is a different operation
-and does not provide a fresh dedicated track with inherited project setup.
+system. Fountain's separate park-time checkpoint (`Machines.HomeCheckpoint`)
+rolls a machine back to its own earlier state. It does not provide a fresh dedicated
+track with inherited project setup.

@@ -13,14 +13,15 @@ defmodule Ravix.SandboxOpenTraceTest do
       completed_at: ~U[2026-09-28 10:01:12.345000Z]
     }
 
-    for {events, mode} <- [
-          {{:ok, []}, "cold"},
-          {{:ok, [stage("started"), stage("done")]}, "warm"},
-          {{:ok, [stage("started"), stage("failed")]}, "cold"},
-          {{:ok, [stage("started")]}, "unknown"},
-          {{:error, :unavailable}, "unknown"}
+    for {events, more?, mode} <- [
+          {[], false, "cold"},
+          {[stage("started"), stage("done")], false, "warm"},
+          {[stage("started"), stage("done")], true, "warm"},
+          {[stage("started"), stage("failed")], true, "cold"},
+          {[stage("started")], true, "unknown"},
+          {[], true, "unknown"}
         ] do
-      assert :ok = OpenTrace.record(operation, events)
+      assert :ok = OpenTrace.record(operation, {:ok, %{events: events, has_more: more?}})
       assert_receive {:span, recorded = span(name: "tracks.sandbox.open")}
       assert attributes(recorded)["ravix.start_mode"] == mode
       assert attributes(recorded)["ravix.open_to_ready_ms"] == 72_345
@@ -63,6 +64,59 @@ defmodule Ravix.SandboxOpenTraceTest do
 
     Sandbox.advance(client, operation.id)
     refute_received {:span, span(name: "tracks.sandbox.open")}
+  end
+
+  test "ready is broadcast while the provisioning history read is blocked" do
+    alias Ravix.Fountain.FakeTransport
+    alias Ravix.Tracks.Sandbox
+    alias Ravix.Tracks.Sandbox.Store
+
+    track =
+      insert_track(
+        sandbox_layout: :dedicated,
+        setup_state: "ready",
+        conversation_id: "blocked-history"
+      )
+
+    {:ok, operation} = Store.begin_operation(track.id, 0, :open)
+    {:ok, operation} = Store.update_operation(operation, %{phase: "setup"})
+    Ravix.Hub.subscribe(track.project_id)
+    parent = self()
+
+    client =
+      FakeTransport.client([
+        {%{
+           method: "GET",
+           path: "/api/conversations/blocked-history/events",
+           query: %{"limit" => "100"}
+         },
+         fn _ ->
+           send(parent, {:history_read, self()})
+
+           receive do
+             :release_history ->
+               {200, [], %{data: [], meta: %{has_more: true, next_cursor: 100}}}
+           end
+         end}
+      ])
+
+    task = Task.async(fn -> Sandbox.advance(client, operation.id) end)
+
+    try do
+      assert_receive {:history_read, reader}
+      id = track.id
+      assert_receive {:hub, %Ravix.Hub.Event{name: :tracks, track_id: ^id}}
+      assert Store.get_track(id).sandbox_state == :ready
+      assert Store.get_operation(operation.id).phase == "done"
+      refute_received {:span, span(name: "tracks.sandbox.open")}
+      send(reader, :release_history)
+      assert {:ok, %Operation{phase: "done"}} = Task.await(task)
+      assert_receive {:span, recorded = span(name: "tracks.sandbox.open")}
+      assert attributes(recorded)["ravix.start_mode"] == "unknown"
+      refute_received {:hub, %Ravix.Hub.Event{name: :tracks, track_id: ^id}}
+    after
+      Task.shutdown(task, :brutal_kill)
+    end
   end
 
   defp stage(state),
