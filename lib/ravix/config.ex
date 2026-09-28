@@ -15,6 +15,19 @@ defmodule Ravix.Config do
   def threads_enabled?, do: Application.get_env(:ravix, :threads_enabled, false)
 
   @doc """
+  Whether workspace membership may grant anything (ADR 0009, phase 3).
+
+  One global switch, `RAVIX_WORKSPACE_ACCESS`, off unless set to `"true"`.
+  There is no per-user cohort: a workspace is shared by several people, and
+  half of them seeing it through a different rule than the other half is a
+  leak, not a rollout. While it is off, authorization is exactly the legacy
+  doors'. Only the operator flips it, after every instance runs a release
+  that reads it and incompatible queue workers have drained.
+  """
+  @spec workspace_access?() :: boolean()
+  def workspace_access?, do: Application.get_env(:ravix, :workspace_access, false) == true
+
+  @doc """
   Whether this person may run an operator action, as the deployment says.
 
   There is no admin column and nothing here promotes anybody: Ravix's people

@@ -13,6 +13,12 @@ config :ravix,
        |> Enum.map(&String.trim/1)
        |> Enum.reject(&(&1 == ""))
 
+# ADR 0009's global switch for workspace-derived access. Off unless exactly
+# "true"; see `Ravix.Config.workspace_access?/0`.
+config :ravix,
+       :workspace_access,
+       System.get_env("RAVIX_WORKSPACE_ACCESS", "false") == "true"
+
 config :ravix,
        :threads_enabled,
        System.get_env(

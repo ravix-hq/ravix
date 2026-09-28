@@ -16,6 +16,12 @@ defmodule Ravix.Workspaces do
       has not reached it yet;
     * a person the backfill has not reached has no personal workspace, and
       that is an answer (`{:error, :not_found}`), not an error.
+
+  Phase 3a adds the access side without switching it on: sign-in writes a
+  new person's personal workspace (`Ravix.Accounts.upsert_user/1`),
+  `Ravix.Accounts.Access` names what each role may do, and `remove_member/3`
+  revokes a membership and tells open pages. Anything a workspace role
+  *grants* stays behind `Ravix.Config.workspace_access?/0`, which is off.
   """
 
   alias Ravix.Accounts.{Access, User}
@@ -83,6 +89,37 @@ defmodule Ravix.Workspaces do
           {:ok, %{workspace: Workspace.t(), role: Ravix.Workspaces.Membership.role()}}
           | {:error, :not_found}
   def get(%User{} = user, workspace_id), do: Access.workspace_access(user, workspace_id)
+
+  @doc """
+  Remove `user_id` from a workspace. Owners and admins only; only an owner
+  removes an owner, and never the last one.
+
+  Revocation is never behind `Ravix.Config.workspace_access?/0`: taking
+  access away is safe in either state. The membership is stamped revoked,
+  and once that has committed every instance's subscribers are told on the
+  workspace's hub topic, so an open page re-reads its access on the notice
+  (`RavixWeb.Live.WorkspaceGuard`). A caller who is not a member, and a
+  target who is not one, both answer not found.
+  """
+  @spec remove_member(User.t(), String.t(), String.t()) ::
+          :ok | {:error, :not_found | :last_owner | {:forbidden, String.t()}}
+  def remove_member(%User{} = user, workspace_id, user_id) do
+    with {:ok, %{workspace: workspace, role: role}} <- Access.workspace_access(user, workspace_id),
+         :ok <- Access.require_capability(role, :manage_members),
+         {:ok, _revoked} <- revoke(workspace.id, user_id, role) do
+      Ravix.Hub.publish_workspace(workspace.id, :members)
+    end
+  end
+
+  defp revoke(workspace_id, user_id, role) do
+    case Store.revoke_membership(workspace_id, user_id, role) do
+      {:error, :owner_only} ->
+        {:error, {:forbidden, "Only an owner of this workspace can remove an owner."}}
+
+      result ->
+        result
+    end
+  end
 
   @doc """
   Whether a legacy duplicate holds `repo` back from the caller's legacy

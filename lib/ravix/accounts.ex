@@ -59,6 +59,13 @@ defmodule Ravix.Accounts do
   login freed by a deleted account can be taken by somebody else. `login`,
   `name`, `avatar_url` and the encrypted token are overwritten on every
   sign-in and `last_seen_at` is bumped. New users start with no unseen changes.
+
+  In the same transaction, a person without a personal workspace gets one,
+  with themselves as its owner (ADR 0009): a new user from their first
+  sign-in, and anybody an older release created before the backfill reached
+  them. It is named after the login it was created with and is not renamed
+  with it. A returning user's workspace and membership are left untouched,
+  revoked or not.
   """
   @spec upsert_user(%{
           required(:github_id) => String.t(),
@@ -75,13 +82,27 @@ defmodule Ravix.Accounts do
       |> Map.take([:github_id, :login, :name, :avatar_url, :token_enc])
       |> Map.put(:last_seen_at, now)
 
-    %User{}
-    |> User.changeset(attrs)
-    |> Repo.insert(
-      on_conflict: {:replace, [:login, :name, :avatar_url, :token_enc, :last_seen_at]},
-      conflict_target: :github_id,
-      returning: true
-    )
+    # ownership: no door -- sign-in is where a person is first proven, so
+    # there is nobody to ask yet; the personal workspace written below is
+    # this same person's alone, in the transaction that writes their row.
+    Repo.transaction(fn ->
+      %User{}
+      |> User.changeset(attrs)
+      |> Repo.insert(
+        on_conflict: {:replace, [:login, :name, :avatar_url, :token_enc, :last_seen_at]},
+        conflict_target: :github_id,
+        returning: true
+      )
+      |> case do
+        {:ok, user} ->
+          # ownership: no door -- as above, the person this sign-in just proved.
+          Ravix.Workspaces.Store.ensure_personal_workspace(user)
+          user
+
+        {:error, changeset} ->
+          Repo.rollback(changeset)
+      end
+    end)
     |> signed_in()
   end
 

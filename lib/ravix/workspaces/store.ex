@@ -59,6 +59,93 @@ defmodule Ravix.Workspaces.Store do
     )
   end
 
+  @doc """
+  Give `user` their personal workspace and its owner membership, unless
+  they already have them. Returns the personal workspace.
+
+  The sign-up half of the backfill: `Ravix.Accounts.upsert_user/1` calls it
+  in the sign-in's own transaction, so a person created by this release has
+  a personal workspace from the moment their row exists. Same shape as
+  `insert_personal_workspaces/1` and `insert_owner_memberships/1` (named
+  after the login at creation, never renamed with it), and the same
+  `ON CONFLICT DO NOTHING` on the same unique keys, so it and a backfill
+  running on another instance cannot both mint one. A revoked or archived
+  row is left exactly as it is.
+  """
+  @spec ensure_personal_workspace(User.t()) :: Workspace.t()
+  def ensure_personal_workspace(%User{id: user_id, login: login}) do
+    now = DateTime.utc_now()
+
+    Repo.insert_all(
+      Workspace,
+      [
+        %{
+          id: Ecto.UUID.generate(),
+          name: login,
+          kind: :personal,
+          personal_user_id: user_id,
+          created_by_user_id: user_id,
+          created_at: now
+        }
+      ],
+      on_conflict: :nothing,
+      conflict_target: {:unsafe_fragment, "(personal_user_id) WHERE personal_user_id IS NOT NULL"}
+    )
+
+    # A conflict above waited for the other writer to commit, so this read,
+    # a new statement, sees whichever row won.
+    workspace = Repo.one!(from w in Workspace, where: w.personal_user_id == ^user_id)
+
+    Repo.insert_all(
+      Membership,
+      [%{workspace_id: workspace.id, user_id: user_id, role: :owner, created_at: now}],
+      on_conflict: :nothing
+    )
+
+    workspace
+  end
+
+  @doc """
+  Revoke `user_id`'s membership of `workspace_id` on behalf of somebody
+  holding `actor_role` there, who was already admitted to manage members.
+
+  Stamps `revoked_at` rather than deleting, so the backfill cannot hand a
+  removed owner their membership back. Every live membership of the
+  workspace is locked first, which is what keeps two owners removing each
+  other at once from leaving it with none. Only an owner removes an owner.
+  """
+  @spec revoke_membership(String.t(), String.t(), Membership.role()) ::
+          {:ok, Membership.t()} | {:error, :not_found | :last_owner | :owner_only}
+  def revoke_membership(workspace_id, user_id, actor_role) do
+    Repo.transaction(fn ->
+      live =
+        Repo.all(
+          from m in Membership,
+            where: m.workspace_id == ^workspace_id and is_nil(m.revoked_at),
+            order_by: m.user_id,
+            lock: "FOR UPDATE"
+        )
+
+      owners = Enum.count(live, &(&1.role == :owner))
+
+      case Enum.find(live, &(&1.user_id == user_id)) do
+        nil ->
+          Repo.rollback(:not_found)
+
+        %Membership{role: :owner} when actor_role != :owner ->
+          Repo.rollback(:owner_only)
+
+        %Membership{role: :owner} when owners <= 1 ->
+          Repo.rollback(:last_owner)
+
+        %Membership{} = membership ->
+          membership
+          |> Ecto.Changeset.change(revoked_at: DateTime.utc_now())
+          |> Repo.update!()
+      end
+    end)
+  end
+
   @typedoc """
   Whose creation path a reservation holds back: a workspace's, or, for a
   duplicate still in the legacy layout, its owner's. A reservation row has
