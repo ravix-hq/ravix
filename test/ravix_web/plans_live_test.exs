@@ -20,6 +20,87 @@ defmodule RavixWeb.PlansLiveTest do
     %{user: user, project: project}
   end
 
+  test "plans live behind the project row, not on the project's home", ctx do
+    {:ok, plan} = Plans.create(ctx.user, ctx.project.id, %{"title" => "Roadmap", "items" => []})
+    {:ok, view, _} = live(log_in_user(ctx.conn, ctx.user), "/p/#{ctx.project.id}")
+    render_async(view)
+    refute has_element?(view, "#plans-panel")
+
+    view |> element("#project-plans-#{ctx.project.id}") |> render_click()
+    assert_patch(view, "/p/#{ctx.project.id}/plans")
+    render_async(view)
+    assert has_element?(view, "#plans-panel .plans-list a", "Roadmap")
+    assert has_element?(view, "#project-plans-#{ctx.project.id}[aria-current=page]")
+    assert page_title(view) =~ "Plans · #{ctx.project.name}"
+
+    view |> element("#plans-panel button", "New plan") |> render_click()
+    assert_patch(view, "/p/#{ctx.project.id}/plans?new=plan")
+    assert has_element?(view, "#plan-editor h3", "New plan")
+
+    # The crumb on the project's home reaches the same page.
+    {:ok, home, _} = live(log_in_user(ctx.conn, ctx.user), "/p/#{ctx.project.id}")
+    render_async(home)
+    home |> element("#crumb-plans") |> render_click()
+    assert_patch(home, "/p/#{ctx.project.id}/plans")
+
+    # Links stored before the page existed still open the plan.
+    {:ok, old, _} = live(log_in_user(ctx.conn, ctx.user), "/p/#{ctx.project.id}?plan=#{plan.id}")
+    render_async(old)
+    assert has_element?(old, "#plans-panel h3", "Roadmap")
+  end
+
+  test "quick-jump finds plans only where the viewer has the whole project", ctx do
+    {:ok, plan} =
+      Plans.create(ctx.user, ctx.project.id, %{"title" => "Launch checklist", "items" => []})
+
+    track = insert_track(project: ctx.project, created_by: ctx.user.id, title: "shared-work")
+    guest = insert_user()
+    insert_track_member(track, guest)
+    member = insert_user()
+    insert_project_member(ctx.project, member)
+
+    for user <- [ctx.user, member] do
+      {:ok, view, _} = live(log_in_user(build_conn(), user), "/inbox")
+      render_async(view)
+      render_click(view, "dialog", %{name: "search"})
+      view |> form("#search-form", q: "launch") |> render_change()
+
+      assert has_element?(
+               view,
+               "#search-plan-link-#{plan.id}[href='/p/#{ctx.project.id}/plans?plan=#{plan.id}']",
+               "Plan: Launch checklist"
+             )
+    end
+
+    {:ok, view, _} = live(log_in_user(build_conn(), guest), "/inbox")
+    render_async(view)
+    render_click(view, "dialog", %{name: "search"})
+    refute has_element?(view, "#search-plan-link-#{plan.id}")
+    view |> form("#search-form", q: "launch") |> render_change()
+    assert has_element?(view, "#search-dialog", "No projects, tracks or plans match")
+    refute has_element?(view, "#project-plans-#{ctx.project.id}")
+
+    # The page itself refuses a track guest too.
+    {:ok, page, _} = live(log_in_user(build_conn(), guest), "/p/#{ctx.project.id}/plans")
+    render_async(page)
+    refute has_element?(page, "#plans-panel")
+    refute render(page) =~ "Launch checklist"
+  end
+
+  test "Plans.titles/1 follows project access, not track shares", ctx do
+    {:ok, plan} = Plans.create(ctx.user, ctx.project.id, %{"title" => "Owned", "items" => []})
+    assert [%{id: id, title: "Owned"}] = Plans.titles(ctx.user)
+    assert id == plan.id
+
+    guest = insert_user()
+    insert_track_member(insert_track(project: ctx.project), guest)
+    assert Plans.titles(guest) == []
+    assert Plans.titles(insert_user()) == []
+
+    Repo.update!(Ecto.Changeset.change(ctx.project, archived_at: DateTime.utc_now()))
+    assert Plans.titles(ctx.user) == []
+  end
+
   test "an open plan redacts a newly private assignment on every subsequent update", ctx do
     creator = insert_user()
     insert_project_member(ctx.project, creator)
@@ -100,7 +181,7 @@ defmodule RavixWeb.PlansLiveTest do
       end
     end)
 
-    {:ok, view, _} = live(log_in_user(conn, user), "/p/#{project.id}")
+    {:ok, view, _} = live(log_in_user(conn, user), "/p/#{project.id}/plans")
     assert_receive {:progress_read, reader}, 5_000
     assert has_element?(view, ".plans-list a", "Mixed progress")
     assert has_element?(view, ".plan-progress-placeholder", "Loading progress")
@@ -113,7 +194,7 @@ defmodule RavixWeb.PlansLiveTest do
     assert has_element?(view, ".plans-list", "1 blocked")
     stub(Ravix.GitHub, :plan_pulls, fn _, _, _ -> {:ok, %{pulls: pulls, complete: true}} end)
     view |> element(".plans-list a", "Mixed progress") |> render_click()
-    assert_patch(view, "/p/#{project.id}?plan=#{plan.id}")
+    assert_patch(view, "/p/#{project.id}/plans?plan=#{plan.id}")
     render_async(view)
     assert has_element?(view, "#plan-detail-progress progress[value='25']")
     assert has_element?(view, "#plan-detail-progress", "1 WIP")
@@ -126,7 +207,7 @@ defmodule RavixWeb.PlansLiveTest do
     user: user,
     project: project
   } do
-    {:ok, view, _} = live(log_in_user(conn, user), "/p/#{project.id}")
+    {:ok, view, _} = live(log_in_user(conn, user), "/p/#{project.id}/plans")
     view |> element("#plans-panel button", "New plan") |> render_click()
     html = render(view)
     [_, id] = Regex.run(~r/id="edit-title-([^"]+)"/, html)
@@ -146,7 +227,7 @@ defmodule RavixWeb.PlansLiveTest do
     attrs = put_in(attrs, ["items", second], %{"title" => "Second", "brief" => "Build UI"})
     view |> form("#plan-editor", %{"plan" => attrs}) |> render_submit()
     {:ok, [plan]} = Plans.list(user, project.id)
-    assert_patch(view, "/p/#{project.id}?plan=#{plan.id}")
+    assert_patch(view, "/p/#{project.id}/plans?plan=#{plan.id}")
     render_async(view, 5_000)
     assert has_element?(view, "#plans-panel h3", "Deliver")
     assert has_element?(view, "#plans-panel strong", "Rationale")
@@ -183,7 +264,7 @@ defmodule RavixWeb.PlansLiveTest do
     {:ok, view, _} = live(conn, "/p/#{project.id}?plan=#{plan.id}")
     render_async(view, 5_000)
     view |> element("#plans-panel button", "New plan") |> render_click()
-    assert_patch(view, "/p/#{project.id}?new=plan")
+    assert_patch(view, "/p/#{project.id}/plans?new=plan")
     assert has_element?(view, "#plan-editor h3", "New plan")
     refute has_element?(view, "#plan-editor", "Assigned items")
     refute has_element?(view, "#plan-editor select")
@@ -192,7 +273,7 @@ defmodule RavixWeb.PlansLiveTest do
     refute has_element?(view, "#plan-editor button", "Remove item")
 
     view |> element("#plan-editor button", "Cancel") |> render_click()
-    assert_patch(view, "/p/#{project.id}")
+    assert_patch(view, "/p/#{project.id}/plans")
     assert has_element?(view, ".plans-list a", "Existing")
     refute has_element?(view, "#plan-editor")
 

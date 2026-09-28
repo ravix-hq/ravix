@@ -69,7 +69,7 @@ defmodule RavixWeb.ProjectTreeLiveTest do
 
     view |> form("#search-form", q: hidden.title) |> render_change()
     refute has_element?(view, "#search-dialog a[href='/p/#{shared.id}/t/#{hidden.id}']")
-    assert has_element?(view, "#search-dialog", "No projects or tracks match")
+    assert has_element?(view, "#search-dialog", "No projects, tracks or plans match")
     view |> form("#search-form", q: visible.title) |> render_change()
     assert has_element?(view, "#search-dialog a[href='/p/#{shared.id}/t/#{visible.id}']")
     view |> form("#search-form", q: "") |> render_change()
@@ -215,7 +215,7 @@ defmodule RavixWeb.ProjectTreeLiveTest do
     render_click(view, "dialog", %{name: "search"})
     view |> form("#search-form", q: track.title) |> render_change()
     refute has_element?(view, "#search-track-link-#{track.id}")
-    assert has_element?(view, "#search-dialog", "No projects or tracks match")
+    assert has_element?(view, "#search-dialog", "No projects, tracks or plans match")
     view |> form("#search-form", q: "") |> render_change()
     refute has_element?(view, "#search-dialog a[href='/p/#{project.id}'] .badge")
   end

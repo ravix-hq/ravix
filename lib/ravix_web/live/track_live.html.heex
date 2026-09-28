@@ -43,12 +43,14 @@
       </button>
       <strong :if={!owner_or_creator?(@current_user, @track)}>{@track.title}</strong>
       <span :if={@track.visibility == :private}><.icon name="lock" /> Private</span>
-      <.link
-        :if={@assigned_plan.plan && @assigned_plan.items == []}
-        navigate={@assigned_plan.plan.url}
-        class="chip track-plan-chip"
-        title={@assigned_plan.plan.title}
-      >Plan: {@assigned_plan.plan.title}</.link>
+      <.live_component
+        module={RavixWeb.Live.TrackPlanItems}
+        id={"track-plan-items-#{@track.id}"}
+        current_user={@current_user}
+        session_hash={@session_hash}
+        track_id={@track.id}
+        summary={@assigned_plan}
+      />
       <%!-- A new track is titled with its branch, so the chip appears only
         once the two say different things: after a rename, say. --%>
       <span
@@ -143,14 +145,6 @@
           class="transcript-scroll"
           data-track={@thread_id}
         >
-          <.live_component
-            module={RavixWeb.Live.TrackPlanItems}
-            id={"track-plan-items-#{@track.id}"}
-            current_user={@current_user}
-            session_hash={@session_hash}
-            track_id={@track.id}
-            summary={@assigned_plan}
-          />
           <div class="track-ribbon">
             <p :if={@header && @header.copy_of} class="track-copy">
               You are in a copy of {@header.copy_of} called

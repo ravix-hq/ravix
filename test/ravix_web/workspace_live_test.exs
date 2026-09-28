@@ -210,7 +210,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
     assert has_element?(view, "#rail-loading")
     render_click(view, "dialog", %{name: "search"})
     assert has_element?(view, "#search-dialog [role=status]", "Loading projects")
-    refute has_element?(view, "#search-dialog", "No projects or tracks match")
+    refute has_element?(view, "#search-dialog", "No projects, tracks or plans match")
     render_click(view, "dismiss-switcher")
     child = find_live_child(view, "track-host")
     assert render_async(child) =~ "Deep-linked work"
@@ -1452,7 +1452,9 @@ defmodule RavixWeb.WorkspaceLiveTest do
 
     render_async(view)
     assert has_element?(view, "a.workspace-project-name", "New project")
-    assert has_element?(view, "#plans-panel")
+    # Plans are behind the project row now, not on the project's home.
+    refute has_element?(view, "#plans-panel")
+    assert has_element?(view, "a.project-action[aria-label='Plans in New project']")
   end
 
   test "signing out somewhere else takes this page with it, without being poked", %{conn: conn} do

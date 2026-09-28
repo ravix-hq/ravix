@@ -88,6 +88,28 @@ defmodule Ravix.Accounts.Access do
     )
   end
 
+  @doc """
+  The ids of live projects this viewer may enter whole, as `project_access/2`
+  would admit them one at a time: owned, or joined as a project member. A
+  track share admits nothing here.
+  """
+  @spec project_ids(User.t()) :: [String.t()]
+  # ownership: no door before this one; this query establishes project membership.
+  def project_ids(%User{id: user_id}) do
+    import Ecto.Query
+
+    Repo.all(
+      from(p in Project,
+        left_join: pm in Ravix.Projects.ProjectMember,
+        on: pm.project_id == p.id and pm.user_id == ^user_id,
+        where: is_nil(p.archived_at) and is_nil(p.deletion_requested_at),
+        where: p.user_id == ^user_id or not is_nil(pm.user_id),
+        distinct: true,
+        select: p.id
+      )
+    )
+  end
+
   defp listing_visibility(user_id) do
     import Ecto.Query
 

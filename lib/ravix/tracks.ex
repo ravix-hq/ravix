@@ -2086,7 +2086,7 @@ defmodule Ravix.Tracks do
   # "number": 5}` is given an issue's URL. That is worth a second look, but
   # not in a change whose whole claim is that nothing behaves differently.
   defp origin_url(%Project{id: id}, %Origin{kind: :plan, plan_id: plan_id, item_id: item_id}),
-    do: "/p/#{id}?plan=#{plan_id}#item-#{item_id}"
+    do: "/p/#{id}/plans?plan=#{plan_id}#item-#{item_id}"
 
   defp origin_url(%Project{repo_full_name: repo}, %Origin{number: n} = origin)
        when is_binary(repo) and is_integer(n) do

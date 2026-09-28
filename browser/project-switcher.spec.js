@@ -73,7 +73,7 @@ test('project tree and quick-jump navigate with keyboard and fit desktop and pho
     await trigger.focus();
     await page.keyboard.press('Control+k');
     const picker = page.getByRole('dialog', { name: 'Search', exact: true });
-    const search = picker.getByLabel('Search projects and tracks');
+    const search = picker.getByLabel('Search projects, tracks and plans');
     await searchReady(search);
     await search.fill('beta-work');
     await expect(picker.locator(`a[href='${projects[1].track}']`)).toBeVisible();

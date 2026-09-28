@@ -26,24 +26,35 @@ test('assigned plan items stay compact across widths and themes', async ({ page 
     UPDATE ravix.tracks SET origin_kind = 'plan', origin_plan_id = 'compact-plan', origin_item_id = 'compact-0', origin_title = 'Report task completion', origin_url = '/p/' || project_id || '?plan=compact-plan' WHERE id = '${track}';
   `]);
   await page.reload();
-  const summary = page.locator('.track-plan-summary');
-  await expect(summary).toHaveCount(1);
-  await expect(summary.getByRole('button')).toHaveAttribute('aria-expanded', 'false');
-  await expect(summary).toContainText('0 of 4 done');
+  // The items are one chip in the track header, not a panel over the transcript.
+  const chip = page.locator('header.track-crumbs .track-plan-toggle');
+  const popover = page.locator('.track-plan-popover');
+  await expect(chip).toHaveCount(1);
+  await expect(chip).toHaveAttribute('aria-expanded', 'false');
+  await expect(chip).toContainText('Plan: Small fixes: task state, machine stats, 404 and navigation');
+  await expect(chip).toContainText('4 items');
+  await expect(page.locator('.transcript-scroll .track-plan-items')).toHaveCount(0);
+  await expect(popover).toBeHidden();
   await expect(page.locator('.track-plan-item-row')).toHaveCount(0);
-  await expect(page.locator('.track-plan-chip')).toHaveCount(0);
-  await expect(page.getByRole('link', { name: 'Plan · Small fixes: task state, machine stats, 404 and navigation', exact: true })).toHaveCount(1);
+  await expect(page.locator('a.track-plan-chip')).toHaveCount(0);
   for (const theme of ['midnight', 'daylight']) {
     await page.locator('html').evaluate((el, theme) => el.dataset.theme = theme, theme);
-    for (const width of [1480, 500]) {
+    for (const width of [1280, 500]) {
       await page.setViewportSize({ width, height: 900 });
-      await expect(summary).toBeVisible();
-      expect(await summary.evaluate(el => el.getBoundingClientRect().height)).toBeLessThan(60);
+      await expect(chip).toBeVisible();
+      expect(await page.locator('header.track-crumbs').evaluate(el => el.getBoundingClientRect().height)).toBeLessThan(60);
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
       await page.screenshot({ path: `tmp/assigned-after-${theme}-${width}.png` });
-      await summary.getByRole('button').click();
+      await chip.click();
+      await expect(chip).toHaveAttribute('aria-expanded', 'true');
+      await expect(popover).toBeVisible();
+      await expect(popover.locator('.track-plan-summary')).toContainText(/\d of 4 done/);
+      await expect(page.getByRole('link', { name: 'Plan · Small fixes: task state, machine stats, 404 and navigation', exact: true })).toHaveCount(1);
       await expect(page.locator('.track-plan-item-row')).toHaveCount(4);
       await expect(page.locator('.track-plan-detail')).toHaveCount(0);
+      const box = await popover.boundingBox();
+      expect(box.x).toBeGreaterThanOrEqual(0);
+      expect(box.x + box.width).toBeLessThanOrEqual(width);
       await page.screenshot({ path: `tmp/assigned-list-${theme}-${width}.png` });
       await page.locator('.track-plan-item-title').first().click();
       await expect(page.locator('.track-plan-detail')).toContainText('Implement and validate Report task completion.');
@@ -51,10 +62,12 @@ test('assigned plan items stay compact across widths and themes', async ({ page 
       await page.getByRole('button', { name: 'Add note', exact: true }).click();
       await expect(page.locator('.track-plan-detail')).toContainText(`Verified ${theme} at ${width}px`);
       await page.screenshot({ path: `tmp/assigned-expanded-${theme}-${width}.png` });
-      const result = await new AxeBuilder({ page }).include('.track-conversation').withTags(['wcag2a', 'wcag2aa']).analyze();
+      const result = await new AxeBuilder({ page }).include('.track-crumbs').include('.track-conversation').withTags(['wcag2a', 'wcag2aa']).analyze();
       expect(result.violations).toEqual([]);
       await page.locator('.track-plan-item-title').first().click();
-      await summary.getByRole('button').click();
+      await page.keyboard.press('Escape');
+      await expect(chip).toHaveAttribute('aria-expanded', 'false');
+      await expect(popover).toBeHidden();
     }
   }
 });

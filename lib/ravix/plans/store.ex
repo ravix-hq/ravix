@@ -15,6 +15,15 @@ defmodule Ravix.Plans.Store do
         from p in Plan, where: p.project_id == ^project_id, order_by: [desc: p.inserted_at]
       )
 
+  def titles(project_ids),
+    do:
+      Repo.all(
+        from p in Plan,
+          where: p.project_id in ^project_ids,
+          order_by: [asc: p.title, asc: p.id],
+          select: %{id: p.id, project_id: p.project_id, title: p.title, archived: p.archived}
+      )
+
   def items(plan_id),
     do:
       Repo.all(

@@ -1,5 +1,9 @@
 defmodule RavixWeb.Live.TrackPlanItems do
-  @moduledoc "Compact assigned material, including for guests without project access."
+  @moduledoc """
+  Assigned plan material as one header chip ("Plan: X · 3 items") that opens
+  a panel of the items, their status and notes. Guests without project access
+  see their assigned items only.
+  """
   use RavixWeb, :live_component
   alias Ravix.Plans
 
@@ -24,6 +28,8 @@ defmodule RavixWeb.Live.TrackPlanItems do
 
   defp event("toggle", _, socket),
     do: {:noreply, assign(socket, expanded: !socket.assigns.expanded)}
+
+  defp event("close", _, socket), do: {:noreply, assign(socket, expanded: false)}
 
   defp event("detail", %{"id" => id}, socket),
     do: {:noreply, assign(socket, detail: if(socket.assigns.detail != id, do: id))}
@@ -58,6 +64,9 @@ defmodule RavixWeb.Live.TrackPlanItems do
   defp label(:closed_without_merge), do: "Closed without merge"
   defp label(:blocked), do: "Blocked"
 
+  defp count([_]), do: "1 item"
+  defp count(items), do: "#{length(items)} items"
+
   defp progress(items) do
     done = Enum.count(items, &(&1.status == :done))
     if done == length(items), do: "All plan items done", else: "#{done} of #{length(items)} done"
@@ -66,73 +75,101 @@ defmodule RavixWeb.Live.TrackPlanItems do
   @impl true
   def render(assigns) do
     ~H"""
-    <div id={@id} class="track-plan-items">
-      <p :if={@error} role="alert">{@error}</p>
-      <div :if={@items != []} class="track-plan-summary">
-        <.link
-          :if={@summary.plan}
-          navigate={@summary.plan.url}
-          title={@summary.plan.title}
-          class="track-plan-title"
-        >
-          Plan · {@summary.plan.title}
-        </.link>
-        <span :if={!@summary.plan} class="track-plan-title">Plan items</span>
-        <RavixWeb.PlanProgress.summary progress={
-          if @summary.plan, do: @summary.plan.progress, else: @summary.progress
-        } />
-        <button
-          type="button"
-          class="ghost track-plan-toggle"
-          phx-click="toggle"
-          phx-target={@myself}
-          aria-expanded={to_string(@expanded)}
-          aria-controls={"#{@id}-list"}
-        >
-          {progress(@items)} <span aria-hidden="true">{if @expanded, do: "▾", else: "▸"}</span>
-        </button>
-      </div>
-      <ul :if={@items != []} id={"#{@id}-list"} class="track-plan-list" hidden={!@expanded}>
-        <li :for={item <- @items} :if={@expanded} id={"assigned-item-#{item.id}"}>
-          <div class="track-plan-item-row">
-            <span class={"chip plan-status plan-status-#{item.status}"}>{label(item.status)}</span>
-            <button
-              type="button"
-              class="ghost track-plan-item-title"
-              title={item.title}
-              phx-click="detail"
-              phx-value-id={item.id}
-              phx-target={@myself}
-              aria-expanded={to_string(@detail == item.id)}
-              aria-controls={"assigned-detail-#{item.id}"}
-            >{item.title}</button>
-            <.link
-              :if={item.pull && item.pull.url}
-              href={item.pull.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              class="track-plan-pr"
-              aria-label={"Pull request ##{item.pull.number}"}
-            >#{item.pull.number}</.link>
-          </div>
-          <div id={"assigned-detail-#{item.id}"} hidden={@detail != item.id}>
-            <div :if={@detail == item.id} class="track-plan-detail">
-              <p :if={!item.status_available} class="hint">PR status is temporarily unavailable.</p>
-              <div class="md">{RavixWeb.Markdown.render_safe(item.brief)}</div>
-              <p :if={item.acceptance != ""}><strong>Acceptance:</strong> {item.acceptance}</p>
-              <ul :if={item.notes != []}>
-                <li :for={note <- item.notes}>{note.created_by_login}: {note.body}</li>
-              </ul>
-              <.form for={%{}} id={"track-note-#{item.id}"} phx-submit="note" phx-target={@myself}>
-                <input type="hidden" name="item_id" value={item.id} />
-                <label for={"track-note-body-#{item.id}"}>Add an item note</label>
-                <textarea id={"track-note-body-#{item.id}"} name="body" required maxlength="10000"></textarea>
-                <button type="submit">Add note</button>
-              </.form>
+    <div
+      id={@id}
+      class="track-plan-items"
+      phx-click-away={@expanded && "close"}
+      phx-window-keydown={@expanded && "close"}
+      phx-key="escape"
+      phx-target={@myself}
+    >
+      <p :if={@error} role="alert" class="error fine">{@error}</p>
+      <.link
+        :if={@summary.plan && @items == []}
+        navigate={@summary.plan.url}
+        class="chip track-plan-chip"
+        title={@summary.plan.title}
+      >Plan: {@summary.plan.title}</.link>
+      <button
+        :if={@items != []}
+        type="button"
+        class="chip track-plan-chip track-plan-toggle"
+        phx-click="toggle"
+        phx-target={@myself}
+        title={@summary.plan && @summary.plan.title}
+        aria-expanded={to_string(@expanded)}
+        aria-controls={"#{@id}-panel"}
+      >
+        <span class="truncate">{if @summary.plan,
+          do: "Plan: #{@summary.plan.title}",
+          else: "Plan items"}</span><span class="track-plan-count">{" · " <> count(@items)}</span>
+        <.icon name="chevron" size={11} open={@expanded} />
+      </button>
+      <div
+        :if={@items != []}
+        id={"#{@id}-panel"}
+        class="track-plan-popover"
+        role="region"
+        aria-label="Plan items"
+        hidden={!@expanded}
+      >
+        <div class="track-plan-summary">
+          <.link
+            :if={@summary.plan}
+            navigate={@summary.plan.url}
+            title={@summary.plan.title}
+            class="track-plan-title"
+          >
+            Plan · {@summary.plan.title}
+          </.link>
+          <span :if={!@summary.plan} class="track-plan-title">Plan items</span>
+          <RavixWeb.PlanProgress.summary progress={
+            if @summary.plan, do: @summary.plan.progress, else: @summary.progress
+          } />
+          <span class="dim">{progress(@items)}</span>
+        </div>
+        <ul id={"#{@id}-list"} class="track-plan-list">
+          <li :for={item <- @items} :if={@expanded} id={"assigned-item-#{item.id}"}>
+            <div class="track-plan-item-row">
+              <span class={"chip plan-status plan-status-#{item.status}"}>{label(item.status)}</span>
+              <button
+                type="button"
+                class="ghost track-plan-item-title"
+                title={item.title}
+                phx-click="detail"
+                phx-value-id={item.id}
+                phx-target={@myself}
+                aria-expanded={to_string(@detail == item.id)}
+                aria-controls={"assigned-detail-#{item.id}"}
+              >{item.title}</button>
+              <.link
+                :if={item.pull && item.pull.url}
+                href={item.pull.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                class="track-plan-pr"
+                aria-label={"Pull request ##{item.pull.number}"}
+              >#{item.pull.number}</.link>
             </div>
-          </div>
-        </li>
-      </ul>
+            <div id={"assigned-detail-#{item.id}"} hidden={@detail != item.id}>
+              <div :if={@detail == item.id} class="track-plan-detail">
+                <p :if={!item.status_available} class="hint">PR status is temporarily unavailable.</p>
+                <div class="md">{RavixWeb.Markdown.render_safe(item.brief)}</div>
+                <p :if={item.acceptance != ""}><strong>Acceptance:</strong> {item.acceptance}</p>
+                <ul :if={item.notes != []}>
+                  <li :for={note <- item.notes}>{note.created_by_login}: {note.body}</li>
+                </ul>
+                <.form for={%{}} id={"track-note-#{item.id}"} phx-submit="note" phx-target={@myself}>
+                  <input type="hidden" name="item_id" value={item.id} />
+                  <label for={"track-note-body-#{item.id}"}>Add an item note</label>
+                  <textarea id={"track-note-body-#{item.id}"} name="body" required maxlength="10000"></textarea>
+                  <button type="submit">Add note</button>
+                </.form>
+              </div>
+            </div>
+          </li>
+        </ul>
+      </div>
     </div>
     """
   end

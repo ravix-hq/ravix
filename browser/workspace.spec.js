@@ -438,7 +438,7 @@ test('mobile navigation marks the current page and names Search consistently', a
   await capture(page, 'mobile-nav-inbox-500');
   await nav.getByRole('button', { name: 'Search', exact: true }).click();
   await expect(page.getByRole('dialog', { name: 'Search', exact: true })).toBeVisible();
-  await expect(page.getByLabel('Search projects and tracks')).toBeFocused();
+  await expect(page.getByLabel('Search projects, tracks and plans')).toBeFocused();
   await page.keyboard.press('Escape');
   await expect(nav.getByRole('button', { name: 'Search', exact: true })).toBeFocused();
   await nav.getByRole('button', { name: 'Menu', exact: true }).click();
@@ -449,13 +449,13 @@ test('find a track focuses its search field and explains no matches', async ({ p
   await signIn(page);
   const open = page.getByRole('button', { name: 'Search', exact: true });
   const dialog = page.getByRole('dialog', { name: 'Search', exact: true });
-  const query = dialog.getByLabel('Search projects and tracks');
+  const query = dialog.getByLabel('Search projects, tracks and plans');
 
   await open.focus();
   await open.press('Enter');
   await expect(query).toBeFocused();
   await page.keyboard.type('no-track-could-match-this-query');
-  await expect(dialog.getByRole('status')).toHaveText('No projects or tracks match');
+  await expect(dialog.getByRole('status')).toHaveText('No projects, tracks or plans match');
   await expect(dialog.locator('a')).toHaveCount(0);
   await expect(query).toBeFocused();
   await page.keyboard.press('Escape');

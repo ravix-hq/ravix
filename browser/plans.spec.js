@@ -12,6 +12,11 @@ test('a project plan assigns coordinated tracks and works at phone width', async
   await page.getByLabel('Project name', { exact: true }).fill('Planned release');
   await page.getByRole('button', { name: 'Create project', exact: true }).click();
   const panel = page.locator('#plans-panel');
+  // Plans are not on the project's home; the project row opens them.
+  await expect(page.locator('#project-tabpanel .crumbs')).toBeVisible();
+  await expect(panel).toHaveCount(0);
+  await page.getByRole('link', { name: 'Plans in Planned release', exact: true }).click();
+  await expect(page).toHaveURL(/\/plans$/);
   await expect(panel).toBeVisible();
   await panel.getByRole('button', { name: 'New plan', exact: true }).click();
   await expect(page).toHaveURL(/\?new=plan$/);
@@ -57,7 +62,10 @@ test('a project plan assigns coordinated tracks and works at phone width', async
   }
   await page.locator('html').evaluate(el => el.dataset.theme = 'midnight');
   await page.setViewportSize({ width: 1280, height: 900 });
-  await panel.getByRole('link', { name: 'Ship the release', exact: true }).click();
+  // Quick-jump finds the plan by its title.
+  await page.keyboard.press('Control+k');
+  await page.getByLabel('Search projects, tracks and plans').fill('ship the');
+  await page.locator('#search-dialog').getByRole('link', { name: 'Plan: Ship the release' }).click();
   await expect(page).toHaveURL(planURL);
   await expect(panel.getByRole('heading', { name: 'Ship the release' })).toBeVisible();
   const card = panel.locator('.plan-item').filter({ has: page.getByRole('heading', { name: 'Build API', exact: true }) });
@@ -134,5 +142,6 @@ test('a project plan assigns coordinated tracks and works at phone width', async
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await page.screenshot({ path: 'test-results/plans-phone.png', fullPage: true });
   await panel.getByRole('link', { name: 'Open track: ravix/build-api' }).click();
+  await page.getByRole('button', { name: /^Plan: Ship the release · 1 item/ }).click();
   await expect(page.getByRole('link', { name: 'Plan · Ship the release' })).toBeVisible();
 });

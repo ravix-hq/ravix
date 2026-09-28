@@ -1,8 +1,8 @@
 <section class="plans-panel" id="plans-panel" aria-label="Project plans">
   <header class="plans-toolbar">
     <h2>Plans</h2>
-    <.link patch={"/p/#{@project.id}"}>All plans</.link>
-    <button phx-click={JS.patch("/p/#{@project.id}?new=plan")} disabled={@busy}>New plan</button>
+    <.link patch={"/p/#{@project.id}/plans"}>All plans</.link>
+    <button phx-click={JS.patch("/p/#{@project.id}/plans?new=plan")} disabled={@busy}>New plan</button>
     <button phx-click="refresh-plans" phx-target={@myself} disabled={@busy}>Refresh status</button>
   </header>
   <p :if={@error} class="error" role="alert">{@error}</p>
@@ -13,7 +13,7 @@
       id={"plan-row-#{plan.id}"}
       class={if plan.archived, do: "plan-archived"}
     >
-      <.link patch={"/p/#{@project.id}?plan=#{plan.id}"}>{plan.title}</.link>
+      <.link patch={"/p/#{@project.id}/plans?plan=#{plan.id}"}>{plan.title}</.link>
       <span :if={plan.archived} class="chip">Archived</span>
       <RavixWeb.PlanProgress.summary
         progress={@progress[plan.id]}
@@ -107,7 +107,7 @@
       <button type="submit" class="primary">Save plan</button>
       <button
         type="button"
-        phx-click={if @new_plan, do: JS.patch("/p/#{@project.id}"), else: "cancel-edit"}
+        phx-click={if @new_plan, do: JS.patch("/p/#{@project.id}/plans"), else: "cancel-edit"}
         phx-target={@myself}
       >Cancel</button>
     </div>

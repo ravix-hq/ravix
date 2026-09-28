@@ -1739,8 +1739,16 @@ defmodule RavixWeb.TrackLiveTest do
 
     send(ctx.view.pid, :refresh_plan_items)
     settle(ctx.view)
-    assert has_element?(ctx.view, ".track-plan-toggle[aria-expanded=false]", "1 of 4 done")
-    assert has_element?(ctx.view, ".track-plan-summary")
+    # The items are a chip in the header, not a panel over the transcript.
+    assert has_element?(
+             ctx.view,
+             "header.track-crumbs .track-plan-toggle[aria-expanded=false]",
+             "Plan items · 4 items"
+           )
+
+    refute has_element?(ctx.view, "#transcript-scroll .track-plan-items")
+    assert has_element?(ctx.view, ".track-plan-popover[hidden]")
+    assert has_element?(ctx.view, ".track-plan-summary", "1 of 4 done")
     assert has_element?(ctx.view, ".track-plan-summary", "25% complete")
     assert has_element?(ctx.view, ".track-plan-summary", "2 WIP")
     assert has_element?(ctx.view, ".track-plan-summary", "1 unstarted")
@@ -1768,6 +1776,11 @@ defmodule RavixWeb.TrackLiveTest do
     ctx.view |> element("#assigned-item-compact-0 .track-plan-item-title") |> render_click()
     refute has_element?(ctx.view, "#track-note-compact-2")
     assert has_element?(ctx.view, "#track-note-compact-0")
+
+    # Escape closes the panel again.
+    ctx.view |> element(".track-plan-items") |> render_keydown(%{"key" => "Escape"})
+    assert has_element?(ctx.view, ".track-plan-toggle[aria-expanded=false]")
+    refute has_element?(ctx.view, ".track-plan-list > li")
   end
 
   test "the header uses the plan title and completed items have a quiet summary", ctx do
@@ -1803,17 +1816,20 @@ defmodule RavixWeb.TrackLiveTest do
 
     assert has_element?(
              ctx.view,
-             ".track-plan-summary .track-plan-title[title='#{plan.title}'][href='/p/#{ctx.project.id}?plan=#{plan.id}']",
+             ".track-plan-summary .track-plan-title[title='#{plan.title}'][href='/p/#{ctx.project.id}/plans?plan=#{plan.id}']",
              "Plan · #{plan.title}"
            )
 
-    refute has_element?(ctx.view, ".track-plan-chip")
+    refute has_element?(ctx.view, "a.track-plan-chip")
 
     assert has_element?(
              ctx.view,
-             ".track-plan-toggle[aria-expanded=false]",
-             "All plan items done"
+             ".track-plan-toggle[aria-expanded=false][title='#{plan.title}']",
+             "Plan: #{plan.title}"
            )
+
+    assert has_element?(ctx.view, ".track-plan-toggle", "1 item")
+    assert has_element?(ctx.view, ".track-plan-summary", "All plan items done")
   end
 
   test "closed, blocked and ready items retain their distinct labels", ctx do
@@ -1913,7 +1929,8 @@ defmodule RavixWeb.TrackLiveTest do
 
     view = find_live_child(parent, "track-host")
     settle(view)
-    assert has_element?(view, ".track-plan-toggle[aria-expanded=false]", "0 of 1 done")
+    assert has_element?(view, ".track-plan-toggle[aria-expanded=false]", "Plan items · 1 item")
+    assert has_element?(view, ".track-plan-summary", "0 of 1 done")
     refute has_element?(view, ".track-plan-items a")
     view |> element(".track-plan-toggle") |> render_click()
     assert has_element?(view, ".track-plan-item-title", "Allowed work")

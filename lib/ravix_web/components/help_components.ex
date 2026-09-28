@@ -62,9 +62,12 @@ defmodule RavixWeb.HelpComponents do
       <details>
         <summary>Plan work across tracks</summary>
         <p>
-          Open a project to create a plan with a Markdown rationale, ordered items, briefs,
+          Open Plans from a project's row in the sidebar, or search for a plan by title
+          with ⌘/Ctrl K, to create a plan with a Markdown rationale, ordered items, briefs,
           acceptance notes and dependencies. Select items and choose new or existing tracks,
           then press Assign selected items. Assignment spends the project owner's subscription or API key.
+          On a track made from a plan, the "Plan" chip in the header opens its items, their status
+          and Add note.
         </p>
         <p>MCP tools: create_plan, get_plan, list_plans, update_plan, assign_items and note_item.
           Request plans:read and plans:write; assignment also requires tracks:write.

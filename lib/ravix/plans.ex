@@ -31,6 +31,9 @@ defmodule Ravix.Plans do
     with {:ok, _} <- Access.project_access(user, project_id), do: {:ok, Store.list(project_id)}
   end
 
+  @doc "Plan titles across every project this viewer may enter whole, for quick-jump."
+  def titles(user), do: Store.titles(Access.project_ids(user))
+
   @doc "One project-wide status batch for list consumers; keep list/2 provider-free."
   def list_with_progress(user, project_id) do
     with {:ok, %{project: project}} <- Access.project_access(user, project_id) do
@@ -117,7 +120,7 @@ defmodule Ravix.Plans do
           %{
             id: plan.id,
             title: plan.title,
-            url: "/p/#{project.id}?plan=#{plan.id}",
+            url: "/p/#{project.id}/plans?plan=#{plan.id}",
             progress: Progress.summarize(Enum.filter(derived, &MapSet.member?(ids, &1.id)))
           }
         end
