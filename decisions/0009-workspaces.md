@@ -7,7 +7,7 @@ status: stable
 adr: "0009"
 adr_status: "Accepted"
 date: 2026-09-28
-generated: { by: process:codex, at: 2026-09-28T06:50:31Z }
+generated: { by: process:codex, at: 2026-09-28T07:01:14Z }
 stale_after: 2026-10-28
 ---
 
@@ -246,6 +246,12 @@ log, settings viewer and export are deferred; they are not rollout requirements.
 **The Ravix GitHub App is the author and pushes commits.** Include a
 `Co-authored-by` trailer for the thread starter; PRs name who started the track.
 Use installation authority, with no per-user GitHub tokens.
+
+**Later — 2026-09-28:** Raunak confirmed the attribution decision above. Once
+there are many users, the intended direction is to attribute PRs to the track's
+owner rather than the app. This is deliberately not for now: it requires a
+per-user GitHub credential (a personal token or user-to-server grant), adding
+onboarding friction. Decide that change in its own ADR when it becomes relevant.
 
 ### The track creator pays for every thread and runtime
 
