@@ -24,7 +24,7 @@ defmodule Ravix.ThreadsTest do
       {:ok, true}
     end)
 
-    stub(Fountain, :catalog, fn _ ->
+    stub(MachineCache, :catalog, fn _ ->
       {:ok, %Shapes.Catalog{runtimes: ["claude"], models: %{"claude" => [project.model]}}}
     end)
 

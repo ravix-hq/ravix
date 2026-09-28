@@ -46,6 +46,13 @@ defmodule Ravix.TrackMaintenanceTest do
     client = provider([])
     stub(Ravix.Accounts.Inference, :usable?, fn _, "codex", _ -> {:ok, true} end)
 
+    stub(Ravix.Accounts.Inference, :usable_agents, fn _, [fresh: true] -> {:ok, [:codex]} end)
+
+    stub(Ravix.MachineCache, :catalog, fn _ ->
+      {:ok,
+       %Ravix.Fountain.Shapes.Catalog{runtimes: ["codex"], models: %{"codex" => [project.model]}}}
+    end)
+
     assert is_nil(project.home_runtime)
     assert Project.home_runtime(project) == "codex"
     assert {:ok, "codex"} = RuntimeAgents.home_runtime(project, client, nil)

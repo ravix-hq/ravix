@@ -27,8 +27,8 @@ defmodule RavixWeb.Live.AgentPanelTest do
     catalog = %Ravix.Fountain.Shapes.Catalog{
       runtimes: ["claude", "codex"],
       models: %{
-        "claude" => ["sonnet", "opus"],
-        "codex" => ["gpt"]
+        "claude" => ["anthropic/claude-sonnet-5", "anthropic/claude-opus-5-5"],
+        "codex" => ["openai/gpt-6-astra"]
       }
     }
 
@@ -40,15 +40,45 @@ defmodule RavixWeb.Live.AgentPanelTest do
     view = open_account(conn, user)
     render_async(view)
     render_async(view)
-    assert has_element?(view, "#thread-default-choice option[value='claude|opus']")
-    refute has_element?(view, "#thread-default-choice option[value='codex|gpt']")
-    view |> form("#thread-default-form", preference: %{choice: "claude|opus"}) |> render_submit()
+
+    assert has_element?(
+             view,
+             "#thread-default-choice option[value='claude|anthropic/claude-opus-5-5']"
+           )
+
+    refute has_element?(view, "#thread-default-choice option[value='codex|openai/gpt-6-astra']")
+
+    view
+    |> form("#thread-default-form", preference: %{choice: "claude|anthropic/claude-opus-5-5"})
+    |> render_submit()
+
     render_async(view)
-    assert Repo.get!(User, user.id).preferred_model == "opus"
+    assert Repo.get!(User, user.id).preferred_model == "anthropic/claude-opus-5-5"
+    assert has_element?(view, "#thread-default-form [role=status]", "Thread default saved.")
+
+    view
+    |> form("#thread-default-form", preference: %{choice: "claude|anthropic/claude-sonnet-5"})
+    |> render_change()
+
+    refute has_element?(view, "#thread-default-form [role=status]")
+    stub(Inference, :usable?, fn _, _, _ -> {:ok, false} end)
+
+    view
+    |> form("#thread-default-form", preference: %{choice: "claude|anthropic/claude-sonnet-5"})
+    |> render_submit()
+
+    render_async(view)
+    assert has_element?(view, "#thread-default-form [role=alert]", "Connect this agent first.")
+    refute has_element?(view, "#thread-default-form [role=status]")
+
     view = open_account(conn, user)
     render_async(view)
     render_async(view)
-    assert has_element?(view, "#thread-default-choice option[value='claude|opus'][selected]")
+
+    assert has_element?(
+             view,
+             "#thread-default-choice option[value='claude|anthropic/claude-opus-5-5'][selected]"
+           )
   end
 
   test "opens from the rail, shows what is connected, and says who pays", %{conn: conn} do

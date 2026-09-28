@@ -1087,10 +1087,10 @@ defmodule Ravix.Tracks do
          {:ok, %Conversation{model: ^override}} <-
            Fountain.set_model(client, thread.conversation_id, override),
          {:ok, _} <-
-           ThreadPreference.put(
+           ThreadPreference.remember_model(
              user,
              thread.runtime || project.runtime,
-             override || project.model,
+             if(is_nil(model), do: nil, else: override || project.model),
              catalog
            ) do
       Store.set_thread_model(thread.id, override || project.model)

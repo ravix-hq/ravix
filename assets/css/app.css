@@ -918,6 +918,7 @@ html[data-inspector="closed"] #inspector-toggle .label-show { display: inline; }
     position-try-fallbacks: flip-inline;
   }
 }
+.model-default-hint { margin: 6px 8px; color: var(--dimmer); font-size: 11px; }
 .model-option small { flex: none; color: var(--dimmer); font-size: 11px; }
 .model-option[aria-checked="true"] { color: var(--ink); }
 .model-option .check { flex: none; color: var(--accent); }

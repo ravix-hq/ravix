@@ -11,6 +11,16 @@ defmodule Ravix.PlansAssignmentTest do
   alias RavixWeb.Tooling.MCP
 
   setup do
+    stub(Ravix.Accounts.Inference, :usable_agents, fn _, [fresh: true] -> {:ok, [:claude]} end)
+
+    stub(Ravix.MachineCache, :catalog, fn _ ->
+      {:ok,
+       %Ravix.Fountain.Shapes.Catalog{
+         runtimes: ["claude"],
+         models: %{"claude" => ["anthropic/claude-opus-5"]}
+       }}
+    end)
+
     stub(Ravix.Accounts.Inference, :usable?, fn _, "claude", [fresh: true] -> {:ok, true} end)
     user = insert_user()
 

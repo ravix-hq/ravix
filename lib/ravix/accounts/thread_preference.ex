@@ -3,7 +3,7 @@ defmodule Ravix.Accounts.ThreadPreference do
   A person's default for new threads, independent of the new-project default.
 
   Until explicitly chosen, use the most recently connected credential still held,
-  across ChatGPT links, API keys and Claude tokens, and its first catalog model.
+  across ChatGPT links, API keys and Claude tokens, and its runtime default model.
   Connection timestamps are recorded by Inference after successful writes. Legacy
   connections without timestamps use the recorded account agent, then catalog order;
   their historical connection order cannot be recovered from the credential list.
@@ -116,6 +116,21 @@ defmodule Ravix.Accounts.ThreadPreference do
     end
   end
 
+  def clear(%User{} = person) do
+    case Store.get_user(person.id) do
+      %User{} = user ->
+        user
+        |> change(preferred_runtime: nil, preferred_model: nil)
+        |> Repo.update()
+
+      nil ->
+        {:error, :not_found}
+    end
+  end
+
+  def remember_model(person, _runtime, nil, _catalog), do: clear(person)
+  def remember_model(person, runtime, model, catalog), do: put(person, runtime, model, catalog)
+
   def save(%User{} = user, runtime, model) do
     with {:ok, true} <- Inference.usable?(user, runtime, fresh: true),
          {:ok, client} <- Ravix.Providers.fountain(),
@@ -138,6 +153,6 @@ defmodule Ravix.Accounts.ThreadPreference do
 
   defp valid_or_default(catalog, runtime, model) do
     models = Catalog.models_for(catalog, runtime)
-    if model in models, do: model, else: List.first(models)
+    if model in models, do: model, else: Catalog.default_model(catalog, runtime)
   end
 end

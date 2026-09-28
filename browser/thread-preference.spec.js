@@ -34,6 +34,14 @@ test('an account default selects the model for a new thread and leaves the exist
   await form.getByRole('button', { name: 'Create thread', exact: true }).click();
   await expect(tabs.locator('[aria-current="true"]')).not.toHaveAttribute('data-thread-id', original);
   await expect(page.locator('#model-trigger')).toHaveAttribute('title', selected.label);
+  await page.locator('#model-trigger').click();
+  await expect(page.locator('.model-default-hint')).toHaveText('Also your default for new threads');
+  await page.locator('#model-menu [phx-value-model=""]').click();
+  await expect(page.locator('#model-trigger')).toHaveAttribute('title', originalModel);
+  await tabs.getByRole('button', { name: 'Add thread', exact: true }).click();
+  await expect(form.locator('.thread-default-source')).toContainText('Your default:');
+  await expect(form.locator('#new_thread-model')).not.toHaveValue(selected.value.split('|')[1]);
+  await page.getByRole('dialog', { name: 'New thread', exact: true }).getByRole('button', { name: 'Close', exact: true }).click();
   await tabs.locator(`button[data-thread-id="${original}"]`).click();
   await expect(page.locator('#model-trigger')).toHaveAttribute('title', originalModel);
 });

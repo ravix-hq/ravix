@@ -10,7 +10,12 @@ defmodule Ravix.ThreadRuntimeTest do
   alias Ravix.Tracks.Store
 
   @models %{
-    "claude" => ["anthropic/claude-sonnet-5", "anthropic/claude-opus-5"],
+    "claude" => [
+      "anthropic/claude-fable-5-1",
+      "anthropic/claude-opus-5-5",
+      "anthropic/claude-opus-5",
+      "anthropic/claude-sonnet-5"
+    ],
     "codex" => ["openai/gpt-6-astra", "openai/gpt-5.6"]
   }
 
@@ -89,7 +94,12 @@ defmodule Ravix.ThreadRuntimeTest do
     assert {:ok, %{runtime: "claude", source: :project}} =
              Tracks.thread_options(member, ctx.track.id)
 
-    assert {:ok, _} = Tracks.add_thread(ctx.owner, ctx.track.id, %{runtime: "claude"})
+    assert {:ok, _} =
+             Tracks.add_thread(ctx.owner, ctx.track.id, %{
+               runtime: "claude",
+               preference_explicit: "true"
+             })
+
     stub(Ravix.MachineCache, :machine_of, fn _, _ -> {:ok, nil} end)
 
     assert {:ok, %{runtime: "claude", source: :track}} =
@@ -138,6 +148,35 @@ defmodule Ravix.ThreadRuntimeTest do
              })
 
     assert Ravix.Accounts.Store.get_user(ctx.owner.id).preferred_runtime == nil
+  end
+
+  for reason <- [:disconnected, :disabled] do
+    test "without a preference, dialog and create skip a #{reason} remembered runtime", ctx do
+      stub(Ravix.MachineCache, :machine_for_track, fn _, _, _ -> {:ok, nil} end)
+
+      {:ok, _} =
+        Store.create_thread(%{
+          track_id: ctx.track.id,
+          title: "Previous",
+          runtime: "codex",
+          model: "openai/gpt-6-astra"
+        })
+
+      if unquote(reason) == :disconnected do
+        stub(Ravix.Config, :dedicated_opens_enabled?, fn _ -> true end)
+        stub(Inference, :usable_agents, fn _ -> {:ok, [:claude]} end)
+        stub(Inference, :usable_agents, fn _, _ -> {:ok, [:claude]} end)
+        stub(Inference, :usable?, fn _, runtime, _ -> {:ok, runtime == "claude"} end)
+      end
+
+      assert {:ok, %{runtime: "claude", source: :project, model: model}} =
+               Tracks.thread_options(ctx.owner, ctx.track.id)
+
+      assert {:ok, thread} = Tracks.add_thread(ctx.owner, ctx.track.id, %{})
+      assert thread.runtime == "claude"
+      assert thread.model == model
+      assert Ravix.Accounts.Store.get_user(ctx.owner.id).preferred_runtime == nil
+    end
   end
 
   test "home threads persist their model and leave legacy nullable threads readable", ctx do
@@ -210,7 +249,10 @@ defmodule Ravix.ThreadRuntimeTest do
         assert launch.sandbox_id == "disk"
         assert launch.vault_id == project.vault_id
         assert launch.environment_id == project.environment_id
-        assert launch.model == hd(@models[guest])
+
+        assert launch.model ==
+                 if(guest == "claude", do: "anthropic/claude-opus-5", else: "openai/gpt-6-astra")
+
         {:ok, Shapes.conversation(%{"id" => Ecto.UUID.generate(), "sandbox_id" => "disk"})}
       end)
 

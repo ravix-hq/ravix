@@ -128,8 +128,10 @@ defmodule RavixWeb.WorkspaceManagementTest do
       assert composer |> LazyHTML.query("#model-trigger .truncate") |> LazyHTML.text() == label
 
       for {choice, name} <- labels do
+        value = if choice == hd(models), do: "", else: choice
+
         assert composer
-               |> LazyHTML.query("[phx-value-model='#{choice}'] .truncate")
+               |> LazyHTML.query("[phx-value-model='#{value}'] .truncate")
                |> LazyHTML.text() == name
       end
     end
