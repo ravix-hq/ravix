@@ -1092,10 +1092,15 @@ defmodule Ravix.PromptQueueTest do
       old = Follower.whereis(f.track.id)
       Process.exit(old, :kill)
 
+      # A new follower can register before the queue server has handled the
+      # old one's exit and subscribed again, so wait for the subscription
+      # itself, not just for a new pid.
       wait_until(
         fn ->
           pid = Follower.whereis(f.track.id)
-          is_pid(pid) and pid != old
+
+          is_pid(pid) and pid != old and
+            Map.has_key?(:sys.get_state(pid).subscribers, f.server)
         end,
         System.monotonic_time(:millisecond) + 1_000
       )
