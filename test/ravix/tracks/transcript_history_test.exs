@@ -138,6 +138,42 @@ defmodule Ravix.Tracks.TranscriptHistoryTest do
     assert comparable(page.turns) == comparable(full.turns)
   end
 
+  test "mostly turn-less output renders after three pages, and Load earlier reads the rest" do
+    owner = insert_user()
+
+    track =
+      insert_track(
+        project: insert_project(user: owner, runtime: "codex"),
+        conversation_id: "noisy"
+      )
+
+    # One short turn, then 1,000 events of turn-less output: five pages of it.
+    log = sparse(1, 10) ++ unbound(11..1010, "out ")
+    base = "/api/conversations/noisy"
+    routes = Fixture.desc_routes(base <> "/events", log)
+    assert length(routes) == 6
+
+    client =
+      FakeTransport.client([
+        {%{method: "GET", path: base <> "/turns"}, {200, [], %{data: []}}} | routes
+      ])
+
+    stub(Fountain, :client, fn -> client end)
+    assert {:ok, page} = Tracks.events(owner, track.id)
+    # Not the whole log before first paint: three pages, rendered as read.
+    assert length(event_calls(client)) == 3
+    assert [%{id: newest} = run] = page.turns
+    assert newest == "pending:#{id(411)}" and length(run.events) == 600
+    assert page.last_event_id == List.last(log)["id"]
+    assert Transcript.History.more?(page.history) and page.history.held == []
+
+    assert {:ok, page} = earlier(owner, track.id, page)
+    assert length(event_calls(client)) == 6
+    refute Transcript.History.more?(page.history)
+    assert Enum.map(page.turns, & &1.id) == ["t1", "pending:#{id(11)}", newest]
+    assert page.turns |> Enum.map(&length(&1.events)) |> Enum.sum() == length(log)
+  end
+
   test "a turn split at Fountain's ceiling, turn-less runs cut by the limit and older conversations each render once, whole" do
     owner = insert_user()
     project = insert_project(user: owner, runtime: "codex")
@@ -243,7 +279,7 @@ defmodule Ravix.Tracks.TranscriptHistoryTest do
         verify: false
       )
 
-    assert {:ok, _follower} =
+    assert {:ok, follower} =
              Tracks.follow(owner, track.id,
                after: page.last_event_id,
                client: stream,
@@ -256,6 +292,8 @@ defmodule Ravix.Tracks.TranscriptHistoryTest do
     assert_receive {:transcript, ^track_id, %Transcript.Event{id: ^next}}, 1_000
     assert [%{headers: headers} | _] = FakeTransport.calls(stream)
     assert {"last-event-id", "#{newest}"} in headers
+    # Stop the follower here rather than let it linger past the test's sandbox.
+    DynamicSupervisor.terminate_child(Tracks.Follower.supervisor(), follower)
   end
 
   test "a Fountain without page objects falls back to the forward read, reusing its first page" do

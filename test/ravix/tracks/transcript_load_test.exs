@@ -297,6 +297,79 @@ defmodule Ravix.Tracks.TranscriptLoadTest do
     assert classified("scan") == ~w(t3 t4 t5 t6 t7)
   end
 
+  test "a running turn over the limit makes no extra request when the turns behind it are classified" do
+    owner = insert_user()
+    project = insert_project(user: owner, runtime: "codex")
+    track = insert_track(project: project, conversation_id: "running")
+    base = "/api/conversations/running"
+    # t3 is still running, 600 events in: the read's whole page is only t3.
+    running = settled_turns(3, 600) |> Enum.drop(-1)
+    [read | _older] = Fixture.desc_routes(base <> "/events", running, then: 1000)
+    assert Enum.all?(elem(elem(read, 1), 2)["data"], &(&1["turn_id"] == "t3"))
+
+    for turn <- ~w(t1 t2),
+        do: {:ok, _} = Store.classify_turn_once("running", turn, fn -> {:ok, nil} end)
+
+    turns = {%{method: "GET", path: base <> "/turns"}, {200, [], %{data: []}}}
+    client = FakeTransport.client([read, turns])
+    stub(Fountain, :client, fn -> client end)
+    scanning(self())
+
+    assert {:ok, %{turns: [%{id: "t3", settled?: false}]}} = Tracks.events(owner, track.id)
+    await_scan()
+    assert length(event_paths(client)) == 1
+  end
+
+  test "a first open mid-turn still walks back, and one walk per conversation runs at a time" do
+    owner = insert_user()
+    project = insert_project(user: owner, runtime: "codex")
+    track = insert_track(project: project, conversation_id: "walk")
+    base = "/api/conversations/walk"
+    running = settled_turns(3, 600) |> Enum.drop(-1)
+    [read, older] = Fixture.desc_routes(base <> "/events", running, then: 1000)
+    turns = {%{method: "GET", path: base <> "/turns"}, {200, [], %{data: []}}}
+    client = FakeTransport.client([read, turns])
+    stub(Fountain, :client, fn -> client end)
+    scanning(self())
+
+    # Another walk of this conversation holds the lock: this scan does not walk.
+    lock = {Ravix.Cluster.name(:settlement_scan, "walk"), self()}
+    assert :global.set_lock(lock, [node()], 0)
+    assert {:ok, _} = Tracks.events(owner, track.id)
+    await_scan()
+    assert length(event_paths(client)) == 1
+    :global.del_lock(lock, [node()])
+
+    # Nothing classified yet, so the running turn does not stop the walk.
+    FakeTransport.expect(client, elem(read, 0), elem(read, 1))
+    FakeTransport.expect(client, elem(turns, 0), elem(turns, 1))
+    FakeTransport.expect(client, elem(older, 0), elem(older, 1))
+    assert {:ok, _} = Tracks.events(owner, track.id)
+    await_scan()
+    assert length(event_paths(client)) == 3
+    assert classified("walk") == ~w(t1 t2)
+  end
+
+  test "a scan reads back at most twenty pages" do
+    owner = insert_user()
+    project = insert_project(user: owner, runtime: "codex")
+    track = insert_track(project: project, conversation_id: "budget")
+    base = "/api/conversations/budget"
+    # One 1,000-event turn per scan page: t23 is read, t22 back to t3 scanned.
+    routes = Fixture.desc_routes(base <> "/events", settled_turns(23, 1000), then: 1000)
+    assert length(routes) == 23
+    [read | scanned] = Enum.take(routes, 21)
+    turns = {%{method: "GET", path: base <> "/turns"}, {200, [], %{data: []}}}
+    client = FakeTransport.client([read, turns | scanned])
+    stub(Fountain, :client, fn -> client end)
+    scanning(self())
+
+    assert {:ok, _} = Tracks.events(owner, track.id)
+    await_scan()
+    assert length(event_paths(client)) == 21
+    assert classified("budget") == Enum.sort(for n <- 3..23, do: "t#{n}")
+  end
+
   test "unscrolled settled turns on older pages classify in the background, bounded and off the read" do
     owner = insert_user()
     project = insert_project(user: owner, runtime: "codex")
@@ -371,6 +444,13 @@ defmodule Ravix.Tracks.TranscriptLoadTest do
     after
       2_000 -> flunk("the scan neither classified nor finished")
     end
+  end
+
+  defp scanning(parent) do
+    stub(Trace, :span, fn name, attributes, fun ->
+      if name == "transcript.classification_scan", do: send(parent, {:scanning, self()})
+      Mimic.call_original(Trace, :span, [name, attributes, fun])
+    end)
   end
 
   defp await_scan do

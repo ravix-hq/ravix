@@ -94,8 +94,17 @@ defmodule Ravix.Tracks.Settlement do
       background(key, conversation_id, turn.id, turn.events, runtime, binding)
     end
 
-    if known == [], do: :continue, else: :done
+    cond do
+      known != [] -> :done
+      unknown != [] -> :continue
+      # Nothing settled here (a running turn over the limit): an earlier open
+      # already classified what is behind it, unless nothing ever was.
+      true -> if first_scan?(classified, conversation_id), do: :continue, else: :done
+    end
   end
+
+  defp first_scan?(classified, conversation_id),
+    do: not Enum.any?(classified, &match?({^conversation_id, _}, &1))
 
   @doc "Classify every settled turn in a fetched snapshot, including turns outside the visible page."
   def enqueue_log(log, conversation_id, runtime, binding) do

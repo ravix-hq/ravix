@@ -39,6 +39,11 @@ defmodule Ravix.Tracks.Transcript.History do
   @read_limit 200
   @scan_limit 1000
 
+  # The most pages one read takes before it renders what it has: a
+  # conversation of mostly turn-less output must not be read whole before
+  # its first paint.
+  @paint_pages 3
+
   @doc "The fallback: a forward-read log, partitioned into complete-turn chunks, newest first."
   @spec new([map()], list(), String.t(), list(), term()) :: t()
   def new(events, records, conversation_id, conversations, source) do
@@ -76,8 +81,8 @@ defmodule Ravix.Tracks.Transcript.History do
 
   One `order=desc&whole_turns=true` page, and another only when the whole
   page is held (a single turn beyond Fountain's ceiling, or turn-less output
-  longer than a page). Returns the raw events to render, ascending, the
-  advanced history, and the pages and events read.
+  longer than a page), at most `@paint_pages` in all. Returns the raw events
+  to render, ascending, the advanced history, and the pages and events read.
   """
   @spec read(Fountain.Client.t(), t(), :read | :scan) ::
           {:ok, [map()], t(), %{pages: pos_integer(), events: non_neg_integer()}}
@@ -88,10 +93,8 @@ defmodule Ravix.Tracks.Transcript.History do
   @doc "Continue `read/2` past a page absorbed already, when all of it was held."
   @spec settle(Fountain.Client.t(), [map()], t(), map()) ::
           {:ok, [map()], t(), map()} | {:error, Fountain.failure()}
-  def settle(client, [], %{before: before} = history, stats) when is_integer(before),
-    do: fetch(client, history, :read, stats)
-
-  def settle(_client, events, history, stats), do: {:ok, events, history, stats}
+  def settle(client, events, history, stats),
+    do: continue(client, events, history, :read, stats)
 
   defp fetch(client, history, purpose, stats) do
     with {:ok, fetched} <-
@@ -99,12 +102,28 @@ defmodule Ravix.Tracks.Transcript.History do
          :ok <- advanced(history, fetched) do
       {events, history} = absorb(history, fetched)
       stats = %{pages: stats.pages + 1, events: stats.events + length(fetched.events)}
-
-      if events == [] and is_integer(history.before),
-        do: fetch(client, history, purpose, stats),
-        else: {:ok, events, history, stats}
+      continue(client, events, history, purpose, stats)
     end
   end
+
+  defp continue(client, [], %{before: before} = history, purpose, stats)
+       when is_integer(before) do
+    if stats.pages < @paint_pages,
+      do: fetch(client, history, purpose, stats),
+      else: {:ok, release(history), %{history | held: release_rest(history)}, stats}
+  end
+
+  defp continue(_client, events, history, _purpose, stats),
+    do: {:ok, events, history, stats}
+
+  # Out of pages with everything held. Turn-less output renders as far as it
+  # was read, and its older part renders under an identity of its own when it
+  # is loaded. A turn cut by the ceiling stays held: rendering half of it
+  # would make its older half a duplicate, so Load earlier reads on.
+  defp release(history), do: if(turnless?(history.held), do: history.held, else: [])
+  defp release_rest(history), do: if(turnless?(history.held), do: [], else: history.held)
+
+  defp turnless?(events), do: Enum.all?(events, &(Event.from(&1).turn_id == Event.pending()))
 
   # A cursor that does not move back would read the same page forever.
   defp advanced(%{before: before}, %{has_more: true, next_cursor: next})

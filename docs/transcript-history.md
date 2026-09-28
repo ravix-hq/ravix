@@ -45,8 +45,11 @@ A page's older edge can be incomplete in two ways, and those events are
 
 So a turn split across pages renders once, whole, exactly as a full build of
 the conversation would render it; the history tests compare the whole walk
-with a full build. A page held entirely (one turn over the ceiling) reads the
-next page at once rather than rendering nothing.
+with a full build. A page held entirely reads the next page at once rather
+than rendering nothing, but one read takes at most three pages. At that point
+held turn-less output renders as far as it was read (its older part renders as
+a block of its own when loaded), while a turn cut by the ceiling stays held
+and Load earlier reads on, so it is never rendered in halves.
 
 Each Load earlier task receives the cursor, the held events and the
 conversation's turn records (image counts), and returns only its new turns.
@@ -62,7 +65,9 @@ Settled turns must be classified (`Ravix.Tracks.Settlement`) even when nobody
 scrolls to them, and there is no full log to scan any more. Each open starts a
 supervised background scan: it classifies the settled turns on the page it
 has, then pages **backward** (`before`, whole turns) only until it reaches a
-settled turn that is already classified. Classification is durable, so steady
+settled turn that is already classified. A page with no settled turn at all (a
+running turn over the limit) stops it too, unless nothing in the conversation
+has been classified yet. Classification is durable, so steady
 state reads no further page, and the first open of an old conversation walks
 back once, at most 20 pages, off the read path. One walk per conversation runs
 at a time (a `:global` lock), and the per-turn `:settlement` registration and
