@@ -1013,7 +1013,15 @@ defmodule Ravix.ProjectsTest do
 
       fountain([
         {%{method: "GET", path: "/api/environments/e"},
-         {200, [], %{data: %{id: "e", setup_script: "apt update", packages: %{apt: ["ripgrep"]}}}}},
+         {200, [],
+          %{
+            data: %{
+              id: "e",
+              setup_script: "apt update",
+              packages: %{apt: ["ripgrep"]},
+              env_vars: %{"PORT" => "4100"}
+            }
+          }}},
         {%{method: "GET", path: "/api/environments/e/secrets"},
          {200, [], %{data: [%{key: "API_KEY"}]}}},
         {%{method: "GET", path: "/api/vaults/v/secrets"},
@@ -1023,7 +1031,10 @@ defmodule Ravix.ProjectsTest do
 
       assert {:ok, settings} = Projects.settings(owner, project.id)
 
+      refute inspect(settings) =~ "4100"
+
       assert settings == %Ravix.Projects.Settings{
+               env_vars: %{"PORT" => "4100"},
                runtime: "claude",
                catalog: %Shapes.Catalog{
                  runtimes: ["codex"],
@@ -1082,6 +1093,179 @@ defmodule Ravix.ProjectsTest do
       tracks = for id <- ["t", "other"], do: insert_track(project: project, id: id, slug: id)
       Ravix.Hub.subscribe(project.id)
       %{owner: owner, project: project, tracks: tracks}
+    end
+
+    test "readable variables round trip through the transport, invalidate cache and bump only on change",
+         ctx do
+      vars = %{"PORT" => "4100", "NODE_ENV" => "development", "EMPTY" => ""}
+      client = fountain()
+
+      for {previous, next, rev} <- [{%{}, vars, 2}, {vars, vars, 2}, {vars, %{}, 3}] do
+        for path <- ["/api/environments/e/secrets", "/api/vaults/v/secrets"] do
+          FakeTransport.expect(client, %{method: "GET", path: path}, {200, [], %{data: []}})
+        end
+
+        FakeTransport.expect(
+          client,
+          %{method: "GET", path: "/api/environments/e"},
+          {200, [], %{data: %{env_vars: previous}}}
+        )
+
+        FakeTransport.expect(
+          client,
+          %{method: "PUT", path: "/api/environments/e", body: %{"env_vars" => next}},
+          {200, [], %{data: %{env_vars: next}}}
+        )
+
+        expect(Ravix.MachineCache, :forget_environment, fn "e" -> :ok end)
+
+        assert {:ok, %{rev: ^rev}} =
+                 Projects.update_settings(ctx.owner, ctx.project.id, %{env_vars: next})
+
+        assert Repo.get!(Project, ctx.project.id).rev == rev
+        assert_received {:hub, %Event{name: :settings}}
+      end
+    end
+
+    test "stale variable snapshots refuse overwriting newer values", ctx do
+      fountain()
+      stub(Ravix.Fountain, :secret_keys, fn _, _, _ -> {:ok, []} end)
+
+      stub(Ravix.Fountain, :get_environment, fn _, _ ->
+        {:ok, %{"env_vars" => %{"PORT" => "newer"}}}
+      end)
+
+      reject(&Ravix.Fountain.update_environment/3)
+
+      assert {:error, {:conflict, "env_vars_conflict", message}} =
+               Projects.update_settings(ctx.owner, ctx.project.id, %{
+                 env_vars: %{"PORT" => "stale edit"},
+                 expected_env_vars: %{}
+               })
+
+      assert message == "Variables changed since you opened settings. Reload and try again."
+      assert Repo.get!(Project, ctx.project.id).rev == 1
+    end
+
+    test "variable writes refuse a concurrent environment mutation", ctx do
+      fountain()
+      stub(Ravix.Fountain, :secret_keys, fn _, _, _ -> {:ok, []} end)
+      reject(&Ravix.Fountain.update_environment/3)
+      parent = self()
+
+      task =
+        Task.async(fn ->
+          Ravix.Cluster.project_mutation(ctx.project.id, :env_vars_change, fn ->
+            send(parent, :locked)
+            receive do: (:release -> :ok)
+          end)
+        end)
+
+      assert_receive :locked
+
+      assert {:error, {:conflict, "project_change_in_progress", _}} =
+               Projects.update_settings(ctx.owner, ctx.project.id, %{env_vars: %{}})
+
+      send(task.pid, :release)
+      assert Task.await(task) == :ok
+    end
+
+    test "instructions still bump and notify when a later environment write fails", ctx do
+      fountain([
+        {%{method: "PUT", path: "/api/agents/a"}, {200, [], %{data: %{id: "a"}}}},
+        {%{method: "PUT", path: "/api/environments/e"}, {503, [], %{error: "down"}}}
+      ])
+
+      assert {:error, %Ravix.Fountain.Error{status: 503}} =
+               Projects.update_settings(ctx.owner, ctx.project.id, %{
+                 instructions: "Saved instructions",
+                 setup_script: "echo setup"
+               })
+
+      project = Repo.get!(Project, ctx.project.id)
+      assert project.instructions == "Saved instructions"
+      assert project.rev == 2
+      assert_received {:hub, %Event{name: :settings}}
+    end
+
+    test "invalid readable variables are refused before any provider mutation", ctx do
+      fountain()
+
+      invalid = [
+        {%{"9bad" => "x"}, "bad_env_key"},
+        {%{"PORT\n" => "x"}, "bad_env_key"},
+        {%{String.duplicate("K", 201) => "x"}, "bad_env_key"},
+        {[%{"key" => "PORT", "value" => "1"}, %{"key" => "PORT", "value" => "2"}],
+         "duplicate_env_key"},
+        {%{@clone => "x"}, "reserved_key"},
+        {%{"PORT" => 3}, "bad_env_value"},
+        {%{"PORT" => <<0>>}, "bad_env_value"},
+        {%{"PORT" => String.duplicate("x", 16_385)}, "bad_env_value"},
+        {Map.new(1..101, &{"KEY_#{&1}", "x"}), "env_vars_limit"},
+        {[%{"key" => "PORT"}], "bad_env_vars"}
+      ]
+
+      for {vars, code} <- invalid do
+        assert {:error, {:unprocessable, ^code, _}} =
+                 Projects.update_settings(ctx.owner, ctx.project.id, %{
+                   env_vars: vars,
+                   name: "Should not save"
+                 })
+      end
+
+      for name <-
+            ~w(ANTHROPIC_API_KEY CLAUDE_CODE_OAUTH_TOKEN OPENAI_API_KEY GEMINI_API_KEY GOOGLE_GENERATIVE_AI_API_KEY) do
+        assert {:error, {:unprocessable, "provider_auth_env_key", message}} =
+                 Projects.update_settings(ctx.owner, ctx.project.id, %{env_vars: %{name => "x"}})
+
+        assert message =~ "Use a secret"
+        assert message =~ "billing"
+      end
+
+      assert Repo.get!(Project, ctx.project.id).name == "Project"
+      assert Repo.get!(Project, ctx.project.id).rev == 1
+    end
+
+    test "readable variables reject secret collisions and fail closed on key-list outages", ctx do
+      client = fountain()
+
+      for store <- ["environments/e", "vaults/v"] do
+        for target <- ["environments/e", "vaults/v"] do
+          keys = if target == store, do: [%{key: "TOKEN"}], else: []
+
+          FakeTransport.expect(
+            client,
+            %{method: "GET", path: "/api/#{target}/secrets"},
+            {200, [], %{data: keys}}
+          )
+        end
+
+        assert {:error, {:unprocessable, "env_secret_collision", _}} =
+                 Projects.update_settings(ctx.owner, ctx.project.id, %{
+                   env_vars: %{"TOKEN" => "x"}
+                 })
+      end
+
+      FakeTransport.expect(
+        client,
+        %{method: "GET", path: "/api/environments/e/secrets"},
+        {503, [], %{error: "down"}}
+      )
+
+      assert {:error, %Ravix.Fountain.Error{status: 503}} =
+               Projects.update_settings(ctx.owner, ctx.project.id, %{env_vars: %{"PORT" => "1"}})
+
+      assert Repo.get!(Project, ctx.project.id).rev == 1
+    end
+
+    test "a project member cannot read or write readable variables", ctx do
+      member = person("member")
+      insert_project_member(ctx.project, member)
+      fountain()
+      assert {:error, :not_found} = Projects.settings(member, ctx.project.id)
+
+      assert {:error, :not_found} =
+               Projects.update_settings(member, ctx.project.id, %{env_vars: %{"PORT" => "1"}})
     end
 
     test "an owner without Codex cannot switch, even with rebuild confirmation", ctx do

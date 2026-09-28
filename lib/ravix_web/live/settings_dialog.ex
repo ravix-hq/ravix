@@ -13,6 +13,7 @@ defmodule RavixWeb.Live.SettingsDialog do
   alias Ravix.Fountain.Shapes.Catalog
   alias Ravix.Previews
   alias Ravix.Projects
+  alias Ravix.Projects.EnvironmentVariables.Row
   alias Ravix.Projects.Machine.Rebuild
   alias Ravix.Tracks
   alias RavixWeb.Live.Form
@@ -145,6 +146,36 @@ defmodule RavixWeb.Live.SettingsDialog do
 
   defp settings_event("cancel-agent-switch", _, socket),
     do: {:noreply, assign(socket, switch_confirmation: nil)}
+
+  defp settings_event("edit-env-vars", params, socket) do
+    {:noreply, assign(socket, variable_rows: variable_rows(params), save_state: "")}
+  end
+
+  defp settings_event("add-env-var", _, socket) do
+    {:noreply, update(socket, :variable_rows, &(&1 ++ [%Row{key: "", value: ""}]))}
+  end
+
+  defp settings_event("remove-env-var", %{"index" => index}, socket) do
+    case Integer.parse(index) do
+      {index, ""} when index >= 0 ->
+        {:noreply, update(socket, :variable_rows, &List.delete_at(&1, index))}
+
+      _ ->
+        {:noreply, socket}
+    end
+  end
+
+  defp settings_event("discard-env-vars", _, socket),
+    do: {:noreply, assign(socket, variable_rows: saved_variable_rows(socket.assigns.settings))}
+
+  defp settings_event("save-env-vars", params, socket) do
+    rows = variable_rows(params)
+
+    {:noreply,
+     socket
+     |> assign(variable_rows: rows)
+     |> save_settings(%{env_vars: rows, expected_env_vars: socket.assigns.settings.env_vars})}
+  end
 
   defp settings_event("save-secret", %{"secret" => params}, socket) do
     # The store and the key go back into the form so a refusal can be
@@ -335,6 +366,20 @@ defmodule RavixWeb.Live.SettingsDialog do
 
   # ── loading ───────────────────────────────────────────────────────────
 
+  defp variable_rows(params),
+    do:
+      params
+      |> Map.get("env_vars", %{})
+      |> Enum.sort_by(fn {index, _} -> Integer.parse(index) end)
+      |> Enum.map(fn {_, row} -> Row.new(row) end)
+
+  defp saved_variable_rows(settings) do
+    settings
+    |> Map.get(:env_vars, %{})
+    |> Enum.sort()
+    |> Enum.map(fn {key, value} -> %Row{key: key, value: value} end)
+  end
+
   defp refresh_secret_confirmation(socket) do
     case Access.project_of(user(socket), project_id(socket)) do
       {:ok, project} ->
@@ -359,7 +404,11 @@ defmodule RavixWeb.Live.SettingsDialog do
         end
 
       s
-      |> assign(settings: settings, settings_form: settings_form(settings))
+      |> assign(
+        settings: settings,
+        settings_form: settings_form(settings),
+        variable_rows: saved_variable_rows(settings)
+      )
       |> show_defaults(defaults)
       |> refresh_agents()
       # The secret form is always blank: values are write-only, so there is
@@ -486,6 +535,7 @@ defmodule RavixWeb.Live.SettingsDialog do
       {"general", "General"},
       {"agent", "Agent"},
       {"environment", "Environment"},
+      {"variables", "Environment variables"},
       {"secrets", "Secrets"},
       {"previews", "Run script"},
       {"danger", "Danger zone"}
@@ -792,6 +842,68 @@ defmodule RavixWeb.Live.SettingsDialog do
                 </p>
                 <button class="primary" phx-disable-with="Saving…" disabled={:settings in @pending}>Save environment</button>
               </.form>
+            </section>
+            <section
+              id="settings-section-variables"
+              data-settings-panel="variables"
+              aria-labelledby="settings-variables-title"
+              hidden
+            >
+              <h3 id="settings-variables-title" tabindex="-1">Environment variables</h3>
+              <p class="settings-help">
+                These values are visible to anyone who can see project settings. Keep secrets in Secrets.
+                Changes apply when the next conversation starts, including dedicated tracks.
+                Running conversations keep the old values until the track is restarted or rebuilt.
+              </p>
+              <p class="settings-help">
+                Up to 100 variables; names up to 200 bytes and values up to 16 KiB. Saving replaces the list.
+              </p>
+              <form
+                id="env-vars-form"
+                phx-target={@myself}
+                phx-change="edit-env-vars"
+                phx-submit="save-env-vars"
+              >
+                <fieldset disabled={MapSet.size(@pending) > 0}>
+                  <legend class="sr-only">Readable environment variables</legend>
+                  <div
+                    :for={{row, index} <- Enum.with_index(@variable_rows)}
+                    id={"env-var-row-#{index}"}
+                  >
+                    <.input
+                      name={"env_vars[#{index}][key]"}
+                      id={"env-var-key-#{index}"}
+                      label="Variable name"
+                      value={row.key}
+                      required
+                    />
+                    <.input
+                      name={"env_vars[#{index}][value]"}
+                      id={"env-var-value-#{index}"}
+                      label="Variable value"
+                      type="textarea"
+                      rows="2"
+                      value={row.value}
+                    />
+                    <button
+                      type="button"
+                      data-env-row-action
+                      phx-click="remove-env-var"
+                      phx-value-index={index}
+                      phx-target={@myself}
+                      aria-label={"Remove variable #{index + 1}"}
+                    >Remove</button>
+                  </div>
+                  <button
+                    type="button"
+                    data-env-row-action
+                    phx-click="add-env-var"
+                    phx-target={@myself}
+                    disabled={length(@variable_rows) >= 100}
+                  >Add variable</button>
+                  <button class="primary" phx-disable-with="Saving…">Save variables</button>
+                </fieldset>
+              </form>
             </section>
             <section
               id="settings-section-secrets"

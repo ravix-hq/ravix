@@ -49,7 +49,11 @@ defmodule Ravix.Cluster do
   The caller owns the lock; process/node loss releases it. Durable fences
   remain in the database after the critical section ends.
   """
-  @spec project_mutation(String.t(), :shared_machine | :secret_change, (-> term())) :: term()
+  @spec project_mutation(
+          String.t(),
+          :shared_machine | :secret_change | :env_vars_change,
+          (-> term())
+        ) :: term()
   def project_mutation(project_id, kind, fun) do
     lock = {{:ravix, :project_mutation, kind, project_id}, self()}
     nodes = [node() | Node.list()]
@@ -63,7 +67,7 @@ defmodule Ravix.Cluster do
     else
       {:error,
        {:conflict, "project_change_in_progress",
-        "Another change to this project's machine or secrets is still running. Try again shortly."}}
+        "Another change to this project's machine, secrets or variables is still running. Try again shortly."}}
     end
   end
 

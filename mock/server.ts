@@ -851,7 +851,7 @@ export async function fountain(req: Request, url: URL): Promise<Response | null>
     if (p === `/api/${collection}`) {
       if (method === "GET") return json({ data: list });
       if (method === "POST") {
-        const record = { id: `${collection[0]}${list.length + 1}-${Math.random().toString(36).slice(2, 8)}`, ...body };
+        const record = { ...(collection === "environments" ? { env_vars: {} } : {}), id: `${collection[0]}${list.length + 1}-${Math.random().toString(36).slice(2, 8)}`, ...body };
         list.push(record);
         return json({ data: record });
       }

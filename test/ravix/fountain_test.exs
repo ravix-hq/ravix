@@ -294,6 +294,25 @@ defmodule Ravix.FountainTest do
       assert :ok = Fountain.put_secret(client, :environments, "env-1", "API_KEY", "v")
     end
 
+    test "environment failures never log echoed readable values" do
+      client =
+        fake([
+          {%{method: "PUT", path: "/api/environments/e"},
+           {422, [], %{error: "invalid", message: "rejected readable-private-marker"}}}
+        ])
+
+      log =
+        capture_log(fn ->
+          assert {:error, %Error{status: 422}} =
+                   Fountain.update_environment(client, "e", %{
+                     env_vars: %{"PORT" => "readable-private-marker"}
+                   })
+        end)
+
+      assert log =~ "fountain 422 on PUT /api/environments/e"
+      refute log =~ "readable-private-marker"
+    end
+
     test "a failed write logs the path and the status, never the value" do
       client =
         fake([

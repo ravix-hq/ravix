@@ -1,0 +1,40 @@
+import { test, expect } from '@playwright/test';
+import { signIn, connectClaude } from './sign-in.js';
+
+const mock = `http://localhost:${process.env.MOCK_PORT || 8893}`;
+
+test('readable project variables add, edit, reject auth names and remove through Fountain', async ({ page, request }) => {
+  await signIn(page, 'dana');
+  await connectClaude(page);
+  await page.getByRole('button', { name: 'Add a project', exact: true }).first().click();
+  const create = page.getByRole('dialog', { name: 'New project' });
+  await create.getByLabel('Project name', { exact: true }).fill('Readable variables browser');
+  await create.getByRole('button', { name: 'Create project', exact: true }).click();
+  await expect(create).not.toBeVisible();
+  await page.locator('.crumbs').getByRole('button', { name: 'Settings', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Project settings', exact: true });
+  await dialog.getByRole('button', { name: 'Environment variables', exact: true }).click();
+  await expect(dialog).toContainText('Running conversations keep the old values');
+  await dialog.getByRole('button', { name: 'Add variable', exact: true }).click();
+  await dialog.getByLabel('Variable name', { exact: true }).fill('PORT');
+  await dialog.getByLabel('Variable value', { exact: true }).fill('4321');
+  await dialog.getByRole('button', { name: 'Save variables', exact: true }).click();
+  await expect(dialog.locator('#settings-sections')).toHaveAttribute('data-save-state', 'saved');
+  const environments = (await (await request.get(`${mock}/api/environments`)).json()).data;
+  const env = environments.find(e => e.env_vars.PORT === '4321');
+  expect(env).toBeDefined();
+  await dialog.getByLabel('Variable value', { exact: true }).fill('4322');
+  await dialog.getByRole('button', { name: 'Save variables', exact: true }).click();
+  await expect(dialog.locator('#settings-sections')).toHaveAttribute('data-save-state', 'saved');
+  expect((await (await request.get(`${mock}/api/environments/${env.id}`)).json()).data.env_vars).toEqual({ PORT: '4322' });
+  await dialog.getByLabel('Variable name', { exact: true }).fill('OPENAI_API_KEY');
+  await dialog.getByRole('button', { name: 'Save variables', exact: true }).click();
+  await expect(page.getByText('Use a secret if you intend to override billing with a provider auth variable.', { exact: true })).toBeVisible();
+  await expect(dialog.getByLabel('Variable name', { exact: true })).toHaveValue('OPENAI_API_KEY');
+  await dialog.getByRole('button', { name: 'Discard changes', exact: true }).click();
+  await expect(dialog.getByLabel('Variable name', { exact: true })).toHaveValue('PORT');
+  await dialog.getByRole('button', { name: 'Remove variable 1', exact: true }).click();
+  await dialog.getByRole('button', { name: 'Save variables', exact: true }).click();
+  await expect(dialog.locator('#settings-sections')).toHaveAttribute('data-save-state', 'saved');
+  expect((await (await request.get(`${mock}/api/environments/${env.id}`)).json()).data.env_vars).toEqual({});
+});

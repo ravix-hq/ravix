@@ -385,6 +385,7 @@ defmodule RavixWeb.WorkspaceManagementTest do
     stub(Projects, :settings, fn _, _ ->
       {:ok,
        %Projects.Settings{
+         env_vars: %{},
          name: ctx.project.name,
          runtime: "claude",
          model: "model",
