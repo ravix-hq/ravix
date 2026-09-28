@@ -229,11 +229,37 @@ defmodule Ravix.Projects.Machine do
         :ok
 
       set_id ->
-        body = with_credentials(%{}, set_id)
+        Ravix.Cluster.agent_allowlist(project.agent_id, fn -> adopt(project, client, set_id) end)
+    end
+  end
 
-        with {:ok, _agent} <- Fountain.update_agent(client, project.agent_id, body) do
-          Projects.Store.set_credential_set(project.id, set_id)
-        end
+  defp adopt(project, client, set_id) do
+    with {:ok, body} <- adopted_body(project, client, set_id),
+         {:ok, _agent} <- Fountain.update_agent(client, project.agent_id, body),
+         do: Projects.Store.set_credential_set(project.id, set_id)
+  end
+
+  # The owner's set becomes the default. The allowlist is reset to `[]` only
+  # while nothing on the project is creator-billed: a creator-billed track's
+  # payer was admitted on this agent (`RuntimeAgents.admit_payer/3`), and
+  # resetting the list would evict them. Then the list is read and kept, and
+  # only an agent that never had one (nil, which Fountain reads as every set
+  # on the account) is given one.
+  defp adopted_body(project, client, set_id) do
+    # ownership: the caller is through Access.project_of/2 or Access.project_access/2;
+    # this asks only whether any open track on the project is creator-billed.
+    if Ravix.Tracks.Store.creator_billed_open?(project.id) do
+      with {:ok, agent} <- Fountain.get_agent(client, project.agent_id) do
+        body = %{inference_credential_id: set_id}
+
+        {:ok,
+         if(is_list(agent["allowed_inference_credential_ids"]),
+           do: body,
+           else: Map.put(body, :allowed_inference_credential_ids, [])
+         )}
+      end
+    else
+      {:ok, with_credentials(%{}, set_id)}
     end
   end
 

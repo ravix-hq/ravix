@@ -68,7 +68,7 @@ defmodule Ravix.Tracks.Sandbox.Store do
 
   @doc "Persist the row, default thread and open intent atomically, before provider allocation."
   # ownership: Access.project_access admitted this dedicated open before reserving its project.
-  def create(plan, selection, project) do
+  def create(plan, selection, project, opts \\ []) do
     Repo.transaction(fn ->
       current = Ravix.Projects.Store.lock_retirement(project.id)
       if current.deletion_requested_at || current.archived_at, do: Repo.rollback(:not_found)
@@ -84,7 +84,15 @@ defmodule Ravix.Tracks.Sandbox.Store do
           secrets_generation: project.secrets_generation
         })
 
-      track = unwrap!(Ravix.Tracks.Store.create_track(attrs, selection))
+      track =
+        unwrap!(
+          Ravix.Tracks.Store.create_track(
+            attrs,
+            selection,
+            Keyword.take(opts, [:creator_billing])
+          )
+        )
+
       {:ok, op} = begin_operation(track.id, 0, :open)
 
       resources =

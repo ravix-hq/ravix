@@ -104,11 +104,17 @@ defmodule Ravix.Tracks.Track do
     # The creator's GitHub avatar, joined by `Access.open_tracks/3` for the rail.
     field :creator_avatar_url, :string, virtual: true
     field :visibility, Ecto.Enum, values: [:project, :private], default: :project
-    # ADR 0009, expand only: who pays for this track's inference. `created_by`
-    # is the creator; these two are unwritten until creator billing, and not
+    # ADR 0009: who pays for this track's inference. `created_by` is the
+    # creator. Written once, when a dedicated track is opened while
+    # `RAVIX_CREATOR_BILLING` is on (`creator_billing_changeset/2`), and never
     # cast by `changeset/2`. A nil policy is a legacy owner-paid track.
     field :payer_user_id, :string
     field :billing_policy, Ecto.Enum, values: [:legacy_owner, :creator]
+    # Harnesses paused because the payer's credential stopped serving, by
+    # runtime; see `Ravix.Tracks.Billing`. Written only through `Tracks.Store`.
+    field :billing_pauses, :map, default: %{}
+    # When the creator was shown that collaborators' prompts spend their plan.
+    field :billing_notice_at, :utc_datetime_usec
 
     has_many :threads, Ravix.Tracks.Thread
     has_many :prompts, Ravix.PromptQueue.Item
@@ -142,6 +148,27 @@ defmodule Ravix.Tracks.Track do
       _legacy -> {:legacy_owner, project.user_id}
     end
   end
+
+  @doc """
+  Bind a new track's inference to its creator (ADR 0009 phase 6).
+
+  Only the opening of a dedicated track calls this, and only while
+  `Ravix.Config.creator_billing?/0` is on. The payer is `created_by`, never
+  somebody the request names.
+  """
+  @spec creator_billing_changeset(Ecto.Changeset.t()) :: Ecto.Changeset.t()
+  def creator_billing_changeset(%Ecto.Changeset{} = changeset) do
+    changeset
+    |> put_change(:billing_policy, :creator)
+    |> put_change(:payer_user_id, get_field(changeset, :created_by))
+    |> validate_required([:payer_user_id])
+    |> check_constraint(:billing_policy, name: :tracks_billing_policy)
+  end
+
+  @doc "Whether this track's inference is its creator's, whoever prompts it."
+  @spec creator_billed?(t()) :: boolean()
+  def creator_billed?(%__MODULE__{billing_policy: :creator}), do: true
+  def creator_billed?(%__MODULE__{}), do: false
 
   @doc "The four things a track can be started from."
   @spec origin_kinds() :: [origin_kind()]

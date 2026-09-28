@@ -20,12 +20,24 @@ defmodule Ravix.Fountain.Error do
           code: String.t() | nil,
           message: String.t(),
           kind: atom(),
-          sandbox_status: String.t() | nil
+          sandbox_status: String.t() | nil,
+          grant_reason: String.t() | nil,
+          until: DateTime.t() | nil
         }
 
   @type http :: %{status: pos_integer(), code: String.t(), message: String.t()}
 
-  defstruct status: 0, code: nil, message: "", kind: :api, sandbox_status: nil
+  defstruct status: 0,
+            code: nil,
+            message: "",
+            kind: :api,
+            sandbox_status: nil,
+            grant_reason: nil,
+            until: nil
+
+  # `chatgpt_grant_unusable`'s `reason` (docs/creator-billing.md §4), kept only
+  # when it is one Fountain documents, so it can be matched without an atom.
+  @grant_reasons ~w(disconnected revoked expired reconnect_required exhausted not_found broker_required owner_ineligible)
 
   @busy_codes ~w(sandbox_at_capacity conversation_busy)
 
@@ -48,9 +60,29 @@ defmodule Ravix.Fountain.Error do
       code: error.code,
       message: message_of(error),
       kind: error.kind || :api,
-      sandbox_status: if(is_map(error.body), do: error.body["status"])
+      sandbox_status: if(is_map(error.body), do: error.body["status"]),
+      grant_reason: grant_reason(error.code, error.body),
+      until: grant_until(error.code, error.body)
     }
   end
+
+  defp grant_reason("chatgpt_grant_unusable", %{"reason" => reason})
+       when reason in @grant_reasons,
+       do: reason
+
+  defp grant_reason(_code, _body), do: nil
+
+  # When the subscription's usage resets: Fountain's `until`, on an exhausted
+  # grant only. Anything that is not an ISO 8601 time is no time at all.
+  defp grant_until("chatgpt_grant_unusable", %{"reason" => "exhausted", "until" => until})
+       when is_binary(until) do
+    case DateTime.from_iso8601(until) do
+      {:ok, at, _offset} -> at
+      _ -> nil
+    end
+  end
+
+  defp grant_until(_code, _body), do: nil
 
   @doc """
   A machine already taking a turn.

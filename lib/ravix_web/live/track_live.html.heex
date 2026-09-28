@@ -69,7 +69,14 @@
       >{if @track.sandbox_layout == :dedicated,
         do: "Own machine",
         else: "Shared project machine"}</span>
-      <span :if={@project.role != :owner} id="track-agent-owner" class="dim">
+      <span :if={@track.billing == :creator} id="track-payer" class="dim">
+        {payer_label(@track)}
+      </span>
+      <span
+        :if={@track.billing != :creator && @project.role != :owner}
+        id="track-agent-owner"
+        class="dim"
+      >
         Runs on @{@project.owner_login}'s {RavixWeb.AgentName.label(
           @track.runtime || @project.runtime
         )}
@@ -351,6 +358,10 @@
             Rebuild machine…
           </button>
         </div>
+        <div :if={@billing_notice} id="billing-notice" class="welcome-warning" role="status">
+          <p>{@billing_notice}</p>
+          <button type="button" class="ghost" phx-click="dismiss-billing-notice">Got it</button>
+        </div>
         <.loading_status :if={:retry in @pending}>Retrying track…</.loading_status>
         <.loading_status :if={@thread_draft[:selected?] && :thread_options in @pending}>
           Loading agents…
@@ -555,6 +566,16 @@
                   />
                   <p class="hint draft-default-hint">Also your default for new threads</p>
                 </div>
+                <span
+                  :if={
+                    @composer_mode == :ask &&
+                      (@track.billing == :creator || @project.role != :owner)
+                  }
+                  id="composer-payer"
+                  class="dim composer-payer"
+                >
+                  {payer_label(@track)}
+                </span>
                 <.model_menu
                   :if={!@thread_draft[:selected?] && @composer_mode == :ask}
                   runtime={@track.runtime || @project.runtime}

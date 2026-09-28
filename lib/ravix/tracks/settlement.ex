@@ -1,7 +1,7 @@
 defmodule Ravix.Tracks.Settlement do
   @moduledoc "Durable settlement classification, with supervised catch-up for previously unwatched turns."
   alias Ravix.{Cluster, Fountain, Hub, Trace}
-  alias Ravix.Tracks.{AgentFailure, Store, Transcript}
+  alias Ravix.Tracks.{AgentFailure, Billing, Store, Transcript}
   alias Ravix.Tracks.Transcript.Event
 
   @doc "Schedule missing settled turns without making the reader wait for classification."
@@ -269,7 +269,26 @@ defmodule Ravix.Tracks.Settlement do
 
   defp persist(conversation_id, turn_id, events, runtime) do
     # ownership: the current follower binding or explicit maintenance command selected this turn.
-    Store.classify_turn_once(conversation_id, turn_id, fn -> detect(events, runtime) end)
+    result = Store.classify_turn_once(conversation_id, turn_id, fn -> detect(events, runtime) end)
+
+    # Once per turn, after the classification that claimed it committed: a
+    # creator-billed track's harness pauses on a turn its payer's credential
+    # failed (`Ravix.Tracks.Billing.observe_turn/5`).
+    with {:ok, %Ravix.Tracks.TurnFailure{}} <- result,
+         do: observe_billing(conversation_id, events, runtime)
+
+    result
+  end
+
+  defp observe_billing(conversation_id, events, runtime) do
+    # ownership: no door; the Access.thread_access follower binding or authorized read
+    # that scheduled this turn's classification chose the conversation.
+    with %Ravix.Tracks.Track{billing_policy: :creator} = track <-
+           Store.track_by_conversation(conversation_id),
+         # ownership: no door; the project of the track the classification found above.
+         %Ravix.Projects.Project{} = project <- Ravix.Projects.Store.get_project(track.project_id) do
+      Billing.observe_turn(track, project, runtime, events)
+    end
   end
 
   defp detect(events, runtime) do

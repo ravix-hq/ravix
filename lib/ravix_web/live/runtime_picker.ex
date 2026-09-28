@@ -55,6 +55,11 @@ defmodule RavixWeb.Live.RuntimePicker do
 
   defp availability(%{connected: false}, %{owner?: true}), do: " — Connect to use"
 
+  # A creator-billed track runs on its creator's connections only; one they
+  # have not made is disabled, never lent from whoever is looking.
+  defp availability(%{connected: false, runtime: runtime}, %{billing: :creator} = options),
+    do: " — @#{options.owner_login} hasn't connected #{RavixWeb.AgentName.label(runtime)}"
+
   defp availability(%{connected: false}, options),
     do: " — Not connected — #{options.owner_login} must connect it"
 

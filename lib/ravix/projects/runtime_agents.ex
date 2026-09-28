@@ -66,33 +66,57 @@ defmodule Ravix.Projects.RuntimeAgents do
     end
   end
 
+  # `payer_set:` is a creator-billed track's payer's set (ADR 0009 phase 6).
+  # Such a track is always isolated, whatever the owner's rollout cohort says:
+  # its conversations name that set, so the agent must admit it and its
+  # default must never be moved to make room for it.
   defp ensure_current(project, client, runtime, model, opts) do
-    isolated? = Keyword.get(opts, :isolated, false) and Project.maintenance?(project)
+    payer_set = Keyword.get(opts, :payer_set)
+
+    isolated =
+      cond do
+        is_binary(payer_set) -> {:payer, payer_set}
+        Keyword.get(opts, :isolated, false) and Project.maintenance?(project) -> :owner
+        true -> false
+      end
 
     if runtime == Project.home_runtime(project) do
-      adopt_home(project, client, isolated?)
+      adopt_home(project, client, isolated)
     else
-      ensure_other(project, client, runtime, model, isolated?)
+      ensure_other(project, client, runtime, model, isolated)
     end
   end
 
-  defp adopt_home(project, client, isolated?) do
-    if isolated?,
-      do: allow_source(project, client, project.agent_id, project.credential_set_id),
-      else:
-        with(
-          :ok <- Projects.Machine.adopt_credentials(project, client),
-          do: {:ok, project.agent_id}
-        )
+  defp adopt_home(project, client, {:payer, set}),
+    do: admit_payer(client, project.agent_id, set)
+
+  defp adopt_home(project, client, :owner),
+    do: allow_source(project, client, project.agent_id, project.credential_set_id)
+
+  defp adopt_home(project, client, false) do
+    with :ok <- Projects.Machine.adopt_credentials(project, client), do: {:ok, project.agent_id}
   end
 
-  defp ensure_other(project, client, runtime, model, isolated?) do
+  defp ensure_other(project, client, runtime, model, isolated) do
     case Enum.find(Store.runtime_agents(project.id), &(&1.runtime == runtime)) do
-      nil -> reserve_and_create(project, client, runtime, model)
-      %{agent_id: nil} -> pending()
-      agent -> adopt(project, client, agent, isolated?)
+      nil ->
+        with {:ok, id} <- reserve_and_create(project, client, runtime, model),
+             do: admitted(project, client, %{agent_id: id, credential_set_id: nil}, isolated)
+
+      %{agent_id: nil} ->
+        pending()
+
+      agent ->
+        adopt(project, client, agent, isolated)
     end
   end
+
+  # A runtime agent made just now for a creator-billed thread still has to
+  # admit that creator before anything names their set.
+  defp admitted(_project, client, agent, {:payer, set}),
+    do: admit_payer(client, agent.agent_id, set)
+
+  defp admitted(_project, _client, agent, _isolated), do: {:ok, agent.agent_id}
 
   defp reserve_and_create(project, client, runtime, model) do
     case Store.reserve_runtime(project.id, runtime, project.agent_id) do
@@ -113,6 +137,10 @@ defmodule Ravix.Projects.RuntimeAgents do
       environment_id: project.environment_id,
       vault_id: project.vault_id,
       inference_credential_id: set,
+      # Explicit, never nil: Fountain reads a nil allowlist as "every set on
+      # the account", and every Ravix person's set is on this one account.
+      # Creators are admitted one by one (`admit_payer/3`).
+      allowed_inference_credential_ids: [],
       metadata: %{ravix: %{project: project.id}}
     }
 
@@ -133,11 +161,13 @@ defmodule Ravix.Projects.RuntimeAgents do
     end
   end
 
-  defp adopt(project, client, agent, isolated?) do
+  defp adopt(_project, client, agent, {:payer, set}), do: admit_payer(client, agent.agent_id, set)
+
+  defp adopt(project, client, agent, isolated) do
     set = owner(project).credential_set_id
 
     cond do
-      isolated? ->
+      isolated == :owner ->
         allow_source(project, client, agent.agent_id, agent.credential_set_id)
 
       set == agent.credential_set_id ->
@@ -157,26 +187,80 @@ defmodule Ravix.Projects.RuntimeAgents do
   defp allow_source(project, client, agent_id, default_source) do
     source = owner(project).credential_set_id
 
-    if source == default_source do
-      {:ok, agent_id}
-    else
+    if source == default_source,
+      do: {:ok, agent_id},
+      else:
+        Ravix.Cluster.agent_allowlist(agent_id, fn -> allow_owner(client, agent_id, source) end)
+  end
+
+  defp allow_owner(client, agent_id, source) do
+    with {:ok, agent} <- Fountain.get_agent(client, agent_id),
+         {:ok, _} <- allow_source_id(client, agent_id, agent, source),
+         do: {:ok, agent_id}
+  end
+
+  @doc """
+  Admit a creator-billed track's payer's set on a project or runtime agent
+  (`docs/creator-billing.md` §1).
+
+  Every writer of an agent's allowlist goes through
+  `Ravix.Cluster.agent_allowlist/2`, so this read, add and write cannot lose
+  a concurrent admission, and the list is read back afterwards: only a set
+  Fountain now reports admitted is `{:ok, agent_id}`. Anything else is a
+  tagged refusal and the caller launches nothing, which is what fails closed
+  means here --- Fountain would refuse the launch too
+  (`inference_credential_not_allowed`), and the agent's default, the
+  project owner's set, is never what a creator-billed thread falls back to.
+  The set comes from the track's recorded payer, never from a request.
+  """
+  @spec admit_payer(Fountain.Client.t(), String.t(), String.t()) ::
+          {:ok, String.t()} | {:error, term()}
+  def admit_payer(client, agent_id, set) when is_binary(agent_id) and is_binary(set) do
+    Ravix.Cluster.agent_allowlist(agent_id, fn ->
       with {:ok, agent} <- Fountain.get_agent(client, agent_id),
-           :ok <- allow_source_id(client, agent_id, agent, source),
-           do: {:ok, agent_id}
+           {:ok, changed?} <- allow_source_id(client, agent_id, agent, set),
+           :ok <- confirm_admitted(client, agent_id, set, changed?) do
+        {:ok, agent_id}
+      end
+    end)
+  end
+
+  def admit_payer(_client, _agent_id, _set), do: not_admitted()
+
+  defp confirm_admitted(_client, _agent_id, _set, false), do: :ok
+
+  defp confirm_admitted(client, agent_id, set, true) do
+    case Fountain.get_agent(client, agent_id) do
+      {:ok, agent} -> if admits?(agent, set), do: :ok, else: not_admitted()
+      _ -> not_admitted()
     end
   end
+
+  @doc "Whether a Fountain agent, as its JSON reads, admits `set` on a conversation."
+  @spec admits?(map(), String.t()) :: boolean()
+  def admits?(agent, set) when is_map(agent) and is_binary(set) do
+    set == agent["inference_credential_id"] or
+      (is_list(agent["allowed_inference_credential_ids"]) and
+         set in agent["allowed_inference_credential_ids"])
+  end
+
+  defp not_admitted,
+    do:
+      {:error,
+       {:conflict, "payer_not_admitted",
+        "This track's agent has not admitted its payer's account yet. Your prompt is saved; try again shortly."}}
 
   defp allow_source_id(client, agent_id, agent, source) do
     allowed = agent["allowed_inference_credential_ids"] || []
 
-    if source == agent["inference_credential_id"] or source in allowed do
-      :ok
+    if admits?(agent, source) do
+      {:ok, false}
     else
       with {:ok, _} <-
              Fountain.update_agent(client, agent_id, %{
                allowed_inference_credential_ids: Enum.uniq(allowed ++ [source])
              }),
-           do: :ok
+           do: {:ok, true}
     end
   end
 

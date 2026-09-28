@@ -72,6 +72,53 @@ defmodule Ravix.Cluster do
   end
 
   @doc """
+  Serialize every read-modify-write of one Fountain agent's
+  `allowed_inference_credential_ids` across connected instances.
+
+  Fountain replaces the whole list on `PUT /api/agents/:id` and has no
+  conditional update, so two admissions racing each other would each write
+  the list they read and the later one would drop the earlier one's set
+  (`docs/creator-billing.md` §1). Unlike `project_mutation/3` this waits a
+  little for the holder, whose critical section is two or three short
+  Fountain calls, then fails closed: an admission that cannot take the lock
+  is an admission that did not happen.
+  """
+  @spec agent_allowlist(String.t(), (-> term())) :: term()
+  def agent_allowlist(agent_id, fun) when is_binary(agent_id) do
+    lock = {{:ravix, :agent_allowlist, agent_id}, self()}
+    nodes = [node() | Node.list()]
+    wait = Application.get_env(:ravix, :agent_allowlist_wait_ms, 5_000)
+
+    if take_lock(lock, nodes, System.monotonic_time(:millisecond) + wait) do
+      try do
+        fun.()
+      after
+        :global.del_lock(lock, nodes)
+      end
+    else
+      {:error,
+       {:conflict, "payer_admission_busy",
+        "Another change to this project's agent is still running. Your prompt is saved; try again shortly."}}
+    end
+  end
+
+  # `:global`'s own retries back off to seconds apiece; a short fixed poll
+  # bounded by a deadline keeps the wait what the caller can afford.
+  defp take_lock(lock, nodes, deadline) do
+    cond do
+      :global.set_lock(lock, nodes, 0) ->
+        true
+
+      System.monotonic_time(:millisecond) >= deadline ->
+        false
+
+      true ->
+        Process.sleep(25)
+        take_lock(lock, nodes, deadline)
+    end
+  end
+
+  @doc """
   A name to start a process under, cluster-wide.
 
   `GenServer.start_link(mod, arg, name: Ravix.Cluster.via(:follower, id))`

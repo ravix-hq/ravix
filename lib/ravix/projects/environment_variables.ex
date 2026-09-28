@@ -12,6 +12,10 @@ defmodule Ravix.Projects.EnvironmentVariables do
   @auth_names ~w(ANTHROPIC_API_KEY CLAUDE_CODE_OAUTH_TOKEN OPENAI_API_KEY GEMINI_API_KEY GOOGLE_GENERATIVE_AI_API_KEY)
   @key ~r/\A[A-Za-z_][A-Za-z0-9_]*\z/
 
+  @doc "Variable and secret names Fountain reads as a provider credential, overriding the set."
+  @spec auth_names() :: [String.t()]
+  def auth_names, do: @auth_names
+
   def normalize(raw) when is_map(raw) and not is_struct(raw),
     do: raw |> Enum.map(fn {key, value} -> %{"key" => key, "value" => value} end) |> normalize()
 

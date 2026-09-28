@@ -19,6 +19,13 @@ config :ravix,
        :workspace_access,
        System.get_env("RAVIX_WORKSPACE_ACCESS", "false") == "true"
 
+# ADR 0009 phase 6: dedicated tracks opened while this is on are paid for
+# by their creator. Off unless exactly "true"; see
+# `Ravix.Config.creator_billing?/0`.
+config :ravix,
+       :creator_billing,
+       System.get_env("RAVIX_CREATOR_BILLING", "false") == "true"
+
 config :ravix,
        :threads_enabled,
        System.get_env(
