@@ -28,6 +28,7 @@
 // file's header, and list it here.
 import "../css/app.css"
 import "phoenix_html"
+import {clearTransportFallback, LONG_POLL_FALLBACK_MS} from "./transport"
 import {trackPageLoading} from "./page_loading"
 import {Socket} from "phoenix"
 import {LiveSocket} from "phoenix_live_view"
@@ -49,8 +50,9 @@ import {CopyCode} from "./hooks/copy_code"
 const hooks = {AgentConfirmation, Theme, PanelResize, PanelToggle, TranscriptTail, Composer, Terminal, Notify, SettingsSections, ProjectTree, QuickJump, ProjectSections, CopyCode, ProjectFormFocus}
 
 const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
+clearTransportFallback(window)
 const liveSocket = new LiveSocket("/live", Socket, {
-  longPollFallbackMs: 2500,
+  longPollFallbackMs: LONG_POLL_FALLBACK_MS,
   params: {_csrf_token: csrfToken},
   hooks,
 })

@@ -19,6 +19,10 @@ defmodule Ravix.Trace.Setup do
     * `OpentelemetryEcto` spans queries on `[:ravix, :repo, :query]`, the same
       prefix `RavixWeb.Telemetry`'s summaries read.
 
+  A small `:phoenix, :socket_connected` handler also records the accepted
+  LiveView transport as `live_view.connect` with `ravix.live_view.transport`.
+  This counts connections rather than HTTP polls or individual LiveView mounts.
+
   ## Nothing is attached when nothing would be recorded
 
   `Ravix.Trace.enabled?/0` gates all three, and that gate is the difference
@@ -90,6 +94,14 @@ defmodule Ravix.Trace.Setup do
       OpentelemetryBandit.setup()
       OpentelemetryPhoenix.setup(adapter: :bandit, liveview: true)
       OpentelemetryEcto.setup([:ravix, :repo], db_statement: :enabled)
+
+      :telemetry.attach(
+        "ravix-live-socket-transport",
+        [:phoenix, :socket_connected],
+        &__MODULE__.handle_socket_connected/4,
+        nil
+      )
+
       Logger.info("ravix: tracing attached")
       :attached
     else
@@ -98,4 +110,23 @@ defmodule Ravix.Trace.Setup do
       :skipped
     end
   end
+
+  @doc false
+  def handle_socket_connected(
+        _event,
+        _measurements,
+        %{user_socket: Phoenix.LiveView.Socket, result: :ok, transport: transport},
+        _config
+      )
+      when transport in [:websocket, :longpoll] do
+    # One span per accepted transport connection, not per poll or nested mount.
+    # Never copy params/connect_info: they contain session and CSRF credentials.
+    Trace.span(
+      "live_view.connect",
+      %{"ravix.live_view.transport" => Atom.to_string(transport)},
+      fn -> :ok end
+    )
+  end
+
+  def handle_socket_connected(_event, _measurements, _metadata, _config), do: :ok
 end
