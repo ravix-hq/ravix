@@ -850,8 +850,34 @@ defmodule Ravix.PromptQueue.Server do
   # is told who is speaking -- not an access decision; `authorized?/1` is.
   defp shared?(track, project) do
     Repo.exists?(from(m in TrackMember, where: m.track_id == ^track.id)) or
-      Repo.exists?(from(m in ProjectMember, where: m.project_id == ^project.id))
+      Repo.exists?(from(m in ProjectMember, where: m.project_id == ^project.id)) or
+      workspace_shared?(track, project)
   end
+
+  # With `RAVIX_WORKSPACE_ACCESS` on, a workspace project's track is shared
+  # when anybody besides the owner is in its workspace (project-visible) or
+  # holds a permission row on it (private).
+  defp workspace_shared?(track, %{workspace_id: workspace_id} = project)
+       when is_binary(workspace_id) do
+    # ownership: `authorized?/1` put the sender through `Access.track_access/2`;
+    # as `shared?/2`, this decides only whether the agent is told who speaks.
+    Ravix.Config.workspace_access?() and
+      if track.visibility == :private do
+        Repo.exists?(from(p in Ravix.Tracks.TrackPermission, where: p.track_id == ^track.id))
+      else
+        # ownership: `authorized?/1` went through `Access.track_access/2`; this
+        # reads only whether anybody else is in the workspace.
+        Repo.exists?(
+          from(m in Ravix.Workspaces.Membership,
+            where:
+              m.workspace_id == ^workspace_id and m.user_id != ^project.user_id and
+                is_nil(m.revoked_at)
+          )
+        )
+      end
+  end
+
+  defp workspace_shared?(_track, _project), do: false
 
   # The sender still exists, still has the track, and the track is open with
   # a conversation to deliver into. The track and the project that decided it

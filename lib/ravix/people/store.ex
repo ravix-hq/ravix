@@ -45,7 +45,7 @@ defmodule Ravix.People.Store do
   alias Ravix.Projects.Store, as: Projects
   alias Ravix.Repo
   alias Ravix.Tracks.Store, as: Tracks
-  alias Ravix.Tracks.{Track, TrackInvite, TrackLink, TrackMember, TrackRead}
+  alias Ravix.Tracks.{Track, TrackInvite, TrackLink, TrackMember, TrackPermission, TrackRead}
 
   # ── who else is in a track ─────────────────────────────────────
 
@@ -93,6 +93,76 @@ defmodule Ravix.People.Store do
     :ok
   end
 
+  # ── workspace permission rows (ADR 0009) ─────────────────────────────
+
+  @doc """
+  Share a private track with `user_id`, a member of `workspace_id`, under
+  that workspace. Idempotent. The caller has established that the track is
+  the creator's, private and in that workspace, and that `user_id` is a
+  live member of it; the row counts only while that membership stays live.
+  """
+  @spec add_permission(String.t(), String.t(), String.t(), String.t()) :: :ok
+  def add_permission(track_id, user_id, workspace_id, granted_by) do
+    %TrackPermission{}
+    |> TrackPermission.changeset(%{
+      track_id: track_id,
+      user_id: user_id,
+      workspace_id: workspace_id,
+      granted_by_user_id: granted_by
+    })
+    |> Repo.insert!(on_conflict: :nothing, conflict_target: [:track_id, :user_id])
+
+    :ok
+  end
+
+  @doc """
+  Take a permission row away, with every preview grant its holder had on
+  the track, and tell the project's hub once it is gone -- as
+  `remove_member/2` does for a legacy seat, and for the same reason.
+  """
+  @spec remove_permission(Track.t(), String.t()) :: :ok
+  def remove_permission(%Track{} = track, user_id) do
+    # ownership: `Ravix.People.unshare/3` admitted the creator through
+    # `Access.track_access/2`; the row and the grants name this track.
+    Ravix.Previews.Store.revoke(track.id, user_id)
+    Ravix.Previews.Store.revoke_agent(track.id, user_id)
+
+    Repo.delete_all(
+      from(p in TrackPermission, where: p.track_id == ^track.id and p.user_id == ^user_id)
+    )
+
+    Ravix.Hub.publish(track.project_id, :people, track_id: track.id)
+    :ok
+  end
+
+  @doc """
+  Whether `user_id` holds a permission row on `track_id` under
+  `workspace_id`. Only the row: whether it *counts* (the switch, a live
+  membership) is `Ravix.Accounts.Access`'s question.
+  """
+  @spec permitted?(String.t(), String.t(), String.t()) :: boolean()
+  def permitted?(track_id, user_id, workspace_id) do
+    Repo.exists?(
+      from(p in TrackPermission,
+        where:
+          p.track_id == ^track_id and p.user_id == ^user_id and p.workspace_id == ^workspace_id
+      )
+    )
+  end
+
+  @doc "Whom a track is shared with through permission rows, oldest first."
+  @spec permitted_on(String.t()) :: [User.t()]
+  def permitted_on(track_id) do
+    Repo.all(
+      from(p in TrackPermission,
+        join: u in assoc(p, :user),
+        where: p.track_id == ^track_id,
+        order_by: p.created_at,
+        select: u
+      )
+    )
+  end
+
   @doc "Whether `user_id` was named on this track. The owner is not: they own the project."
   @spec member?(String.t(), String.t()) :: boolean()
   def member?(track_id, user_id), do: seated?(TrackMember, :track_id, track_id, user_id)
@@ -121,27 +191,22 @@ defmodule Ravix.People.Store do
     |> Enum.group_by(&elem(&1, 0), &elem(&1, 1))
   end
 
-  @doc "The open tracks this person was invited to, across every project."
+  @doc """
+  The open tracks this person reaches one at a time -- a seat, a private
+  track they made or, with `RAVIX_WORKSPACE_ACCESS` on, one shared with
+  them -- across every project. `Ravix.Accounts.Access.visible/2` decides;
+  this keeps only the tracks a project or workspace grant would not
+  already have admitted.
+  """
   @spec member_tracks(String.t()) :: [Track.t()]
   def member_tracks(user_id) do
-    # ownership: no door before this membership query; it establishes Access visibility.
-    Repo.all(
-      from(t in Track,
-        left_join: m in TrackMember,
-        on: m.track_id == t.id and m.user_id == ^user_id,
-        where:
-          (not is_nil(m.user_id) or
-             (t.visibility == :private and t.created_by == ^user_id and
-                is_nil(t.creator_revoked_at))) and
-            is_nil(t.closed_at),
-        order_by: t.created_at,
-        select: t
-      )
-    )
+    # ownership: no door before this membership query; `Access.visible/2`
+    # is the visibility rule itself, applied here rather than copied.
+    Repo.all(narrow_tracks(user_id) |> order_by([track: t], t.created_at))
   end
 
   @doc """
-  Whether `user_id` was named on any open track of `project_id`.
+  Whether `user_id` reaches any open track of `project_id` one at a time.
 
   The third of the three ways into a project (see
   `Ravix.Accounts.Access.access_of/3`), asked as one `EXISTS` rather than
@@ -152,18 +217,20 @@ defmodule Ravix.People.Store do
   @spec track_member_of?(String.t(), String.t()) :: boolean()
   def track_member_of?(project_id, user_id) do
     # ownership: no door before this query, used by Access.access_of to establish membership.
-    Repo.exists?(
-      from(t in Track,
-        left_join: m in TrackMember,
-        on: m.track_id == t.id and m.user_id == ^user_id,
-        where:
-          (not is_nil(m.user_id) or
-             (t.visibility == :private and t.created_by == ^user_id and
-                is_nil(t.creator_revoked_at))) and
-            t.project_id == ^project_id and
-            is_nil(t.closed_at)
-      )
+    Repo.exists?(narrow_tracks(user_id) |> where([track: t], t.project_id == ^project_id))
+  end
+
+  defp narrow_tracks(user_id) do
+    from(t in Track,
+      as: :track,
+      join: p in Project,
+      as: :project,
+      on: p.id == t.project_id,
+      where: is_nil(t.closed_at),
+      select: t
     )
+    |> Ravix.Accounts.Access.visible(user_id)
+    |> where([track: t, vis_tm: tm], t.visibility == :private or not is_nil(tm.user_id))
   end
 
   # ── invitations to somebody who is not here yet ────────────────

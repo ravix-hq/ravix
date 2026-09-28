@@ -167,6 +167,38 @@ defmodule Ravix.Workspaces.Store do
 
   defp removable(_target, _actor, _owners), do: :ok
 
+  @doc """
+  Live projects in live workspaces where `user_id` holds a live membership,
+  oldest first. Rows only: `Ravix.Projects.list/2` asks for them only with
+  `RAVIX_WORKSPACE_ACCESS` on, and `Access.access_of/3` decides from there.
+  """
+  @spec member_projects(String.t()) :: [Project.t()]
+  def member_projects(user_id) do
+    # ownership: no door before this one -- a live membership is the fourth
+    # way in (`Access.access_of/3`), and this read is that fact.
+    Repo.all(
+      from p in Project,
+        join: w in Workspace,
+        on: w.id == p.workspace_id and is_nil(w.archived_at),
+        join: m in Membership,
+        on: m.workspace_id == w.id and m.user_id == ^user_id and is_nil(m.revoked_at),
+        where: is_nil(p.archived_at) and is_nil(p.deletion_requested_at),
+        order_by: [asc: p.created_at, asc: p.id]
+    )
+  end
+
+  @doc "The ids of the live projects in a workspace."
+  @spec project_ids(String.t()) :: [String.t()]
+  def project_ids(workspace_id) do
+    # ownership: no door -- ids only, for telling each project's hub that a
+    # workspace membership it may be read through has changed.
+    Repo.all(
+      from p in Project,
+        where: p.workspace_id == ^workspace_id and is_nil(p.archived_at),
+        select: p.id
+    )
+  end
+
   @typedoc """
   Whose creation path a reservation holds back: a workspace's, or, for a
   duplicate still in the legacy layout, its owner's. A reservation row has

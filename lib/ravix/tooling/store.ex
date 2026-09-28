@@ -370,34 +370,24 @@ defmodule Ravix.Tooling.Store do
   end
 
   defp visible_tasks(user_id, client_id) do
-    from task in Task,
+    from(task in Task,
       join: track in Ravix.Tracks.Track,
+      as: :track,
       on: track.id == task.track_id,
       join: project in Ravix.Projects.Project,
+      as: :project,
       on: project.id == track.project_id,
-      left_join: tm in Ravix.Tracks.TrackMember,
-      on: tm.track_id == track.id and tm.user_id == ^user_id,
-      left_join: pm in Ravix.Projects.ProjectMember,
-      on: pm.project_id == project.id and pm.user_id == ^user_id,
       where:
         task.user_id == ^user_id and task.client_id == ^client_id and
-          is_nil(project.archived_at),
-      where: ^track_visibility(user_id)
-  end
-
-  defp track_visibility(user_id) do
-    member =
-      dynamic(
-        [_, track, _, tm, pm],
-        (track.visibility == :private and track.created_by == ^user_id and
-           is_nil(track.creator_revoked_at)) or not is_nil(tm.user_id) or
-          (track.visibility == :project and not is_nil(pm.user_id))
-      )
-
-    dynamic(
-      [_, track, project],
-      (track.visibility == :project and project.user_id == ^user_id) or
-        (is_nil(track.closed_at) and ^member)
+          is_nil(project.archived_at)
+    )
+    # ownership: `Access.visible/2` is the one visibility rule; the owner
+    # alone keeps a closed project-visible track's tasks, as before.
+    |> Ravix.Accounts.Access.visible(user_id)
+    |> where(
+      [track: track, project: project],
+      is_nil(track.closed_at) or
+        (track.visibility == :project and project.user_id == ^user_id)
     )
   end
 
