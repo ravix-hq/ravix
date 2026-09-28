@@ -31,6 +31,155 @@ defmodule Ravix.SchedulesTest do
              ~U[2027-01-01 09:30:00.000000Z]
   end
 
+  describe "local-time schedules" do
+    defp daily(time, zone), do: %Schedule{frequency: :daily, time: time, timezone: zone}
+
+    test "a 09:00 daily schedule created in Asia/Kolkata stores that zone and runs at 03:30 UTC" do
+      user = insert_user()
+      project = insert_project(user: user)
+
+      {:ok, row} =
+        Schedules.create(
+          user,
+          project.id,
+          Map.merge(attrs(), %{
+            "frequency" => "daily",
+            "time" => "09:00",
+            "timezone" => "Asia/Kolkata"
+          })
+        )
+
+      assert {:ok, %{timezone: "Asia/Kolkata"}} = Schedules.get(user, row.id)
+      assert {row.next_run_at.hour, row.next_run_at.minute} == {3, 30}
+
+      assert Schedule.next_run(row, ~U[2026-06-01 03:30:00.000000Z]) ==
+               ~U[2026-06-02 03:30:00.000000Z]
+    end
+
+    test "America/New_York stays at 9:00 local across both DST changes" do
+      row = daily(~T[09:00:00], "America/New_York")
+
+      # 2026-03-08: EST (UTC-5) becomes EDT (UTC-4).
+      assert Schedule.next_run(row, ~U[2026-03-07 14:00:00.000000Z]) ==
+               ~U[2026-03-08 13:00:00.000000Z]
+
+      # 2026-11-01: EDT becomes EST.
+      assert Schedule.next_run(row, ~U[2026-10-31 13:00:00.000000Z]) ==
+               ~U[2026-11-01 14:00:00.000000Z]
+
+      weekly = %{row | frequency: :weekly, weekday: 1}
+
+      assert Schedule.next_run(weekly, ~U[2026-03-02 14:00:00.000000Z]) ==
+               ~U[2026-03-09 13:00:00.000000Z]
+    end
+
+    test "a time inside the spring-forward gap runs at the first instant after it" do
+      row = daily(~T[02:30:00], "America/New_York")
+
+      # 02:30 does not exist on 2026-03-08; 03:00 EDT is the next valid instant.
+      assert Schedule.next_run(row, ~U[2026-03-07 08:00:00.000000Z]) ==
+               ~U[2026-03-08 07:00:00.000000Z]
+
+      assert Schedule.next_run(row, ~U[2026-03-08 07:00:00.000000Z]) ==
+               ~U[2026-03-09 06:30:00.000000Z]
+    end
+
+    test "a time inside the autumn fold runs once, at its first instance" do
+      row = daily(~T[01:30:00], "America/New_York")
+
+      # 01:30 happens at 05:30Z (EDT) and again at 06:30Z (EST) on 2026-11-01.
+      assert Schedule.next_run(row, ~U[2026-10-31 12:00:00.000000Z]) ==
+               ~U[2026-11-01 05:30:00.000000Z]
+
+      for now <- [~U[2026-11-01 05:30:00.000000Z], ~U[2026-11-01 06:00:00.000000Z]] do
+        assert Schedule.next_run(row, now) == ~U[2026-11-02 06:30:00.000000Z]
+      end
+    end
+
+    test "hourly runs at the chosen local minute" do
+      row = %Schedule{frequency: :hourly, time: ~T[09:15:00], timezone: "Asia/Kolkata"}
+
+      assert Schedule.next_run(row, ~U[2026-01-01 00:00:00.000000Z]) ==
+               ~U[2026-01-01 00:45:00.000000Z]
+
+      assert Schedule.next_run(row, ~U[2026-01-01 00:45:00.000000Z]) ==
+               ~U[2026-01-01 01:45:00.000000Z]
+    end
+
+    test "an invalid zone falls back to UTC without creating atoms" do
+      user = insert_user()
+      project = insert_project(user: user)
+      assert Schedules.timezone("Europe/Berlin") == "Europe/Berlin"
+      assert Schedules.timezone(" Asia/Kolkata ") == "Asia/Kolkata"
+
+      unknown = "Nowhere/Zone#{System.unique_integer([:positive])}"
+      atoms = :erlang.system_info(:atom_count)
+
+      for value <- [unknown, "", "  ", nil, 42, %{}, "UTC; DROP", String.duplicate("A/", 100)] do
+        assert Schedules.timezone(value) == "Etc/UTC"
+      end
+
+      assert :erlang.system_info(:atom_count) == atoms
+
+      for zone <- [unknown, "", nil] do
+        {:ok, row} = Schedules.create(user, project.id, Map.put(attrs(), "timezone", zone))
+        assert row.timezone == "Etc/UTC"
+      end
+    end
+
+    test "editing keeps the stored zone unless the change names one" do
+      user = insert_user()
+      project = insert_project(user: user)
+
+      {:ok, row} =
+        Schedules.create(user, project.id, Map.put(attrs(), "timezone", "America/New_York"))
+
+      assert {:ok, %{timezone: "America/New_York"}} =
+               Schedules.update(user, row.id, %{"prompt" => "Something else"})
+
+      assert {:ok, %{timezone: "America/New_York"}} =
+               Schedules.update(user, row.id, %{enabled: false})
+
+      assert {:ok, %{timezone: "Asia/Kolkata"} = moved} =
+               Schedules.update(user, row.id, %{"timezone" => "Asia/Kolkata", "enabled" => "true"})
+
+      assert {moved.next_run_at.hour, moved.next_run_at.minute} == {4, 0}
+    end
+
+    test "rows written without a zone keep their UTC times" do
+      user = insert_user()
+      project = insert_project(user: user)
+      id = Ecto.UUID.generate()
+      now = DateTime.utc_now()
+
+      # What the previous release inserts: no timezone column in the row.
+      Repo.insert_all(
+        "schedules",
+        [
+          %{
+            id: id,
+            user_id: user.id,
+            project_id: project.id,
+            name: "Old",
+            prompt: "Check",
+            frequency: "daily",
+            time: ~T[09:30:00],
+            weekday: 1,
+            next_run_at: now,
+            inserted_at: now,
+            updated_at: now
+          }
+        ],
+        prefix: "ravix"
+      )
+
+      assert {:ok, %{timezone: "Etc/UTC"} = row} = Schedules.get(user, id)
+
+      assert Schedule.next_run(row, ~U[2026-03-08 12:00:00.000000Z]) ==
+               ~U[2026-03-09 09:30:00.000000Z]
+    end
+  end
+
   test "schedules are personal and require whole-project membership" do
     owner = insert_user()
     project = insert_project(user: owner)

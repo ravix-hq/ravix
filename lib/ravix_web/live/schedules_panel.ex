@@ -5,11 +5,12 @@ defmodule RavixWeb.Live.SchedulesPanel do
   alias Ravix.Schedules.Schedule
 
   @impl true
-  def mount(socket), do: {:ok, assign(socket, editing: nil, form: blank_form(), error: nil)}
+  def mount(socket), do: {:ok, assign(socket, editing: nil, form: nil, error: nil)}
 
   @impl true
   def update(assigns, socket) do
     socket = assign(socket, assigns)
+    socket = if socket.assigns.form, do: socket, else: assign(socket, form: blank_form(socket))
     {:ok, load(socket)}
   end
 
@@ -30,7 +31,7 @@ defmodule RavixWeb.Live.SchedulesPanel do
 
     case result do
       {:ok, _} ->
-        {:noreply, socket |> assign(editing: nil, form: blank_form(), error: nil) |> load()}
+        {:noreply, socket |> assign(editing: nil, form: blank_form(socket), error: nil) |> load()}
 
       {:error, %Ecto.Changeset{} = cs} ->
         {:noreply, assign(socket, form: to_form(cs, as: :schedule), error: nil)}
@@ -60,7 +61,7 @@ defmodule RavixWeb.Live.SchedulesPanel do
   end
 
   def handle_event("cancel", _, socket),
-    do: {:noreply, assign(socket, editing: nil, form: blank_form(), error: nil)}
+    do: {:noreply, assign(socket, editing: nil, form: blank_form(socket), error: nil)}
 
   def handle_event("toggle", %{"id" => id}, socket) do
     with {:ok, row} <- Schedules.get(socket.assigns.current_user, id),
@@ -74,7 +75,7 @@ defmodule RavixWeb.Live.SchedulesPanel do
 
   def handle_event("delete", %{"id" => id}, socket) do
     case Schedules.delete(socket.assigns.current_user, id) do
-      {:ok, _} -> {:noreply, socket |> assign(editing: nil, form: blank_form()) |> load()}
+      {:ok, _} -> {:noreply, socket |> assign(editing: nil, form: blank_form(socket)) |> load()}
       {:error, reason} -> refuse(socket, reason)
     end
   end
@@ -86,21 +87,49 @@ defmodule RavixWeb.Live.SchedulesPanel do
     socket = assign(socket, schedules: rows)
 
     if socket.assigns.editing && not Enum.any?(rows, &(&1.id == socket.assigns.editing)),
-      do: assign(socket, editing: nil, form: blank_form()),
+      do: assign(socket, editing: nil, form: blank_form(socket)),
       else: socket
   end
 
   defp refuse(socket, reason),
     do: {:noreply, socket |> assign(error: RavixWeb.Error.from(reason).message) |> load()}
 
-  defp blank_form,
-    do: to_form(%{"frequency" => "daily", "time" => "09:00", "weekday" => "1"}, as: :schedule)
+  defp blank_form(socket) do
+    to_form(
+      %{
+        "frequency" => "daily",
+        "time" => "09:00",
+        "weekday" => "1",
+        "timezone" => socket.assigns.timezone
+      },
+      as: :schedule
+    )
+  end
 
   defp project_name(projects, id),
     do: Enum.find_value(projects, "Project", &if(&1.id == id, do: &1.display_name))
 
-  defp timestamp(nil), do: "Never"
-  defp timestamp(time), do: Calendar.strftime(time, "%b %d, %Y at %H:%M UTC")
+  @weekdays ~w(Mondays Tuesdays Wednesdays Thursdays Fridays Saturdays Sundays)
+
+  @doc "When a schedule runs, in its own zone: \"Daily at 09:00 (America/New_York)\"."
+  def cadence(%Schedule{} = schedule) do
+    time = Calendar.strftime(schedule.time, "%H:%M")
+
+    at =
+      case schedule.frequency do
+        :hourly -> "Hourly at :#{Calendar.strftime(schedule.time, "%M")}"
+        :daily -> "Daily at #{time}"
+        :weekly -> "#{Enum.at(@weekdays, schedule.weekday - 1)} at #{time}"
+      end
+
+    "#{at} (#{schedule.timezone})"
+  end
+
+  @doc "An instant in the viewer's zone, with that zone's abbreviation."
+  def timestamp(nil, _zone), do: "Never"
+
+  def timestamp(time, zone),
+    do: time |> DateTime.shift_zone!(zone) |> Calendar.strftime("%b %d, %Y at %H:%M %Z")
 
   @impl true
   def render(assigns) do
@@ -116,7 +145,13 @@ defmodule RavixWeb.Live.SchedulesPanel do
             aria-describedby="schedules-refresh-note"
           >Refresh</button>
         </div>
-        <p>Run a prompt on a schedule. Each run opens a fresh track in your project.</p>
+        <p>
+          A schedule is a routine: a prompt that runs on a timer. Each run opens a fresh
+          track in the project you choose, so you can read what the agent did.
+        </p>
+        <p class="dim">
+          For example: every weekday at 9:00, triage new GitHub issues and open a track for anything urgent.
+        </p>
         <p id="schedules-refresh-note" class="dim">
           Refresh to see the latest run status and changes made in another tab.
         </p>
@@ -163,7 +198,15 @@ defmodule RavixWeb.Live.SchedulesPanel do
               label="Repeat"
               options={[{"Every hour", :hourly}, {"Every day", :daily}, {"Every week", :weekly}]}
             />
-            <.input field={@form[:time]} type="time" label="Time (UTC)" required />
+            <.input field={@form[:time]} type="time" label="Time" required />
+            <.input
+              field={@form[:timezone]}
+              label="Time zone"
+              maxlength="64"
+              autocomplete="off"
+              spellcheck="false"
+              placeholder="America/New_York"
+            />
             <.input
               :if={@form[:frequency].value in [:weekly, "weekly"]}
               field={@form[:weekday]}
@@ -180,7 +223,7 @@ defmodule RavixWeb.Live.SchedulesPanel do
               ]}
             />
             <p class="meta">
-              Hourly schedules use the minute of the selected time. All times are UTC. Missed occurrences combine into one run when service resumes.
+              Times are in the schedule's time zone, filled in from your browser for new schedules; an unknown zone falls back to UTC. Hourly schedules use the minute of the selected time. Missed occurrences combine into one run when service resumes.
             </p>
             <div class="row">
               <button type="submit" class="primary" phx-disable-with="Saving…">{if @editing,
@@ -198,7 +241,11 @@ defmodule RavixWeb.Live.SchedulesPanel do
         </section>
         <section class="schedule-list" aria-label="Your schedules">
           <div :if={@schedules == []} class="inbox-empty">
-            <h2>No schedules yet</h2><p>Choose a project, write a prompt, and set when it runs.</p>
+            <h2>No schedules yet</h2>
+            <p>
+              Choose a project, write the prompt you would type yourself, and set when it runs.
+              Each run starts in a new track, so earlier runs stay as they were.
+            </p>
           </div>
           <article :for={schedule <- @schedules} id={"schedule-#{schedule.id}"} class="schedule-card">
             <div class="row">
@@ -206,10 +253,10 @@ defmodule RavixWeb.Live.SchedulesPanel do
                 do: "Active",
                 else: "Paused"}</span>
             </div>
-            <p class="meta">{project_name(@projects, schedule.project_id)} · {schedule.frequency}</p>
+            <p class="meta">{project_name(@projects, schedule.project_id)} · {cadence(schedule)}</p>
             <p class="schedule-prompt">{schedule.prompt}</p>
-            <p :if={schedule.enabled}>Next: {timestamp(schedule.next_run_at)}</p>
-            <p>Last dispatch: {timestamp(schedule.last_run_at)}</p>
+            <p :if={schedule.enabled}>Next: {timestamp(schedule.next_run_at, @timezone)}</p>
+            <p>Last dispatch: {timestamp(schedule.last_run_at, @timezone)}</p>
             <p :if={schedule.last_status}>{schedule.last_status}</p>
             <.link
               :if={schedule.last_track_id}
