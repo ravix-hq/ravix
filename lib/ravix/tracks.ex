@@ -125,8 +125,10 @@ defmodule Ravix.Tracks do
   whichever of the three is asking. Ordinary lists use the short conversation
   memo. Pass `fresh: true` after a turn event or for an explicit refresh;
   membership and this person's read markers are always read from the database.
+  `closed: true` includes the closed tracks the same rules admit.
   """
-  @spec list(User.t(), String.t(), fresh: boolean()) :: {:ok, [View.t()]} | {:error, :not_found}
+  @spec list(User.t(), String.t(), fresh: boolean(), closed: boolean()) ::
+          {:ok, [View.t()]} | {:error, :not_found}
   def list(%User{} = user, project_id, opts \\ []) do
     case live_project(project_id) do
       %Project{} = project -> listing(user, project, opts)
@@ -138,23 +140,29 @@ defmodule Ravix.Tracks do
   # third question is "are they on any track of this project", which is the
   # query that produced these rows: asking the database for the rows and then
   # asking it the same thing again is the pair #302's `open_tracks/2`
-  # consolidation removed elsewhere and this caller still paid for.
+  # consolidation removed elsewhere and this caller still paid for. Only open
+  # rows answer it: a closed track admits nobody to the project.
   defp listing(user, project, opts) do
-    rows = Enum.map(Access.open_tracks(user, [project.id]), &elem(&1, 0))
+    closed = if Keyword.get(opts, :closed, false), do: [project.id], else: []
+    rows = Enum.map(Access.open_tracks(user, [project.id], closed: closed), &elem(&1, 0))
+    open = Enum.filter(rows, &is_nil(&1.closed_at))
 
-    case Access.access_of(user.id, project, tracks: rows) do
+    case Access.access_of(user.id, project, tracks: open) do
       nil -> {:error, :not_found}
       :owner -> {:ok, present_all(rows, project, user, :owner, opts)}
       _member -> {:ok, present_all(rows, project, user, :member, opts)}
     end
   end
 
-  @doc "The rail's open tracks, discovered in one scoped query across projects."
+  @doc """
+  The rail's open tracks, discovered in one scoped query across projects.
+  `closed:` lists the projects whose closed tracks the same query includes.
+  """
   @spec list_many(User.t(), [String.t()], keyword()) ::
           %{String.t() => [View.t()] | {:error, :unavailable}}
   def list_many(%User{} = user, project_ids, opts \\ []) do
     groups =
-      Access.open_tracks(user, project_ids)
+      Access.open_tracks(user, project_ids, closed: Keyword.get(opts, :closed, []))
       |> Enum.group_by(fn {_row, project} -> project end)
       |> Enum.to_list()
 
@@ -2053,6 +2061,7 @@ defmodule Ravix.Tracks do
       creator_revoked_at: row.creator_revoked_at,
       visibility: row.visibility,
       created_by_login: row.created_by_login,
+      creator_avatar_url: row.creator_avatar_url,
       people: Keyword.get(opts, :people, []),
       threads: Keyword.get(opts, :threads, []),
       role: Keyword.get(opts, :role, :owner),

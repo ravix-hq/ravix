@@ -1045,14 +1045,18 @@ defmodule RavixWeb.WorkspaceLiveTest do
 
     # The namespace every default title shares is left off the tab; the full
     # title is still its accessible name and tooltip.
-    assert has_element?(view, "#{tab.(idle)}[aria-label='ravix/idle'][title='ravix/idle']")
+    assert has_element?(
+             view,
+             "#{tab.(idle)}[aria-label='ravix/idle, created by @user'][title='ravix/idle']"
+           )
+
     assert render(element(view, "#{tab.(idle)} .track-title")) =~ ~r{>idle</span>}
     # A title outside the namespace is shown whole, and a plan's track says so.
     assert has_element?(view, "#{tab.(feature)} .track-title", "feature/login")
 
     assert has_element?(
              view,
-             "#{tab.(feature)}[aria-label='feature/login, from a project plan']"
+             "#{tab.(feature)}[aria-label='feature/login, created by @user, from a project plan']"
            )
 
     for {track, label} <- [
@@ -1063,11 +1067,16 @@ defmodule RavixWeb.WorkspaceLiveTest do
           {setup_broken, "Setup failed"}
         ] do
       assert has_element?(view, "#{tab.(track)} .dot[role=img][aria-label='#{label}']")
-      assert has_element?(view, "#{tab.(track)}[aria-label='#{track.title}, #{label}']")
+
+      assert has_element?(
+               view,
+               "#{tab.(track)}[aria-label='#{track.title}, created by @user, #{label}']"
+             )
     end
 
     # Idle and active tracks alike omit decorative numbering.
-    refute has_element?(view, "#{tab.(idle)} [role=img]")
+    refute has_element?(view, "#{tab.(idle)} .dot[role=img]")
+    assert has_element?(view, "#{tab.(idle)} [role=img]", "US")
     refute has_element?(view, ".project-tree-tracks .track-num")
   end
 

@@ -189,6 +189,22 @@
             phx-value-name="sections"
           >Manage sections</button>
         </div>
+        <div id="rail-scope" class="rail-scope" role="group" aria-label="Show tracks from">
+          <button
+            :for={{scope, label} <- [everyone: "Everyone", mine: "Mine"]}
+            type="button"
+            id={"rail-scope-#{scope}"}
+            class={if @current_user.rail_scope == scope, do: "on", else: "ghost"}
+            aria-pressed={to_string(@current_user.rail_scope == scope)}
+            title={
+              if scope == :mine,
+                do: "Only tracks you created",
+                else: "Every track you can see"
+            }
+            phx-click="rail-scope"
+            phx-value-scope={scope}
+          >{label}</button>
+        </div>
         <div
           id="project-sections"
           phx-hook="ProjectSections"
@@ -299,6 +315,42 @@
                     >
                       <.icon name="settings" size={13} />
                     </button>
+                    <button
+                      :if={project.access != :tracks}
+                      type="button"
+                      id={"project-menu-trigger-#{project.id}"}
+                      class="project-action"
+                      aria-label={"More for #{project.display_name}"}
+                      title="More"
+                      popovertarget={"project-menu-#{project.id}"}
+                    >
+                      <.icon name="more" size={13} />
+                    </button>
+                    <div
+                      :if={project.access != :tracks}
+                      id={"project-menu-#{project.id}"}
+                      class="project-menu"
+                      popover
+                      role="menu"
+                      aria-label={"More for #{project.display_name}"}
+                    >
+                      <button
+                        type="button"
+                        id={"show-closed-#{project.id}"}
+                        class="account-item"
+                        role="menuitemcheckbox"
+                        aria-checked={to_string(MapSet.member?(@closed_projects, project.id))}
+                        popovertarget={"project-menu-#{project.id}"}
+                        popovertargetaction="hide"
+                        phx-click="show-closed"
+                        phx-value-project={project.id}
+                        phx-value-show={to_string(!MapSet.member?(@closed_projects, project.id))}
+                      >
+                        <span class="menu-check" aria-hidden="true">
+                          <.icon :if={MapSet.member?(@closed_projects, project.id)} name="check" size={14} />
+                        </span>Show closed tracks
+                      </button>
+                    </div>
                     <.link
                       :if={project.access != :tracks}
                       patch={"/p/#{project.id}#{if @project && @project.id == project.id, do: track_suffix(@track_id), else: ""}?new=track"}
@@ -317,7 +369,9 @@
                     aria-label={"Tracks in #{project.display_name}"}
                   >
                     <.link
-                      :for={track <- @tracks[project.id] || []}
+                      :for={
+                        track <- rail_rows(@tracks[project.id] || [], @current_user, @track_id)
+                      }
                       id={"project-track-tab-#{track.id}"}
                       patch={"/p/#{project.id}/t/#{track.id}"}
                       class={["workspace-track track-tab", @track_id == track.id && "selected"]}
@@ -330,6 +384,7 @@
                         status={to_string(tab_status(track))}
                         label={tab_status_label(tab_status(track))}
                       />
+                      <.creator track={track} />
                       <span class="track-title">{tab_label(track)}</span>
                       <span :if={track.visibility == :private}><.icon name="lock" /> Private</span>
                     </.link>
@@ -348,12 +403,56 @@
                     <p
                       :if={
                         @rail_loaded && !MapSet.member?(@track_errors, project.id) &&
-                          (@tracks[project.id] || []) == []
+                          rail_rows(@tracks[project.id] || [], @current_user, @track_id) == []
                       }
                       class="hint"
                     >
-                      No open tracks
+                      {if (@tracks[project.id] || []) == [],
+                        do: "No open tracks",
+                        else: "No open tracks of yours"}
                     </p>
+                    <div
+                      :if={MapSet.member?(@closed_projects, project.id)}
+                      id={"closed-tracks-#{project.id}"}
+                      class="closed-tracks"
+                    >
+                      <p class="section-label"><small>Closed</small></p>
+                      <ul aria-label={"Closed tracks in #{project.display_name}"}>
+                        <li
+                          :for={
+                            track <-
+                              rail_rows(@closed_tracks[project.id] || [], @current_user, nil)
+                          }
+                          id={"closed-track-#{track.id}"}
+                          class="workspace-track closed-track"
+                        >
+                          <.creator track={track} />
+                          <span class="track-title truncate" title={track.title}>
+                            {tab_label(track)}<span class="sr-only">, closed</span>
+                          </span>
+                          <span :if={track.visibility == :private}>
+                            <.icon name="lock" /> Private
+                          </span>
+                          <button
+                            :if={reopenable?(project)}
+                            type="button"
+                            id={"reopen-track-#{track.id}"}
+                            class="ghost"
+                            aria-label={"Reopen #{track.title}"}
+                            phx-click={JS.push_focus() |> JS.push("reopen-track")}
+                            phx-value-track={track.id}
+                          >Reopen</button>
+                        </li>
+                      </ul>
+                      <p
+                        :if={
+                          rail_rows(@closed_tracks[project.id] || [], @current_user, nil) == []
+                        }
+                        class="hint"
+                      >
+                        No closed tracks
+                      </p>
+                    </div>
                   </nav>
                 </section>
               </div>
@@ -737,6 +836,7 @@
         tracks={@tracks}
         plans={@search_plans}
         query={@query}
+        user={@current_user}
       />
     </.dialog>
     <.dialog
@@ -847,6 +947,14 @@
             options={Enum.map(@refs, &{ref_label(&1), ref_id(&1)})}
             required
           />
+          <p :if={@reopen && @origin_kind == :branch} id="reopen-hint" class="hint">
+            Reopening {@reopen.title}: a new track starts from its branch {@reopen.branch}.
+            <span :if={
+              !@refs_loading && @refs != [] && !Enum.any?(@refs, &(&1.name == @reopen.branch))
+            }>
+              That branch isn't on GitHub, so push it first or choose another branch.
+            </span>
+          </p>
           <p :if={@origin_kind == :blank} class="hint">
             Start from {@track_project.default_branch || "the default branch"}.
           </p>

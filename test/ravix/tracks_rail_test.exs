@@ -81,6 +81,87 @@ defmodule Ravix.TracksRailTest do
     end
   end
 
+  test "closed tracks join the same one query under the same visibility, with creator avatars" do
+    viewer = insert_user(avatar_url: "https://avatars.example/viewer.png")
+    other = insert_user()
+    owned = insert_project(user: viewer)
+    member = insert_project()
+    insert_project_member(member, viewer)
+    closed_at = DateTime.utc_now()
+    open = insert_track(project: owned, created_by: viewer.id, created_by_login: viewer.login)
+    closed = insert_track(project: owned, closed_at: closed_at, created_by: other.id)
+    closed_member = insert_track(project: member, closed_at: closed_at)
+    legacy = insert_track(project: owned, created_by_login: viewer.login)
+
+    # The project owner never sees another person's private track, open or closed.
+    foreign_private =
+      insert_track(
+        project: owned,
+        visibility: :private,
+        created_by: other.id,
+        sandbox_layout: :dedicated,
+        closed_at: closed_at
+      )
+
+    own_private =
+      insert_track(
+        project: member,
+        visibility: :private,
+        created_by: viewer.id,
+        sandbox_layout: :dedicated,
+        closed_at: closed_at
+      )
+
+    revoked =
+      insert_track(
+        project: member,
+        visibility: :private,
+        created_by: viewer.id,
+        sandbox_layout: :dedicated,
+        closed_at: closed_at
+      )
+      |> Ecto.Changeset.change(creator_revoked_at: closed_at)
+      |> Ravix.Repo.update!()
+
+    ids = [owned.id, member.id]
+
+    {rows, queries} =
+      QueryCount.count(fn -> Access.open_tracks(viewer, ids, closed: ids) end)
+
+    assert length(queries) == 1
+    found = MapSet.new(rows, fn {track, _} -> track.id end)
+
+    assert found ==
+             MapSet.new([open.id, closed.id, closed_member.id, legacy.id, own_private.id])
+
+    refute foreign_private.id in found
+    refute revoked.id in found
+
+    only_owned = Access.open_tracks(viewer, ids, closed: [owned.id])
+
+    assert MapSet.new(only_owned, fn {track, _} -> track.id end) ==
+             MapSet.new([open.id, closed.id, legacy.id])
+
+    {row, _} = Enum.find(rows, fn {track, _} -> track.id == open.id end)
+    assert row.creator_avatar_url == viewer.avatar_url
+    {row, _} = Enum.find(rows, fn {track, _} -> track.id == legacy.id end)
+    assert row.creator_avatar_url == nil
+
+    assert Access.created_by?(viewer, open)
+    assert Access.created_by?(viewer, legacy)
+    refute Access.created_by?(viewer, closed)
+
+    tracks = Tracks.list_many(viewer, ids, closed: [owned.id])
+
+    assert tracks[owned.id] |> Enum.filter(&(&1.status == :closed)) |> Enum.map(& &1.id) == [
+             closed.id
+           ]
+
+    refute Map.has_key?(tracks, member.id)
+    assert {:ok, listed} = Tracks.list(viewer, member.id, closed: true)
+    assert MapSet.new(listed, & &1.id) == MapSet.new([closed_member.id, own_private.id])
+  end
+
   test "a failed provider presentation is isolated to its project" do
     viewer = insert_user()
     broken = insert_project(user: viewer)

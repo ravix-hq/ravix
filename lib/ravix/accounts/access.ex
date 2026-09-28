@@ -63,14 +63,21 @@ defmodule Ravix.Accounts.Access do
   @typedoc "What `track_access/2` answers. See `Ravix.Accounts.TrackAccess`."
   @type track_access :: TrackAccess.t()
 
-  @doc "All open tracks in the requested projects admitted by this viewer's memberships."
-  @spec open_tracks(User.t(), [String.t()]) :: [{Track.t(), Project.t()}]
-  # ownership: no door before this one; this query establishes project and track membership.
-  def open_tracks(%User{id: user_id}, project_ids) do
+  @doc """
+  All open tracks in the requested projects admitted by this viewer's memberships.
+
+  `closed:` names projects whose closed tracks are wanted too. They pass the
+  same visibility test as open ones, so another person's private track stays
+  out whether it is open or closed. Each row carries its creator's avatar.
+  """
+  @spec open_tracks(User.t(), [String.t()], closed: [String.t()]) :: [{Track.t(), Project.t()}]
+  def open_tracks(%User{id: user_id}, project_ids, opts \\ []) do
     import Ecto.Query
 
     visibility = listing_visibility(user_id)
+    closed = Keyword.get(opts, :closed, [])
 
+    # ownership: no door before this one; this query establishes project and track membership.
     Repo.all(
       from(t in Track,
         join: p in Project,
@@ -79,11 +86,13 @@ defmodule Ravix.Accounts.Access do
         on: pm.project_id == p.id and pm.user_id == ^user_id,
         left_join: tm in Ravix.Tracks.TrackMember,
         on: tm.track_id == t.id and tm.user_id == ^user_id,
+        left_join: u in User,
+        on: u.id == t.created_by,
         where: p.id in ^project_ids and is_nil(p.archived_at) and is_nil(p.deletion_requested_at),
-        where: is_nil(t.closed_at),
+        where: is_nil(t.closed_at) or t.project_id in ^closed,
         where: ^visibility,
         order_by: [asc: t.created_at, asc: t.id],
-        select: {t, p}
+        select: {%{t | creator_avatar_url: u.avatar_url}, p}
       )
     )
   end
@@ -109,6 +118,10 @@ defmodule Ravix.Accounts.Access do
       )
     )
   end
+
+  @doc "Whether this person made the track: the stable id, or the login on rows from before it."
+  def created_by?(%User{id: id, login: login}, %{created_by: creator} = track),
+    do: if(is_nil(creator), do: track.created_by_login == login, else: creator == id)
 
   defp listing_visibility(user_id) do
     import Ecto.Query

@@ -61,6 +61,11 @@ defmodule RavixWeb.WorkspaceLive do
         sections: [],
         section_placements: %{},
         tracks: %{},
+        # Closed tracks of the projects this person asked to see them for:
+        # listed, never counted, never a URL to open.
+        closed_tracks: %{},
+        closed_projects: MapSet.new(),
+        reopen: nil,
         track_errors: MapSet.new(),
         track_loading: MapSet.new(),
         # How many tracks across every project want somebody. Counted where
@@ -380,6 +385,68 @@ defmodule RavixWeb.WorkspaceLive do
     )
   end
 
+  def handle_event("rail-scope", %{"scope" => scope}, socket) do
+    case Accounts.put_rail_scope(socket.assigns.current_user, scope) do
+      {:ok, user} ->
+        {:noreply, assign(socket, current_user: user)}
+
+      {:error, reason} ->
+        {:noreply, put_flash(socket, :error, RavixWeb.Error.from(reason).message)}
+    end
+  end
+
+  def handle_event("show-closed", %{"project" => id, "show" => show}, socket) do
+    show? = show == "true"
+
+    case Sections.show_closed(socket.assigns.current_user, id, show?) do
+      {:ok, _} ->
+        socket = update(socket, :closed_projects, &toggle(&1, id, show?))
+
+        {:noreply,
+         if(show?,
+           do: refresh_tracks(socket, id),
+           else: update(socket, :closed_tracks, &Map.delete(&1, id))
+         )}
+
+      {:error, reason} ->
+        {:noreply, put_flash(socket, :error, RavixWeb.Error.from(reason).message)}
+    end
+  end
+
+  # Reopening is a new track from the closed one's branch: closing removed
+  # the worktree and ended the conversation, so there is nothing to resume.
+  def handle_event("reopen-track", %{"track" => id}, socket) do
+    socket = recheck_rail(socket)
+
+    found =
+      Enum.find_value(socket.assigns.closed_tracks, fn {project_id, rows} ->
+        track = Enum.find(rows, &(&1.id == id))
+        project = track && Enum.find(socket.assigns.projects, &(&1.id == project_id))
+        if project && reopenable?(project), do: {project, track}
+      end)
+
+    case found do
+      {project, track} ->
+        visibility =
+          if track.visibility == :private and
+               Ravix.Config.dedicated_opens_enabled?(socket.assigns.current_user),
+             do: "private",
+             else: "project"
+
+        {:noreply,
+         socket
+         |> new_track_dialog(project)
+         |> assign(
+           reopen: %{title: track.title, branch: track.branch},
+           track_form: Form.new(:new_track, %{"ref" => track.branch, "visibility" => visibility})
+         )
+         |> choose_origin(:branch)}
+
+      nil ->
+        {:noreply, flash(socket, :error, "Track not available.")}
+    end
+  end
+
   def handle_event("delete-section", %{"id" => id}, socket) do
     section_result(socket, Sections.delete(socket.assigns.current_user, id))
   end
@@ -513,31 +580,8 @@ defmodule RavixWeb.WorkspaceLive do
      end)}
   end
 
-  def handle_event("origin", %{"kind" => word}, socket) when is_map_key(@form_origins, word) do
-    kind = Map.fetch!(@form_origins, word)
-
-    socket =
-      assign(socket, origin_kind: kind, refs: [], refs_loading: false, advanced_track: true)
-
-    case @origin_refs[kind] do
-      nil ->
-        {:noreply, socket}
-
-      refs_kind ->
-        # A GitHub call, and it used to be one this process waited out: the
-        # rail stopped drawing and the dialog stopped answering for as long
-        # as the repository took to list its branches. The form's own
-        # "Create track" stays disabled until the refs land, which is what
-        # already said "not yet" while this was synchronous too.
-        user = socket.assigns.current_user
-        id = track_project_id(socket)
-
-        {:noreply,
-         traced_async(assign(socket, refs_loading: true), :refs, fn ->
-           Projects.refs(user, id, refs_kind)
-         end)}
-    end
-  end
+  def handle_event("origin", %{"kind" => word}, socket) when is_map_key(@form_origins, word),
+    do: {:noreply, choose_origin(socket, Map.fetch!(@form_origins, word))}
 
   def handle_event("create-track", %{"new_track" => params}, socket) do
     kind = socket.assigns.origin_kind
@@ -1075,7 +1119,9 @@ defmodule RavixWeb.WorkspaceLive do
   defp created(response, _user), do: response
 
   defp rail_tracks(socket) do
-    Enum.reduce(socket.assigns.track_errors, socket.assigns.tracks, fn id, tracks ->
+    all = Map.merge(socket.assigns.tracks, socket.assigns.closed_tracks, fn _, a, b -> a ++ b end)
+
+    Enum.reduce(socket.assigns.track_errors, all, fn id, tracks ->
       Map.put(tracks, id, {:error, :unavailable})
     end)
   end
@@ -1098,9 +1144,12 @@ defmodule RavixWeb.WorkspaceLive do
       socket =
         assign(socket, :track_loading, MapSet.put(socket.assigns.track_loading, project_id))
 
-      traced_async(socket, {:tracks, project_id}, fn ->
-        Tracks.list(user, project_id, fresh: true)
-      end)
+      opts =
+        if MapSet.member?(socket.assigns.closed_projects, project_id),
+          do: [fresh: true, closed: true],
+          else: [fresh: true]
+
+      traced_async(socket, {:tracks, project_id}, fn -> Tracks.list(user, project_id, opts) end)
     else
       socket
     end
@@ -1113,7 +1162,8 @@ defmodule RavixWeb.WorkspaceLive do
   # another project is still answering.
   defp read_rail(user, opts \\ []) do
     projects = Projects.list(user, include_machine: false)
-    tracks = Tracks.list_many(user, Enum.map(projects, & &1.id), opts)
+    closed = closed_shown(user, projects)
+    tracks = Tracks.list_many(user, Enum.map(projects, & &1.id), [closed: closed] ++ opts)
     {projects, tracks}
   end
 
@@ -1127,9 +1177,11 @@ defmodule RavixWeb.WorkspaceLive do
       socket.assigns.current_user
       |> Projects.list(include_machine: false)
 
+    closed_projects = MapSet.new(closed_shown(socket.assigns.current_user, projects))
+
     visible =
       socket.assigns.current_user
-      |> Access.open_tracks(Enum.map(projects, & &1.id))
+      |> Access.open_tracks(Enum.map(projects, & &1.id), closed: MapSet.to_list(closed_projects))
       |> MapSet.new(fn {row, _project} -> row.id end)
 
     track_errors =
@@ -1146,6 +1198,16 @@ defmodule RavixWeb.WorkspaceLive do
 
         rows = Enum.filter(rows, &MapSet.member?(visible, &1.id))
         {project.id, rows}
+      end)
+
+    {closed_tracks, tracks} =
+      Enum.reduce(tracks, {%{}, %{}}, fn {id, rows}, {closed, open} ->
+        {shut, live} = Enum.split_with(rows, &(&1.status == :closed))
+
+        closed =
+          if MapSet.member?(closed_projects, id), do: Map.put(closed, id, shut), else: closed
+
+        {closed, Map.put(open, id, live)}
       end)
 
     {sections, placements} = Sections.list(socket.assigns.current_user)
@@ -1171,6 +1233,8 @@ defmodule RavixWeb.WorkspaceLive do
       section_placements: placements,
       projects: projects,
       tracks: tracks,
+      closed_tracks: closed_tracks,
+      closed_projects: closed_projects,
       track_errors: track_errors,
       attention: attention_count(tracks)
     )
@@ -1368,10 +1432,46 @@ defmodule RavixWeb.WorkspaceLive do
       thread_connect: nil,
       origin_kind: :blank,
       refs: [],
-      refs_loading: false
+      refs_loading: false,
+      reopen: nil
     )
     |> traced_async({:track_options, id}, fn -> Tracks.open_options(user, id) end)
   end
+
+  defp choose_origin(socket, kind) do
+    socket =
+      assign(socket, origin_kind: kind, refs: [], refs_loading: false, advanced_track: true)
+
+    case @origin_refs[kind] do
+      nil ->
+        socket
+
+      refs_kind ->
+        # A GitHub call, and it used to be one this process waited out: the
+        # rail stopped drawing and the dialog stopped answering for as long
+        # as the repository took to list its branches. The form's own
+        # "Create track" stays disabled until the refs land, which is what
+        # already said "not yet" while this was synchronous too.
+        user = socket.assigns.current_user
+        id = track_project_id(socket)
+
+        traced_async(assign(socket, refs_loading: true), :refs, fn ->
+          Projects.refs(user, id, refs_kind)
+        end)
+    end
+  end
+
+  # Show closed belongs to the project row menu, which somebody invited only
+  # to tracks does not have; a choice made before losing project access lapses.
+  defp closed_shown(user, projects) do
+    ids = for p <- projects, p.access != :tracks, into: MapSet.new(), do: p.id
+    Enum.filter(Sections.closed_shown(user), &MapSet.member?(ids, &1))
+  end
+
+  defp toggle(set, id, true), do: MapSet.put(set, id)
+  defp toggle(set, id, false), do: MapSet.delete(set, id)
+
+  defp reopenable?(project), do: not is_nil(project.repo)
 
   defp track_project_id(socket),
     do: socket.assigns.track_project && socket.assigns.track_project.id
@@ -1412,6 +1512,7 @@ defmodule RavixWeb.WorkspaceLive do
   defp tab_name(track) do
     [
       track.title,
+      "created by @#{track.created_by_login}",
       track.origin.kind == :plan && "from a project plan",
       (status = tab_status(track)) && tab_status_label(status)
     ]
@@ -1419,24 +1520,67 @@ defmodule RavixWeb.WorkspaceLive do
     |> Enum.join(", ")
   end
 
+  # The sidebar's Mine filter. The selected track stays, so choosing Mine
+  # never takes away the page somebody is looking at.
+  defp rail_rows(rows, %Accounts.User{rail_scope: :mine} = user, selected),
+    do: Enum.filter(rows, &(&1.id == selected or Access.created_by?(user, &1)))
+
+  defp rail_rows(rows, _user, _selected), do: rows
+
+  # Quick-jump searches everything unless the query says `mine:`.
+  defp jump_query(query) do
+    words = String.split(query)
+    {"mine:" in words, words |> Enum.reject(&(&1 == "mine:")) |> Enum.join(" ")}
+  end
+
+  attr :track, :map, required: true
+
+  defp creator(assigns) do
+    ~H"""
+    <span
+      class="track-creator"
+      role="img"
+      aria-label={"Created by @#{@track.created_by_login}"}
+      title={"Created by @#{@track.created_by_login}"}
+    >
+      <img :if={@track.creator_avatar_url} src={@track.creator_avatar_url} alt="" loading="lazy" />
+      <span :if={!@track.creator_avatar_url} aria-hidden="true">{initials(@track.created_by_login)}</span>
+    </span>
+    """
+  end
+
+  defp initials(login) do
+    case String.split(login || "", ~r/[-_.]+/, trim: true) do
+      [first, second | _] -> String.first(first) <> String.first(second)
+      [only] -> String.slice(only, 0, 2)
+      [] -> "?"
+    end
+    |> String.upcase()
+  end
+
   # Keep filtering inside a component so HEEx tracks its input assigns.
   defp track_search_results(assigns) do
     plans = Enum.group_by(assigns.plans, & &1.project_id)
+    {mine?, query} = jump_query(assigns.query)
 
     results =
       for project <- assigns.projects,
           tracks =
-            Enum.filter(assigns.tracks[project.id] || [], &matching?(&1, project, assigns.query)),
-          # Only a project this person may enter whole has plans to offer.
-          plans =
-            if(project.access == :tracks,
-              do: [],
-              else: Enum.filter(plans[project.id] || [], &plan_matches?(&1, assigns.query))
+            Enum.filter(
+              assigns.tracks[project.id] || [],
+              &((!mine? or Access.created_by?(assigns.user, &1)) and matching?(&1, project, query))
             ),
-          tracks != [] || plans != [] || project_matches?(project, assigns.query),
+          # Only a project this person may enter whole has plans to offer, and
+          # `mine:` is about the tracks this person created.
+          plans =
+            if(project.access == :tracks or mine?,
+              do: [],
+              else: Enum.filter(plans[project.id] || [], &plan_matches?(&1, query))
+            ),
+          tracks != [] || plans != [] || (!mine? and project_matches?(project, query)),
           do: {project, tracks, plans}
 
-    assigns = assign(assigns, :results, results)
+    assigns = assign(assigns, results: results, query: query)
 
     ~H"""
     <p :if={@results == []} role="status">No projects, tracks or plans match</p>
