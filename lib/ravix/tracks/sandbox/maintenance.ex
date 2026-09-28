@@ -1,6 +1,6 @@
 defmodule Ravix.Tracks.Sandbox.Maintenance do
   @moduledoc "Preparation of one dedicated workspace; no sibling agent or disk mutations."
-  alias Ravix.Projects.{Machine, Project, RuntimeAgents}
+  alias Ravix.Projects.Machine
   alias Ravix.Tracks.Billing
   alias Ravix.Tracks.Sandbox.Store
 
@@ -49,15 +49,4 @@ defmodule Ravix.Tracks.Sandbox.Maintenance do
   end
 
   defp clone_token(_client, _track, _project), do: :ok
-
-  @doc """
-  Adopt the owner's source on this conversation, never by changing a shared
-  agent. Creator billing binds through `Ravix.Tracks.Billing.bind/3`, which
-  does this for an owner-billed track and names the creator's set otherwise.
-  """
-  def adopt(launch, project) do
-    if Project.maintenance?(project),
-      do: %{launch | inference_credential_id: RuntimeAgents.owner(project).credential_set_id},
-      else: launch
-  end
 end

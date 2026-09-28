@@ -14,6 +14,8 @@ defmodule Ravix.Tracks.Sandbox do
   alias Ravix.Tracks.Setup
   alias Ravix.Tracks.Track
 
+  @admission_pending ~w(payer_admission_busy payer_not_admitted)
+
   def advance(client, id) do
     case Store.claim(id) do
       nil ->
@@ -265,12 +267,27 @@ defmodule Ravix.Tracks.Sandbox do
       {:error, %Error{} = error} ->
         mutation_failed(error, error.code || "setup_failed", client, op, track, project)
 
+      {:error, {_kind, code, message}} when code in @admission_pending ->
+        retry_admission(op, code, message)
+
       {:error, {_kind, code, message}} ->
         fail(client, op, track, project, code, message)
 
       {:error, _reason} ->
         defer(op, "sandbox_outcome_unknown")
     end
+  end
+
+  # A creator's set not admitted yet, or another admission holding the
+  # agent's lock: nothing was sent, so setup waits and tries the launch again
+  # rather than failing the track (`RuntimeAgents.admit_payer/3`).
+  defp retry_admission(op, code, message) do
+    Store.progress(
+      op,
+      %{phase: "vault_ready", retry_at: DateTime.add(DateTime.utc_now(), 15)},
+      setup_error: message,
+      setup_error_code: code
+    )
   end
 
   # The opening conversation spends the track's payer (`Ravix.Tracks.Billing`):

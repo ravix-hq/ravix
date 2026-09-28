@@ -540,6 +540,22 @@ defmodule Ravix.CreatorBillingTest do
       %{track: creator_billed(ready_track(ctx))}
     end
 
+    # The operator's evidence for each launch: one info line, ids only.
+    defp launch_log(fun) do
+      previous_level = Logger.level()
+      Logger.configure(level: :info)
+
+      try do
+        ExUnit.CaptureLog.capture_log([level: :info], fun)
+      after
+        Logger.configure(level: previous_level)
+      end
+    end
+
+    defp launch_line(track, ctx),
+      do:
+        "ravix: creator billing launch track=#{track.id} payer=#{ctx.creator.id} set=creator-set agent=#{ctx.project.agent_id}"
+
     # `Billing.bind/3` is where a path puts the set; forcing it to produce a
     # wrong launch shows the door itself refuses, not just the builder.
     defp mislabel(set) do
@@ -592,10 +608,6 @@ defmodule Ravix.CreatorBillingTest do
       ]
 
     test "thread start", ctx do
-      previous_level = Logger.level()
-      Logger.configure(level: :info)
-      on_exit(fn -> Logger.configure(level: previous_level) end)
-
       client =
         fountain(
           [
@@ -606,15 +618,10 @@ defmodule Ravix.CreatorBillingTest do
           verify: false
         )
 
-      log =
-        ExUnit.CaptureLog.capture_log([level: :info], fn ->
-          assert {:ok, _} = start_thread(ctx.collab, ctx.track, "claude")
-        end)
-
+      log = launch_log(fn -> assert {:ok, _} = start_thread(ctx.collab, ctx.track, "claude") end)
       assert [%{"inference_credential_id" => "creator-set"}] = created(client)
-
-      assert log =~
-               "creator billing launch track=#{ctx.track.id} payer=#{ctx.creator.id} set=creator-set"
+      assert log =~ launch_line(ctx.track, ctx)
+      refute log =~ "owner-set"
 
       for bad <- [nil, "owner-set", "collab-set"] do
         mislabel(bad)
@@ -639,8 +646,14 @@ defmodule Ravix.CreatorBillingTest do
     test "the opening conversation", ctx do
       track = creator_billed(ready_track(ctx, conversation_id: nil, sandbox_id: nil))
       client = opening_fountain(ctx, "track-vault", opened())
-      Tracks.Sandbox.advance(client, open_op(ctx, track, "vault_ready").id)
+
+      log =
+        launch_log(fn ->
+          Tracks.Sandbox.advance(client, open_op(ctx, track, "vault_ready").id)
+        end)
+
       assert [%{"inference_credential_id" => "creator-set"}] = created(client)
+      assert log =~ launch_line(track, ctx)
 
       for bad <- [nil, "owner-set"] do
         mislabel(bad)
@@ -650,6 +663,37 @@ defmodule Ravix.CreatorBillingTest do
         assert created(client) == []
         assert %{setup_error_code: "payer_mismatch"} = Tracks.Store.get_track(track.id)
       end
+    end
+
+    test "an admission still pending retries the open instead of failing it", ctx do
+      track = creator_billed(ready_track(ctx, conversation_id: nil, sandbox_id: nil))
+      op = open_op(ctx, track, "vault_ready")
+      agent_id = ctx.project.agent_id
+
+      client =
+        FakeTransport.client(
+          clean(ctx.project.environment_id, "track-vault") ++
+            [
+              {%{method: "GET", path: "/api/agents/#{agent_id}"},
+               agent(agent_id, "owner-set", [])},
+              {%{method: "PUT", path: "/api/agents/#{agent_id}"},
+               agent(agent_id, "owner-set", [])},
+              {%{method: "GET", path: "/api/agents/#{agent_id}"},
+               agent(agent_id, "owner-set", [])}
+            ],
+          verify: false
+        )
+
+      Tracks.Sandbox.advance(client, op.id)
+      assert created(client) == []
+
+      assert %{phase: "vault_ready", retry_at: %DateTime{}, error: nil} =
+               Tracks.Sandbox.Store.get_operation(op.id)
+
+      assert %{setup_error_code: "payer_not_admitted", sandbox_state: state} =
+               Tracks.Store.get_track(track.id)
+
+      refute state == :failed
     end
 
     test "a retried open", ctx do
@@ -686,10 +730,14 @@ defmodule Ravix.CreatorBillingTest do
            {201, [], %{data: %{id: "successor", sandbox_id: ctx.track.sandbox_id}}}}
         ])
 
-      assert :rebound =
-               Tracks.CredentialRecovery.prepare(client, ctx.track, ctx.project, ctx.track.id)
+      log =
+        launch_log(fn ->
+          assert :rebound =
+                   Tracks.CredentialRecovery.prepare(client, ctx.track, ctx.project, ctx.track.id)
+        end)
 
       assert [%{"inference_credential_id" => "creator-set"}] = created(client)
+      assert log =~ launch_line(ctx.track, ctx)
 
       for bad <- [nil, "owner-set"] do
         mislabel(bad)

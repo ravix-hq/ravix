@@ -516,6 +516,13 @@ exactly what it was.
     open track on the project is creator-billed. Otherwise it keeps the list
     and changes only the default.
   - Runtime agents are created with `allowed_inference_credential_ids: []`.
+    Agents made before that may still read as open (nil). `mix
+    ravix.provider_secrets` lists them, and `--close-allowlists` (in a
+    release, `Ravix.Release.close_open_allowlists()`) gives each an explicit
+    `[]`, idempotently and under the same lock.
+  - An open whose admission is still pending (`payer_not_admitted`,
+    `payer_admission_busy`) retries after 15 seconds instead of failing the
+    track's setup.
   - `inference_credential_not_allowed` keeps the prompt queued.
 - **Provider-named values (§2).** A creator-billed open or launch is refused
   (`provider_secret`, naming the keys, never values) while the project
@@ -559,8 +566,10 @@ exactly what it was.
   `codex_inference_conflict` on the same sandbox (§3). This is unchanged from
   owner-billed tracks today. A ChatGPT subscription is not affected.
 - There is no live check against the deployed Fountain before activation
-  (owner decision). Every dedicated create goes through
-  `Billing.create_conversation/4`: it verifies the payer's set immediately
-  before the POST, and logs `ravix: creator billing launch track=<id>
-  payer=<user id> set=<set id>` for each creator-billed create. That log
-  line, and the tests, are the guard.
+  (owner decision). `Billing.bind/3` logs `ravix: creator billing launch
+  track=<id> payer=<user id> set=<set id> agent=<agent id>` for each
+  creator-billed launch, and every dedicated create goes through
+  `Billing.create_conversation/4`, which verifies the payer's set again
+  immediately before the POST. That log line and the tests are the guard.
+  The owner-only `Maintenance.adopt/2` is gone; `bind/3` is the only way a
+  launch gets a set.

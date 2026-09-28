@@ -244,6 +244,38 @@ defmodule Ravix.Projects.RuntimeAgents do
          set in agent["allowed_inference_credential_ids"])
   end
 
+  @doc """
+  Give an agent Fountain reads as open (a nil allowlist: every set on the
+  account) an explicit empty list, under the same lock as every other
+  allowlist writer. Idempotent: an agent that already has a list, empty or
+  not, is left alone. The activation runbook's step for agents made before
+  runtime agents were created with `[]`.
+  """
+  @spec close_allowlist(Fountain.Client.t(), String.t()) ::
+          {:ok, :closed | :already} | {:error, term()}
+  def close_allowlist(client, agent_id) when is_binary(agent_id) do
+    Ravix.Cluster.agent_allowlist(agent_id, fn ->
+      with {:ok, agent} <- Fountain.get_agent(client, agent_id),
+           do: close_open(client, agent_id, agent)
+    end)
+  end
+
+  defp close_open(_client, _agent_id, %{"allowed_inference_credential_ids" => list})
+       when is_list(list),
+       do: {:ok, :already}
+
+  defp close_open(client, agent_id, _agent) do
+    with {:ok, _} <-
+           Fountain.update_agent(client, agent_id, %{allowed_inference_credential_ids: []}),
+         {:ok, %{"allowed_inference_credential_ids" => list}} when is_list(list) <-
+           Fountain.get_agent(client, agent_id) do
+      {:ok, :closed}
+    else
+      {:error, _} = error -> error
+      _ -> not_admitted()
+    end
+  end
+
   defp not_admitted,
     do:
       {:error,

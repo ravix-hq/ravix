@@ -149,7 +149,10 @@ defmodule Ravix.Tracks.Billing do
       Track.creator_billed?(track) ->
         with {:ok, payer} <- payer(track, project),
              {:ok, set} <- payer_set(payer),
-             do: verify(%{launch | inference_credential_id: set}, track, project)
+             {:ok, launch} <- verify(%{launch | inference_credential_id: set}, track, project) do
+          log_launch(launch, track)
+          {:ok, launch}
+        end
 
       Project.maintenance?(project) ->
         {:ok, %{launch | inference_credential_id: RuntimeAgents.owner(project).credential_set_id}}
@@ -188,27 +191,30 @@ defmodule Ravix.Tracks.Billing do
   @doc """
   The one door a dedicated track's conversation is created through: the
   launch is verified against the track's payer immediately before the POST,
-  whatever built it, and a creator-billed create is logged by track, payer
-  and set id (never a credential). A refused launch reaches no provider.
+  whatever built it. A refused launch reaches no provider. `bind/3` logs
+  each creator-billed launch by track, payer, set and agent id.
   """
   @spec create_conversation(Fountain.Client.t(), Launch.t(), Track.t(), Project.t()) ::
           {:ok, term()} | {:error, term()}
   def create_conversation(client, %Launch{} = launch, %Track{} = track, %Project{} = project) do
-    with {:ok, launch} <- verify(launch, track, project) do
-      if Track.creator_billed?(track) do
-        Logger.info(
-          "ravix: creator billing launch track=#{track.id} payer=#{track.payer_user_id} set=#{launch.inference_credential_id}"
-        )
+    with {:ok, launch} <- verify(launch, track, project),
+         do: Fountain.create_conversation(client, launch)
+  end
 
-        Trace.annotate(%{
-          "ravix.billing_policy" => "creator",
-          "ravix.payer_user_id" => track.payer_user_id,
-          "ravix.credential_set_id" => launch.inference_credential_id
-        })
-      end
+  # One line per creator-billed launch: ids only, never a credential. With
+  # no live check before activation, this is what an operator reads to see
+  # that each new track's conversations name their creator's set.
+  defp log_launch(launch, track) do
+    Logger.info(
+      "ravix: creator billing launch track=#{track.id} payer=#{track.payer_user_id} set=#{launch.inference_credential_id} agent=#{launch.agent_id}"
+    )
 
-      Fountain.create_conversation(client, launch)
-    end
+    Trace.annotate(%{
+      "ravix.billing_policy" => "creator",
+      "ravix.payer_user_id" => track.payer_user_id,
+      "ravix.credential_set_id" => launch.inference_credential_id,
+      "ravix.agent_id" => launch.agent_id
+    })
   end
 
   @doc "Admit the payer's set on `agent_id` before a creator-billed create; nothing otherwise."
@@ -294,6 +300,55 @@ defmodule Ravix.Tracks.Billing do
     |> Enum.filter(fn finding ->
       finding.environment != [] or finding.vault != []
     end)
+  end
+
+  @doc """
+  Every project and runtime agent Fountain reads as open (a nil allowlist,
+  which admits every set on Ravix's one account), for the activation
+  runbook. `close: true` gives each an explicit empty list
+  (`RuntimeAgents.close_allowlist/2`, idempotent) and reports what it did.
+  An agent Fountain could not be asked about is listed with the error.
+  """
+  @spec open_allowlists(Fountain.Client.t(), keyword()) :: [map()]
+  def open_allowlists(client, opts \\ []) do
+    close? = Keyword.get(opts, :close, false)
+
+    # ownership: no door; an operator task with no user in hand, reading agent
+    # allowlists (ids only) and, when asked, closing the open ones.
+    for project <- Ravix.Projects.Store.live_projects(),
+        agent_id <- RuntimeAgents.ids(project),
+        finding = open_allowlist(client, project, agent_id, close?),
+        do: finding
+  end
+
+  defp open_allowlist(client, project, agent_id, close?) do
+    case Fountain.get_agent(client, agent_id) do
+      {:ok, %{"allowed_inference_credential_ids" => list}} when is_list(list) ->
+        nil
+
+      {:ok, _open} ->
+        %{
+          project_id: project.id,
+          agent_id: agent_id,
+          state: close_state(client, agent_id, close?)
+        }
+
+      {:error, reason} ->
+        %{
+          project_id: project.id,
+          agent_id: agent_id,
+          state: {:error, Ravix.Redact.reason(reason)}
+        }
+    end
+  end
+
+  defp close_state(_client, _agent_id, false), do: :open
+
+  defp close_state(client, agent_id, true) do
+    case RuntimeAgents.close_allowlist(client, agent_id) do
+      {:ok, state} -> state
+      {:error, reason} -> {:error, Ravix.Redact.reason(reason)}
+    end
   end
 
   defp names_or_error({:ok, names}) do
