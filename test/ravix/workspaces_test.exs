@@ -263,20 +263,20 @@ defmodule Ravix.WorkspacesTest do
 
       # A bound track pays its creator, whoever starts or prompts a thread,
       # and a payer whose account is gone is nil -- refuse, not the owner.
-      bound = %{track | billing_policy: :starter, payer_user_id: creator.id}
-      assert Track.payer(bound, project) == {:starter, creator.id}
-      assert Track.payer(%{bound | payer_user_id: nil}, project) == {:starter, nil}
+      bound = %{track | billing_policy: :creator, payer_user_id: creator.id}
+      assert Track.payer(bound, project) == {:creator, creator.id}
+      assert Track.payer(%{bound | payer_user_id: nil}, project) == {:creator, nil}
 
       # A project that is not the track's is a caller bug, not an answer.
       assert_raise FunctionClauseError, fn -> Track.payer(track, insert_project()) end
 
       # Changesets cannot bind billing; only the billing phase will.
-      changeset = Track.changeset(track, %{billing_policy: :starter, payer_user_id: creator.id})
+      changeset = Track.changeset(track, %{billing_policy: :creator, payer_user_id: creator.id})
       refute Map.has_key?(changeset.changes, :billing_policy)
       refute Map.has_key?(changeset.changes, :payer_user_id)
 
       assert_raise Postgrex.Error, ~r/tracks_billing_policy/, fn ->
-        Repo.query!("UPDATE ravix.tracks SET billing_policy = 'workspace' WHERE id = $1", [
+        Repo.query!("UPDATE ravix.tracks SET billing_policy = 'starter' WHERE id = $1", [
           track.id
         ])
       end

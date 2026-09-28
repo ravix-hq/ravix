@@ -97,7 +97,7 @@ defmodule Ravix.Tracks.Track do
     # is the creator; these two are unwritten until creator billing, and not
     # cast by `changeset/2`. A nil policy is a legacy owner-paid track.
     field :payer_user_id, :string
-    field :billing_policy, Ecto.Enum, values: [:legacy_owner, :starter]
+    field :billing_policy, Ecto.Enum, values: [:legacy_owner, :creator]
 
     has_many :threads, Ravix.Tracks.Thread
     has_many :prompts, Ravix.PromptQueue.Item
@@ -113,7 +113,7 @@ defmodule Ravix.Tracks.Track do
   @required ~w(id project_id slug title branch workdir origin_kind rev created_at created_by_login)a
 
   @typedoc "Who pays for a track's inference, and under which policy."
-  @type payer :: {:legacy_owner, String.t()} | {:starter, String.t() | nil}
+  @type payer :: {:legacy_owner, String.t()} | {:creator, String.t() | nil}
 
   @doc """
   Who pays for every thread on `track` (ADR 0009, RAV-17 as clarified).
@@ -127,7 +127,7 @@ defmodule Ravix.Tracks.Track do
   @spec payer(t(), Ravix.Projects.Project.t()) :: payer()
   def payer(%__MODULE__{project_id: id} = track, %Ravix.Projects.Project{id: id} = project) do
     case track.billing_policy do
-      :starter -> {:starter, track.payer_user_id}
+      :creator -> {:creator, track.payer_user_id}
       _legacy -> {:legacy_owner, project.user_id}
     end
   end

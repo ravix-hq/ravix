@@ -164,7 +164,7 @@ defmodule Ravix.Repo.Migrations.ExpandWorkspaces do
     end
 
     create constraint(:tracks, :tracks_billing_policy,
-             check: "billing_policy IS NULL OR billing_policy IN ('legacy_owner', 'starter')",
+             check: "billing_policy IS NULL OR billing_policy IN ('legacy_owner', 'creator')",
              validate: false
            )
 

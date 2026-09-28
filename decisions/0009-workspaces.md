@@ -1,13 +1,13 @@
 ---
 type: ADR
 title: "Workspaces own repositories; a track's creator pays"
-description: "Amended: workspaces own repository projects, sharing is workspace-only, and the track creator's credential, bound to the track's sandbox, pays for every thread and runtime on it, whoever prompts. Existing tracks stay owner-paid until backfilled or closed; a departed or disconnected creator's track fails prompts clearly rather than falling back. Workspace audit and departed-member private-track handling are deferred."
+description: "Amended: workspaces own repository projects, sharing is workspace-only, and the track creator pays for every thread and runtime on a dedicated track. Workspace audit and departed-member private-track handling are deferred; implementation remains staged with legacy project-owner billing preserved."
 tags: [architecture, workspaces, access, billing, fountain]
 status: stable
 adr: "0009"
 adr_status: "Accepted"
 date: 2026-09-28
-generated: { by: claude-opus/5.5, at: 2026-09-28T07:36:52Z }
+generated: { by: process:codex, at: 2026-09-28T07:01:14Z }
 stale_after: 2026-10-28
 ---
 
@@ -25,19 +25,6 @@ whoever prompts. Under ADR 0006 each track has its own sandbox, owned by its
 creator, so every harness on that machine uses that creator's credentials.
 This removes per-thread payer selection and the Codex different-starter refusal
 rule. Legacy/shared-machine tracks keep project-owner billing until retired.
-
-**Change record, 2026-09-28 (owner, after the RAV-17 clarification).** Raunak
-wrote in Linear: “I meant ‘track’ not thread. If a user starts a track, their
-subscription is used across that track. … When we create that sandbox, we put
-that user's subscription/api on that sandbox.” The owner accepted this. The
-billing section below records the resulting rules:
-- the creator's credential is bound to the track's sandbox at creation;
-- invitees and members prompting the track spend it;
-- existing tracks stay owner-paid until backfilled or closed;
-- a departed or disconnected creator's track refuses prompts rather than
-  falling back to the owner.
-
-The billing columns sit on `tracks`, not `threads` (phase 2).
 
 The owner also replaced external guest invitations with workspace-member
 selection and the track's ordinary URL, deferred the workspace audit log, and
@@ -269,55 +256,17 @@ onboarding friction. Decide that change in its own ADR when it becomes relevant.
 ### The track creator pays for every thread and runtime
 
 **RAV-17: the track creator pays for all inference on a dedicated track, whoever
-prompts.** When a track is created, its creator's inference credential is bound
-to the track's sandbox. Every thread and every runtime—Claude, Codex and later Cursor—uses
+prompts.** Every thread and every runtime—Claude, Codex and later Cursor—uses
 the creator's credentials. Under ADR 0006 a track is its own sandbox, owned by
 its creator; every harness on that machine logs in with the same person's
 credentials. Starting a thread or delivering a collaborator's prompt never
 selects a different subscription. Authorization still checks whoever acts, but
 payer selection does not depend on that person or on the thread starter.
 
-**Stated plainly: people selected on a track, and workspace members prompting
-a workspace-visible track, spend the track creator's subscription**, on every
-thread, including threads they start themselves. Someone who does not want to
-spend the creator's subscription starts their own track.
-
-One credential per track also satisfies Fountain's single Codex source and
-revision per sandbox by construction. That is why the former Codex
-single-payer-per-track restriction and different-starter refusal are dropped,
-not deferred.
-
 Until creator billing ships, existing project-owner billing stays active.
 **Legacy/shared-machine tracks retain ADR 0005 project-owner billing until
 retired.** Preserve their named sponsor rather than silently migrating a running
-shared machine to a track creator's credentials. **Existing tracks, shared or
-dedicated, that were created before creator billing** also keep the project
-owner paying under ADR 0005 until one of two things happens:
-- they are explicitly backfilled to their creator, which needs the creator's
-  consent and a verified compatible credential on that sandbox;
-- they are closed.
-
-A null billing policy on a track means exactly this legacy owner-paid state;
-readers never infer a creator payer from it.
-
-**If the creator leaves or disconnects their subscription, prompting fails with
-a clear error; the project owner does not take over.** Removal from the
-workspace or project, a disconnected or revoked credential, expiry and
-exhaustion all have the same effect:
-- new prompts, queued deliveries, scheduled continuations and retries on the
-  track are refused and paused with a reason naming the payer's state;
-- no conversation is created on anyone else's credential.
-
-A creator who reconnects resumes their own tracks. After a removal the track
-stays readable to whoever its visibility still admits, and it can be closed as
-today. Collaborators who want to continue start a track of their own.
-
-This follows the RAV-27 orphan rules as they stand: removal revokes access and
-stops the removed person's spending, never transferring the obligation to an
-owner or admin. A departed creator's private track remains subject only to
-#299's owner-only orphan count and blind close. Owner takeover was rejected
-because it would silently charge someone who never consented and would break
-that rule.
+shared machine to a track creator's credentials.
 
 | Option | Requirements | Decision |
 |---|---|---|
@@ -327,11 +276,7 @@ that rule.
 | Workspace pays | Administer a common workspace inference credential set and consent. | Not selected for inference: the creator pays. Sandbox compute/storage remain billed to the workspace owner. |
 
 Persist the track creator, billing policy, payer and credential-set binding
-on the track row before launching paid work: `tracks.created_by` is the creator,
-with nullable `tracks.payer_user_id` and `tracks.billing_policy`
-(`legacy_owner | starter`) beside it, added in phase 2 and unwritten until
-phase 6. Nothing about billing lives on `threads`. For new-policy tracks the
-payer is the creator.
+before launching paid work. For new-policy tracks the payer is the creator.
 All threads, queue delivery, scheduled continuations, retries, wakes and
 replacement conversations preserve that binding. Do not change the project's
 agent default before each prompt. Shared project/runtime agents admit only
@@ -354,9 +299,8 @@ serve every runtime on the track.
 There are no spend caps yet. Name the creator as the payer to collaborators.
 Sandbox compute and storage are billed to the workspace owner, separately from
 inference. Runtime eligibility follows the creator's usable credentials.
-Revocation, expiry, member removal or exhaustion pauses paid work with a reason,
-as decided above; never fall back to the project owner, thread starter,
-prompter, workspace or deployment funds.
+Revocation, expiry, member removal or exhaustion pauses paid work with a reason;
+never fall back to the thread starter, prompter, workspace or deployment funds.
 
 **ADR 0005 is amended, not deleted:** dedicated tracks spend their creator's
 set, project agents admit authorized creator overrides, and runtime eligibility
@@ -476,11 +420,9 @@ later-created duplicate survives as legacy work because its tracks, plans, disks
 and secrets cannot safely be merged by repository name.
 
 Project-owner billing continues until creator billing ships and remains on
-legacy/shared-machine tracks and existing tracks until they are backfilled or
-closed. A dedicated track then has one creator payer across every thread and
-runtime, simplifying credential selection and making sharing consent explicit.
-Collaborators spend the creator's subscription, and a creator's departure or
-disconnection stops their tracks' inference rather than moving the bill. Workspace membership precedes the removal
+legacy/shared-machine tracks until retired. A dedicated track then has one
+creator payer across every thread and runtime, simplifying credential selection
+and making sharing consent explicit. Workspace membership precedes the removal
 of track invite links. Audit and departed-member private-track handling are
 deferred, with #299's existing maintenance unchanged. This ADR records policy,
 not live provider verification or confirmation of subscription-provider terms.
@@ -499,9 +441,7 @@ Implementation follows this amendment; this PR remains documentation only.
    activation; confirm subscription-provider terms for the rollout.
    Workspace work and track-creator billing retain independent rollout gates.
 2. **Expand and dual readers (RAV-12/13).** Add workspace/membership/installation
-   tables and nullable attribution/policy fields, including the track billing
-   fields (`tracks.payer_user_id`, `tracks.billing_policy`) and thread
-   `started_by` attribution. Add the workspace repository
+   tables and nullable attribution/policy fields. Add the workspace repository
    partial unique constraint, legacy-duplicate markers/reservations, resumable
    personal-workspace backfill and legacy fallback.
    Exercise old-writer rows, interrupted backfills and mixed-release reads.
@@ -544,12 +484,8 @@ Implementation follows this amendment; this PR remains documentation only.
    credentials across Claude, Codex and future harnesses, concurrent threads
    started by different members, retries, queue delivery, allowlist updates,
    revocation and credential rotation/recovery. There is no different-starter
-   Codex refusal or per-thread payer selection. Refuse prompts with a clear
-   error when the creator has left or disconnected, with no owner takeover.
-   Backfill existing tracks to their creator only with consent and a verified
-   compatible credential; otherwise they stay owner-paid until closed. Enable
-   after provider contract checks; preserve project-owner billing on
-   legacy/shared machines until retired.
+   Codex refusal or per-thread payer selection. Enable after provider contract
+   checks; preserve project-owner billing on legacy/shared machines until retired.
 7. **Observe and contract later.** Reconcile old-writer rows and pending provider
    operations; retain legacy duplicates and both sandbox layouts. Remove only
    fields unused by all deployed readers. Any duplicate merge or removal of dual
