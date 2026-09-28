@@ -427,13 +427,19 @@ defmodule Ravix.Workspaces do
   # ── moving a project between workspaces ───────────────────────────────
 
   @typedoc "Where a project's owner may move it, from `move_targets/2`."
-  @type move_targets :: %{current: Workspace.t() | nil, targets: [Workspace.t()]}
+  @type move_targets :: %{
+          current: Workspace.t() | nil,
+          targets: [Workspace.t()],
+          duplicate_of: String.t() | nil
+        }
 
   @doc """
   The workspace a project is in (nil for a legacy project) and the ones its
   owner may move it into: live workspaces where they are an owner or admin
-  (`:manage_projects`), other than the current one. The project's owner
-  only, and not found for everybody while `RAVIX_WORKSPACE_ACCESS` is off.
+  (`:manage_projects`), other than the current one. None for a legacy
+  duplicate, which `move_project/3` refuses; `duplicate_of` names its
+  canonical project. The project's owner only, and not found for everybody
+  while `RAVIX_WORKSPACE_ACCESS` is off.
   """
   @spec move_targets(User.t(), String.t()) :: {:ok, move_targets()} | {:error, :not_found}
   def move_targets(%User{} = user, project_id) do
@@ -441,11 +447,17 @@ defmodule Ravix.Workspaces do
          {:ok, project} <- Access.project_of(user, project_id) do
       targets =
         for {workspace, role} <- Store.workspaces_of(user.id),
+            not legacy_duplicate?(project),
             workspace.id != project.workspace_id,
             Access.can?(role, :manage_projects),
             do: workspace
 
-      {:ok, %{current: Store.live_workspace(project.workspace_id), targets: targets}}
+      {:ok,
+       %{
+         current: Store.live_workspace(project.workspace_id),
+         targets: targets,
+         duplicate_of: project.legacy_duplicate_of
+       }}
     end
   end
 
@@ -457,7 +469,9 @@ defmodule Ravix.Workspaces do
   `:manage_projects`); a member-only workspace is refused. A target that
   already has a project for the same repository is refused with that
   project, so the caller can point to it (the one-project-per-repository
-  index, `projects_workspace_repo`).
+  index, `projects_workspace_repo`). A marked legacy duplicate is refused
+  too: that index does not count it, so a moved duplicate would reserve
+  nothing in its target and leave two projects for one repository there.
 
   Tracks, threads, legacy project and track members and permission rows
   stay as they are. A permission row counts only in the workspace it was
@@ -480,12 +494,23 @@ defmodule Ravix.Workspaces do
     with {:ok, project} <- Access.project_of(user, project_id),
          {:ok, %{workspace: target}} <-
            Access.workspace_grant(user, workspace_id, :manage_projects),
+         :ok <- not_duplicate(project),
          :ok <- elsewhere(project, target),
          {:ok, moved} <- store_move(project, target) do
       if project.workspace_id, do: members_changed(project.workspace_id)
       members_changed(target.id)
       {:ok, moved}
     end
+  end
+
+  defp not_duplicate(%Project{legacy_duplicate_of: canonical} = project) do
+    if legacy_duplicate?(project),
+      do:
+        {:error,
+         {:conflict, "legacy_duplicate",
+          "This project is a legacy duplicate of project #{canonical}, so it cannot be moved. " <>
+            "Keep working in that one, or ask for the duplicate to be resolved first."}},
+      else: :ok
   end
 
   defp elsewhere(%Project{workspace_id: id}, %Workspace{id: id, name: name}),

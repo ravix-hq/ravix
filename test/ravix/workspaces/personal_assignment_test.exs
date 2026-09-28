@@ -103,7 +103,11 @@ defmodule Ravix.Workspaces.PersonalAssignmentTest do
     insert_project_member(ctx.plain, member)
     track = insert_track(project: ctx.plain)
 
-    assert {:ok, %{applied: true}} = PersonalAssignment.run(apply: true)
+    assert {:ok, %{applied: true} = applied} = PersonalAssignment.run(apply: true)
+    results = Map.new(applied.projects, &{&1.id, &1.result})
+    assert results[ctx.plain.id] == :moved
+    assert results[ctx.colliding.id] == :marked
+    assert results[ctx.archived.id] == nil
 
     for project <- [ctx.plain, ctx.scratch, ctx.older, ctx.marked_canonical] do
       moved = reload(project)
@@ -160,6 +164,120 @@ defmodule Ravix.Workspaces.PersonalAssignmentTest do
     assert PersonalAssignment.format(%{applied: false, projects: []}) == [
              "Dry run (pass --apply to write): no unassigned projects"
            ]
+  end
+
+  describe "who else holds what" do
+    setup ctx do
+      zed = insert_user(login: "zed")
+      bo = insert_user(login: "bo")
+      insert_project_member(ctx.plain, zed)
+      track = insert_track(project: ctx.plain)
+      other_track = insert_track(project: ctx.plain)
+      insert_track_member(track, bo)
+      insert_track_member(other_track, bo)
+      # The owner's own seat is not somebody else's.
+      insert_track_member(track, ctx.ada)
+      insert_track_invite(track, login: "pending")
+      insert_project_invite(ctx.plain, login: "waiting")
+      {_token, _link} = insert_track_link(track)
+      expired = DateTime.add(DateTime.utc_now(), -1, :day)
+      {_token, _link} = insert_project_link(ctx.plain, expires_at: expired)
+
+      # Shared, but only through what carries over.
+      insert_project_member(ctx.scratch, bo)
+      %{zed: zed, bo: bo}
+    end
+
+    test "is inventoried per project, and a line that loses something is marked", ctx do
+      {:ok, summary} = PersonalAssignment.run()
+      lines = by_id(summary)
+
+      assert lines[ctx.plain.id].sharing == %{
+               members: ["zed"],
+               seats: ["bo"],
+               invites: ["waiting", "pending"],
+               links: 1
+             }
+
+      assert lines[ctx.scratch.id].sharing == %{members: ["bo"], seats: [], invites: [], links: 0}
+      assert lines[ctx.older.id].sharing == %{members: [], seats: [], invites: [], links: 0}
+
+      text = Enum.join(PersonalAssignment.format(summary), "\n")
+      assert text =~ "1 moving project(s) have waiting invitations or links that stop working"
+
+      assert text =~
+               "    LOSES invitations/links; project members @zed (kept); track seats @bo (kept); " <>
+                 "waiting invitations @waiting, @pending; 1 unexpired link(s)"
+
+      assert text =~ "    shared: project members @bo (kept)"
+      refute text =~ "token"
+    end
+
+    test "carries members and seats over on apply", ctx do
+      {:ok, _} = PersonalAssignment.run(apply: true)
+      assert reload(ctx.plain).workspace_id == ctx.personal.id
+      assert {:ok, %{role: :member}} = Access.project_access(ctx.zed, ctx.plain.id)
+      assert {:ok, %{role: :member}} = Access.project_access(ctx.bo, ctx.scratch.id)
+    end
+  end
+
+  test "an archived canonical project is named as such", ctx do
+    ctx.held |> Ecto.Changeset.change(archived_at: DateTime.utc_now()) |> Repo.update!()
+    {:ok, summary} = PersonalAssignment.run()
+    assert %{action: :duplicate, canonical_state: :archived} = by_id(summary)[ctx.colliding.id]
+    text = Enum.join(PersonalAssignment.format(summary), "\n")
+    assert text =~ "personal workspace #{ctx.personal.id} (that project is archived)"
+    assert by_id(summary)[ctx.later.id].canonical_state == :live
+  end
+
+  test "the write re-checks the row: changed since the plan is skipped, a collision reported",
+       ctx do
+    ctx.plain |> Ecto.Changeset.change(archived_at: DateTime.utc_now()) |> Repo.update!()
+    assert Store.assign_personal(ctx.plain.id, ctx.personal.id) == :skipped
+    assert is_nil(reload(ctx.plain).workspace_id)
+
+    # `colliding` would land beside `held`, which the plan would have caught.
+    assert Store.assign_personal(ctx.colliding.id, ctx.personal.id) == :collision
+    assert is_nil(reload(ctx.colliding).workspace_id)
+
+    assert Store.assign_personal(ctx.older.id, ctx.personal.id) == :moved
+    assert Store.assign_personal(ctx.older.id, ctx.personal.id) == :skipped
+
+    line = %{
+      id: "p",
+      name: "n",
+      repo: "r/r",
+      owner: "ada",
+      workspace_id: "w",
+      action: :move,
+      duplicate_of: nil,
+      canonical_state: nil,
+      sharing: %{members: [], seats: [], invites: ["x"], links: 0},
+      result: nil
+    }
+
+    text =
+      Enum.join(
+        PersonalAssignment.format(%{
+          applied: true,
+          projects: [
+            %{line | result: :skipped},
+            %{line | result: :collision},
+            %{line | result: :moved},
+            %{line | action: :duplicate, duplicate_of: "c", result: :marked},
+            %{line | action: :duplicate, duplicate_of: "c", result: {:failed, :already_marked}}
+          ]
+        }),
+        "\n"
+      )
+
+    assert text =~ "-> skipped at write: no longer unassigned, live and unmarked"
+    assert text =~ "-> not moved: the workspace gained a project for this repository"
+    assert text =~ "-> moved"
+    assert text =~ "-> marked"
+    assert text =~ "-> not marked: already_marked"
+    # Only the line that did move is counted as losing its invitation.
+    assert text =~ "1 moving project(s) have waiting invitations"
   end
 
   test "the release entry and the Mix task run it, dry by default", ctx do

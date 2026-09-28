@@ -93,7 +93,21 @@ defmodule RavixWeb.ProjectMoveLiveTest do
            )
 
     assert has_element?(view, "#move-confirmation", "Private tracks stay private.")
-    assert has_element?(view, "#move-confirmation", "People who reach it only through Acme")
+
+    assert has_element?(
+             view,
+             "#move-confirmation",
+             "People you added to the project or to a track keep their access."
+           )
+
+    assert has_element?(
+             view,
+             "#move-confirmation",
+             "Invitations nobody has accepted yet and invite links stop working"
+           )
+
+    assert has_element?(view, "#move-confirmation", "share only with members of Beta")
+    assert has_element?(view, "#move-confirmation", "Members of Acme who were not added")
 
     view |> element("#move-confirmation button", "Cancel") |> render_click()
     refute has_element?(view, "#move-confirmation")
@@ -157,6 +171,19 @@ defmodule RavixWeb.ProjectMoveLiveTest do
     assert has_element?(view, "#settings-form")
     refute has_element?(view, "#settings-section-workspace")
     refute has_element?(view, "[data-settings-section=workspace]")
+  end
+
+  test "a legacy duplicate offers no move and points to its canonical project", ctx do
+    twin = insert_project(user: ctx.owner, name: "twin", repo_full_name: "owner/app")
+
+    {:ok, _} =
+      Store.mark_legacy_duplicate(twin.id, ctx.project.id, canonical: :explicit)
+
+    view = open_settings(%{ctx | project: twin})
+    assert has_element?(view, "#move-duplicate", "cannot be moved")
+    assert has_element?(view, ~s|#move-duplicate a[href="/p/#{ctx.project.id}"]|)
+    refute has_element?(view, "#move-targets")
+    refute has_element?(view, "#move-no-targets")
   end
 
   test "an owner with nowhere else to go is told why" do

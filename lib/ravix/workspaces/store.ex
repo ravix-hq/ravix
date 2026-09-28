@@ -1164,9 +1164,13 @@ defmodule Ravix.Workspaces.Store do
   @doc """
   The project each of `workspace_ids` counts for a repository in
   `projects_workspace_repo` (every row but a marked legacy duplicate), as
-  `{workspace_id, normalized_repo} => project_id`.
+  `{workspace_id, normalized_repo} => %{id: project_id, state: state}`,
+  where `state` is `:live`, `:archived` or `:deleting`: an archived or
+  deleting project still holds the slot.
   """
-  @spec index_holders([String.t()]) :: %{{String.t(), String.t()} => String.t()}
+  @spec index_holders([String.t()]) :: %{
+          {String.t(), String.t()} => %{id: String.t(), state: :live | :archived | :deleting}
+        }
   def index_holders([]), do: %{}
 
   def index_holders(workspace_ids) do
@@ -1177,10 +1181,63 @@ defmodule Ravix.Workspaces.Store do
           p.workspace_id in ^workspace_ids and not is_nil(p.normalized_repo_full_name) and
             is_nil(p.legacy_duplicate_at),
         order_by: [asc: p.created_at, asc: p.id],
-        select: {{p.workspace_id, p.normalized_repo_full_name}, p.id}
+        select: {{p.workspace_id, p.normalized_repo_full_name}, p}
     )
     |> Enum.reverse()
-    |> Map.new()
+    |> Map.new(fn {key, project} -> {key, %{id: project.id, state: holder_state(project)}} end)
+  end
+
+  defp holder_state(%Project{archived_at: %DateTime{}}), do: :archived
+  defp holder_state(%Project{deletion_requested_at: %DateTime{}}), do: :deleting
+  defp holder_state(%Project{}), do: :live
+
+  @doc """
+  Put a legacy project into its owner's personal workspace, for the
+  personal-workspace assignment. Written only while the row is still
+  unassigned, live and not a marked duplicate, re-checked by the update
+  itself: `:skipped` when it no longer is (0 rows), `:collision` when the
+  workspace gained a project for its repository since the plan was made.
+  """
+  @spec assign_personal(String.t(), String.t()) :: :moved | :skipped | :collision
+  def assign_personal(project_id, workspace_id) do
+    # ownership: no door -- the operator data step `Ravix.Workspaces.PersonalAssignment`.
+    {count, _} =
+      Repo.update_all(
+        from(p in Project,
+          where:
+            p.id == ^project_id and is_nil(p.workspace_id) and is_nil(p.archived_at) and
+              is_nil(p.deletion_requested_at) and is_nil(p.legacy_duplicate_at),
+          update: [
+            set: [
+              workspace_id: ^workspace_id,
+              created_by_user_id: coalesce(p.created_by_user_id, p.user_id),
+              normalized_repo_full_name:
+                fragment(
+                  "coalesce(?, nullif(lower(btrim(?, E' \\t\\r\\n')), ''))",
+                  p.normalized_repo_full_name,
+                  p.repo_full_name
+                )
+            ]
+          ]
+        ),
+        []
+      )
+
+    if count == 1, do: :moved, else: :skipped
+  rescue
+    error in Postgrex.Error ->
+      if error.postgres[:code] == :unique_violation,
+        do: :collision,
+        else: reraise(error, __STACKTRACE__)
+  end
+
+  @doc "Which of `workspace_ids` are personal workspaces."
+  @spec personal_ids([String.t()]) :: MapSet.t(String.t())
+  def personal_ids(workspace_ids) do
+    Repo.all(
+      from w in Workspace, where: w.id in ^workspace_ids and w.kind == :personal, select: w.id
+    )
+    |> MapSet.new()
   end
 
   @doc """
@@ -1204,7 +1261,7 @@ defmodule Ravix.Workspaces.Store do
           from p in Project,
             where:
               p.id == ^project_id and p.user_id == ^owner_id and is_nil(p.archived_at) and
-                is_nil(p.deletion_requested_at),
+                is_nil(p.deletion_requested_at) and is_nil(p.legacy_duplicate_at),
             lock: "FOR UPDATE"
         )
 

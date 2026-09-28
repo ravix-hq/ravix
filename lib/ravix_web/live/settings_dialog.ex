@@ -1162,7 +1162,16 @@ defmodule RavixWeb.Live.SettingsDialog do
                   do: "This project is in #{workspace_label(@move_targets.current)}.",
                   else: "This project is not in a workspace yet."} Moving it keeps its tracks, threads, machine, settings and secrets.
               </p>
-              <p :if={@move_targets.targets == []} id="move-no-targets" class="settings-help">
+              <p :if={@move_targets.duplicate_of} id="move-duplicate" class="settings-help">
+                This project is a legacy duplicate of
+                <.link navigate={"/p/#{@move_targets.duplicate_of}"}>another project</.link>
+                for the same repository, so it cannot be moved. Keep working in that one, or resolve the duplicate first.
+              </p>
+              <p
+                :if={@move_targets.targets == [] and is_nil(@move_targets.duplicate_of)}
+                id="move-no-targets"
+                class="settings-help"
+              >
                 You can move it only into a workspace where you are an owner or admin, and you are not one of any other.
               </p>
               <div
@@ -1204,13 +1213,17 @@ defmodule RavixWeb.Live.SettingsDialog do
                   <li>
                     Members of {workspace_label(@move_confirmation)} will see this project and its workspace-visible tracks, and can start tracks of their own.
                   </li>
+                  <li>Private tracks stay private.</li>
                   <li>
-                    Private tracks stay private. Private-track shares made in {if @move_targets.current,
-                      do: workspace_label(@move_targets.current),
-                      else: "the old layout"} do not carry over.
+                    People you added to the project or to a track keep their access.
+                  </li>
+                  <li>
+                    Invitations nobody has accepted yet and invite links stop working. From then on you can share only with members of {workspace_label(
+                      @move_confirmation
+                    )}.
                   </li>
                   <li :if={@move_targets.current}>
-                    People who reach it only through {workspace_label(@move_targets.current)} lose access, including to tracks they started. People you added to the project or a track directly keep it.
+                    Members of {workspace_label(@move_targets.current)} who were not added to the project or a track lose access, including private tracks shared with them there.
                   </li>
                 </ul>
                 <button

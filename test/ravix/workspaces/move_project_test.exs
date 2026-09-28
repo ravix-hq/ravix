@@ -166,6 +166,31 @@ defmodule Ravix.Workspaces.MoveProjectTest do
     assert reload(ctx.project).workspace_id == ctx.acme.id
   end
 
+  test "a legacy duplicate is not offered anywhere and cannot be moved", ctx do
+    canonical = insert_project(user: ctx.owner, repo_full_name: "owner/twin")
+    twin = insert_project(user: ctx.owner, repo_full_name: "owner/twin")
+    {:ok, _} = Store.mark_legacy_duplicate(twin.id, canonical.id, canonical: :explicit)
+
+    assert {:ok, %{targets: [], duplicate_of: duplicate_of}} =
+             Workspaces.move_targets(ctx.owner, twin.id)
+
+    assert duplicate_of == canonical.id
+
+    assert {:error, {:conflict, "legacy_duplicate", message}} =
+             Workspaces.move_project(ctx.owner, twin.id, ctx.beta.id)
+
+    assert message =~ canonical.id
+    assert is_nil(reload(twin).workspace_id)
+
+    # The locked write refuses it too, for a caller that raced the mark.
+    assert {:error, :not_found} =
+             Store.move_owned_project(twin.id, ctx.owner.id, nil, ctx.beta.id)
+
+    # The canonical project is still offered.
+    assert {:ok, %{targets: [_ | _], duplicate_of: nil}} =
+             Workspaces.move_targets(ctx.owner, canonical.id)
+  end
+
   test "with the switch off nothing moves", ctx do
     Application.put_env(:ravix, :workspace_access, false)
     assert {:error, :not_found} = Workspaces.move_project(ctx.owner, ctx.project.id, ctx.beta.id)
