@@ -2720,7 +2720,7 @@ defmodule RavixWeb.TrackLiveTest do
     assert has_element?(
              ctx.view,
              "#track-terminal .dock-empty",
-             "For a server that keeps running"
+             "For a process that keeps running"
            )
 
     refute has_element?(ctx.view, "button[phx-click=dock]", "Run")
@@ -2733,13 +2733,13 @@ defmodule RavixWeb.TrackLiveTest do
 
     # The button is the dock's, but the tab it opens is the page's: the push
     # carries no target, so it reaches `TrackLive` rather than the component.
-    ctx.view |> element("#track-terminal .dock-empty button", "Open Previews") |> render_click()
+    ctx.view |> element("#track-terminal .dock-empty button", "Open Run") |> render_click()
     render_async(ctx.view)
 
     assert has_element?(
              ctx.view,
              "nav[aria-label='Inspector panels'] button.selected",
-             "Previews"
+             "Run"
            )
 
     assert has_element?(ctx.view, "#preview-config-form")
@@ -2763,7 +2763,7 @@ defmodule RavixWeb.TrackLiveTest do
 
     # Clearing the scrollback is an empty terminal again, and says so.
     ctx.view |> element("button[phx-click=clear]") |> render_click()
-    assert has_element?(ctx.view, "#track-terminal .dock-empty", "Open Previews")
+    assert has_element?(ctx.view, "#track-terminal .dock-empty", "Open Run")
   end
 
   test "a session that went without notice cannot run a command through the dock", ctx do
@@ -3000,11 +3000,11 @@ defmodule RavixWeb.TrackLiveTest do
     refute has_element?(ctx.view, "#rename-dialog")
   end
 
-  for {state, launch_label, restart?, stop?} <- [
-        {:stopped, "Start", false, false},
-        {:starting, "Open", true, true},
-        {:ready, "Open", true, true},
-        {:failed, "Start", false, true}
+  for {state, run?, restart?, stop?} <- [
+        {:stopped, true, false, false},
+        {:starting, false, true, true},
+        {:ready, false, true, true},
+        {:failed, true, false, true}
       ] do
     test "preview controls reflect #{state}", ctx do
       stub(Previews, :status, fn _, _ -> {:ok, %{preview() | state: unquote(state)}} end)
@@ -3013,11 +3013,11 @@ defmodule RavixWeb.TrackLiveTest do
 
       assert has_element?(
                ctx.view,
-               "button.primary[phx-value-action='open']:not([disabled])",
-               unquote(launch_label)
-             )
+               "button.primary[phx-value-action='run']:not([disabled])",
+               "Run"
+             ) == unquote(run?)
 
-      assert has_element?(ctx.view, "button[phx-value-action='restart']") == unquote(restart?)
+      assert has_element?(ctx.view, "button[phx-value-action='restart-run']") == unquote(restart?)
 
       assert has_element?(ctx.view, "button[phx-value-action='stop']:not([disabled])") ==
                unquote(stop?)
@@ -3059,25 +3059,29 @@ defmodule RavixWeb.TrackLiveTest do
     assert has_element?(ctx.view, "#preview-logs[open] pre", "[stdout] app booting")
   end
 
-  test "Start launches the stopped preview and disables controls until the response", ctx do
+  test "Run launches the stopped preview and disables controls until the response", ctx do
     stub(Previews, :status, fn _, _ -> {:ok, preview()} end)
     render_click(ctx.view, "panel", %{name: "preview"})
     render_async(ctx.view)
     owner = self()
 
-    expect(Previews, :open, fn user, id, hash ->
+    expect(Previews, :run, fn user, id ->
       assert {user.id, id} == {ctx.user.id, ctx.track.id}
-      assert is_binary(hash)
       send(owner, {:launching, self()})
       receive do: (:finish -> {:ok, %{preview() | state: :starting}})
     end)
 
-    ctx.view |> element("button[phx-value-action='open']", "Start") |> render_click()
+    ctx.view |> element("button[phx-value-action='run']", "Run") |> render_click()
     assert_receive {:launching, task}
     refute has_element?(ctx.view, "button[phx-click='preview']:not([disabled])")
     send(task, :finish)
     render_async(ctx.view)
-    assert has_element?(ctx.view, "button[phx-value-action='restart']:not([disabled])", "Restart")
+
+    assert has_element?(
+             ctx.view,
+             "button[phx-value-action='restart-run']:not([disabled])",
+             "Restart"
+           )
   end
 
   test "unavailable previews disable launch controls but retain logs", ctx do
@@ -3088,13 +3092,16 @@ defmodule RavixWeb.TrackLiveTest do
 
     render_click(ctx.view, "panel", %{name: "preview"})
     render_async(ctx.view)
-    assert has_element?(ctx.view, "button[phx-value-action='open'][disabled]", "Start")
+    assert has_element?(ctx.view, "button[phx-value-action='run'][disabled]", "Run")
     assert has_element?(ctx.view, "button[phx-value-action='stop'][disabled]")
     assert has_element?(ctx.view, "button[phx-value-action='logs']:not([disabled])")
   end
 
   test "preview actions keep status and use fresh tickets for the iframe", ctx do
-    stub(Previews, :status, fn _, _ -> {:ok, %{preview() | state: :ready}} end)
+    stub(Previews, :status, fn _, _ ->
+      {:ok, %{preview() | state: :ready, url: "https://preview.test"}}
+    end)
+
     render_click(ctx.view, "panel", %{name: "preview"})
     render_async(ctx.view)
 
@@ -3102,13 +3109,14 @@ defmodule RavixWeb.TrackLiveTest do
       struct!(preview(),
         state: :ready,
         logs: "service output",
+        url: "https://preview.test",
         open_url: "https://preview.test/__ravix/open#fresh"
       )
 
     # Two arities, because the two that mint a ticket are the two that need
     # the session hash and the other two are not handed one at all. That
     # distinction only exists once the verb is in the function name.
-    for action <- [:open, :restart] do
+    for action <- [:open] do
       expect(Previews, action, fn user, id, hash ->
         assert {user.id, id} == {ctx.user.id, ctx.track.id}
         assert is_binary(hash)
@@ -3118,6 +3126,14 @@ defmodule RavixWeb.TrackLiveTest do
       ctx.view |> element("button[phx-value-action='#{action}']") |> render_click()
       assert render_async(ctx.view) =~ "service output"
     end
+
+    expect(Previews, :run, fn user, id, :restart ->
+      assert {user.id, id} == {ctx.user.id, ctx.track.id}
+      {:ok, answered}
+    end)
+
+    ctx.view |> element("button[phx-value-action='restart-run']") |> render_click()
+    assert render_async(ctx.view) =~ "service output"
 
     for action <- [:logs, :stop] do
       expect(Previews, action, fn user, id ->
@@ -3131,6 +3147,48 @@ defmodule RavixWeb.TrackLiveTest do
 
     assert has_element?(ctx.view, "iframe[src='https://preview.test/__ravix/open#fresh']")
     assert has_element?(ctx.view, "a[href='/preview/#{ctx.track.id}']")
+  end
+
+  for action <- ["run", "restart-run", "stop"] do
+    @run_action action
+    test "revoked sessions cannot #{action} the run script", ctx do
+      token = Plug.Conn.get_session(ctx.conn, :session_token)
+      Repo.delete!(Repo.get_by!(Session, token_hash: Ravix.Crypto.sha256(token)))
+
+      :sys.replace_state(ctx.view.pid, fn state ->
+        update_in(state.socket.assigns.session_guard, &%{&1 | stale?: true})
+      end)
+
+      reject(&Previews.run/2)
+      reject(&Previews.run/3)
+      reject(&Previews.stop/2)
+
+      assert {:error, {:redirect, %{to: "/login"}}} =
+               render_click(ctx.view, "preview", %{action: @run_action})
+    end
+  end
+
+  test "plain running process shows output and restart/stop but no preview link", ctx do
+    info = %{
+      preview()
+      | state: :running,
+        config: %{directory: ".", command: "worker", readiness_path: nil},
+        logs: "worker output"
+    }
+
+    stub(Previews, :status, fn _, _ -> {:ok, info} end)
+    render_click(ctx.view, "panel", %{name: "preview"})
+    render_async(ctx.view)
+    assert has_element?(ctx.view, "#run-status", "running")
+    assert has_element?(ctx.view, "#preview-logs pre", "worker output")
+    assert has_element?(ctx.view, "button[phx-value-action='restart-run']:not([disabled])")
+    assert has_element?(ctx.view, "button[phx-value-action='stop']:not([disabled])")
+    refute has_element?(ctx.view, "button[phx-value-action='open']")
+    refute has_element?(ctx.view, "iframe.workspace-preview")
+    expect(Previews, :stop, fn _, _ -> {:ok, %{info | state: :stopped}} end)
+    ctx.view |> element("button[phx-value-action='stop']") |> render_click()
+    render_async(ctx.view)
+    assert has_element?(ctx.view, "#run-status", "stopped")
   end
 
   test "preview override can be set and cleared", ctx do

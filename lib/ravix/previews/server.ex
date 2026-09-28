@@ -53,7 +53,7 @@ defmodule Ravix.Previews.Server do
   alias Ravix.Clock
   alias Ravix.MachineCache.Machine
   alias Ravix.Previews
-  alias Ravix.Previews.{Lifecycle, Row, Store}
+  alias Ravix.Previews.{Lifecycle, Row, Stop, Store}
   alias Ravix.Repo
   alias Ravix.Sprites
   alias Ravix.Sprites.Shapes
@@ -389,7 +389,7 @@ defmodule Ravix.Previews.Server do
 
   defp retire(%Row{} = row, mode, owner) do
     with %Ravix.Config.Sprites{} = cfg <- Sprites.config(),
-         {:ok, _} <- Sprites.service_action(cfg, row.sprite, row.service, :stop),
+         {:ok, _} <- Stop.service(cfg, row),
          :ok <- release_activity(cfg, row),
          _ = GenServer.cast(owner, {:held, 0}),
          {:ok, _} <- remove(cfg, row, mode) do
@@ -430,7 +430,8 @@ defmodule Ravix.Previews.Server do
   defp hold(%Row{} = row, held_at, owner) do
     now = Clock.now_ms()
 
-    if row.sprite == nil or row.lease_until <= now or held_at > now - @hold_ms do
+    if row.sprite == nil or (row.lease_until <= now and not Row.plain?(row)) or
+         held_at > now - @hold_ms do
       :ok
     else
       with :ok <- Sprites.activity(Sprites.config(), row.sprite, row.service, :hold) do
@@ -483,7 +484,7 @@ defmodule Ravix.Previews.Server do
 
   defp config_for(row, project) do
     case row.config || Store.defaults(project.id) do
-      nil -> {:error, "Save a preview startup command and app directory first.", row}
+      nil -> {:error, "Save a run script startup command and app directory first.", row}
       config -> {:ok, config}
     end
   end
@@ -606,7 +607,7 @@ defmodule Ravix.Previews.Server do
   defp drop_definition(row, _service) do
     cfg = Sprites.config()
 
-    with {:ok, _} <- sprites(Sprites.service_action(cfg, row.sprite, row.service, :stop), row),
+    with {:ok, _} <- sprites(Stop.service(cfg, row), row),
          :ok <- fresh(row),
          {:ok, _} <- sprites(Sprites.service_action(cfg, row.sprite, row.service, :delete), row),
          do: fresh(row)
@@ -646,7 +647,7 @@ defmodule Ravix.Previews.Server do
     with :ok <- fresh(row),
          {:ok, actual} <- sprites(Sprites.service(Sprites.config(), row.sprite, row.service), row),
          :ok <- not_crashed(actual, row),
-         false <- Shapes.running?(actual) and Lifecycle.ready?(row, config.readiness_path) do
+         false <- Shapes.running?(actual) and ready?(row, config) do
       Clock.sleep(@probe_ms)
 
       if Clock.now_ms() < deadline,
@@ -658,6 +659,9 @@ defmodule Ravix.Previews.Server do
       {:error, _, _} = failure -> failure
     end
   end
+
+  defp ready?(_row, %{readiness_path: nil}), do: true
+  defp ready?(row, config), do: Lifecycle.ready?(row, config.readiness_path)
 
   # `actual` is nil while Sprites has no definition yet: not crashed, and the
   # readiness loop keeps polling.

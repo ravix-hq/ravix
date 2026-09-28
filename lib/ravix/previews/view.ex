@@ -51,7 +51,7 @@ defmodule Ravix.Previews.View do
           unavailable_reason: String.t() | nil,
           config: Row.config() | nil,
           override: Row.config() | nil,
-          state: Row.state(),
+          state: Row.state() | :running,
           error: String.t() | nil,
           logs: String.t() | nil,
           url: String.t() | nil,

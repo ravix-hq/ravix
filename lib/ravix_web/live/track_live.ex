@@ -376,6 +376,14 @@ defmodule RavixWeb.TrackLive do
   # it. A single clause taking the word the button sent could only hand that
   # word onward and let the context sort it out, which is how "stop" and a
   # typo became the same request.
+  def handle_event("preview", %{"action" => "run"}, socket),
+    do: {:noreply, preview_async(socket, fn user, id, _hash -> Previews.run(user, id) end)}
+
+  def handle_event("preview", %{"action" => "restart-run"}, socket),
+    do:
+      {:noreply,
+       preview_async(socket, fn user, id, _hash -> Previews.run(user, id, :restart) end)}
+
   def handle_event("preview", %{"action" => "open"}, socket),
     do: {:noreply, preview_async(socket, &Previews.open(&1, &2, &3))}
 
@@ -901,7 +909,7 @@ defmodule RavixWeb.TrackLive do
     result(update_panel(socket, &Panel.settled/1), response, fn s, preview ->
       s
       |> show_preview(preview)
-      |> assign(preview_url: preview.open_url || s.assigns.preview_url)
+      |> assign(preview_url: if(preview.url, do: preview.open_url || s.assigns.preview_url))
     end)
   end
 
@@ -2115,11 +2123,13 @@ defmodule RavixWeb.TrackLive do
 
     assign(socket,
       preview: preview,
+      preview_url: if(preview.url, do: socket.assigns.preview_url),
       preview_form:
         Form.new(:preview_config, %{
           "directory" => Map.get(config, :directory, "."),
           "command" => Map.get(config, :command, ""),
-          "readiness_path" => Map.get(config, :readiness_path, "/")
+          "readiness_path" => Map.get(config, :readiness_path, ""),
+          "stop_command" => Map.get(config, :stop_command, "")
         })
     )
   end

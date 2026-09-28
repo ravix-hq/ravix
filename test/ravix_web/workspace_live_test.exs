@@ -1643,7 +1643,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
     assert render_async(child) =~ "CI passed"
 
     child
-    |> element("button[phx-click=panel][phx-value-name=preview]", "Previews")
+    |> element("button[phx-click=panel][phx-value-name=preview]", "Run")
     |> render_click()
 
     assert render_async(child) =~ "stopped"

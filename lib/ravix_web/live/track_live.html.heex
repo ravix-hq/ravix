@@ -504,7 +504,7 @@
                 {:files, "All files"},
                 {:changes, "Changes"},
                 {:checks, "Checks"},
-                {:preview, "Previews"}
+                {:preview, "Run"}
               ]
             }
             class={if @panel.tab == tab, do: "selected", else: "ghost"}
@@ -543,7 +543,11 @@
             diff_show_large={@diff_show_large}
           />
           <div :if={@panel.tab == :preview && @preview}>
-            <p>Status: {@preview.state}</p>
+            <p id="run-status">
+              Status: {if @preview.state == :ready && !@preview.url,
+                do: :running,
+                else: @preview.state}
+            </p>
             <.loading_status :if={@preview.state == :starting} id="preview-loading">
               {RavixWeb.PreviewPresentation.loading_label(@preview.config)}
             </.loading_status>
@@ -560,15 +564,24 @@
               <button
                 class="primary"
                 phx-click="preview"
-                phx-value-action="open"
-                disabled={@panel.busy? || !@preview.available}
+                phx-value-action="run"
+                disabled={
+                  @panel.busy? || !@preview.available ||
+                    @preview.state in [:starting, :ready, :running]
+                }
               >
-                {if @preview.state in [:stopped, :failed], do: "Start", else: "Open"}
+                Run
               </button>
               <button
-                :if={@preview.state in [:starting, :ready]}
+                :if={@preview.url}
                 phx-click="preview"
-                phx-value-action="restart"
+                phx-value-action="open"
+                disabled={@panel.busy? || !@preview.available}
+              >Open preview</button>
+              <button
+                :if={@preview.state in [:starting, :ready, :running]}
+                phx-click="preview"
+                phx-value-action="restart-run"
                 disabled={@panel.busy? || !@preview.available}
               >
                 Restart
@@ -614,7 +627,7 @@
               <pre>{RavixWeb.PreviewPresentation.logs(@preview.logs) |> then(&if(&1 == "", do: "No logs yet.", else: &1))}</pre>
             </details>
             <details>
-              <summary>Preview configuration</summary>
+              <summary>Run script override</summary>
               <.form
                 :let={f}
                 for={@preview_form}
@@ -625,9 +638,21 @@
                 <.input
                   field={f[:command]}
                   id="preview-command"
-                  label="Command (must honor $PORT)"
+                  label="Run command"
                 />
-                <.input field={f[:readiness_path]} id="preview-path" label="Readiness path" />
+                <.input
+                  field={f[:readiness_path]}
+                  id="preview-path"
+                  label="Readiness path (optional)"
+                />
+                <.input
+                  field={f[:stop_command]}
+                  id="run-stop-command"
+                  label="Stop command (optional)"
+                />
+                <p class="hint">
+                  Leave readiness blank for a process without a preview. HTTP apps must honor $PORT and fail on a collision. Without a stop command, Stop signals the process group.
+                </p>
                 <button class="primary">Save</button><button
                   class="ghost"
                   name="clear"

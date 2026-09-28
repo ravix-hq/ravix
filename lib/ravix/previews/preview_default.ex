@@ -1,9 +1,9 @@
 defmodule Ravix.Previews.PreviewDefault do
   @moduledoc """
-  A project's default preview configuration.
+  A project's run script, stored in the existing preview default row.
 
-  One per project: the directory, the command and the readiness path a
-  track's preview uses unless the track overrides them. Deleting the row is
+  One per project: directory, run command, optional stop command and optional
+  HTTP readiness path. Tracks inherit it unless they supply an override. Deleting the row is
   how defaults are cleared.
 
   `config` is a `:map` column carrying a `Ravix.Previews.Config`, through

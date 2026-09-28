@@ -137,6 +137,16 @@ defmodule Ravix.Previews do
     end
   end
 
+  @doc "Why the process runner is unavailable, independent of HTTP gateway configuration."
+  @spec run_unavailable() :: String.t() | nil
+  def run_unavailable do
+    cond do
+      Sprites.config() == nil -> "Previews unavailable: SPRITES_TOKEN is not configured."
+      Ravix.Config.fountain().key == nil -> "Previews unavailable: Fountain is not configured."
+      true -> nil
+    end
+  end
+
   @doc "The browser origin of a preview row, or nil when `PREVIEW_DOMAIN` is unset."
   @spec origin(Row.t()) :: String.t() | nil
   def origin(%Row{hostname: hostname}) do
@@ -272,6 +282,16 @@ defmodule Ravix.Previews do
   def restart(%User{} = user, track_id, session_hash),
     do: launch(user, track_id, session_hash, :restart)
 
+  @doc "Run or restart the track's script without issuing a browser access ticket."
+  @spec run(User.t(), String.t(), start_mode()) :: {:ok, View.t()} | {:error, reason()}
+  def run(%User{} = user, track_id, mode \\ :start) when mode in [:start, :restart] do
+    with {:ok, _track} <- open_track(user, track_id),
+         :ok <- Lifecycle.start_service(track_id, mode),
+         {:ok, _track} <- open_track(user, track_id) do
+      {:ok, Lifecycle.info(track_id)}
+    end
+  end
+
   defp launch(user, track_id, session_hash, mode) do
     with {:ok, track} <- open_track(user, track_id),
          {:ok, url} <- mint_ticket(track_id, session_hash) do
@@ -358,7 +378,12 @@ defmodule Ravix.Previews do
   defp mint_ticket(track_id, session_hash) do
     row = Store.ensure(track_id)
 
-    case origin(row) do
+    config = Lifecycle.info(track_id).config
+
+    case if(config && is_nil(config.readiness_path), do: :plain, else: origin(row)) do
+      :plain ->
+        {:error, {:conflict, "no_preview", "This run script has no HTTP readiness path."}}
+
       nil ->
         {:error, {:unavailable, "PREVIEW_DOMAIN is not configured."}}
 

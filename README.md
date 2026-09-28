@@ -61,7 +61,7 @@ the corresponding Phoenix URL when launching `bun mock/server.ts` directly.
   presence, files, changes, GitHub checks/PRs, previews, command execution,
   and machine vitals.
 - Project settings: harness/model, instructions, setup script, packages,
-  write-only environment/vault secrets, preview defaults, and machine rebuild.
+  write-only environment/vault secrets, a project run script, and machine rebuild.
 - Project and track sharing: GitHub usernames and revocable invite links.
 - Desktop notifications, switched on from the rail: when a track finishes or
   fails while the tab is in the background, the browser says so.
@@ -372,3 +372,26 @@ An empty provider listing after an uncertain mutation is not proof that it did
 nothing: the intent and cleanup obligation remain pending rather than allocating
 again. An operator must resolve persistent ambiguity at the provider; do not clear
 operation records or retry with a different identity to bypass it.
+
+### Project run scripts
+
+Project settings → Run script stores the directory, startup command, optional
+stop command, and optional HTTP readiness path. Existing preview defaults are
+read as run scripts in place; there is still one project configuration. Each
+track inherits it and can save its own override in the Run panel.
+
+Run / Restart / Stop use the existing managed Sprites service. Without an HTTP
+readiness path, a process reports running and output, with no preview URL; it
+continues until stopped or its track is retired. With a readiness path, the app
+must honor `$PORT` and fail on a port collision. Readiness enables the existing
+private preview and its viewing/idle lease behavior.
+
+A stop command runs in the applied service directory with its assigned `$PORT`
+and `HOST=127.0.0.1`, with a 15-second limit. Stop then signals the managed
+service process group, including when the custom command fails. Restart and
+configuration changes also stop the previous service using its applied stop
+command. Shared tracks keep their separate port allocations; dedicated tracks
+run on their own machines.
+
+The track agent helper supports `run` (an alias for `start`), `restart`, `stop`,
+`status`, and `logs`. The MCP catalog does not yet expose preview/run tools.

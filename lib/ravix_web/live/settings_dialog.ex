@@ -198,7 +198,7 @@ defmodule RavixWeb.Live.SettingsDialog do
        assign(socket, save_state: "error", defaults_form: Form.new(:preview_defaults, fields)),
        Previews.set_defaults(user(socket), project_id(socket), config),
        fn s, defaults ->
-         s |> show_defaults(defaults) |> saved() |> flash(:info, "Preview defaults saved.")
+         s |> show_defaults(defaults) |> saved() |> flash(:info, "Run script saved.")
        end,
        :defaults_form
      )}
@@ -436,7 +436,8 @@ defmodule RavixWeb.Live.SettingsDialog do
         Form.new(:preview_defaults, %{
           "directory" => Map.get(config, :directory, "."),
           "command" => Map.get(config, :command, ""),
-          "readiness_path" => Map.get(config, :readiness_path, "/")
+          "readiness_path" => Map.get(config, :readiness_path, ""),
+          "stop_command" => Map.get(config, :stop_command, "")
         })
     )
   end
@@ -486,7 +487,7 @@ defmodule RavixWeb.Live.SettingsDialog do
       {"agent", "Agent"},
       {"environment", "Environment"},
       {"secrets", "Secrets"},
-      {"previews", "Previews"},
+      {"previews", "Run script"},
       {"danger", "Danger zone"}
     ]
 
@@ -895,9 +896,9 @@ defmodule RavixWeb.Live.SettingsDialog do
               aria-labelledby="settings-previews-title"
               hidden
             >
-              <h3 id="settings-previews-title" tabindex="-1">Previews</h3>
+              <h3 id="settings-previews-title" tabindex="-1">Run script</h3>
               <p class="settings-help">
-                Defaults for tracks without a preview override. Saving does not restart running previews.
+                The run script inherited by each track. Saving stops tracks using this default; run them again to apply it.
               </p>
               <.form
                 :let={f}
@@ -918,7 +919,7 @@ defmodule RavixWeb.Live.SettingsDialog do
                 <.input
                   field={f[:command]}
                   id="default-command"
-                  label="Command (must honor $PORT)"
+                  label="Run command"
                   aria-describedby="default-command-help"
                 />
                 <p id="default-command-help" class="settings-help">
@@ -927,11 +928,19 @@ defmodule RavixWeb.Live.SettingsDialog do
                 <.input
                   field={f[:readiness_path]}
                   id="default-readiness"
-                  label="Readiness path"
+                  label="Readiness path (optional)"
                   aria-describedby="default-readiness-help"
                 />
                 <p id="default-readiness-help" class="settings-help">
-                  An HTTP path that responds when the app is ready, for example /health or /.
+                  An HTTP path that responds when the app is ready, for example /health or /. Leave blank to run a process without a preview.
+                </p>
+                <.input
+                  field={f[:stop_command]}
+                  id="default-stop-command"
+                  label="Stop command (optional)"
+                />
+                <p class="settings-help">
+                  Runs in the same directory with the same $PORT. Leave blank to signal the process group. Stop always ends the managed service, even if this command fails.
                 </p>
                 <button class="primary" phx-disable-with="Saving…">Save defaults</button><button
                   name="clear"

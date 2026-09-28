@@ -17,7 +17,7 @@ defmodule Ravix.Previews.ServerFailureTest do
   test "a missing configuration fails visibly and remains retryable", ctx do
     assert :ok = Lifecycle.start_service(ctx.track.id)
     assert %{state: :failed, error: message} = Lifecycle.info(ctx.track.id)
-    assert message =~ "Save a preview startup command"
+    assert message =~ "Save a run script startup command"
   end
 
   test "a missing machine explains how to recover", ctx do

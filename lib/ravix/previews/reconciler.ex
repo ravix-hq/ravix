@@ -48,7 +48,7 @@ defmodule Ravix.Previews.Reconciler do
   @doc "One reconciliation pass over every preview row, waited for."
   @spec tick() :: :ok
   def tick do
-    if Previews.unavailable() == nil do
+    if Previews.run_unavailable() == nil do
       rows = Store.all()
 
       Ravix.TaskSupervisor
@@ -121,6 +121,7 @@ defmodule Ravix.Previews.Reconciler do
 
   defp decide_running(row, now) do
     cond do
+      Row.plain?(row) -> if Server.busy?(row.track_id), do: :leave, else: :ensure
       now - row.last_activity > Previews.idle_ms() -> :stop
       row.lease_until > now and not Server.busy?(row.track_id) -> :ensure
       true -> :leave
