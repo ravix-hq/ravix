@@ -470,9 +470,11 @@ html[data-inspector="closed"] #inspector-toggle .label-show { display: inline; }
    lifted out of the split and pinned to the stage, so it runs the full
    window like the project rail. The tab panel keeps a margin of the same
    width, which is the column the conversation and its crumbs now live in.
-   Each column still scrolls on its own. */
-.workspace-track-host, .track-workspace, .track-workspace-body { display: flex; flex: 1; flex-direction: column; min-height: 0; overflow: hidden; }
-.workspace-track-host > div { display: flex; flex: 1; min-height: 0; }
+   Each column still scrolls on its own. The track's LiveView root is a
+   row, so every level needs `min-width: 0`, or a long name in the crumbs
+   widens the column under the inspector. */
+.workspace-track-host, .track-workspace, .track-workspace-body { display: flex; flex: 1; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; }
+.workspace-track-host > div { display: flex; flex: 1; min-width: 0; min-height: 0; }
 .track-view-switch.workspace-tabs { display: none; }
 .track-conversation { display: flex; flex: 1; flex-direction: column; min-width: 0; min-height: 0; }
 
@@ -671,6 +673,7 @@ html[data-inspector="closed"] #inspector-toggle .label-show { display: inline; }
 .crumbs strong { font-size: 13px; font-weight: 500; }
 .crumbs button, .project-crumb { display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; }
 .crumbs > strong, .project-crumb > strong { min-width: 0; }
+.project-crumb > strong { overflow: hidden; text-overflow: ellipsis; }
 .project-crumb { min-width: 0; max-width: 40%; color: var(--ink); text-decoration: none; }
 /* The title and the branch each get a share of the strip, so a long one
    cannot push the buttons off the right end. The branch chip's own share is

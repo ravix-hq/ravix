@@ -11,7 +11,7 @@ test('a flagged track copies secrets, becomes ready, and deletes its own machine
   await connectClaude(page);
   await page.getByRole('button', { name: 'Add a project', exact: true }).first().click();
   const project = page.getByRole('dialog', { name: 'New project', exact: true });
-  await project.getByLabel('Project name', { exact: true }).fill('Dedicated lifecycle');
+  await project.getByLabel('Project name', { exact: true }).fill('Dedicated lifecycle with a project name long enough to crowd the header');
   await project.getByRole('button', { name: 'Create project', exact: true }).click();
   await expect(project).toHaveCount(0);
   await page.locator('#yard .workspace-project.current .project-add').click();
@@ -49,6 +49,22 @@ test('a flagged track copies secrets, becomes ready, and deletes its own machine
   await page.goto(firstUrl);
   await expect(page.locator('[data-phx-main]')).toHaveClass(/phx-connected/);
   await expect(page.locator('#rebuild-track-machine')).toHaveCount(0);
+  // A long name and every header button must not widen the track past its
+  // column: the pinned inspector would cover Close and the composer's edge,
+  // and its resize handle would swallow clicks on Add thread.
+  await expect(page.locator('.track-crumbs').getByRole('button', { name: 'Rebuild machine', exact: true })).toBeVisible();
+  const layout = await page.evaluate(() => {
+    const right = sel => document.querySelector(sel).getBoundingClientRect().right;
+    return {
+      inspector: document.querySelector('#inspector').getBoundingClientRect().left,
+      track: right('.track-workspace'),
+      close: right('.track-crumbs [aria-label="Close track"]'),
+      add: right('.thread-add'),
+    };
+  });
+  expect(layout.track).toBeLessThanOrEqual(layout.inspector);
+  expect(layout.close).toBeLessThanOrEqual(layout.inspector);
+  expect(layout.add).toBeLessThanOrEqual(layout.inspector - 8);
   await page.getByRole('button', { name: 'Rebuild machine', exact: true }).click();
   const rebuild = page.getByRole('dialog', { name: 'Rebuild machine', exact: true });
   await expect(rebuild).toContainText("Rebuilding deletes only this track's machine");
