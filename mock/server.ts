@@ -1539,6 +1539,26 @@ Bun.serve({
       });
     }
 
+    if (p === "/__browser/long-transcript" && req.method === "POST" && process.env.RAVIX_BROWSER_TEST === "1") {
+      const { id } = await req.json() as { id: string };
+      const conv = state.conversations.find(c => c.id === id);
+      if (!conv) return json({ error: "invalid_fixture" }, 400);
+      const records = state.turns.get(id) ?? [];
+      for (let i = 1; i <= 35; i++) {
+        const turn = `history-${id}-${i}`;
+        records.push({ id: turn, prompt: `History prompt ${i}`, status: "completed", image_count: 0 });
+        push(id, { kind: "stage", stage: "turn", state: "started", turn_id: turn });
+        for (let j = 0; j < 198; j++) {
+          push(id, { kind: "output", stream: "acp", turn_id: turn,
+            data: text(`History answer ${i}: line ${j}.\n\n`) });
+        }
+        push(id, { kind: "stage", stage: "turn", state: "completed", turn_id: turn });
+      }
+      state.turns.set(id, records);
+      conv.turn_count += 35;
+      return json({ status: "ok" });
+    }
+
     // Deterministic provider states for the real-browser composer matrix.
     if (p === "/__browser/conversation-state" && req.method === "POST" && process.env.RAVIX_BROWSER_TEST === "1") {
       const { id, status, emit = false } = await req.json() as { id: string; status: string; emit?: boolean };

@@ -198,3 +198,19 @@ test("UTC timestamps stay consistent with the inbox on mount and after a patch",
   hook.updated()
   expect(hook.el.querySelectorAll("time")[1].textContent).toBe("14:30 UTC")
 })
+
+test("a visible turn stays anchored when earlier history and live output arrive together", () => {
+  const el = document.querySelector("#transcript")
+  el.innerHTML += '<button id="load-earlier">Load earlier</button><div id="transcript-turns"><article id="turn-held">held</article></div>'
+  const {hook} = mountHook(TranscriptTail, "#transcript")
+  el.querySelector("#load-earlier").click()
+  expect(hook.pinned).toBe(false)
+  el.scrollTop = 100
+  const held = el.querySelector("article")
+  held.getBoundingClientRect = () => ({ top: 50, bottom: 200 })
+  hook.beforeUpdate()
+  dimensions(el, {scrollHeight: 2000})
+  held.getBoundingClientRect = () => ({ top: 350, bottom: 500 })
+  hook.updated()
+  expect(el.scrollTop).toBe(400)
+})

@@ -8,7 +8,7 @@
 // expects, on the scroll container:
 //
 //   <div phx-hook="TranscriptTail" id="transcript-scroll" class="transcript-scroll"
-//        data-track={@track.id} data-older-event="older">
+//        data-track={@thread_id} data-older-event="older">
 //     <div>… anything above the turns …</div>
 //     <div id="transcript-turns" phx-update="stream">… the turns …</div>
 //     <button type="button" class="jump-latest" data-jump-latest>Jump to latest</button>
@@ -19,13 +19,13 @@
 //   shows it only under `.transcript-scroll.unpinned` (or `.scroll.unpinned`),
 //   which is the class this hook toggles.
 //
-//   data-track        changes when the reader is somewhere new, which re-pins
+//   data-track        holds the selected thread id; changing it re-pins
 //                     the panel to the bottom whatever they had scrolled to
 //   data-older-event  optional; pushed to the LiveView when the reader nears
 //                     the top, so a page of older turns can be laid in above.
-//                     The hook measures the distance from the bottom before
-//                     each patch and restores it after, so what the reader is
-//                     looking at does not move when the page above lands.
+//                     The hook anchors the first visible turn across patches,
+//                     so prepending history and appending live output together
+//                     leave what the reader is looking at in place.
 //
 // The hook toggles `unpinned` on the container while the reader is away from
 // the bottom, which is what shows the affordance; clicking it pins again.
@@ -74,6 +74,10 @@ export const TranscriptTail = {
         this.el.classList.remove("unpinned")
         return
       }
+      if (e.target.closest("#load-earlier")) {
+        this.pinned = false
+        this.el.classList.add("unpinned")
+      }
       const button = e.target.closest("button.code-copy")
       if (button && this.el.contains(button)) this.copy(button)
       const answer = e.target.closest("button[data-copy]")
@@ -90,9 +94,17 @@ export const TranscriptTail = {
   },
 
   beforeUpdate() {
-    // The distance from the bottom, so a page laid in above can be undone
-    // from the reader's point of view after the patch.
+    // Prefer a visible turn; distance from the bottom is the fallback while
+    // the transcript is empty. Pinned updates need no layout measurements.
     this.anchor = this.pinned ? null : this.el.scrollHeight - this.el.scrollTop
+    this.turnAnchor = null
+    if (this.pinned) return
+    const top = this.el.getBoundingClientRect().top
+    const turn = [...this.el.querySelectorAll("#transcript-turns > article")]
+      .find(turn => turn.getBoundingClientRect().bottom > top)
+    this.turnAnchor = turn
+      ? { id: turn.id, top: turn.getBoundingClientRect().top }
+      : null
   },
 
   updated() {
@@ -106,7 +118,9 @@ export const TranscriptTail = {
     if (this.pinned) {
       this.stick()
     } else if (this.anchor !== null) {
-      this.el.scrollTop = this.el.scrollHeight - this.anchor
+      const turn = this.turnAnchor && this.el.ownerDocument.getElementById(this.turnAnchor.id)
+      if (turn) this.el.scrollTop += turn.getBoundingClientRect().top - this.turnAnchor.top
+      else this.el.scrollTop = this.el.scrollHeight - this.anchor
       this.asked = false
     }
     this.anchor = null

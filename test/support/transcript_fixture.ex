@@ -118,7 +118,18 @@ defmodule Ravix.TranscriptFixture do
   end
 
   def public(%_{} = struct),
-    do: struct |> Map.from_struct() |> Map.drop([:fold, :failure, :conversation_id]) |> public()
+    do:
+      struct
+      |> Map.from_struct()
+      |> Map.drop([
+        :fold,
+        :failure,
+        :conversation_id,
+        :history,
+        :oldest_event_id,
+        :oldest_conversation_id
+      ])
+      |> public()
 
   def public(map) when is_map(map),
     do:

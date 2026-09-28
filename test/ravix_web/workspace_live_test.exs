@@ -982,7 +982,8 @@ defmodule RavixWeb.WorkspaceLiveTest do
     other = insert_project(user: user)
     other_track = insert_track(project: other)
     {:ok, view, _} = live(log_in_user(conn, user), "/p/#{project.id}/t/#{track.id}")
-    render_async(view)
+    # Await the rail tasks; 100ms is too short under coverage and browser load.
+    render_async(view, 1_000)
 
     assert has_element?(
              view,

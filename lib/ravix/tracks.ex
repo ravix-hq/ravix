@@ -1228,48 +1228,138 @@ defmodule Ravix.Tracks do
        do: read_transcript(client, id, runtime, binding, page)
 
   defp read_thread_transcript(client, thread, runtime, _previous, binding) do
-    Enum.reduce_while(
-      thread.previous_conversation_ids ++ [thread.conversation_id],
-      {:ok, Transcript.empty(runtime)},
-      fn id, {:ok, previous} ->
-        case read_transcript(client, id, runtime, binding) do
-          {:ok, page} -> {:cont, {:ok, %{page | turns: previous.turns ++ page.turns}}}
-          error -> {:halt, error}
-        end
-      end
+    with {:ok, page} <- read_transcript(client, thread.conversation_id, runtime, binding) do
+      history = %{page.history | conversations: Enum.reverse(thread.previous_conversation_ids)}
+      {:ok, %{page | history: history}}
+    end
+  end
+
+  @doc "Return only the preceding complete-turn chunk after re-establishing thread access; the caller retains and merges its loaded tail."
+  @spec earlier_events(User.t(), String.t(), Transcript.History.t(), keyword()) ::
+          {:ok, Transcript.Page.t()} | {:error, reason()}
+  def earlier_events(%User{} = user, track_id, history, opts \\ []) do
+    Trace.span(
+      "tracks.events.earlier",
+      %{"ravix.track_id" => track_id, "ravix.events_fetched" => 0, "ravix.event_pages" => 0},
+      fn -> do_earlier_events(user, track_id, history, opts) end
     )
   end
+
+  defp do_earlier_events(user, track_id, history, opts) do
+    with {:ok, %{thread: thread, project: project}} <-
+           Access.thread_access(user, track_id, opts[:thread_id]),
+         true <- valid_history?(history, track_id, thread),
+         {:ok, client} <- fountain() do
+      binding = %{
+        project_id: project.id,
+        track_id: track_id,
+        thread_id: thread.id,
+        conversation_ids: thread.previous_conversation_ids ++ [thread.conversation_id]
+      }
+
+      with {:ok, history} <-
+             earlier_history(client, history, thread.runtime || project.runtime, binding) do
+        history_page(history, thread.runtime || project.runtime, binding)
+      end
+    else
+      false -> {:error, :not_found}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp valid_history?(%Transcript.History{} = history, track_id, thread) do
+    ids = thread.previous_conversation_ids ++ [thread.conversation_id]
+
+    history.source == {track_id, thread.id, thread.conversation_id} and
+      history.conversation_id in ids and Enum.all?(history.conversations, &(&1 in ids))
+  end
+
+  defp valid_history?(_page, _track_id, _thread), do: false
+
+  defp earlier_history(
+         client,
+         %{chunks: [], conversations: [id | rest]} = history,
+         runtime,
+         binding
+       ) do
+    with {:ok, log} <- Fountain.events(client, id, prompts: true),
+         {:ok, records} <- Fountain.turns(client, id) do
+      Trace.annotate(%{"ravix.events_fetched" => length(log)})
+      Settlement.enqueue_log(log, id, runtime, binding)
+      {:ok, Transcript.History.new(log, records, id, rest, history.source)}
+    end
+  end
+
+  defp earlier_history(_client, history, _runtime, _binding), do: {:ok, history}
 
   defp read_transcript(client, conversation_id, runtime, binding, previous \\ nil) do
     opts = if previous, do: [prompts: true, after: previous.last_event_id], else: [prompts: true]
 
     with {:ok, log} <- Fountain.events(client, conversation_id, opts),
          {:ok, turns} <- Fountain.turns(client, conversation_id) do
-      classifications =
-        Trace.span("transcript.failures", %{}, fn ->
-          Store.turn_classifications(binding.conversation_ids)
-        end)
+      Trace.annotate(%{"ravix.events_fetched" => length(log)})
 
-      page =
-        Trace.span("transcript.build", %{"ravix.event_count" => length(log)}, fn ->
-          previous
-          |> build_transcript(log, runtime, classifications.failures)
-          |> transcript_source(conversation_id)
-        end)
-
-      page = Trace.span("transcript.images", %{}, fn -> Transcript.with_images(page, turns) end)
-
-      # How much transcript came back, on the span that fetched it. A slow
-      # first paint is either Fountain being slow or a conversation being long,
-      # and a duration alone cannot say which.
-      Trace.annotate(%{
-        "ravix.turn_count" => length(page.turns),
-        "ravix.event_count" => length(log)
-      })
-
-      Settlement.enqueue(page, classifications.classified, binding)
-      {:ok, %{page | conversation_id: conversation_id}}
+      if previous do
+        build_transcript_page(previous, log, turns, conversation_id, runtime, binding)
+      else
+        Settlement.enqueue_log(log, conversation_id, runtime, binding)
+        source = {binding.track_id, binding.thread_id, conversation_id}
+        history = Transcript.History.new(log, turns, conversation_id, [], source)
+        history_page(history, runtime, binding)
+      end
     end
+  end
+
+  defp history_page(history, runtime, binding) do
+    {log, rest} = Transcript.History.take(history)
+
+    with {:ok, page} <-
+           build_transcript_page(
+             nil,
+             log,
+             history.records,
+             history.conversation_id,
+             runtime,
+             binding
+           ) do
+      oldest =
+        case log do
+          [first | _] -> Transcript.Event.from(first).id
+          [] -> nil
+        end
+
+      {:ok,
+       %{
+         page
+         | history: rest,
+           oldest_event_id: oldest,
+           oldest_conversation_id: if(oldest, do: history.conversation_id)
+       }}
+    end
+  end
+
+  defp build_transcript_page(previous, log, turns, conversation_id, runtime, binding) do
+    classifications =
+      Trace.span("transcript.failures", %{}, fn ->
+        Store.turn_classifications(binding.conversation_ids)
+      end)
+
+    page =
+      Trace.span("transcript.build", %{"ravix.event_count" => length(log)}, fn ->
+        previous
+        |> build_transcript(log, runtime, classifications.failures)
+        |> transcript_source(conversation_id)
+      end)
+
+    page = Trace.span("transcript.images", %{}, fn -> Transcript.with_images(page, turns) end)
+
+    Trace.annotate(%{
+      "ravix.turn_count" => length(page.turns),
+      "ravix.event_count" => length(log)
+    })
+
+    if previous, do: Settlement.enqueue(page, classifications.classified, binding)
+    {:ok, %{page | conversation_id: conversation_id}}
   end
 
   defp transcript_source(page, id) do

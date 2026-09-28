@@ -135,7 +135,7 @@
           id="transcript-scroll"
           phx-hook="TranscriptTail"
           class="transcript-scroll"
-          data-track={@track.id}
+          data-track={@thread_id}
         >
           <.live_component
             module={RavixWeb.Live.TrackPlanItems}
@@ -160,6 +160,15 @@
               Settings changed — open a new track to use them
             </span>
           </div>
+          <button
+            :if={Transcript.History.more?(@page.history)}
+            id="load-earlier"
+            type="button"
+            phx-click="load-earlier"
+            disabled={@earlier_loading}
+          >
+            {if @earlier_loading, do: "Loading earlier…", else: "Load earlier"}
+          </button>
           <div id="transcript-turns" phx-update="stream">
             <article :for={{dom_id, turn} <- @streams.turns} id={dom_id} class="workspace-turn">
               <.prompt_message

@@ -4741,6 +4741,134 @@ defmodule RavixWeb.TrackLiveTest do
       render_async(ctx.view)
     end
 
+    test "earlier turns prepend once while live output and catch-up retain their tail", ctx do
+      history = %Transcript.History{chunks: [[%{"id" => 1}]], source: :fixture}
+
+      page = %{
+        transcript([{"new", "newest"}], from: 20)
+        | history: history,
+          conversation_id: "live-conversation",
+          oldest_event_id: 20
+      }
+
+      repair(ctx, page)
+      parent = self()
+
+      expect(Tracks, :earlier_events, fn user, id, %Transcript.History{} = request, opts ->
+        assert request == Transcript.History.request(history)
+        assert user.id == ctx.user.id and id == ctx.track.id
+        assert opts[:thread_id] == ctx.track.id
+        send(parent, {:earlier_started, self()})
+        receive do: (:finish -> :ok)
+
+        older = %{
+          transcript([{"old", "earlier"}])
+          | history: %{history | chunks: []},
+            oldest_event_id: 1
+        }
+
+        {:ok, older}
+      end)
+
+      render_click(ctx.view, "load-earlier", %{})
+      assert_receive {:earlier_started, reader}
+      assert has_element?(ctx.view, "#load-earlier[disabled]")
+      render_click(ctx.view, "load-earlier", %{})
+      send(ctx.view.pid, {:transcript, ctx.track.id, opened(30, "live", "Live prompt")})
+      send(reader, :finish)
+      render_async(ctx.view)
+      send(ctx.view.pid, :flush_transcript)
+      refute has_element?(ctx.view, "#load-earlier")
+      html = render(ctx.view)
+      assert html =~ "earlier" and html =~ "newest" and html =~ "Live prompt"
+      # An in-flight repair based on the original history cannot erase a prepend.
+      html = repair(ctx, page)
+      assert html =~ "earlier" and html =~ "Live prompt"
+      refute has_element?(ctx.view, "#load-earlier")
+      assert has_element?(ctx.view, "#transcript-turns > article:first-child", "earlier")
+      assert has_element?(ctx.view, "#transcript-turns > article:last-child", "Live prompt")
+    end
+
+    test "each earlier task receives only the next raw chunk and returns only new turns", ctx do
+      history = %Transcript.History{chunks: [[%{"id" => 10}], [%{"id" => 1}]], source: :fixture}
+      page = %{transcript([{"new", "held tail"}], from: 20) | history: history}
+      repair(ctx, page)
+
+      expect(Tracks, :earlier_events, fn _,
+                                         _,
+                                         %Transcript.History{chunks: [[%{"id" => 10}]]} = request,
+                                         _ ->
+        {:ok,
+         %{transcript([{"middle", "middle chunk"}], from: 10) | history: %{request | chunks: []}}}
+      end)
+
+      render_click(ctx.view, "load-earlier", %{})
+      render_async(ctx.view)
+      assert has_element?(ctx.view, "#load-earlier:not([disabled])")
+      assert has_element?(ctx.view, "#transcript-turns > article:first-child", "middle chunk")
+      assert has_element?(ctx.view, "#transcript-turns > article:last-child", "held tail")
+
+      expect(Tracks, :earlier_events, fn _,
+                                         _,
+                                         %Transcript.History{chunks: [[%{"id" => 1}]]} = request,
+                                         _ ->
+        {:ok, %{transcript([{"old", "oldest chunk"}]) | history: %{request | chunks: []}}}
+      end)
+
+      render_click(ctx.view, "load-earlier", %{})
+      render_async(ctx.view)
+      refute has_element?(ctx.view, "#load-earlier")
+      assert has_element?(ctx.view, "#transcript-turns > article:first-child", "oldest chunk")
+      assert has_element?(ctx.view, "#transcript-turns > article:last-child", "held tail")
+    end
+
+    for revoked <- [:session, :track] do
+      test "#{revoked} revocation rejects an earlier-history result", ctx do
+        page = %{transcript([{"new", "newest"}]) | history: %Transcript.History{chunks: [[]]}}
+        repair(ctx, page)
+        parent = self()
+
+        expect(Tracks, :earlier_events, fn _, _, _, _ ->
+          send(parent, {:earlier_started, self()})
+          receive do: (:finish -> {:ok, page})
+        end)
+
+        render_click(ctx.view, "load-earlier", %{})
+        assert_receive {:earlier_started, reader}
+
+        case unquote(revoked) do
+          :session ->
+            token = Plug.Conn.get_session(ctx.conn, :session_token)
+            Ravix.Accounts.end_session(Ravix.Crypto.sha256(token))
+
+          :track ->
+            Repo.delete!(Repo.get!(Track, ctx.track.id))
+        end
+
+        send(reader, :finish)
+
+        assert_redirect(
+          ctx.parent,
+          if(unquote(revoked) == :session, do: "/login", else: "/"),
+          1_000
+        )
+      end
+    end
+
+    test "earlier errors and crashes settle the control for retry", ctx do
+      page = %{transcript([{"new", "newest"}]) | history: %Transcript.History{chunks: [[]]}}
+      repair(ctx, page)
+      expect(Tracks, :earlier_events, fn _, _, _, _ -> {:error, :not_found} end)
+      render_click(ctx.view, "load-earlier", %{})
+      render_async(ctx.view)
+      refute has_element?(ctx.view, "#load-earlier[disabled]")
+      expect(Tracks, :earlier_events, fn _, _, _, _ -> exit(:offline) end)
+      render_click(ctx.view, "load-earlier", %{})
+      render_async(ctx.view)
+      refute has_element?(ctx.view, "#load-earlier[disabled]")
+      assert render(ctx.parent) =~ "Could not load earlier history"
+    end
+
     test "renders a turn that gained content and a turn that arrived after it", ctx do
       html = repair(ctx, transcript([{"t1", "first"}, {"t2", "second"}]))
       assert html =~ "first"
