@@ -48,7 +48,6 @@ defmodule Ravix.MixProject do
     [
       {:phoenix, "~> 1.8.5"},
       {:phoenix_ecto, "~> 4.5"},
-      {:tz, "~> 0.28"},
       {:ecto_sql, "~> 3.13"},
       {:postgrex, ">= 0.0.0"},
       {:phoenix_html, "~> 4.1"},
@@ -75,6 +74,9 @@ defmodule Ravix.MixProject do
       # polling loader. Server-side only -- there is deliberately no `posthog-js`.
       {:posthog, "~> 2.15"},
       {:jason, "~> 1.2"},
+      # IANA time zone data compiled into the release; schedules run at their
+      # creator's local time. No runtime updater or writable data directory.
+      {:tz, "~> 0.28"},
       {:dns_cluster, "~> 0.3.0"},
       {:bandit, "~> 1.5"},
       # Fountain and its component libraries (Apache-2.0, maintained upstream).

@@ -2,6 +2,7 @@ defmodule Ravix.Schedules.Schedule do
   @moduledoc "A personal recurring prompt, executed in a fresh project track."
   use Ecto.Schema
   import Ecto.Changeset
+  require Logger
 
   @primary_key {:id, :string, autogenerate: false}
   @type t :: %__MODULE__{}
@@ -86,9 +87,25 @@ defmodule Ravix.Schedules.Schedule do
   Hourly runs every hour at the chosen local minute.
   """
   def next_run(schedule, now) do
-    zone = schedule.timezone || @utc
+    case DateTime.shift_zone(now, schedule.timezone || @utc) do
+      {:ok, local} ->
+        next_run(schedule, now, local)
+
+      {:error, reason} ->
+        # A zone the database stopped knowing must not raise inside the
+        # runner's claim and stall every due row behind it: run on UTC.
+        Logger.warning(
+          "schedule #{schedule.id} has unusable time zone #{inspect(schedule.timezone)} " <>
+            "(#{inspect(reason)}); computing its next run in UTC"
+        )
+
+        next_run(%{schedule | timezone: @utc}, now)
+    end
+  end
+
+  defp next_run(schedule, now, local) do
+    zone = local.time_zone
     time = %{schedule.time | second: 0, microsecond: {0, 0}}
-    local = DateTime.shift_zone!(now, zone)
     today = DateTime.to_date(local)
 
     case schedule.frequency do

@@ -71,6 +71,10 @@ defmodule Ravix.SchedulesTest do
 
       assert Schedule.next_run(weekly, ~U[2026-03-02 14:00:00.000000Z]) ==
                ~U[2026-03-09 13:00:00.000000Z]
+
+      # Sunday 2026-11-01 is the change; the Monday before is EDT, after is EST.
+      assert Schedule.next_run(weekly, ~U[2026-10-26 13:00:00.000000Z]) ==
+               ~U[2026-11-02 14:00:00.000000Z]
     end
 
     test "a time inside the spring-forward gap runs at the first instant after it" do
@@ -125,6 +129,42 @@ defmodule Ravix.SchedulesTest do
         {:ok, row} = Schedules.create(user, project.id, Map.put(attrs(), "timezone", zone))
         assert row.timezone == "Etc/UTC"
       end
+    end
+
+    test "a stored zone the database no longer knows claims on UTC without stalling the runner" do
+      user = insert_user()
+      project = insert_project(user: user)
+      prompt = "Secret prompt text #{System.unique_integer([:positive])}"
+
+      {:ok, bad} =
+        Schedules.create(user, project.id, Map.merge(attrs(), %{"prompt" => prompt}))
+
+      {:ok, good} = Schedules.create(user, project.id, attrs())
+      now = DateTime.add(good.next_run_at, 30, :day)
+
+      # Bypasses the changeset, as a tz release that drops a zone would.
+      Repo.update_all(from(s in Schedule, where: s.id == ^bad.id), set: [timezone: "Gone/Zone"])
+
+      stub(Ravix.Accounts.Access, :project_access, fn _, _ -> {:error, :not_found} end)
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          assert Runner.tick(now) == :ok
+        end)
+
+      assert log =~ bad.id
+      assert log =~ "Gone/Zone"
+      refute log =~ prompt
+
+      # Access is stubbed shut so dispatch finishes at once; read the rows directly.
+      for id <- [bad.id, good.id] do
+        row = Repo.get!(Schedule, id)
+        assert row.last_run_at == now
+        assert DateTime.compare(row.next_run_at, now) == :gt
+      end
+
+      claimed = Repo.get!(Schedule, bad.id)
+      assert claimed.next_run_at == Schedule.next_run(%{claimed | timezone: "Etc/UTC"}, now)
     end
 
     test "editing keeps the stored zone unless the change names one" do

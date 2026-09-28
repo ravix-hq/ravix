@@ -6,7 +6,8 @@
 // scroll position, a drag, the palette painted before the first frame. Those
 // live in `hooks/`, one file each, and this file registers them. The
 // page_loading helper also reflects pending navigation in the shared status
-// indicator, and the connect params carry the browser's time zone. There is no framework or package beyond Phoenix's own.
+// indicator, and the connect params carry the browser's time zone. There is
+// no framework or package beyond Phoenix's own.
 //
 // The hooks, and what they are for:
 //
