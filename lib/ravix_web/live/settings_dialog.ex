@@ -170,7 +170,11 @@ defmodule RavixWeb.Live.SettingsDialog do
 
   defp settings_event("save-env-vars", params, socket) do
     rows = variable_rows(params)
-    {:noreply, socket |> assign(variable_rows: rows) |> save_settings(%{env_vars: rows})}
+
+    {:noreply,
+     socket
+     |> assign(variable_rows: rows)
+     |> save_settings(%{env_vars: rows, expected_env_vars: socket.assigns.settings.env_vars})}
   end
 
   defp settings_event("save-secret", %{"secret" => params}, socket) do
@@ -850,6 +854,7 @@ defmodule RavixWeb.Live.SettingsDialog do
                 These values are visible to anyone who can see project settings. Keep secrets in Secrets.
                 Changes apply when the next conversation starts, including dedicated tracks.
                 Running conversations keep the old values until the track is restarted or rebuilt.
+                Changing variables clears the warm-start checkpoint: the next track starts cold and reruns setup.
               </p>
               <p class="settings-help">
                 Up to 100 variables; names up to 200 bytes and values up to 16 KiB. Saving replaces the list.

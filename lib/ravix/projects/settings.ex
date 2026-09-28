@@ -97,6 +97,7 @@ defmodule Ravix.Projects.Settings do
     setup_script: :string,
     packages: :map,
     env_vars: :map,
+    expected_env_vars: :map,
     secret: :map
   }
 
@@ -158,20 +159,36 @@ defmodule Ravix.Projects.Settings do
   a setup script or a package list does not, because Fountain applies those when the disk is built rather than
   when a session starts.
 
-  The environment is saved last so a successful variable update always
-  reaches its revision bump. The first failure stops the remaining mutations;
-  what was already saved stays saved, as it did in the TypeScript.
+  The first failure stops remaining mutations. Successful session-start
+  mutations still bump the revision when a later mutation fails.
   """
   @spec update(Project.t(), map(), Fountain.Client.t()) :: {:ok, integer()} | {:error, term()}
   def update(%Project{} = project, attrs, client) do
     with {:ok, change} <- cast_attrs(attrs),
          :ok <- validate_env_secrets(project, change, client),
-         {:ok, project, bumps} <- harness(project, change, client),
-         :ok <- rename(project, change),
-         {:ok, bumps} <- instructions(project, change, client, bumps),
-         {:ok, bumps} <- secret(project, change, client, bumps),
-         {:ok, bumps} <- environment(project, change, client, bumps) do
-      {:ok, if(bumps, do: Projects.Store.bump_rev(project.id), else: project.rev)}
+         {:ok, project, bumps} <- harness(project, change, client) do
+      steps = [
+        fn bumps ->
+          :ok = rename(project, change)
+          {:ok, bumps}
+        end,
+        &instructions(project, change, client, &1),
+        &secret(project, change, client, &1),
+        &environment(project, change, client, &1)
+      ]
+
+      {result, bumps} = Enum.reduce_while(steps, {:ok, bumps}, &apply_mutation/2)
+
+      rev = if bumps, do: Projects.Store.bump_rev(project.id), else: project.rev
+      if bumps and result != :ok, do: Ravix.Hub.publish(project.id, :settings)
+      if result == :ok, do: {:ok, rev}, else: result
+    end
+  end
+
+  defp apply_mutation(step, {:ok, bumps}) do
+    case step.(bumps) do
+      {:ok, next} -> {:cont, {:ok, next}}
+      error -> {:halt, {error, bumps}}
     end
   end
 
@@ -374,6 +391,12 @@ defmodule Ravix.Projects.Settings do
   defp rename(_project, _change), do: :ok
 
   defp environment(project, change, client, bumps) do
+    Ravix.Cluster.project_mutation(project.id, :env_vars_change, fn ->
+      save_environment(project, change, client, bumps)
+    end)
+  end
+
+  defp save_environment(project, change, client, bumps) do
     patch =
       %{}
       |> put_if(:setup_script, change, :setup_script, &str(&1, 20_000))
@@ -394,9 +417,18 @@ defmodule Ravix.Projects.Settings do
     end
   end
 
-  defp env_vars_changed(project, %{env_vars: vars}, client) do
-    with {:ok, env} <- Fountain.get_environment(client, project.environment_id),
-         do: {:ok, (env["env_vars"] || %{}) != vars}
+  defp env_vars_changed(project, %{env_vars: vars} = change, client) do
+    with {:ok, env} <- Fountain.get_environment(client, project.environment_id) do
+      current = env["env_vars"] || %{}
+
+      if Map.has_key?(change, :expected_env_vars) and change.expected_env_vars != current do
+        {:error,
+         {:conflict, "env_vars_conflict",
+          "Variables changed since you opened settings. Reload and try again."}}
+      else
+        {:ok, current != vars}
+      end
+    end
   end
 
   defp env_vars_changed(_project, _change, _client), do: {:ok, false}

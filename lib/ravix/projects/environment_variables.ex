@@ -26,6 +26,9 @@ defmodule Ravix.Projects.EnvironmentVariables do
 
   def normalize(_), do: error("env_vars_limit", "Use at most 100 environment variables.")
 
+  defp add(%__MODULE__.Row{value: nil}, _vars),
+    do: error("bad_env_vars", "Each variable needs a name and a string value.")
+
   defp add(%__MODULE__.Row{key: key, value: value}, vars),
     do: add(%{"key" => key, "value" => value}, vars)
 

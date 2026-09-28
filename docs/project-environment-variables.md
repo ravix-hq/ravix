@@ -15,10 +15,15 @@ under ADR 0005. The alias list and upstream source are documented in
 
 MCP `get_project_settings` returns `env_vars`. `update_project_settings` accepts a
 string-to-string object: it replaces the entire map, `{}` clears it, and omitting
-it preserves it. The browser submits rows so duplicate names are detected before
+it preserves it. MCP intentionally replaces unconditionally, without a stale-map check.
+Writes are serialized per project. The dialog sends the map it loaded and refuses
+a save if Fountain now has a different map; reload settings before retrying. The browser submits rows so duplicate names are detected before
 conversion to a map. Errors contain validation codes and explanations, never
 values. Phoenix filters `env_vars` parameters, settings and editable-row inspection redact them,
 and environment API failures omit response text from logs.
+
+Changing variables clears Fountain's warm-start checkpoint; the next track starts
+cold and reruns setup.
 
 A changed map bumps `project.rev` and invalidates the cached environment.
 Fountain injects the latest map when a conversation starts. Running conversations

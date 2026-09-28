@@ -1127,6 +1127,67 @@ defmodule Ravix.ProjectsTest do
       end
     end
 
+    test "stale variable snapshots refuse overwriting newer values", ctx do
+      fountain()
+      stub(Ravix.Fountain, :secret_keys, fn _, _, _ -> {:ok, []} end)
+
+      stub(Ravix.Fountain, :get_environment, fn _, _ ->
+        {:ok, %{"env_vars" => %{"PORT" => "newer"}}}
+      end)
+
+      reject(&Ravix.Fountain.update_environment/3)
+
+      assert {:error, {:conflict, "env_vars_conflict", message}} =
+               Projects.update_settings(ctx.owner, ctx.project.id, %{
+                 env_vars: %{"PORT" => "stale edit"},
+                 expected_env_vars: %{}
+               })
+
+      assert message == "Variables changed since you opened settings. Reload and try again."
+      assert Repo.get!(Project, ctx.project.id).rev == 1
+    end
+
+    test "variable writes refuse a concurrent environment mutation", ctx do
+      fountain()
+      stub(Ravix.Fountain, :secret_keys, fn _, _, _ -> {:ok, []} end)
+      reject(&Ravix.Fountain.update_environment/3)
+      parent = self()
+
+      task =
+        Task.async(fn ->
+          Ravix.Cluster.project_mutation(ctx.project.id, :env_vars_change, fn ->
+            send(parent, :locked)
+            receive do: (:release -> :ok)
+          end)
+        end)
+
+      assert_receive :locked
+
+      assert {:error, {:conflict, "project_change_in_progress", _}} =
+               Projects.update_settings(ctx.owner, ctx.project.id, %{env_vars: %{}})
+
+      send(task.pid, :release)
+      assert Task.await(task) == :ok
+    end
+
+    test "instructions still bump and notify when a later environment write fails", ctx do
+      fountain([
+        {%{method: "PUT", path: "/api/agents/a"}, {200, [], %{data: %{id: "a"}}}},
+        {%{method: "PUT", path: "/api/environments/e"}, {503, [], %{error: "down"}}}
+      ])
+
+      assert {:error, %Ravix.Fountain.Error{status: 503}} =
+               Projects.update_settings(ctx.owner, ctx.project.id, %{
+                 instructions: "Saved instructions",
+                 setup_script: "echo setup"
+               })
+
+      project = Repo.get!(Project, ctx.project.id)
+      assert project.instructions == "Saved instructions"
+      assert project.rev == 2
+      assert_received {:hub, %Event{name: :settings}}
+    end
+
     test "invalid readable variables are refused before any provider mutation", ctx do
       fountain()
 

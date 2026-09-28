@@ -77,6 +77,32 @@ defmodule RavixWeb.Live.SettingsVariablesTest do
     assert Agent.get(env, & &1) == %{}
   end
 
+  test "stale dialog refuses to replace a newer map", %{view: view, env: env} do
+    Agent.update(env, fn _ -> %{"PORT" => "newer"} end)
+    view |> element("[phx-click=add-env-var]") |> render_click()
+
+    view
+    |> form("#env-vars-form", env_vars: %{"0" => %{key: "PORT", value: "old edit"}})
+    |> render_submit()
+
+    render_async(view, 2_000)
+    assert render(view) =~ "Variables changed since you opened settings. Reload and try again."
+    assert Agent.get(env, & &1) == %{"PORT" => "newer"}
+  end
+
+  test "missing row value reports validation instead of crashing", %{view: view, env: env} do
+    view
+    |> with_target(component(view))
+    |> render_hook("save-env-vars", %{
+      "env_vars" => %{"0" => %{"key" => "PORT"}}
+    })
+
+    render_async(view, 2_000)
+    assert render(view) =~ "Each variable needs a name and a string value."
+    assert Agent.get(env, & &1) == %{}
+    assert render(view) =~ "next track starts cold and reruns setup"
+  end
+
   defp component(view) do
     view
     |> element("#settings-sections")

@@ -5,4 +5,5 @@ defmodule Ravix.Projects.EnvironmentVariables.Row do
   defstruct @enforce_keys
 
   def new(%{"key" => key, "value" => value}), do: %__MODULE__{key: key, value: value}
+  def new(_), do: %__MODULE__{key: nil, value: nil}
 end

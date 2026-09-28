@@ -35,7 +35,7 @@ defmodule Ravix.Tooling.Catalog do
       ),
       tool(
         "update_project_settings",
-        "Update owned project settings; setup scripts and instructions can execute code. env_vars replaces all readable variables (empty object clears them), applies to the next conversation, and rejects secret names and provider auth names. Limit 100 variables, 200 bytes per name, 16 KiB per value.",
+        "Update owned project settings; setup scripts and instructions can execute code. env_vars unconditionally replaces all readable variables (empty object clears them; no stale-map check), applies to the next conversation, and rejects secret names and provider auth names. Limit 100 variables, 200 bytes per name, 16 KiB per value.",
         "projects:write",
         %{"project_id" => string(), "settings" => settings(), "request_id" => string(100)},
         ["project_id", "settings", "request_id"]
