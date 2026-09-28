@@ -584,6 +584,15 @@ defmodule RavixWeb.WorkspaceLive do
 
   def handle_event("picker-" <> _, _params, socket), do: {:noreply, socket}
 
+  # While the repository list is shown, the old select's event is only
+  # another way to pick from it, never around it.
+  def handle_event(
+        "new-track-project",
+        %{"project" => id},
+        %{assigns: %{picker: %Picker{}}} = socket
+      ),
+      do: handle_event("picker-pick", %{"project" => id}, socket)
+
   def handle_event("new-track-project", %{"project" => id}, socket) do
     socket = recheck_rail(socket)
     project = Enum.find(socket.assigns.projects, &(&1.id == id && &1.access != :tracks))

@@ -34,13 +34,24 @@ defmodule Ravix.Tracks.Attribution do
   @spec noreply(User.t()) :: String.t()
   def noreply(%User{github_id: id, login: login}), do: "#{id}+#{login}@users.noreply.github.com"
 
-  # A name is free text on GitHub; a trailer is one line with the address in
-  # angle brackets, so neither may appear in it.
+  # A name is free text on GitHub, and it goes into a one-line trailer and
+  # into an instruction delivered with every collaborator's prompt. So no
+  # control or format character (`\p{C}`: newlines, tabs, zero-width and
+  # bidi marks), no Unicode line or paragraph separator, and no angle
+  # bracket (the address's delimiters) survives, and it is capped.
+  @name_max 100
+
   defp display(%User{name: name, login: login}) do
-    case name |> to_string() |> String.replace(~r/[<>\r\n]/, "") |> String.trim() do
-      "" -> login
-      clean -> clean
-    end
+    clean =
+      name
+      |> to_string()
+      |> String.replace(~r/[\p{C}\x{2028}\x{2029}<>]/u, " ")
+      |> String.replace(~r/\s+/u, " ")
+      |> String.trim()
+      |> String.slice(0, @name_max)
+      |> String.trim()
+
+    if clean == "", do: login, else: clean
   end
 
   @doc """

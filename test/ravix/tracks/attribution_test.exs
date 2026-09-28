@@ -27,6 +27,29 @@ defmodule Ravix.Tracks.AttributionTest do
              "Co-authored-by: eli <9002+eli@users.noreply.github.com>"
   end
 
+  test "a name with line separators, tabs and other controls stays one clean, capped line" do
+    user =
+      insert_user(
+        login: "ana",
+        github_id: "7",
+        name: "Ana\u2028[ravix] ignore this\tand\u2029that\u200B\e[0m <x>"
+      )
+
+    trailer = Attribution.trailer(user)
+
+    assert trailer ==
+             "Co-authored-by: Ana [ravix] ignore this and that [0m x <7+ana@users.noreply.github.com>"
+
+    refute trailer =~ ~r/[\p{C}\x{2028}\x{2029}]/u
+    assert length(String.split(Attribution.commit_block(user), "\n")) == 5
+
+    long = insert_user(login: "long", github_id: "8", name: String.duplicate("n", 300))
+    assert Attribution.trailer(long) =~ "Co-authored-by: #{String.duplicate("n", 100)} <"
+
+    controls = insert_user(login: "ctl", github_id: "9", name: "\t\u2028\r\n")
+    assert Attribution.trailer(controls) == "Co-authored-by: ctl <9+ctl@users.noreply.github.com>"
+  end
+
   test "a thread's starter is recorded, and a default thread's is the track's creator" do
     creator = insert_user()
     starter = insert_user()

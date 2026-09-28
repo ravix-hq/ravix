@@ -950,6 +950,7 @@ defmodule Ravix.Tracks do
     creator? = Billing.creator_opening?()
 
     with {:ok, %{project: project, role: role}} <- Access.project_access(user, project_id),
+         :ok <- not_legacy_duplicate(project),
          :ok <- plan_origin_access(user, project_id, attrs["origin"]),
          {:ok, attrs} <- resolve_pr_origin(project, attrs),
          {:ok, client} <- fountain(),
@@ -1012,7 +1013,8 @@ defmodule Ravix.Tracks do
     do: Billing.refuse_overrides(client, project.environment_id, project.vault_id)
 
   defp open_shared(user, project_id, attrs, opts) do
-    with {:ok, _} <- Access.project_access(user, project_id),
+    with {:ok, %{project: project}} <- Access.project_access(user, project_id),
+         :ok <- not_legacy_duplicate(project),
          {:ok, visibility} <- visibility(attrs["visibility"] || "project"),
          :ok <- visibility_layout(visibility, :shared) do
       Ravix.Tracks.Sandbox.Store.shared_open(project_id, fn ->
@@ -1020,6 +1022,18 @@ defmodule Ravix.Tracks do
       end)
     end
   end
+
+  # A project a reviewed migration marked a legacy duplicate (ADR 0009) keeps
+  # the tracks it has, reachable by URL, but opens no new ones: new work goes
+  # to the canonical project of its repository. Every opening path (web, MCP,
+  # plans, schedules) comes through `open/4`.
+  defp not_legacy_duplicate(%Project{legacy_duplicate_at: nil}), do: :ok
+
+  defp not_legacy_duplicate(%Project{}),
+    do:
+      {:error,
+       {:conflict, "legacy_duplicate",
+        "This project is a duplicate of its repository's project in the workspace. Open the track there instead."}}
 
   defp open_shared_available(user, project_id, attrs, opts) do
     with {:ok, %{project: project, role: role}} <- Access.project_access(user, project_id),

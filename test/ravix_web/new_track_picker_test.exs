@@ -134,10 +134,25 @@ defmodule RavixWeb.NewTrackPickerTest do
     assert has_element?(view, "#repo-option-scratch[aria-pressed=true]")
     assert has_element?(view, "#repo-picker-selected", "Sandbox")
 
-    # A forged pick of a legacy duplicate is refused.
+    # A forged pick of a legacy duplicate is refused, through the list's own
+    # event and through the old project select's.
     render_hook(view, "picker-pick", %{"project" => marked.id})
     assert has_element?(view, "#repo-option-scratch[aria-pressed=true]")
+    render_hook(view, "new-track-project", %{"project" => marked.id})
+    assert has_element?(view, "#repo-option-scratch[aria-pressed=true]")
+    refute has_element?(view, "#repo-option-#{marked.id}")
     _ = scratch
+  end
+
+  test "a forged old-select pick of another workspace's project is refused", ctx do
+    insert_project(user: ctx.user, repo_full_name: "me/app")
+    team_project = insert_project(user: ctx.user, repo_full_name: "team/api") |> in_team(ctx.team)
+
+    view = open_top(ctx.conn, "/home")
+    assert options(view) == ["me/app"]
+    render_hook(view, "new-track-project", %{"project" => team_project.id})
+    assert has_element?(view, "#repo-picker-selected", "me/app")
+    refute has_element?(view, "#repo-option-#{team_project.id}")
   end
 
   test "no scratch project yet: scratch opens New project in scratch mode", ctx do
