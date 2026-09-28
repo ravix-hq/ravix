@@ -5,7 +5,7 @@ import {mountHook} from './setup.js'
 beforeEach(() => {
   document.body.innerHTML = `<div id="sections">
     <div id="section-other" data-section-drop="">
-      <section id="alpha" data-project-id="p1" draggable="true"><a href="/p/p1">Alpha</a></section>
+      <section id="alpha" data-project-id="p1" draggable="true"><a id="alpha-link" href="/p/p1">Alpha</a></section>
       <section id="fixed" data-project-id="p2" draggable="false"><a href="/p/p2">Fixed</a></section>
     </div>
     <div id="section-work" data-section-drop="s1"><span class="yard-label">Work</span><p id="empty">No projects</p></div>
@@ -20,6 +20,37 @@ const drag = (el, type, options = {}) => {
   return event
 }
 const $ = selector => document.querySelector(selector)
+
+test('restores a selected project link when a patch moves its row and drops focus', () => {
+  const {hook} = mountHook(ProjectSections, '#sections')
+  const row = $('#alpha')
+  const link = $('#alpha-link')
+  link.focus()
+  hook.beforeUpdate()
+  row.remove()
+  $('#section-work').append(row)
+  expect(document.activeElement).toBe(document.body)
+  hook.updated()
+  expect(document.activeElement).toBe(link)
+})
+
+test('does not steal focus from another control or restore a filtered-out project', () => {
+  const {hook} = mountHook(ProjectSections, '#sections')
+  const link = $('#alpha-link')
+  link.focus()
+  hook.beforeUpdate()
+  $('#fixed a').focus()
+  hook.updated()
+  expect(document.activeElement).toBe($('#fixed a'))
+  link.focus()
+  hook.beforeUpdate()
+  $('#alpha').remove()
+  hook.updated()
+  expect(document.activeElement).toBe(document.body)
+  hook.beforeUpdate()
+  hook.updated()
+  expect(document.activeElement).toBe(document.body)
+})
 
 test('dropping a project on another section moves it there', () => {
   const {events} = mountHook(ProjectSections, '#sections')
