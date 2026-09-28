@@ -404,6 +404,19 @@ type Say = (body: string) => Promise<void>;
  * up in development instead of in production.
  */
 async function act(prompt: string, emit: Emit, say: Say, conv: Conv, disk: Disk, pause: (ms: number) => Promise<void>): Promise<void> {
+  if (prompt === "Demonstrate a recovered tool error") {
+    emit({ kind: "output", stream: "acp", data: tool("failed-test", "mix test") });
+    emit({ kind: "output", stream: "acp", data: acp({
+      sessionUpdate: "tool_call_update", toolCallId: "failed-test", status: "failed",
+      content: [{ type: "content", content: { type: "text", text: "1 test failed" } }],
+    }) });
+    await say("I fixed the test and will run it again.");
+    emit({ kind: "output", stream: "acp", data: tool("retry-test", "mix test") });
+    emit({ kind: "output", stream: "acp", data: toolDone("retry-test", "All tests passed") });
+    await say("The fix is complete.");
+    return;
+  }
+
   const dir = /\/home\/sprite\/work\/[A-Za-z0-9._-]+/.exec(prompt)?.[0] ?? null;
 
   if (prompt.startsWith("[ravix] Open this track") && dir) {
