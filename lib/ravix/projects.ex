@@ -38,6 +38,7 @@ defmodule Ravix.Projects do
   `%Ravix.GitHub.Error{}` passed through from the client that produced it.
   """
 
+  alias Ravix.Accounts.Access
   alias Ravix.Accounts.Inference
   alias Ravix.Accounts.User
   alias Ravix.Analytics
@@ -109,6 +110,9 @@ defmodule Ravix.Projects do
     whole = People.Store.member_projects(user.id)
     tracks = People.Store.member_tracks(user.id)
 
+    # The fourth way in, when the switch lets it count (`Access.access_of/3`).
+    %{projects: in_workspaces, workspace_ids: workspace_ids} = Access.workspace_reach(user)
+
     # The projects behind the track memberships, in the order the tracks were
     # cut: the order the rail has always drawn them in, kept through the map.
     track_project_ids = tracks |> Enum.map(& &1.project_id) |> Enum.uniq()
@@ -118,7 +122,7 @@ defmodule Ravix.Projects do
     seen = MapSet.new(mine, & &1.id)
 
     {guest, _seen} =
-      Enum.reduce(whole ++ partial, {[], seen}, fn
+      Enum.reduce(whole ++ in_workspaces ++ partial, {[], seen}, fn
         %Project{archived_at: nil, deletion_requested_at: nil} = project, {acc, seen} ->
           if MapSet.member?(seen, project.id),
             do: {acc, seen},
@@ -130,7 +134,12 @@ defmodule Ravix.Projects do
 
     guest = Enum.reverse(guest)
     owners = owners_of(guest, user)
-    known = [projects: MapSet.new(whole, & &1.id), tracks: MapSet.new(tracks, & &1.project_id)]
+
+    known = [
+      projects: MapSet.new(whole, & &1.id),
+      workspaces: MapSet.new(workspace_ids),
+      tracks: MapSet.new(tracks, & &1.project_id)
+    ]
 
     for project <- mine ++ guest do
       access = access_of(user.id, project, known)

@@ -98,7 +98,8 @@ defmodule Ravix.Workspaces do
   access away is safe in either state. The membership is stamped revoked,
   and once that has committed every instance's subscribers are told on the
   workspace's hub topic, so an open page re-reads its access on the notice
-  (`RavixWeb.Live.WorkspaceGuard`). A caller who is not a member, and a
+  (`RavixWeb.Live.WorkspaceGuard`), and on each of its projects' topics
+  (`:people`), so an open track page does too. A caller who is not a member, and a
   target who is not one, both answer not found. The caller's own role is
   checked again under the removal's lock, so one revoked at the same moment
   is refused.
@@ -113,6 +114,12 @@ defmodule Ravix.Workspaces do
     with {:ok, %{workspace: workspace, role: role}} <- Access.workspace_access(user, workspace_id),
          :ok <- Access.require_capability(role, :manage_members),
          {:ok, _revoked} <- revoke(workspace.id, user_id, user.id) do
+      # A track page is subscribed to its project, not its workspace, and
+      # with `RAVIX_WORKSPACE_ACCESS` on the membership may be what admits
+      # it: tell each project, as a project-member removal does.
+      for project_id <- Store.project_ids(workspace.id),
+          do: Ravix.Hub.publish(project_id, :people)
+
       Ravix.Hub.publish_workspace(workspace.id, :members)
     end
   end

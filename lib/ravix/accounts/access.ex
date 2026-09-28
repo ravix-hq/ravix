@@ -48,12 +48,14 @@ defmodule Ravix.Accounts.Access do
   Membership a caller has already read, so `access_of/3` need not read it again.
 
   `:projects` is the set of project ids this person was let into whole;
+  `:workspaces` the ids of live workspaces they are a live member of;
   `:tracks` is the set of project ids they hold an open track on, or the
   track rows themselves. A key left out is read from the database for the
   one project asked about.
   """
   @type known :: [
           {:projects, MapSet.t(String.t())}
+          | {:workspaces, MapSet.t(String.t())}
           | {:tracks, MapSet.t(String.t()) | [Track.t()]}
         ]
 
@@ -76,29 +78,26 @@ defmodule Ravix.Accounts.Access do
   def open_tracks(%User{id: user_id}, project_ids, opts \\ []) do
     import Ecto.Query
 
-    visibility = listing_visibility(user_id)
     closed = Keyword.get(opts, :closed, %{})
 
     ranked =
       from(t in Track,
+        as: :track,
         join: p in Project,
+        as: :project,
         on: p.id == t.project_id,
-        left_join: pm in Ravix.Projects.ProjectMember,
-        on: pm.project_id == p.id and pm.user_id == ^user_id,
-        left_join: tm in Ravix.Tracks.TrackMember,
-        on: tm.track_id == t.id and tm.user_id == ^user_id,
         where: p.id in ^project_ids and is_nil(p.archived_at) and is_nil(p.deletion_requested_at),
-        where: is_nil(t.closed_at) or t.project_id in ^Map.keys(closed),
-        where: ^visibility,
-        select: %{
-          id: t.id,
-          rank:
-            over(row_number(),
-              partition_by: [t.project_id, fragment("? IS NULL", t.closed_at)],
-              order_by: [desc: t.closed_at, desc: t.id]
-            )
-        }
+        where: is_nil(t.closed_at) or t.project_id in ^Map.keys(closed)
       )
+      |> visible(user_id)
+      |> select([t], %{
+        id: t.id,
+        rank:
+          over(row_number(),
+            partition_by: [t.project_id, fragment("? IS NULL", t.closed_at)],
+            order_by: [desc: t.closed_at, desc: t.id]
+          )
+      })
 
     within =
       Enum.reduce(closed, dynamic([t], is_nil(t.closed_at)), fn {id, limit}, acc ->
@@ -123,38 +122,160 @@ defmodule Ravix.Accounts.Access do
 
   @doc """
   The ids of live projects this viewer may enter whole, as `project_access/2`
-  would admit them one at a time: owned, or joined as a project member. A
-  track share admits nothing here.
+  would admit them one at a time: owned, or joined as a project member, or --
+  with `Ravix.Config.workspace_access?/0` on -- in a workspace they are a live
+  member of. A track share admits nothing here.
   """
   @spec project_ids(User.t()) :: [String.t()]
   # ownership: no door before this one; this query establishes project membership.
   def project_ids(%User{id: user_id}) do
     import Ecto.Query
 
-    Repo.all(
+    query =
       from(p in Project,
+        as: :project,
         left_join: pm in Ravix.Projects.ProjectMember,
+        as: :vis_pm,
         on: pm.project_id == p.id and pm.user_id == ^user_id,
         where: is_nil(p.archived_at) and is_nil(p.deletion_requested_at),
-        where: p.user_id == ^user_id or not is_nil(pm.user_id),
         distinct: true,
         select: p.id
       )
-    )
+
+    if Ravix.Config.workspace_access?() do
+      query
+      |> workspace_joins(user_id)
+      |> where(
+        [project: p, vis_pm: pm, vis_wm: wm],
+        p.user_id == ^user_id or not is_nil(pm.user_id) or not is_nil(wm.user_id)
+      )
+      |> Repo.all()
+    else
+      query
+      |> where([project: p, vis_pm: pm], p.user_id == ^user_id or not is_nil(pm.user_id))
+      |> Repo.all()
+    end
   end
 
   @doc "Whether this person made the track: the stable id, or the login on rows from before it."
   def created_by?(%User{id: id, login: login}, %{created_by: creator} = track),
     do: if(is_nil(creator), do: track.created_by_login == login, else: creator == id)
 
-  defp listing_visibility(user_id) do
+  @doc """
+  Narrow a query over tracks to the ones `user_id` may see: the one listing
+  predicate, as `visible_track?/3` is the one row predicate. Every surface
+  that lists tracks by viewer -- the rail, MCP, badges, search -- goes
+  through this, so a private sibling's name or count cannot reach a list
+  the creator did not share it into.
+
+  The query binds the track as `:track` and its project as `:project`; this
+  adds its own joins under `:vis_*` names. With `RAVIX_WORKSPACE_ACCESS`
+  off it is exactly the legacy rule:
+
+    * a legacy track seat (`track_members`, from an invitation or link);
+    * a private track's creator, until project removal revoked them;
+    * a project-visible track, to the project's owner and members.
+
+  With it on, a project in a workspace also admits (a legacy project, with
+  no workspace, reads exactly as above):
+
+    * a project-visible track, to live members of that workspace;
+    * a private track, to whoever holds a permission row on it *and* is
+      still a live member of that workspace.
+
+  and its private tracks' creators count only while they still reach the
+  project, through the workspace or a legacy grant: leaving the workspace
+  ends even the creator's access (ADR 0009). Owners and admins get no
+  implicit read of a private track.
+  """
+  @spec visible(Ecto.Queryable.t(), String.t()) :: Ecto.Query.t()
+  def visible(query, user_id) do
+    import Ecto.Query
+
+    query =
+      query
+      |> join(:left, [project: p], pm in Ravix.Projects.ProjectMember,
+        as: :vis_pm,
+        on: pm.project_id == p.id and pm.user_id == ^user_id
+      )
+      |> join(:left, [track: t], tm in Ravix.Tracks.TrackMember,
+        as: :vis_tm,
+        on: tm.track_id == t.id and tm.user_id == ^user_id
+      )
+
+    if Ravix.Config.workspace_access?() do
+      query
+      |> workspace_joins(user_id)
+      |> join(:left, [track: t, vis_wm: wm], tp in Ravix.Tracks.TrackPermission,
+        as: :vis_tp,
+        on: tp.track_id == t.id and tp.user_id == ^user_id and tp.workspace_id == wm.workspace_id
+      )
+      |> where(^workspace_visibility(user_id))
+    else
+      where(query, ^legacy_visibility(user_id))
+    end
+  end
+
+  defp legacy_visibility(user_id) do
     import Ecto.Query
 
     dynamic(
-      [t, p, pm, tm],
+      [track: t, project: p, vis_pm: pm, vis_tm: tm],
       not is_nil(tm.user_id) or
         (t.visibility == :private and t.created_by == ^user_id and is_nil(t.creator_revoked_at)) or
         (t.visibility == :project and (p.user_id == ^user_id or not is_nil(pm.user_id)))
+    )
+  end
+
+  defp workspace_visibility(user_id) do
+    import Ecto.Query
+
+    in_project = in_project(user_id)
+    creator = still_creator(user_id, in_project)
+
+    dynamic(
+      [track: t, vis_tm: tm, vis_tp: tp],
+      not is_nil(tm.user_id) or ^creator or
+        (t.visibility == :private and not is_nil(tp.user_id)) or
+        (t.visibility == :project and ^in_project)
+    )
+  end
+
+  # Still in the project: through its workspace, or a legacy grant.
+  defp in_project(user_id) do
+    import Ecto.Query
+
+    dynamic(
+      [project: p, vis_pm: pm, vis_wm: wm],
+      p.user_id == ^user_id or not is_nil(pm.user_id) or not is_nil(wm.user_id)
+    )
+  end
+
+  # A private track's creator, while they are still in its project. A legacy
+  # project, with no workspace, keeps its creators as before.
+  defp still_creator(user_id, in_project) do
+    import Ecto.Query
+
+    dynamic(
+      [track: t, project: p],
+      t.visibility == :private and t.created_by == ^user_id and is_nil(t.creator_revoked_at) and
+        (is_nil(p.workspace_id) or ^in_project)
+    )
+  end
+
+  # The viewer's live membership of the project's live workspace, as `:vis_wm`.
+  # Null for a legacy project, an archived workspace or a revoked membership.
+  defp workspace_joins(query, user_id) do
+    import Ecto.Query
+
+    query
+    |> join(:left, [project: p], w in Ravix.Workspaces.Workspace,
+      as: :vis_w,
+      on: w.id == p.workspace_id and is_nil(w.archived_at)
+    )
+    |> join(:left, [vis_w: w], wm in Ravix.Workspaces.Membership,
+      as: :vis_wm,
+      on: wm.workspace_id == w.id and wm.user_id == ^user_id and is_nil(wm.revoked_at)
     )
   end
 
@@ -214,21 +335,108 @@ defmodule Ravix.Accounts.Access do
         {:ok, %ProjectAccess{project: project, role: :owner}}
 
       %Project{} = project ->
-        if project_member?(project.id, user_id),
+        if project_member?(project.id, user_id) or workspace_member?(project, user_id),
           do: {:ok, %ProjectAccess{project: project, role: :member}},
           else: {:error, :not_found}
     end
   end
 
   @doc """
+  Whether `user_id` is a live member of `project`'s live workspace, and the
+  switch lets that count. False for a legacy project, which has none, and
+  for everybody while `Ravix.Config.workspace_access?/0` is off.
+
+  A workspace member reaches the project as a legacy project member does
+  (`:member`, `:project`): its project-visible tracks and cutting their
+  own. Not its controls: `project_of/2` stays the legacy owner's.
+  """
+  @spec workspace_member?(Project.t(), String.t()) :: boolean()
+  def workspace_member?(%Project{workspace_id: workspace_id}, user_id)
+      when is_binary(workspace_id) do
+    Ravix.Config.workspace_access?() and
+      match?({:ok, _}, workspace_access(%User{id: user_id}, workspace_id))
+  end
+
+  def workspace_member?(%Project{}, _user_id), do: false
+
+  @doc """
+  The projects a live workspace membership admits `user` to, and those
+  workspaces' ids -- none while the switch is off. For a caller listing
+  several projects (`Ravix.Projects.list/2`), which passes the ids back to
+  `access_of/3` as `known: [workspaces: ...]`.
+  """
+  @spec workspace_reach(User.t()) :: %{
+          projects: [Project.t()],
+          workspace_ids: [String.t()]
+        }
+  def workspace_reach(%User{id: user_id}) do
+    if Ravix.Config.workspace_access?() do
+      # ownership: no door before this one -- a live membership is the fourth
+      # way in, and these reads are that fact.
+      %{
+        projects: Ravix.Workspaces.Store.member_projects(user_id),
+        workspace_ids: Enum.map(Ravix.Workspaces.Store.workspaces_of(user_id), &elem(&1, 0).id)
+      }
+    else
+      %{projects: [], workspace_ids: []}
+    end
+  end
+
+  @doc """
+  Whether anybody besides the owner reaches `track` through its workspace:
+  a permission row on a private track, another live member for a
+  project-visible one. False for a legacy project and while the switch is
+  off. Not an access decision -- it is whether the agent is told who is
+  speaking (`Ravix.PromptQueue.Server`), for a sender already admitted.
+  """
+  @spec workspace_shared?(Track.t(), Project.t()) :: boolean()
+  def workspace_shared?(%Track{} = track, %Project{workspace_id: workspace_id} = project)
+      when is_binary(workspace_id) do
+    Ravix.Config.workspace_access?() and
+      if track.visibility == :private,
+        # ownership: no door -- the sender was admitted by `track_access/2`;
+        # this reads only whether the track has an audience.
+        do: People.permitted_any?(track.id),
+        else: Ravix.Workspaces.Store.others_in?(workspace_id, project.user_id)
+  end
+
+  def workspace_shared?(%Track{}, %Project{}), do: false
+
+  @doc """
+  Who reaches a project's tracks through its workspace, for the people
+  lists and @mentions: its live members, and the live members holding a
+  permission row on each of `track_ids`. Empty for a legacy project and
+  while the switch is off, which is what keeps those lists as they are.
+  Each person still reaches a given track only as `visible_track?/3` says:
+  a member is on a project-visible track's list, a holder on its private one.
+  """
+  @spec workspace_audience(String.t(), [String.t()]) :: %{
+          members: [User.t()],
+          permitted: %{String.t() => [User.t()]}
+        }
+  def workspace_audience(project_id, track_ids) do
+    with true <- Ravix.Config.workspace_access?(),
+         %Project{workspace_id: workspace_id} when is_binary(workspace_id) <-
+           live_project(project_id) do
+      # ownership: no door -- callers were admitted to these tracks by
+      # `track_access/2` or `open_tracks/2`; these are the facts it decides from.
+      %{
+        members: Ravix.Workspaces.Store.live_members(workspace_id),
+        permitted: People.permitted_by_track(track_ids, workspace_id)
+      }
+    else
+      _ -> %{members: [], permitted: %{}}
+    end
+  end
+
+  @doc """
   A workspace the caller is an unrevoked member of, and their role in it.
 
-  ADR 0009's fourth door, added before anything goes through it: in this
-  release a workspace membership admits the caller to the workspace row and
-  nothing else. `project_access/2` and `track_access/2` above do not consult
-  it, so a project with a `workspace_id` is still reached only through its
-  legacy owner and members. Somebody else's workspace, a revoked membership,
-  an archived workspace and an id that does not exist all answer not found.
+  ADR 0009's fourth door. It answers about the workspace row alone, switch
+  or no switch; what a membership admits to *beyond* that row is
+  `workspace_member?/2`'s question, which the switch gates. Somebody else's
+  workspace, a revoked membership, an archived workspace and an id that
+  does not exist all answer not found.
   """
   @spec workspace_access(User.t(), String.t()) ::
           {:ok, %{workspace: Ravix.Workspaces.Workspace.t(), role: workspace_role()}}
@@ -344,26 +552,53 @@ defmodule Ravix.Accounts.Access do
         track.closed_at != nil ->
           {:error, :not_found}
 
-        creator?(%User{id: user_id}, track) or member?(track.id, user_id) or
-            project_member?(project.id, user_id) ->
-          {:ok, %TrackAccess{track: track, project: project, role: :member}}
-
+        # Visible and not the owner: every way `visible_track?/3` admits
+        # somebody is a seat, a creator, a project or workspace member or a
+        # permission row, and each of those works on the track as a member.
         true ->
-          {:error, :not_found}
+          {:ok, %TrackAccess{track: track, project: project, role: :member}}
       end
     else
       _ -> {:error, :not_found}
     end
   end
 
-  @doc "Whether a track row is visible through this user's project or track membership."
+  @doc """
+  Whether `user_id` may see a track: the one row predicate, the same rule
+  `visible/2` applies to a list (see there for the rule itself). The switch
+  is asked here and nowhere else, and a legacy project, with no workspace,
+  reads the legacy rule whatever it says.
+  """
+  @spec visible_track?(String.t(), Track.t(), Project.t()) :: boolean()
   def visible_track?(user_id, %Track{} = track, %Project{} = project) do
-    # ADR 0009: :project becomes workspace visibility when workspaces land.
+    if Ravix.Config.workspace_access?() and is_binary(project.workspace_id),
+      do: workspace_visible?(user_id, track, project),
+      else: legacy_visible?(user_id, track, project)
+  end
+
+  defp legacy_visible?(user_id, track, project) do
     (track.visibility == :private and creator?(%User{id: user_id}, track)) or
       member?(track.id, user_id) or
-      (track.visibility == :project and
-         (project.user_id == user_id or project_member?(project.id, user_id)))
+      (track.visibility == :project and legacy_grant?(project, user_id))
   end
+
+  defp workspace_visible?(user_id, track, project) do
+    in_workspace? = workspace_member?(project, user_id)
+
+    member?(track.id, user_id) or
+      case track.visibility do
+        :project ->
+          in_workspace? or legacy_grant?(project, user_id)
+
+        :private ->
+          (creator?(%User{id: user_id}, track) and
+             (in_workspace? or legacy_grant?(project, user_id))) or
+            (in_workspace? and permitted?(track.id, user_id, project.workspace_id))
+      end
+  end
+
+  defp legacy_grant?(project, user_id),
+    do: project.user_id == user_id or project_member?(project.id, user_id)
 
   @doc "Stable creator identity; login is presentation only."
   def creator?(%User{id: id}, %{created_by: creator} = track),
@@ -406,10 +641,16 @@ defmodule Ravix.Accounts.Access do
     cond do
       project.user_id == user_id -> :owner
       in_project?(project.id, user_id, known[:projects]) -> :project
+      in_workspace?(project, user_id, known[:workspaces]) -> :project
       on_tracks?(project.id, user_id, known[:tracks]) -> :tracks
       true -> nil
     end
   end
+
+  defp in_workspace?(project, user_id, nil), do: workspace_member?(project, user_id)
+
+  defp in_workspace?(%Project{workspace_id: id}, _user_id, %MapSet{} = ids),
+    do: is_binary(id) and Ravix.Config.workspace_access?() and MapSet.member?(ids, id)
 
   defp in_project?(project_id, user_id, nil), do: project_member?(project_id, user_id)
   defp in_project?(project_id, _user_id, %MapSet{} = ids), do: MapSet.member?(ids, project_id)
@@ -468,6 +709,15 @@ defmodule Ravix.Accounts.Access do
   """
   @spec member?(String.t(), String.t()) :: boolean()
   defdelegate member?(track_id, user_id), to: People
+
+  @doc """
+  Whether `user_id` holds a permission row on `track_id` under `workspace_id`.
+
+  # ownership: as `member?/2` -- no door before this one; it is the door,
+  one of the facts `visible_track?/3` is made of.
+  """
+  @spec permitted?(String.t(), String.t(), String.t()) :: boolean()
+  defdelegate permitted?(track_id, user_id, workspace_id), to: People
 
   @doc """
   Whether `user_id` was let into the whole of `project_id`.

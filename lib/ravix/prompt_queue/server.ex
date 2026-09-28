@@ -850,7 +850,8 @@ defmodule Ravix.PromptQueue.Server do
   # is told who is speaking -- not an access decision; `authorized?/1` is.
   defp shared?(track, project) do
     Repo.exists?(from(m in TrackMember, where: m.track_id == ^track.id)) or
-      Repo.exists?(from(m in ProjectMember, where: m.project_id == ^project.id))
+      Repo.exists?(from(m in ProjectMember, where: m.project_id == ^project.id)) or
+      Access.workspace_shared?(track, project)
   end
 
   # The sender still exists, still has the track, and the track is open with

@@ -6,7 +6,8 @@
   "scripts": {
     "mock": "RAVIX_URL=http://localhost:4000 bun mock/server.ts",
     "test:ui": "bun test",
-    "test:browser": "playwright test"
+    "test:browser": "playwright test",
+    "test:browser:workspace-access": "RAVIX_WORKSPACE_ACCESS=true playwright test browser/workspace-visibility.spec.js"
   },
   "devDependencies": {
     "@axe-core/playwright": "4.13.0",

@@ -114,8 +114,9 @@ defmodule Ravix.Workspaces.Store do
   Revoke `user_id`'s membership of `workspace_id` on behalf of `actor_id`.
 
   Stamps `revoked_at` rather than deleting, so the backfill cannot hand a
-  removed owner their membership back. Every live membership of the
-  workspace is locked first, and the remover's own standing is read under
+  removed owner their membership back, and deletes their permission rows in
+  the workspace's tracks, so re-admitting them restores none of those
+  shares. Every live membership of the workspace is locked first, and the remover's own standing is read under
   that lock: an admin demoted or removed at the same moment cannot finish a
   removal they started, and two owners removing each other at once cannot
   leave the workspace with none. Only an owner removes an owner.
@@ -124,6 +125,8 @@ defmodule Ravix.Workspaces.Store do
           {:ok, Membership.t()}
           | {:error, :not_found | :actor_gone | :not_manager | :owner_only | :last_owner}
   def revoke_membership(workspace_id, user_id, actor_id) do
+    # ownership: `Workspaces.remove_member/3` went through `Access.workspace_access/2`;
+    # the permission rows deleted inside are this membership's (see below).
     Repo.transaction(fn ->
       live =
         Repo.all(
@@ -137,9 +140,22 @@ defmodule Ravix.Workspaces.Store do
            :ok <- manager(actor),
            {:ok, target} <- live_member(live, user_id, :not_found),
            :ok <- removable(target, actor, Enum.count(live, &(&1.role == :owner))) do
-        target
-        |> Ecto.Changeset.change(revoked_at: DateTime.utc_now())
-        |> Repo.update!()
+        revoked =
+          target
+          |> Ecto.Changeset.change(revoked_at: DateTime.utc_now())
+          |> Repo.update!()
+
+        # ownership: `Workspaces.remove_member/3` admitted the remover through
+        # `Access.workspace_access/2`, re-checked under this lock. ADR 0009:
+        # removal invalidates their explicit track grants in the workspace,
+        # so a later re-admission starts from none. A share racing this waits
+        # on the membership lock (`People.Store.add_permission/4`).
+        Repo.delete_all(
+          from p in Ravix.Tracks.TrackPermission,
+            where: p.workspace_id == ^workspace_id and p.user_id == ^user_id
+        )
+
+        revoked
       else
         {:error, reason} -> Repo.rollback(reason)
       end
@@ -166,6 +182,61 @@ defmodule Ravix.Workspaces.Store do
     do: {:error, :last_owner}
 
   defp removable(_target, _actor, _owners), do: :ok
+
+  @doc """
+  Live projects in live workspaces where `user_id` holds a live membership,
+  oldest first. Rows only: `Ravix.Projects.list/2` asks for them only with
+  `RAVIX_WORKSPACE_ACCESS` on, and `Access.access_of/3` decides from there.
+  """
+  @spec member_projects(String.t()) :: [Project.t()]
+  def member_projects(user_id) do
+    # ownership: no door before this one -- a live membership is the fourth
+    # way in (`Access.access_of/3`), and this read is that fact.
+    Repo.all(
+      from p in Project,
+        join: w in Workspace,
+        on: w.id == p.workspace_id and is_nil(w.archived_at),
+        join: m in Membership,
+        on: m.workspace_id == w.id and m.user_id == ^user_id and is_nil(m.revoked_at),
+        where: is_nil(p.archived_at) and is_nil(p.deletion_requested_at),
+        order_by: [asc: p.created_at, asc: p.id]
+    )
+  end
+
+  @doc "The users holding a live membership of a workspace, by login."
+  @spec live_members(String.t()) :: [User.t()]
+  def live_members(workspace_id) do
+    # ownership: `Access.workspace_audience/2` asks, for tracks its caller
+    # was already admitted to; the user rows are who those members are.
+    Repo.all(
+      from u in User,
+        join: m in Membership,
+        on: m.user_id == u.id,
+        where: m.workspace_id == ^workspace_id and is_nil(m.revoked_at),
+        order_by: [asc: u.login]
+    )
+  end
+
+  @doc "Whether anybody besides `user_id` holds a live membership of the workspace."
+  @spec others_in?(String.t(), String.t()) :: boolean()
+  def others_in?(workspace_id, user_id) do
+    Repo.exists?(
+      from m in Membership,
+        where: m.workspace_id == ^workspace_id and m.user_id != ^user_id and is_nil(m.revoked_at)
+    )
+  end
+
+  @doc "The ids of the live projects in a workspace."
+  @spec project_ids(String.t()) :: [String.t()]
+  def project_ids(workspace_id) do
+    # ownership: no door -- ids only, for telling each project's hub that a
+    # workspace membership it may be read through has changed.
+    Repo.all(
+      from p in Project,
+        where: p.workspace_id == ^workspace_id and is_nil(p.archived_at),
+        select: p.id
+    )
+  end
 
   @typedoc """
   Whose creation path a reservation holds back: a workspace's, or, for a

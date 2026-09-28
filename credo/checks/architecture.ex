@@ -6,7 +6,7 @@ defmodule Ravix.Credo.Architecture do
   #
   # A membership row is named after its subject and lives in that subject's
   # directory -- `Ravix.Tracks.TrackMember` under `tracks/` -- but the context
-  # that reads and writes all seven of them is `Ravix.People`, because
+  # that reads and writes all eight of them is `Ravix.People`, because
   # membership is what People *is*. `tracks/track.ex` and `projects/project.ex`
   # name them only in `has_many`, which is a schema declaration and not a read.
   #
@@ -16,6 +16,7 @@ defmodule Ravix.Credo.Architecture do
     TrackInvite: :People,
     TrackLink: :People,
     TrackRead: :People,
+    TrackPermission: :People,
     ProjectMember: :People,
     ProjectInvite: :People,
     ProjectLink: :People

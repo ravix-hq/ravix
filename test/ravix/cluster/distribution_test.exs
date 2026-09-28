@@ -379,6 +379,77 @@ defmodule Ravix.Cluster.DistributionTest do
     end)
   end
 
+  # ADR 0009 phase 3b. No process caches workspace access -- the database is
+  # the state -- so what a second instance has to show is that the removal's
+  # notices reach a page there, and that its next check refuses.
+  test "a workspace removal on one instance reaches a track reader on another", ctx do
+    alias Ecto.Adapters.SQL.Sandbox
+    alias Ravix.Accounts.Access
+    alias Ravix.Repo
+    alias Ravix.Workspaces.{Membership, Store}
+    import Ravix.Factory
+    require Ecto.Query
+
+    previous = Application.fetch_env(:ravix, :workspace_access)
+
+    on_exit(fn ->
+      case previous do
+        {:ok, value} -> Application.put_env(:ravix, :workspace_access, value)
+        :error -> Application.delete_env(:ravix, :workspace_access)
+      end
+    end)
+
+    for node <- [node(), ctx.node],
+        do: :ok = :erpc.call(node, Application, :put_env, [:ravix, :workspace_access, true])
+
+    Sandbox.unboxed_run(Repo, fn ->
+      owner = insert_user()
+      member = insert_user()
+      {:ok, workspace} = Store.ensure_personal_workspace(owner)
+
+      Repo.insert!(%Membership{
+        workspace_id: workspace.id,
+        user_id: member.id,
+        role: :member,
+        created_at: DateTime.utc_now()
+      })
+
+      project = insert_project(user: owner)
+
+      Repo.update_all(Ecto.Query.where(Ravix.Projects.Project, id: ^project.id),
+        set: [workspace_id: workspace.id]
+      )
+
+      track = insert_track(project: project, created_by: owner.id)
+
+      try do
+        topics = [Ravix.Hub.topic(project.id), Ravix.Hub.workspace_topic(workspace.id), "ping"]
+        Node.spawn(ctx.node, Ravix.ClusterPeer, :reader, [self(), topics])
+        assert_receive {:ready, _reader}, 30_000
+        await_fanout()
+
+        assert {:ok, %{role: :member}} =
+                 :erpc.call(ctx.node, Access, :track_access, [member, track.id])
+
+        :ok = Ravix.Workspaces.remove_member(owner, workspace.id, member.id)
+
+        project_id = project.id
+        workspace_id = workspace.id
+        assert_receive {:forwarded, {:hub, %Event{name: :people, project_id: ^project_id}}}, 5_000
+        assert_receive {:forwarded, {:workspace_hub, ^workspace_id, :members}}, 5_000
+
+        assert {:error, :not_found} =
+                 :erpc.call(ctx.node, Access, :track_access, [member, track.id])
+      after
+        Repo.delete!(track)
+        Repo.delete!(Repo.get!(Ravix.Projects.Project, project.id))
+        # The personal workspace and both memberships go with their users.
+        Repo.delete!(member)
+        Repo.delete!(owner)
+      end
+    end)
+  end
+
   # ── the cluster ───────────────────────────────────────────────────────
 
   defp distribute!(name \\ :"ravix_primary@127.0.0.1") do

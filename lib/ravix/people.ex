@@ -261,6 +261,75 @@ defmodule Ravix.People do
     end
   end
 
+  # ── selected workspace members (ADR 0009) ───────────────────────────
+
+  @doc """
+  Share a private track with one member of its workspace: a permission row
+  (`Ravix.Tracks.TrackPermission`), ADR 0009's "selected workspace members".
+
+  The creator only, on a private track in a workspace project, and only
+  with `RAVIX_WORKSPACE_ACCESS` on -- while it is off this answers not found,
+  as the workspace door does. Sharing is workspace-only: somebody who is
+  not a live member of the track's workspace is refused with
+  `:not_workspace_member`, and nobody is admitted to the workspace by it.
+  Legacy seats and #299's invite links are `add/3` and the link routes,
+  unchanged.
+  """
+  @spec share(User.t(), String.t(), String.t()) ::
+          :ok | {:error, reason() | :not_workspace_member}
+  def share(%User{} = user, track_id, user_id) do
+    with {:ok, %{track: track, project: project, role: role}} <-
+           Access.track_access(user, track_id),
+         {:ok, _} <- Access.workspace_grant(user, project.workspace_id, :create_track),
+         :ok <- Access.require_track_manager(role, user, track, "share this track"),
+         :ok <- shareable(track),
+         {:ok, _} <- workspace_member(project.workspace_id, user_id),
+         :ok <- Store.add_permission(track.id, user_id, project.workspace_id, user.id) do
+      Ravix.Hub.publish(project.id, :people, track_id: track.id)
+      :ok
+    end
+  end
+
+  @doc """
+  Take a permission row away: the creator removing anybody, or a holder
+  removing themselves. Never behind the switch, since taking access away
+  is safe in either state. Their preview grants on the track go with it,
+  and open pages hear `:people` on the project.
+  """
+  @spec unshare(User.t(), String.t(), String.t()) :: :ok | {:error, reason()}
+  def unshare(%User{} = user, track_id, user_id) do
+    with {:ok, %{track: track, role: role}} <- Access.track_access(user, track_id),
+         :ok <-
+           if(user_id == user.id,
+             do: :ok,
+             else: Access.require_track_manager(role, user, track, "stop sharing this track")
+           ) do
+      Store.remove_permission(track, user_id)
+    end
+  end
+
+  @doc "Whom a track is shared with through permission rows. Anyone who reaches it may ask."
+  @spec shared_with(User.t(), String.t()) :: {:ok, [User.t()]} | {:error, :not_found}
+  def shared_with(%User{} = user, track_id) do
+    with {:ok, %{track: track}} <- Access.track_access(user, track_id),
+         do: {:ok, Store.permitted_on(track.id)}
+  end
+
+  defp shareable(%{visibility: :private}), do: :ok
+
+  defp shareable(_track),
+    do:
+      {:error,
+       {:unprocessable, "not_private",
+        "Only a private track is shared with selected members; the others are already visible to the workspace."}}
+
+  defp workspace_member(workspace_id, user_id) do
+    case Access.workspace_access(%User{id: user_id}, workspace_id) do
+      {:ok, access} -> {:ok, access}
+      {:error, :not_found} -> {:error, :not_workspace_member}
+    end
+  end
+
   # Somebody here by way of the *project* is not the track dialog's to
   # remove. Silently widening one click into "out of every track on this
   # machine" would be the most surprising thing either dialog could do, so

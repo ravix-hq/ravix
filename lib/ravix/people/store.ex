@@ -45,7 +45,7 @@ defmodule Ravix.People.Store do
   alias Ravix.Projects.Store, as: Projects
   alias Ravix.Repo
   alias Ravix.Tracks.Store, as: Tracks
-  alias Ravix.Tracks.{Track, TrackInvite, TrackLink, TrackMember, TrackRead}
+  alias Ravix.Tracks.{Track, TrackInvite, TrackLink, TrackMember, TrackPermission, TrackRead}
 
   # ── who else is in a track ─────────────────────────────────────
 
@@ -93,6 +93,136 @@ defmodule Ravix.People.Store do
     :ok
   end
 
+  # ── workspace permission rows (ADR 0009) ─────────────────────────────
+
+  @doc """
+  Share a private track with `user_id` under `workspace_id`, only while they
+  are a live member of it. Idempotent. The caller has established that the
+  track is the creator's, private and in that workspace.
+
+  The membership is read `FOR SHARE` in the insert's transaction, which is
+  what keeps a concurrent removal from leaving a fresh row behind: the
+  removal's `FOR UPDATE` (`Ravix.Workspaces.Store.revoke_membership/3`)
+  either waits for this share to commit and then deletes it, or has already
+  committed, in which case this read finds the membership revoked and
+  inserts nothing.
+  """
+  @spec add_permission(String.t(), String.t(), String.t(), String.t()) ::
+          :ok | {:error, :not_workspace_member}
+  def add_permission(track_id, user_id, workspace_id, granted_by) do
+    # ownership: `Ravix.People.share/3` went through `Access.track_access/2` and
+    # `Access.workspace_grant/3`; the membership locked inside is the target's.
+    Repo.transaction(fn ->
+      # ownership: `Ravix.People.share/3` admitted the creator through
+      # `Access.track_access/2` and `Access.workspace_grant/3`; this locks the
+      # target's own membership, which is what the row depends on.
+      live =
+        Repo.one(
+          from m in Ravix.Workspaces.Membership,
+            where:
+              m.workspace_id == ^workspace_id and m.user_id == ^user_id and
+                is_nil(m.revoked_at),
+            lock: "FOR SHARE"
+        )
+
+      if is_nil(live), do: Repo.rollback(:not_workspace_member)
+
+      %TrackPermission{}
+      |> TrackPermission.changeset(%{
+        track_id: track_id,
+        user_id: user_id,
+        workspace_id: workspace_id,
+        granted_by_user_id: granted_by
+      })
+      |> Repo.insert!(on_conflict: :nothing, conflict_target: [:track_id, :user_id])
+    end)
+    |> case do
+      {:ok, _row} -> :ok
+      {:error, :not_workspace_member} = refused -> refused
+    end
+  end
+
+  @doc """
+  Take a permission row away and, only if there was one, every preview
+  grant its holder had on the track, then tell the project's hub -- as
+  `remove_member/2` does for a legacy seat, and for the same reason. A
+  person here through a legacy seat keeps that seat and its grants.
+  """
+  @spec remove_permission(Track.t(), String.t()) :: :ok
+  def remove_permission(%Track{} = track, user_id) do
+    {deleted, _} =
+      Repo.delete_all(
+        from(p in TrackPermission, where: p.track_id == ^track.id and p.user_id == ^user_id)
+      )
+
+    if deleted > 0 do
+      # ownership: `Ravix.People.unshare/3` admitted the caller through
+      # `Access.track_access/2`; the deleted row gave these grants.
+      Ravix.Previews.Store.revoke(track.id, user_id)
+      Ravix.Previews.Store.revoke_agent(track.id, user_id)
+      Ravix.Hub.publish(track.project_id, :people, track_id: track.id)
+    end
+
+    :ok
+  end
+
+  @doc """
+  Whether `user_id` holds a permission row on `track_id` under
+  `workspace_id`. Only the row: whether it *counts* (the switch, a live
+  membership) is `Ravix.Accounts.Access`'s question.
+  """
+  @spec permitted?(String.t(), String.t(), String.t()) :: boolean()
+  def permitted?(track_id, user_id, workspace_id) do
+    Repo.exists?(
+      from(p in TrackPermission,
+        where:
+          p.track_id == ^track_id and p.user_id == ^user_id and p.workspace_id == ^workspace_id
+      )
+    )
+  end
+
+  @doc """
+  The permission holders on each of `track_ids` who are still live members
+  of `workspace_id`, keyed by track id. A track with none is absent.
+  """
+  @spec permitted_by_track([String.t()], String.t()) :: %{String.t() => [User.t()]}
+  def permitted_by_track([], _workspace_id), do: %{}
+
+  def permitted_by_track(track_ids, workspace_id) do
+    # ownership: `Access.workspace_audience/2` asks, for tracks admitted by
+    # `Access.track_access/2` or `Access.open_tracks/2`; the membership join
+    # keeps only holders still in the workspace.
+    Repo.all(
+      from(p in TrackPermission,
+        join: m in Ravix.Workspaces.Membership,
+        on: m.workspace_id == p.workspace_id and m.user_id == p.user_id and is_nil(m.revoked_at),
+        join: u in assoc(p, :user),
+        where: p.track_id in ^track_ids and p.workspace_id == ^workspace_id,
+        order_by: p.created_at,
+        select: {p.track_id, u}
+      )
+    )
+    |> Enum.group_by(&elem(&1, 0), &elem(&1, 1))
+  end
+
+  @doc "Whether anybody holds a permission row on `track_id`."
+  @spec permitted_any?(String.t()) :: boolean()
+  def permitted_any?(track_id),
+    do: Repo.exists?(from(p in TrackPermission, where: p.track_id == ^track_id))
+
+  @doc "Whom a track is shared with through permission rows, oldest first."
+  @spec permitted_on(String.t()) :: [User.t()]
+  def permitted_on(track_id) do
+    Repo.all(
+      from(p in TrackPermission,
+        join: u in assoc(p, :user),
+        where: p.track_id == ^track_id,
+        order_by: p.created_at,
+        select: u
+      )
+    )
+  end
+
   @doc "Whether `user_id` was named on this track. The owner is not: they own the project."
   @spec member?(String.t(), String.t()) :: boolean()
   def member?(track_id, user_id), do: seated?(TrackMember, :track_id, track_id, user_id)
@@ -121,27 +251,22 @@ defmodule Ravix.People.Store do
     |> Enum.group_by(&elem(&1, 0), &elem(&1, 1))
   end
 
-  @doc "The open tracks this person was invited to, across every project."
+  @doc """
+  The open tracks this person reaches one at a time -- a seat, a private
+  track they made or, with `RAVIX_WORKSPACE_ACCESS` on, one shared with
+  them -- across every project. `Ravix.Accounts.Access.visible/2` decides;
+  this keeps only the tracks a project or workspace grant would not
+  already have admitted.
+  """
   @spec member_tracks(String.t()) :: [Track.t()]
   def member_tracks(user_id) do
-    # ownership: no door before this membership query; it establishes Access visibility.
-    Repo.all(
-      from(t in Track,
-        left_join: m in TrackMember,
-        on: m.track_id == t.id and m.user_id == ^user_id,
-        where:
-          (not is_nil(m.user_id) or
-             (t.visibility == :private and t.created_by == ^user_id and
-                is_nil(t.creator_revoked_at))) and
-            is_nil(t.closed_at),
-        order_by: t.created_at,
-        select: t
-      )
-    )
+    # ownership: no door before this membership query; `Access.visible/2`
+    # is the visibility rule itself, applied here rather than copied.
+    Repo.all(narrow_tracks(user_id) |> order_by([track: t], t.created_at))
   end
 
   @doc """
-  Whether `user_id` was named on any open track of `project_id`.
+  Whether `user_id` reaches any open track of `project_id` one at a time.
 
   The third of the three ways into a project (see
   `Ravix.Accounts.Access.access_of/3`), asked as one `EXISTS` rather than
@@ -152,18 +277,20 @@ defmodule Ravix.People.Store do
   @spec track_member_of?(String.t(), String.t()) :: boolean()
   def track_member_of?(project_id, user_id) do
     # ownership: no door before this query, used by Access.access_of to establish membership.
-    Repo.exists?(
-      from(t in Track,
-        left_join: m in TrackMember,
-        on: m.track_id == t.id and m.user_id == ^user_id,
-        where:
-          (not is_nil(m.user_id) or
-             (t.visibility == :private and t.created_by == ^user_id and
-                is_nil(t.creator_revoked_at))) and
-            t.project_id == ^project_id and
-            is_nil(t.closed_at)
-      )
+    Repo.exists?(narrow_tracks(user_id) |> where([track: t], t.project_id == ^project_id))
+  end
+
+  defp narrow_tracks(user_id) do
+    from(t in Track,
+      as: :track,
+      join: p in Project,
+      as: :project,
+      on: p.id == t.project_id,
+      where: is_nil(t.closed_at),
+      select: t
     )
+    |> Ravix.Accounts.Access.visible(user_id)
+    |> where([track: t, vis_tm: tm], t.visibility == :private or not is_nil(tm.user_id))
   end
 
   # ── invitations to somebody who is not here yet ────────────────
@@ -706,16 +833,12 @@ defmodule Ravix.People.Store do
   @spec people_of(String.t(), String.t(), String.t()) :: [person()]
   def people_of(track_id, owner_id, project_id) do
     wide = project_members_of(project_id)
+    # ownership: the caller passed `Access.track_access/2` for this track.
+    audience = Ravix.Accounts.Access.workspace_audience(project_id, [track_id])
+    {shared, seen} = shared_people(owner_id, wide, audience.members)
 
-    people =
-      assemble(
-        shared_people(owner_id, wide),
-        MapSet.new(wide, & &1.id),
-        members_of(track_id),
-        invites_of(track_id)
-      )
-
-    private_people(track_id, people)
+    people = assemble(shared, seen, members_of(track_id), invites_of(track_id))
+    private_people(track_id, people, Map.get(audience.permitted, track_id, []))
   end
 
   @doc """
@@ -737,8 +860,9 @@ defmodule Ravix.People.Store do
 
   def people_by_track(track_ids, owner_id, project_id) do
     wide = project_members_of(project_id)
-    shared = shared_people(owner_id, wide)
-    seen = MapSet.new(wide, & &1.id)
+    # ownership: Access.track_access or Access.open_tracks admitted these track IDs.
+    audience = Ravix.Accounts.Access.workspace_audience(project_id, track_ids)
+    {shared, seen} = shared_people(owner_id, wide, audience.members)
     members = members_by_track(track_ids)
     invites = invites_by_track(track_ids)
 
@@ -754,13 +878,16 @@ defmodule Ravix.People.Store do
            seen,
            Map.get(members, track_id, []),
            Map.get(invites, track_id, [])
-         )
+         ),
+         Map.get(audience.permitted, track_id, [])
        )}
     end)
   end
 
   # ownership: callers passed Access.track_access or filtered their track list.
-  defp private_people(track_id, people) do
+  # `permitted` is who holds a live permission row on it, as
+  # `Access.workspace_audience/2` found them: none while the switch is off.
+  defp private_people(track_id, people, permitted) do
     track = if is_binary(track_id), do: Tracks.get_track(track_id), else: track_id
 
     case track do
@@ -772,9 +899,12 @@ defmodule Ravix.People.Store do
             do: Enum.map(owner_entry(creator), &%{&1 | via: :creator}),
             else: []
 
+        seen = MapSet.new(if creator_people == [], do: [], else: [creator])
+        shared = Enum.reject(permitted, &MapSet.member?(seen, &1.id))
+
         assemble(
-          creator_people,
-          MapSet.new(if creator_people == [], do: [], else: [creator]),
+          creator_people ++ Enum.map(shared, &Person.new(&1, :shared)),
+          MapSet.union(seen, MapSet.new(shared, & &1.id)),
           members,
           invites_of(id)
         )
@@ -784,9 +914,16 @@ defmodule Ravix.People.Store do
     end
   end
 
-  # The half of the list that is the same for every track on a project.
-  defp shared_people(owner_id, wide) do
-    owner_entry(owner_id) ++ Enum.map(wide, &Person.new(&1, :project))
+  # The half of the list that is the same for every track on a project, and
+  # the ids already in it: the owner, project members, then any live
+  # workspace members not already one of those.
+  defp shared_people(owner_id, wide, workspace) do
+    seen = MapSet.new([owner_id | Enum.map(wide, & &1.id)])
+    extra = Enum.reject(workspace, &MapSet.member?(seen, &1.id))
+
+    {owner_entry(owner_id) ++
+       Enum.map(wide, &Person.new(&1, :project)) ++ Enum.map(extra, &Person.new(&1, :workspace)),
+     MapSet.union(MapSet.new(wide, & &1.id), MapSet.new(extra, & &1.id))}
   end
 
   # Pending last, because they cannot read anything yet and the list is

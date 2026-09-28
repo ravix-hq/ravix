@@ -42,7 +42,8 @@ defmodule Ravix.Comments.Store do
 
   @doc """
   Everyone who might reach a track: the project's owner and members, the
-  track's members, and its creator. A superset; each is still put through
+  track's members, its creator and -- with `RAVIX_WORKSPACE_ACCESS` on --
+  its workspace's members and permission holders. A superset; each is still put through
   `Ravix.Accounts.Access.track_access/2` before being offered or notified.
   """
   def candidates(track, project) do
@@ -61,8 +62,17 @@ defmodule Ravix.Comments.Store do
         from m in Ravix.Tracks.TrackMember, where: m.track_id == ^track.id, select: m.user_id
       )
 
+    # ownership: as above; `Access.workspace_audience/2` is empty with the switch off.
+    audience = Ravix.Accounts.Access.workspace_audience(project.id, [track.id])
+    workspace = Enum.map(audience.members ++ Map.get(audience.permitted, track.id, []), & &1.id)
+
     ids =
-      Enum.uniq(Enum.reject([project.user_id, track.created_by | members ++ named], &is_nil/1))
+      Enum.uniq(
+        Enum.reject(
+          [project.user_id, track.created_by | members ++ named ++ workspace],
+          &is_nil/1
+        )
+      )
 
     # ownership: Access.thread_access as above; each is put through the door again.
     Repo.all(from u in User, where: u.id in ^ids, order_by: [asc: u.login])
