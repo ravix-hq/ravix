@@ -1127,6 +1127,29 @@ defmodule RavixWeb.WorkspaceLiveTest do
     refute has_element?(view, ".project-tree-tracks .track-num")
   end
 
+  test "a machine's sleep or wake re-reads the rail from the memo, not Fountain", %{conn: conn} do
+    user = insert_user()
+    project = insert_project(user: user)
+    track = insert_track(project: project)
+    {:ok, view, _} = live(log_in_user(conn, user), "/p/#{project.id}")
+    render_async(view)
+    parent = self()
+
+    stub(Tracks, :list, fn _user, _project_id, opts ->
+      send(parent, {:list, opts[:fresh]})
+      {:ok, [Tracks.present(Repo.get!(Ravix.Tracks.Track, track.id), project: project)]}
+    end)
+
+    send(
+      view.pid,
+      {:hub, %Ravix.Hub.Event{name: :machine, project_id: project.id, track_id: track.id}}
+    )
+
+    render_async(view)
+    assert_received {:list, false}
+    refute_received {:list, true}
+  end
+
   test "project tree marks navigation and closes the mobile drawer", %{conn: conn} do
     user = insert_user()
     project = insert_project(user: user)

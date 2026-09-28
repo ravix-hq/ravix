@@ -236,9 +236,9 @@ defmodule Ravix.Tracks.FollowerTest do
     assert {:ok, _} = subscribe(ctx, client: client)
     track_id = track.id
     assert_receive {:transcript, ^track_id, %Event{id: 7}}, 2_000
-    assert_receive {:hub, %Ravix.Hub.Event{name: :turn, track_id: ^track_id}}, 2_000
+    assert_receive {:hub, %Ravix.Hub.Event{name: :machine, track_id: ^track_id}}, 2_000
     assert_receive {:transcript, ^track_id, %Event{id: 9}}, 2_000
-    assert_receive {:hub, %Ravix.Hub.Event{name: :turn, track_id: ^track_id}}, 2_000
+    assert_receive {:hub, %Ravix.Hub.Event{name: :machine, track_id: ^track_id}}, 2_000
     assert is_nil(Repo.get!(Ravix.Tracks.Track, track.id).sandbox_suspended_at)
     Follower.unsubscribe(track.id)
   end

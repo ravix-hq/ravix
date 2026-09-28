@@ -28,6 +28,7 @@ defmodule Ravix.Terminal do
   alias Ravix.Accounts.User
   alias Ravix.Sprites
   alias Ravix.Tracks
+  alias Ravix.Tracks.Sleep
 
   defmodule Request do
     @moduledoc """
@@ -282,9 +283,12 @@ defmodule Ravix.Terminal do
             do: Sprites.running?(sprites, sprite),
             else: Sprites.reachable?(sprites, sprite)
 
-        if available?,
-          do: %Status{available: true, why: nil, cwd: track.workdir},
-          else: %Status{available: false, why: :unreachable, cwd: track.workdir}
+        if available? do
+          woke(track)
+          %Status{available: true, why: nil, cwd: track.workdir}
+        else
+          %Status{available: false, why: :unreachable, cwd: track.workdir}
+        end
 
       {:error, {:conflict, "no_machine", _}} ->
         %Status{available: false, why: :no_machine, cwd: track.workdir}
@@ -293,6 +297,14 @@ defmodule Ravix.Terminal do
         %Status{available: false, why: :no_sprite, cwd: track.workdir}
     end
   end
+
+  # A running machine is not asleep, whatever the stream last said. Only a
+  # row that says otherwise is written, so a probe of an awake one is free.
+  defp woke(%{sandbox_layout: :dedicated, sandbox_suspended_at: %DateTime{}} = track),
+    # ownership: Access.track_access in status/3 admitted this track.
+    do: Sleep.record(track.id, false)
+
+  defp woke(_track), do: :ok
 
   # The machine, then the sprite behind it: the two answers the panels tell apart.
   defp sprite_of(project, track) do

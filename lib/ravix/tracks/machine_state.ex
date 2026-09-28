@@ -11,7 +11,7 @@ defmodule Ravix.Tracks.MachineState do
 
   Error is for a failure somebody must act on (setup failed, the machine
   failed); everything that recovers by itself or with the next message
-  (starting, restarting, asleep, a failed turn) is said without alarm.
+  (starting, restarting, asleep, a failed turn) carries no failure badge.
 
   The order of the clauses is the precedence. Closing outranks everything,
   since the machine is going away whatever else it was doing; an error

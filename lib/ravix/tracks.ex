@@ -1981,6 +1981,16 @@ defmodule Ravix.Tracks do
     end
   end
 
+  # A dedicated machine that answered a read is awake; only a row still
+  # marked asleep is written.
+  defp disk_result(
+         %{sandbox_layout: :dedicated, sandbox_suspended_at: %DateTime{}} = track,
+         {:ok, _} = result
+       ) do
+    Sleep.record(track.id, false)
+    result
+  end
+
   defp disk_result(_track, result), do: result
 
   defp machine_read(user, track_id) do

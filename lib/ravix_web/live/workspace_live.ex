@@ -1027,6 +1027,11 @@ defmodule RavixWeb.WorkspaceLive do
   def handle_info({:hub, %Event{name: :comment, project_id: id}}, socket),
     do: {:noreply, refresh_tracks(socket, id, fresh: false)}
 
+  # A machine went to sleep or woke: the row says so, and the memo serves
+  # everything else, so nothing is asked of Fountain.
+  def handle_info({:hub, %Event{name: :machine, project_id: id}}, socket),
+    do: {:noreply, refresh_tracks(socket, id, fresh: false)}
+
   # A read mark is one person's own, and the only thing on this page it can
   # move is that person's unread dot on the track it names. So it is applied
   # to the rail in hand and reads nothing: not Fountain, not the database.

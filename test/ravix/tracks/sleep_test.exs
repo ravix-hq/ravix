@@ -57,7 +57,7 @@ defmodule Ravix.Tracks.SleepTest do
       track_id = track.id
       assert :ok = Sleep.observe(track.id, "conv", [suspended(1)])
       assert %DateTime{} = Repo.get!(Track, track.id).sandbox_suspended_at
-      assert_receive {:hub, %Hub.Event{name: :turn, track_id: ^track_id}}
+      assert_receive {:hub, %Hub.Event{name: :machine, track_id: ^track_id}}
 
       # A repeat changes nothing and publishes nothing.
       assert :ok = Sleep.observe(track.id, "conv", [suspended(2)])
@@ -65,7 +65,7 @@ defmodule Ravix.Tracks.SleepTest do
 
       assert :ok = Sleep.observe(track.id, "conv", [started(3)])
       assert is_nil(Repo.get!(Track, track.id).sandbox_suspended_at)
-      assert_receive {:hub, %Hub.Event{name: :turn, track_id: ^track_id}}
+      assert_receive {:hub, %Hub.Event{name: :machine, track_id: ^track_id}}
     end
 
     test "a conversation the thread has moved on from is ignored", %{track: track} do

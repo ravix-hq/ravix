@@ -53,11 +53,14 @@ defmodule Ravix.Tracks.Sleep do
     end
   end
 
-  @doc "Record a dedicated track's sandbox as asleep or awake; publish only a change."
+  @doc """
+  Record a dedicated track's sandbox as asleep or awake; publish only a
+  change, as `:machine`, which readers answer from the database alone.
+  """
   @spec record(String.t(), boolean()) :: :ok
   def record(track_id, suspended?) do
     case Store.set_sandbox_suspended(track_id, suspended?) do
-      {project_id, ^track_id} -> Hub.publish(project_id, :turn, track_id: track_id)
+      {project_id, ^track_id} -> Hub.publish(project_id, :machine, track_id: track_id)
       nil -> :ok
     end
   end

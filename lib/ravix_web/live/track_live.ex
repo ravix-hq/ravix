@@ -2586,6 +2586,9 @@ defmodule RavixWeb.TrackLive do
       |> refresh_queue()
       |> catch_up_transcript()
 
+  # Sleep is on the row; the conversations can come from the memo.
+  defp hub(%Event{name: :machine}, socket), do: refresh_detail(socket, fresh: false)
+
   defp hub(%Event{name: name}, socket) when name in [:people, :tracks, :settings],
     do: socket |> refresh_detail() |> refresh_plan_items()
 
@@ -2639,9 +2642,10 @@ defmodule RavixWeb.TrackLive do
   # arriving mid-read cannot render a detail older than the one after it. The
   # superseded read itself still runs; what keeps a burst from costing a call
   # per event is the memo behind `Tracks.get/2`, not this.
-  defp refresh_detail(%{assigns: %{track: nil}} = socket), do: socket
+  defp refresh_detail(socket, opts \\ [fresh: true])
+  defp refresh_detail(%{assigns: %{track: nil}} = socket, _opts), do: socket
 
-  defp refresh_detail(socket) do
+  defp refresh_detail(socket, opts) do
     user = socket.assigns.current_user
     id = socket.assigns.track_id
     thread_id = socket.assigns.thread_id
@@ -2649,7 +2653,7 @@ defmodule RavixWeb.TrackLive do
     generation = socket.assigns.thread_generation
 
     traced_async(socket, {:detail, thread_id, generation}, fn ->
-      Tracks.get(user, id, fresh: true, thread_id: thread_id)
+      Tracks.get(user, id, fresh: Keyword.fetch!(opts, :fresh), thread_id: thread_id)
     end)
   end
 

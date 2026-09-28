@@ -58,12 +58,16 @@ defmodule Ravix.Hub.Event do
       on `thread_id`. Nothing on Fountain moved either: a track page re-reads
       that thread's comments, and a rail re-reads the project's unread marks
       from its memo.
+    * `:machine` -- `Ravix.Tracks.Sleep` recorded that `track_id`'s machine
+      went to sleep or woke. The fact is on the track's row, so readers
+      re-read the database and the memo, not Fountain.
   """
 
-  @names [:people, :tracks, :turn, :queue, :settings, :here, :read, :comment]
+  @names [:people, :tracks, :turn, :queue, :settings, :here, :read, :comment, :machine]
 
-  @typedoc "Which of the eight things happened."
-  @type name :: :people | :tracks | :turn | :queue | :settings | :here | :read | :comment
+  @typedoc "Which of the nine things happened."
+  @type name ::
+          :people | :tracks | :turn | :queue | :settings | :here | :read | :comment | :machine
 
   @type t :: %__MODULE__{
           name: name(),

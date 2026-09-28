@@ -614,13 +614,12 @@ html[data-inspector="closed"] #inspector-toggle .label-show { display: inline; }
 .dot { flex: none; width: 6px; height: 6px; border-radius: 999px; background: var(--dimmer); }
 .dot.ready { background: var(--ok); }
 .dot.running, .dot.working { background: var(--accent); animation: pulse 1.4s ease-in-out infinite; }
-.dot.opening, .dot.queued { background: var(--warn); animation: pulse 1.4s ease-in-out infinite; }
+.dot.opening, .dot.queued, .dot.starting, .dot.restarting { background: var(--warn); animation: pulse 1.4s ease-in-out infinite; }
 .dot.failed, .dot.setup_failed, .dot.error { background: var(--bad); }
-/* A track's machine (`Ravix.Tracks.MachineState`). Red is only for a
-   failure somebody must act on; states that recover by themselves are
-   neutral: starting and restarting pulse grey, asleep is a hollow ring,
-   idle a plain dot where a chip needs one. Closing is solid orange. */
-.dot.starting, .dot.restarting { background: var(--dim); animation: pulse 1.4s ease-in-out infinite; }
+/* A track's machine (`Ravix.Tracks.MachineState`). Orange is provisioning,
+   blue working, a pulse progressing; red is only for an error somebody must
+   act on. Starting and restarting pulse orange (above), closing is solid
+   orange, asleep a hollow grey ring, idle a plain dot where a chip needs one. */
 .dot.closing { background: var(--warn); }
 .dot.asleep { background: transparent; box-shadow: inset 0 0 0 1.5px var(--dim); }
 .dot.idle { background: var(--dim); }

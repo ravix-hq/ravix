@@ -1551,6 +1551,32 @@ defmodule Ravix.TracksTest do
       end
     end
 
+    test "a dedicated read that succeeds clears a stale Asleep", ctx do
+      sandbox_id = "awake-#{ctx.track.id}"
+      path = ctx.track.workdir
+
+      Repo.update!(
+        Ecto.Changeset.change(ctx.track,
+          sandbox_layout: :dedicated,
+          sandbox_id: sandbox_id,
+          sandbox_suspended_at: DateTime.utc_now()
+        )
+      )
+
+      disk_fountain(
+        :dedicated,
+        ctx.project,
+        [
+          {%{method: "GET", path: "/api/sandboxes/#{sandbox_id}/files"},
+           {200, [], %{data: %{path: path, entries: []}}}}
+        ],
+        sandbox_id
+      )
+
+      assert {:ok, _listing} = Tracks.files(ctx.owner, ctx.track.id, nil)
+      assert is_nil(Repo.get!(Track, ctx.track.id).sandbox_suspended_at)
+    end
+
     test "a dedicated read preserves real provider failures", ctx do
       sandbox_id = "failed-#{ctx.track.id}"
 

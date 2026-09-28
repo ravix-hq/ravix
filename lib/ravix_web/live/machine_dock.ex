@@ -249,6 +249,14 @@ defmodule RavixWeb.Live.MachineDock do
        when why in [:no_sprite, :unreachable],
        do: "Idle. The machine did not answer just now; your next message wakes it."
 
+  # The probe itself failed: that says nothing about the machine.
+  defp machine_status(:unavailable, _machine),
+    do: "Machine status is unavailable. Try again later."
+
+  # The probe found it running, so a stale Asleep (the row is cleared on the
+  # way) must not say otherwise.
+  defp machine_status(%Terminal.Status{available: true}, %{state: :asleep}), do: "Idle."
+
   defp machine_status(_status, nil), do: "Checking machine status…"
   defp machine_status(_status, %{state: state, detail: nil}), do: "#{MachineState.label(state)}."
 

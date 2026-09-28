@@ -1733,6 +1733,51 @@ defmodule RavixWeb.TrackLiveTest do
       chip(ctx.view, "Idle", nil)
     end
 
+    test "a machine the probe finds running is not called asleep in the dock", ctx do
+      stub(Terminal, :status, fn _, _, _ ->
+        {:ok, %Terminal.Status{available: true, why: nil, cwd: ctx.track.workdir}}
+      end)
+
+      machine_row(ctx,
+        opened_at: DateTime.utc_now(),
+        sandbox_layout: :dedicated,
+        sandbox_state: :ready,
+        sandbox_suspended_at: DateTime.utc_now()
+      )
+
+      {:ok, parent, _} = live(ctx.conn, "/p/#{ctx.project.id}/t/#{ctx.track.id}")
+      view = find_live_child(parent, "track-host")
+      settle(view)
+      assert has_element?(view, "#track-machine-status", "Idle.")
+      refute has_element?(view, "#track-machine-status", "Asleep")
+    end
+
+    test "a sleep or wake is re-read from the row and the memo, not Fountain", ctx do
+      parent = self()
+
+      stub(Tracks, :get, fn _, id, opts ->
+        send(parent, {:get, opts[:fresh]})
+
+        {:ok,
+         %{
+           track: Tracks.present(Repo.get!(Track, id), role: :owner),
+           header: blank_header(),
+           threads: thread_options(id),
+           starters: [],
+           models: []
+         }}
+      end)
+
+      send(
+        ctx.view.pid,
+        {:hub, %Event{name: :machine, project_id: ctx.project.id, track_id: ctx.track.id}}
+      )
+
+      render_async(ctx.view)
+      assert_received {:get, false}
+      refute_received {:get, true}
+    end
+
     test "the dock's status line uses the same words", ctx do
       stub(Terminal, :status, fn _, _, _ ->
         {:ok, %Terminal.Status{available: false, why: :no_sprite, cwd: ctx.track.workdir}}
@@ -3195,7 +3240,7 @@ defmodule RavixWeb.TrackLiveTest do
           "Machine status is unavailable because the machine connection is not configured.",
         no_sprite: "Idle. The machine did not answer just now; your next message wakes it.",
         unreachable: "Idle. The machine did not answer just now; your next message wakes it.",
-        error: "Idle."
+        error: "Machine status is unavailable. Try again later."
       ] do
     @status_reason reason
     @status_sentence sentence
