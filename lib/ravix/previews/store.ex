@@ -305,8 +305,18 @@ defmodule Ravix.Previews.Store do
 
   @doc "Drop a track's browser grants, or only those of one user's sessions."
   @spec revoke(String.t(), String.t() | nil) :: :ok
-  def revoke(track_id, user_id \\ nil) do
-    query = from g in PreviewGrant, where: g.track_id == ^track_id
+  def revoke(track_id, user_id \\ nil), do: revoke_tracks([track_id], user_id)
+
+  @doc """
+  `revoke/2` for several tracks in one statement.
+
+  For a caller holding every track of a project --- project removal, orphan
+  cleanup --- where one statement per track was one round trip per track
+  inside a transaction that already holds their rows locked.
+  """
+  @spec revoke_tracks([String.t()], String.t() | nil) :: :ok
+  def revoke_tracks(track_ids, user_id \\ nil) do
+    query = from g in PreviewGrant, where: g.track_id in ^track_ids
 
     query =
       if user_id,
@@ -385,8 +395,12 @@ defmodule Ravix.Previews.Store do
 
   @doc "Drop a track's agent grant, or only one user's."
   @spec revoke_agent(String.t(), String.t() | nil) :: :ok
-  def revoke_agent(track_id, user_id \\ nil) do
-    query = from g in PreviewAgentGrant, where: g.track_id == ^track_id
+  def revoke_agent(track_id, user_id \\ nil), do: revoke_agent_tracks([track_id], user_id)
+
+  @doc "`revoke_agent/2` for several tracks in one statement. See `revoke_tracks/2`."
+  @spec revoke_agent_tracks([String.t()], String.t() | nil) :: :ok
+  def revoke_agent_tracks(track_ids, user_id \\ nil) do
+    query = from g in PreviewAgentGrant, where: g.track_id in ^track_ids
     query = if user_id, do: where(query, [g], g.user_id == ^user_id), else: query
     Repo.delete_all(query)
     :ok

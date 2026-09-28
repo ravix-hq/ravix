@@ -267,6 +267,107 @@ defmodule Ravix.PrivateTracksTest do
     assert id == other.id
   end
 
+  test "a close the machine refuses is a tagged error, not a crash", c do
+    # Two orphans: this project's private track once its creator is revoked
+    # and its one invitee has gone, and a track that never had a creator.
+    assert {:ok, _} = People.remove(c.creator, c.track.id, c.invited.login)
+
+    other =
+      insert_track(
+        project: c.project,
+        visibility: :private,
+        sandbox_layout: :dedicated,
+        created_by: nil
+      )
+
+    assert {:ok, _} = People.remove_project(c.owner, c.project.id, c.creator.login)
+    {_token, session} = insert_session(c.joiner)
+    grant = insert_preview_grant(other, session)
+    assert {:ok, 2} = Tracks.orphan_private_count(c.owner, c.project.id)
+
+    # The close walks the orphans in id order, so refusing the later of the
+    # two is refusing after the earlier one has already been written: one
+    # button press is one action, and a machine that says no has to undo it.
+    refused = Enum.max([c.track.id, other.id])
+
+    stub(Ravix.Tracks.Sandbox.Store, :request_close, fn track ->
+      if track.id == refused,
+        do: {:error, :closing},
+        else: call_original(Ravix.Tracks.Sandbox.Store, :request_close, [track])
+    end)
+
+    assert {:error, {:unavailable, "orphan_close_failed", message}} =
+             Tracks.close_orphaned_private(c.owner, c.project.id)
+
+    assert message =~ "could not be closed"
+
+    # Nothing was half-done: neither machine is closing, the grant on the one
+    # that would have gone first is still there, and both orphans are still
+    # there to try again on.
+    for id <- [c.track.id, other.id],
+        do: refute(Repo.get!(Ravix.Tracks.Track, id).sandbox_state == :closing)
+
+    assert Repo.get(Ravix.Previews.PreviewGrant, grant.hash)
+    assert {:ok, 2} = Tracks.orphan_private_count(c.owner, c.project.id)
+  end
+
+  test "project removal batches its per-track work and announces it last", c do
+    others = for _ <- 1..3, do: insert_track(project: c.project, created_by: c.creator.id)
+    {_token, session} = insert_session(c.creator)
+    grants = for track <- [c.track | others], do: insert_preview_grant(track, session)
+
+    {:ok, item} =
+      Tracks.prompt(c.creator, c.track.id, %{
+        prompt: "Work in flight",
+        request_id: Ecto.UUID.generate()
+      })
+
+    test_pid = self()
+
+    # One statement per kind of row, not one per track: the calls carry every
+    # id at once.
+    stub(Ravix.Previews.Store, :revoke_tracks, fn ids, user_id ->
+      send(test_pid, {:revoked, length(ids)})
+      call_original(Ravix.Previews.Store, :revoke_tracks, [ids, user_id])
+    end)
+
+    # Every announcement lands after the transaction that wrote the removal,
+    # so a page re-reading on one cannot see the access it just lost.
+    stub(Ravix.Hub, :publish, fn project_id, name ->
+      send(test_pid, {:published, name})
+      call_original(Ravix.Hub, :publish, [project_id, name])
+    end)
+
+    stub(Ravix.Hub, :publish, fn project_id, name, meta ->
+      send(test_pid, {:published, name})
+      call_original(Ravix.Hub, :publish, [project_id, name, meta])
+    end)
+
+    assert :ok = PeopleStore.remove_project_member(c.project.id, c.creator.id)
+
+    # In this order, and mailbox order from one sender is the order they
+    # happened in: the four tracks revoked in one call, then the queue of the
+    # one track that had work, then the people list --- both announcements
+    # after the transaction that wrote the removal.
+    assert drain() == [{:revoked, 4}, {:published, :queue}, {:published, :people}]
+
+    for grant <- grants, do: refute(Repo.get(Ravix.Previews.PreviewGrant, grant.hash))
+    assert Repo.get_by!(Ravix.PromptQueue.Item, id: item.id).status == :cancelled
+    refute PeopleStore.project_member?(c.project.id, c.creator.id)
+    assert Repo.get!(Ravix.Tracks.Track, c.track.id).creator_revoked_at
+
+    for track <- [c.track | others],
+        do: assert({:error, :not_found} = Tracks.get(c.creator, track.id))
+  end
+
+  defp drain(acc \\ []) do
+    receive do
+      message -> drain([message | acc])
+    after
+      0 -> Enum.reverse(acc)
+    end
+  end
+
   test "shared tracks cannot become private or be created private", c do
     shared = insert_track(project: c.project, created_by: c.creator.id)
 

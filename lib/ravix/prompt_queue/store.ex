@@ -532,20 +532,46 @@ defmodule Ravix.PromptQueue.Store do
   @doc "Cancel everything on a track that has not been sent: the track closed, or its project went."
   @spec cancel_track(String.t()) :: :ok
   def cancel_track(track_id) do
-    Item
-    |> where([p], p.track_id == ^track_id and p.status != :sent)
-    |> Repo.update_all(set: [status: :cancelled, body: nil, payload: "", error: nil])
-
+    cancel_tracks([track_id])
+    # Unconditionally, unlike the plural form: a closing track's page is told
+    # to re-read whether or not there was anything queued on it to cancel.
     publish_queue(track_id)
   end
 
-  @doc "Cancel a removed person's outstanding work on a track."
-  def cancel_user_track(track_id, user_id) do
-    Item
-    |> where([p], p.track_id == ^track_id and p.user_id == ^user_id and p.status != :sent)
-    |> Repo.update_all(set: [status: :cancelled, body: nil, payload: "", error: nil])
+  @doc """
+  `cancel_track/1` for several tracks in one statement, announcing nothing.
 
-    publish_queue(track_id)
+  The tracks that actually had work come back, for a caller inside its own
+  transaction to hand to `publish_queues/1` once it has committed. Telling a
+  page to re-read before the commit is visible is telling it to re-read the
+  rows the cancellation was about to replace.
+  """
+  @spec cancel_tracks([String.t()]) :: [String.t()]
+  def cancel_tracks(track_ids) do
+    Item
+    |> where([p], p.track_id in ^track_ids and p.status != :sent)
+    |> cancel_all()
+  end
+
+  @doc "Cancel a removed person's outstanding work across these tracks. See `cancel_tracks/1`."
+  @spec cancel_user_tracks([String.t()], String.t()) :: [String.t()]
+  def cancel_user_tracks(track_ids, user_id) do
+    Item
+    |> where([p], p.track_id in ^track_ids and p.user_id == ^user_id and p.status != :sent)
+    |> cancel_all()
+  end
+
+  @doc "Announce these tracks' queues, for a caller that cancelled inside its own transaction."
+  @spec publish_queues([String.t()]) :: :ok
+  def publish_queues(track_ids), do: Enum.each(track_ids, &publish_queue/1)
+
+  defp cancel_all(query) do
+    {_count, tracks} =
+      query
+      |> select([p], p.track_id)
+      |> Repo.update_all(set: [status: :cancelled, body: nil, payload: "", error: nil])
+
+    Enum.uniq(tracks)
   end
 
   defp validate_request_id(id) when is_binary(id) do
