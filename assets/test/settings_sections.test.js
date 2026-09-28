@@ -160,3 +160,21 @@ test('agent picker warns on changed selection, ignores credential typing, and di
   expect(hook.dirty).toBe(false)
   expect(key(window, 'Escape').defaultPrevented).toBe(false)
 })
+
+test('variable row actions warn before leaving and discard restores the server rows', () => {
+  const {hook} = mountHook(SettingsSections, '#settings')
+  hook.el.dataset.component = '7'
+  hook.el.insertAdjacentHTML('beforeend', `<button data-settings-section="variables">Environment variables</button>
+    <section data-settings-panel="variables" hidden><h3 tabindex="-1">Environment variables</h3><form><button type="button" data-env-row-action>Add variable</button><button class="primary">Save variables</button></form></section>`)
+  const calls = []
+  hook.pushEventTo = (...args) => calls.push(args)
+  document.querySelector('[data-settings-section=variables]').click()
+  document.querySelector('[data-env-row-action]').click()
+  expect(hook.dirty).toBe(true)
+  document.querySelector('[data-settings-section=general]').click()
+  expect(hook.section).toBe('variables')
+  expect(document.activeElement.textContent).toBe('Save variables')
+  document.querySelector('[data-settings-discard]').click()
+  expect(calls).toEqual([['7', 'discard-env-vars', {}]])
+  expect(hook.dirty).toBe(false)
+})

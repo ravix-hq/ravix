@@ -14,7 +14,15 @@ config :ravix,
   preview_backend: RavixWeb.PreviewGateway.RavixBackend
 
 # OAuth codes, verifiers, tokens and JSON-RPC arguments must never enter request logs.
-config :phoenix, :filter_parameters, ["password", "secret", "token", "code", "prompt", "params"]
+config :phoenix, :filter_parameters, [
+  "env_vars",
+  "password",
+  "secret",
+  "token",
+  "code",
+  "prompt",
+  "params"
+]
 
 # Configure the endpoint
 config :ravix, RavixWeb.Endpoint,

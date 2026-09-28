@@ -14,6 +14,11 @@ export const SettingsSections = {
       if (event.target.id === 'settings-runtime') this.models(event.target.value)
     }
     this.onClick = event => {
+      if (event.target.closest('[data-env-row-action]')) {
+        this.dirty = true
+        this.showSection()
+        this.feedback('Unsaved changes')
+      }
       const agent = event.target.closest('[data-settings-agent]')
       if (agent && !agent.disabled && agent.getAttribute('aria-pressed') !== 'true') {
         this.dirty = true
@@ -104,6 +109,9 @@ export const SettingsSections = {
     const panel = this.el.querySelector(`[data-settings-panel="${this.section}"]`)
     panel.querySelectorAll('form').forEach(form => form.reset())
     panel.querySelectorAll('input[type="password"]').forEach(input => { input.value = '' })
+    if (this.section === 'variables' && this.el.dataset.component) {
+      this.pushEventTo(this.el.dataset.component, 'discard-env-vars', {})
+    }
     if (this.section === 'agent') {
       if (this.el.dataset.component) this.pushEventTo(this.el.dataset.component, 'discard-agent', {})
       this.models(this.el.querySelector('#settings-runtime').value, this.el.dataset.savedModel)

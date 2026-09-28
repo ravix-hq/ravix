@@ -25,7 +25,7 @@ defmodule Ravix.Projects.Settings do
   alias Ravix.Fountain
   alias Ravix.Fountain.Shapes.Catalog
   alias Ravix.Projects
-  alias Ravix.Projects.{Project, Store}
+  alias Ravix.Projects.{EnvironmentVariables, Project, Store}
 
   @typedoc """
   What the panel is given to show. `@enforce_keys` covers all of it, so a
@@ -41,6 +41,7 @@ defmodule Ravix.Projects.Settings do
     :name,
     :setup_script,
     :packages,
+    :env_vars,
     :env_keys,
     :vault_keys,
     :runtime,
@@ -48,6 +49,7 @@ defmodule Ravix.Projects.Settings do
     :model,
     :instructions
   ]
+  @derive {Inspect, except: [:env_vars]}
   defstruct @enforce_keys ++
               [
                 secrets_pending: false,
@@ -64,6 +66,7 @@ defmodule Ravix.Projects.Settings do
           name: String.t(),
           setup_script: String.t(),
           packages: %{optional(String.t()) => [String.t()]},
+          env_vars: %{optional(String.t()) => String.t()},
           env_keys: [String.t()],
           vault_keys: [String.t()],
           runtime: String.t(),
@@ -93,6 +96,7 @@ defmodule Ravix.Projects.Settings do
     instructions: :string,
     setup_script: :string,
     packages: :map,
+    env_vars: :map,
     secret: :map
   }
 
@@ -121,6 +125,7 @@ defmodule Ravix.Projects.Settings do
          name: project.name,
          setup_script: env["setup_script"] || "",
          packages: if(is_map(env["packages"]), do: env["packages"], else: %{}),
+         env_vars: env["env_vars"] || %{},
          env_keys: keys_of(client, :environments, project.environment_id),
          # The clone token is Ravix's own plumbing, not one of the person's
          # secrets. Listing it invites somebody to delete it and then wonder
@@ -149,21 +154,23 @@ defmodule Ravix.Projects.Settings do
   `setup_script` and `packages` (the environment), `instructions` (the
   agent's system prompt), and `secret` as `%{store: "vault" | "env", key,
   value}` where an empty value deletes. The harness, the instructions and a
-  secret bump the revision; a name, a setup script or a package list does
-  not, because Fountain applies those when the disk is built rather than
+  secret or readable environment-variable change bumps the revision; a name,
+  a setup script or a package list does not, because Fountain applies those when the disk is built rather than
   when a session starts.
 
-  Mutations are applied in that order and the first failure stops the rest;
+  The environment is saved last so a successful variable update always
+  reaches its revision bump. The first failure stops the remaining mutations;
   what was already saved stays saved, as it did in the TypeScript.
   """
   @spec update(Project.t(), map(), Fountain.Client.t()) :: {:ok, integer()} | {:error, term()}
   def update(%Project{} = project, attrs, client) do
     with {:ok, change} <- cast_attrs(attrs),
+         :ok <- validate_env_secrets(project, change, client),
          {:ok, project, bumps} <- harness(project, change, client),
          :ok <- rename(project, change),
-         :ok <- environment(project, change, client),
          {:ok, bumps} <- instructions(project, change, client, bumps),
-         {:ok, bumps} <- secret(project, change, client, bumps) do
+         {:ok, bumps} <- secret(project, change, client, bumps),
+         {:ok, bumps} <- environment(project, change, client, bumps) do
       {:ok, if(bumps, do: Projects.Store.bump_rev(project.id), else: project.rev)}
     end
   end
@@ -178,7 +185,37 @@ defmodule Ravix.Projects.Settings do
   is said.
   """
   @spec cast_attrs(map()) :: {:ok, change()} | {:error, term()}
-  def cast_attrs(attrs), do: attrs |> cast_into(@attrs) |> apply_cast("settings")
+  def cast_attrs(attrs) do
+    key = if Map.has_key?(attrs, "env_vars"), do: "env_vars", else: :env_vars
+
+    if Map.has_key?(attrs, key) do
+      with {:ok, vars} <- EnvironmentVariables.normalize(Map.fetch!(attrs, key)),
+           do: attrs |> Map.put(key, vars) |> cast_into(@attrs) |> apply_cast("settings")
+    else
+      attrs |> cast_into(@attrs) |> apply_cast("settings")
+    end
+  end
+
+  defp validate_env_secrets(project, %{env_vars: vars}, client) do
+    with {:ok, env_keys} <- Fountain.secret_keys(client, :environments, project.environment_id),
+         {:ok, vault_keys} <- vault_secret_keys(project, client) do
+      keys = Enum.map(env_keys ++ vault_keys, & &1["key"])
+
+      if Enum.any?(Map.keys(vars), &(&1 in keys)),
+        do:
+          {:error,
+           {:unprocessable, "env_secret_collision",
+            "A variable cannot use an existing project secret name."}},
+        else: :ok
+    end
+  end
+
+  defp validate_env_secrets(_project, _change, _client), do: :ok
+
+  defp vault_secret_keys(%{vault_id: nil}, _client), do: {:ok, []}
+
+  defp vault_secret_keys(project, client),
+    do: Fountain.secret_keys(client, :vaults, project.vault_id)
 
   defp cast_secret(raw), do: raw |> cast_into(@secret_attrs) |> apply_cast("secret")
 
@@ -336,24 +373,33 @@ defmodule Ravix.Projects.Settings do
 
   defp rename(_project, _change), do: :ok
 
-  defp environment(project, change, client) do
+  defp environment(project, change, client, bumps) do
     patch =
       %{}
       |> put_if(:setup_script, change, :setup_script, &str(&1, 20_000))
       |> put_if(:packages, change, :packages, &normalize_packages/1)
+      |> put_if(:env_vars, change, :env_vars, &Function.identity/1)
 
     if patch == %{} do
-      :ok
+      {:ok, bumps}
     else
-      with {:ok, _env} <- Fountain.update_environment(client, project.environment_id, patch) do
+      with {:ok, changed?} <- env_vars_changed(project, change, client),
+           {:ok, _env} <- Fountain.update_environment(client, project.environment_id, patch) do
         # The track ribbon's "add a setup script" offer is read from the
         # memoised environment, so the answer this just changed has to be
         # dropped or the offer keeps appearing for another minute.
         Ravix.MachineCache.forget_environment(project.environment_id)
-        :ok
+        {:ok, bumps or changed?}
       end
     end
   end
+
+  defp env_vars_changed(project, %{env_vars: vars}, client) do
+    with {:ok, env} <- Fountain.get_environment(client, project.environment_id),
+         do: {:ok, (env["env_vars"] || %{}) != vars}
+  end
+
+  defp env_vars_changed(_project, _change, _client), do: {:ok, false}
 
   defp instructions(project, change, client, bumps) do
     case change do

@@ -231,6 +231,7 @@ defmodule Ravix.Tooling do
         :instructions,
         :setup_script,
         :packages,
+        :env_vars,
         :env_keys,
         :vault_keys
       ])

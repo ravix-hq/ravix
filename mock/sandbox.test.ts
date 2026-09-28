@@ -249,3 +249,18 @@ test("suspended disk reads return Fountain's typed 409 and never wake the sandbo
   setSandboxStatus(f.sandbox_id, "ready");
   expect((await request("GET", `/api/sandboxes/${f.sandbox_id}/files?path=/workspace/repo`)).status).toBe(200);
 });
+
+test("environments retain readable variables, replace the map and allow clearing", async () => {
+  const env = await create("environments");
+  expect(env.env_vars).toEqual({});
+  try {
+    for (const env_vars of [{ PORT: "4100", NODE_ENV: "development" }, { EMPTY: "" }, {}]) {
+      const saved = await request("PUT", `/api/environments/${env.id}`, { env_vars });
+      expect(saved.body.data.env_vars).toEqual(env_vars);
+      expect((await request("GET", `/api/environments/${env.id}`)).body.data.env_vars).toEqual(env_vars);
+    }
+  } finally {
+    await request("DELETE", `/api/environments/${env.id}`);
+  }
+
+});

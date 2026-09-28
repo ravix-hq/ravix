@@ -310,7 +310,14 @@ defmodule Ravix.ToolingTest do
 
     fountain([
       {%{method: "GET", path: "/api/environments/env"},
-       {200, [], %{data: %{setup_script: "echo hello", packages: %{apt: ["git"]}}}}},
+       {200, [],
+        %{
+          data: %{
+            setup_script: "echo hello",
+            packages: %{apt: ["git"]},
+            env_vars: %{"PORT" => "4100"}
+          }
+        }}},
       {%{method: "GET", path: "/api/catalog"}, {200, [], %{data: %{runtimes: []}}}},
       {%{method: "GET", path: "/api/environments/env/secrets"},
        {200, [], %{data: [%{key: "TOKEN", value: "must-not-escape"}]}}},
@@ -320,6 +327,7 @@ defmodule Ravix.ToolingTest do
     assert {:ok, settings} =
              Tooling.call(p, "get_project_settings", %{"project_id" => project.id})
 
+    assert settings.env_vars == %{"PORT" => "4100"}
     assert settings.env_keys == ["TOKEN"]
     refute Jason.encode!(settings) =~ "must-not-escape"
 
@@ -338,6 +346,33 @@ defmodule Ravix.ToolingTest do
                "settings" => %{"secret" => %{}},
                "request_id" => "secret"
              })
+  end
+
+  test "MCP replaces readable variables and returns their values", %{p: p, user: user} do
+    project = insert_project(user: user, environment_id: "env", vault_id: nil)
+    vars = %{"NODE_ENV" => "development"}
+
+    fountain([
+      {%{method: "GET", path: "/api/environments/env/secrets"}, {200, [], %{data: []}}},
+      {%{method: "GET", path: "/api/environments/env"}, {200, [], %{data: %{env_vars: %{}}}}},
+      {%{method: "PUT", path: "/api/environments/env", body: %{"env_vars" => vars}},
+       {200, [], %{data: %{env_vars: vars}}}},
+      {%{method: "GET", path: "/api/environments/env"}, {200, [], %{data: %{env_vars: vars}}}},
+      {%{method: "GET", path: "/api/environments/env/secrets"}, {200, [], %{data: []}}},
+      {%{method: "GET", path: "/api/catalog"}, {200, [], %{data: %{}}}}
+    ])
+
+    assert {:ok, %{updated: true}} =
+             Tooling.call(p, "update_project_settings", %{
+               "project_id" => project.id,
+               "settings" => %{"env_vars" => vars},
+               "request_id" => "vars"
+             })
+
+    assert Repo.get!(Project, project.id).rev == 2
+
+    assert {:ok, %{env_vars: ^vars}} =
+             Tooling.call(p, "get_project_settings", %{"project_id" => project.id})
   end
 
   test "transcript reads are paged, scoped and recheck revocation after the provider responds", %{

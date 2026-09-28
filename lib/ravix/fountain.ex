@@ -724,15 +724,19 @@ defmodule Ravix.Fountain do
     ours = Error.from_sdk(error)
 
     if ours.status >= 400 and not Error.sandbox_suspended?(ours) do
-      detail = if secret_path?(path), do: "", else: ": #{ours.message}"
+      detail = if sensitive_path?(path), do: "", else: ": #{ours.message}"
       Logger.error("ravix: fountain #{ours.status} on #{method} #{path}#{detail}")
     end
 
     ours
   end
 
-  defp secret_path?(path),
-    do: String.contains?(path, "/secrets") or String.contains?(path, "/credentials/")
+  # Environment failures can echo readable values too; they belong in the
+  # settings response, never in operational logs or telemetry.
+  defp sensitive_path?(path),
+    do:
+      String.contains?(path, "/secrets") or String.contains?(path, "/credentials/") or
+        String.starts_with?(path, "/api/environments")
 
   defp conversation(http, id), do: Fountain.Conversation.new(http, escape(id))
 
