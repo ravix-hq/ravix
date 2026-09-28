@@ -25,7 +25,7 @@ defmodule Ravix.Tooling.Tasks do
 
       result =
         Store.transaction(fn ->
-          accept(principal, id, track_id, prompt, fingerprint, thread.id)
+          accept(principal, id, track_id, prompt, fingerprint, thread)
         end)
 
       Phoenix.PubSub.broadcast(Ravix.PubSub, "tooling:queue", {:tooling_queue, track_id})
@@ -33,20 +33,20 @@ defmodule Ravix.Tooling.Tasks do
     end
   end
 
-  defp accept(principal, id, track_id, prompt, fingerprint, thread_id) do
+  defp accept(principal, id, track_id, prompt, fingerprint, thread) do
     # Queue acceptance and the task receipt share a transaction.
     case Store.task(id) do
       %Task{fingerprint: ^fingerprint} = task -> task
       %Task{} -> Store.rollback(conflict())
-      nil -> enqueue(principal, id, track_id, prompt, fingerprint, thread_id)
+      nil -> enqueue(principal, id, track_id, prompt, fingerprint, thread)
     end
   end
 
-  defp enqueue(principal, id, track_id, prompt, fingerprint, thread_id) do
+  defp enqueue(principal, id, track_id, prompt, fingerprint, thread) do
     case Tracks.prompt(principal.user, track_id, %{
            "prompt" => prompt,
            "request_id" => id,
-           "thread_id" => thread_id
+           "thread_id" => thread.id
          }) do
       {:ok, _} ->
         # The queue serializes on the track; re-read after it to resolve two
@@ -58,7 +58,10 @@ defmodule Ravix.Tooling.Tasks do
               user_id: principal.user.id,
               client_id: principal.grant.client_id,
               track_id: track_id,
-              fingerprint: fingerprint
+              fingerprint: fingerprint,
+              reply_events: [],
+              cursor: Store.checkpoint(thread.id, thread.conversation_id).cursor,
+              cursor_conversation_id: thread.conversation_id
             })
 
           %Task{fingerprint: ^fingerprint} = task ->
@@ -139,7 +142,15 @@ defmodule Ravix.Tooling.Tasks do
          {:ok, task} <- actionable(principal, id),
          :ok <- PromptQueue.retry(principal.user, task.track_id, task.id) do
       {:ok,
-       Store.update(task, state: "TASK_STATE_SUBMITTED", turn_id: nil, cursor: nil, result: "")}
+       Store.update(task,
+         state: "TASK_STATE_SUBMITTED",
+         turn_id: nil,
+         cursor: nil,
+         result: "",
+         reply_events: [],
+         turn_seen: false,
+         reply_prefix: ""
+       )}
     end
   end
 
@@ -251,17 +262,41 @@ defmodule Ravix.Tooling.Tasks do
     rows
     |> Enum.group_by(fn {_task, access} -> access.thread.id end)
     |> Enum.reduce_while(:ok, fn {_id, group}, :ok ->
-      case reconcile_group(group) do
+      case reconcile_thread(group) do
         :ok -> {:cont, :ok}
         error -> {:halt, error}
       end
     end)
   end
 
+  defp reconcile_thread([{_, access} | _] = rows) do
+    Ravix.Trace.span(
+      "tooling.reconcile.thread",
+      %{"ravix.thread_id" => access.thread.id, "ravix.task_count" => length(rows)},
+      fn ->
+        checkpoint = Store.checkpoint(access.thread.id, access.thread.conversation_id)
+        result = reconcile_group(rows)
+        current = Enum.map(rows, fn {task, _} -> Store.task(task.id) end)
+
+        signature =
+          digest(
+            {result, Enum.sort(Enum.map(current, &{&1.id, &1.state, &1.turn_id, &1.cursor}))}
+          )
+
+        Store.finish_checkpoint(checkpoint, signature)
+
+        case result do
+          {:ok, _} -> :ok
+          error -> error
+        end
+      end
+    )
+  end
+
   defp reconcile_group(rows) do
     rows =
       Enum.map(rows, fn {task, access} ->
-        current = persist_queue(task)
+        current = persist_queue(task, access.thread.conversation_id)
         current = %{current | reconciled_at: Store.record_reconciliation(task.id)}
 
         if current.state != task.state,
@@ -271,18 +306,20 @@ defmodule Ravix.Tooling.Tasks do
       end)
 
     active =
-      Enum.filter(rows, fn {task, _} ->
-        not terminal?(task) and task.queue_status in [:sent, :sending]
+      Enum.filter(rows, fn {task, access} ->
+        not terminal?(task) and task.queue_status in [:sent, :sending] and
+          task.cursor_conversation_id == access.thread.conversation_id
       end)
 
     case active do
       [] ->
-        :ok
+        {:ok, nil}
 
       [{_, access} | _] ->
         with {:ok, client} <- Ravix.Providers.fountain(),
-             {:ok, turns} <- Fountain.turns(client, access.thread.conversation_id) do
-          reconcile_turns(active, client, turns)
+             {:ok, turns} <- Fountain.turns(client, access.thread.conversation_id),
+             :ok <- reconcile_turns(active, client, turns) do
+          {:ok, digest(turns)}
         end
     end
   end
@@ -301,20 +338,31 @@ defmodule Ravix.Tooling.Tasks do
       end
     end)
     |> case do
-      {:ok, _} -> :ok
-      error -> error
+      {:ok, pages} ->
+        Ravix.Trace.annotate(%{
+          "ravix.pages_read" => map_size(pages),
+          "ravix.events_read" =>
+            Enum.sum(Enum.map(pages, fn {_, page} -> length(page.events) end))
+        })
+
+        :ok
+
+      error ->
+        error
     end
   end
 
-  defp persist_queue(task) do
+  defp persist_queue(task, conversation_id \\ nil) do
     {:ok, current} =
       Store.transaction(fn ->
         # ownership: no door for internal receipt reconciliation; the queue owns delivery
         # state, and public reads still pass accessible/2's principal/client door.
         {:ok, queue} = Ravix.PromptQueue.Store.lock_row(task.id, task.track_id)
         current = Store.lock_task(task.id)
+        current = cursor_conversation(current, conversation_id, task.cursor_conversation_id)
         queue = Map.put(queue, :blocked_by, Ravix.PromptQueue.Store.held_before(queue))
-        # The same receipt door: setup state only shapes MCP recovery guidance.
+        # ownership: Tasks.send created this receipt through Access.thread_access;
+        # setup state only shapes MCP recovery guidance.
         track = Ravix.Tracks.Store.get_track(task.track_id)
         view = queue_view(current, queue, track)
         if view.state != current.state, do: Store.update(current, state: view.state)
@@ -324,13 +372,40 @@ defmodule Ravix.Tooling.Tasks do
     current
   end
 
+  # A credential recovery can replace the conversation on the same thread.
+  # Event IDs belong to that conversation, so neither a cursor nor a reply journal
+  # may follow it. NULL receipts predate this migration and retain their old text.
+  defp cursor_conversation(%{state: state} = task, _, _) when state in @terminal, do: task
+  defp cursor_conversation(task, nil, _), do: task
+  defp cursor_conversation(%{cursor_conversation_id: id} = task, id, _), do: task
+
+  # A stale row snapshot may not reset a cursor already moved by another reader.
+  defp cursor_conversation(%{cursor_conversation_id: current} = task, _, expected)
+       when current != expected, do: task
+
+  defp cursor_conversation(%{cursor_conversation_id: nil} = task, id, _),
+    do: Store.update(task, cursor_conversation_id: id)
+
+  defp cursor_conversation(task, id, _) do
+    Store.update(task,
+      cursor_conversation_id: id,
+      cursor: nil,
+      turn_id: nil,
+      turn_seen: false,
+      reply_events: [],
+      reply_prefix: "",
+      result: "",
+      state: "TASK_STATE_SUBMITTED"
+    )
+  end
+
   defp reconcile(task, access) do
     with :ok <- reconcile_rows([{task, access}]), do: {:ok, Store.task(task.id)}
   end
 
   defp collect(task, access, client, turn, pages) do
     finished = turn_state(turn.status) in @terminal
-    cursor = if finished, do: nil, else: task.cursor
+    cursor = task.cursor
 
     with {:ok, page, pages} <-
            collect_pages(
@@ -338,17 +413,17 @@ defmodule Ravix.Tooling.Tasks do
              access.thread.conversation_id,
              turn,
              cursor,
-             %{events: [], seen: not is_nil(cursor) and task.turn_id == turn.id},
+             %{events: [], seen: task.turn_seen and task.turn_id == turn.id},
              pages
            ),
-         runtime <- access.thread.runtime || access.project.runtime,
-         text <- reply(page.events, turn.id, runtime) do
-      blocks = Transcript.blocks_for_turn(page.events, runtime)
+         runtime <- access.thread.runtime || access.project.runtime do
+      # NULL is an old-release receipt. Capture its latest result on first use,
+      # not during migration, since the old singleton may still be writing it.
+      task = if is_nil(task.reply_events), do: %{task | reply_prefix: task.result}, else: task
+      events = (task.reply_events || []) ++ page.events
+      {text, failure} = outcome(task, events, page.events, runtime, finished)
 
-      failure =
-        if finished,
-          do: AgentFailure.detect(page.events, runtime, blocks),
-          else: AgentFailure.suspension(page.events)
+      page = %{page | events: events}
 
       {:ok, saved} =
         Store.transaction(fn -> persist_outcome(task, access, turn, page, text, failure) end)
@@ -358,6 +433,19 @@ defmodule Ravix.Tooling.Tasks do
 
       {:ok, pages}
     end
+  end
+
+  defp outcome(task, _events, [], _runtime, false), do: {task.result, nil}
+
+  defp outcome(task, events, _new, runtime, finished) do
+    blocks = Transcript.blocks_for_turn(events, runtime)
+
+    failure =
+      if finished,
+        do: AgentFailure.detect(events, runtime, blocks),
+        else: AgentFailure.suspension(events)
+
+    {task.reply_prefix <> reply(blocks), failure}
   end
 
   defp persist_outcome(task, access, turn, page, text, failure) do
@@ -371,7 +459,9 @@ defmodule Ravix.Tooling.Tasks do
       )
     end
 
-    save_page(task, turn, page, text, failure)
+    saved = save_page(task, turn, page, text, failure)
+    Store.advance_checkpoint(access.thread.id, saved.cursor_conversation_id, saved.cursor)
+    saved
   end
 
   # Cache provider pages across receipts belonging to this thread.
@@ -402,10 +492,25 @@ defmodule Ravix.Tooling.Tasks do
 
   defp cached_page(pages, cursor, client, conversation_id) do
     case Map.fetch(pages, cursor) do
-      {:ok, page} -> {:ok, page}
-      :error -> Fountain.events_page(client, conversation_id, after: cursor, limit: 100)
+      {:ok, page} ->
+        {:ok, page}
+
+      :error ->
+        Ravix.Trace.span("tooling.reconcile.events", %{}, fn ->
+          result = Fountain.events_page(client, conversation_id, after: cursor, limit: 100)
+
+          annotate_page(result)
+
+          result
+        end)
     end
   end
+
+  defp annotate_page({:ok, page}) do
+    Ravix.Trace.annotate(%{"ravix.events_read" => length(page.events), "ravix.pages_read" => 1})
+  end
+
+  defp annotate_page(_), do: :ok
 
   defp turn_window(events, turn_id, seen) do
     {events, seen, past} =
@@ -443,13 +548,16 @@ defmodule Ravix.Tooling.Tasks do
       current
     else
       state = if failure, do: "TASK_STATE_FAILED", else: turn_state(turn.status)
-      result = if state in @terminal, do: text, else: current.result <> text
+      result = text
 
       Store.update(current,
         state: state,
         turn_id: turn.id,
+        turn_seen: task.turn_seen or page.events != [],
         cursor: page.next_cursor || current.cursor,
         result: String.slice(if(failure, do: failure.reason, else: result), 0, 64_000),
+        reply_events: if(state in @terminal, do: [], else: page.events),
+        reply_prefix: task.reply_prefix,
         failure_code: failure && failure.code,
         failure_message: failure && failure.reason
       )
@@ -458,16 +566,12 @@ defmodule Ravix.Tooling.Tasks do
 
   defp stale_page?(task, current, queue) do
     queue.status not in [:sent, :sending] or current.cursor != task.cursor or
+      current.cursor_conversation_id != task.cursor_conversation_id or
       terminal?(%{current | state: delivered_state(current)})
   end
 
-  defp reply(events, turn_id, runtime) do
-    events
-    |> Enum.filter(&(&1["turn_id"] == turn_id))
-    |> Transcript.page(runtime)
-    |> Map.fetch!(:turns)
-    |> Enum.flat_map(& &1.blocks)
-    |> Enum.map_join(fn
+  defp reply(blocks) do
+    Enum.map_join(blocks, fn
       %Block.Text{body: body} -> body
       _ -> ""
     end)

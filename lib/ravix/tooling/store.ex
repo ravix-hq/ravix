@@ -2,7 +2,7 @@ defmodule Ravix.Tooling.Store do
   @moduledoc "Persistence for OAuth grants, mutation receipts and delegated tasks. Callers establish access."
   import Ecto.Query
   alias Ravix.Repo
-  alias Ravix.Tooling.{Client, Credential, Grant, Receipt, Task}
+  alias Ravix.Tooling.{Client, Credential, Grant, Receipt, Task, ThreadCheckpoint}
 
   def client(id) when is_binary(id), do: Repo.get(Client, id)
   def client(_), do: nil
@@ -81,7 +81,7 @@ defmodule Ravix.Tooling.Store do
   end
 
   def pending_threads do
-    Repo.all(from [t, q, thread, track, p] in pending(), distinct: true, select: thread.id)
+    Repo.all(from [t, q, thread, track, p] in sweepable(), distinct: true, select: thread.id)
   end
 
   def record_reconciliation(id) do
@@ -91,27 +91,105 @@ defmodule Ravix.Tooling.Store do
   end
 
   def due_threads(cursor, now, limit) do
-    short = DateTime.add(now, -3, :second)
-    long = DateTime.add(now, -45, :second)
+    initial = DateTime.add(now, -3, :second)
 
     Repo.all(
-      from [t, q, thread, track, p] in pending(),
+      from [t, q, thread, track, p] in sweepable(),
+        left_join: checkpoint in ThreadCheckpoint,
+        on: checkpoint.id == thread.id and checkpoint.conversation_id == thread.conversation_id,
         where: thread.id > ^cursor,
         where:
-          coalesce(t.reconciled_at, t.updated_at) <=
-            fragment(
-              "CASE WHEN ? = 'TASK_STATE_WORKING' AND ? IS NOT NULL AND ? = 'sent' THEN ? ELSE ? END",
-              t.state,
-              t.turn_id,
-              q.status,
-              type(^long, :utc_datetime_usec),
-              type(^short, :utc_datetime_usec)
-            ),
+          checkpoint.next_due_at <= ^now or
+            (is_nil(checkpoint.next_due_at) and
+               coalesce(t.reconciled_at, t.updated_at) <= ^initial),
         distinct: true,
         order_by: thread.id,
         limit: ^limit,
         select: thread.id
     )
+  end
+
+  # Held rows still receive queue hints, but cannot progress by polling Fountain.
+  defp sweepable do
+    from [t, q] in pending(),
+      where:
+        q.status in [:sent, :sending] or
+          (q.status == :queued and t.state != "TASK_STATE_SUBMITTED") or
+          (q.status == :failed and t.state != "TASK_STATE_FAILED") or
+          (q.status == :unconfirmed and t.state != "TASK_STATE_INPUT_REQUIRED") or
+          (q.status == :cancelled and t.state != "TASK_STATE_CANCELED")
+  end
+
+  def checkpoint(id, nil), do: %ThreadCheckpoint{id: id}
+
+  def checkpoint(id, conversation_id) do
+    Repo.get_by(ThreadCheckpoint, id: id, conversation_id: conversation_id) ||
+      %ThreadCheckpoint{id: id, conversation_id: conversation_id}
+  end
+
+  def reset_checkpoint(_id, nil), do: :ok
+
+  def reset_checkpoint(id, conversation_id) do
+    Repo.insert_all(ThreadCheckpoint, [%{id: id, conversation_id: conversation_id}],
+      on_conflict: :nothing
+    )
+
+    Repo.update_all(
+      from(c in ThreadCheckpoint, where: c.id == ^id and c.conversation_id == ^conversation_id),
+      set: [next_due_at: DateTime.utc_now(), unchanged: 0, signature: nil],
+      inc: [generation: 1]
+    )
+
+    :ok
+  end
+
+  def finish_checkpoint(%{conversation_id: nil}, _signature), do: :ok
+
+  def finish_checkpoint(before, signature) do
+    Repo.insert_all(ThreadCheckpoint, [%{id: before.id, conversation_id: before.conversation_id}],
+      on_conflict: :nothing
+    )
+
+    unchanged = if signature == before.signature, do: min(before.unchanged + 1, 3), else: 0
+    delay = Enum.at([5, 60, 180, 300], unchanged)
+    # A concurrent hint invalidates this attempt's cadence; never postpone that hint.
+    Repo.update_all(
+      from(c in ThreadCheckpoint,
+        where:
+          c.id == ^before.id and c.conversation_id == ^before.conversation_id and
+            c.generation == ^before.generation
+      ),
+      set: [
+        signature: signature,
+        unchanged: unchanged,
+        next_due_at: DateTime.add(DateTime.utc_now(), delay, :second)
+      ],
+      inc: [generation: 1]
+    )
+
+    :ok
+  end
+
+  def advance_checkpoint(_id, nil, _cursor), do: :ok
+  def advance_checkpoint(_id, _conversation_id, nil), do: :ok
+
+  # Called inside the receipt transaction: a crash cannot commit a reply without
+  # the high-water mark inherited by the next task. Older receipts keep their own cursor.
+  def advance_checkpoint(id, conversation_id, cursor) do
+    Repo.insert_all(ThreadCheckpoint, [%{id: id, conversation_id: conversation_id}],
+      on_conflict: :nothing
+    )
+
+    Repo.update_all(
+      from(c in ThreadCheckpoint,
+        where:
+          c.id == ^id and c.conversation_id == ^conversation_id and
+            (is_nil(c.cursor) or c.cursor < ^cursor)
+      ),
+      set: [cursor: cursor]
+    )
+
+    :ok
   end
 
   def reconciliation_rows(opts) do

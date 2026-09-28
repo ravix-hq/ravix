@@ -2,7 +2,7 @@ defmodule Ravix.Tooling.Reconciler do
   @moduledoc """
   Durable task bookkeeping, owned by the `tooling.tasks` cluster singleton.
 
-  Queue hints join the same follower topics as PromptQueue.Server; settle
+  Queue hints join settle-only follower topics; settle
   events reconcile a thread once, sharing turns and event pages. The five-second
   backstop rotates through at most 50 aged threads per pass, so an unreachable
   provider cannot starve later threads. Nothing is handed over on node loss:
@@ -41,28 +41,34 @@ defmodule Ravix.Tooling.Reconciler do
 
   def handle_info({:tooling_queue, track_id}, state) when is_binary(track_id) do
     state = subscribe(state)
-    reconcile(track_id: track_id)
+    reconcile([track_id: track_id], true)
     {:noreply, state}
   end
 
   def handle_info({:transcript, thread_id, %Event{} = event}, state) do
-    if Event.settles?(event), do: reconcile(thread_id: thread_id)
+    if Event.settles?(event), do: reconcile([thread_id: thread_id], true)
     {:noreply, state}
   end
 
   def handle_info(_, state), do: {:noreply, state}
 
-  defp sweep(state) do
+  defp sweep(state),
+    do: Ravix.Trace.span("tooling.reconcile.sweep", %{}, fn -> do_sweep(state) end)
+
+  defp do_sweep(state) do
     state = subscribe(state)
     now = DateTime.utc_now()
     ids = Store.due_threads(state.cursor, now, 50)
     # Wrap in this sweep rather than spending an empty tick at the end of the list.
     ids = if ids == [] and state.cursor != "", do: Store.due_threads("", now, 50), else: ids
 
+    Ravix.Trace.annotate(%{"ravix.thread_count" => length(ids)})
+    carry = Ravix.Trace.carrier()
+
     Task.Supervisor.async_stream_nolink(
       Ravix.TaskSupervisor,
       ids,
-      fn id -> reconcile(thread_id: id) end,
+      fn id -> carry.(fn -> reconcile(thread_id: id) end) end,
       max_concurrency: 4,
       timeout: 30_000,
       on_timeout: :kill_task
@@ -72,10 +78,19 @@ defmodule Ravix.Tooling.Reconciler do
     %{state | cursor: List.last(ids) || ""}
   end
 
-  defp reconcile(opts) do
+  defp reconcile(opts, reset \\ false) do
     # ownership: this singleton performs only bookkeeping of existing receipts;
     # Store correlates their queue rows. Tasks' public doors still authorize reads.
-    case Tasks.reconcile_rows(Store.reconciliation_rows(opts)) do
+    rows = Store.reconciliation_rows(opts)
+
+    if reset do
+      rows
+      |> Enum.map(fn {_, access} -> {access.thread.id, access.thread.conversation_id} end)
+      |> Enum.uniq()
+      |> Enum.each(fn {id, conversation_id} -> Store.reset_checkpoint(id, conversation_id) end)
+    end
+
+    case Tasks.reconcile_rows(rows) do
       :ok -> :ok
       {:error, _} -> Logger.warning("Tooling task reconciliation deferred to the next sweep")
     end
@@ -88,12 +103,12 @@ defmodule Ravix.Tooling.Reconciler do
 
     Enum.each(
       MapSet.difference(wanted, state.threads),
-      &Phoenix.PubSub.subscribe(Ravix.PubSub, Follower.topic(&1))
+      &Phoenix.PubSub.subscribe(Ravix.PubSub, Follower.settle_topic(&1))
     )
 
     Enum.each(
       MapSet.difference(state.threads, wanted),
-      &Phoenix.PubSub.unsubscribe(Ravix.PubSub, Follower.topic(&1))
+      &Phoenix.PubSub.unsubscribe(Ravix.PubSub, Follower.settle_topic(&1))
     )
 
     %{state | threads: wanted}

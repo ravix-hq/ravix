@@ -74,7 +74,26 @@ defmodule Ravix.Tooling.Task do
     field :blocked, :boolean, virtual: true, default: false
     field :turn_id, :string
     field :cursor, :integer
+    field :cursor_conversation_id, :string
     field :result, :string, default: ""
+    field :reply_events, {:array, :map}
+    field :reply_prefix, :string, default: ""
+    field :turn_seen, :boolean, default: false
     timestamps(type: :utc_datetime_usec)
+  end
+end
+
+defmodule Ravix.Tooling.ThreadCheckpoint do
+  @moduledoc "Durable event high-water mark and backstop cadence for task receipts on one thread."
+  use Ecto.Schema
+  @primary_key false
+  schema "tooling_thread_checkpoints" do
+    field :id, :string, primary_key: true
+    field :conversation_id, :string, primary_key: true
+    field :cursor, :integer
+    field :signature, :string
+    field :unchanged, :integer, default: 0
+    field :next_due_at, :utc_datetime_usec
+    field :generation, :integer, default: 0
   end
 end

@@ -78,6 +78,7 @@ defmodule Ravix.Tracks.Follower do
   @doc "The PubSub topic a track's events are broadcast on."
   @spec topic(String.t()) :: String.t()
   def topic(track_id), do: "track:" <> track_id
+  def settle_topic(track_id), do: "track:settle:" <> track_id
 
   @doc "The dynamic supervisor the application starts for followers."
   @spec supervisor() :: atom()
@@ -288,6 +289,15 @@ defmodule Ravix.Tracks.Follower do
   defp relay(raw, client, conversation_id, track_id, follower) do
     event = raw |> Event.from() |> with_prompt(client, conversation_id)
     Phoenix.PubSub.broadcast(Ravix.PubSub, topic(track_id), {:transcript, track_id, event})
+
+    if Event.settles?(event),
+      do:
+        Phoenix.PubSub.broadcast(
+          Ravix.PubSub,
+          settle_topic(track_id),
+          {:transcript, track_id, event}
+        )
+
     if is_integer(event.id), do: send(follower, {:seen, event.id})
     :cont
   end

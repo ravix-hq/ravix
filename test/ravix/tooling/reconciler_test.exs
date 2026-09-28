@@ -67,7 +67,12 @@ defmodule Ravix.Tooling.ReconcilerTest do
     task = submit(c, "cursor")
 
     task
-    |> Ecto.Changeset.change(state: "TASK_STATE_WORKING", turn_id: task.id, cursor: 2)
+    |> Ecto.Changeset.change(
+      state: "TASK_STATE_WORKING",
+      turn_id: task.id,
+      cursor: 2,
+      turn_seen: true
+    )
     |> Repo.update!()
 
     reconciled_ago(task, 46)
@@ -154,6 +159,7 @@ defmodule Ravix.Tooling.ReconcilerTest do
       for n <- 1..3 do
         track = insert_track(project: c.project, conversation_id: Ecto.UUID.generate())
         {:ok, task} = Tasks.send(c.p, track.id, "hello", "#{n}")
+        Queue.mark_delivered(task.id)
         age(task)
         task
       end
@@ -178,50 +184,46 @@ defmodule Ravix.Tooling.ReconcilerTest do
     assert %{state: "TASK_STATE_COMPLETED", result: "reply"} = Repo.get!(Task, task.id)
   end
 
-  test "running turns use the long cadence while settlement bypasses it", c do
+  test "unchanged threads back off to five minutes and settlement resets the cadence", c do
     task = submit(c, "running")
     age(task)
     server = server()
-    running = %{turn(task) | status: "running"}
-
-    reads = :atomics.new(2, [])
+    reads = :atomics.new(1, [])
 
     stub(Fountain, :turns, fn _, _ ->
       :atomics.add(reads, 1, 1)
-      {:ok, [running]}
+      {:ok, [%{turn(task) | status: "running"}]}
     end)
 
     stub(Fountain, :events_page, fn _, _, _ ->
-      :atomics.add(reads, 2, 1)
       {:ok, %{events: [], next_cursor: nil, has_more: false}}
     end)
 
-    Reconciler.tick(server)
-    first = Repo.get!(Task, task.id)
-    assert first.state == "TASK_STATE_WORKING"
-    assert first.reconciled_at
-
-    # Simulate successive five-second sweeps without sleeping or mocking Tasks.
-    for elapsed <- 5..40//5 do
-      reconciled_ago(task, elapsed)
+    for {delay, count} <- Enum.with_index([5, 60, 180, 300, 300], 1) do
+      make_due(c.track.id)
       Reconciler.tick(server)
+      checkpoint = Ravix.Tooling.Store.checkpoint(c.track.id, c.track.conversation_id)
+      assert_in_delta DateTime.diff(checkpoint.next_due_at, DateTime.utc_now()), delay, 1
+      assert :atomics.get(reads, 1) == count
       Reconciler.tick(server)
-      assert :atomics.get(reads, 1) == 1
-      assert :atomics.get(reads, 2) == 1
+      assert :atomics.get(reads, 1) == count
     end
 
-    reconciled_ago(task, 46)
-    Reconciler.tick(server)
-    current = Repo.get!(Task, task.id)
-    assert :atomics.get(reads, 1) == 2
-    assert :atomics.get(reads, 2) == 2
-    assert current.updated_at == first.updated_at
-    assert DateTime.diff(DateTime.utc_now(), current.reconciled_at) < 3
-
+    # A settle hint bypasses five minutes of backoff even if the provider still says running.
+    settle(c.track.id)
+    :sys.get_state(server)
+    assert :atomics.get(reads, 1) == 6
+    assert Ravix.Tooling.Store.checkpoint(c.track.id, c.track.conversation_id).unchanged == 0
     expect_reply(task)
     settle(c.track.id)
     :sys.get_state(server)
     assert Repo.get!(Task, task.id).state == "TASK_STATE_COMPLETED"
+  end
+
+  defp make_due(id) do
+    Repo.update_all(from(c in Ravix.Tooling.ThreadCheckpoint, where: c.id == ^id),
+      set: [next_due_at: DateTime.add(DateTime.utc_now(), -1, :second)]
+    )
   end
 
   test "sent submitted receipts retry within five seconds even without a state change", c do
@@ -235,6 +237,7 @@ defmodule Ravix.Tooling.ReconcilerTest do
     assert current.reconciled_at
 
     reconciled_ago(task, 4)
+    make_due(c.track.id)
     expect_reply(task)
     Reconciler.tick(server)
     assert Repo.get!(Task, task.id).state == "TASK_STATE_COMPLETED"
@@ -315,6 +318,7 @@ defmodule Ravix.Tooling.ReconcilerTest do
     # A failed attempt is stamped too, so an immediate sweep does not retry.
     assert :ok = Reconciler.tick(server)
     age(task)
+    make_due(c.track.id)
     expect_reply(task)
     assert :ok = Reconciler.tick(server)
     assert Repo.get!(Task, task.id).state == "TASK_STATE_COMPLETED"
@@ -335,8 +339,175 @@ defmodule Ravix.Tooling.ReconcilerTest do
     refute Repo.get!(Task, task.id).state == "TASK_STATE_COMPLETED"
   end
 
+  test "new pages and reply journals survive restart, and later receipts inherit the thread cursor",
+       c do
+    alias Ravix.Fountain.FakeTransport
+    task = submit(c, "incremental")
+    age(task)
+    client = FakeTransport.client()
+    stub(Fountain, :client, fn -> client end)
+    base = "/api/conversations/#{c.track.conversation_id}"
+    server = server()
+
+    for {cursor, last, status} <- [
+          {nil, 100, "running"},
+          {100, 101, "running"},
+          {101, 102, "completed"}
+        ] do
+      FakeTransport.expect(
+        client,
+        %{method: "GET", path: base <> "/turns"},
+        {200, [], %{data: [%{id: task.id, client_request_id: task.id, status: status}]}}
+      )
+
+      query = if cursor, do: %{limit: "100", after: to_string(cursor)}, else: %{limit: "100"}
+
+      events =
+        if cursor == nil,
+          do: Enum.map(1..100, &event(%{id: "old"}, &1)),
+          else: [event(task, last)]
+
+      FakeTransport.expect(
+        client,
+        %{method: "GET", path: base <> "/events", query: query},
+        {200, [], %{data: events, meta: %{next_cursor: last, has_more: cursor == nil}}}
+      )
+
+      make_due(c.track.id)
+      Reconciler.tick(server)
+      assert Repo.get!(Task, task.id).cursor == last
+      assert Ravix.Tooling.Store.checkpoint(c.track.id, c.track.conversation_id).cursor == last
+    end
+
+    assert length(FakeTransport.calls(client)) == 6
+
+    assert %{result: "replyreply", state: "TASK_STATE_COMPLETED", reply_events: []} =
+             Repo.get!(Task, task.id)
+
+    GenServer.stop(server)
+    replacement = server()
+    Reconciler.tick(replacement)
+    assert length(FakeTransport.calls(client)) == 6
+    GenServer.stop(replacement)
+    {:ok, next} = Tasks.send(c.p, c.track.id, "next", "next")
+    assert next.cursor == 102
+  end
+
+  test "a replacement resumes an unfinished reply from the durable cursor", c do
+    task = submit(c, "restart")
+    age(task)
+    first = server()
+    expect(Fountain, :turns, fn _, _ -> {:ok, [%{turn(task) | status: "running"}]} end)
+
+    expect(Fountain, :events_page, fn _, _, _ ->
+      {:ok, %{events: [event(task, 1)], next_cursor: 1, has_more: false}}
+    end)
+
+    Reconciler.tick(first)
+    GenServer.stop(first)
+    second = server()
+    make_due(c.track.id)
+    expect(Fountain, :turns, fn _, _ -> {:ok, [turn(task)]} end)
+
+    expect(Fountain, :events_page, fn _, _, opts ->
+      assert opts[:after] == 1
+      {:ok, %{events: [event(task, 2)], next_cursor: 2, has_more: false}}
+    end)
+
+    Reconciler.tick(second)
+    assert Repo.get!(Task, task.id).result == "replyreply"
+  end
+
+  test "held-only and terminal threads are neither due nor subscribed", c do
+    {:ok, held} = Tasks.send(c.p, c.track.id, "hello", "held-only")
+    Queue.set_status(held.id, :unconfirmed)
+    Tasks.reconcile_rows(Ravix.Tooling.Store.reconciliation_rows(thread_id: c.track.id))
+    future = DateTime.add(DateTime.utc_now(), 3600, :second)
+    assert Ravix.Tooling.Store.due_threads("", future, 50) == []
+    assert Ravix.Tooling.Store.pending_threads() == []
+    Queue.set_status(held.id, :cancelled)
+    Tasks.reconcile_rows(Ravix.Tooling.Store.reconciliation_rows(thread_id: c.track.id))
+    assert Ravix.Tooling.Store.due_threads("", future, 50) == []
+  end
+
+  test "transcript chunks never enter the reconciler mailbox", c do
+    submit(c, "stream")
+    pid = server()
+    Reconciler.tick(pid)
+    :sys.suspend(pid)
+
+    try do
+      for id <- 1..1000 do
+        Phoenix.PubSub.broadcast(
+          Ravix.PubSub,
+          Follower.topic(c.track.id),
+          {:transcript, c.track.id, Event.from(event(%{id: "running"}, id))}
+        )
+      end
+
+      assert {:messages, []} = Process.info(pid, :messages)
+      settle(c.track.id)
+      assert {:messages, [{:transcript, _, %Event{stage: "turn"}}]} = Process.info(pid, :messages)
+    after
+      # Discard the synthetic settlement without making a provider request.
+      :sys.replace_state(pid, fn state ->
+        receive do
+          {:transcript, _, _} -> :ok
+        end
+
+        state
+      end)
+
+      :sys.resume(pid)
+    end
+  end
+
+  test "a hint fences an older reconcile's backoff write", c do
+    alias Ravix.Tooling.Store
+    before = Store.checkpoint(c.track.id, c.track.conversation_id)
+    Store.reset_checkpoint(c.track.id, c.track.conversation_id)
+    Store.finish_checkpoint(before, "unchanged")
+    Store.advance_checkpoint(c.track.id, c.track.conversation_id, 100)
+    current = Store.checkpoint(c.track.id, c.track.conversation_id)
+    assert current.signature == nil
+    assert current.unchanged == 0
+    assert DateTime.compare(current.next_due_at, DateTime.utc_now()) != :gt
+    assert current.cursor == 100
+  end
+
+  test "receipt and thread cursor roll back together when a transaction fails", c do
+    task = submit(c, "atomic-cursor")
+    expect_reply(task)
+
+    assert {:error, :interrupted} =
+             Ravix.Tooling.Store.transaction(fn ->
+               :ok =
+                 Tasks.reconcile_rows(
+                   Ravix.Tooling.Store.reconciliation_rows(thread_id: c.track.id)
+                 )
+
+               assert Ravix.Tooling.Store.checkpoint(c.track.id, c.track.conversation_id).cursor ==
+                        1
+
+               Ravix.Tooling.Store.rollback(:interrupted)
+             end)
+
+    assert Repo.get!(Task, task.id).cursor == nil
+    assert Ravix.Tooling.Store.checkpoint(c.track.id, c.track.conversation_id).cursor == nil
+    assert Repo.get!(Task, task.id).state == "TASK_STATE_SUBMITTED"
+  end
+
   defp server do
-    pid = start_supervised!({Reconciler, interval: false, subscribe: false})
+    # A graceful stop waits for an in-flight query before releasing the process.
+    # A supervisor's shutdown signal can interrupt another async test's queue hint.
+    pid =
+      start_supervised!(
+        Supervisor.child_spec(
+          {Reconciler, interval: false, subscribe: false},
+          restart: :temporary
+        )
+      )
+
     Sandbox.allow(Repo, self(), pid)
     allow(Fountain, self(), pid)
 
@@ -376,7 +547,7 @@ defmodule Ravix.Tooling.ReconcilerTest do
   defp settle(id) do
     Phoenix.PubSub.broadcast(
       Ravix.PubSub,
-      Follower.topic(id),
+      Follower.settle_topic(id),
       {:transcript, id, Event.from(%{"kind" => "stage", "stage" => "turn", "state" => "done"})}
     )
   end
