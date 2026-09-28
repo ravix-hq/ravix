@@ -54,6 +54,11 @@ defmodule Ravix.Accounts.Store do
   def get_users([]), do: []
   def get_users(ids) when is_list(ids), do: Repo.all(from(u in User, where: u.id in ^ids))
 
+  @doc "A user by GitHub's numeric id, the identity that survives a rename, or nil."
+  @spec user_by_github_id(String.t()) :: User.t() | nil
+  def user_by_github_id(github_id) when is_binary(github_id),
+    do: Repo.get_by(User, github_id: github_id)
+
   @doc """
   A user by GitHub login, case-insensitively, or nil.
 

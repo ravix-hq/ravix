@@ -66,6 +66,9 @@ defmodule Ravix.Accounts do
   them. It is named after the login it was created with and is not renamed
   with it. A returning user's workspace and membership are left untouched,
   revoked or not.
+
+  Also in that transaction, workspace invitations waiting on this GitHub
+  account are accepted (`Ravix.Workspaces.Store.accept_invites/1`).
   """
   @spec upsert_user(%{
           required(:github_id) => String.t(),
@@ -86,17 +89,32 @@ defmodule Ravix.Accounts do
     # there is nobody to ask yet; the personal workspace written below is
     # this same person's alone, in the transaction that writes their row.
     Repo.transaction(fn ->
-      %User{}
-      |> User.changeset(attrs)
-      |> Repo.insert(
-        on_conflict: {:replace, [:login, :name, :avatar_url, :token_enc, :last_seen_at]},
-        conflict_target: :github_id,
-        returning: true
-      )
-      |> with_personal_workspace()
+      user =
+        %User{}
+        |> User.changeset(attrs)
+        |> Repo.insert(
+          on_conflict: {:replace, [:login, :name, :avatar_url, :token_enc, :last_seen_at]},
+          conflict_target: :github_id,
+          returning: true
+        )
+        |> with_personal_workspace()
+
+      # ownership: no door -- as above: the invitations waiting on the
+      # GitHub account this sign-in just proved become its memberships.
+      {user, Ravix.Workspaces.Store.accept_invites(user)}
     end)
+    |> joined_workspaces()
     |> signed_in()
   end
+
+  # Told only once the memberships have committed, so a workspace page that
+  # re-reads on the notice sees the newcomer.
+  defp joined_workspaces({:ok, {user, workspace_ids}}) do
+    Enum.each(workspace_ids, &Ravix.Workspaces.members_changed/1)
+    {:ok, user}
+  end
+
+  defp joined_workspaces(error), do: error
 
   # Inside `upsert_user/1`'s transaction: either the person and their
   # personal workspace both commit, or neither does.

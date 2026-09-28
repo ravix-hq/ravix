@@ -107,6 +107,8 @@ defmodule RavixWeb.Router do
       live "/p/:project", WorkspaceLive, :project
       live "/p/:project/plans", WorkspaceLive, :plans
       live "/p/:project/t/:track", WorkspaceLive, :track
+      # A workspace's people (ADR 0009 phase 4a), behind RAVIX_WORKSPACE_ACCESS.
+      live "/w/:workspace", WorkspacePeopleLive, :show
 
       # The first visit. The same `live_session`, so the workspace can send
       # somebody here and be sent back without a page load in between.
