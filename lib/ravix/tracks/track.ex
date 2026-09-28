@@ -93,6 +93,11 @@ defmodule Ravix.Tracks.Track do
     field :created_by, :string
     field :creator_revoked_at, :utc_datetime_usec
     field :visibility, Ecto.Enum, values: [:project, :private], default: :project
+    # ADR 0009, expand only: who pays for this track's inference. `created_by`
+    # is the creator; these two are unwritten until creator billing, and not
+    # cast by `changeset/2`. A nil policy is a legacy owner-paid track.
+    field :payer_user_id, :string
+    field :billing_policy, Ecto.Enum, values: [:legacy_owner, :starter]
 
     has_many :threads, Ravix.Tracks.Thread
     has_many :prompts, Ravix.PromptQueue.Item
@@ -106,6 +111,26 @@ defmodule Ravix.Tracks.Track do
   @fields ~w(visibility created_by last_runtime sandbox_layout sandbox_id sandbox_generation sandbox_state vault_id id project_id conversation_id slug title branch branch_reserved workdir origin_kind origin_base
              origin_number origin_title origin_url origin_plan_id origin_item_id rev setup_state setup_attempts setup_request_id setup_started_at setup_retry_at setup_error setup_error_code setup_lease setup_lease_until opened_at closed_at created_at created_by_login)a
   @required ~w(id project_id slug title branch workdir origin_kind rev created_at created_by_login)a
+
+  @typedoc "Who pays for a track's inference, and under which policy."
+  @type payer :: {:legacy_owner, String.t()} | {:starter, String.t() | nil}
+
+  @doc """
+  Who pays for every thread on `track` (ADR 0009, RAV-17 as clarified).
+
+  A track no release has bound -- every track today, and every row an older
+  release writes -- is `:legacy_owner`: its project's owner pays, under ADR
+  0005, until it is backfilled or closed. A creator-billed track answers its
+  bound payer, whoever starts or prompts the thread. That payer is nil if
+  their account is gone, and nil means refuse, never fall back to the owner.
+  """
+  @spec payer(t(), Ravix.Projects.Project.t()) :: payer()
+  def payer(%__MODULE__{project_id: id} = track, %Ravix.Projects.Project{id: id} = project) do
+    case track.billing_policy do
+      :starter -> {:starter, track.payer_user_id}
+      _legacy -> {:legacy_owner, project.user_id}
+    end
+  end
 
   @doc "The four things a track can be started from."
   @spec origin_kinds() :: [origin_kind()]

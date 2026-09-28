@@ -1,4 +1,4 @@
-defmodule Ravix.Repo.Migrations.ValidateThreadsBillingPolicy do
+defmodule Ravix.Repo.Migrations.ValidateTracksBillingPolicy do
   @moduledoc """
   Validate the check `20260928054856_expand_workspaces` added `NOT VALID`.
 
@@ -10,7 +10,7 @@ defmodule Ravix.Repo.Migrations.ValidateThreadsBillingPolicy do
 
   def up do
     execute "SET LOCAL lock_timeout = '5s'"
-    execute "ALTER TABLE ravix.threads VALIDATE CONSTRAINT threads_billing_policy"
+    execute "ALTER TABLE ravix.tracks VALIDATE CONSTRAINT tracks_billing_policy"
   end
 
   def down, do: :ok

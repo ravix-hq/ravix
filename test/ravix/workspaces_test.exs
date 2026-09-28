@@ -10,7 +10,7 @@ defmodule Ravix.WorkspacesTest do
 
   alias Ravix.Accounts.{Access, User}
   alias Ravix.Projects.Project
-  alias Ravix.Tracks.Thread
+  alias Ravix.Tracks.{Thread, Track}
   alias Ravix.Workspaces
   alias Ravix.Workspaces.{Backfill, Installation, Membership, RepositoryReservation, Store}
   alias Ravix.Workspaces.Workspace
@@ -227,23 +227,79 @@ defmodule Ravix.WorkspacesTest do
       assert Workspaces.created_by(current) == owner.id
     end
 
-    test "threads load with no starter or payer: legacy owner-paid" do
-      track = insert_track()
-      {:ok, thread} = Ravix.Tracks.Store.create_thread(%{track_id: track.id, title: "t"})
-      thread = Repo.get!(Thread, thread.id)
+    test "every track reads as owner-paid until creator billing binds it" do
+      owner = insert_user()
+      creator = insert_user()
+      project = insert_project(user: owner)
+      track = insert_track(project: project, created_by: creator.id)
 
-      assert {thread.started_by, thread.payer_user_id, thread.billing_policy} == {nil, nil, nil}
+      # A track as an older release writes it: neither billing column.
+      old_id = Ecto.UUID.generate()
 
-      assert_raise Postgrex.Error, ~r/threads_billing_policy/, fn ->
-        Repo.query!("UPDATE ravix.threads SET billing_policy = 'workspace' WHERE id = $1", [
-          thread.id
+      {1, _} =
+        Repo.insert_all(Track, [
+          %{
+            id: old_id,
+            project_id: project.id,
+            rev: 1,
+            slug: "old-writer",
+            title: "Old",
+            branch: "u/old-#{old_id}",
+            workdir: "/w/old",
+            origin_kind: :blank,
+            created_by_login: "u",
+            created_at: DateTime.utc_now()
+          }
+        ])
+
+      for row <- [track, Repo.get!(Track, old_id)] do
+        assert {row.payer_user_id, row.billing_policy} == {nil, nil}
+        assert Track.payer(row, project) == {:legacy_owner, owner.id}
+      end
+
+      # Legacy by name as well as by default, and never inferred from the creator.
+      explicit = %{track | billing_policy: :legacy_owner, payer_user_id: creator.id}
+      assert Track.payer(explicit, project) == {:legacy_owner, owner.id}
+
+      # A bound track pays its creator, whoever starts or prompts a thread,
+      # and a payer whose account is gone is nil -- refuse, not the owner.
+      bound = %{track | billing_policy: :starter, payer_user_id: creator.id}
+      assert Track.payer(bound, project) == {:starter, creator.id}
+      assert Track.payer(%{bound | payer_user_id: nil}, project) == {:starter, nil}
+
+      # A project that is not the track's is a caller bug, not an answer.
+      assert_raise FunctionClauseError, fn -> Track.payer(track, insert_project()) end
+
+      # Changesets cannot bind billing; only the billing phase will.
+      changeset = Track.changeset(track, %{billing_policy: :starter, payer_user_id: creator.id})
+      refute Map.has_key?(changeset.changes, :billing_policy)
+      refute Map.has_key?(changeset.changes, :payer_user_id)
+
+      assert_raise Postgrex.Error, ~r/tracks_billing_policy/, fn ->
+        Repo.query!("UPDATE ravix.tracks SET billing_policy = 'workspace' WHERE id = $1", [
+          track.id
         ])
       end
 
       # Added NOT VALID under the expand's lock timeout, then validated.
       assert %{rows: [[true]]} =
                Repo.query!(
-                 "SELECT convalidated FROM pg_constraint WHERE conname = 'threads_billing_policy'"
+                 "SELECT convalidated FROM pg_constraint WHERE conname = 'tracks_billing_policy'"
+               )
+    end
+
+    test "threads carry only starter attribution, never a payer" do
+      track = insert_track()
+      {:ok, thread} = Ravix.Tracks.Store.create_thread(%{track_id: track.id, title: "t"})
+
+      assert Repo.get!(Thread, thread.id).started_by == nil
+      refute :payer_user_id in Thread.__schema__(:fields)
+      refute :billing_policy in Thread.__schema__(:fields)
+
+      assert %{rows: []} =
+               Repo.query!(
+                 "SELECT 1 FROM information_schema.columns WHERE table_schema = 'ravix' " <>
+                   "AND table_name = 'threads' AND column_name IN ('payer_user_id', 'billing_policy')"
                )
     end
 

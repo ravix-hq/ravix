@@ -4,18 +4,18 @@ defmodule Ravix.Repo.Migrations.ExpandWorkspaces do
 
   Everything here is new or nullable, so the release that is still serving
   while this runs keeps inserting exactly the rows it always did: its
-  projects and threads arrive with every column below null, and the reader
+  projects, tracks and threads arrive with every column below null, and the reader
   treats a null workspace as the legacy layout rather than a default one.
   Nothing reads these to authorize yet. `Ravix.Workspaces.Backfill` fills
   the personal workspaces and the equivalent project fields afterwards, in
   resumable batches, and again for whatever an old writer inserted since.
 
-  The `ALTER TABLE`s take brief exclusive locks on `projects` and `threads`
+  The `ALTER TABLE`s take brief exclusive locks on `projects`, `tracks` and `threads`
   while the old release serves them, so the transaction gives up after
   `lock_timeout` rather than queueing every request behind a long reader.
   It is set at both ends so it applies first whichever way this runs.
-  The thread check is added `NOT VALID` (new writes are still checked) and
-  validated by `20260928063025_validate_threads_billing_policy`, which does
+  The track billing check is added `NOT VALID` (new writes are still checked)
+  and validated by `20260928063025_validate_tracks_billing_policy`, which does
   not block writes.
   """
   use Ecto.Migration
@@ -149,15 +149,21 @@ defmodule Ravix.Repo.Migrations.ExpandWorkspaces do
              name: :workspace_repository_reservations_repo
            )
 
-    # Who started a thread and who pays for it. Unwritten until starter
-    # billing (phase 6); a null here is a legacy owner-paid thread.
+    # Who started a thread: attribution for `Co-authored-by`, never a payer.
     alter table(:threads) do
       add :started_by, references(:users, type: :text, on_delete: :nilify_all)
+    end
+
+    # Who pays for a track's inference (RAV-17 as clarified: the track's
+    # creator, bound to its sandbox, for every thread on it). `created_by` is
+    # already the creator. Unwritten until creator billing (phase 6); a null
+    # policy is a legacy track its project owner pays for.
+    alter table(:tracks) do
       add :payer_user_id, references(:users, type: :text, on_delete: :nilify_all)
       add :billing_policy, :text
     end
 
-    create constraint(:threads, :threads_billing_policy,
+    create constraint(:tracks, :tracks_billing_policy,
              check: "billing_policy IS NULL OR billing_policy IN ('legacy_owner', 'starter')",
              validate: false
            )
