@@ -18,6 +18,12 @@ defmodule RavixWeb.Live.PeopleDialog do
   `scope` picks the unit. What that changes is real and the dialog says so:
   a project member reaches project-visible tracks; private invitations remain
   separate, including when the person leaves the project.
+
+  On a workspace project (`Ravix.People.workspace_sharing?/1`, RAV-32) the
+  project scope lists who is in it and lets them be removed, but offers no
+  invitation and no link: people join the workspace from its members page,
+  and a track is shared from its Share dialog. `Ravix.People` refuses both
+  as well, so hiding them here is the courtesy rather than the boundary.
   """
   use RavixWeb, :live_component
 
@@ -34,6 +40,7 @@ defmodule RavixWeb.Live.PeopleDialog do
   @impl true
   def update(assigns, socket) do
     socket = assign(socket, assigns)
+    socket = assign(socket, workspace_project?: workspace_project?(socket.assigns))
 
     # Unlike `invite: nil` above, this one is not a default `mount/1` could
     # have set: listing people needs the scope and the signed-in user, and
@@ -116,7 +123,7 @@ defmodule RavixWeb.Live.PeopleDialog do
     %{scope: scope, subject_id: id, current_user: user} = socket.assigns
     socket = result(socket, list(scope, user, id), &assign(&1, people: &2))
 
-    if socket.assigns.owner,
+    if socket.assigns.owner and not socket.assigns.workspace_project?,
       do: result(socket, link(scope, user, id), &assign(&1, invite: &2)),
       else: socket
   end
@@ -138,6 +145,13 @@ defmodule RavixWeb.Live.PeopleDialog do
 
   defp drop(:track, user, id), do: People.drop_link(user, id)
   defp drop(:project, user, id), do: People.drop_project_link(user, id)
+
+  # Only the project scope asks: the track page shows the Share dialog in
+  # this one's place on a workspace project.
+  defp workspace_project?(%{scope: :project, project: project}),
+    do: People.workspace_sharing?(project)
+
+  defp workspace_project?(_assigns), do: false
 
   defp title(:track), do: "Track people"
   defp title(:project), do: "Project people"
@@ -186,7 +200,7 @@ defmodule RavixWeb.Live.PeopleDialog do
     <div>
       <.dialog id={"#{@id}-dialog"} title={title(@scope)} on_close="dismiss">
         <p><.project_name project={@project} /></p>
-        <p :if={@scope == :project} class="hint">
+        <p :if={@scope == :project && !@workspace_project?} class="hint">
           Members can create tracks and work in tracks shared with this project. Private tracks require an invitation.
         </p>
         <form
@@ -231,8 +245,12 @@ defmodule RavixWeb.Live.PeopleDialog do
             </button>
           </li>
         </ul>
+        <p :if={@workspace_project?} id={"#{@id}-workspace-hint"} class="hint workspace-hint">
+          This project is shared with members of its workspace. People join it from <.link navigate={"/w/#{@project.workspace_id}"}>the workspace's members page</.link>;
+          use Share on a track to add them to it.
+        </p>
         <form
-          :if={@owner}
+          :if={@owner && !@workspace_project?}
           id={"#{@id}-invite-form"}
           phx-change="type-login"
           phx-submit="invite-person"
@@ -248,7 +266,12 @@ defmodule RavixWeb.Live.PeopleDialog do
           <.loading_status :if={@inviting?}>Sending invitation…</.loading_status>
           <button class="primary" phx-disable-with="Inviting…" disabled={@inviting?}>Invite</button>
         </form>
-        <.invite_link owner={@owner} invite={@invite} target={@myself} />
+        <.invite_link
+          :if={!@workspace_project?}
+          owner={@owner}
+          invite={@invite}
+          target={@myself}
+        />
       </.dialog>
     </div>
     """

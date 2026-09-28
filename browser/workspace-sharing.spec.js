@@ -134,3 +134,36 @@ test('the Share dialog shares a private track with one member, and nobody else l
     await bystanderContext.close();
   }
 });
+
+// RAV-32: a workspace project's People dialog lists who is in it but offers
+// no invitation and no invite link; it points at the workspace instead.
+test("a workspace project's People dialog offers no invite link and points to the workspace", async ({ page }) => {
+  test.skip(process.env.RAVIX_WORKSPACE_ACCESS !== 'true', 'Runs under test:browser:workspace-access');
+  const sql = browserSql();
+
+  await signIn(page, 'sharecreator');
+  await connectClaude(page);
+  await page.getByRole('button', { name: 'Add a project', exact: true }).first().click();
+  const dialog = page.getByRole('dialog', { name: 'New project', exact: true });
+  await dialog.getByLabel('Project name', { exact: true }).fill('Retired links project');
+  await dialog.getByRole('button', { name: 'Create project', exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  const projectPath = new URL(page.url()).pathname;
+  const projectId = idOf(projectPath);
+  sql(`UPDATE ravix.projects SET workspace_id = (SELECT id FROM ravix.workspaces
+         WHERE personal_user_id = '00000000-0000-4000-8000-000000009013') WHERE id = '${projectId}'`);
+  const workspaceId = sql(`SELECT workspace_id FROM ravix.projects WHERE id = '${projectId}'`);
+  expect(workspaceId).toMatch(/^[a-f0-9-]{36}$/);
+
+  await page.goto(projectPath);
+  await page.getByRole('button', { name: 'People', exact: true }).click();
+  const people = page.getByRole('dialog', { name: 'Project people', exact: true });
+  await expect(people).toBeVisible();
+  await expect(people.getByLabel('GitHub username')).toHaveCount(0);
+  await expect(people).not.toContainText('invite link');
+  await expect(people.getByRole('link', { name: "the workspace's members page" }))
+    .toHaveAttribute('href', `/w/${workspaceId}`);
+  const axe = await new AxeBuilder({ page }).include('#people-dialog')
+    .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze();
+  expect(axe.violations).toEqual([]);
+});

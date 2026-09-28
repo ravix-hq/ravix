@@ -580,12 +580,17 @@ defmodule Ravix.People do
   Owner-only, and there is no argument for widening it. A member who could
   invite could hand out the machine they were lent, and the owner would
   find out from the people list.
+
+  Refused on a project shared through its workspace (`workspace_sharing?/1`,
+  RAV-32): people join the workspace from its members page instead, and
+  nobody outside it is let onto its machine.
   """
   @spec add_project(User.t(), String.t(), String.t() | nil) ::
           {:ok, [Store.person()]} | {:error, reason()}
   def add_project(%User{} = user, project_id, login) do
     with {:ok, %{project: project, role: role}} <- Access.project_access(user, project_id),
          :ok <- Access.require_owner(role, "invite people to a project"),
+         :ok <- project_links_kept(project),
          {:ok, found} <- resolve_login(login),
          :ok <- refuse_owner(found, project, "That is the owner of this project.") do
       # `add_project_member/3` is a promotion: any track rows they held on
@@ -783,6 +788,18 @@ defmodule Ravix.People do
       else: :ok
   end
 
+  # RAV-32: the same, one level up. A project link or invitation admitted
+  # anybody to every track on a workspace project, members of the workspace
+  # or not; the workspace's own members page is how somebody joins now.
+  defp project_links_kept(project) do
+    if workspace_sharing?(project),
+      do:
+        {:error,
+         {:unprocessable, "workspace_sharing",
+          "This project is shared with members of its workspace. Invite people to the workspace, and use Share on a track to add them to it."}},
+      else: :ok
+  end
+
   # ── the other way in: a link ─────────────────────────────────────────
 
   @doc "Whether a track link is out, never the link itself. Owner-only."
@@ -843,15 +860,22 @@ defmodule Ravix.People do
   def project_link(%User{} = user, project_id) do
     with {:ok, %{project: project, role: role}} <- Access.project_access(user, project_id),
          :ok <- Access.require_owner(role, "see this project's invite link") do
-      {:ok, describe_link(Store.project_link_of(project.id))}
+      # As `link/2`: a retired link is no link.
+      if workspace_sharing?(project),
+        do: {:ok, nil},
+        else: {:ok, describe_link(Store.project_link_of(project.id))}
     end
   end
 
-  @doc "Mint a project link, replacing whatever was out. Owner-only."
+  @doc """
+  Mint a project link, replacing whatever was out. Owner-only. Refused on a
+  project shared through its workspace, whose links are retired (RAV-32).
+  """
   @spec mint_project_link(User.t(), String.t()) :: {:ok, invite_link()} | {:error, reason()}
   def mint_project_link(%User{} = user, project_id) do
     with {:ok, %{project: project, role: role}} <- Access.project_access(user, project_id),
-         :ok <- Access.require_owner(role, "make an invite link for a project") do
+         :ok <- Access.require_owner(role, "make an invite link for a project"),
+         :ok <- project_links_kept(project) do
       token = Ravix.Crypto.random_token()
 
       Store.put_project_link(
@@ -898,9 +922,10 @@ defmodule Ravix.People do
   order is arbitrary rather than load-bearing.
 
   `:error` when the link is unknown, revoked, expired, or points at
-  something that has since closed. `:retired` for a track link on a project
-  shared through its workspace (ADR 0009 phase 5): it admits nobody, and
-  the page says to ask the track's creator. Takes a user id rather than a
+  something that has since closed. `:retired` for a track or project link
+  on a project shared through its workspace (ADR 0009 phase 5, RAV-32): it
+  admits nobody, and the page says to ask the project's owner for a
+  workspace invitation. Takes a user id rather than a
   user because the sign-in callback has only just created the row.
   """
   @spec claim_link(String.t(), String.t()) :: {:ok, String.t()} | :error | :retired
@@ -932,8 +957,8 @@ defmodule Ravix.People do
   The optional viewer affects only the project label: its owner sees the bare
   name; everyone else sees the owner prefix. The hash still authorizes the read.
 
-  `:retired` for a track link whose project is now shared through its
-  workspace, as `claim_link/2` answers it.
+  `:retired` for a track or project link whose project is now shared
+  through its workspace, as `claim_link/2` answers it.
 
   `invited_by` is whoever minted the link, by login. Worth naming: an invitation
   is a claim about who is asking, and the one piece of it a stranger cannot
@@ -977,14 +1002,19 @@ defmodule Ravix.People do
   defp project_target(nil, _hash, _user), do: :error
 
   defp project_target(%Project{} = project, hash, user) do
-    {:ok,
-     %LinkTarget{
-       kind: :project,
-       project: project.name,
-       project_view: invite_project(project, user),
-       track: nil,
-       invited_by: Store.minted_by(ProjectLink, :project_id, project.id, hash)
-     }}
+    if workspace_sharing?(project),
+      do: :retired,
+      else: {:ok, project_link_target(project, hash, user)}
+  end
+
+  defp project_link_target(project, hash, user) do
+    %LinkTarget{
+      kind: :project,
+      project: project.name,
+      project_view: invite_project(project, user),
+      track: nil,
+      invited_by: Store.minted_by(ProjectLink, :project_id, project.id, hash)
+    }
   end
 
   # ownership: the invite hash matched the live project or one of its tracks
@@ -1022,7 +1052,13 @@ defmodule Ravix.People do
 
   defp redeem_project(_user_id, nil), do: :error
 
+  # RAV-32: as a track link, a workspace project's link admits nobody,
+  # workspace member or not. People who came in on one before stay.
   defp redeem_project(user_id, %Project{} = project) do
+    if workspace_sharing?(project), do: :retired, else: seat_project_by_link(user_id, project)
+  end
+
+  defp seat_project_by_link(user_id, project) do
     if project.user_id != user_id, do: Store.add_project_member(project.id, user_id, "link")
     Ravix.Hub.publish(project.id, :people)
     # The project rather than one of its tracks: this link did not name

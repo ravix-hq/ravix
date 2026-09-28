@@ -69,9 +69,10 @@ defmodule RavixWeb.AuthHTML do
   end
 
   @doc """
-  An old track invite link, after workspace sharing replaced them (ADR 0009
-  phase 5). Nothing is joined and nothing about the track is named: the
-  link opens nothing now, whatever it once opened.
+  An old track or project invite link, after workspace sharing replaced
+  them (ADR 0009 phase 5, RAV-32). Nothing is joined and nothing about the
+  track or project is named: the link opens nothing now, whatever it once
+  opened. One page for both, since the page cannot tell them apart.
   """
   def retired(assigns) do
     ~H"""
@@ -83,7 +84,7 @@ defmodule RavixWeb.AuthHTML do
       <main class="invite">
         <h1 id="invite-title">This invite link no longer works</h1>
         <p class="landing-intro">
-          Tracks are now shared with members of their workspace. Ask the track's creator to add you.
+          Projects and tracks are now shared with members of their workspace. Ask the project's owner for an invitation to its workspace.
         </p>
         <div class="landing-actions">
           <a href="/">Go to Ravix</a>

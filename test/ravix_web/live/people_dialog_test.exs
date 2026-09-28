@@ -9,10 +9,13 @@ defmodule RavixWeb.Live.PeopleDialogTest do
 
   import Mimic
   import Phoenix.LiveViewTest
+  import Ecto.Query, only: [where: 2]
 
   alias Ravix.Accounts.Access
   alias Ravix.{People, Projects, Repo, Tracks}
+  alias Ravix.Projects.{Project, ProjectLink}
   alias Ravix.Tracks.{Track, Transcript}
+  alias Ravix.Workspaces.Store, as: WorkspaceStore
 
   setup %{conn: conn} do
     owner = insert_user()
@@ -381,6 +384,106 @@ defmodule RavixWeb.Live.PeopleDialogTest do
                ctx.view |> element("button[phx-value-login='#{member.login}']") |> render_click()
 
       assert {:ok, _project} = Projects.get(member, ctx.project.id)
+    end
+  end
+
+  describe "a workspace project's dialog (RAV-32)" do
+    setup ctx do
+      stub(Ravix.Config, :workspace_access?, fn -> true end)
+      {:ok, workspace} = WorkspaceStore.ensure_personal_workspace(ctx.owner)
+
+      Repo.update_all(where(Project, id: ^ctx.project.id),
+        set: [workspace_id: workspace.id]
+      )
+
+      legacy = insert_user()
+      insert_project_member(ctx.project, legacy)
+      %{workspace: workspace, legacy: legacy}
+    end
+
+    # The dialog's own root: with no invite control left on the page, the
+    # refused events are sent the way a hand-edited browser would send them.
+    @people_component "div[data-phx-component]:has(> #people-dialog)"
+
+    defp project_people(conn, user, project) do
+      {:ok, view, _} = live(log_in_user(conn, user), "/p/#{project.id}")
+      render_async(view)
+      open_people(view)
+    end
+
+    test "offers no invitation and no link, and points to the workspace and Share", ctx do
+      view = project_people(ctx.conn, ctx.owner, ctx.project)
+
+      refute has_element?(view, "#people-invite-form")
+      refute has_element?(view, "button[phx-click=invite-link]")
+      refute render(view) =~ "invite link"
+      assert has_element?(view, "#people-workspace-hint a[href='/w/#{ctx.workspace.id}']")
+      assert has_element?(view, "#people-workspace-hint", "use Share on a track")
+
+      # The member who came in before stays, and is still the owner's to remove.
+      assert has_element?(view, "#people-dialog", "@#{ctx.legacy.login}")
+      assert has_element?(view, "button[phx-value-login='#{ctx.legacy.login}']")
+    end
+
+    test "the server refuses a link or an invitation the browser sends anyway", ctx do
+      view = project_people(ctx.conn, ctx.owner, ctx.project)
+      reject(&Ravix.GitHub.user_by_login/2)
+
+      refute render(view) =~ "Invite people to the workspace, and use Share"
+
+      view
+      |> with_target(@people_component)
+      |> render_click("invite-link", %{"action" => "create"})
+
+      assert render(view) =~ "Invite people to the workspace, and use Share"
+      refute Repo.exists?(where(ProjectLink, project_id: ^ctx.project.id))
+
+      outsider = insert_user()
+
+      view
+      |> with_target(@people_component)
+      |> render_submit("invite-person", %{"login" => outsider.login})
+
+      render_async(view)
+      assert render(view) =~ "Invite people to the workspace, and use Share"
+      assert {:error, :not_found} = Projects.get(outsider, ctx.project.id)
+    end
+
+    test "a revoked session cannot mint a link through the dialog", ctx do
+      {token, session} = insert_session(ctx.owner)
+      conn = Plug.Test.init_test_session(ctx.conn, session_token: token)
+      {:ok, view, _} = live(conn, "/p/#{ctx.project.id}")
+      render_async(view)
+      open_people(view)
+
+      reject(&People.mint_project_link/2)
+      Repo.delete!(session)
+
+      assert {:error, {:redirect, %{to: "/login"}}} =
+               view
+               |> with_target(@people_component)
+               |> render_click("invite-link", %{"action" => "create"})
+    end
+
+    test "another user's project id opens no dialog and mints nothing", ctx do
+      stranger = insert_user()
+      {:ok, view, _} = live(log_in_user(ctx.conn, stranger), "/p/#{ctx.project.id}")
+      render_async(view)
+      open_people(view)
+
+      refute has_element?(view, "#people-dialog")
+      refute render(view) =~ "@#{ctx.legacy.login}"
+      assert {:error, :not_found} = People.mint_project_link(stranger, ctx.project.id)
+      refute Repo.exists?(where(ProjectLink, project_id: ^ctx.project.id))
+    end
+
+    test "with the switch off the dialog offers today's invitation and link", ctx do
+      stub(Ravix.Config, :workspace_access?, fn -> false end)
+      view = project_people(ctx.conn, ctx.owner, ctx.project)
+
+      assert has_element?(view, "#people-invite-form")
+      assert has_element?(view, "button[phx-value-action=create]", "Create invite link")
+      refute has_element?(view, "#people-workspace-hint")
     end
   end
 
