@@ -14,7 +14,7 @@ test('an account default selects the model for a new thread and leaves the exist
   await expect(page.getByRole('dialog', { name: 'New track', exact: true })).toHaveCount(0);
   await expect(page.locator('#track-setup-status')).toHaveCount(0, { timeout: 45_000 });
   const tabs = page.getByRole('navigation', { name: 'Threads', exact: true });
-  const original = await tabs.locator('[aria-current="true"]').getAttribute('data-thread-id');
+  const original = await tabs.locator('[aria-selected="true"]').getAttribute('data-thread-id');
   const originalModel = await page.locator('#model-trigger').getAttribute('title');
   await page.locator('#account-trigger').click();
   await page.locator('#open-account').click();
@@ -32,7 +32,7 @@ test('an account default selects the model for a new thread and leaves the exist
   await expect(form.locator('.thread-default-source')).toContainText('Your default:');
   await expect(form.locator('#new_thread-model')).toHaveValue(selected.value.split('|')[1]);
   await form.getByRole('button', { name: 'Create thread', exact: true }).click();
-  await expect(tabs.locator('[aria-current="true"]')).not.toHaveAttribute('data-thread-id', original);
+  await expect(tabs.locator('[aria-selected="true"]')).not.toHaveAttribute('data-thread-id', original);
   await expect(page.locator('#model-trigger')).toHaveAttribute('title', selected.label);
   await page.locator('#model-trigger').click();
   await expect(page.locator('.model-default-hint')).toHaveText('Also your default for new threads');
