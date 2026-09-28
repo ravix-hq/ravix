@@ -298,7 +298,7 @@
                     </button>
                     <.link
                       :if={project.access != :tracks}
-                      patch={"/p/#{project.id}?new=track"}
+                      patch={"/p/#{project.id}#{if @project && @project.id == project.id, do: track_suffix(@track_id), else: ""}?new=track"}
                       id={"new-track-#{project.id}"}
                       phx-click={JS.push_focus()}
                       class="project-action project-add"
@@ -686,7 +686,12 @@
       <div :if={@rail_error} role="alert">
         <p>Projects could not be loaded.</p><button type="button" phx-click="refresh">Retry</button>
       </div>
-      <.track_search_results projects={@projects} tracks={@tracks} query={@query} />
+      <.track_search_results
+        :if={@rail_loaded}
+        projects={@projects}
+        tracks={@tracks}
+        query={@query}
+      />
     </.dialog>
     <.dialog
       :if={@dialog == :new_project}

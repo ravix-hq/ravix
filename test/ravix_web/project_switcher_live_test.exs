@@ -105,6 +105,23 @@ defmodule RavixWeb.ProjectTreeLiveTest do
     refute render(view) =~ hidden.title
   end
 
+  test "new-track action on the current project preserves the selected track", %{conn: conn} do
+    user = insert_user()
+    project = insert_project(user: user)
+    track = insert_track(project: project)
+    path = "/p/#{project.id}/t/#{track.id}"
+    {:ok, view, _} = live(log_in_user(conn, user), path)
+    render_async(view)
+    child = find_live_child(view, "track-host")
+    view |> element("#new-track-#{project.id}") |> render_click()
+    assert_patch(view, path <> "?new=track")
+    assert has_element?(view, "#new-track-dialog")
+    assert find_live_child(view, "track-host").pid == child.pid
+    render_click(view, "dismiss")
+    assert_patch(view, path)
+    assert find_live_child(view, "track-host").pid == child.pid
+  end
+
   test "membership removal drops projects while the quick-jump is open", %{conn: conn} do
     user = insert_user()
     insert_project(user: user)

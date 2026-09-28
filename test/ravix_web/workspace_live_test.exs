@@ -208,6 +208,10 @@ defmodule RavixWeb.WorkspaceLiveTest do
     )
 
     assert has_element?(view, "#rail-loading")
+    render_click(view, "dialog", %{name: "search"})
+    assert has_element?(view, "#search-dialog [role=status]", "Loading projects")
+    refute has_element?(view, "#search-dialog", "No projects or tracks match")
+    render_click(view, "dismiss-switcher")
     child = find_live_child(view, "track-host")
     assert render_async(child) =~ "Deep-linked work"
     refute_patched(view)
