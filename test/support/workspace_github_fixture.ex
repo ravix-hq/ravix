@@ -9,7 +9,12 @@ defmodule Ravix.WorkspaceGitHubFixture do
   their installation (`inst-<id>`), and `GET /installation/repositories`,
   which answers for whichever installation's token asked, and
   `GET /repos/:owner/:repo` likewise. Call it again to change GitHub under
-  a test. `provisioning/1` scripts the Fountain calls one project admission
+  a test.
+
+  `users` maps an OAuth `code` to the installation ids its person can see:
+  the code exchanges for a token (`user-<code>`), and `GET
+  /user/installations` with that token lists exactly those. A code not in
+  the map is GitHub's `bad_verification_code`. `provisioning/1` scripts the Fountain calls one project admission
   makes.
   """
 
@@ -42,8 +47,9 @@ defmodule Ravix.WorkspaceGitHubFixture do
   Route GitHub for `installations`: `%{id => %{account: login, repos: [repo],
   suspended: bool, gone: bool}}`. Returns the App.
   """
-  @spec github(%{integer() => map()}) :: Ravix.Config.GitHubApp.t()
-  def github(installations) do
+  @spec github(%{integer() => map()}, %{String.t() => [integer()]}) ::
+          Ravix.Config.GitHubApp.t()
+  def github(installations, users \\ %{}) do
     app = Process.get({__MODULE__, :app}) || GH.app()
     Process.put({__MODULE__, :app}, app)
 
@@ -51,7 +57,9 @@ defmodule Ravix.WorkspaceGitHubFixture do
       {"POST", ~r{^/app/installations/\d+/access_tokens$}, &token(&1, installations)},
       {"GET", ~r{^/app/installations/\d+$}, &installation(&1, installations)},
       {"GET", "/installation/repositories", &repositories(&1, installations)},
-      {"GET", ~r{^/repos/[^/]+/[^/]+$}, &one_repo(&1, installations)}
+      {"GET", ~r{^/repos/[^/]+/[^/]+$}, &one_repo(&1, installations)},
+      {"POST", "/login/oauth/access_token", &exchange(&1, users)},
+      {"GET", "/user/installations", &user_installations(&1, installations, users)}
     ])
 
     app
@@ -96,10 +104,28 @@ defmodule Ravix.WorkspaceGitHubFixture do
   defp repositories(conn, installations) do
     conn = Plug.Conn.fetch_query_params(conn)
 
-    repos =
-      if conn.query_params["page"] in [nil, "1"], do: repos_for(conn, installations), else: []
+    page = String.to_integer(conn.query_params["page"] || "1")
 
-    Req.Test.json(conn, %{"total_count" => length(repos), "repositories" => repos})
+    repos =
+      case Process.get({__MODULE__, :failing_page}) do
+        ^page -> :fail
+        _ -> conn |> repos_for(installations) |> Enum.slice((page - 1) * 100, 100)
+      end
+
+    case repos do
+      :fail ->
+        conn |> Plug.Conn.put_status(502) |> Req.Test.json(%{"message" => "Bad Gateway"})
+
+      repos ->
+        Req.Test.json(conn, %{"total_count" => length(repos), "repositories" => repos})
+    end
+  end
+
+  @doc "Make `GET /installation/repositories` fail on `page` (nil: never) for this test."
+  @spec fail_page(pos_integer() | nil) :: :ok
+  def fail_page(page) do
+    Process.put({__MODULE__, :failing_page}, page)
+    :ok
   end
 
   defp one_repo(conn, installations) do
@@ -110,6 +136,38 @@ defmodule Ravix.WorkspaceGitHubFixture do
       nil -> not_found(conn)
       repo -> Req.Test.json(conn, repo)
     end
+  end
+
+  # GitHub answers 200 with an error body for a code it will not exchange.
+  defp exchange(conn, users) do
+    {:ok, raw, conn} = Plug.Conn.read_body(conn)
+    code = Jason.decode!(raw)["code"]
+
+    if Map.has_key?(users, code),
+      do: Req.Test.json(conn, %{"access_token" => "user-#{code}", "token_type" => "bearer"}),
+      else:
+        Req.Test.json(conn, %{
+          "error" => "bad_verification_code",
+          "error_description" => "The code passed is incorrect or expired."
+        })
+  end
+
+  defp user_installations(conn, installations, users) do
+    ["Bearer user-" <> code] = Plug.Conn.get_req_header(conn, "authorization")
+
+    listed =
+      for id <- Map.get(users, code, []) do
+        account = get_in(installations, [id, :account]) || "someone"
+
+        %{
+          "id" => id,
+          "account" => %{"login" => account, "id" => id + 50, "avatar_url" => nil},
+          "app_id" => 1,
+          "target_type" => "Organization"
+        }
+      end
+
+    Req.Test.json(conn, %{"total_count" => length(listed), "installations" => listed})
   end
 
   defp repos_for(conn, installations) do
@@ -124,9 +182,15 @@ defmodule Ravix.WorkspaceGitHubFixture do
   Fountain, scripted for `admissions` project admissions (and for the last
   `unwound` of them to be taken back). Stubs `Ravix.Fountain.client/0`; the caller
   must `use Mimic`.
+
+  `on_agent:` runs just before Fountain answers the agent's creation: the
+  moment between admission's checks and its insert, for a test to race.
   """
-  @spec provisioning(non_neg_integer(), non_neg_integer()) :: Ravix.Fountain.Client.t()
-  def provisioning(admissions \\ 1, unwound \\ 0) do
+  @spec provisioning(non_neg_integer(), non_neg_integer(), keyword()) ::
+          Ravix.Fountain.Client.t()
+  def provisioning(admissions \\ 1, unwound \\ 0, opts \\ []) do
+    on_agent = Keyword.get(opts, :on_agent, fn -> :ok end)
+
     one = fn n ->
       [
         {%{method: "GET", path: "/api/catalog"}, {200, [], %{data: @catalog}}},
@@ -136,7 +200,11 @@ defmodule Ravix.WorkspaceGitHubFixture do
         {%{method: "POST", path: "/api/vaults"}, {201, [], %{data: %{id: "vault-#{n}"}}}},
         {%{method: "POST", path: "/api/vaults/vault-#{n}/secrets"},
          {201, [], %{data: %{key: "GITHUB_TOKEN"}}}},
-        {%{method: "POST", path: "/api/agents"}, {201, [], %{data: %{id: "agent-#{n}"}}}}
+        {%{method: "POST", path: "/api/agents"},
+         fn _call ->
+           on_agent.()
+           {201, [], %{data: %{id: "agent-#{n}"}}}
+         end}
       ]
     end
 

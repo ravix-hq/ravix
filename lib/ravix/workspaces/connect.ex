@@ -20,14 +20,23 @@ defmodule Ravix.Workspaces.Connect do
       a replayed callback finds nothing;
     * **short-lived.** Fifteen minutes, as the sign-in state is.
 
+  The state proves who began the flow; it does not prove the installation
+  is theirs, because the `installation_id` arrives in the query string and
+  any id of this App's installations would pass a lookup as the App. So the
+  callback must also carry the user-to-server `code` GitHub sends to the
+  setup URL when the App has "Request user authorization (OAuth) during
+  installation" on. It is exchanged, the returning person's own
+  `GET /user/installations` is read with it, and the installation is bound
+  only if it is in that list. The token is then dropped: nothing personal
+  is stored. A callback without a `code` is refused.
+
   The caller must still hold `:connect_repos` in the workspace when the
-  callback lands, and GitHub must still have the installation (read as the
-  App). One installation may be connected to several workspaces, each by
-  its own round trip. Binding it refreshes that workspace's catalog
+  callback lands. One installation may be connected to several workspaces,
+  each by its own round trip. Binding it refreshes that workspace's catalog
   (`Ravix.Workspaces.Repositories`).
   """
 
-  alias Ravix.Accounts.{Access, User}
+  alias Ravix.Accounts.{Access, Auth, User}
   alias Ravix.Crypto
   alias Ravix.Workspaces.{Repositories, Store}
 
@@ -66,28 +75,38 @@ defmodule Ravix.Workspaces.Connect do
   def state?(@prefix <> _rest), do: true
   def state?(_state), do: false
 
-  @doc "The workspace a connect `state` names, unverified: where to send the browser back."
+  @doc """
+  The workspace a connect `state` names, unverified but well-formed (a
+  UUID): where to send the browser back. Nil for anything else.
+  """
   @spec workspace_of(term()) :: String.t() | nil
   def workspace_of(state) do
-    case parse(state) do
-      {:ok, workspace_id, _nonce} -> workspace_id
-      :error -> nil
+    # `Ecto.UUID.cast/1` also takes any 16-byte binary as a raw UUID, so
+    # only the 36-character text form is let through.
+    with {:ok, workspace_id, _nonce} <- parse(state),
+         36 <- byte_size(workspace_id),
+         {:ok, uuid} <- Ecto.UUID.cast(workspace_id) do
+      uuid
+    else
+      _ -> nil
     end
   end
 
   @doc """
   Finish a connect round trip: bind `installation_id` to the workspace the
-  state names. The state is spent first, whatever happens after, so it
-  cannot be tried twice. Answers the workspace id.
+  state names, once GitHub's `code` proves the returning person can see
+  that installation. The state is spent first, whatever happens after, so
+  it cannot be tried twice. Answers the workspace id.
 
   `:stale` for a state that is unknown, spent, expired, or minted for
   another workspace, person or session; not found when the caller no
-  longer manages the workspace; `no_installation` when GitHub does not have
-  that installation of this App.
+  longer manages the workspace; `no_authorization` without a `code`;
+  `not_your_installation` when the installation is not among the returning
+  person's own.
   """
-  @spec finish(User.t(), String.t() | nil, term(), term()) ::
+  @spec finish(User.t(), String.t() | nil, term(), term(), term()) ::
           {:ok, String.t()} | {:error, reason()}
-  def finish(%User{} = user, session_hash, state, installation_id)
+  def finish(%User{} = user, session_hash, state, installation_id, code)
       when is_binary(session_hash) do
     with {:ok, workspace_id, nonce} <- parse(state) |> stale(),
          %{} = row <-
@@ -96,9 +115,9 @@ defmodule Ravix.Workspaces.Connect do
          {:ok, %{workspace: workspace}} <-
            Access.workspace_grant(user, row.workspace_id, :connect_repos),
          {:ok, installation_id} <- installation_id(installation_id),
+         {:ok, code} <- code(code),
          {:ok, app} <- Ravix.Providers.github(),
-         {:ok, found} <- Ravix.GitHub.installation(app, installation_id),
-         {:ok, found} <- present(found) do
+         {:ok, found} <- theirs(app, code, installation_id) do
       {:ok, _binding} =
         Store.bind_installation(workspace.id, installation_id, found.account, user.id)
 
@@ -110,7 +129,33 @@ defmodule Ravix.Workspaces.Connect do
     end
   end
 
-  def finish(%User{}, _session_hash, _state, _installation_id), do: {:error, :stale}
+  def finish(%User{}, _session_hash, _state, _installation_id, _code), do: {:error, :stale}
+
+  # The returning person's own installations, read with the token their
+  # `code` buys and then forgotten: the ownership proof, not a credential.
+  defp theirs(app, code, installation_id) do
+    with {:ok, token} <-
+           Ravix.GitHub.exchange_code(app, code, Auth.callback_url()),
+         {:ok, installations} <- Ravix.GitHub.installations_for(app, token) do
+      case Enum.find(installations, &(&1.id == installation_id)) do
+        nil ->
+          {:error,
+           {:unprocessable, "not_your_installation",
+            "That GitHub installation is not one you can see, so it cannot be connected here."}}
+
+        found ->
+          {:ok, found}
+      end
+    end
+  end
+
+  defp code(code) when is_binary(code) and code != "", do: {:ok, code}
+
+  defp code(_code),
+    do:
+      {:error,
+       {:unprocessable, "no_authorization",
+        "GitHub did not confirm who installed the App. Connect GitHub again."}}
 
   defp parse(@prefix <> rest) do
     case String.split(rest, ".", parts: 2) do
@@ -137,14 +182,6 @@ defmodule Ravix.Workspaces.Connect do
     do:
       {:error,
        {:unprocessable, "no_installation", "GitHub did not say which installation to connect."}}
-
-  defp present(nil),
-    do:
-      {:error,
-       {:unprocessable, "no_installation",
-        "GitHub does not have that installation of the Ravix App."}}
-
-  defp present(found), do: {:ok, found}
 
   defp key(nonce, workspace_id, user_id, session_hash),
     do: Crypto.sha256(Enum.join([nonce, workspace_id, user_id, session_hash], "\n"))

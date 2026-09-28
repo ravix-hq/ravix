@@ -332,27 +332,36 @@ defmodule Ravix.GitHub do
   @doc """
   Every repository an installation grants, read with the installation's own
   token: the workspace catalog's source, which needs nobody's personal
-  GitHub access. Paged to a thousand, as `repositories/4` is.
+  GitHub access. Paged to the end, 100 at a time.
+
+  `{:error, :truncated}` rather than a partial list when GitHub is still
+  sending full pages after `@installation_page_limit` of them: the catalog
+  replaces what an installation reaches with this answer, and must not
+  drop repositories it simply did not get to.
   """
   @spec installation_repositories(app(), installation_id()) ::
-          {:ok, [Shapes.RepoRef.t()]} | error()
+          {:ok, [Shapes.RepoRef.t()]} | error() | {:error, :truncated}
   def installation_repositories(nil, _installation_id), do: {:error, {:unconfigured, :github}}
 
   def installation_repositories(%GitHubApp{} = app, installation_id),
     do: installation_repository_pages(app, installation_id, 1, [])
 
-  defp installation_repository_pages(_app, _installation_id, page, acc) when page > 10,
-    do: {:ok, acc}
+  # 100 000 repositories; an installation past that is refused, not cut short.
+  @installation_page_limit 1000
+
+  defp installation_repository_pages(_app, _installation_id, page, _acc)
+       when page > @installation_page_limit,
+       do: {:error, :truncated}
 
   defp installation_repository_pages(app, installation_id, page, acc) do
     path = "/installation/repositories?per_page=100&page=#{page}"
 
     with {:ok, body} <- as_installation(app, installation_id, :get, path) do
       batch = Enum.map(body["repositories"] || [], &Shapes.repo_ref(&1, installation_id))
-      acc = acc ++ batch
+      acc = [batch | acc]
 
       if length(batch) < 100,
-        do: {:ok, acc},
+        do: {:ok, acc |> Enum.reverse() |> List.flatten()},
         else: installation_repository_pages(app, installation_id, page + 1, acc)
     end
   end

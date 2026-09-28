@@ -110,6 +110,32 @@ defmodule Ravix.Workspaces.RepositoriesTest do
       assert length(catalog.repos) == 3
     end
 
+    test "an installation's repositories are read to the last page", ctx do
+      many = for n <- 1..250, do: repo(1000 + n, "acme/repo-#{n}")
+      github(%{77 => %{account: "acme", repos: many}, 88 => %{account: "tools", repos: []}})
+
+      assert {:ok, %{errors: []}} = Repositories.refresh(ctx.owner, ctx.team.id)
+      assert {:ok, catalog} = Repositories.catalog(ctx.owner, ctx.team.id)
+      assert length(catalog.repos) == 250
+      # Three pages for 250, and one for the other installation's none.
+      assert GH.request_count("/installation/repositories") == 4
+    end
+
+    test "a listing that fails part-way keeps what the catalog had", ctx do
+      many = for n <- 1..150, do: repo(1000 + n, "acme/repo-#{n}")
+      github(%{77 => %{account: "acme", repos: many}, 88 => %{account: "tools", repos: []}})
+      {:ok, _} = Repositories.refresh(ctx.owner, ctx.team.id)
+
+      # Page two now fails: nothing past page one may be taken for gone.
+      fail_page(2)
+
+      assert {:ok, %{errors: [{77, %Ravix.GitHub.Error{status: 502}}]}} =
+               Repositories.refresh(ctx.owner, ctx.team.id)
+
+      assert {:ok, catalog} = Repositories.catalog(ctx.owner, ctx.team.id)
+      assert length(catalog.repos) == 150
+    end
+
     test "any member reads it; a stranger and another tenant's id are not found", ctx do
       member = insert_user()
       :ok = Store.add_member(ctx.team.id, member.id, :member, ctx.owner.id)
@@ -318,6 +344,58 @@ defmodule Ravix.Workspaces.RepositoriesTest do
                Repositories.add(ctx.owner, ctx.team.id, "acme/web")
 
       assert id == moved.id
+    end
+
+    test "an archived project holds its repository: refused before any machine is made", ctx do
+      client = provisioning(0)
+
+      archived =
+        insert_project(
+          user: ctx.owner,
+          repo_full_name: "acme/web",
+          archived_at: DateTime.utc_now()
+        )
+
+      Store.move_project(archived.id, ctx.team.id)
+
+      assert {:error, {:conflict, "project_archived", message}} =
+               Repositories.add(ctx.owner, ctx.team.id, "acme/web")
+
+      assert message =~ "Restore it"
+      assert FakeTransport.calls(client) == []
+
+      # Pending deletion holds it the same way.
+      Repo.update_all(from(p in Project, where: p.id == ^archived.id),
+        set: [archived_at: nil, deletion_requested_at: DateTime.utc_now()]
+      )
+
+      assert {:error, {:conflict, "project_archived", _}} =
+               Repositories.add(ctx.owner, ctx.team.id, "acme/web")
+
+      assert FakeTransport.calls(client) == []
+    end
+
+    test "a lost race to a row archived meanwhile is the same refusal, not a nil project", ctx do
+      # The row appears after the check but before the insert: the index
+      # refuses the insert, the machine is taken back, and nothing crashes.
+      client =
+        provisioning(1, 1,
+          on_agent: fn ->
+            held =
+              insert_project(
+                user: ctx.owner,
+                repo_full_name: "tools/cli",
+                archived_at: DateTime.utc_now()
+              )
+
+            Store.move_project(held.id, ctx.team.id)
+          end
+        )
+
+      assert {:error, {:conflict, "project_archived", _}} =
+               Repositories.add(ctx.owner, ctx.team.id, "tools/cli")
+
+      assert Enum.any?(FakeTransport.calls(client), &(&1.method == "DELETE"))
     end
 
     test "a legacy duplicate is never the workspace's project and never offered", ctx do

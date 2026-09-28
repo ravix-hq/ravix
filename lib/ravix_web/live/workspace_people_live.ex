@@ -178,8 +178,12 @@ defmodule RavixWeb.WorkspacePeopleLive do
        |> assign(refreshing: false)
        |> put_flash(:error, "GitHub could not be read. Try Refresh again.")}
 
-  def handle_async(:add_repo, {:ok, {:ok, %{project: project}}}, socket),
-    do: {:noreply, socket |> assign(adding: nil) |> push_navigate(to: "/p/#{project.id}")}
+  def handle_async(:add_repo, {:ok, {:ok, %{project: %{id: id}}}}, socket),
+    do: {:noreply, socket |> assign(adding: nil) |> push_navigate(to: "/p/#{id}")}
+
+  # Not a shape `Repositories.add/3` answers; drawn as a refusal, never a crash.
+  def handle_async(:add_repo, {:ok, {:ok, _no_project}}, socket),
+    do: handle_async(:add_repo, {:exit, :no_project}, socket)
 
   def handle_async(:add_repo, {:ok, {:error, reason}}, socket) do
     {:noreply,

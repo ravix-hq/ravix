@@ -933,6 +933,24 @@ defmodule Ravix.Workspaces.Store do
     |> Map.new(&{&1.normalized_repo_full_name, &1})
   end
 
+  @doc """
+  The project `projects_workspace_repo` counts for a repository in a
+  workspace, live or not: every row but a marked legacy duplicate. An
+  archived or pending-deletion one still holds the slot, so admission must
+  not provision a second.
+  """
+  @spec index_holder(String.t(), String.t()) :: Project.t() | nil
+  def index_holder(workspace_id, normalized) do
+    # ownership: no door -- as `canonical_project/2`, behind `Access.workspace_grant/3`.
+    Repo.one(
+      from p in Project,
+        where:
+          p.workspace_id == ^workspace_id and p.normalized_repo_full_name == ^normalized and
+            is_nil(p.legacy_duplicate_at),
+        limit: 1
+    )
+  end
+
   @doc "A canonical project by id, reread, or nil."
   @spec canonical_project_by_id(String.t()) :: Project.t() | nil
   def canonical_project_by_id(id) do

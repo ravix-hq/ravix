@@ -40,7 +40,13 @@ defmodule RavixWeb.WorkspaceGitHubController do
 
     result =
       with {:ok, user} <- CurrentUser.require_user(conn) do
-        Connect.finish(user, session_hash(conn), state, params["installation_id"])
+        Connect.finish(
+          user,
+          session_hash(conn),
+          state,
+          params["installation_id"],
+          params["code"]
+        )
       end
 
     case result do

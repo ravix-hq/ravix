@@ -17,6 +17,10 @@ defmodule RavixWeb.Live.WorkspaceGitHub do
     "stale_connect" =>
       "That GitHub connection link had expired or was already used. Press Connect GitHub again.",
     "no_installation" => "GitHub did not return an installation of the Ravix App to connect.",
+    "no_authorization" => "GitHub did not confirm who installed the App. Connect GitHub again.",
+    "not_your_installation" =>
+      "That GitHub installation is not one you can see, so it cannot be connected here.",
+    "owner_only" => "Your role in that workspace can no longer connect GitHub.",
     "not_found" => "You can no longer connect GitHub to that workspace."
   }
 
@@ -87,7 +91,8 @@ defmodule RavixWeb.Live.WorkspaceGitHub do
       >
         <li
           :for={installation <- @catalog.installations}
-          id={"installation-#{installation.installation_id}"}
+          id={"installation-#{installation.id}"}
+          data-account={installation.account_login}
           data-status={Installation.status(installation)}
         >
           <.icon name="github" size={14} />
@@ -109,7 +114,8 @@ defmodule RavixWeb.Live.WorkspaceGitHub do
       >
         <li
           :for={%{repo: repo, project: project} <- @catalog.repos}
-          id={"repo-#{repo.github_repo_id}"}
+          id={"repo-#{repo.id}"}
+          data-repo={repo.full_name}
         >
           <span class="truncate">{repo.full_name}</span>
           <small :if={repo.private}>Private</small>

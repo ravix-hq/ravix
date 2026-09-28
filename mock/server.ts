@@ -1627,10 +1627,15 @@ function githubWeb(req: Request, url: URL, webBody: Record<string, unknown> = {}
   const install = /^\/apps\/([^/]+)\/installations\/new$/.exec(p);
   if (install) {
     const state = url.searchParams.get("state");
+    // A workspace's "Connect GitHub" (ADR 0009 phase 4b, a `ws.` state)
+    // needs GitHub's user-to-server `code` too, as an App with "Request user
+    // authorization (OAuth) during installation" sends it: Ravix reads the
+    // returning person's own installations with it before binding one.
     const back = `${APP_URL}/api/auth/callback?${new URLSearchParams({
       installation_id: String(INSTALLATION_ID),
       setup_action: "install",
       ...(state ? { state } : {}),
+      ...(state?.startsWith("ws.") ? { code: `install:${VIEWER.login}` } : {}),
     })}`;
     return PAGE(
       `Install ${install[1]}`,

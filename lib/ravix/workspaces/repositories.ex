@@ -4,8 +4,9 @@ defmodule Ravix.Workspaces.Repositories do
   admission of one of them as the workspace's project (ADR 0009, phase 4b).
 
   **The catalog** is every repository reachable through the workspace's
-  live connections, read with each installation's own token and cached in
-  `workspace_repositories`. Pages read the cache (`catalog/2`); only
+  live connections, read with each installation's own token (every page)
+  and cached in `workspace_repositories`. A listing that fails or cannot
+  be finished leaves that connection's cached rows as they were. Pages read the cache (`catalog/2`); only
   `refresh/2` asks GitHub. A refresh also learns when GitHub has suspended
   an installation or the App was uninstalled: the connection is marked, its
   repositories leave the catalog, and the reason is shown beside it. It
@@ -206,10 +207,26 @@ defmodule Ravix.Workspaces.Repositories do
 
   defp add_new(user, workspace_id, role, key) do
     with :ok <- Access.require_capability(role, :create_project),
+         :ok <- slot_free(workspace_id, key),
          {:ok, repo, entry} <- resolve(workspace_id, key) do
       existing_or_admit(user, workspace_id, repo, entry)
     end
   end
+
+  # The unique index counts an archived or pending-deletion project too, so
+  # provisioning a machine for the same repository would only be refused
+  # and unwound: say so first, and spend nothing.
+  defp slot_free(workspace_id, key) do
+    case Store.index_holder(workspace_id, key) do
+      nil -> :ok
+      %Project{} -> {:error, held()}
+    end
+  end
+
+  defp held,
+    do:
+      {:conflict, "project_archived",
+       "This repository's project in this workspace is archived or being deleted. Restore it to use it again."}
 
   defp key(full_name) do
     case Project.normalize_repo(full_name) do
@@ -271,23 +288,32 @@ defmodule Ravix.Workspaces.Repositories do
         {:ok, %{project: project, created: false}}
 
       nil ->
-        admission = %{
-          workspace_id: workspace_id,
-          workspace_installation_id: entry.workspace_installation_id,
-          installation_id: entry.workspace_installation.installation_id,
-          repo: repo
-        }
+        with :ok <- slot_free(workspace_id, key),
+             do: admit_now(user, workspace_id, key, repo, entry)
+    end
+  end
 
-        case Ravix.Projects.admit(user, admission) do
-          {:ok, project} ->
-            {:ok, %{project: project, created: true}}
+  defp admit_now(user, workspace_id, key, repo, entry) do
+    admission = %{
+      workspace_id: workspace_id,
+      workspace_installation_id: entry.workspace_installation_id,
+      installation_id: entry.workspace_installation.installation_id,
+      repo: repo
+    }
 
-          {:error, :exists} ->
-            {:ok, %{project: Store.canonical_project(workspace_id, key), created: false}}
+    case Ravix.Projects.admit(user, admission) do
+      {:ok, project} -> {:ok, %{project: project, created: true}}
+      {:error, :exists} -> lost_race(workspace_id, key)
+      {:error, _} = error -> error
+    end
+  end
 
-          {:error, _} = error ->
-            error
-        end
+  # Another admission won the index. Its winner is live, or it is a row the
+  # lookup does not return (archived since), which is `slot_free/2`'s refusal.
+  defp lost_race(workspace_id, key) do
+    case Store.canonical_project(workspace_id, key) do
+      %Project{} = project -> {:ok, %{project: project, created: false}}
+      nil -> {:error, held()}
     end
   end
 
