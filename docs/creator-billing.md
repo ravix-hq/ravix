@@ -3,7 +3,8 @@
 Linear RAV-17, ADR 0009 phase 6 and the phase 1 billing checks. This records
 what Fountain actually does, so the implementation behind
 `RAVIX_CREATOR_BILLING` can bind a dedicated track's conversations to the
-track creator's credential set. It changes no code.
+track creator's credential set. [Implementation](#implementation) at the end
+says what Ravix built on it, and where it deviates.
 
 ## Sources and method
 
@@ -236,6 +237,12 @@ collaborator's prompts, and the collaborator would never see it.
 
 ## 3. Converting a live track
 
+> **Superseded by an owner decision (2026-09-28):** existing tracks are not
+> converted. Only tracks opened while the switch is on are creator-billed, and
+> every other track keeps project-owner billing until it closes. What follows
+> still describes how Fountain treats a successor conversation, which is what
+> credential recovery relies on: a recovery successor keeps the same payer.
+
 ### What Fountain allows
 
 - **No in-place re-bind.**
@@ -424,6 +431,14 @@ for an explicit decision rather than losing a working tree.
 
 ## Before enabling
 
+> **Dropped by an owner decision (2026-09-28):** these live checks are not
+> run before activation. Instead, tests assert the exact
+> `inference_credential_id` sent on every creator-billed launch path, and
+> that a nil or mismatched one is refused before any request
+> (`test/ravix/creator_billing_test.exs`, "every creator-billed launch
+> path"). The provider-named value inventory is still required. What follows
+> is kept as a record of what a live check would cover.
+
 ADR 0009 phase 1 (`decisions/0009-workspaces.md:435-442`) requires deployed,
 not only source, checks. They need Ravix's Fountain account and should use a
 **disposable test user's set**, never a real person's set or grant:
@@ -463,3 +478,98 @@ not only source, checks. They need Ravix's Fountain account and should use a
 - **Provider-named secrets** already present on projects block creator-billed
   launches until they are removed. The inventory should run before the owner
   flips `RAVIX_CREATOR_BILLING`.
+
+## Implementation
+
+What Ravix built on this (RAV-17, `Plan-Item: r2-creator-billing`). Every
+item below applies only while `RAVIX_CREATOR_BILLING=true`, and only to
+dedicated tracks opened while it is on. With the switch off, billing is
+exactly what it was.
+
+- **Recording the payer.** `Tracks.open/4` (web, MCP `create_track`, plans
+  and schedules all go through it) writes `billing_policy: :creator` and
+  `payer_user_id: created_by` in the same insert as the track
+  (`Track.creator_billing_changeset/1`). Turning the switch off later leaves
+  the row as it is: `Track.payer/2` reads the row, not the switch. There is
+  no conversion path.
+- **Starting a track.** The opener must have a usable harness of their own,
+  or the open is refused with "Connect Claude or Codex to start a track — you
+  pay for its agent" (`creator_not_connected`). New track offers only their
+  harnesses and the inline connect flow (`ThreadConnect`).
+- **Binding (§1).** `Ravix.Tracks.Billing.bind/3` puts the payer's set on
+  every create of a creator-billed track:
+  - the opening conversation (`Tracks.Sandbox`);
+  - every later thread (`Tracks.start_thread/4`), whoever starts it;
+  - credential-recovery successors (`CredentialRecovery`).
+
+  `verify/3` refuses a launch whose `inference_credential_id` is nil or
+  differs from the payer's set. Queue delivery, retries, wakes and scheduled
+  prompts reach Fountain through conversations created on these paths, which
+  stay pinned.
+- **Allowlist (§1).**
+  - `RuntimeAgents.admit_payer/3` runs GET, add, PUT, then GET again to
+    confirm, under `Ravix.Cluster.agent_allowlist/2`. That is one `:global`
+    lock per Fountain agent, waiting at most five seconds and then failing
+    closed.
+  - Every allowlist writer takes the same lock, including
+    `Machine.adopt_credentials/2`. It still resets the list to `[]` while no
+    open track on the project is creator-billed. Otherwise it keeps the list
+    and changes only the default.
+  - Runtime agents are created with `allowed_inference_credential_ids: []`.
+    Agents made before that may still read as open (nil). `mix
+    ravix.provider_secrets` lists them, and `--close-allowlists` (in a
+    release, `Ravix.Release.close_open_allowlists()`) gives each an explicit
+    `[]`, idempotently and under the same lock.
+  - An open whose admission is still pending (`payer_not_admitted`,
+    `payer_admission_busy`) retries after 15 seconds instead of failing the
+    track's setup.
+  - `inference_credential_not_allowed` keeps the prompt queued.
+- **Provider-named values (§2).** A creator-billed open or launch is refused
+  (`provider_secret`, naming the keys, never values) while the project
+  environment's variables or secrets, or the vault the track runs with, hold
+  one of `EnvironmentVariables.auth_names/0`. `mix ravix.provider_secrets`
+  (in a release: `bin/ravix rpc 'Ravix.Release.provider_secrets()'`) lists
+  affected projects by name before activation.
+- **Pauses (§4).** Pauses are stored per track and runtime in
+  `tracks.billing_pauses`.
+  - **What pauses a harness:**
+    - `chatgpt_grant_unusable`, using its `reason` and `until`;
+    - `inference_credential_unusable`;
+    - on a Claude subscription or an API key, a failed turn whose reason is
+      auth- or quota-shaped.
+
+    The failed-turn check happens once per turn, when the turn is classified
+    (`Settlement`), and only within 30 minutes of the failure.
+  - **"Until" is shown only for** Fountain's `until` or a time the runtime's
+    text carries (`|<unix seconds>` or ISO 8601, at most eight days ahead).
+  - **While paused,** queued prompts stay queued with the reason, and new
+    threads on that harness are refused with it.
+  - **Who sees it:** everyone on the track sees the reason in the composer's
+    banner. The creator also gets an Inbox item and "Try again".
+  - **A pause lifts when:**
+    - the creator reconnects that agent (a newer `credential_connected_at`
+      stamp);
+    - a reset time passes;
+    - the creator presses Try again.
+- **Consent and labels.** The creator sees a one-time note the first time
+  anyone else can reach the track. It is recorded in
+  `tracks.billing_notice_at` when shown. "Paid by @creator" / "Paid by you"
+  appears in the track header and beside the model picker. Owner-billed
+  tracks show "Paid by @owner" beside the model picker to non-owners.
+
+**Limitations of the implementation:**
+- Claude and API-key failures are recognised from Fountain's free-text turn
+  failure only. A failure in words the patterns do not know is not paused,
+  and some pauses cannot say "until".
+- Rotating an OpenAI **API key** on a creator-billed Codex track changes the
+  source's revision, so the recovery successor meets
+  `codex_inference_conflict` on the same sandbox (§3). This is unchanged from
+  owner-billed tracks today. A ChatGPT subscription is not affected.
+- There is no live check against the deployed Fountain before activation
+  (owner decision). `Billing.bind/3` logs `ravix: creator billing launch
+  track=<id> payer=<user id> set=<set id> agent=<agent id>` for each
+  creator-billed launch, and every dedicated create goes through
+  `Billing.create_conversation/4`, which verifies the payer's set again
+  immediately before the POST. That log line and the tests are the guard.
+  The owner-only `Maintenance.adopt/2` is gone; `bind/3` is the only way a
+  launch gets a set.

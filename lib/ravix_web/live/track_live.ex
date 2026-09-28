@@ -91,6 +91,9 @@ defmodule RavixWeb.TrackLive do
         thread_draft: nil,
         thread_connect: nil,
         thread_error: nil,
+        # The creator's one-time note that collaborators' prompts spend their
+        # subscription (ADR 0009 phase 6); see `Tracks.billing_notice/2`.
+        billing_notice: nil,
         project_id: session["project_id"],
         agent_refused: false,
         health_refresh: 0,
@@ -209,6 +212,9 @@ defmodule RavixWeb.TrackLive do
         {:noreply, error(socket, reason)}
     end
   end
+
+  def handle_event("dismiss-billing-notice", _, socket),
+    do: {:noreply, assign(socket, billing_notice: nil)}
 
   def handle_event("connect-thread-agent", %{"runtime" => runtime}, socket) do
     connection =
@@ -655,6 +661,11 @@ defmodule RavixWeb.TrackLive do
     {:noreply, socket}
   end
 
+  def handle_info({:reconnect_own_agent, runtime}, socket) do
+    if socket.parent_pid, do: send(socket.parent_pid, {:reconnect_own_agent, runtime})
+    {:noreply, socket}
+  end
+
   def handle_info({:invalidate, _owner_id}, socket),
     do: handle_info(:refresh_agent_health, socket)
 
@@ -916,6 +927,7 @@ defmodule RavixWeb.TrackLive do
       models: detail.models,
       loading: false
     )
+    |> billing_notice(detail.track)
     # This render is the one that puts `#transcript-turns` on the page, and a
     # stream's pending inserts are consumed by whichever render comes next
     # whether or not that render contains the container. So a transcript that
@@ -1342,8 +1354,7 @@ defmodule RavixWeb.TrackLive do
 
         message =
           if error.code == "agent_not_connected",
-            do:
-              "#{socket.assigns.project.owner_login} hasn't connected #{RavixWeb.AgentName.label(runtime)}.",
+            do: "#{payer_name(socket)} hasn't connected #{RavixWeb.AgentName.label(runtime)}.",
             else: error.message
 
         {:noreply, assign(socket, thread_error: message)}
@@ -1503,6 +1514,7 @@ defmodule RavixWeb.TrackLive do
       thread_draft: nil,
       thread_connect: nil,
       thread_error: nil,
+      billing_notice: nil,
       present: [],
       narrow_view: "conversation",
       panel: Panel.new(),
@@ -1631,6 +1643,38 @@ defmodule RavixWeb.TrackLive do
         "Agent replied"
     end
   end
+
+  # Shown to the creator once, the first time the track is visible to anybody
+  # else; the server records it as shown in the same step.
+  defp billing_notice(%{assigns: %{billing_notice: notice}} = socket, _track)
+       when is_binary(notice),
+       do: socket
+
+  defp billing_notice(socket, %{billing: :creator, payer?: true} = track) do
+    case Tracks.billing_notice(socket.assigns.current_user, track.id) do
+      {:ok, notice} when is_binary(notice) -> assign(socket, billing_notice: notice)
+      _ -> socket
+    end
+  end
+
+  defp billing_notice(socket, _track), do: socket
+
+  # "Paid by …" beside the model picker and in the header (ADR 0009 phase 6):
+  # the creator of a creator-billed track sees themselves, everybody else
+  # sees who; an owner-billed track names its project's owner.
+  defp payer_label(%{payer?: true}), do: "Paid by you"
+
+  defp payer_label(%{payer_login: login}) when is_binary(login) and login != "",
+    do: "Paid by @#{login}"
+
+  defp payer_label(%{owner_login: login}), do: "Paid by @#{login}"
+
+  # Whoever pays for this track's agent, as refusals name them: the creator
+  # of a creator-billed track, else the project's owner, as before.
+  defp payer_name(%{assigns: %{track: %{billing: :creator, payer_login: login}}}),
+    do: "@#{login}"
+
+  defp payer_name(socket), do: socket.assigns.project.owner_login
 
   defp schedule_flush(%{assigns: %{flushing?: true}} = socket), do: socket
 
@@ -1915,7 +1959,7 @@ defmodule RavixWeb.TrackLive do
 
     case error.code do
       "agent_not_connected" ->
-        "#{socket.assigns.project.owner_login} hasn't connected #{agent}."
+        "#{payer_name(socket)} hasn't connected #{agent}."
 
       code when code in ["sandbox_at_capacity", "conversation_busy", "machine_busy"] ->
         "#{agent} is at capacity on this machine; try again in a moment."

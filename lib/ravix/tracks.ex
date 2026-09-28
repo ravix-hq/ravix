@@ -67,6 +67,7 @@ defmodule Ravix.Tracks do
   require Logger
 
   alias Ravix.Tracks.{
+    Billing,
     Diff,
     Files,
     Follower,
@@ -229,7 +230,8 @@ defmodule Ravix.Tracks do
           live: active,
           people: Map.fetch!(people, row.id),
           role: role,
-          last_read: reads[row.id]
+          last_read: reads[row.id],
+          viewer: user
         )
 
       %{
@@ -342,7 +344,8 @@ defmodule Ravix.Tracks do
              # very track; both of these are that caller's own view of it.
              people: People.Store.people_of(track.id, project.user_id, project.id),
              role: role,
-             last_read: reads[thread.id]
+             last_read: reads[thread.id],
+             viewer: user
            )
            |> Map.put(:runtime, thread.runtime || project.runtime)
            |> Map.put(:default_model, thread.model || project.model),
@@ -441,27 +444,49 @@ defmodule Ravix.Tracks do
   def agent_health(%User{} = user, track_id, thread_id) do
     with {:ok, %{track: track, project: project, thread: thread, role: role}} <-
            Access.thread_access(user, track_id, thread_id) do
-      if track.sandbox_layout == :dedicated and Project.maintenance?(project) do
-        thread_health(project, thread, role)
-      else
-        Ravix.Projects.agent_health(user, project.id)
+      cond do
+        Track.creator_billed?(track) ->
+          creator_health(user, track, project, thread)
+
+        track.sandbox_layout == :dedicated and Project.maintenance?(project) ->
+          thread_health(project, thread, role)
+
+        true ->
+          Ravix.Projects.agent_health(user, project.id)
       end
     end
   end
 
+  @doc """
+  The harnesses a new thread on this track can offer. On a creator-billed
+  track they are the creator's, whoever is looking: one the creator has not
+  connected is offered disabled, never run on the viewer's.
+  """
   def thread_options(%User{} = user, track_id) do
     with {:ok, %{track: track, project: project}} <- Access.track_access(user, track_id),
+         {:ok, payer_opts} <- thread_payer(track, project),
          {:ok, client} <- fountain(),
          {:ok, machine} <- MachineCache.machine_for_track(client, project, track) do
-      Runtime.options(user, project, client, track.last_runtime, machine)
+      Runtime.options(user, project, client, track.last_runtime, machine, payer_opts)
     end
   end
 
+  @doc """
+  The harnesses New track can offer. While creator billing is on and this
+  person would open a dedicated track, those are their own: whoever opens a
+  track pays for it.
+  """
   def open_options(%User{} = user, project_id) do
     with {:ok, %{project: project}} <- Access.project_access(user, project_id),
          {:ok, client} <- fountain() do
-      Runtime.options(user, project, client)
+      Runtime.options(user, project, client, nil, :discover, open_payer(user))
     end
+  end
+
+  defp open_payer(user) do
+    if Billing.creator_opening?() and Ravix.Config.dedicated_opens_enabled?(user),
+      do: [payer: user, payer_set: user.credential_set_id],
+      else: []
   end
 
   defp thread_health(project, thread, role) do
@@ -483,6 +508,98 @@ defmodule Ravix.Tracks do
        usable?: usable,
        exhausted_until: thread_reset(owner, runtime, usable)
      }}
+  end
+
+  # The creator's connection, shown to everybody on the track, with the
+  # pause standing on this thread's harness if there is one. `owner?` means
+  # "this is the person who pays", which is who may reconnect or retry.
+  defp creator_health(user, track, project, thread) do
+    runtime = thread.runtime || Project.home_runtime(project)
+
+    with {:ok, payer} <- Billing.payer(track, project) do
+      usable =
+        case Inference.usable?(payer, runtime, []) do
+          {:ok, value} -> value
+          _ -> nil
+        end
+
+      pause = Billing.paused(track, runtime, payer)
+
+      {:ok,
+       %{
+         scope: :thread,
+         billing: :creator,
+         runtime: runtime,
+         owner_login: payer.login,
+         owner?: user.id == payer.id,
+         usable?: usable,
+         pause: pause && %{message: Billing.message(pause), until: pause["until"]},
+         exhausted_until: thread_reset(payer, runtime, usable)
+       }}
+    end
+  end
+
+  @doc """
+  The creator lifts a pause on one harness of their track: "try again".
+  Only the payer may, and only the pause they saw.
+  """
+  @spec resume_billing(User.t(), String.t(), String.t()) :: :ok | {:error, reason()}
+  def resume_billing(%User{} = user, track_id, runtime) when is_binary(runtime) do
+    with {:ok, %{track: track, project: project}} <- Access.track_access(user, track_id),
+         true <- Track.creator_billed?(track) or {:error, :not_found},
+         {:ok, payer} <- Billing.payer(track, project),
+         true <-
+           payer.id == user.id or
+             {:error, {:forbidden, "Only this track's creator can resume it."}},
+         %{} = pause <- Billing.paused(track, runtime, payer) || {:error, :not_found} do
+      case Billing.resume(track, runtime, pause) do
+        :ok ->
+          :ok
+
+        {:error, :stale_pause} ->
+          {:error, {:conflict, "stale_pause", "This pause changed. Reload and try again."}}
+      end
+    end
+  end
+
+  @doc """
+  The one-time note a creator-billed track's creator is owed once others can
+  see it: collaborators' prompts here spend their subscription. Answers the
+  note to show, and records that it was shown, or nil.
+  """
+  @spec billing_notice(User.t(), String.t()) :: {:ok, String.t() | nil} | {:error, reason()}
+  def billing_notice(%User{} = user, track_id) do
+    with {:ok, %{track: track, project: project}} <- Access.track_access(user, track_id) do
+      if Track.creator_billed?(track) and is_nil(track.billing_notice_at) and
+           track.payer_user_id == user.id and visible_to_others?(track, project) and
+           Store.mark_billing_notice(track.id) == :ok do
+        {:ok, notice_text(user)}
+      else
+        {:ok, nil}
+      end
+    end
+  end
+
+  # Somebody besides the creator can reach it: a project-visible track, which
+  # everybody on the project sees, or a private one with a member added.
+  defp visible_to_others?(track, project) do
+    # ownership: billing_notice/2 admitted this person through Access.track_access/2.
+    track.id
+    |> Ravix.People.Store.people_of(project.user_id, project.id)
+    |> Enum.any?(&(&1.via != :pending and &1.login != track.created_by_login))
+  end
+
+  defp notice_text(user) do
+    label =
+      case Inference.usable_agents(user) do
+        {:ok, [_ | _] = agents} ->
+          Enum.map_join(agents, " and ", &Billing.connection_label(user, Atom.to_string(&1)))
+
+        _ ->
+          "agent connection"
+      end
+
+    "Collaborators' prompts here use your #{label}. You pay for every thread on this track, whoever starts it."
   end
 
   defp thread_reset(owner, "codex", true) do
@@ -575,6 +692,7 @@ defmodule Ravix.Tracks do
   defp launch_thread(user, track, project, attrs, request_id, body) do
     with {:ok, client} <- fountain(),
          {:ok, sandbox_id} <- thread_sandbox(client, track),
+         {:ok, payer_opts} <- thread_payer(track, project),
          {:ok, selection} <-
            Runtime.select(
              user,
@@ -583,8 +701,9 @@ defmodule Ravix.Tracks do
              attrs,
              track.last_runtime,
              sandbox_id,
-             isolated: track.sandbox_layout == :dedicated
-           ) do
+             [isolated: track.sandbox_layout == :dedicated] ++ payer_opts
+           ),
+         :ok <- not_paused(track, selection.runtime, payer_opts[:payer]) do
       Analytics.track(user, :prompt_sent, %{
         "ravix.prompt_length" => String.length(body.prompt),
         "ravix.image_count" => length(body.images)
@@ -599,6 +718,21 @@ defmodule Ravix.Tracks do
         selection,
         {request_id, body}
       )
+    end
+  end
+
+  # A creator-billed track's thread is chosen against its creator's
+  # connections, whoever starts it; `started_by` stays attribution only.
+  defp thread_payer(track, project) do
+    if Track.creator_billed?(track),
+      do: Billing.select_opts(track, project),
+      else: {:ok, []}
+  end
+
+  defp not_paused(track, runtime, payer) do
+    case Track.creator_billed?(track) && Billing.paused(track, runtime, payer) do
+      %{} = pause -> {:error, {:conflict, "payer_paused", Billing.message(pause)}}
+      _ -> :ok
     end
   end
 
@@ -640,13 +774,11 @@ defmodule Ravix.Tracks do
       prompt: nil
     }
 
-    launch =
-      if track.sandbox_layout == :dedicated,
-        do: Maintenance.adopt(launch, project),
-        else: launch
-
-    with :ok <- prepare_thread(client, track, project),
-         {:ok, %Conversation{id: conversation_id}} <- Fountain.create_conversation(client, launch) do
+    with {:ok, launch} <- bind_thread(launch, track, project),
+         :ok <- thread_overrides(client, launch, track),
+         :ok <- prepare_thread(client, track, project),
+         {:ok, %Conversation{id: conversation_id}} <-
+           create_thread_conversation(client, launch, track, project, selection.runtime) do
       result =
         with {:ok, %{track: %{closed_at: nil}, project: %{runtime_agents_retiring: false}}} <-
                Access.track_access(user, track.id),
@@ -711,12 +843,60 @@ defmodule Ravix.Tracks do
   end
 
   defp prepare_thread(client, %{sandbox_layout: :dedicated} = track, project) do
-    if Project.maintenance?(project),
+    if Billing.maintained?(track, project),
       do: Maintenance.prepare(client, track, project),
       else: :ok
   end
 
   defp prepare_thread(_client, _track, _project), do: :ok
+
+  defp bind_thread(launch, %{sandbox_layout: :dedicated} = track, project),
+    do: Billing.bind(launch, track, project)
+
+  defp bind_thread(launch, _track, _project), do: {:ok, launch}
+
+  defp thread_overrides(client, launch, track) do
+    if Track.creator_billed?(track),
+      do: Billing.refuse_overrides(client, launch.environment_id, launch.vault_id),
+      else: :ok
+  end
+
+  # Fountain refusing a creator's credential pauses that harness on the track
+  # and says whose it was; nothing is retried on anybody else's.
+  defp create_thread_conversation(
+         client,
+         launch,
+         %{sandbox_layout: :dedicated} = track,
+         project,
+         runtime
+       ),
+       do:
+         refused_payer(
+           Billing.create_conversation(client, launch, track, project),
+           track,
+           project,
+           runtime
+         )
+
+  defp create_thread_conversation(client, launch, _track, _project, _runtime),
+    do: Fountain.create_conversation(client, launch)
+
+  defp refused_payer(result, track, project, runtime) do
+    case result do
+      {:error, %Fountain.Error{} = error} = refused ->
+        with true <- Track.creator_billed?(track),
+             {:ok, payer} <- Billing.payer(track, project),
+             %{} = pause <- Billing.from_error(error, payer, runtime) do
+          Billing.pause(track, runtime, pause)
+          {:error, {:conflict, error.code, Billing.message(pause)}}
+        else
+          _ -> refused
+        end
+
+      result ->
+        result
+    end
+  end
 
   # ── opening ───────────────────────────────────────────────────────────
 
@@ -750,14 +930,23 @@ defmodule Ravix.Tracks do
       else: open_shared(user, project_id, stringify(attrs), opts)
   end
 
+  # While `RAVIX_CREATOR_BILLING` is on, the person opening a dedicated track
+  # pays for it from its first turn (ADR 0009 phase 6): only a harness they
+  # have connected themselves can start it, their set is admitted on the
+  # agent, and the row records them as its payer. Web, MCP, plans and
+  # schedules all open through here, so this is the one server check.
   defp open_dedicated(user, project_id, attrs) do
+    creator? = Billing.creator_opening?()
+
     with {:ok, %{project: project, role: role}} <- Access.project_access(user, project_id),
          :ok <- plan_origin_access(user, project_id, attrs["origin"]),
          {:ok, attrs} <- resolve_pr_origin(project, attrs),
          {:ok, client} <- fountain(),
+         {:ok, payer_opts} <- opening_payer(user, creator?),
+         :ok <- opening_overrides(client, project, creator?),
          {:ok, plan} <- plan(user, project, attrs, nil),
          {:ok, selection} <-
-           Runtime.select(user, project, client, attrs, nil, nil, isolated: true),
+           Runtime.select(user, project, client, attrs, nil, nil, [isolated: true] ++ payer_opts),
          {:ok, _} <- Access.project_access(user, project_id),
          :ok <-
            check(
@@ -765,7 +954,8 @@ defmodule Ravix.Tracks do
              {:conflict, "dedicated_opens_disabled",
               "Opening a track with its own machine is not enabled."}
            ),
-         {:ok, track} <- Ravix.Tracks.Sandbox.Store.create(plan, selection, project) do
+         {:ok, track} <-
+           Ravix.Tracks.Sandbox.Store.create(plan, selection, project, creator_billing: creator?) do
       publish_tracks(project.id, track.id)
 
       {:ok,
@@ -780,6 +970,35 @@ defmodule Ravix.Tracks do
       error -> error
     end
   end
+
+  defp opening_payer(_user, false), do: {:ok, []}
+
+  defp opening_payer(user, true) do
+    with {:ok, true} <- has_usable_agent(user),
+         {:ok, set} <- Billing.payer_set(user) do
+      {:ok, [payer: user, payer_set: set]}
+    else
+      {:ok, false} -> {:error, creator_not_connected()}
+      {:error, {:conflict, "payer_not_connected", _}} -> {:error, creator_not_connected()}
+      error -> error
+    end
+  end
+
+  defp has_usable_agent(user) do
+    with {:ok, agents} <- Inference.usable_agents(user, fresh: true), do: {:ok, agents != []}
+  end
+
+  defp creator_not_connected,
+    do:
+      {:conflict, "creator_not_connected",
+       "Connect Claude or Codex to start a track — you pay for its agent."}
+
+  # The project's environment and the vault a new track's is copied from:
+  # a provider-named value in either would outrank the creator's set.
+  defp opening_overrides(_client, _project, false), do: :ok
+
+  defp opening_overrides(client, project, true),
+    do: Billing.refuse_overrides(client, project.environment_id, project.vault_id)
 
   defp open_shared(user, project_id, attrs, opts) do
     with {:ok, _} <- Access.project_access(user, project_id),
@@ -2307,7 +2526,43 @@ defmodule Ravix.Tracks do
       unread: unread?(last_active, Keyword.get(opts, :last_read)),
       model: live && live.model
     }
+    |> put_billing(row, project, Keyword.get(opts, :viewer))
   end
+
+  defp put_billing(view, %Track{billing_policy: :creator} = row, project, viewer) do
+    %{
+      view
+      | billing: :creator,
+        payer_login: row.created_by_login,
+        payer?: match?(%User{id: id} when id == row.payer_user_id, viewer),
+        billing_pause: standing_pause(row, project)
+    }
+  end
+
+  defp put_billing(view, _row, _project, viewer) do
+    %{view | payer_login: view.owner_login, payer?: viewer_owns?(view, viewer)}
+  end
+
+  defp viewer_owns?(%View{role: :owner}, %User{}), do: true
+  defp viewer_owns?(_view, _viewer), do: false
+
+  # The payer's row decides whether they have reconnected since; it is read
+  # only for a creator-billed track that has a pause recorded at all.
+  defp standing_pause(%Track{billing_pauses: pauses} = row, project)
+       when is_map(pauses) and map_size(pauses) > 0 do
+    payer =
+      case project && Billing.payer(row, project) do
+        {:ok, payer} -> payer
+        _ -> nil
+      end
+
+    case row |> Billing.pauses(payer) |> Enum.sort() do
+      [{runtime, pause} | _] -> %{runtime: runtime, message: Billing.message(pause)}
+      [] -> nil
+    end
+  end
+
+  defp standing_pause(_row, _project), do: nil
 
   # ownership: `open/4` went through `Access.project_access/2` before presenting
   # the new track. Members need its project owner's login, not their own.

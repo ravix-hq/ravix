@@ -1,11 +1,12 @@
 defmodule Ravix.Tracks.Sandbox.Maintenance do
   @moduledoc "Preparation of one dedicated workspace; no sibling agent or disk mutations."
-  alias Ravix.Projects.{Machine, Project, RuntimeAgents}
+  alias Ravix.Projects.Machine
+  alias Ravix.Tracks.Billing
   alias Ravix.Tracks.Sandbox.Store
 
   # ownership: Access.track_access or a durable setup/queue operation admitted this track.
   def prepare(client, track, project) do
-    if track.sandbox_layout == :dedicated and Project.maintenance?(project) do
+    if Billing.maintained?(track, project) do
       with :ok <- clone_token(client, track, project) do
         current?(track)
       end
@@ -48,11 +49,4 @@ defmodule Ravix.Tracks.Sandbox.Maintenance do
   end
 
   defp clone_token(_client, _track, _project), do: :ok
-
-  @doc "Adopt the owner's source on this conversation, never by changing a shared agent."
-  def adopt(launch, project) do
-    if Project.maintenance?(project),
-      do: %{launch | inference_credential_id: RuntimeAgents.owner(project).credential_set_id},
-      else: launch
-  end
 end

@@ -28,6 +28,19 @@ defmodule Ravix.Config do
   def workspace_access?, do: Application.get_env(:ravix, :workspace_access, false) == true
 
   @doc """
+  Whether a dedicated track opened now is paid for by its creator (ADR 0009,
+  phase 6; `docs/creator-billing.md`).
+
+  One global switch, `RAVIX_CREATOR_BILLING`, off unless set to `"true"`.
+  It decides only what a track records when it is opened: the recorded
+  `billing_policy` is what every later turn reads (`Ravix.Tracks.Track.payer/2`),
+  so turning it off does not move a creator-billed track back onto its
+  project's owner, and turning it on converts nothing already open.
+  """
+  @spec creator_billing?() :: boolean()
+  def creator_billing?, do: Application.get_env(:ravix, :creator_billing, false) == true
+
+  @doc """
   Whether this person may run an operator action, as the deployment says.
 
   There is no admin column and nothing here promotes anybody: Ravix's people

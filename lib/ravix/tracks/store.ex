@@ -176,9 +176,21 @@ defmodule Ravix.Tracks.Store do
     end
   end
 
-  def create_track(attrs, selection) do
+  @doc """
+  A track row with its default thread's runtime and model. `creator_billing:
+  true` binds the track's inference to its creator (`Track.creator_billing_changeset/1`);
+  only a dedicated open while `RAVIX_CREATOR_BILLING` is on asks for it.
+  """
+  def create_track(attrs, selection, opts \\ []) do
     Repo.transaction(fn ->
-      case create_track(Map.put(attrs, :last_runtime, selection.runtime)) do
+      changeset = Track.changeset(%Track{}, Map.put(attrs, :last_runtime, selection.runtime))
+
+      changeset =
+        if Keyword.get(opts, :creator_billing, false),
+          do: Track.creator_billing_changeset(changeset),
+          else: changeset
+
+      case Repo.insert(changeset) do
         {:ok, track} ->
           from(t in Thread, where: t.id == ^track.id)
           |> Repo.update_all(set: [runtime: selection.runtime, model: selection.model])
@@ -380,6 +392,62 @@ defmodule Ravix.Tracks.Store do
       if thread.id == track.id, do: update_track(track.id, conversation_id: conversation_id)
       :ok
     end)
+  end
+
+  @doc """
+  Pause one harness on a track: its payer's credential stopped serving.
+  `pause` is the string-keyed map `Ravix.Tracks.Billing` builds; a later
+  pause of the same harness replaces it.
+  """
+  def pause_billing(track_id, runtime, %{} = pause) when is_binary(runtime) do
+    entry = %{runtime => pause}
+
+    Repo.update_all(
+      from(t in Track,
+        where: t.id == ^track_id,
+        update: [set: [billing_pauses: fragment("? || ?::jsonb", t.billing_pauses, ^entry)]]
+      ),
+      []
+    )
+
+    :ok
+  end
+
+  @doc "Lift one harness's pause, but only the pause that was read: a newer one stays."
+  def resume_billing(track_id, runtime, %{} = pause) when is_binary(runtime) do
+    {count, _} =
+      Repo.update_all(
+        from(t in Track,
+          where:
+            t.id == ^track_id and
+              fragment("?->? = ?::jsonb", t.billing_pauses, ^runtime, ^pause),
+          update: [set: [billing_pauses: fragment("? - ?", t.billing_pauses, ^runtime)]]
+        ),
+        []
+      )
+
+    if count == 1, do: :ok, else: {:error, :stale_pause}
+  end
+
+  @doc "Whether any open track on the project is paid for by its creator."
+  def creator_billed_open?(project_id) do
+    Repo.exists?(
+      from(t in Track,
+        where:
+          t.project_id == ^project_id and t.billing_policy == :creator and is_nil(t.closed_at)
+      )
+    )
+  end
+
+  @doc "Record, once, that the creator was shown who pays for collaborators' prompts."
+  def mark_billing_notice(track_id) do
+    {count, _} =
+      Repo.update_all(
+        from(t in Track, where: t.id == ^track_id and is_nil(t.billing_notice_at)),
+        set: [billing_notice_at: DateTime.utc_now()]
+      )
+
+    if count == 1, do: :ok, else: :already_shown
   end
 
   def credential_context_delivered(thread_id, conversation_id) do

@@ -66,6 +66,7 @@ defmodule Ravix.PromptQueue.Server do
   alias Ravix.Fountain.Error
   alias Ravix.Fountain.Shapes
   alias Ravix.Hub
+  alias Ravix.Projects.Project
   alias Ravix.Projects.ProjectMember
   alias Ravix.PromptQueue
   alias Ravix.PromptQueue.Activity
@@ -75,10 +76,12 @@ defmodule Ravix.PromptQueue.Server do
   alias Ravix.PromptQueue.Store
   alias Ravix.Repo
   alias Ravix.Trace
+  alias Ravix.Tracks.Billing
   alias Ravix.Tracks.CredentialRecovery
   alias Ravix.Tracks.Follower
   alias Ravix.Tracks.Sandbox.Maintenance
   alias Ravix.Tracks.Setup
+  alias Ravix.Tracks.Track
   alias Ravix.Tracks.TrackMember
   alias Ravix.Tracks.Transcript
   alias Ravix.Tracks.Transcript.Event
@@ -503,12 +506,19 @@ defmodule Ravix.PromptQueue.Server do
   # may send: what to send it to, without a second read of either.
   defp deliver_queued(client, row, track, project, server) do
     readiness =
-      case CredentialRecovery.prepare(client, track, project, row.thread_id) do
-        :ok -> readiness(client, track, project, row)
+      with :ok <- billing_hold(track, project, row),
+           :ok <- CredentialRecovery.prepare(client, track, project, row.thread_id) do
+        readiness(client, track, project, row)
+      else
+        {:paused, message} -> {:paused, message}
         _ -> :recovering_credentials
       end
 
     case readiness do
+      {:paused, message} ->
+        Store.annotate(row.id, :queued, message)
+        :waiting
+
       :recovering_credentials ->
         Store.annotate(
           row.id,
@@ -531,6 +541,32 @@ defmodule Ravix.PromptQueue.Server do
       :unavailable ->
         hold(row)
     end
+  end
+
+  # A creator-billed track's harness waits while its payer's credential is
+  # paused (`Ravix.Tracks.Billing`): the prompt stays queued, saying why, and
+  # goes out once the creator reconnects or tries again. Nobody else's
+  # credential is tried meanwhile.
+  defp billing_hold(track, project, row) do
+    if Track.creator_billed?(track),
+      do: payer_hold(track, project, thread_runtime(row, project)),
+      else: :ok
+  end
+
+  defp payer_hold(track, project, runtime) do
+    with {:ok, payer} <- Billing.payer(track, project),
+         %{} = pause <- Billing.paused(track, runtime, payer) do
+      {:paused, Billing.message(pause)}
+    else
+      nil -> :ok
+      {:error, {_kind, _code, message}} -> {:paused, message}
+    end
+  end
+
+  defp thread_runtime(row, project) do
+    # ownership: access/1 established Access.thread_access for this queue row.
+    thread = Ravix.Tracks.Store.get_thread(row.thread_id)
+    (thread && thread.runtime) || Project.home_runtime(project)
   end
 
   # An unconfirmed row nobody has looked for yet. After one look that found
@@ -781,6 +817,36 @@ defmodule Ravix.PromptQueue.Server do
   # sandbox's capacity meanwhile. A rejection is safe to retry. Any other
   # refusal needs a person; anything else may or may not have arrived.
   defp settle({:error, %Error{} = error}, row, track, project) do
+    case creator_refusal(error, row, track, project) do
+      :none -> settle_refusal(error, row, track, project)
+      settled -> settled
+    end
+  end
+
+  defp settle({:error, _reason}, row, _track, _project),
+    do: Store.set_status(row.id, :unconfirmed, @unconfirmed)
+
+  # A creator-billed track's refusals of its payer's credential keep the
+  # prompt queued with the reason; nothing is tried on anybody else's.
+  defp creator_refusal(error, row, track, project) do
+    cond do
+      pause = creator_pause(error, row, track, project) ->
+        Store.set_status(row.id, :queued, Billing.message(pause), error.code)
+
+      error.code == "inference_credential_not_allowed" and Track.creator_billed?(track) ->
+        Store.set_status(
+          row.id,
+          :queued,
+          "Waiting for this track's agent to admit its creator's account. Your prompt is saved.",
+          error.code
+        )
+
+      true ->
+        :none
+    end
+  end
+
+  defp settle_refusal(error, row, track, project) do
     cond do
       error.code == "inference_source_changed" and
           CredentialRecovery.enabled?(track, project) ->
@@ -807,8 +873,19 @@ defmodule Ravix.PromptQueue.Server do
     end
   end
 
-  defp settle({:error, _reason}, row, _track, _project),
-    do: Store.set_status(row.id, :unconfirmed, @unconfirmed)
+  # A refusal of a creator-billed track's payer's credential pauses the
+  # harness on the track, and the prompt waits rather than failing.
+  defp creator_pause(error, row, track, project) do
+    with true <- Track.creator_billed?(track),
+         {:ok, payer} <- Billing.payer(track, project),
+         runtime = thread_runtime(row, project),
+         %{} = pause <- Billing.from_error(error, payer, runtime) do
+      Billing.pause(track, runtime, pause)
+      pause
+    else
+      _ -> nil
+    end
+  end
 
   # The prompt reached the agent. Attributed to whoever sent it, which the row
   # records, and carrying the wait -- a prompt accepted while the agent was busy

@@ -7,6 +7,7 @@ defmodule Ravix.TrackMaintenanceTest do
   alias Ravix.Projects.Project
   alias Ravix.Projects.RuntimeAgents
   alias Ravix.Tracks
+  alias Ravix.Tracks.Billing
   alias Ravix.Tracks.Sandbox
   alias Ravix.Tracks.Sandbox.Maintenance
   alias Ravix.Tracks.Sandbox.Store
@@ -241,7 +242,8 @@ defmodule Ravix.TrackMaintenanceTest do
       prompt: nil
     }
 
-    adopted = Maintenance.adopt(launch, ctx.project)
+    track = insert_track(project: ctx.project, sandbox_layout: :dedicated)
+    assert {:ok, adopted} = Billing.bind(launch, track, ctx.project)
     assert adopted.inference_credential_id == "owner-set"
     assert adopted.vault_id == "one-track"
 

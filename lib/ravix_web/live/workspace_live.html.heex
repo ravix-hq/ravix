@@ -727,6 +727,7 @@
                 <div class="row">
                   <span class="chip">
                     {cond do
+                      billing_attention?(track) -> "Reconnect"
                       track.status == :setup_failed -> "Setup failed"
                       track.status == :failed -> "Failed turn"
                       track.mention -> "Mentioned"
@@ -742,6 +743,8 @@
                 <span :if={track.visibility == :private}><.icon name="lock" /> Private</span><code class="dimmer">{track.branch}</code>
                 <span class="dim">
                   <%= cond do %>
+                    <% billing_attention?(track) -> %>
+                      {track.billing_pause.message} Reconnect it, or open the track to try again.
                     <% track.status == :setup_failed -> %>
                       Setup failed. {track.setup_error} Open the track to Retry setup.
                     <% track.status == :failed -> %>
@@ -1009,7 +1012,9 @@
         <.loading_status :if={@busy}>Opening track and preparing its worktree…</.loading_status>
         <button
           class="primary"
-          disabled={@busy || (@origin_kind != :blank && @refs == [])}
+          disabled={
+            @busy || (@origin_kind != :blank && @refs == []) || creator_blocked?(@track_options)
+          }
           phx-disable-with="Opening…"
         >
           {if @busy, do: "Opening track…", else: "Create track"}

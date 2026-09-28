@@ -1,5 +1,5 @@
 defmodule RavixWeb.Live.AgentHealth do
-  @moduledoc "Owner-funded runtime status, shared by the project overview and track composer."
+  @moduledoc "Payer-funded runtime status and pauses, shared by the project overview and track composer."
   use RavixWeb, :live_component
 
   alias Ravix.{Accounts, Projects, Tracks}
@@ -37,6 +37,19 @@ defmodule RavixWeb.Live.AgentHealth do
   def handle_async(:health, _, socket), do: {:noreply, socket}
 
   @impl true
+  def handle_event("reconnect", _, %{assigns: %{health: %{billing: :creator} = health}} = socket) do
+    # A creator-billed track's payer reconnects their own account; the
+    # dialog it opens only ever writes the signed-in person's credentials.
+    user = Accounts.session_user(socket.assigns.session_hash)
+
+    with %Accounts.User{} <- user,
+         true <- payer?(user, socket) do
+      send(self(), {:reconnect_own_agent, health.runtime})
+    end
+
+    {:noreply, socket}
+  end
+
   def handle_event("reconnect", _, socket) do
     # Re-establish ownership at the event boundary; a forged click cannot
     # open someone else's funding form.
@@ -48,6 +61,35 @@ defmodule RavixWeb.Live.AgentHealth do
     end
 
     {:noreply, socket}
+  end
+
+  # "Try again": the payer lifts a pause on this harness of the track.
+  def handle_event("resume", _, %{assigns: %{health: %{billing: :creator} = health}} = socket) do
+    user = Accounts.session_user(socket.assigns.session_hash)
+    {track_id, _thread_id} = socket.assigns.health_key
+
+    socket =
+      with %Accounts.User{} <- user,
+           :ok <- Tracks.resume_billing(user, track_id, health.runtime) do
+        key = socket.assigns.health_key
+        traced_async(socket, :health, fn -> read_health(user, socket.assigns.project_id, key) end)
+      else
+        _ -> socket
+      end
+
+    {:noreply, socket}
+  end
+
+  def handle_event("resume", _, socket), do: {:noreply, socket}
+
+  defp payer?(user, socket) do
+    case socket.assigns.health_key do
+      {track_id, thread_id} when is_binary(track_id) ->
+        match?({:ok, %{owner?: true}}, Tracks.agent_health(user, track_id, thread_id))
+
+      _ ->
+        false
+    end
   end
 
   defp read_health(user, _project_id, {track_id, thread_id}) when is_binary(track_id),
@@ -76,16 +118,33 @@ defmodule RavixWeb.Live.AgentHealth do
     ~H"""
     <div id={@id}>
       <div
-        :if={@health && (@health.usable? == false || @refused || @health.exhausted_until)}
+        :if={
+          @health &&
+            (@health.usable? == false || @refused || @health.exhausted_until ||
+               Map.get(@health, :pause))
+        }
         class="welcome-warning"
         role="status"
         id={@id <> "-banner"}
       >
-        <p :if={@health.exhausted_until}>
+        <p :if={Map.get(@health, :pause)} id={@id <> "-pause"}>{@health.pause.message}</p>
+        <button
+          :if={Map.get(@health, :pause) && @health.owner?}
+          type="button"
+          class="ghost"
+          phx-click="resume"
+          phx-target={@myself}
+        >
+          Try again
+        </button>
+        <p :if={@health.exhausted_until && !Map.get(@health, :pause)}>
           {@health.owner_login}'s ChatGPT usage resets at
           <.provider_time value={@health.exhausted_until} />.
         </p>
-        <p :if={!@health.exhausted_until && Map.get(@health, :scope) == :thread}>
+        <p :if={
+          !@health.exhausted_until && !Map.get(@health, :pause) &&
+            Map.get(@health, :scope) == :thread
+        }>
           <%= if @health.usable? == false do %>
             This thread uses {RavixWeb.AgentName.label(@health.runtime)}, which {@health.owner_login} has disconnected.
           <% else %>

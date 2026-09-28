@@ -39,6 +39,17 @@ defmodule Ravix.Projects.Store do
 
   def live_project(_), do: nil
 
+  @doc "Every project that is not archived or being deleted, oldest first. Operator tasks only."
+  @spec live_projects() :: [Project.t()]
+  def live_projects,
+    do:
+      Repo.all(
+        from(p in Project,
+          where: is_nil(p.archived_at) and is_nil(p.deletion_requested_at),
+          order_by: [asc: p.created_at, asc: p.id]
+        )
+      )
+
   def lock_retirement(id),
     do: Repo.one!(from p in Project, where: p.id == ^id, lock: "FOR UPDATE")
 

@@ -894,6 +894,13 @@ defmodule RavixWeb.WorkspaceLive do
   # The account dialog connected or replaced what pays for this person's
   # agent. The person on the page is now out of date, and the dialog has
   # already said what replacing it means for open tracks.
+  # A creator-billed track's payer reconnecting their own agent: the account
+  # dialog is always the signed-in person's own.
+  def handle_info({:reconnect_own_agent, runtime}, socket) do
+    agent = Map.get(%{"claude" => :claude, "claude-code" => :claude, "codex" => :codex}, runtime)
+    {:noreply, assign(socket, dialog: :account, reconnect_agent: agent)}
+  end
+
   def handle_info({:reconnect_agent, id}, socket) do
     case Access.project_of(socket.assigns.current_user, id) do
       {:ok, project} ->
@@ -1563,13 +1570,27 @@ defmodule RavixWeb.WorkspaceLive do
 
   defp inbox_time(track), do: track.last_active_at
 
-  # What the Inbox lists: a failure, a reply nobody has read, or a comment
-  # naming this person. A comment that names nobody moves only the dot.
+  # What the Inbox lists: a failure, a reply nobody has read, a comment
+  # naming this person, or a creator-billed track of theirs paused on their
+  # credential. A comment that names nobody moves only the dot.
   defp attention?(track),
     do:
-      track.status in [:failed, :setup_failed] or
+      billing_attention?(track) or track.status in [:failed, :setup_failed] or
         (track.status == :ready and reply_unread?(track)) or
         Map.get(track, :mention) != nil
+
+  # While creator billing is on, whoever opens a track pays for it, so New
+  # track waits for them to connect a harness of their own; the server
+  # refuses the same open for web and MCP alike (`Tracks.open/4`).
+  defp creator_blocked?(%{billing: :creator, runtimes: runtimes}),
+    do: not Enum.any?(runtimes, &(&1.connected and &1.enabled))
+
+  defp creator_blocked?(_options), do: false
+
+  # A creator-billed track paused on its creator's credential is the
+  # creator's to reconnect, so it is in their Inbox and nobody else's.
+  defp billing_attention?(track),
+    do: Map.get(track, :payer?) == true and Map.get(track, :billing_pause) != nil
 
   defp reply_unread?(track) do
     case Map.get(track, :reply_unread) do

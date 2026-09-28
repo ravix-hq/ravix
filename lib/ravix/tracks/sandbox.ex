@@ -8,10 +8,13 @@ defmodule Ravix.Tracks.Sandbox do
   alias Ravix.Previews.Lifecycle
   alias Ravix.Projects.Machine
   alias Ravix.Spec
-  alias Ravix.Tracks.Sandbox.Maintenance
+  alias Ravix.Tracks.Billing
   alias Ravix.Tracks.Sandbox.OpenTrace
   alias Ravix.Tracks.Sandbox.Store
   alias Ravix.Tracks.Setup
+  alias Ravix.Tracks.Track
+
+  @admission_pending ~w(payer_admission_busy payer_not_admitted)
 
   def advance(client, id) do
     case Store.claim(id) do
@@ -251,15 +254,93 @@ defmodule Ravix.Tracks.Sandbox do
       prompt: Spec.open_dedicated_prompt(project, track)
     }
 
-    launch = Maintenance.adopt(launch, project)
-    launched(Fountain.create_conversation(client, launch), client, op, track, project)
+    case bind_launch(client, launch, track, project) do
+      {:ok, launch} ->
+        launched(
+          Billing.create_conversation(client, launch, track, project),
+          client,
+          op,
+          track,
+          project
+        )
+
+      {:error, %Error{} = error} ->
+        mutation_failed(error, error.code || "setup_failed", client, op, track, project)
+
+      {:error, {_kind, code, message}} when code in @admission_pending ->
+        retry_admission(op, code, message)
+
+      {:error, {_kind, code, message}} ->
+        fail(client, op, track, project, code, message)
+
+      {:error, _reason} ->
+        defer(op, "sandbox_outcome_unknown")
+    end
+  end
+
+  # A creator's set not admitted yet, or another admission holding the
+  # agent's lock: nothing was sent, so setup waits and tries the launch again
+  # rather than failing the track (`RuntimeAgents.admit_payer/3`).
+  defp retry_admission(op, code, message) do
+    Store.progress(
+      op,
+      %{phase: "vault_ready", retry_at: DateTime.add(DateTime.utc_now(), 15)},
+      setup_error: message,
+      setup_error_code: code
+    )
+  end
+
+  # The opening conversation spends the track's payer (`Ravix.Tracks.Billing`):
+  # a creator-billed track names its creator's set, admitted on the agent,
+  # with no provider-named override in the way; an owner-billed one is bound
+  # exactly as before.
+  defp bind_launch(client, launch, track, project) do
+    with {:ok, launch} <- Billing.bind(launch, track, project),
+         :ok <- creator_checks(client, launch, track, project),
+         do: {:ok, launch}
+  end
+
+  # A creator's credential Fountain refused: the harness is paused on the
+  # track, and setup says whose connection it was rather than the owner's.
+  defp payer_pause(track, project, op, error) do
+    runtime = op.resource_ids["runtime"]
+
+    with true <- Track.creator_billed?(track) and is_binary(runtime),
+         {:ok, payer} <- Billing.payer(track, project),
+         %{} = pause <- Billing.from_error(error, payer, runtime) do
+      Billing.pause(track, runtime, pause)
+      pause
+    else
+      _ -> nil
+    end
+  end
+
+  defp creator_checks(client, launch, track, project) do
+    if Track.creator_billed?(track) do
+      with :ok <- Billing.refuse_overrides(client, launch.environment_id, launch.vault_id),
+           do: Billing.admit(client, track, project, launch.agent_id)
+    else
+      :ok
+    end
   end
 
   defp launched({:ok, conversation}, client, op, _track, _project),
     do: bind(client, op, conversation)
 
-  defp launched({:error, %Error{} = error}, client, op, track, project),
-    do: mutation_failed(error, error.code || "setup_failed", client, op, track, project)
+  defp launched({:error, %Error{} = error}, client, op, track, project) do
+    case payer_pause(track, project, op, error) do
+      nil ->
+        mutation_failed(error, error.code || "setup_failed", client, op, track, project)
+
+      pause ->
+        fail(client, op, track, project, error.code, Billing.message(pause))
+    end
+  end
+
+  # Refused before any request: a launch that does not name its payer's set.
+  defp launched({:error, {_kind, code, message}}, client, op, track, project)
+       when is_binary(code),
+       do: fail(client, op, track, project, code, message)
 
   defp launched(_, _client, op, _track, _project), do: defer(op, "sandbox_outcome_unknown")
 
@@ -387,8 +468,8 @@ defmodule Ravix.Tracks.Sandbox do
     end
   end
 
-  defp fail(client, op, track, project, code) do
-    error = %{code: code, message: Error.public_message(code)}
+  defp fail(client, op, track, project, code, message \\ nil) do
+    error = %{code: code, message: message || Error.public_message(code)}
 
     with {:ok, op} <-
            Store.progress(op, %{phase: "cleanup", error: error},

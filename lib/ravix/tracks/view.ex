@@ -11,6 +11,12 @@ defmodule Ravix.Tracks.View do
   what the Inbox lists. `reply_unread` is nil where only the agent's side
   was read (a single `present/2`), and then means the same as `unread`.
 
+  `billing` is who pays for the track's agent (ADR 0009 phase 6): `:creator`
+  on a creator-billed track, `:owner` otherwise; `payer_login` names them and
+  `payer?` says the viewer is them. `billing_pause` is a harness paused
+  because the payer's credential stopped serving, with the reason everybody
+  on the track is shown; the payer's Inbox lists it.
+
   `model` is the model the shown conversation runs instead of its agent's,
   read live off Fountain like the status, and nil when it follows the
   project's model.
@@ -84,7 +90,11 @@ defmodule Ravix.Tracks.View do
                 runtime: nil,
                 default_model: nil,
                 reply_unread: nil,
-                mention: nil
+                mention: nil,
+                billing: :owner,
+                payer_login: nil,
+                payer?: false,
+                billing_pause: nil
               ]
 
   @type t :: %__MODULE__{
@@ -124,6 +134,10 @@ defmodule Ravix.Tracks.View do
           sandbox_state: atom() | nil,
           sandbox_stage: String.t() | nil,
           sandbox_action: :open | :close | :rebuild | nil,
-          sandbox_suspended_at: DateTime.t() | nil
+          sandbox_suspended_at: DateTime.t() | nil,
+          billing: :owner | :creator,
+          payer_login: String.t() | nil,
+          payer?: boolean(),
+          billing_pause: %{runtime: String.t(), message: String.t()} | nil
         }
 end
