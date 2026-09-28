@@ -44,6 +44,8 @@ defmodule Ravix.Tooling.ReconcilerTraceTest do
     assert span(thread, :parent_span_id) == span(sweep, :span_id)
     assert attributes(thread)["ravix.events_read"] == 0
     assert attributes(thread)["ravix.pages_read"] == 1
+    assert attributes(thread)["ravix.task_payload_bytes_read"] > 0
+    assert attributes(thread)["ravix.task_payload_bytes_written"] > 0
     assert attributes(sweep)["ravix.thread_count"] == 1
     assert span(thread, :end_time) >= span(thread, :start_time)
   end

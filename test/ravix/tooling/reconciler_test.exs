@@ -339,7 +339,7 @@ defmodule Ravix.Tooling.ReconcilerTest do
     refute Repo.get!(Task, task.id).state == "TASK_STATE_COMPLETED"
   end
 
-  test "new pages and reply journals survive restart, and later receipts inherit the thread cursor",
+  test "new pages and reply fragments survive restart, and later receipts inherit the thread cursor",
        c do
     alias Ravix.Fountain.FakeTransport
     task = submit(c, "incremental")
@@ -432,7 +432,7 @@ defmodule Ravix.Tooling.ReconcilerTest do
 
   test "transcript chunks never enter the reconciler mailbox", c do
     submit(c, "stream")
-    pid = server()
+    pid = server(false)
     Reconciler.tick(pid)
     :sys.suspend(pid)
 
@@ -453,6 +453,8 @@ defmodule Ravix.Tooling.ReconcilerTest do
       :sys.replace_state(pid, fn state ->
         receive do
           {:transcript, _, _} -> :ok
+        after
+          0 -> :ok
         end
 
         state
@@ -497,7 +499,7 @@ defmodule Ravix.Tooling.ReconcilerTest do
     assert Repo.get!(Task, task.id).state == "TASK_STATE_SUBMITTED"
   end
 
-  defp server do
+  defp server(subscribe \\ true) do
     # A graceful stop waits for an in-flight query before releasing the process.
     # A supervisor's shutdown signal can interrupt another async test's queue hint.
     pid =
@@ -514,7 +516,7 @@ defmodule Ravix.Tooling.ReconcilerTest do
     # Subscribe only after sandbox/provider allowances exist. Other async tests
     # can publish queue hints as soon as this process joins the global topic.
     :sys.replace_state(pid, fn state ->
-      Phoenix.PubSub.subscribe(Ravix.PubSub, "tooling:queue")
+      if subscribe, do: Phoenix.PubSub.subscribe(Ravix.PubSub, "tooling:queue")
       state
     end)
 

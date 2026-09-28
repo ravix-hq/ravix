@@ -17,6 +17,102 @@ defmodule Ravix.Tracks.AgentFailure do
       end
   end
 
+  @doc "Fixed-size evidence for incremental task receipts; no raw frames are retained."
+  def accumulate(summary, events, blocks) do
+    frames = Enum.flat_map(events, &frames/1)
+    closed = summary["closed"] == true
+    suspension = if closed, do: nil, else: suspension(events)
+
+    suspension =
+      if suspension, do: %{suspension | reason: String.slice(suspension.reason, 0, 512)}
+
+    text =
+      Enum.map_join(blocks, fn
+        %Block.Text{body: body} -> body
+        _ -> ""
+      end)
+
+    summary
+    |> accumulate_signals(frames, blocks)
+    |> Map.put("timeout", timeout_progress(Map.get(summary, "timeout", ""), text))
+    |> Map.put(
+      "retries",
+      max(
+        summary["retries"] || 0,
+        Enum.max(Enum.map(frames, &(retry_count(&1) || 0)), fn -> 0 end)
+      )
+    )
+    |> Map.put(
+      "closed",
+      closed or
+        Enum.any?(events, &(Event.from(&1).stage == "turn" and Event.settles?(Event.from(&1))))
+    )
+    |> Map.put("suspension", summary["suspension"] || suspension)
+  end
+
+  defp accumulate_signals(summary, frames, blocks) do
+    signals = %{
+      "system" => Enum.any?(frames, &system_error?/1),
+      "transport" => Enum.any?(frames, &transport?/1),
+      "approval" => Enum.any?(frames, &approval_failure?/1),
+      "tool" => Enum.any?(blocks, &match?(%Block.Tool{}, &1)),
+      "other" => Enum.any?(blocks, &(not match?(%Block.Text{}, &1)))
+    }
+
+    Map.merge(summary, signals, fn _key, old, new -> old == true or new end)
+  end
+
+  # The only text-dependent classifier recognizes one fixed phrase. Keeping its
+  # prefix (and trailing whitespace state) bounds evidence independently of reply length.
+  defp timeout_progress(false, _), do: false
+
+  defp timeout_progress(prefix, text) do
+    combined = prefix <> text
+    trimmed = String.trim(combined)
+
+    cond do
+      trimmed == "request timed out" ->
+        "request timed out" <> if(String.trim_trailing(combined) == combined, do: "", else: " ")
+
+      String.starts_with?("request timed out", String.trim_leading(combined)) ->
+        String.trim_leading(combined)
+
+      true ->
+        false
+    end
+  end
+
+  @doc "Apply the same failure classification after the last page, using bounded evidence."
+  def from_summary(summary, runtime, finished) do
+    suspension = summary["suspension"]
+
+    cond do
+      is_map(suspension) ->
+        %{
+          code: suspension["code"] || suspension[:code],
+          reason: suspension["reason"] || suspension[:reason]
+        }
+
+      finished and summary_outage?(summary) ->
+        frames = [%{"retryCount" => summary["retries"]}]
+        blocks = if summary["tool"], do: [struct(Block.Tool)], else: []
+        %{code: @code, reason: message(runtime, frames, blocks)}
+
+      true ->
+        nil
+    end
+  end
+
+  defp summary_outage?(summary) do
+    (summary["system"] == true and summary["transport"] == true) or
+      summary["approval"] == true or summary_timeout?(summary)
+  end
+
+  defp summary_timeout?(%{"timeout" => text} = summary) when is_binary(text),
+    do: summary["other"] != true and String.trim(text) == "request timed out"
+
+  defp summary_timeout?(_summary), do: false
+
   @doc "Suspension closes a turn even while the provider's turn status is catching up."
   def suspension(events) do
     events = Enum.map(events, &Event.from/1)

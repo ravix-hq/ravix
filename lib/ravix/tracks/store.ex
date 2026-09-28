@@ -155,6 +155,9 @@ defmodule Ravix.Tracks.Store do
 
   @doc "One track by id, closed or not."
   @spec get_track(String.t()) :: Track.t() | nil
+  def setup_status(id),
+    do: Repo.one(from t in Track, where: t.id == ^id, select: map(t, [:setup_state]))
+
   def get_track(id) when is_binary(id), do: Repo.get(Track, id)
   def get_track(_id), do: nil
 

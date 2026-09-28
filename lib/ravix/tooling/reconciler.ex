@@ -56,6 +56,7 @@ defmodule Ravix.Tooling.Reconciler do
     do: Ravix.Trace.span("tooling.reconcile.sweep", %{}, fn -> do_sweep(state) end)
 
   defp do_sweep(state) do
+    Tasks.compact_legacy()
     state = subscribe(state)
     now = DateTime.utc_now()
     ids = Store.due_threads(state.cursor, now, 50)

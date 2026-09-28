@@ -60,6 +60,7 @@ defmodule Ravix.Tooling.Tasks do
               track_id: track_id,
               fingerprint: fingerprint,
               reply_events: [],
+              reply_compacted: true,
               cursor: Store.checkpoint(thread.id, thread.conversation_id).cursor,
               cursor_conversation_id: thread.conversation_id
             })
@@ -125,7 +126,8 @@ defmodule Ravix.Tooling.Tasks do
     with {:ok, principal} <- Authorization.check(principal, "tracks:cancel"),
          {:ok, task} <- actionable(principal, id),
          :ok <- PromptQueue.cancel(principal.user, task.track_id, task.id) do
-      {:ok, Store.update(task, state: "TASK_STATE_CANCELED")}
+      {:ok,
+       Store.update(Store.small_task(task.id), state: "TASK_STATE_CANCELED", result: task.result)}
     else
       {:error, {:conflict, "already_sending", _}} ->
         {:error,
@@ -141,16 +143,24 @@ defmodule Ravix.Tooling.Tasks do
     with {:ok, principal} <- Authorization.check(principal, "tracks:write"),
          {:ok, task} <- actionable(principal, id),
          :ok <- PromptQueue.retry(principal.user, task.track_id, task.id) do
-      {:ok,
-       Store.update(task,
-         state: "TASK_STATE_SUBMITTED",
-         turn_id: nil,
-         cursor: nil,
-         result: "",
-         reply_events: [],
-         turn_seen: false,
-         reply_prefix: ""
-       )}
+      Store.transaction(fn ->
+        current = Store.lock_task(task.id)
+        Store.clear_reply(task.id)
+
+        Store.update(current,
+          state: "TASK_STATE_SUBMITTED",
+          turn_id: nil,
+          cursor: nil,
+          result: "",
+          reply_events: [],
+          reply_compacted: true,
+          turn_seen: false,
+          reply_prefix: "",
+          reply_size: 0,
+          reply_bytes: 0,
+          failure_evidence: %{}
+        )
+      end)
     end
   end
 
@@ -198,13 +208,22 @@ defmodule Ravix.Tooling.Tasks do
     end
   end
 
-  defp refresh(%Task{state: state} = task, _) when state in @terminal,
-    do: {:ok, persist_queue(task)}
+  defp refresh(%Task{state: state} = task, access) when state in @terminal,
+    do: refresh_queue(task, access)
 
   defp refresh(%Task{queue_status: status} = task, access) when status in [:sent, :sending],
     do: reconcile(task, access)
 
-  defp refresh(task, _access), do: {:ok, persist_queue(task)}
+  defp refresh(task, access), do: refresh_queue(task, access)
+
+  defp refresh_queue(task, access) do
+    {:ok,
+     persist_queue(
+       task,
+       access.thread.conversation_id,
+       access.thread.runtime || access.project.runtime
+     )}
+  end
 
   defp queue_view(task, queue, track) do
     {state, message} =
@@ -274,29 +293,37 @@ defmodule Ravix.Tooling.Tasks do
       "tooling.reconcile.thread",
       %{"ravix.thread_id" => access.thread.id, "ravix.task_count" => length(rows)},
       fn ->
-        checkpoint = Store.checkpoint(access.thread.id, access.thread.conversation_id)
-        result = reconcile_group(rows)
-        current = Enum.map(rows, fn {task, _} -> Store.task(task.id) end)
-
-        signature =
-          digest(
-            {result, Enum.sort(Enum.map(current, &{&1.id, &1.state, &1.turn_id, &1.cursor}))}
-          )
-
-        Store.finish_checkpoint(checkpoint, signature)
-
-        case result do
-          {:ok, _} -> :ok
-          error -> error
-        end
+        Store.measure(rows, fn -> reconcile_measured(rows, access) end)
       end
     )
+  end
+
+  defp reconcile_measured(rows, access) do
+    checkpoint = Store.checkpoint(access.thread.id, access.thread.conversation_id)
+    result = reconcile_group(rows)
+    current = Enum.map(rows, fn {task, _} -> Store.small_task(task.id) end)
+
+    signature =
+      digest({result, Enum.sort(Enum.map(current, &{&1.id, &1.state, &1.turn_id, &1.cursor}))})
+
+    Store.finish_checkpoint(checkpoint, signature)
+
+    case result do
+      {:ok, _} -> :ok
+      error -> error
+    end
   end
 
   defp reconcile_group(rows) do
     rows =
       Enum.map(rows, fn {task, access} ->
-        current = persist_queue(task, access.thread.conversation_id)
+        current =
+          persist_queue(
+            task,
+            access.thread.conversation_id,
+            access.thread.runtime || access.project.runtime
+          )
+
         current = %{current | reconciled_at: Store.record_reconciliation(task.id)}
 
         if current.state != task.state,
@@ -352,24 +379,77 @@ defmodule Ravix.Tooling.Tasks do
     end
   end
 
-  defp persist_queue(task, conversation_id \\ nil) do
+  defp persist_queue(task, conversation_id, runtime) do
     {:ok, current} =
       Store.transaction(fn ->
         # ownership: no door for internal receipt reconciliation; the queue owns delivery
         # state, and public reads still pass accessible/2's principal/client door.
-        {:ok, queue} = Ravix.PromptQueue.Store.lock_row(task.id, task.track_id)
+        {:ok, queue} = Ravix.PromptQueue.Store.lock_status(task.id, task.track_id)
         current = Store.lock_task(task.id)
+        current = compact_reply(current, runtime)
         current = cursor_conversation(current, conversation_id, task.cursor_conversation_id)
         queue = Map.put(queue, :blocked_by, Ravix.PromptQueue.Store.held_before(queue))
         # ownership: Tasks.send created this receipt through Access.thread_access;
         # setup state only shapes MCP recovery guidance.
-        track = Ravix.Tracks.Store.get_track(task.track_id)
+        track = Ravix.Tracks.Store.setup_status(task.track_id)
         view = queue_view(current, queue, track)
-        if view.state != current.state, do: Store.update(current, state: view.state)
+
+        save_queue_state(current, view)
+
         view
       end)
 
     current
+  end
+
+  defp save_queue_state(%{state: state}, %{state: state}), do: :ok
+
+  defp save_queue_state(current, view) do
+    attrs = if terminal?(view), do: [result: Store.reply(current.id)], else: []
+    Store.update(current, [state: view.state] ++ attrs)
+  end
+
+  @doc false
+  def compact_legacy do
+    Enum.each(Store.legacy_tasks(), &compact_legacy_task/1)
+  end
+
+  defp compact_legacy_task({id, runtime}) do
+    Ravix.Trace.span("tooling.reconcile.compact", %{}, fn ->
+      Store.measure([], fn -> compact_transaction(id, runtime) end)
+    end)
+  end
+
+  defp compact_transaction(id, runtime) do
+    Store.transaction(fn -> compact_reply(Store.lock_task(id), runtime) end)
+  end
+
+  defp compact_reply(%{reply_compacted: true} = task, _runtime), do: task
+
+  defp compact_reply(task, runtime) do
+    legacy = Store.legacy_reply(task.id)
+    task = struct(task, legacy)
+    events = legacy.reply_events || []
+    blocks = Transcript.blocks_for_turn(events, runtime)
+    evidence = AgentFailure.accumulate(%{}, events, blocks)
+    text = if events == [], do: legacy.result, else: legacy.reply_prefix <> reply(blocks)
+    text = reply_fragment(text, 0, 0)
+    Store.clear_reply(task.id)
+    unless terminal?(task), do: Store.append_reply(task.id, -1, text)
+    attrs = if terminal?(task), do: [], else: [result: ""]
+
+    Store.update(
+      task,
+      attrs ++
+        [
+          reply_compacted: true,
+          reply_events: [],
+          reply_prefix: "",
+          reply_size: String.length(text),
+          reply_bytes: byte_size(text),
+          failure_evidence: evidence
+        ]
+    )
   end
 
   # A credential recovery can replace the conversation on the same thread.
@@ -387,6 +467,8 @@ defmodule Ravix.Tooling.Tasks do
     do: Store.update(task, cursor_conversation_id: id)
 
   defp cursor_conversation(task, id, _) do
+    Store.clear_reply(task.id)
+
     Store.update(task,
       cursor_conversation_id: id,
       cursor: nil,
@@ -394,6 +476,9 @@ defmodule Ravix.Tooling.Tasks do
       turn_seen: false,
       reply_events: [],
       reply_prefix: "",
+      reply_size: 0,
+      reply_bytes: 0,
+      failure_evidence: %{},
       result: "",
       state: "TASK_STATE_SUBMITTED"
     )
@@ -417,38 +502,23 @@ defmodule Ravix.Tooling.Tasks do
              pages
            ),
          runtime <- access.thread.runtime || access.project.runtime do
-      # NULL is an old-release receipt. Capture its latest result on first use,
-      # not during migration, since the old singleton may still be writing it.
-      task = if is_nil(task.reply_events), do: %{task | reply_prefix: task.result}, else: task
-      events = (task.reply_events || []) ++ page.events
-      {text, failure} = outcome(task, events, page.events, runtime, finished)
-
-      page = %{page | events: events}
+      blocks = Transcript.blocks_for_turn(page.events, runtime)
+      evidence = AgentFailure.accumulate(task.failure_evidence, page.events, blocks)
+      failure = AgentFailure.from_summary(evidence, runtime, finished)
+      text = reply_fragment(reply(blocks), task.reply_size, task.reply_bytes)
 
       {:ok, saved} =
-        Store.transaction(fn -> persist_outcome(task, access, turn, page, text, failure) end)
+        Store.transaction(fn ->
+          persist_outcome(task, access, turn, page, text, evidence, failure)
+        end)
 
-      if {saved.state, saved.result, saved.cursor} != {task.state, task.result, task.cursor},
-        do: publish(task.id)
+      if {saved.state, saved.cursor} != {task.state, task.cursor}, do: publish(task.id)
 
       {:ok, pages}
     end
   end
 
-  defp outcome(task, _events, [], _runtime, false), do: {task.result, nil}
-
-  defp outcome(task, events, _new, runtime, finished) do
-    blocks = Transcript.blocks_for_turn(events, runtime)
-
-    failure =
-      if finished,
-        do: AgentFailure.detect(events, runtime, blocks),
-        else: AgentFailure.suspension(events)
-
-    {task.reply_prefix <> reply(blocks), failure}
-  end
-
-  defp persist_outcome(task, access, turn, page, text, failure) do
+  defp persist_outcome(task, access, turn, page, text, evidence, failure) do
     if failure do
       # ownership: no door for bookkeeping; reconciliation correlates an existing receipt's thread and turn.
       Ravix.Tracks.Store.record_turn_failure(
@@ -459,7 +529,7 @@ defmodule Ravix.Tooling.Tasks do
       )
     end
 
-    saved = save_page(task, turn, page, text, failure)
+    saved = save_page(task, turn, page, text, evidence, failure)
     Store.advance_checkpoint(access.thread.id, saved.cursor_conversation_id, saved.cursor)
     saved
   end
@@ -539,35 +609,66 @@ defmodule Ravix.Tooling.Tasks do
       else: events
   end
 
-  defp save_page(task, turn, page, text, failure) do
+  defp save_page(task, turn, page, text, evidence, failure) do
     # ownership: no door for bookkeeping of existing receipts; lock queue before receipt to fence late reads.
-    {:ok, queue} = Ravix.PromptQueue.Store.lock_row(task.id, task.track_id)
+    {:ok, queue} = Ravix.PromptQueue.Store.lock_status(task.id, task.track_id)
     current = Store.lock_task(task.id)
 
     if stale_page?(task, current, queue) do
       current
     else
-      state = if failure, do: "TASK_STATE_FAILED", else: turn_state(turn.status)
-      result = text
-
-      Store.update(current,
-        state: state,
-        turn_id: turn.id,
-        turn_seen: task.turn_seen or page.events != [],
-        cursor: page.next_cursor || current.cursor,
-        result: String.slice(if(failure, do: failure.reason, else: result), 0, 64_000),
-        reply_events: if(state in @terminal, do: [], else: page.events),
-        reply_prefix: task.reply_prefix,
-        failure_code: failure && failure.code,
-        failure_message: failure && failure.reason
-      )
+      write_page(current, task, turn, page, text, evidence, failure)
     end
   end
+
+  defp write_page(current, task, turn, page, text, evidence, failure) do
+    state = if failure, do: "TASK_STATE_FAILED", else: turn_state(turn.status)
+    Store.append_reply(task.id, page.next_cursor || current.cursor || 0, text)
+
+    attrs = terminal_result(state, task.id, failure)
+
+    Store.update(
+      current,
+      attrs ++
+        [
+          state: state,
+          turn_id: turn.id,
+          turn_seen: task.turn_seen or page.events != [],
+          cursor: page.next_cursor || current.cursor,
+          reply_size: current.reply_size + String.length(text),
+          reply_bytes: current.reply_bytes + byte_size(text),
+          failure_evidence: evidence,
+          failure_code: failure && failure.code,
+          failure_message: failure && failure.reason
+        ]
+    )
+  end
+
+  defp terminal_result(state, id, failure) when state in @terminal do
+    [result: if(failure, do: failure.reason, else: Store.reply(id))]
+  end
+
+  defp terminal_result(_state, _id, _failure), do: []
 
   defp stale_page?(task, current, queue) do
     queue.status not in [:sent, :sending] or current.cursor != task.cursor or
       current.cursor_conversation_id != task.cursor_conversation_id or
       terminal?(%{current | state: delivered_state(current)})
+  end
+
+  # Preserve the existing 64k-character artifact limit, with a second byte bound
+  # for pathological combining-character graphemes. Never retain a partial UTF-8 codepoint.
+  defp reply_fragment(text, size, bytes) do
+    length = min(byte_size(text), max(256_000 - bytes, 0))
+    prefix = binary_part(text, 0, length)
+
+    valid =
+      case :unicode.characters_to_binary(prefix) do
+        {:incomplete, valid, _rest} -> valid
+        valid when is_binary(valid) -> valid
+      end
+
+    String.slice(valid, 0, max(64_000 - size, 0))
   end
 
   defp reply(blocks) do

@@ -76,7 +76,11 @@ defmodule Ravix.Tooling.Task do
     field :cursor, :integer
     field :cursor_conversation_id, :string
     field :result, :string, default: ""
-    field :reply_events, {:array, :map}
+    field :reply_compacted, :boolean, default: false
+    field :reply_size, :integer, default: 0
+    field :reply_bytes, :integer, default: 0
+    field :failure_evidence, :map, default: %{}
+    field :reply_events, {:array, :map}, default: []
     field :reply_prefix, :string, default: ""
     field :turn_seen, :boolean, default: false
     timestamps(type: :utc_datetime_usec)
@@ -95,5 +99,16 @@ defmodule Ravix.Tooling.ThreadCheckpoint do
     field :unchanged, :integer, default: 0
     field :next_due_at, :utc_datetime_usec
     field :generation, :integer, default: 0
+  end
+end
+
+defmodule Ravix.Tooling.ReplyChunk do
+  @moduledoc "Append-only bounded reply fragments, committed with the receipt cursor."
+  use Ecto.Schema
+  @primary_key false
+  schema "tooling_reply_chunks" do
+    field :task_id, :string, primary_key: true
+    field :cursor, :integer, primary_key: true
+    field :body, :string
   end
 end
