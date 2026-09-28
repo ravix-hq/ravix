@@ -67,6 +67,7 @@ defmodule Ravix.Tracks do
   require Logger
 
   alias Ravix.Tracks.{
+    Attribution,
     Billing,
     Diff,
     Files,
@@ -799,7 +800,9 @@ defmodule Ravix.Tracks do
                    conversation_id: conversation_id,
                    title: title,
                    runtime: selection.runtime,
-                   model: selection.model
+                   model: selection.model,
+                   # Attribution only (`Co-authored-by`), never the payer.
+                   started_by: user.id
                  },
                  track,
                  user,
@@ -947,6 +950,7 @@ defmodule Ravix.Tracks do
     creator? = Billing.creator_opening?()
 
     with {:ok, %{project: project, role: role}} <- Access.project_access(user, project_id),
+         :ok <- not_legacy_duplicate(project),
          :ok <- plan_origin_access(user, project_id, attrs["origin"]),
          {:ok, attrs} <- resolve_pr_origin(project, attrs),
          {:ok, client} <- fountain(),
@@ -1009,7 +1013,8 @@ defmodule Ravix.Tracks do
     do: Billing.refuse_overrides(client, project.environment_id, project.vault_id)
 
   defp open_shared(user, project_id, attrs, opts) do
-    with {:ok, _} <- Access.project_access(user, project_id),
+    with {:ok, %{project: project}} <- Access.project_access(user, project_id),
+         :ok <- not_legacy_duplicate(project),
          {:ok, visibility} <- visibility(attrs["visibility"] || "project"),
          :ok <- visibility_layout(visibility, :shared) do
       Ravix.Tracks.Sandbox.Store.shared_open(project_id, fn ->
@@ -1017,6 +1022,18 @@ defmodule Ravix.Tracks do
       end)
     end
   end
+
+  # A project a reviewed migration marked a legacy duplicate (ADR 0009) keeps
+  # the tracks it has, reachable by URL, but opens no new ones: new work goes
+  # to the canonical project of its repository. Every opening path (web, MCP,
+  # plans, schedules) comes through `open/4`.
+  defp not_legacy_duplicate(%Project{legacy_duplicate_at: nil}), do: :ok
+
+  defp not_legacy_duplicate(%Project{}),
+    do:
+      {:error,
+       {:conflict, "legacy_duplicate",
+        "This project is a duplicate of its repository's project in the workspace. Open the track there instead."}}
 
   defp open_shared_available(user, project_id, attrs, opts) do
     with {:ok, %{project: project, role: role}} <- Access.project_access(user, project_id),
@@ -2397,16 +2414,25 @@ defmodule Ravix.Tracks do
     with {:ok, app} <- github(),
          {:ok, %{track: track, project: project}} <- Access.track_access(user, track_id),
          :ok <- require_repo(project, "This project has no repository.") do
+      body =
+        text(attrs["body"], 20_000) |> non_empty() || "Opened from Ravix track `#{track.slug}`."
+
       Ravix.GitHub.open_pull(app, project.installation_id, project.repo_full_name, %{
         head: track.branch,
         base: text(attrs["base"], 200) |> non_empty() || project.default_branch || "main",
         title: text(attrs["title"], 200) |> non_empty() || track.title,
-        body:
-          text(attrs["body"], 20_000) |> non_empty() || "Opened from Ravix track `#{track.slug}`.",
+        body: Attribution.pr_body(body, track_starter(track)),
         draft: attrs["draft"] != false
       })
     end
   end
+
+  # ownership: the track's own creator, read after `Access.track_access/2`
+  # admitted the caller to it; named in the pull request (ADR 0009 phase 4c).
+  defp track_starter(%Track{created_by: id}) when is_binary(id),
+    do: Ravix.Accounts.Store.get_user(id)
+
+  defp track_starter(_track), do: nil
 
   @doc "The selected track's machine, after track membership is established."
   @spec machine_for_track(User.t(), String.t(), keyword()) ::

@@ -106,3 +106,31 @@ test('quick-jump keeps selected result focus when filtering moves its row', () =
   link.focus(); hook.beforeUpdate(); link.remove(); hook.updated()
   expect(document.activeElement).toBe(document.body)
 })
+
+test('quick-jump keys also move through a data-jump-scope list, skipping disabled results', () => {
+  document.body.innerHTML = `<div id="workspace"><div id="repo-picker" data-jump-scope>
+    <input id="repo-picker-query" data-jump-query>
+    <button id="a" data-jump-result>acme/api</button>
+    <button id="off" data-jump-result disabled>acme/busy</button>
+    <button id="b" data-jump-result>acme/web</button>
+  </div><input id="elsewhere"></div>`
+  const {hook} = mountHook(QuickJump, '#workspace')
+  const query = document.querySelector('#repo-picker-query')
+  let picked = null
+  document.querySelector('#a').addEventListener('click', () => { picked = 'a' })
+  query.focus()
+  expect(key(query, 'ArrowDown')).toBe(false)
+  expect(document.activeElement.id).toBe('a')
+  key(document.activeElement, 'ArrowDown')
+  expect(document.activeElement.id).toBe('b')
+  key(document.activeElement, 'ArrowDown')
+  expect(document.activeElement.id).toBe('a')
+  key(document.activeElement, 'ArrowUp')
+  expect(document.activeElement.id).toBe('b')
+  expect(key(query, 'Enter')).toBe(false)
+  expect(picked).toBe('a')
+  // Outside any scope the keys are left alone.
+  const elsewhere = document.querySelector('#elsewhere')
+  expect(key(elsewhere, 'ArrowDown')).toBe(true)
+  hook.destroyed()
+})

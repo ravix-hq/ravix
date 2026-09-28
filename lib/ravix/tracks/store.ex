@@ -111,6 +111,45 @@ defmodule Ravix.Tracks.Store do
               f.stage == "classification"
       )
 
+  @doc """
+  When `user_id` last opened a track in each of `project_ids`: the
+  New track picker's "recent first" (ADR 0009 phase 4c). Projects they
+  never opened a track in are absent.
+  """
+  @spec last_used(String.t(), [String.t()]) :: %{String.t() => DateTime.t()}
+  def last_used(_user_id, []), do: %{}
+
+  def last_used(user_id, project_ids) do
+    Repo.all(
+      from t in Track,
+        where: t.created_by == ^user_id and t.project_id in ^project_ids,
+        group_by: t.project_id,
+        select: {t.project_id, max(t.created_at)}
+    )
+    |> Map.new()
+  end
+
+  @doc "Who started a thread: `started_by`, or for a track's default thread its creator."
+  @spec starter_id(String.t(), String.t() | nil) :: String.t() | nil
+  def starter_id(track_id, thread_id) do
+    thread_id = thread_id || track_id
+
+    Repo.one(
+      from th in Thread,
+        join: t in Track,
+        on: t.id == th.track_id,
+        where: th.id == ^thread_id and th.track_id == ^track_id,
+        select:
+          fragment(
+            "coalesce(?, CASE WHEN ? = ? THEN ? END)",
+            th.started_by,
+            th.id,
+            t.id,
+            t.created_by
+          )
+    )
+  end
+
   @doc "A track row. The caller brings the id decided in the opening plan."
   @spec create_track(map()) :: {:ok, Track.t()} | {:error, Ecto.Changeset.t()}
   def create_track(attrs), do: %Track{} |> Track.changeset(attrs) |> Repo.insert()
@@ -192,8 +231,15 @@ defmodule Ravix.Tracks.Store do
 
       case Repo.insert(changeset) do
         {:ok, track} ->
+          # The default thread is started by whoever opened the track.
           from(t in Thread, where: t.id == ^track.id)
-          |> Repo.update_all(set: [runtime: selection.runtime, model: selection.model])
+          |> Repo.update_all(
+            set: [
+              runtime: selection.runtime,
+              model: selection.model,
+              started_by: track.created_by
+            ]
+          )
 
           track
 

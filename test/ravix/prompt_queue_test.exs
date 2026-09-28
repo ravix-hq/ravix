@@ -15,6 +15,7 @@ defmodule Ravix.PromptQueueTest do
   alias Ravix.QueryCount
   alias Ravix.Tooling.Tasks
   alias Ravix.Tracks
+  alias Ravix.Tracks.Attribution
   alias Ravix.Tracks.Follower
   alias Ravix.Tracks.TrackMember
   alias Ravix.Tracks.Transcript.Event, as: TranscriptEvent
@@ -62,7 +63,13 @@ defmodule Ravix.PromptQueueTest do
     pid = start_supervised!(spec)
     Sandbox.allow(Repo, self(), pid)
 
-    for mod <- [Ravix.Fountain, Ravix.Projects, Ravix.Previews, Ravix.Previews.Store],
+    for mod <- [
+          Ravix.Fountain,
+          Ravix.Projects,
+          Ravix.Previews,
+          Ravix.Previews.Store,
+          Ravix.Config
+        ],
         do: allow(mod, self(), pid)
 
     pid
@@ -864,6 +871,40 @@ defmodule Ravix.PromptQueueTest do
     # same prompt twice.
     PromptQueue.Store.recover()
     assert status_of(id) == :sending
+  end
+
+  describe "commit attribution (ADR 0009 phase 4c)" do
+    setup f do
+      Repo.update_all(from(t in Ravix.Tracks.Track, where: t.id == ^f.track.id),
+        set: [created_by: f.owner.id]
+      )
+
+      :ok
+    end
+
+    test "each prompt on a thread asks for its starter's Co-authored-by trailer", f do
+      stub(Ravix.Config, :workspace_access?, fn -> true end)
+      client = fountain([read("idle"), accept()])
+      insert_project_member(f.project, f.guest)
+      send_prompt(f.track, f.guest, "commit the fix")
+
+      Server.tick(f.server)
+      assert [%{"prompt" => prompt}] = posted(client)
+      # The default thread was started by the track's creator, whoever sends.
+      assert prompt =~ "[ravix commit attribution]"
+      assert prompt =~ Attribution.trailer(f.owner)
+      assert prompt =~ "started by @#{f.owner.login}"
+      assert String.ends_with?(prompt, "[from @#{f.guest.login}] commit the fix")
+    end
+
+    test "with RAVIX_WORKSPACE_ACCESS off the prompt is as before", f do
+      stub(Ravix.Config, :workspace_access?, fn -> false end)
+      client = fountain([read("idle"), accept()])
+      send_prompt(f.track, f.owner, "plain")
+
+      Server.tick(f.server)
+      assert [%{"prompt" => "plain"}] = posted(client)
+    end
   end
 
   test "project members retain authorship and a full queue refuses more work", f do

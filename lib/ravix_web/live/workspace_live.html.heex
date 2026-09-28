@@ -220,32 +220,33 @@
           <div id="project-tree" phx-hook="ProjectTree" data-viewer={@current_user.id}>
             <section
               :for={
-                {section, projects} <- section_groups(@projects, @sections, @section_placements)
+                {section, projects} <-
+                  section_groups(@projects, @sections, @section_placements, @scratch_group)
               }
-              id={"section-#{section.id || "other"}"}
+              id={"section-#{section_key(section)}"}
               class="project-section"
-              data-section-drop={section.id || ""}
+              data-section-drop={if !scratch_section?(section), do: section.id || ""}
             >
               <button
-                :if={section.id || @sections != []}
+                :if={section.id || @sections != [] || scratch_section?(section)}
                 type="button"
                 class="ghost section-toggle"
-                data-collapse={if is_nil(section.id), do: "section-other"}
+                data-collapse={if is_nil(section.id), do: "section-#{section_key(section)}"}
                 phx-click={if section.id, do: "toggle-section"}
                 phx-value-id={section.id}
                 phx-value-collapsed={to_string(!section.collapsed)}
                 aria-expanded={to_string(!section.collapsed)}
-                aria-controls={"section-projects-#{section.id || "other"}"}
+                aria-controls={"section-projects-#{section_key(section)}"}
               >
                 <.icon name="chevron" size={12} open={!section.collapsed} />
                 <span class="truncate">{section.name}</span>
               </button>
-              <div id={"section-projects-#{section.id || "other"}"} hidden={section.collapsed}>
+              <div id={"section-projects-#{section_key(section)}"} hidden={section.collapsed}>
                 <section
                   :for={project <- projects}
                   id={"project-row-#{project.id}"}
                   class={["workspace-project", @project && @project.id == project.id && "current"]}
-                  draggable={to_string(@sections != [])}
+                  draggable={to_string(@sections != [] and !scratch_section?(section))}
                   data-project-id={project.id}
                 >
                   <div class="workspace-project-row">
@@ -930,7 +931,13 @@
       title="New track"
       on_close="dismiss"
     >
-      <form id="new-track-project-form" phx-change="new-track-project">
+      <RavixWeb.Live.RepoPicker.picker
+        :if={@picker}
+        picker={@picker}
+        selected={@track_project}
+        busy={@busy}
+      />
+      <form :if={!@picker} id="new-track-project-form" phx-change="new-track-project">
         <label for="new-track-project">Project / repository</label>
         <select id="new-track-project" name="project" disabled={@busy}>
           <option

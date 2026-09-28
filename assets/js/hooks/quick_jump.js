@@ -1,5 +1,6 @@
 // Cmd/Ctrl-K uses the visible dialog trigger, preserving the shared dialog's
-// push/pop focus stack. Arrow keys move through native navigation links.
+// push/pop focus stack. Arrow keys move through native navigation links, in
+// search and in any `data-jump-scope` list; Enter in its query takes the first.
 export const QuickJump = {
   mounted() {
     const mac = /Mac|iPhone|iPad|iPod/.test(navigator.userAgentData?.platform || navigator.platform)
@@ -17,9 +18,12 @@ export const QuickJump = {
         }
         return
       }
+      // Search, and any other list that asks for the same keys by marking
+      // itself `data-jump-scope` (the New track repository list).
       const dialog = this.el.querySelector('#search-dialog')
-      if (!dialog || !dialog.contains(event.target)) return
-      const results = [...dialog.querySelectorAll('[data-jump-result]')]
+      const scope = dialog?.contains(event.target) ? dialog : event.target.closest?.('[data-jump-scope]')
+      if (!scope || !this.el.contains(scope)) return
+      const results = [...scope.querySelectorAll('[data-jump-result]')].filter(result => !result.disabled)
       if (!results.length) return
       const index = results.indexOf(document.activeElement)
       if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
@@ -27,7 +31,7 @@ export const QuickJump = {
         const next = index < 0 ? (event.key === 'ArrowDown' ? 0 : results.length - 1)
           : (index + (event.key === 'ArrowDown' ? 1 : -1) + results.length) % results.length
         results[next].focus()
-      } else if (event.key === 'Enter' && event.target.id === 'search-query') {
+      } else if (event.key === 'Enter' && (event.target.id === 'search-query' || event.target.matches?.('[data-jump-query]'))) {
         event.preventDefault()
         results[0].click()
       }

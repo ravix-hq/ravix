@@ -426,6 +426,30 @@ defmodule Ravix.TracksTest do
       {:ok, owner: owner, project: project}
     end
 
+    test "a legacy duplicate opens no new track, on either path, before any Fountain call",
+         ctx do
+      first =
+        insert_project(
+          user: ctx.owner,
+          repo_full_name: "acme/ledger",
+          created_at: ~U[2026-01-01 00:00:00Z]
+        )
+
+      {:ok, _} = Ravix.Workspaces.Store.mark_legacy_duplicate(ctx.project.id, first.id)
+      client = FakeTransport.client([])
+      stub(Ravix.Fountain, :client, fn -> client end)
+
+      for dedicated? <- [false, true] do
+        stub(Ravix.Config, :dedicated_opens_enabled?, fn _ -> dedicated? end)
+
+        assert {:error, {:conflict, "legacy_duplicate", _}} =
+                 Tracks.open(ctx.owner, ctx.project.id, %{"title" => "new work"})
+      end
+
+      assert FakeTransport.calls(client) == []
+      assert Repo.aggregate(from(t in Track, where: t.project_id == ^ctx.project.id), :count) == 0
+    end
+
     # A Fountain with (or without) a machine, that accepts one conversation
     # and, on an attach, one prompt.
     defp opening_fountain(project, machine?) do
