@@ -9,7 +9,8 @@ defmodule Ravix.Tracks.TrackMember do
   `Ravix.Projects.ProjectMember` is the wider one, and the two are separate
   tables rather than one with a nullable track_id because they answer
   different questions and are read in different places. Private track seats
-  coexist with project membership and survive joining or leaving the project.
+  coexist with project membership and survive promotion. Project removal
+  revokes them together with creator access.
   On project-visible tracks, promotion still replaces the narrower seats.
   """
   use Ecto.Schema

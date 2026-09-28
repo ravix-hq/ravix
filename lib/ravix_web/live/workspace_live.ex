@@ -1094,8 +1094,8 @@ defmodule RavixWeb.WorkspaceLive do
     |> announce(tracks)
   end
 
-  defp accessible_rows(user, _project, rows) do
-    Enum.filter(rows, &match?({:ok, _}, Access.track_access(user, &1.id)))
+  defp accessible_rows(user, project, rows) do
+    Access.visible_tracks(user.id, rows, project)
   end
 
   # Use the scoped rail already held by the workspace, including after a

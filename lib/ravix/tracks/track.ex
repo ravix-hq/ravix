@@ -91,6 +91,7 @@ defmodule Ravix.Tracks.Track do
     field :created_at, :utc_datetime_usec
     field :created_by_login, :string
     field :created_by, :string
+    field :creator_revoked_at, :utc_datetime_usec
     field :visibility, Ecto.Enum, values: [:project, :private], default: :project
 
     has_many :threads, Ravix.Tracks.Thread

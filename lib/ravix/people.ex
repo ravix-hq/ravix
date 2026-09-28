@@ -28,9 +28,9 @@ defmodule Ravix.People do
   one piece of the work.
 
   Project membership replaces narrower seats on project-visible tracks.
-  Private track seats survive project membership changes: a project share
-  neither grants nor revokes a private invitation. A private track's creator retains
-  access through their stable user ID.
+  Promotion preserves private track seats. Removal from the project revokes
+  every track seat, creator access, outstanding prompt and invitation issued
+  by that person in the project.
 
   ## What sharing actually costs
 
@@ -234,7 +234,7 @@ defmodule Ravix.People do
       # than removed: there is no membership to delete, only a promise to
       # withdraw. Owner-only, because a pending person has no session to ask
       # with.
-      if (role == :owner or Access.creator?(user, track)) and
+      if Access.require_track_manager(role, user, track, "remove invitations") == :ok and
            Store.remove_invite_by_login(track.id, wanted) do
         Ravix.Hub.publish(project.id, :people, track_id: track.id)
         {:ok, Store.people_of(track.id, project.user_id, project.id)}
@@ -267,7 +267,16 @@ defmodule Ravix.People do
   # it is named and refused, and the sentence says where the control
   # actually is.
   defp may_remove_track(role, user, target, track) do
-    if Access.creator?(user, track), do: :ok, else: may_remove(role, user, target)
+    cond do
+      user.id == target.id ->
+        :ok
+
+      track.visibility == :private ->
+        Access.require_track_manager(role, user, track, "remove people")
+
+      true ->
+        may_remove(role, user, target)
+    end
   end
 
   defp refuse_track_project_member(_project, _user, _target, %{visibility: :private}), do: :ok
@@ -347,8 +356,8 @@ defmodule Ravix.People do
   The owner removing somebody from a project, or somebody leaving.
 
   This gives up project-visible tracks, including invitations superseded
-  by promotion. Private track memberships and creator access remain intact:
-  they must be revoked separately on the private track.
+  by promotion. Private track memberships and creator access are revoked too, together with
+  outstanding work and invitations issued by the removed person.
 
   Returns the project's people, or `{:ok, :left}` when the caller has just
   removed their own access.

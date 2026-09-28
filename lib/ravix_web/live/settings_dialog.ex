@@ -235,6 +235,16 @@ defmodule RavixWeb.Live.SettingsDialog do
      )}
   end
 
+  defp settings_event("close-orphaned-private", %{"confirm" => name}, socket) do
+    if name == socket.assigns.project.name do
+      user = user(socket)
+      id = project_id(socket)
+      {:noreply, begin(socket, :orphan_close, fn -> Tracks.close_orphaned_private(user, id) end)}
+    else
+      {:noreply, flash(socket, :error, "Type the project name to confirm.")}
+    end
+  end
+
   defp settings_event("confirm-danger", %{"action" => action, "confirm" => name}, socket)
        when action in ["rebuild", "delete"] do
     {:noreply, update(socket, :confirmations, &Map.put(&1, action, name))}
@@ -324,6 +334,13 @@ defmodule RavixWeb.Live.SettingsDialog do
      end)}
   end
 
+  defp async_result(:orphan_close, {:ok, response}, socket) do
+    {:noreply,
+     result(settle(socket, :orphan_close), response, fn s, count ->
+       s |> load() |> flash(:info, "Closing #{count} private tracks with no remaining members.")
+     end)}
+  end
+
   defp async_result(:danger, {:ok, response}, socket) do
     {:noreply,
      result(settle(socket, :danger), response, fn s, outcome ->
@@ -406,6 +423,11 @@ defmodule RavixWeb.Live.SettingsDialog do
       s
       |> assign(
         settings: settings,
+        orphan_count:
+          case Tracks.orphan_private_count(user(s), project_id(s)) do
+            {:ok, count} -> count
+            _ -> 0
+          end,
         settings_form: settings_form(settings),
         variable_rows: saved_variable_rows(settings)
       )
@@ -1069,6 +1091,28 @@ defmodule RavixWeb.Live.SettingsDialog do
               hidden
             >
               <h3 id="settings-danger-title" tabindex="-1">Danger zone</h3>
+              <form
+                :if={@orphan_count > 0}
+                id="close-orphaned-private-form"
+                phx-target={@myself}
+                phx-submit="close-orphaned-private"
+              >
+                <p>{@orphan_count} private tracks with no remaining members</p>
+                <p>
+                  Closing deletes their machines and uncommitted work. No track contents will be opened.
+                </p>
+                <.input
+                  name="confirm"
+                  value=""
+                  label={"Type #{@project.name} to confirm closing orphaned tracks"}
+                  required
+                />
+                <button
+                  class="danger"
+                  disabled={MapSet.size(@pending) > 0}
+                  phx-disable-with="Closing…"
+                >Close orphaned private tracks</button>
+              </form>
               <p :if={Map.get(@settings, :shared_tracks) != nil}>
                 Rebuild an individual track from that track; sibling tracks are unaffected.
                 Deleting the project includes private tracks you cannot see and deletes all its tracks’ machines, uncommitted changes, unpushed commits, settings and secrets. Cleanup continues until deletion is confirmed.

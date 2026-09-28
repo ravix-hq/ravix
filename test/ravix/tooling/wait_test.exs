@@ -244,6 +244,42 @@ defmodule Ravix.Tooling.WaitTest do
     assert_receive {:DOWN, ^ref, :process, ^server, _}
   end
 
+  test "project removal revokes a private creator wait during a blocked read", ctx do
+    creator = insert_user()
+    insert_project_member(ctx.project, ctx.p.user)
+    Repo.update!(Ecto.Changeset.change(ctx.project, user_id: creator.id))
+
+    Repo.update!(
+      Ecto.Changeset.change(ctx.track,
+        created_by: ctx.p.user.id,
+        visibility: :private,
+        sandbox_layout: :dedicated,
+        sandbox_state: :ready,
+        sandbox_id: "privacy-machine"
+      )
+    )
+
+    owner = self()
+
+    stub(Fountain, :turns, fn _, _ ->
+      send(owner, {:blocked_read, self()})
+
+      receive do
+        :release -> {:ok, []}
+      end
+    end)
+
+    waiter = start_wait(ctx)
+    assert_receive {:subscribed, server}
+    assert_receive {:blocked_read, worker}
+    monitor = Process.monitor(worker)
+    assert {:ok, _} = Ravix.People.remove_project(creator, ctx.project.id, ctx.p.user.login)
+    assert {:ok, {:error, :not_found}} = Task.yield(waiter, 1000)
+    assert_receive {:DOWN, ^monitor, :process, ^worker, _}
+    ref = Process.monitor(server)
+    assert_receive {:DOWN, ^ref, :process, ^server, _}
+  end
+
   test "queued cancellation through the scoped context wakes a waiter", ctx do
     {:ok, queued} = Tasks.send(ctx.p, ctx.track.id, "queued", "cancelled")
     waiter = start_wait(ctx, %{"task_ids" => [queued.id]})

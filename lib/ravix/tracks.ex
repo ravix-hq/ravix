@@ -722,7 +722,7 @@ defmodule Ravix.Tracks do
       Ravix.Hub.publish(track.project_id, :people, track_id: track.id)
       {:ok, updated.visibility}
     else
-      false -> {:error, :not_found}
+      false -> {:error, {:forbidden, "Only the track creator can change visibility."}}
       error -> error
     end
   end
@@ -1283,6 +1283,20 @@ defmodule Ravix.Tracks do
     end
   end
 
+  @doc "Owner-only count of private tracks with no remaining participants; no track metadata."
+  def orphan_private_count(%User{} = user, project_id) do
+    with {:ok, _} <- Access.project_of(user, project_id) do
+      {:ok, Ravix.Tracks.Orphans.Store.count(project_id)}
+    end
+  end
+
+  @doc "Owner-only closure of orphaned private machines, returning only the number closed."
+  def close_orphaned_private(%User{} = user, project_id) do
+    with {:ok, _} <- Access.project_of(user, project_id) do
+      Ravix.Tracks.Orphans.Store.close(project_id)
+    end
+  end
+
   @doc "Read-only close warning, scoped to the selected track's disk."
   def close_info(%User{} = user, track_id) do
     with {:ok, %{track: track, project: project, role: role}} <-
@@ -1735,6 +1749,7 @@ defmodule Ravix.Tracks do
       turn_count: (live && live.turn_count) || 0,
       created_at: row.created_at,
       created_by: row.created_by,
+      creator_revoked_at: row.creator_revoked_at,
       visibility: row.visibility,
       created_by_login: row.created_by_login,
       people: Keyword.get(opts, :people, []),

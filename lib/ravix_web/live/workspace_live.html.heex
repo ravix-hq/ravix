@@ -839,7 +839,13 @@
           field={f[:visibility]}
           type="select"
           label="Sharing"
-          options={[{"Everyone in this project", "project"}, {"Only people I invite", "private"}]}
+          options={
+            [{"Everyone in this project", "project"}] ++
+              if(Ravix.Config.dedicated_opens_enabled?(@current_user),
+                do: [{"Only people I invite", "private"}],
+                else: []
+              )
+          }
           value={f[:visibility].value || "project"}
         />
         <RavixWeb.Live.RuntimePicker.fields

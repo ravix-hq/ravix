@@ -64,6 +64,7 @@ defmodule Ravix.Tracks.View do
               [
                 visibility: :project,
                 created_by: nil,
+                creator_revoked_at: nil,
                 sandbox_layout: :shared,
                 sandbox_state: nil,
                 sandbox_stage: nil,

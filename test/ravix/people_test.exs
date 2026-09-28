@@ -340,7 +340,7 @@ defmodule Ravix.PeopleTest do
       assert {:error, :not_found} = Access.track_access(ctx.guest, ctx.shared.id)
     end
 
-    test "removing somebody from a project revokes their grants on every open track", ctx do
+    test "removing somebody from a project revokes their grants on every track", ctx do
       %{id: shared_id} = ctx.shared
       %{id: private_id} = ctx.private
       %{id: guest_id} = ctx.guest
@@ -350,21 +350,21 @@ defmodule Ravix.PeopleTest do
 
       revoked = :ets.new(:revoked, [:public, :bag])
 
-      expect(Ravix.Previews.Store, :revoke, 2, fn t, ^guest_id ->
+      expect(Ravix.Previews.Store, :revoke, 3, fn t, ^guest_id ->
         :ets.insert(revoked, {:revoke, t})
       end)
 
-      expect(Ravix.Previews.Store, :revoke_agent, 2, fn t, ^guest_id ->
+      expect(Ravix.Previews.Store, :revoke_agent, 3, fn t, ^guest_id ->
         :ets.insert(revoked, {:agent, t})
       end)
 
       People.Store.remove_project_member(ctx.project.id, guest_id)
 
       assert Enum.sort(:ets.lookup(revoked, :revoke)) ==
-               Enum.sort([{:revoke, shared_id}, {:revoke, private_id}])
+               Enum.sort([{:revoke, shared_id}, {:revoke, private_id}, {:revoke, closed.id}])
 
       assert Enum.sort(:ets.lookup(revoked, :agent)) ==
-               Enum.sort([{:agent, shared_id}, {:agent, private_id}])
+               Enum.sort([{:agent, shared_id}, {:agent, private_id}, {:agent, closed.id}])
     end
 
     test "the owner is never a member of their own project", ctx do

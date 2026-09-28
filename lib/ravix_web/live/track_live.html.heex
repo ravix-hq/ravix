@@ -741,7 +741,7 @@
       subject_id={@track_id}
       track={@track}
       owner={
-        Ravix.Accounts.Access.creator?(@current_user, @track) ||
+        (@track.visibility == :private && Ravix.Accounts.Access.creator?(@current_user, @track)) ||
           (@track.role == :owner && @track.visibility == :project)
       }
       current_user={@current_user}
