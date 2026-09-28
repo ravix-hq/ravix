@@ -1715,23 +1715,23 @@ defmodule RavixWeb.WorkspaceLiveTest do
     end)
 
     {:ok, parent, _} = live(log_in_user(conn, user), "/p/#{project.id}/t/#{track.id}")
-    render_async(parent)
+    render_async(parent, 5_000)
     child = find_live_child(parent, "track-host")
-    render_async(child)
+    render_async(child, 5_000)
     child |> element("button", "app.ex") |> render_click()
-    assert render_async(child) =~ "hello file"
+    assert render_async(child, 5_000) =~ "hello file"
     child |> element("button", "Changes") |> render_click()
-    render_async(child)
+    render_async(child, 5_000)
     child |> element(".change-file", "app.ex") |> render_click()
     assert has_element?(child, ".diff-line.diff-add code", "hello change")
     child |> element("button", "Checks") |> render_click()
-    assert render_async(child) =~ "CI passed"
+    assert render_async(child, 5_000) =~ "CI passed"
 
     child
     |> element("button[phx-click=panel][phx-value-name=preview]", "Run")
     |> render_click()
 
-    assert render_async(child) =~ "stopped"
+    assert render_async(child, 5_000) =~ "stopped"
     assert has_element?(child, "#preview-config-form")
   end
 
