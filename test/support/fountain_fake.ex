@@ -150,7 +150,8 @@ defmodule Ravix.Fountain.FakeTransport do
            names,
            &{MapSet.member?(&1, {kind, name}), MapSet.put(&1, {kind, name})}
          ),
-         do: {422, [], %{errors: %{name: ["has already been taken"]}}},
+         do:
+           {422, [], %{error: "validation_failed", errors: %{name: ["has already been taken"]}}},
          else: {201, [], %{data: %{id: id, name: name}}}
     end
   end

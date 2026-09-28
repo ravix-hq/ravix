@@ -646,7 +646,7 @@ defmodule Ravix.ProjectsTest do
         {%{method: "POST", path: "/api/environments"}, {201, [], %{data: %{id: "new-env"}}}},
         {%{method: "POST", path: "/api/vaults"}, {201, [], %{data: %{id: "new-vault"}}}},
         {%{method: "POST", path: "/api/agents"},
-         {422, [], %{errors: %{name: ["has already been taken"]}}}},
+         {422, [], %{error: "validation_failed", errors: %{name: ["has already been taken"]}}}},
         {%{method: "DELETE", path: "/api/vaults/new-vault"}, {204, [], nil}},
         {%{method: "DELETE", path: "/api/environments/new-env"}, {204, [], nil}}
       ])
@@ -660,10 +660,33 @@ defmodule Ravix.ProjectsTest do
       assert Repo.aggregate(Project, :count) == 0
     end
 
+    test "an environment or vault name Fountain refuses is the same tagged conflict" do
+      taken =
+        {422, [], %{error: "validation_failed", errors: %{name: ["has already been taken"]}}}
+
+      no_github()
+
+      creation_fountain([{%{method: "POST", path: "/api/environments"}, taken}])
+
+      assert {:error, {:conflict, "fountain_name_taken", _}} =
+               Projects.create(connected_person("env"), %{name: "api"})
+
+      creation_fountain([
+        {%{method: "POST", path: "/api/environments"}, {201, [], %{data: %{id: "new-env"}}}},
+        {%{method: "POST", path: "/api/vaults"}, taken},
+        {%{method: "DELETE", path: "/api/environments/new-env"}, {204, [], nil}}
+      ])
+
+      assert {:error, {:conflict, "fountain_name_taken", _}} =
+               Projects.create(connected_person("vault"), %{name: "api"})
+
+      assert Repo.aggregate(Project, :count) == 0
+    end
+
     test "any other refusal of a record passes through as Fountain's error" do
       creation_fountain([
         {%{method: "POST", path: "/api/environments"},
-         {422, [], %{errors: %{setup_script: ["is too long"]}}}}
+         {422, [], %{error: "validation_failed", errors: %{setup_script: ["is too long"]}}}}
       ])
 
       no_github()

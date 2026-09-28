@@ -70,8 +70,8 @@ defmodule Ravix.Fountain.Error do
   end
 
   # Fountain's unique index on a record's name surfaces as a changeset error
-  # on `name`: a 422 (or 409) whose `errors` map names the field.
-  defp name_error?(%Fountain.Error{status: status} = error) when status in [409, 422],
+  # on `name`: a 422 whose `errors` map names the field.
+  defp name_error?(%Fountain.Error{status: 422} = error),
     do: Fountain.Error.field_errors(error)["name"] not in [nil, []]
 
   defp name_error?(_error), do: false

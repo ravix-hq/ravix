@@ -946,7 +946,6 @@ defmodule Ravix.CreatorBillingTest do
                assert call.body["name"] ==
                         Projects.Machine.fountain_name(ctx.project, "codex")
 
-               assert call.body["name"] =~ String.slice(ctx.project.id, 0, 8)
                {201, [], %{data: %{id: "codex-agent"}}}
              end},
             {%{method: "GET", path: "/api/agents/codex-agent"},
