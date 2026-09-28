@@ -507,7 +507,7 @@ html[data-inspector="closed"] #inspector-toggle .label-show { display: inline; }
   position: absolute; left: 25px; top: 3px; width: 8px; height: 8px; border-radius: 50%;
   background: var(--accent); box-shadow: 0 0 0 2px var(--sidebar);
 }
-.account-menu {
+.account-menu, .project-menu {
   position: fixed; inset: auto; bottom: 64px; left: 8px; margin: 0;
   width: min(272px, calc(100vw - 16px)); max-height: calc(100vh - 66px); overflow-y: auto;
   padding: 4px; color: var(--ink); background: var(--panel);
@@ -585,7 +585,9 @@ html[data-inspector="closed"] #inspector-toggle .label-show { display: inline; }
 .project-action.on { color: var(--ink); background: var(--surface); }
 @media (hover: hover) {
   .workspace-project .project-action[title="Project settings"],
-  .workspace-project .project-action[title="Plans"]:not(.on) { opacity: 0; }
+  .workspace-project .project-action[title="Plans"]:not(.on),
+  .workspace-project .project-action[title="More"] { opacity: 0; }
+  .workspace-project:has(.project-menu:popover-open) .project-action[title="More"] { opacity: 1; }
   .workspace-project-row:hover .project-action, .workspace-project-row:focus-within .project-action { opacity: 1; }
   .workspace-project:not(.current) .project-actions { opacity: 0; }
   .workspace-project:hover .project-actions, .workspace-project:focus-within .project-actions { opacity: 1; }
@@ -1798,6 +1800,27 @@ body:has(.phx-error) #request-progress { display: none; }
 .project-tree-tracks[hidden] { display: none; }
 .project-tree-tracks .track-tab { min-width: 0; }
 .project-tree-tracks .hint { margin: 4px 8px; }
+/* Who made each track: their GitHub avatar, or initials when there is none. */
+.track-creator {
+  flex: none; width: 16px; height: 16px; border-radius: 50%; overflow: hidden; display: grid; place-items: center;
+  font-size: 8px; font-weight: 600; line-height: 1; color: var(--ink); background: var(--surface-active);
+}
+.track-creator img { width: 100%; height: 100%; object-fit: cover; }
+.rail-scope { display: flex; gap: 2px; margin: 0 8px 6px; padding: 2px; background: var(--surface); border-radius: var(--radius); }
+.rail-scope button { flex: 1; padding: 2px 8px; font-size: 12px; border: none; border-radius: var(--radius); }
+.rail-scope button.on { color: var(--ink); background: var(--panel); box-shadow: 0 1px 2px var(--shadow); }
+.project-menu { bottom: auto; top: 64px; width: min(220px, calc(100vw - 16px)); }
+@supports (position-area: bottom) {
+  .project-menu { top: auto; position-area: bottom span-left; margin-top: 4px; }
+}
+.menu-check { flex: none; width: 14px; height: 14px; display: grid; place-items: center; }
+/* Closed tracks are listed to be found and reopened, not worked in. */
+.closed-tracks .section-label { margin: 6px 10px 2px; color: var(--dim); }
+.closed-tracks ul { list-style: none; margin: 0; padding: 0; }
+.closed-track { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 4px 10px; color: var(--dim); font-size: 13px; }
+.closed-track .track-title { flex: 1; min-width: 0; }
+.closed-track .track-creator { opacity: 0.7; }
+.closed-track button { flex: none; padding: 1px 6px; font-size: 12px; }
 .project-collapse { flex: 0 0 24px; padding: 4px; }
 [data-collapse][aria-expanded="false"] svg { transform: rotate(-90deg); }
 .workspace-project-row .workspace-project-name { min-width: 0; }

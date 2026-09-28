@@ -117,6 +117,16 @@ defmodule Ravix.Accounts do
     user |> Ecto.Changeset.change(changes_seen_at: marker) |> Repo.update()
   end
 
+  @doc "Whether this person's sidebar lists every visible track or only their own."
+  @spec put_rail_scope(User.t(), String.t() | atom()) :: {:ok, User.t()} | {:error, term()}
+  def put_rail_scope(%User{} = user, scope)
+      when scope in [:everyone, :mine, "everyone", "mine"] do
+    user |> Ecto.Changeset.cast(%{rail_scope: scope}, [:rail_scope]) |> Repo.update()
+  end
+
+  def put_rail_scope(%User{}, _scope),
+    do: {:error, {:unprocessable, "rail_scope", "Choose Mine or Everyone."}}
+
   # ── what a person set up ──────────────────────────────────────────────
 
   @doc """

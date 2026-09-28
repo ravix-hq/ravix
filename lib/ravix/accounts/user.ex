@@ -36,6 +36,8 @@ defmodule Ravix.Accounts.User do
     field :agent, Ecto.Enum, values: [:claude, :codex]
     field :credential_set_id, :string
     field :credential_kind, Ecto.Enum, values: [:subscription, :api_key]
+    # Whether the sidebar lists every visible track or only this person's.
+    field :rail_scope, Ecto.Enum, values: [:everyone, :mine], default: :everyone
     # When the first-run walkthrough was finished or dismissed.
     field :onboarded_at, :utc_datetime_usec
     field :created_at, :utc_datetime_usec

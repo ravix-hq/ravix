@@ -4,7 +4,7 @@ defmodule Ravix.Projects.Sections do
 
   alias Ravix.Accounts.User
   alias Ravix.Projects
-  alias Ravix.Projects.{Section, SectionPlacement}
+  alias Ravix.Projects.{ClosedView, Section, SectionPlacement}
   alias Ravix.Repo
 
   @doc "Sections and project assignments belonging only to the current person."
@@ -47,6 +47,36 @@ defmodule Ravix.Projects.Sections do
   def move(%User{} = user, project_id, section_id) do
     with {:ok, _project} <- Projects.get(user, project_id) do
       place(user, project_id, section_id)
+    end
+  end
+
+  @doc "The projects whose closed tracks this person asked to see."
+  @spec closed_shown(User.t()) :: [String.t()]
+  def closed_shown(%User{id: user_id}),
+    do: Repo.all(from v in ClosedView, where: v.user_id == ^user_id, select: v.project_id)
+
+  @doc """
+  Show or hide a project's closed tracks in this person's sidebar. Somebody
+  invited only to tracks has no project row menu, and no closed track to open.
+  """
+  @spec show_closed(User.t(), String.t(), boolean()) :: {:ok, boolean()} | {:error, term()}
+  def show_closed(%User{id: user_id} = user, project_id, show?) do
+    case Projects.get(user, project_id) do
+      {:ok, %{access: access}} when access != :tracks ->
+        if show?,
+          do:
+            Repo.insert_all(ClosedView, [%{user_id: user_id, project_id: project_id}],
+              on_conflict: :nothing
+            ),
+          else:
+            Repo.delete_all(
+              from v in ClosedView, where: v.user_id == ^user_id and v.project_id == ^project_id
+            )
+
+        {:ok, show?}
+
+      _ ->
+        {:error, :not_found}
     end
   end
 

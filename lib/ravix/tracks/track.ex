@@ -92,6 +92,8 @@ defmodule Ravix.Tracks.Track do
     field :created_by_login, :string
     field :created_by, :string
     field :creator_revoked_at, :utc_datetime_usec
+    # The creator's GitHub avatar, joined by `Access.open_tracks/3` for the rail.
+    field :creator_avatar_url, :string, virtual: true
     field :visibility, Ecto.Enum, values: [:project, :private], default: :project
     # ADR 0009, expand only: who pays for this track's inference. `created_by`
     # is the creator; these two are unwritten until creator billing, and not
