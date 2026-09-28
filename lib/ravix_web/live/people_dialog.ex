@@ -149,6 +149,8 @@ defmodule RavixWeb.Live.PeopleDialog do
   def badge(%Person{via: :owner}, _scope), do: "owner"
   def badge(%Person{via: :pending}, _scope), do: "invited, not signed in yet"
   def badge(%Person{via: :project}, :track), do: "in the whole project"
+  def badge(%Person{via: :workspace}, _scope), do: "in the workspace"
+  def badge(%Person{via: :shared}, _scope), do: "shared with them"
   def badge(%Person{}, _scope), do: nil
 
   # A control that cannot work is worse than no control. The owner holds the
@@ -159,6 +161,8 @@ defmodule RavixWeb.Live.PeopleDialog do
   defp removable?(%Person{via: :creator}, _scope, _owner?, _user), do: false
   defp removable?(%Person{via: :owner}, _scope, _owner?, _user), do: false
   defp removable?(%Person{via: :project}, :track, _owner?, _user), do: false
+  defp removable?(%Person{via: :workspace}, _scope, _owner?, _user), do: false
+  defp removable?(%Person{via: :shared}, _scope, _owner?, _user), do: false
 
   defp removable?(%Person{} = person, _scope, owner?, user),
     do: owner? or person.login == user.login

@@ -12,6 +12,11 @@ defmodule Ravix.People.Person do
 
   `:creator` identifies the private track creator, independently of project roles.
 
+  With `RAVIX_WORKSPACE_ACCESS` on (ADR 0009), `:workspace` is a live member
+  of the project's workspace on a project-visible track, and `:shared` holds
+  a permission row on a private one. Neither is the track dialog's to
+  remove: the first is the workspace's, the second the creator's sharing.
+
   Every entry carries one of these values, so a page never has to infer which
   by the absence of a key. `@enforce_keys` covers `via` as well, which is
   what makes that a property rather than a convention: the list used to be
@@ -25,7 +30,7 @@ defmodule Ravix.People.Person do
   alias Ravix.People.Profile
 
   @typedoc "How this person comes to be in the list."
-  @type via :: :owner | :creator | :project | :track | :pending
+  @type via :: :owner | :creator | :project | :workspace | :track | :shared | :pending
 
   @enforce_keys [:login, :name, :avatar_url, :via]
   defstruct @enforce_keys
@@ -41,13 +46,14 @@ defmodule Ravix.People.Person do
   @spec new(Profile.t() | User.t(), via()) :: t()
   def new(%User{} = user, via), do: user |> Profile.from_user() |> new(via)
 
-  def new(%Profile{} = profile, via) when via in [:owner, :creator, :project, :track, :pending],
-    do: %__MODULE__{
-      login: profile.login,
-      name: profile.name,
-      avatar_url: profile.avatar_url,
-      via: via
-    }
+  def new(%Profile{} = profile, via)
+      when via in [:owner, :creator, :project, :workspace, :track, :shared, :pending],
+      do: %__MODULE__{
+        login: profile.login,
+        name: profile.name,
+        avatar_url: profile.avatar_url,
+        via: via
+      }
 
   @doc """
   Somebody invited who has not signed in.

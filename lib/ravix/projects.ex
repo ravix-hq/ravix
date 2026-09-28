@@ -38,6 +38,7 @@ defmodule Ravix.Projects do
   `%Ravix.GitHub.Error{}` passed through from the client that produced it.
   """
 
+  alias Ravix.Accounts.Access
   alias Ravix.Accounts.Inference
   alias Ravix.Accounts.User
   alias Ravix.Analytics
@@ -109,15 +110,8 @@ defmodule Ravix.Projects do
     whole = People.Store.member_projects(user.id)
     tracks = People.Store.member_tracks(user.id)
 
-    # ownership: with `RAVIX_WORKSPACE_ACCESS` on, a live workspace membership
-    # is the fourth way in (`Access.access_of/3`); these rows are that fact.
-    {in_workspaces, workspace_ids} =
-      if Ravix.Config.workspace_access?() do
-        {Ravix.Workspaces.Store.member_projects(user.id),
-         MapSet.new(Ravix.Workspaces.Store.workspaces_of(user.id), &elem(&1, 0).id)}
-      else
-        {[], MapSet.new()}
-      end
+    # The fourth way in, when the switch lets it count (`Access.access_of/3`).
+    %{projects: in_workspaces, workspace_ids: workspace_ids} = Access.workspace_reach(user)
 
     # The projects behind the track memberships, in the order the tracks were
     # cut: the order the rail has always drawn them in, kept through the map.
@@ -143,7 +137,7 @@ defmodule Ravix.Projects do
 
     known = [
       projects: MapSet.new(whole, & &1.id),
-      workspaces: workspace_ids,
+      workspaces: MapSet.new(workspace_ids),
       tracks: MapSet.new(tracks, & &1.project_id)
     ]
 

@@ -70,9 +70,10 @@ defmodule Ravix.WorkspaceVisibilityTest do
       )
 
     insert_track_member(open, seat)
-    PeopleStore.add_permission(secret.id, holder.id, workspace.id, creator.id)
+    :ok = PeopleStore.add_permission(secret.id, holder.id, workspace.id, creator.id)
+    # Shared, then removed: the removal must take the row with it.
+    :ok = PeopleStore.add_permission(secret.id, removed.id, workspace.id, creator.id)
     {:ok, _} = Store.revoke_membership(workspace.id, removed.id, owner.id)
-    PeopleStore.add_permission(secret.id, removed.id, workspace.id, creator.id)
 
     # Another tenant: the stranger's own workspace, project and tracks.
     {:ok, elsewhere} = Store.ensure_personal_workspace(stranger)
@@ -300,6 +301,70 @@ defmodule Ravix.WorkspaceVisibilityTest do
       assert_receive {:hub, %Ravix.Hub.Event{name: :people, track_id: nil}}
     end
 
+    test "removal deletes their permission rows, so re-admission restores no share", ctx do
+      refute PeopleStore.permitted?(ctx.secret.id, ctx.removed.id, ctx.workspace.id)
+
+      :ok = Workspaces.remove_member(ctx.owner, ctx.workspace.id, ctx.holder.id)
+      refute PeopleStore.permitted?(ctx.secret.id, ctx.holder.id, ctx.workspace.id)
+
+      # Phase 4's re-admission un-revokes the same membership row.
+      Repo.update_all(
+        where(Membership, workspace_id: ^ctx.workspace.id, user_id: ^ctx.holder.id),
+        set: [revoked_at: nil]
+      )
+
+      assert {:ok, _} = Access.workspace_access(ctx.holder, ctx.workspace.id)
+      assert {:error, :not_found} = Access.track_access(ctx.holder, ctx.secret.id)
+      assert {:ok, _} = Access.track_access(ctx.holder, ctx.open.id)
+    end
+
+    test "the row is written only under a live membership, whoever calls", ctx do
+      # `People.share/3` checks first; the write checks again, under a lock,
+      # which is what a removal racing the share meets.
+      assert {:error, :not_workspace_member} =
+               PeopleStore.add_permission(
+                 ctx.secret.id,
+                 ctx.removed.id,
+                 ctx.workspace.id,
+                 ctx.creator.id
+               )
+
+      refute PeopleStore.permitted?(ctx.secret.id, ctx.removed.id, ctx.workspace.id)
+    end
+
+    test "the rail is still one query with the switch on", ctx do
+      {rows, queries} =
+        Ravix.QueryCount.count(fn -> Access.open_tracks(ctx.holder, [ctx.project.id]) end)
+
+      assert length(queries) == 1
+      assert Enum.sort(Enum.map(rows, &elem(&1, 0).id)) == Enum.sort([ctx.open.id, ctx.secret.id])
+    end
+
+    test "people lists and @mentions include the workspace's members and holders", ctx do
+      {:ok, people} = People.list(ctx.creator, ctx.secret.id)
+
+      assert Enum.map(people, &{&1.login, &1.via}) |> Enum.sort() ==
+               Enum.sort([{ctx.creator.login, :creator}, {ctx.holder.login, :shared}])
+
+      {:ok, people} = People.list(ctx.owner, ctx.open.id)
+      vias = Map.new(people, &{&1.login, &1.via})
+      assert vias[ctx.colleague.login] == :workspace
+      assert vias[ctx.legacy.login] == :project
+      refute Map.has_key?(vias, ctx.removed.login)
+
+      {:ok, mentionable} = Ravix.Comments.mentionable(ctx.creator, ctx.secret.id)
+      assert Enum.map(mentionable, & &1.login) == [ctx.holder.login]
+
+      {:ok, mentionable} = Ravix.Comments.mentionable(ctx.owner, ctx.open.id)
+      logins = Enum.map(mentionable, & &1.login)
+      assert ctx.colleague.login in logins and ctx.admin.login in logins
+      refute ctx.removed.login in logins
+
+      switch(false)
+      {:ok, mentionable} = Ravix.Comments.mentionable(ctx.owner, ctx.open.id)
+      refute ctx.colleague.login in Enum.map(mentionable, & &1.login)
+    end
+
     test "a legacy project never reads through a workspace", ctx do
       legacy_project = insert_project(user: ctx.owner)
       track = insert_track(project: legacy_project, created_by: ctx.owner.id)
@@ -333,8 +398,7 @@ defmodule Ravix.WorkspaceVisibilityTest do
 
       assert {:ok, shared} = People.shared_with(ctx.creator, ctx.secret.id)
 
-      assert Enum.sort(Enum.map(shared, & &1.id)) ==
-               Enum.sort([ctx.holder.id, ctx.removed.id, ctx.extra.id])
+      assert Enum.sort(Enum.map(shared, & &1.id)) == Enum.sort([ctx.holder.id, ctx.extra.id])
     end
 
     test "rejects anybody outside the workspace; there are no external guests", ctx do
@@ -361,6 +425,15 @@ defmodule Ravix.WorkspaceVisibilityTest do
       switch(false)
       assert {:error, :not_found} = People.share(ctx.creator, ctx.secret.id, ctx.extra.id)
       refute PeopleStore.permitted?(ctx.secret.id, ctx.extra.id, ctx.workspace.id)
+    end
+
+    test "unsharing somebody on a legacy seat leaves their seat's preview grants", ctx do
+      insert_track_member(ctx.secret, ctx.extra)
+      insert_preview_agent_grant(ctx.secret, ctx.extra)
+
+      assert :ok = People.unshare(ctx.creator, ctx.secret.id, ctx.extra.id)
+      assert [_] = Repo.all(where(Ravix.Previews.PreviewAgentGrant, user_id: ^ctx.extra.id))
+      assert {:ok, _} = Access.track_access(ctx.extra, ctx.secret.id)
     end
 
     test "unsharing revokes the row and its preview grants; a holder may leave", ctx do

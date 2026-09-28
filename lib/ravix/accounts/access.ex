@@ -360,6 +360,76 @@ defmodule Ravix.Accounts.Access do
   def workspace_member?(%Project{}, _user_id), do: false
 
   @doc """
+  The projects a live workspace membership admits `user` to, and those
+  workspaces' ids -- none while the switch is off. For a caller listing
+  several projects (`Ravix.Projects.list/2`), which passes the ids back to
+  `access_of/3` as `known: [workspaces: ...]`.
+  """
+  @spec workspace_reach(User.t()) :: %{
+          projects: [Project.t()],
+          workspace_ids: [String.t()]
+        }
+  def workspace_reach(%User{id: user_id}) do
+    if Ravix.Config.workspace_access?() do
+      # ownership: no door before this one -- a live membership is the fourth
+      # way in, and these reads are that fact.
+      %{
+        projects: Ravix.Workspaces.Store.member_projects(user_id),
+        workspace_ids: Enum.map(Ravix.Workspaces.Store.workspaces_of(user_id), &elem(&1, 0).id)
+      }
+    else
+      %{projects: [], workspace_ids: []}
+    end
+  end
+
+  @doc """
+  Whether anybody besides the owner reaches `track` through its workspace:
+  a permission row on a private track, another live member for a
+  project-visible one. False for a legacy project and while the switch is
+  off. Not an access decision -- it is whether the agent is told who is
+  speaking (`Ravix.PromptQueue.Server`), for a sender already admitted.
+  """
+  @spec workspace_shared?(Track.t(), Project.t()) :: boolean()
+  def workspace_shared?(%Track{} = track, %Project{workspace_id: workspace_id} = project)
+      when is_binary(workspace_id) do
+    Ravix.Config.workspace_access?() and
+      if track.visibility == :private,
+        # ownership: no door -- the sender was admitted by `track_access/2`;
+        # this reads only whether the track has an audience.
+        do: People.permitted_any?(track.id),
+        else: Ravix.Workspaces.Store.others_in?(workspace_id, project.user_id)
+  end
+
+  def workspace_shared?(%Track{}, %Project{}), do: false
+
+  @doc """
+  Who reaches a project's tracks through its workspace, for the people
+  lists and @mentions: its live members, and the live members holding a
+  permission row on each of `track_ids`. Empty for a legacy project and
+  while the switch is off, which is what keeps those lists as they are.
+  Each person still reaches a given track only as `visible_track?/3` says:
+  a member is on a project-visible track's list, a holder on its private one.
+  """
+  @spec workspace_audience(String.t(), [String.t()]) :: %{
+          members: [User.t()],
+          permitted: %{String.t() => [User.t()]}
+        }
+  def workspace_audience(project_id, track_ids) do
+    with true <- Ravix.Config.workspace_access?(),
+         %Project{workspace_id: workspace_id} when is_binary(workspace_id) <-
+           live_project(project_id) do
+      # ownership: no door -- callers were admitted to these tracks by
+      # `track_access/2` or `open_tracks/2`; these are the facts it decides from.
+      %{
+        members: Ravix.Workspaces.Store.live_members(workspace_id),
+        permitted: People.permitted_by_track(track_ids, workspace_id)
+      }
+    else
+      _ -> %{members: [], permitted: %{}}
+    end
+  end
+
+  @doc """
   A workspace the caller is an unrevoked member of, and their role in it.
 
   ADR 0009's fourth door. It answers about the workspace row alone, switch

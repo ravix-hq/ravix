@@ -3,7 +3,8 @@ import { execFileSync } from 'node:child_process';
 import { test, expect } from '@playwright/test';
 import { signIn, connectClaude } from './sign-in.js';
 
-// ADR 0009 phase 3b, with RAVIX_WORKSPACE_ACCESS on (browser/server.py).
+// ADR 0009 phase 3b, with RAVIX_WORKSPACE_ACCESS on: `bun run
+// test:browser:workspace-access` starts the harness (browser/server.py) so.
 // Workspace admission has no UI until phase 4 and sharing with selected
 // members none until phase 5, so the two rows those will write -- the
 // project's workspace and a membership, then a permission row -- are written
@@ -33,6 +34,9 @@ async function openTrack(page, visibility, branch) {
 }
 
 test('a private track stays out of another workspace member\'s rail, search and badges', async ({ page, browser }) => {
+  // The harness runs the app with the switch as the run sets it: off for
+  // `test:browser`, on for `test:browser:workspace-access`.
+  test.skip(process.env.RAVIX_WORKSPACE_ACCESS !== 'true', 'Runs under test:browser:workspace-access');
   test.setTimeout(150_000);
   const sql = browserSql();
 

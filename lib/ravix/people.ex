@@ -283,8 +283,8 @@ defmodule Ravix.People do
          {:ok, _} <- Access.workspace_grant(user, project.workspace_id, :create_track),
          :ok <- Access.require_track_manager(role, user, track, "share this track"),
          :ok <- shareable(track),
-         {:ok, _} <- workspace_member(project.workspace_id, user_id) do
-      Store.add_permission(track.id, user_id, project.workspace_id, user.id)
+         {:ok, _} <- workspace_member(project.workspace_id, user_id),
+         :ok <- Store.add_permission(track.id, user_id, project.workspace_id, user.id) do
       Ravix.Hub.publish(project.id, :people, track_id: track.id)
       :ok
     end

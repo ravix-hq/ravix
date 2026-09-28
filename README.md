@@ -308,6 +308,9 @@ fixtures use `psql` against only the harness's generated database and a
 browser-only mock endpoint. Failure traces remain under `test-results/`.
 CI splits the suite into three shards, each against its own app and database;
 `bun run test:browser -- --shard=2/3` reproduces one shard locally.
+The suite runs with `RAVIX_WORKSPACE_ACCESS` off, as production does;
+`bun run test:browser:workspace-access` starts the harness with it on and runs
+the specs that need it.
 Install Chromium once with `bunx playwright install chromium`, and build assets
 with `MIX_ENV=prod mix assets.deploy` first. Node is pinned alongside Elixir/OTP
 and Bun in `.tool-versions`.

@@ -20,6 +20,7 @@ mix precommit                          # local analysis, tests, guard probes
 mix precommit.release                  # production assets and release, as CI's release job
 bunx playwright install chromium       # once per Playwright upgrade
 bun run test:browser                    # real Chromium + isolated app/providers/DB
+bun run test:browser:workspace-access   # the same, with RAVIX_WORKSPACE_ACCESS on
 python3 scripts/secrets.py git .        # redacted history scan
 ```
 
