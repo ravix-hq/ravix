@@ -164,6 +164,40 @@ defmodule RavixWeb.ProjectSwitcherLiveTest do
     assert has_element?(view, "#project-switcher a[href='/p/#{project.id}'] .badge", "1")
   end
 
+  test "a late turn result cannot restore newly private tracks for a project member", %{
+    conn: conn
+  } do
+    user = insert_user()
+    project = insert_project()
+    kept = insert_track(project: project)
+    removed = insert_track(project: project)
+    insert_project_member(project, user)
+    insert_track_member(kept, user)
+    {:ok, view, _} = live(log_in_user(conn, user), "/p/#{project.id}")
+    render_async(view, 5_000)
+    parent = self()
+
+    expect(Tracks, :list, fn _, _, _ ->
+      send(parent, {:reading, self()})
+
+      receive do: (:finish ->
+                     {:ok,
+                      for(
+                        row <- [kept, removed],
+                        do: %{Tracks.present(row) | status: :ready, unread: true}
+                      )})
+    end)
+
+    Hub.publish(project.id, :turn)
+    assert_receive {:reading, worker}
+    removed |> Ecto.Changeset.change(visibility: :private) |> Ravix.Repo.update!()
+    send(worker, :finish)
+    render_async(view, 5_000)
+    refute render(view) =~ removed.title
+    render_click(view, "dialog", %{name: "projects"})
+    assert has_element?(view, "#project-switcher a[href='/p/#{project.id}'] .badge", "1")
+  end
+
   test "revoking a session closes an open switcher and redirects to sign in", %{conn: conn} do
     user = insert_user()
     project = insert_project(user: user)

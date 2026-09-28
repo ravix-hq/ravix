@@ -124,11 +124,14 @@ defmodule Ravix.People.Store do
   @doc "The open tracks this person was invited to, across every project."
   @spec member_tracks(String.t()) :: [Track.t()]
   def member_tracks(user_id) do
+    # ownership: no door before this membership query; it establishes Access visibility.
     Repo.all(
       from(t in Track,
         left_join: m in TrackMember,
         on: m.track_id == t.id and m.user_id == ^user_id,
-        where: (not is_nil(m.user_id) or t.created_by == ^user_id) and is_nil(t.closed_at),
+        where:
+          (not is_nil(m.user_id) or (t.visibility == :private and t.created_by == ^user_id)) and
+            is_nil(t.closed_at),
         order_by: t.created_at,
         select: t
       )
@@ -146,12 +149,14 @@ defmodule Ravix.People.Store do
   """
   @spec track_member_of?(String.t(), String.t()) :: boolean()
   def track_member_of?(project_id, user_id) do
+    # ownership: no door before this query, used by Access.access_of to establish membership.
     Repo.exists?(
       from(t in Track,
         left_join: m in TrackMember,
         on: m.track_id == t.id and m.user_id == ^user_id,
         where:
-          (not is_nil(m.user_id) or t.created_by == ^user_id) and t.project_id == ^project_id and
+          (not is_nil(m.user_id) or (t.visibility == :private and t.created_by == ^user_id)) and
+            t.project_id == ^project_id and
             is_nil(t.closed_at)
       )
     )
@@ -306,22 +311,9 @@ defmodule Ravix.People.Store do
   # ── who else is in a project ───────────────────────────────────
 
   @doc """
-  Somebody into the whole project, replacing whatever narrower rows they had.
-
-  The subsumption is the point, and it is here rather than in the route so
-  that the three ways in (invited by name, arrived on a link, claimed on
-  sign-in) cannot disagree about it. **One person holds one grade of access
-  to a project.** Two rows granting the same person the same track by
-  different routes is a state nothing on screen can render honestly: the
-  people list would have to show them twice or pick one, and removing them
-  from the project would leave behind access that neither list explained.
-
-  So this is a promotion, not an addition, and the corollary is worth
-  saying plainly because it is the surprising half: **taking somebody off a
-  project takes away every track on it**, including one they were named on
-  separately before they were promoted. The alternative, a hidden narrower
-  row that survives, is worse, because it is invisible at exactly the
-  moment somebody is trying to revoke access.
+  Add project membership and replace redundant seats on project-visible tracks.
+  Private track invitations remain independent: joining or leaving the project
+  does not change those seats, and private people lists show them explicitly.
   """
   @spec add_project_member(String.t(), String.t(), String.t()) :: :ok
   def add_project_member(project_id, user_id, invited_by) do
@@ -711,7 +703,7 @@ defmodule Ravix.People.Store do
     members = members_by_track(track_ids)
     invites = invites_by_track(track_ids)
 
-    # ownership: callers authorized these track IDs before presenting their people.
+    # ownership: Access.track_access or Access.visible_tracks admitted these track IDs.
     tracks = Map.new(Tracks.get_tracks(track_ids), &{&1.id, &1})
 
     Map.new(track_ids, fn track_id ->

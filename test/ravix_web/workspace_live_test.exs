@@ -4,13 +4,13 @@ defmodule RavixWeb.WorkspaceLiveTest do
   import Phoenix.LiveViewTest
   import Mimic
   alias Ravix.{Accounts, Crypto, Hub, Previews, Projects, QueryCount, Repo, Tracks}
-  alias Ravix.Fountain.Client
+  alias Ravix.Fountain.{Client, FakeTransport}
   alias Ravix.Fountain.Shapes, as: FountainShapes
   alias Ravix.Fountain.Shapes.Catalog
   alias Ravix.GitHub.{ChecksReport, Shapes}
   alias Ravix.Hub.Event
   alias Ravix.People.Store, as: People
-  alias Ravix.Tracks.{Diff, Files, Setup}
+  alias Ravix.Tracks.{Diff, Files, Follower, Setup}
   alias Ravix.Tracks.Transcript
   alias RavixWeb.Live.Guard
 
@@ -1498,6 +1498,41 @@ defmodule RavixWeb.WorkspaceLiveTest do
     assert_push_event(child, "composer:clear", %{})
   end
 
+  test "private track Inbox, notifications and search require an explicit invitation", %{
+    conn: conn
+  } do
+    owner = insert_user()
+    creator = insert_user()
+    project = insert_project(user: owner)
+    insert_project_member(project, creator)
+
+    track =
+      insert_track(
+        project: project,
+        created_by: creator.id,
+        visibility: :private,
+        setup_state: "failed",
+        title: "Invitation-only failure"
+      )
+
+    {:ok, view, _} = live(log_in_user(conn, owner), "/inbox")
+    render_async(view)
+    refute render(view) =~ track.title
+    render_click(view, "dialog", %{name: "search"})
+    refute render(view) =~ track.title
+    render_click(view, "dismiss")
+    assert {:ok, _} = Ravix.People.add(creator, track.id, owner.login)
+    render_async(view)
+    assert has_element?(view, ".inbox-item", track.title)
+    assert_push_event(view, "notify", %{tracks: [%{id: id}]})
+    assert id == track.id
+    render_click(view, "dialog", %{name: "search"})
+    assert has_element?(view, "a.workspace-track", track.title)
+    assert {:ok, _} = Ravix.People.remove(creator, track.id, owner.login)
+    render_async(view)
+    refute render(view) =~ track.title
+  end
+
   test "switching to private removes a connected project member", %{conn: conn} do
     creator = insert_user()
     user = insert_user()
@@ -1508,14 +1543,38 @@ defmodule RavixWeb.WorkspaceLiveTest do
       insert_track(project: project, created_by: creator.id, conversation_id: "conversation-test")
 
     stub_track(track)
+    client = FakeTransport.client([], verify: false)
+    test = self()
+
+    stub(Tracks, :follow, fn viewer, id, opts ->
+      assert {:ok, _} = Ravix.Accounts.Access.track_access(viewer, id)
+
+      result =
+        Follower.subscribe(
+          id,
+          Keyword.merge(opts,
+            client: client,
+            conversation_id: track.conversation_id,
+            linger_ms: 0,
+            stream_opts: [max_retries: 0]
+          )
+        )
+
+      send(test, {:following, result})
+      result
+    end)
+
     {:ok, parent, _} = live(log_in_user(conn, user), "/p/#{project.id}/t/#{track.id}")
     render_async(parent)
     child = find_live_child(parent, "track-host")
     render_async(child)
+    assert_receive {:following, {:ok, follower}}
+    follower_monitor = Process.monitor(follower)
     monitor = Process.monitor(child.pid)
     assert {:ok, :private} = Tracks.set_visibility(creator, track.id, "private")
     assert_redirect(parent, "/", 1000)
     assert_receive {:DOWN, ^monitor, :process, _, _}
+    assert_receive {:DOWN, ^follower_monitor, :process, ^follower, _}, 1000
   end
 
   test "track membership revocation redirects before processing transcript data", %{conn: conn} do

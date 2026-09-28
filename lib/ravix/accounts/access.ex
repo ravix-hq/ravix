@@ -171,7 +171,7 @@ defmodule Ravix.Accounts.Access do
   @doc "Whether a track row is visible through this user's project or track membership."
   def visible_track?(user_id, %Track{} = track, %Project{} = project) do
     # ADR 0009: :project becomes workspace visibility when workspaces land.
-    track.created_by == user_id or member?(track.id, user_id) or
+    (track.visibility == :private and track.created_by == user_id) or member?(track.id, user_id) or
       (track.visibility == :project and
          (project.user_id == user_id or project_member?(project.id, user_id)))
   end
@@ -179,11 +179,12 @@ defmodule Ravix.Accounts.Access do
   @doc "Filter a listing with one membership read, independent of its size."
   def visible_tracks(user_id, tracks, project) do
     wide = project.user_id == user_id or project_member?(project.id, user_id)
-    # ownership: this is the listing access door, not an unchecked content read.
+    # ownership: no door before this one; this query establishes listing access.
     invited = MapSet.new(People.member_tracks(user_id), & &1.id)
 
     Enum.filter(tracks, fn track ->
-      (wide and track.visibility == :project) or track.created_by == user_id or
+      (wide and track.visibility == :project) or
+        (track.visibility == :private and track.created_by == user_id) or
         MapSet.member?(invited, track.id)
     end)
   end

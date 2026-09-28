@@ -7,6 +7,9 @@ defmodule Ravix.Accounts.TrackAccess do
   needs both and re-reading it would be a second query against a row the door
   has already had to load to decide the answer.
 
+  Private tracks first require creator or track membership; project ownership
+  alone never admits their owner.
+
   `role` is `:owner` only for the owner of the *project*. Somebody named on
   the track and somebody named on the whole project both arrive as `:member`:
   the difference between them is how they got here, not what they may do once

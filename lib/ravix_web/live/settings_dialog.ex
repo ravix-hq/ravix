@@ -783,7 +783,7 @@ defmodule RavixWeb.Live.SettingsDialog do
                 <p>
                   This closes {@switch_confirmation.count} open {if @switch_confirmation.count == 1,
                     do: "track",
-                    else: "tracks"} and discards the machine's disk, including unpushed work.
+                    else: "tracks"} visible to you, plus any private tracks you cannot see, and discards the machine's disk, including unpushed work.
                   <span :if={Map.get(@switch_confirmation, :shared_only?, false)}>Dedicated tracks are unaffected.</span>
                 </p>
                 <button
@@ -1071,7 +1071,7 @@ defmodule RavixWeb.Live.SettingsDialog do
               <h3 id="settings-danger-title" tabindex="-1">Danger zone</h3>
               <p :if={Map.get(@settings, :shared_tracks) != nil}>
                 Rebuild an individual track from that track; sibling tracks are unaffected.
-                Deleting the project deletes all its tracks’ machines, uncommitted changes, unpushed commits, settings and secrets. Cleanup continues until deletion is confirmed.
+                Deleting the project includes private tracks you cannot see and deletes all its tracks’ machines, uncommitted changes, unpushed commits, settings and secrets. Cleanup continues until deletion is confirmed.
               </p>
               <p :if={Map.get(@settings, :shared_tracks) == nil}>
                 These actions also affect private tracks you cannot see. Rebuilding discards the machine’s disk and closes every track, keeping project settings and secrets for the next machine. Unpushed work on that disk is lost. Deleting also removes the project settings and secrets. These actions cannot be undone.

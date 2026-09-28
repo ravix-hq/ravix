@@ -2,9 +2,14 @@ defmodule Ravix.PrivateTracksTest do
   use Ravix.DataCase, async: true
   import Mimic
   alias Ravix.Accounts.Access
-  alias Ravix.{People, Plans, Tracks}
+  alias Ravix.Fountain.Client
+  alias Ravix.People
+  alias Ravix.People.Store, as: PeopleStore
+  alias Ravix.Plans
   alias Ravix.Tooling
+  alias Ravix.Tooling.OAuth
   alias Ravix.ToolingFixture
+  alias Ravix.Tracks
 
   setup do
     owner = insert_user()
@@ -30,7 +35,7 @@ defmodule Ravix.PrivateTracksTest do
     insert_track_member(track, invited)
 
     stub(Ravix.Fountain, :client, fn ->
-      Ravix.Fountain.Client.new("https://fountain.test", "key")
+      Client.new("https://fountain.test", "key")
     end)
 
     stub(Ravix.MachineCache, :environment, fn _, _ -> {:error, :offline} end)
@@ -66,6 +71,8 @@ defmodule Ravix.PrivateTracksTest do
       assert {:error, :not_found} = Tracks.get(user, c.track.id)
       assert {:error, :not_found} = Ravix.Terminal.exec(user, c.track.id, %{command: "pwd"})
       assert {:error, :not_found} = Ravix.Previews.status(user, c.track.id)
+      assert {:error, :not_found} = Ravix.Terminal.status(user, c.track.id)
+      assert {:error, :not_found} = Tracks.machine_identity(user, c.track.id)
     end
 
     for user <- [c.owner, c.member], do: assert({:ok, []} = Tracks.list(user, c.project.id))
@@ -111,6 +118,15 @@ defmodule Ravix.PrivateTracksTest do
     assert {:error, :not_found} = Access.track_access(c.owner, c.track.id)
   end
 
+  test "project removal still revokes project-visible tracks, while private creators retain access",
+       c do
+    public = insert_track(project: c.project, created_by: c.creator.id)
+    assert {:ok, _} = Access.track_access(c.creator, public.id)
+    PeopleStore.remove_project_member(c.project.id, c.creator.id)
+    assert {:error, :not_found} = Access.track_access(c.creator, public.id)
+    assert {:ok, _} = Access.track_access(c.creator, c.track.id)
+  end
+
   test "plans and MCP redact private assignments while retaining status", c do
     {:ok, plan} =
       Plans.create(c.owner, c.project.id, %{
@@ -152,5 +168,13 @@ defmodule Ravix.PrivateTracksTest do
              Tooling.call(principal, "list_tracks", %{"project_id" => c.project.id})
 
     assert {:ok, %{id: ^id}} = Tooling.call(principal, "get_track", %{"track_id" => id})
+
+    stub(Ravix.Fountain, :events_page, fn _, _, _ ->
+      {:ok, %{events: [], next_cursor: nil, has_more: false}}
+    end)
+
+    assert {:ok, _} = Tooling.call(principal, "read_track", %{"track_id" => id})
+    OAuth.disconnect(c.invited, principal.grant.id)
+    assert {:error, :unauthenticated} = Tooling.call(principal, "get_track", %{"track_id" => id})
   end
 end

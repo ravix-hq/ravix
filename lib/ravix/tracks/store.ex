@@ -205,7 +205,8 @@ defmodule Ravix.Tracks.Store do
         left_join: m in TrackMember,
         on: m.track_id == t.id and m.user_id == ^user_id,
         where:
-          (not is_nil(m.user_id) or t.created_by == ^user_id) and t.project_id == ^project_id and
+          (not is_nil(m.user_id) or (t.visibility == :private and t.created_by == ^user_id)) and
+            t.project_id == ^project_id and
             is_nil(t.closed_at),
         order_by: t.created_at
       )

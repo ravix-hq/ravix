@@ -15,8 +15,9 @@ defmodule Ravix.People do
     transcript, files, diff, terminal, and the ability to prompt it. They
     do not see the project's other tracks and cannot open one.
 
-    **A project member** gets every track on that project, the ones open
-    now and the ones opened tomorrow, and may cut tracks of their own. A
+    **A project member** gets project-visible tracks, including future ones,
+    and may cut tracks of their own. Private tracks require creator or
+    track membership, even for the project owner. A
     project you were let into where you cannot start a line of work is only
     a bundle of track invitations under a grander name.
 
@@ -26,15 +27,10 @@ defmodule Ravix.People do
   for the machine, `project_access` for the work on it, `track_access` for
   one piece of the work.
 
-  **One person holds one grade of access to a project.** Inviting somebody
-  to the whole project deletes any track rows they held on it, and inviting
-  a project member to a single track is refused as the no-op it is. The
-  corollary is the surprising half and is said in the dialog: removing
-  somebody from a project takes away every track on it, including one they
-  were named on separately beforehand. The alternative is a narrower row
-  that survives invisibly, which is worse, because it is invisible at
-  exactly the moment somebody is trying to revoke access. `add_project_member/3`
-  is where that is enforced, so the three ways in cannot disagree about it.
+  Project membership replaces narrower seats on project-visible tracks.
+  Private track seats survive project membership changes: a project share
+  neither grants nor revokes a private invitation. A private track's creator retains
+  access through their stable user ID.
 
   ## What sharing actually costs
 
