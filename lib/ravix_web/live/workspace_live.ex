@@ -4,7 +4,7 @@ defmodule RavixWeb.WorkspaceLive do
 
   alias RavixWeb.Live.NewProject
 
-  alias Ravix.{Accounts, Hub, Ids, Projects, Tracks}
+  alias Ravix.{Accounts, Hub, Ids, People, Projects, Tracks}
   alias Ravix.Accounts.Access
   alias Ravix.Hub.Event
   alias Ravix.Projects.Sections
@@ -78,6 +78,9 @@ defmodule RavixWeb.WorkspaceLive do
         # four times a render --- twice in the sidebar badge and twice in the
         # inbox heading --- and each ask walked every track of every project.
         attention: 0,
+        # People who lost access to this person's tracks when invite links
+        # were retired (ADR 0009 phase 5); Inbox rows, counted in `attention`.
+        access_notices: [],
         noticed: nil,
         notice_thread: nil,
         advanced_track: false,
@@ -349,6 +352,20 @@ defmodule RavixWeb.WorkspaceLive do
   end
 
   def handle_event("refresh", _, socket), do: {:noreply, reload_async(socket, fresh: true)}
+
+  def handle_event("dismiss-access-notice", %{"id" => id}, socket) do
+    user = socket.assigns.current_user
+
+    {:noreply,
+     result(socket, People.dismiss_notice(user, id), fn s, _ ->
+       notices = Enum.reject(s.assigns.access_notices, &(&1.id == id))
+
+       assign(s,
+         access_notices: notices,
+         attention: attention_count(s.assigns.tracks) + length(notices)
+       )
+     end)}
+  end
 
   def handle_event("workspace-create", %{"name" => name}, socket),
     do: {:noreply, WorkspaceSwitcher.create(socket, name)}
@@ -1087,7 +1104,12 @@ defmodule RavixWeb.WorkspaceLive do
 
         tracks = Map.put(tracks, project_id, rows)
 
-        socket |> assign(tracks: tracks, attention: attention_count(tracks)) |> announce(tracks)
+        socket
+        |> assign(
+          tracks: tracks,
+          attention: attention_count(tracks) + length(socket.assigns.access_notices)
+        )
+        |> announce(tracks)
 
       :error ->
         socket
@@ -1285,6 +1307,7 @@ defmodule RavixWeb.WorkspaceLive do
     end
 
     project = socket.assigns.project && Enum.find(projects, &(&1.id == socket.assigns.project.id))
+    notices = People.notices(socket.assigns.current_user)
 
     socket
     |> assign(
@@ -1301,7 +1324,8 @@ defmodule RavixWeb.WorkspaceLive do
       closed_tracks: closed_tracks,
       closed_projects: closed_projects,
       track_errors: track_errors,
-      attention: attention_count(tracks)
+      access_notices: notices,
+      attention: attention_count(tracks) + length(notices)
     )
     |> assign_page_title()
     |> announce(tracks)

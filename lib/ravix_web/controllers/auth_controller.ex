@@ -128,7 +128,10 @@ defmodule RavixWeb.AuthController do
   POST. Somebody who is not goes to GitHub first with the token parked as the
   attempt's redirect, and comes back to this same page
   (`Ravix.Accounts.Auth.callback/2`). A link that is gone or was never real
-  lands on `/?error=bad_invite`.
+  lands on `/?error=bad_invite`. With `RAVIX_WORKSPACE_ACCESS` on, a track
+  link on a workspace project, or any token that opens nothing, gets a page
+  saying to ask the track's creator instead: tracks are shared with
+  workspace members, and no link admits anybody (ADR 0009 phase 5).
 
   **This route makes no change of its own, and must not.** It used to claim the
   membership here: `protect_from_forgery` covers only non-GET requests and
@@ -162,10 +165,29 @@ defmodule RavixWeb.AuthController do
               page_title: "Join an invitation · Ravix"
             )
 
+          :retired ->
+            retired(conn)
+
           :error ->
-            conn |> put_status(:see_other) |> redirect(to: "/?error=bad_invite")
+            unknown_link(conn)
         end
     end
+  end
+
+  # ADR 0009 phase 5: tracks are shared with workspace members, and a track
+  # link admits nobody. With the switch on, an unknown token is most likely
+  # one the cutover deleted, and the same page is the answer for both, so
+  # it does not tell a retired link from a made-up one.
+  defp unknown_link(conn) do
+    if Ravix.Config.workspace_access?(),
+      do: retired(conn),
+      else: conn |> put_status(:see_other) |> redirect(to: "/?error=bad_invite")
+  end
+
+  defp retired(conn) do
+    conn
+    |> put_status(:gone)
+    |> render(:retired, page_title: "This invite link no longer works · Ravix")
   end
 
   @doc """
@@ -183,13 +205,11 @@ defmodule RavixWeb.AuthController do
         join(conn, %{"token" => token})
 
       user ->
-        to =
-          case claim_link(user.id, token) do
-            {:ok, path} -> path
-            _ -> "/?error=bad_invite"
-          end
-
-        conn |> put_status(:see_other) |> redirect(to: to)
+        case claim_link(user.id, token) do
+          {:ok, path} -> conn |> put_status(:see_other) |> redirect(to: path)
+          :retired -> retired(conn)
+          _ -> conn |> put_status(:see_other) |> redirect(to: "/?error=bad_invite")
+        end
     end
   end
 

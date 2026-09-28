@@ -75,13 +75,17 @@ defmodule Ravix.People do
   individually below, and `Ravix.ArchitectureTest` keeps that list and this
   paragraph agreeing.
 
+  One more takes no user and reads no row: `workspace_sharing?/1` says, of
+  a project already in hand, whether its tracks are shared through its
+  workspace's Share dialog or through the invitations and links above.
+
   They shared this module until they did not. `drop_link/2` refused anyone
   but the owner and `drop_link/1` refused nobody, forty lines apart under a
   divider asking the reader to remember which half they were in.
   """
 
   alias Ravix.Accounts.{Access, User}
-  alias Ravix.People.{InviteLink, LinkTarget, Person, Profile, Store}
+  alias Ravix.People.{InviteLink, LinkTarget, Person, Profile, Sharing, Store}
   alias Ravix.Projects.{Machine, Project, ProjectLink}
   alias Ravix.Tracks.{Track, TrackLink}
 
@@ -183,7 +187,9 @@ defmodule Ravix.People do
   a row naming a login that has never appeared would be a permission
   granted to whoever claimed that name first.
 
-  Owner-only. Returns the track's people, as `list/2` would.
+  Owner-only. Returns the track's people, as `list/2` would. Refused on a
+  project shared through its workspace (`workspace_sharing?/1`), where the
+  Share dialog adds workspace members instead.
   """
   @spec add(User.t(), String.t(), String.t() | nil) ::
           {:ok, [Store.person()]} | {:error, reason()}
@@ -191,6 +197,7 @@ defmodule Ravix.People do
     with {:ok, %{track: track, project: project, role: role}} <-
            Access.track_access(user, track_id),
          :ok <- Access.require_track_manager(role, user, track, "invite people to a track"),
+         :ok <- links_kept(project),
          {:ok, found} <- resolve_login(login),
          :ok <- refuse_track_grade(found, project, track) do
       case found do
@@ -313,6 +320,190 @@ defmodule Ravix.People do
   def shared_with(%User{} = user, track_id) do
     with {:ok, %{track: track}} <- Access.track_access(user, track_id),
          do: {:ok, Store.permitted_on(track.id)}
+  end
+
+  # ── the Share dialog (ADR 0009 phase 5) ─────────────────────────────
+
+  @doc """
+  Whether a project's tracks are shared through its workspace, with the
+  Share dialog, rather than through #299's invitations and links: the
+  switch is on and the project is in a workspace. Anything with a
+  `workspace_id` will do, a `Ravix.Projects.View` included. A legacy project
+  keeps its invitations and links whatever the switch says.
+  """
+  @spec workspace_sharing?(map()) :: boolean()
+  def workspace_sharing?(%{workspace_id: id}) when is_binary(id),
+    do: Ravix.Config.workspace_access?()
+
+  def workspace_sharing?(_project), do: false
+
+  @doc """
+  What the Share dialog shows for a track: who may change what, whom a
+  private track is shared with, and the link. Anyone who reaches the track
+  may read it; not found on a legacy project or with the switch off.
+  """
+  @spec sharing(User.t(), String.t()) :: {:ok, Sharing.t()} | {:error, :not_found}
+  def sharing(%User{} = user, track_id) do
+    with {:ok, %{track: track, project: project, role: role}} <-
+           Access.track_access(user, track_id),
+         true <- workspace_sharing?(project) || {:error, :not_found},
+         # ownership: `Access.track_access/2` admitted the caller to a track of
+         # this workspace's project; the row is read for the name it shows.
+         %{name: name} <- Ravix.Workspaces.Store.live_workspace(project.workspace_id) do
+      creator? = Access.creator?(user, track)
+      holders = Map.get(Access.workspace_audience(project.id, [track.id]).permitted, track.id, [])
+
+      {:ok,
+       %Sharing{
+         track_id: track.id,
+         url: "#{Ravix.Config.public_url()}/p/#{project.id}/t/#{track.id}",
+         workspace: name,
+         visibility: track.visibility,
+         private_allowed: track.sandbox_layout == :dedicated,
+         set_visibility: creator?,
+         manage_people:
+           track.visibility == :private and
+             Access.require_track_manager(role, user, track, "share") == :ok,
+         holders: Enum.map(holders, &Store.present_person/1),
+         consent: if(consent_pending?(user, track), do: Ravix.Tracks.billing_notice_text(user))
+       }}
+    else
+      _ -> {:error, :not_found}
+    end
+  end
+
+  @doc """
+  The Share dialog's @-mention list: live members of the track's workspace
+  whose login or name starts with `q`, less the creator, the caller and
+  anyone already shared with. At most eight. Only for whoever may share
+  the track (`share/3`), so nobody learns the workspace's members from a
+  track they merely read.
+  """
+  @spec share_candidates(User.t(), String.t(), String.t() | nil) ::
+          {:ok, [profile()]} | {:error, reason()}
+  def share_candidates(%User{} = user, track_id, q) do
+    with {:ok, %{track: track, project: project, role: role}} <-
+           Access.track_access(user, track_id),
+         {:ok, _} <- Access.workspace_grant(user, project.workspace_id, :create_track),
+         :ok <- Access.require_track_manager(role, user, track, "share this track"),
+         :ok <- shareable(track) do
+      prefix = q |> to_string() |> String.trim() |> strip_at() |> String.slice(0, 60)
+      except = [user.id, track.created_by | Enum.map(Store.permitted_on(track.id), & &1.id)]
+
+      # ownership: `Access.track_access/2`, `Access.workspace_grant/3` and the
+      # manager check above admitted the caller to share this track.
+      {:ok,
+       project.workspace_id
+       |> Ravix.Workspaces.Store.search_members(prefix, Enum.reject(except, &is_nil/1), 8)
+       |> Enum.map(&Store.present_person/1)}
+    end
+  end
+
+  @doc """
+  `share/3` by login, as the Share dialog picks people. Anybody who is not
+  a live member of the track's workspace is refused with a sentence naming
+  the workspace -- an unknown login and a stranger alike, so the box does
+  not say which logins have accounts here. On a creator-billed track the
+  creator's first share, made with the note in front of them, records it
+  as shown (`consent_sharing/2`).
+  """
+  @spec share_login(User.t(), String.t(), String.t() | nil) :: :ok | {:error, reason()}
+  def share_login(%User{} = user, track_id, login) do
+    login = login |> to_string() |> String.slice(0, 80) |> String.trim() |> strip_at()
+
+    # ownership: a login the creator picked; `share/3` puts the caller through
+    # `Access.track_access/2` before the row is read for anything but its id.
+    target = if login == "", do: nil, else: Ravix.Accounts.Store.user_by_login(login)
+
+    case share(user, track_id, (target && target.id) || "") do
+      :ok ->
+        consent_sharing(user, track_id)
+
+      {:error, :not_workspace_member} ->
+        {:error,
+         {:unprocessable, "not_workspace_member",
+          "@#{login} is not a member of this track's workspace. Invite them to the workspace first."}}
+
+      error ->
+        error
+    end
+  end
+
+  @doc "`unshare/3` by login: the creator removing a holder, or a holder leaving."
+  @spec unshare_login(User.t(), String.t(), String.t()) :: :ok | {:error, reason()}
+  def unshare_login(%User{} = user, track_id, login) do
+    with {:ok, _} <- Access.track_access(user, track_id),
+         {:ok, target} <- find_person(strip_at(to_string(login))) do
+      unshare(user, track_id, target.id)
+    end
+  end
+
+  @doc """
+  The creator acknowledging RAV-17's one-time note -- collaborators'
+  prompts on this track use their subscription -- in the Share dialog.
+  It is the note `Ravix.Tracks.billing_notice/2` shows on the track page,
+  recorded on the same column, so whichever surface shows it first, it is
+  shown once. A no-op for anybody else and on a track its creator does not
+  pay for.
+  """
+  @spec consent_sharing(User.t(), String.t()) :: :ok | {:error, :not_found}
+  def consent_sharing(%User{} = user, track_id) do
+    with {:ok, %{track: track}} <- Access.track_access(user, track_id) do
+      # ownership: `Access.track_access/2` admitted this user, the track's payer.
+      if consent_pending?(user, track), do: Ravix.Tracks.Store.mark_billing_notice(track.id)
+      :ok
+    end
+  end
+
+  # The creator of a track they pay for (RAV-17), not yet shown the note.
+  defp consent_pending?(user, track) do
+    Access.creator?(user, track) and Track.creator_billed?(track) and
+      track.payer_user_id == user.id and is_nil(track.billing_notice_at)
+  end
+
+  # ── the cutover's Inbox notes ────────────────────────────────────────
+
+  @typedoc "An Inbox note from the invite-link cutover; see `Ravix.People.AccessNotice`."
+  @type notice :: %{
+          id: String.t(),
+          project_id: String.t(),
+          track_id: String.t(),
+          track_title: String.t(),
+          workspace_id: String.t(),
+          revoked: [String.t()],
+          withdrawn: [String.t()],
+          at: DateTime.t()
+        }
+
+  @doc """
+  The caller's undismissed access notices, newest first: people who lost
+  access to a track of theirs when its links were retired. Only on tracks
+  the caller still reaches.
+  """
+  @spec notices(User.t()) :: [notice()]
+  def notices(%User{id: user_id} = user) when is_binary(user_id) do
+    # ownership: no door -- the rows are this caller's own notices; each
+    # track is then checked through `Access.track_access/2` before it is shown.
+    for {notice, track} <- Store.notices_for(user_id),
+        match?({:ok, _}, Access.track_access(user, track.id)) do
+      %{
+        id: notice.id,
+        project_id: track.project_id,
+        track_id: track.id,
+        track_title: track.title,
+        workspace_id: notice.workspace_id,
+        revoked: notice.revoked_logins,
+        withdrawn: notice.withdrawn_logins,
+        at: notice.created_at
+      }
+    end
+  end
+
+  @doc "Dismiss one of the caller's own access notices."
+  @spec dismiss_notice(User.t(), String.t()) :: :ok | {:error, :not_found}
+  def dismiss_notice(%User{id: user_id}, id) when is_binary(id) do
+    # ownership: no door -- the update is limited to the caller's own rows.
+    if Store.dismiss_notice(id, user_id), do: :ok, else: {:error, :not_found}
   end
 
   defp shareable(%{visibility: :private}), do: :ok
@@ -579,17 +770,33 @@ defmodule Ravix.People do
   defp strip_at("@" <> login), do: login
   defp strip_at(login) when is_binary(login), do: login
 
+  # ADR 0009 phase 5: a workspace project's tracks are shared with its
+  # members from the Share dialog. Invitations by login and invite links are
+  # retired there, so nothing new is handed out that could outlive a
+  # membership or admit somebody from outside the workspace.
+  defp links_kept(project) do
+    if workspace_sharing?(project),
+      do:
+        {:error,
+         {:unprocessable, "workspace_sharing",
+          "This track is shared with members of its workspace. Use Share to add people."}},
+      else: :ok
+  end
+
   # ── the other way in: a link ─────────────────────────────────────────
 
   @doc "Whether a track link is out, never the link itself. Owner-only."
   @spec link(User.t(), String.t()) :: {:ok, invite_link() | nil} | {:error, reason()}
   def link(%User{} = user, track_id) do
-    with {:ok, %{track: track, role: role}} <- Access.track_access(user, track_id),
+    with {:ok, %{track: track, project: project, role: role}} <-
+           Access.track_access(user, track_id),
          :ok <- Access.require_track_manager(role, user, track, "see this track's invite link") do
       # The URL is deliberately absent. Only the hash is stored, so it
       # genuinely cannot be shown again, which is worth being honest about
-      # rather than implying it was lost.
-      {:ok, describe_link(Store.link_of(track.id))}
+      # rather than implying it was lost. A retired link is no link.
+      if workspace_sharing?(project),
+        do: {:ok, nil},
+        else: {:ok, describe_link(Store.link_of(track.id))}
     end
   end
 
@@ -600,12 +807,15 @@ defmodule Ravix.People do
   silently kills the old one. That is the behaviour people expect from a
   "regenerate" button and the one they do not expect from a "create"
   button, so the UI says which it is doing. Owner-only. The returned `url`
-  is the only time the link is ever shown.
+  is the only time the link is ever shown. Refused on a project shared
+  through its workspace, whose tracks have no invite links (ADR 0009).
   """
   @spec mint_link(User.t(), String.t()) :: {:ok, invite_link()} | {:error, reason()}
   def mint_link(%User{} = user, track_id) do
-    with {:ok, %{track: track, role: role}} <- Access.track_access(user, track_id),
-         :ok <- Access.require_track_manager(role, user, track, "make an invite link for a track") do
+    with {:ok, %{track: track, project: project, role: role}} <-
+           Access.track_access(user, track_id),
+         :ok <- Access.require_track_manager(role, user, track, "make an invite link for a track"),
+         :ok <- links_kept(project) do
       token = Ravix.Crypto.random_token()
       Store.put_link(track.id, Ravix.Crypto.sha256(token), user.id, @link_ttl_ms)
       {:ok, minted(Store.link_of(track.id), token)}
@@ -688,10 +898,12 @@ defmodule Ravix.People do
   order is arbitrary rather than load-bearing.
 
   `:error` when the link is unknown, revoked, expired, or points at
-  something that has since closed. Takes a user id rather than a user
-  because the sign-in callback has only just created the row.
+  something that has since closed. `:retired` for a track link on a project
+  shared through its workspace (ADR 0009 phase 5): it admits nobody, and
+  the page says to ask the track's creator. Takes a user id rather than a
+  user because the sign-in callback has only just created the row.
   """
-  @spec claim_link(String.t(), String.t()) :: {:ok, String.t()} | :error
+  @spec claim_link(String.t(), String.t()) :: {:ok, String.t()} | :error | :retired
   def claim_link(user_id, token) do
     hash = Ravix.Crypto.sha256(token)
 
@@ -720,12 +932,15 @@ defmodule Ravix.People do
   The optional viewer affects only the project label: its owner sees the bare
   name; everyone else sees the owner prefix. The hash still authorizes the read.
 
+  `:retired` for a track link whose project is now shared through its
+  workspace, as `claim_link/2` answers it.
+
   `invited_by` is whoever minted the link, by login. Worth naming: an invitation
   is a claim about who is asking, and the one piece of it a stranger cannot
   forge is the account that actually holds the project.
   """
-  @spec link_target(String.t()) :: {:ok, link_target()} | :error
-  @spec link_target(String.t(), User.t() | nil) :: {:ok, link_target()} | :error
+  @spec link_target(String.t()) :: {:ok, link_target()} | :error | :retired
+  @spec link_target(String.t(), User.t() | nil) :: {:ok, link_target()} | :error | :retired
   def link_target(token, user \\ nil) do
     hash = Ravix.Crypto.sha256(token)
 
@@ -740,18 +955,23 @@ defmodule Ravix.People do
     # matched against this track's row.
     case Store.live_project(track.project_id) do
       %Project{} = project ->
-        {:ok,
-         %LinkTarget{
-           kind: :track,
-           project: project.name,
-           project_view: invite_project(project, user),
-           track: track.title,
-           invited_by: Store.minted_by(TrackLink, :track_id, track.id, hash)
-         }}
+        if workspace_sharing?(project),
+          do: :retired,
+          else: {:ok, track_link_target(project, track, hash, user)}
 
       _ ->
         :error
     end
+  end
+
+  defp track_link_target(project, track, hash, user) do
+    %LinkTarget{
+      kind: :track,
+      project: project.name,
+      project_view: invite_project(project, user),
+      track: track.title,
+      invited_by: Store.minted_by(TrackLink, :track_id, track.id, hash)
+    }
   end
 
   defp project_target(nil, _hash, _user), do: :error
@@ -779,19 +999,25 @@ defmodule Ravix.People do
     # caller, and `Store.track_for_link/1` has already matched it.
     case Store.live_project(track.project_id) do
       %Project{} = project ->
-        # Somebody already in the whole project needs no row and gets none:
-        # a track membership written here would outlive their project
-        # membership and quietly leave them one branch after being removed.
-        if track.visibility == :private or
-             (project.user_id != user_id and not Store.project_member?(project.id, user_id)),
-           do: Store.add_member(track.id, user_id, "link")
-
-        Ravix.Hub.publish(project.id, :people, track_id: track.id)
-        {:ok, "/p/#{project.id}/t/#{track.id}"}
+        # A workspace project's links are retired: holding one admits
+        # nobody, whatever the link row says (ADR 0009 phase 5).
+        if workspace_sharing?(project), do: :retired, else: seat_by_link(user_id, track, project)
 
       _ ->
         :error
     end
+  end
+
+  defp seat_by_link(user_id, track, project) do
+    # Somebody already in the whole project needs no row and gets none:
+    # a track membership written here would outlive their project
+    # membership and quietly leave them one branch after being removed.
+    if track.visibility == :private or
+         (project.user_id != user_id and not Store.project_member?(project.id, user_id)),
+       do: Store.add_member(track.id, user_id, "link")
+
+    Ravix.Hub.publish(project.id, :people, track_id: track.id)
+    {:ok, "/p/#{project.id}/t/#{track.id}"}
   end
 
   defp redeem_project(_user_id, nil), do: :error

@@ -48,8 +48,9 @@ import {SettingsSections} from "./hooks/settings_sections"
 import {ProjectSections} from "./hooks/project_sections"
 import {ProjectFormFocus} from "./hooks/project_form_focus"
 import {CopyCode} from "./hooks/copy_code"
+import {ShareMention} from "./hooks/share_mention"
 
-const hooks = {ThreadTabs, AgentConfirmation, Theme, PanelResize, PanelToggle, TranscriptTail, Composer, Terminal, Notify, SettingsSections, ProjectTree, QuickJump, ProjectSections, CopyCode, ProjectFormFocus}
+const hooks = {ThreadTabs, AgentConfirmation, Theme, PanelResize, PanelToggle, TranscriptTail, Composer, Terminal, Notify, SettingsSections, ProjectTree, QuickJump, ProjectSections, CopyCode, ProjectFormFocus, ShareMention}
 
 const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
 clearTransportFallback(window)

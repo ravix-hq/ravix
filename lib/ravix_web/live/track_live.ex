@@ -2633,8 +2633,15 @@ defmodule RavixWeb.TrackLive do
   # Sleep is on the row; the conversations can come from the memo.
   defp hub(%Event{name: :machine}, socket), do: refresh_detail(socket, fresh: false)
 
-  defp hub(%Event{name: name}, socket) when name in [:people, :tracks, :settings],
-    do: socket |> refresh_detail() |> refresh_plan_items()
+  defp hub(%Event{name: name}, socket) when name in [:people, :tracks, :settings] do
+    # The Share dialog lists whom the track is shared with; somebody else
+    # sharing or unsharing it changes that under an open dialog.
+    if name == :people and socket.assigns[:dialog] == :people and
+         Ravix.People.workspace_sharing?(socket.assigns.project || %{}),
+       do: send_update(RavixWeb.Live.ShareDialog, id: "track-share", reload: true)
+
+    socket |> refresh_detail() |> refresh_plan_items()
+  end
 
   # Somebody's read mark moved. This page is the one that moves it, and it
   # draws nothing from it: the unread dot is the rail's, and the rail clears

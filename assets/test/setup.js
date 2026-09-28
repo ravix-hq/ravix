@@ -15,6 +15,7 @@ export function mountHook(definition, selector) {
     ...definition,
     el: document.querySelector(selector),
     pushEvent: (name, payload) => events.push({name, payload}),
+    pushEventTo: (target, name, payload) => events.push({name, payload, target}),
     handleEvent: (name, handler) => handlers.set(name, handler),
   }
   hook.mounted()

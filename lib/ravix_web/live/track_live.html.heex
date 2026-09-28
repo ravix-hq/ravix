@@ -82,6 +82,20 @@
         )}
       </span>
       <span class="spacer"></span><button
+        :if={
+          Ravix.People.workspace_sharing?(@project) && owner_or_creator?(@current_user, @track)
+        }
+        id="track-share-button"
+        class="ghost"
+        phx-click={JS.push_focus() |> JS.push("dialog")}
+        phx-value-name="people"
+        aria-haspopup="dialog"
+        title={"Share track (#{length(@present)} viewing now)"}
+      ><.icon name="add-person" size={15} /><span>Share</span><span
+        class="dim"
+        aria-label={"#{length(@present)} viewing now"}
+      >{length(@present)}</span></button><button
+        :if={!Ravix.People.workspace_sharing?(@project)}
         class="ghost"
         phx-click={JS.push_focus() |> JS.push("dialog")}
         phx-value-name="people"
@@ -920,7 +934,18 @@
       </form>
     </.dialog>
     <.live_component
-      :if={@dialog == :people}
+      :if={
+        @dialog == :people && Ravix.People.workspace_sharing?(@project) &&
+          owner_or_creator?(@current_user, @track)
+      }
+      module={RavixWeb.Live.ShareDialog}
+      id="track-share"
+      track_id={@track_id}
+      current_user={@current_user}
+      session_hash={@session_hash}
+    />
+    <.live_component
+      :if={@dialog == :people && !Ravix.People.workspace_sharing?(@project)}
       module={RavixWeb.Live.PeopleDialog}
       id="track-people"
       scope={:track}

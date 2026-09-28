@@ -13,7 +13,8 @@ export const CopyCode = {
         await navigator.clipboard.writeText(this.el.querySelector("code").textContent)
         message = "Copied"
       } catch {
-        message = "Copy failed. Select and copy the code."
+        // The Share dialog copies a link, not code, and says so.
+        message = this.el.dataset.copyFailed ?? "Copy failed. Select and copy the code."
       }
       if (!this.removed) {
         this.status.textContent = message

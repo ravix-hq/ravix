@@ -63,3 +63,11 @@ test("pending writes cannot duplicate and closing Help removes the listener", as
   button.click()
   expect(write).toHaveBeenCalledTimes(1)
 })
+
+test("a copy that names what it copies says so when it fails", async () => {
+  document.getElementById("example").dataset.copyFailed = "Copy failed. Select the link and copy it."
+  const {button, status} = setup(async () => {throw new Error("denied")})
+  button.click()
+  await Promise.resolve()
+  expect(status.textContent).toBe("Copy failed. Select the link and copy it.")
+})

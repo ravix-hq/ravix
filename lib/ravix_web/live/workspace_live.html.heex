@@ -711,13 +711,49 @@
                 Inbox <span :if={@attention > 0} class="badge">{@attention}</span>
               </h1>
             </div>
-            <p>Replies, mentions and failed turns across all your projects.</p>
+            <p>Replies, mentions, failed turns and sharing changes across all your projects.</p>
           </header>
           <div :if={@attention == 0} class="inbox-empty">
             <h2>You're all caught up</h2>
             <p>When a track needs your attention, it will appear here.</p>
           </div>
           <div class="inbox-list">
+            <div
+              :for={notice <- @access_notices}
+              id={"access-notice-#{notice.id}"}
+              class="inbox-item"
+            >
+              <div class="row">
+                <span class="chip">Access removed</span>
+                <span class="spacer"></span><time datetime={DateTime.to_iso8601(notice.at)}>
+                  {Calendar.strftime(notice.at, "%b %-d, %H:%M UTC")}
+                </time>
+              </div>
+              <strong>{notice.track_title}</strong>
+              <span :if={notice.revoked != []} class="dim">
+                Tracks are now shared with workspace members, so {Enum.map_join(
+                  notice.revoked,
+                  ", ",
+                  &"@#{&1}"
+                )} can no longer open this track: they are not in its workspace.
+              </span>
+              <span :if={notice.withdrawn != []} class="dim">
+                Invitations withdrawn: {Enum.map_join(notice.withdrawn, ", ", &"@#{&1}")}.
+              </span>
+              <div class="row">
+                <.link navigate={"/w/#{notice.workspace_id}"}>Invite them to the workspace</.link>
+                <.link patch={"/p/#{notice.project_id}/t/#{notice.track_id}"}>Open track</.link>
+                <span class="spacer"></span>
+                <button
+                  type="button"
+                  class="ghost"
+                  phx-click="dismiss-access-notice"
+                  phx-value-id={notice.id}
+                >
+                  Dismiss
+                </button>
+              </div>
+            </div>
             <div :for={project <- @projects}>
               <.link
                 :for={track <- Enum.filter(@tracks[project.id] || [], &attention?/1)}

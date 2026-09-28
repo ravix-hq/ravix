@@ -42,7 +42,9 @@ defmodule Ravix.Projects.View do
     :access
   ]
 
-  defstruct @enforce_keys
+  # The project's workspace (ADR 0009), nil for a legacy project. Optional,
+  # so a view built without it reads as legacy.
+  defstruct @enforce_keys ++ [workspace_id: nil]
 
   @type t :: %__MODULE__{
           id: String.t(),
@@ -59,6 +61,7 @@ defmodule Ravix.Projects.View do
           created_at: DateTime.t(),
           owner_login: String.t(),
           role: :owner | :member,
-          access: access()
+          access: access(),
+          workspace_id: String.t() | nil
         }
 end
