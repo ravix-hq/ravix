@@ -40,16 +40,17 @@ test('recovered tool errors are muted while expanded errors retain their status'
   await page.reload();
   const turn = page.locator('.workspace-turn').filter({ hasText: 'The fix is complete.' });
   const summary = turn.locator('.workspace-work > summary');
-  const recovered = summary.locator('.tool-recovered');
-  await expect(recovered).toHaveText('1 recovered tool error', { timeout: 30_000 });
-  await expect(summary.locator('.tool-error')).toHaveCount(0);
-  expect(await recovered.evaluate(el => getComputedStyle(el).color))
-    .toBe(await summary.evaluate(el => getComputedStyle(el).color));
+  await expect(summary).toContainText('tool call', { timeout: 30_000 });
+  // The folded line counts work, never failures or recoveries.
+  await expect(summary.locator('.chip')).toHaveCount(0);
   await summary.click();
   const failed = turn.locator('.workspace-tool').filter({ has: page.locator('.tool-error') });
   await expect(failed.locator('.tool-error')).toHaveText('error');
+  // The call's own status is information in the fold, in the summary's muted tone, not an alarm.
+  // Move the pointer off the summary first: hovering it brightens its colour.
+  await page.mouse.move(0, 0);
   expect(await failed.locator('.tool-error').evaluate(el => getComputedStyle(el).color))
-    .not.toBe(await recovered.evaluate(el => getComputedStyle(el).color));
+    .toBe(await summary.evaluate(el => getComputedStyle(el).color));
   await failed.locator('summary').click();
   await expect(failed).toContainText('1 test failed');
 });

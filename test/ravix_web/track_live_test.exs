@@ -4771,7 +4771,8 @@ defmodule RavixWeb.TrackLiveTest do
              "2 tool calls, 1 message, 1 thought"
            )
 
-    assert has_element?(ctx.view, "#turns-turn .workspace-work > summary .tool-error", "1 failed")
+    # The folded line counts work, never failures.
+    refute has_element?(ctx.view, "#turns-turn .workspace-work > summary .chip")
     assert has_element?(ctx.view, "#turns-turn .workspace-work-body .md", "Checking the remote")
     refute has_element?(ctx.view, "#turns-turn .workspace-work", "The answer")
     assert has_element?(ctx.view, "#turns-turn .agent-terminal-output > div > .md", "The answer")
@@ -4883,9 +4884,11 @@ defmodule RavixWeb.TrackLiveTest do
       render_click(ctx.view, "retry-load")
       render_async(ctx.view)
 
+      # Whatever happened to the calls, the folded line carries no failure or
+      # recovery chip: the turn's own failure block is the only alarm.
       summary = "#turns-turn .workspace-work > summary"
-      assert has_element?(ctx.view, summary <> " .tool-error") == failed > 0
-      assert has_element?(ctx.view, summary <> " .tool-recovered") == recovered > 0
+      _ = {recovered, failed}
+      refute has_element?(ctx.view, summary <> " .chip")
 
       assert has_element?(ctx.view, "#turns-turn .workspace-tool .tool-error") ==
                (status == "failed")
