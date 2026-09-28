@@ -5,6 +5,7 @@ defmodule Ravix.Previews.RunScriptTest do
 
   alias Ravix.Previews
   alias Ravix.Previews.{Config, Lifecycle, Reconciler, Row, Store}
+  alias Ravix.Sprites.Shapes
 
   setup do
     provider = start_provider()
@@ -82,7 +83,7 @@ defmodule Ravix.Previews.RunScriptTest do
     advance(ctx.provider, Previews.idle_ms() + 1)
 
     assert Reconciler.decide(Store.get(ctx.track.id), ctx.track, ctx.project, now(ctx.provider)) ==
-             :ensure
+             :observe
 
     put(ctx.provider, :crash, 3)
     assert {:ok, %{state: :failed, logs: logs}} = Previews.run(ctx.owner, ctx.track.id, :restart)
@@ -130,11 +131,162 @@ defmodule Ravix.Previews.RunScriptTest do
       {:ok, %{code: 7, stdout: "", stderr: "failed"}}
     end)
 
-    assert {:error, {:unavailable, message}} = Previews.stop(ctx.owner, ctx.track.id)
-    assert message =~ "status 7"
+    assert {:ok, %{state: :stopped, logs: logs}} = Previews.stop(ctx.owner, ctx.track.id)
+    assert logs =~ "[warning] Stop command:"
+    assert logs =~ "status 7"
     assert state(ctx.provider).services["#{row.sprite}/#{row.service}"] == "stopped"
-    assert Store.get(ctx.track.id).stop_pending
-    assert {:ok, %{state: :stopped}} = Previews.stop(ctx.owner, ctx.track.id)
     refute Store.get(ctx.track.id).stop_pending
+    assert "#{row.sprite}/#{row.service}/release" in state(ctx.provider).holds
+  end
+
+  for {code, expected} <- [{0, :stopped}, {17, :failed}] do
+    test "a plain process that exits #{code} after running stays #{expected} until explicitly run",
+         ctx do
+      assert {:ok, _} =
+               Previews.save_config(ctx.owner, ctx.track.id, %{directory: ".", command: "worker"})
+
+      assert {:ok, %{state: :running}} = Previews.run(ctx.owner, ctx.track.id)
+      row = Store.get(ctx.track.id)
+      put(ctx.provider, :exit_code, unquote(code))
+      put(ctx.provider, :services, %{"#{row.sprite}/#{row.service}" => "stopped"})
+      creates = state(ctx.provider).creates
+      assert :ok = Reconciler.reconcile({row, ctx.track, ctx.project})
+
+      assert %{state: unquote(expected), desired: :stopped, lease_until: 0, logs: logs} =
+               Store.get(ctx.track.id)
+
+      assert logs =~ "command not found"
+      before = state(ctx.provider)
+      assert :ok = Reconciler.reconcile({Store.get(ctx.track.id), ctx.track, ctx.project})
+      assert state(ctx.provider) == before
+      assert state(ctx.provider).creates == creates
+      assert "#{row.sprite}/#{row.service}/release" in state(ctx.provider).holds
+      put(ctx.provider, :exit_code, nil)
+      assert {:ok, %{state: :running}} = Previews.run(ctx.owner, ctx.track.id)
+      assert state(ctx.provider).creates == creates + 1
+    end
+  end
+
+  test "even one provider restart after running is a failure, without another start", ctx do
+    assert {:ok, _} =
+             Previews.save_config(ctx.owner, ctx.track.id, %{directory: ".", command: "worker"})
+
+    assert {:ok, %{state: :running}} = Previews.run(ctx.owner, ctx.track.id)
+    put(ctx.provider, :crash, 1)
+    assert :ok = Reconciler.reconcile({Store.get(ctx.track.id), ctx.track, ctx.project})
+    assert %{state: :failed, desired: :stopped, error: error} = Store.get(ctx.track.id)
+    assert error =~ "provider restarted"
+    assert state(ctx.provider).creates == 1
+  end
+
+  test "a delayed observation cannot replace a newer stop with a failed exit", ctx do
+    assert {:ok, _} =
+             Previews.save_config(ctx.owner, ctx.track.id, %{directory: ".", command: "worker"})
+
+    assert {:ok, _} = Previews.run(ctx.owner, ctx.track.id)
+    row = Store.get(ctx.track.id)
+    before = state(ctx.provider).stops
+
+    expect(Ravix.Sprites, :service, fn _, _, _ ->
+      Store.update(ctx.track.id,
+        generation: row.generation + 1,
+        state: :stopped,
+        desired: :stopped
+      )
+
+      {:ok, Shapes.service(%{"state" => %{"status" => "failed", "exit_code" => 3}})}
+    end)
+
+    assert :ok = Reconciler.reconcile({row, ctx.track, ctx.project})
+    assert %{state: :stopped, error: nil} = Store.get(ctx.track.id)
+    assert state(ctx.provider).stops == before
+  end
+
+  test "display state and keep-awake use the applied script while defaults change", ctx do
+    assert {:ok, _} =
+             Previews.set_defaults(ctx.owner, ctx.project.id, %{directory: ".", command: "worker"})
+
+    assert {:ok, %{state: :running, keeps_awake: true}} = Previews.run(ctx.owner, ctx.track.id)
+
+    Store.set_defaults(ctx.project.id, %Config{
+      directory: ".",
+      command: "http",
+      readiness_path: "/"
+    })
+
+    assert %{state: :running, keeps_awake: true, url: nil} = Lifecycle.info(ctx.track.id)
+  end
+
+  test "HTTP display remains ready while the saved default changes to plain", ctx do
+    assert {:ok, _} =
+             Previews.set_defaults(ctx.owner, ctx.project.id, %{
+               directory: ".",
+               command: "http",
+               readiness_path: "/"
+             })
+
+    assert {:ok, %{state: :ready, keeps_awake: false}} = Previews.run(ctx.owner, ctx.track.id)
+    Store.set_defaults(ctx.project.id, %Config{directory: ".", command: "worker"})
+    assert %{state: :ready, keeps_awake: false, url: url} = Lifecycle.info(ctx.track.id)
+    assert is_binary(url)
+  end
+
+  for code <- [0, 9] do
+    test "a plain command exiting #{code} before its first running probe settles immediately",
+         ctx do
+      assert {:ok, _} =
+               Previews.save_config(ctx.owner, ctx.track.id, %{directory: ".", command: "worker"})
+
+      stub(Ravix.Sprites, :service, fn _, _, _ ->
+        service =
+          if state(ctx.provider).creates > 0,
+            do:
+              Shapes.service(%{
+                "state" => %{"status" => "stopped", "exit_code" => unquote(code)}
+              })
+
+        {:ok, service}
+      end)
+
+      assert {:ok, info} = Previews.run(ctx.owner, ctx.track.id)
+      assert info.state == if(unquote(code) == 0, do: :stopped, else: :failed)
+      assert Store.get(ctx.track.id).desired == :stopped
+    end
+  end
+
+  for mode <- [:restart, :cleanup] do
+    test "a failing stop command does not abort #{mode}", ctx do
+      assert {:ok, _} =
+               Previews.save_config(ctx.owner, ctx.track.id, %{
+                 directory: ".",
+                 command: "worker",
+                 stop_command: "bad-stop"
+               })
+
+      assert {:ok, _} = Previews.run(ctx.owner, ctx.track.id)
+      row = Store.get(ctx.track.id)
+
+      stub(Ravix.Sprites, :exec, fn _, _, ["sh", "-lc", script], _ ->
+        {:ok, %{code: if(script =~ "bad-stop", do: 7, else: 0), stdout: "", stderr: ""}}
+      end)
+
+      if unquote(mode) == :restart do
+        assert {:ok, %{state: :running, logs: logs}} =
+                 Previews.run(ctx.owner, ctx.track.id, :restart)
+
+        assert logs =~ "[warning] Stop command:"
+        assert state(ctx.provider).creates == 2
+      else
+        assert :ok = Lifecycle.stop_service(ctx.track.id, :cleanup)
+
+        assert %{sprite: nil, port: nil, stop_pending: false, logs: logs} =
+                 Store.get(ctx.track.id)
+
+        assert logs =~ "[warning] Stop command:"
+        assert "#{row.sprite}/#{row.service}/release" in state(ctx.provider).holds
+      end
+
+      assert "#{row.sprite}/#{row.service}" in state(ctx.provider).deletes
+    end
   end
 end

@@ -1,7 +1,7 @@
 defmodule Ravix.Previews.Stop do
   @moduledoc "Stops the applied run script, then its managed service process group."
 
-  alias Ravix.Previews.{Config, Row}
+  alias Ravix.Previews.{Config, Row, Server}
   alias Ravix.Sprites
   alias Ravix.Sprites.Shapes
 
@@ -12,10 +12,15 @@ defmodule Ravix.Previews.Stop do
     stopped = Sprites.service_action(cfg, row.sprite, row.service, :stop)
 
     case stopped do
-      {:ok, _} -> custom
+      {:ok, _} -> output(custom)
       {:error, _} -> stopped
     end
   end
+
+  defp output({:ok, output}), do: {:ok, output}
+
+  defp output({:error, reason}),
+    do: {:ok, "[warning] Stop command: #{Server.message_of(reason)}\n"}
 
   defp custom_stop(cfg, row, %Config{stop_command: command}) when is_binary(command) do
     with {:ok, service} <- Sprites.service(cfg, row.sprite, row.service) do

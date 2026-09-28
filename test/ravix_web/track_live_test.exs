@@ -3172,6 +3172,7 @@ defmodule RavixWeb.TrackLiveTest do
     info = %{
       preview()
       | state: :running,
+        keeps_awake: true,
         config: %{directory: ".", command: "worker", readiness_path: nil},
         logs: "worker output"
     }
@@ -3180,6 +3181,13 @@ defmodule RavixWeb.TrackLiveTest do
     render_click(ctx.view, "panel", %{name: "preview"})
     render_async(ctx.view)
     assert has_element?(ctx.view, "#run-status", "running")
+
+    assert has_element?(
+             ctx.view,
+             "#run-keeps-awake",
+             "Keeps this track's machine awake while running"
+           )
+
     assert has_element?(ctx.view, "#preview-logs pre", "worker output")
     assert has_element?(ctx.view, "button[phx-value-action='restart-run']:not([disabled])")
     assert has_element?(ctx.view, "button[phx-value-action='stop']:not([disabled])")

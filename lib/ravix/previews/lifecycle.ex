@@ -60,22 +60,29 @@ defmodule Ravix.Previews.Lifecycle do
       end
 
     config = row.config || defaults
-    why = unavailable_for(config) || row.unavailable
+    running_config = if row.desired == :running, do: Row.applied(row) || config, else: config
+    why = unavailable_for(running_config) || row.unavailable
 
     %View{
       available: why == nil,
       unavailable_reason: why,
       config: config,
       override: row.config,
-      state: display_state(row.state, config),
+      state: display_state(row),
+      keeps_awake: keeps_awake?(row, config),
       error: row.error,
       logs: row.logs,
-      url: preview_url(row, config, why)
+      url: preview_url(row, running_config, why)
     }
   end
 
-  defp display_state(:ready, %{readiness_path: nil}), do: :running
-  defp display_state(state, _config), do: state
+  defp display_state(%Row{state: :ready} = row),
+    do: if(Row.plain?(row), do: :running, else: :ready)
+
+  defp display_state(row), do: row.state
+
+  defp keeps_awake?(%Row{desired: :running} = row, _config), do: Row.plain?(row)
+  defp keeps_awake?(_row, config), do: match?(%{readiness_path: nil}, config)
 
   defp preview_url(row, %{readiness_path: path}, nil) when is_binary(path),
     do: Previews.origin(row)

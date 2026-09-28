@@ -544,9 +544,7 @@
           />
           <div :if={@panel.tab == :preview && @preview}>
             <p id="run-status">
-              Status: {if @preview.state == :ready && !@preview.url,
-                do: :running,
-                else: @preview.state}
+              Status: {@preview.state}
             </p>
             <.loading_status :if={@preview.state == :starting} id="preview-loading">
               {RavixWeb.PreviewPresentation.loading_label(@preview.config)}
@@ -560,6 +558,9 @@
               {@preview.error}
             </p>
             <p :if={@preview.unavailable_reason}>{@preview.unavailable_reason}</p>
+            <p :if={@preview.keeps_awake} id="run-keeps-awake" class="hint">
+              Keeps this track's machine awake while running
+            </p>
             <div class="workspace-actions">
               <button
                 class="primary"

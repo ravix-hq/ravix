@@ -74,6 +74,7 @@ defmodule Ravix.Previews.Server do
   @typedoc "What a server is asked to do, in order of arrival."
   @type operation ::
           {:ensure_running, generation :: integer(), Previews.start_mode()}
+          | {:observe, generation :: integer()}
           | {:retire, Row.t(), Previews.stop_mode(), changes :: keyword()}
 
   @typep failure :: {:error, :stale} | {:error, term(), Row.t()}
@@ -83,6 +84,7 @@ defmodule Ravix.Previews.Server do
   # would be a new value per call for no gain.
   @spec operation_name(operation()) :: atom()
   defp operation_name({:ensure_running, _generation, _mode}), do: :ensure_running
+  defp operation_name({:observe, _generation}), do: :observe
   defp operation_name({:retire, _row, _mode, _changes}), do: :retire
 
   @doc "The child spec of the supervisor the servers live under."
@@ -343,8 +345,38 @@ defmodule Ravix.Previews.Server do
     end
   end
 
+  defp perform({:observe, generation}, track_id, held_at, owner) do
+    with %Row{generation: ^generation} = row <- Store.get(track_id),
+         true <- current?(row) and Row.plain?(row),
+         {:ok, service} <- Sprites.service(Sprites.config(), row.sprite, row.service),
+         true <- current?(row) do
+      case Shapes.run_outcome(service) do
+        :running -> hold(row, held_at, owner)
+        :pending -> :ok
+        outcome -> finish_run(row, outcome, owner)
+      end
+    else
+      {:error, _} = error -> error
+      _ -> :ok
+    end
+  end
+
   defp perform({:retire, row, mode, changes}, _track_id, _held_at, owner) do
     with :ok <- retire(row, mode, owner), do: update(row, changes)
+  end
+
+  defp finish_run(row, outcome, owner) do
+    logs = failure_logs(row)
+
+    {state, error} =
+      case outcome do
+        :stopped -> {:stopped, nil}
+        {:failed, message} -> {:failed, message}
+      end
+
+    update(row, logs: logs)
+    retire_or_defer(row, owner)
+    update(row, state: state, desired: :stopped, error: error, lease_until: 0)
   end
 
   # ── shared with the caller-side operations ───────────────────────────
@@ -389,15 +421,22 @@ defmodule Ravix.Previews.Server do
 
   defp retire(%Row{} = row, mode, owner) do
     with %Ravix.Config.Sprites{} = cfg <- Sprites.config(),
-         {:ok, _} <- Stop.service(cfg, row),
+         {:ok, output} <- Stop.service(cfg, row),
          :ok <- release_activity(cfg, row),
          _ = GenServer.cast(owner, {:held, 0}),
          {:ok, _} <- remove(cfg, row, mode) do
-      :ok
+      append_stop_output(row, output)
     else
       nil -> {:error, {:unavailable, "Restore SPRITES_TOKEN to stop the saved preview service."}}
       {:error, reason} -> {:error, reason}
     end
+  end
+
+  defp append_stop_output(_row, ""), do: :ok
+
+  defp append_stop_output(row, output) do
+    current = Store.get(row.track_id) || row
+    update(row, logs: String.slice(current.logs <> "\n" <> output, -32_000, 32_000))
   end
 
   # `service_action/4` treats a missing sprite as already-stopped, but
@@ -468,7 +507,7 @@ defmodule Ravix.Previews.Server do
          {:ok, row} <- define(row, track, config, mode),
          :ok <- fresh(row),
          :ok <- sprites(hold(Store.get(row.track_id) || row, held_at, owner), row) do
-      await_ready(row, {project, track}, config, Clock.now_ms() + @start_ms, @max_probes)
+      await_ready(row, {project, track}, config, Clock.now_ms() + @start_ms, @max_probes, owner)
     end
   end
 
@@ -547,7 +586,7 @@ defmodule Ravix.Previews.Server do
     with {:ok, service} <- sprites(Sprites.service(cfg, row.sprite, row.service), row),
          :ok <- fresh(row) do
       cond do
-        mode == :restart or row.applied_config != fingerprint or
+        mode == :restart or new_plain_run?(row, config) or row.applied_config != fingerprint or
             not matches?(service, config, directory, row.port) ->
           redefine(row, service, config, directory, fingerprint)
 
@@ -559,6 +598,10 @@ defmodule Ravix.Previews.Server do
       end
     end
   end
+
+  # A new explicit plain run must not inherit the previous run's exit/restart metadata.
+  defp new_plain_run?(%Row{state: :starting}, %{readiness_path: nil}), do: true
+  defp new_plain_run?(_row, _config), do: false
 
   # The definition is right and the service merely stopped: start it again.
   defp resume(row) do
@@ -576,7 +619,7 @@ defmodule Ravix.Previews.Server do
   defp redefine(row, service, config, directory, fingerprint) do
     cfg = Sprites.config()
 
-    with :ok <- drop_definition(row, service),
+    with {:ok, output} <- drop_definition(row, service),
          :ok <- port_free(row),
          :ok <- fresh(row),
          {:ok, logs} <-
@@ -594,7 +637,7 @@ defmodule Ravix.Previews.Server do
       update(row,
         applied_config: fingerprint,
         state: :starting,
-        logs: logs,
+        logs: output <> logs,
         started_at: Clock.now_ms()
       )
 
@@ -602,15 +645,16 @@ defmodule Ravix.Previews.Server do
     end
   end
 
-  defp drop_definition(_row, nil), do: :ok
+  defp drop_definition(_row, nil), do: {:ok, ""}
 
   defp drop_definition(row, _service) do
     cfg = Sprites.config()
 
-    with {:ok, _} <- sprites(Stop.service(cfg, row), row),
+    with {:ok, output} <- sprites(Stop.service(cfg, row), row),
          :ok <- fresh(row),
          {:ok, _} <- sprites(Sprites.service_action(cfg, row.sprite, row.service, :delete), row),
-         do: fresh(row)
+         :ok <- fresh(row),
+         do: {:ok, output}
   end
 
   # Refuse a collision before creating a service. Readiness below only
@@ -641,24 +685,42 @@ defmodule Ravix.Previews.Server do
   defp matches?(service, config, directory, port),
     do: Shapes.defined_as?(service, config.command, directory, port)
 
-  defp await_ready(row, _project, config, _deadline, 0), do: not_ready(row, config)
+  defp await_ready(row, _project, config, _deadline, 0, _owner), do: not_ready(row, config)
 
-  defp await_ready(row, project, config, deadline, probes) do
+  defp await_ready(row, project, config, deadline, probes, owner) do
     with :ok <- fresh(row),
          {:ok, actual} <- sprites(Sprites.service(Sprites.config(), row.sprite, row.service), row),
+         :ok <- fresh(row),
+         :ok <- plain_startup(actual, row, config, owner),
          :ok <- not_crashed(actual, row),
          false <- Shapes.running?(actual) and ready?(row, config) do
       Clock.sleep(@probe_ms)
 
       if Clock.now_ms() < deadline,
-        do: await_ready(row, project, config, deadline, probes - 1),
+        do: await_ready(row, project, config, deadline, probes - 1, owner),
         else: not_ready(row, config)
     else
+      :finished -> :ok
       true -> publish_ready(row, project)
       {:error, _} = failure -> failure
       {:error, _, _} = failure -> failure
     end
   end
+
+  defp plain_startup(nil, _row, _config, _owner), do: :ok
+
+  defp plain_startup(actual, row, %{readiness_path: nil}, owner) do
+    case Shapes.run_outcome(actual) do
+      outcome when outcome in [:running, :pending] ->
+        :ok
+
+      outcome ->
+        finish_run(row, outcome, owner)
+        :finished
+    end
+  end
+
+  defp plain_startup(_actual, _row, _config, _owner), do: :ok
 
   defp ready?(_row, %{readiness_path: nil}), do: true
   defp ready?(row, config), do: Lifecycle.ready?(row, config.readiness_path)

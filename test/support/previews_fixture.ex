@@ -60,6 +60,8 @@ defmodule Ravix.PreviewsFixture do
       reads: 0,
       ready: true,
       crash: 0,
+      exit_code: nil,
+      service_error: nil,
       collide: false,
       exec_error: nil,
       creates: 0,
@@ -244,7 +246,12 @@ defmodule Ravix.PreviewsFixture do
         |> Kernel.||(%{})
         |> Map.merge(%{
           "name" => name,
-          "state" => %{"status" => status, "restart_count" => state.crash}
+          "state" => %{
+            "status" => status,
+            "restart_count" => state.crash,
+            "exit_code" => state.exit_code,
+            "error" => state.service_error
+          }
         })
         |> Shapes.service()
     end

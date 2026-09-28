@@ -395,3 +395,16 @@ run on their own machines.
 
 The track agent helper supports `run` (an alias for `start`), `restart`, `stop`,
 `status`, and `logs`. The MCP catalog does not yet expose preview/run tools.
+
+Plain run scripts are observed after startup, not automatically relaunched.
+A successful exit becomes stopped; a non-zero exit, provider failure, or
+provider restart becomes failed. Run or Restart explicitly starts another run.
+Custom stop-command failures are warnings in output and do not prevent managed
+service cleanup or Restart. Plain scripts keep the track's machine awake while
+running; the Run panel shows this cost before starting them.
+
+During a mixed-version deployment, an old instance hosting the global preview
+server ignores `stop_command`, times out plain scripts as failed, and applies
+its preview idle shutdown. These limitations end once every instance runs the
+new release; wait for that rollout before relying on plain scripts or custom
+shutdown commands.

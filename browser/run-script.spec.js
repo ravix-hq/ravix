@@ -42,6 +42,7 @@ test('project run script is inherited: run, ready, restart, stop and plain overr
   await page.getByText('Run script override', { exact: true }).click();
   await page.locator('#preview-path').fill('');
   await page.locator('#preview-config-form').getByRole('button', { name: 'Save', exact: true }).click();
+  await expect(page.locator('#run-keeps-awake')).toHaveText("Keeps this track's machine awake while running");
   await run.click();
   await expect(status).toHaveText('Status: running');
   await expect(page.locator('button[phx-value-action="open"]')).toHaveCount(0);
