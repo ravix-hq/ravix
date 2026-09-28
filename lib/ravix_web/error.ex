@@ -34,6 +34,8 @@ defmodule RavixWeb.Error do
       `:no_token` (from `Ravix.Accounts.user_token/1`) are 401 `reauthenticate`.
     * `{:forbidden, message}` is 403 `owner_only`.
     * `{:conflict, code, message}` is 409; `{:unprocessable, code, message}` is 422.
+    * `{:link_conflict, %Ravix.Accounts.Inference.Conflict{}}` is 422
+      `link_failed` with the conflict's own sentence.
     * `{:unavailable, message}` is 503 `unavailable`; `{:unavailable, code, message}`
       keeps its code (`no_exec`, `preview_replaced`).
     * `{:unconfigured, provider}` is 503 `no_fountain`, `no_github` or
@@ -121,6 +123,14 @@ defmodule RavixWeb.Error do
 
   def from({:unprocessable, code, message}, _opts),
     do: %__MODULE__{status: 422, code: to_string(code), message: message}
+
+  # A ChatGPT sign-in refused because the account is already linked here. The
+  # sentence is on the struct, classified against Fountain's account
+  # (`Ravix.Accounts.Inference.Conflict`); what the struct carries beyond it is
+  # for the panel that can offer the repair, and is nothing to a caller reading
+  # this. `link_failed` stays the code the other sign-in refusals use.
+  def from({:link_conflict, %Ravix.Accounts.Inference.Conflict{message: message}}, _opts),
+    do: %__MODULE__{status: 422, code: "link_failed", message: message}
 
   def from({:rate_limited, message}, _opts),
     do: %__MODULE__{status: 429, code: "rate_limited", message: message}

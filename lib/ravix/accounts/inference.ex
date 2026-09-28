@@ -62,6 +62,16 @@ defmodule Ravix.Accounts.Inference do
   everybody, so the ceiling is a deployment-wide count of people who can run
   Codex this way (`CHATGPT_GRANT_CEILING` on the Fountain).
 
+  A ChatGPT account can only be linked once, and every Ravix person's grant
+  lives on the *one* Fountain account, so "already linked" here usually means
+  something of this deployment's own is holding it --- often this person's own
+  grant under a login they have forgotten. `Conflict` is that refusal
+  classified against the account's grants and sets, so the page can offer the
+  repair (`resolve_conflict/2`) instead of telling somebody their own
+  subscription belongs to a stranger. What neither of them can do for
+  themselves --- taking a grant off one Ravix login and putting it on another
+  --- is `move_subscription/3`, for an operator.
+
   Once a set names a grant, Codex on that set runs on the subscription and on
   nothing else: Fountain refuses a run whose subscription is disconnected,
   expired or spent rather than falling back to a key. Choosing an API key for
@@ -79,6 +89,8 @@ defmodule Ravix.Accounts.Inference do
   (a slot emptied on the account by hand), the page says so rather than
   drawing the row as true.
   """
+
+  require Logger
 
   alias Ravix.Accounts
   alias Ravix.Accounts.Inference.Cache
@@ -121,6 +133,48 @@ defmodule Ravix.Accounts.Inference do
     ]
   end
 
+  defmodule Conflict do
+    @moduledoc """
+    Why ChatGPT would not link an account here, and what can be done about it.
+
+    Fountain refuses a second link of the same ChatGPT account
+    (`account_already_linked`) and names the grant already holding it. Ravix is
+    one Fountain account for everybody, so that grant is usually one of this
+    deployment's own --- this person's, from a login they have forgotten, or one
+    nothing uses any more. Telling them it belongs to "somebody else" was true
+    of the account and wrong about the person.
+
+    `resolution` is what there is to offer:
+
+      * `:reconnect` --- the grant is this person's, by name or because their
+        own set names it. Signing in again *against that grant id* is the
+        repair, and Fountain allows it.
+      * `:remove` --- the grant is disconnected, no set names it, and no Ravix
+        login is named on it. It can be deleted and the sign-in started again.
+      * `:elsewhere` --- it is another Ravix login's, or something here is
+        still using it. Nothing self-serve to do, and the message says so
+        *without naming whose it is*: the name is `ravix:<their id>`, which
+        says who, to somebody who has no business knowing.
+      * `:unknown` --- Fountain did not say which grant, or would not describe
+        it. The message says what happened and claims nothing further.
+
+    `grant_id` is set only for the two resolutions that act on a grant, so a
+    refusal nobody may act on carries nothing to act with. It is an id and
+    never a token; Fountain does not hand those out.
+    """
+
+    @type resolution :: :reconnect | :remove | :elsewhere | :unknown
+
+    @type t :: %__MODULE__{
+            resolution: resolution(),
+            grant_id: String.t() | nil,
+            message: String.t()
+          }
+
+    @enforce_keys [:resolution, :message]
+    defstruct [:resolution, :grant_id, :message]
+  end
+
   @typedoc "What `connect/2` takes, as atoms the page has already narrowed."
   @type attrs :: %{
           required(:agent) => User.agent(),
@@ -134,8 +188,11 @@ defmodule Ravix.Accounts.Inference do
 
   @type reason ::
           {:unprocessable, String.t(), String.t()}
+          | {:link_conflict, Conflict.t()}
           | {:unavailable, String.t()}
+          | {:forbidden, String.t()}
           | {:unconfigured, :fountain}
+          | :not_found
           | Error.t()
           | Ecto.Changeset.t()
 
@@ -825,6 +882,11 @@ defmodule Ravix.Accounts.Inference do
   removed if they had one. Codex becomes the default only if none was chosen. A sign-in that
   failed, expired or was cancelled is a refusal in words, with nothing
   changed.
+
+  The one refusal that is more than words is `account_already_linked`, which
+  comes back as `{:error, {:link_conflict, Conflict.t()}}`: the ChatGPT
+  account is held by a grant on this Fountain, and `Conflict` says whose and
+  what to do about it. See `resolve_conflict/2`.
   """
   @spec poll_link(User.t(), Link.t()) :: {:ok, :pending} | {:ok, User.t()} | {:error, reason()}
   def poll_link(%User{} = user, %Link{attempt_id: attempt_id, set_id: set_id}) do
@@ -842,7 +904,7 @@ defmodule Ravix.Accounts.Inference do
           end
 
         %{"state" => "failed"} = attempt ->
-          {:error, link_failure(attempt["failure"])}
+          {:error, link_failure(client, user, attempt)}
 
         %{"state" => "expired"} ->
           refused("The code was not used within fifteen minutes. Start again.")
@@ -891,33 +953,397 @@ defmodule Ravix.Accounts.Inference do
     end
   end
 
-  # Fountain's reason, in our words. The grant another person's subscription
-  # holds is not named: it is `ravix:<their id>`, which says who.
-  defp link_failure(%{"reason" => "account_already_linked"}),
-    do:
-      {:unprocessable, "link_failed",
-       "That ChatGPT account is already connected to somebody else on this Ravix. " <>
-         "Sign in to ChatGPT as a different account and start again."}
+  # Fountain's reason, in our words. `account_already_linked` is the one that
+  # needs the account looked at before anything can be said about it, which is
+  # why this takes the client and the person rather than the failure alone.
+  defp link_failure(client, user, attempt) do
+    case failure(attempt) do
+      %{reason: "account_already_linked", grant_id: grant_id} ->
+        {:link_conflict, conflict(client, user, grant_id)}
 
-  defp link_failure(%{"reason" => "invalid_sign_in"}),
-    do:
-      {:unprocessable, "link_failed",
-       "ChatGPT refused the code. Device sign-in has to be allowed in that ChatGPT account's security settings."}
+      %{reason: reason} ->
+        {:unprocessable, "link_failed", refusal(reason)}
+    end
+  end
 
-  defp link_failure(%{"reason" => "grant_limit_reached"}),
-    do:
-      {:unprocessable, "link_failed",
-       "This Ravix deployment already holds as many ChatGPT subscriptions as it may. " <>
-         "Ask whoever runs it to raise the limit."}
+  # Fountain writes the refusal on the attempt two ways --- nested under
+  # `failure`, and flat as `failure_reason` with `conflict_grant_id` --- and
+  # which one arrives depends on the deployment's version. Both are read, so
+  # the classification does not turn on that.
+  defp failure(attempt) do
+    nested = if is_map(attempt["failure"]), do: attempt["failure"], else: %{}
 
-  defp link_failure(%{"reason" => reason})
-       when reason in ~w(authorization_failed exchange_failed),
-       do: {:unprocessable, "link_failed", "ChatGPT did not complete the sign-in. Start again."}
+    %{
+      reason: text(nested["reason"]) || text(attempt["failure_reason"]),
+      grant_id:
+        text(nested["conflict_grant_id"]) || text(nested["grant_id"]) ||
+          text(attempt["conflict_grant_id"])
+    }
+  end
 
-  defp link_failure(_failure),
+  defp text(value) when is_binary(value) and value != "", do: value
+  defp text(_value), do: nil
+
+  defp refusal("invalid_sign_in"),
     do:
-      {:unprocessable, "link_failed",
-       "The sign-in could not finish with the machine service. Start again."}
+      "ChatGPT refused the code. Device sign-in has to be allowed in that ChatGPT account's security settings."
+
+  defp refusal("grant_limit_reached"),
+    do:
+      "This Ravix deployment already holds as many ChatGPT subscriptions as it may. " <>
+        "Ask whoever runs it to raise the limit."
+
+  defp refusal(reason) when reason in ~w(authorization_failed exchange_failed),
+    do: "ChatGPT did not complete the sign-in. Start again."
+
+  defp refusal(_reason),
+    do: "The sign-in could not finish with the machine service. Start again."
+
+  # ── an account already linked ─────────────────────────────────────────
+
+  @own_conflict "That ChatGPT account is already connected here, under your own earlier sign-in. " <>
+                  "Reconnect it rather than connecting it twice."
+
+  @stray_conflict "That ChatGPT account is held here by an old connection that nothing is using " <>
+                    "and that has stopped working. Remove it and sign in again."
+
+  @elsewhere_conflict "This ChatGPT account is already connected to a different Ravix login. " <>
+                        "A ChatGPT account can only pay for one. Disconnect it from that login, " <>
+                        "or ask whoever runs this Ravix to move it, then start again."
+
+  @unknown_conflict "That ChatGPT account is already connected on this Ravix, and it can only be " <>
+                      "connected once. Sign in as a different ChatGPT account, or ask whoever runs " <>
+                      "this Ravix which login holds it."
+
+  # The refusal classified. A Fountain that will not describe its own account
+  # is not guessed at: `:unknown` says only what the attempt said.
+  defp conflict(client, user, grant_id) do
+    case classify(client, user, grant_id) do
+      {:ok, %Conflict{} = conflict} -> conflict
+      {:error, _reason} -> conflict_of(:unknown)
+    end
+  end
+
+  defp classify(_client, _user, nil), do: {:ok, conflict_of(:unknown)}
+
+  defp classify(client, user, grant_id) do
+    with {:ok, grants} <- all_grants(client),
+         {:ok, sets} <- all_sets(client) do
+      {:ok, classify(user, grant_id, grants, sets)}
+    end
+  end
+
+  # Ours, ours-but-renamed, nobody's, or not to be touched --- in that order,
+  # because each later test is only safe once the earlier ones have failed.
+  # A grant named `ravix:<somebody>` is never removed or renamed from here
+  # however disconnected it looks: that name is a person.
+  defp classify(user, grant_id, grants, sets) do
+    grant = Enum.find(grants, &(&1["id"] == grant_id))
+    mine = set_name(user)
+    naming = Enum.filter(sets, &(&1["chatgpt_grant_id"] == grant_id))
+
+    cond do
+      is_nil(grant) -> conflict_of(:unknown)
+      grant["name"] == mine -> conflict_of(:reconnect, grant_id)
+      Enum.any?(naming, &(&1["name"] == mine)) -> conflict_of(:reconnect, grant_id)
+      ravix_name?(grant["name"]) -> conflict_of(:elsewhere)
+      naming != [] -> conflict_of(:elsewhere)
+      grant["status"] == "disconnected" -> conflict_of(:remove, grant_id)
+      true -> conflict_of(:elsewhere)
+    end
+  end
+
+  defp ravix_name?("ravix:" <> rest), do: rest != ""
+  defp ravix_name?(_name), do: false
+
+  defp conflict_of(:reconnect, grant_id),
+    do: %Conflict{resolution: :reconnect, grant_id: grant_id, message: @own_conflict}
+
+  defp conflict_of(:remove, grant_id),
+    do: %Conflict{resolution: :remove, grant_id: grant_id, message: @stray_conflict}
+
+  defp conflict_of(:elsewhere),
+    do: %Conflict{resolution: :elsewhere, message: @elsewhere_conflict}
+
+  defp conflict_of(:unknown),
+    do: %Conflict{resolution: :unknown, message: @unknown_conflict}
+
+  # The account's grants and sets, with a Fountain too old to have either
+  # counting as holding neither. Anything else is the caller's to report.
+  defp all_grants(client) do
+    case Fountain.chatgpt_subscriptions(client) do
+      {:ok, grants} -> {:ok, Enum.filter(grants, &is_map/1)}
+      {:error, %Error{status: 404}} -> {:ok, []}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp all_sets(client) do
+    case Fountain.credential_sets(client) do
+      {:ok, sets} -> {:ok, Enum.filter(sets, &is_map/1)}
+      {:error, %Error{status: 404}} -> {:ok, []}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  @doc """
+  Act on a refusal `poll_link/2` classified, and start the sign-in again.
+
+  `:reconnect` starts an attempt against the person's own grant, which is what
+  Fountain wants for a ChatGPT account it already holds. `:remove` deletes the
+  stray grant first and then starts an ordinary sign-in. Either way what comes
+  back is a fresh `Link` for the page to show and poll, exactly as
+  `begin_link/1` does.
+
+  **The conflict is classified again here, from Fountain, before anything is
+  touched.** The page's copy of it is as old as the page, and the two writes
+  this can make --- deleting a grant, reconnecting one --- are not writes to do
+  on a stale reading. A grant that has since become somebody else's, or that a
+  set has started naming, is refused with the sentence for what it is now, and
+  another Ravix login's grant is never reached from here at all.
+
+  `:elsewhere` and `:unknown` have nothing to do: they come back refused.
+  """
+  @spec resolve_conflict(User.t(), Conflict.t()) :: {:ok, Link.t()} | {:error, reason()}
+  def resolve_conflict(%User{} = user, %Conflict{resolution: resolution, grant_id: grant_id})
+      when resolution in [:reconnect, :remove] and is_binary(grant_id) do
+    with {:ok, client} <- fountain(),
+         {:ok, set_id} <- ensure_set(client, user),
+         :ok <- confirm_conflict(client, user, resolution, grant_id),
+         :ok <- clear_conflict(client, resolution, grant_id),
+         {:ok, target} <- conflict_target(client, user, resolution, grant_id),
+         {:ok, attempt} <- start_link(client, target) do
+      {:ok, link_of(attempt, set_id)}
+    end
+  end
+
+  def resolve_conflict(%User{}, %Conflict{message: message}),
+    do: {:error, {:unprocessable, "link_failed", message}}
+
+  defp confirm_conflict(client, user, resolution, grant_id) do
+    case classify(client, user, grant_id) do
+      {:ok, %Conflict{resolution: ^resolution}} -> :ok
+      {:ok, %Conflict{message: message}} -> {:error, {:unprocessable, "link_failed", message}}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp clear_conflict(_client, :reconnect, _grant_id), do: :ok
+
+  # Gone already is the outcome wanted, as everywhere else here.
+  defp clear_conflict(client, :remove, grant_id) do
+    case Fountain.delete_chatgpt_subscription(client, grant_id) do
+      :ok -> :ok
+      {:error, %Error{status: 404}} -> :ok
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  # Reconnecting names the grant the refusal was about, which is the whole
+  # point of it. Starting over asks the same question `begin_link/1` asks, on
+  # an account the stray grant has just left.
+  defp conflict_target(_client, _user, :reconnect, grant_id), do: {:ok, %{grant_id: grant_id}}
+  defp conflict_target(client, user, :remove, _grant_id), do: link_target(client, user)
+
+  # ── moving a subscription between people ──────────────────────────────
+
+  @doc """
+  Move a ChatGPT subscription from one Ravix person to another, for an operator.
+
+  Neither of them can do this. Ravix is one Fountain account, a ChatGPT account
+  may be linked once, and a grant belongs to whichever Ravix login is named on
+  it --- so somebody who linked their subscription under an old login can only
+  disconnect it, and cannot link the same ChatGPT account again while it is
+  held. This is the hand-over, as the writes the operator was doing by hand:
+
+    1. every set naming the grant stops naming it,
+    2. a grant already holding the target's name is renamed out of the way,
+    3. the moved grant takes the target's name, and
+    4. the target's set names it.
+
+  Only a user this deployment named as an operator (`Ravix.Config.admin?/1`)
+  may run it; everybody else is `{:forbidden, _}`, including the two people
+  concerned. It is logged, because an operator action nobody can ask about
+  afterwards is not one to have. No token is read, written or logged: Fountain
+  does not hand them out and nothing here wants one.
+
+  The rows follow the account, as they would after a sign-in: the source stops
+  saying a subscription pays for Codex, and the target's set and default are
+  recorded the way `poll_link/2` records them. This ends the conversations
+  running on either set, like any write to a set.
+  """
+  @spec move_subscription(User.t(), String.t(), String.t()) ::
+          {:ok, User.t()} | {:error, reason()}
+  def move_subscription(%User{} = admin, from_id, to_id)
+      when is_binary(from_id) and is_binary(to_id) do
+    do_move(admin, from_id, to_id)
+  after
+    forget_cache(from_id)
+    forget_cache(to_id)
+  end
+
+  defp do_move(admin, from_id, to_id) do
+    with :ok <- authorize_operator(admin),
+         {:ok, from, to} <- move_between(from_id, to_id),
+         {:ok, client} <- fountain(),
+         {:ok, to_set_id} <- ensure_set(client, to),
+         {:ok, grants} <- all_grants(client),
+         {:ok, grant_id} <- movable_grant(grants, from),
+         {:ok, sets} <- all_sets(client),
+         :ok <- release_grant(client, sets, to_set_id, grant_id),
+         :ok <- free_name(client, grants, grant_id, to),
+         {:ok, _grant} <- rename_grant(client, grant_id, set_name(to)),
+         {:ok, _set} <- point_set(client, to_set_id, grant_id),
+         {:ok, _from} <- forget(from, :codex, :subscription),
+         {:ok, moved} <- remember_connection(to, :codex, :subscription, to_set_id, false) do
+      Logger.info(
+        "chatgpt subscription moved: grant=#{grant_id} from_user=#{from.id} " <>
+          "to_user=#{to.id} to_set=#{to_set_id} by_user=#{admin.id}"
+      )
+
+      {:ok, moved}
+    end
+  end
+
+  @doc """
+  `move_subscription/3` from somewhere with no signed-in person: the operator
+  is named by their Ravix id, which `mix ravix.move_chatgpt_subscription` is
+  given on the command line.
+
+  Resolving them is this module's to do rather than the task's, so that a place
+  with no user in hand does not learn to read the users table on its own. An id
+  matching nobody is refused like anybody else who is not an operator: a move
+  has to be made in somebody's name to be a move anybody can ask about.
+  """
+  @spec move_subscription_as(String.t(), String.t(), String.t()) ::
+          {:ok, User.t()} | {:error, reason()}
+  def move_subscription_as(admin_id, from_id, to_id) when is_binary(admin_id) do
+    case Accounts.Store.get_user(admin_id) do
+      %User{} = admin ->
+        move_subscription(admin, from_id, to_id)
+
+      nil ->
+        {:error,
+         {:forbidden,
+          "No Ravix user has that id, so there is nobody to move a ChatGPT subscription as."}}
+    end
+  end
+
+  defp authorize_operator(%User{} = user) do
+    if Ravix.Config.admin?(user),
+      do: :ok,
+      else:
+        {:error, {:forbidden, "Only an operator of this Ravix may move a ChatGPT subscription."}}
+  end
+
+  defp move_between(id, id),
+    do:
+      {:error,
+       {:unprocessable, "same_person", "That subscription is already this person's to use."}}
+
+  defp move_between(from_id, to_id) do
+    with {:ok, from} <- known_user(from_id), {:ok, to} <- known_user(to_id), do: {:ok, from, to}
+  end
+
+  defp known_user(id) do
+    case Accounts.Store.get_user(id) do
+      %User{} = user -> {:ok, user}
+      nil -> {:error, :not_found}
+    end
+  end
+
+  defp movable_grant(grants, from) do
+    case Enum.find(grants, &(&1["name"] == set_name(from))) do
+      %{"id" => id} when is_binary(id) ->
+        {:ok, id}
+
+      _ ->
+        {:error,
+         {:unprocessable, "no_subscription",
+          "That person has no ChatGPT subscription on this Ravix to move."}}
+    end
+  end
+
+  # The grant leaves every set that names it, except the one it is going to:
+  # a set naming a grant is the whole of what spends it, and the source must
+  # stop spending it before the target starts.
+  defp release_grant(client, sets, to_set_id, grant_id) do
+    sets
+    |> Enum.filter(
+      &(&1["chatgpt_grant_id"] == grant_id and is_binary(&1["id"]) and &1["id"] != to_set_id)
+    )
+    |> each_ok(fn set -> unname_grant(client, set["id"]) end)
+  end
+
+  # Names are unique on the account, so the target's name has to be free
+  # before the moved grant can take it. Whatever holds it is parked rather
+  # than deleted: it is somebody's linked subscription, however stale, and a
+  # name is not a reason to throw one away.
+  defp free_name(client, grants, grant_id, to) do
+    name = set_name(to)
+
+    grants
+    |> Enum.filter(&(&1["name"] == name and is_binary(&1["id"]) and &1["id"] != grant_id))
+    |> each_ok(fn grant ->
+      with {:ok, _grant} <- rename_grant(client, grant["id"], parked_name(name)), do: :ok
+    end)
+  end
+
+  # A name nothing here looks up: `own_grant/2` finds by the exact name, so a
+  # grant parked under this one stops being anybody's without being deleted,
+  # and says when it stopped.
+  defp parked_name(name), do: name <> ":replaced-" <> DateTime.to_iso8601(DateTime.utc_now())
+
+  defp rename_grant(client, grant_id, name) do
+    case Fountain.rename_chatgpt_subscription(client, grant_id, name) do
+      {:ok, grant} ->
+        {:ok, grant}
+
+      {:error, %Error{status: status}} when status in [404, 422] ->
+        {:error,
+         {:unprocessable, "no_subscription",
+          "That ChatGPT subscription could not be renamed on the machine service. " <>
+            "Read the account before running the move again."}}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  # The step the move turns on: until the target's set names the grant, the
+  # subscription carries their name and pays for nothing of theirs. Said as
+  # that, because a half-finished move is what somebody has to read next.
+  defp point_set(client, set_id, grant_id) do
+    case Fountain.name_chatgpt_subscription(client, set_id, grant_id) do
+      {:ok, set} ->
+        {:ok, set}
+
+      {:error, %Error{status: status}} when status in [404, 422] ->
+        {:error,
+         {:unprocessable, "no_subscription",
+          "The subscription now carries that person's name, but the machine service would not " <>
+            "point their credential set at it. Run the move again."}}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp each_ok(items, fun) do
+    Enum.reduce_while(items, :ok, fn item, :ok ->
+      case fun.(item) do
+        :ok -> {:cont, :ok}
+        {:error, reason} -> {:halt, {:error, reason}}
+      end
+    end)
+  end
+
+  defp forget_cache(user_id) do
+    case Accounts.Store.get_user(user_id) do
+      %User{} = user -> Cache.invalidate(user)
+      nil -> :ok
+    end
+  end
 
   defp refused(message), do: {:error, {:unprocessable, "link_failed", message}}
 

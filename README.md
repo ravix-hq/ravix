@@ -100,6 +100,7 @@ under [#12](https://github.com/ravix-hq/ravix/issues/12).
 | `SPRITES_TOKEN`, `SPRITES_URL` | Sprites API credentials and optional origin override |
 | `PREVIEW_DOMAIN` | Wildcard preview domain routed to the same service |
 | `RAVIX_DEDICATED_OPEN_USER_IDS` | Comma-separated user IDs eligible for dedicated sandboxes, or `*` for everyone; empty or unset disables new dedicated opens |
+| `RAVIX_ADMIN_GITHUB_IDS` | Comma-separated **GitHub numeric ids** allowed to run operator actions, currently `mix ravix.move_chatgpt_subscription`. By id rather than login, because a login is renameable and a freed one can be taken by somebody else. No wildcard; unset means nobody |
 | `POOL_SIZE` | Production database pool size; defaults to 10 |
 | `HONEYCOMB_API_KEY` | Sends OpenTelemetry traces to Honeycomb; unset means no exporter and no traces leave the process (ADR 0004) |
 | `HONEYCOMB_SAMPLE_RATIO` | Fraction of traces to keep, `0.0`--`1.0`; defaults to `1.0` |
