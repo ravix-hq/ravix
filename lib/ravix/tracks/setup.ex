@@ -19,6 +19,8 @@ defmodule Ravix.Tracks.Setup do
 
   @max_attempts 3
   @settle_seconds 600
+  @parked_seconds 60
+  @asleep "The project's machine is asleep. Send a prompt or wake it to finish setup."
   @failure "Track setup failed. Retry setup, then retry this saved prompt."
 
   def failure_message, do: @failure
@@ -246,13 +248,7 @@ defmodule Ravix.Tracks.Setup do
         failed(track, "The opening turn finished without creating its worktree.")
 
       :suspended ->
-        # Queued user turns wait for setup. A bounded setup retry deliberately
-        # wakes the machine rather than waiting for a turn that cannot be sent.
-        failed(
-          track,
-          "The machine is asleep; setup will wake it and retry shortly.",
-          "sandbox_suspended"
-        )
+        suspended(track)
 
       :unavailable ->
         :ok
@@ -300,11 +296,48 @@ defmodule Ravix.Tracks.Setup do
     end
   end
 
-  defp unavailable(%{sandbox_layout: :dedicated}, error) do
+  defp unavailable(_track, error) do
     if Fountain.Error.sandbox_suspended?(error), do: :suspended, else: :unavailable
   end
 
-  defp unavailable(_track, _error), do: :unavailable
+  # Queued user turns wait for setup, and a machine that is asleep cannot be
+  # verified. A bounded setup retry deliberately wakes it rather than waiting
+  # for a turn that cannot be sent -- the retry resends the opening prompt,
+  # which is a real turn on the owner's agent.
+  #
+  # A dedicated machine is this track's alone, so it is always woken. A shared
+  # machine is woken only for somebody: a prompt waiting on this track, or an
+  # explicit retry (`Tracks.retry/3`). Tracks that were open before setup was
+  # verified at all were all reset to pending, and waking every idle one of
+  # them would spend turns nobody asked for and pile opening turns onto one
+  # machine at once. So an idle one parks, says why, and rechecks slowly.
+  defp suspended(%{sandbox_layout: :dedicated} = track), do: wake(track)
+
+  defp suspended(track) do
+    # ownership: the setup lease names this track; this reads whether its own queue waits.
+    if Ravix.PromptQueue.Store.waiting?(track.id), do: wake(track), else: park(track)
+  end
+
+  defp wake(track),
+    do:
+      failed(
+        track,
+        "The machine is asleep; setup will wake it and retry shortly.",
+        "sandbox_suspended"
+      )
+
+  defp park(track) do
+    parked? = track.setup_error_code == "sandbox_suspended"
+
+    if Store.update_setup(track,
+         setup_error: @asleep,
+         setup_error_code: "sandbox_suspended",
+         setup_retry_at: DateTime.add(DateTime.utc_now(), @parked_seconds, :second)
+       ) and not parked? do
+      Logger.info("ravix: setup parked on a sleeping machine track=#{track.id}")
+      publish(track)
+    end
+  end
 
   defp failed(track, reason, code \\ nil, terminal? \\ false) do
     exhausted? = terminal? or track.setup_attempts >= @max_attempts
@@ -313,8 +346,7 @@ defmodule Ravix.Tracks.Setup do
       setup_state: if(exhausted?, do: "failed", else: "retry"),
       setup_error: reason,
       setup_error_code: code,
-      setup_retry_at:
-        DateTime.add(DateTime.utc_now(), backoff(track.setup_attempts, code), :second)
+      setup_retry_at: DateTime.add(DateTime.utc_now(), backoff(track, code), :second)
     ]
 
     if Store.update_setup(track, attrs) do
@@ -345,13 +377,18 @@ defmodule Ravix.Tracks.Setup do
     end
   end
 
-  defp backoff(_attempt, "sandbox_suspended"), do: 300
+  defp backoff(%{sandbox_layout: :dedicated}, "sandbox_suspended"), do: 300
 
-  defp backoff(attempt, "agent_provider_unreachable"),
+  # Somebody is waiting on a shared machine, so wake it soon, but spread the
+  # tracks that share it: opening turns started together on one machine is
+  # what the setup budget cannot absorb.
+  defp backoff(_track, "sandbox_suspended"), do: 5 + :rand.uniform(55)
+
+  defp backoff(%{setup_attempts: attempt}, "agent_provider_unreachable"),
     do: min(300, 30 * Integer.pow(2, min(attempt, 3)))
 
-  defp backoff(1, _code), do: 5
-  defp backoff(_, _code), do: 30
+  defp backoff(%{setup_attempts: 1}, _code), do: 5
+  defp backoff(_track, _code), do: 30
   defp due?(nil), do: true
   defp due?(at), do: DateTime.compare(at, DateTime.utc_now()) != :gt
 

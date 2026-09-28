@@ -880,7 +880,8 @@ defmodule Ravix.Tracks do
   send is not the failure it looks like. But a track whose worktree was never
   cut is one a person needs to be able to retry, which this is for. The
   selected thread is woken once setup is ready. A refused wake is returned to
-  the caller; setup can be explicitly retried only after it has failed.
+  the caller; setup can be explicitly retried only after it has failed, or
+  woken while it waits on a sleeping shared machine.
   """
   @spec retry(User.t(), String.t(), String.t() | nil) :: :ok | {:error, reason()}
   def retry(%User{} = user, track_id, thread_id \\ nil) do
@@ -914,6 +915,16 @@ defmodule Ravix.Tracks do
 
   defp retry_track(client, %{setup_state: "failed"} = track, _project, _thread) do
     Store.retry_setup(track.id)
+    Setup.advance(client, track.id)
+  end
+
+  defp retry_track(
+         client,
+         %{setup_state: "running", setup_error_code: "sandbox_suspended"} = track,
+         _project,
+         _thread
+       ) do
+    Store.wake_setup(track.id)
     Setup.advance(client, track.id)
   end
 

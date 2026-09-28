@@ -467,6 +467,29 @@ defmodule Ravix.Tracks.Store do
     count == 1
   end
 
+  @doc """
+  Wake setup parked on a sleeping shared machine now. An explicit request,
+  like `retry_setup/1`, but setup has not failed, so its budget stands.
+  """
+  def wake_setup(id) do
+    {count, _} =
+      Repo.update_all(
+        from(t in Track,
+          where:
+            t.id == ^id and is_nil(t.closed_at) and t.setup_state == "running" and
+              t.setup_error_code == "sandbox_suspended"
+        ),
+        set: [
+          setup_state: "retry",
+          setup_retry_at: DateTime.utc_now(),
+          setup_lease: nil,
+          setup_lease_until: nil
+        ]
+      )
+
+    count == 1
+  end
+
   @doc "The opening turn reported back. Idempotent: the first time stands."
   @spec mark_opened(String.t()) :: :ok
   def mark_opened(track_id) do

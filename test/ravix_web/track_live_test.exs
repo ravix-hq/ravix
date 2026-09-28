@@ -909,6 +909,30 @@ defmodule RavixWeb.TrackLiveTest do
     settle(ctx.view)
   end
 
+  test "setup parked on a sleeping machine says so and offers to wake it", ctx do
+    ctx.track
+    |> Ecto.Changeset.change(
+      setup_state: "running",
+      setup_error_code: "sandbox_suspended",
+      setup_error: "The project's machine is asleep. Send a prompt or wake it to finish setup."
+    )
+    |> Repo.update!()
+
+    send(ctx.view.pid, {:hub, Event.new(:tracks, ctx.project.id, track_id: ctx.track.id)})
+    settle(ctx.view)
+    assert has_element?(ctx.view, "#track-setup-status", "Machine asleep")
+    assert has_element?(ctx.view, "#track-setup-status", "Send a prompt or wake it")
+    refute has_element?(ctx.view, "#track-setup-status", "Prompts will wait")
+
+    expect(Tracks, :retry, fn user, id, _thread_id ->
+      assert {user.id, id} == {ctx.user.id, ctx.track.id}
+      :ok
+    end)
+
+    ctx.view |> element("button[phx-click=retry-track]", "Wake machine") |> render_click()
+    settle(ctx.view)
+  end
+
   test "switching threads changes transcript, composer, and delivery without changing tracks",
        ctx do
     client = FakeTransport.client([], verify: false)
