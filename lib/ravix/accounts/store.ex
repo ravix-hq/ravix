@@ -23,6 +23,32 @@ defmodule Ravix.Accounts.Store do
   def get_user(id) when is_binary(id), do: Repo.get(User, id)
   def get_user(_), do: nil
 
+  @doc "Save connection metadata and atomically merge its timestamp with concurrent connections."
+  def save_connection(%User{} = user, attrs, connection) do
+    timestamp = %{connection => DateTime.to_iso8601(DateTime.utc_now())}
+
+    Repo.transaction(fn ->
+      case Repo.update(User.setup_changeset(user, attrs)) do
+        {:ok, _} -> :ok
+        {:error, changeset} -> Repo.rollback(changeset)
+      end
+
+      query =
+        from u in User,
+          where: u.id == ^user.id,
+          update: [
+            set: [
+              credential_connected_at:
+                fragment("? || ?::jsonb", u.credential_connected_at, ^timestamp)
+            ]
+          ],
+          select: u
+
+      {1, [updated]} = Repo.update_all(query, [])
+      updated
+    end)
+  end
+
   @doc "Several users by id, in no particular order. An unknown id is simply absent."
   @spec get_users([String.t()]) :: [User.t()]
   def get_users([]), do: []

@@ -1,8 +1,9 @@
 defmodule Ravix.ToolingTest do
   use Ravix.DataCase, async: true
   use Mimic
+  alias Ravix.Accounts.{Inference, ThreadPreference}
   alias Ravix.Fountain
-  alias Ravix.Fountain.{Client, FakeTransport}
+  alias Ravix.Fountain.{Client, FakeTransport, Shapes}
   alias Ravix.GitHub.Shapes, as: GitHubShapes
   alias Ravix.Projects.Project
   alias Ravix.Tooling
@@ -12,6 +13,11 @@ defmodule Ravix.ToolingTest do
   import Ravix.ToolingFixture
 
   setup do
+    stub(Ravix.MachineCache, :catalog, fn _ ->
+      {:ok,
+       %Shapes.Catalog{runtimes: ["claude"], models: %{"claude" => ["anthropic/claude-opus-5"]}}}
+    end)
+
     stub(Ravix.Accounts.Inference, :usable?, fn owner, runtime, opts ->
       if runtime == "claude",
         do: {:ok, true},
@@ -136,6 +142,37 @@ defmodule Ravix.ToolingTest do
     assert project.id == result.id
   end
 
+  test "MCP runtime/model arguments never change a human default", %{p: p, user: user} do
+    project = insert_project(runtime: "claude", user: user)
+
+    catalog = %Shapes.Catalog{
+      runtimes: ["claude"],
+      models: %{"claude" => [project.model, "anthropic/claude-opus-5-5"]}
+    }
+
+    {:ok, _} = ThreadPreference.put(user, "claude", "anthropic/claude-opus-5-5", catalog)
+    stub(Ravix.MachineCache, :catalog, fn _ -> {:ok, catalog} end)
+    stub(Ravix.Projects, :prepare_machine, fn _, _ -> :ok end)
+
+    fountain([
+      {%{method: "GET", path: "/api/conversations"}, {200, [], %{data: []}}},
+      {%{method: "POST", path: "/api/conversations"}, {201, [], %{data: %{id: "mcp-explicit"}}}}
+    ])
+
+    args = %{
+      "project_id" => project.id,
+      "runtime" => "claude",
+      "model" => project.model,
+      "request_id" => "explicit-model"
+    }
+
+    assert {:ok, _} = Tooling.call(p, "create_track", args)
+    assert {:ok, %{model: "anthropic/claude-opus-5-5"}} = ThreadPreference.get(user, catalog)
+
+    assert {:error, _} =
+             Tooling.call(p, "create_track", Map.put(args, "preference_explicit", "true"))
+  end
+
   test "a refused or ambiguous creation is not repeated blindly", %{p: p} do
     stub(Fountain, :client, fn -> Client.new("https://fountain.test", nil) end)
     args = %{"name" => "Desktop", "request_id" => "create-project-1"}
@@ -150,6 +187,20 @@ defmodule Ravix.ToolingTest do
     user: user
   } do
     project = insert_project(runtime: "claude", user: user)
+
+    catalog = %Shapes.Catalog{
+      runtimes: ["claude"],
+      models: %{"claude" => [project.model, "anthropic/claude-opus-5-5"]}
+    }
+
+    {:ok, _} = ThreadPreference.put(user, "claude", "anthropic/claude-opus-5-5", catalog)
+    stub(Ravix.MachineCache, :catalog, fn _ -> {:ok, catalog} end)
+
+    stub(Inference, :usable_agents, fn payer, [fresh: true] ->
+      assert payer.id == user.id
+      {:ok, [:claude]}
+    end)
+
     stub(Ravix.Projects, :prepare_machine, fn _, _ -> :ok end)
 
     client =
@@ -167,6 +218,7 @@ defmodule Ravix.ToolingTest do
 
     assert {:ok, result} = Tooling.call(p, "create_track", args)
     assert Repo.get!(Track, result.id).title == "ravix/desktop-task"
+    assert Ravix.Tracks.Store.thread(result.id).model == "anthropic/claude-opus-5-5"
     assert result.branch == "ravix/desktop-task"
     assert {:ok, retry} = Tooling.call(p, "create_track", args)
     assert retry["id"] == result.id

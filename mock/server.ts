@@ -1070,7 +1070,7 @@ export async function fountain(req: Request, url: URL): Promise<Response | null>
     if (!conv) return json({ error: "not_found", message: "Conversation not found" }, 404);
     if (conv.status === "running" || conv.status === "pending")
       return json({ error: "conversation_busy", message: "A turn is running" }, 409);
-    const b = (await req.json().catch(() => ({}))) as { model?: unknown };
+    const b = body as { model?: unknown };
     if ("model" in b) conv.model = typeof b.model === "string" ? b.model : null;
     return json({ data: withBox(conv) });
   }

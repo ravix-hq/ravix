@@ -54,32 +54,9 @@
     >
     </div>
     <aside id="yard" class={["yard", @yard_open && "forced"]} aria-label="Projects">
-      <%!-- The person, and everything about them rather than about a project:
-        the preferences this browser keeps, the account, help, signing out.
-        Settled once and then rarely touched, so it is one row that opens a
-        native popover rather than a footer that holds 250px forever. The
-        popover gives light dismiss, Escape and focus return for free; an item
-        that opens a dialog also hides it (`popovertargetaction="hide"`) and
-        pushes the trigger, not itself, as the place focus comes back to. --%>
+      <%!-- Account preferences live in the sidebar footer; the native popover
+        retains light dismiss, Escape and focus return. --%>
       <div class="yard-top">
-        <button
-          type="button"
-          id="account-trigger"
-          class="yard-account"
-          popovertarget="account-menu"
-        >
-          <span class="avatar workspace-avatar" aria-hidden="true">
-            {String.first(@current_user.login) |> String.upcase()}
-          </span>
-          <span class="yard-who">
-            <strong class="truncate">{@current_user.name || @current_user.login}</strong><small class="truncate">@{@current_user.login}</small>
-          </span>
-          <span class="sr-only">Account menu</span>
-          <span :if={@changes_unseen > 0} class="account-unseen" id="account-unseen">
-            <span class="sr-only">, {@changes_unseen} new in What's new</span>
-          </span>
-          <.icon name="chevron" size={12} open={true} class="account-chevron" />
-        </button>
         <button
           id="quick-jump-trigger"
           type="button"
@@ -175,6 +152,13 @@
         </.link>
       </div>
       <div class="workspace-actions yard-nav">
+        <button
+          id="top-new-track"
+          class="primary"
+          phx-click={JS.push_focus() |> JS.push("top-new-track")}
+        >
+          <.icon name="plus" />New track
+        </button>
         <.link patch="/inbox" class={["yard-item", @live_action in [:home, :inbox] && "on"]}>
           <.icon name="terminal" />Inbox<span class="spacer"></span>
           <span :if={@attention > 0} class="badge">{@attention}</span>
@@ -288,16 +272,13 @@
                       <.icon name="add-person" size={13} />
                     </button>
                     <button
-                      :if={
-                        @project && @project.id == project.id && project.access != :tracks &&
-                          project.role == :owner
-                      }
+                      :if={project.access != :tracks && project.role == :owner}
                       type="button"
                       class="project-action"
                       aria-label={"Project settings for #{project.display_name}"}
                       title="Project settings"
-                      phx-click={JS.push_focus() |> JS.push("dialog")}
-                      phx-value-name="settings"
+                      phx-click={JS.push_focus() |> JS.push("project-settings")}
+                      phx-value-project={project.id}
                     >
                       <.icon name="settings" size={13} />
                     </button>
@@ -327,13 +308,11 @@
                       aria-label={tab_name(track)}
                       title={track.title}
                     >
-                      <span
+                      <.status_dot
                         :if={tab_status(track)}
-                        class={"dot #{tab_status(track)}"}
-                        role="img"
-                        aria-label={tab_status_label(tab_status(track))}
-                        title={tab_status_label(tab_status(track))}
-                      ></span>
+                        status={to_string(tab_status(track))}
+                        label={tab_status_label(tab_status(track))}
+                      />
                       <span class="track-title">{tab_label(track)}</span>
                       <span :if={track.visibility == :private}><.icon name="lock" /> Private</span>
                     </.link>
@@ -364,6 +343,26 @@
             </section>
           </div>
         </div>
+      </div>
+      <div class="yard-footer">
+        <button
+          type="button"
+          id="account-trigger"
+          class="yard-account"
+          aria-label={"Account and app settings" <> if(@changes_unseen > 0, do: ", #{@changes_unseen} new in What's new", else: "")}
+          title="Account and app settings"
+          popovertarget="account-menu"
+        >
+          <.icon name="settings" size={18} />
+          <span class="yard-who">
+            <strong class="truncate">Settings</strong><small class="truncate">@{@current_user.login}</small>
+          </span>
+          <span class="sr-only">Account menu</span>
+          <span :if={@changes_unseen > 0} class="account-unseen" id="account-unseen">
+            <span class="sr-only">, {@changes_unseen} new in What's new</span>
+          </span>
+          <.icon name="chevron" size={12} open={true} class="account-chevron" />
+        </button>
       </div>
     </aside>
     <main class="stage" id="workspace-stage">
@@ -436,14 +435,6 @@
             phx-value-name="people"
           >
             People
-          </button>
-          <button
-            :if={@project.role == :owner}
-            class="ghost"
-            phx-click={JS.push_focus() |> JS.push("dialog")}
-            phx-value-name="settings"
-          >
-            Settings
           </button>
         </div>
         <p
@@ -742,11 +733,24 @@
       />
     </.dialog>
     <.dialog
-      :if={@dialog == :new_track && @project}
+      :if={@dialog == :new_track && @track_project}
       id="new-track-dialog"
       title="New track"
       on_close="dismiss"
     >
+      <form id="new-track-project-form" phx-change="new-track-project">
+        <label for="new-track-project">Project / repository</label>
+        <select id="new-track-project" name="project" disabled={@busy}>
+          <option
+            :for={project <- @projects}
+            :if={project.access != :tracks}
+            value={project.id}
+            selected={project.id == @track_project.id}
+          >
+            {project.display_name}{if project.repo, do: " · #{project.repo}"}
+          </option>
+        </select>
+      </form>
       <.form
         :let={f}
         for={@track_form}
@@ -774,7 +778,7 @@
           name="new_track"
         />
         <p :if={!@advanced_track} class="hint">
-          New worktree from {@project.default_branch || "the default branch"}, with an automatic name.
+          New worktree from {@track_project.default_branch || "the default branch"}, with an automatic name.
         </p>
         <button
           type="button"
@@ -789,7 +793,7 @@
           <div class="workspace-actions origin-options">
             <button
               :for={{kind, label} <- origin_choices()}
-              :if={kind == :blank || @project.repo}
+              :if={kind == :blank || @track_project.repo}
               type="button"
               class={if @origin_kind == kind, do: "primary", else: "ghost"}
               phx-click="origin"
@@ -812,7 +816,7 @@
             required
           />
           <p :if={@origin_kind == :blank} class="hint">
-            Start from {@project.default_branch || "the default branch"}.
+            Start from {@track_project.default_branch || "the default branch"}.
           </p>
           <div :if={@origin_kind != :pr}>
             <label for="track-title">Branch name</label>

@@ -322,8 +322,24 @@ When a change is visible to people using Ravix, add a reviewed entry to `Ravix.C
 ### Thread runtimes
 
 Each new thread records its runtime and model. The new-track form chooses the
-first thread; subsequent threads default to the track's last runtime, then the
-project default. Nullable legacy threads retain the project's runtime/model.
+first thread. New threads use the starter's preferred runtime/model if the
+project owner's credentials and runtime gates allow it, then the track's last
+runtime, then the project default. The dialog labels the source. Set **Default
+agent for new threads** in Your account; explicit dialog or composer model picks
+also save that person's preference. Choosing the project model in the composer
+clears the saved preference, restoring derivation from connected credentials.
+MCP runtime/model arguments never change a person's preference. Existing threads retain their runtime.
+
+Until explicitly chosen, the preference uses the most recently connected held
+credential (ChatGPT link, API key, or Claude token) and that runtime's default
+model: the catalog's known default (`anthropic/claude-opus-5` or
+`openai/gpt-6-astra`), otherwise an Opus model, otherwise the first listed model.
+Successful connections record timestamps locally. Pre-existing
+connections lack historical timestamps: they use the account's recorded agent,
+then the connected credential order, until reconnected or explicitly chosen.
+MCP `create_track` shares this resolver when runtime is omitted; `send_prompt`
+continues its existing thread without changing its runtime/model. Nullable legacy
+threads retain the project's runtime/model.
 Threads share a checkout and may work concurrently; the tabs identify those
 mid-turn, and users coordinate conflicting edits.
 

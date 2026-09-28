@@ -61,6 +61,25 @@ defmodule Ravix.Accounts.InferenceTest do
   defp link(set_id, attempt_id \\ "att-1"),
     do: %Inference.Link{attempt_id: attempt_id, set_id: set_id, poll_interval: 5}
 
+  test "connection timestamps merge even when callers hold stale account rows" do
+    user = insert_user()
+
+    assert {:ok, first} =
+             Accounts.Store.save_connection(
+               user,
+               %{credential_set_id: "set"},
+               "claude:subscription"
+             )
+
+    assert {:ok, second} =
+             Accounts.Store.save_connection(user, %{credential_set_id: "set"}, "codex:api_key")
+
+    assert second.credential_connected_at["claude:subscription"] ==
+             first.credential_connected_at["claude:subscription"]
+
+    assert second.credential_connected_at["codex:api_key"]
+  end
+
   describe "kinds/1" do
     test "both agents take a subscription or a key; only Codex's subscription is a sign-in rather than a paste" do
       assert Inference.kinds(:claude) == [:subscription, :api_key]
@@ -319,6 +338,7 @@ defmodule Ravix.Accounts.InferenceTest do
       ])
 
       assert {:ok, %User{credential_kind: :subscription}} = Inference.poll_link(me, link("s"))
+      assert is_binary(Repo.get!(User, me.id).credential_connected_at["codex:subscription"])
     end
 
     test "a reconnect names what is named already and deletes nothing" do
@@ -988,6 +1008,7 @@ defmodule Ravix.Accounts.InferenceTest do
                  make_default: true
                })
 
+      assert is_binary(Repo.get!(User, user.id).credential_connected_at["codex:api_key"])
       assert Enum.any?(PostHog.Test.all_captured(), &(&1.event == "default agent changed"))
     end
 

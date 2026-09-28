@@ -41,6 +41,7 @@ defmodule Ravix.Tracks do
 
   alias Ravix.Accounts.Access
   alias Ravix.Accounts.Inference
+  alias Ravix.Accounts.ThreadPreference
   alias Ravix.Accounts.User
   alias Ravix.Analytics
   alias Ravix.Fountain
@@ -1074,10 +1075,24 @@ defmodule Ravix.Tracks do
              {:conflict, "not_open", "This track has no conversation yet."}
            ),
          {:ok, client} <- fountain(),
+         {:ok, catalog} <- MachineCache.catalog(client),
          {:ok, override} <-
            thread_model(client, project, thread, model),
+         :ok <-
+           ThreadPreference.validate(
+             thread.runtime || project.runtime,
+             override || project.model,
+             catalog
+           ),
          {:ok, %Conversation{model: ^override}} <-
-           Fountain.set_model(client, thread.conversation_id, override) do
+           Fountain.set_model(client, thread.conversation_id, override),
+         {:ok, _} <-
+           ThreadPreference.remember_model(
+             user,
+             thread.runtime || project.runtime,
+             if(is_nil(model), do: nil, else: override || project.model),
+             catalog
+           ) do
       Store.set_thread_model(thread.id, override || project.model)
       MachineCache.forget_project(project.id)
       publish_tracks(project.id, track.id)

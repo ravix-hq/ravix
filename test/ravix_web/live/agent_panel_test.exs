@@ -11,6 +11,7 @@ defmodule RavixWeb.Live.AgentPanelTest do
 
   alias Ravix.{Accounts, Repo}
   alias Ravix.Accounts.{Inference, User}
+  alias Ravix.Fountain.FakeTransport
 
   setup :verify_on_exit!
 
@@ -18,6 +19,66 @@ defmodule RavixWeb.Live.AgentPanelTest do
     {:ok, view, _} = live(log_in_user(conn, user), "/home")
     view |> element("#open-account") |> render_click()
     view
+  end
+
+  test "the thread default round trips and offers only connected runtimes", %{conn: conn} do
+    user = insert_user()
+
+    catalog = %Ravix.Fountain.Shapes.Catalog{
+      runtimes: ["claude", "codex"],
+      models: %{
+        "claude" => ["anthropic/claude-sonnet-5", "anthropic/claude-opus-5-5"],
+        "codex" => ["openai/gpt-6-astra"]
+      }
+    }
+
+    stub(Ravix.Fountain, :client, fn -> FakeTransport.client([], verify: false) end)
+
+    stub(Ravix.MachineCache, :catalog, fn _ -> {:ok, catalog} end)
+    stub(Inference, :held, fn _ -> {:ok, [{:claude, :api_key}]} end)
+    stub(Inference, :usable?, fn _, runtime, _ -> {:ok, runtime == "claude"} end)
+    view = open_account(conn, user)
+    render_async(view)
+    render_async(view)
+
+    assert has_element?(
+             view,
+             "#thread-default-choice option[value='claude|anthropic/claude-opus-5-5']"
+           )
+
+    refute has_element?(view, "#thread-default-choice option[value='codex|openai/gpt-6-astra']")
+
+    view
+    |> form("#thread-default-form", preference: %{choice: "claude|anthropic/claude-opus-5-5"})
+    |> render_submit()
+
+    render_async(view)
+    assert Repo.get!(User, user.id).preferred_model == "anthropic/claude-opus-5-5"
+    assert has_element?(view, "#thread-default-form [role=status]", "Thread default saved.")
+
+    view
+    |> form("#thread-default-form", preference: %{choice: "claude|anthropic/claude-sonnet-5"})
+    |> render_change()
+
+    refute has_element?(view, "#thread-default-form [role=status]")
+    stub(Inference, :usable?, fn _, _, _ -> {:ok, false} end)
+
+    view
+    |> form("#thread-default-form", preference: %{choice: "claude|anthropic/claude-sonnet-5"})
+    |> render_submit()
+
+    render_async(view)
+    assert has_element?(view, "#thread-default-form [role=alert]", "Connect this agent first.")
+    refute has_element?(view, "#thread-default-form [role=status]")
+
+    view = open_account(conn, user)
+    render_async(view)
+    render_async(view)
+
+    assert has_element?(
+             view,
+             "#thread-default-choice option[value='claude|anthropic/claude-opus-5-5'][selected]"
+           )
   end
 
   test "opens from the rail, shows what is connected, and says who pays", %{conn: conn} do

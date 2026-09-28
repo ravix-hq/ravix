@@ -59,13 +59,16 @@ test('cohort threads attach the other runtime to the home disk and reuse its pro
         await expect(dialog).toContainText('You are creating a Codex thread.');
       }
       await form.getByLabel('Agent', { exact: true }).selectOption(guest);
+      // Model options arrive with the server's runtime patch, after selectOption returns.
+      await expect(page.locator('#new-thread-dialog')).toContainText(
+        `You are creating a ${guest === 'codex' ? 'Codex' : 'Claude Code'} thread.`);
       const models = form.getByLabel('Model', { exact: true });
       const model = await models.locator('option').last().getAttribute('value');
       await models.selectOption(model);
       await form.getByRole('button', { name: 'Create thread', exact: true }).click();
       await expect(form).toHaveCount(0);
       await expect(page.locator('.composer-model')).toContainText(guest === 'codex' ? 'Codex · ' : 'Claude Code · ');
-      await expect(page.locator('.thread-tab[aria-current=true] .thread-tab-agent')).toContainText(guest === 'codex' ? 'Codex · ' : 'Claude Code · ');
+      await expect(page.locator('.thread-tab[aria-selected=true] .thread-tab-agent')).toContainText(guest === 'codex' ? 'Codex · ' : 'Claude Code · ');
       if (home === 'claude' && n === 1) {
         const homeTab = page.locator('.thread-tab').first();
         const notice = page.locator('#threads-working');
@@ -89,7 +92,8 @@ test('cohort threads attach the other runtime to the home disk and reuse its pro
         }
         for (const [status, label] of [['pending', 'Queued'], ['failed', 'Failed'], ['idle', 'Idle']]) {
           await changeState(status);
-          await expect(homeTab).toHaveAccessibleName(new RegExp(label));
+          if (status === 'idle') await expect(page.locator('#thread-picker option').first()).not.toContainText('Idle');
+          else await expect(page.locator('#thread-picker option').first()).toContainText(label);
           await expect(notice).toHaveCount(0);
         }
         await page.setViewportSize({ width: 1280, height: 900 });

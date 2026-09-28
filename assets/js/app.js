@@ -10,6 +10,7 @@
 //
 // The hooks, and what they are for:
 //
+//   ThreadTabs      keyboard navigation and overflow visibility for conversation threads
 //   Theme           the palette picker (reads and writes `ravix.theme`)
 //   PanelResize     the drag handle between the rail, the stage and the inspector
 //   PanelToggle     whether those sidebars are open; a preference of this browser
@@ -32,6 +33,7 @@ import {clearTransportFallback, LONG_POLL_FALLBACK_MS} from "./transport"
 import {trackPageLoading} from "./page_loading"
 import {Socket} from "phoenix"
 import {LiveSocket} from "phoenix_live_view"
+import {ThreadTabs} from "./hooks/thread_tabs"
 import {Theme} from "./hooks/theme"
 import {PanelResize} from "./hooks/panel_resize"
 import {PanelToggle} from "./hooks/panel_toggle"
@@ -47,7 +49,7 @@ import {ProjectSections} from "./hooks/project_sections"
 import {ProjectFormFocus} from "./hooks/project_form_focus"
 import {CopyCode} from "./hooks/copy_code"
 
-const hooks = {AgentConfirmation, Theme, PanelResize, PanelToggle, TranscriptTail, Composer, Terminal, Notify, SettingsSections, ProjectTree, QuickJump, ProjectSections, CopyCode, ProjectFormFocus}
+const hooks = {ThreadTabs, AgentConfirmation, Theme, PanelResize, PanelToggle, TranscriptTail, Composer, Terminal, Notify, SettingsSections, ProjectTree, QuickJump, ProjectSections, CopyCode, ProjectFormFocus}
 
 const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
 clearTransportFallback(window)

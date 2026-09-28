@@ -392,6 +392,14 @@ defmodule Ravix.TracksTest do
 
   describe "open/4" do
     setup do
+      stub(Ravix.MachineCache, :catalog, fn _ ->
+        {:ok,
+         %Ravix.Fountain.Shapes.Catalog{
+           runtimes: ["claude"],
+           models: %{"claude" => ["anthropic/claude-opus-5"]}
+         }}
+      end)
+
       owner = insert_user(login: "Ana")
 
       project =
@@ -1048,13 +1056,16 @@ defmodule Ravix.TracksTest do
       assert {:ok, "anthropic/claude-sonnet-5"} =
                Tracks.set_model(ctx.owner, ctx.track.id, nil, "anthropic/claude-sonnet-5")
 
+      assert Ravix.Accounts.Store.get_user(ctx.owner.id).preferred_model ==
+               "anthropic/claude-sonnet-5"
+
       track_id = ctx.track.id
       assert_receive {:hub, %Event{name: :tracks, track_id: ^track_id}}
     end
 
     test "the project's own model, or nil, follows the project again", ctx do
       client =
-        FakeTransport.client([reapply(nil, answered(nil)), reapply(nil, answered(nil))])
+        FakeTransport.client([@catalog, reapply(nil, answered(nil)), reapply(nil, answered(nil))])
 
       stub(Ravix.Fountain, :client, fn -> client end)
 
@@ -1062,6 +1073,8 @@ defmodule Ravix.TracksTest do
                Tracks.set_model(ctx.owner, ctx.track.id, nil, "anthropic/claude-opus-5")
 
       assert {:ok, nil} = Tracks.set_model(ctx.owner, ctx.track.id, nil, nil)
+      assert Ravix.Accounts.Store.get_user(ctx.owner.id).preferred_runtime == nil
+      assert Ravix.Accounts.Store.get_user(ctx.owner.id).preferred_model == nil
     end
 
     test "a model the catalog does not offer this runtime is refused before Fountain", ctx do

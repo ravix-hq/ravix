@@ -2,7 +2,7 @@ defmodule RavixWeb.TrackLiveTest do
   use RavixWeb.ConnCase, async: true
   import Phoenix.LiveViewTest
   import Mimic
-  alias Ravix.Accounts.{Access, Session}
+  alias Ravix.Accounts.{Access, Session, ThreadPreference}
   alias Ravix.Fountain.Error, as: FountainError
   alias Ravix.Fountain.{FakeTransport, Shapes}
   alias Ravix.Hub.Event
@@ -940,13 +940,13 @@ defmodule RavixWeb.TrackLiveTest do
 
     assert has_element?(
              ctx.view,
-             "#thread-switcher [data-thread-id='#{thread.id}'][aria-current]",
+             "#thread-switcher [data-thread-id='#{thread.id}'][aria-selected='true']",
              "Next"
            )
 
     refute has_element?(
              ctx.view,
-             "#thread-switcher [data-thread-id='#{ctx.track.id}'][aria-current]"
+             "#thread-switcher [data-thread-id='#{ctx.track.id}'][aria-selected='true']"
            )
 
     ctx.view |> form("#composer-form", %{text: "continue"}) |> render_submit()
@@ -993,6 +993,7 @@ defmodule RavixWeb.TrackLiveTest do
     ctx.view |> element("#thread-switcher button[aria-label='Add thread']") |> render_click()
     render_async(ctx.view, 2_000)
     assert has_element?(ctx.view, "#new-thread-form")
+    assert has_element?(ctx.view, ".thread-default-source", "Project default")
 
     ctx.view
     |> form("#new-thread-form", new_thread: %{runtime: "claude", model: ctx.project.model})
@@ -1002,6 +1003,28 @@ defmodule RavixWeb.TrackLiveTest do
     [_, thread] = Tracks.Store.threads_of(ctx.track.id)
     assert thread.conversation_id == "added"
     assert has_element?(ctx.view, "#composer-#{thread.id}")
+  end
+
+  test "thread dialog shows the saved personal default and its source", ctx do
+    Repo.update!(Ecto.Changeset.change(ctx.project, runtime: "claude"))
+    stub(Ravix.MachineCache, :machine_for_track, fn _, _, _ -> {:ok, nil} end)
+
+    catalog = %Shapes.Catalog{
+      runtimes: ["claude"],
+      models: %{"claude" => ["anthropic/claude-opus-5"]}
+    }
+
+    {:ok, _} =
+      ThreadPreference.put(ctx.user, "claude", "anthropic/claude-opus-5", catalog)
+
+    stub(Ravix.Fountain, :client, fn -> FakeTransport.client([], verify: false) end)
+    stub(Ravix.Accounts.Inference, :usable_agents, fn _ -> {:ok, [:claude]} end)
+    stub(Ravix.MachineCache, :catalog, fn _ -> {:ok, catalog} end)
+    stub(Ravix.MachineCache, :machine_of, fn _, _ -> {:ok, nil} end)
+    ctx.view |> element("#thread-switcher button[aria-label='Add thread']") |> render_click()
+    render_async(ctx.view)
+    assert has_element?(ctx.view, ".thread-default-source", "Your default: Claude Code")
+    assert has_element?(ctx.view, "#new_thread-model option[selected]", "Claude Opus 5")
   end
 
   test "thread picker explains unavailable agents and uses product and model names", ctx do
@@ -1247,12 +1270,44 @@ defmodule RavixWeb.TrackLiveTest do
 
     selected = "#thread-switcher button[data-thread-id='#{ctx.track.id}']"
     unread = "#thread-switcher button[data-thread-id='#{other.id}']"
-    assert has_element?(ctx.view, "nav#thread-switcher[aria-label='Threads']")
-    assert has_element?(ctx.view, selected <> "[aria-current='true']")
+
+    assert has_element?(
+             ctx.view,
+             "nav#thread-switcher[aria-label='Threads'][phx-hook='ThreadTabs']"
+           )
+
+    assert has_element?(ctx.view, "#thread-tablist[role=tablist]")
+
+    assert has_element?(
+             ctx.view,
+             ".track-conversation > #thread-switcher ~ #transcript-scroll[role=tabpanel][aria-labelledby='thread-tab-#{ctx.track.id}']"
+           )
+
+    refute has_element?(ctx.view, "#thread-picker option", "Idle")
+    assert has_element?(ctx.view, "#thread-picker option[value='#{other.id}']", "(unread)")
+
+    assert has_element?(
+             ctx.view,
+             selected <>
+               "[aria-selected='true'][tabindex='0'][role='tab'][aria-controls='transcript-scroll']"
+           )
+
     refute has_element?(ctx.view, selected <> " .thread-unread")
-    assert has_element?(ctx.view, unread <> ":not([aria-current]) .thread-unread", "(unread)")
+
+    assert has_element?(
+             ctx.view,
+             unread <> "[aria-selected='false'][tabindex='-1'] .thread-unread",
+             "(unread)"
+           )
+
     assert has_element?(ctx.view, unread, "Review")
     assert has_element?(ctx.view, unread <> "[aria-label='Review · Agent · Idle (unread)']")
+
+    ctx.view |> element(".thread-picker") |> render_change(%{thread_id: other.id})
+    settle(ctx.view)
+    assert has_element?(ctx.view, "#thread-picker option[value='#{other.id}'][selected]")
+    ctx.view |> element(".thread-picker") |> render_change(%{thread_id: ctx.track.id})
+    settle(ctx.view)
 
     reject(&Tracks.events/3)
     ctx.view |> element(selected) |> render_click()
@@ -1525,6 +1580,8 @@ defmodule RavixWeb.TrackLiveTest do
     end
 
     test "names what the conversation runs and marks the project's model as the default", ctx do
+      assert has_element?(ctx.view, ".model-default-hint", "Also your default for new threads")
+      assert has_element?(ctx.view, "#model-menu [phx-value-model=\"\"]", "Project default")
       assert has_element?(ctx.view, "#model-trigger:not([disabled])", "Claude Sonnet 5")
 
       assert has_element?(
@@ -1567,6 +1624,12 @@ defmodule RavixWeb.TrackLiveTest do
 
       render_async(ctx.view)
       assert has_element?(ctx.view, "#model-trigger:not([disabled])")
+    end
+
+    test "choosing the project default clears the personal preference through the context", ctx do
+      expect(Tracks, :set_model, fn _, _, _, nil -> {:ok, nil} end)
+      ctx.view |> element(~s(#model-menu [phx-value-model=""])) |> render_click()
+      render_async(ctx.view)
     end
 
     test "a refusal is said, and the page keeps the model it had", ctx do
@@ -2763,13 +2826,13 @@ defmodule RavixWeb.TrackLiveTest do
 
     # The button is the dock's, but the tab it opens is the page's: the push
     # carries no target, so it reaches `TrackLive` rather than the component.
-    ctx.view |> element("#track-terminal .dock-empty button", "Open Run") |> render_click()
+    ctx.view |> element("#track-terminal .dock-empty button", "Open Preview") |> render_click()
     render_async(ctx.view)
 
     assert has_element?(
              ctx.view,
              "nav[aria-label='Inspector panels'] button.selected",
-             "Run"
+             "Preview"
            )
 
     assert has_element?(ctx.view, "#preview-config-form")
@@ -2793,7 +2856,7 @@ defmodule RavixWeb.TrackLiveTest do
 
     # Clearing the scrollback is an empty terminal again, and says so.
     ctx.view |> element("button[phx-click=clear]") |> render_click()
-    assert has_element?(ctx.view, "#track-terminal .dock-empty", "Open Run")
+    assert has_element?(ctx.view, "#track-terminal .dock-empty", "Open Preview")
   end
 
   test "a session that went without notice cannot run a command through the dock", ctx do
@@ -3477,10 +3540,7 @@ defmodule RavixWeb.TrackLiveTest do
     # the title does not.
     assert has_element?(ctx.view, ".track-crumbs .track-branch", ctx.track.branch)
 
-    assert has_element?(
-             ctx.view,
-             ".track-crumbs button.icon-button[aria-label='Project settings'][phx-value-name='settings'] svg"
-           )
+    refute has_element?(ctx.view, ".track-crumbs button[aria-label='Project settings']")
 
     # New track lives once, at the end of the tab strip above; the header
     # does not offer it a second time.
@@ -3489,7 +3549,7 @@ defmodule RavixWeb.TrackLiveTest do
     # Buttons whose only text is an icon: nothing visible is left to read.
     refute render(header.(ctx.view)) =~ ~r/>\s*(New track|Settings)\s*</
 
-    assert has_element?(ctx.view, ".track-crumbs button[title='Project settings']")
+    refute has_element?(ctx.view, ".track-crumbs button[title='Project settings']")
     assert has_element?(ctx.view, ".track-crumbs button[title='Rename track']")
 
     assert has_element?(
