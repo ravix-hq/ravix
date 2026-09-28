@@ -544,7 +544,7 @@ defmodule Ravix.Fountain do
   @spec events(Client.t(), id(), keyword()) :: result([record()])
   def events(client, id, opts \\ []) do
     if Client.configured?(client),
-      do: collect_events(client, id, Keyword.delete(opts, :after), opts[:after], %{}),
+      do: collect_events(client, id, Keyword.delete(opts, :after), opts[:after], %{}, 0),
       else: {:error, {:unconfigured, :fountain}}
   end
 
@@ -740,9 +740,10 @@ defmodule Ravix.Fountain do
 
   defp conversation(http, id), do: Fountain.Conversation.new(http, escape(id))
 
-  defp collect_events(client, id, opts, after_cursor, seen) do
+  defp collect_events(client, id, opts, after_cursor, seen, pages) do
     with {:ok, page} <- events_page(client, id, Keyword.put(opts, :after, after_cursor)) do
       seen = Enum.reduce(page.events, seen, &Map.put(&2, &1["id"], &1))
+      Trace.annotate(%{"ravix.event_pages" => pages + 1})
 
       cond do
         not page.has_more ->
@@ -759,7 +760,7 @@ defmodule Ravix.Fountain do
            }}
 
         true ->
-          collect_events(client, id, opts, page.next_cursor, seen)
+          collect_events(client, id, opts, page.next_cursor, seen, pages + 1)
       end
     end
   end

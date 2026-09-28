@@ -93,6 +93,33 @@ defmodule Ravix.Tracks.Transcript do
     %{page | turns: turns}
   end
 
+  @doc "Prepend complete turns without re-folding the loaded tail or moving its live cursor."
+  @spec prepend_history(Page.t(), Page.t()) :: Page.t()
+  def prepend_history(page, chunk) do
+    ids = MapSet.new(page.turns, & &1.id)
+
+    turns =
+      chunk.turns
+      |> Enum.map(&archive_pending(&1, page.conversation_id))
+      |> Enum.reject(&MapSet.member?(ids, &1.id))
+
+    %{
+      page
+      | turns: turns ++ page.turns,
+        history: chunk.history,
+        oldest_event_id: chunk.oldest_event_id || page.oldest_event_id,
+        oldest_conversation_id: chunk.oldest_conversation_id || page.oldest_conversation_id
+    }
+  end
+
+  # Real turn IDs are global, but every conversation calls its unbound setup
+  # output "pending". Give archived setup output a stable, distinct DOM ID.
+  defp archive_pending(%Turn{id: "pending", conversation_id: id} = turn, current)
+       when is_binary(id) and id != current,
+       do: %{turn | id: "#{id}:pending"}
+
+  defp archive_pending(turn, _current), do: turn
+
   @doc "An empty page for a track with no conversation yet."
   @spec empty(String.t()) :: Page.t()
   def empty(runtime), do: page([], runtime)
@@ -204,8 +231,11 @@ defmodule Ravix.Tracks.Transcript do
         if turn.id == turn_id, do: {lay_in(turn, event, page.runtime), true}, else: {turn, found?}
       end)
 
+    # A shared follower can still be replaying events older than this reader's
+    # snapshot. Unloaded turns belong to history, not at the live tail. Keep
+    # allowing corrections (including prompt enrichment) to loaded turns.
     turns =
-      if found?,
+      if found? or (not is_nil(page.history) and id <= (page.last_event_id || 0)),
         do: turns,
         else: turns ++ [lay_in(new_turn(%Turn{id: turn_id}, page.runtime), event, page.runtime)]
 

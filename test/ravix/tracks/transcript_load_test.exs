@@ -215,6 +215,16 @@ defmodule Ravix.Tracks.TranscriptLoadTest do
       # This returns while the classifier is deliberately blocked. It cannot
       # be a synchronous scan or wait hidden inside tracks.events.
       assert {:ok, page} = Tracks.events(owner, track.id)
+
+      page =
+        if mode == :archived do
+          assert page.turns == []
+          assert {:ok, older} = Tracks.earlier_events(owner, track.id, page)
+          older
+        else
+          page
+        end
+
       assert_receive {:classifying, worker}
       worker = if mode == :retry, do: retry_background(worker, owner, track), else: worker
       on_exit(fn -> if Process.alive?(worker), do: Process.exit(worker, :kill) end)

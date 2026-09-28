@@ -109,6 +109,7 @@ defmodule RavixWeb.TrackLive do
         # is the slowest of the reads, so the page says which of the two it
         # is still waiting on rather than treating "loaded" as one moment.
         transcript_loading: true,
+        earlier_loading: false,
         queue: [],
         present: [],
         narrow_view: "conversation",
@@ -243,6 +244,26 @@ defmodule RavixWeb.TrackLive do
   end
 
   def handle_event("narrow-view", _, socket), do: {:noreply, socket}
+
+  def handle_event("load-earlier", _, socket) do
+    page = socket.assigns.page
+
+    if socket.assigns.earlier_loading or not Transcript.History.more?(page.history) do
+      {:noreply, socket}
+    else
+      user = socket.assigns.current_user
+      track_id = socket.assigns.track_id
+      thread_id = socket.assigns.thread_id
+      key = {:earlier, thread_id, socket.assigns.thread_generation, history_cursor(page)}
+
+      {:noreply,
+       socket
+       |> assign(earlier_loading: true)
+       |> traced_async(key, fn ->
+         Tracks.earlier_events(user, track_id, page, thread_id: thread_id)
+       end)}
+    end
+  end
 
   def handle_event("retry-load", _, socket), do: {:noreply, load(socket)}
   def handle_event("validate", _, socket), do: {:noreply, socket}
@@ -817,6 +838,34 @@ defmodule RavixWeb.TrackLive do
 
   defp async_result(:queue, {:ok, {:error, reason}}, socket), do: error(socket, reason)
 
+  defp async_result({:earlier, thread_id, generation, cursor}, response, socket) do
+    if thread_id == socket.assigns.thread_id and generation == socket.assigns.thread_generation do
+      socket = assign(socket, earlier_loading: false)
+
+      current_cursor = history_cursor(socket.assigns.page)
+
+      case response do
+        {:ok, {:ok, chunk}} when cursor == current_cursor ->
+          page = Transcript.prepend_history(socket.assigns.page, chunk)
+          held = MapSet.new(socket.assigns.page.turns, & &1.id)
+          earlier = Enum.reject(Transcript.visible_turns(chunk), &MapSet.member?(held, &1.id))
+          socket = socket |> assign(page: page) |> memoize()
+          Enum.reduce(Enum.reverse(earlier), socket, &stream_insert(&2, :turns, &1, at: 0))
+
+        {:ok, {:ok, _stale}} ->
+          socket
+
+        {:ok, {:error, reason}} ->
+          error(socket, reason)
+
+        {:exit, _reason} ->
+          flash(socket, :error, "Could not load earlier history. Please try again.")
+      end
+    else
+      socket
+    end
+  end
+
   # The same clause serves the read this page opens with and every repair
   # afterwards, because the difference between them is one question --- is
   # this page already following the track's live transcript? --- and the
@@ -837,9 +886,11 @@ defmodule RavixWeb.TrackLive do
       |> Enum.filter(&(&1.id > (page.last_event_id || 0)))
       |> Enum.sort_by(& &1.id)
 
+    page = page |> Transcript.add_events(newer) |> retain_earlier(socket.assigns.page)
+
     socket
     |> assign(transcript_loading: false)
-    |> repair(Transcript.add_events(page, newer))
+    |> repair(page)
   end
 
   defp async_result(:transcript, {:ok, {:error, reason}}, socket),
@@ -959,6 +1010,24 @@ defmodule RavixWeb.TrackLive do
       |> assign(loading: false, transcript_loading: false)
       |> update_panel(&Panel.settled/1)
       |> flash(:error, "Could not finish loading. Please try again.")
+
+  defp history_cursor(page),
+    do:
+      {page.conversation_id, page.oldest_conversation_id, page.oldest_event_id,
+       page.history && page.history.conversation_id}
+
+  defp retain_earlier(
+         %{history: %Transcript.History{} = incoming} = page,
+         %{history: %Transcript.History{} = held} = current
+       ) do
+    if incoming.source == held.source and
+         {length(held.conversations), length(held.chunks)} <
+           {length(incoming.conversations), length(incoming.chunks)},
+       do: Transcript.prepend_history(page, current),
+       else: page
+  end
+
+  defp retain_earlier(page, _current), do: page
 
   # The repair read, rendered as what actually differs.
   #
@@ -1169,6 +1238,7 @@ defmodule RavixWeb.TrackLive do
       thread_params: %{},
       agent_refused: false,
       transcript_loading: true,
+      earlier_loading: false,
       page: Transcript.empty(""),
       rendered: %{}
     )
