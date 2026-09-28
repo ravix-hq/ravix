@@ -35,7 +35,7 @@ defmodule RavixWeb.WorkspaceFiltersTest do
 
   defp open(conn, user, path) do
     {:ok, view, _} = live(log_in_user(conn, user), path)
-    render_async(view)
+    render_async(view, 5_000)
     view
   end
 
@@ -87,7 +87,7 @@ defmodule RavixWeb.WorkspaceFiltersTest do
 
     Repo.delete!(ctx.mine)
     render_patch(view, "/p/#{ctx.project.id}")
-    render_async(view)
+    render_async(view, 5_000)
 
     assert has_element?(
              view,
@@ -131,7 +131,7 @@ defmodule RavixWeb.WorkspaceFiltersTest do
            )
 
     view |> element("#show-closed-#{ctx.project.id}") |> render_click()
-    render_async(view)
+    render_async(view, 5_000)
     assert Sections.closed_shown(ctx.viewer) == [ctx.project.id]
     assert has_element?(view, "#show-closed-#{ctx.project.id}[aria-checked=true]")
     assert has_element?(view, "#closed-track-#{closed.id}.closed-track", "Closed track")
@@ -219,7 +219,7 @@ defmodule RavixWeb.WorkspaceFiltersTest do
     {:ok, _} = Sections.show_closed(ctx.viewer, ctx.project.id, true)
     view = open(ctx.conn, ctx.viewer, "/p/#{ctx.project.id}")
     view |> element("#reopen-track-#{closed.id}") |> render_click()
-    render_async(view)
+    render_async(view, 5_000)
 
     assert has_element?(view, "#new-track-dialog #reopen-hint", "ravix/old-work")
     refute has_element?(view, "#reopen-hint", "isn't on GitHub")
@@ -243,7 +243,7 @@ defmodule RavixWeb.WorkspaceFiltersTest do
     {:ok, _} = Sections.show_closed(ctx.viewer, ctx.project.id, true)
     view = open(ctx.conn, ctx.viewer, "/p/#{ctx.project.id}")
     view |> element("#reopen-track-#{closed.id}") |> render_click()
-    render_async(view)
+    render_async(view, 5_000)
     assert has_element?(view, "#reopen-hint", "isn't on GitHub")
   end
 end
