@@ -7,6 +7,7 @@ defmodule Ravix.WorkspaceAccessTest do
   Not async: some tests flip the switch, which is application-wide.
   """
   use Ravix.DataCase, async: false
+  use Mimic
 
   alias Ravix.Accounts
   alias Ravix.Accounts.{Access, User}
@@ -42,6 +43,11 @@ defmodule Ravix.WorkspaceAccessTest do
     %Membership{}
     |> Membership.changeset(%{workspace_id: workspace.id, user_id: user.id, role: role})
     |> Repo.insert!()
+  end
+
+  defp personal!(user) do
+    {:ok, workspace} = Store.ensure_personal_workspace(user)
+    workspace
   end
 
   defp memberships(workspace),
@@ -101,10 +107,9 @@ defmodule Ravix.WorkspaceAccessTest do
       # A sign-in whose workspace insert lost the race to the backfill (the
       # unique key conflicted) still finds it and adds only what is missing.
       Repo.delete_all(from m in Membership, where: m.user_id == ^fresh.id)
-      assert %Workspace{} = Store.ensure_personal_workspace(fresh)
-
-      assert Store.ensure_personal_workspace(fresh).id ==
-               elem(Workspaces.personal_workspace(fresh), 1).id
+      assert {:ok, %Workspace{id: id}} = Store.ensure_personal_workspace(fresh)
+      assert {:ok, %Workspace{id: ^id}} = Store.ensure_personal_workspace(fresh)
+      assert {:ok, %Workspace{id: ^id}} = Workspaces.personal_workspace(fresh)
 
       assert Repo.aggregate(Workspace, :count) == 2
       assert Repo.aggregate(Membership, :count) == 2
@@ -114,12 +119,21 @@ defmodule Ravix.WorkspaceAccessTest do
       assert {:error, %Ecto.Changeset{}} = sign_in("906", nil)
       assert Repo.aggregate(Workspace, :count) == 0
     end
+
+    test "a personal workspace gone mid-sign-in rolls the sign-in back, rather than raising" do
+      stub(Store, :ensure_personal_workspace, fn _user -> {:error, :not_found} end)
+
+      assert {:error, %Ecto.Changeset{errors: [id: {"has no personal workspace", _}]}} =
+               sign_in("907", "vanished")
+
+      assert Repo.aggregate(User, :count) == 0
+    end
   end
 
   describe "workspace_access/2" do
     setup do
       [owner, admin, member, stranger] = for _ <- 1..4, do: insert_user()
-      workspace = Store.ensure_personal_workspace(owner)
+      workspace = personal!(owner)
       member!(workspace, admin, :admin)
       member!(workspace, member, :member)
       %{owner: owner, admin: admin, member: member, stranger: stranger, workspace: workspace}
@@ -137,7 +151,7 @@ defmodule Ravix.WorkspaceAccessTest do
     test "a non-member, another tenant's id and a removed membership are all not found", ctx do
       assert {:error, :not_found} = Access.workspace_access(ctx.stranger, ctx.workspace.id)
 
-      other = Store.ensure_personal_workspace(ctx.stranger)
+      other = personal!(ctx.stranger)
       assert {:error, :not_found} = Access.workspace_access(ctx.owner, other.id)
 
       assert :ok = Workspaces.remove_member(ctx.owner, ctx.workspace.id, ctx.member.id)
@@ -172,7 +186,7 @@ defmodule Ravix.WorkspaceAccessTest do
     test "workspace_grant/3 grants nothing while the switch is off" do
       owner = insert_user()
       member = insert_user()
-      workspace = Store.ensure_personal_workspace(owner)
+      workspace = personal!(owner)
       member!(workspace, member, :member)
 
       switch(false)
@@ -194,7 +208,7 @@ defmodule Ravix.WorkspaceAccessTest do
   describe "remove_member/3" do
     setup do
       [owner, admin, member] = for _ <- 1..3, do: insert_user()
-      workspace = Store.ensure_personal_workspace(owner)
+      workspace = personal!(owner)
       member!(workspace, admin, :admin)
       member!(workspace, member, :member)
       %{owner: owner, admin: admin, member: member, workspace: workspace}
@@ -249,9 +263,38 @@ defmodule Ravix.WorkspaceAccessTest do
                Workspaces.remove_member(ctx.owner, ctx.workspace.id, ctx.owner.id)
     end
 
+    test "a remover revoked or demoted while their removal was in flight is refused", ctx do
+      # `workspace_access/2` answered for the admin before the removal took
+      # its lock; by then another owner had removed them.
+      stale = Access.workspace_access(ctx.admin, ctx.workspace.id)
+      :ok = Workspaces.remove_member(ctx.owner, ctx.workspace.id, ctx.admin.id)
+      Ravix.Hub.subscribe_workspace(ctx.workspace.id)
+      stub(Access, :workspace_access, fn _user, _id -> stale end)
+
+      assert {:error, :not_found} =
+               Workspaces.remove_member(ctx.admin, ctx.workspace.id, ctx.member.id)
+
+      # Demoted to member instead: refused as a member is.
+      demoted = insert_user()
+      member!(ctx.workspace, demoted, :member)
+
+      stub(Access, :workspace_access, fn _user, _id ->
+        {:ok, %{workspace: ctx.workspace, role: :admin}}
+      end)
+
+      assert {:error, {:forbidden, _}} =
+               Workspaces.remove_member(demoted, ctx.workspace.id, ctx.member.id)
+
+      # Neither removal happened, and nobody was told one did.
+      refute_received {:workspace_hub, _, :members}
+
+      assert %{revoked_at: nil} =
+               Repo.get_by(Membership, workspace_id: ctx.workspace.id, user_id: ctx.member.id)
+    end
+
     test "a stranger, another tenant and somebody not in it answer not found", ctx do
       stranger = insert_user()
-      other = Store.ensure_personal_workspace(stranger)
+      other = personal!(stranger)
 
       assert {:error, :not_found} =
                Workspaces.remove_member(stranger, ctx.workspace.id, ctx.member.id)
@@ -318,7 +361,7 @@ defmodule Ravix.WorkspaceAccessTest do
       before = doors.()
 
       # Now give the project a workspace, and everybody a role in it.
-      workspace = Store.ensure_personal_workspace(owner)
+      workspace = personal!(owner)
       Repo.update_all(where(Project, id: ^project.id), set: [workspace_id: workspace.id])
       member!(workspace, colleague, :member)
       member!(workspace, stranger, :admin)

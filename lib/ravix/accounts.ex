@@ -93,18 +93,28 @@ defmodule Ravix.Accounts do
         conflict_target: :github_id,
         returning: true
       )
-      |> case do
-        {:ok, user} ->
-          # ownership: no door -- as above, the person this sign-in just proved.
-          Ravix.Workspaces.Store.ensure_personal_workspace(user)
-          user
-
-        {:error, changeset} ->
-          Repo.rollback(changeset)
-      end
+      |> with_personal_workspace()
     end)
     |> signed_in()
   end
+
+  # Inside `upsert_user/1`'s transaction: either the person and their
+  # personal workspace both commit, or neither does.
+  defp with_personal_workspace({:ok, user}) do
+    # ownership: no door -- as above, the person this sign-in just proved.
+    case Ravix.Workspaces.Store.ensure_personal_workspace(user) do
+      {:ok, _workspace} ->
+        user
+
+      {:error, :not_found} ->
+        user
+        |> Ecto.Changeset.change()
+        |> Ecto.Changeset.add_error(:id, "has no personal workspace")
+        |> Repo.rollback()
+    end
+  end
+
+  defp with_personal_workspace({:error, changeset}), do: Repo.rollback(changeset)
 
   # Every sign-in, not just the first. PostHog works out new from returning
   # itself from the person's own history, so there is no separate signup event to

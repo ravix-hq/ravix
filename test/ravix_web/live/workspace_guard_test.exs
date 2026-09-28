@@ -11,12 +11,22 @@ defmodule RavixWeb.Live.WorkspaceGuardTest do
   alias Ravix.Workspaces
   alias Ravix.Workspaces.{Membership, Store}
   alias RavixWeb.Live.Guard
-  alias RavixWeb.WorkspaceGuardFixtureLive, as: Page
+  alias RavixWeb.WorkspaceGuardFixture.Endpoint
+
+  # The fixture page is routed through its own endpoint; see
+  # `RavixWeb.WorkspaceGuardFixture.Endpoint`.
+  @endpoint Endpoint
+
+  setup_all do
+    Endpoint.put_config()
+    start_supervised!(Endpoint)
+    :ok
+  end
 
   setup %{conn: conn} do
     owner = insert_user()
     member = insert_user()
-    workspace = Store.ensure_personal_workspace(owner)
+    {:ok, workspace} = Store.ensure_personal_workspace(owner)
 
     Repo.insert!(%Membership{
       workspace_id: workspace.id,
@@ -25,31 +35,30 @@ defmodule RavixWeb.Live.WorkspaceGuardTest do
       created_at: DateTime.utc_now()
     })
 
-    %{conn: log_in_user(conn, member), owner: owner, member: member, workspace: workspace}
+    %{conn: signed_in(conn, member), owner: owner, member: member, workspace: workspace}
   end
 
-  defp open(ctx) do
-    live_isolated(ctx.conn, Page,
-      session: %{"workspace_id" => ctx.workspace.id, "test" => self()}
-    )
-  end
+  defp signed_in(conn, user),
+    do: conn |> log_in_user(user) |> Plug.Conn.put_session("test", self())
+
+  defp open(ctx), do: live(ctx.conn, "/workspaces/#{ctx.workspace.id}")
 
   # A removal whose notice never arrives: the lost-PubSub case.
   defp revoke_silently(ctx),
-    do: {:ok, _} = Store.revoke_membership(ctx.workspace.id, ctx.member.id, :owner)
+    do: {:ok, _} = Store.revoke_membership(ctx.workspace.id, ctx.member.id, ctx.owner.id)
 
   test "a member's page holds the workspace; a stranger's and another tenant's do not", ctx do
     {:ok, view, _html} = open(ctx)
     assert view |> element("#role") |> render() =~ "member"
     assert render_click(view, "ping") =~ ~s(<p id="pings">1</p>)
 
-    stranger = log_in_user(build_conn(), insert_user())
-    session = %{"workspace_id" => ctx.workspace.id, "test" => self()}
-    assert {:error, {:redirect, %{to: "/"}}} = live_isolated(stranger, Page, session: session)
+    stranger = signed_in(build_conn(), insert_user())
 
-    elsewhere = Store.ensure_personal_workspace(insert_user())
-    session = %{"workspace_id" => elsewhere.id, "test" => self()}
-    assert {:error, {:redirect, %{to: "/"}}} = live_isolated(ctx.conn, Page, session: session)
+    assert {:error, {:redirect, %{to: "/"}}} =
+             live(stranger, "/workspaces/#{ctx.workspace.id}")
+
+    {:ok, elsewhere} = Store.ensure_personal_workspace(insert_user())
+    assert {:error, {:redirect, %{to: "/"}}} = live(ctx.conn, "/workspaces/#{elsewhere.id}")
   end
 
   test "removal sends an open page home on the notice, with nothing else to prompt it", ctx do
@@ -66,6 +75,16 @@ defmodule RavixWeb.Live.WorkspaceGuardTest do
     send(view.pid, :ping)
 
     assert view |> element("#pings") |> render() =~ ">1<"
+  end
+
+  test "a URL patch re-reads the membership: applied for a member, refused once removed", ctx do
+    {:ok, view, _html} = open(ctx)
+    assert render_patch(view, "/workspaces/#{ctx.workspace.id}?tab=one") =~ ">one<"
+
+    revoke_silently(ctx)
+
+    assert {:error, {:redirect, %{to: "/"}}} =
+             render_patch(view, "/workspaces/#{ctx.workspace.id}?tab=two")
   end
 
   test "an event after a removal whose notice was lost is refused", ctx do

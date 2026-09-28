@@ -8,10 +8,11 @@ defmodule RavixWeb.Live.WorkspaceGuard do
   once at mount, and afterwards re-establishes it the way `TrackLive` does a
   track, with one difference in strictness:
 
-    * **Events and async results read the membership again, every time.**
-      Both are rare, and an async result is the case the ADR names: work
-      started while somebody was a member must not render once they are not,
-      even when its answer beats the removal notice to the page.
+    * **URL patches, events and async results read the membership again,
+      every time.** All three are rare, and each is a case the ADR names: a
+      patch renders new state for the URL, and work started while somebody
+      was a member must not render once they are not, even when its answer
+      beats the removal notice to the page.
     * **Messages trust the held answer** (`RavixWeb.Live.Guard`) until the
       workspace's hub notice arrives, which re-reads it at once. Should the
       notice be lost, the held answer expires on its own after
@@ -41,6 +42,10 @@ defmodule RavixWeb.Live.WorkspaceGuard do
   Assigns `:workspace_access` (`%{workspace: ..., role: ...}`) and the held
   `:workspace_guard`. Not found for anybody who is not a live member, as
   the door answers. Call once, from `mount/3`, after the session hooks.
+
+  For a page mounted at the router: it hooks `handle_params/3`, which
+  LiveView only allows there. Nested and isolated pages have no URL to
+  patch, and none holds a workspace.
   """
   @spec hold(Socket.t(), String.t()) :: {:ok, Socket.t()} | {:error, :not_found}
   def hold(%Socket{} = socket, workspace_id) do
@@ -50,6 +55,7 @@ defmodule RavixWeb.Live.WorkspaceGuard do
       {:ok,
        socket
        |> assign(workspace_access: access, workspace_guard: renew(socket))
+       |> attach_hook(:workspace_params, :handle_params, fn _, _, s -> recheck(s) end)
        |> attach_hook(:workspace_event, :handle_event, fn _, _, s -> recheck(s) end)
        |> attach_hook(:workspace_message, :handle_info, &message/2)
        |> attach_hook(:workspace_async, :handle_async, fn _, _, s -> recheck(s) end)}

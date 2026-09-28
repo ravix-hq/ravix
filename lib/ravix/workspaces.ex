@@ -99,20 +99,32 @@ defmodule Ravix.Workspaces do
   and once that has committed every instance's subscribers are told on the
   workspace's hub topic, so an open page re-reads its access on the notice
   (`RavixWeb.Live.WorkspaceGuard`). A caller who is not a member, and a
-  target who is not one, both answer not found.
+  target who is not one, both answer not found. The caller's own role is
+  checked again under the removal's lock, so one revoked at the same moment
+  is refused.
+
+  Do not call this inside an outer transaction: it publishes after its own
+  commit, and inside another the notice would go out before the removal is
+  visible, so subscribers would re-read the access they are about to lose.
   """
   @spec remove_member(User.t(), String.t(), String.t()) ::
           :ok | {:error, :not_found | :last_owner | {:forbidden, String.t()}}
   def remove_member(%User{} = user, workspace_id, user_id) do
     with {:ok, %{workspace: workspace, role: role}} <- Access.workspace_access(user, workspace_id),
          :ok <- Access.require_capability(role, :manage_members),
-         {:ok, _revoked} <- revoke(workspace.id, user_id, role) do
+         {:ok, _revoked} <- revoke(workspace.id, user_id, user.id) do
       Ravix.Hub.publish_workspace(workspace.id, :members)
     end
   end
 
-  defp revoke(workspace_id, user_id, role) do
-    case Store.revoke_membership(workspace_id, user_id, role) do
+  defp revoke(workspace_id, user_id, actor_id) do
+    case Store.revoke_membership(workspace_id, user_id, actor_id) do
+      {:error, :actor_gone} ->
+        {:error, :not_found}
+
+      {:error, :not_manager} ->
+        Access.require_capability(:member, :manage_members)
+
       {:error, :owner_only} ->
         {:error, {:forbidden, "Only an owner of this workspace can remove an owner."}}
 
