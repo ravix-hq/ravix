@@ -297,6 +297,96 @@ defmodule Ravix.Projects do
     end
   end
 
+  @typedoc """
+  A repository a workspace admits, as `Ravix.Workspaces.Repositories` resolved
+  it through the workspace's own connection: GitHub's current spelling and
+  numeric id, and the connection (`workspace_installation_id`) and
+  installation whose authority clones it.
+  """
+  @type admission :: %{
+          required(:workspace_id) => String.t(),
+          required(:workspace_installation_id) => String.t(),
+          required(:installation_id) => integer(),
+          required(:repo) => Ravix.GitHub.Shapes.RepoRef.t(),
+          optional(:runtime) => String.t() | nil
+        }
+
+  @doc """
+  A workspace repository becomes its project (ADR 0009 phase 4b).
+
+  As `create/2`, with two differences. The repository was resolved through
+  the workspace's installation rather than the caller's own GitHub token, so
+  a member with no personal access to it still admits it; and the row is the
+  workspace's canonical project for that repository. The caller must hold
+  `:create_project` in the workspace (`Access.workspace_grant/3`, asked
+  again here), and is the project's legacy owner, whose agent it spends
+  (ADR 0005).
+
+  `{:error, :exists}` when another admission of the same repository won the
+  partial unique index first; this one's Fountain records are taken back
+  and the caller reads the winner.
+  """
+  @spec admit(User.t(), admission()) :: {:ok, Project.t()} | {:error, :exists | reason()}
+  def admit(%User{} = user, %{workspace_id: workspace_id, repo: repo} = admission) do
+    with {:ok, _access} <-
+           Ravix.Accounts.Access.workspace_grant(user, workspace_id, :create_project),
+         {:ok, client} <- fountain(),
+         {:ok, harness} <-
+           Machine.creation_harness(client, admission[:runtime] || Inference.runtime(user)),
+         :ok <- require_connected_agent(user, harness.runtime),
+         project = %Project{
+           id: Ecto.UUID.generate(),
+           user_id: user.id,
+           name: repo.name,
+           repo_full_name: repo.full_name,
+           repo_private: repo.private == true,
+           default_branch: repo.default_branch,
+           installation_id: admission.installation_id,
+           instructions: "",
+           runtime: harness.runtime
+         },
+         {:ok, ids} <- Machine.provision(project, user, client, harness) do
+      insert_admitted(user, project, ids, client, admission)
+    end
+  end
+
+  defp insert_admitted(user, project, %Provisioned{} = ids, client, admission) do
+    attrs =
+      project
+      |> Map.take(
+        ~w(id user_id name repo_full_name repo_private default_branch installation_id instructions)a
+      )
+      |> Map.merge(%{
+        environment_id: ids.environment_id,
+        vault_id: ids.vault_id,
+        agent_id: ids.agent_id,
+        runtime: ids.runtime,
+        model: ids.model,
+        credential_set_id: ids.credential_set_id,
+        workspace_id: admission.workspace_id,
+        workspace_installation_id: admission.workspace_installation_id,
+        github_repo_id: admission.repo.id
+      })
+
+    case Store.create_admitted(attrs) do
+      {:ok, row} ->
+        Analytics.track(
+          user,
+          :project_created,
+          Map.merge(Analytics.repo(nil, row), %{"ravix.repo_private" => row.repo_private})
+        )
+
+        {:ok, row}
+
+      {:error, changeset} ->
+        Machine.unwind(client, ids)
+
+        if Keyword.has_key?(changeset.errors, :repo_full_name),
+          do: {:error, :exists},
+          else: {:error, changeset}
+    end
+  end
+
   # The same resolved runtime is checked and provisioned. A cached answer is
   # insufficient at the point where this request starts creating paid resources.
   defp require_connected_agent(owner, runtime) do

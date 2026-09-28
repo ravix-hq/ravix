@@ -34,9 +34,11 @@ defmodule Ravix.GitHub.Shapes do
       :language,
       :installation_id
     ]
-    defstruct @enforce_keys
+    # GitHub's numeric id: the identity that survives a rename or transfer.
+    defstruct @enforce_keys ++ [:id]
 
     @type t :: %__MODULE__{
+            id: integer() | nil,
             full_name: String.t(),
             owner: String.t() | nil,
             name: String.t(),
@@ -134,6 +136,18 @@ defmodule Ravix.GitHub.Shapes do
     @type t :: %__MODULE__{id: integer(), account: String.t(), avatar_url: String.t() | nil}
   end
 
+  defmodule InstallationState do
+    @moduledoc """
+    One installation as the App reads it (`GET /app/installations/:id`):
+    whose account it is on, and whether GitHub has suspended it.
+    """
+
+    @enforce_keys [:id, :account, :suspended_at]
+    defstruct @enforce_keys
+
+    @type t :: %__MODULE__{id: integer(), account: String.t(), suspended_at: String.t() | nil}
+  end
+
   defmodule Account do
     @moduledoc "A GitHub account: the four fields sign-in and invitations use."
 
@@ -152,6 +166,7 @@ defmodule Ravix.GitHub.Shapes do
   @spec repo_ref(map(), integer()) :: RepoRef.t()
   def repo_ref(%{} = r, installation_id) do
     %RepoRef{
+      id: r["id"],
       full_name: r["full_name"],
       owner: get_in(r, ["owner", "login"]),
       name: r["name"],
@@ -267,6 +282,16 @@ defmodule Ravix.GitHub.Shapes do
       id: i["id"],
       account: get_in(i, ["account", "login"]) || "(unknown)",
       avatar_url: get_in(i, ["account", "avatar_url"])
+    }
+  end
+
+  @doc "An installation as the App reads it."
+  @spec installation_state(map()) :: InstallationState.t()
+  def installation_state(%{} = i) do
+    %InstallationState{
+      id: i["id"],
+      account: get_in(i, ["account", "login"]) || "(unknown)",
+      suspended_at: i["suspended_at"]
     }
   end
 

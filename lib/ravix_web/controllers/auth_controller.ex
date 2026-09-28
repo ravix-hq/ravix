@@ -27,6 +27,7 @@ defmodule RavixWeb.AuthController do
   use RavixWeb, :controller
 
   alias Ravix.Accounts.Auth
+  alias Ravix.Workspaces.Connect
   alias RavixWeb.Error
   alias RavixWeb.Plugs.CurrentUser
 
@@ -55,6 +56,14 @@ defmodule RavixWeb.AuthController do
   """
   @spec callback(Plug.Conn.t(), map()) :: Plug.Conn.t()
   def callback(conn, params) do
+    # A "Connect GitHub" round trip for a workspace (ADR 0009 phase 4b)
+    # comes back to the same setup URL; its state says so.
+    if Connect.state?(params["state"]),
+      do: RavixWeb.WorkspaceGitHubController.finish(conn, params),
+      else: sign_in_callback(conn, params)
+  end
+
+  defp sign_in_callback(conn, params) do
     conn = fetch_cookies(conn)
     state = Map.get(params, "state")
     secret = if Auth.valid_state?(state), do: conn.req_cookies[Auth.cookie_name(state)]

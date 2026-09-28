@@ -308,6 +308,55 @@ defmodule Ravix.GitHub do
     end
   end
 
+  # ── the App's own view of an installation (ADR 0009 phase 4b) ─────────
+
+  @doc """
+  One installation of this App, read as the App: whose account it is on and
+  whether it is suspended. `{:ok, nil}` when GitHub no longer has it, which
+  is what an uninstalled App looks like.
+  """
+  @spec installation(app(), installation_id()) ::
+          {:ok, Shapes.InstallationState.t() | nil} | error()
+  def installation(nil, _installation_id), do: {:error, {:unconfigured, :github}}
+
+  def installation(%GitHubApp{} = app, installation_id) when is_integer(installation_id) do
+    case HTTP.request(app, :get, "/app/installations/#{installation_id}",
+           auth: "Bearer " <> app_jwt(app)
+         ) do
+      {:ok, raw} -> {:ok, Shapes.installation_state(raw)}
+      {:error, %Error{status: 404}} -> {:ok, nil}
+      {:error, _} = error -> error
+    end
+  end
+
+  @doc """
+  Every repository an installation grants, read with the installation's own
+  token: the workspace catalog's source, which needs nobody's personal
+  GitHub access. Paged to a thousand, as `repositories/4` is.
+  """
+  @spec installation_repositories(app(), installation_id()) ::
+          {:ok, [Shapes.RepoRef.t()]} | error()
+  def installation_repositories(nil, _installation_id), do: {:error, {:unconfigured, :github}}
+
+  def installation_repositories(%GitHubApp{} = app, installation_id),
+    do: installation_repository_pages(app, installation_id, 1, [])
+
+  defp installation_repository_pages(_app, _installation_id, page, acc) when page > 10,
+    do: {:ok, acc}
+
+  defp installation_repository_pages(app, installation_id, page, acc) do
+    path = "/installation/repositories?per_page=100&page=#{page}"
+
+    with {:ok, body} <- as_installation(app, installation_id, :get, path) do
+      batch = Enum.map(body["repositories"] || [], &Shapes.repo_ref(&1, installation_id))
+      acc = acc ++ batch
+
+      if length(batch) < 100,
+        do: {:ok, acc},
+        else: installation_repository_pages(app, installation_id, page + 1, acc)
+    end
+  end
+
   @doc "One repository, read as the installation, so it works for private ones."
   @spec repository(app(), installation_id(), String.t()) :: {:ok, Shapes.RepoRef.t()} | error()
   def repository(nil, _installation_id, _full_name), do: {:error, {:unconfigured, :github}}

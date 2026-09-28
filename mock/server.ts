@@ -1439,6 +1439,28 @@ function githubApi(req: Request, url: URL, body: Record<string, unknown>): Respo
   if (p === "/user") return json(personFor(req.headers.get("authorization")));
 
   /**
+   * The App's own view of one installation (ADR 0009 phase 4b): a workspace
+   * connecting GitHub checks the installation exists, and a catalog refresh
+   * reads whether it is suspended. Only the one installation this mock has.
+   */
+  const appInstallation = /^\/app\/installations\/(\d+)$/.exec(p);
+  if (appInstallation) {
+    if (Number(appInstallation[1]) !== INSTALLATION_ID) return json({ message: "Not Found" }, 404);
+    return json({
+      id: INSTALLATION_ID,
+      account: { login: VIEWER.login, avatar_url: VIEWER.avatar_url },
+      suspended_at: null,
+    });
+  }
+
+  /** Every repository the installation grants, read with its own token. */
+  if (p === "/installation/repositories") {
+    const page = Number(url.searchParams.get("page") ?? "1");
+    const repositories = page > 1 ? [] : REPOS.map((r) => repoBody(r.name));
+    return json({ total_count: REPOS.length, repositories });
+  }
+
+  /**
    * One account by login, which is how somebody with no ravix account
    * gets invited. A short allowlist rather than "anything is a person":
    * inviting a name that does not exist has to stay reachable offline, because

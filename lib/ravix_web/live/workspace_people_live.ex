@@ -13,12 +13,21 @@ defmodule RavixWeb.WorkspacePeopleLive do
   people who have signed in here, withdraw waiting invitations and remove
   members; owners also change roles. Every one of those is decided again by
   the context; the page only hides the controls a role cannot use.
+
+  Phase 4b adds the workspace's GitHub (`RavixWeb.Live.WorkspaceGitHub`):
+  its connections, "Connect GitHub" for owners and admins, and the
+  repository catalog, read from the cache and refreshed from GitHub in the
+  background when stale or asked. Adding a repository opens its project,
+  the existing one when the workspace already has it.
   """
   use RavixWeb, :live_view
 
   alias Ravix.{Accounts, People, Workspaces}
-  alias Ravix.Workspaces.Invite
-  alias RavixWeb.Live.{WorkspaceGuard, WorkspaceSwitcher}
+  alias Ravix.Workspaces.{Installation, Invite, Repositories}
+  alias RavixWeb.Live.{WorkspaceGitHub, WorkspaceGuard, WorkspaceSwitcher}
+
+  # How old the catalog may be before opening the page refreshes it.
+  @stale_ms 10 * 60 * 1000
 
   @impl true
   def mount(%{"workspace" => id}, _session, socket) do
@@ -33,9 +42,14 @@ defmodule RavixWeb.WorkspacePeopleLive do
          workspaces: WorkspaceSwitcher.list(user),
          suggestions: [],
          invite_login: "",
-         page_title: people.workspace.name
+         page_title: people.workspace.name,
+         catalog: nil,
+         refreshing: false,
+         adding: nil
        )
-       |> assign_people(people)}
+       |> assign_people(people)
+       |> load_catalog()
+       |> refresh_if_stale()}
     else
       _ ->
         {:ok,
@@ -45,8 +59,40 @@ defmodule RavixWeb.WorkspacePeopleLive do
     end
   end
 
+  # `?github=connected` and `?github_error=...` are where the connect
+  # round trip lands (`RavixWeb.WorkspaceGitHubController.finish/2`).
   @impl true
-  def handle_params(_params, _uri, socket), do: {:noreply, socket}
+  def handle_params(params, _uri, socket) do
+    socket =
+      cond do
+        params["github"] == "connected" ->
+          socket |> put_flash(:info, "GitHub connected.") |> load_catalog()
+
+        is_binary(params["github_error"]) ->
+          put_flash(socket, :error, WorkspaceGitHub.connect_error(params["github_error"]))
+
+        true ->
+          socket
+      end
+
+    {:noreply, socket}
+  end
+
+  def handle_event("refresh-catalog", _params, socket), do: {:noreply, start_refresh(socket)}
+
+  def handle_event("add-repo", %{"repo" => repo}, socket) do
+    if socket.assigns.adding do
+      {:noreply, socket}
+    else
+      user = socket.assigns.current_user
+      id = workspace_id(socket)
+
+      {:noreply,
+       socket
+       |> assign(adding: repo)
+       |> start_async(:add_repo, fn -> Repositories.add(user, id, repo) end)}
+    end
+  end
 
   @impl true
   def handle_event("workspace-create", %{"name" => name}, socket),
@@ -100,10 +146,88 @@ defmodule RavixWeb.WorkspacePeopleLive do
   end
 
   # The guard passes the hub notice on only while the viewer is still a
-  # member; see `WorkspaceGuard.hold/3`.
+  # member; see `WorkspaceGuard.hold/3`. A connection bound elsewhere
+  # announces itself the same way.
   @impl true
-  def handle_info({:workspace_hub, _id, :members}, socket), do: {:noreply, reload(socket)}
+  def handle_info({:workspace_hub, _id, :members}, socket),
+    do: {:noreply, socket |> reload() |> load_catalog()}
+
   def handle_info(_message, socket), do: {:noreply, socket}
+
+  # The guard has re-read the membership before either result lands.
+  @impl true
+  def handle_async(:refresh, {:ok, result}, socket) do
+    socket = assign(socket, refreshing: false) |> load_catalog()
+
+    case result do
+      {:ok, %{errors: [], collisions: []}} ->
+        {:noreply, socket}
+
+      {:ok, %{errors: errors, collisions: collisions}} ->
+        {:noreply, put_flash(socket, :error, WorkspaceGitHub.refresh_problem(errors, collisions))}
+
+      {:error, reason} ->
+        {:noreply, put_flash(socket, :error, RavixWeb.Error.from(reason).message)}
+    end
+  end
+
+  def handle_async(:refresh, {:exit, _reason}, socket),
+    do:
+      {:noreply,
+       socket
+       |> assign(refreshing: false)
+       |> put_flash(:error, "GitHub could not be read. Try Refresh again.")}
+
+  def handle_async(:add_repo, {:ok, {:ok, %{project: project}}}, socket),
+    do: {:noreply, socket |> assign(adding: nil) |> push_navigate(to: "/p/#{project.id}")}
+
+  def handle_async(:add_repo, {:ok, {:error, reason}}, socket) do
+    {:noreply,
+     socket
+     |> assign(adding: nil)
+     |> put_flash(:error, RavixWeb.Error.from(reason, noun: "repository").message)
+     |> load_catalog()}
+  end
+
+  def handle_async(:add_repo, {:exit, _reason}, socket),
+    do:
+      {:noreply,
+       socket
+       |> assign(adding: nil)
+       |> put_flash(:error, "The repository could not be added. Try again.")}
+
+  defp load_catalog(socket) do
+    case Repositories.catalog(socket.assigns.current_user, workspace_id(socket)) do
+      {:ok, catalog} -> assign(socket, catalog: catalog)
+      {:error, _} -> assign(socket, catalog: nil)
+    end
+  end
+
+  # Only once connected, and only when there is a live connection whose
+  # catalog is missing or older than `@stale_ms`: a page render never asks
+  # GitHub itself.
+  defp refresh_if_stale(socket) do
+    catalog = socket.assigns.catalog
+
+    stale? =
+      catalog != nil and
+        Enum.any?(catalog.installations, &(Installation.status(&1) == :active)) and
+        (is_nil(catalog.refreshed_at) or
+           DateTime.diff(DateTime.utc_now(), catalog.refreshed_at, :millisecond) > @stale_ms)
+
+    if connected?(socket) and stale?, do: start_refresh(socket), else: socket
+  end
+
+  defp start_refresh(%{assigns: %{refreshing: true}} = socket), do: socket
+
+  defp start_refresh(socket) do
+    user = socket.assigns.current_user
+    id = workspace_id(socket)
+
+    socket
+    |> assign(refreshing: true)
+    |> start_async(:refresh, fn -> Repositories.refresh(user, id) end)
+  end
 
   defp settled(:ok, socket, message),
     do: {:noreply, socket |> put_flash(:info, message) |> reload()}
@@ -255,6 +379,13 @@ defmodule RavixWeb.WorkspacePeopleLive do
             </li>
           </ul>
         </section>
+        <WorkspaceGitHub.section
+          workspace={@workspace}
+          role={@role}
+          catalog={@catalog}
+          refreshing={@refreshing}
+          adding={@adding}
+        />
       </main>
     </Layouts.app>
     """

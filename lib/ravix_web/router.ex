@@ -80,6 +80,9 @@ defmodule RavixWeb.Router do
     get "/auth/github", AuthController, :github
     get "/api/auth/callback", AuthController, :callback
     get "/api/auth/install", AuthController, :install
+    # Connecting GitHub to a workspace (ADR 0009 phase 4b); GitHub returns
+    # to `/api/auth/callback` above.
+    get "/w/:workspace/github/connect", WorkspaceGitHubController, :connect
     post "/auth/signout", AuthController, :signout
     get "/preview/:track_id", PreviewController, :open
 
