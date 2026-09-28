@@ -9,7 +9,13 @@ defmodule RavixWeb.TrackLive do
   # declared matches no clause -- exactly as the `in ~w(...)` guards these
   # replace behaved.
   @tabs %{"files" => :files, "changes" => :changes, "checks" => :checks, "preview" => :preview}
-  @dialogs %{"rename" => :rename, "close" => :close, "people" => :people, "pull" => :pull}
+  @dialogs %{
+    "rename" => :rename,
+    "close" => :close,
+    "rebuild" => :rebuild,
+    "people" => :people,
+    "pull" => :pull
+  }
 
   # How often the page re-reads everything without being told to.
   #
@@ -461,18 +467,21 @@ defmodule RavixWeb.TrackLive do
     {:noreply, begin(socket, :pull, &Tracks.open_pull(&1, &2, attrs))}
   end
 
-  # Rename opens on the name the track has now, so the dialog is a correction
-  # rather than a blank box. The form is rebuilt each time it opens, which is
-  # also what discards a refusal from the last attempt.
-  defp open_dialog(%{assigns: %{track: %{sandbox_layout: :dedicated}}} = socket, :close) do
+  # Closing and rebuilding a dedicated track both delete its machine, so both
+  # say what that machine still holds before anyone confirms.
+  defp open_dialog(%{assigns: %{track: %{sandbox_layout: :dedicated}}} = socket, dialog)
+       when dialog in [:close, :rebuild] do
     user = socket.assigns.current_user
     id = socket.assigns.track_id
 
     socket
-    |> assign(dialog: :close, close_info: nil)
+    |> assign(dialog: dialog, close_info: nil)
     |> workspace_async(:close_info, fn -> Tracks.close_info(user, id) end)
   end
 
+  # Rename opens on the name the track has now, so the dialog is a correction
+  # rather than a blank box. The form is rebuilt each time it opens, which is
+  # also what discards a refusal from the last attempt.
   defp open_dialog(socket, :rename),
     do:
       assign(socket,
@@ -2235,6 +2244,45 @@ defmodule RavixWeb.TrackLive do
 
   defp owner_or_creator?(user, track),
     do: Access.creator?(user, track) or (track.visibility == :project and track.role == :owner)
+
+  # What deleting a dedicated track's machine would take with it, as
+  # `Tracks.close_info/2` found it; shared by the Close and Rebuild dialogs.
+  attr :id, :string, required: true
+  attr :info, :any, required: true
+
+  defp machine_changes(assigns) do
+    ~H"""
+    <p id={@id}>
+      <%= case @info do %>
+        <% nil -> %>
+          Checking for uncommitted changes and unpushed commits…
+        <% :unavailable -> %>
+          The machine could not be checked. It may contain uncommitted changes or unpushed commits.
+        <% info -> %>
+          {if info.dirty,
+            do: "Uncommitted changes will be deleted.",
+            else: "No uncommitted changes found."}
+          <%= case info.unpushed do %>
+            <% :unknown -> %>
+              Unpushed commits could not be checked. The branch may have no upstream, or the check may have failed.
+            <% true -> %>
+              Unpushed commits will be deleted.
+            <% false -> %>
+              No unpushed commits found.
+          <% end %>
+      <% end %>
+    </p>
+    """
+  end
+
+  # Only a track on its own machine can be rebuilt on its own. It is offered
+  # from the header while that machine is ready, and called out in the setup
+  # banner when secrets changed under it, the one case that needs a rebuild.
+  defp rebuildable?(user, track) do
+    track.sandbox_layout == :dedicated and owner_or_creator?(user, track) and
+      (track.setup_error_code == "secrets_changed" or
+         (Ravix.Config.dedicated_opens_enabled?(user) and track.sandbox_state == :ready))
+  end
 
   # The markdown of every block on the page, rendered once per body.
   #

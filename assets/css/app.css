@@ -846,6 +846,16 @@ html[data-inspector="closed"] #inspector-toggle .label-show { display: inline; }
   border: 1px dashed var(--line-strong); border-radius: 8px; background: transparent;
 }
 .workspace-queue { padding: 8px 20px; max-height: 140px; overflow: auto; font-size: 12px; }
+/* Setup progress or failure above the composer. A failure that needs the
+   machine rebuilt carries that one action; routine rebuilds live in the header. */
+#track-setup-status {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px;
+  margin: 0 16px 8px; padding: 8px 12px; font-size: 12px;
+  border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface);
+}
+#track-setup-status[role="alert"] { border-color: var(--danger-line); background: var(--danger-bg); }
+#track-setup-status p { flex-basis: 100%; margin: 0; color: var(--dim); }
+#track-setup-status button { margin-left: auto; }
 
 /* ── the composer ──────────────────────────────────────────────────────── */
 

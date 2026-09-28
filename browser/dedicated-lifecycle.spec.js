@@ -48,7 +48,9 @@ test('a flagged track copies secrets, becomes ready, and deletes its own machine
   expect(siblingVault.id).not.toBe(vaultId);
   await page.goto(firstUrl);
   await expect(page.locator('[data-phx-main]')).toHaveClass(/phx-connected/);
-  const rebuild = page.locator('#rebuild-track-machine');
+  await expect(page.locator('#rebuild-track-machine')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Rebuild machine', exact: true }).click();
+  const rebuild = page.getByRole('dialog', { name: 'Rebuild machine', exact: true });
   await expect(rebuild).toContainText("Rebuilding deletes only this track's machine");
   await expect(rebuild).toContainText('Sibling tracks are unaffected.');
   await rebuild.locator('input[type=checkbox]').check();

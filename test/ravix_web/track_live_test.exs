@@ -112,7 +112,7 @@ defmodule RavixWeb.TrackLiveTest do
     assert has_element?(ctx.view, "#close-machine-changes", "could not be checked")
   end
 
-  test "ready dedicated rebuild wording names only this machine and protects siblings", ctx do
+  test "a ready dedicated track offers rebuild from the header, not the transcript", ctx do
     stub(Ravix.Config, :dedicated_opens_enabled?, fn _ -> true end)
 
     Repo.update!(
@@ -122,8 +122,33 @@ defmodule RavixWeb.TrackLiveTest do
     {:ok, parent, _} = live(ctx.conn, "/p/#{ctx.project.id}/t/#{ctx.track.id}")
     view = find_live_child(parent, "track-host")
     settle(view)
-    assert render(view) =~ "Rebuilding deletes only this track&#39;s machine"
-    assert render(view) =~ "Sibling tracks are unaffected."
+    refute has_element?(view, "#rebuild-track-machine")
+    refute has_element?(view, "#secrets-changed-rebuild")
+
+    view |> element("button[aria-label='Rebuild machine']") |> render_click()
+    render_async(view)
+    assert has_element?(view, "#rebuild-dialog", "deletes only this track's machine")
+    assert has_element?(view, "#rebuild-dialog", "Sibling tracks are unaffected.")
+    assert has_element?(view, "#rebuild-machine-changes", "could not be checked")
+    assert has_element?(view, "#rebuild-track-machine input[type=checkbox][required]")
+
+    expect(Tracks, :rebuild_machine, fn user, id, opts ->
+      assert {user.id, id, opts} == {ctx.user.id, ctx.track.id, [force: true]}
+      :ok
+    end)
+
+    view |> form("#rebuild-track-machine", %{force: "true"}) |> render_submit()
+    refute has_element?(view, "#rebuild-dialog")
+  end
+
+  test "a track on the shared project machine offers no rebuild", ctx do
+    stub(Ravix.Config, :dedicated_opens_enabled?, fn _ -> true end)
+    Repo.update!(Ecto.Changeset.change(ctx.track, sandbox_state: :ready))
+
+    {:ok, parent, _} = live(ctx.conn, "/p/#{ctx.project.id}/t/#{ctx.track.id}")
+    view = find_live_child(parent, "track-host")
+    settle(view)
+    refute has_element?(view, "button[aria-label='Rebuild machine']")
   end
 
   test "disconnect health follows the selected thread rather than its project default", ctx do
@@ -372,7 +397,11 @@ defmodule RavixWeb.TrackLiveTest do
 
     render(ctx.view)
     render_async(ctx.view)
-    assert has_element?(ctx.view, "#rebuild-track-machine", "Secrets changed — rebuild to apply")
+    assert has_element?(ctx.view, "#track-setup-status", "Secrets changed — rebuild to apply")
+    refute has_element?(ctx.view, "#track-setup-status", "Retry setup")
+    ctx.view |> element("#secrets-changed-rebuild") |> render_click()
+    render_async(ctx.view)
+    assert has_element?(ctx.view, "#rebuild-dialog", "secrets changed")
     assert has_element?(ctx.view, "#rebuild-track-machine input[required]")
   end
 
@@ -407,7 +436,8 @@ defmodule RavixWeb.TrackLiveTest do
 
     view = find_live_child(parent, "track-host")
     settle(view)
-    refute has_element?(view, "#rebuild-track-machine")
+    refute has_element?(view, "#secrets-changed-rebuild")
+    refute has_element?(view, "button[aria-label='Rebuild machine']")
     render_hook(view, "rebuild-machine", %{force: "true"})
     assert Tracks.Sandbox.Store.operations(ctx.track.id) == []
 
@@ -3323,7 +3353,7 @@ defmodule RavixWeb.TrackLiveTest do
     settle(ctx.view)
     refute has_element?(ctx.view, "[phx-value-name=rename]")
     refute has_element?(ctx.view, "[phx-value-name=close]")
-    refute has_element?(ctx.view, "#rebuild-track-machine")
+    refute has_element?(ctx.view, "[phx-value-name=rebuild]")
     render_click(ctx.view, "dialog", %{name: "people"})
     refute has_element?(ctx.view, "#track-visibility-form")
     refute has_element?(ctx.view, "[phx-submit=invite-person]")
