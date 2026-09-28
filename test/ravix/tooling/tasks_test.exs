@@ -43,6 +43,56 @@ defmodule Ravix.Tooling.TasksTest do
     assert Repo.get_by!(Ravix.Tracks.TurnFailure, turn_id: "mine").state == "failed"
   end
 
+  test "failure evidence survives incremental pages", %{p: p, track: track} do
+    {:ok, task} = Tasks.send(p, track.id, "hello", "split-outage")
+    QueueStore.mark_delivered(task.id)
+    {first, rest} = Enum.split(Ravix.AgentOutageFixture.events(), 5)
+    expect(Fountain, :turns, fn _, _ -> {:ok, [turn(task.id, "mine", "running")]} end)
+
+    expect(Fountain, :events_page, fn _, _, _ ->
+      {:ok, %{events: first, next_cursor: 5, has_more: false}}
+    end)
+
+    assert {:ok, %{state: "TASK_STATE_WORKING"}} = Tasks.get(p, task.id)
+    expect(Fountain, :turns, fn _, _ -> {:ok, [turn(task.id, "mine", "completed")]} end)
+
+    expect(Fountain, :events_page, fn _, _, opts ->
+      assert opts[:after] == 5
+      {:ok, %{events: rest, next_cursor: 8, has_more: false}}
+    end)
+
+    assert {:ok,
+            %{
+              state: "TASK_STATE_FAILED",
+              failure_code: "agent_provider_unreachable",
+              reply_events: []
+            }} = Tasks.get(p, task.id)
+  end
+
+  test "old-release receipt keeps text written after the expand migration", %{p: p, track: track} do
+    {:ok, task} = Tasks.send(p, track.id, "hello", "legacy")
+    QueueStore.mark_delivered(task.id)
+
+    task
+    |> Ecto.Changeset.change(
+      state: "TASK_STATE_WORKING",
+      cursor: 1,
+      turn_id: "mine",
+      result: "old ",
+      reply_events: nil
+    )
+    |> Repo.update!()
+
+    expect(Fountain, :turns, fn _, _ -> {:ok, [turn(task.id, "mine", "completed")]} end)
+
+    expect(Fountain, :events_page, fn _, _, opts ->
+      assert opts[:after] == 1
+      {:ok, %{events: [event(2, "mine", "new")], next_cursor: 2, has_more: false}}
+    end)
+
+    assert {:ok, %{state: "TASK_STATE_COMPLETED", result: "old new"}} = Tasks.get(p, task.id)
+  end
+
   test "explicit thread delivery and polling stay in that conversation", %{p: p, track: track} do
     {:ok, thread} =
       Ravix.Tracks.Store.create_thread(%{
@@ -135,11 +185,11 @@ defmodule Ravix.Tooling.TasksTest do
     stub(Fountain, :turns, fn _, _ -> {:ok, [turn(task.id, "mine", "ended")]} end)
 
     expect(Fountain, :events_page, fn _, _, opts ->
-      assert opts[:after] == nil
+      assert opts[:after] == 1
 
       {:ok,
        %{
-         events: [event(1, "mine", "one "), event(2, "mine", "two")],
+         events: [event(2, "mine", "two")],
          next_cursor: 2,
          has_more: false
        }}

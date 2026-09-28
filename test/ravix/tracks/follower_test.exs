@@ -71,6 +71,40 @@ defmodule Ravix.Tracks.FollowerTest do
     assert_receive {:transcript, ^track_id, %Event{id: 3}}, 1_000
   end
 
+  test "settle-only topic filters output at the publisher", ctx do
+    id = ctx.track_id
+    Phoenix.PubSub.subscribe(Ravix.PubSub, Follower.settle_topic(id))
+    done = FakeTransport.frame(3, "stage", %{id: 3, kind: "stage", stage: "turn", state: "done"})
+
+    client =
+      FakeTransport.client(
+        [
+          {%{method: "GET", path: "/api/conversations/#{ctx.conversation_id}/stream"},
+           {200, [], frames([1, 2]) ++ [done]}}
+        ],
+        verify: false
+      )
+
+    # Keep the Follower alive without joining the full transcript topic in this process.
+    owner = self()
+
+    reader =
+      spawn(fn ->
+        {:ok, _} = subscribe(ctx, client: client)
+        send(owner, :following)
+
+        receive do
+          :stop -> Follower.unsubscribe(id)
+        end
+      end)
+
+    assert_receive :following
+    assert_receive {:transcript, ^id, %Event{id: 3}}, 1000
+    refute_received {:transcript, ^id, %Event{id: 1}}
+    refute_received {:transcript, ^id, %Event{id: 2}}
+    send(reader, :stop)
+  end
+
   describe "a turn's prompt" do
     defp opening(id), do: %{id: id, turn_id: "t1", kind: "stage", stage: "turn", state: "started"}
 
