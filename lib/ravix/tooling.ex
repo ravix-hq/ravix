@@ -83,6 +83,30 @@ defmodule Ravix.Tooling do
   defp execute(p, "cancel_task", a),
     do: map_result(Tasks.cancel(p, a["task_id"]), &Tasks.present/1)
 
+  # A close takes the creator's access with it, so a retry of one that
+  # finished is answered from its receipt before the door would refuse it.
+  # Every refusal comes before the close, so it releases the request_id.
+  defp execute(p, "close_track", a) do
+    with :none <- Mutations.replay(p, "close_track", a),
+         :ok <- mutation_access(p, "close_track", a) do
+      Mutations.run(
+        p,
+        "close_track",
+        a,
+        fn ->
+          map_result(
+            Tracks.close_finished(p.user, a["track_id"],
+              force: a["force"] == true,
+              require_merged: a["require_merged"] == true
+            ),
+            &%{closed: true, pr: &1.pr}
+          )
+        end,
+        release: true
+      )
+    end
+  end
+
   defp execute(p, name, a) do
     with :ok <- mutation_access(p, name, a) do
       Mutations.run(p, name, a, fn -> mutate(p, name, a) end)
@@ -96,6 +120,12 @@ defmodule Ravix.Tooling do
 
   defp mutation_access(p, "update_project_settings", a),
     do: access_result(Access.project_of(p.user, a["project_id"]))
+
+  defp mutation_access(p, "close_track", a) do
+    with {:ok, %{track: track, role: role}} <- Access.track_access(p.user, a["track_id"]) do
+      Access.require_owner_or_cutter(role, p.user, track, "close a track")
+    end
+  end
 
   defp access_result({:ok, _}), do: :ok
   defp access_result(error), do: error

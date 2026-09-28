@@ -92,6 +92,7 @@ receipt, so tool calls do not hold open the connection until an agent finishes.
 | `send_prompt` | `track_id`, `prompt`, `request_id` |
 | `get_task` | `task_id` |
 | `cancel_task` | `task_id` |
+| `close_track` | `track_id`, `request_id`; optional `force`, `require_merged` |
 | `read_track` | `track_id`; optional integer event cursor `after`, `limit` |
 
 Schemas are discoverable through `tools/list`; the catalog is filtered by scope.
@@ -102,7 +103,7 @@ data is capped, with `truncated: true` on oversized events.
 
 Settings allow name, runtime, model, instructions, setup script and packages.
 Secret names can be read, but secret values are never returned. Secret writes,
-sharing changes, project deletion/rebuild and track closure are not exposed.
+sharing changes and project deletion/rebuild are not exposed.
 Setup scripts and agent instructions can execute code, which the consent page
 explicitly explains.
 
@@ -291,6 +292,26 @@ external event arrives during the refresh. It is false for wholly terminal or
 held snapshots. Missing events and provider outages can delay persistence until
 a successful backstop pass; `stale: false` is not a provider freshness timestamp.
 All reads still require the submitting principal and OAuth client.
+
+### Closing a track
+
+`close_track` (`tracks:write`) closes a track the way Close in the browser does,
+with the browser's rule: the project owner or the track's creator, and only its
+creator for a private track. Anybody else who can see the track gets
+`forbidden`; anybody who cannot gets `not_found`. It is irreversible: the
+machine or worktree is discarded and the track's unsent prompts are cancelled.
+
+Without `force: true` it refuses a track with a running turn on any thread
+(`track_running`), with queued or sending prompts (`prompts_queued`), or whose
+running state Fountain cannot report (`status_unavailable`). On a shared
+machine `force` also removes the worktree with its uncommitted changes.
+`require_merged: true` refuses unless the track's pull request is merged
+(`pr_not_merged`), reading GitHub past its five-minute cache. The pull request
+is read before the running and queue checks, which come last before the close. A successful close returns `{"closed": true, "pr": {"number":
+218, "state": "merged"}}`; `state` is `merged`, `open`, `closed`, `none` or
+`unknown` (GitHub could not be read, which `require_merged` treats as not
+merged). A refusal releases its `request_id`; retrying a completed close with
+the same ID returns the original result even after the creator loses access.
 
 ### Setup recovery and PR origins
 

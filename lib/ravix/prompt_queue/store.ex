@@ -377,6 +377,14 @@ defmodule Ravix.PromptQueue.Store do
   def waiting?(track_id),
     do: Repo.exists?(from p in Item, where: p.track_id == ^track_id and p.status == :queued)
 
+  @doc "Whether a prompt on this track is queued or being sent."
+  @spec pending?(String.t()) :: boolean()
+  def pending?(track_id),
+    do:
+      Repo.exists?(
+        from p in Item, where: p.track_id == ^track_id and p.status in [:queued, :sending]
+      )
+
   @doc "Fail every unsent prompt, retaining its body for explicit retry."
   def fail_setup(track_id, reason, code \\ nil) do
     # ownership: no door — a setup worker holds this track's lease. Recheck
