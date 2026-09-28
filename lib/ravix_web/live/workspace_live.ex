@@ -759,6 +759,19 @@ defmodule RavixWeb.WorkspaceLive do
       {:noreply,
        socket |> assign(track_host: pid) |> select_notice_thread(socket.assigns.track_id)}
 
+  # A draft tab became a thread. The page already shows it; the URL names it
+  # too, so a reload or a copied link lands on the thread rather than the
+  # track's first one.
+  def handle_info({:thread_started, track_id, thread_id}, socket) do
+    if track_id == socket.assigns.track_id and socket.assigns.project,
+      do:
+        {:noreply,
+         push_patch(socket,
+           to: "/p/#{socket.assigns.project.id}/t/#{track_id}?thread=#{thread_id}"
+         )},
+      else: {:noreply, socket}
+  end
+
   # The people dialog did the removal. Either way the rail is now wrong --
   # a project you just left goes, and a project you took somebody off has a
   # different set of tracks under it -- so it is re-read and the dialog

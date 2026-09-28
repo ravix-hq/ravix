@@ -145,22 +145,29 @@ defmodule Ravix.Tracks.Store do
     |> Enum.group_by(& &1.track_id)
   end
 
-  def create_thread(attrs, generation \\ nil) do
+  @doc """
+  Insert a thread on an open track. `also`, run inside the same transaction
+  with the new row, returns `{:ok, _}` or `{:error, reason}`; an error rolls
+  the thread back with it, which is how a thread and its first prompt are
+  written together.
+  """
+  def create_thread(attrs, generation \\ nil, also \\ fn _thread -> {:ok, nil} end) do
     changeset = Thread.changeset(%Thread{}, attrs)
 
     if changeset.valid?,
-      do: Repo.transaction(fn -> insert_thread_locked(changeset, generation) end),
+      do: Repo.transaction(fn -> insert_thread_locked(changeset, generation, also) end),
       else: {:error, changeset}
   end
 
-  defp insert_thread_locked(changeset, expected_generation) do
+  defp insert_thread_locked(changeset, expected_generation, also) do
     track_id = Ecto.Changeset.get_field(changeset, :track_id)
 
     with %Track{closed_at: nil, sandbox_state: state, sandbox_generation: generation}
          when state not in [:closing, :terminated] <-
            Repo.one(from(t in Track, where: t.id == ^track_id, lock: "FOR UPDATE")),
          true <- is_nil(expected_generation) or generation == expected_generation,
-         {:ok, thread} <- Repo.insert(changeset) do
+         {:ok, thread} <- Repo.insert(changeset),
+         {:ok, _} <- also.(thread) do
       remember_runtime(track_id, thread.runtime)
       thread
     else

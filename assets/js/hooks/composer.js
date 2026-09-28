@@ -159,6 +159,15 @@ export const Composer = {
         ? "Review your message and reattach its images, then send to retry."
         : "Review your message, then send to retry.")
     })
+    // A draft thread's box is gone once the draft is sent or discarded, and
+    // what it remembered goes with it; the key names that box, not this one.
+    this.handleEvent("composer:forget", ({key}) => {
+      try {
+        localStorage.removeItem(DRAFT_PREFIX + key)
+      } catch {
+        // Nothing to forget.
+      }
+    })
     this.handleEvent("composer:clear", () => {
       this.el.value = ""
       this.forget()

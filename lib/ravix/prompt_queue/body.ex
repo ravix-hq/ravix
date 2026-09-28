@@ -99,6 +99,22 @@ defmodule Ravix.PromptQueue.Body do
 
   def in_thread(prompt, _row, _track), do: prompt
 
+  @doc """
+  A prompt as its sender wrote it, without the working-directory line
+  `in_thread/3` put in front of it for the agent. The transcript reads the
+  prompt back as delivered, and without this every message on an additional
+  thread was shown as an instruction from Ravix instead of the person's words.
+  """
+  @spec outside_thread(String.t()) :: String.t()
+  def outside_thread("[ravix] This conversation shares track " <> _ = prompt) do
+    case String.split(prompt, "\n\n", parts: 2) do
+      [_preamble, said] -> said
+      [_only] -> prompt
+    end
+  end
+
+  def outside_thread(prompt), do: prompt
+
   @doc "An empty body: no text, no attachments."
   @spec empty() :: t()
   def empty, do: %__MODULE__{prompt: "", images: []}

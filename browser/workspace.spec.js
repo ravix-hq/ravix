@@ -694,7 +694,8 @@ test('project, track, streaming, image upload, reconnect, and revocation', async
   await expect.poll(() => page.evaluate(() => window.liveSocket.getSocket().isConnected())).toBe(true);
   await expect(page.locator('[data-phx-main]')).toHaveClass(/phx-connected/);
   await expect(composer).toHaveValue('Draft survives reconnect');
-  // A new thread is blank and retains the track's branch, URL, and default draft.
+  // "+" opens a draft thread: a tab and a blank composer, with no thread made
+  // yet and the track's branch, URL and default draft left as they were.
   const trackUrl = page.url();
   // A new track is titled with its branch, which the header then shows once.
   const branch = (await page.locator('.project-tree-tracks [aria-current="page"] .track-title').textContent()).trim();
@@ -703,11 +704,10 @@ test('project, track, streaming, image upload, reconnect, and revocation', async
   const currentThread = threadTabs.locator('[aria-selected="true"]');
   const threadTab = id => threadTabs.locator(`button[data-thread-id="${id}"]`);
   const defaultThread = await currentThread.getAttribute('data-thread-id');
+  const threadCount = await threadTabs.locator('.thread-tab').count();
   await threadTabs.getByRole('button', { name: 'Add thread', exact: true }).click();
-  await expect(page.locator('#new-thread-form')).toBeVisible();
-  await page.locator('#new-thread-form').getByRole('button', { name: 'Create thread', exact: true }).click();
-  await expect(currentThread).not.toHaveAttribute('data-thread-id', defaultThread);
-  const nextThread = await currentThread.getAttribute('data-thread-id');
+  await expect(currentThread).toHaveAttribute('data-thread-id', 'draft');
+  await expect(page.locator('#draft-thread-empty')).toContainText('Your first message starts this thread.');
   await expect(composer).toHaveValue('');
   await expect(page.locator('.track-crumbs')).toContainText(branch);
   expect(page.url()).toBe(trackUrl);
@@ -715,12 +715,16 @@ test('project, track, streaming, image upload, reconnect, and revocation', async
   await threadTab(defaultThread).click();
   await expect(composer).toHaveValue('Draft survives reconnect');
   // The tabs use manual activation: focus followed by Enter switches.
-  await threadTab(nextThread).focus();
+  await threadTab('draft').focus();
   await page.keyboard.press('Enter');
-  await expect(threadTab(nextThread)).toHaveAttribute('aria-selected', 'true');
+  await expect(threadTab('draft')).toHaveAttribute('aria-selected', 'true');
   await expect(composer).toHaveValue('A separate thread draft');
   await threadTab(defaultThread).click();
   await expect(composer).toHaveValue('Draft survives reconnect');
+  // Discarding the draft made nothing: the tabs are the ones there were.
+  await threadTabs.getByRole('button', { name: 'Discard new thread', exact: true }).click();
+  await expect(threadTab('draft')).toHaveCount(0);
+  await expect(threadTabs.locator('.thread-tab')).toHaveCount(threadCount);
   const chooserOpened = page.waitForEvent('filechooser');
   await page.getByRole('button', { name: 'Choose images', exact: true }).click();
   const chooser = await chooserOpened;

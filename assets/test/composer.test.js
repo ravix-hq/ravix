@@ -160,3 +160,20 @@ test("retry preserves drafts and attachments, then restores a message for review
   receive("composer:retry", {text: "Text only", images: false})
   expect(document.querySelector("[data-composer-note]").textContent).toBe("Review your message, then send to retry.")
 })
+
+test("a sent or discarded draft thread's text is forgotten without touching this box", () => {
+  localStorage.setItem("ravix.draft.track:a:thread:draft:d1", "First message")
+  localStorage.setItem("ravix.draft.track:a", "This thread's words")
+  const {hook, receive} = mountHook(Composer, "textarea")
+  receive("composer:forget", {key: "track:a:thread:draft:d1"})
+  expect(localStorage.getItem("ravix.draft.track:a:thread:draft:d1")).toBeNull()
+  expect(hook.el.value).toBe("This thread's words")
+  expect(localStorage.getItem("ravix.draft.track:a")).toBe("This thread's words")
+  const unavailable = localStorage.removeItem
+  localStorage.removeItem = () => { throw new Error("storage disabled") }
+  try {
+    expect(() => receive("composer:forget", {key: "track:a"})).not.toThrow()
+  } finally {
+    localStorage.removeItem = unavailable
+  }
+})

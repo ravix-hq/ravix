@@ -20,6 +20,39 @@ defmodule Ravix.Tracks.Thread do
     field :closed_at, :utc_datetime_usec
   end
 
+  @title_length 40
+
+  @doc """
+  A title from a thread's first prompt: one line, about forty characters,
+  cut at a word boundary. A prompt with no words (an image on its own) is
+  "New thread".
+  """
+  @spec title_from(String.t() | nil) :: String.t()
+  def title_from(prompt) when is_binary(prompt) do
+    line = prompt |> String.split() |> Enum.join(" ")
+
+    cond do
+      line == "" ->
+        "New thread"
+
+      String.length(line) <= @title_length ->
+        line
+
+      true ->
+        cut = String.slice(line, 0, @title_length + 1)
+
+        words =
+          case String.split(cut, " ") do
+            [_single] -> String.slice(cut, 0, @title_length)
+            parts -> parts |> Enum.drop(-1) |> Enum.join(" ")
+          end
+
+        String.trim_trailing(words) <> "…"
+    end
+  end
+
+  def title_from(_prompt), do: "New thread"
+
   def changeset(thread, attrs) do
     thread
     |> cast(attrs, [

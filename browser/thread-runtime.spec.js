@@ -46,29 +46,32 @@ test('cohort threads attach the other runtime to the home disk and reuse its pro
     let guestAgentId;
     for (let n = 1; n <= 2; n++) {
       await page.getByRole('button', { name: 'Add thread', exact: true }).click();
-      const form = page.locator('#new-thread-form');
+      const form = page.locator('#draft-runtime');
+      const draftTab = page.locator('#thread-tab-draft');
       // All-dedicated projects use the saved project default for each new thread.
       await expect(form.getByLabel('Agent', { exact: true })).toHaveValue(home);
       if (home === 'claude' && n === 1) {
-        const dialog = page.getByRole('dialog', { name: 'New thread', exact: true });
-        await dialog.getByRole('button', { name: 'Connect to use Codex', exact: true }).click();
-        await dialog.getByRole('button', { name: 'API key', exact: true }).click();
-        await dialog.getByLabel('API key', { exact: true }).fill('mock-inline-thread-key');
-        await dialog.getByRole('button', { name: 'Connect Codex', exact: true }).click();
+        const connections = page.locator('.thread-connections');
+        await connections.getByRole('button', { name: 'Connect to use Codex', exact: true }).click();
+        await connections.getByRole('button', { name: 'API key', exact: true }).click();
+        await connections.getByLabel('API key', { exact: true }).fill('mock-inline-thread-key');
+        await connections.getByRole('button', { name: 'Connect Codex', exact: true }).click();
         await expect(form.getByLabel('Agent', { exact: true })).toHaveValue('codex');
-        await expect(dialog).toContainText('You are creating a Codex thread.');
+        await expect(draftTab).toContainText('Codex');
       }
       await form.getByLabel('Agent', { exact: true }).selectOption(guest);
       // Model options arrive with the server's runtime patch, after selectOption returns.
-      await expect(page.locator('#new-thread-dialog')).toContainText(
-        `You are creating a ${guest === 'codex' ? 'Codex' : 'Claude Code'} thread.`);
+      await expect(draftTab).toContainText(guest === 'codex' ? 'Codex · ' : 'Claude Code · ');
       const models = form.getByLabel('Model', { exact: true });
       const model = await models.locator('option').last().getAttribute('value');
       await models.selectOption(model);
-      await form.getByRole('button', { name: 'Create thread', exact: true }).click();
+      await page.getByRole('textbox', { name: 'Message', exact: true }).fill(`Guest thread ${n}`);
+      await page.getByRole('button', { name: 'Send', exact: true }).click();
       await expect(form).toHaveCount(0);
+      await expect(draftTab).toHaveCount(0);
       await expect(page.locator('.composer-model')).toContainText(guest === 'codex' ? 'Codex · ' : 'Claude Code · ');
       await expect(page.locator('.thread-tab[aria-selected=true] .thread-tab-agent')).toContainText(guest === 'codex' ? 'Codex · ' : 'Claude Code · ');
+      await expect(page.locator('.thread-tab[aria-selected=true] .thread-tab-title')).toHaveText(`Guest thread ${n}`);
       if (home === 'claude' && n === 1) {
         const homeTab = page.locator('.thread-tab').first();
         const notice = page.locator('#threads-working');
