@@ -144,6 +144,17 @@ defmodule Ravix.Projects.Store do
     %Project{} |> Project.changeset(attrs) |> Repo.insert()
   end
 
+  @doc """
+  Insert a project admitted to a workspace. The partial unique index
+  `projects_workspace_repo` refuses a second canonical project for the same
+  repository, as a changeset error on `repo_full_name`.
+  """
+  @spec create_admitted(map()) :: {:ok, Project.t()} | {:error, Ecto.Changeset.t()}
+  def create_admitted(attrs) do
+    attrs = attrs |> Map.new(fn {k, v} -> {to_string(k), v} end) |> Map.put("rev", 1)
+    %Project{} |> Project.admission_changeset(attrs) |> Repo.insert()
+  end
+
   @doc "One project by id, archived or not. Unscoped: callers establish ownership first."
   @spec get_project(String.t()) :: Project.t() | nil
   def get_project(id) when is_binary(id), do: Repo.get(Project, id)

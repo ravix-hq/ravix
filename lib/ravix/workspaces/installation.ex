@@ -22,7 +22,21 @@ defmodule Ravix.Workspaces.Installation do
     belongs_to :connected_by_user, Ravix.Accounts.User
     field :connected_at, :utc_datetime_usec
     field :revoked_at, :utc_datetime_usec
+    # Phase 4b: why its repositories are out of the catalog, and when the
+    # catalog last read it. See `Ravix.Workspaces.Repositories`.
+    field :suspended_at, :utc_datetime_usec
+    field :status_reason, :string
+    field :refreshed_at, :utc_datetime_usec
   end
+
+  @typedoc "Whether a connection's repositories are in the catalog, and if not why."
+  @type status :: :active | :suspended | :revoked
+
+  @doc "The connection's standing: revoked wins over suspended."
+  @spec status(t()) :: status()
+  def status(%__MODULE__{revoked_at: %DateTime{}}), do: :revoked
+  def status(%__MODULE__{suspended_at: %DateTime{}}), do: :suspended
+  def status(%__MODULE__{}), do: :active
 
   @doc "A connection. Mints the id and `connected_at` when absent."
   @spec changeset(t(), map()) :: Ecto.Changeset.t()

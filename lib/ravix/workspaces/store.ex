@@ -15,7 +15,16 @@ defmodule Ravix.Workspaces.Store do
   alias Ravix.Accounts.User
   alias Ravix.Projects.Project
   alias Ravix.Repo
-  alias Ravix.Workspaces.{Invite, Membership, RepositoryReservation, Workspace}
+
+  alias Ravix.Workspaces.{
+    CatalogRepo,
+    ConnectState,
+    Installation,
+    Invite,
+    Membership,
+    RepositoryReservation,
+    Workspace
+  }
 
   @doc "A workspace that exists and has not been archived, or nil."
   @spec live_workspace(String.t() | nil) :: Workspace.t() | nil
@@ -708,6 +717,281 @@ defmodule Ravix.Workspaces.Store do
 
   defp repo_key(%Project{} = project),
     do: project.normalized_repo_full_name || Project.normalize_repo(project.repo_full_name)
+
+  # ── GitHub connections and the catalog (phase 4b) ─────────────────────
+
+  @doc "Park a connect round trip under `key_hash`; sweeps rows older than `max_age_s`."
+  @spec put_connect_state(String.t(), String.t(), String.t(), pos_integer()) :: :ok
+  def put_connect_state(key_hash, workspace_id, user_id, max_age_s) do
+    cutoff = DateTime.add(DateTime.utc_now(), -max_age_s, :second)
+    Repo.delete_all(from s in ConnectState, where: s.created_at < ^cutoff)
+
+    Repo.insert!(%ConnectState{
+      key_hash: key_hash,
+      workspace_id: workspace_id,
+      user_id: user_id,
+      created_at: DateTime.utc_now()
+    })
+
+    :ok
+  end
+
+  @doc """
+  Take a parked connect round trip: deleted in the same statement that
+  finds it, so a replay finds nothing. Nil when absent or older than
+  `max_age_s`.
+  """
+  @spec take_connect_state(String.t(), pos_integer()) :: ConnectState.t() | nil
+  def take_connect_state(key_hash, max_age_s) do
+    cutoff = DateTime.add(DateTime.utc_now(), -max_age_s, :second)
+
+    case Repo.delete_all(from(s in ConnectState, where: s.key_hash == ^key_hash, select: s)) do
+      {1, [%ConnectState{created_at: at} = row]} ->
+        if DateTime.compare(at, cutoff) == :lt, do: nil, else: row
+
+      _ ->
+        nil
+    end
+  end
+
+  @doc """
+  Bind `installation_id` to `workspace_id` on `user_id`'s word. Binding it
+  again re-activates a revoked or suspended connection and clears its
+  reason; the same installation bound to other workspaces is untouched.
+  """
+  @spec bind_installation(String.t(), integer(), String.t() | nil, String.t()) ::
+          {:ok, Installation.t()}
+  def bind_installation(workspace_id, installation_id, account_login, user_id) do
+    now = DateTime.utc_now()
+
+    Repo.insert_all(
+      Installation,
+      [
+        %{
+          id: Ecto.UUID.generate(),
+          workspace_id: workspace_id,
+          installation_id: installation_id,
+          account_login: account_login,
+          connected_by_user_id: user_id,
+          connected_at: now
+        }
+      ],
+      on_conflict: [
+        set: [
+          account_login: account_login,
+          connected_by_user_id: user_id,
+          connected_at: now,
+          revoked_at: nil,
+          suspended_at: nil,
+          status_reason: nil
+        ]
+      ],
+      conflict_target: [:workspace_id, :installation_id]
+    )
+
+    {:ok,
+     Repo.get_by!(Installation, workspace_id: workspace_id, installation_id: installation_id)}
+  end
+
+  @doc "A workspace's connections, live first, then by when they were connected."
+  @spec installations(String.t()) :: [Installation.t()]
+  def installations(workspace_id) do
+    Repo.all(
+      from i in Installation,
+        where: i.workspace_id == ^workspace_id,
+        order_by: [asc: not is_nil(i.revoked_at), asc: i.connected_at, asc: i.id]
+    )
+  end
+
+  @doc """
+  Record what a refresh learned about one connection, and replace its
+  catalog rows with `repos` in the same transaction: an active connection's
+  repositories as GitHub listed them, or none for a suspended or revoked
+  one, so they leave the catalog with the reason shown beside it.
+  """
+  @spec record_refresh(Installation.t(), Installation.status(), String.t() | nil, [map()]) :: :ok
+  def record_refresh(%Installation{} = installation, status, reason, repos) do
+    now = DateTime.utc_now()
+
+    stamps =
+      case status do
+        :active -> [suspended_at: nil, status_reason: nil]
+        :suspended -> [suspended_at: installation.suspended_at || now, status_reason: reason]
+        :revoked -> [revoked_at: installation.revoked_at || now, status_reason: reason]
+      end
+
+    rows =
+      repos
+      |> Enum.uniq_by(& &1.github_repo_id)
+      |> Enum.map(&catalog_row(&1, installation, now))
+
+    {:ok, :ok} =
+      Repo.transaction(fn ->
+        Repo.update_all(
+          from(i in Installation, where: i.id == ^installation.id),
+          set: [refreshed_at: now] ++ stamps
+        )
+
+        Repo.delete_all(
+          from r in CatalogRepo, where: r.workspace_installation_id == ^installation.id
+        )
+
+        rows |> Enum.chunk_every(500) |> Enum.each(&Repo.insert_all(CatalogRepo, &1))
+        :ok
+      end)
+
+    :ok
+  end
+
+  defp catalog_row(repo, installation, now) do
+    %{
+      id: Ecto.UUID.generate(),
+      workspace_id: installation.workspace_id,
+      workspace_installation_id: installation.id,
+      github_repo_id: repo.github_repo_id,
+      full_name: repo.full_name,
+      normalized_repo_full_name: Project.normalize_repo(repo.full_name),
+      private: repo.private,
+      default_branch: repo.default_branch,
+      pushed_at: repo.pushed_at,
+      refreshed_at: now
+    }
+  end
+
+  @doc """
+  The catalog: every repository a live connection of the workspace reached
+  at its last refresh, one row per repository (a repository two connections
+  both reach appears once, through the earlier connection), most recently
+  pushed first.
+  """
+  @spec catalog(String.t()) :: [CatalogRepo.t()]
+  def catalog(workspace_id) do
+    Repo.all(
+      from r in CatalogRepo,
+        join: i in Installation,
+        on: i.id == r.workspace_installation_id,
+        where:
+          r.workspace_id == ^workspace_id and is_nil(i.revoked_at) and is_nil(i.suspended_at),
+        order_by: [asc: i.connected_at, asc: i.id],
+        preload: [workspace_installation: i]
+    )
+    |> Enum.uniq_by(& &1.github_repo_id)
+    |> Enum.sort_by(&(&1.pushed_at || ""), :desc)
+  end
+
+  @doc "The catalog row for a repository, by comparison name, or nil."
+  @spec catalog_repo(String.t(), String.t()) :: CatalogRepo.t() | nil
+  def catalog_repo(workspace_id, normalized) do
+    workspace_id |> catalog() |> Enum.find(&(&1.normalized_repo_full_name == normalized))
+  end
+
+  @doc """
+  The workspace's one project for a repository: live, not a legacy
+  duplicate, matched by comparison name. The partial unique index
+  `projects_workspace_repo` makes it at most one.
+  """
+  @spec canonical_project(String.t(), String.t()) :: Project.t() | nil
+  def canonical_project(workspace_id, normalized) do
+    # ownership: no door -- `Ravix.Workspaces.Repositories` asks after
+    # `Access.workspace_grant/3` admitted the caller to this workspace.
+    Repo.one(
+      from p in Project,
+        where:
+          p.workspace_id == ^workspace_id and p.normalized_repo_full_name == ^normalized and
+            is_nil(p.legacy_duplicate_at) and is_nil(p.archived_at) and
+            is_nil(p.deletion_requested_at)
+    )
+  end
+
+  @doc "The workspace's canonical projects by GitHub repository id."
+  @spec canonical_projects_by_repo_id(String.t(), [integer()]) :: %{integer() => Project.t()}
+  def canonical_projects_by_repo_id(_workspace_id, []), do: %{}
+
+  def canonical_projects_by_repo_id(workspace_id, repo_ids) do
+    # ownership: no door -- as `canonical_project/2`, behind `Access.workspace_grant/3`.
+    Repo.all(
+      from p in Project,
+        where:
+          p.workspace_id == ^workspace_id and p.github_repo_id in ^repo_ids and
+            is_nil(p.legacy_duplicate_at) and is_nil(p.archived_at) and
+            is_nil(p.deletion_requested_at)
+    )
+    |> Map.new(&{&1.github_repo_id, &1})
+  end
+
+  @doc "The workspace's canonical projects, keyed by comparison name."
+  @spec canonical_projects(String.t()) :: %{String.t() => Project.t()}
+  def canonical_projects(workspace_id) do
+    # ownership: no door -- as `canonical_project/2`, behind `Access.workspace_grant/3`.
+    Repo.all(
+      from p in Project,
+        where:
+          p.workspace_id == ^workspace_id and not is_nil(p.normalized_repo_full_name) and
+            is_nil(p.legacy_duplicate_at) and is_nil(p.archived_at) and
+            is_nil(p.deletion_requested_at)
+    )
+    |> Map.new(&{&1.normalized_repo_full_name, &1})
+  end
+
+  @doc """
+  The project `projects_workspace_repo` counts for a repository in a
+  workspace, live or not: every row but a marked legacy duplicate. An
+  archived or pending-deletion one still holds the slot, so admission must
+  not provision a second.
+  """
+  @spec index_holder(String.t(), String.t()) :: Project.t() | nil
+  def index_holder(workspace_id, normalized) do
+    # ownership: no door -- as `canonical_project/2`, behind `Access.workspace_grant/3`.
+    Repo.one(
+      from p in Project,
+        where:
+          p.workspace_id == ^workspace_id and p.normalized_repo_full_name == ^normalized and
+            is_nil(p.legacy_duplicate_at),
+        limit: 1
+    )
+  end
+
+  @doc "A canonical project by id, reread, or nil."
+  @spec canonical_project_by_id(String.t()) :: Project.t() | nil
+  def canonical_project_by_id(id) do
+    # ownership: no door -- a project `Ravix.Workspaces.Repositories` already
+    # found through the workspace, behind `Access.workspace_grant/3`, reread.
+    Repo.one(from p in Project, where: p.id == ^id and is_nil(p.legacy_duplicate_at))
+  end
+
+  @doc "Record GitHub's numeric id on a project that did not have it yet."
+  @spec set_github_repo_id(Project.t(), integer()) :: :ok
+  def set_github_repo_id(%Project{id: id}, github_repo_id) do
+    # ownership: no door -- a catalog refresh behind `Access.workspace_grant/3`.
+    Repo.update_all(
+      from(p in Project, where: p.id == ^id and is_nil(p.github_repo_id)),
+      set: [github_repo_id: github_repo_id]
+    )
+
+    :ok
+  end
+
+  @doc """
+  Follow a rename or transfer on GitHub: point a canonical project at the
+  repository's new name, keeping its id and everything on it. Refused
+  (`:taken`) when another canonical project of the workspace already has
+  that name, which the unique index would refuse too.
+  """
+  @spec rename_repo(Project.t(), String.t()) :: {:ok, Project.t()} | {:error, :taken}
+  def rename_repo(%Project{} = project, full_name) do
+    normalized = Project.normalize_repo(full_name)
+
+    # ownership: no door -- a catalog refresh or an admission, behind
+    # `Access.workspace_grant/3`, following GitHub's own rename.
+    project
+    |> Ecto.Changeset.change(repo_full_name: full_name, normalized_repo_full_name: normalized)
+    |> Ecto.Changeset.unique_constraint(:repo_full_name, name: :projects_workspace_repo)
+    |> Repo.update()
+    |> case do
+      {:ok, project} -> {:ok, project}
+      {:error, _changeset} -> {:error, :taken}
+    end
+  end
 
   # ── operator data steps (the Ravi seed) ───────────────────────────────
   #

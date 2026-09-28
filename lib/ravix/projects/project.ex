@@ -104,6 +104,19 @@ defmodule Ravix.Projects.Project do
     )
   end
 
+  @doc """
+  A project admitted to a workspace (ADR 0009 phase 4b): `changeset/2` plus
+  the workspace, its connection and GitHub's repository id, which only
+  admission writes.
+  """
+  @spec admission_changeset(t(), map()) :: Ecto.Changeset.t()
+  def admission_changeset(project, attrs) do
+    project
+    |> changeset(attrs)
+    |> cast(attrs, ~w(workspace_id workspace_installation_id github_repo_id)a)
+    |> validate_required(~w(workspace_id workspace_installation_id repo_full_name)a)
+  end
+
   # The dual write for the two ADR 0009 fields whose meaning is the same as
   # a legacy column's. An older release inserts nulls here instead, which
   # `Ravix.Workspaces.Backfill` fills and `Ravix.Workspaces` reads around.
