@@ -337,7 +337,7 @@ test('home quick start creates a scratch project and recent navigation survives 
     'Search repositories, or leave empty for scratch',
   );
   await page.getByRole('button', { name: 'Create project', exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'Plans', exact: true })).toBeVisible();
+  await expect(page.locator('#crumb-plans')).toBeVisible();
   await expect(page.locator('.crumbs')).toContainText('Quick start quality');
   await capture(page, 'project-empty');
   await page.getByRole('link', { name: 'Home', exact: true }).first().click();
@@ -347,7 +347,7 @@ test('home quick start creates a scratch project and recent navigation survives 
   await page.getByRole('button', { name: /^New project/ }).click();
   await page.getByLabel('Project name', { exact: true }).fill('A much longer project name to verify columns and narrow screen wrapping');
   await page.getByRole('button', { name: 'Create project', exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'Plans', exact: true })).toBeVisible();
+  await expect(page.locator('#crumb-plans')).toBeVisible();
   await page.getByRole('link', { name: 'Home', exact: true }).first().click();
   await expect(recent.getByRole('link')).toHaveCount(2);
   await recentColumns(page);
@@ -360,7 +360,7 @@ test('home quick start creates a scratch project and recent navigation survives 
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'daylight');
   await recent.getByRole('link', { name: /Quick start quality/ }).click();
   await expect(page).toHaveURL(/\/p\//);
-  await expect(page.getByRole('heading', { name: 'Plans', exact: true })).toBeVisible();
+  await expect(page.locator('#crumb-plans')).toBeVisible();
   await expect(page.locator('.crumbs')).toContainText('Quick start quality');
   // Exact: an empty inbox must not put a "0" badge in the link's name.
   await page.getByRole('link', { name: 'Inbox', exact: true }).first().click();
@@ -1131,8 +1131,8 @@ test('shared project prefixes stay muted and truncate across every theme', async
   const name = 'Shared project with a deliberately long name for a narrow rail';
   await page.getByLabel('Project name', { exact: true }).fill(name);
   await page.getByRole('button', { name: 'Create project', exact: true }).click();
-  // An owner's project page opens on its plans (#158), not the track picker.
-  await expect(page.getByRole('heading', { name: 'Plans', exact: true })).toBeVisible();
+  // An owner's project page links to its plans (RAV-8), not the track picker.
+  await expect(page.locator('#crumb-plans')).toBeVisible();
   const projectPath = new URL(page.url()).pathname;
   await expect(page.locator('.workspace-project-name.selected .project-label')).toHaveText(name);
   await expect(page.locator('.workspace-project-name.selected .project-label .dim')).toHaveCount(0);

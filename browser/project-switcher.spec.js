@@ -23,7 +23,7 @@ test('project tree and quick-jump navigate with keyboard and fit desktop and pho
     await page.getByRole('button', { name: /^New project/ }).click();
     await page.getByLabel('Project name', { exact: true }).fill(name);
     await page.getByRole('button', { name: 'Create project', exact: true }).click();
-    await expect(page.getByRole('heading', { name: 'Plans', exact: true })).toBeVisible();
+    await expect(page.locator('#crumb-plans')).toBeVisible();
     const path = new URL(page.url()).pathname;
     await page.locator('#yard .workspace-project.current .project-add').click();
     const dialog = page.getByRole('dialog', { name: 'New track', exact: true });
