@@ -127,10 +127,8 @@
           threads={@threads}
           states={@thread_states}
           thread_id={@thread_id}
-          adding={
-            :add_thread in @pending or
-              (@track.sandbox_layout == :dedicated and @track.sandbox_state != :ready)
-          }
+          draft={@thread_draft}
+          adding={@track.sandbox_layout == :dedicated and @track.sandbox_state != :ready}
           enabled={Ravix.Config.threads_enabled?()}
         />
         <div
@@ -138,12 +136,18 @@
           role={if length(@threads) > 1 or Ravix.Config.threads_enabled?(), do: "tabpanel"}
           aria-labelledby={
             if length(@threads) > 1 or Ravix.Config.threads_enabled?(),
-              do: "thread-tab-#{@thread_id}"
+              do:
+                if(@thread_draft[:selected?],
+                  do: "thread-tab-draft",
+                  else: "thread-tab-#{@thread_id}"
+                )
           }
           tabindex="0"
           phx-hook="TranscriptTail"
           class="transcript-scroll"
-          data-track={@thread_id}
+          data-track={
+            if @thread_draft[:selected?], do: "draft-#{@thread_draft.id}", else: @thread_id
+          }
         >
           <div class="track-ribbon">
             <p :if={@header && @header.copy_of} class="track-copy">
@@ -160,8 +164,22 @@
               Settings changed — open a new track to use them
             </span>
           </div>
+          <%!-- A draft has no transcript: the thread it will be does not exist
+            until its first message, which is what this says. --%>
+          <div
+            :if={@thread_draft[:selected?]}
+            id="draft-thread-empty"
+            class="workspace-welcome conversation-start"
+          >
+            <span class="empty-icon"><.icon name="sparkle" size={22} /></span>
+            <h2>New thread</h2>
+            <p>Your first message starts this thread.</p>
+            <p class="hint">
+              Threads share this checkout and can run concurrently. Coordinate edits to avoid collisions.
+            </p>
+          </div>
           <button
-            :if={Transcript.History.more?(@page.history)}
+            :if={!@thread_draft[:selected?] && Transcript.History.more?(@page.history)}
             id="load-earlier"
             type="button"
             phx-click="load-earlier"
@@ -169,7 +187,7 @@
           >
             {if @earlier_loading, do: "Loading earlier…", else: "Load earlier"}
           </button>
-          <div id="transcript-turns" phx-update="stream">
+          <div :if={!@thread_draft[:selected?]} id="transcript-turns" phx-update="stream">
             <article :for={{dom_id, turn} <- @streams.turns} id={dom_id} class="workspace-turn">
               <.prompt_message
                 :if={turn.prompt || turn.image_count > 0}
@@ -216,7 +234,11 @@
           <button type="button" class="jump-latest" data-jump-latest>
             <.icon name="arrow-down" size={12} class="ico" />Jump to latest
           </button>
-          <p :if={@transcript_loading} class="workspace-welcome" role="status">
+          <p
+            :if={!@thread_draft[:selected?] && @transcript_loading}
+            class="workspace-welcome"
+            role="status"
+          >
             Loading conversation…
           </p>
           <%!-- Only once the transcript has actually been read. An empty
@@ -225,7 +247,10 @@
             in it --- for the moment before the read answers --- is a worse
             answer than saying nothing yet. --%>
           <div
-            :if={!@transcript_loading && Transcript.visible_turns(@page) == []}
+            :if={
+              !@thread_draft[:selected?] && !@transcript_loading &&
+                Transcript.visible_turns(@page) == []
+            }
             class="workspace-welcome conversation-start"
           >
             <span class="empty-icon"><.icon name="sparkle" size={22} /></span>
@@ -242,7 +267,7 @@
             </div>
           </div>
         </div>
-        <div :if={@queue != []} class="workspace-queue">
+        <div :if={!@thread_draft[:selected?] && @queue != []} class="workspace-queue">
           <div :for={item <- @queue}>
             <span class="chip">{queue_label(item.status)}</span> {item.prompt}
             <p :if={queue_feedback(item, @track.runtime || @project.runtime)}>
@@ -309,40 +334,21 @@
           </button>
         </div>
         <.loading_status :if={:retry in @pending}>Retrying track…</.loading_status>
-        <.loading_status :if={:thread_options in @pending}>Loading agents…</.loading_status>
-        <div :if={@thread_options} role="dialog" aria-label="New thread" id="new-thread-dialog">
-          <p>
-            You are creating a {RavixWeb.AgentName.label(
-              @thread_params["runtime"] || @thread_options.runtime
-            )} thread.
-          </p>
-          <form
-            id="new-thread-form"
-            phx-change="edit-thread"
-            phx-submit="add-thread"
-          >
-            <RavixWeb.Live.RuntimePicker.fields
-              options={@thread_options}
-              params={@thread_params}
-              name="new_thread"
-            />
-            <p class="hint">
-              Threads share this checkout and can run concurrently. Coordinate edits to avoid collisions.
-            </p>
-            <button type="submit" class="primary" disabled={:add_thread in @pending}>Create thread</button>
-            <button type="button" class="ghost" phx-click="cancel-thread">Cancel</button>
-          </form>
-          <RavixWeb.Live.ThreadConnect.panel
-            options={@thread_options}
-            connection={@thread_connect}
-            current_user={@current_user}
-            session_hash={@session_hash}
-          />
-        </div>
+        <.loading_status :if={@thread_draft[:selected?] && :thread_options in @pending}>
+          Loading agents…
+        </.loading_status>
+        <RavixWeb.Live.ThreadConnect.panel
+          :if={@thread_draft[:selected?]}
+          options={@thread_draft.options}
+          connection={@thread_connect}
+          current_user={@current_user}
+          session_hash={@session_hash}
+        />
         <p :if={@thread_error} id="thread-error" role="alert">{@thread_error}</p>
-        <.loading_status :if={:add_thread in @pending}>Adding thread…</.loading_status>
+        <.loading_status :if={:start_thread in @pending}>Starting thread…</.loading_status>
         <div class="workspace-composer">
           <.live_component
+            :if={!@thread_draft[:selected?]}
             module={RavixWeb.Live.AgentHealth}
             id="track-agent-health"
             track_id={@track.id}
@@ -379,6 +385,20 @@
             <div class="composer-box" data-composer-box>
               <div class="composer-note" role="status" data-composer-note hidden></div>
               <textarea
+                :if={@thread_draft[:selected?]}
+                id={"composer-draft-#{@thread_draft.id}"}
+                phx-hook="Composer"
+                name="text"
+                rows="2"
+                phx-debounce="blur"
+                placeholder="Start a new thread…"
+                aria-label="Message"
+                data-draft-key={"track:#{@track.id}:thread:draft:#{@thread_draft.id}"}
+                data-typing-event="typing"
+                disabled={is_nil(@track.conversation_id)}
+              ></textarea>
+              <textarea
+                :if={!@thread_draft[:selected?]}
                 id={"composer-#{@thread_id}"}
                 phx-hook="Composer"
                 name="text"
@@ -418,7 +438,29 @@
                 >
                   <.icon name="picture" size={17} />
                 </button>
+                <%!-- A draft's agent is still open, so it offers both; once the
+                  thread exists only the model changes. The picks are part of
+                  this form, and each change arrives as `validate`. --%>
+                <div
+                  :if={@thread_draft[:selected?] && @thread_draft.options}
+                  id="draft-runtime"
+                  class="draft-runtime"
+                >
+                  <RavixWeb.Live.RuntimePicker.fields
+                    options={@thread_draft.options}
+                    params={
+                      %{
+                        "runtime" => @thread_draft.runtime,
+                        "model" => @thread_draft.model,
+                        "preference_explicit" => to_string(@thread_draft.explicit?)
+                      }
+                    }
+                    name="thread_draft"
+                  />
+                  <p class="hint draft-default-hint">Also your default for new threads</p>
+                </div>
                 <.model_menu
+                  :if={!@thread_draft[:selected?]}
                   runtime={@track.runtime || @project.runtime}
                   model={@track.model || @track.default_model || @project.model}
                   project_model={
@@ -436,12 +478,16 @@
                   class="primary composer-send"
                   aria-label="Send"
                   title="Send"
-                  disabled={is_nil(@track.conversation_id)}
+                  disabled={
+                    is_nil(@track.conversation_id) or
+                      (@thread_draft[:selected?] &&
+                         (is_nil(@thread_draft.options) or :start_thread in @pending))
+                  }
                 >
                   <.icon name="arrow-up" size={16} />
                 </button>
                 <button
-                  :if={@track.status in [:running, :opening]}
+                  :if={!@thread_draft[:selected?] && @track.status in [:running, :opening]}
                   type="button"
                   class="ghost"
                   phx-click="interrupt"
@@ -451,10 +497,11 @@
                 </button>
                 <button
                   :if={
-                    (@track.setup_state == "failed" &&
-                       @track.setup_error_code != "secrets_changed") ||
-                      (@track.setup_state == "ready" && @track.status in [:failed, :opening]) ||
-                      parked?(@track)
+                    parked?(@track) ||
+                      (!@thread_draft[:selected?] &&
+                         ((@track.setup_state == "failed" &&
+                             @track.setup_error_code != "secrets_changed") ||
+                            (@track.setup_state == "ready" && @track.status in [:failed, :opening])))
                   }
                   type="button"
                   class="ghost"

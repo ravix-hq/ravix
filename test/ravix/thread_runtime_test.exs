@@ -95,7 +95,7 @@ defmodule Ravix.ThreadRuntimeTest do
              Tracks.thread_options(member, ctx.track.id)
 
     assert {:ok, _} =
-             Tracks.add_thread(ctx.owner, ctx.track.id, %{
+             start_thread(ctx.owner, ctx.track.id, %{
                runtime: "claude",
                preference_explicit: "true"
              })
@@ -110,7 +110,7 @@ defmodule Ravix.ThreadRuntimeTest do
 
     outsider = insert_user()
     assert {:error, _} = Tracks.thread_options(outsider, ctx.track.id)
-    assert {:error, _} = Tracks.add_thread(outsider, ctx.track.id, %{runtime: "claude"})
+    assert {:error, _} = start_thread(outsider, ctx.track.id, %{runtime: "claude"})
     assert {:ok, nil} = ThreadPreference.get(outsider, catalog)
   end
 
@@ -118,7 +118,7 @@ defmodule Ravix.ThreadRuntimeTest do
     alias Ravix.Accounts.ThreadPreference
     catalog = %Shapes.Catalog{runtimes: ["claude", "codex"], models: @models}
     {:ok, _} = ThreadPreference.put(ctx.owner, "claude", "anthropic/claude-opus-5", catalog)
-    assert {:ok, thread} = Tracks.add_thread(ctx.owner, ctx.track.id, %{})
+    assert {:ok, thread} = start_thread(ctx.owner, ctx.track.id, %{})
     assert thread.runtime == "claude"
     assert thread.model == "anthropic/claude-opus-5"
     assert Store.thread(ctx.track.id).runtime == nil
@@ -141,7 +141,7 @@ defmodule Ravix.ThreadRuntimeTest do
     assert {:ok, %{source: :track}} = Tracks.thread_options(ctx.owner, ctx.track.id)
 
     assert {:ok, _} =
-             Tracks.add_thread(ctx.owner, ctx.track.id, %{
+             start_thread(ctx.owner, ctx.track.id, %{
                "runtime" => "claude",
                "model" => "anthropic/claude-opus-5",
                "preference_explicit" => "false"
@@ -172,7 +172,7 @@ defmodule Ravix.ThreadRuntimeTest do
       assert {:ok, %{runtime: "claude", source: :project, model: model}} =
                Tracks.thread_options(ctx.owner, ctx.track.id)
 
-      assert {:ok, thread} = Tracks.add_thread(ctx.owner, ctx.track.id, %{})
+      assert {:ok, thread} = start_thread(ctx.owner, ctx.track.id, %{})
       assert thread.runtime == "claude"
       assert thread.model == model
       assert Ravix.Accounts.Store.get_user(ctx.owner.id).preferred_runtime == nil
@@ -183,7 +183,7 @@ defmodule Ravix.ThreadRuntimeTest do
     assert Store.thread(ctx.track.id).runtime == nil
 
     assert {:ok, thread} =
-             Tracks.add_thread(ctx.owner, ctx.track.id, %{model: "anthropic/claude-opus-5"})
+             start_thread(ctx.owner, ctx.track.id, %{model: "anthropic/claude-opus-5"})
 
     assert thread.runtime == "claude"
     assert thread.model == "anthropic/claude-opus-5"
@@ -198,10 +198,10 @@ defmodule Ravix.ThreadRuntimeTest do
     assert {:error,
             {:conflict, "guest_runtime_disabled",
              "Codex threads on this project aren't available yet."}} =
-             Tracks.add_thread(ctx.owner, ctx.track.id, %{runtime: "codex"})
+             start_thread(ctx.owner, ctx.track.id, %{runtime: "codex"})
 
     assert {:error, {:unprocessable, "invalid_runtime", "Choose Claude Code or Codex."}} =
-             Tracks.add_thread(ctx.owner, ctx.track.id, %{runtime: "unexpected"})
+             start_thread(ctx.owner, ctx.track.id, %{runtime: "unexpected"})
   end
 
   test "a member spends the owner's connection and cannot select a disconnected runtime", ctx do
@@ -219,7 +219,7 @@ defmodule Ravix.ThreadRuntimeTest do
     message = "#{ctx.owner.login} hasn't connected Codex."
 
     assert {:error, {:conflict, "agent_not_connected", ^message}} =
-             Tracks.add_thread(member, ctx.track.id, %{runtime: "codex"})
+             start_thread(member, ctx.track.id, %{runtime: "codex"})
   end
 
   for {home, guest} <- [{"claude", "codex"}, {"codex", "claude"}] do
@@ -239,7 +239,7 @@ defmodule Ravix.ThreadRuntimeTest do
         assert body.inference_credential_id == "owner-set"
         # A concurrent creator sees the durable reservation, never another POST.
         assert {:error, {:conflict, "runtime_agent_pending", _}} =
-                 Tracks.add_thread(ctx.owner, ctx.track.id, %{runtime: guest})
+                 start_thread(ctx.owner, ctx.track.id, %{runtime: guest})
 
         {:ok, %{"id" => "guest-agent"}}
       end)
@@ -256,9 +256,9 @@ defmodule Ravix.ThreadRuntimeTest do
         {:ok, Shapes.conversation(%{"id" => Ecto.UUID.generate(), "sandbox_id" => "disk"})}
       end)
 
-      assert {:ok, first} = Tracks.add_thread(ctx.owner, ctx.track.id, %{runtime: guest})
+      assert {:ok, first} = start_thread(ctx.owner, ctx.track.id, %{runtime: guest})
       assert first.runtime == guest
-      assert {:ok, next} = Tracks.add_thread(ctx.owner, ctx.track.id)
+      assert {:ok, next} = start_thread(ctx.owner, ctx.track.id)
       assert next.runtime == guest
       assert Enum.sort(RuntimeAgents.ids(project)) == Enum.sort([project.agent_id, "guest-agent"])
     end
@@ -268,10 +268,10 @@ defmodule Ravix.ThreadRuntimeTest do
     stub(Ravix.Config, :dedicated_opens_enabled?, fn _ -> true end)
     error = %Fountain.Error{status: 0, kind: :connection, message: "lost response"}
     expect(Fountain, :create_agent, fn _, _ -> {:error, error} end)
-    assert {:error, ^error} = Tracks.add_thread(ctx.owner, ctx.track.id, %{runtime: "codex"})
+    assert {:error, ^error} = start_thread(ctx.owner, ctx.track.id, %{runtime: "codex"})
 
     assert {:error, {:conflict, "runtime_agent_pending", _}} =
-             Tracks.add_thread(ctx.owner, ctx.track.id, %{runtime: "codex"})
+             start_thread(ctx.owner, ctx.track.id, %{runtime: "codex"})
 
     assert {:error, {:conflict, "runtime_agent_pending", _}} =
              RuntimeAgents.retire(ctx.project, ctx.client)
@@ -281,7 +281,7 @@ defmodule Ravix.ThreadRuntimeTest do
     stub(Ravix.Config, :dedicated_opens_enabled?, fn _ -> true end)
     error = %Fountain.Error{status: 422, kind: :api, message: "refused"}
     expect(Fountain, :create_agent, fn _, _ -> {:error, error} end)
-    assert {:error, ^error} = Tracks.add_thread(ctx.owner, ctx.track.id, %{runtime: "codex"})
+    assert {:error, ^error} = start_thread(ctx.owner, ctx.track.id, %{runtime: "codex"})
     assert Ravix.Projects.Store.runtime_agents(ctx.project.id) == []
   end
 
@@ -315,10 +315,10 @@ defmodule Ravix.ThreadRuntimeTest do
     end)
 
     assert {:ok, %{runtime: "codex"}} =
-             Tracks.add_thread(ctx.owner, ctx.track.id, %{runtime: "codex"})
+             start_thread(ctx.owner, ctx.track.id, %{runtime: "codex"})
 
     assert {:error, {:conflict, "guest_runtime_disabled", _}} =
-             Tracks.add_thread(ctx.owner, ctx.track.id, %{runtime: "claude"})
+             start_thread(ctx.owner, ctx.track.id, %{runtime: "claude"})
   end
 
   test "retirement fences new runtime allocations until a replacement is bound", ctx do
@@ -327,7 +327,7 @@ defmodule Ravix.ThreadRuntimeTest do
     reject(&Fountain.create_agent/2)
 
     assert {:error, {:conflict, "runtime_agent_pending", _}} =
-             Tracks.add_thread(ctx.owner, ctx.track.id, %{runtime: "codex"})
+             start_thread(ctx.owner, ctx.track.id, %{runtime: "codex"})
 
     assert {:error, :retiring} =
              Ravix.Projects.Store.reserve_runtime(ctx.project.id, "codex", ctx.project.agent_id)
@@ -436,7 +436,7 @@ defmodule Ravix.ThreadRuntimeTest do
       {:ok, %{"id" => id}}
     end)
 
-    assert {:ok, _} = Tracks.add_thread(ctx.owner, ctx.track.id)
+    assert {:ok, _} = start_thread(ctx.owner, ctx.track.id)
     assert Ravix.Projects.Store.get_project(ctx.project.id).credential_set_id == "new-owner-set"
     :ok = Ravix.Projects.Store.reserve_runtime(ctx.project.id, "codex")
     :ok = Ravix.Projects.Store.bind_runtime(ctx.project.id, "codex", "guest", "owner-set")
@@ -446,7 +446,7 @@ defmodule Ravix.ThreadRuntimeTest do
       {:ok, %{"id" => "guest"}}
     end)
 
-    assert {:ok, _} = Tracks.add_thread(ctx.owner, ctx.track.id, %{runtime: "codex"})
+    assert {:ok, _} = start_thread(ctx.owner, ctx.track.id, %{runtime: "codex"})
 
     assert [%{credential_set_id: "new-owner-set"}] =
              Ravix.Projects.Store.runtime_agents(ctx.project.id)
@@ -484,8 +484,17 @@ defmodule Ravix.ThreadRuntimeTest do
       {:ok, Shapes.conversation(%{"id" => "dedicated-thread", "sandbox_id" => "track-disk"})}
     end)
 
-    assert {:ok, _} = Tracks.add_thread(ctx.owner, ctx.track.id, %{runtime: "codex"})
+    assert {:ok, _} = start_thread(ctx.owner, ctx.track.id, %{runtime: "codex"})
     Repo.update!(Ecto.Changeset.change(Store.get_track(ctx.track.id), sandbox_id: nil))
-    assert {:error, {:conflict, "not_open", _}} = Tracks.add_thread(ctx.owner, ctx.track.id)
+    assert {:error, {:conflict, "not_open", _}} = start_thread(ctx.owner, ctx.track.id)
   end
+
+  # Every new thread starts with its first prompt now; these tests are about
+  # which runtime and model it gets, so the prompt is incidental.
+  defp start_thread(user, track_id, attrs \\ %{}),
+    do:
+      Tracks.start_thread(user, track_id, attrs, %{
+        prompt: "Start here",
+        request_id: Ecto.UUID.generate()
+      })
 end

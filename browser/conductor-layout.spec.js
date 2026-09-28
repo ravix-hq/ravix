@@ -20,14 +20,21 @@ test('conversation tabs, project picker, settings gears and inspector at desktop
   await expect(newTrack.getByLabel('Project / repository')).toHaveValue(projects[1]);
   await newTrack.getByRole('button', { name: 'Create track', exact: true }).click();
   await expect(newTrack).not.toBeVisible();
-  const trackUrl = page.url();
+  const composer = page.getByRole('textbox', { name: 'Message', exact: true });
+  await expect(composer).toBeEnabled({ timeout: 30_000 });
   for (let i = 0; i < 3; i++) {
     await page.getByRole('button', { name: 'Add thread', exact: true }).click();
-    const dialog = page.getByRole('dialog', { name: 'New thread', exact: true });
-    await expect(dialog.getByLabel('Agent', { exact: true })).toHaveValue('claude');
-    await dialog.getByRole('button', { name: 'Create thread', exact: true }).click();
-    await expect(dialog).not.toBeVisible();
+    const draft = page.locator('#draft-runtime');
+    await expect(draft.getByLabel('Agent', { exact: true })).toHaveValue('claude');
+    await composer.fill(`Layout thread ${i + 1}`);
+    await page.getByRole('button', { name: 'Send', exact: true }).click();
+    await expect(draft).not.toBeVisible();
+    await expect(page.locator('#thread-tab-draft')).toHaveCount(0);
   }
+  // The last send named its thread in the URL. Dialogs opened below patch the
+  // query, so what they must not move is the track.
+  await expect(page).toHaveURL(/\?thread=/);
+  const trackUrl = new RegExp(`${new URL(page.url()).pathname}(\\?thread=[0-9a-f-]+)?$`);
   const tabs = page.locator('.thread-tab');
   await expect(tabs).toHaveCount(4);
   const firstId = await tabs.first().getAttribute('data-thread-id');

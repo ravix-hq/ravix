@@ -84,10 +84,12 @@ defmodule RavixWeb.TrackLive do
         threads: [],
         sibling_followers: %{},
         thread_states: %{},
-        thread_options: nil,
+        # The "+" tab: a thread nobody has sent anything to yet. It lives in
+        # this page and nowhere else --- a reload drops it, and nobody else
+        # on the track ever sees it. See `show_draft/1` and `start/2`.
+        thread_draft: nil,
         thread_connect: nil,
         thread_error: nil,
-        thread_params: %{},
         project_id: session["project_id"],
         agent_refused: false,
         health_refresh: 0,
@@ -179,13 +181,23 @@ defmodule RavixWeb.TrackLive do
   end
 
   @impl true
+  def handle_event("select-thread", %{"thread_id" => "draft"}, socket),
+    do: {:noreply, show_draft(socket)}
+
   def handle_event("select-thread", %{"thread_id" => id}, socket) do
+    shown = if drafting?(socket), do: nil, else: socket.assigns.thread_id
+
     case Access.thread_access(socket.assigns.current_user, socket.assigns.track_id, id) do
       # The selected tab is still a button; pressing it again keeps the
       # transcript and the follower it already has.
-      {:ok, _} when id == socket.assigns.thread_id -> {:noreply, socket}
-      {:ok, _} -> {:noreply, switch_thread(socket, id)}
-      {:error, reason} -> {:noreply, error(socket, reason)}
+      {:ok, _} when id == shown ->
+        {:noreply, socket}
+
+      {:ok, _} ->
+        {:noreply, switch_thread(socket, id)}
+
+      {:error, reason} ->
+        {:noreply, error(socket, reason)}
     end
   end
 
@@ -195,49 +207,56 @@ defmodule RavixWeb.TrackLive do
         socket.assigns.current_user,
         socket.assigns.project_id,
         runtime,
-        socket.assigns.thread_options
+        socket.assigns.thread_draft && socket.assigns.thread_draft.options
       )
 
     {:noreply, assign(socket, thread_connect: connection)}
   end
 
-  def handle_event("new-thread", _, socket) do
-    {:noreply, begin(socket, :thread_options, &Tracks.thread_options/2)}
+  # "+": a draft tab on the person's default agent and model, and nothing
+  # else. The thread itself is made by the first message; see `start/2`.
+  # Pressing it again goes back to the draft there is rather than making a
+  # second one.
+  def handle_event("draft-thread", _, %{assigns: %{thread_draft: nil}} = socket) do
+    draft = %{
+      id: Ecto.UUID.generate(),
+      selected?: false,
+      options: nil,
+      runtime: nil,
+      model: nil,
+      source: nil,
+      explicit?: false
+    }
+
+    {:noreply,
+     socket
+     |> assign(thread_draft: draft, thread_error: nil)
+     |> show_draft()
+     |> draft_options()}
   end
 
-  def handle_event("cancel-thread", _, socket),
-    do:
-      {:noreply,
-       socket
-       |> cancel_async(:thread_options)
-       |> settle(:thread_options)
-       |> assign(thread_options: nil, thread_params: %{}, thread_connect: nil, thread_error: nil)}
+  def handle_event("draft-thread", _, socket) do
+    socket = show_draft(socket)
 
-  def handle_event("edit-thread", %{"new_thread" => params} = event, socket) do
-    params =
-      if event["_target"] in [["new_thread", "runtime"], ["new_thread", "model"]],
-        do: Map.put(params, "preference_explicit", "true"),
-        else: params
-
-    params =
-      if params["runtime"] != socket.assigns.thread_params["runtime"],
-        do: Map.delete(params, "model"),
-        else: params
-
-    {:noreply, assign(socket, thread_params: params)}
-  end
-
-  def handle_event("add-thread", params, socket) do
-    attrs = Map.get(params, "new_thread", %{})
-
-    if MapSet.member?(socket.assigns.pending, :add_thread),
+    if socket.assigns.thread_draft.options,
       do: {:noreply, socket},
-      else:
-        {:noreply,
-         socket
-         |> assign(thread_params: attrs, thread_error: nil)
-         |> begin(:add_thread, &Tracks.add_thread(&1, &2, attrs))}
+      else: {:noreply, draft_options(socket)}
   end
+
+  def handle_event("discard-draft", _, %{assigns: %{thread_draft: %{} = draft}} = socket) do
+    socket =
+      socket
+      |> cancel_async(:thread_options)
+      |> settle(:thread_options)
+      |> assign(thread_draft: nil, thread_connect: nil, thread_error: nil)
+      |> push_event("composer:forget", %{key: draft_key(socket.assigns.track_id, draft)})
+
+    if draft.selected?,
+      do: {:noreply, switch_thread(socket, socket.assigns.thread_id)},
+      else: {:noreply, socket}
+  end
+
+  def handle_event("discard-draft", _, socket), do: {:noreply, socket}
 
   def handle_event("narrow-view", %{"name" => name}, socket)
       when name in ["conversation", "files", "terminal"] do
@@ -272,6 +291,22 @@ defmodule RavixWeb.TrackLive do
   end
 
   def handle_event("retry-load", _, socket), do: {:noreply, load(socket)}
+
+  # The draft's agent and model live in the composer's own form, so a change
+  # to either arrives here. Either is an explicit pick (RAV-7): sending
+  # remembers it as this person's default for new threads.
+  def handle_event("validate", %{"thread_draft" => picks} = params, socket) do
+    case {socket.assigns.thread_draft, params["_target"]} do
+      {%{options: %{}} = draft, ["thread_draft", field]} when field in ["runtime", "model"] ->
+        runtime = if field == "runtime", do: picks["runtime"], else: draft.runtime
+        model = if field == "model", do: picks["model"]
+        {:noreply, assign(socket, thread_draft: pick(%{draft | explicit?: true}, runtime, model))}
+
+      _ ->
+        {:noreply, socket}
+    end
+  end
+
   def handle_event("validate", _, socket), do: {:noreply, socket}
 
   def handle_event("typing", _, socket) do
@@ -297,6 +332,9 @@ defmodule RavixWeb.TrackLive do
 
       upload_errors(socket.assigns.uploads.images) != [] ->
         {:noreply, flash(socket, :error, "Remove invalid images before sending.")}
+
+      drafting?(socket) ->
+        {:noreply, start(socket, text)}
 
       true ->
         send_prompt(socket, text)
@@ -543,17 +581,13 @@ defmodule RavixWeb.TrackLive do
            connection,
            connection.id
          ) do
+      draft = socket.assigns.thread_draft
+      draft = draft && %{draft | runtime: connection.runtime, model: nil}
+
       {:noreply,
        socket
-       |> assign(
-         current_user: user,
-         thread_connect: nil,
-         thread_params:
-           socket.assigns.thread_params
-           |> Map.put("runtime", connection.runtime)
-           |> Map.delete("model")
-       )
-       |> begin(:thread_options, &Tracks.thread_options/2)}
+       |> assign(current_user: user, thread_connect: nil, thread_draft: draft)
+       |> draft_options()}
     else
       {:noreply, socket}
     end
@@ -570,11 +604,22 @@ defmodule RavixWeb.TrackLive do
   def handle_info(:refresh_agent_health, socket),
     do: {:noreply, socket |> assign(agent_refused: false) |> update(:health_refresh, &(&1 + 1))}
 
+  # The workspace's URL named a thread. The URL this page patched itself,
+  # after a draft became a thread, names the one already shown.
   def handle_info({:select_thread, track_id, thread_id}, socket) do
-    if track_id == socket.assigns.track_id and
-         match?({:ok, _}, Access.thread_access(socket.assigns.current_user, track_id, thread_id)),
-       do: {:noreply, switch_thread(socket, thread_id)},
-       else: {:noreply, socket}
+    cond do
+      track_id != socket.assigns.track_id ->
+        {:noreply, socket}
+
+      thread_id == socket.assigns.thread_id and not drafting?(socket) ->
+        {:noreply, socket}
+
+      match?({:ok, _}, Access.thread_access(socket.assigns.current_user, track_id, thread_id)) ->
+        {:noreply, switch_thread(socket, thread_id)}
+
+      true ->
+        {:noreply, socket}
+    end
   end
 
   # Ravix runs on more than one instance (ADR 0003) and a deploy is rolling,
@@ -588,7 +633,7 @@ defmodule RavixWeb.TrackLive do
   def handle_info({:transcript, id, %TranscriptEvent{} = event}, socket) do
     socket = thread_activity(socket, id, event)
 
-    if id == socket.assigns.thread_id,
+    if id == socket.assigns.thread_id and not drafting?(socket),
       do: {:noreply, socket |> absorb(event) |> schedule_flush() |> after_turn(event)},
       else: {:noreply, socket}
   end
@@ -751,31 +796,48 @@ defmodule RavixWeb.TrackLive do
 
   defp async_result({:plan_items, _}, _response, socket), do: socket
 
-  defp async_result(:thread_options, {:ok, {:ok, options}}, socket),
-    do:
-      socket
-      |> settle(:thread_options)
-      |> assign(
-        thread_options: options,
-        thread_params: Map.put_new(socket.assigns.thread_params, "runtime", options.runtime)
-      )
+  # The default the draft opens on, and every agent it may switch to. A
+  # draft picked before the answer (the inline connect, say) keeps its pick.
+  defp async_result(:thread_options, {:ok, {:ok, options}}, socket) do
+    socket = settle(socket, :thread_options)
 
-  defp async_result(:thread_options, {:ok, {:error, reason}}, socket),
-    do: socket |> settle(:thread_options) |> error(reason)
+    case socket.assigns.thread_draft do
+      nil ->
+        socket
 
-  defp async_result(:add_thread, {:ok, {:ok, thread}}, socket) do
-    socket =
-      socket
-      |> settle(:add_thread)
-      |> assign(thread_options: nil, thread_params: %{}, thread_connect: nil, thread_error: nil)
-
-    if thread.track_id == socket.assigns.track_id,
-      do: switch_thread(socket, thread.id),
-      else: socket
+      draft ->
+        draft = %{draft | options: options, source: options.source}
+        assign(socket, thread_draft: pick(draft, draft.runtime, draft.model))
+    end
   end
 
-  defp async_result(:add_thread, {:ok, {:error, reason}}, socket),
-    do: socket |> settle(:add_thread) |> assign(thread_error: thread_failure(socket, reason))
+  defp async_result(:thread_options, {:ok, {:error, reason}}, socket),
+    do: socket |> settle(:thread_options) |> assign(thread_error: Error.from(reason).message)
+
+  defp async_result({:start_thread, draft_id}, {:ok, {:ok, thread}}, socket) do
+    socket = settle(socket, :start_thread)
+    draft = socket.assigns.thread_draft
+
+    socket =
+      if draft && draft.id == draft_id,
+        do:
+          socket
+          |> assign(thread_draft: nil, thread_connect: nil, attached_images: [])
+          |> push_event("composer:forget", %{key: draft_key(socket.assigns.track_id, draft)}),
+        else: socket
+
+    if thread.track_id == socket.assigns.track_id do
+      if socket.parent_pid,
+        do: send(socket.parent_pid, {:thread_started, thread.track_id, thread.id})
+
+      socket |> assign(thread_error: nil) |> switch_thread(thread.id)
+    else
+      socket
+    end
+  end
+
+  defp async_result({:start_thread, _draft_id}, {:ok, {:error, reason}}, socket),
+    do: socket |> settle(:start_thread) |> assign(thread_error: thread_failure(socket, reason))
 
   defp async_result(:load, {:ok, {:ok, detail, project}}, socket) do
     Tracks.beat(socket.assigns.current_user, socket.assigns.track_id, :watching)
@@ -998,12 +1060,20 @@ defmodule RavixWeb.TrackLive do
   # One of the ribbon's writes that did not answer. Not the loading clause
   # below: nothing was being loaded, and "could not finish loading" about a
   # Stop that crashed would be a sentence about the wrong thing.
-  defp async_result(:add_thread, {:exit, _reason}, socket),
+  defp async_result({:start_thread, _draft_id}, {:exit, _reason}, socket),
     do:
-      socket |> settle(:add_thread) |> assign(thread_error: thread_failure(socket, :unavailable))
+      socket
+      |> settle(:start_thread)
+      |> assign(thread_error: thread_failure(socket, :unavailable))
+
+  defp async_result(:thread_options, {:exit, _reason}, socket),
+    do:
+      socket
+      |> settle(:thread_options)
+      |> assign(thread_error: "Could not load the agents. Press + to try again.")
 
   defp async_result(name, {:exit, reason}, socket)
-       when name in [:interrupt, :retry, :pull, :thread_options, :model],
+       when name in [:interrupt, :retry, :pull, :model],
        do: socket |> settle(name) |> exit(reason)
 
   # A background refresh that crashed leaves the page showing what it had.
@@ -1095,16 +1165,111 @@ defmodule RavixWeb.TrackLive do
   # after somebody switched tabs was filed under whichever panel they had
   # moved to.
 
+  # The images a send carries: those retained from a refused send, and those
+  # just uploaded. They stay in `attached_images` until a send succeeds.
   # File paths are issued by LiveView after validating its managed upload.
   # sobelow_skip ["Traversal.FileModule"]
-  defp send_prompt(socket, text) do
+  defp take_images(socket) do
     images =
       consume_uploaded_entries(socket, :images, fn %{path: path}, entry ->
         {:ok, %{data: Base.encode64(File.read!(path)), media_type: entry.client_type}}
       end)
 
     images = socket.assigns.attached_images ++ images
-    socket = assign(socket, attached_images: images)
+    {images, assign(socket, attached_images: images)}
+  end
+
+  # The draft's first message: the thread and the prompt are made together,
+  # server-side, and nothing is shown as sent until both are. A second press
+  # while the first is out does nothing here, and the draft's id is the
+  # request id, so a second press that got past this still answers with the
+  # thread the first one started. A refusal keeps the draft, its picks, the
+  # typed text and the images, and says why beside the composer.
+  defp start(socket, text) do
+    draft = socket.assigns.thread_draft
+
+    cond do
+      MapSet.member?(socket.assigns.pending, :start_thread) ->
+        socket
+
+      is_nil(draft.options) ->
+        assign(socket, thread_error: "Wait for the agents to load, then send.")
+
+      true ->
+        {images, socket} = take_images(socket)
+        %{current_user: user, track_id: id} = socket.assigns
+
+        attrs = %{
+          "runtime" => draft.runtime,
+          "model" => draft.model,
+          "preference_explicit" => to_string(draft.explicit?)
+        }
+
+        payload = %{prompt: text, images: images, request_id: draft.id}
+
+        socket
+        |> assign(thread_error: nil)
+        |> update(:pending, &MapSet.put(&1, :start_thread))
+        |> traced_async({:start_thread, draft.id}, fn ->
+          Tracks.start_thread(user, id, attrs, payload)
+        end)
+    end
+  end
+
+  defp drafting?(socket), do: match?(%{selected?: true}, socket.assigns.thread_draft)
+
+  # Put the draft on screen. The shown thread's transcript stops following
+  # (its tab keeps following, as a sibling's does), and choosing any thread
+  # tab afterwards is a full switch back to it.
+  defp show_draft(%{assigns: %{thread_draft: %{selected?: false}}} = socket) do
+    socket
+    |> unfollow()
+    |> drop_pending()
+    |> drop_attachments()
+    |> update(:thread_generation, &(&1 + 1))
+    |> update(:thread_draft, &%{&1 | selected?: true})
+    |> assign(thread_error: nil, agent_refused: false)
+    |> follow_siblings()
+  end
+
+  defp show_draft(socket), do: socket
+
+  defp draft_options(socket) do
+    if MapSet.member?(socket.assigns.pending, :thread_options),
+      do: socket,
+      else: begin(socket, :thread_options, &Tracks.thread_options/2)
+  end
+
+  # Settle a pick against the agents on offer: an agent that is not one of
+  # them is the default one, and a model the agent does not run is that
+  # agent's first (the resolved default, for the default agent).
+  defp pick(%{options: nil} = draft, runtime, model),
+    do: %{draft | runtime: runtime, model: model}
+
+  defp pick(%{options: options} = draft, runtime, model) do
+    choice =
+      Enum.find(options.runtimes, &(&1.runtime == runtime)) ||
+        Enum.find(options.runtimes, &(&1.runtime == options.runtime)) ||
+        %{runtime: options.runtime, models: []}
+
+    %{draft | runtime: choice.runtime, model: pick_model(options, choice, model)}
+  end
+
+  defp pick_model(options, %{runtime: runtime, models: models}, model) do
+    cond do
+      is_binary(model) and model in models -> model
+      runtime == options.runtime and (options.model in models or models == []) -> options.model
+      true -> List.first(models)
+    end
+  end
+
+  # The composer keeps unsent text in the browser under this key, so leaving
+  # the draft and coming back finds it; each draft is new, so a reload, which
+  # makes a new one, does not.
+  defp draft_key(track_id, draft), do: "track:#{track_id}:thread:draft:#{draft.id}"
+
+  defp send_prompt(socket, text) do
+    {images, socket} = take_images(socket)
 
     response =
       Tracks.prompt(socket.assigns.current_user, socket.assigns.track_id, %{
@@ -1159,6 +1324,7 @@ defmodule RavixWeb.TrackLive do
     |> drop_attachments()
     |> update(:thread_generation, &(&1 + 1))
     |> assign(thread_id: id, agent_refused: false)
+    |> update(:thread_draft, &(&1 && %{&1 | selected?: false}))
     |> load()
   end
 
@@ -1187,9 +1353,8 @@ defmodule RavixWeb.TrackLive do
       assigned_plan: %{items: [], plan: nil},
       starters: [],
       queue: [],
-      thread_options: nil,
+      thread_draft: nil,
       thread_connect: nil,
-      thread_params: %{},
       thread_error: nil,
       present: [],
       narrow_view: "conversation",
@@ -1242,9 +1407,6 @@ defmodule RavixWeb.TrackLive do
     |> assign(
       loading: true,
       thread_error: nil,
-      thread_options: nil,
-      thread_connect: nil,
-      thread_params: %{},
       agent_refused: false,
       transcript_loading: true,
       earlier_loading: false,
@@ -1398,8 +1560,8 @@ defmodule RavixWeb.TrackLive do
   # Each subscription uses the scoped context and shares the existing Follower.
   # Sibling frames only update tab state; they never enter this thread's transcript.
   defp follow_siblings(socket) do
-    wanted =
-      for thread <- socket.assigns.threads, thread.id != socket.assigns.thread_id, do: thread.id
+    shown = if drafting?(socket), do: nil, else: socket.assigns.thread_id
+    wanted = for thread <- socket.assigns.threads, thread.id != shown, do: thread.id
 
     held =
       Map.reject(socket.assigns.sibling_followers, fn {id, ref} ->
@@ -1589,19 +1751,13 @@ defmodule RavixWeb.TrackLive do
   end
 
   defp thread_failure(socket, reason) do
-    runtime =
-      socket.assigns.thread_params["runtime"] || socket.assigns.track.runtime ||
-        socket.assigns.project.runtime
-
+    draft = socket.assigns.thread_draft || %{runtime: nil, options: nil}
+    runtime = draft.runtime || socket.assigns.track.runtime || socket.assigns.project.runtime
     agent = RavixWeb.AgentName.label(runtime)
 
     fallback =
       RavixWeb.AgentName.label(
-        Map.get(
-          socket.assigns.thread_options || %{},
-          :home_runtime,
-          socket.assigns.project.runtime
-        )
+        Map.get(draft.options || %{}, :home_runtime, socket.assigns.project.runtime)
       )
 
     error = RavixWeb.Error.from(reason)
@@ -1642,23 +1798,31 @@ defmodule RavixWeb.TrackLive do
   attr :states, :map, default: %{}
   attr :adding, :boolean, default: false
   attr :enabled, :boolean, required: true
+  attr :draft, :map, default: nil, doc: "this page's unsent thread, if it has one"
 
   @doc """
   The track's threads as a row of tabs above the conversation, with "+" at the
   end when threads can be added. A track with one thread that cannot gain
   another has nothing to switch between, so the row is not drawn at all.
 
+  A draft ("+" pressed, nothing sent yet) is the trailing tab, with its own
+  close button beside the row: a tablist holds tabs and nothing else.
+
   Manual-activation tabs use roving focus, Enter/Space selection, and one
   associated transcript panel. Narrow screens use the native picker.
   """
   def thread_tabs(assigns) do
+    drafting? = match?(%{selected?: true}, assigns.draft)
+    shown = if drafting?, do: nil, else: assigns.thread_id
+
     assigns =
-      assign(
-        assigns,
-        :working,
-        Enum.filter(assigns.threads, fn thread ->
-          thread.id != assigns.thread_id and thread_status(thread, assigns.states) == "Running"
-        end)
+      assign(assigns,
+        shown: shown,
+        draft_label: assigns.draft && draft_label(assigns.draft),
+        working:
+          Enum.filter(assigns.threads, fn thread ->
+            thread.id != shown and thread_status(thread, assigns.states) == "Running"
+          end)
       )
 
     ~H"""
@@ -1672,9 +1836,10 @@ defmodule RavixWeb.TrackLive do
       <form id="thread-picker-form" class="thread-picker" phx-change="select-thread">
         <label for="thread-picker" class="sr-only">Thread</label>
         <select id="thread-picker" name="thread_id">
-          <option :for={thread <- @threads} value={thread.id} selected={thread.id == @thread_id}>
-            {thread_option_label(thread, @states, @thread_id)}
+          <option :for={thread <- @threads} value={thread.id} selected={thread.id == @shown}>
+            {thread_option_label(thread, @states, @shown)}
           </option>
+          <option :if={@draft} value="draft" selected={@draft.selected?}>{@draft_label}</option>
         </select>
       </form>
       <div id="thread-tablist" class="thread-tablist" role="tablist" aria-label="Threads">
@@ -1683,33 +1848,64 @@ defmodule RavixWeb.TrackLive do
           type="button"
           id={"thread-tab-#{thread.id}"}
           role="tab"
-          aria-selected={to_string(thread.id == @thread_id)}
+          aria-selected={to_string(thread.id == @shown)}
           aria-controls="transcript-scroll"
-          tabindex={if thread.id == @thread_id, do: "0", else: "-1"}
+          tabindex={if thread.id == @shown, do: "0", else: "-1"}
           class="thread-tab"
           phx-click="select-thread"
           phx-value-thread_id={thread.id}
           data-thread-id={thread.id}
           title={thread.title <> " · " <> agent_model(Map.get(thread, :runtime), Map.get(thread, :model))}
-          aria-label={thread.title <> " · " <> agent_model(Map.get(thread, :runtime), Map.get(thread, :model)) <> " · " <> thread_status(thread, @states) <> if(thread.unread && thread.id != @thread_id, do: " (unread)", else: "")}
+          aria-label={thread.title <> " · " <> agent_model(Map.get(thread, :runtime), Map.get(thread, :model)) <> " · " <> thread_status(thread, @states) <> if(thread.unread && thread.id != @shown, do: " (unread)", else: "")}
         >
           <.status_dot status={String.downcase(thread_status(thread, @states))} />
           <span class="thread-tab-title">{thread.title}</span><span class="thread-tab-agent"> · {agent_model(
             Map.get(thread, :runtime),
             Map.get(thread, :model)
           )}</span><span class="thread-tab-state"> · {thread_status(thread, @states)}</span><span
-            :if={thread.unread && thread.id != @thread_id}
+            :if={thread.unread && thread.id != @shown}
             class="thread-unread"
           ><span class="sr-only">(unread)</span></span>
         </button>
+        <button
+          :if={@draft}
+          type="button"
+          id="thread-tab-draft"
+          role="tab"
+          aria-selected={to_string(@draft.selected?)}
+          aria-controls="transcript-scroll"
+          tabindex={if @draft.selected?, do: "0", else: "-1"}
+          class="thread-tab thread-tab-draft"
+          phx-click="select-thread"
+          phx-value-thread_id="draft"
+          data-thread-id="draft"
+          title={@draft_label}
+          aria-label={@draft_label <> " · Not started"}
+        >
+          <span class="thread-tab-title">New thread</span><span
+            :if={@draft.runtime}
+            class="thread-tab-agent"
+          > · {agent_model(@draft.runtime, @draft.model)}</span>
+        </button>
       </div>
+      <button
+        :if={@draft}
+        type="button"
+        id="thread-draft-discard"
+        class="ghost icon-button thread-draft-discard"
+        aria-label="Discard new thread"
+        title="Discard new thread"
+        phx-click="discard-draft"
+      >
+        <.icon name="x" size={12} />
+      </button>
       <button
         :if={@enabled}
         type="button"
         class="ghost thread-add"
         aria-label="Add thread"
         title="Add thread"
-        phx-click="new-thread"
+        phx-click="draft-thread"
         disabled={@adding}
       >
         <.icon name="plus" size={14} />
@@ -1722,6 +1918,9 @@ defmodule RavixWeb.TrackLive do
     </p>
     """
   end
+
+  defp draft_label(%{runtime: nil}), do: "New thread"
+  defp draft_label(draft), do: "New thread · " <> agent_model(draft.runtime, draft.model)
 
   defp thread_option_label(thread, states, current_id) do
     label =
@@ -2778,8 +2977,7 @@ defmodule RavixWeb.TrackLive do
 
   defp prompt_message(assigns) do
     {prompt, restored?} = Recovery.visible_prompt(assigns.prompt)
-    prompt = Ravix.Previews.Agent.visible_prompt(prompt)
-    {speaker, body} = prompt_author(prompt)
+    {speaker, body} = prompt |> Ravix.Previews.Agent.visible_prompt() |> prompt_author()
     assigns = assign(assigns, speaker: speaker, body: body, restored?: restored?)
 
     ~H"""
@@ -2810,10 +3008,12 @@ defmodule RavixWeb.TrackLive do
 
   # Shared prompts carry PromptQueue.with_author/2's marker after the preview
   # instructions. Never infer an old, untagged message's author from its viewer.
+  # An additional thread's working-directory line sits inside the author
+  # marker, and is the agent's to read rather than anybody's to see.
   defp prompt_author(prompt) do
     case Regex.run(~r/\A\[from @([a-zA-Z0-9-]+)\] (.*)\z/s, prompt) do
-      [_, login, body] -> {"@" <> login, body}
-      nil -> app_or_unattributed_prompt(prompt)
+      [_, login, body] -> {"@" <> login, PromptQueue.Body.outside_thread(body)}
+      nil -> prompt |> PromptQueue.Body.outside_thread() |> app_or_unattributed_prompt()
     end
   end
 

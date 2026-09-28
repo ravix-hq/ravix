@@ -61,7 +61,7 @@ defmodule Ravix.ThreadsTest do
       {:ok, Shapes.conversation(%{"id" => "second"})}
     end)
 
-    assert {:ok, added} = Tracks.add_thread(ctx.user, ctx.track.id)
+    assert {:ok, added} = start_thread(ctx.user, ctx.track.id)
     assert Store.thread(ctx.track.id, added.id).conversation_id == "second"
     assert Store.get_track(ctx.track.id).conversation_id == "default"
     assert Store.get_track(ctx.track.id).workdir == ctx.track.workdir
@@ -84,7 +84,7 @@ defmodule Ravix.ThreadsTest do
                request_id: Ecto.UUID.generate()
              })
 
-    assert {:error, :not_found} = Tracks.add_thread(insert_user(), ctx.track.id)
+    assert {:error, :not_found} = start_thread(insert_user(), ctx.track.id)
   end
 
   test "transcripts and interrupt use the selected conversation", ctx do
@@ -191,7 +191,7 @@ defmodule Ravix.ThreadsTest do
       {:ok, Shapes.conversation(%{"id" => "default"})}
     end)
 
-    assert {:error, {:conflict, "not_open", _}} = Tracks.add_thread(ctx.user, ctx.track.id)
+    assert {:error, {:conflict, "not_open", _}} = start_thread(ctx.user, ctx.track.id)
     assert length(Store.threads_of(ctx.track.id)) == 1
   end
 
@@ -209,7 +209,7 @@ defmodule Ravix.ThreadsTest do
     end)
 
     expect(Fountain, :terminate, fn _, "orphan" -> :ok end)
-    assert {:error, :not_found} = Tracks.add_thread(member, ctx.track.id)
+    assert {:error, :not_found} = start_thread(member, ctx.track.id)
     assert length(Store.threads_of(ctx.track.id)) == 1
   end
 
@@ -253,4 +253,13 @@ defmodule Ravix.ThreadsTest do
 
     thread
   end
+
+  # Every new thread starts with its first prompt now; these tests are about
+  # which runtime and model it gets, so the prompt is incidental.
+  defp start_thread(user, track_id, attrs \\ %{}),
+    do:
+      Tracks.start_thread(user, track_id, attrs, %{
+        prompt: "Start here",
+        request_id: Ecto.UUID.generate()
+      })
 end

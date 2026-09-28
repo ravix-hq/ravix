@@ -58,6 +58,7 @@ defmodule Ravix.Tracks do
   alias Ravix.PromptQueue.Activity
   alias Ravix.PromptQueue.Body
   alias Ravix.PromptQueue.Body.Image
+  alias Ravix.PromptQueue.Server, as: QueueServer
   alias Ravix.Spec
   alias Ravix.Trace
   alias Ravix.Tracks.Sandbox.Maintenance
@@ -76,6 +77,7 @@ defmodule Ravix.Tracks do
     Runtime,
     Setup,
     Store,
+    Thread,
     Track,
     Transcript,
     View
@@ -448,8 +450,25 @@ defmodule Ravix.Tracks do
 
   defp thread_reset(_, _, _), do: nil
 
-  @doc "Attach a blank conversation to the track's existing sandbox."
-  def add_thread(%User{} = user, track_id, attrs \\ %{}) do
+  @doc """
+  A new thread on the track's existing sandbox, started by its first prompt.
+
+  The page's draft tab holds the runtime and model until somebody sends, and
+  sending is this one step: the conversation is created, then the thread row
+  and the queued prompt are written in one transaction, so a failure leaves
+  neither an empty thread nor a prompt with nowhere to go. Delivery is
+  `Ravix.PromptQueue`'s, exactly as for any other first prompt.
+
+  `attrs` (string or atom keys): `runtime`, `model`, `preference_explicit`,
+  as `Ravix.Tracks.Runtime.select/7` reads them. `payload`: `prompt`,
+  `images` and `request_id`, as `prompt/3` reads them. The request id names
+  the draft: the same id again answers the thread it already started.
+  """
+  @spec start_thread(User.t(), String.t(), map(), map()) ::
+          {:ok, Thread.t()} | {:error, reason()}
+  def start_thread(%User{} = user, track_id, attrs, payload) do
+    payload = stringify(payload)
+
     with {:ok, %{track: track, project: project}} <- Access.track_access(user, track_id),
          :ok <-
            check(
@@ -461,9 +480,79 @@ defmodule Ravix.Tracks do
              is_nil(track.closed_at) and track.sandbox_state not in [:closing, :terminated],
              {:conflict, "closed_track", "This track is closing or closed."}
            ),
-         {:ok, client} <- fountain(),
-         {:ok, sandbox_id} <- thread_sandbox(client, track) do
-      launch_thread(user, track, project, client, sandbox_id, stringify(attrs))
+         {:ok, body} <- first_prompt(payload) do
+      case started(user, track, payload["request_id"]) do
+        nil -> launch_thread(user, track, project, stringify(attrs), payload["request_id"], body)
+        found -> found
+      end
+    end
+  end
+
+  defp first_prompt(payload) do
+    with {:ok, images} <- read_images(payload["images"]),
+         text = text(payload["prompt"], 100_000),
+         :ok <-
+           check(
+             String.trim(text) != "" or images != [],
+             {:unprocessable, "empty_prompt", "Say something."}
+           ),
+         :ok <-
+           check(
+             is_binary(payload["request_id"]) and
+               Regex.match?(~r/^[a-zA-Z0-9-]{16,80}$/, payload["request_id"]),
+             {:unprocessable, "request_id_required", "Send a unique request id with this prompt."}
+           ),
+         do: {:ok, %Body{prompt: text, images: images}}
+  end
+
+  # The receipt a draft already left: its first prompt names the thread it
+  # started. Somebody else's prompt under this id is a collision, not a thread.
+  defp started(user, track, request_id) do
+    # ownership: start_thread/4 admitted this person through Access.track_access/2,
+    # and only a receipt on this track from this person answers.
+    case Ravix.PromptQueue.Store.get(request_id) do
+      nil ->
+        nil
+
+      %{track_id: track_id, user_id: user_id, thread_id: thread_id}
+      when track_id == track.id and user_id == user.id ->
+        case Store.get_thread(thread_id) do
+          %Thread{} = thread -> {:ok, thread}
+          nil -> {:error, :not_found}
+        end
+
+      _ ->
+        {:error, {:conflict, "request_id_used", "Use a new request id."}}
+    end
+  end
+
+  defp launch_thread(user, track, project, attrs, request_id, body) do
+    with {:ok, client} <- fountain(),
+         {:ok, sandbox_id} <- thread_sandbox(client, track),
+         {:ok, selection} <-
+           Runtime.select(
+             user,
+             project,
+             client,
+             attrs,
+             track.last_runtime,
+             sandbox_id,
+             isolated: track.sandbox_layout == :dedicated
+           ) do
+      Analytics.track(user, :prompt_sent, %{
+        "ravix.prompt_length" => String.length(body.prompt),
+        "ravix.image_count" => length(body.images)
+      })
+
+      launch_selected_thread(
+        user,
+        track,
+        project,
+        client,
+        sandbox_id,
+        selection,
+        {request_id, body}
+      )
     end
   end
 
@@ -488,24 +577,10 @@ defmodule Ravix.Tracks do
   defp thread_not_open,
     do: {:error, {:conflict, "not_open", "The track's machine is not ready."}}
 
-  defp launch_thread(user, track, project, client, sandbox_id, attrs) do
-    with {:ok, selection} <-
-           Runtime.select(
-             user,
-             project,
-             client,
-             attrs,
-             track.last_runtime,
-             sandbox_id,
-             isolated: track.sandbox_layout == :dedicated
-           ) do
-      launch_selected_thread(user, track, project, client, sandbox_id, selection)
-    end
-  end
-
-  defp launch_selected_thread(user, track, project, client, sandbox_id, selection) do
+  defp launch_selected_thread(user, track, project, client, sandbox_id, selection, first) do
+    {request_id, body} = first
     id = Ecto.UUID.generate()
-    title = "Thread #{length(Store.threads_of(track.id)) + 1}"
+    title = Thread.title_from(body.prompt)
 
     launch = %Launch{
       agent_id: selection.agent_id,
@@ -531,7 +606,7 @@ defmodule Ravix.Tracks do
                Access.track_access(user, track.id),
              :ok <- Runtime.gate(user, %{project | runtime: selection.home}, selection.runtime),
              do:
-               Store.create_thread(
+               save_started_thread(
                  %{
                    id: id,
                    track_id: track.id,
@@ -540,20 +615,53 @@ defmodule Ravix.Tracks do
                    runtime: selection.runtime,
                    model: selection.model
                  },
-                 track.sandbox_generation
+                 track,
+                 user,
+                 request_id,
+                 body
                )
 
       case result do
-        {:ok, %Ravix.Tracks.Thread{} = thread} ->
+        {:ok, %Thread{} = thread} ->
+          # ownership: the rows above were written behind Access.track_access/2;
+          # this repeats the queue's own after-commit notice and wake.
+          Ravix.PromptQueue.Store.publish_queues([track.id])
+          QueueServer.wake()
           MachineCache.forget_project(project.id)
           publish_tracks(project.id, track.id)
           {:ok, thread}
+
+        {:error, {:conflict, "request_id_used", _}} = refused ->
+          unwind_conversation(client, conversation_id)
+          # A second send of the same draft lost the race to the first; answer
+          # with the thread the first one started.
+          started(user, track, request_id) || refused
+
+        {:error, {kind, _, _} = reason} when kind in [:conflict, :unprocessable] ->
+          unwind_conversation(client, conversation_id)
+          {:error, reason}
 
         _ ->
           unwind_conversation(client, conversation_id)
           {:error, :not_found}
       end
     end
+  end
+
+  # The thread and its first prompt, or neither.
+  defp save_started_thread(attrs, track, user, request_id, body) do
+    Store.create_thread(attrs, track.sandbox_generation, fn thread ->
+      # ownership: launch_selected_thread/7 re-admitted this person with
+      # Access.track_access/2 a moment ago; the prompt row records who sent it.
+      Ravix.PromptQueue.Store.enqueue(
+        track.id,
+        user.id,
+        user.login,
+        request_id,
+        body,
+        thread.id
+      )
+    end)
   end
 
   defp prepare_thread(client, %{sandbox_layout: :dedicated} = track, project) do

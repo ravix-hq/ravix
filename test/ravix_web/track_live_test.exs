@@ -561,12 +561,14 @@ defmodule RavixWeb.TrackLiveTest do
     end
   end
 
-  test "add-thread capacity refusal says to try again without claiming a queued prompt", ctx do
-    expect(Tracks, :add_thread, fn _, _, _ ->
+  test "a draft's capacity refusal says to try again without claiming a queued prompt", ctx do
+    open_draft(ctx, draft_options(ctx, runtime: "codex"))
+
+    expect(Tracks, :start_thread, fn _, _, %{"runtime" => "codex"}, %{prompt: "go"} ->
       {:error, %FountainError{status: 409, code: "sandbox_at_capacity"}}
     end)
 
-    render_click(ctx.view, "add-thread", %{"new_thread" => %{"runtime" => "codex"}})
+    ctx.view |> form("#composer-form", %{text: "go"}) |> render_submit()
     render_async(ctx.view)
     html = render(ctx.parent)
 
@@ -981,7 +983,7 @@ defmodule RavixWeb.TrackLiveTest do
     assert has_element?(ctx.view, "#composer-#{ctx.track.id}")
   end
 
-  test "adding a thread persists and selects it", ctx do
+  test "the first message of a draft creates its thread and queues the prompt on it", ctx do
     client =
       FakeTransport.client(
         [
@@ -1002,34 +1004,64 @@ defmodule RavixWeb.TrackLiveTest do
 
     expect(Ravix.Fountain, :create_conversation, fn _, launch ->
       assert launch.sandbox_id == "sandbox"
+      assert launch.title == "Explain the prompt queue and its retries…"
       {:ok, Shapes.conversation(%{"id" => "added"})}
     end)
 
     Repo.update!(Ecto.Changeset.change(ctx.project, runtime: "claude"))
     stub(Ravix.Accounts.Inference, :usable?, fn _, "claude", _ -> {:ok, true} end)
     stub(Ravix.Accounts.Inference, :usable_agents, fn _ -> {:ok, [:claude]} end)
+    stub(Ravix.Accounts.Inference, :usable_agents, fn _, _ -> {:ok, [:claude]} end)
 
     stub(Ravix.MachineCache, :catalog, fn _ ->
       {:ok, %Shapes.Catalog{runtimes: ["claude"], models: %{"claude" => [ctx.project.model]}}}
     end)
 
     stub(Ravix.MachineCache, :machine_of, fn _, _ -> {:ok, nil} end)
+    stub(Ravix.MachineCache, :machine_for_track, fn _, _, _ -> {:ok, nil} end)
     ctx.view |> element("#thread-switcher button[aria-label='Add thread']") |> render_click()
     render_async(ctx.view, 2_000)
-    assert has_element?(ctx.view, "#new-thread-form")
+    refute has_element?(ctx.view, "#new-thread-dialog")
+    assert has_element?(ctx.view, "#thread-tab-draft[aria-selected=true]", "New thread")
     assert has_element?(ctx.view, ".thread-default-source", "Project default")
+    # Stubbed `Tracks.get` reads the rows, so the page sees the new thread.
+    stub(Tracks, :get, fn _, id, _opts ->
+      {:ok,
+       %{
+         track: Tracks.present(Repo.get!(Track, id), role: :owner),
+         header: blank_header(),
+         threads: thread_options(id),
+         starters: [],
+         models: []
+       }}
+    end)
 
-    ctx.view
-    |> form("#new-thread-form", new_thread: %{runtime: "claude", model: ctx.project.model})
-    |> render_submit()
-
+    prompt = "Explain the prompt queue and its retries in detail"
+    ctx.view |> form("#composer-form", %{text: prompt}) |> render_submit()
+    # The second press lands while the first is out and does nothing.
+    ctx.view |> form("#composer-form", %{text: prompt}) |> render_submit()
     render_async(ctx.view, 2_000)
+    settle(ctx.view)
+
     [_, thread] = Tracks.Store.threads_of(ctx.track.id)
     assert thread.conversation_id == "added"
+    assert thread.title == "Explain the prompt queue and its retries…"
+
+    assert [%{thread_id: thread_id, id: request_id}] =
+             PromptQueue.Store.queued_prompts(ctx.track.id)
+
+    assert thread_id == thread.id
     assert has_element?(ctx.view, "#composer-#{thread.id}")
+    assert has_element?(ctx.view, "#thread-tab-#{thread.id}[aria-selected=true]")
+    refute has_element?(ctx.view, "#thread-tab-draft")
+    refute has_element?(ctx.view, "#thread_draft-runtime")
+    assert has_element?(ctx.view, ".composer-model")
+    assert_push_event(ctx.view, "composer:forget", %{key: key})
+    assert key == "track:#{ctx.track.id}:thread:draft:#{request_id}"
+    assert_patch(ctx.parent, "/p/#{ctx.project.id}/t/#{ctx.track.id}?thread=#{thread.id}")
   end
 
-  test "thread dialog shows the saved personal default and its source", ctx do
+  test "a draft opens on the saved personal default and names its source", ctx do
     Repo.update!(Ecto.Changeset.change(ctx.project, runtime: "claude"))
     stub(Ravix.MachineCache, :machine_for_track, fn _, _, _ -> {:ok, nil} end)
 
@@ -1048,40 +1080,47 @@ defmodule RavixWeb.TrackLiveTest do
     ctx.view |> element("#thread-switcher button[aria-label='Add thread']") |> render_click()
     render_async(ctx.view)
     assert has_element?(ctx.view, ".thread-default-source", "Your default: Claude Code")
-    assert has_element?(ctx.view, "#new_thread-model option[selected]", "Claude Opus 5")
+    assert has_element?(ctx.view, "#thread_draft-model option[selected]", "Claude Opus 5")
+    assert has_element?(ctx.view, "#thread-tab-draft", "Claude Code · Claude Opus 5")
+    assert has_element?(ctx.view, "#thread-picker option[value=draft][selected]", "New thread")
   end
 
-  test "thread picker explains unavailable agents and uses product and model names", ctx do
+  test "the draft's agent picker explains unavailable agents and uses product and model names",
+       ctx do
+    base = draft_options(ctx, owner?: true)
+
     base = %{
-      runtime: "claude",
-      model: "anthropic/claude-opus-5",
-      owner_login: ctx.user.login,
-      owner?: true,
-      runtimes: [
-        %{runtime: "claude", connected: true, enabled: true, models: ["anthropic/claude-opus-5"]},
-        %{runtime: "codex", connected: true, enabled: false, models: ["openai/gpt-6-astra"]}
-      ]
+      base
+      | runtimes: [
+          %{
+            runtime: "claude",
+            connected: true,
+            enabled: true,
+            models: ["anthropic/claude-opus-5"]
+          },
+          %{runtime: "codex", connected: true, enabled: false, models: ["openai/gpt-6-astra"]}
+        ]
     }
 
-    stub(Tracks, :thread_options, fn _, _ -> {:ok, base} end)
-    render_click(ctx.view, "new-thread")
-    render_async(ctx.view)
-    assert has_element?(ctx.view, "label[for=new_thread-runtime]", "Agent")
-    assert has_element?(ctx.view, "#new_thread-runtime option[value=claude]", "Claude Code")
+    open_draft(ctx, base)
+    assert has_element?(ctx.view, "label[for=thread_draft-runtime]", "Agent")
+    assert has_element?(ctx.view, "#thread_draft-runtime option[value=claude]", "Claude Code")
 
     assert has_element?(
              ctx.view,
-             "#new_thread-runtime option[value=codex][disabled]",
+             "#thread_draft-runtime option[value=codex][disabled]",
              "Codex threads on this project aren't available yet"
            )
 
-    assert has_element?(ctx.view, "#new_thread-model option", "Claude Opus 5")
+    assert has_element?(ctx.view, "#thread_draft-model option", "Claude Opus 5")
 
     for {owner?, reason} <- [
           {true, "Connect to use"},
           {false, "Not connected — #{ctx.user.login} must connect it"}
         ] do
-      render_click(ctx.view, "cancel-thread")
+      render_click(ctx.view, "discard-draft")
+      settle(ctx.view)
+      refute has_element?(ctx.view, "#thread-tab-draft")
 
       options = %{
         base
@@ -1090,10 +1129,8 @@ defmodule RavixWeb.TrackLiveTest do
             Enum.map(base.runtimes, &%{&1 | enabled: true, connected: &1.runtime == "claude"})
       }
 
-      stub(Tracks, :thread_options, fn _, _ -> {:ok, options} end)
-      render_click(ctx.view, "new-thread")
-      render_async(ctx.view)
-      assert has_element?(ctx.view, "#new_thread-runtime option[value=codex][disabled]", reason)
+      open_draft(ctx, options)
+      assert has_element?(ctx.view, "#thread_draft-runtime option[value=codex][disabled]", reason)
     end
   end
 
@@ -1157,18 +1194,26 @@ defmodule RavixWeb.TrackLiveTest do
            )
   end
 
-  test "thread errors name the agent and owner in plain words", ctx do
+  test "a draft's refusals name the agent and owner in plain words and keep the draft", ctx do
+    open_draft(ctx, draft_options(ctx, runtime: "codex"))
+
     for {code, message} <- [
           {"agent_not_connected", "#{ctx.user.login} hasn't connected Codex."},
           {"guest_runtime_disabled", "Codex threads on this project aren't available yet."},
           {"invalid_runtime", "Choose Claude Code or Codex."},
           {"invalid_model", "Choose one of Codex's models."}
         ] do
-      expect(Tracks, :add_thread, fn _, _, _ -> {:error, {:conflict, code, message}} end)
-      render_click(ctx.view, "add-thread", %{"new_thread" => %{"runtime" => "codex"}})
+      expect(Tracks, :start_thread, fn _, _, _, _ -> {:error, {:conflict, code, message}} end)
+      ctx.view |> form("#composer-form", %{text: "keep me"}) |> render_submit()
       render_async(ctx.view)
       assert has_element?(ctx.view, "#thread-error[role=alert]", message)
+      assert has_element?(ctx.view, "#thread-tab-draft[aria-selected=true]")
+      assert has_element?(ctx.view, "#thread_draft-runtime option[value=codex][selected]")
+      refute_push_event(ctx.view, "composer:clear", %{})
+      refute_push_event(ctx.view, "composer:forget", %{})
     end
+
+    assert [_] = Tracks.Store.threads_of(ctx.track.id)
   end
 
   test "a disconnected agent refuses a prompt beside the composer without clearing it", ctx do
@@ -1189,12 +1234,14 @@ defmodule RavixWeb.TrackLiveTest do
   end
 
   test "failed guest attachment explains the retry and home-agent alternative", ctx do
-    expect(Tracks, :add_thread, fn _, _, _ ->
+    open_draft(ctx, draft_options(ctx, runtime: "codex"))
+
+    expect(Tracks, :start_thread, fn _, _, _, _ ->
       {:error,
        %FountainError{status: 422, code: "sandbox_runtime_mismatch", message: "provider details"}}
     end)
 
-    render_click(ctx.view, "add-thread", %{"new_thread" => %{"runtime" => "codex"}})
+    ctx.view |> form("#composer-form", %{text: "go"}) |> render_submit()
     render_async(ctx.view)
 
     assert has_element?(
@@ -1207,19 +1254,20 @@ defmodule RavixWeb.TrackLiveTest do
     refute render(ctx.view) =~ "provider details"
   end
 
-  test "owners connect inline before creating a thread and late ticks are discarded", ctx do
+  test "owners connect an agent inline from the draft and late ticks are discarded", ctx do
     options = %{
-      runtime: "claude",
-      model: "anthropic/claude-opus-5",
-      owner_login: ctx.user.login,
-      owner?: true,
-      runtimes: [
-        %{runtime: "claude", connected: true, enabled: true, models: ["anthropic/claude-opus-5"]},
-        %{runtime: "codex", connected: false, enabled: true, models: ["openai/gpt-6-astra"]}
-      ]
+      draft_options(ctx, owner?: true)
+      | runtimes: [
+          %{
+            runtime: "claude",
+            connected: true,
+            enabled: true,
+            models: ["anthropic/claude-opus-5"]
+          },
+          %{runtime: "codex", connected: false, enabled: true, models: ["openai/gpt-6-astra"]}
+        ]
     }
 
-    stub(Tracks, :thread_options, fn _, _ -> {:ok, options} end)
     stub(Ravix.Accounts.Inference, :held, fn _ -> {:ok, []} end)
     stub(Ravix.Accounts.Inference, :subscription, fn _ -> {:ok, nil} end)
 
@@ -1227,9 +1275,8 @@ defmodule RavixWeb.TrackLiveTest do
       {:ok, %{enabled?: true, pending: nil}}
     end)
 
-    render_click(ctx.view, "new-thread")
-    render_async(ctx.view)
-    assert has_element?(ctx.view, "#new-thread-dialog", "You are creating a Claude Code thread.")
+    open_draft(ctx, options)
+    assert has_element?(ctx.view, "#thread-tab-draft", "Claude Code")
 
     ctx.view
     |> element("button[phx-click=connect-thread-agent][phx-value-runtime=codex]")
@@ -1259,16 +1306,19 @@ defmodule RavixWeb.TrackLiveTest do
 
     assert has_element?(
              ctx.view,
-             "#new_thread-runtime option[value=codex][selected]",
+             "#thread_draft-runtime option[value=codex][selected]",
              "Connected"
            )
 
-    assert has_element?(ctx.view, "#new-thread-dialog", "You are creating a Codex thread.")
+    assert has_element?(ctx.view, "#thread_draft-model option[selected]", "GPT-6 Astra")
+    assert has_element?(ctx.view, "#thread-tab-draft", "Codex · GPT-6 Astra")
     refute has_element?(ctx.view, ".thread-connections form")
-    render_click(ctx.view, "cancel-thread")
+    render_click(ctx.view, "discard-draft")
+    settle(ctx.view)
     send(ctx.view.pid, {:agent_panel, "thread-connect-old", {:poll_link, make_ref()}})
     render(ctx.view)
-    refute has_element?(ctx.view, "#new-thread-dialog")
+    refute has_element?(ctx.view, "#thread-tab-draft")
+    refute has_element?(ctx.view, ".thread-connections")
   end
 
   test "thread tabs mark the selected thread and unread ones, and pressing the current tab stays put",
@@ -1551,7 +1601,7 @@ defmodule RavixWeb.TrackLiveTest do
     refute has_element?(ctx.view, "#composer-#{foreign.id}")
   end
 
-  for event <- ["select-thread", "add-thread", "connect-thread-agent", "rebuild-machine"] do
+  for event <- ["select-thread", "draft-thread", "connect-thread-agent", "rebuild-machine"] do
     @thread_event event
     test "revoked session rejects #{event}", ctx do
       token = Plug.Conn.get_session(ctx.conn, :session_token)
@@ -1698,6 +1748,251 @@ defmodule RavixWeb.TrackLiveTest do
       assert {:error, {:redirect, %{to: "/login"}}} =
                render_hook(ctx.view, "set-model", %{model: "anthropic/claude-opus-5"})
     end
+  end
+
+  describe "a draft thread" do
+    test "+ adds a draft on the personal default with no dialog, and pressing it again reuses it",
+         ctx do
+      expect(Tracks, :thread_options, 1, fn user, id ->
+        assert {user.id, id} == {ctx.user.id, ctx.track.id}
+        {:ok, draft_options(ctx, source: :person)}
+      end)
+
+      ctx.view |> element("#thread-switcher button[aria-label='Add thread']") |> render_click()
+      render_async(ctx.view)
+
+      refute has_element?(ctx.view, "#new-thread-dialog")
+      refute has_element?(ctx.view, "#new-thread-form")
+      assert has_element?(ctx.view, "#thread-tab-draft[aria-selected=true]", "New thread")
+      assert has_element?(ctx.view, "#thread-tab-draft", "Claude Code · Claude Opus 5")
+      assert has_element?(ctx.view, "#thread-tab-#{ctx.track.id}[aria-selected=false]")
+      assert has_element?(ctx.view, "#transcript-scroll[aria-labelledby=thread-tab-draft]")
+
+      assert has_element?(
+               ctx.view,
+               "#draft-thread-empty",
+               "Your first message starts this thread."
+             )
+
+      refute has_element?(ctx.view, "#transcript-turns")
+      assert has_element?(ctx.view, ".thread-default-source", "Your default: Claude Code")
+      assert has_element?(ctx.view, ".draft-default-hint", "Also your default for new threads")
+      refute has_element?(ctx.view, "#model-trigger")
+      key = draft_key(ctx.view)
+
+      ctx.view |> element("#thread-switcher button[aria-label='Add thread']") |> render_click()
+      render_async(ctx.view)
+
+      assert 1 ==
+               ctx.view
+               |> render()
+               |> LazyHTML.from_fragment()
+               |> LazyHTML.query("#thread-tab-draft")
+               |> Enum.count()
+
+      assert draft_key(ctx.view) == key
+
+      # The close button discards it and goes back to the thread it left.
+      ctx.view |> element("#thread-draft-discard") |> render_click()
+      settle(ctx.view)
+      refute has_element?(ctx.view, "#thread-tab-draft")
+      assert has_element?(ctx.view, "#composer-#{ctx.track.id}")
+      assert has_element?(ctx.view, "#thread-tab-#{ctx.track.id}[aria-selected=true]")
+      assert_push_event(ctx.view, "composer:forget", %{key: ^key})
+    end
+
+    test "switching threads keeps the draft, its picks and its text; a reload drops it", ctx do
+      open_draft(ctx, draft_options(ctx))
+      key = draft_key(ctx.view)
+
+      ctx.view
+      |> form("#composer-form", %{
+        thread_draft: %{runtime: "claude", model: "anthropic/claude-sonnet-5"}
+      })
+      |> render_change(%{_target: ["thread_draft", "model"]})
+
+      render_hook(ctx.view, "select-thread", %{thread_id: ctx.track.id})
+      settle(ctx.view)
+      assert has_element?(ctx.view, "#composer-#{ctx.track.id}")
+      assert has_element?(ctx.view, "#thread-tab-#{ctx.track.id}[aria-selected=true]")
+      assert has_element?(ctx.view, "#thread-tab-draft[aria-selected=false]", "Claude Sonnet 5")
+      refute has_element?(ctx.view, "#thread_draft-runtime")
+
+      # The narrow picker offers the draft too, and choosing it comes back.
+      assert has_element?(ctx.view, "#thread-picker option[value=draft]", "New thread")
+      ctx.view |> element("#thread-picker-form") |> render_change(%{thread_id: "draft"})
+      assert has_element?(ctx.view, "#thread-tab-draft[aria-selected=true]")
+      assert draft_key(ctx.view) == key
+      assert has_element?(ctx.view, "#thread_draft-model option[selected]", "Claude Sonnet 5")
+
+      {:ok, parent, _} = live(ctx.conn, "/p/#{ctx.project.id}/t/#{ctx.track.id}")
+      reloaded = find_live_child(parent, "track-host")
+      settle(reloaded)
+      refute has_element?(reloaded, "#thread-tab-draft")
+    end
+
+    test "the agent and model are explicit picks sent with the first message", ctx do
+      open_draft(ctx, draft_options(ctx))
+      key = draft_key(ctx.view)
+
+      ctx.view
+      |> form("#composer-form", %{thread_draft: %{runtime: "codex"}})
+      |> render_change(%{_target: ["thread_draft", "runtime"]})
+
+      assert has_element?(ctx.view, "#thread_draft-runtime option[value=codex][selected]")
+      assert has_element?(ctx.view, "#thread_draft-model option[selected]", "GPT-6 Astra")
+      assert has_element?(ctx.view, "#thread-tab-draft", "Codex · GPT-6 Astra")
+
+      ctx.view
+      |> form("#composer-form", %{thread_draft: %{runtime: "codex", model: "openai/gpt-5.6"}})
+      |> render_change(%{_target: ["thread_draft", "model"]})
+
+      assert has_element?(ctx.view, "#thread-tab-draft", "Codex · GPT-5.6")
+
+      expect(Tracks, :start_thread, fn user, id, attrs, payload ->
+        assert {user.id, id} == {ctx.user.id, ctx.track.id}
+
+        assert attrs == %{
+                 "runtime" => "codex",
+                 "model" => "openai/gpt-5.6",
+                 "preference_explicit" => "true"
+               }
+
+        assert "track:#{ctx.track.id}:thread:draft:#{payload.request_id}" == key
+        assert payload.prompt == "Use Codex"
+        {:error, {:conflict, "not_open", "The track's machine is not ready."}}
+      end)
+
+      ctx.view |> form("#composer-form", %{text: "Use Codex"}) |> render_submit()
+      render_async(ctx.view)
+      assert has_element?(ctx.view, "#thread-error", "Couldn't start a Codex thread")
+      assert has_element?(ctx.view, "#thread-tab-draft[aria-selected=true]", "Codex · GPT-5.6")
+      assert draft_key(ctx.view) == key
+    end
+
+    test "an untouched default is not an explicit pick", ctx do
+      open_draft(ctx, draft_options(ctx))
+
+      expect(Tracks, :start_thread, fn _, _, attrs, _ ->
+        assert attrs == %{
+                 "runtime" => "claude",
+                 "model" => "anthropic/claude-opus-5",
+                 "preference_explicit" => "false"
+               }
+
+        {:error, :not_found}
+      end)
+
+      ctx.view |> form("#composer-form", %{text: "defaults"}) |> render_submit()
+      render_async(ctx.view)
+    end
+
+    test "a collaborator never sees another person's draft", ctx do
+      member = insert_user()
+      insert_project_member(ctx.project, member)
+
+      {:ok, parent, _} =
+        live(log_in_user(build_conn(), member), "/p/#{ctx.project.id}/t/#{ctx.track.id}")
+
+      theirs = find_live_child(parent, "track-host")
+      settle(theirs)
+
+      open_draft(ctx, draft_options(ctx))
+      send(theirs.pid, {:hub, Event.new(:tracks, ctx.project.id, track_id: ctx.track.id)})
+      settle(theirs)
+      refute has_element?(theirs, "#thread-tab-draft")
+      refute render(theirs) =~ "New thread"
+      assert has_element?(ctx.view, "#thread-tab-draft")
+    end
+
+    test "a revoked session cannot start a thread from its draft", ctx do
+      open_draft(ctx, draft_options(ctx))
+      reject(&Tracks.start_thread/4)
+      token = Plug.Conn.get_session(ctx.conn, :session_token)
+      Repo.delete!(Repo.get_by!(Session, token_hash: Ravix.Crypto.sha256(token)))
+
+      :sys.replace_state(ctx.view.pid, fn state ->
+        update_in(state.socket.assigns.session_guard, &%{&1 | stale?: true})
+      end)
+
+      assert {:error, {:redirect, %{to: "/login"}}} =
+               render_submit(ctx.view, "send", %{"text" => "after sign-out"})
+
+      assert [_] = Tracks.Store.threads_of(ctx.track.id)
+    end
+
+    test "a removed member cannot start a thread from their draft", ctx do
+      member = insert_user()
+      membership = insert_project_member(ctx.project, member)
+
+      {:ok, parent, _} =
+        live(log_in_user(build_conn(), member), "/p/#{ctx.project.id}/t/#{ctx.track.id}")
+
+      view = find_live_child(parent, "track-host")
+      settle(view)
+      open_draft(%{ctx | view: view}, draft_options(ctx))
+      reject(&Tracks.start_thread/4)
+      Repo.delete!(membership)
+
+      :sys.replace_state(view.pid, fn state ->
+        update_in(state.socket.assigns.track_guard, &%{&1 | stale?: true})
+      end)
+
+      assert {:error, {:redirect, %{to: "/"}}} =
+               render_submit(view, "send", %{"text" => "still a member?"})
+
+      assert [_] = Tracks.Store.threads_of(ctx.track.id)
+    end
+  end
+
+  defp draft_key(view) do
+    [key] =
+      view
+      |> render()
+      |> LazyHTML.from_fragment()
+      |> LazyHTML.query("textarea[data-draft-key]")
+      |> LazyHTML.attribute("data-draft-key")
+
+    key
+  end
+
+  # What `Tracks.thread_options/2` answers for a Claude-home project whose
+  # payer has both agents: the draft's picker, without Fountain.
+  defp draft_options(ctx, overrides \\ []) do
+    runtime = Keyword.get(overrides, :runtime, "claude")
+
+    Map.merge(
+      %{
+        runtime: runtime,
+        model: if(runtime == "codex", do: "openai/gpt-6-astra", else: "anthropic/claude-opus-5"),
+        source: :project,
+        home_runtime: "claude",
+        owner_login: ctx.user.login,
+        owner?: true,
+        runtimes: [
+          %{
+            runtime: "claude",
+            connected: true,
+            enabled: true,
+            models: ["anthropic/claude-opus-5", "anthropic/claude-sonnet-5"]
+          },
+          %{
+            runtime: "codex",
+            connected: true,
+            enabled: true,
+            models: ["openai/gpt-6-astra", "openai/gpt-5.6"]
+          }
+        ]
+      },
+      Map.new(Keyword.delete(overrides, :runtime))
+    )
+  end
+
+  defp open_draft(ctx, options) do
+    stub(Tracks, :thread_options, fn _, _ -> {:ok, options} end)
+    ctx.view |> element("#thread-switcher button[aria-label='Add thread']") |> render_click()
+    render_async(ctx.view)
+    assert has_element?(ctx.view, "#thread-tab-draft[aria-selected=true]")
   end
 
   defp thread_options(id) do
@@ -4172,6 +4467,30 @@ defmodule RavixWeb.TrackLiveTest do
     assert has_element?(ctx.view, ".workspace-welcome", "What are we working on?")
     assert has_element?(ctx.view, "#composer-form textarea[placeholder='Ask to make changes…']")
     assert has_element?(ctx.view, ~s|.jump-latest svg path[d="M12 5v14M6 13l6 6 6-6"]|)
+  end
+
+  test "an additional thread's working-directory line stays out of the prompt shown", ctx do
+    track = Repo.get!(Track, ctx.track.id)
+    row = %{thread_id: "other-thread", track_id: track.id}
+
+    for {id, said, speaker} <- [
+          {"solo", PromptQueue.Body.in_thread("Fix the build", row, track), "User"},
+          {"shared",
+           PromptQueue.with_author(
+             "teammate",
+             PromptQueue.Body.in_thread("Fix the build", row, track)
+           ), "@teammate"}
+        ] do
+      send(ctx.view.pid, {:transcript, ctx.track.id, opened(200, id, said)})
+      drawn(ctx.view)
+      assert has_element?(ctx.view, "#turns-#{id} .speaker", speaker)
+      assert has_element?(ctx.view, "#turns-#{id} .workspace-prompt", "Fix the build")
+      refute has_element?(ctx.view, "#turns-#{id}", "This conversation shares track")
+    end
+
+    # A Ravix instruction that is only the line is still Ravix's.
+    assert PromptQueue.Body.outside_thread("[ravix] This conversation shares track x.") ==
+             "[ravix] This conversation shares track x."
   end
 
   test "restored context and preview instructions stay out of an authored prompt", ctx do
