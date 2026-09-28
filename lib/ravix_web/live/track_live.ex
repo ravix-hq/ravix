@@ -1958,6 +1958,11 @@ defmodule RavixWeb.TrackLive do
     """
   end
 
+  # Setup is waiting on a sleeping shared machine that it will not wake by
+  # itself; a prompt or the wake button does. See `Ravix.Tracks.Setup`.
+  defp parked?(track),
+    do: track.setup_state == "running" and track.setup_error_code == "sandbox_suspended"
+
   defp pull_state_label(:merged), do: "Merged"
   defp pull_state_label(:closed), do: "Closed"
   defp pull_state_label(:open), do: "Open"
@@ -1978,6 +1983,10 @@ defmodule RavixWeb.TrackLive do
 
   defp setup_label(%{status: :closed}, _now), do: "Closed"
   defp setup_label(%{setup_state: "failed"}, _now), do: "Setup failed"
+
+  defp setup_label(%{setup_state: "running", setup_error_code: "sandbox_suspended"}, _now),
+    do: "Machine asleep"
+
   defp setup_label(%{setup_state: "ready"}, _now), do: "Ready"
 
   defp setup_label(%{setup_state: "retry", setup_error_code: code}, _now)

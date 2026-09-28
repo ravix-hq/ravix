@@ -295,7 +295,7 @@
             do: "Own machine",
             else: "Shared project machine"}</span>
           <span :if={@track.setup_error}>{@track.setup_error}</span>
-          <p :if={@track.setup_state in ["pending", "running", "retry"]}>
+          <p :if={@track.setup_state in ["pending", "running", "retry"] and not parked?(@track)}>
             Prompts will wait until setup is ready.
           </p>
 
@@ -459,14 +459,19 @@
                   :if={
                     (@track.setup_state == "failed" &&
                        @track.setup_error_code != "secrets_changed") ||
-                      (@track.setup_state == "ready" && @track.status in [:failed, :opening])
+                      (@track.setup_state == "ready" && @track.status in [:failed, :opening]) ||
+                      parked?(@track)
                   }
                   type="button"
                   class="ghost"
                   phx-click="retry-track"
                   disabled={:retry in @pending}
                 >
-                  {if @track.status == :setup_failed, do: "Retry setup", else: "Wake / retry"}
+                  {cond do
+                    @track.status == :setup_failed -> "Retry setup"
+                    parked?(@track) -> "Wake machine"
+                    true -> "Wake / retry"
+                  end}
                 </button>
               </div>
             </div>
