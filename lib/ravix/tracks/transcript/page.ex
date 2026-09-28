@@ -17,11 +17,12 @@ defmodule Ravix.Tracks.Transcript.Page do
   alias Ravix.Tracks.Transcript.Turn
 
   @enforce_keys [:turns, :last_event_id, :runtime]
-  defstruct turns: [], last_event_id: nil, runtime: ""
+  defstruct turns: [], last_event_id: nil, runtime: "", conversation_id: nil
 
   @type t :: %__MODULE__{
           turns: [Turn.t()],
           last_event_id: integer() | nil,
+          conversation_id: String.t() | nil,
           runtime: String.t()
         }
 end

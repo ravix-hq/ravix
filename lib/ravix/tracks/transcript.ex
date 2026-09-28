@@ -41,7 +41,7 @@ defmodule Ravix.Tracks.Transcript do
   alias Managoat.ACP.Protocol
   alias Ravix.Fountain.Error
   alias Ravix.Tracks.AgentFailure
-  alias Ravix.Tracks.Transcript.{Block, Detail, Edit, Event, Page, Turn}
+  alias Ravix.Tracks.Transcript.{Block, Detail, Edit, Event, Fold, Page, Turn}
 
   @acp_runtimes ~w(claude codex opencode)
   @tool_kinds ~w(read edit delete move search execute fetch think other)
@@ -74,8 +74,9 @@ defmodule Ravix.Tracks.Transcript do
   dropped, so the very first thing a new track shows is not an empty panel.
   """
   @spec page([Event.t() | map()], String.t()) :: Page.t()
-  def page(events, runtime) do
-    add_events(%Page{turns: [], last_event_id: nil, runtime: runtime || ""}, events)
+  @spec page([Event.t() | map()], String.t(), :detect | map()) :: Page.t()
+  def page(events, runtime, failures \\ :detect) do
+    add_events(%Page{turns: [], last_event_id: nil, runtime: runtime || ""}, events, failures)
   end
 
   @doc "Attach retained image counts from Fountain's turn records to a loaded page."
@@ -85,7 +86,7 @@ defmodule Ravix.Tracks.Transcript do
 
     turns =
       Enum.map(page.turns, fn turn ->
-        count = Map.get(counts, turn.id, 0)
+        count = Map.get(counts, turn.id, turn.image_count)
         %{turn | image_count: count, visible?: turn.visible? or count > 0}
       end)
 
@@ -98,7 +99,65 @@ defmodule Ravix.Tracks.Transcript do
 
   @doc "Every event in `events`, laid into its turn. Duplicates (by id) are ignored."
   @spec add_events(Page.t(), [Event.t() | map()]) :: Page.t()
-  def add_events(page, events), do: Enum.reduce(events, page, &add_event(&2, &1))
+  @spec add_events(Page.t(), [Event.t() | map()], :detect | map()) :: Page.t()
+  def add_events(page, events, failures \\ :detect) do
+    indexed = Map.new(page.turns, &{&1.id, &1})
+    order = page.turns |> Enum.map(& &1.id) |> Enum.reverse()
+
+    {turns, order, last} =
+      Enum.reduce(events, {indexed, order, page.last_event_id}, fn raw, state ->
+        batch_event(Event.from(raw), page.runtime, state)
+      end)
+
+    %{
+      page
+      | turns:
+          Enum.map(Enum.reverse(order), fn id ->
+            turn = Map.fetch!(turns, id)
+
+            turn =
+              if is_map(failures) and turn.settled?,
+                do: %{turn | failure: Map.get(failures, id)},
+                else: turn
+
+            finish(turn, turn.fold)
+          end),
+        last_event_id: last
+    }
+  end
+
+  defp batch_event(%Event{id: id} = event, runtime, {turns, order, last}) when is_integer(id) do
+    event = bind_suspension(event, turns, order)
+
+    if event do
+      turn_id = event.turn_id
+      order = if Map.has_key?(turns, turn_id), do: order, else: [turn_id | order]
+      turn = Map.get(turns, turn_id, %Turn{id: turn_id, runtime: runtime})
+      {Map.put(turns, turn_id, ingest(turn, event, runtime)), order, max(last || 0, id)}
+    else
+      {turns, order, max(last || 0, id)}
+    end
+  end
+
+  defp batch_event(_event, _runtime, state), do: state
+
+  defp bind_suspension(%Event{turn_id: "pending"} = event, turns, order) do
+    if Event.suspension(event), do: bind_open_turn(event, turns, order), else: event
+  end
+
+  defp bind_suspension(event, _turns, _order), do: event
+
+  defp bind_open_turn(event, turns, [id | _]) do
+    case Map.fetch!(turns, id) do
+      %Turn{settled?: false, events: [%Event{id: last} | _]} when last < event.id ->
+        %{event | turn_id: id}
+
+      _ ->
+        nil
+    end
+  end
+
+  defp bind_open_turn(_event, _turns, []), do: nil
 
   @doc """
   One live event, laid into its turn, which is re-parsed. A page that has
@@ -183,23 +242,26 @@ defmodule Ravix.Tracks.Transcript do
   # The prompt is taken before any of that, whichever branch follows. It only
   # arrives on the event that opens the turn, and only when the feed was read
   # with prompts; a copy of that event without one leaves the prompt alone.
-  defp lay_in(%Turn{} = turn, event, runtime) do
+  defp lay_in(turn, event, runtime) do
+    turn = ingest(turn, event, runtime)
+    finish(turn, turn.fold)
+  end
+
+  defp ingest(%Turn{} = turn, event, runtime) do
     turn = if event.prompt, do: %{turn | prompt: event.prompt}, else: turn
     turn = %{turn | image_count: max(turn.image_count, event.image_count)}
 
     cond do
       appended?(turn.events, event) ->
-        finish(
-          %{
-            turn
-            | events: [event | turn.events],
-              settled?: turn.settled? or Event.settles?(event)
-          },
-          fold(event, runtime, turn.fold)
-        )
+        %{
+          turn
+          | events: [event | turn.events],
+            settled?: turn.settled? or Event.settles?(event),
+            fold: fold(event, runtime, turn.fold)
+        }
 
       Enum.any?(turn.events, &(&1.id == event.id)) ->
-        finish(turn, turn.fold)
+        turn
 
       # Out of order: the order the blocks are in changes, so it is rebuilt.
       true ->
@@ -227,6 +289,7 @@ defmodule Ravix.Tracks.Transcript do
   # only one of them can afford to read the whole log for it.
   defp finish(%Turn{} = turn, acc) do
     blocks = blocks_of(acc)
+    turn = classify(turn, blocks)
     visible = blocks |> Enum.filter(&visible_block?/1) |> failure_reply(turn)
     notice = AgentFailure.github_notice(turn.events, blocks)
     visible = if notice, do: visible ++ [%Block.System{body: notice}], else: visible
@@ -241,8 +304,13 @@ defmodule Ravix.Tracks.Transcript do
     }
   end
 
+  defp classify(%Turn{settled?: true, failure: :unclassified} = turn, blocks),
+    do: %{turn | failure: AgentFailure.detect(turn.events, turn.runtime, blocks)}
+
+  defp classify(turn, _blocks), do: turn
+
   defp failure_reply(blocks, %{settled?: true} = turn) do
-    case AgentFailure.detect(turn.events, turn.runtime, blocks) do
+    case turn.failure do
       nil ->
         blocks
 
@@ -274,7 +342,7 @@ defmodule Ravix.Tracks.Transcript do
 
   defp empty_acc, do: Turn.empty_fold()
   defp fold(event, runtime, acc), do: output(event, runtime, acc)
-  defp blocks_of(blocks), do: Enum.reverse(blocks)
+  defp blocks_of(acc), do: Fold.blocks(acc)
 
   @doc """
   Has Fountain closed this turn? `stage: "turn"` in any state other than
@@ -345,19 +413,19 @@ defmodule Ravix.Tracks.Transcript do
   defp output(%Event{kind: :stage} = event, _runtime, acc) do
     cond do
       session_gone?(event) and not Event.failed_stage?(event) ->
-        [
+        Fold.push(
+          acc,
           %Block.System{
             body:
               "The agent lost its memory of earlier turns; Ravix will restate the track's context on your next message."
           }
-          | acc
-        ]
+        )
 
       Event.failed_stage?(event) ->
-        [
+        Fold.push(
+          acc,
           %Block.Failure{stage: event.stage, body: raw_failure_reason(event), details: event.data}
-          | acc
-        ]
+        )
 
       true ->
         acc
@@ -435,7 +503,7 @@ defmodule Ravix.Tracks.Transcript do
         Enum.reduce(Blocks.from_update(update), acc, &apply_block(&1, update, ts, &2))
 
       {:invalid, raw} ->
-        [%Block.Raw{body: raw} | acc]
+        Fold.push(acc, %Block.Raw{body: raw})
 
       _ ->
         acc
@@ -449,18 +517,9 @@ defmodule Ravix.Tracks.Transcript do
     do: push_text(acc, Block.Thinking, body, ts)
 
   defp apply_block(%{kind: :tool_use} = block, update, ts, blocks),
-    do: [Block.tool(block, ts, detail(Detail.new(), update)) | blocks]
+    do: Fold.push(blocks, Block.tool(block, ts, detail(Detail.new(), update)))
 
-  # A result is paired onto its call by matching the struct that carries the
-  # id, not by an offset remembered when the call went past. The offset
-  # version was a transliteration of `tools[id] = blocks.length - 1`: it kept
-  # a second map beside the blocks, converted forward index to reverse
-  # position with `length(blocks) - 1 - index`, and was correct only while
-  # nothing ever changed the length of the list in between. Matching asks the
-  # list directly, so no invariant has to hold and no second map has to exist.
-  #
-  # A `tool_id` that is not a string pairs with nothing --- a `%Tool{id: nil}`
-  # would otherwise match one --- so those fall to the catch-all below.
+  # The newest call with this id owns subsequent results.
   defp apply_block(%{kind: :tool_result, tool_id: id} = block, update, ts, blocks)
        when is_binary(id),
        do: pair_result(blocks, id, block, update, ts)
@@ -468,12 +527,7 @@ defmodule Ravix.Tracks.Transcript do
   # The newest plan replaces any earlier one in the turn, wherever that was;
   # an empty or unreadable one just takes the old one away.
   defp apply_block(%{kind: :plan, body: entries}, _update, _ts, acc) do
-    acc = Enum.reject(acc, &match?(%Block.Plan{}, &1))
-
-    case Block.Plan.from_entries(entries) do
-      nil -> acc
-      plan -> [plan | acc]
-    end
+    Fold.plan(acc, Block.Plan.from_entries(entries))
   end
 
   # Permission requests and anything the ACP library adds later have no
@@ -481,20 +535,10 @@ defmodule Ravix.Tracks.Transcript do
   # noise, as the browser dropped them.
   defp apply_block(_block, _update, _ts, acc), do: acc
 
-  # Adjacent chunks of the same kind are one block. The timestamps are the
-  # first and last chunk that landed in it. `%module{}` binds the struct at
-  # the head of the list and the second argument matches against it, which is
-  # the struct-name-as-tag version of the `kind` field these blocks carried.
-  defp push_text([%module{} = last | rest], module, body, ts),
-    do: [%{last | body: last.body <> body, ended_at: ts || last.ended_at} | rest]
+  defp push_text(acc, module, body, ts), do: Fold.text(acc, module, body, ts)
 
-  defp push_text(blocks, module, body, ts),
-    do: [struct!(module, body: body, started_at: ts, ended_at: ts) | blocks]
-
-  # The tool the result belongs to, updated in place. Not found is the list
-  # unchanged: a result whose call this turn never saw is dropped, as it was.
-  defp pair_result([%Block.Tool{id: id} = tool | rest], id, result, update, ts) do
-    [
+  defp pair_result(acc, id, result, update, ts) do
+    Fold.result(acc, id, fn tool ->
       %{
         tool
         | status: if(result.error?, do: :error, else: :done),
@@ -502,14 +546,8 @@ defmodule Ravix.Tracks.Transcript do
           ended_at: ts,
           detail: detail(tool.detail, update)
       }
-      | rest
-    ]
+    end)
   end
-
-  defp pair_result([block | rest], id, result, update, ts),
-    do: [block | pair_result(rest, id, result, update, ts)]
-
-  defp pair_result([], _id, _result, _update, _ts), do: []
 
   # ── tool detail (src/lib/tools.ts) ────────────────────────────────────
 

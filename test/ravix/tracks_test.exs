@@ -10,7 +10,7 @@ defmodule Ravix.TracksTest do
   alias Ravix.PromptQueue.Body
   alias Ravix.QueryCount
   alias Ravix.Tracks
-  alias Ravix.Tracks.{Diff, Files, Names, Origin, Setup, Track}
+  alias Ravix.Tracks.{Diff, Files, Names, Origin, Settlement, Setup, Track, Transcript}
   alias Ravix.Tracks.Transcript.{Block, Turn}
 
   @root "/home/sprite/work/kyoto"
@@ -1134,7 +1134,7 @@ defmodule Ravix.TracksTest do
   end
 
   describe "events/3" do
-    test "outage correction is scoped and recorded once when the transcript is read" do
+    test "outage correction is recorded once on settlement and reads only use stored results" do
       owner = insert_user()
       project = insert_project(user: owner, runtime: "codex")
       track = insert_track(project: project, conversation_id: "outage-history")
@@ -1148,12 +1148,25 @@ defmodule Ravix.TracksTest do
       stub(Ravix.Fountain, :turns, fn _, "outage-history" -> {:ok, []} end)
       assert {:error, :not_found} = Tracks.events(insert_user(), track.id)
 
+      event = Ravix.AgentOutageFixture.events() |> List.last() |> Transcript.Event.from()
+      assert {:ok, %{turns: [%{blocks: []}]}} = Tracks.events(owner, track.id)
+      assert Repo.all(Ravix.Tracks.TurnFailure) == []
+      assert {:ok, _} = Settlement.record(client, track.id, "outage-history", event)
+      # Classification must not even fetch events again after settling once.
+      expect(Ravix.Fountain, :events, 2, fn _, "outage-history", [prompts: true] ->
+        {:ok, Ravix.AgentOutageFixture.events()}
+      end)
+
+      assert {:ok, _} = Settlement.record(client, track.id, "outage-history", event)
+
       for _ <- 1..2 do
         assert {:ok, %{turns: [%{blocks: [%Block.Failure{}]}]}} = Tracks.events(owner, track.id)
       end
 
-      assert [%{code: "agent_provider_unreachable", state: "failed"}] =
-               Repo.all(Ravix.Tracks.TurnFailure)
+      rows = Repo.all(Ravix.Tracks.TurnFailure)
+      assert Enum.any?(rows, &(&1.stage == "turn" and &1.code == "agent_provider_unreachable"))
+      assert Enum.any?(rows, &(&1.stage == "classification" and &1.state == "completed"))
+      assert length(rows) == 2
     end
 
     test "the feed and retained image counts form a page; unopened tracks are empty" do
