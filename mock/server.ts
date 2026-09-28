@@ -404,7 +404,7 @@ type Say = (body: string) => Promise<void>;
  * up in development instead of in production.
  */
 async function act(prompt: string, emit: Emit, say: Say, conv: Conv, disk: Disk, pause: (ms: number) => Promise<void>): Promise<void> {
-  if (prompt === "Demonstrate a recovered tool error") {
+  if (prompt.endsWith("Demonstrate a recovered tool error")) {
     emit({ kind: "output", stream: "acp", data: tool("failed-test", "mix test") });
     emit({ kind: "output", stream: "acp", data: acp({
       sessionUpdate: "tool_call_update", toolCallId: "failed-test", status: "failed",
