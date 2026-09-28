@@ -359,11 +359,9 @@ defmodule Ravix.Accounts.InferenceTest do
       me = insert_user()
       read = %{method: "GET", path: "#{@chatgpt}/attempts/att-1"}
 
+      # `account_already_linked` is not here: it is the one refusal that reads
+      # the account before it can say anything, and it has its own file.
       endings = [
-        {%{
-           state: "failed",
-           failure: %{reason: "account_already_linked", grant_id: "g-9", grant: "ravix:other"}
-         }, "already connected to somebody else"},
         {%{state: "failed", failure: %{reason: "invalid_sign_in"}}, "refused the code"},
         {%{state: "failed", failure: %{reason: "exchange_failed"}}, "did not complete"},
         {%{state: "failed", failure: %{reason: "internal_error"}}, "machine service"},
@@ -378,7 +376,6 @@ defmodule Ravix.Accounts.InferenceTest do
                  Inference.poll_link(me, link("s"))
 
         assert message =~ words
-        refute message =~ "ravix:other"
       end
 
       assert %User{agent: nil, credential_set_id: nil} = Repo.get!(User, me.id)

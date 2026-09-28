@@ -124,7 +124,7 @@ const state = {
     state: string;
     polls: number;
     result_grant_id: string | null;
-    failure: { reason: string } | null;
+    failure: { reason: string; grant_id?: string | null; grant?: string | null } | null;
     expires_at: string;
   }[],
   conversations: [] as Conv[],
@@ -689,6 +689,9 @@ export async function fountain(req: Request, url: URL): Promise<Response | null>
   // ── ChatGPT subscriptions ────────────────────────────────────────────
 
   const CHATGPT = "/api/account/chatgpt-subscriptions";
+  // The one ChatGPT account this mock can sign in as. Two grants for it is
+  // exactly what Fountain will not hold; see the poll below.
+  const MOCK_CHATGPT_EMAIL = "mockuser@example.com";
   const attemptView = (a: (typeof state.chatgptAttempts)[number]) => ({
     id: a.id,
     kind: a.kind,
@@ -701,6 +704,8 @@ export async function fountain(req: Request, url: URL): Promise<Response | null>
     auth_unreachable: false,
     expires_at: a.expires_at,
     result_grant_id: a.result_grant_id,
+    // Fountain writes a failure as {reason, grant_id, grant}: the conflicting
+    // grant's id and its name, and both null when it is not this account's.
     failure: a.failure,
   });
   if (p === CHATGPT && method === "GET") {
@@ -762,16 +767,25 @@ export async function fountain(req: Request, url: URL): Promise<Response | null>
           attempt.state = "completed";
           attempt.result_grant_id = grant.id;
         } else {
-          const grant = {
-            id: `grant${state.chatgptGrants.length + 1}-${Math.random().toString(36).slice(2, 8)}`,
-            name: attempt.name!,
-            status: "active",
-            plan_type: "plus",
-            account_email: "mockuser@example.com",
-          };
-          state.chatgptGrants.push(grant);
-          attempt.state = "completed";
-          attempt.result_grant_id = grant.id;
+          // The mock always signs in as the same ChatGPT account, so a second
+          // *new* link is the real conflict Fountain refuses: one ChatGPT
+          // account, one grant, whoever is asking.
+          const held = state.chatgptGrants.find((g) => g.account_email === MOCK_CHATGPT_EMAIL);
+          if (held) {
+            attempt.state = "failed";
+            attempt.failure = { reason: "account_already_linked", grant_id: held.id, grant: held.name };
+          } else {
+            const grant = {
+              id: `grant${state.chatgptGrants.length + 1}-${Math.random().toString(36).slice(2, 8)}`,
+              name: attempt.name!,
+              status: "active",
+              plan_type: "plus",
+              account_email: MOCK_CHATGPT_EMAIL,
+            };
+            state.chatgptGrants.push(grant);
+            attempt.state = "completed";
+            attempt.result_grant_id = grant.id;
+          }
         }
       }
       return json({ data: attemptView(attempt) });
@@ -783,6 +797,30 @@ export async function fountain(req: Request, url: URL): Promise<Response | null>
     if (!grant) return json({ error: "not_found" }, 404);
     grant.status = "disconnected";
     for (const set of state.credentialSets) if (set.chatgpt_grant_id === grant.id) invalidateInference(set);
+    return json({ data: grant });
+  }
+  const grantOne = new RegExp(`^${CHATGPT}/([^/]+)$`).exec(p);
+  if (grantOne && grantOne[1] !== "attempts" && (method === "DELETE" || method === "PATCH")) {
+    const grant = state.chatgptGrants.find((g) => g.id === grantOne[1]);
+    if (!grant) return json({ error: "not_found" }, 404);
+    if (method === "DELETE") {
+      // Gone entirely, which is what frees the ChatGPT account to be linked
+      // again. A set left naming it stops being able to run Codex.
+      state.chatgptGrants = state.chatgptGrants.filter((g) => g.id !== grant.id);
+      for (const set of state.credentialSets) {
+        if (set.chatgpt_grant_id === grant.id) {
+          set.chatgpt_grant_id = null;
+          invalidateInference(set);
+        }
+      }
+      return new Response(null, { status: 204 });
+    }
+    const name = typeof body.name === "string" ? body.name.trim() : null;
+    if (!name) return json({ error: "validation_failed", errors: { name: ["is required"] } }, 422);
+    if (state.chatgptGrants.some((g) => g.id !== grant.id && g.name === name)) {
+      return json({ error: "validation_failed", errors: { name: ["already names a subscription"] } }, 422);
+    }
+    grant.name = name;
     return json({ data: grant });
   }
   const credential = new RegExp(`^${SETS}/([^/]+)/credentials/([a-z_]+)$`).exec(p);

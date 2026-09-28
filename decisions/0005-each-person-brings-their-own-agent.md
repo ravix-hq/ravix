@@ -170,10 +170,32 @@ what they were invited to.
   whoever runs the deployment; raising `CHATGPT_GRANT_CEILING` on the
   Fountain is the fix. The other limits --- three sign-ins open at once, ten
   started an hour --- are per account too, and are said in those words.
-- **A ChatGPT account links once per Fountain account.** Two people here
-  approving codes with the same ChatGPT account is refused for the second
-  (`account_already_linked`), and the page does not say whose it is, because
-  the grant's name says who.
+- **A ChatGPT account links once per Fountain account.** A second approval for
+  the same ChatGPT account is refused (`account_already_linked`), and because
+  Ravix is one account for everybody, the grant in the way is usually one of
+  this deployment's own. So the refusal is *classified* against the account's
+  grants and sets (`Ravix.Accounts.Inference.Conflict`) rather than reported as
+  somebody else's: this person's own grant, by name or because their own set
+  names it, offers a reconnect; a grant that has stopped working
+  (`disconnected` or `revoked`) that no set names and no Ravix login is named on
+  offers a removal; anything else says a different Ravix login holds it and no
+  more, because the grant's name is `ravix:<their id>` and says who. Fountain
+  names the grant's id *and* its name on the refusal; the name is read nowhere.
+  A grant with a Ravix name is never removed or renamed by self-serve, and a
+  refusal Fountain does not pin to a grant of this account's claims nothing
+  about whose it is.
+- **Taking a grant off one Ravix login and putting it on another is an operator
+  action.** Neither person can do it --- the holder can only disconnect, and the
+  other cannot link the same ChatGPT account while it is held --- so
+  `Ravix.Accounts.Inference.move_subscription/3` does it, gated on
+  `RAVIX_ADMIN_GITHUB_IDS` and logged. There is no admin column and nothing here
+  promotes anybody; the deployment names its operators, by GitHub's numeric id
+  because a login is renameable. `mix ravix.move_chatgpt_subscription` is the
+  door. Four Fountain writes with no transaction across them, so running it
+  again finishes one that stopped half-way: a grant carrying the *target's*
+  name while the source has none is recognised as a move in that state, which
+  is the one step repetition alone cannot recover. What is unbuilt: the audit
+  is a logger line rather than a record anything can be read back from.
 - **The ChatGPT sign-in has been run against the mock and a scripted
   Fountain only.** Fountain itself says the first links on the hosted
   platform are the test. What a real approval, renewal and exhaustion look

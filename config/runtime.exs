@@ -20,6 +20,16 @@ config :ravix,
          "true"
        ) == "true"
 
+# Who may run an operator action, by GitHub's numeric id: a login is
+# renameable and reusable, so it is not an identity to allowlist. Unset means
+# nobody, and there is no wildcard. See `Ravix.Config.admin?/1`.
+config :ravix,
+       :admin_github_ids,
+       (System.get_env("RAVIX_ADMIN_GITHUB_IDS") || "")
+       |> String.split(",", trim: true)
+       |> Enum.map(&String.trim/1)
+       |> Enum.reject(&(&1 == ""))
+
 # config/runtime.exs is executed for all environments, including
 # during releases. It is executed after compilation and before the
 # system starts, so it is typically used to load production configuration
