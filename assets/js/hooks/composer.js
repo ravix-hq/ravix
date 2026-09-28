@@ -31,6 +31,12 @@
 // `[data-composer-note]`, because a rejection that arrives as a failed turn
 // is a rejection nobody can act on.
 //
+// In Comment mode (`data-mode="comment"`) the box is text only, and typing
+// `@` opens the list of people who can be mentioned: the server renders
+// them into the `role="listbox"` the textarea's `aria-controls` names, and
+// this hook filters it by what follows the `@`, moves through it with the
+// arrow keys, and puts `@login ` in the box on Enter, Tab or a click.
+//
 // Sending clears the remembered draft; the text itself stays until the
 // server says the prompt was saved, by pushing `composer:clear` to this
 // hook. A save that fails leaves the words where they were, which is the
@@ -74,6 +80,12 @@ export function rejectionMessage(rejected) {
   return parts.join(" ")
 }
 
+/** The `@partial` being typed just before the caret, or null. */
+export function mentionQuery(text, caret) {
+  const match = /(^|[^\w@/`])@([A-Za-z0-9-]{0,39})$/.exec(text.slice(0, caret))
+  return match ? {start: caret - match[2].length - 1, query: match[2]} : null
+}
+
 function list(names) {
   if (names.length <= 1) return names[0] ?? ""
   return `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`
@@ -89,10 +101,13 @@ export const Composer = {
     this.el.addEventListener("input", () => {
       this.grow()
       this.save()
+      this.mention()
       if (this.el.value.trim()) this.typing()
     })
     this.el.addEventListener("keydown", e => {
-      if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
+      if (this.mentionKey(e)) {
+        e.preventDefault()
+      } else if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
         e.preventDefault()
         this.submit()
       } else if (e.key === "Escape") {
@@ -129,7 +144,15 @@ export const Composer = {
     // -- and `box()` walks upwards from it, which from a detached element
     // finds nothing. Removing a listener from whatever a second lookup
     // happens to return would be wrong even where it found something.
+    this.onMentionPick = e => {
+      const option = e.target.closest?.("[data-mention-options] [role=option]")
+      if (!option) return
+      // Keep the caret in the box: the choice is made on the way down.
+      e.preventDefault()
+      this.choose(option)
+    }
     this.boundBox = box
+    box.addEventListener("mousedown", this.onMentionPick)
     box.addEventListener("dragover", this.onDragOver)
     box.addEventListener("dragleave", this.onDragLeave)
     box.addEventListener("drop", this.onDrop)
@@ -179,9 +202,14 @@ export const Composer = {
   updated() {
     this.restore()
     this.grow()
+    // A patch rewrites the textarea's attributes from the template, which
+    // does not know which option is highlighted.
+    if (this.active && this.mentions()) this.el.setAttribute("aria-activedescendant", this.active.id)
+    else this.active = null
   },
 
   destroyed() {
+    this.boundBox?.removeEventListener("mousedown", this.onMentionPick)
     this.boundBox?.removeEventListener("dragover", this.onDragOver)
     this.boundBox?.removeEventListener("dragleave", this.onDragLeave)
     this.boundBox?.removeEventListener("drop", this.onDrop)
@@ -220,6 +248,10 @@ export const Composer = {
   attach(files) {
     const incoming = Array.from(files ?? [])
     if (!incoming.length) return false
+    if (this.el.dataset.mode === "comment") {
+      this.note("Comments are text only. Switch to Ask agent to attach images.")
+      return true
+    }
     const picker = this.picker()
     if (!picker) return false
     const held = picker.files?.length ?? 0
@@ -234,6 +266,75 @@ export const Composer = {
     picker.dispatchEvent(new Event("input", {bubbles: true}))
     picker.dispatchEvent(new Event("change", {bubbles: true}))
     return true
+  },
+
+  /** The listbox of people, while the box is in Comment mode. */
+  mentions() {
+    if (this.el.dataset.mode !== "comment") return null
+    const id = this.el.getAttribute("aria-controls")
+    return (id && document.getElementById(id)) || null
+  },
+
+  /** Open, filter or close the list for whatever `@` is at the caret. */
+  mention() {
+    const menu = this.mentions()
+    const query = menu && mentionQuery(this.el.value, this.el.selectionStart ?? this.el.value.length)
+    if (!query) return this.closeMentions()
+    const prefix = query.query.toLowerCase()
+    let first = null
+    for (const option of menu.querySelectorAll("[role=option]")) {
+      const hit = option.dataset.login.toLowerCase().startsWith(prefix)
+      option.hidden = !hit
+      if (hit && !first) first = option
+    }
+    if (!first) return this.closeMentions()
+    menu.setAttribute("data-open", "")
+    this.highlight(first)
+  },
+
+  /** Arrow keys, Enter, Tab and Escape while the list is open. True if handled. */
+  mentionKey(e) {
+    const menu = this.mentions()
+    if (!menu?.hasAttribute("data-open") || e.isComposing) return false
+    const shown = Array.from(menu.querySelectorAll("[role=option]")).filter(o => !o.hidden)
+    const at = shown.indexOf(this.active)
+    if (e.key === "ArrowDown") this.highlight(shown[(at + 1) % shown.length])
+    else if (e.key === "ArrowUp") this.highlight(shown[(at - 1 + shown.length) % shown.length])
+    else if ((e.key === "Enter" && !e.shiftKey) || e.key === "Tab") this.choose(this.active ?? shown[0])
+    else if (e.key === "Escape") this.closeMentions()
+    else return false
+    return true
+  },
+
+  highlight(option) {
+    if (this.active) this.active.setAttribute("aria-selected", "false")
+    this.active = option
+    option.setAttribute("aria-selected", "true")
+    option.scrollIntoView?.({block: "nearest"})
+    this.el.setAttribute("aria-activedescendant", option.id)
+  },
+
+  choose(option) {
+    const caret = this.el.selectionStart ?? this.el.value.length
+    const query = mentionQuery(this.el.value, caret)
+    if (query) {
+      const text = `@${option.dataset.login} `
+      this.el.value = this.el.value.slice(0, query.start) + text + this.el.value.slice(caret)
+      const after = query.start + text.length
+      this.el.setSelectionRange?.(after, after)
+      this.save()
+      this.grow()
+    }
+    this.closeMentions()
+    this.el.focus()
+  },
+
+  closeMentions() {
+    const menu = this.mentions()
+    menu?.removeAttribute("data-open")
+    if (this.active) this.active.setAttribute("aria-selected", "false")
+    this.active = null
+    this.el.removeAttribute("aria-activedescendant")
   },
 
   note(text) {

@@ -204,13 +204,14 @@ defmodule Ravix.Tracks do
 
     thread_rows = Store.threads_by_track(Enum.map(rows, & &1.id))
     thread_reads = Store.thread_reads(user.id, project.id)
+    comments = comment_activity(user, Enum.flat_map(Map.values(thread_rows), & &1))
 
     Enum.map(rows, fn row ->
       threads =
         thread_views(
           row.id,
           Map.get(thread_rows, row.id, []),
-          thread_reads,
+          {thread_reads, comments},
           live,
           project
         )
@@ -230,9 +231,24 @@ defmodule Ravix.Tracks do
           last_read: reads[row.id]
         )
 
-      %{view | threads: threads, unread: Enum.any?(threads, & &1.unread)}
+      %{
+        view
+        | threads: threads,
+          unread: Enum.any?(threads, & &1.unread),
+          reply_unread: Enum.any?(threads, & &1.reply_unread),
+          mention: threads |> Enum.map(& &1.mention) |> Enum.reject(&is_nil/1) |> newest()
+      }
     end)
   end
+
+  defp newest([]), do: nil
+  defp newest(mentions), do: Enum.max_by(mentions, & &1.at, DateTime)
+
+  # ownership: every caller admitted these threads through Access.open_tracks/2,
+  # Access.thread_access/3 or Access.track_access/2; this is the caller's own
+  # unread state on them, and nothing of the comments' bodies.
+  defp comment_activity(%User{id: id}, threads),
+    do: Ravix.Comments.Store.activity(id, Enum.map(threads, & &1.id))
 
   @doc """
   The track, plus the ribbon that sits above it and
@@ -288,7 +304,9 @@ defmodule Ravix.Tracks do
          {:ok, client} <- fountain() do
       live = conversations_of(project, fresh: fresh)
       reads = Store.thread_reads(user.id, project.id)
-      threads = thread_views(track_id, Store.threads_of(track_id), reads, live, project)
+      thread_rows = Store.threads_of(track_id)
+      marks = {reads, comment_activity(user, thread_rows)}
+      threads = thread_views(track_id, thread_rows, marks, live, project)
       threads = guest_thread_views(track, project, threads)
 
       environment =
@@ -374,35 +392,48 @@ defmodule Ravix.Tracks do
     end
   end
 
-  defp thread_views(track_id, %User{} = user, project, live),
-    do:
-      thread_views(
-        track_id,
-        Store.threads_of(track_id),
-        Store.thread_reads(user.id, project.id),
-        live,
-        project
-      )
+  defp thread_views(track_id, %User{} = user, project, live) do
+    threads = Store.threads_of(track_id)
+    marks = {Store.thread_reads(user.id, project.id), comment_activity(user, threads)}
+    thread_views(track_id, threads, marks, live, project)
+  end
 
-  defp thread_views(track_id, threads, reads, live, project) do
+  # `unread` is the thread's dot: the agent said something, or somebody else
+  # commented, since this person last looked. `reply_unread` is the agent
+  # half alone, which is what the Inbox lists, together with `mention`: the
+  # newest comment naming this person that they have not read yet.
+  defp thread_views(track_id, threads, {reads, comments}, live, project) do
     Enum.map(threads, fn thread ->
       conversation = live[thread.conversation_id]
 
-      %{
-        id: thread.id,
-        title: thread.title,
-        runtime: thread.runtime || project.runtime,
-        model: (conversation && conversation.model) || thread.model || project.model,
-        default: thread.id == track_id,
-        conversation_id: thread.conversation_id,
-        status:
-          if(conversation && conversation.status in [:running, :pending, :failed],
-            do: conversation.status,
-            else: :ready
-          ),
-        unread: unread?(conversation && conversation.last_active_at, reads[thread.id])
-      }
+      Map.merge(
+        %{
+          id: thread.id,
+          title: thread.title,
+          runtime: thread.runtime || project.runtime,
+          model: (conversation && conversation.model) || thread.model || project.model,
+          default: thread.id == track_id,
+          conversation_id: thread.conversation_id,
+          status:
+            if(conversation && conversation.status in [:running, :pending, :failed],
+              do: conversation.status,
+              else: :ready
+            )
+        },
+        marks(conversation, reads[thread.id], Map.get(comments, thread.id))
+      )
     end)
+  end
+
+  defp marks(conversation, read, activity) do
+    %{comment_at: comment_at, mention: mention} = activity || %{comment_at: nil, mention: nil}
+    reply_unread = unread?(conversation && conversation.last_active_at, read)
+
+    %{
+      unread: reply_unread or unread?(comment_at, read),
+      reply_unread: reply_unread,
+      mention: if(mention && unread?(mention.at, read), do: mention)
+    }
   end
 
   @doc "Funding status for precisely the selected thread; legacy shared copy stays unchanged."

@@ -177,3 +177,109 @@ test("a sent or discarded draft thread's text is forgotten without touching this
     localStorage.removeItem = unavailable
   }
 })
+
+const commentBox = `<form><div data-composer-box><div data-composer-note hidden></div>
+  <textarea data-mode="comment" aria-controls="mention-options"></textarea>
+  <ul id="mention-options" role="listbox" data-mention-options>
+    <li id="mention-option-alice" role="option" aria-selected="false" data-login="alice">@alice</li>
+    <li id="mention-option-alan" role="option" aria-selected="false" data-login="alan">@alan</li>
+    <li id="mention-option-bob" role="option" aria-selected="false" data-login="bob">@bob</li>
+  </ul><input type="file"></div></form>`
+
+function type(el, text) {
+  el.value = text
+  el.setSelectionRange(text.length, text.length)
+  el.dispatchEvent(new Event("input"))
+}
+
+const shown = () => Array.from(document.querySelectorAll("[role=option]")).filter(o => !o.hidden).map(o => o.dataset.login)
+
+test("mentionQuery finds the @partial at the caret and nothing inside words, paths or code", async () => {
+  const {mentionQuery} = await import("../js/hooks/composer.js")
+  expect(mentionQuery("hi @al", 6)).toEqual({start: 3, query: "al"})
+  expect(mentionQuery("@", 1)).toEqual({start: 0, query: ""})
+  expect(mentionQuery("mail me@al", 10)).toBeNull()
+  expect(mentionQuery("see /@al", 8)).toBeNull()
+  expect(mentionQuery("`@al", 4)).toBeNull()
+  expect(mentionQuery("@al done", 8)).toBeNull()
+})
+
+test("in Comment mode @ opens the people list, filters it, and arrows and Enter choose without sending", () => {
+  document.body.innerHTML = commentBox
+  const {hook} = mountHook(Composer, "textarea")
+  const menu = document.getElementById("mention-options")
+  let submits = 0
+  hook.el.form.addEventListener("submit", e => {e.preventDefault(); submits++})
+
+  type(hook.el, "thanks @al")
+  expect(menu.hasAttribute("data-open")).toBe(true)
+  expect(shown()).toEqual(["alice", "alan"])
+  expect(hook.el.getAttribute("aria-activedescendant")).toBe("mention-option-alice")
+
+  key(hook.el, "ArrowDown")
+  expect(hook.el.getAttribute("aria-activedescendant")).toBe("mention-option-alan")
+  key(hook.el, "ArrowDown")
+  expect(hook.el.getAttribute("aria-activedescendant")).toBe("mention-option-alice")
+  key(hook.el, "ArrowUp")
+  hook.updated()
+  expect(hook.el.getAttribute("aria-activedescendant")).toBe("mention-option-alan")
+  key(hook.el, "Enter")
+  expect(submits).toBe(0)
+  expect(hook.el.value).toBe("thanks @alan ")
+  expect(menu.hasAttribute("data-open")).toBe(false)
+  expect(hook.el.hasAttribute("aria-activedescendant")).toBe(false)
+
+  // Nobody matches: the list stays shut and Enter sends as usual.
+  type(hook.el, "thanks @zed")
+  expect(menu.hasAttribute("data-open")).toBe(false)
+  key(hook.el, "Enter")
+  expect(submits).toBe(1)
+})
+
+test("a click or Tab picks a person, Escape closes the list and keeps the draft", () => {
+  document.body.innerHTML = commentBox
+  localStorage.clear()
+  const {hook} = mountHook(Composer, "textarea")
+  const menu = document.getElementById("mention-options")
+
+  type(hook.el, "@b")
+  const bob = document.getElementById("mention-option-bob")
+  const down = new MouseEvent("mousedown", {bubbles: true, cancelable: true})
+  bob.dispatchEvent(down)
+  expect(down.defaultPrevented).toBe(true)
+  expect(hook.el.value).toBe("@bob ")
+
+  type(hook.el, "@bob and @")
+  expect(shown()).toEqual(["alice", "alan", "bob"])
+  key(hook.el, "Tab")
+  expect(hook.el.value).toBe("@bob and @alice ")
+
+  type(hook.el, "@a")
+  key(hook.el, "Escape")
+  expect(menu.hasAttribute("data-open")).toBe(false)
+  expect(hook.el.value).toBe("@a")
+  // Other keys fall through to the box.
+  type(hook.el, "@a")
+  expect(key(hook.el, "x").defaultPrevented).toBe(false)
+})
+
+test("Comment mode is text only, and Ask mode has no mention list", () => {
+  document.body.innerHTML = commentBox
+  const {hook} = mountHook(Composer, "textarea")
+  const picker = document.querySelector("input")
+  const transfer = new DataTransfer()
+  transfer.items.add(image("shot.png"))
+  const paste = new Event("paste", {cancelable: true})
+  paste.clipboardData = {files: transfer.files}
+  hook.el.dispatchEvent(paste)
+  expect(paste.defaultPrevented).toBe(true)
+  expect(picker.files?.length ?? 0).toBe(0)
+  expect(document.querySelector("[data-composer-note]").textContent).toContain("text only")
+
+  hook.el.dataset.mode = "ask"
+  type(hook.el, "@al")
+  expect(document.getElementById("mention-options").hasAttribute("data-open")).toBe(false)
+  hook.active = document.getElementById("mention-option-alice")
+  hook.updated()
+  expect(hook.active).toBeNull()
+})

@@ -709,7 +709,7 @@
                 Inbox <span :if={@attention > 0} class="badge">{@attention}</span>
               </h1>
             </div>
-            <p>Replies and failed turns across all your projects.</p>
+            <p>Replies, mentions and failed turns across all your projects.</p>
           </header>
           <div :if={@attention == 0} class="inbox-empty">
             <h2>You're all caught up</h2>
@@ -724,16 +724,17 @@
               >
                 <div class="row">
                   <span class="chip">
-                    {case track.status do
-                      :setup_failed -> "Setup failed"
-                      :failed -> "Failed turn"
-                      _ -> "Unread reply"
+                    {cond do
+                      track.status == :setup_failed -> "Setup failed"
+                      track.status == :failed -> "Failed turn"
+                      track.mention -> "Mentioned"
+                      true -> "Unread reply"
                     end}
                   </span>
                   <span class="dim"><.project_name project={project} /></span><span class="spacer"></span><time
-                    :if={track.last_active_at}
-                    datetime={DateTime.to_iso8601(track.last_active_at)}
-                  >{Calendar.strftime(track.last_active_at, "%b %-d, %H:%M UTC")}</time>
+                    :if={inbox_time(track)}
+                    datetime={DateTime.to_iso8601(inbox_time(track))}
+                  >{Calendar.strftime(inbox_time(track), "%b %-d, %H:%M UTC")}</time>
                 </div>
                 <strong>{track.title}</strong>
                 <span :if={track.visibility == :private}><.icon name="lock" /> Private</span><code class="dimmer">{track.branch}</code>
@@ -743,6 +744,8 @@
                       Setup failed. {track.setup_error} Open the track to Retry setup.
                     <% track.status == :failed -> %>
                       The agent needs a hand. Open the conversation to see what happened.
+                    <% track.mention -> %>
+                      @{track.mention.author_login} mentioned you in a comment.
                     <% true -> %>
                       The agent finished. Open the conversation to read its reply.
                   <% end %>

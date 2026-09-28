@@ -74,7 +74,9 @@ function away() {
 
 function body(track) {
   const where = track.project ? ` in ${track.project}` : ""
-  return track.status === "failed" ? `The agent hit a problem${where}.` : `The agent finished${where}.`
+  if (track.status === "failed") return `The agent hit a problem${where}.`
+  if (track.mention) return `@${track.mention} mentioned you${where}.`
+  return `The agent finished${where}.`
 }
 
 export const Notify = {
