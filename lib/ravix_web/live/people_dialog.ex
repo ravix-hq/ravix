@@ -22,12 +22,13 @@ defmodule RavixWeb.Live.PeopleDialog do
   On a workspace project (`Ravix.People.workspace_sharing?/1`, RAV-32) the
   project scope lists who is in it and lets them be removed, but offers no
   invitation and no link: people join the workspace from its members page,
-  and a track is shared from its Share dialog. `Ravix.People` refuses both
+  linked only for somebody who can open it, and a track is shared from its
+  Share dialog. `Ravix.People` refuses both
   as well, so hiding them here is the courtesy rather than the boundary.
   """
   use RavixWeb, :live_component
 
-  alias Ravix.People
+  alias Ravix.{People, Workspaces}
   alias Ravix.People.Person
 
   @doc "The two units of sharing, and everything that differs between them."
@@ -35,7 +36,8 @@ defmodule RavixWeb.Live.PeopleDialog do
   def scopes, do: [:track, :project]
 
   @impl true
-  def mount(socket), do: {:ok, assign(socket, invite: nil, inviting?: false, login: "")}
+  def mount(socket),
+    do: {:ok, assign(socket, invite: nil, inviting?: false, login: "", workspace_link?: false)}
 
   @impl true
   def update(assigns, socket) do
@@ -121,7 +123,11 @@ defmodule RavixWeb.Live.PeopleDialog do
 
   defp load(socket) do
     %{scope: scope, subject_id: id, current_user: user} = socket.assigns
-    socket = result(socket, list(scope, user, id), &assign(&1, people: &2))
+
+    socket =
+      socket
+      |> result(list(scope, user, id), &assign(&1, people: &2))
+      |> assign(workspace_link?: workspace_link?(socket.assigns))
 
     if socket.assigns.owner and not socket.assigns.workspace_project?,
       do: result(socket, link(scope, user, id), &assign(&1, invite: &2)),
@@ -152,6 +158,14 @@ defmodule RavixWeb.Live.PeopleDialog do
     do: People.workspace_sharing?(project)
 
   defp workspace_project?(_assigns), do: false
+
+  # A legacy project member need not belong to the project's workspace, and
+  # its members page answers them not found; the link is only for somebody
+  # the page will open for.
+  defp workspace_link?(%{workspace_project?: true, project: project, current_user: user}),
+    do: match?({:ok, _}, Workspaces.get(user, project.workspace_id))
+
+  defp workspace_link?(_assigns), do: false
 
   defp title(:track), do: "Track people"
   defp title(:project), do: "Project people"
@@ -246,8 +260,14 @@ defmodule RavixWeb.Live.PeopleDialog do
           </li>
         </ul>
         <p :if={@workspace_project?} id={"#{@id}-workspace-hint"} class="hint workspace-hint">
-          This project is shared with members of its workspace. People join it from <.link navigate={"/w/#{@project.workspace_id}"}>the workspace's members page</.link>;
-          use Share on a track to add them to it.
+          This project is shared with members of its workspace.
+          <span :if={@workspace_link?}>
+            People join it from <.link navigate={"/w/#{@project.workspace_id}"}>the workspace's members page</.link>;
+            use Share on a track to add them to it.
+          </span>
+          <span :if={!@workspace_link?}>
+            Ask the project's owner to invite people to the workspace.
+          </span>
         </p>
         <form
           :if={@owner && !@workspace_project?}

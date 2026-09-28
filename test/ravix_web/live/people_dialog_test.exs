@@ -12,7 +12,7 @@ defmodule RavixWeb.Live.PeopleDialogTest do
   import Ecto.Query, only: [where: 2]
 
   alias Ravix.Accounts.Access
-  alias Ravix.{People, Projects, Repo, Tracks}
+  alias Ravix.{People, Projects, Repo, Tracks, Workspaces}
   alias Ravix.Projects.{Project, ProjectLink}
   alias Ravix.Tracks.{Track, Transcript}
   alias Ravix.Workspaces.Store, as: WorkspaceStore
@@ -419,10 +419,31 @@ defmodule RavixWeb.Live.PeopleDialogTest do
       refute render(view) =~ "invite link"
       assert has_element?(view, "#people-workspace-hint a[href='/w/#{ctx.workspace.id}']")
       assert has_element?(view, "#people-workspace-hint", "use Share on a track")
+      refute has_element?(view, "#people-workspace-hint", "Ask the project's owner")
 
       # The member who came in before stays, and is still the owner's to remove.
       assert has_element?(view, "#people-dialog", "@#{ctx.legacy.login}")
       assert has_element?(view, "button[phx-value-login='#{ctx.legacy.login}']")
+    end
+
+    test "a legacy member outside the workspace is not linked to a page that would not open",
+         ctx do
+      # The members page answers them not found: they do not belong to it.
+      assert {:error, :not_found} = Workspaces.get(ctx.legacy, ctx.workspace.id)
+      view = project_people(ctx.conn, ctx.legacy, ctx.project)
+
+      assert has_element?(view, "#people-workspace-hint")
+      refute has_element?(view, "#people-workspace-hint a")
+      refute render(view) =~ "/w/#{ctx.workspace.id}"
+
+      assert has_element?(
+               view,
+               "#people-workspace-hint",
+               "Ask the project's owner to invite people to the workspace."
+             )
+
+      refute has_element?(view, "#people-invite-form")
+      assert has_element?(view, "button[phx-value-login='#{ctx.legacy.login}']", "Leave project")
     end
 
     test "the server refuses a link or an invitation the browser sends anyway", ctx do
