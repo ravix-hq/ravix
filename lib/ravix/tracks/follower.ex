@@ -57,7 +57,7 @@ defmodule Ravix.Tracks.Follower do
 
   alias Ravix.Fountain
   alias Ravix.Fountain.Client
-  alias Ravix.Tracks.Settlement
+  alias Ravix.Tracks.{Settlement, Sleep}
   alias Ravix.Tracks.Store
   alias Ravix.Tracks.Thread
   alias Ravix.Tracks.Transcript.Event
@@ -251,6 +251,12 @@ defmodule Ravix.Tracks.Follower do
     {:noreply, %{state | last_id: max(state.last_id, id), attempt: 0}}
   end
 
+  def handle_info({:sleep, event}, state) do
+    # ownership: Follower subscribers established Access.thread_access for this thread.
+    Sleep.observe(state.track_id, state.conversation_id, [event])
+    {:noreply, state}
+  end
+
   def handle_info(:reopen, state), do: {:noreply, open_stream(state)}
 
   def handle_info(:stop, %{subscribers: subs} = state) when map_size(subs) == 0,
@@ -289,6 +295,11 @@ defmodule Ravix.Tracks.Follower do
   # exactly one place in Ravix and every page downstream reads fields.
   defp relay(raw, client, conversation_id, track_id, follower) do
     event = raw |> Event.from() |> with_prompt(client, conversation_id)
+
+    # To the follower rather than written here: the stream is not held up by
+    # the database, and one process per track keeps a suspension and the turn
+    # that wakes it in the order Fountain sent them.
+    if Event.suspension(event) || Event.starts_turn?(event), do: send(follower, {:sleep, event})
 
     if Event.settles?(event) do
       case Settlement.record(client, track_id, conversation_id, event) do

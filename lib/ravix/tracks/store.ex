@@ -507,6 +507,34 @@ defmodule Ravix.Tracks.Store do
     :ok
   end
 
+  @doc """
+  Record that an open dedicated track's sandbox went to sleep (`true`) or woke
+  (`false`). Only a change is written, so a burst of turn starts costs one
+  indexed update each and at most one hub event. Answers the track's
+  `{project_id, track_id}` when the row changed, and nil otherwise.
+  """
+  @spec set_sandbox_suspended(String.t(), boolean()) :: {String.t(), String.t()} | nil
+  def set_sandbox_suspended(track_id, suspended?) do
+    changed =
+      if suspended?,
+        do: dynamic([t], is_nil(t.sandbox_suspended_at)),
+        else: dynamic([t], not is_nil(t.sandbox_suspended_at))
+
+    {_count, rows} =
+      Repo.update_all(
+        from(t in Track,
+          where:
+            t.id == ^track_id and t.sandbox_layout == :dedicated and is_nil(t.closed_at) and
+              (is_nil(t.sandbox_state) or t.sandbox_state not in [:closing, :terminated]),
+          where: ^changed,
+          select: {t.project_id, t.id}
+        ),
+        set: [sandbox_suspended_at: if(suspended?, do: DateTime.utc_now())]
+      )
+
+    List.first(rows)
+  end
+
   @doc "Rename the label, and only the label."
   @spec rename_track(String.t(), String.t()) :: :ok
   def rename_track(track_id, title), do: update_track(track_id, title: title)

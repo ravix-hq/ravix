@@ -8,6 +8,7 @@ defmodule RavixWeb.WorkspaceLive do
   alias Ravix.Accounts.Access
   alias Ravix.Hub.Event
   alias Ravix.Projects.Sections
+  alias Ravix.Tracks.MachineState
   alias RavixWeb.Live.Form
   alias RavixWeb.Live.Guard
   alias RavixWeb.Live.ThreadConnect
@@ -1026,6 +1027,11 @@ defmodule RavixWeb.WorkspaceLive do
   def handle_info({:hub, %Event{name: :comment, project_id: id}}, socket),
     do: {:noreply, refresh_tracks(socket, id, fresh: false)}
 
+  # A machine went to sleep or woke: the row says so, and the memo serves
+  # everything else, so nothing is asked of Fountain.
+  def handle_info({:hub, %Event{name: :machine, project_id: id}}, socket),
+    do: {:noreply, refresh_tracks(socket, id, fresh: false)}
+
   # A read mark is one person's own, and the only thing on this page it can
   # move is that person's unread dot on the track it names. So it is applied
   # to the rail in hand and reads nothing: not Fountain, not the database.
@@ -1566,21 +1572,37 @@ defmodule RavixWeb.WorkspaceLive do
   end
 
   # A tab's dot, from what the rail already read: nothing new is asked of
-  # Fountain to draw it. Idle, read tracks keep their ordinal instead.
-  defp tab_status(%{status: status}) when status in [:running, :opening, :failed, :setup_failed],
-    do: status
+  # Fountain to draw it. `MachineState` is the one place the state is decided,
+  # so the dot, the header chip and the dock say the same word.
+  defp tab_machine(track), do: MachineState.of(track)
 
-  defp tab_status(%{status: :ready, unread: true} = track),
-    do: if(reply_unread?(track), do: :unread, else: :commented)
+  # An unread row says whether a reply or only a comment is waiting.
+  defp tab_status(track) do
+    case MachineState.marker(tab_machine(track), track.unread) do
+      :unread -> if(reply_unread?(track), do: :unread, else: :commented)
+      marker -> marker
+    end
+  end
 
-  defp tab_status(_track), do: nil
-
-  defp tab_status_label(:running), do: "Working"
-  defp tab_status_label(:opening), do: "Setting up…"
-  defp tab_status_label(:failed), do: "Error"
-  defp tab_status_label(:setup_failed), do: "Setup failed"
   defp tab_status_label(:unread), do: "Unread reply"
   defp tab_status_label(:commented), do: "New comment"
+  defp tab_status_label(state), do: MachineState.label(state)
+
+  # The dot's tooltip: the state, and what it means when there is more to say.
+  defp tab_status_title(track) do
+    machine = tab_machine(track)
+
+    case tab_status(track) do
+      marker when marker in [:unread, :commented] ->
+        "#{tab_status_label(marker)} · #{MachineState.label(machine.state)}"
+
+      state when is_nil(machine.detail) ->
+        tab_status_label(state)
+
+      state ->
+        "#{tab_status_label(state)}: #{machine.detail}"
+    end
+  end
 
   defp tab_label(%{title: title}) do
     namespace = Ids.branch_namespace()
@@ -1593,7 +1615,8 @@ defmodule RavixWeb.WorkspaceLive do
       track.title,
       "created by @#{track.created_by_login}",
       track.origin.kind == :plan && "from a project plan",
-      (status = tab_status(track)) && tab_status_label(status)
+      MachineState.label(tab_machine(track).state),
+      (marker = tab_status(track)) in [:unread, :commented] && tab_status_label(marker)
     ]
     |> Enum.filter(& &1)
     |> Enum.join(", ")

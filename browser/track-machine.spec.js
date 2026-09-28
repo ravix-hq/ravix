@@ -17,6 +17,8 @@ test('machine status follows the selected dedicated track, never its shared proj
     await page.getByRole('button', { name: 'Create track', exact: true }).click();
     await expect.poll(() => new URL(page.url()).pathname).not.toBe(previousPath);
     await expect(page.getByRole('textbox', { name: 'Message', exact: true })).toBeEnabled();
+    // Setup finishes on the shared layout the fixture then rewrites.
+    await expect(page.locator('#track-machine-state')).toHaveText('Idle', { timeout: 30_000 });
     paths.push(new URL(page.url()).pathname);
   }
   const ids = paths.map(path => path.split('/t/')[1]);
@@ -37,7 +39,7 @@ test('machine status follows the selected dedicated track, never its shared proj
   for (const index of [0, 1, 0]) {
     await page.goto(paths[index]);
     await expect(page.locator('#track-machine-status')).toHaveText(index === 0
-      ? 'The machine is running.'
-      : 'The machine is asleep or unreachable. It wakes on the next turn.');
+      ? 'Idle.'
+      : 'Idle. The machine did not answer just now; your next message wakes it.');
   }
 });

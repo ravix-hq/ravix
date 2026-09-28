@@ -76,6 +76,8 @@ defmodule Ravix.Tracks.View do
                 sandbox_layout: :shared,
                 sandbox_state: nil,
                 sandbox_stage: nil,
+                sandbox_action: nil,
+                sandbox_suspended_at: nil,
                 repo_full_name: nil,
                 threads: [],
                 setup_error_code: nil,
@@ -117,6 +119,11 @@ defmodule Ravix.Tracks.View do
           setup_attempts: non_neg_integer(),
           setup_error: String.t() | nil,
           setup_error_code: String.t() | nil,
-          setup_retry_at: DateTime.t() | nil
+          setup_retry_at: DateTime.t() | nil,
+          sandbox_layout: :shared | :dedicated,
+          sandbox_state: atom() | nil,
+          sandbox_stage: String.t() | nil,
+          sandbox_action: :open | :close | :rebuild | nil,
+          sandbox_suspended_at: DateTime.t() | nil
         }
 end

@@ -510,4 +510,48 @@ defmodule Ravix.Tracks.TranscriptLoadTest do
       :finish -> :ok
     end
   end
+
+  test "a snapshot that ends asleep marks a dedicated track asleep, and one with a later turn wakes it" do
+    owner = insert_user()
+    project = insert_project(user: owner, runtime: "codex")
+
+    track =
+      insert_track(
+        project: project,
+        conversation_id: "sleepy",
+        sandbox_layout: :dedicated,
+        sandbox_state: :ready
+      )
+
+    suspended = %{
+      "id" => 1,
+      "kind" => "stage",
+      "stage" => "sandbox",
+      "state" => "done",
+      "data" => ~s({"event":"suspended","reason":"idle"})
+    }
+
+    woke = Map.merge(Fixture.stage(2, "started"), %{"turn_id" => "t2"})
+    client = Fountain.Client.new("https://fountain.test", "key")
+    stub(Fountain, :client, fn -> client end)
+    stub(Fountain, :turns, fn _, _ -> {:ok, []} end)
+
+    for {log, asleep?} <- [{[suspended], true}, {[suspended, woke], false}] do
+      stub(Fountain, :events_page, fn _, "sleepy", opts -> Fixture.events_page(log, opts) end)
+      running = Task.Supervisor.children(Ravix.TaskSupervisor)
+      assert {:ok, _page} = Tracks.events(owner, track.id)
+      settle_background(running)
+      assert is_nil(Repo.get!(Tracks.Track, track.id).sandbox_suspended_at) == not asleep?
+    end
+  end
+
+  # Classification of the snapshot's settled turns runs in the background;
+  # wait for the tasks this read started, not anybody else's.
+  defp settle_background(running) do
+    Ravix.TaskSupervisor
+    |> Task.Supervisor.children()
+    |> Kernel.--(running)
+    |> Enum.map(&Process.monitor/1)
+    |> Enum.each(fn ref -> assert_receive {:DOWN, ^ref, :process, _, _}, 5_000 end)
+  end
 end

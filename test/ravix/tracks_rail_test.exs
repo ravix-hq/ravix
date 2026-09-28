@@ -2,7 +2,7 @@ defmodule Ravix.TracksRailTest do
   use Ravix.DataCase, async: true
   import Mimic
   alias Ravix.{Accounts.Access, QueryCount, Tracks}
-  alias Ravix.Fountain.Client
+  alias Ravix.Fountain.{Client, FakeTransport}
 
   setup :verify_on_exit!
 
@@ -202,6 +202,51 @@ defmodule Ravix.TracksRailTest do
     more = Access.open_tracks(viewer, ids, closed: %{busy.id => 21})
     assert length(more) == 22
     refute quiet_closed.id in Enum.map(more, fn {track, _} -> track.id end)
+  end
+
+  test "machine states come from the rail's own rows, with no Fountain request per row" do
+    viewer = insert_user()
+    project = insert_project(user: viewer)
+    now = DateTime.utc_now()
+    opened = [opened_at: now, project: project]
+
+    rows = [
+      idle: insert_track([sandbox_layout: :dedicated, sandbox_state: :ready] ++ opened),
+      asleep:
+        insert_track(
+          [sandbox_layout: :dedicated, sandbox_state: :ready, sandbox_suspended_at: now] ++
+            opened
+        ),
+      restarting:
+        insert_track(
+          [
+            sandbox_layout: :dedicated,
+            sandbox_state: :provisioning,
+            sandbox_action: :rebuild,
+            sandbox_stage: "creating",
+            setup_state: "pending"
+          ] ++ opened
+        ),
+      closing: insert_track([sandbox_layout: :dedicated, sandbox_state: :closing] ++ opened),
+      legacy: insert_track([sandbox_suspended_at: now] ++ opened)
+    ]
+
+    client =
+      FakeTransport.client([
+        {%{method: "GET", path: "/api/conversations"}, {200, [], %{data: []}}}
+      ])
+
+    stub(Ravix.Fountain, :client, fn -> client end)
+    project_id = project.id
+    %{^project_id => views} = Tracks.list_many(viewer, [project_id])
+    states = Map.new(views, &{&1.id, Tracks.MachineState.of(&1).state})
+
+    for {state, row} <- rows,
+        do: assert(states[row.id] == if(state == :legacy, do: :idle, else: state))
+
+    # One list for the project, whatever the number of rows: no sandbox, file
+    # or conversation read was made to decide any row's state.
+    assert [%{path: "/api/conversations"}] = FakeTransport.calls(client)
   end
 
   test "a failed provider presentation is isolated to its project" do

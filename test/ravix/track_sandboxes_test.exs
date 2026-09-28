@@ -137,6 +137,53 @@ defmodule Ravix.TrackSandboxesTest do
     assert Repo.get!(Track, track.id).sandbox_state == :provisioning
   end
 
+  test "each intent names its action so a rebuild reads Restarting, and a new intent wakes the row" do
+    track =
+      insert_track(
+        sandbox_layout: :dedicated,
+        sandbox_state: :ready,
+        sandbox_suspended_at: DateTime.utc_now()
+      )
+
+    assert {:ok, _} = Store.begin_operation(track.id, 0, :rebuild)
+    row = Repo.get!(Track, track.id)
+    assert {row.sandbox_state, row.sandbox_action} == {:provisioning, :rebuild}
+    assert is_nil(row.sandbox_suspended_at)
+
+    assert {:ok, _} = Store.update_sandbox(track.id, 1, %{sandbox_state: :ready})
+    assert {:ok, _} = Store.begin_operation(track.id, 1, :close)
+    assert Repo.get!(Track, track.id).sandbox_action == :close
+    assert {:ok, _} = Store.begin_operation(track.id, 2, :open)
+    row = Repo.get!(Track, track.id)
+    assert {row.sandbox_state, row.sandbox_action} == {:provisioning, :open}
+  end
+
+  test "a row the previous release wrote mid-open reads as Starting, never Restarting" do
+    project = insert_project()
+    attrs = track_attrs(project: project)
+
+    fields = ~w(id project_id slug title branch workdir origin_kind created_by_login)
+    values = Enum.map(fields, &Map.fetch!(attrs, &1))
+    placeholders = Enum.map_join(1..length(fields), ",", &"$#{&1}")
+
+    # The old writer knows neither new column; its open and its rebuild both
+    # wrote `provisioning` and nothing else.
+    SQL.query!(
+      Repo,
+      "INSERT INTO ravix.tracks (#{Enum.join(fields, ",")}, sandbox_layout, sandbox_state, " <>
+        "sandbox_stage, setup_state, created_at) " <>
+        "VALUES (#{placeholders}, 'dedicated', 'provisioning', 'creating', 'pending', NOW())",
+      values
+    )
+
+    row = Repo.get!(Track, attrs["id"])
+    assert is_nil(row.sandbox_action)
+    assert is_nil(row.sandbox_suspended_at)
+
+    assert %{state: :starting, detail: "Creating this track's machine…"} =
+             row |> Tracks.present() |> Tracks.MachineState.of()
+  end
+
   test "invalid and stale mutations preserve records; shared rows cannot acquire dedicated intent" do
     shared = insert_track()
     assert {:error, :stale_generation} = Store.begin_operation(shared.id, 0, :open)

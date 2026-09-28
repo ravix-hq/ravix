@@ -170,6 +170,34 @@ defmodule Ravix.TerminalTest do
     end
   end
 
+  test "a probe that finds a dedicated machine running clears a stale Asleep, once", ctx do
+    stub(Ravix.Config, :sprites, fn -> @sprites end)
+    fountain(ctx.project, "sprite-7")
+    Ravix.Hub.subscribe(ctx.project.id)
+
+    track =
+      ctx.track
+      |> Ecto.Changeset.change(
+        sandbox_layout: :dedicated,
+        sandbox_state: :ready,
+        sandbox_id: "sb-1",
+        sandbox_suspended_at: DateTime.utc_now()
+      )
+      |> Repo.update!()
+
+    track_id = track.id
+
+    for {status, asleep?} <- [{"cold", true}, {"running", false}, {"running", false}] do
+      SpritesFake.install(fn conn, _call -> Req.Test.json(conn, %{status: status}) end)
+      assert {:ok, _} = Terminal.status(ctx.owner, track.id, passive: true)
+      assert is_nil(Repo.get!(Ravix.Tracks.Track, track.id).sandbox_suspended_at) == not asleep?
+    end
+
+    # Woken once: the second running probe found nothing to write.
+    assert_received {:hub, %Ravix.Hub.Event{name: :machine, track_id: ^track_id}}
+    refute_received {:hub, %Ravix.Hub.Event{name: :machine}}
+  end
+
   describe "status/2" do
     test "the four answers, in the order the panel tells them apart", ctx do
       stub(Ravix.Config, :sprites, fn -> nil end)

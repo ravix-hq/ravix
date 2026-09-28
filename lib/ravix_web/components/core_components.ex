@@ -24,6 +24,10 @@ defmodule RavixWeb.CoreComponents do
   attr :status, :string, required: true
   attr :label, :string, default: nil
 
+  attr :title, :string,
+    default: nil,
+    doc: "a tooltip with more than the label; the label by default"
+
   def status_dot(assigns) do
     ~H"""
     <span
@@ -31,7 +35,7 @@ defmodule RavixWeb.CoreComponents do
       role={if @label, do: "img"}
       aria-label={@label}
       aria-hidden={if is_nil(@label), do: "true"}
-      title={@label}
+      title={@title || @label}
     ></span>
     """
   end
