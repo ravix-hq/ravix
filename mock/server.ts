@@ -598,6 +598,13 @@ function secretsFor(parent: string, id: string): Map<string, string> {
 
 // ── Fountain ───────────────────────────────────────────────────────────
 
+/** Provider lifecycle control for deterministic mock contract tests. */
+export function setSandboxStatus(id: string, status: "suspended" | "ready"): void {
+  const box = state.boxes.get(id);
+  if (!box) throw new Error("No such mock sandbox");
+  box.status = status;
+}
+
 export async function fountain(req: Request, url: URL): Promise<Response | null> {
   const p = url.pathname;
   const method = req.method;
@@ -1097,6 +1104,15 @@ export async function fountain(req: Request, url: URL): Promise<Response | null>
   }
 
   // ── the box, read-only ───────────────────────────────────────────────
+
+  // Fountain's passive disk reads never wake a parked sandbox.
+  if (disk && /\/api\/sandboxes\/[^/]+\/(files|file|diff)$/.test(p) && disk.status !== "ready") {
+    return json({
+      error: "sandbox_not_ready",
+      message: `the sandbox is ${disk.status}; files are read from a ready one only`,
+      status: disk.status,
+    }, 409);
+  }
 
   const sbFiles = /^\/api\/sandboxes\/([^/]+)\/files$/.exec(p);
   if (sbFiles && disk) {

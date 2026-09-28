@@ -1091,6 +1091,26 @@ defmodule Ravix.FountainTest do
   # ── errors ──────────────────────────────────────────────────────────────
 
   describe "Error" do
+    test "suspension is identified by code and structured status, never message text" do
+      suspended =
+        Error.from_sdk(%Elixir.Fountain.Error{
+          status: 409,
+          code: "sandbox_not_ready",
+          body: %{"status" => "suspended", "message" => "different wording"}
+        })
+
+      assert Error.sandbox_suspended?(suspended)
+      refute Error.sandbox_suspended?(%{suspended | status: 503})
+      refute Error.sandbox_suspended?(%{suspended | code: "other_conflict"})
+      refute Error.sandbox_suspended?(%{suspended | sandbox_status: "failed"})
+
+      refute Error.sandbox_suspended?(%{
+               suspended
+               | sandbox_status: nil,
+                 message: "the sandbox is suspended; files are read from a ready one only"
+             })
+    end
+
     test "from_sdk keeps status and code and prefers Fountain's message, then the code" do
       with_message =
         Elixir.Fountain.Error.for_status(

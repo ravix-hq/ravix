@@ -102,6 +102,7 @@ defmodule Ravix.Tracks do
   """
   @type reason ::
           :not_found
+          | :machine_asleep
           | {:forbidden, String.t()}
           | {:conflict, String.t(), String.t()}
           | {:unprocessable, String.t(), String.t()}
@@ -1422,12 +1423,17 @@ defmodule Ravix.Tracks do
 
   # ── reading a track's directory ───────────────────────────────────────
 
-  @doc "One directory, confined to the worktree. Free; it does not wake a parked box."
+  @doc """
+  One directory, confined to the track's working directory. Reads never wake
+  a parked machine. Shared tracks retain the legacy provider result; dedicated
+  tracks return `{:error, :machine_asleep}` when Fountain reports suspension.
+  """
   @spec files(User.t(), String.t(), String.t() | nil) ::
           {:ok, Files.Listing.t()} | {:error, reason()}
   def files(%User{} = user, track_id, path) do
     with {:ok, track, client, sandbox_id} <- machine_read(user, track_id),
-         {:ok, raw} <- Fountain.listing(client, sandbox_id, confine(track.workdir, path)) do
+         {:ok, raw} <-
+           disk_result(track, Fountain.listing(client, sandbox_id, confine(track.workdir, path))) do
       {:ok, Files.present_listing(raw)}
     end
   end
@@ -1471,7 +1477,8 @@ defmodule Ravix.Tracks do
           {:ok, Files.Content.t()} | {:error, reason()}
   def file(%User{} = user, track_id, path) do
     with {:ok, track, client, sandbox_id} <- machine_read(user, track_id),
-         {:ok, raw} <- Fountain.file(client, sandbox_id, confine(track.workdir, path)) do
+         {:ok, raw} <-
+           disk_result(track, Fountain.file(client, sandbox_id, confine(track.workdir, path))) do
       {:ok, Files.present_file(raw)}
     end
   end
@@ -1480,7 +1487,7 @@ defmodule Ravix.Tracks do
   @spec diff(User.t(), String.t()) :: {:ok, Diff.t()} | {:error, reason()}
   def diff(%User{} = user, track_id) do
     with {:ok, track, client, sandbox_id} <- machine_read(user, track_id),
-         {:ok, raw} <- Fountain.diff(client, sandbox_id, track.workdir) do
+         {:ok, raw} <- disk_result(track, Fountain.diff(client, sandbox_id, track.workdir)) do
       diff = raw["diff"] || ""
       files = Diff.parse(diff, raw["truncated"] == true)
 
@@ -1503,6 +1510,14 @@ defmodule Ravix.Tracks do
   @doc "A path, pinned inside the track's own worktree. See `Ravix.Tracks.Files.confine/2`."
   @spec confine(String.t(), String.t() | nil) :: String.t()
   defdelegate confine(root, requested), to: Files
+
+  defp disk_result(%{sandbox_layout: :dedicated}, {:error, %Fountain.Error{} = error}) do
+    if Fountain.Error.sandbox_suspended?(error),
+      do: {:error, :machine_asleep},
+      else: {:error, error}
+  end
+
+  defp disk_result(_track, result), do: result
 
   defp machine_read(user, track_id) do
     with {:ok, %{track: track, project: project}} <- Access.track_access(user, track_id),
