@@ -48,6 +48,23 @@ defmodule Ravix.ReleaseTest do
     refute {Ravix.Cluster.Singleton, :init, 1} in snapshot.initial_calls
   end
 
+  test "two tasks in one eval both run, and still start no singleton, scheduler or endpoint",
+       %{peer: peer} do
+    calls = [{:close_open_allowlists, []}, {:provider_secrets, []}]
+    snapshot = :peer.call(peer, Ravix.ClusterPeer, :release_tasks, [calls], 60_000)
+
+    assert [still_open, found] = snapshot.result
+    assert is_integer(still_open) and is_integer(found)
+    assert snapshot.repo == [[1]]
+    assert Ravix.Release.Services in snapshot.registered
+
+    refute snapshot.ravix_started?
+    refute Ravix.Supervisor in snapshot.registered
+    refute RavixWeb.Endpoint in snapshot.registered
+    refute Ravix.Tracks.Follower.Supervisor in snapshot.registered
+    refute {Ravix.Cluster.Singleton, :init, 1} in snapshot.initial_calls
+  end
+
   # Already gone is fine: the peer is linked to the test process.
   defp stop(peer) do
     :peer.stop(peer)

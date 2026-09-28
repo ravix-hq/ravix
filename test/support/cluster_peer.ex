@@ -95,10 +95,19 @@ defmodule Ravix.ClusterPeer do
   output is captured rather than printed, and returned with its result.
   """
   @spec release_task(atom(), [term()]) :: map()
-  def release_task(fun, args) do
+  def release_task(fun, args), do: release_tasks([{fun, args}])
+
+  @doc """
+  Run several release tasks in turn from one process, as one `bin/ravix eval`
+  of several calls does, and report as `release_task/2` does. `result` is the
+  list of their results, in order.
+  """
+  @spec release_tasks([{atom(), [term()]}, ...]) :: map()
+  def release_tasks(calls) do
     {:ok, io} = StringIO.open("")
     Process.group_leader(self(), io)
-    result = apply(Ravix.Release, fun, args)
+    results = for {fun, args} <- calls, do: apply(Ravix.Release, fun, args)
+    result = if match?([_], calls), do: hd(results), else: results
     # Taken while the task's services are still linked to this process.
     %{
       result: result,

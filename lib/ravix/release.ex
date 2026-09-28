@@ -167,7 +167,10 @@ defmodule Ravix.Release do
   prompt queue, is not started.
 
   A no-op where the application is already running -- `bin/ravix rpc` into
-  a serving node, or the test suite -- since everything is there already.
+  a serving node, or the test suite -- since everything is there already,
+  and where an earlier task in the same `eval` already started the services:
+  the supervisor is named, so a second call finds it rather than starting a
+  second `Ravix.Repo`.
   """
   @spec start_services() :: :ok
   def start_services do
@@ -176,8 +179,14 @@ defmodule Ravix.Release do
     else
       load_app()
       {:ok, _} = Application.ensure_all_started(Application.spec(@app, :applications))
-      {:ok, _} = Supervisor.start_link(Ravix.Application.services(), strategy: :one_for_one)
-      :ok
+
+      case Supervisor.start_link(Ravix.Application.services(),
+             strategy: :one_for_one,
+             name: Ravix.Release.Services
+           ) do
+        {:ok, _} -> :ok
+        {:error, {:already_started, _}} -> :ok
+      end
     end
   end
 
