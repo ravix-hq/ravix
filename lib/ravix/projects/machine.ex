@@ -77,20 +77,26 @@ defmodule Ravix.Projects.Machine do
         []
       end
 
-    body = %{name: label(project), repositories: repositories, packages: %{}, setup_script: ""}
+    body = %{
+      name: fountain_name(project),
+      repositories: repositories,
+      packages: %{},
+      setup_script: ""
+    }
 
-    with {:ok, env} <- Fountain.create_environment(client, body) do
-      {:ok, %{state | environment_id: env["id"]}}
+    case Fountain.create_environment(client, body) do
+      {:ok, env} -> {:ok, %{state | environment_id: env["id"]}}
+      {:error, reason} -> {:error, name_taken(reason)}
     end
   end
 
   # Created up front even though nothing needs it yet, precisely because
   # attaching one later would change the identity and cost the disk.
   defp vault(client, project, state) do
-    case Fountain.create_vault(client, %{name: label(project)}) do
+    case Fountain.create_vault(client, %{name: fountain_name(project)}) do
       {:ok, vault} -> {:ok, %{state | vault_id: vault["id"]}}
       {:error, %Error{status: status}} when status in [403, 404, 501] -> {:ok, state}
-      {:error, reason} -> {:error, reason}
+      {:error, reason} -> {:error, name_taken(reason)}
     end
   end
 
@@ -129,7 +135,7 @@ defmodule Ravix.Projects.Machine do
   defp create_agent(client, project, state, choice, owner) do
     body =
       %{
-        name: label(project),
+        name: fountain_name(project),
         model: choice.model,
         runtime: choice.runtime,
         # The identity's own default, so every track on it gets the same home
@@ -147,15 +153,19 @@ defmodule Ravix.Projects.Machine do
       |> with_vault(state.vault_id)
       |> with_credentials(owner.credential_set_id)
 
-    with {:ok, agent} <- Fountain.create_agent(client, body) do
-      {:ok,
-       %{
-         state
-         | agent_id: agent["id"],
-           runtime: choice.runtime,
-           model: choice.model,
-           credential_set_id: owner.credential_set_id
-       }}
+    case Fountain.create_agent(client, body) do
+      {:ok, agent} ->
+        {:ok,
+         %{
+           state
+           | agent_id: agent["id"],
+             runtime: choice.runtime,
+             model: choice.model,
+             credential_set_id: owner.credential_set_id
+         }}
+
+      {:error, reason} ->
+        {:error, name_taken(reason)}
     end
   end
 
@@ -331,7 +341,7 @@ defmodule Ravix.Projects.Machine do
 
     body =
       %{
-        name: label(project),
+        name: fountain_name(project),
         model: blank_or(project.model, choice.model),
         runtime: blank_or(project.runtime, choice.runtime),
         sandbox_mode: "persistent",
@@ -342,7 +352,7 @@ defmodule Ravix.Projects.Machine do
       |> with_vault(project.vault_id)
       |> with_credentials(set_id)
 
-    Fountain.create_agent(client, body)
+    with {:error, reason} <- Fountain.create_agent(client, body), do: {:error, name_taken(reason)}
   end
 
   defp terminate_live(client, conversations) do
@@ -540,7 +550,42 @@ defmodule Ravix.Projects.Machine do
     end
   end
 
-  defp label(%Project{name: name}), do: "Ravix · #{name}"
+  @doc """
+  The name every Fountain record made for a project is filed under.
+
+  Every Ravix person shares one Fountain user, and Fountain keeps
+  environment, vault and agent names unique per user, so a display name alone
+  would let the first project called "api" claim it for everybody. The first
+  eight characters of the project id make it the project's own. A runtime
+  agent (`Ravix.Projects.RuntimeAgents`) adds its runtime, as it shares the
+  project's environment.
+
+  Records made before this naming keep the name they were created with:
+  nothing here looks a record up by name, only by the id the row stores.
+  """
+  @spec fountain_name(Project.t(), String.t() | nil) :: String.t()
+  def fountain_name(%Project{id: id, name: name}, suffix \\ nil) do
+    Enum.join(["Ravix", name, String.slice(id, 0, 8)] ++ List.wrap(suffix), " · ")
+  end
+
+  @doc """
+  Fountain refusing a record because its name is taken, as a tagged conflict.
+
+  The short id makes this unlikely, not impossible (a record left behind
+  under the same name, or two ids sharing a prefix), and a person should be
+  told to retry rather than shown a generic provider failure. Anything else
+  passes through unchanged.
+  """
+  @spec name_taken(term()) :: term()
+  def name_taken(%Error{} = error) do
+    if Error.name_taken?(error),
+      do:
+        {:conflict, "fountain_name_taken",
+         "The machine service already has a record with this project's name. Try again, or choose a different name."},
+      else: error
+  end
+
+  def name_taken(reason), do: reason
 
   defp with_vault(body, nil), do: body
   defp with_vault(body, ""), do: body

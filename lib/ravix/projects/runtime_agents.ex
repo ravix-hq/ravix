@@ -129,7 +129,7 @@ defmodule Ravix.Projects.RuntimeAgents do
     set = owner(project).credential_set_id
 
     body = %{
-      name: "Ravix #{project.id} #{runtime}",
+      name: Projects.Machine.fountain_name(project, runtime),
       runtime: runtime,
       model: model,
       sandbox_mode: "persistent",
@@ -154,7 +154,7 @@ defmodule Ravix.Projects.RuntimeAgents do
         # An uncertain POST must never be retried into a duplicate runtime agent.
         # Leave its reservation for operator reconciliation, including process death.
         unless Error.unknown_outcome?(error), do: Store.forget_runtime(project.id, runtime)
-        {:error, error}
+        {:error, Projects.Machine.name_taken(error)}
 
       _ ->
         pending()
