@@ -4,7 +4,6 @@ defmodule RavixWeb.ThreadCommentsLiveTest do
   import Mimic
 
   alias Ravix.{Comments, Repo, Tracks}
-  alias Ravix.Hub.Event
   alias Ravix.Tracks.{Track, Transcript}
 
   setup :verify_on_exit!
@@ -38,25 +37,7 @@ defmodule RavixWeb.ThreadCommentsLiveTest do
 
     insert_project(user: outsider)
 
-    stub(Tracks, :get, fn user, id, _opts ->
-      row = Repo.get!(Track, id)
-
-      {:ok, threads} = Tracks.threads(user, id)
-
-      {:ok,
-       %{
-         track: Tracks.present(row, role: :owner),
-         header: %Tracks.Header{
-           copy_of: nil,
-           branched_from: nil,
-           created: %{dir: row.slug, files: nil},
-           has_setup_script: false
-         },
-         threads: threads,
-         starters: [],
-         models: []
-       }}
-    end)
+    stub(Tracks, :get, fn user, id, _opts -> detail(user, id) end)
 
     stub(Tracks, :events, fn _, _, _ -> {:ok, transcript([{"t1", "first"}, {"t2", "second"}])} end)
 
@@ -73,6 +54,25 @@ defmodule RavixWeb.ThreadCommentsLiveTest do
       project: project,
       track: track
     }
+  end
+
+  defp detail(user, id) do
+    row = Repo.get!(Track, id)
+    {:ok, threads} = Tracks.threads(user, id)
+
+    {:ok,
+     %{
+       track: Tracks.present(row, role: :owner),
+       header: %Tracks.Header{
+         copy_of: nil,
+         branched_from: nil,
+         created: %{dir: row.slug, files: nil},
+         has_setup_script: false
+       },
+       threads: threads,
+       starters: [],
+       models: []
+     }}
   end
 
   defp open(ctx, user) do
@@ -131,6 +131,41 @@ defmodule RavixWeb.ThreadCommentsLiveTest do
     submit(view, "   ")
     assert has_element?(view, "#thread-error")
     assert has_element?(view, "#composer-mode-comment[aria-pressed=true]")
+  end
+
+  test "a comment waits for the transcript, so it never lands above every turn", ctx do
+    test = self()
+
+    stub(Tracks, :get, fn user, id, _opts ->
+      send(test, {:loading, self()})
+      detail(user, id)
+    end)
+
+    stub(Tracks, :events, fn _, _, _ ->
+      send(test, {:reading, self()})
+      receive do: (:release -> {:ok, transcript([{"t1", "first"}])})
+    end)
+
+    {:ok, parent, _} =
+      live(log_in_user(build_conn(), ctx.owner), "/p/#{ctx.project.id}/t/#{ctx.track.id}")
+
+    view = find_live_child(parent, "track-host")
+    assert_receive {:loading, loader}
+    assert_receive {:reading, reader}
+    ref = Process.monitor(loader)
+    assert_receive {:DOWN, ^ref, :process, _, _}
+    comment_mode(view)
+
+    assert has_element?(view, "button.composer-send[aria-label='Post comment'][disabled]")
+    submit(view, "Too early")
+    assert has_element?(view, "#thread-error", "Wait for the conversation to load")
+    assert stored(ctx.track) == []
+
+    send(reader, :release)
+    render_async(view)
+    refute has_element?(view, "button.composer-send[disabled]")
+    submit(view, "In place")
+    assert [%{anchor_turn_id: "t1"}] = stored(ctx.track)
   end
 
   test "a draft thread has nothing to comment on: no toggle, and Comment mode is left", ctx do
@@ -208,7 +243,10 @@ defmodule RavixWeb.ThreadCommentsLiveTest do
     refute has_element?(theirs, "#comment-#{comment.id} button", "Edit")
     assert has_element?(mine, "#comment-#{comment.id} button", "Edit")
 
-    # Somebody else's edit is refused even if they send the event.
+    # Somebody else's comment never opens for editing and is not deleted,
+    # even when they forge the events.
+    render_click(theirs, "edit-comment", %{"id" => comment.id})
+    refute has_element?(theirs, "#comment-edit-#{comment.id}")
     render_click(theirs, "delete-comment", %{"id" => comment.id})
     assert is_nil(Repo.reload(comment).deleted_at)
 

@@ -574,10 +574,11 @@
                   aria-label={if @composer_mode == :comment, do: "Post comment", else: "Send"}
                   title={if @composer_mode == :comment, do: "Post comment", else: "Send"}
                   disabled={
-                    @composer_mode == :ask &&
-                      (is_nil(@track.conversation_id) or
-                         (@thread_draft[:selected?] &&
-                            (is_nil(@thread_draft.options) or :start_thread in @pending)))
+                    (@composer_mode == :comment && @transcript_loading) ||
+                      (@composer_mode == :ask &&
+                         (is_nil(@track.conversation_id) or
+                            (@thread_draft[:selected?] &&
+                               (is_nil(@thread_draft.options) or :start_thread in @pending))))
                   }
                 >
                   <.icon name="arrow-up" size={16} />

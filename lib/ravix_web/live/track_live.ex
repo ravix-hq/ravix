@@ -365,8 +365,15 @@ defmodule RavixWeb.TrackLive do
   def handle_event("composer-mode", _, socket),
     do: {:noreply, assign(socket, composer_mode: :ask)}
 
-  def handle_event("edit-comment", %{"id" => id}, socket),
-    do: {:noreply, socket |> assign(comment_editing: id) |> redraw_comments([id])}
+  # Only the author's own comment opens for editing; the component checks
+  # authorship again, and `Comments.edit/4` refuses anybody else regardless.
+  def handle_event("edit-comment", %{"id" => id}, socket) do
+    user_id = socket.assigns.current_user.id
+
+    if Enum.any?(socket.assigns.comments, &(&1.id == id and &1.author_id == user_id)),
+      do: {:noreply, socket |> assign(comment_editing: id) |> redraw_comments([id])},
+      else: {:noreply, socket}
+  end
 
   def handle_event("cancel-comment-edit", _, socket) do
     editing = socket.assigns.comment_editing
@@ -1369,6 +1376,13 @@ defmodule RavixWeb.TrackLive do
   # A comment is placed after the last turn on screen, which is what the
   # person commenting was looking at. The composer returns to asking the
   # agent, so the next Enter is not a comment by accident.
+  # Until the transcript has loaded there is no turn to place a comment
+  # after, and one posted then would sit above every turn in the thread.
+  defp post_comment(%{assigns: %{transcript_loading: true}} = socket, _text),
+    do:
+      {:noreply,
+       assign(socket, thread_error: "Wait for the conversation to load before commenting.")}
+
   defp post_comment(socket, text) do
     %{current_user: user, track_id: track_id, thread_id: thread_id, page: page} = socket.assigns
 
@@ -3172,7 +3186,7 @@ defmodule RavixWeb.TrackLive do
         login: (comment.author && comment.author.login) || "someone",
         deleted?: not is_nil(comment.deleted_at),
         mine?: comment.author_id == assigns.current_user.id,
-        editing?: assigns.editing == comment.id
+        editing?: assigns.editing == comment.id and comment.author_id == assigns.current_user.id
       )
 
     ~H"""
