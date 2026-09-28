@@ -61,7 +61,7 @@
           id="quick-jump-trigger"
           type="button"
           class="ghost"
-          title="Search projects and tracks (⌘/Ctrl K)"
+          title="Search projects, tracks and plans (⌘/Ctrl K)"
           data-quick-jump-trigger
           phx-click={JS.push_focus() |> JS.push("dialog")}
           phx-value-name="search"
@@ -271,6 +271,23 @@
                     >
                       <.icon name="add-person" size={13} />
                     </button>
+                    <.link
+                      :if={project.access != :tracks}
+                      id={"project-plans-#{project.id}"}
+                      patch={"/p/#{project.id}/plans"}
+                      class={[
+                        "project-action",
+                        @live_action == :plans && @project && @project.id == project.id && "on"
+                      ]}
+                      aria-label={"Plans in #{project.display_name}"}
+                      aria-current={
+                        if @live_action == :plans && @project && @project.id == project.id,
+                          do: "page"
+                      }
+                      title="Plans"
+                    >
+                      <.icon name="document" size={13} />
+                    </.link>
                     <button
                       :if={project.access != :tracks && project.role == :owner}
                       type="button"
@@ -428,6 +445,14 @@
             :if={@project.repo}
             class="chip mono"
           >{@project.repo}</span><span class="spacer"></span>
+          <.link
+            :if={@project.access != :tracks && @live_action != :plans}
+            id="crumb-plans"
+            class="ghost"
+            patch={"/p/#{@project.id}/plans"}
+          >
+            Plans
+          </.link>
           <button
             :if={@project.access != :tracks}
             class="ghost"
@@ -469,8 +494,14 @@
           project_id={@project.id}
           refresh={@health_refresh}
         />
+        <%!-- Plans are a page of their own, reached from the project row. A
+          `?plan=` or `?new=plan` link on the project itself still opens it,
+          because track origins stored before the page existed point there. --%>
         <.live_component
-          :if={@project && is_nil(@track_id) && @project.access != :tracks}
+          :if={
+            @project && is_nil(@track_id) && @project.access != :tracks &&
+              (@live_action == :plans || @selected_plan_id || @new_plan)
+          }
           module={RavixWeb.Live.PlansPanel}
           id={"plans-#{@project.id}"}
           current_user={@current_user}
@@ -692,7 +723,7 @@
           name="q"
           id="search-query"
           value={@query}
-          label="Search projects and tracks"
+          label="Search projects, tracks and plans"
           phx-debounce="150"
         />
       </form>
@@ -704,6 +735,7 @@
         :if={@rail_loaded}
         projects={@projects}
         tracks={@tracks}
+        plans={@search_plans}
         query={@query}
       />
     </.dialog>

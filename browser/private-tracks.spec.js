@@ -34,7 +34,7 @@ test('private tracks are hidden from project members until invited', async ({ pa
     await expect(guest.locator('#project-sections[aria-busy="false"]')).toBeAttached();
     await expect(guest.locator('body')).not.toContainText('secret-investigation');
     await guest.locator('#quick-jump-trigger').click();
-    await guest.getByLabel('Search projects and tracks').fill('secret-investigation');
+    await guest.getByLabel('Search projects, tracks and plans').fill('secret-investigation');
     await expect(guest.locator('#search-dialog [data-jump-result]')).toHaveCount(0);
     await guest.keyboard.press('Escape');
     await guest.goto(trackPath);

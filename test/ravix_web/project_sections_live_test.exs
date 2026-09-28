@@ -45,7 +45,7 @@ defmodule RavixWeb.ProjectSectionsLiveTest do
     view |> form("#search-form", q: "SECTION") |> render_change()
     assert has_element?(view, "#search-dialog a[href='/p/#{project.id}']")
     view |> form("#search-form", q: "missing") |> render_change()
-    assert has_element?(view, "#search-dialog", "No projects or tracks match")
+    assert has_element?(view, "#search-dialog", "No projects, tracks or plans match")
     {:ok, reloaded, _} = live(conn, "/p/#{project.id}")
     render_async(reloaded)
     assert has_element?(reloaded, "#section-projects-#{section.id}[hidden]")

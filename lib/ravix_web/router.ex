@@ -105,6 +105,7 @@ defmodule RavixWeb.Router do
       live "/settings/connections", WorkspaceLive, :connections
       live "/inbox", WorkspaceLive, :inbox
       live "/p/:project", WorkspaceLive, :project
+      live "/p/:project/plans", WorkspaceLive, :plans
       live "/p/:project/t/:track", WorkspaceLive, :track
 
       # The first visit. The same `live_session`, so the workspace can send

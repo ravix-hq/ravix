@@ -582,8 +582,10 @@ html[data-inspector="closed"] #inspector-toggle .label-show { display: inline; }
   color: var(--dim); background: transparent; border: none; border-radius: var(--radius); text-decoration: none;
 }
 .project-action:hover:not(:disabled), .project-action:focus-visible { color: var(--ink); background: var(--surface); border-color: transparent; }
+.project-action.on { color: var(--ink); background: var(--surface); }
 @media (hover: hover) {
-  .workspace-project .project-action[title="Project settings"] { opacity: 0; }
+  .workspace-project .project-action[title="Project settings"],
+  .workspace-project .project-action[title="Plans"]:not(.on) { opacity: 0; }
   .workspace-project-row:hover .project-action, .workspace-project-row:focus-within .project-action { opacity: 1; }
   .workspace-project:not(.current) .project-actions { opacity: 0; }
   .workspace-project:hover .project-actions, .workspace-project:focus-within .project-actions { opacity: 1; }
@@ -1710,14 +1712,23 @@ body:has(.phx-error) #request-progress { display: none; }
 .schedule-error { padding: 12px; background: var(--danger-bg); border: 1px solid var(--danger-line); border-radius: var(--radius); }
 @media (max-width: 960px) { .schedules-layout { grid-template-columns: 1fr; } }
 
-/* Assigned plan material occupies one row until the reader opens it. */
+/* Assigned plan material is one header chip until the reader opens it; the
+   items open in a panel hung from the header, over the transcript. */
+.track-crumbs { position: relative; }
 .track-crumbs .track-plan-chip { min-width: 0; max-width: 18rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.track-plan-items { margin-bottom: 8px; flex: none; min-width: 0; border-bottom: 1px solid var(--line); }
-.track-plan-items:empty { display: none; }
-.track-plan-summary { display: flex; align-items: center; gap: .5rem; padding: .35rem .75rem; min-width: 0; }
-.track-plan-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .8rem; color: var(--dim); }
-.track-plan-toggle { flex: none; font-size: .75rem; white-space: nowrap; padding: 2px 6px; min-height: 24px; }
-.track-plan-list { list-style: none; margin: 0; padding: 0 .75rem .5rem; max-height: min(40vh, 24rem); overflow-y: auto; }
+.track-plan-items { display: contents; }
+.track-crumbs .track-plan-toggle { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; font: inherit; font-size: 12px; min-height: 24px; }
+.track-plan-toggle .truncate { min-width: 0; }
+.track-plan-count { flex: none; color: var(--dim); }
+.track-plan-popover {
+  position: absolute; top: 100%; left: 12px; z-index: 30; width: min(32rem, calc(100% - 24px));
+  max-height: min(60vh, 32rem); overflow-y: auto; background: var(--panel);
+  border: 1px solid var(--line-strong); border-radius: var(--radius); box-shadow: 0 8px 24px rgb(0 0 0 / .18);
+}
+.track-plan-popover[hidden] { display: none; }
+.track-plan-summary { display: flex; align-items: center; gap: .5rem; padding: .5rem .75rem; min-width: 0; border-bottom: 1px solid var(--line); }
+.track-plan-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .8rem; }
+.track-plan-list { list-style: none; margin: 0; padding: .35rem .75rem .5rem; }
 .track-plan-item-row { display: flex; align-items: center; gap: .5rem; min-width: 0; padding: .2rem 0; }
 .track-plan-item-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; font-size: .8rem; }
 .track-plan-pr { flex: none; font-size: .8rem; }
@@ -1728,8 +1739,9 @@ body:has(.phx-error) #request-progress { display: none; }
 .track-plan-detail textarea { display: block; width: 100%; margin: .4rem 0; }
 @media (max-width: 600px) {
   .track-crumbs .track-plan-chip { max-width: 9rem; }
-  .track-plan-summary { padding: .25rem .5rem; }
-  .track-plan-list { padding: 0 .5rem .4rem; max-height: none; overflow: visible; }
+  .track-plan-popover { left: 8px; width: calc(100% - 16px); max-height: 70vh; }
+  .track-plan-summary { padding: .4rem .5rem; }
+  .track-plan-list { padding: .25rem .5rem .4rem; }
   .track-plan-item-row { gap: .3rem; }
 }
 

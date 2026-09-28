@@ -104,6 +104,9 @@ defmodule RavixWeb.WorkspaceLive do
         refs: [],
         origin_kind: :blank,
         query: "",
+        # Plan titles quick-jump offers, read when the dialog opens. Only
+        # projects this person may enter whole contribute; see `Plans.titles/1`.
+        search_plans: [],
         # Creating a project and creating a track, and nothing else. The
         # settings dialog owns its own; see `RavixWeb.Live.SettingsDialog`
         # for why one flag for the whole page could not answer "may I press
@@ -928,7 +931,7 @@ defmodule RavixWeb.WorkspaceLive do
   def handle_info({:plan_saved, project_id, plan_id}, socket) do
     case Ravix.Plans.access(socket.assigns.current_user, plan_id) do
       {:ok, %{project_id: ^project_id}, _} ->
-        {:noreply, push_patch(socket, to: "/p/#{project_id}?plan=#{plan_id}")}
+        {:noreply, push_patch(socket, to: "/p/#{project_id}/plans?plan=#{plan_id}")}
 
       _ ->
         {:noreply, reload_async(socket)}
@@ -1187,6 +1190,7 @@ defmodule RavixWeb.WorkspaceLive do
     title =
       case Enum.find(assigns.tracks[project.id] || [], &(&1.id == assigns.track_id)) ||
              (requested && requested.id == assigns.track_id && requested) do
+        nil when assigns.live_action == :plans -> "Plans · " <> project.display_name
         nil -> project.display_name
         track -> track.title <> " · " <> project.display_name
       end
@@ -1265,7 +1269,14 @@ defmodule RavixWeb.WorkspaceLive do
   defp open_dialog(socket, :sections), do: assign(socket, dialog: :sections)
 
   defp open_dialog(socket, :search),
-    do: socket |> recheck_rail() |> assign(dialog: :search, query: "")
+    do:
+      socket
+      |> recheck_rail()
+      |> assign(
+        dialog: :search,
+        query: "",
+        search_plans: Ravix.Plans.titles(socket.assigns.current_user)
+      )
 
   # The settings dialog loads and holds its own four forms, so opening it is
   # only opening it.
@@ -1397,19 +1408,27 @@ defmodule RavixWeb.WorkspaceLive do
 
   # Keep filtering inside a component so HEEx tracks its input assigns.
   defp track_search_results(assigns) do
+    plans = Enum.group_by(assigns.plans, & &1.project_id)
+
     results =
       for project <- assigns.projects,
           tracks =
             Enum.filter(assigns.tracks[project.id] || [], &matching?(&1, project, assigns.query)),
-          tracks != [] || project_matches?(project, assigns.query),
-          do: {project, tracks}
+          # Only a project this person may enter whole has plans to offer.
+          plans =
+            if(project.access == :tracks,
+              do: [],
+              else: Enum.filter(plans[project.id] || [], &plan_matches?(&1, assigns.query))
+            ),
+          tracks != [] || plans != [] || project_matches?(project, assigns.query),
+          do: {project, tracks, plans}
 
     assigns = assign(assigns, :results, results)
 
     ~H"""
-    <p :if={@results == []} role="status">No projects or tracks match</p>
+    <p :if={@results == []} role="status">No projects, tracks or plans match</p>
     <section
-      :for={{project, tracks} <- @results}
+      :for={{project, tracks, plans} <- @results}
       id={"search-group-#{project.id}"}
       aria-labelledby={"search-project-#{project.id}"}
     >
@@ -1442,9 +1461,24 @@ defmodule RavixWeb.WorkspaceLive do
         {track.title}<span :if={track.visibility == :private}><.icon name="lock" /> Private</span>
         <span :if={attention?(track)} class="badge" aria-label="1 unread">1</span>
       </.link>
+      <.link
+        :for={plan <- plans}
+        id={"search-plan-link-#{plan.id}"}
+        patch={"/p/#{project.id}/plans?plan=#{plan.id}"}
+        class="workspace-track"
+        data-jump-result
+      >
+        <.icon name="document" size={13} /><span>Plan: {plan.title}</span><span
+          :if={plan.archived}
+          class="chip"
+        >Archived</span>
+      </.link>
     </section>
     """
   end
+
+  defp plan_matches?(plan, query),
+    do: String.contains?(String.downcase(plan.title), String.downcase(query))
 
   defp matching?(track, project, query),
     do:

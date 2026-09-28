@@ -797,7 +797,13 @@ defmodule RavixWeb.WorkspaceManagementTest do
     assert has_element?(ctx.view, "a[href='/p/#{ctx.project.id}/t/#{track.id}']")
     render_change(ctx.view, "search", %{q: "does-not-exist"})
     refute has_element?(ctx.view, "#search-dialog a[href='/p/#{ctx.project.id}/t/#{track.id}']")
-    assert has_element?(ctx.view, "#search-dialog [role=status]", "No projects or tracks match")
+
+    assert has_element?(
+             ctx.view,
+             "#search-dialog [role=status]",
+             "No projects, tracks or plans match"
+           )
+
     refute has_element?(ctx.view, "#search-dialog h3")
     render_change(ctx.view, "search", %{q: "SEARCHABLE"})
     refute has_element?(ctx.view, "#search-dialog [role=status]")
