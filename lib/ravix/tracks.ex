@@ -76,6 +76,7 @@ defmodule Ravix.Tracks do
     Origin,
     Runtime,
     Setup,
+    Sleep,
     Store,
     Thread,
     Track,
@@ -1495,6 +1496,7 @@ defmodule Ravix.Tracks do
 
     with {:ok, log, history, newest} <-
            open_conversation(client, conversation_id, [], source, runtime, binding),
+         :ok <- Sleep.observe(binding.thread_id, conversation_id, log),
          {:ok, page} <- history_page(log, history, runtime, binding, false) do
       {:ok, %{page | last_event_id: newest || page.last_event_id}}
     end
@@ -1506,6 +1508,7 @@ defmodule Ravix.Tracks do
            Fountain.events(client, conversation_id, prompts: true, after: previous.last_event_id),
          {:ok, turns} <- Fountain.turns(client, conversation_id) do
       annotate_read(%{events: length(log)}, "asc")
+      Sleep.observe(binding.thread_id, conversation_id, log)
       build_transcript_page(previous, log, turns, conversation_id, runtime, binding, true)
     end
   end
@@ -1969,10 +1972,13 @@ defmodule Ravix.Tracks do
   @spec confine(String.t(), String.t() | nil) :: String.t()
   defdelegate confine(root, requested), to: Files
 
-  defp disk_result(%{sandbox_layout: :dedicated}, {:error, %Fountain.Error{} = error}) do
-    if Fountain.Error.sandbox_suspended?(error),
-      do: {:error, :machine_asleep},
-      else: {:error, error}
+  defp disk_result(%{sandbox_layout: :dedicated} = track, {:error, %Fountain.Error{} = error}) do
+    if Fountain.Error.sandbox_suspended?(error) do
+      Sleep.record(track.id, true)
+      {:error, :machine_asleep}
+    else
+      {:error, error}
+    end
   end
 
   defp disk_result(_track, result), do: result
@@ -2143,6 +2149,8 @@ defmodule Ravix.Tracks do
       sandbox_layout: row.sandbox_layout,
       sandbox_state: row.sandbox_state,
       sandbox_stage: row.sandbox_stage,
+      sandbox_action: row.sandbox_action,
+      sandbox_suspended_at: row.sandbox_suspended_at,
       repo_full_name: project && project.repo_full_name,
       setup_state: row.setup_state,
       setup_attempts: row.setup_attempts,

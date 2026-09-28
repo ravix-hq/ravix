@@ -23,6 +23,7 @@ defmodule RavixWeb.Live.MachineDock do
 
   alias Ravix.Terminal
   alias Ravix.Tracks
+  alias Ravix.Tracks.MachineState
   alias Ravix.Vitals
   alias RavixWeb.Live.Hooks
 
@@ -54,6 +55,7 @@ defmodule RavixWeb.Live.MachineDock do
        output: [],
        exec_busy: false,
        machine_status: nil,
+       machine: nil,
        vitals: nil,
        vitals_busy?: false
      )}
@@ -233,17 +235,25 @@ defmodule RavixWeb.Live.MachineDock do
 
   defp machine_label(_), do: "Machine"
 
-  defp machine_status(nil), do: "Checking machine status…"
-  defp machine_status(%Terminal.Status{available: true}), do: "The machine is running."
-  defp machine_status(%Terminal.Status{why: :no_machine}), do: "No machine is available yet."
+  # The status line, in the words the header chip and the sidebar use
+  # (`Ravix.Tracks.MachineState`), qualified only where the terminal's own
+  # probe knows something the track does not: that this deployment cannot
+  # reach machines at all, or that there is no machine yet.
+  defp machine_status(%Terminal.Status{why: :no_machine}, _machine),
+    do: "No machine is available yet."
 
-  defp machine_status(%Terminal.Status{why: :no_token}),
+  defp machine_status(%Terminal.Status{why: :no_token}, _machine),
     do: "Machine status is unavailable because the machine connection is not configured."
 
-  defp machine_status(%Terminal.Status{why: why}) when why in [:no_sprite, :unreachable],
-    do: "The machine is asleep or unreachable. It wakes on the next turn."
+  defp machine_status(%Terminal.Status{why: why}, %{state: :idle})
+       when why in [:no_sprite, :unreachable],
+       do: "Idle. The machine did not answer just now; your next message wakes it."
 
-  defp machine_status(_), do: "Machine status is unavailable. Try again later."
+  defp machine_status(_status, nil), do: "Checking machine status…"
+  defp machine_status(_status, %{state: state, detail: nil}), do: "#{MachineState.label(state)}."
+
+  defp machine_status(_status, %{state: state, detail: detail}),
+    do: "#{MachineState.label(state)}. #{detail}"
 
   @impl true
   def render(assigns) do
@@ -251,7 +261,7 @@ defmodule RavixWeb.Live.MachineDock do
     <div class="machine-dock-host">
       <p id="track-machine-label">{machine_label(@machine_identity)}</p>
       <p id="track-machine-status" role="status">
-        {machine_status(@machine_status)}
+        {machine_status(@machine_status, @machine)}
       </p>
       <nav class="workspace-tabs dock-tabs" aria-label="Machine panels">
         <button

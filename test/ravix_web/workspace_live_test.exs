@@ -1013,18 +1013,32 @@ defmodule RavixWeb.WorkspaceLiveTest do
     project = insert_project(user: user)
 
     tracks =
-      for {title, status, unread} <- [
-            {"ravix/idle", :ready, false},
-            {"ravix/busy", :running, false},
-            {"ravix/booting", :opening, false},
-            {"ravix/broken", :failed, false},
-            {"ravix/answered", :ready, true},
-            {"feature/login", :ready, false},
-            {"ravix/setup-broken", :setup_failed, false}
+      for {title, status, unread, extra} <- [
+            {"ravix/idle", :ready, false, []},
+            {"ravix/busy", :running, false, []},
+            {"ravix/booting", :opening, false, []},
+            {"ravix/broken", :failed, false, []},
+            {"ravix/answered", :ready, true, []},
+            {"feature/login", :ready, false, []},
+            {"ravix/setup-broken", :setup_failed, false,
+             [setup_error: "The opening turn failed."]},
+            {"ravix/asleep", :ready, false,
+             [sandbox_layout: :dedicated, sandbox_suspended_at: DateTime.utc_now()]},
+            {"ravix/asleep-unread", :ready, true,
+             [sandbox_layout: :dedicated, sandbox_suspended_at: DateTime.utc_now()]},
+            {"ravix/rebuilding", :ready, false,
+             [
+               sandbox_layout: :dedicated,
+               sandbox_state: :provisioning,
+               sandbox_action: :rebuild,
+               sandbox_stage: "creating"
+             ]},
+            {"ravix/closing", :ready, false,
+             [sandbox_layout: :dedicated, sandbox_state: :closing]}
           ] do
         insert_track(project: project, title: title)
         |> Tracks.present(project: project)
-        |> struct!(status: status, unread: unread)
+        |> struct!([status: status, unread: unread] ++ extra)
       end
 
     tracks =
@@ -1041,13 +1055,26 @@ defmodule RavixWeb.WorkspaceLiveTest do
       "#yard .project-tree-tracks a[href='/p/#{project.id}/t/#{track.id}']"
     end
 
-    [idle, busy, booting, broken, answered, feature, setup_broken] = tracks
+    [
+      idle,
+      busy,
+      booting,
+      broken,
+      answered,
+      feature,
+      setup_broken,
+      asleep,
+      asleep_unread,
+      rebuilding,
+      closing
+    ] = tracks
 
     # The namespace every default title shares is left off the tab; the full
-    # title is still its accessible name and tooltip.
+    # title, its creator and its machine state are its accessible name, the
+    # title its tooltip.
     assert has_element?(
              view,
-             "#{tab.(idle)}[aria-label='ravix/idle, created by @user'][title='ravix/idle']"
+             "#{tab.(idle)}[aria-label='ravix/idle, created by @user, Idle'][title='ravix/idle']"
            )
 
     assert render(element(view, "#{tab.(idle)} .track-title")) =~ ~r{>idle</span>}
@@ -1056,23 +1083,43 @@ defmodule RavixWeb.WorkspaceLiveTest do
 
     assert has_element?(
              view,
-             "#{tab.(feature)}[aria-label='feature/login, created by @user, from a project plan']"
+             "#{tab.(feature)}[aria-label='feature/login, created by @user, from a project plan, Idle']"
            )
 
-    for {track, label} <- [
-          {busy, "Working"},
-          {booting, "Setting up…"},
-          {broken, "Error"},
-          {answered, "Unread reply"},
-          {setup_broken, "Setup failed"}
+    # One `MachineState` per row: the dot's class, its label and tooltip, and
+    # the row's accessible name all say the same word.
+    for {track, class, label, name, tooltip} <- [
+          {busy, "working", "Working", "Working", "Working: The agent is taking a turn."},
+          {booting, "starting", "Starting", "Starting", "Starting: Setting up…"},
+          {answered, "unread", "Unread reply", "Idle, Unread reply", "Unread reply · Idle"},
+          {setup_broken, "error", "Error", "Error", "Error: The opening turn failed."},
+          {asleep, "asleep", "Asleep", "Asleep", "Asleep: Your next message wakes it."},
+          {asleep_unread, "unread", "Unread reply", "Asleep, Unread reply",
+           "Unread reply · Asleep"},
+          {rebuilding, "restarting", "Restarting", "Restarting",
+           "Restarting: Creating this track's machine…"},
+          {closing, "closing", "Closing", "Closing",
+           "Closing: Closing… cleaning up this track's machine"}
         ] do
-      assert has_element?(view, "#{tab.(track)} .dot[role=img][aria-label='#{label}']")
+      assert has_element?(
+               view,
+               "#{tab.(track)} .dot.#{class}[role=img][aria-label='#{label}'][title=\"#{tooltip}\"]"
+             )
 
       assert has_element?(
                view,
-               "#{tab.(track)}[aria-label='#{track.title}, created by @user, #{label}']"
+               "#{tab.(track)}[aria-label=\"#{track.title}, created by @user, #{name}\"]"
              )
     end
+
+    # A failed turn is recoverable, so it is no alarm: the machine is Idle,
+    # and the next message carries on.
+    refute has_element?(view, "#{tab.(broken)} .dot[role=img]")
+
+    assert has_element?(
+             view,
+             "#{tab.(broken)}[aria-label='ravix/broken, created by @user, Idle']"
+           )
 
     # Idle and active tracks alike omit decorative numbering.
     refute has_element?(view, "#{tab.(idle)} .dot[role=img]")

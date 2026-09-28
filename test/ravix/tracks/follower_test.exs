@@ -1,5 +1,8 @@
 defmodule Ravix.Tracks.FollowerTest do
-  use Ravix.DataCase, async: true
+  # Not async: an opening or suspension event has the follower ask
+  # `Tracks.Sleep` about the machine, and only a shared sandbox lets that
+  # process reach the database.
+  use Ravix.DataCase, async: false
 
   import ExUnit.CaptureLog
 
@@ -15,8 +18,15 @@ defmodule Ravix.Tracks.FollowerTest do
   end
 
   setup do
-    {:ok,
-     track_id: Ecto.UUID.generate(), conversation_id: "c-#{System.unique_integer([:positive])}"}
+    track_id = Ecto.UUID.generate()
+
+    # A follower that heard a turn open asks the database about sleep; let it
+    # finish that while this test still owns the sandbox.
+    on_exit(fn ->
+      with pid when is_pid(pid) <- Follower.whereis(track_id), do: :sys.get_state(pid)
+    end)
+
+    {:ok, track_id: track_id, conversation_id: "c-#{System.unique_integer([:positive])}"}
   end
 
   defp frames(ids) do
@@ -175,6 +185,62 @@ defmodule Ravix.Tracks.FollowerTest do
         assert_receive {:transcript, ^track_id, %Event{id: 6}}, 1_000
       end)
     end
+  end
+
+  test "a suspension on the stream marks a dedicated track asleep, and the next turn wakes it" do
+    project = insert_project()
+    conversation_id = "c-#{System.unique_integer([:positive])}"
+
+    track =
+      insert_track(
+        project: project,
+        sandbox_layout: :dedicated,
+        sandbox_state: :ready,
+        conversation_id: conversation_id
+      )
+
+    Ravix.Hub.subscribe(project.id)
+    stream = "/api/conversations/#{conversation_id}/stream"
+
+    suspended =
+      FakeTransport.frame(7, "stage", %{
+        id: 7,
+        kind: "stage",
+        stage: "sandbox",
+        state: "done",
+        data: ~s({"event":"suspended","reason":"idle"})
+      })
+
+    woke =
+      FakeTransport.frame(9, "stage", %{
+        id: 9,
+        turn_id: "t2",
+        kind: "stage",
+        stage: "turn",
+        state: "started"
+      })
+
+    client =
+      FakeTransport.client(
+        [
+          {%{method: "GET", path: stream}, {200, [], [suspended]}},
+          # Settlement reads the log to place the suspension; it holds no turn.
+          {%{method: "GET", path: "/api/conversations/#{conversation_id}/events"},
+           {200, [], %{data: [], meta: %{has_more: false}}}},
+          {%{method: "GET", path: stream, headers: [{"last-event-id", "7"}]}, {200, [], [woke]}}
+        ],
+        verify: false
+      )
+
+    ctx = %{track_id: track.id, conversation_id: conversation_id}
+    assert {:ok, _} = subscribe(ctx, client: client)
+    track_id = track.id
+    assert_receive {:transcript, ^track_id, %Event{id: 7}}, 2_000
+    assert_receive {:hub, %Ravix.Hub.Event{name: :turn, track_id: ^track_id}}, 2_000
+    assert_receive {:transcript, ^track_id, %Event{id: 9}}, 2_000
+    assert_receive {:hub, %Ravix.Hub.Event{name: :turn, track_id: ^track_id}}, 2_000
+    assert is_nil(Repo.get!(Ravix.Tracks.Track, track.id).sandbox_suspended_at)
+    Follower.unsubscribe(track.id)
   end
 
   test "one follower per track, shared by every subscriber", ctx do

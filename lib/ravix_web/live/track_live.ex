@@ -59,7 +59,7 @@ defmodule RavixWeb.TrackLive do
   alias Ravix.{Hub, Previews, PromptQueue, Tracks}
   alias Ravix.Hub.Event
   alias Ravix.PromptQueue.Recovery
-  alias Ravix.Tracks.{AgentFailure, Diff, Files, Follower}
+  alias Ravix.Tracks.{AgentFailure, Diff, Files, Follower, MachineState}
   alias Ravix.Tracks.Transcript
   alias Ravix.Tracks.Transcript.Block, as: TranscriptBlock
   alias Ravix.Tracks.Transcript.Event, as: TranscriptEvent
@@ -2317,39 +2317,38 @@ defmodule RavixWeb.TrackLive do
   defp pull_state_label(:closed), do: "Closed"
   defp pull_state_label(:open), do: "Open"
 
-  defp setup_label(%{sandbox_state: :closing}, _now),
-    do: "Closing… cleaning up this track's machine"
+  defp setup_label(track, now), do: MachineState.setup_label(track, now)
 
-  defp setup_label(%{setup_error_code: "sandbox_outcome_unknown"}, _now),
-    do: "Checking this track's machine…"
+  # One state for the track's machine, with the per-thread turn states this
+  # page hears on the stream, which are fresher than the last detail read.
+  defp machine(track, threads, states, now) do
+    running =
+      track.status == :running or
+        Enum.any?(
+          threads,
+          &(Map.get(states, &1.id, Map.get(&1, :status)) in [:running, :pending])
+        )
 
-  defp setup_label(%{sandbox_stage: "creating"}, _now), do: "Creating this track's machine…"
-
-  defp setup_label(%{sandbox_stage: "cloning", repo_full_name: repo}, _now),
-    do: "Cloning #{repo}…"
-
-  defp setup_label(%{sandbox_stage: "setup", setup_state: state}, _now) when state != "ready",
-    do: "Running setup…"
-
-  defp setup_label(%{status: :closed}, _now), do: "Closed"
-  defp setup_label(%{setup_state: "failed"}, _now), do: "Setup failed"
-
-  defp setup_label(%{setup_state: "running", setup_error_code: "sandbox_suspended"}, _now),
-    do: "Machine asleep"
-
-  defp setup_label(%{setup_state: "ready"}, _now), do: "Ready"
-
-  defp setup_label(%{setup_state: "retry", setup_error_code: code}, _now)
-       when code in ["sandbox_at_capacity", "conversation_busy"], do: "Waiting for capacity"
-
-  defp setup_label(%{setup_state: "retry"} = track, now) do
-    seconds =
-      if track.setup_retry_at, do: max(0, DateTime.diff(track.setup_retry_at, now)), else: 0
-
-    "Retrying (attempt #{min(track.setup_attempts + 1, 3)} of 3, next in #{seconds}s)"
+    MachineState.of(track, running: running, now: now)
   end
 
-  defp setup_label(_track, _now), do: "Setting up…"
+  attr :machine, :map, required: true
+
+  # The header's state chip. Only the word is a live region: the detail can
+  # tick (a retry countdown), so it describes the chip rather than announcing.
+  defp machine_chip(assigns) do
+    ~H"""
+    <span
+      id="track-machine-state"
+      class={"chip machine-chip machine-#{@machine.state}"}
+      role="status"
+      aria-live="polite"
+      aria-describedby={@machine.detail && "track-machine-detail"}
+      title={@machine.detail}
+    ><.status_dot status={to_string(@machine.state)} />{MachineState.label(@machine.state)}</span>
+    <span :if={@machine.detail} id="track-machine-detail" class="sr-only">{@machine.detail}</span>
+    """
+  end
 
   defp diff_status(status), do: %{added: "A", modified: "M", deleted: "D", renamed: "R"}[status]
 

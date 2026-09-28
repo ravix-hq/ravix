@@ -613,9 +613,18 @@ html[data-inspector="closed"] #inspector-toggle .label-show { display: inline; }
 /* Status dots accompany track titles when there is activity to report. */
 .dot { flex: none; width: 6px; height: 6px; border-radius: 999px; background: var(--dimmer); }
 .dot.ready { background: var(--ok); }
-.dot.running { background: var(--accent); animation: pulse 1.4s ease-in-out infinite; }
+.dot.running, .dot.working { background: var(--accent); animation: pulse 1.4s ease-in-out infinite; }
 .dot.opening, .dot.queued { background: var(--warn); animation: pulse 1.4s ease-in-out infinite; }
-.dot.failed, .dot.setup_failed { background: var(--bad); }
+.dot.failed, .dot.setup_failed, .dot.error { background: var(--bad); }
+/* A track's machine (`Ravix.Tracks.MachineState`). Red is only for a
+   failure somebody must act on; states that recover by themselves are
+   neutral: starting and restarting pulse grey, asleep is a hollow ring,
+   idle a plain dot where a chip needs one. Closing is solid orange. */
+.dot.starting, .dot.restarting { background: var(--dim); animation: pulse 1.4s ease-in-out infinite; }
+.dot.closing { background: var(--warn); }
+.dot.asleep { background: transparent; box-shadow: inset 0 0 0 1.5px var(--dim); }
+.dot.idle { background: var(--dim); }
+.machine-chip { display: inline-flex; align-items: center; gap: 6px; }
 @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.32; } }
 
 
@@ -1569,7 +1578,7 @@ button.primary.home-action .ico { color: inherit; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .dot.running, .dot.opening, .dot.queued { animation: none; }
+  .dot.running, .dot.opening, .dot.queued, .dot.working, .dot.starting, .dot.restarting { animation: none; }
   .toast, .live-disconnected, .scrim, .yard-scrim { animation: none; }
 }
 

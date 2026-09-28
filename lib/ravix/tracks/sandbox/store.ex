@@ -24,7 +24,12 @@ defmodule Ravix.Tracks.Sandbox.Store do
       next = generation + 1
 
       track
-      |> Track.changeset(%{sandbox_generation: next, sandbox_state: Map.fetch!(@states, action)})
+      |> Track.changeset(%{
+        sandbox_generation: next,
+        sandbox_state: Map.fetch!(@states, action),
+        sandbox_action: action,
+        sandbox_suspended_at: nil
+      })
       |> save!()
 
       %Operation{}

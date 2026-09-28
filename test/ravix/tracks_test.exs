@@ -1539,6 +1539,11 @@ defmodule Ravix.TracksTest do
         # capture_log also sees concurrent tests: inspect this unique read only.
         refute log =~ "fountain 409 on GET /api/sandboxes/#{sandbox_id}/#{unquote(endpoint)}"
 
+        # The refusal is the machine saying it is asleep: a dedicated track
+        # remembers it for the rail; a shared one never claims it.
+        suspended_at = Repo.get!(Track, ctx.track.id).sandbox_suspended_at
+        assert is_nil(suspended_at) == (unquote(layout) == :shared)
+
         assert Enum.count(
                  FakeTransport.calls(client),
                  &(&1.path == "/api/sandboxes/#{sandbox_id}/#{unquote(endpoint)}")

@@ -43,6 +43,7 @@
       </button>
       <strong :if={!owner_or_creator?(@current_user, @track)}>{@track.title}</strong>
       <span :if={@track.visibility == :private}><.icon name="lock" /> Private</span>
+      <.machine_chip machine={machine(@track, @threads, @thread_states, @setup_now)} />
       <.live_component
         module={RavixWeb.Live.TrackPlanItems}
         id={"track-plan-items-#{@track.id}"}
@@ -830,6 +831,7 @@
               do: {@track.conversation_id, @track.sandbox_state}
           }
           track_id={@track_id}
+          machine={machine(@track, @threads, @thread_states, @setup_now)}
           workdir={@track.workdir}
           current_user={@current_user}
           session_hash={@session_hash}

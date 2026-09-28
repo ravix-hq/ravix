@@ -1623,6 +1623,139 @@ defmodule RavixWeb.TrackLiveTest do
     end
   end
 
+  describe "the machine state chip" do
+    # The row as the page's next detail read will present it, then the hub
+    # message that makes the page read it again.
+    defp machine_row(ctx, attrs) do
+      Repo.update!(Ecto.Changeset.change(Repo.get!(Track, ctx.track.id), attrs))
+
+      send(
+        ctx.view.pid,
+        {:hub, %Event{name: :tracks, project_id: ctx.project.id, track_id: ctx.track.id}}
+      )
+
+      render(ctx.view)
+      render_async(ctx.view)
+    end
+
+    defp chip(view, label, detail) do
+      assert has_element?(
+               view,
+               "#track-machine-state[role=status][aria-live=polite] .dot.#{String.downcase(label)}"
+             )
+
+      assert has_element?(view, "#track-machine-state", label)
+
+      if detail do
+        assert has_element?(
+                 view,
+                 "#track-machine-state[aria-describedby=track-machine-detail][title=\"#{detail}\"]"
+               )
+
+        assert has_element?(view, "#track-machine-detail.sr-only", detail)
+      else
+        refute has_element?(view, "#track-machine-detail")
+        refute has_element?(view, "#track-machine-state[title]")
+      end
+    end
+
+    test "says each state with its detail", ctx do
+      now = DateTime.utc_now()
+      opened = [opened_at: now, setup_state: "ready", setup_error: nil]
+      dedicated = [sandbox_layout: :dedicated, sandbox_state: :ready, sandbox_stage: "ready"]
+
+      for {attrs, label, detail} <- [
+            {opened, "Idle", nil},
+            {dedicated ++
+               [
+                 sandbox_state: :provisioning,
+                 sandbox_action: :open,
+                 sandbox_stage: "creating",
+                 setup_state: "pending"
+               ], "Starting", "Creating this track's machine…"},
+            {dedicated ++
+               [sandbox_stage: "setup", sandbox_state: :provisioning, setup_state: "running"],
+             "Starting", "Running setup…"},
+            {dedicated ++
+               opened ++
+               [
+                 sandbox_state: :provisioning,
+                 sandbox_action: :rebuild,
+                 sandbox_stage: "creating",
+                 setup_state: "pending"
+               ], "Restarting", "Creating this track's machine…"},
+            {dedicated ++ opened ++ [sandbox_suspended_at: now], "Asleep",
+             "Your next message wakes it."},
+            {opened ++
+               [setup_state: "failed", setup_error: "The opening turn failed to clone the repo."],
+             "Error", "The opening turn failed to clone the repo."},
+            {dedicated ++ [sandbox_state: :closing, sandbox_stage: "closing"], "Closing",
+             "Closing… cleaning up this track's machine"},
+            {[sandbox_layout: :shared, sandbox_state: nil, sandbox_suspended_at: now] ++ opened,
+             "Idle", nil}
+          ] do
+        machine_row(ctx, attrs)
+        chip(ctx.view, label, detail)
+      end
+    end
+
+    test "follows a turn as it starts and ends, and a rebuild until the machine is back",
+         ctx do
+      machine_row(ctx, opened_at: DateTime.utc_now(), sandbox_layout: :dedicated)
+      chip(ctx.view, "Idle", nil)
+
+      turn = fn state ->
+        send(
+          ctx.view.pid,
+          {:transcript, ctx.track.id,
+           %{"id" => 1, "turn_id" => "t1", "kind" => "stage", "stage" => "turn", "state" => state}}
+        )
+
+        render(ctx.view)
+      end
+
+      turn.("started")
+      chip(ctx.view, "Working", "The agent is taking a turn.")
+      turn.("done")
+      chip(ctx.view, "Idle", nil)
+
+      machine_row(ctx,
+        sandbox_state: :provisioning,
+        sandbox_action: :rebuild,
+        sandbox_stage: "creating",
+        setup_state: "pending"
+      )
+
+      chip(ctx.view, "Restarting", "Creating this track's machine…")
+      machine_row(ctx, sandbox_stage: "setup", setup_state: "running")
+      chip(ctx.view, "Restarting", "Running setup…")
+      machine_row(ctx, sandbox_state: :ready, sandbox_stage: "ready", setup_state: "ready")
+      chip(ctx.view, "Idle", nil)
+    end
+
+    test "the dock's status line uses the same words", ctx do
+      stub(Terminal, :status, fn _, _, _ ->
+        {:ok, %Terminal.Status{available: false, why: :no_sprite, cwd: ctx.track.workdir}}
+      end)
+
+      Repo.update!(
+        Ecto.Changeset.change(Repo.get!(Track, ctx.track.id),
+          opened_at: DateTime.utc_now(),
+          sandbox_layout: :dedicated,
+          sandbox_state: :ready,
+          sandbox_suspended_at: DateTime.utc_now()
+        )
+      )
+
+      {:ok, parent, _} = live(ctx.conn, "/p/#{ctx.project.id}/t/#{ctx.track.id}")
+      view = find_live_child(parent, "track-host")
+      settle(view)
+      chip(view, "Asleep", "Your next message wakes it.")
+      assert has_element?(view, "#track-machine-status", "Asleep. Your next message wakes it.")
+      refute render(view) =~ "asleep or unreachable"
+    end
+  end
+
   describe "the model menu" do
     setup ctx do
       # `status` and `model` stand for the live conversation, which is
@@ -3030,7 +3163,9 @@ defmodule RavixWeb.TrackLiveTest do
     @layout layout
     @machine_label label
     test "#{layout} machine ownership is visible in the dock, terminal and Vitals", ctx do
-      Repo.update!(Ecto.Changeset.change(ctx.track, sandbox_layout: @layout))
+      Repo.update!(
+        Ecto.Changeset.change(ctx.track, sandbox_layout: @layout, opened_at: DateTime.utc_now())
+      )
 
       stub(Terminal, :status, fn _, _, _ ->
         {:ok, %Terminal.Status{available: true, why: nil, cwd: ctx.track.workdir}}
@@ -3044,7 +3179,7 @@ defmodule RavixWeb.TrackLiveTest do
       view = find_live_child(parent, "track-host")
       render_async(view)
       assert has_element?(view, "#track-machine-label", @machine_label)
-      assert has_element?(view, "#track-machine-status", "The machine is running.")
+      assert has_element?(view, "#track-machine-status", "Idle.")
       view |> element("button[phx-click=dock][phx-value-name=terminal]") |> render_click()
       assert has_element?(view, "#terminal-machine-label", @machine_label)
       view |> element("button[phx-click=dock][phx-value-name=vitals]") |> render_click()
@@ -3058,13 +3193,15 @@ defmodule RavixWeb.TrackLiveTest do
         no_machine: "No machine is available yet.",
         no_token:
           "Machine status is unavailable because the machine connection is not configured.",
-        no_sprite: "The machine is asleep or unreachable.",
-        unreachable: "The machine is asleep or unreachable.",
-        error: "Machine status is unavailable. Try again later."
+        no_sprite: "Idle. The machine did not answer just now; your next message wakes it.",
+        unreachable: "Idle. The machine did not answer just now; your next message wakes it.",
+        error: "Idle."
       ] do
     @status_reason reason
     @status_sentence sentence
     test "machine status explains #{@status_reason} in plain language", ctx do
+      Repo.update!(Ecto.Changeset.change(ctx.track, opened_at: DateTime.utc_now()))
+
       stub(Terminal, :status, fn _, _, _ ->
         if @status_reason == :error,
           do: {:error, :not_found},
