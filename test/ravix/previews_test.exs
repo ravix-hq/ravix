@@ -133,7 +133,16 @@ defmodule Ravix.PreviewsTest do
   test "privacy closes an existing gateway watch and invalidates its session grant", ctx do
     creator = insert_user()
     insert_project_member(ctx.project, creator)
-    Repo.update!(Ecto.Changeset.change(ctx.t1, created_by: creator.id))
+
+    Repo.update!(
+      Ecto.Changeset.change(ctx.t1,
+        created_by: creator.id,
+        sandbox_layout: :dedicated,
+        sandbox_state: :ready,
+        sandbox_id: "privacy-machine"
+      )
+    )
+
     assert {:ok, url} = Previews.open_ticket(ctx.owner, ctx.t1.id, ctx.owner_session.token_hash)
     [_, ticket] = String.split(url, "/__ravix/open#")
     row = Store.get(ctx.t1.id)

@@ -471,7 +471,16 @@ defmodule Ravix.PromptQueueTest do
   test "delivery rechecks privacy for a queued project owner's prompt", f do
     creator = insert_user()
     insert_project_member(f.project, creator)
-    Repo.update!(Ecto.Changeset.change(f.track, created_by: creator.id))
+
+    Repo.update!(
+      Ecto.Changeset.change(f.track,
+        created_by: creator.id,
+        sandbox_layout: :dedicated,
+        sandbox_state: :ready,
+        sandbox_id: "privacy-machine"
+      )
+    )
+
     fountain_hooks(fn -> "idle" end, fn -> :ok end)
     {:ok, %Item{id: id}} = send_prompt(f.track, f.owner, "queued before privacy")
     assert {:ok, :private} = Tracks.set_visibility(creator, f.track.id, "private")

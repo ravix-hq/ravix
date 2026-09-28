@@ -184,8 +184,17 @@ defmodule RavixWeb.Live.PeopleDialog do
             name="visibility"
             label="Sharing"
             value={@track.visibility}
-            options={[{"Everyone in this project", :project}, {"Only people I invite", :private}]}
+            options={
+              [{"Everyone in this project", :project}] ++
+                if(@track.sandbox_layout == :dedicated,
+                  do: [{"Only people I invite", :private}],
+                  else: []
+                )
+            }
           />
+          <p :if={@track.sandbox_layout != :dedicated} class="hint">
+            Private tracks need their own machine. This track shares the project machine.
+          </p>
         </form>
         <ul class="people-list" aria-label="Members">
           <li :for={person <- @people} class="people-row">

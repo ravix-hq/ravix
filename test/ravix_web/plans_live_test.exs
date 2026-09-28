@@ -23,7 +23,14 @@ defmodule RavixWeb.PlansLiveTest do
   test "an open plan redacts a newly private assignment on every subsequent update", ctx do
     creator = insert_user()
     insert_project_member(ctx.project, creator)
-    track = insert_track(project: ctx.project, created_by: creator.id, title: "Hidden plan work")
+
+    track =
+      insert_track(
+        project: ctx.project,
+        created_by: creator.id,
+        sandbox_layout: :dedicated,
+        title: "Hidden plan work"
+      )
 
     {:ok, plan} =
       Plans.create(ctx.user, ctx.project.id, %{

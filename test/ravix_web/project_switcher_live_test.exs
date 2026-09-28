@@ -35,6 +35,7 @@ defmodule RavixWeb.ProjectSwitcherLiveTest do
       insert_track(
         project: project,
         visibility: :private,
+        sandbox_layout: :dedicated,
         created_by: creator.id,
         title: "Private omitted #{project.id}"
       )
@@ -190,7 +191,11 @@ defmodule RavixWeb.ProjectSwitcherLiveTest do
 
     Hub.publish(project.id, :turn)
     assert_receive {:reading, worker}
-    removed |> Ecto.Changeset.change(visibility: :private) |> Ravix.Repo.update!()
+
+    removed
+    |> Ecto.Changeset.change(visibility: :private, sandbox_layout: :dedicated)
+    |> Ravix.Repo.update!()
+
     send(worker, :finish)
     render_async(view, 5_000)
     refute render(view) =~ removed.title

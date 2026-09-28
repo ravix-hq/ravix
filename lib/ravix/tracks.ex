@@ -592,7 +592,9 @@ defmodule Ravix.Tracks do
   end
 
   defp open_shared(user, project_id, attrs, opts) do
-    with {:ok, _} <- Access.project_access(user, project_id) do
+    with {:ok, _} <- Access.project_access(user, project_id),
+         {:ok, visibility} <- visibility(attrs["visibility"] || "project"),
+         :ok <- visibility_layout(visibility, :shared) do
       Ravix.Tracks.Sandbox.Store.shared_open(project_id, fn ->
         open_shared_available(user, project_id, attrs, opts)
       end)
@@ -699,11 +701,20 @@ defmodule Ravix.Tracks do
   defp visibility(value) when value in [:private, "private"], do: {:ok, :private}
   defp visibility(_), do: {:error, {:unprocessable, "visibility", "Choose project or private."}}
 
+  defp visibility_layout(:private, layout) when layout != :dedicated,
+    do:
+      {:error,
+       {:conflict, "private_requires_dedicated",
+        "Private tracks need their own machine. This track shares the project machine."}}
+
+  defp visibility_layout(_, _), do: :ok
+
   @doc "Only the creator can change a track's visibility."
   def set_visibility(%User{} = user, track_id, value) do
     with {:ok, %{track: track}} <- Access.track_access(user, track_id),
          true <- Access.creator?(user, track),
          {:ok, visibility} <- visibility(value),
+         :ok <- visibility_layout(visibility, track.sandbox_layout),
          {:ok, updated} <- Store.set_visibility(track, visibility) do
       # ownership: Access.track_access and the creator check admitted this visibility change.
       Ravix.Previews.Store.revoke(track.id)

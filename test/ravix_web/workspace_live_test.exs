@@ -1511,6 +1511,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
         project: project,
         created_by: creator.id,
         visibility: :private,
+        sandbox_layout: :dedicated,
         setup_state: "failed",
         title: "Invitation-only failure"
       )
@@ -1540,7 +1541,12 @@ defmodule RavixWeb.WorkspaceLiveTest do
     insert_project_member(project, user)
 
     track =
-      insert_track(project: project, created_by: creator.id, conversation_id: "conversation-test")
+      insert_track(
+        project: project,
+        created_by: creator.id,
+        sandbox_layout: :dedicated,
+        conversation_id: "conversation-test"
+      )
 
     stub_track(track)
     client = FakeTransport.client([], verify: false)

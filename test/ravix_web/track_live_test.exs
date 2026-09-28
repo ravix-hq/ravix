@@ -3305,8 +3305,24 @@ defmodule RavixWeb.TrackLiveTest do
     ctx.view |> element("button[phx-click=queue]", "Cancel") |> render_click()
   end
 
-  test "creator changes sharing in People and a revoked session cannot change it", ctx do
+  test "shared track sharing explains and refuses private visibility", ctx do
     Repo.update!(Ecto.Changeset.change(ctx.track, created_by: ctx.user.id))
+    send(ctx.view.pid, {:hub, Event.new(:people, ctx.project.id, track_id: ctx.track.id)})
+    settle(ctx.view)
+    render_click(ctx.view, "dialog", %{name: "people"})
+    refute has_element?(ctx.view, "#track-visibility-form option[value='private']")
+    message = "Private tracks need their own machine. This track shares the project machine."
+    assert has_element?(ctx.view, "#track-visibility-form", message)
+    ctx.view |> element("#track-visibility-form") |> render_change(%{"visibility" => "private"})
+    assert toasted(ctx) =~ message
+    assert Repo.get!(Track, ctx.track.id).visibility == :project
+  end
+
+  test "creator changes sharing in People and a revoked session cannot change it", ctx do
+    Repo.update!(
+      Ecto.Changeset.change(ctx.track, created_by: ctx.user.id, sandbox_layout: :dedicated)
+    )
+
     send(ctx.view.pid, {:hub, Event.new(:people, ctx.project.id, track_id: ctx.track.id)})
     settle(ctx.view)
     render_click(ctx.view, "dialog", %{name: "people"})

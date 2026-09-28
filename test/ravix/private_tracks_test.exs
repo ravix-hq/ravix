@@ -27,6 +27,7 @@ defmodule Ravix.PrivateTracksTest do
       insert_track(
         project: project,
         visibility: :private,
+        sandbox_layout: :dedicated,
         created_by: creator.id,
         created_by_login: creator.login,
         title: "Private investigation"
@@ -116,6 +117,26 @@ defmodule Ravix.PrivateTracksTest do
     assert {:ok, :private} = Tracks.set_visibility(renamed, c.track.id, "private")
     assert_receive {:hub, %{name: :people}}
     assert {:error, :not_found} = Access.track_access(c.owner, c.track.id)
+  end
+
+  test "shared tracks cannot become private or be created private", c do
+    shared = insert_track(project: c.project, created_by: c.creator.id)
+
+    error =
+      {:error,
+       {:conflict, "private_requires_dedicated",
+        "Private tracks need their own machine. This track shares the project machine."}}
+
+    assert Tracks.set_visibility(c.creator, shared.id, "private") == error
+
+    assert %{visibility: :project, sandbox_layout: :shared} =
+             Repo.get!(Ravix.Tracks.Track, shared.id)
+
+    assert {:ok, :project} = Tracks.set_visibility(c.creator, shared.id, "project")
+    stub(Ravix.Config, :dedicated_opens_enabled?, fn _ -> false end)
+    reject(Ravix.Fountain, :client, 0)
+    assert Tracks.open(c.creator, c.project.id, %{"visibility" => "private"}) == error
+    assert {:error, :not_found} = Tracks.set_visibility(c.stranger, shared.id, "private")
   end
 
   test "project removal still revokes project-visible tracks, while private creators retain access",

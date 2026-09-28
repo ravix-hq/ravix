@@ -213,7 +213,16 @@ defmodule Ravix.Tooling.WaitTest do
   test "privacy revokes a wait even while its provider read is blocked", ctx do
     creator = insert_user()
     insert_project_member(ctx.project, creator)
-    Repo.update!(Ecto.Changeset.change(ctx.track, created_by: creator.id))
+
+    Repo.update!(
+      Ecto.Changeset.change(ctx.track,
+        created_by: creator.id,
+        sandbox_layout: :dedicated,
+        sandbox_state: :ready,
+        sandbox_id: "privacy-machine"
+      )
+    )
+
     owner = self()
 
     stub(Fountain, :turns, fn _, _ ->
