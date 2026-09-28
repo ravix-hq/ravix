@@ -380,7 +380,10 @@ defmodule Ravix.People.Store do
           # An archived project is not somewhere to arrive, and neither is
           # your own: ownership is the stronger claim and is a column, not a
           # row here.
-          project.user_id != user_id do
+          project.user_id != user_id,
+          # Retired with the links on a workspace project (RAV-32), as a
+          # track invitation is below: dropped, never honoured.
+          not workspace_shared?(project) do
         add_project_member(project.id, user_id, "invite")
         project
       end
@@ -414,8 +417,11 @@ defmodule Ravix.People.Store do
     tracks
   end
 
-  # `Ravix.People.workspace_sharing?/1` for a project id, read here because
-  # sign-in has no door to go through first.
+  # `Ravix.People.workspace_sharing?/1` for a project or its id, read here
+  # because sign-in has no door to go through first.
+  defp workspace_shared?(%Project{workspace_id: id}),
+    do: is_binary(id) and Ravix.Config.workspace_access?()
+
   defp workspace_shared?(project_id) do
     # ownership: no door -- sign-in, as `claim_track_invites/2` says; the
     # project is read for its workspace alone.

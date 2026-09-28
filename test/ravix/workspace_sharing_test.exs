@@ -15,7 +15,7 @@ defmodule Ravix.WorkspaceSharingTest do
   alias Ravix.People
   alias Ravix.People.{AccessNotice, Cutover}
   alias Ravix.People.Store, as: PeopleStore
-  alias Ravix.Projects.Project
+  alias Ravix.Projects.{Project, ProjectInvite, ProjectLink, ProjectMember}
   alias Ravix.Tracks.{Track, TrackInvite, TrackLink, TrackMember, TrackPermission}
   alias Ravix.Workspaces
   alias Ravix.Workspaces.{Membership, Store}
@@ -294,6 +294,122 @@ defmodule Ravix.WorkspaceSharingTest do
       token = url |> String.split("/j/") |> List.last()
       assert {:ok, _} = People.claim_link(ctx.outsider.id, token)
       assert reaches?(ctx.outsider, ctx.secret)
+    end
+  end
+
+  describe "project links and invitations on a workspace project, with the switch on (RAV-32)" do
+    # A project link as #299 minted it: `mint_project_link/2` refuses now.
+    defp old_project_link(project, by) do
+      token = Ravix.Crypto.random_token()
+      :ok = PeopleStore.put_project_link(project.id, Ravix.Crypto.sha256(token), by.id, 60_000)
+      token
+    end
+
+    defp project_member?(user, project),
+      do: Repo.exists?(where(ProjectMember, project_id: ^project.id, user_id: ^user.id))
+
+    test "a live link held by an outsider admits nobody", ctx do
+      token = old_project_link(ctx.project, ctx.owner)
+
+      assert People.link_target(token, ctx.outsider) == :retired
+      assert People.link_target(token) == :retired
+      assert People.claim_link(ctx.outsider.id, token) == :retired
+
+      refute project_member?(ctx.outsider, ctx.project)
+      assert {:error, :not_found} = Access.project_access(ctx.outsider, ctx.project.id)
+      refute reaches?(ctx.outsider, ctx.open)
+    end
+
+    test "a live link held by a workspace member writes no legacy grant", ctx do
+      token = old_project_link(ctx.project, ctx.owner)
+
+      assert People.claim_link(ctx.colleague.id, token) == :retired
+      refute project_member?(ctx.colleague, ctx.project)
+      # What they reach, they reach as a workspace member, not by the link.
+      assert reaches?(ctx.colleague, ctx.open)
+      refute reaches?(ctx.colleague, ctx.secret)
+    end
+
+    test "an invitation waiting at sign-in is dropped, not honoured", ctx do
+      insert_project_invite(ctx.project,
+        github_id: ctx.outsider.github_id,
+        login: ctx.outsider.login,
+        invited_by: ctx.owner.id
+      )
+
+      assert %{projects: []} = PeopleStore.claim_invites(ctx.outsider.id, ctx.outsider.github_id)
+      refute project_member?(ctx.outsider, ctx.project)
+      assert {:error, :not_found} = Access.project_access(ctx.outsider, ctx.project.id)
+      refute Repo.exists?(where(ProjectInvite, project_id: ^ctx.project.id))
+    end
+
+    test "minting a link and inviting by login are refused; an old link reads as none", ctx do
+      assert {:error, {:unprocessable, "workspace_sharing", message}} =
+               People.mint_project_link(ctx.owner, ctx.project.id)
+
+      assert message =~ "members of its workspace"
+      refute Repo.exists?(where(ProjectLink, project_id: ^ctx.project.id))
+
+      assert {:error, {:unprocessable, "workspace_sharing", _}} =
+               People.add_project(ctx.owner, ctx.project.id, ctx.outsider.login)
+
+      refute project_member?(ctx.outsider, ctx.project)
+
+      old_project_link(ctx.project, ctx.owner)
+      assert {:ok, nil} = People.project_link(ctx.owner, ctx.project.id)
+      # Revoking it is still the owner's to do: taking access away is safe.
+      assert :ok = People.drop_project_link(ctx.owner, ctx.project.id)
+      refute Repo.exists?(where(ProjectLink, project_id: ^ctx.project.id))
+    end
+
+    test "another user's ids are refused before the retirement is even asked", ctx do
+      assert {:error, :not_found} = People.mint_project_link(ctx.outsider, ctx.project.id)
+      assert {:error, :not_found} = People.add_project(ctx.outsider, ctx.project.id, "x")
+      # A member of the project is not its owner.
+      assert {:error, {:forbidden, _}} = People.mint_project_link(ctx.legacy, ctx.project.id)
+      assert {:error, {:forbidden, _}} = People.add_project(ctx.legacy, ctx.project.id, "x")
+
+      # And the owner's own call on somebody else's project is not found.
+      stranger = insert_project(user: ctx.outsider, name: "Theirs")
+      assert {:error, :not_found} = People.mint_project_link(ctx.owner, stranger.id)
+      assert {:error, :not_found} = People.add_project(ctx.owner, stranger.id, ctx.holder.login)
+    end
+
+    test "existing project members keep their access and stay legacy grants", ctx do
+      assert project_member?(ctx.legacy, ctx.project)
+      assert {:ok, _} = Access.project_access(ctx.legacy, ctx.project.id)
+      assert reaches?(ctx.legacy, ctx.open)
+      assert {:ok, people} = People.list_project(ctx.owner, ctx.project.id)
+      assert ctx.legacy.login in Enum.map(people, & &1.login)
+    end
+
+    test "a legacy project keeps its project links and invitations", ctx do
+      assert {:ok, %{url: url}} = People.mint_project_link(ctx.owner, ctx.old.id)
+      token = url |> String.split("/j/") |> List.last()
+      assert {:ok, %{kind: :project}} = People.link_target(token)
+      assert {:ok, _} = People.claim_link(ctx.outsider.id, token)
+      assert project_member?(ctx.outsider, ctx.old)
+    end
+
+    test "with the switch off a workspace project keeps today's links and invitations", ctx do
+      switch(false)
+
+      assert {:ok, %{url: url}} = People.mint_project_link(ctx.owner, ctx.project.id)
+      token = url |> String.split("/j/") |> List.last()
+      assert {:ok, %{kind: :project}} = People.link_target(token, ctx.outsider)
+      assert {:ok, "/p/" <> _} = People.claim_link(ctx.outsider.id, token)
+      assert project_member?(ctx.outsider, ctx.project)
+
+      insert_project_invite(ctx.project,
+        github_id: ctx.pending_member.github_id,
+        login: ctx.pending_member.login,
+        invited_by: ctx.owner.id
+      )
+
+      assert %{projects: [%Project{}]} =
+               PeopleStore.claim_invites(ctx.pending_member.id, ctx.pending_member.github_id)
+
+      assert project_member?(ctx.pending_member, ctx.project)
     end
   end
 
