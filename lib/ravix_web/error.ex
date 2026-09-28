@@ -53,6 +53,13 @@ defmodule RavixWeb.Error do
 
   def from(%__MODULE__{} = error, _opts), do: error
 
+  def from(:machine_asleep, _opts),
+    do: %__MODULE__{
+      status: 409,
+      code: "machine_asleep",
+      message: "This track's machine is asleep. It wakes on the next turn."
+    }
+
   def from(:not_found, opts) do
     noun = Keyword.get(opts, :noun)
     message = if noun, do: "No such #{noun}.", else: "No such thing here."

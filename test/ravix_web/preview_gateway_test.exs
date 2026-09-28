@@ -510,14 +510,14 @@ defmodule RavixWeb.PreviewGatewayTest do
 
   test "an upstream close frame preserves its code and reason", %{f: f} do
     {:ok, ws} = Client.ws_connect(f.port, "/hmr", ws_headers(f))
-    assert_receive {:upstream_socket, upstream}
+    assert_receive {:upstream_socket, upstream}, 10_000
     send(upstream, {:close, 4001, "app restarting"})
     assert {:close, 4001, "app restarting", _ws} = Client.ws_await_close(ws)
   end
 
   test "an upstream socket killed without a close frame sends the browser 1011", %{f: f} do
     {:ok, ws} = Client.ws_connect(f.port, "/hmr", ws_headers(f))
-    assert_receive {:upstream_socket, upstream}
+    assert_receive {:upstream_socket, upstream}, 10_000
     ref = Process.monitor(upstream)
     Process.exit(upstream, :kill)
     assert_receive {:DOWN, ^ref, :process, ^upstream, :killed}
@@ -529,7 +529,9 @@ defmodule RavixWeb.PreviewGatewayTest do
     @intent intent
     test "an upstream drop during #{@intent} sends the browser 1001", %{f: f} do
       {:ok, ws} = Client.ws_connect(f.port, "/hmr", ws_headers(f))
-      assert_receive {:upstream_socket, upstream}
+      # The browser upgrade can finish before the upstream WebSock initializes.
+      # Match the socket client's I/O budget while waiting for its ready message.
+      assert_receive {:upstream_socket, upstream}, 10_000
 
       Store.update_row(f.t1, fn row ->
         %{

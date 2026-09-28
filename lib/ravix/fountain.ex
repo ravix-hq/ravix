@@ -723,7 +723,7 @@ defmodule Ravix.Fountain do
   defp fail(%Fountain.Error{} = error, method, path) do
     ours = Error.from_sdk(error)
 
-    if ours.status >= 400 do
+    if ours.status >= 400 and not Error.sandbox_suspended?(ours) do
       detail = if secret_path?(path), do: "", else: ": #{ours.message}"
       Logger.error("ravix: fountain #{ours.status} on #{method} #{path}#{detail}")
     end

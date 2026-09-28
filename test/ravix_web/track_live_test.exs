@@ -161,6 +161,119 @@ defmodule RavixWeb.TrackLiveTest do
     refute has_element?(view, "#track-agent-health-banner")
   end
 
+  for wake <- [:turn, :binding, :manual] do
+    test "an asleep dedicated files panel waits through refresh ticks then reloads on #{wake}",
+         ctx do
+      row =
+        Repo.update!(
+          Ecto.Changeset.change(ctx.track,
+            sandbox_layout: :dedicated,
+            sandbox_state: :ready,
+            sandbox_id: "sleeping-disk"
+          )
+        )
+
+      send(
+        ctx.view.pid,
+        {:hub, %Event{name: :tracks, project_id: ctx.project.id, track_id: row.id}}
+      )
+
+      settle(ctx.view)
+
+      caller = self()
+
+      stub(Tracks, :files, fn _, _, _ ->
+        send(caller, :listing_call)
+        {:error, :machine_asleep}
+      end)
+
+      render_click(ctx.view, "refresh-panel")
+      settle(ctx.view)
+      assert_receive :listing_call
+
+      assert has_element?(
+               ctx.view,
+               ".workspace-panel [role=status]",
+               "This track's machine is asleep. Files load when it wakes."
+             )
+
+      refute has_element?(ctx.view, ".workspace-panel [role=alert]")
+
+      for _ <- 1..3 do
+        send(ctx.view.pid, :refresh)
+        settle(ctx.view)
+        refute_received :listing_call
+      end
+
+      stub(Tracks, :files, fn _, _, _ ->
+        send(caller, :listing_call)
+
+        {:ok,
+         %Files.Listing{
+           path: row.workdir,
+           entries: [%Files.Entry{name: "awake.txt", type: "file", size: 1}],
+           truncated: false
+         }}
+      end)
+
+      case unquote(wake) do
+        :turn ->
+          send(
+            ctx.view.pid,
+            {:transcript, row.id,
+             %Ravix.Tracks.Transcript.Event{
+               id: 999,
+               turn_id: "wake-turn",
+               stream: nil,
+               data: nil,
+               ts: nil,
+               kind: :stage,
+               stage: "turn",
+               state: "started"
+             }}
+          )
+
+        :binding ->
+          Repo.update!(Ecto.Changeset.change(row, conversation_id: "awake-conversation"))
+
+          send(
+            ctx.view.pid,
+            {:hub, %Event{name: :tracks, project_id: ctx.project.id, track_id: row.id}}
+          )
+
+        :manual ->
+          render_click(ctx.view, "refresh-panel")
+      end
+
+      settle(ctx.view)
+      assert_receive :listing_call
+      assert has_element?(ctx.view, ".file-explorer", "awake.txt")
+      refute has_element?(ctx.view, ".workspace-panel [role=status]", "asleep")
+    end
+  end
+
+  for source <- [:file, :directory, :changes] do
+    test "suspension while reading #{source} renders the asleep state", ctx do
+      case unquote(source) do
+        :file ->
+          expect(Tracks, :file, fn _, _, _ -> {:error, :machine_asleep} end)
+          render_click(ctx.view, "file", %{path: "a.txt"})
+
+        :directory ->
+          expect(Tracks, :files, fn _, _, _ -> {:error, :machine_asleep} end)
+          render_click(ctx.view, "directory", %{path: "src"})
+
+        :changes ->
+          expect(Tracks, :diff, fn _, _ -> {:error, :machine_asleep} end)
+          render_click(ctx.view, "panel", %{name: "changes"})
+      end
+
+      settle(ctx.view)
+      assert has_element?(ctx.view, ".workspace-panel [role=status]", "machine is asleep")
+      refute has_element?(ctx.view, ".workspace-panel [role=alert]")
+    end
+  end
+
   test "a dedicated binding refreshes mount reads and the dock without waiting for the backstop",
        ctx do
     row =

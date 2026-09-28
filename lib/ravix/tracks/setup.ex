@@ -4,6 +4,8 @@ defmodule Ravix.Tracks.Setup do
   without a queued prompt. PostgreSQL leases serialize instances; request ids
   survive a crash between POST and response. No browser or follower owns setup.
   """
+  require Logger
+
   alias Ravix.Fountain
   alias Ravix.Hub
   alias Ravix.Spec
@@ -236,6 +238,15 @@ defmodule Ravix.Tracks.Setup do
       :missing ->
         failed(track, "The opening turn finished without creating its worktree.")
 
+      :suspended ->
+        # Queued user turns wait for setup. A bounded setup retry deliberately
+        # wakes the machine rather than waiting for a turn that cannot be sent.
+        failed(
+          track,
+          "The machine is asleep; setup will wake it and retry shortly.",
+          "sandbox_suspended"
+        )
+
       :unavailable ->
         :ok
     end
@@ -274,10 +285,19 @@ defmodule Ravix.Tracks.Setup do
       {:error, %Fountain.Error{status: 404}} ->
         :missing
 
+      {:error, %Fountain.Error{} = error} ->
+        unavailable(track, error)
+
       {:error, _} ->
         :unavailable
     end
   end
+
+  defp unavailable(%{sandbox_layout: :dedicated}, error) do
+    if Fountain.Error.sandbox_suspended?(error), do: :suspended, else: :unavailable
+  end
+
+  defp unavailable(_track, _error), do: :unavailable
 
   defp failed(track, reason, code \\ nil, terminal? \\ false) do
     exhausted? = terminal? or track.setup_attempts >= @max_attempts
@@ -291,6 +311,10 @@ defmodule Ravix.Tracks.Setup do
     ]
 
     if Store.update_setup(track, attrs) do
+      if code == "sandbox_suspended" do
+        Logger.info("ravix: setup suspended track=#{track.id} state=#{attrs[:setup_state]}")
+      end
+
       # ownership: no door — this setup lease belongs to this track; only queued rows
       # are failed, preserving bodies and leaving already-delivered turns alone.
       if exhausted?,
@@ -313,6 +337,8 @@ defmodule Ravix.Tracks.Setup do
       _ -> "The opening turn failed."
     end
   end
+
+  defp backoff(_attempt, "sandbox_suspended"), do: 300
 
   defp backoff(attempt, "agent_provider_unreachable"),
     do: min(300, 30 * Integer.pow(2, min(attempt, 3)))

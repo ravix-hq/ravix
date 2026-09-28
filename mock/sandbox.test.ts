@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { fountain } from "./server";
+import { fountain, setSandboxStatus } from "./server";
 
 process.env.MOCK_RUNTIME_CAPACITY = "2";
 const owned: string[] = [];
@@ -231,4 +231,21 @@ test("an inference revision invalidates both runtimes; a connected runtime resum
   })).body.data;
   expect(await request("POST", `/api/conversations/${disconnected.id}/prompts`, { prompt: "resume" }))
     .toMatchObject({ status: 409, body: { error: "inference_credential_unusable" } });
+});
+
+
+test("suspended disk reads return Fountain's typed 409 and never wake the sandbox", async () => {
+  const f = await fixture();
+  setSandboxStatus(f.sandbox_id, "suspended");
+  for (const endpoint of ["files", "file", "diff"]) {
+    expect(await request("GET", `/api/sandboxes/${f.sandbox_id}/${endpoint}?path=/workspace/repo`))
+      .toEqual({ status: 409, body: {
+        error: "sandbox_not_ready",
+        message: "the sandbox is suspended; files are read from a ready one only",
+        status: "suspended",
+      } });
+  }
+  expect((await request("GET", `/api/sandboxes/${f.sandbox_id}`)).body.data.status).toBe("suspended");
+  setSandboxStatus(f.sandbox_id, "ready");
+  expect((await request("GET", `/api/sandboxes/${f.sandbox_id}/files?path=/workspace/repo`)).status).toBe(200);
 });

@@ -318,7 +318,7 @@ defmodule RavixWeb.TrackLive do
 
   def handle_event("panel", %{"name" => name}, socket) when is_map_key(@tabs, name) do
     panel = Panel.select(socket.assigns.panel, Map.fetch!(@tabs, name))
-    {:noreply, socket |> assign(panel: panel, narrow_view: "files") |> load_panel()}
+    {:noreply, socket |> assign(panel: panel, narrow_view: "files") |> reload_panel()}
   end
 
   def handle_event("select-diff", %{"path" => path}, socket) do
@@ -334,7 +334,7 @@ defmodule RavixWeb.TrackLive do
   def handle_event("show-large-diff", _, socket),
     do: {:noreply, assign(socket, diff_show_large: true)}
 
-  def handle_event("refresh-panel", _, socket), do: {:noreply, load_panel(socket)}
+  def handle_event("refresh-panel", _, socket), do: {:noreply, reload_panel(socket)}
 
   def handle_event("toggle-ignored", _, socket),
     do: {:noreply, assign(socket, show_ignored?: !socket.assigns.show_ignored?)}
@@ -828,6 +828,16 @@ defmodule RavixWeb.TrackLive do
 
   defp async_result(:transcript, {:ok, {:error, reason}}, socket),
     do: socket |> assign(transcript_loading: false) |> error(reason)
+
+  defp async_result(name, {:ok, {:error, :machine_asleep}}, socket)
+       when name in [:panel, :file],
+       do: asleep_panel(socket)
+
+  defp async_result({:directory, path, token}, {:ok, {:error, :machine_asleep}}, socket) do
+    if socket.assigns.panel.directories[path] == {:loading, token},
+      do: asleep_panel(socket),
+      else: socket
+  end
 
   # The open file lands in the panel beside whatever the tab is listing, so
   # this clause settles the busy flag and leaves `data` where it is --- a
@@ -1367,7 +1377,7 @@ defmodule RavixWeb.TrackLive do
          {track.conversation_id, track.sandbox_state} !=
            {previous.conversation_id, previous.sandbox_state} do
       socket = socket |> unfollow() |> refresh_transcript()
-      if track.sandbox_state == :ready, do: load_panel(socket), else: socket
+      if track.sandbox_state == :ready, do: reload_panel(socket), else: socket
     else
       socket
     end
@@ -1636,6 +1646,12 @@ defmodule RavixWeb.TrackLive do
   # read as `@panel_data[:runs] || []`: an `Access` read that answers `nil`
   # for a field that does not exist, so a renamed one would render an empty
   # list rather than fail.
+  defp panel_body(%{data: :machine_asleep} = assigns) do
+    ~H"""
+    <p class="panel-empty" role="status">This track's machine is asleep. Files load when it wakes.</p>
+    """
+  end
+
   defp panel_body(%{data: %Files.Listing{}} = assigns) do
     ~H"""
     <div class="file-explorer">
@@ -1951,6 +1967,12 @@ defmodule RavixWeb.TrackLive do
   # badge forgets its count rather than keep one the turn may have made
   # wrong; it comes back the next time the list is read. No polling, and no
   # read the page was not already going to make.
+  defp after_turn(
+         %{assigns: %{panel: %{data: :machine_asleep}}} = socket,
+         %TranscriptEvent{kind: :stage, stage: "turn", state: "started"}
+       ),
+       do: reload_panel(socket)
+
   defp after_turn(socket, %TranscriptEvent{} = event) do
     cond do
       not TranscriptEvent.settles?(event) -> socket
@@ -1968,7 +1990,20 @@ defmodule RavixWeb.TrackLive do
     end)
   end
 
-  defp load_panel(socket, mark \\ &Panel.loading/1) do
+  # An asleep panel waits for a wake signal or explicit refresh, never a timer.
+  defp asleep_panel(socket),
+    do:
+      update_panel(
+        socket,
+        &(Panel.loading(&1) |> Panel.loaded(:machine_asleep) |> Panel.close_file())
+      )
+
+  defp reload_panel(socket), do: socket |> update_panel(&Panel.loading/1) |> load_panel()
+
+  defp load_panel(socket, mark \\ &Panel.loading/1)
+  defp load_panel(%{assigns: %{panel: %{data: :machine_asleep}}} = socket, _mark), do: socket
+
+  defp load_panel(socket, mark) do
     user = socket.assigns.current_user
     id = socket.assigns.track_id
     tab = socket.assigns.panel.tab

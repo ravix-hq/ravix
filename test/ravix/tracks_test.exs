@@ -1430,18 +1430,109 @@ defmodule Ravix.TracksTest do
       {:ok, owner: owner, project: project, track: track}
     end
 
-    defp machine_fountain(project, extra) do
+    defp machine_fountain(project, extra, sandbox_id \\ "sb-1") do
       client =
         FakeTransport.client(
           [
             {%{method: "GET", path: "/api/conversations", query: %{agent_id: project.agent_id}},
              {200, [],
-              %{data: [%{id: "c1", sandbox_id: "sb-1", status: "idle", inserted_at: "x"}]}}}
+              %{data: [%{id: "c1", sandbox_id: sandbox_id, status: "idle", inserted_at: "x"}]}}}
           ] ++ extra
         )
 
       stub(Ravix.Fountain, :client, fn -> client end)
       client
+    end
+
+    defp disk_fountain(:shared, project, extra, sandbox_id),
+      do: machine_fountain(project, extra, sandbox_id)
+
+    defp disk_fountain(:dedicated, _project, extra, _sandbox_id) do
+      client = FakeTransport.client(extra)
+      stub(Ravix.Fountain, :client, fn -> client end)
+      client
+    end
+
+    for {operation, endpoint, path} <- [
+          {:files, "files", nil},
+          {:file, "file", "a.txt"},
+          {:diff, "diff", nil}
+        ],
+        layout <- [:dedicated, :shared] do
+      test "#{layout} #{operation} handles a suspended sandbox without error logging", ctx do
+        sandbox_id = "suspended-#{ctx.track.id}"
+
+        Repo.update!(
+          Ecto.Changeset.change(ctx.track,
+            sandbox_layout: unquote(layout),
+            sandbox_id: sandbox_id
+          )
+        )
+
+        client =
+          disk_fountain(
+            unquote(layout),
+            ctx.project,
+            [
+              {%{method: "GET", path: "/api/sandboxes/#{sandbox_id}/#{unquote(endpoint)}"},
+               {409, [],
+                %{
+                  error: "sandbox_not_ready",
+                  status: "suspended",
+                  message: "the sandbox is suspended; files are read from a ready one only"
+                }}}
+            ],
+            sandbox_id
+          )
+
+        log =
+          ExUnit.CaptureLog.capture_log(fn ->
+            args =
+              if unquote(operation) == :diff,
+                do: [ctx.owner, ctx.track.id],
+                else: [ctx.owner, ctx.track.id, unquote(path)]
+
+            result = apply(Tracks, unquote(operation), args)
+
+            if unquote(layout) == :dedicated do
+              assert result == {:error, :machine_asleep}
+            else
+              assert {:error, %Error{code: "sandbox_not_ready", sandbox_status: "suspended"}} =
+                       result
+            end
+          end)
+
+        # capture_log also sees concurrent tests: inspect this unique read only.
+        refute log =~ "fountain 409 on GET /api/sandboxes/#{sandbox_id}/#{unquote(endpoint)}"
+
+        assert Enum.count(
+                 FakeTransport.calls(client),
+                 &(&1.path == "/api/sandboxes/#{sandbox_id}/#{unquote(endpoint)}")
+               ) == 1
+      end
+    end
+
+    test "a dedicated read preserves real provider failures", ctx do
+      sandbox_id = "failed-#{ctx.track.id}"
+
+      Repo.update!(
+        Ecto.Changeset.change(ctx.track, sandbox_layout: :dedicated, sandbox_id: sandbox_id)
+      )
+
+      disk_fountain(
+        :dedicated,
+        ctx.project,
+        [
+          {%{method: "GET", path: "/api/sandboxes/#{sandbox_id}/files"},
+           {409, [], %{error: "sandbox_not_ready", status: "failed", message: "not ready"}}}
+        ],
+        sandbox_id
+      )
+
+      assert ExUnit.CaptureLog.capture_log(fn ->
+               assert {:error, %Error{sandbox_status: "failed"}} =
+                        Tracks.files(ctx.owner, ctx.track.id, nil)
+             end) =~ "fountain 409 on GET /api/sandboxes/#{sandbox_id}/files"
     end
 
     test "an outsider cannot trigger file metadata commands", ctx do

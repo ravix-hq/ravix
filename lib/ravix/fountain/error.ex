@@ -19,12 +19,13 @@ defmodule Ravix.Fountain.Error do
           status: non_neg_integer(),
           code: String.t() | nil,
           message: String.t(),
-          kind: atom()
+          kind: atom(),
+          sandbox_status: String.t() | nil
         }
 
   @type http :: %{status: pos_integer(), code: String.t(), message: String.t()}
 
-  defstruct status: 0, code: nil, message: "", kind: :api
+  defstruct status: 0, code: nil, message: "", kind: :api, sandbox_status: nil
 
   @busy_codes ~w(sandbox_at_capacity conversation_busy)
 
@@ -46,7 +47,8 @@ defmodule Ravix.Fountain.Error do
       status: error.status || 0,
       code: error.code,
       message: message_of(error),
-      kind: error.kind || :api
+      kind: error.kind || :api,
+      sandbox_status: if(is_map(error.body), do: error.body["status"])
     }
   end
 
@@ -65,6 +67,17 @@ defmodule Ravix.Fountain.Error do
   @spec sandbox_gone?(t()) :: boolean()
   def sandbox_gone?(%__MODULE__{status: status, code: code}),
     do: status in [404, 410] and code in ["sandbox_not_found", "sandbox_gone"]
+
+  @doc "A passive disk read refused because the sandbox is suspended."
+  @spec sandbox_suspended?(t()) :: boolean()
+  def sandbox_suspended?(%__MODULE__{
+        status: 409,
+        code: "sandbox_not_ready",
+        sandbox_status: "suspended"
+      }),
+      do: true
+
+  def sandbox_suspended?(%__MODULE__{}), do: false
 
   @doc "The vault endpoints deliberately conflate malformed, foreign and missing IDs."
   def vault_gone?(%__MODULE__{status: status}), do: status in [404, 410]
