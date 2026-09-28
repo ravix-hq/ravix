@@ -2,6 +2,7 @@ import { test, expect } from '@playwright/test';
 import { signIn, connectClaude } from './sign-in.js';
 
 test('layout evidence', async ({ page }, testInfo) => {
+  test.skip(!process.env.LAYOUT_PHASE, 'Opt-in screenshot capture');
   test.setTimeout(120_000);
   await signIn(page, 'dana');
   await connectClaude(page);

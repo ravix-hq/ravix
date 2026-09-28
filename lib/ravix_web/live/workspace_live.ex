@@ -94,6 +94,7 @@ defmodule RavixWeb.WorkspaceLive do
         project_mode: "github",
         track_form: Form.new(:new_track),
         track_options: nil,
+        track_project: nil,
         thread_connect: nil,
         repos_loading: false,
         refs_loading: false,
@@ -393,30 +394,34 @@ defmodule RavixWeb.WorkspaceLive do
         do: project,
         else: Enum.find(socket.assigns.projects, &(&1.access != :tracks))
 
-    suffix =
-      if project && project.id == project_id(socket),
-        do: track_suffix(socket.assigns.track_id),
-        else: ""
-
     if project,
-      do:
-        {:noreply,
-         push_patch(socket,
-           to: "/p/#{project.id}#{suffix}?new=track"
-         )},
+      do: {:noreply, new_track_dialog(socket, project)},
       else: {:noreply, open_dialog(socket, :new_project)}
   end
 
-  def handle_event(event, %{"project" => id}, socket)
-      when event in ["new-track-project", "project-settings"] do
+  def handle_event("new-track-project", %{"project" => id}, socket) do
+    socket = recheck_rail(socket)
+    project = Enum.find(socket.assigns.projects, &(&1.id == id && &1.access != :tracks))
+
+    cond do
+      is_nil(project) || socket.assigns.dialog != :new_track || socket.assigns.busy ->
+        {:noreply, flash(socket, :error, "Project not available.")}
+
+      id == track_project_id(socket) ->
+        {:noreply, socket}
+
+      true ->
+        {:noreply, choose_track_project(socket, project)}
+    end
+  end
+
+  def handle_event("project-settings", %{"project" => id}, socket) do
     socket = recheck_rail(socket)
     project = Enum.find(socket.assigns.projects, &(&1.id == id))
 
-    if project && project.access != :tracks &&
-         (event == "new-track-project" || project.role == :owner) do
+    if project && project.access != :tracks && project.role == :owner do
       suffix = if id == project_id(socket), do: track_suffix(socket.assigns.track_id), else: ""
-      query = if event == "project-settings", do: "settings=true", else: "new=track"
-      {:noreply, push_patch(socket, to: "/p/#{id}#{suffix}?#{query}")}
+      {:noreply, push_patch(socket, to: "/p/#{id}#{suffix}?settings=true")}
     else
       {:noreply, flash(socket, :error, "Project not available.")}
     end
@@ -451,7 +456,7 @@ defmodule RavixWeb.WorkspaceLive do
         do:
           ThreadConnect.open(
             socket.assigns.current_user,
-            project_id(socket),
+            track_project_id(socket),
             runtime,
             socket.assigns.track_options
           )
@@ -517,7 +522,7 @@ defmodule RavixWeb.WorkspaceLive do
         # "Create track" stays disabled until the refs land, which is what
         # already said "not yet" while this was synchronous too.
         user = socket.assigns.current_user
-        id = project_id(socket)
+        id = track_project_id(socket)
 
         {:noreply,
          traced_async(assign(socket, refs_loading: true), :refs, fn ->
@@ -545,7 +550,7 @@ defmodule RavixWeb.WorkspaceLive do
       end
 
     user = socket.assigns.current_user
-    id = project_id(socket)
+    id = track_project_id(socket)
 
     attrs = %{
       title: params["title"],
@@ -563,7 +568,7 @@ defmodule RavixWeb.WorkspaceLive do
 
   @impl true
   def handle_async({:track_options, id}, {:ok, {:ok, options}}, socket) do
-    if id == project_id(socket) and socket.assigns.dialog == :new_track and
+    if id == track_project_id(socket) and socket.assigns.dialog == :new_track and
          match?({:ok, _}, Access.project_access(socket.assigns.current_user, id)),
        do:
          {:noreply,
@@ -578,8 +583,11 @@ defmodule RavixWeb.WorkspaceLive do
        else: {:noreply, socket}
   end
 
-  def handle_async({:track_options, _id}, {:ok, {:error, reason}}, socket),
-    do: {:noreply, put_flash(socket, :error, RavixWeb.Error.from(reason).message)}
+  def handle_async({:track_options, id}, {:ok, {:error, reason}}, socket) do
+    if id == track_project_id(socket) && socket.assigns.dialog == :new_track,
+      do: {:noreply, put_flash(socket, :error, RavixWeb.Error.from(reason).message)},
+      else: {:noreply, socket}
+  end
 
   def handle_async(:project_agents, {:ok, response}, socket),
     do: {:noreply, NewProject.availability(socket, response)}
@@ -614,6 +622,8 @@ defmodule RavixWeb.WorkspaceLive do
 
   def handle_async(:agent_disconnect_notice, {:ok, message}, socket),
     do: {:noreply, flash(socket, :info, message)}
+
+  def handle_async(:refs, {:exit, {:shutdown, :cancel}}, socket), do: {:noreply, socket}
 
   def handle_async(:refs, {:ok, response}, socket),
     do: {:noreply, result(assign(socket, refs_loading: false), response, &assign(&1, refs: &2))}
@@ -766,7 +776,7 @@ defmodule RavixWeb.WorkspaceLive do
   def handle_info({:agent_panel, id, tick}, %{assigns: %{dialog: :new_track}} = socket) do
     if ThreadConnect.active?(
          socket.assigns.current_user,
-         project_id(socket),
+         track_project_id(socket),
          socket.assigns.thread_connect,
          id
        ),
@@ -821,11 +831,11 @@ defmodule RavixWeb.WorkspaceLive do
            user.id == socket.assigns.current_user.id && to_string(agent) == connection.runtime &&
            ThreadConnect.active?(
              user,
-             project_id(socket),
+             track_project_id(socket),
              connection,
              connection.id
            ) do
-        id = project_id(socket)
+        id = track_project_id(socket)
 
         params =
           socket.assigns.track_form.params
@@ -1131,6 +1141,9 @@ defmodule RavixWeb.WorkspaceLive do
     socket
     |> assign(
       project: project,
+      track_project:
+        socket.assigns.track_project &&
+          Enum.find(projects, &(&1.id == track_project_id(socket) && &1.access != :tracks)),
       rail_loaded: true,
       rail_error: false,
       sections: sections,
@@ -1242,22 +1255,7 @@ defmodule RavixWeb.WorkspaceLive do
       |> NewProject.init()
       |> load_repos(nil)
 
-  defp open_dialog(socket, :new_track) do
-    user = socket.assigns.current_user
-    id = project_id(socket)
-
-    socket
-    |> assign(
-      dialog: :new_track,
-      track_form: Form.new(:new_track),
-      track_options: nil,
-      thread_connect: nil,
-      origin_kind: :blank,
-      refs: [],
-      advanced_track: false
-    )
-    |> traced_async({:track_options, id}, fn -> Tracks.open_options(user, id) end)
-  end
+  defp open_dialog(socket, :new_track), do: new_track_dialog(socket, socket.assigns.project)
 
   defp open_dialog(socket, :sections), do: assign(socket, dialog: :sections)
 
@@ -1315,6 +1313,39 @@ defmodule RavixWeb.WorkspaceLive do
 
   defp track_suffix(nil), do: ""
   defp track_suffix(id), do: "/t/#{id}"
+
+  defp new_track_dialog(socket, project) when is_nil(project) or project.access == :tracks,
+    do: flash(socket, :error, "Project not available.")
+
+  defp new_track_dialog(socket, project) do
+    socket
+    |> assign(dialog: :new_track, track_form: Form.new(:new_track), advanced_track: false)
+    |> choose_track_project(project)
+  end
+
+  # The dialog owns its destination. Changing it must not navigate the page or
+  # discard the branch/sharing draft; only project-dependent choices expire.
+  defp choose_track_project(socket, project) do
+    user = socket.assigns.current_user
+    id = project.id
+    params = Map.drop(socket.assigns.track_form.params, ["runtime", "model", "ref"])
+
+    socket
+    |> cancel_async(:refs)
+    |> assign(
+      track_project: project,
+      track_form: Form.new(:new_track, params),
+      track_options: nil,
+      thread_connect: nil,
+      origin_kind: :blank,
+      refs: [],
+      refs_loading: false
+    )
+    |> traced_async({:track_options, id}, fn -> Tracks.open_options(user, id) end)
+  end
+
+  defp track_project_id(socket),
+    do: socket.assigns.track_project && socket.assigns.track_project.id
 
   defp project_id(socket), do: socket.assigns.project && socket.assigns.project.id
   defp ref_id(%{number: number}), do: to_string(number)

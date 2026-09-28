@@ -133,6 +133,12 @@
         />
         <div
           id="transcript-scroll"
+          role={if length(@threads) > 1 or Ravix.Config.threads_enabled?(), do: "tabpanel"}
+          aria-labelledby={
+            if length(@threads) > 1 or Ravix.Config.threads_enabled?(),
+              do: "thread-tab-#{@thread_id}"
+          }
+          tabindex="0"
           phx-hook="TranscriptTail"
           class="transcript-scroll"
           data-track={@thread_id}

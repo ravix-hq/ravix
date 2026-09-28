@@ -700,7 +700,7 @@ test('project, track, streaming, image upload, reconnect, and revocation', async
   const branch = (await page.locator('.project-tree-tracks [aria-current="page"] .track-title').textContent()).trim();
   await expect(page.locator('.track-crumbs')).toContainText(branch);
   const threadTabs = page.getByRole('navigation', { name: 'Threads', exact: true });
-  const currentThread = threadTabs.locator('[aria-current="true"]');
+  const currentThread = threadTabs.locator('[aria-selected="true"]');
   const threadTab = id => threadTabs.locator(`button[data-thread-id="${id}"]`);
   const defaultThread = await currentThread.getAttribute('data-thread-id');
   await threadTabs.getByRole('button', { name: 'Add thread', exact: true }).click();
@@ -714,10 +714,10 @@ test('project, track, streaming, image upload, reconnect, and revocation', async
   await composer.fill('A separate thread draft');
   await threadTab(defaultThread).click();
   await expect(composer).toHaveValue('Draft survives reconnect');
-  // The tabs are plain buttons: Tab reaches them and Enter switches.
+  // The tabs use manual activation: focus followed by Enter switches.
   await threadTab(nextThread).focus();
   await page.keyboard.press('Enter');
-  await expect(threadTab(nextThread)).toHaveAttribute('aria-current', 'true');
+  await expect(threadTab(nextThread)).toHaveAttribute('aria-selected', 'true');
   await expect(composer).toHaveValue('A separate thread draft');
   await threadTab(defaultThread).click();
   await expect(composer).toHaveValue('Draft survives reconnect');

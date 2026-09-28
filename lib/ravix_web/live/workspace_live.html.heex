@@ -308,13 +308,11 @@
                       aria-label={tab_name(track)}
                       title={track.title}
                     >
-                      <span
+                      <.status_dot
                         :if={tab_status(track)}
-                        class={"dot #{tab_status(track)}"}
-                        role="img"
-                        aria-label={tab_status_label(tab_status(track))}
-                        title={tab_status_label(tab_status(track))}
-                      ></span>
+                        status={to_string(tab_status(track))}
+                        label={tab_status_label(tab_status(track))}
+                      />
                       <span class="track-title">{tab_label(track)}</span>
                       <span :if={track.visibility == :private}><.icon name="lock" /> Private</span>
                     </.link>
@@ -351,7 +349,7 @@
           type="button"
           id="account-trigger"
           class="yard-account"
-          aria-label="Account and app settings"
+          aria-label={"Account and app settings" <> if(@changes_unseen > 0, do: ", #{@changes_unseen} new in What's new", else: "")}
           title="Account and app settings"
           popovertarget="account-menu"
         >
@@ -735,19 +733,19 @@
       />
     </.dialog>
     <.dialog
-      :if={@dialog == :new_track && @project}
+      :if={@dialog == :new_track && @track_project}
       id="new-track-dialog"
       title="New track"
       on_close="dismiss"
     >
       <form id="new-track-project-form" phx-change="new-track-project">
         <label for="new-track-project">Project / repository</label>
-        <select id="new-track-project" name="project">
+        <select id="new-track-project" name="project" disabled={@busy}>
           <option
             :for={project <- @projects}
             :if={project.access != :tracks}
             value={project.id}
-            selected={project.id == @project.id}
+            selected={project.id == @track_project.id}
           >
             {project.display_name}{if project.repo, do: " · #{project.repo}"}
           </option>
@@ -780,7 +778,7 @@
           name="new_track"
         />
         <p :if={!@advanced_track} class="hint">
-          New worktree from {@project.default_branch || "the default branch"}, with an automatic name.
+          New worktree from {@track_project.default_branch || "the default branch"}, with an automatic name.
         </p>
         <button
           type="button"
@@ -795,7 +793,7 @@
           <div class="workspace-actions origin-options">
             <button
               :for={{kind, label} <- origin_choices()}
-              :if={kind == :blank || @project.repo}
+              :if={kind == :blank || @track_project.repo}
               type="button"
               class={if @origin_kind == kind, do: "primary", else: "ghost"}
               phx-click="origin"
@@ -818,7 +816,7 @@
             required
           />
           <p :if={@origin_kind == :blank} class="hint">
-            Start from {@project.default_branch || "the default branch"}.
+            Start from {@track_project.default_branch || "the default branch"}.
           </p>
           <div :if={@origin_kind != :pr}>
             <label for="track-title">Branch name</label>

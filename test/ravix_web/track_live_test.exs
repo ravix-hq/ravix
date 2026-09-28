@@ -940,13 +940,13 @@ defmodule RavixWeb.TrackLiveTest do
 
     assert has_element?(
              ctx.view,
-             "#thread-switcher [data-thread-id='#{thread.id}'][aria-current]",
+             "#thread-switcher [data-thread-id='#{thread.id}'][aria-selected='true']",
              "Next"
            )
 
     refute has_element?(
              ctx.view,
-             "#thread-switcher [data-thread-id='#{ctx.track.id}'][aria-current]"
+             "#thread-switcher [data-thread-id='#{ctx.track.id}'][aria-selected='true']"
            )
 
     ctx.view |> form("#composer-form", %{text: "continue"}) |> render_submit()
@@ -1253,11 +1253,30 @@ defmodule RavixWeb.TrackLiveTest do
              "nav#thread-switcher[aria-label='Threads'][phx-hook='ThreadTabs']"
            )
 
-    assert has_element?(ctx.view, ".track-conversation > #thread-switcher ~ #transcript-scroll")
+    assert has_element?(ctx.view, "#thread-tablist[role=tablist]")
+
+    assert has_element?(
+             ctx.view,
+             ".track-conversation > #thread-switcher ~ #transcript-scroll[role=tabpanel][aria-labelledby='thread-tab-#{ctx.track.id}']"
+           )
+
+    refute has_element?(ctx.view, "#thread-picker option", "Idle")
     assert has_element?(ctx.view, "#thread-picker option[value='#{other.id}']", "(unread)")
-    assert has_element?(ctx.view, selected <> "[aria-current='true']")
+
+    assert has_element?(
+             ctx.view,
+             selected <>
+               "[aria-selected='true'][tabindex='0'][role='tab'][aria-controls='transcript-scroll']"
+           )
+
     refute has_element?(ctx.view, selected <> " .thread-unread")
-    assert has_element?(ctx.view, unread <> ":not([aria-current]) .thread-unread", "(unread)")
+
+    assert has_element?(
+             ctx.view,
+             unread <> "[aria-selected='false'][tabindex='-1'] .thread-unread",
+             "(unread)"
+           )
+
     assert has_element?(ctx.view, unread, "Review")
     assert has_element?(ctx.view, unread <> "[aria-label='Review · Agent · Idle (unread)']")
 

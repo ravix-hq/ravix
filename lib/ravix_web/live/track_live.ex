@@ -1641,9 +1641,8 @@ defmodule RavixWeb.TrackLive do
   end when threads can be added. A track with one thread that cannot gain
   another has nothing to switch between, so the row is not drawn at all.
 
-  Plain buttons in a labelled nav: each is reachable with Tab and fires on
-  Enter or Space, the selected one carries `aria-current`, and an unread
-  thread's dot has a spoken label.
+  Manual-activation tabs use roving focus, Enter/Space selection, and one
+  associated transcript panel. Narrow screens use the native picker.
   """
   def thread_tabs(assigns) do
     assigns =
@@ -1667,32 +1666,36 @@ defmodule RavixWeb.TrackLive do
         <label for="thread-picker" class="sr-only">Thread</label>
         <select id="thread-picker" name="thread_id">
           <option :for={thread <- @threads} value={thread.id} selected={thread.id == @thread_id}>
-            {thread.title} · {agent_model(Map.get(thread, :runtime), Map.get(thread, :model))} · {thread_status(
-              thread,
-              @states
-            )}{if thread.unread && thread.id != @thread_id, do: " (unread)"}
+            {thread_option_label(thread, @states, @thread_id)}
           </option>
         </select>
       </form>
-      <button
-        :for={thread <- @threads}
-        type="button"
-        class="thread-tab"
-        phx-click="select-thread"
-        phx-value-thread_id={thread.id}
-        data-thread-id={thread.id}
-        aria-current={if thread.id == @thread_id, do: "true"}
-        title={thread.title <> " · " <> agent_model(Map.get(thread, :runtime), Map.get(thread, :model))}
-        aria-label={thread.title <> " · " <> agent_model(Map.get(thread, :runtime), Map.get(thread, :model)) <> " · " <> thread_status(thread, @states) <> if(thread.unread && thread.id != @thread_id, do: " (unread)", else: "")}
-      >
-        <span class="thread-tab-title">{thread.title}</span><span class="thread-tab-agent"> · {agent_model(
-          Map.get(thread, :runtime),
-          Map.get(thread, :model)
-        )}</span><span class="thread-tab-state"> · {thread_status(thread, @states)}</span><span
-          :if={thread.unread && thread.id != @thread_id}
-          class="thread-unread"
-        ><span class="sr-only">(unread)</span></span>
-      </button>
+      <div id="thread-tablist" class="thread-tablist" role="tablist" aria-label="Threads">
+        <button
+          :for={thread <- @threads}
+          type="button"
+          id={"thread-tab-#{thread.id}"}
+          role="tab"
+          aria-selected={to_string(thread.id == @thread_id)}
+          aria-controls="transcript-scroll"
+          tabindex={if thread.id == @thread_id, do: "0", else: "-1"}
+          class="thread-tab"
+          phx-click="select-thread"
+          phx-value-thread_id={thread.id}
+          data-thread-id={thread.id}
+          title={thread.title <> " · " <> agent_model(Map.get(thread, :runtime), Map.get(thread, :model))}
+          aria-label={thread.title <> " · " <> agent_model(Map.get(thread, :runtime), Map.get(thread, :model)) <> " · " <> thread_status(thread, @states) <> if(thread.unread && thread.id != @thread_id, do: " (unread)", else: "")}
+        >
+          <.status_dot status={String.downcase(thread_status(thread, @states))} />
+          <span class="thread-tab-title">{thread.title}</span><span class="thread-tab-agent"> · {agent_model(
+            Map.get(thread, :runtime),
+            Map.get(thread, :model)
+          )}</span><span class="thread-tab-state"> · {thread_status(thread, @states)}</span><span
+            :if={thread.unread && thread.id != @thread_id}
+            class="thread-unread"
+          ><span class="sr-only">(unread)</span></span>
+        </button>
+      </div>
       <button
         :if={@enabled}
         type="button"
@@ -1711,6 +1714,15 @@ defmodule RavixWeb.TrackLive do
       end)}.
     </p>
     """
+  end
+
+  defp thread_option_label(thread, states, current_id) do
+    label =
+      thread.title <> " · " <> agent_model(Map.get(thread, :runtime), Map.get(thread, :model))
+
+    status = thread_status(thread, states)
+    label = if status == "Idle", do: label, else: label <> " · " <> status
+    label <> if(thread.unread && thread.id != current_id, do: " (unread)", else: "")
   end
 
   defp thread_status(thread, states) do
