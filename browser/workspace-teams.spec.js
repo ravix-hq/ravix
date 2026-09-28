@@ -11,9 +11,11 @@ test('create a team workspace, invite by login, and switch', async ({ page, brow
   test.setTimeout(120_000);
   await signIn(page, 'teamowner', '/home');
 
+  // Which workspace is current depends on the teams other specs put this
+  // login in, so only the menu is asked about.
   const trigger = page.locator('#workspace-switcher-trigger');
-  await expect(trigger).toContainText('teamowner');
   await trigger.click();
+  await expect(page.locator('#workspace-menu')).toContainText('teamowner');
   const menu = page.locator('#workspace-menu');
   await expect(menu).toBeVisible();
   await menu.getByLabel('New workspace', { exact: true }).fill('Acme Team');
@@ -29,13 +31,17 @@ test('create a team workspace, invite by login, and switch', async ({ page, brow
   await expect(page.locator('#workspace-invites')).toContainText('@teammate');
   await expect(page.locator('#workspace-invites')).toContainText('waiting to sign in');
 
-  // Switch to the personal workspace and back.
+  // Switch to the personal workspace, whose settings the gear opens, and back.
   await page.locator('#workspace-switcher-trigger').click();
-  await page.locator('#workspace-menu').getByRole('link', { name: /teamowner/ }).click();
+  await page.locator('#workspace-menu').getByRole('button', { name: /teamowner/ }).click();
+  await expect(page).toHaveURL(/\/home$/);
+  await page.getByRole('link', { name: 'Settings and members of teamowner', exact: true }).click();
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('teamowner');
   await expect(page.locator('#workspace-invite-form')).toHaveCount(0);
   await page.locator('#workspace-switcher-trigger').click();
-  await page.locator('#workspace-menu').getByRole('link', { name: /Acme Team/ }).click();
+  await page.locator('#workspace-menu').getByRole('button', { name: /Acme Team/ }).click();
+  await expect(page).toHaveURL(/\/home$/);
+  await page.getByRole('link', { name: 'Settings and members of Acme Team', exact: true }).click();
   await expect(page).toHaveURL(new RegExp(`${teamPath}$`));
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('Acme Team');
 
@@ -45,7 +51,8 @@ test('create a team workspace, invite by login, and switch', async ({ page, brow
     const mate = await context.newPage();
     await signIn(mate, 'teammate', '/home');
     await mate.locator('#workspace-switcher-trigger').click();
-    await mate.locator('#workspace-menu').getByRole('link', { name: /Acme Team/ }).click();
+    await mate.locator('#workspace-menu').getByRole('button', { name: /Acme Team/ }).click();
+    await mate.getByRole('link', { name: 'Settings and members of Acme Team', exact: true }).click();
     await expect(mate.getByRole('heading', { level: 1 })).toHaveText('Acme Team');
     await expect(mate.locator('#workspace-members')).toContainText('@teammate');
     await expect(mate.locator('#workspace-invite-form')).toHaveCount(0);

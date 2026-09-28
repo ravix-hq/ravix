@@ -88,6 +88,124 @@ defmodule Ravix.Workspaces do
         do: %{workspace: workspace, role: role}
   end
 
+  @typedoc "A workspace the caller belongs to, and their role in it."
+  @type entry :: %{workspace: Workspace.t(), role: Ravix.Workspaces.Membership.role()}
+
+  @doc """
+  The caller's current workspace: what the sidebar, quick-jump, badges, the
+  Inbox and New track are scoped to.
+
+  The one they last chose (`Ravix.Accounts.put_current_workspace/2`), read
+  again through `Access.workspace_access/2` every time, so a membership
+  revoked or a workspace archived since then is never current. Failing
+  that -- never chosen, or removed from the one they chose -- the default:
+  their own personal workspace (RAV-33), and only for somebody without one
+  their first team workspace.
+  Not found for somebody in no workspace at all, and for everybody while
+  `RAVIX_WORKSPACE_ACCESS` is off, which is what leaves the page unscoped.
+
+  `listed` is `list/1`'s answer when the caller already has it in hand.
+  """
+  @spec current(User.t(), [entry()] | nil) :: {:ok, entry()} | {:error, :not_found}
+  def current(%User{} = user, listed \\ nil) do
+    with true <- enabled?() || {:error, :not_found} do
+      case is_binary(user.current_workspace_id) &&
+             Access.workspace_access(user, user.current_workspace_id) do
+        {:ok, entry} -> {:ok, entry}
+        _ -> default(user, listed || list(user))
+      end
+    end
+  end
+
+  defp default(user, listed) do
+    case Enum.find(listed, &own_personal?(&1, user)) ||
+           Enum.find(listed, &(&1.workspace.kind == :team)) do
+      nil -> {:error, :not_found}
+      entry -> {:ok, entry}
+    end
+  end
+
+  # The caller's own personal workspace: a membership of somebody else's
+  # counts as any other workspace they were let into.
+  defp own_personal?(%{workspace: workspace}, %User{id: user_id}),
+    do: workspace.kind == :personal and workspace.personal_user_id == user_id
+
+  defp own_personal_id(listed, user),
+    do: Enum.find_value(listed, &(own_personal?(&1, user) && &1.workspace.id))
+
+  @typedoc "Which part of a scoped page a project belongs to. See `partition/4`."
+  @type placement :: :current | :shared | :other
+
+  @doc """
+  Where each of the caller's projects sits relative to their current
+  workspace. `views` are what `Ravix.Projects.list/2` answered, so every
+  one of them is already a project the caller reaches; this only sorts
+  them, and it grants and hides nothing that access has not already decided.
+
+    * A project in a workspace the caller is a member of belongs to that
+      workspace: `:current` there, `:other` anywhere else.
+    * Everything else -- a legacy project with no workspace, or one in a
+      workspace the caller is not in, reached through a legacy project or
+      track share -- belongs to their personal workspace. There their own
+      projects are `:current`, and the ones somebody else shared with them
+      are `:shared`, until the owner moves them into a workspace the caller
+      is in.
+    * A project with nowhere to belong, because the caller has no personal
+      workspace yet, stays `:current` wherever they are: never hidden.
+
+  With no current workspace (switch off, or no workspace at all) every
+  project is `:current`.
+  """
+  @spec partition(User.t(), Workspace.t() | nil, [entry()], [map()]) :: %{
+          current: [map()],
+          shared: [map()],
+          other: [map()]
+        }
+  def partition(%User{}, nil, _listed, views), do: %{current: views, shared: [], other: []}
+
+  def partition(%User{} = user, %Workspace{} = current, listed, views) do
+    member = MapSet.new(listed, & &1.workspace.id)
+    personal = own_personal_id(listed, user)
+    grouped = Enum.group_by(views, &placement(&1, current, member, personal))
+
+    %{
+      current: Map.get(grouped, :current, []),
+      shared: Map.get(grouped, :shared, []),
+      other: Map.get(grouped, :other, [])
+    }
+  end
+
+  @doc """
+  The workspace a project belongs to for this caller, as `partition/4`
+  places it: its own when they are a member, else their personal one. Nil
+  when it has no home among `listed`.
+  """
+  @spec home(User.t(), [entry()], map()) :: String.t() | nil
+  def home(%User{} = user, listed, %{workspace_id: workspace_id}) do
+    if Enum.any?(listed, &(&1.workspace.id == workspace_id)),
+      do: workspace_id,
+      else: own_personal_id(listed, user)
+  end
+
+  defp placement(view, current, member, personal) do
+    cond do
+      is_binary(view.workspace_id) and MapSet.member?(member, view.workspace_id) ->
+        if view.workspace_id == current.id, do: :current, else: :other
+
+      is_nil(personal) ->
+        :current
+
+      personal != current.id ->
+        :other
+
+      view.access == :owner ->
+        :current
+
+      true ->
+        :shared
+    end
+  end
+
   @doc """
   One workspace the caller belongs to. Another person's workspace, a revoked
   membership and a made-up id all answer not found.

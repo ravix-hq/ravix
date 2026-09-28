@@ -1,7 +1,8 @@
 defmodule RavixWeb.WorkspacePeopleLive do
   @moduledoc """
   One workspace's page: who is in it, who is invited, and the invite box
-  (ADR 0009, phase 4a). Where the sidebar's workspace switcher goes.
+  (ADR 0009, phase 4a). Where the gear beside the switcher's current
+  workspace goes.
 
   Behind `RAVIX_WORKSPACE_ACCESS`: with the switch off every workspace is
   not found here, as `Ravix.Workspaces.people/2` answers. The page holds its
@@ -36,10 +37,15 @@ defmodule RavixWeb.WorkspacePeopleLive do
     with %Accounts.User{} <- user,
          {:ok, people} <- Workspaces.people(user, id),
          {:ok, socket} <- WorkspaceGuard.hold(socket, people.workspace.id, notify: true) do
+      workspaces = WorkspaceSwitcher.list(user)
+
       {:ok,
        socket
        |> assign(
-         workspaces: WorkspaceSwitcher.list(user),
+         workspaces: workspaces,
+         # The switcher names the viewer's current workspace, as it does in
+         # the app, whichever workspace's settings this page shows.
+         current_workspace_id: current_id(user, workspaces),
          suggestions: [],
          invite_login: "",
          page_title: people.workspace.name,
@@ -97,6 +103,15 @@ defmodule RavixWeb.WorkspacePeopleLive do
   @impl true
   def handle_event("workspace-create", %{"name" => name}, socket),
     do: {:noreply, WorkspaceSwitcher.create(socket, name)}
+
+  # The switcher scopes the app, and this page is not the app: picking a
+  # workspace here makes it current and goes back to its projects.
+  def handle_event("workspace-select", %{"workspace" => id}, socket) do
+    case WorkspaceSwitcher.select(socket, id) do
+      {:ok, socket} -> {:noreply, push_navigate(socket, to: "/home")}
+      {:error, socket} -> {:noreply, socket}
+    end
+  end
 
   def handle_event("suggest", %{"login" => q}, socket) do
     suggestions = if manager?(socket), do: People.search(socket.assigns.current_user, q), else: []
@@ -262,6 +277,13 @@ defmodule RavixWeb.WorkspacePeopleLive do
 
   defp workspace_id(socket), do: socket.assigns.workspace_access.workspace.id
 
+  defp current_id(user, workspaces) do
+    case Workspaces.current(user, workspaces) do
+      {:ok, %{workspace: workspace}} -> workspace.id
+      {:error, :not_found} -> nil
+    end
+  end
+
   defp manager?(socket), do: Ravix.Accounts.Access.can?(socket.assigns.role, :manage_members)
 
   defp strip("@" <> login), do: String.trim(login)
@@ -280,7 +302,7 @@ defmodule RavixWeb.WorkspacePeopleLive do
     <Layouts.app flash={@flash}>
       <main id="workspace-page" class="workspace-page">
         <header class="workspace-page-head">
-          <WorkspaceSwitcher.switcher workspaces={@workspaces} current_id={@workspace.id} />
+          <WorkspaceSwitcher.switcher workspaces={@workspaces} current_id={@current_workspace_id} />
           <.link navigate="/home" class="ghost">Back to projects</.link>
         </header>
 

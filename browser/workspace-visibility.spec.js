@@ -33,74 +33,104 @@ async function openTrack(page, visibility, branch) {
   return new URL(page.url()).pathname;
 }
 
+// A track's own setup turn runs on the server after it is created, and its
+// completion bumps the conversation's activity. Until it has finished, whether
+// the track reads as an unread reply depends on who was looking when it did.
+// So wait for that turn to finish (`#track-setup-status` goes once setup is
+// ready), after which nothing runs on the track again.
+async function settled(page) {
+  await expect(page.locator('#track-setup-status')).toHaveCount(0, { timeout: 45_000 });
+}
+
 test('a private track stays out of another workspace member\'s rail, search and badges', async ({ page, browser }) => {
   // The harness runs the app with the switch as the run sets it: off for
   // `test:browser`, on for `test:browser:workspace-access`.
   test.skip(process.env.RAVIX_WORKSPACE_ACCESS !== 'true', 'Runs under test:browser:workspace-access');
   test.setTimeout(150_000);
   const sql = browserSql();
+  // Every repeat shares the harness's database and these two people, so each
+  // names its own project and branches.
+  const run = `${Date.now().toString(36)}${test.info().repeatEachIndex}`;
+  const projectName = `Workspace visibility ${run}`;
+  const secretBranch = `workspace-secret-${run}`;
+  const openBranch = `workspace-open-${run}`;
 
   await signIn(page, 'workspacecreator');
   await connectClaude(page);
   await page.getByRole('button', { name: 'Add a project', exact: true }).first().click();
   const project = page.getByRole('dialog', { name: 'New project', exact: true });
-  await project.getByLabel('Project name', { exact: true }).fill('Workspace visibility project');
+  await project.getByLabel('Project name', { exact: true }).fill(projectName);
   await project.getByRole('button', { name: 'Create project', exact: true }).click();
   await expect(project).toHaveCount(0);
   const projectPath = new URL(page.url()).pathname;
   const projectId = idOf(projectPath);
 
-  const secretPath = await openTrack(page, 'private', 'workspace-secret');
+  const secretPath = await openTrack(page, 'private', secretBranch);
   const secretId = idOf(secretPath);
+  await settled(page);
   await page.goto(projectPath);
-  const openPath = await openTrack(page, 'project', 'workspace-open');
+  const openPath = await openTrack(page, 'project', openBranch);
   const openId = idOf(openPath);
+  await settled(page);
+
+  // The creator reads the open track after its last activity: loading the
+  // page marks it read before the track is drawn, so once the crumbs are
+  // there the read is recorded. It is then no reply of theirs to count.
+  await page.goto(openPath);
+  await expect(page.locator('.track-crumbs')).toContainText(openBranch);
+  await expect(page.locator(`#project-track-tab-${openId} .dot.unread`)).toHaveCount(0);
 
   const colleagueContext = await browser.newContext();
   try {
     const colleague = await colleagueContext.newPage();
     // Signing in writes the colleague's user row and personal workspace.
     await signIn(colleague, 'workspacecolleague');
-    await expect(colleague.locator('body')).not.toContainText('Workspace visibility project');
+    await expect(colleague.locator('body')).not.toContainText(projectName);
 
     // Admit the project to the creator's personal workspace and the colleague
-    // to that workspace. The private track needs attention (a failed setup),
-    // so a leaked badge would count it; the open one does not.
+    // to that workspace (an earlier repeat may have already). The private
+    // track needs attention (a failed setup), so a leaked badge counts it.
     sql(`UPDATE ravix.projects SET workspace_id = (SELECT id FROM ravix.workspaces
            WHERE personal_user_id = '00000000-0000-4000-8000-000000009009') WHERE id = '${projectId}'`);
     sql(`INSERT INTO ravix.workspace_memberships (workspace_id, user_id, role, created_at)
            SELECT p.workspace_id, u.id, 'member', NOW() FROM ravix.projects p, ravix.users u
-           WHERE p.id = '${projectId}' AND u.login = 'workspacecolleague'`);
+           WHERE p.id = '${projectId}' AND u.login = 'workspacecolleague'
+           ON CONFLICT DO NOTHING`);
     sql(`UPDATE ravix.tracks SET setup_state = 'failed' WHERE id = '${secretId}'`);
-    sql(`UPDATE ravix.tracks SET setup_state = 'ready' WHERE id = '${openId}'`);
 
+    // The colleague has never read the open track, so its settled reply is
+    // exactly one unread for them; the private track would make it two.
     await colleague.goto(projectPath);
     await expect(colleague.locator('#project-sections[aria-busy="false"]')).toBeAttached();
     await expect(colleague.locator(`#project-track-tab-${openId}`)).toBeVisible();
+    await expect(colleague.locator(`#project-track-tab-${openId} .dot.unread`)).toHaveCount(1);
     await expect(colleague.locator(`#project-track-tab-${secretId}`)).toHaveCount(0);
-    await expect(colleague.locator('body')).not.toContainText('workspace-secret');
-    await expect(colleague.locator(`#project-link-${projectId} .badge`)).toHaveCount(0);
+    await expect(colleague.locator('body')).not.toContainText(secretBranch);
+    await expect(colleague.locator(`#project-link-${projectId} .badge`)).toHaveAttribute('aria-label', '1 unread');
 
     await colleague.locator('#quick-jump-trigger').click();
     const search = colleague.getByLabel('Search projects, tracks and plans');
-    await search.fill('workspace-secret');
+    await search.fill(secretBranch);
     await expect(colleague.locator('#search-dialog [data-jump-result]')).toHaveCount(0);
-    await search.fill('workspace-open');
+    await search.fill(openBranch);
     await expect(colleague.locator(`#search-track-link-${openId}`)).toBeVisible();
     await colleague.keyboard.press('Escape');
 
     await colleague.goto('/inbox');
     await expect(colleague.locator('#project-sections[aria-busy="false"]')).toBeAttached();
-    await expect(colleague.locator('body')).not.toContainText('workspace-secret');
+    await expect(colleague.locator('body')).toContainText(openBranch);
+    await expect(colleague.locator('body')).not.toContainText(secretBranch);
 
     // Its URL opens nothing for them.
     await colleague.goto(secretPath);
     await expect(colleague).toHaveURL(new RegExp(`${projectPath}$`));
-    await expect(colleague.locator('body')).not.toContainText('workspace-secret');
+    await expect(colleague.locator('body')).not.toContainText(secretBranch);
 
-    // The creator, meanwhile, sees it and its badge.
+    // The creator, meanwhile, sees it, and it is their one unread: the open
+    // track was read after it settled.
     await page.goto(projectPath);
     await expect(page.locator(`#project-track-tab-${secretId}`)).toBeVisible();
+    await expect(page.locator(`#project-track-tab-${openId} .dot.unread`)).toHaveCount(0);
     await expect(page.locator(`#project-link-${projectId} .badge`)).toHaveAttribute('aria-label', '1 unread');
 
     // Shared with the colleague by a permission row, it reaches them.
@@ -109,7 +139,7 @@ test('a private track stays out of another workspace member\'s rail, search and 
            FROM ravix.projects p, ravix.users u
            WHERE p.id = '${projectId}' AND u.login = 'workspacecolleague'`);
     await colleague.goto(secretPath);
-    await expect(colleague.locator('.track-crumbs')).toContainText('workspace-secret');
+    await expect(colleague.locator('.track-crumbs')).toContainText(secretBranch);
     await expect(colleague.locator('.track-crumbs')).toContainText('Private');
   } finally {
     await colleagueContext.close();

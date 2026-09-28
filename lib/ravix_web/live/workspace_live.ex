@@ -55,7 +55,27 @@ defmodule RavixWeb.WorkspaceLive do
         github_available: Accounts.capabilities().github,
         reconnect_agent: nil,
         health_refresh: 0,
+        # What the page shows: the projects and tracks of the current
+        # workspace (ADR 0009), or all of them while RAVIX_WORKSPACE_ACCESS
+        # is off. The sidebar, quick-jump, badges, the Inbox and New track all
+        # read these. See `scope_rail/2`.
         projects: [],
+        # Everything the viewer reaches, across workspaces: what the scope is
+        # cut from, what desktop notifications and the Inbox's "in other
+        # workspaces" count read, and what a `/p/:id` link may switch to.
+        all_projects: [],
+        all_tracks: %{},
+        all_notices: [],
+        # The current workspace (`Ravix.Workspaces.current/2`), nil unscoped;
+        # the legacy projects shared with the viewer, drawn as "Shared with
+        # you" in their personal workspace; and the Inbox items elsewhere.
+        current_workspace: nil,
+        watched_workspace: nil,
+        # A project a URL named before the rail arrived, for that rail to
+        # follow into its workspace; see `open_url/2`.
+        url_project: nil,
+        shared_ids: MapSet.new(),
+        other_attention: 0,
         rail_loaded: false,
         rail_error: false,
         rail_retried: false,
@@ -171,7 +191,7 @@ defmodule RavixWeb.WorkspaceLive do
 
   defp wrong_page(%{assigns: %{live_action: action} = assigns})
        when action in [:home, :projects, :inbox] do
-    if Accounts.needs_onboarding?(assigns.current_user, length(assigns.projects)),
+    if Accounts.needs_onboarding?(assigns.current_user, length(assigns.all_projects)),
       do: "/welcome"
   end
 
@@ -179,19 +199,23 @@ defmodule RavixWeb.WorkspaceLive do
 
   # Before the rail arrives, database-backed access is enough to mount the
   # selected child. An unavailable URL waits for the rail's normal decision.
+  # The project the URL named is remembered for that rail, which scopes the
+  # page to its workspace (`scope_rail/2`).
   defp open_url(%{assigns: %{rail_loaded: false}} = socket, %{"project" => id} = params) do
     user = socket.assigns.current_user
 
     with {:ok, project} <- Projects.get(user, id),
          {:ok, track} <- requested_track(user, id, params["track"]) do
-      select_project(socket, project, params["track"], params, track)
+      socket
+      |> assign(url_project: project.id)
+      |> select_project(project, params["track"], params, track)
     else
       _ -> assign(socket, pending_url: params)
     end
   end
 
   defp open_url(socket, params) do
-    socket = recheck_rail(socket)
+    socket = socket |> recheck_rail() |> follow(params["project"])
 
     project = Enum.find(socket.assigns.projects, &(&1.id == params["project"]))
     track_id = params["track"]
@@ -331,8 +355,19 @@ defmodule RavixWeb.WorkspaceLive do
 
   defp validate_session(socket) do
     case Guard.verify(socket.assigns[:session_guard], socket.assigns.session_hash) do
-      {:ok, guard} -> assign(socket, session_guard: guard)
-      :error -> assign(socket, current_user: nil, projects: [], tracks: %{}, attention: 0)
+      {:ok, guard} ->
+        assign(socket, session_guard: guard)
+
+      :error ->
+        assign(socket,
+          current_user: nil,
+          projects: [],
+          tracks: %{},
+          all_projects: [],
+          all_tracks: %{},
+          attention: 0,
+          other_attention: 0
+        )
     end
   end
 
@@ -364,17 +399,38 @@ defmodule RavixWeb.WorkspaceLive do
 
     {:noreply,
      result(socket, People.dismiss_notice(user, id), fn s, _ ->
-       notices = Enum.reject(s.assigns.access_notices, &(&1.id == id))
-
-       assign(s,
-         access_notices: notices,
-         attention: attention_count(s.assigns.tracks) + length(notices)
-       )
+       s
+       |> update(:all_notices, fn notices -> Enum.reject(notices, &(&1.id == id)) end)
+       |> derive_scope()
      end)}
   end
 
   def handle_event("workspace-create", %{"name" => name}, socket),
     do: {:noreply, WorkspaceSwitcher.create(socket, name)}
+
+  # The switcher makes a workspace current and the page shows it: the rail
+  # already holds every workspace's projects and tracks, so it is scoped
+  # again from those, with membership and visibility re-read and no provider
+  # asked. A project left open from the workspace being left is closed, for
+  # the new workspace's home; closed first, or an owned one would be
+  # followed straight back (`scope_rail/2`).
+  def handle_event("workspace-select", %{"workspace" => id}, socket) do
+    case WorkspaceSwitcher.select(socket, id) do
+      {:ok, socket} ->
+        open = socket.assigns.project
+        socket = socket |> assign(project: nil) |> recheck_rail()
+
+        {:noreply,
+         case open && Enum.find(socket.assigns.projects, &(&1.id == open.id)) do
+           nil when is_nil(open) -> socket
+           nil -> push_patch(socket, to: "/home")
+           project -> assign(socket, project: project)
+         end}
+
+      {:error, socket} ->
+        {:noreply, recheck_rail(socket)}
+    end
+  end
 
   def handle_event("dismiss", _, socket) do
     socket = assign(socket, dialog: nil)
@@ -771,17 +827,20 @@ defmodule RavixWeb.WorkspaceLive do
   def handle_async(:picker_add, {:ok, {:ok, %{project: %{id: id}}}}, socket) do
     user = socket.assigns.current_user
 
-    # The rail's own database read: the new project, as the caller reaches it.
-    views = Projects.list(user, include_machine: false)
+    # The rail's own database read: the new project, as the caller reaches it,
+    # in the current workspace it was added to.
+    socket = recheck_rail(socket)
+    views = socket.assigns.projects
 
     with %Picker{} <- socket.assigns.picker,
          true <- socket.assigns.dialog == :new_track,
          %{} = view <- Enum.find(views, &(&1.id == id && &1.access != :tracks)) do
+      picker = Picker.build(user, views, view, socket.assigns.current_workspace)
+
       {:noreply,
        socket
-       |> assign(picker: %{Picker.build(user, views, view) | query: "", mode: :repos})
-       |> choose_track_project(view)
-       |> recheck_rail()}
+       |> assign(picker: %{picker | query: "", mode: :repos})
+       |> choose_track_project(view)}
     else
       _ -> {:noreply, update_picker_adding(socket)}
     end
@@ -856,9 +915,9 @@ defmodule RavixWeb.WorkspaceLive do
   def handle_async({:tracks, id}, {:ok, {:ok, tracks}}, socket) do
     socket = finish_track_load(socket, id)
 
-    if Enum.any?(socket.assigns.projects, &(&1.id == id)) do
+    if Enum.any?(socket.assigns.all_projects, &(&1.id == id)) do
       tracks = Map.put(rail_tracks(socket), id, tracks)
-      {:noreply, apply_rail(socket, {socket.assigns.projects, tracks})}
+      {:noreply, apply_rail(socket, {socket.assigns.all_projects, tracks})}
     else
       {:noreply, socket}
     end
@@ -1192,22 +1251,20 @@ defmodule RavixWeb.WorkspaceLive do
   def handle_info({:hub, %Event{name: :read} = event}, socket),
     do: {:noreply, clear_unread(socket, event)}
 
-  def handle_info({:hub, %Event{name: name}}, socket) when name in [:people, :tracks] do
-    previous_project = socket.assigns.project
-    socket = recheck_rail(socket)
-
-    socket =
-      if previous_project && is_nil(socket.assigns.project),
-        do: push_patch(socket, to: "/"),
-        else: socket
-
-    {:noreply, reload_async(socket)}
-  end
+  def handle_info({:hub, %Event{name: name}}, socket) when name in [:people, :tracks],
+    do: {:noreply, socket |> recheck_or_leave() |> reload_async()}
 
   def handle_info({:hub, %Event{}}, socket), do: {:noreply, reload_async(socket)}
 
+  # The current workspace's members changed, perhaps to leave this viewer
+  # out: scope again, falling back to the default if so. A project that goes
+  # with it is left here, since this notice can beat the project's own
+  # `:people` event, which would then find nothing open to leave.
+  def handle_info({:workspace_hub, _id, :members}, socket),
+    do: {:noreply, recheck_or_leave(socket)}
+
   defp clear_unread(
-         %{assigns: %{current_user: %Accounts.User{id: user_id}, tracks: tracks}} = socket,
+         %{assigns: %{current_user: %Accounts.User{id: user_id}, all_tracks: tracks}} = socket,
          %Event{
            user_id: user_id,
            project_id: project_id,
@@ -1223,10 +1280,8 @@ defmodule RavixWeb.WorkspaceLive do
         tracks = Map.put(tracks, project_id, rows)
 
         socket
-        |> assign(
-          tracks: tracks,
-          attention: attention_count(tracks) + length(socket.assigns.access_notices)
-        )
+        |> assign(all_tracks: tracks)
+        |> derive_scope()
         |> announce(tracks)
 
       :error ->
@@ -1273,7 +1328,21 @@ defmodule RavixWeb.WorkspaceLive do
   # With `scratch_group` (RAVIX_WORKSPACE_ACCESS on), scratch projects leave
   # the sections for a group of their own after them (ADR 0009 phase 4c),
   # outside repository deduplication and the New track repository list.
-  defp section_groups(projects, sections, placements, scratch_group) do
+  #
+  # Legacy projects somebody shared with this person sit last, in "Shared
+  # with you", while their personal workspace is current (`scope_rail/2`).
+  defp section_groups(projects, sections, placements, scratch_group, shared_ids) do
+    {shared, projects} = Enum.split_with(projects, &MapSet.member?(shared_ids, &1.id))
+
+    groups = own_groups(projects, sections, placements, scratch_group)
+
+    if shared == [],
+      do: groups,
+      else:
+        groups ++ [{%{id: nil, name: "Shared with you", collapsed: false, shared: true}, shared}]
+  end
+
+  defp own_groups(projects, sections, placements, scratch_group) do
     {scratch, repos} =
       if scratch_group, do: Enum.split_with(projects, &is_nil(&1.repo)), else: {[], projects}
 
@@ -1286,18 +1355,32 @@ defmodule RavixWeb.WorkspaceLive do
       else: groups ++ [{%{id: nil, name: "Scratch", collapsed: false, scratch: true}, scratch}]
   end
 
-  # The scratch group is a map standing in for a section; real sections are
-  # `Ravix.Projects.Section` structs, which do not answer `section[:key]`.
-  defp scratch_section?(section), do: Map.get(section, :scratch) == true
+  # The scratch and shared groups are maps standing in for a section; real
+  # sections are `Ravix.Projects.Section` structs, which do not answer
+  # `section[:key]`. Neither takes a dragged project.
+  defp scratch_section?(section),
+    do: Map.get(section, :scratch) == true or Map.get(section, :shared) == true
 
   defp section_key(%{scratch: true}), do: "scratch"
+  defp section_key(%{shared: true}), do: "shared"
   defp section_key(%{id: nil}), do: "other"
   defp section_key(%{id: id}), do: id
+
+  # Scope again from the database, and leave the open project if that took
+  # it away.
+  defp recheck_or_leave(socket) do
+    previous_project = socket.assigns.project
+    socket = recheck_rail(socket)
+
+    if previous_project && is_nil(socket.assigns.project),
+      do: push_patch(socket, to: "/"),
+      else: socket
+  end
 
   # Only the connected, already-loaded rail is revalidated here. Initial
   # discovery remains in start_async; this reads membership, never providers.
   defp recheck_rail(%{assigns: %{rail_loaded: true, current_user: %Accounts.User{}}} = socket),
-    do: apply_rail(socket, {socket.assigns.projects, rail_tracks(socket)})
+    do: apply_rail(socket, {socket.assigns.all_projects, rail_tracks(socket)})
 
   defp recheck_rail(socket), do: socket
 
@@ -1334,7 +1417,8 @@ defmodule RavixWeb.WorkspaceLive do
   defp created(response, _user), do: response
 
   defp rail_tracks(socket) do
-    all = Map.merge(socket.assigns.tracks, socket.assigns.closed_tracks, fn _, a, b -> a ++ b end)
+    all =
+      Map.merge(socket.assigns.all_tracks, socket.assigns.closed_tracks, fn _, a, b -> a ++ b end)
 
     Enum.reduce(socket.assigns.track_errors, all, fn id, tracks ->
       Map.put(tracks, id, {:error, :unavailable})
@@ -1347,7 +1431,7 @@ defmodule RavixWeb.WorkspaceLive do
   defp track_load_failed(socket, id) do
     socket = finish_track_load(socket, id)
     tracks = Map.put(rail_tracks(socket), id, {:error, :unavailable})
-    apply_rail(socket, {socket.assigns.projects, tracks})
+    apply_rail(socket, {socket.assigns.all_projects, tracks})
   end
 
   defp refresh_tracks(socket, project_id, opts \\ [fresh: true])
@@ -1355,7 +1439,7 @@ defmodule RavixWeb.WorkspaceLive do
   defp refresh_tracks(%{assigns: %{current_user: nil}} = socket, _id, _opts), do: socket
 
   defp refresh_tracks(socket, project_id, opts) do
-    if Enum.any?(socket.assigns.projects, &(&1.id == project_id)) do
+    if Enum.any?(socket.assigns.all_projects, &(&1.id == project_id)) do
       user = socket.assigns.current_user
 
       socket =
@@ -1436,37 +1520,148 @@ defmodule RavixWeb.WorkspaceLive do
     {sections, placements} = Sections.list(socket.assigns.current_user)
 
     if connected?(socket) do
-      old = MapSet.new(socket.assigns.projects, & &1.id)
+      old = MapSet.new(socket.assigns.all_projects, & &1.id)
       new = MapSet.new(projects, & &1.id)
       Enum.each(MapSet.difference(old, new), &Hub.unsubscribe/1)
       Enum.each(MapSet.difference(new, old), &Hub.subscribe/1)
     end
 
-    project = socket.assigns.project && Enum.find(projects, &(&1.id == socket.assigns.project.id))
-    notices = People.notices(socket.assigns.current_user)
-
     socket
     |> assign(
-      project: project,
-      track_project:
-        socket.assigns.track_project &&
-          Enum.find(projects, &(&1.id == track_project_id(socket) && &1.access != :tracks)),
       rail_loaded: true,
       rail_error: false,
       sections: sections,
       section_placements: placements,
-      projects: projects,
-      tracks: tracks,
+      all_projects: projects,
+      all_tracks: tracks,
+      all_notices: People.notices(socket.assigns.current_user),
       closed_tracks: closed_tracks,
       closed_projects: closed_projects,
-      track_errors: track_errors,
-      access_notices: notices,
-      attention: attention_count(tracks) + length(notices)
+      track_errors: track_errors
     )
+    |> scope_rail(socket.assigns.url_project)
+    |> assign(url_project: nil)
     |> refresh_picker()
     |> assign_page_title()
     |> announce(tracks)
   end
+
+  # Cut the page's scope from everything the viewer reaches (ADR 0009): the
+  # current workspace's projects, and in the personal workspace the legacy
+  # projects somebody shared, as "Shared with you". The current workspace is
+  # read again here, through `Access.workspace_access/2`, on every rail read,
+  # so a membership revoked since the choice was made falls back to the
+  # default. Nothing is read from a provider and nothing is granted: the
+  # projects are `Projects.list/2`'s, already admitted one by one.
+  #
+  # `follow` is a project a URL just named, on mount or a patch. When it is
+  # one the viewer reaches but sits in another of their workspaces, that
+  # workspace becomes current, so a `/p/:id` link from somewhere else opens
+  # where it lives rather than as "not found". A background read follows
+  # only a project the viewer owns and has open: only its owner can move a
+  # project, so that is their own move, from this page or another. Anybody
+  # else's project moved elsewhere while open leaves the page, and their
+  # choice of workspace stays theirs.
+  defp scope_rail(socket, follow) do
+    user = socket.assigns.current_user
+    listed = WorkspaceSwitcher.list(user)
+    all = socket.assigns.all_projects
+    follow = follow || owned_open_project(socket)
+
+    current =
+      case Workspaces.current(user, listed) do
+        {:ok, current} -> current
+        {:error, :not_found} -> nil
+      end
+
+    parts = Workspaces.partition(user, current && current.workspace, listed, all)
+
+    {user, current, parts} =
+      with id when is_binary(id) <- follow,
+           %{} = view <- Enum.find(parts.other, &(&1.id == id)),
+           home when is_binary(home) <- Workspaces.home(user, listed, view),
+           {:ok, user} <- Accounts.put_current_workspace(user, home),
+           {:ok, current} <- Workspaces.current(user, listed) do
+        {user, current, Workspaces.partition(user, current.workspace, listed, all)}
+      else
+        _ -> {user, current, parts}
+      end
+
+    shown = MapSet.new(parts.current ++ parts.shared, & &1.id)
+    projects = Enum.filter(all, &MapSet.member?(shown, &1.id))
+    project = socket.assigns.project && Enum.find(projects, &(&1.id == socket.assigns.project.id))
+
+    socket
+    |> watch_workspace(current)
+    |> assign(
+      current_user: user,
+      workspaces: listed,
+      current_workspace: current,
+      projects: projects,
+      shared_ids: MapSet.new(parts.shared, & &1.id),
+      project: project,
+      track_project:
+        socket.assigns.track_project &&
+          Enum.find(projects, &(&1.id == track_project_id(socket) && &1.access != :tracks))
+    )
+    |> derive_scope()
+  end
+
+  defp owned_open_project(%{assigns: %{project: %{id: id}, all_projects: all}}) do
+    if Enum.any?(all, &(&1.id == id and &1.access == :owner)), do: id
+  end
+
+  defp owned_open_project(_socket), do: nil
+
+  # A `/p/:id` link to a project the viewer reaches in another of their
+  # workspaces switches to it; anything else is left to `open_url/2`.
+  defp follow(socket, id) when is_binary(id) do
+    in_scope? = Enum.any?(socket.assigns.projects, &(&1.id == id))
+    reachable? = Enum.any?(socket.assigns.all_projects, &(&1.id == id))
+    if reachable? and not in_scope?, do: scope_rail(socket, id), else: socket
+  end
+
+  defp follow(socket, _id), do: socket
+
+  # The current workspace's own membership notices, so a page whose viewer
+  # is removed from it re-scopes at once, even with no project there to
+  # carry the `:people` event.
+  defp watch_workspace(socket, current) do
+    id = current && current.workspace.id
+    was = socket.assigns[:watched_workspace]
+
+    if connected?(socket) and id != was do
+      if was, do: Hub.unsubscribe_workspace(was)
+      if id, do: Hub.subscribe_workspace(id)
+    end
+
+    assign(socket, watched_workspace: id)
+  end
+
+  # The scoped tracks, badges and Inbox from what the rail holds: no reads.
+  # Access notices name their track's workspace and are scoped with it; one
+  # for a workspace the viewer is not in stays, never hidden.
+  defp derive_scope(socket) do
+    %{all_tracks: all, projects: projects, all_notices: notices} = socket.assigns
+    ids = MapSet.new(projects, & &1.id)
+    {here, elsewhere} = Enum.split_with(all, fn {id, _rows} -> MapSet.member?(ids, id) end)
+    {shown, hidden} = Enum.split_with(notices, &notice_here?(&1, socket.assigns))
+    tracks = Map.new(here)
+
+    assign(socket,
+      tracks: tracks,
+      access_notices: shown,
+      attention: attention_count(tracks) + length(shown),
+      other_attention: attention_count(elsewhere) + length(hidden)
+    )
+  end
+
+  defp notice_here?(_notice, %{current_workspace: nil}), do: true
+
+  defp notice_here?(notice, %{current_workspace: %{workspace: current}, workspaces: listed}),
+    do:
+      notice.workspace_id == current.id or
+        not Enum.any?(listed, &(&1.workspace.id == notice.workspace_id))
 
   # The repository list is the rail's, so it is read again with the rail: a
   # project gained, lost or renamed shows there too, and the query, the add
@@ -1477,7 +1672,13 @@ defmodule RavixWeb.WorkspaceLive do
          } =
            socket
        ) do
-    rebuilt = Picker.build(socket.assigns.current_user, socket.assigns.projects, anchor)
+    rebuilt =
+      Picker.build(
+        socket.assigns.current_user,
+        socket.assigns.projects,
+        anchor,
+        socket.assigns.current_workspace
+      )
 
     assign(socket,
       picker: %{
@@ -1544,7 +1745,7 @@ defmodule RavixWeb.WorkspaceLive do
           thread <- notice_threads(track),
           attention?(thread),
           into: %{},
-          do: {thread.id, notice(track, thread, socket.assigns.projects)}
+          do: {thread.id, notice(track, thread, socket.assigns.all_projects)}
 
     ids = MapSet.new(Map.keys(wanting))
 
@@ -1696,7 +1897,8 @@ defmodule RavixWeb.WorkspaceLive do
         do: [anchor | Enum.reject(socket.assigns.projects, &(&1.id == anchor.id))],
         else: socket.assigns.projects
 
-    picker = Picker.build(socket.assigns.current_user, views, anchor)
+    picker =
+      Picker.build(socket.assigns.current_user, views, anchor, socket.assigns.current_workspace)
 
     case Picker.preselect(picker, anchor) do
       nil ->

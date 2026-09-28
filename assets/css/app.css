@@ -532,8 +532,11 @@ html[data-inspector="closed"] #inspector-toggle .label-show { display: inline; }
 .account-item:hover svg, .account-item:focus-visible svg { color: var(--dim); }
 /* The workspace switcher (ADR 0009 phase 4a): first in the yard's top row,
    its menu a native popover like the account menu, dropping down instead. */
-.workspace-switcher { flex: 1; min-width: 0; }
-.workspace-trigger { display: flex; align-items: center; gap: 8px; width: 100%; min-width: 0; padding: 4px 6px; color: var(--ink); font-weight: 600; text-align: left; }
+.workspace-switcher { flex: 1; min-width: 0; display: flex; align-items: center; gap: 2px; }
+.workspace-trigger { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; padding: 4px 6px; color: var(--ink); font-weight: 600; text-align: left; }
+/* Settings and members of the current workspace, beside its name. */
+.workspace-gear { flex: none; display: grid; place-items: center; width: 28px; height: 28px; color: var(--dim); border-radius: var(--radius); }
+.workspace-gear:hover { color: var(--ink); background: var(--surface-hover); }
 .workspace-mark {
   flex: none; display: grid; place-items: center; width: 20px; height: 20px; border-radius: var(--radius);
   background: var(--surface); border: 1px solid var(--line); color: var(--ink); font-size: 11px; font-weight: 600;
@@ -549,11 +552,12 @@ html[data-inspector="closed"] #inspector-toggle .label-show { display: inline; }
   .workspace-menu { position-anchor: --workspace; top: calc(anchor(bottom) + 4px); left: anchor(left); }
 }
 .workspace-menu hr { margin: 4px 2px; border: none; border-top: 1px solid var(--line); }
-.workspace-menu [aria-current="page"] { background: var(--surface-hover); color: var(--ink); }
+.workspace-menu [aria-current="page"], .workspace-menu [aria-current="true"] { background: var(--surface-hover); color: var(--ink); }
 .workspace-menu small { color: var(--dimmer); font-size: 11px; }
 .new-workspace { display: grid; gap: 6px; padding: 6px 8px; }
 .new-workspace label { font-size: 12px; color: var(--dim); }
 html[data-yard="closed"] .workspace-trigger > :not(.workspace-mark) { display: none; }
+html[data-yard="closed"] .yard .workspace-gear { display: none; }
 .workspace-page { max-width: 720px; margin: 0 auto; padding: 24px 16px 48px; display: grid; gap: 16px; }
 .workspace-page-head { display: flex; align-items: center; gap: 12px; }
 .workspace-page-head .workspace-switcher { flex: 0 1 280px; }

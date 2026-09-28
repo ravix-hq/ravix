@@ -38,6 +38,9 @@ defmodule Ravix.Accounts.User do
     field :credential_kind, Ecto.Enum, values: [:subscription, :api_key]
     # Whether the sidebar lists every visible track or only this person's.
     field :rail_scope, Ecto.Enum, values: [:everyone, :mine], default: :everyone
+    # The workspace last chosen in the switcher (ADR 0009). Navigation state,
+    # checked again on every read: see `Ravix.Workspaces.current/1`.
+    field :current_workspace_id, :string
     # When the first-run walkthrough was finished or dismissed.
     field :onboarded_at, :utc_datetime_usec
     field :created_at, :utc_datetime_usec
