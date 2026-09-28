@@ -3,7 +3,7 @@ import { signIn, connectClaude } from './sign-in.js';
 
 test('private tracks are hidden from project members until invited', async ({ page, browser }) => {
   test.setTimeout(120_000);
-  await signIn(page, 'mockuser');
+  await signIn(page, 'privacycreator');
   await connectClaude(page);
   await page.getByRole('button', { name: 'Add a project', exact: true }).first().click();
   const project = page.getByRole('dialog', { name: 'New project', exact: true });
@@ -12,9 +12,9 @@ test('private tracks are hidden from project members until invited', async ({ pa
   await expect(project).toHaveCount(0);
   const projectPath = new URL(page.url()).pathname;
   await page.locator('#workspace-stage').getByRole('button', { name: 'People', exact: true }).click();
-  await page.getByLabel('GitHub username', { exact: true }).fill('eli');
+  await page.getByLabel('GitHub username', { exact: true }).fill('privacyguest');
   await page.getByRole('button', { name: 'Invite', exact: true }).click();
-  await expect(page.locator('#people-dialog')).toContainText('@eli');
+  await expect(page.locator('#people-dialog')).toContainText('@privacyguest');
   await page.keyboard.press('Escape');
   await page.getByRole('navigation', { name: 'Project tracks', exact: true }).getByRole('button', { name: 'New track', exact: true }).click();
   const track = page.getByRole('dialog', { name: 'New track', exact: true });
@@ -30,7 +30,7 @@ test('private tracks are hidden from project members until invited', async ({ pa
   const guestContext = await browser.newContext();
   try {
     const guest = await guestContext.newPage();
-    await signIn(guest, 'eli', projectPath);
+    await signIn(guest, 'privacyguest', projectPath);
     await expect(guest.locator('#project-sections[aria-busy="false"]')).toBeAttached();
     await expect(guest.locator('body')).not.toContainText('secret-investigation');
     await guest.goto(trackPath);
@@ -39,9 +39,9 @@ test('private tracks are hidden from project members until invited', async ({ pa
 
     await page.getByRole('button', { name: /^Track sharing/ }).click();
     const people = page.locator('#track-people-dialog');
-    await people.getByLabel('GitHub username', { exact: true }).fill('eli');
+    await people.getByLabel('GitHub username', { exact: true }).fill('privacyguest');
     await people.getByRole('button', { name: 'Invite', exact: true }).click();
-    await expect(people).toContainText('@eli');
+    await expect(people).toContainText('@privacyguest');
     await guest.goto(trackPath);
     await expect(guest.locator('.track-crumbs')).toContainText('secret-investigation');
     await expect(guest.locator('.track-crumbs')).toContainText('Private');

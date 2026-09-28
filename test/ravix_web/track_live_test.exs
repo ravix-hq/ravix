@@ -3308,12 +3308,13 @@ defmodule RavixWeb.TrackLiveTest do
   test "creator changes sharing in People and a revoked session cannot change it", ctx do
     Repo.update!(Ecto.Changeset.change(ctx.track, created_by: ctx.user.id))
     send(ctx.view.pid, {:hub, Event.new(:people, ctx.project.id, track_id: ctx.track.id)})
-    render(ctx.view)
+    settle(ctx.view)
     render_click(ctx.view, "dialog", %{name: "people"})
     assert has_element?(ctx.view, "#track-visibility-form")
     ctx.view |> form("#track-visibility-form", visibility: "private") |> render_change()
     assert Repo.get!(Track, ctx.track.id).visibility == :private
-    assert render(ctx.view) =~ "Private"
+    settle(ctx.view)
+    assert has_element?(ctx.view, ".track-crumbs", "Private")
     token = Plug.Conn.get_session(ctx.conn, :session_token)
     session = Repo.get_by!(Session, token_hash: Ravix.Crypto.sha256(token))
     Repo.delete!(session)
