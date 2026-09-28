@@ -1,24 +1,24 @@
 ---
 type: ADR
 title: "Workspaces own repositories; a thread names who pays"
-description: "Proposes workspaces as the tenant boundary, one project per repository within each workspace, project/workspace-visible tracks by default with dedicated-only private opt-in, and thread-starter billing with a single-payer restriction for Codex threads on one track. Records owner decisions, manual duplicate cleanup and a compatible staged migration."
+description: "Accepts workspaces as the tenant boundary, one project per repository within each workspace, project/workspace-visible tracks by default with dedicated-only private opt-in, and thread-starter billing with a single-payer restriction for Codex threads on one track. Records owner decisions, manual duplicate cleanup and a compatible staged migration."
 tags: [architecture, workspaces, access, billing, fountain]
-status: draft
+status: stable
 adr: "0009"
-adr_status: "Proposed"
+adr_status: "Accepted"
 date: 2026-09-28
-generated: { by: process:codex, at: 2026-09-28T00:44:47Z }
+generated: { by: process:codex, at: 2026-09-28T05:30:19Z }
 stale_after: 2026-10-28
 ---
 
 # 0009 — Workspaces own repositories; a thread names who pays
 
-**Status:** Proposed. Incorporates the owner's decided workspace, access, billing
-and duplicate-cleanup policy from the 2026-09-28 design interview. Remaining
-product questions need Raunak's review; this is not implementation authorization.
-This PR changes documentation only. The phases
-below describe dependencies for a later implementation plan; no migration,
-authorization change or billing change ships with this ADR.
+**Status:** Accepted. The owner resolved the remaining questions in the
+2026-09-28 design interview for RAV-23. The decisions below include external
+guests, departure, audit retention, workspace scratch, spend consent and GitHub
+attribution. This acceptance changes documentation only; the phases below
+define subsequent implementation work. No migration, authorization change or
+billing change ships with this ADR.
 
 ## Context
 
@@ -72,24 +72,35 @@ that revision, rather than assertions about a later deployment:
   `lib/ravix/config.ex:4`) and maintenance gated by the project owner
   (`lib/ravix/projects/project.ex:70`). This is code evidence, not live provider verification.
 
-This proposal would **amend [0005](0005-each-person-brings-their-own-agent.md)**:
+This decision **amends [0005](0005-each-person-brings-their-own-agent.md)**:
 its project-owner payer, owner-only agent credential binding and owner-runtime
 selection decisions change for newly enabled starter-paid threads. Owner-paid
 operation remains unchanged until that feature ships and for legacy threads.
 Its personal credential sets, revision invalidation and prohibition on reading
 credential values remain; the changed invalidation scope is specified below.
-It would **amend
+It **amends
 [0006](0006-a-sandbox-per-track.md)**'s owner-based billing and runtime eligibility,
 while retaining one sandbox per track and at most one agent per runtime per
-project. It would **amend [0008](0008-the-project-switcher.md)**'s discovery scope to
+project. It **amends [0008](0008-the-project-switcher.md)**'s discovery scope to
 include workspaces while preserving narrow shares, personal sections and global
 activity. Its pending `r2-sidebar-project-tree` amendment replaces the project
 switcher with an always-open project → track sidebar tree and Cmd/Ctrl-K
-quick-jump; this proposal uses that navigation direction. It retains
+quick-jump; this decision uses that navigation direction. It retains
 [0003](0003-cluster-and-transparent-deploys.md)'s cluster and rolling-deploy rules. None of those ADR files is changed or superseded in
-full by this proposal.
+full by this decision.
 
 ## Decision
+
+### Project-scope precursor already implemented
+
+[PR #299](https://github.com/ravix-hq/ravix/pull/299) implemented project-scope
+creator-controlled private tracks, removal that revokes private access and
+stops the removed person's spending, and an owner-only orphan count and blind
+close. These are the project-scope precursor of this workspace policy, not
+workspace support. The workspace rollout extends them to owners/admins and
+adds the 30-day automatic close and the creator-removed case with remaining
+invitees (RAV-27). The code citations in Context describe the earlier pinned
+revision; their project-wide access assumptions predate #299.
 
 ### A workspace is the tenant, not a machine
 
@@ -121,7 +132,7 @@ remove naming ambiguity. There is no GitHub organization picker before a track.
 
 ### A project is a workspace's repository
 
-For new workspace projects, require a repository and enforce a database unique
+For new workspace repository projects, require a repository and enforce a database unique
 key on `(workspace_id, normalized_repo_full_name)`. Keep GitHub's display casing,
 normalize comparison, and retain the stable GitHub repository id to reconcile
 renames/transfers. A rename updates the name of the same project after checking
@@ -136,9 +147,10 @@ remains the legacy ownership field during compatibility; copy attribution to
 `created_by_user_id`. In the new layout the creator is audit history, not the
 project owner or payer. Workspace capabilities govern administration.
 
-No new scratch projects enter the repository catalog. Existing repository-less
-projects remain supported as legacy work; whether to offer a separate scratch
-experience needs Raunak's call.
+**Scratch projects remain supported as workspace scratch.** They sit outside
+the repository catalog, are not deduplicated and never appear in the repository
+picker. Give them their own sidebar group within the workspace, retaining
+existing repository-less work through the compatible migration.
 
 ### Repository membership is not track visibility
 
@@ -171,8 +183,8 @@ invited, including owners and admins. Persist the creator and one of three modes
   workspace members, may read/work on it.
 - **Not shared (private opt-in):** only the creator may read/work on the track.
 - **Invited people:** the creator and specifically invited users may read/work
-  on it. Whether new invitations may admit external guests needs Raunak's call;
-  any permitted guest receives only the narrow track grant described above.
+  on it. Track invitations may admit external guests, who receive only the
+  narrow track grant described above. Guests cannot create private tracks.
 
 Only the creator controls these sharing modes; changing to Not shared revokes
 invitations and outstanding links. Workspace administration alone does not
@@ -193,9 +205,29 @@ mode is not isolation from the provider operator or a promise to hide pushed wor
 Workspace removal invalidates all that person's workspace-derived permissions
 and explicit grants within it, including creator access, so removal cannot leave
 an invisible guest route back in. Keep creator attribution. An intentional later
-guest invitation is a new audited grant. Unowned private work remains inaccessible
-until a reviewed recovery/retention policy applies; removal does not transfer its
-billing obligation to an admin.
+guest invitation is a new audited grant. Removal stops the removed person's
+spending; it never transfers their billing obligation to an admin.
+
+**Departure means revoke, then close blind; there is no content recovery.**
+Owners/admins see orphaned private tracks only as a count and can close them
+without reading their content. Automatically close orphans after **30 days**
+from creator removal. A private track whose creator was removed is an orphan
+even if invitees remain (RAV-27); their remaining grants do not exempt it from
+blind closure or the 30-day deadline. This count is a deliberate administrative
+exception to hiding private-track counts, not a discovery or read permission.
+
+### Audit and GitHub attribution
+
+Keep a content-free workspace audit log for **1 year**, viewable and exportable
+by owners and admins in workspace settings. Record invitations sent, accepted
+and revoked; repositories connected and disconnected; members removed; and
+visibility changes. Repository connection events and the connection UI make
+later expansion of members' repository access visible without exposing private
+track content.
+
+**The Ravix GitHub App is the author and pushes commits.** Include a
+`Co-authored-by` trailer for the thread starter; PRs name who started the track.
+Use installation authority, with no per-user GitHub tokens.
 
 ### The thread starter pays as far as Fountain allows
 
@@ -289,7 +321,9 @@ is the track creator; subsequent threads record the authenticated creator.
 Persist `payer_user_id`, billing policy and credential-set identity before
 launch. For new-policy threads the payer equals `started_by`; recording both
 also describes legacy sponsor-paid threads without inventing a starter. The
-starter consents to paying for all collaborators' prompts. Queue delivery,
+starter consents to paying for all collaborators' prompts. Starting a thread
+in a shared track shows: `This thread uses your <subscription>; collaborators' prompts here also use it.` There are no spend caps yet. Sandbox compute and
+storage are billed to the workspace owner, separately from inference. Queue delivery,
 scheduled continuations, retries, wakes and replacement conversations keep that
 binding; never charge whoever triggers a retry. Runtime choices use that payer's
 usable credentials, subject to the Codex restriction. Revocation, expiry, removal
@@ -322,8 +356,8 @@ Project/environment/vault inference secrets can override credential sets under
 ADR 0005. Before enabling starter billing, reject those override names for
 new-policy launches, identify existing overrides without exposing values, and
 require removal or an explicitly legacy billing mode. Verify selected-source
-precedence on the deployed Fountain. Infrastructure/sandbox costs remain a
-separate product question from inference.
+precedence on the deployed Fountain. Sandbox compute/storage charges follow
+the workspace-owner policy above, separately from inference.
 
 ### Compatibility is part of the model
 
@@ -422,18 +456,20 @@ Owner-paid billing continues until starter billing ships. Claude can then use
 per-thread payers; Codex admission stays narrower than unrestricted RAV-17. The
 UI must name the actual payer and explain refused Codex starts. This ADR records
 the supplied upstream contract, not a live verification or confirmation of
-subscription-provider terms or infrastructure cost allocation.
+subscription-provider terms. Infrastructure cost allocation is decided above.
 
 ## Phased implementation plan
 
-These are candidate, separately shippable PR boundaries **after** owner/Raunak
-review, not assigned implementation work in this docs PR.
+These are separately shippable PR boundaries under the accepted policy.
+Implementation follows this acceptance PR; this PR remains documentation only.
 
-1. **Contract and inventory (RAV-23, RAV-17).** Record the owner decisions and
-   resolve remaining product calls below. Verify manual drain/deletion of
+1. **Contract and inventory (RAV-23, RAV-17).** The owner decisions are
+   recorded above. Verify manual drain/deletion of
    `ravix3`–`ravix10`, identify the earlier canonical project in the remaining
    pair, and inventory legacy access/secret overrides without reading values.
-   Verify the supplied Fountain override and Codex conflict contracts live.
+   Run and record deployed Fountain override/allowlist, source precedence,
+   Codex source/revision conflict and dirty-work recovery checks before billing
+   activation; confirm subscription-provider terms for the rollout.
    Workspace work and starter billing retain independent rollout gates.
 2. **Expand and dual readers (RAV-12/13).** Add workspace/membership/installation
    tables and nullable attribution/policy fields. Add the workspace repository
@@ -442,26 +478,39 @@ review, not assigned implementation work in this docs PR.
    Exercise old-writer rows, interrupted backfills and mixed-release reads.
    Keep existing authorization and writes active everywhere.
 3. **Access boundaries before activation (RAV-5/20).** Implement workspace
-   capabilities, guest grants, explicit track visibility, session/revocation
-   guards and filtered discovery behind a gate. Test cross-tenant ids, private
+   capabilities, external track-only guest grants (minimal project label, no
+   catalog, sibling tracks, settings or private-track creation), explicit track
+   visibility, session/revocation guards and filtered discovery behind a gate. Test cross-tenant ids, private
    sibling names/counts, preview/terminal access, lost notifications and peer-node
    revocation. Deploy to every instance and drain incompatible queue workers
    before activating any new-policy row.
 4. **Repository admission and navigation (RAV-12/13/10).** Ship explicit workspace
    creation/joining and authorized multi-installation connection, canonical
    project admission and atomic re-add lookup. Present one repository list for
-   new tracks. Test concurrent adds, normalization, rename collisions, revoked
-   installations and a member without personal GitHub access. Browser checks
+   new tracks and a separate workspace scratch sidebar group, outside repository
+   deduplication and the picker. Add the content-free, 1-year audit log with
+   owner/admin viewing and export in workspace settings for invitations
+   sent/accepted/revoked, repository connections/disconnections, member removals
+   and visibility changes. Attribute commits to the Ravix GitHub App with the
+   thread starter's `Co-authored-by` trailer, and name the track starter in PRs;
+   use no per-user GitHub tokens. Test concurrent adds, normalization, rename
+   collisions, revoked installations and a member without personal GitHub access. Browser checks
    cover the sidebar tree, quick-jump, workspace selection, guest landing, global
    activity and mobile navigation.
 5. **Sharing controls (RAV-20).** Enable the three modes only on dedicated tracks,
    with project/workspace visibility as the default, explicit private opt-in,
-   consent and explicit legacy conversion. Test member removal, share
+   consent and explicit legacy conversion. Extend #299's project-scope revocation,
+   spending stop, orphan count and blind close to workspace owners/admins. Add
+   automatic orphan closure 30 days after creator removal, including tracks with
+   remaining invitees (RAV-27), with no content recovery. Test the deadline and
+   count-only administrative access as well as member removal, share
    revocation, creator departure, old invite links and stale async results.
    Browser tests prove private tracks do not leak through search or badges.
 6. **Thread payer binding (RAV-17).** Add `started_by`, immutable payer bindings,
-   explicit legacy sponsor labels and reconciled agent allowlists. Enforce
-   Claude starter billing and atomic Codex source/revision reservations with
+   explicit legacy sponsor labels and reconciled agent allowlists. Show the exact
+   shared-track subscription consent note above; introduce no spend caps. Bill
+   sandbox compute/storage to the workspace owner separately from inference.
+   Enforce Claude starter billing and atomic Codex source/revision reservations with
    refusal of a different starter. Verify distinct Claude payers, same-payer
    Codex threads, conflicting Codex starts and mixed runtimes live; test retry,
    queue, member/guest allowlists, revocation and cross-workspace revision
@@ -472,31 +521,14 @@ review, not assigned implementation work in this docs PR.
    fields unused by all deployed readers. Any duplicate merge or removal of dual
    readers requires its own decision and rollback evidence.
 
-## Open questions for the team
+## Open questions
 
-- **Raunak — RAV-20:** may track invitations admit external guests, and under
-  what conditions? Who may recover a departed creator's private work, and for
-  how long? Project/workspace visibility by default, private opt-in hidden from
-  uninvited owners/admins, and dedicated-only private mode are decided.
-- **Raunak:** should scratch work remain a product feature outside repository
-  projects? Manual duplicate cleanup and the later-created legacy duplicate
-  rule are decided, not open alternatives.
-- **Raunak and owner — audit:** workspace invitations grant effective access to
-  every repository. Which invitation, acceptance, repository-connection and
-  removal events must be retained, for how long, and who can review/export them?
-  How should admins see that a repo added later expands existing members' access?
-- **Fountain verification:** who runs and records deployed override/allowlist,
-  source precedence, Codex source/revision conflict and recovery checks? What
-  recovery preserves dirty work after a Codex payer rotates credentials? A future
-  upstream multi-source Codex contract could relax the refusal rule, but is not
-  required for the decided restricted rollout.
-- **Owner:** what payer consent/spend limits, subscription-sharing terms and
-  departure policy apply? Who pays sandbox compute/storage, separately from
-  inference, and who may stop spending already in flight?
-- **Raunak and owner:** what GitHub actor attribution should collaborators see
-  for installation-authorized pushes, and what connection UX proves installation
-  authority across multiple workspaces? Confirm rename/transfer recovery and
-  installation revocation behavior before enabling shared repository access.
+None remain for the owner policy. Deployed Fountain verification, dirty-work
+recovery checks, subscription-provider terms, installation-authority UX and
+rename/transfer/revocation checks remain implementation validation before their
+respective rollout gates, as specified above; acceptance does not claim those
+checks have run. Future multi-source Codex support is not required for this
+restricted rollout.
 
 ## Alternatives considered
 
