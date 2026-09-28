@@ -416,7 +416,12 @@ defmodule RavixWeb.WorkspaceLive do
     {:noreply, assign(socket, thread_connect: connection)}
   end
 
-  def handle_event("edit", %{"new_track" => params}, socket) do
+  def handle_event("edit", %{"new_track" => params} = event, socket) do
+    params =
+      if event["_target"] in [["new_track", "runtime"], ["new_track", "model"]],
+        do: Map.put(params, "preference_explicit", "true"),
+        else: params
+
     params =
       if params["runtime"] != socket.assigns.track_form.params["runtime"],
         do: Map.delete(params, "model"),

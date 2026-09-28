@@ -426,7 +426,16 @@ defmodule Ravix.Accounts.Inference do
   defp remember_connection(user, agent, kind, set_id, make_default?) do
     current = Accounts.Store.get_user(user.id)
     choose? = is_nil(current.agent) or make_default?
-    attrs = %{credential_set_id: set_id}
+
+    attrs = %{
+      credential_set_id: set_id,
+      credential_connected_at:
+        Map.put(
+          current.credential_connected_at,
+          "#{agent}:#{kind}",
+          DateTime.to_iso8601(DateTime.utc_now())
+        )
+    }
 
     attrs =
       if choose? or current.agent == agent,

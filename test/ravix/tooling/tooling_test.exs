@@ -1,8 +1,9 @@
 defmodule Ravix.ToolingTest do
   use Ravix.DataCase, async: true
   use Mimic
+  alias Ravix.Accounts.{Inference, ThreadPreference}
   alias Ravix.Fountain
-  alias Ravix.Fountain.{Client, FakeTransport}
+  alias Ravix.Fountain.{Client, FakeTransport, Shapes}
   alias Ravix.GitHub.Shapes, as: GitHubShapes
   alias Ravix.Projects.Project
   alias Ravix.Tooling
@@ -150,6 +151,20 @@ defmodule Ravix.ToolingTest do
     user: user
   } do
     project = insert_project(runtime: "claude", user: user)
+
+    catalog = %Shapes.Catalog{
+      runtimes: ["claude"],
+      models: %{"claude" => [project.model, "opus"]}
+    }
+
+    {:ok, _} = ThreadPreference.put(user, "claude", "opus", catalog)
+    stub(Ravix.MachineCache, :catalog, fn _ -> {:ok, catalog} end)
+
+    stub(Inference, :usable_agents, fn payer, [fresh: true] ->
+      assert payer.id == user.id
+      {:ok, [:claude]}
+    end)
+
     stub(Ravix.Projects, :prepare_machine, fn _, _ -> :ok end)
 
     client =
@@ -167,6 +182,7 @@ defmodule Ravix.ToolingTest do
 
     assert {:ok, result} = Tooling.call(p, "create_track", args)
     assert Repo.get!(Track, result.id).title == "ravix/desktop-task"
+    assert Ravix.Tracks.Store.thread(result.id).model == "opus"
     assert result.branch == "ravix/desktop-task"
     assert {:ok, retry} = Tooling.call(p, "create_track", args)
     assert retry["id"] == result.id
