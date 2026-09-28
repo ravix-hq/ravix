@@ -161,12 +161,13 @@
           &dependency_title(@detail.items, &1)
         )}
       </p>
+      <span :if={item.private_track}>Assigned to a private track</span>
       <.link :if={item.track_url} navigate={item.track_url}>Open track: {item.track_title}</.link>
       <p :if={item.status == :blocked} id={"blocked-#{item.id}"}>
         Blocked by: {blockers(@detail.items, item)}
       </p>
       <div
-        :if={!item.track_id && !@detail.plan.archived}
+        :if={!item.track_id && !item.private_track && !@detail.plan.archived}
         class="plan-assignment-row"
         role="group"
         aria-labelledby={"item-title-#{item.id}"}

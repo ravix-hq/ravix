@@ -90,6 +90,9 @@ defmodule Ravix.Tracks.Track do
     field :closed_at, :utc_datetime_usec
     field :created_at, :utc_datetime_usec
     field :created_by_login, :string
+    field :created_by, :string
+    field :creator_revoked_at, :utc_datetime_usec
+    field :visibility, Ecto.Enum, values: [:project, :private], default: :project
 
     has_many :threads, Ravix.Tracks.Thread
     has_many :prompts, Ravix.PromptQueue.Item
@@ -100,7 +103,7 @@ defmodule Ravix.Tracks.Track do
     has_one :preview, Ravix.Previews.Preview
   end
 
-  @fields ~w(last_runtime sandbox_layout sandbox_id sandbox_generation sandbox_state vault_id id project_id conversation_id slug title branch branch_reserved workdir origin_kind origin_base
+  @fields ~w(visibility created_by last_runtime sandbox_layout sandbox_id sandbox_generation sandbox_state vault_id id project_id conversation_id slug title branch branch_reserved workdir origin_kind origin_base
              origin_number origin_title origin_url origin_plan_id origin_item_id rev setup_state setup_attempts setup_request_id setup_started_at setup_retry_at setup_error setup_error_code setup_lease setup_lease_until opened_at closed_at created_at created_by_login)a
   @required ~w(id project_id slug title branch workdir origin_kind rev created_at created_by_login)a
 
@@ -119,7 +122,8 @@ defmodule Ravix.Tracks.Track do
     |> cast(attrs, @fields)
     |> Ravix.Schema.put_new_id()
     |> Ravix.Schema.stamp(:created_at)
-    |> validate_required(@required)
+    |> validate_required(@required ++ [:visibility])
+    |> check_constraint(:visibility, name: :tracks_visibility)
     |> validate_number(:rev, greater_than_or_equal_to: 1)
     |> validate_required([:sandbox_layout, :sandbox_generation])
     |> validate_number(:sandbox_generation, greater_than_or_equal_to: 0)

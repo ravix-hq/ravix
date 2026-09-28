@@ -4,13 +4,15 @@ defmodule Ravix.People.Person do
 
   `via` is the whole reason a list is worth reading twice. `:owner` holds
   the project and cannot be removed from anything. `:project` was let into
-  the machine and reaches every track on it, so a *track's* dialog cannot
+  the machine and reaches its project-visible tracks, so a *track's* dialog cannot
   take them off --- that is the project's people to change. `:track` was
   named on this one branch. `:pending` is an invitation nobody has taken up
   yet: they can read nothing until they sign in, and withdrawing it is not
   a removal.
 
-  Every entry carries one of the four, so a page never has to infer which
+  `:creator` identifies the private track creator, independently of project roles.
+
+  Every entry carries one of these values, so a page never has to infer which
   by the absence of a key. `@enforce_keys` covers `via` as well, which is
   what makes that a property rather than a convention: the list used to be
   assembled by `Map.put(profile, :via, :project)`, and a fourth way of
@@ -23,7 +25,7 @@ defmodule Ravix.People.Person do
   alias Ravix.People.Profile
 
   @typedoc "How this person comes to be in the list."
-  @type via :: :owner | :project | :track | :pending
+  @type via :: :owner | :creator | :project | :track | :pending
 
   @enforce_keys [:login, :name, :avatar_url, :via]
   defstruct @enforce_keys
@@ -39,7 +41,7 @@ defmodule Ravix.People.Person do
   @spec new(Profile.t() | User.t(), via()) :: t()
   def new(%User{} = user, via), do: user |> Profile.from_user() |> new(via)
 
-  def new(%Profile{} = profile, via) when via in [:owner, :project, :track, :pending],
+  def new(%Profile{} = profile, via) when via in [:owner, :creator, :project, :track, :pending],
     do: %__MODULE__{
       login: profile.login,
       name: profile.name,

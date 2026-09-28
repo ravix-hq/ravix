@@ -271,6 +271,7 @@ defmodule RavixWeb.WorkspaceManagementTest do
         assert attrs == %{
                  title: if(@kind == "pr", do: nil, else: "Work"),
                  origin: @expected,
+                 visibility: "project",
                  runtime: nil,
                  model: nil
                }

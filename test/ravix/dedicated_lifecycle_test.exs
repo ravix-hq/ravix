@@ -9,6 +9,38 @@ defmodule Ravix.DedicatedLifecycleTest do
   alias Ravix.Tracks.Sandbox
   alias Ravix.Tracks.Sandbox.{Operation, Store}
 
+  test "owner orphan cleanup deletes the dedicated machine without granting track access" do
+    owner = insert_user()
+    creator = insert_user()
+    project = insert_project(user: owner)
+    insert_project_member(project, creator)
+
+    track =
+      insert_track(
+        project: project,
+        visibility: :private,
+        created_by: creator.id,
+        sandbox_layout: :dedicated,
+        sandbox_state: :ready,
+        sandbox_id: "orphan-disk"
+      )
+
+    assert {:ok, _} = Ravix.People.remove_project(owner, project.id, creator.login)
+    assert {:ok, 1} = Ravix.Tracks.close_orphaned_private(owner, project.id)
+    [close] = Store.operations(track.id)
+
+    client =
+      FakeTransport.client([
+        {%{method: "DELETE", path: "/api/sandboxes/orphan-disk"}, {204, [], ""}},
+        {%{method: "GET", path: "/api/sandboxes/orphan-disk"},
+         {404, [], %{error: "sandbox_not_found"}}}
+      ])
+
+    Sandbox.advance(client, close.id)
+    assert %{sandbox_state: :terminated, closed_at: %DateTime{}} = Store.get_track(track.id)
+    assert {:error, :not_found} = Ravix.Tracks.get(owner, track.id)
+  end
+
   defp operation do
     project = insert_project(repo_full_name: nil, installation_id: nil)
 

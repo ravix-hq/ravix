@@ -235,6 +235,16 @@ defmodule RavixWeb.Live.SettingsDialog do
      )}
   end
 
+  defp settings_event("close-orphaned-private", %{"confirm" => name}, socket) do
+    if name == socket.assigns.project.name do
+      user = user(socket)
+      id = project_id(socket)
+      {:noreply, begin(socket, :orphan_close, fn -> Tracks.close_orphaned_private(user, id) end)}
+    else
+      {:noreply, flash(socket, :error, "Type the project name to confirm.")}
+    end
+  end
+
   defp settings_event("confirm-danger", %{"action" => action, "confirm" => name}, socket)
        when action in ["rebuild", "delete"] do
     {:noreply, update(socket, :confirmations, &Map.put(&1, action, name))}
@@ -324,6 +334,13 @@ defmodule RavixWeb.Live.SettingsDialog do
      end)}
   end
 
+  defp async_result(:orphan_close, {:ok, response}, socket) do
+    {:noreply,
+     result(settle(socket, :orphan_close), response, fn s, count ->
+       s |> load() |> flash(:info, "Closing #{count} private tracks with no remaining members.")
+     end)}
+  end
+
   defp async_result(:danger, {:ok, response}, socket) do
     {:noreply,
      result(settle(socket, :danger), response, fn s, outcome ->
@@ -406,6 +423,11 @@ defmodule RavixWeb.Live.SettingsDialog do
       s
       |> assign(
         settings: settings,
+        orphan_count:
+          case Tracks.orphan_private_count(user(s), project_id(s)) do
+            {:ok, count} -> count
+            _ -> 0
+          end,
         settings_form: settings_form(settings),
         variable_rows: saved_variable_rows(settings)
       )
@@ -653,7 +675,7 @@ defmodule RavixWeb.Live.SettingsDialog do
                   else: "tracks still share"} the project machine
               </p>
               <p :if={not Map.get(@settings, :default_only, false)} class="settings-help">
-                Switching agents rebuilds the machine, closes every track and loses unpushed work on its disk. Model and instruction changes apply to new tracks.
+                These actions also affect private tracks you cannot see. Switching agents rebuilds the machine, closes every track and loses unpushed work on its disk. Model and instruction changes apply to new tracks.
               </p>
               <div class="field" role="group" aria-label="Agent">
                 <div class="agent-choices">
@@ -783,7 +805,7 @@ defmodule RavixWeb.Live.SettingsDialog do
                 <p>
                   This closes {@switch_confirmation.count} open {if @switch_confirmation.count == 1,
                     do: "track",
-                    else: "tracks"} and discards the machine's disk, including unpushed work.
+                    else: "tracks"} visible to you, plus any private tracks you cannot see, and discards the machine's disk, including unpushed work.
                   <span :if={Map.get(@switch_confirmation, :shared_only?, false)}>Dedicated tracks are unaffected.</span>
                 </p>
                 <button
@@ -1069,12 +1091,35 @@ defmodule RavixWeb.Live.SettingsDialog do
               hidden
             >
               <h3 id="settings-danger-title" tabindex="-1">Danger zone</h3>
+              <form
+                :if={@orphan_count > 0}
+                id="close-orphaned-private-form"
+                phx-target={@myself}
+                phx-submit="close-orphaned-private"
+              >
+                <p>{@orphan_count} private tracks with no remaining members</p>
+                <p>
+                  Closing deletes their machines and uncommitted work. No track contents will be opened.
+                </p>
+                <.input
+                  name="confirm"
+                  id="close-orphaned-private-confirm"
+                  value=""
+                  label={"Type #{@project.name} to confirm closing orphaned tracks"}
+                  required
+                />
+                <button
+                  class="danger"
+                  disabled={MapSet.size(@pending) > 0}
+                  phx-disable-with="Closing…"
+                >Close orphaned private tracks</button>
+              </form>
               <p :if={Map.get(@settings, :shared_tracks) != nil}>
                 Rebuild an individual track from that track; sibling tracks are unaffected.
-                Deleting the project deletes all its tracks’ machines, uncommitted changes, unpushed commits, settings and secrets. Cleanup continues until deletion is confirmed.
+                Deleting the project includes private tracks you cannot see and deletes all its tracks’ machines, uncommitted changes, unpushed commits, settings and secrets. Cleanup continues until deletion is confirmed.
               </p>
               <p :if={Map.get(@settings, :shared_tracks) == nil}>
-                Rebuilding discards the machine’s disk and closes every track, keeping project settings and secrets for the next machine. Unpushed work on that disk is lost. Deleting also removes the project settings and secrets. These actions cannot be undone.
+                These actions also affect private tracks you cannot see. Rebuilding discards the machine’s disk and closes every track, keeping project settings and secrets for the next machine. Unpushed work on that disk is lost. Deleting also removes the project settings and secrets. These actions cannot be undone.
               </p>
               <form
                 :for={

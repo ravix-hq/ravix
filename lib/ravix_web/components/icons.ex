@@ -24,6 +24,8 @@ defmodule RavixWeb.Icons do
   # whose mark is a reinterpretation reads as a phishing page. Third-party
   # marks are the one place consistency loses.
   @glyphs %{
+    "lock" =>
+      ~S(<rect x="5" y="10" width="14" height="11" rx="2" /><path d="M8 10V7a4 4 0 0 1 8 0v3" />),
     "code" => ~S(<path d="m8 6-6 6 6 6m8-12 6 6-6 6M14 4l-4 16" />),
     "document" => ~S(<path d="M14 3H5v18h14V8zM14 3v5h5M8 12h8M8 16h6" />),
     "home" => ~S(<path d="M3 10.5 12 3l9 7.5" /><path d="M5 9.5V21h14V9.5" />),

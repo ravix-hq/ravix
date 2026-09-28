@@ -9,9 +9,11 @@ defmodule Ravix.PreviewsTest do
 
   import Ravix.PreviewsFixture
 
+  alias Ecto.Adapters.SQL.Sandbox
   alias Ravix.Previews
   alias Ravix.Previews.{Config, Lifecycle, Row, Store}
   alias Ravix.Tracks.Track
+  alias RavixWeb.PreviewGateway.Watch
 
   setup do
     start_tree()
@@ -125,6 +127,43 @@ defmodule Ravix.PreviewsTest do
     await(p, fn _ -> Store.get(t1.id).state == :ready end)
 
     assert {:error, :not_found} = Previews.open_ticket(insert_user(), t1.id, session.token_hash)
+    await_background()
+  end
+
+  test "privacy closes an existing gateway watch and invalidates its session grant", ctx do
+    creator = insert_user()
+    insert_project_member(ctx.project, creator)
+
+    Repo.update!(
+      Ecto.Changeset.change(ctx.t1,
+        created_by: creator.id,
+        sandbox_layout: :dedicated,
+        sandbox_state: :ready,
+        sandbox_id: "privacy-machine"
+      )
+    )
+
+    assert {:ok, url} = Previews.open_ticket(ctx.owner, ctx.t1.id, ctx.owner_session.token_hash)
+    [_, ticket] = String.split(url, "/__ravix/open#")
+    row = Store.get(ctx.t1.id)
+    grant = Store.get_grant(Ravix.Crypto.sha256(ticket), row.track_id, :ticket, :peek)
+
+    assert {:ok, watcher} =
+             Watch.start(RavixWeb.PreviewGateway.RavixBackend, row, grant, ctx.project.id)
+
+    Sandbox.allow(Repo, self(), watcher)
+    owner = self()
+    Watch.attach(watcher, fn -> send(owner, :tunnel_closed) end)
+    assert {:ok, :private} = Ravix.Tracks.set_visibility(creator, ctx.t1.id, "private")
+    assert_receive {:preview_gateway, :close}
+    assert_receive :tunnel_closed
+    refute Previews.allowed?(row, grant)
+
+    assert {:error, :not_found} =
+             Previews.open_ticket(ctx.owner, ctx.t1.id, ctx.owner_session.token_hash)
+
+    assert {:ok, _} = Previews.status(creator, ctx.t1.id)
+    Watch.stop(watcher)
     await_background()
   end
 

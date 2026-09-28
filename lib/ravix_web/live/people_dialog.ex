@@ -16,9 +16,8 @@ defmodule RavixWeb.Live.PeopleDialog do
   came to hold twenty-eight of them.
 
   `scope` picks the unit. What that changes is real and the dialog says so:
-  a project member reaches every track on the machine, so its dialog
-  explains that and its "leave" is worded for a machine rather than a
-  branch.
+  a project member reaches project-visible tracks; private invitations remain
+  separate, including when the person leaves the project.
   """
   use RavixWeb, :live_component
 
@@ -50,6 +49,15 @@ defmodule RavixWeb.Live.PeopleDialog do
   # GitHub took. The button is disabled until the answer lands, which is
   # also what stops a second Enter inviting them twice.
   @impl true
+  def handle_event("visibility", %{"visibility" => visibility}, socket) do
+    %{current_user: user, subject_id: id} = socket.assigns
+
+    {:noreply,
+     result(socket, Ravix.Tracks.set_visibility(user, id, visibility), fn s, value ->
+       s |> assign(track: %{s.assigns.track | visibility: value}) |> load()
+     end)}
+  end
+
   def handle_event("invite-person", %{"login" => login}, socket) do
     %{scope: scope, subject_id: id, current_user: user} = socket.assigns
 
@@ -137,6 +145,7 @@ defmodule RavixWeb.Live.PeopleDialog do
   the answer is "they are project members" and the dialog already said so.
   """
   @spec badge(Person.t(), :track | :project) :: String.t() | nil
+  def badge(%Person{via: :creator}, _scope), do: "creator"
   def badge(%Person{via: :owner}, _scope), do: "owner"
   def badge(%Person{via: :pending}, _scope), do: "invited, not signed in yet"
   def badge(%Person{via: :project}, :track), do: "in the whole project"
@@ -147,6 +156,7 @@ defmodule RavixWeb.Live.PeopleDialog do
   # whose access comes from the project cannot be taken off one of its tracks
   # -- `Ravix.People.remove/3` refuses both, and the badge beside them now
   # says where to go instead.
+  defp removable?(%Person{via: :creator}, _scope, _owner?, _user), do: false
   defp removable?(%Person{via: :owner}, _scope, _owner?, _user), do: false
   defp removable?(%Person{via: :project}, :track, _owner?, _user), do: false
 
@@ -160,8 +170,31 @@ defmodule RavixWeb.Live.PeopleDialog do
       <.dialog id={"#{@id}-dialog"} title={title(@scope)} on_close="dismiss">
         <p><.project_name project={@project} /></p>
         <p :if={@scope == :project} class="hint">
-          Members can create and work in every track in this project.
+          Members can create tracks and work in tracks shared with this project. Private tracks require an invitation.
         </p>
+        <form
+          :if={@scope == :track && Ravix.Accounts.Access.creator?(@current_user, @track)}
+          id="track-visibility-form"
+          phx-change="visibility"
+          phx-target={@myself}
+        >
+          <.input
+            type="select"
+            name="visibility"
+            label="Sharing"
+            value={@track.visibility}
+            options={
+              [{"Everyone in this project", :project}] ++
+                if(@track.sandbox_layout == :dedicated,
+                  do: [{"Only people I invite", :private}],
+                  else: []
+                )
+            }
+          />
+          <p :if={@track.sandbox_layout != :dedicated} class="hint">
+            Private tracks need their own machine. This track shares the project machine.
+          </p>
+        </form>
         <ul class="people-list" aria-label="Members">
           <li :for={person <- @people} class="people-row">
             <div class="people-identity">

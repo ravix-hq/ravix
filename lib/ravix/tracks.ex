@@ -131,6 +131,8 @@ defmodule Ravix.Tracks do
           do: Store.member_tracks_of(user.id, project.id),
           else: Store.tracks_of(project.id)
 
+      rows = Access.visible_tracks(user.id, rows, project)
+
       {:ok,
        present_all(rows, project, user, if(access == :owner, do: :owner, else: :member), opts)}
     else
@@ -590,7 +592,9 @@ defmodule Ravix.Tracks do
   end
 
   defp open_shared(user, project_id, attrs, opts) do
-    with {:ok, _} <- Access.project_access(user, project_id) do
+    with {:ok, _} <- Access.project_access(user, project_id),
+         {:ok, visibility} <- visibility(attrs["visibility"] || "project"),
+         :ok <- visibility_layout(visibility, :shared) do
       Ravix.Tracks.Sandbox.Store.shared_open(project_id, fn ->
         open_shared_available(user, project_id, attrs, opts)
       end)
@@ -682,11 +686,44 @@ defmodule Ravix.Tracks do
     name = attrs["branch_name"] || attrs["title"] || ""
     name = if name == "", do: default_title(origin, taken), else: name
 
-    with :ok <- validate_name(origin, name),
+    with {:ok, visibility} <- visibility(attrs["visibility"] || "project"),
+         :ok <- validate_name(origin, name),
          branch = if(origin.kind == :pr, do: origin.base, else: Ids.branch_for(name)),
          :ok <- available_branch(origin, rows, branch) do
       slug = free_slug(open_slugs, if(origin.kind == :pr, do: branch, else: name))
-      {:ok, build_plan(user, project, machine, id, origin, slug, branch)}
+
+      {:ok,
+       %{build_plan(user, project, machine, id, origin, slug, branch) | visibility: visibility}}
+    end
+  end
+
+  defp visibility(value) when value in [:project, "project"], do: {:ok, :project}
+  defp visibility(value) when value in [:private, "private"], do: {:ok, :private}
+  defp visibility(_), do: {:error, {:unprocessable, "visibility", "Choose project or private."}}
+
+  defp visibility_layout(:private, layout) when layout != :dedicated,
+    do:
+      {:error,
+       {:conflict, "private_requires_dedicated",
+        "Private tracks need their own machine. This track shares the project machine."}}
+
+  defp visibility_layout(_, _), do: :ok
+
+  @doc "Only the creator can change a track's visibility."
+  def set_visibility(%User{} = user, track_id, value) do
+    with {:ok, %{track: track}} <- Access.track_access(user, track_id),
+         true <- Access.creator?(user, track),
+         {:ok, visibility} <- visibility(value),
+         :ok <- visibility_layout(visibility, track.sandbox_layout),
+         {:ok, updated} <- Store.set_visibility(track, visibility) do
+      # ownership: Access.track_access and the creator check admitted this visibility change.
+      Ravix.Previews.Store.revoke(track.id)
+      Ravix.Previews.Store.revoke_agent(track.id)
+      Ravix.Hub.publish(track.project_id, :people, track_id: track.id)
+      {:ok, updated.visibility}
+    else
+      false -> {:error, {:forbidden, "Only the track creator can change visibility."}}
+      error -> error
     end
   end
 
@@ -733,6 +770,7 @@ defmodule Ravix.Tracks do
       title: title,
       branch: branch,
       workdir: Ids.workdir_for(slug),
+      created_by: user.id,
       created_by_login: user.login,
       origin: origin,
       conversation: %Launch{
@@ -1245,6 +1283,20 @@ defmodule Ravix.Tracks do
     end
   end
 
+  @doc "Owner-only count of private tracks with no remaining participants; no track metadata."
+  def orphan_private_count(%User{} = user, project_id) do
+    with {:ok, _} <- Access.project_of(user, project_id) do
+      {:ok, Ravix.Tracks.Orphans.Store.count(project_id)}
+    end
+  end
+
+  @doc "Owner-only closure of orphaned private machines, returning only the number closed."
+  def close_orphaned_private(%User{} = user, project_id) do
+    with {:ok, _} <- Access.project_of(user, project_id) do
+      Ravix.Tracks.Orphans.Store.close(project_id)
+    end
+  end
+
   @doc "Read-only close warning, scoped to the selected track's disk."
   def close_info(%User{} = user, track_id) do
     with {:ok, %{track: track, project: project, role: role}} <-
@@ -1696,6 +1748,9 @@ defmodule Ravix.Tracks do
       last_active_at: last_active,
       turn_count: (live && live.turn_count) || 0,
       created_at: row.created_at,
+      created_by: row.created_by,
+      creator_revoked_at: row.creator_revoked_at,
+      visibility: row.visibility,
       created_by_login: row.created_by_login,
       people: Keyword.get(opts, :people, []),
       threads: Keyword.get(opts, :threads, []),

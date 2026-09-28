@@ -29,6 +29,18 @@ defmodule RavixWeb.ProjectSwitcherLiveTest do
       end
 
     [_, _, visible, hidden] = rows
+    creator = insert_user()
+
+    for project <- [owned, member] do
+      insert_track(
+        project: project,
+        visibility: :private,
+        sandbox_layout: :dedicated,
+        created_by: creator.id,
+        title: "Private omitted #{project.id}"
+      )
+    end
+
     insert_track_member(visible, user)
 
     client =
@@ -59,6 +71,7 @@ defmodule RavixWeb.ProjectSwitcherLiveTest do
       assert has_element?(view, "#project-switcher a[href='/p/#{project.id}'] .badge", "1")
     end
 
+    refute render(view) =~ "Private omitted"
     refute render(view) =~ foreign.name
     refute render(view) =~ hidden.title
     assert has_element?(view, ".yard-nav a[href='/inbox'] .badge", "3")
@@ -76,6 +89,7 @@ defmodule RavixWeb.ProjectSwitcherLiveTest do
     assert has_element?(view, ".workspace-mobile-nav a[href='/schedules']")
     render_patch(view, "/p/#{foreign.id}")
     assert_patch(view, "/home")
+    refute render(view) =~ "Private omitted"
     refute render(view) =~ foreign.name
     render_patch(view, "/p/#{shared.id}/t/#{hidden.id}")
     assert_patch(view, "/p/#{shared.id}")
@@ -144,6 +158,44 @@ defmodule RavixWeb.ProjectSwitcherLiveTest do
     Hub.publish(project.id, :turn)
     assert_receive {:reading, worker}
     Ravix.Repo.delete!(membership)
+    send(worker, :finish)
+    render_async(view, 5_000)
+    refute render(view) =~ removed.title
+    render_click(view, "dialog", %{name: "projects"})
+    assert has_element?(view, "#project-switcher a[href='/p/#{project.id}'] .badge", "1")
+  end
+
+  test "a late turn result cannot restore newly private tracks for a project member", %{
+    conn: conn
+  } do
+    user = insert_user()
+    project = insert_project()
+    kept = insert_track(project: project)
+    removed = insert_track(project: project)
+    insert_project_member(project, user)
+    insert_track_member(kept, user)
+    {:ok, view, _} = live(log_in_user(conn, user), "/p/#{project.id}")
+    render_async(view, 5_000)
+    parent = self()
+
+    expect(Tracks, :list, fn _, _, _ ->
+      send(parent, {:reading, self()})
+
+      receive do: (:finish ->
+                     {:ok,
+                      for(
+                        row <- [kept, removed],
+                        do: %{Tracks.present(row) | status: :ready, unread: true}
+                      )})
+    end)
+
+    Hub.publish(project.id, :turn)
+    assert_receive {:reading, worker}
+
+    removed
+    |> Ecto.Changeset.change(visibility: :private, sandbox_layout: :dedicated)
+    |> Ravix.Repo.update!()
+
     send(worker, :finish)
     render_async(view, 5_000)
     refute render(view) =~ removed.title

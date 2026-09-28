@@ -529,6 +529,15 @@ defmodule Ravix.PromptQueue.Store do
     publish_queue(track_id)
   end
 
+  @doc "Cancel a removed person's outstanding work on a track."
+  def cancel_user_track(track_id, user_id) do
+    Item
+    |> where([p], p.track_id == ^track_id and p.user_id == ^user_id and p.status != :sent)
+    |> Repo.update_all(set: [status: :cancelled, body: nil, payload: "", error: nil])
+
+    publish_queue(track_id)
+  end
+
   defp validate_request_id(id) when is_binary(id) do
     if Regex.match?(~r/^[a-zA-Z0-9-]{16,80}$/, id), do: :ok, else: request_id_required()
   end

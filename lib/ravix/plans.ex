@@ -60,9 +60,26 @@ defmodule Ravix.Plans do
   def get(user, id) do
     with {:ok, plan, project} <- access(user, id) do
       items = Store.items(plan.id)
-      items = Status.items(project, items)
+      items = Status.items(project, items) |> redact_items(user)
       {:ok, %{plan: plan, items: items, progress: Progress.summarize(items)}}
     end
+  end
+
+  @doc "Recheck assigned-track disclosure before applying a cached or async plan result."
+  def redact_items(items, user) do
+    Enum.map(items, fn item ->
+      if item.track_id && not match?({:ok, _}, Access.track_access(user, item.track_id)) do
+        Map.merge(item, %{
+          track_id: nil,
+          track_url: nil,
+          track_title: "a private track",
+          pull: nil,
+          private_track: true
+        })
+      else
+        Map.put_new(item, :private_track, false)
+      end
+    end)
   end
 
   @doc "No summary, sibling IDs, dependency IDs or other plan metadata crosses this door."

@@ -71,7 +71,7 @@ test('settings explicitly rebuilds when switching agents and the next track work
     await expect(settings.getByRole('button', { name: 'Switch and rebuild', exact: true })).toBeFocused();
     await settings.getByRole('button', { name: 'Switch and rebuild', exact: true }).click();
     const confirmation = settings.getByRole('group', { name: 'Confirm agent switch' });
-    await expect(confirmation).toContainText("This closes 1 open track and discards the machine's disk");
+    await expect(confirmation).toContainText("This closes 1 open track visible to you, plus any private tracks you cannot see, and discards the machine's disk");
     await expect(confirmation.getByRole('button', { name: 'Rebuild and switch' })).toBeFocused();
     await confirmation.getByRole('button', { name: 'Cancel', exact: true }).click();
     await expect(confirmation).toHaveCount(0);

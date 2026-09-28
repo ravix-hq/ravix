@@ -1198,7 +1198,11 @@ const VIEWER = { id: 1042, login: "mockuser", name: "Mock User", avatar_url: `${
  */
 const PEOPLE = [
   VIEWER,
-  ...(process.env.RAVIX_BROWSER_TEST === "1" ? [{ id: 9003, login: "threadruntime", name: "Thread Runtime", avatar_url: `${BASE}/ghweb/avatar.svg` }] : []),
+  ...(process.env.RAVIX_BROWSER_TEST === "1" ? [
+    { id: 9003, login: "threadruntime", name: "Thread Runtime", avatar_url: `${BASE}/ghweb/avatar.svg` },
+    { id: 9004, login: "privacycreator", name: "Privacy Creator", avatar_url: `${BASE}/ghweb/avatar.svg` },
+    { id: 9005, login: "privacyguest", name: "Privacy Guest", avatar_url: `${BASE}/ghweb/avatar.svg` },
+  ] : []),
   { id: 9001, login: "dana", name: "Dana Okonkwo", avatar_url: `${BASE}/ghweb/avatar.svg?dana` },
   { id: 9002, login: "eli", name: "Eli Fischer", avatar_url: `${BASE}/ghweb/avatar.svg?eli` },
 ];
@@ -1336,7 +1340,7 @@ function githubApi(req: Request, url: URL, body: Record<string, unknown>): Respo
     const login = decodeURIComponent(byLogin[1]!).toLowerCase();
     const known: Record<string, number> = { octocat: 583231, hubot: 5153, dana: 9001, eli: 9002 };
     if (login === VIEWER.login.toLowerCase()) return json(VIEWER);
-    const id = known[login];
+    const id = known[login] ?? PEOPLE.find(person => person.login.toLowerCase() === login)?.id;
     if (id === undefined) return json({ message: "Not Found" }, 404);
     return json({ id, login, name: null, avatar_url: `${BASE}/ghweb/avatar.svg` });
   }

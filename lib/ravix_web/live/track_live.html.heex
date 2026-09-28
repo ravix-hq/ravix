@@ -42,6 +42,7 @@
         {@track.title}
       </button>
       <strong :if={!owner_or_creator?(@current_user, @track)}>{@track.title}</strong>
+      <span :if={@track.visibility == :private}><.icon name="lock" /> Private</span>
       <.link
         :if={@assigned_plan.plan && @assigned_plan.items == []}
         navigate={@assigned_plan.plan.url}
@@ -738,7 +739,11 @@
       scope={:track}
       project={@project}
       subject_id={@track_id}
-      owner={@track.role == :owner}
+      track={@track}
+      owner={
+        (@track.visibility == :private && Ravix.Accounts.Access.creator?(@current_user, @track)) ||
+          (@track.role == :owner && @track.visibility == :project)
+      }
       current_user={@current_user}
       session_hash={@session_hash}
     />

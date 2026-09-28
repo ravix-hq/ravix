@@ -15,8 +15,9 @@ defmodule Ravix.People do
     transcript, files, diff, terminal, and the ability to prompt it. They
     do not see the project's other tracks and cannot open one.
 
-    **A project member** gets every track on that project, the ones open
-    now and the ones opened tomorrow, and may cut tracks of their own. A
+    **A project member** gets project-visible tracks, including future ones,
+    and may cut tracks of their own. Private tracks require creator or
+    track membership, even for the project owner. A
     project you were let into where you cannot start a line of work is only
     a bundle of track invitations under a grander name.
 
@@ -26,22 +27,17 @@ defmodule Ravix.People do
   for the machine, `project_access` for the work on it, `track_access` for
   one piece of the work.
 
-  **One person holds one grade of access to a project.** Inviting somebody
-  to the whole project deletes any track rows they held on it, and inviting
-  a project member to a single track is refused as the no-op it is. The
-  corollary is the surprising half and is said in the dialog: removing
-  somebody from a project takes away every track on it, including one they
-  were named on separately beforehand. The alternative is a narrower row
-  that survives invisibly, which is worse, because it is invisible at
-  exactly the moment somebody is trying to revoke access. `add_project_member/3`
-  is where that is enforced, so the three ways in cannot disagree about it.
+  Project membership replaces narrower seats on project-visible tracks.
+  Promotion preserves private track seats. Removal from the project revokes
+  every track seat, creator access, outstanding prompt and invitation issued
+  by that person in the project.
 
   ## What sharing actually costs
 
   It is worth being exact, because the invite dialogs say it and this is
   where the sentence is true or not.
 
-  A track is a shell on a machine that also holds every *other* track. The
+  A legacy shared track is a shell on a machine that also holds other shared tracks. The
   worktrees are separate directories, and the agent is told three times
   over to stay in its own, but that is a rule the agent follows, not a
   boundary the kernel enforces. Somebody who can prompt a track can ask the
@@ -50,8 +46,9 @@ defmodule Ravix.People do
   means those secrets.
 
   Which is the honest reason project-level sharing is not the leap it looks
-  like: a track invitation *already* costs most of what a project invitation
-  costs, because they run on one box. What the wider one adds is the
+  like on legacy machines: a shared-track invitation already costs most of what a project
+  invitation costs, because they run on one box. Private tracks require their
+  own dedicated machine. What the wider invitation adds is the
   ability to read the other transcripts and to open tracks: real, and worth
   a separate act by the owner, but not a different order of trust.
 
@@ -193,15 +190,9 @@ defmodule Ravix.People do
   def add(%User{} = user, track_id, login) do
     with {:ok, %{track: track, project: project, role: role}} <-
            Access.track_access(user, track_id),
-         :ok <- Access.require_owner(role, "invite people to a track"),
+         :ok <- Access.require_track_manager(role, user, track, "invite people to a track"),
          {:ok, found} <- resolve_login(login),
-         :ok <-
-           refuse_owner(
-             found,
-             project,
-             "That is the owner of this project. They are already in every track of it."
-           ),
-         :ok <- refuse_wider_grade(found, project) do
+         :ok <- refuse_track_grade(found, project, track) do
       case found do
         %{user: %User{} = member} ->
           Store.add_member(track.id, member.id, user.id)
@@ -243,7 +234,8 @@ defmodule Ravix.People do
       # than removed: there is no membership to delete, only a promise to
       # withdraw. Owner-only, because a pending person has no session to ask
       # with.
-      if role == :owner and Store.remove_invite_by_login(track.id, wanted) do
+      if Access.require_track_manager(role, user, track, "remove invitations") == :ok and
+           Store.remove_invite_by_login(track.id, wanted) do
         Ravix.Hub.publish(project.id, :people, track_id: track.id)
         {:ok, Store.people_of(track.id, project.user_id, project.id)}
       else
@@ -254,8 +246,8 @@ defmodule Ravix.People do
 
   defp remove_from_track(user, track, project, role, wanted) do
     with {:ok, target} <- find_person(wanted),
-         :ok <- may_remove(role, user, target),
-         :ok <- refuse_project_member(project, user, target) do
+         :ok <- may_remove_track(role, user, target, track),
+         :ok <- refuse_track_project_member(project, user, target, track) do
       # `remove_member/2` tells the hub; saying it again here would only make
       # every page on the project re-read twice.
       Store.remove_member(track.id, target.id)
@@ -274,6 +266,24 @@ defmodule Ravix.People do
   # machine" would be the most surprising thing either dialog could do, so
   # it is named and refused, and the sentence says where the control
   # actually is.
+  defp may_remove_track(role, user, target, track) do
+    cond do
+      user.id == target.id ->
+        :ok
+
+      track.visibility == :private ->
+        Access.require_track_manager(role, user, track, "remove people")
+
+      true ->
+        may_remove(role, user, target)
+    end
+  end
+
+  defp refuse_track_project_member(_project, _user, _target, %{visibility: :private}), do: :ok
+
+  defp refuse_track_project_member(project, user, target, _track),
+    do: refuse_project_member(project, user, target)
+
   defp refuse_project_member(project, user, target) do
     if Store.project_member?(project.id, target.id) do
       message =
@@ -345,11 +355,9 @@ defmodule Ravix.People do
   @doc """
   The owner removing somebody from a project, or somebody leaving.
 
-  This gives up **every track on the project**, in one go and including
-  any the person was named on individually before they were let into the
-  whole thing; those rows were deleted when they were promoted. It is a
-  bigger door than leaving one track, which is why the dialog asks twice
-  and says so in the sentence above the button.
+  This gives up project-visible tracks, including invitations superseded
+  by promotion. Private track memberships and creator access are revoked too, together with
+  outstanding work and invitations issued by the removed person.
 
   Returns the project's people, or `{:ok, :left}` when the caller has just
   removed their own access.
@@ -458,6 +466,13 @@ defmodule Ravix.People do
   # no-op that the list cannot show and that `add_project_member/3` would
   # delete on the next promotion anyway. Refused rather than silently
   # ignored, because the owner is entitled to know their click did nothing.
+  defp refuse_track_grade(_found, _project, %{visibility: :private}), do: :ok
+
+  defp refuse_track_grade(found, project, _track) do
+    with :ok <- refuse_owner(found, project, "That is the owner of this project."),
+         do: refuse_wider_grade(found, project)
+  end
+
   defp refuse_wider_grade(found, %Project{} = project) do
     cond do
       match?(%User{}, found.user) and Store.project_member?(project.id, found.user.id) ->
@@ -501,7 +516,7 @@ defmodule Ravix.People do
   @spec link(User.t(), String.t()) :: {:ok, invite_link() | nil} | {:error, reason()}
   def link(%User{} = user, track_id) do
     with {:ok, %{track: track, role: role}} <- Access.track_access(user, track_id),
-         :ok <- Access.require_owner(role, "see this track's invite link") do
+         :ok <- Access.require_track_manager(role, user, track, "see this track's invite link") do
       # The URL is deliberately absent. Only the hash is stored, so it
       # genuinely cannot be shown again, which is worth being honest about
       # rather than implying it was lost.
@@ -521,7 +536,7 @@ defmodule Ravix.People do
   @spec mint_link(User.t(), String.t()) :: {:ok, invite_link()} | {:error, reason()}
   def mint_link(%User{} = user, track_id) do
     with {:ok, %{track: track, role: role}} <- Access.track_access(user, track_id),
-         :ok <- Access.require_owner(role, "make an invite link for a track") do
+         :ok <- Access.require_track_manager(role, user, track, "make an invite link for a track") do
       token = Ravix.Crypto.random_token()
       Store.put_link(track.id, Ravix.Crypto.sha256(token), user.id, @link_ttl_ms)
       {:ok, minted(Store.link_of(track.id), token)}
@@ -539,7 +554,7 @@ defmodule Ravix.People do
   @spec drop_link(User.t(), String.t()) :: :ok | {:error, reason()}
   def drop_link(%User{} = user, track_id) do
     with {:ok, %{track: track, role: role}} <- Access.track_access(user, track_id),
-         :ok <- Access.require_owner(role, "revoke this track's invite link") do
+         :ok <- Access.require_track_manager(role, user, track, "revoke this track's invite link") do
       Store.drop_link(track.id)
     end
   end
@@ -698,8 +713,9 @@ defmodule Ravix.People do
         # Somebody already in the whole project needs no row and gets none:
         # a track membership written here would outlive their project
         # membership and quietly leave them one branch after being removed.
-        if project.user_id != user_id and not Store.project_member?(project.id, user_id),
-          do: Store.add_member(track.id, user_id, "link")
+        if track.visibility == :private or
+             (project.user_id != user_id and not Store.project_member?(project.id, user_id)),
+           do: Store.add_member(track.id, user_id, "link")
 
         Ravix.Hub.publish(project.id, :people, track_id: track.id)
         {:ok, "/p/#{project.id}/t/#{track.id}"}

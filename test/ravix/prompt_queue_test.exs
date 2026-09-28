@@ -468,6 +468,27 @@ defmodule Ravix.PromptQueueTest do
     assert [%{"prompt" => "keep me"}] = posted(client)
   end
 
+  test "delivery rechecks privacy for a queued project owner's prompt", f do
+    creator = insert_user()
+    insert_project_member(f.project, creator)
+
+    Repo.update!(
+      Ecto.Changeset.change(f.track,
+        created_by: creator.id,
+        sandbox_layout: :dedicated,
+        sandbox_state: :ready,
+        sandbox_id: "privacy-machine"
+      )
+    )
+
+    fountain_hooks(fn -> "idle" end, fn -> :ok end)
+    {:ok, %Item{id: id}} = send_prompt(f.track, f.owner, "queued before privacy")
+    assert {:ok, :private} = Tracks.set_visibility(creator, f.track.id, "private")
+    Server.tick(f.server)
+    assert hooked_posts() == []
+    assert status_of(id) == :cancelled
+  end
+
   test "revoked membership and closed tracks cannot dispatch saved work", f do
     fountain_hooks(fn -> "idle" end, fn -> :ok end)
     insert_track_member(f.track, f.guest)

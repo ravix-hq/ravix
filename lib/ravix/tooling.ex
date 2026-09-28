@@ -216,7 +216,8 @@ defmodule Ravix.Tooling do
         :branch,
         :workdir,
         :status,
-        :created_by_login
+        :created_by_login,
+        :visibility
       ])
       # Fountain's conversation ids stay on this side, as they do for the track.
       |> Map.put(:threads, Enum.map(v.threads, &Map.take(&1, [:id, :title, :default, :status])))

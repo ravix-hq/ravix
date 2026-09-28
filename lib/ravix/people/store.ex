@@ -124,10 +124,16 @@ defmodule Ravix.People.Store do
   @doc "The open tracks this person was invited to, across every project."
   @spec member_tracks(String.t()) :: [Track.t()]
   def member_tracks(user_id) do
+    # ownership: no door before this membership query; it establishes Access visibility.
     Repo.all(
-      from(m in TrackMember,
-        join: t in assoc(m, :track),
-        where: m.user_id == ^user_id and is_nil(t.closed_at),
+      from(t in Track,
+        left_join: m in TrackMember,
+        on: m.track_id == t.id and m.user_id == ^user_id,
+        where:
+          (not is_nil(m.user_id) or
+             (t.visibility == :private and t.created_by == ^user_id and
+                is_nil(t.creator_revoked_at))) and
+            is_nil(t.closed_at),
         order_by: t.created_at,
         select: t
       )
@@ -145,10 +151,17 @@ defmodule Ravix.People.Store do
   """
   @spec track_member_of?(String.t(), String.t()) :: boolean()
   def track_member_of?(project_id, user_id) do
+    # ownership: no door before this query, used by Access.access_of to establish membership.
     Repo.exists?(
-      from(m in TrackMember,
-        join: t in assoc(m, :track),
-        where: m.user_id == ^user_id and t.project_id == ^project_id and is_nil(t.closed_at)
+      from(t in Track,
+        left_join: m in TrackMember,
+        on: m.track_id == t.id and m.user_id == ^user_id,
+        where:
+          (not is_nil(m.user_id) or
+             (t.visibility == :private and t.created_by == ^user_id and
+                is_nil(t.creator_revoked_at))) and
+            t.project_id == ^project_id and
+            is_nil(t.closed_at)
       )
     )
   end
@@ -261,7 +274,7 @@ defmodule Ravix.People.Store do
           # ownership: no door yet -- this is sign-in, and the invitation row
           # naming this track is the only claim the person has.
           %Track{closed_at: nil} = track <- [Tracks.get_track(track_id)],
-          not project_member?(track.project_id, user_id) do
+          track.visibility == :private or not project_member?(track.project_id, user_id) do
         add_member(track.id, user_id, "invite")
         track
       end
@@ -302,22 +315,8 @@ defmodule Ravix.People.Store do
   # ── who else is in a project ───────────────────────────────────
 
   @doc """
-  Somebody into the whole project, replacing whatever narrower rows they had.
-
-  The subsumption is the point, and it is here rather than in the route so
-  that the three ways in (invited by name, arrived on a link, claimed on
-  sign-in) cannot disagree about it. **One person holds one grade of access
-  to a project.** Two rows granting the same person the same track by
-  different routes is a state nothing on screen can render honestly: the
-  people list would have to show them twice or pick one, and removing them
-  from the project would leave behind access that neither list explained.
-
-  So this is a promotion, not an addition, and the corollary is worth
-  saying plainly because it is the surprising half: **taking somebody off a
-  project takes away every track on it**, including one they were named on
-  separately before they were promoted. The alternative, a hidden narrower
-  row that survives, is worse, because it is invisible at exactly the
-  moment somebody is trying to revoke access.
+  Add project membership and replace redundant seats on project-visible tracks.
+  Promotion preserves private invitations. Project removal revokes all seats.
   """
   @spec add_project_member(String.t(), String.t(), String.t()) :: :ok
   def add_project_member(project_id, user_id, invited_by) do
@@ -339,29 +338,52 @@ defmodule Ravix.People.Store do
   end
 
   @doc """
-  Take `user_id` off a project: the row, and every preview grant on every
-  open track of it.
+  Remove every form of access and pending work for this person in the project.
 
   As with `remove_member/2`, the hub is told from here: this is where the
   access goes, so this is what announces it.
   """
   @spec remove_project_member(String.t(), String.t()) :: :ok
   def remove_project_member(project_id, user_id) do
-    # ownership: `Ravix.People.remove_project/3` admitted the caller through
-    # `Access.project_access/2`. Taking somebody off a project takes away every
-    # track on it, so the open ones have to be named to revoke their previews;
-    # `open_tracks/1` is the projects context's own read of that list.
-    tracks = Projects.open_tracks(project_id)
+    # ownership: Access.project_access and the removal guard admitted the owner or departing member.
+    # Lock the same track rows as queue submission and orphan cleanup.
+    Repo.transaction(fn ->
+      tracks =
+        Repo.all(
+          from t in Track, where: t.project_id == ^project_id, order_by: t.id, lock: "FOR UPDATE"
+        )
 
-    # ownership: the same `Access.project_access/2` door. The seat being
-    # deleted below is what let this person onto every one of those tracks,
-    # so their grants on each go with it.
-    Enum.each(tracks, &Ravix.Previews.Store.revoke(&1.id, user_id))
-    Enum.each(tracks, &Ravix.Previews.Store.revoke_agent(&1.id, user_id))
+      ids = Enum.map(tracks, & &1.id)
+      # ownership: Access.project_access admitted removal of this project participant.
+      user = Repo.get!(User, user_id)
 
-    Repo.delete_all(
-      from(m in ProjectMember, where: m.project_id == ^project_id and m.user_id == ^user_id)
-    )
+      Repo.delete_all(
+        from m in ProjectMember, where: m.project_id == ^project_id and m.user_id == ^user_id
+      )
+
+      Repo.delete_all(from m in TrackMember, where: m.track_id in ^ids and m.user_id == ^user_id)
+
+      Repo.delete_all(
+        from i in TrackInvite,
+          where:
+            i.track_id in ^ids and (i.invited_by == ^user_id or i.github_id == ^user.github_id)
+      )
+
+      Repo.delete_all(from l in TrackLink, where: l.track_id in ^ids and l.created_by == ^user_id)
+
+      # ownership: Access.project_access admitted revocation of this creator in the project.
+      Repo.update_all(
+        from(t in Track, where: t.project_id == ^project_id and t.created_by == ^user_id),
+        set: [creator_revoked_at: DateTime.utc_now()]
+      )
+
+      # ownership: Access.project_access and the removal guard revoke sessions and queued work.
+      Enum.each(ids, fn id ->
+        Ravix.Previews.Store.revoke(id, user_id)
+        Ravix.Previews.Store.revoke_agent(id, user_id)
+        Ravix.PromptQueue.Store.cancel_user_track(id, user_id)
+      end)
+    end)
 
     Ravix.Hub.publish(project_id, :people)
     :ok
@@ -392,11 +414,11 @@ defmodule Ravix.People.Store do
   @doc """
   The same promotion, for somebody who has not arrived yet.
 
-  A pending track invitation on this project is dropped with it, for the
+  A pending invitation to a project-visible track is dropped with it, for the
   reason the memberships are: it would grant nothing on the sign-in that
   honoured them both, and until then it sits in the track's people list as
   a row whose remove control cancels an invitation that was already
-  superseded.
+  superseded. Private track invitations remain independent and are preserved.
   """
   @spec add_project_invite(%{
           project_id: String.t(),
@@ -564,7 +586,11 @@ defmodule Ravix.People.Store do
   defp live?(expires_at), do: DateTime.compare(expires_at, DateTime.utc_now()) == :gt
 
   defp track_ids_of(project_id),
-    do: from(t in Track, where: t.project_id == ^project_id, select: t.id)
+    do:
+      from(t in Track,
+        where: t.project_id == ^project_id and t.visibility == :project,
+        select: t.id
+      )
 
   # ── what you have not read ─────────────────────────────────────
 
@@ -668,12 +694,15 @@ defmodule Ravix.People.Store do
   def people_of(track_id, owner_id, project_id) do
     wide = project_members_of(project_id)
 
-    assemble(
-      shared_people(owner_id, wide),
-      MapSet.new(wide, & &1.id),
-      members_of(track_id),
-      invites_of(track_id)
-    )
+    people =
+      assemble(
+        shared_people(owner_id, wide),
+        MapSet.new(wide, & &1.id),
+        members_of(track_id),
+        invites_of(track_id)
+      )
+
+    private_people(track_id, people)
   end
 
   @doc """
@@ -700,15 +729,46 @@ defmodule Ravix.People.Store do
     members = members_by_track(track_ids)
     invites = invites_by_track(track_ids)
 
+    # ownership: Access.track_access or Access.visible_tracks admitted these track IDs.
+    tracks = Map.new(Tracks.get_tracks(track_ids), &{&1.id, &1})
+
     Map.new(track_ids, fn track_id ->
       {track_id,
-       assemble(
-         shared,
-         seen,
-         Map.get(members, track_id, []),
-         Map.get(invites, track_id, [])
+       private_people(
+         tracks[track_id],
+         assemble(
+           shared,
+           seen,
+           Map.get(members, track_id, []),
+           Map.get(invites, track_id, [])
+         )
        )}
     end)
+  end
+
+  # ownership: callers passed Access.track_access or filtered their track list.
+  defp private_people(track_id, people) do
+    track = if is_binary(track_id), do: Tracks.get_track(track_id), else: track_id
+
+    case track do
+      %Track{id: id, visibility: :private, created_by: creator, creator_revoked_at: revoked} ->
+        members = members_of(id)
+
+        creator_people =
+          if creator && is_nil(revoked),
+            do: Enum.map(owner_entry(creator), &%{&1 | via: :creator}),
+            else: []
+
+        assemble(
+          creator_people,
+          MapSet.new(if creator_people == [], do: [], else: [creator]),
+          members,
+          invites_of(id)
+        )
+
+      _ ->
+        people
+    end
   end
 
   # The half of the list that is the same for every track on a project.

@@ -263,7 +263,7 @@ defmodule Ravix.ThreadRuntimeTest do
     assert RuntimeAgents.ids(ctx.project) == [ctx.project.agent_id]
   end
 
-  test "the first track selects its home runtime and persists its first thread", ctx do
+  test "a new private track gets its own machine and persists its first thread", ctx do
     stub(Ravix.Config, :dedicated_opens_enabled?, fn _ -> true end)
     stub(Ravix.Projects, :prepare_machine, fn _, _ -> :ok end)
 
@@ -274,12 +274,15 @@ defmodule Ravix.ThreadRuntimeTest do
     assert {:ok, view} =
              Tracks.open(ctx.owner, ctx.project.id, %{
                title: "chosen-home",
+               visibility: "private",
                runtime: "codex",
                model: "openai/gpt-5.6"
              })
 
     assert Store.thread(view.id).runtime == "codex"
     assert Store.thread(view.id).model == "openai/gpt-5.6"
+    assert view.visibility == :private
+    assert Store.get_track(view.id).visibility == :private
     assert Store.get_track(view.id).last_runtime == "codex"
     assert Store.get_track(view.id).sandbox_layout == :dedicated
 

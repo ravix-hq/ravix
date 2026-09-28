@@ -61,6 +61,7 @@ defmodule Ravix.Tooling.Catalog do
         %{
           "project_id" => string(),
           "branch_name" => %{"type" => "string"},
+          "visibility" => %{"type" => "string", "enum" => ["project", "private"]},
           "title" => %{"type" => "string"},
           "origin" => origin(),
           "request_id" => string(100)

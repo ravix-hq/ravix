@@ -32,6 +32,10 @@ defmodule Ravix.Tracks.Store do
     |> Ravix.Repo.insert!(on_conflict: :nothing)
   end
 
+  def set_visibility(track, visibility) do
+    track |> Track.changeset(%{visibility: visibility}) |> Repo.update()
+  end
+
   @doc "A track row. The caller brings the id decided in the opening plan."
   @spec create_track(map()) :: {:ok, Track.t()} | {:error, Ecto.Changeset.t()}
   def create_track(attrs), do: %Track{} |> Track.changeset(attrs) |> Repo.insert()
@@ -161,6 +165,8 @@ defmodule Ravix.Tracks.Store do
   def get_track(id) when is_binary(id), do: Repo.get(Track, id)
   def get_track(_id), do: nil
 
+  def get_tracks(ids), do: Repo.all(from t in Track, where: t.id in ^ids)
+
   @doc "The track a conversation belongs to."
   @spec track_by_conversation(String.t()) :: Track.t() | nil
   def track_by_conversation(conversation_id) when is_binary(conversation_id),
@@ -196,9 +202,14 @@ defmodule Ravix.Tracks.Store do
   def member_tracks_of(user_id, project_id) do
     Repo.all(
       from(t in Track,
-        join: m in TrackMember,
-        on: m.track_id == t.id,
-        where: m.user_id == ^user_id and t.project_id == ^project_id and is_nil(t.closed_at),
+        left_join: m in TrackMember,
+        on: m.track_id == t.id and m.user_id == ^user_id,
+        where:
+          (not is_nil(m.user_id) or
+             (t.visibility == :private and t.created_by == ^user_id and
+                is_nil(t.creator_revoked_at))) and
+            t.project_id == ^project_id and
+            is_nil(t.closed_at),
         order_by: t.created_at
       )
     )

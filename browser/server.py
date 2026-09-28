@@ -37,7 +37,7 @@ env = dict(os.environ, MIX_ENV="prod", PORT=str(ports[0]), PHX_SERVER="true",
            MOCK_PORT=str(ports[1]), MOCK_SPRITES_PORT=str(ports[2]),
            RAVIX_SECRET="browser-test-only-secret-never-used-outside-this-process",
            RAVIX_BROWSER_TEST="1", RAVIX_THREADS_ENABLED="true",
-           RAVIX_DEDICATED_OPEN_USER_IDS="00000000-0000-4000-8000-000000009003")
+           RAVIX_DEDICATED_OPEN_USER_IDS="00000000-0000-4000-8000-000000009003,00000000-0000-4000-8000-000000009004")
 # Only a generated database name is ever created/dropped. Credentials can differ locally.
 base = os.environ.get("BROWSER_DATABASE_SERVER", "postgres://postgres:postgres@localhost:5432")
 if "/" in base.split("://", 1)[-1]:
@@ -63,12 +63,14 @@ with tempfile.TemporaryDirectory(prefix="ravix-browser-") as tmp:
         subprocess.run(["mix", "ecto.create"], env=env, check=True)
         created = True
         subprocess.run(["mix", "ecto.migrate"], env=env, check=True)
-        # Only this mock identity joins the guest-runtime cohort. Seed its stable
-        # app ID in our generated DB; authentication still goes through GitHub.
+        # These mock identities exercise dedicated threads and private tracks.
+        # Seed stable app IDs; authentication still goes through GitHub.
         subprocess.run(["psql", env["DATABASE_URL"], "-X", "-v", "ON_ERROR_STOP=1", "-c",
                         "INSERT INTO ravix.users (id, github_id, login, created_at, last_seen_at) "
                         "VALUES ('00000000-0000-4000-8000-000000009003', '9003', "
-                        "'threadruntime', NOW(), NOW())"], check=True)
+                        "'threadruntime', NOW(), NOW()), "
+                        "('00000000-0000-4000-8000-000000009004', '9004', "
+                        "'privacycreator', NOW(), NOW())"], check=True)
         app = start(["python3", "scripts/dev-mock.py"], env)
         while app.poll() is None and mock.poll() is None:
             time.sleep(0.2)

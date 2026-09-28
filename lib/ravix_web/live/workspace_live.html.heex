@@ -320,6 +320,7 @@
               <%!-- Without the `ravix/` namespace every default title shares:
               the full title is the tab's name and its tooltip. --%>
               <span class="track-title">{tab_label(track)}</span>
+              <span :if={track.visibility == :private}><.icon name="lock" /> Private</span>
             </.link>
           </div>
           <button
@@ -573,7 +574,8 @@
                     datetime={DateTime.to_iso8601(track.last_active_at)}
                   >{Calendar.strftime(track.last_active_at, "%b %-d, %H:%M UTC")}</time>
                 </div>
-                <strong>{track.title}</strong><code class="dimmer">{track.branch}</code>
+                <strong>{track.title}</strong>
+                <span :if={track.visibility == :private}><.icon name="lock" /> Private</span><code class="dimmer">{track.branch}</code>
                 <span class="dim">
                   <%= cond do %>
                     <% track.status == :setup_failed -> %>
@@ -595,9 +597,15 @@
       id="project-switcher"
       title="Projects"
       on_close="dismiss-switcher"
-      initial_focus="#project-query"
+      focus_on_mount={false}
     >
-      <form id="project-switcher-search" phx-change="search-projects" phx-submit="search-projects">
+      <form
+        id="project-switcher-search"
+        phx-hook="ProjectFormFocus"
+        data-focus="#project-query"
+        phx-change="search-projects"
+        phx-submit="search-projects"
+      >
         <.input
           name="q"
           id="project-query"
@@ -656,12 +664,14 @@
             </p>
             <section
               :for={project <- projects}
+              id={"switcher-project-#{project.id}"}
               class={["workspace-project", @project && @project.id == project.id && "current"]}
               draggable={to_string(@sections != [])}
               data-project-id={project.id}
             >
               <div class="workspace-project-row">
                 <.link
+                  id={"switcher-project-link-#{project.id}"}
                   patch={"/p/#{project.id}"}
                   class={[
                     "workspace-project-name",
@@ -825,6 +835,19 @@
         phx-submit="create-track"
         phx-change="edit"
       >
+        <.input
+          field={f[:visibility]}
+          type="select"
+          label="Sharing"
+          options={
+            [{"Everyone in this project", "project"}] ++
+              if(Ravix.Config.dedicated_opens_enabled?(@current_user),
+                do: [{"Only people I invite", "private"}],
+                else: []
+              )
+          }
+          value={f[:visibility].value || "project"}
+        />
         <RavixWeb.Live.RuntimePicker.fields
           :if={@track_options}
           options={@track_options}

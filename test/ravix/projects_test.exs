@@ -454,7 +454,7 @@ defmodule Ravix.ProjectsTest do
       assert length(queries) == 5
       assert Enum.count(queries, &(&1 == "projects")) == 2
       assert Enum.count(queries, &(&1 == "project_members")) == 1
-      assert Enum.count(queries, &(&1 == "track_members")) == 1
+      assert Enum.count(queries, &(&1 == "tracks")) == 1
       assert Enum.count(queries, &(&1 == "users")) == 1
     end
 

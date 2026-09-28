@@ -3305,6 +3305,70 @@ defmodule RavixWeb.TrackLiveTest do
     ctx.view |> element("button[phx-click=queue]", "Cancel") |> render_click()
   end
 
+  test "a private invitee who owns the project sees no creator management controls", ctx do
+    creator = insert_user()
+    insert_project_member(ctx.project, creator)
+    insert_track_member(ctx.track, ctx.user)
+
+    Repo.update!(
+      Ecto.Changeset.change(ctx.track,
+        created_by: creator.id,
+        visibility: :private,
+        sandbox_layout: :dedicated,
+        sandbox_state: :ready
+      )
+    )
+
+    send(ctx.view.pid, {:hub, Event.new(:people, ctx.project.id, track_id: ctx.track.id)})
+    settle(ctx.view)
+    refute has_element?(ctx.view, "[phx-value-name=rename]")
+    refute has_element?(ctx.view, "[phx-value-name=close]")
+    refute has_element?(ctx.view, "#rebuild-track-machine")
+    render_click(ctx.view, "dialog", %{name: "people"})
+    refute has_element?(ctx.view, "#track-visibility-form")
+    refute has_element?(ctx.view, "[phx-submit=invite-person]")
+  end
+
+  test "shared track sharing explains and refuses private visibility", ctx do
+    Repo.update!(Ecto.Changeset.change(ctx.track, created_by: ctx.user.id))
+    send(ctx.view.pid, {:hub, Event.new(:people, ctx.project.id, track_id: ctx.track.id)})
+    settle(ctx.view)
+    render_click(ctx.view, "dialog", %{name: "people"})
+    refute has_element?(ctx.view, "#track-visibility-form option[value='private']")
+    message = "Private tracks need their own machine. This track shares the project machine."
+    assert has_element?(ctx.view, "#track-visibility-form", message)
+    ctx.view |> element("#track-visibility-form") |> render_change(%{"visibility" => "private"})
+    assert toasted(ctx) =~ message
+    assert Repo.get!(Track, ctx.track.id).visibility == :project
+  end
+
+  test "creator changes sharing in People and a revoked session cannot change it", ctx do
+    Repo.update!(
+      Ecto.Changeset.change(ctx.track, created_by: ctx.user.id, sandbox_layout: :dedicated)
+    )
+
+    send(ctx.view.pid, {:hub, Event.new(:people, ctx.project.id, track_id: ctx.track.id)})
+    settle(ctx.view)
+    render_click(ctx.view, "dialog", %{name: "people"})
+    assert has_element?(ctx.view, "#track-visibility-form")
+    ctx.view |> form("#track-visibility-form", visibility: "private") |> render_change()
+    assert Repo.get!(Track, ctx.track.id).visibility == :private
+    settle(ctx.view)
+    assert has_element?(ctx.view, ".track-crumbs", "Private")
+    token = Plug.Conn.get_session(ctx.conn, :session_token)
+    session = Repo.get_by!(Session, token_hash: Ravix.Crypto.sha256(token))
+    Repo.delete!(session)
+
+    :sys.replace_state(ctx.view.pid, fn state ->
+      update_in(state.socket.assigns.session_guard, &%{&1 | stale?: true})
+    end)
+
+    assert {:error, {:redirect, %{to: "/login"}}} =
+             ctx.view |> form("#track-visibility-form", visibility: "project") |> render_change()
+
+    assert Repo.get!(Track, ctx.track.id).visibility == :private
+  end
+
   test "track invites can be minted, revoked, and members removed", ctx do
     member = insert_user()
     People.Store.add_member(ctx.track.id, member.id, ctx.user.id)

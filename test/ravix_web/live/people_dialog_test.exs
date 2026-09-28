@@ -84,12 +84,14 @@ defmodule RavixWeb.Live.PeopleDialogTest do
   end
 
   describe "the track's dialog and the project's differ where they should" do
-    test "each says what it grants, and only the project's grants every track", ctx do
+    test "each says what it grants and distinguishes private tracks", ctx do
       {:ok, project_view, _} = live(log_in_user(ctx.conn, ctx.owner), "/p/#{ctx.project.id}")
       project_html = project_view |> open_people() |> render()
 
       assert project_html =~ "Project people"
-      assert project_html =~ "Members can create and work in every track in this project."
+
+      assert project_html =~
+               "Members can create tracks and work in tracks shared with this project. Private tracks require an invitation."
 
       track_html =
         ctx.conn |> track_page(ctx.owner, ctx.project, ctx.track) |> open_people() |> render()

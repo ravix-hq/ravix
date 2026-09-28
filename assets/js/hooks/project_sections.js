@@ -42,6 +42,19 @@ export const ProjectSections = {
     this.el.addEventListener('drop', this.onDrop)
     this.el.addEventListener('dragend', this.onEnd)
   },
+  beforeUpdate() {
+    const active = document.activeElement
+    this.focusedLink = this.el.contains(active) && active.matches('a[id]') ? active.id : null
+  },
+  updated() {
+    // Moving a keyed row can still blur its link. Restore only lost focus,
+    // never a control the person chose while the search response arrived.
+    const link = this.focusedLink && document.getElementById(this.focusedLink)
+    this.focusedLink = null
+    if (document.activeElement === document.body && link && this.el.contains(link)) {
+      link.focus({preventScroll: true})
+    }
+  },
   // Only a project dragged from this switcher has a section to land in.
   target(event) {
     if (!this.dragged) return null

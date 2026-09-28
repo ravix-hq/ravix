@@ -387,7 +387,8 @@ defmodule RavixWeb.WorkspaceLive do
     end
   end
 
-  def handle_event("search", %{"q" => q}, socket), do: {:noreply, assign(socket, query: q)}
+  def handle_event("search", %{"q" => q}, socket),
+    do: {:noreply, socket |> recheck_rail() |> assign(query: q)}
 
   def handle_event("choose-project-agent", %{"agent" => agent}, socket),
     do: {:noreply, NewProject.choose(socket, agent)}
@@ -502,6 +503,7 @@ defmodule RavixWeb.WorkspaceLive do
 
     attrs = %{
       title: params["title"],
+      visibility: params["visibility"] || "project",
       origin: origin,
       runtime: params["runtime"],
       model: params["model"]
@@ -1092,11 +1094,9 @@ defmodule RavixWeb.WorkspaceLive do
     |> announce(tracks)
   end
 
-  defp accessible_rows(user, %{access: :tracks}, rows) do
-    Enum.filter(rows, &match?({:ok, _}, Access.track_access(user, &1.id)))
+  defp accessible_rows(user, project, rows) do
+    Access.visible_tracks(user.id, rows, project)
   end
-
-  defp accessible_rows(_user, _project, rows), do: rows
 
   # Use the scoped rail already held by the workspace, including after a
   # background reload or rename, so the browser tab follows the visible page.
@@ -1218,7 +1218,8 @@ defmodule RavixWeb.WorkspaceLive do
 
   defp open_dialog(socket, :sections), do: assign(socket, dialog: :sections)
 
-  defp open_dialog(socket, :search), do: assign(socket, dialog: :search, query: "")
+  defp open_dialog(socket, :search),
+    do: socket |> recheck_rail() |> assign(dialog: :search, query: "")
 
   # The settings dialog loads and holds its own four forms, so opening it is
   # only opening it.
@@ -1336,6 +1337,7 @@ defmodule RavixWeb.WorkspaceLive do
         class="workspace-track"
       >
         {track.title}
+        <span :if={track.visibility == :private}><.icon name="lock" /> Private</span>
       </.link>
     </section>
     """
