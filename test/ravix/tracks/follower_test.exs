@@ -152,9 +152,11 @@ defmodule Ravix.Tracks.FollowerTest do
       assert {:ok, _follower} = subscribe(ctx, client: client)
       track_id = ctx.track_id
 
+      # Stream startup and both metadata reads share the fake transport with
+      # other async suites; this is a delivery assertion, not a latency bound.
       assert_receive {:transcript, ^track_id,
                       %Event{id: 5, prompt: "do the thing", image_count: 2}},
-                     1_000
+                     5_000
 
       assert_receive {:transcript, ^track_id, %Event{id: 6, prompt: nil}}, 1_000
 
