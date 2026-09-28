@@ -36,6 +36,81 @@ defmodule Ravix.Tracks.Store do
     track |> Track.changeset(%{visibility: visibility}) |> Repo.update()
   end
 
+  def transcript_runtime(%Thread{runtime: runtime}) when is_binary(runtime), do: runtime
+
+  def transcript_runtime(%Thread{track_id: id}) do
+    # ownership: no door; reads runtime for an authorized follower or an explicit operator backfill.
+    Repo.one(
+      from t in Track,
+        join: p in Ravix.Projects.Project,
+        on: p.id == t.project_id,
+        where: t.id == ^id,
+        select: p.runtime
+    )
+  end
+
+  @doc "Corrections and completion markers for the authorized thread's conversations."
+  def turn_classifications(conversation_ids) do
+    rows =
+      Repo.all(
+        from f in Ravix.Tracks.TurnFailure,
+          where: f.conversation_id in ^conversation_ids and f.stage in ["turn", "classification"]
+      )
+
+    failures =
+      rows
+      |> Enum.filter(&(&1.stage == "turn" and &1.state == "failed"))
+      |> Map.new(&{&1.turn_id, %{code: &1.code, reason: &1.reason}})
+
+    %{failures: failures, classified: MapSet.new(rows, &{&1.conversation_id, &1.turn_id})}
+  end
+
+  def turn_failure(conversation_id, turn_id),
+    do:
+      Repo.get_by(Ravix.Tracks.TurnFailure,
+        conversation_id: conversation_id,
+        turn_id: turn_id,
+        stage: "turn"
+      )
+
+  @doc "Serialize settlement across followers/restarts, including successful classifications."
+  def classify_turn_once(conversation_id, turn_id, fun) do
+    Repo.transaction(fn ->
+      lock = conversation_id <> ":" <> turn_id
+      Repo.query!("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [lock])
+      key = [conversation_id: conversation_id, turn_id: turn_id, stage: "classification"]
+
+      unless Repo.get_by(Ravix.Tracks.TurnFailure, key),
+        do: classify_locked(key, fun)
+    end)
+  end
+
+  defp classify_locked(key, fun) do
+    existing = Repo.get_by(Ravix.Tracks.TurnFailure, Keyword.put(key, :stage, "turn"))
+    result = if existing, do: {:ok, nil}, else: fun.()
+
+    case result do
+      {:ok, failure} ->
+        if failure, do: record_turn_failure(key[:conversation_id], key[:turn_id], "turn", failure)
+
+        Repo.insert!(
+          struct!(Ravix.Tracks.TurnFailure, key ++ [state: "completed", code: "", reason: ""])
+        )
+
+      {:error, reason} ->
+        Repo.rollback(reason)
+    end
+  end
+
+  def turn_classified?(conversation_id, turn_id),
+    do:
+      Repo.exists?(
+        from f in Ravix.Tracks.TurnFailure,
+          where:
+            f.conversation_id == ^conversation_id and f.turn_id == ^turn_id and
+              f.stage == "classification"
+      )
+
   @doc "A track row. The caller brings the id decided in the opening plan."
   @spec create_track(map()) :: {:ok, Track.t()} | {:error, Ecto.Changeset.t()}
   def create_track(attrs), do: %Track{} |> Track.changeset(attrs) |> Repo.insert()

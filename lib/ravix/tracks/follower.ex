@@ -57,6 +57,7 @@ defmodule Ravix.Tracks.Follower do
 
   alias Ravix.Fountain
   alias Ravix.Fountain.Client
+  alias Ravix.Tracks.Settlement
   alias Ravix.Tracks.Store
   alias Ravix.Tracks.Thread
   alias Ravix.Tracks.Transcript.Event
@@ -288,6 +289,14 @@ defmodule Ravix.Tracks.Follower do
   # exactly one place in Ravix and every page downstream reads fields.
   defp relay(raw, client, conversation_id, track_id, follower) do
     event = raw |> Event.from() |> with_prompt(client, conversation_id)
+
+    if Event.settles?(event) do
+      case Settlement.record(client, track_id, conversation_id, event) do
+        {:error, reason} -> exit({:settlement_failed, Ravix.Redact.reason(reason)})
+        _ -> :ok
+      end
+    end
+
     Phoenix.PubSub.broadcast(Ravix.PubSub, topic(track_id), {:transcript, track_id, event})
 
     if Event.settles?(event),

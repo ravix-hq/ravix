@@ -1,0 +1,1113 @@
+{
+  "codex-outage": {
+    "runtime": "codex",
+    "turns": [
+      {
+        "id": "mine",
+        "runtime": "codex",
+        "blocks": [
+          {
+            "body": "Codex couldn't reach OpenAI (the connection failed after 5 retries). Nothing was changed. Retry.",
+            "details": {
+              "code": "agent_provider_unreachable",
+              "reason": "Codex couldn't reach OpenAI (the connection failed after 5 retries). Nothing was changed. Retry."
+            },
+            "stage": "turn"
+          }
+        ],
+        "events": [
+          {
+            "data": null,
+            "id": 8,
+            "stream": null,
+            "state": "completed",
+            "prompt": null,
+            "kind": "stage",
+            "turn_id": "mine",
+            "ts": null,
+            "stage": "turn",
+            "image_count": 0
+          },
+          {
+            "data": {
+              "id": 7,
+              "jsonrpc": "2.0",
+              "result": {
+                "_meta": {
+                  "codex": {
+                    "error": {
+                      "codexErrorInfo": {
+                        "responseStreamDisconnected": {}
+                      },
+                      "message": "stream disconnected before completion: Transport error: timeout",
+                      "retryCount": 5,
+                      "willRetry": false
+                    },
+                    "stopReason": "systemError"
+                  }
+                },
+                "stopReason": "end_turn"
+              }
+            },
+            "id": 7,
+            "stream": "acp",
+            "state": null,
+            "prompt": null,
+            "kind": "output",
+            "turn_id": "mine",
+            "ts": null,
+            "stage": null,
+            "image_count": 0
+          },
+          {
+            "data": {
+              "jsonrpc": "2.0",
+              "method": "session/update",
+              "params": {
+                "sessionId": "redacted-session",
+                "update": {
+                  "_meta": {
+                    "codex": {
+                      "error": {
+                        "codexErrorInfo": {
+                          "responseStreamDisconnected": {}
+                        },
+                        "message": "stream disconnected before completion: Transport error: timeout",
+                        "retryAttempt": 5,
+                        "willRetry": true
+                      }
+                    }
+                  },
+                  "content": {
+                    "text": "",
+                    "type": "text"
+                  },
+                  "sessionUpdate": "agent_message_chunk"
+                }
+              }
+            },
+            "id": 6,
+            "stream": "acp",
+            "state": null,
+            "prompt": null,
+            "kind": "output",
+            "turn_id": "mine",
+            "ts": null,
+            "stage": null,
+            "image_count": 0
+          },
+          {
+            "data": {
+              "jsonrpc": "2.0",
+              "method": "session/update",
+              "params": {
+                "sessionId": "redacted-session",
+                "update": {
+                  "_meta": {
+                    "codex": {
+                      "error": {
+                        "codexErrorInfo": {
+                          "responseStreamDisconnected": {}
+                        },
+                        "message": "stream disconnected before completion: Transport error: timeout",
+                        "retryAttempt": 4,
+                        "willRetry": true
+                      }
+                    }
+                  },
+                  "content": {
+                    "text": "",
+                    "type": "text"
+                  },
+                  "sessionUpdate": "agent_message_chunk"
+                }
+              }
+            },
+            "id": 5,
+            "stream": "acp",
+            "state": null,
+            "prompt": null,
+            "kind": "output",
+            "turn_id": "mine",
+            "ts": null,
+            "stage": null,
+            "image_count": 0
+          },
+          {
+            "data": {
+              "jsonrpc": "2.0",
+              "method": "session/update",
+              "params": {
+                "sessionId": "redacted-session",
+                "update": {
+                  "_meta": {
+                    "codex": {
+                      "error": {
+                        "codexErrorInfo": {
+                          "responseStreamDisconnected": {}
+                        },
+                        "message": "stream disconnected before completion: Transport error: timeout",
+                        "retryAttempt": 3,
+                        "willRetry": true
+                      }
+                    }
+                  },
+                  "content": {
+                    "text": "",
+                    "type": "text"
+                  },
+                  "sessionUpdate": "agent_message_chunk"
+                }
+              }
+            },
+            "id": 4,
+            "stream": "acp",
+            "state": null,
+            "prompt": null,
+            "kind": "output",
+            "turn_id": "mine",
+            "ts": null,
+            "stage": null,
+            "image_count": 0
+          },
+          {
+            "data": {
+              "jsonrpc": "2.0",
+              "method": "session/update",
+              "params": {
+                "sessionId": "redacted-session",
+                "update": {
+                  "_meta": {
+                    "codex": {
+                      "error": {
+                        "codexErrorInfo": {
+                          "responseStreamDisconnected": {}
+                        },
+                        "message": "stream disconnected before completion: Transport error: timeout",
+                        "retryAttempt": 2,
+                        "willRetry": true
+                      }
+                    }
+                  },
+                  "content": {
+                    "text": "",
+                    "type": "text"
+                  },
+                  "sessionUpdate": "agent_message_chunk"
+                }
+              }
+            },
+            "id": 3,
+            "stream": "acp",
+            "state": null,
+            "prompt": null,
+            "kind": "output",
+            "turn_id": "mine",
+            "ts": null,
+            "stage": null,
+            "image_count": 0
+          },
+          {
+            "data": {
+              "jsonrpc": "2.0",
+              "method": "session/update",
+              "params": {
+                "sessionId": "redacted-session",
+                "update": {
+                  "_meta": {
+                    "codex": {
+                      "error": {
+                        "codexErrorInfo": {
+                          "responseStreamDisconnected": {}
+                        },
+                        "message": "stream disconnected before completion: Transport error: timeout",
+                        "retryAttempt": 1,
+                        "willRetry": true
+                      }
+                    }
+                  },
+                  "content": {
+                    "text": "",
+                    "type": "text"
+                  },
+                  "sessionUpdate": "agent_message_chunk"
+                }
+              }
+            },
+            "id": 2,
+            "stream": "acp",
+            "state": null,
+            "prompt": null,
+            "kind": "output",
+            "turn_id": "mine",
+            "ts": null,
+            "stage": null,
+            "image_count": 0
+          },
+          {
+            "data": null,
+            "id": 1,
+            "stream": null,
+            "state": "started",
+            "prompt": null,
+            "kind": "stage",
+            "turn_id": "mine",
+            "ts": null,
+            "stage": "turn",
+            "image_count": 0
+          }
+        ],
+        "prompt": null,
+        "settled?": true,
+        "image_count": 0,
+        "visible?": true
+      }
+    ],
+    "last_event_id": 8
+  },
+  "duplicates-out-of-order": {
+    "runtime": "codex",
+    "turns": [
+      {
+        "id": "t",
+        "runtime": "codex",
+        "blocks": [
+          {
+            "started_at": null,
+            "body": "firstsecondthird",
+            "ended_at": null
+          }
+        ],
+        "events": [
+          {
+            "data": {
+              "jsonrpc": "2.0",
+              "method": "session/update",
+              "params": {
+                "update": {
+                  "content": {
+                    "text": "third",
+                    "type": "text"
+                  },
+                  "sessionUpdate": "agent_message_chunk"
+                }
+              }
+            },
+            "id": 3,
+            "stream": "acp",
+            "state": null,
+            "prompt": null,
+            "kind": "output",
+            "turn_id": "t",
+            "ts": null,
+            "stage": null,
+            "image_count": 0
+          },
+          {
+            "data": {
+              "jsonrpc": "2.0",
+              "method": "session/update",
+              "params": {
+                "update": {
+                  "content": {
+                    "text": "second",
+                    "type": "text"
+                  },
+                  "sessionUpdate": "agent_message_chunk"
+                }
+              }
+            },
+            "id": 2,
+            "stream": "acp",
+            "state": null,
+            "prompt": null,
+            "kind": "output",
+            "turn_id": "t",
+            "ts": null,
+            "stage": null,
+            "image_count": 0
+          },
+          {
+            "data": {
+              "jsonrpc": "2.0",
+              "method": "session/update",
+              "params": {
+                "update": {
+                  "content": {
+                    "text": "first",
+                    "type": "text"
+                  },
+                  "sessionUpdate": "agent_message_chunk"
+                }
+              }
+            },
+            "id": 1,
+            "stream": "acp",
+            "state": null,
+            "prompt": null,
+            "kind": "output",
+            "turn_id": "t",
+            "ts": null,
+            "stage": null,
+            "image_count": 0
+          }
+        ],
+        "prompt": null,
+        "settled?": false,
+        "image_count": 0,
+        "visible?": true
+      }
+    ],
+    "last_event_id": 3
+  },
+  "interleaved-turns": {
+    "runtime": "codex",
+    "turns": [
+      {
+        "id": "a",
+        "runtime": "codex",
+        "blocks": [
+          {
+            "id": "same",
+            "name": "Read file",
+            "output": "defmodule Example do\nend",
+            "status": "done",
+            "started_at": null,
+            "summary": "",
+            "ended_at": null,
+            "detail": {
+              "input": {},
+              "kind": "read",
+              "edits": [],
+              "paths": []
+            }
+          }
+        ],
+        "events": [
+          {
+            "data": {
+              "jsonrpc": "2.0",
+              "method": "session/update",
+              "params": {
+                "update": {
+                  "content": [
+                    {
+                      "content": {
+                        "text": "defmodule Example do\nend",
+                        "type": "text"
+                      },
+                      "type": "content"
+                    }
+                  ],
+                  "sessionUpdate": "tool_call_update",
+                  "status": "completed",
+                  "toolCallId": "same"
+                }
+              }
+            },
+            "id": 3,
+            "stream": "acp",
+            "state": null,
+            "prompt": null,
+            "kind": "output",
+            "turn_id": "a",
+            "ts": null,
+            "stage": null,
+            "image_count": 0
+          },
+          {
+            "data": {
+              "jsonrpc": "2.0",
+              "method": "session/update",
+              "params": {
+                "update": {
+                  "kind": "read",
+                  "sessionUpdate": "tool_call",
+                  "title": "Read file",
+                  "toolCallId": "same"
+                }
+              }
+            },
+            "id": 1,
+            "stream": "acp",
+            "state": null,
+            "prompt": null,
+            "kind": "output",
+            "turn_id": "a",
+            "ts": null,
+            "stage": null,
+            "image_count": 0
+          }
+        ],
+        "prompt": null,
+        "settled?": false,
+        "image_count": 0,
+        "visible?": true
+      },
+      {
+        "id": "b",
+        "runtime": "codex",
+        "blocks": [
+          {
+            "id": "same",
+            "name": "Read file",
+            "output": "defmodule Example do\nend",
+            "status": "done",
+            "started_at": null,
+            "summary": "",
+            "ended_at": null,
+            "detail": {
+              "input": {},
+              "kind": "read",
+              "edits": [],
+              "paths": []
+            }
+          }
+        ],
+        "events": [
+          {
+            "data": {
+              "jsonrpc": "2.0",
+              "method": "session/update",
+              "params": {
+                "update": {
+                  "content": [
+                    {
+                      "content": {
+                        "text": "defmodule Example do\nend",
+                        "type": "text"
+                      },
+                      "type": "content"
+                    }
+                  ],
+                  "sessionUpdate": "tool_call_update",
+                  "status": "completed",
+                  "toolCallId": "same"
+                }
+              }
+            },
+            "id": 4,
+            "stream": "acp",
+            "state": null,
+            "prompt": null,
+            "kind": "output",
+            "turn_id": "b",
+            "ts": null,
+            "stage": null,
+            "image_count": 0
+          },
+          {
+            "data": {
+              "jsonrpc": "2.0",
+              "method": "session/update",
+              "params": {
+                "update": {
+                  "kind": "read",
+                  "sessionUpdate": "tool_call",
+                  "title": "Read file",
+                  "toolCallId": "same"
+                }
+              }
+            },
+            "id": 2,
+            "stream": "acp",
+            "state": null,
+            "prompt": null,
+            "kind": "output",
+            "turn_id": "b",
+            "ts": null,
+            "stage": null,
+            "image_count": 0
+          }
+        ],
+        "prompt": null,
+        "settled?": false,
+        "image_count": 0,
+        "visible?": true
+      }
+    ],
+    "last_event_id": 4
+  },
+  "legacy-and-raw": {
+    "runtime": "codex",
+    "turns": [
+      {
+        "id": "t",
+        "runtime": "codex",
+        "blocks": [
+          {
+            "body": "not JSON"
+          },
+          {
+            "body": "",
+            "details": "",
+            "stage": "turn"
+          }
+        ],
+        "events": [
+          {
+            "data": "",
+            "id": 3,
+            "stream": null,
+            "state": "failed",
+            "prompt": null,
+            "kind": "stage",
+            "turn_id": "t",
+            "ts": null,
+            "stage": "turn",
+            "image_count": 0
+          },
+          {
+            "data": "not JSON\n",
+            "id": 2,
+            "stream": "acp",
+            "state": null,
+            "prompt": null,
+            "kind": "output",
+            "turn_id": "t",
+            "ts": null,
+            "stage": null,
+            "image_count": 0
+          },
+          {
+            "data": "legacy",
+            "id": 1,
+            "stream": "stdout",
+            "state": null,
+            "prompt": null,
+            "kind": "output",
+            "turn_id": "t",
+            "ts": null,
+            "stage": null,
+            "image_count": 0
+          }
+        ],
+        "prompt": null,
+        "settled?": true,
+        "image_count": 0,
+        "visible?": true
+      }
+    ],
+    "last_event_id": 3
+  },
+  "tools-plans-text": {
+    "runtime": "codex",
+    "turns": [
+      {
+        "id": "t",
+        "runtime": "codex",
+        "blocks": [
+          {
+            "started_at": null,
+            "body": "Hello",
+            "ended_at": null
+          },
+          {
+            "started_at": null,
+            "body": "Thinking",
+            "ended_at": null
+          },
+          {
+            "id": "a",
+            "name": "Read file",
+            "output": "defmodule Example do\nend",
+            "status": "done",
+            "started_at": null,
+            "summary": "",
+            "ended_at": null,
+            "detail": {
+              "input": {},
+              "kind": "read",
+              "edits": [],
+              "paths": []
+            }
+          },
+          {
+            "id": "b",
+            "name": "Read file",
+            "output": "defmodule Example do\nend",
+            "status": "done",
+            "started_at": null,
+            "summary": "",
+            "ended_at": null,
+            "detail": {
+              "input": {},
+              "kind": "read",
+              "edits": [],
+              "paths": []
+            }
+          },
+          {
+            "started_at": null,
+            "body": "betweenafter clearing",
+            "ended_at": null
+          },
+          {
+            "id": "a",
+            "name": "Read file",
+            "output": "defmodule Example do\nend",
+            "status": "done",
+            "started_at": null,
+            "summary": "",
+            "ended_at": null,
+            "detail": {
+              "input": {},
+              "kind": "read",
+              "edits": [],
+              "paths": []
+            }
+          },
+          {
+            "entries": [
+              {
+                "status": "completed",
+                "content": "Done"
+              }
+            ]
+          }
+        ],
+        "events": [
+          {
+            "data": null,
+            "id": 30,
+            "stream": null,
+            "state": "completed",
+            "prompt": null,
+            "kind": "stage",
+            "turn_id": "t",
+            "ts": null,
+            "stage": "turn",
+            "image_count": 0
+          },
+          {
+            "data": {
+              "jsonrpc": "2.0",
+              "method": "session/update",
+              "params": {
+                "update": {
+                  "entries": [
+                    {
+                      "content": "Done",
+                      "status": "completed"
+                    }
+                  ],
+                  "sessionUpdate": "plan"
+                }
+              }
+            },
+            "id": 17,
+            "stream": "acp",
+            "state": null,
+            "prompt": null,
+            "kind": "output",
+            "turn_id": "t",
+            "ts": null,
+            "stage": null,
+            "image_count": 0
+          },
+          {
+            "data": {
+              "jsonrpc": "2.0",
+              "method": "session/update",
+              "params": {
+                "update": {
+                  "content": [
+                    {
+                      "content": {
+                        "text": "defmodule Example do\nend",
+                        "type": "text"
+                      },
+                      "type": "content"
+                    }
+                  ],
+                  "sessionUpdate": "tool_call_update",
+                  "status": "completed",
+                  "toolCallId": "orphan"
+                }
+              }
+            },
+            "id": 16,
+            "stream": "acp",
+            "state": null,
+            "prompt": null,
+            "kind": "output",
+            "turn_id": "t",
+            "ts": null,
+            "stage": null,
+            "image_count": 0
+          },
+          {
+            "data": {
+              "jsonrpc": "2.0",
+              "method": "session/update",
+              "params": {
+                "update": {
+                  "content": [
+                    {
+                      "content": {
+                        "text": "defmodule Example do\nend",
+                        "type": "text"
+                      },
+                      "type": "content"
+                    }
+                  ],
+                  "sessionUpdate": "tool_call_update",
+                  "status": "completed",
+                  "toolCallId": "a"
+                }
+              }
+            },
+            "id": 15,
+            "stream": "acp",
+            "state": null,
+            "prompt": null,
+            "kind": "output",
+            "turn_id": "t",
+            "ts": null,
+            "stage": null,
+            "image_count": 0
+          },
+          {
+            "data": {
+              "jsonrpc": "2.0",
+              "method": "session/update",
+              "params": {
+                "update": {
+                  "kind": "read",
+                  "sessionUpdate": "tool_call",
+                  "title": "Read file",
+                  "toolCallId": "a"
+                }
+              }
+            },
+            "id": 14,
+            "stream": "acp",
+            "state": null,
+            "prompt": null,
+            "kind": "output",
+            "turn_id": "t",
+            "ts": null,
+            "stage": null,
+            "image_count": 0
+          },
+          {
+            "data": {
+              "jsonrpc": "2.0",
+              "method": "session/update",
+              "params": {
+                "update": {
+                  "content": [
+                    {
+                      "content": {
+                        "text": "defmodule Example do\nend",
+                        "type": "text"
+                      },
+                      "type": "content"
+                    }
+                  ],
+                  "sessionUpdate": "tool_call_update",
+                  "status": "completed",
+                  "toolCallId": "b"
+                }
+              }
+            },
+            "id": 13,
+            "stream": "acp",
+            "state": null,
+            "prompt": null,
+            "kind": "output",
+            "turn_id": "t",
+            "ts": null,
+            "stage": null,
+            "image_count": 0
+          },
+          {
+            "data": {
+              "jsonrpc": "2.0",
+              "method": "session/update",
+              "params": {
+                "update": {
+                  "content": {
+                    "text": "after clearing",
+                    "type": "text"
+                  },
+                  "sessionUpdate": "agent_message_chunk"
+                }
+              }
+            },
+            "id": 12,
+            "stream": "acp",
+            "state": null,
+            "prompt": null,
+            "kind": "output",
+            "turn_id": "t",
+            "ts": null,
+            "stage": null,
+            "image_count": 0
+          },
+          {
+            "data": {
+              "jsonrpc": "2.0",
+              "method": "session/update",
+              "params": {
+                "update": {
+                  "entries": [],
+                  "sessionUpdate": "plan"
+                }
+              }
+            },
+            "id": 11,
+            "stream": "acp",
+            "state": null,
+            "prompt": null,
+            "kind": "output",
+            "turn_id": "t",
+            "ts": null,
+            "stage": null,
+            "image_count": 0
+          },
+          {
+            "data": {
+              "jsonrpc": "2.0",
+              "method": "session/update",
+              "params": {
+                "update": {
+                  "content": [
+                    {
+                      "content": {
+                        "text": "defmodule Example do\nend",
+                        "type": "text"
+                      },
+                      "type": "content"
+                    }
+                  ],
+                  "sessionUpdate": "tool_call_update",
+                  "status": "completed",
+                  "toolCallId": "a"
+                }
+              }
+            },
+            "id": 10,
+            "stream": "acp",
+            "state": null,
+            "prompt": null,
+            "kind": "output",
+            "turn_id": "t",
+            "ts": null,
+            "stage": null,
+            "image_count": 0
+          },
+          {
+            "data": {
+              "jsonrpc": "2.0",
+              "method": "session/update",
+              "params": {
+                "update": {
+                  "content": {
+                    "text": "between",
+                    "type": "text"
+                  },
+                  "sessionUpdate": "agent_message_chunk"
+                }
+              }
+            },
+            "id": 9,
+            "stream": "acp",
+            "state": null,
+            "prompt": null,
+            "kind": "output",
+            "turn_id": "t",
+            "ts": null,
+            "stage": null,
+            "image_count": 0
+          },
+          {
+            "data": {
+              "jsonrpc": "2.0",
+              "method": "session/update",
+              "params": {
+                "update": {
+                  "entries": [
+                    {
+                      "content": "Inspect",
+                      "status": "in_progress"
+                    }
+                  ],
+                  "sessionUpdate": "plan"
+                }
+              }
+            },
+            "id": 8,
+            "stream": "acp",
+            "state": null,
+            "prompt": null,
+            "kind": "output",
+            "turn_id": "t",
+            "ts": null,
+            "stage": null,
+            "image_count": 0
+          },
+          {
+            "data": {
+              "jsonrpc": "2.0",
+              "method": "session/update",
+              "params": {
+                "update": {
+                  "kind": "read",
+                  "sessionUpdate": "tool_call",
+                  "title": "Read file",
+                  "toolCallId": "b"
+                }
+              }
+            },
+            "id": 7,
+            "stream": "acp",
+            "state": null,
+            "prompt": null,
+            "kind": "output",
+            "turn_id": "t",
+            "ts": null,
+            "stage": null,
+            "image_count": 0
+          },
+          {
+            "data": {
+              "jsonrpc": "2.0",
+              "method": "session/update",
+              "params": {
+                "update": {
+                  "kind": "read",
+                  "sessionUpdate": "tool_call",
+                  "title": "Read file",
+                  "toolCallId": "a"
+                }
+              }
+            },
+            "id": 6,
+            "stream": "acp",
+            "state": null,
+            "prompt": null,
+            "kind": "output",
+            "turn_id": "t",
+            "ts": null,
+            "stage": null,
+            "image_count": 0
+          },
+          {
+            "data": {
+              "jsonrpc": "2.0",
+              "method": "session/update",
+              "params": {
+                "update": {
+                  "content": {
+                    "text": "ing",
+                    "type": "text"
+                  },
+                  "sessionUpdate": "agent_thought_chunk"
+                }
+              }
+            },
+            "id": 5,
+            "stream": "acp",
+            "state": null,
+            "prompt": null,
+            "kind": "output",
+            "turn_id": "t",
+            "ts": null,
+            "stage": null,
+            "image_count": 0
+          },
+          {
+            "data": {
+              "jsonrpc": "2.0",
+              "method": "session/update",
+              "params": {
+                "update": {
+                  "content": {
+                    "text": "Think",
+                    "type": "text"
+                  },
+                  "sessionUpdate": "agent_thought_chunk"
+                }
+              }
+            },
+            "id": 4,
+            "stream": "acp",
+            "state": null,
+            "prompt": null,
+            "kind": "output",
+            "turn_id": "t",
+            "ts": null,
+            "stage": null,
+            "image_count": 0
+          },
+          {
+            "data": {
+              "jsonrpc": "2.0",
+              "method": "session/update",
+              "params": {
+                "update": {
+                  "content": {
+                    "text": "lo",
+                    "type": "text"
+                  },
+                  "sessionUpdate": "agent_message_chunk"
+                }
+              }
+            },
+            "id": 3,
+            "stream": "acp",
+            "state": null,
+            "prompt": null,
+            "kind": "output",
+            "turn_id": "t",
+            "ts": null,
+            "stage": null,
+            "image_count": 0
+          },
+          {
+            "data": {
+              "jsonrpc": "2.0",
+              "method": "session/update",
+              "params": {
+                "update": {
+                  "content": {
+                    "text": "Hel",
+                    "type": "text"
+                  },
+                  "sessionUpdate": "agent_message_chunk"
+                }
+              }
+            },
+            "id": 2,
+            "stream": "acp",
+            "state": null,
+            "prompt": null,
+            "kind": "output",
+            "turn_id": "t",
+            "ts": null,
+            "stage": null,
+            "image_count": 0
+          },
+          {
+            "data": null,
+            "id": 1,
+            "stream": null,
+            "state": "started",
+            "prompt": null,
+            "kind": "stage",
+            "turn_id": "t",
+            "ts": null,
+            "stage": "turn",
+            "image_count": 0
+          }
+        ],
+        "prompt": null,
+        "settled?": true,
+        "image_count": 0,
+        "visible?": true
+      }
+    ],
+    "last_event_id": 30
+  }
+}

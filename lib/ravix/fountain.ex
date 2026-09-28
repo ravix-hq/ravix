@@ -538,13 +538,13 @@ defmodule Ravix.Fountain do
 
   @doc """
   Every stored event, reading every page so long tracks retain their later
-  replies. Deduplicated by id and sorted by id. Options as `events_page/3`
-  less `:after`.
+  replies. Deduplicated by id and sorted by id. Options as `events_page/3`;
+  `:after` limits catch-up to events newer than a held cursor.
   """
   @spec events(Client.t(), id(), keyword()) :: result([record()])
   def events(client, id, opts \\ []) do
     if Client.configured?(client),
-      do: collect_events(client, id, Keyword.delete(opts, :after), nil, %{}),
+      do: collect_events(client, id, Keyword.delete(opts, :after), opts[:after], %{}),
       else: {:error, {:unconfigured, :fountain}}
   end
 

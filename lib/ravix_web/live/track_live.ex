@@ -642,14 +642,13 @@ defmodule RavixWeb.TrackLive do
      |> update(:health_refresh, &(&1 + 1))
      |> refresh_detail()
      |> refresh_queue()
-     |> refresh_transcript()
      |> refresh_plan_items()}
   end
 
   # The follower went away, which on a cluster means its instance did (ADR
   # 0003): `:global` releases the name and starts no replacement, and this page
   # is the only thing that still knows which event id it holds. So it starts a
-  # fresh follower from that id and re-reads the transcript to close whatever
+  # fresh follower from that id and fetches only newer events to close whatever
   # the gap was. `follow/2` goes through `Tracks.follow/3`, so access is
   # re-established rather than assumed. A `:DOWN` for any other reference is a
   # monitor this page no longer owns.
@@ -657,7 +656,7 @@ defmodule RavixWeb.TrackLive do
     if socket.assigns.follower == ref do
       socket = assign(socket, follower: nil)
 
-      {:noreply, socket |> follow(socket.assigns.page) |> refresh_transcript()}
+      {:noreply, socket |> follow(socket.assigns.page) |> catch_up_transcript()}
     else
       siblings = Map.reject(socket.assigns.sibling_followers, fn {_id, held} -> held == ref end)
       {:noreply, socket |> assign(sibling_followers: siblings) |> follow_siblings()}
@@ -1262,7 +1261,7 @@ defmodule RavixWeb.TrackLive do
         socket.assigns.thread_id
       )
 
-      socket |> refresh_detail() |> refresh_queue() |> refresh_transcript()
+      socket |> refresh_detail() |> refresh_queue()
     else
       socket
     end
@@ -1389,6 +1388,17 @@ defmodule RavixWeb.TrackLive do
     else
       socket
     end
+  end
+
+  defp catch_up_transcript(socket) do
+    user = socket.assigns.current_user
+    id = socket.assigns.track_id
+    thread_id = socket.assigns.thread_id
+    page = socket.assigns.page
+
+    traced_async(socket, :transcript, fn ->
+      Tracks.events(user, id, thread_id: thread_id, page: page)
+    end)
   end
 
   defp refresh_transcript(socket) do
@@ -2103,7 +2113,7 @@ defmodule RavixWeb.TrackLive do
       |> update(:thread_states, &Map.delete(&1, thread_id))
       |> refresh_detail()
       |> refresh_queue()
-      |> refresh_transcript()
+      |> catch_up_transcript()
 
   defp hub(%Event{name: name}, socket) when name in [:people, :tracks, :settings],
     do: socket |> refresh_detail() |> refresh_plan_items()

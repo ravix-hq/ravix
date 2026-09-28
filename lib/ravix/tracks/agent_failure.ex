@@ -226,9 +226,12 @@ defmodule Ravix.Tracks.AgentFailure do
 
   @doc "A GitHub auth rejection in a tool result, with expiry evidence, gets a safe notice."
   def github_notice(events, blocks) do
-    if Enum.any?(blocks, &github_expired?(&1, true)) and
-         Enum.any?(blocks, &github_expired?(&1, elapsed?(events))),
-       do: "GitHub access for this turn expired — send another message to refresh it."
+    if Enum.any?(blocks, &github_expired?(&1, true)) do
+      expired? = elapsed?(events)
+
+      if Enum.any?(blocks, &github_expired?(&1, expired?)),
+        do: "GitHub access for this turn expired — send another message to refresh it."
+    end
   end
 
   defp github_expired?(%Block.Tool{output: output, name: name, summary: summary}, expired?) do

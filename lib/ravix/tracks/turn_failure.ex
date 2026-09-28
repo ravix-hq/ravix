@@ -1,5 +1,5 @@
 defmodule Ravix.Tracks.TurnFailure do
-  @moduledoc "A durable local correction to an upstream turn outcome, including setup stage evidence."
+  @moduledoc "A durable turn correction. The classification stage also marks successful settlement checks."
   use Ecto.Schema
   @primary_key false
   schema "track_turn_failures" do

@@ -32,7 +32,7 @@ defmodule Ravix.Cluster do
   """
 
   @typedoc "The process family a name belongs to."
-  @type scope :: :follower | :preview | :singleton
+  @type scope :: :follower | :preview | :singleton | :settlement
 
   @doc """
   The `:global` name for a scope and key.

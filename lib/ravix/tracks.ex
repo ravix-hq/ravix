@@ -59,8 +59,8 @@ defmodule Ravix.Tracks do
   alias Ravix.PromptQueue.Body.Image
   alias Ravix.Spec
   alias Ravix.Trace
-  alias Ravix.Tracks.AgentFailure
   alias Ravix.Tracks.Sandbox.Maintenance
+  alias Ravix.Tracks.Settlement
 
   require Logger
 
@@ -1132,16 +1132,30 @@ defmodule Ravix.Tracks do
     # The call that gates the first paint of a track, so its own span rather
     # than a share of whatever asked for it.
     Trace.span("tracks.events", %{"ravix.track_id" => track_id}, fn ->
-      do_events(user, track_id, Keyword.get(opts, :thread_id))
+      do_events(user, track_id, opts)
     end)
   end
 
-  defp do_events(user, track_id, thread_id) do
+  defp do_events(user, track_id, opts) do
+    thread_id = Keyword.get(opts, :thread_id)
+
     with {:ok, %{thread: thread, project: project}} <-
            Access.thread_access(user, track_id, thread_id),
          {:ok, client} <- fountain() do
       if thread.conversation_id,
-        do: read_thread_transcript(client, thread, thread.runtime || project.runtime),
+        do:
+          read_thread_transcript(
+            client,
+            thread,
+            thread.runtime || project.runtime,
+            opts[:page],
+            %{
+              project_id: project.id,
+              track_id: track_id,
+              thread_id: thread.id,
+              conversation_ids: thread.previous_conversation_ids ++ [thread.conversation_id]
+            }
+          ),
         else: {:ok, Transcript.empty(thread.runtime || project.runtime)}
     end
   end
@@ -1178,12 +1192,22 @@ defmodule Ravix.Tracks do
     end
   end
 
-  defp read_thread_transcript(client, thread, runtime) do
+  defp read_thread_transcript(
+         client,
+         %{conversation_id: id},
+         runtime,
+         %Transcript.Page{conversation_id: id} = page,
+         binding
+       )
+       when is_binary(id),
+       do: read_transcript(client, id, runtime, binding, page)
+
+  defp read_thread_transcript(client, thread, runtime, _previous, binding) do
     Enum.reduce_while(
       thread.previous_conversation_ids ++ [thread.conversation_id],
       {:ok, Transcript.empty(runtime)},
       fn id, {:ok, previous} ->
-        case read_transcript(client, id, runtime) do
+        case read_transcript(client, id, runtime, binding) do
           {:ok, page} -> {:cont, {:ok, %{page | turns: previous.turns ++ page.turns}}}
           error -> {:halt, error}
         end
@@ -1191,12 +1215,24 @@ defmodule Ravix.Tracks do
     )
   end
 
-  defp read_transcript(client, conversation_id, runtime) do
-    with {:ok, log} <- Fountain.events(client, conversation_id, prompts: true),
-         {:ok, turns} <- Fountain.turns(client, conversation_id) do
-      page = log |> Transcript.page(runtime) |> Transcript.with_images(turns)
+  defp read_transcript(client, conversation_id, runtime, binding, previous \\ nil) do
+    opts = if previous, do: [prompts: true, after: previous.last_event_id], else: [prompts: true]
 
-      Enum.each(page.turns, &record_turn_failure(&1, conversation_id, runtime))
+    with {:ok, log} <- Fountain.events(client, conversation_id, opts),
+         {:ok, turns} <- Fountain.turns(client, conversation_id) do
+      classifications =
+        Trace.span("transcript.failures", %{}, fn ->
+          Store.turn_classifications(binding.conversation_ids)
+        end)
+
+      page =
+        Trace.span("transcript.build", %{"ravix.event_count" => length(log)}, fn ->
+          previous
+          |> build_transcript(log, runtime, classifications.failures)
+          |> transcript_source(conversation_id)
+        end)
+
+      page = Trace.span("transcript.images", %{}, fn -> Transcript.with_images(page, turns) end)
 
       # How much transcript came back, on the span that fetched it. A slow
       # first paint is either Fountain being slow or a conversation being long,
@@ -1206,19 +1242,25 @@ defmodule Ravix.Tracks do
         "ravix.event_count" => length(log)
       })
 
-      {:ok, page}
+      Settlement.enqueue(page, classifications.classified, binding)
+      {:ok, %{page | conversation_id: conversation_id}}
     end
   end
 
-  defp record_turn_failure(%{settled?: true} = turn, conversation_id, runtime) do
-    blocks = Transcript.blocks_for_turn(Enum.reverse(turn.events), runtime)
-
-    if failure = AgentFailure.detect(turn.events, runtime, blocks) do
-      Store.record_turn_failure(conversation_id, turn.id, "turn", failure)
-    end
+  defp transcript_source(page, id) do
+    %{
+      page
+      | turns:
+          Enum.map(page.turns, fn turn ->
+            %{turn | conversation_id: turn.conversation_id || id}
+          end)
+    }
   end
 
-  defp record_turn_failure(_turn, _conversation_id, _runtime), do: :ok
+  defp build_transcript(nil, log, runtime, failures), do: Transcript.page(log, runtime, failures)
+
+  defp build_transcript(previous, log, _runtime, failures),
+    do: Transcript.add_events(previous, log, failures)
 
   @doc """
   Rename the label, and only the label.

@@ -3733,6 +3733,21 @@ defmodule RavixWeb.TrackLiveTest do
     assert render_async(ctx.view) =~ "Start here"
   end
 
+  test "minute refresh makes no event requests and live output still appends", ctx do
+    client = FakeTransport.client([])
+    stub(Ravix.Fountain, :client, fn -> client end)
+    # Exercise the actual scoped read if the timer accidentally asks for it.
+    stub(Tracks, :events, &Mimic.call_original(Tracks, :events, [&1, &2, &3]))
+    send(ctx.view.pid, :refresh)
+    render_async(ctx.view)
+    assert FakeTransport.calls(client) == []
+
+    send(ctx.view.pid, {:transcript, ctx.track.id, opened(99, "after-tick", "Still streaming")})
+    assert render(drawn(ctx.view)) =~ "Still streaming"
+    render_async(ctx.view)
+    assert FakeTransport.calls(client) == []
+  end
+
   test "streamed transcript updates render text safely and keep newer events during refresh",
        ctx do
     event = %{
@@ -3775,7 +3790,7 @@ defmodule RavixWeb.TrackLiveTest do
       {:error, {:unavailable, "Transcript offline"}}
     end)
 
-    send(ctx.view.pid, :refresh)
+    send(ctx.view.pid, {:hub, Event.new(:turn, ctx.project.id, track_id: ctx.track.id)})
     assert toasted(ctx) =~ "Transcript offline"
     assert render(ctx.view) =~ "Hello"
   end
