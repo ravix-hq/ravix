@@ -62,6 +62,7 @@ defmodule RavixWeb.WorkspaceLive do
         section_placements: %{},
         tracks: %{},
         track_errors: MapSet.new(),
+        track_loading: MapSet.new(),
         # How many tracks across every project want somebody. Counted where
         # the rail is read rather than in the template, which asked for it
         # four times a render --- twice in the sidebar badge and twice in the
@@ -357,8 +358,11 @@ defmodule RavixWeb.WorkspaceLive do
     )
   end
 
-  def handle_event("retry-tracks", %{"id" => id}, socket),
-    do: {:noreply, socket |> recheck_rail() |> refresh_tracks(id)}
+  def handle_event("retry-tracks", %{"id" => id}, socket) do
+    if MapSet.member?(socket.assigns.track_loading, id),
+      do: {:noreply, socket},
+      else: {:noreply, socket |> recheck_rail() |> refresh_tracks(id)}
+  end
 
   def handle_event("toggle-section", %{"id" => id, "collapsed" => collapsed}, socket) do
     section_result(
@@ -585,6 +589,8 @@ defmodule RavixWeb.WorkspaceLive do
   # One project's tracks, in the place the rail keeps them. A project that has
   # gone since the read started is not put back.
   def handle_async({:tracks, id}, {:ok, {:ok, tracks}}, socket) do
+    socket = finish_track_load(socket, id)
+
     if Enum.any?(socket.assigns.projects, &(&1.id == id)) do
       tracks = Map.put(rail_tracks(socket), id, tracks)
       {:noreply, apply_rail(socket, {socket.assigns.projects, tracks})}
@@ -1000,7 +1006,11 @@ defmodule RavixWeb.WorkspaceLive do
     end)
   end
 
+  defp finish_track_load(socket, id),
+    do: assign(socket, :track_loading, MapSet.delete(socket.assigns.track_loading, id))
+
   defp track_load_failed(socket, id) do
+    socket = finish_track_load(socket, id)
     tracks = Map.put(rail_tracks(socket), id, {:error, :unavailable})
     apply_rail(socket, {socket.assigns.projects, tracks})
   end
@@ -1010,6 +1020,9 @@ defmodule RavixWeb.WorkspaceLive do
   defp refresh_tracks(socket, project_id) do
     if Enum.any?(socket.assigns.projects, &(&1.id == project_id)) do
       user = socket.assigns.current_user
+
+      socket =
+        assign(socket, :track_loading, MapSet.put(socket.assigns.track_loading, project_id))
 
       traced_async(socket, {:tracks, project_id}, fn ->
         Tracks.list(user, project_id, fresh: true)

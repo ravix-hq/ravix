@@ -94,7 +94,7 @@ defmodule Ravix.Accounts.Access do
     dynamic(
       [t, p, pm, tm],
       not is_nil(tm.user_id) or
-        (t.visibility == :private and t.created_by == ^user_id) or
+        (t.visibility == :private and t.created_by == ^user_id and is_nil(t.creator_revoked_at)) or
         (t.visibility == :project and (p.user_id == ^user_id or not is_nil(pm.user_id)))
     )
   end
@@ -213,37 +213,6 @@ defmodule Ravix.Accounts.Access do
       member?(track.id, user_id) or
       (track.visibility == :project and
          (project.user_id == user_id or project_member?(project.id, user_id)))
-  end
-
-  @doc "Filter a listing with one membership read, independent of its size."
-  def visible_tracks(user_id, tracks, %Project{} = project) do
-    wide = project.user_id == user_id or project_member?(project.id, user_id)
-    # ownership: no door before this one; this query establishes listing access.
-    invited = MapSet.new(People.member_tracks(user_id), & &1.id)
-
-    # ownership: no door before this one; current rows authorize late async results.
-    ids = Enum.map(tracks, & &1.id)
-
-    current =
-      Repo.all(Ecto.Query.from(t in Track, where: t.id in ^ids and t.project_id == ^project.id))
-
-    allowed =
-      current
-      |> Enum.filter(fn track ->
-        (wide and track.visibility == :project) or
-          (track.visibility == :private and creator?(%User{id: user_id}, track)) or
-          MapSet.member?(invited, track.id)
-      end)
-      |> MapSet.new(& &1.id)
-
-    Enum.filter(tracks, &MapSet.member?(allowed, &1.id))
-  end
-
-  def visible_tracks(user_id, tracks, %{id: id}) do
-    case live_project(id) do
-      nil -> []
-      project -> visible_tracks(user_id, tracks, project)
-    end
   end
 
   @doc "Stable creator identity; login is presentation only."

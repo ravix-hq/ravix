@@ -49,6 +49,20 @@ defmodule Ravix.TracksRailTest do
 
     insert_track_member(invited_private, viewer)
     assert {:error, :not_found} = Access.track_access(viewer, private.id)
+
+    revoked =
+      insert_track(
+        project: member,
+        visibility: :private,
+        created_by: viewer.id,
+        sandbox_layout: :dedicated
+      )
+
+    revoked
+    |> Ecto.Changeset.change(creator_revoked_at: DateTime.utc_now())
+    |> Ravix.Repo.update!()
+
+    assert {:error, :not_found} = Access.track_access(viewer, revoked.id)
     ids = Enum.map([owned, member, shared, foreign, archived], & &1.id)
     {rows, queries} = QueryCount.count(fn -> Access.open_tracks(viewer, ids) end)
     assert length(queries) == 1

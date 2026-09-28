@@ -344,7 +344,10 @@
                         class="ghost"
                         phx-click="retry-tracks"
                         phx-value-id={project.id}
-                      >Retry</button>
+                        disabled={MapSet.member?(@track_loading, project.id)}
+                      >{if MapSet.member?(@track_loading, project.id),
+                        do: "Retrying…",
+                        else: "Retry"}</button>
                     </div>
                     <p
                       :if={

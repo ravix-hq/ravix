@@ -156,6 +156,70 @@ defmodule RavixWeb.ProjectTreeLiveTest do
     end
   end
 
+  test "a removed creator loses private rows, badges and quick-jump results", %{conn: conn} do
+    creator = insert_user()
+    insert_project(user: creator)
+    project = insert_project()
+    insert_project_member(project, creator)
+
+    track =
+      insert_track(
+        project: project,
+        created_by: creator.id,
+        visibility: :private,
+        sandbox_layout: :dedicated,
+        title: "Revoked creator private work",
+        conversation_id: Ecto.UUID.generate(),
+        opened_at: DateTime.utc_now()
+      )
+
+    client =
+      FakeTransport.client([
+        {%{method: "GET", path: "/api/conversations", query: %{agent_id: project.agent_id}},
+         {200, [],
+          %{
+            data: [
+              %{
+                id: track.conversation_id,
+                status: "idle",
+                last_active_at: "2026-09-28T00:00:00Z",
+                sandbox_id: "sandbox"
+              }
+            ]
+          }}}
+      ])
+
+    stub(Fountain, :client, fn -> client end)
+    {:ok, view, _} = live(log_in_user(conn, creator), "/home")
+    render_async(view, 5_000)
+    assert has_element?(view, "#project-track-tab-#{track.id}")
+    assert has_element?(view, "#project-link-#{project.id} .badge", "1")
+    render_click(view, "dialog", %{name: "search"})
+    assert has_element?(view, "#search-track-link-#{track.id}")
+
+    People.remove_project_member(project.id, creator.id)
+    render_async(view, 5_000)
+    assert Ravix.Repo.get!(Ravix.Tracks.Track, track.id).creator_revoked_at
+    refute has_element?(view, "#project-link-#{project.id}")
+    refute render(view) =~ track.title
+    refute has_element?(view, ".yard-nav a[href='/inbox'] .badge")
+
+    # Returning to the project does not silently restore revoked creator rights.
+    insert_project_member(project, creator)
+    render_click(view, "refresh")
+    render_async(view, 5_000)
+    assert has_element?(view, "#project-link-#{project.id}")
+    refute has_element?(view, "#project-track-tab-#{track.id}")
+    refute has_element?(view, "#project-link-#{project.id} .badge")
+    refute has_element?(view, ".yard-nav a[href='/inbox'] .badge")
+    render_click(view, "dialog", %{name: "search"})
+    view |> form("#search-form", q: track.title) |> render_change()
+    refute has_element?(view, "#search-track-link-#{track.id}")
+    assert has_element?(view, "#search-dialog", "No projects or tracks match")
+    view |> form("#search-form", q: "") |> render_change()
+    refute has_element?(view, "#search-dialog a[href='/p/#{project.id}'] .badge")
+  end
+
   test "a failed project offers scoped retry and recovers without reloading other projects", %{
     conn: conn
   } do
@@ -178,14 +242,23 @@ defmodule RavixWeb.ProjectTreeLiveTest do
     render_click(view, "dismiss")
     assert has_element?(view, panel, "Couldn't load tracks")
 
+    parent = self()
+
     expect(Tracks, :list, fn ^user, id, [fresh: true] ->
       assert id == project.id
-      {:error, :not_found}
+      send(parent, {:retry_started, self()})
+      receive do: (:finish -> {:error, :not_found})
     end)
 
     view |> element(panel <> " button", "Retry") |> render_click()
+    assert_receive {:retry_started, worker}
+    assert has_element?(view, panel <> " button[disabled]", "Retrying…")
+    render_click(view, "retry-tracks", %{id: project.id})
+    refute_receive {:retry_started, _}
+    send(worker, :finish)
     render_async(view, 5_000)
     assert has_element?(view, panel, "Couldn't load tracks")
+    assert has_element?(view, panel <> " button:not([disabled])", "Retry")
 
     expect(Tracks, :list, fn ^user, id, [fresh: true] ->
       assert id == project.id
@@ -219,8 +292,8 @@ defmodule RavixWeb.ProjectTreeLiveTest do
   test "membership removal drops projects while the quick-jump is open", %{conn: conn} do
     user = insert_user()
     insert_project(user: user)
-    member = insert_project()
-    shared = insert_project()
+    member = insert_project(name: "Revoked project membership")
+    shared = insert_project(name: "Revoked track membership")
     track = insert_track(project: shared)
     insert_project_member(member, user)
     insert_track_member(track, user)
@@ -234,6 +307,8 @@ defmodule RavixWeb.ProjectTreeLiveTest do
     Hub.publish(member.id, :people)
     Hub.publish(shared.id, :people)
     render_async(view, 5_000)
+    refute has_element?(view, "#project-link-#{member.id}")
+    refute has_element?(view, "#search-project-link-#{member.id}")
     refute render(view) =~ member.name
     refute render(view) =~ shared.name
   end

@@ -18,7 +18,7 @@ defmodule Ravix.Tracks.Store do
   import Ecto.Query
 
   alias Ravix.Repo
-  alias Ravix.Tracks.{Thread, ThreadRead, Track, TrackMember}
+  alias Ravix.Tracks.{Thread, ThreadRead, Track}
 
   # The caller has scoped thread access, or holds the durable setup lease.
   def record_turn_failure(conversation_id, turn_id, stage, failure) do
@@ -265,29 +265,6 @@ defmodule Ravix.Tracks.Store do
     query = from(t in Track, where: t.project_id == ^project_id, order_by: t.created_at)
     query = if scope == :all, do: query, else: where(query, [t], is_nil(t.closed_at))
     Repo.all(query)
-  end
-
-  @doc "The open tracks of one project this person was named on, oldest first."
-  @spec member_tracks_of(String.t(), String.t()) :: [Track.t()]
-  # ownership: no door before this one. `track_members` is the people
-  # context's table, joined here because the question is about tracks: which
-  # of this project's tracks may this person see, which is what
-  # `Ravix.Tracks.list/2` decides with it. `Ravix.People.Store` answers the
-  # mirror of it.
-  def member_tracks_of(user_id, project_id) do
-    Repo.all(
-      from(t in Track,
-        left_join: m in TrackMember,
-        on: m.track_id == t.id and m.user_id == ^user_id,
-        where:
-          (not is_nil(m.user_id) or
-             (t.visibility == :private and t.created_by == ^user_id and
-                is_nil(t.creator_revoked_at))) and
-            t.project_id == ^project_id and
-            is_nil(t.closed_at),
-        order_by: t.created_at
-      )
-    )
   end
 
   @doc "Whether a slug is free right now: the unique index enforces it, this explains it."
