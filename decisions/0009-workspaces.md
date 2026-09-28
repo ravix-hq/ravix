@@ -1,7 +1,7 @@
 ---
 type: ADR
 title: "Workspaces own repositories; a thread names who pays"
-description: "Proposes workspaces as the tenant boundary, one project per repository within each workspace, explicit track visibility, and thread-starter billing with a single-payer restriction for Codex threads on one track. Records owner decisions, manual duplicate cleanup and a compatible staged migration."
+description: "Proposes workspaces as the tenant boundary, one project per repository within each workspace, project/workspace-visible tracks by default with dedicated-only private opt-in, and thread-starter billing with a single-payer restriction for Codex threads on one track. Records owner decisions, manual duplicate cleanup and a compatible staged migration."
 tags: [architecture, workspaces, access, billing, fountain]
 status: draft
 adr: "0009"
@@ -83,8 +83,10 @@ It would **amend
 while retaining one sandbox per track and at most one agent per runtime per
 project. It would **amend [0008](0008-the-project-switcher.md)**'s discovery scope to
 include workspaces while preserving narrow shares, personal sections and global
-activity. It retains [0003](0003-cluster-and-transparent-deploys.md)'s cluster
-and rolling-deploy rules. None of those ADR files is changed or superseded in
+activity. Its pending `r2-sidebar-project-tree` amendment replaces the project
+switcher with an always-open project → track sidebar tree and Cmd/Ctrl-K
+quick-jump; this proposal uses that navigation direction. It retains
+[0003](0003-cluster-and-transparent-deploys.md)'s cluster and rolling-deploy rules. None of those ADR files is changed or superseded in
 full by this proposal.
 
 ## Decision
@@ -94,8 +96,8 @@ full by this proposal.
 A workspace is a named team with durable membership, projects and repository
 connections. It is distinct from ADR 0006's use of “workspace” for a track's
 working directory. A user may belong to **several workspaces**, with an explicit
-workspace switcher above project discovery. Creating one makes the creator its
-first owner; joining requires an accepted invitation. Personal
+workspace selector that scopes the project → track sidebar tree and quick-jump.
+Creating one makes the creator its first owner; joining requires an accepted invitation. Personal
 work starts in a personal workspace, using the same entity and access rules.
 
 Use **owner, admin and member** roles. Owners transfer ownership, appoint
@@ -160,14 +162,17 @@ a guest is not silently made a workspace member. A share grants the named track
 and the minimum project label needed to navigate it, never project settings,
 the repository catalog, sibling tracks or track creation.
 
-The following private-track interpretation remains a recommendation for Raunak
-to confirm under RAV-20, separate from the decided repository access policy.
-For new tracks, persist the creator and one of three modes:
+**RAV-20 visibility is decided in the owner's 2026-09-28 interview:** new
+tracks default to visible to the project, becoming the workspace on workspace
+admission. Private is an explicit opt-in and hides the track from everyone not
+invited, including owners and admins. Persist the creator and one of three modes:
 
-- **Not shared (default):** only the creator may read/work on the track.
-- **Workspace:** current workspace members may read/work on it.
+- **Project/workspace (default):** current project members, becoming current
+  workspace members, may read/work on it.
+- **Not shared (private opt-in):** only the creator may read/work on the track.
 - **Invited people:** the creator and specifically invited users may read/work
-  on it; invitees may be guests without general workspace membership.
+  on it. Whether new invitations may admit external guests needs Raunak's call;
+  any permitted guest receives only the narrow track grant described above.
 
 Only the creator controls these sharing modes; changing to Not shared revokes
 invitations and outstanding links. Workspace administration alone does not
@@ -179,8 +184,9 @@ promotion in the new layout, since the two now answer different questions.
 
 Private means Ravix transcript, files, terminal, preview and activity access is
 restricted, not that commits pushed to the shared GitHub repository are secret.
-Do not offer private mode on a legacy shared sandbox: a shell can reach sibling
-worktrees (`lib/ravix/people.ex:44`). Require a dedicated sandbox first. Shared
+**Private is dedicated-only; this is decided.** Do not offer private mode on a
+legacy shared sandbox: a shell can reach sibling worktrees
+(`lib/ravix/people.ex:44`). Require a dedicated sandbox first. Shared
 project secrets are also available to code running in a permitted track; private
 mode is not isolation from the provider operator or a promise to hide pushed work.
 
@@ -393,8 +399,9 @@ PubSub notification must not preserve access. Reauthorize queued work at deliver
 and fence in-flight provider side effects; cancellation cannot undo a prompt
 already accepted, so record that outcome without replaying it.
 
-Keep ADR 0008's minimal track-only project entries. Switcher search, Recent,
-Inbox, Schedules and badges use the same visibility predicate, with no hidden
+Keep ADR 0008's minimal track-only project entries in the pending sidebar tree
+and Cmd/Ctrl-K quick-jump amendment. The tree, quick-jump search, Recent, Inbox,
+Schedules and badges use the same visibility predicate, with no hidden
 track counts. Workspace selection filters repository/project discovery; global
 Inbox and Schedules remain across accessible workspaces and guest tracks.
 Use ADR 0003's cluster naming/singleton rules for any new exclusive reconciler,
@@ -445,9 +452,11 @@ review, not assigned implementation work in this docs PR.
    project admission and atomic re-add lookup. Present one repository list for
    new tracks. Test concurrent adds, normalization, rename collisions, revoked
    installations and a member without personal GitHub access. Browser checks
-   cover switcher, guest landing, global activity and mobile navigation.
+   cover the sidebar tree, quick-jump, workspace selection, guest landing, global
+   activity and mobile navigation.
 5. **Sharing controls (RAV-20).** Enable the three modes only on dedicated tracks,
-   with consent and explicit legacy conversion. Test member removal, share
+   with project/workspace visibility as the default, explicit private opt-in,
+   consent and explicit legacy conversion. Test member removal, share
    revocation, creator departure, old invite links and stale async results.
    Browser tests prove private tracks do not leak through search or badges.
 6. **Thread payer binding (RAV-17).** Add `started_by`, immutable payer bindings,
@@ -465,11 +474,10 @@ review, not assigned implementation work in this docs PR.
 
 ## Open questions for the team
 
-- **Raunak:** does “private track” (RAV-20) mean hidden from workspace members
-  who are not invited, given that project members currently see every track
-  (`lib/ravix/people.ex:18`)? The visibility section recommends that meaning;
-  confirm the default, admin content access, external guests and removal of
-  direct grants. Who may recover a departed creator's private work, and for how long?
+- **Raunak — RAV-20:** may track invitations admit external guests, and under
+  what conditions? Who may recover a departed creator's private work, and for
+  how long? Project/workspace visibility by default, private opt-in hidden from
+  uninvited owners/admins, and dedicated-only private mode are decided.
 - **Raunak:** should scratch work remain a product feature outside repository
   projects? Manual duplicate cleanup and the later-created legacy duplicate
   rule are decided, not open alternatives.
