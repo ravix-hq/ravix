@@ -25,7 +25,7 @@ defmodule Ravix.Tooling.Tasks do
 
       result =
         Store.transaction(fn ->
-          accept(principal, id, track_id, prompt, fingerprint, thread.id)
+          accept(principal, id, track_id, prompt, fingerprint, thread)
         end)
 
       Phoenix.PubSub.broadcast(Ravix.PubSub, "tooling:queue", {:tooling_queue, track_id})
@@ -33,20 +33,20 @@ defmodule Ravix.Tooling.Tasks do
     end
   end
 
-  defp accept(principal, id, track_id, prompt, fingerprint, thread_id) do
+  defp accept(principal, id, track_id, prompt, fingerprint, thread) do
     # Queue acceptance and the task receipt share a transaction.
     case Store.task(id) do
       %Task{fingerprint: ^fingerprint} = task -> task
       %Task{} -> Store.rollback(conflict())
-      nil -> enqueue(principal, id, track_id, prompt, fingerprint, thread_id)
+      nil -> enqueue(principal, id, track_id, prompt, fingerprint, thread)
     end
   end
 
-  defp enqueue(principal, id, track_id, prompt, fingerprint, thread_id) do
+  defp enqueue(principal, id, track_id, prompt, fingerprint, thread) do
     case Tracks.prompt(principal.user, track_id, %{
            "prompt" => prompt,
            "request_id" => id,
-           "thread_id" => thread_id
+           "thread_id" => thread.id
          }) do
       {:ok, _} ->
         # The queue serializes on the track; re-read after it to resolve two
@@ -60,7 +60,8 @@ defmodule Ravix.Tooling.Tasks do
               track_id: track_id,
               fingerprint: fingerprint,
               reply_events: [],
-              cursor: Store.checkpoint(thread_id).cursor
+              cursor: Store.checkpoint(thread.id, thread.conversation_id).cursor,
+              cursor_conversation_id: thread.conversation_id
             })
 
           %Task{fingerprint: ^fingerprint} = task ->
@@ -273,7 +274,7 @@ defmodule Ravix.Tooling.Tasks do
       "tooling.reconcile.thread",
       %{"ravix.thread_id" => access.thread.id, "ravix.task_count" => length(rows)},
       fn ->
-        checkpoint = Store.checkpoint(access.thread.id)
+        checkpoint = Store.checkpoint(access.thread.id, access.thread.conversation_id)
         result = reconcile_group(rows)
         current = Enum.map(rows, fn {task, _} -> Store.task(task.id) end)
 
@@ -282,9 +283,7 @@ defmodule Ravix.Tooling.Tasks do
             {result, Enum.sort(Enum.map(current, &{&1.id, &1.state, &1.turn_id, &1.cursor}))}
           )
 
-        cursor = current |> Enum.map(& &1.cursor) |> Enum.min(fn -> nil end)
-        cursor = if Enum.any?(current, &is_nil(&1.cursor)), do: nil, else: cursor
-        Store.finish_checkpoint(checkpoint, signature, cursor)
+        Store.finish_checkpoint(checkpoint, signature)
 
         case result do
           {:ok, _} -> :ok
@@ -297,7 +296,7 @@ defmodule Ravix.Tooling.Tasks do
   defp reconcile_group(rows) do
     rows =
       Enum.map(rows, fn {task, access} ->
-        current = persist_queue(task)
+        current = persist_queue(task, access.thread.conversation_id)
         current = %{current | reconciled_at: Store.record_reconciliation(task.id)}
 
         if current.state != task.state,
@@ -307,8 +306,9 @@ defmodule Ravix.Tooling.Tasks do
       end)
 
     active =
-      Enum.filter(rows, fn {task, _} ->
-        not terminal?(task) and task.queue_status in [:sent, :sending]
+      Enum.filter(rows, fn {task, access} ->
+        not terminal?(task) and task.queue_status in [:sent, :sending] and
+          task.cursor_conversation_id == access.thread.conversation_id
       end)
 
     case active do
@@ -352,15 +352,17 @@ defmodule Ravix.Tooling.Tasks do
     end
   end
 
-  defp persist_queue(task) do
+  defp persist_queue(task, conversation_id \\ nil) do
     {:ok, current} =
       Store.transaction(fn ->
         # ownership: no door for internal receipt reconciliation; the queue owns delivery
         # state, and public reads still pass accessible/2's principal/client door.
         {:ok, queue} = Ravix.PromptQueue.Store.lock_row(task.id, task.track_id)
         current = Store.lock_task(task.id)
+        current = cursor_conversation(current, conversation_id, task.cursor_conversation_id)
         queue = Map.put(queue, :blocked_by, Ravix.PromptQueue.Store.held_before(queue))
-        # The same receipt door: setup state only shapes MCP recovery guidance.
+        # ownership: Tasks.send created this receipt through Access.thread_access;
+        # setup state only shapes MCP recovery guidance.
         track = Ravix.Tracks.Store.get_track(task.track_id)
         view = queue_view(current, queue, track)
         if view.state != current.state, do: Store.update(current, state: view.state)
@@ -368,6 +370,33 @@ defmodule Ravix.Tooling.Tasks do
       end)
 
     current
+  end
+
+  # A credential recovery can replace the conversation on the same thread.
+  # Event IDs belong to that conversation, so neither a cursor nor a reply journal
+  # may follow it. NULL receipts predate this migration and retain their old text.
+  defp cursor_conversation(%{state: state} = task, _, _) when state in @terminal, do: task
+  defp cursor_conversation(task, nil, _), do: task
+  defp cursor_conversation(%{cursor_conversation_id: id} = task, id, _), do: task
+
+  # A stale row snapshot may not reset a cursor already moved by another reader.
+  defp cursor_conversation(%{cursor_conversation_id: current} = task, _, expected)
+       when current != expected, do: task
+
+  defp cursor_conversation(%{cursor_conversation_id: nil} = task, id, _),
+    do: Store.update(task, cursor_conversation_id: id)
+
+  defp cursor_conversation(task, id, _) do
+    Store.update(task,
+      cursor_conversation_id: id,
+      cursor: nil,
+      turn_id: nil,
+      turn_seen: false,
+      reply_events: [],
+      reply_prefix: "",
+      result: "",
+      state: "TASK_STATE_SUBMITTED"
+    )
   end
 
   defp reconcile(task, access) do
@@ -430,7 +459,9 @@ defmodule Ravix.Tooling.Tasks do
       )
     end
 
-    save_page(task, turn, page, text, failure)
+    saved = save_page(task, turn, page, text, failure)
+    Store.advance_checkpoint(access.thread.id, saved.cursor_conversation_id, saved.cursor)
+    saved
   end
 
   # Cache provider pages across receipts belonging to this thread.
@@ -535,6 +566,7 @@ defmodule Ravix.Tooling.Tasks do
 
   defp stale_page?(task, current, queue) do
     queue.status not in [:sent, :sending] or current.cursor != task.cursor or
+      current.cursor_conversation_id != task.cursor_conversation_id or
       terminal?(%{current | state: delivered_state(current)})
   end
 

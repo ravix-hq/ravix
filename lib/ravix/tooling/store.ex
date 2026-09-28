@@ -96,7 +96,7 @@ defmodule Ravix.Tooling.Store do
     Repo.all(
       from [t, q, thread, track, p] in sweepable(),
         left_join: checkpoint in ThreadCheckpoint,
-        on: checkpoint.id == thread.id,
+        on: checkpoint.id == thread.id and checkpoint.conversation_id == thread.conversation_id,
         where: thread.id > ^cursor,
         where:
           checkpoint.next_due_at <= ^now or
@@ -120,12 +120,22 @@ defmodule Ravix.Tooling.Store do
           (q.status == :cancelled and t.state != "TASK_STATE_CANCELED")
   end
 
-  def checkpoint(id), do: Repo.get(ThreadCheckpoint, id) || %ThreadCheckpoint{id: id}
+  def checkpoint(id, nil), do: %ThreadCheckpoint{id: id}
 
-  def reset_checkpoint(id) do
-    Repo.insert_all(ThreadCheckpoint, [%{id: id}], on_conflict: :nothing)
+  def checkpoint(id, conversation_id) do
+    Repo.get_by(ThreadCheckpoint, id: id, conversation_id: conversation_id) ||
+      %ThreadCheckpoint{id: id, conversation_id: conversation_id}
+  end
 
-    Repo.update_all(from(c in ThreadCheckpoint, where: c.id == ^id),
+  def reset_checkpoint(_id, nil), do: :ok
+
+  def reset_checkpoint(id, conversation_id) do
+    Repo.insert_all(ThreadCheckpoint, [%{id: id, conversation_id: conversation_id}],
+      on_conflict: :nothing
+    )
+
+    Repo.update_all(
+      from(c in ThreadCheckpoint, where: c.id == ^id and c.conversation_id == ^conversation_id),
       set: [next_due_at: DateTime.utc_now(), unchanged: 0, signature: nil],
       inc: [generation: 1]
     )
@@ -133,14 +143,21 @@ defmodule Ravix.Tooling.Store do
     :ok
   end
 
-  def finish_checkpoint(before, signature, cursor) do
-    Repo.insert_all(ThreadCheckpoint, [%{id: before.id}], on_conflict: :nothing)
+  def finish_checkpoint(%{conversation_id: nil}, _signature), do: :ok
+
+  def finish_checkpoint(before, signature) do
+    Repo.insert_all(ThreadCheckpoint, [%{id: before.id, conversation_id: before.conversation_id}],
+      on_conflict: :nothing
+    )
+
     unchanged = if signature == before.signature, do: min(before.unchanged + 1, 3), else: 0
     delay = Enum.at([5, 60, 180, 300], unchanged)
     # A concurrent hint invalidates this attempt's cadence; never postpone that hint.
     Repo.update_all(
       from(c in ThreadCheckpoint,
-        where: c.id == ^before.id and c.generation == ^before.generation
+        where:
+          c.id == ^before.id and c.conversation_id == ^before.conversation_id and
+            c.generation == ^before.generation
       ),
       set: [
         signature: signature,
@@ -150,14 +167,27 @@ defmodule Ravix.Tooling.Store do
       inc: [generation: 1]
     )
 
-    if cursor do
-      Repo.update_all(
-        from(c in ThreadCheckpoint,
-          where: c.id == ^before.id and (is_nil(c.cursor) or c.cursor < ^cursor)
-        ),
-        set: [cursor: cursor]
-      )
-    end
+    :ok
+  end
+
+  def advance_checkpoint(_id, nil, _cursor), do: :ok
+  def advance_checkpoint(_id, _conversation_id, nil), do: :ok
+
+  # Called inside the receipt transaction: a crash cannot commit a reply without
+  # the high-water mark inherited by the next task. Older receipts keep their own cursor.
+  def advance_checkpoint(id, conversation_id, cursor) do
+    Repo.insert_all(ThreadCheckpoint, [%{id: id, conversation_id: conversation_id}],
+      on_conflict: :nothing
+    )
+
+    Repo.update_all(
+      from(c in ThreadCheckpoint,
+        where:
+          c.id == ^id and c.conversation_id == ^conversation_id and
+            (is_nil(c.cursor) or c.cursor < ^cursor)
+      ),
+      set: [cursor: cursor]
+    )
 
     :ok
   end

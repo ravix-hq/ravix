@@ -202,7 +202,7 @@ defmodule Ravix.Tooling.ReconcilerTest do
     for {delay, count} <- Enum.with_index([5, 60, 180, 300, 300], 1) do
       make_due(c.track.id)
       Reconciler.tick(server)
-      checkpoint = Ravix.Tooling.Store.checkpoint(c.track.id)
+      checkpoint = Ravix.Tooling.Store.checkpoint(c.track.id, c.track.conversation_id)
       assert_in_delta DateTime.diff(checkpoint.next_due_at, DateTime.utc_now()), delay, 1
       assert :atomics.get(reads, 1) == count
       Reconciler.tick(server)
@@ -213,7 +213,7 @@ defmodule Ravix.Tooling.ReconcilerTest do
     settle(c.track.id)
     :sys.get_state(server)
     assert :atomics.get(reads, 1) == 6
-    assert Ravix.Tooling.Store.checkpoint(c.track.id).unchanged == 0
+    assert Ravix.Tooling.Store.checkpoint(c.track.id, c.track.conversation_id).unchanged == 0
     expect_reply(task)
     settle(c.track.id)
     :sys.get_state(server)
@@ -376,7 +376,7 @@ defmodule Ravix.Tooling.ReconcilerTest do
       make_due(c.track.id)
       Reconciler.tick(server)
       assert Repo.get!(Task, task.id).cursor == last
-      assert Ravix.Tooling.Store.checkpoint(c.track.id).cursor == last
+      assert Ravix.Tooling.Store.checkpoint(c.track.id, c.track.conversation_id).cursor == last
     end
 
     assert length(FakeTransport.calls(client)) == 6
@@ -464,14 +464,37 @@ defmodule Ravix.Tooling.ReconcilerTest do
 
   test "a hint fences an older reconcile's backoff write", c do
     alias Ravix.Tooling.Store
-    before = Store.checkpoint(c.track.id)
-    Store.reset_checkpoint(c.track.id)
-    Store.finish_checkpoint(before, "unchanged", 100)
-    current = Store.checkpoint(c.track.id)
+    before = Store.checkpoint(c.track.id, c.track.conversation_id)
+    Store.reset_checkpoint(c.track.id, c.track.conversation_id)
+    Store.finish_checkpoint(before, "unchanged")
+    Store.advance_checkpoint(c.track.id, c.track.conversation_id, 100)
+    current = Store.checkpoint(c.track.id, c.track.conversation_id)
     assert current.signature == nil
     assert current.unchanged == 0
     assert DateTime.compare(current.next_due_at, DateTime.utc_now()) != :gt
     assert current.cursor == 100
+  end
+
+  test "receipt and thread cursor roll back together when a transaction fails", c do
+    task = submit(c, "atomic-cursor")
+    expect_reply(task)
+
+    assert {:error, :interrupted} =
+             Ravix.Tooling.Store.transaction(fn ->
+               :ok =
+                 Tasks.reconcile_rows(
+                   Ravix.Tooling.Store.reconciliation_rows(thread_id: c.track.id)
+                 )
+
+               assert Ravix.Tooling.Store.checkpoint(c.track.id, c.track.conversation_id).cursor ==
+                        1
+
+               Ravix.Tooling.Store.rollback(:interrupted)
+             end)
+
+    assert Repo.get!(Task, task.id).cursor == nil
+    assert Ravix.Tooling.Store.checkpoint(c.track.id, c.track.conversation_id).cursor == nil
+    assert Repo.get!(Task, task.id).state == "TASK_STATE_SUBMITTED"
   end
 
   defp server do

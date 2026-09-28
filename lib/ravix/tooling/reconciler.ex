@@ -85,9 +85,9 @@ defmodule Ravix.Tooling.Reconciler do
 
     if reset do
       rows
-      |> Enum.map(fn {_, access} -> access.thread.id end)
+      |> Enum.map(fn {_, access} -> {access.thread.id, access.thread.conversation_id} end)
       |> Enum.uniq()
-      |> Enum.each(&Store.reset_checkpoint/1)
+      |> Enum.each(fn {id, conversation_id} -> Store.reset_checkpoint(id, conversation_id) end)
     end
 
     case Tasks.reconcile_rows(rows) do

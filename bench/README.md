@@ -12,23 +12,23 @@ Measurements on this Sprite:
 
 | Workload | Before calls | After calls | Before reductions | After reductions |
 | --- | ---: | ---: | ---: | ---: |
-| 10 threads, 1,000 old + 200 reply events each, four running passes then completion | 210 | 170 | 16,790,684 | 13,917,090 |
-| 10 unchanged working threads, 121 sweeps over 600 simulated seconds | 280 | 100 | 4,830,103 | 2,709,827 |
+| 10 threads, 1,000 old + 200 reply events each, four running passes then completion | 210 | 170 | 16,790,684 | 13,993,171 |
+| 10 unchanged working threads, 121 sweeps over 600 simulated seconds | 280 | 100 | 4,830,103 | 2,812,225 |
 
 The first workload has one task per thread. Calls include `/turns` and `/events`.
 Completion alone falls from 130 calls / 12,406,204 reductions to 90 calls /
-8,974,114 reductions: it resumes after the four already consumed pages, rather
+8,982,844 reductions: it resumes after the four already consumed pages, rather
 than starting at the beginning. Each of those pages contains 100 events, each
-with a 256-byte output body. Total measured wall time was 338 vs 325 ms for the
-first workload and 455 vs 292 ms for the second. Real provider latency is absent.
+with a 256-byte output body. Total measured wall time was 338 vs 306 ms for the
+first workload and 455 vs 302 ms for the second. Real provider latency is absent.
 
 Component probe, 100 repetitions over the same 200-event reply:
 
 | Component | Reductions | Wall time |
 | --- | ---: | ---: |
-| JSON decode | 7,322,126 | 56 ms |
-| Previous `Transcript.page` reply parsing | 3,019,097 | 73 ms |
-| `Transcript.blocks_for_turn` reply parsing | 1,251,623 | 17 ms |
+| JSON decode | 7,324,042 | 56 ms |
+| Previous `Transcript.page` reply parsing | 3,019,889 | 76 ms |
+| `Transcript.blocks_for_turn` reply parsing | 1,250,623 | 17 ms |
 
 The large event payloads and decoding dominate the payload probe. Reply parsing
 also did unnecessary work: `Transcript.page` rebuilds the displayed transcript
@@ -64,8 +64,11 @@ it does not replay history.
 
 ## Durable state and limits
 
-A per-thread high-water cursor initializes future receipts; existing receipts
+A per-thread/conversation high-water cursor commits atomically with the receipt and initializes
+future receipts; existing receipts
 keep their own durable cursor so an older or overlapping task cannot lose events.
+A replacement Fountain conversation starts a separate checkpoint; stale readers
+cannot reset a cursor already moved to that conversation.
 Provider pages are shared within a thread pass. A temporary per-receipt journal
 retains only the correlated unfinished turn's events, preserving ACP replies and
 failure evidence across pages and process loss; terminal writes clear it. Old

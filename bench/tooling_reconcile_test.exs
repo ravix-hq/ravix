@@ -140,8 +140,8 @@ defmodule Ravix.Tooling.ReconcileBench do
         for {task, track} <- rows, track.id in ids do
           Repo.update_all(from(t in Task, where: t.id == ^task.id), set: [reconciled_at: now])
 
-          if function_exported?(Store, :checkpoint, 1) do
-            cp = apply(Store, :checkpoint, [track.id])
+          if function_exported?(Store, :checkpoint, 2) do
+            cp = apply(Store, :checkpoint, [track.id, track.conversation_id])
             delta = DateTime.diff(cp.next_due_at, DateTime.utc_now(), :millisecond)
             Store.update(cp, next_due_at: DateTime.add(now, round(delta / 1000), :second))
           end

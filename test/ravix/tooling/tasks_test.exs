@@ -93,6 +93,59 @@ defmodule Ravix.Tooling.TasksTest do
     assert {:ok, %{state: "TASK_STATE_COMPLETED", result: "old new"}} = Tasks.get(p, task.id)
   end
 
+  test "conversation replacement cannot inherit the previous conversation's cursor", %{
+    p: p,
+    track: track
+  } do
+    {:ok, first} = Tasks.send(p, track.id, "first", "old-conversation")
+    QueueStore.mark_delivered(first.id)
+    expect(Fountain, :turns, fn _, _ -> {:ok, [turn(first.id, "first", "completed")]} end)
+
+    expect(Fountain, :events_page, fn _, _, _ ->
+      {:ok, %{events: [event(1000, "first", "old")], next_cursor: 1000, has_more: false}}
+    end)
+
+    assert {:ok, %{result: "old"}} = Tasks.get(p, first.id)
+    {:ok, task} = Tasks.send(p, track.id, "next", "new-conversation")
+    assert task.cursor == 1000
+    stale_rows = Ravix.Tooling.Store.reconciliation_rows(thread_id: track.id)
+    # Recovery can bind a fresh conversation after a receipt was accepted.
+    Repo.get!(Ravix.Tracks.Thread, track.id)
+    |> Ecto.Changeset.change(conversation_id: "replacement")
+    |> Repo.update!()
+
+    QueueStore.mark_delivered(task.id)
+
+    expect(Fountain, :turns, fn _, "replacement" ->
+      {:ok, [turn(task.id, "second", "running")]}
+    end)
+
+    expect(Fountain, :events_page, fn _, "replacement", opts ->
+      assert opts[:after] == nil
+      {:ok, %{events: [event(1, "second", "new")], next_cursor: 1, has_more: false}}
+    end)
+
+    assert {:ok, %{result: "new", cursor: 1}} = Tasks.get(p, task.id)
+    assert :ok = Tasks.reconcile_rows(stale_rows)
+
+    assert %{result: "new", cursor: 1, cursor_conversation_id: "replacement"} =
+             Repo.get!(Task, task.id)
+
+    expect(Fountain, :turns, fn _, "replacement" ->
+      {:ok, [turn(task.id, "second", "completed")]}
+    end)
+
+    expect(Fountain, :events_page, fn _, "replacement", opts ->
+      assert opts[:after] == 1
+      {:ok, %{events: [], next_cursor: 1, has_more: false}}
+    end)
+
+    assert {:ok, %{state: "TASK_STATE_COMPLETED", result: "new"}} = Tasks.get(p, task.id)
+    {:ok, next} = Tasks.send(p, track.id, "again", "replacement-next")
+    assert next.cursor == 1
+    assert next.cursor_conversation_id == "replacement"
+  end
+
   test "explicit thread delivery and polling stay in that conversation", %{p: p, track: track} do
     {:ok, thread} =
       Ravix.Tracks.Store.create_thread(%{
