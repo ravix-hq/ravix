@@ -65,6 +65,9 @@ defmodule RavixWeb.WorkspaceLive do
         # listed, never counted, never a URL to open.
         closed_tracks: %{},
         closed_projects: MapSet.new(),
+        # How many pages of closed tracks each shown project lists; see
+        # `closed_limits/3`. Held per page view, not persisted.
+        closed_pages: %{},
         reopen: nil,
         track_errors: MapSet.new(),
         track_loading: MapSet.new(),
@@ -405,7 +408,10 @@ defmodule RavixWeb.WorkspaceLive do
         {:noreply,
          if(show?,
            do: refresh_tracks(socket, id),
-           else: update(socket, :closed_tracks, &Map.delete(&1, id))
+           else:
+             socket
+             |> update(:closed_tracks, &Map.delete(&1, id))
+             |> update(:closed_pages, &Map.delete(&1, id))
          )}
 
       {:error, reason} ->
@@ -445,6 +451,16 @@ defmodule RavixWeb.WorkspaceLive do
       nil ->
         {:noreply, flash(socket, :error, "Track not available.")}
     end
+  end
+
+  def handle_event("closed-older", %{"project" => id}, socket) do
+    if MapSet.member?(socket.assigns.closed_projects, id),
+      do:
+        {:noreply,
+         socket
+         |> update(:closed_pages, &Map.update(&1, id, 2, fn n -> n + 1 end))
+         |> refresh_tracks(id)},
+      else: {:noreply, socket}
   end
 
   def handle_event("delete-section", %{"id" => id}, socket) do
@@ -1102,6 +1118,7 @@ defmodule RavixWeb.WorkspaceLive do
   defp reload_async(socket, opts) do
     user = socket.assigns.current_user
     {backoff, opts} = Keyword.pop(opts, :backoff_ms, 0)
+    opts = Keyword.put(opts, :closed_pages, socket.assigns.closed_pages)
 
     traced_async(assign(socket, rail_error: false), :reload, fn ->
       if backoff > 0, do: Process.sleep(backoff)
@@ -1146,7 +1163,7 @@ defmodule RavixWeb.WorkspaceLive do
 
       opts =
         if MapSet.member?(socket.assigns.closed_projects, project_id),
-          do: [fresh: true, closed: true],
+          do: [fresh: true, closed: closed_fetch(socket.assigns.closed_pages, project_id)],
           else: [fresh: true]
 
       traced_async(socket, {:tracks, project_id}, fn -> Tracks.list(user, project_id, opts) end)
@@ -1162,7 +1179,8 @@ defmodule RavixWeb.WorkspaceLive do
   # another project is still answering.
   defp read_rail(user, opts \\ []) do
     projects = Projects.list(user, include_machine: false)
-    closed = closed_shown(user, projects)
+    {pages, opts} = Keyword.pop(opts, :closed_pages, %{})
+    closed = closed_limits(user, projects, pages)
     tracks = Tracks.list_many(user, Enum.map(projects, & &1.id), [closed: closed] ++ opts)
     {projects, tracks}
   end
@@ -1177,11 +1195,12 @@ defmodule RavixWeb.WorkspaceLive do
       socket.assigns.current_user
       |> Projects.list(include_machine: false)
 
-    closed_projects = MapSet.new(closed_shown(socket.assigns.current_user, projects))
+    closed = closed_limits(socket.assigns.current_user, projects, socket.assigns.closed_pages)
+    closed_projects = MapSet.new(Map.keys(closed))
 
     visible =
       socket.assigns.current_user
-      |> Access.open_tracks(Enum.map(projects, & &1.id), closed: MapSet.to_list(closed_projects))
+      |> Access.open_tracks(Enum.map(projects, & &1.id), closed: closed)
       |> MapSet.new(fn {row, _project} -> row.id end)
 
     track_errors =
@@ -1205,7 +1224,9 @@ defmodule RavixWeb.WorkspaceLive do
         {shut, live} = Enum.split_with(rows, &(&1.status == :closed))
 
         closed =
-          if MapSet.member?(closed_projects, id), do: Map.put(closed, id, shut), else: closed
+          if MapSet.member?(closed_projects, id),
+            do: Map.put(closed, id, Enum.sort_by(shut, & &1.closed_at, {:desc, DateTime})),
+            else: closed
 
         {closed, Map.put(open, id, live)}
       end)
@@ -1463,10 +1484,21 @@ defmodule RavixWeb.WorkspaceLive do
 
   # Show closed belongs to the project row menu, which somebody invited only
   # to tracks does not have; a choice made before losing project access lapses.
-  defp closed_shown(user, projects) do
+  #
+  # Each shown project lists a page of its most recently closed tracks at a
+  # time, fetching one more than it shows so the page knows there are older.
+  defp closed_limits(user, projects, pages) do
     ids = for p <- projects, p.access != :tracks, into: MapSet.new(), do: p.id
-    Enum.filter(Sections.closed_shown(user), &MapSet.member?(ids, &1))
+
+    for id <- Sections.closed_shown(user),
+        MapSet.member?(ids, id),
+        into: %{},
+        do: {id, closed_fetch(pages, id)}
   end
+
+  @closed_page 20
+  defp closed_shown_count(pages, id), do: Map.get(pages, id, 1) * @closed_page
+  defp closed_fetch(pages, id), do: closed_shown_count(pages, id) + 1
 
   defp toggle(set, id, true), do: MapSet.put(set, id)
   defp toggle(set, id, false), do: MapSet.delete(set, id)
@@ -1558,6 +1590,21 @@ defmodule RavixWeb.WorkspaceLive do
     |> String.upcase()
   end
 
+  defp jump_tracks(tracks, project, user, mine?, query),
+    do:
+      Enum.filter(
+        tracks,
+        &((!mine? or Access.created_by?(user, &1)) and matching?(&1, project, query))
+      )
+
+  # Only a project this person may enter whole has plans to offer, and
+  # `mine:` is about the tracks this person created.
+  defp jump_plans(_plans, %{access: :tracks}, _mine?, _query), do: []
+  defp jump_plans(_plans, _project, true, _query), do: []
+
+  defp jump_plans(plans, _project, false, query),
+    do: Enum.filter(plans, &plan_matches?(&1, query))
+
   # Keep filtering inside a component so HEEx tracks its input assigns.
   defp track_search_results(assigns) do
     plans = Enum.group_by(assigns.plans, & &1.project_id)
@@ -1566,17 +1613,8 @@ defmodule RavixWeb.WorkspaceLive do
     results =
       for project <- assigns.projects,
           tracks =
-            Enum.filter(
-              assigns.tracks[project.id] || [],
-              &((!mine? or Access.created_by?(assigns.user, &1)) and matching?(&1, project, query))
-            ),
-          # Only a project this person may enter whole has plans to offer, and
-          # `mine:` is about the tracks this person created.
-          plans =
-            if(project.access == :tracks or mine?,
-              do: [],
-              else: Enum.filter(plans[project.id] || [], &plan_matches?(&1, query))
-            ),
+            jump_tracks(assigns.tracks[project.id] || [], project, assigns.user, mine?, query),
+          plans = jump_plans(plans[project.id] || [], project, mine?, query),
           tracks != [] || plans != [] || (!mine? and project_matches?(project, query)),
           do: {project, tracks, plans}
 

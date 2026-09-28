@@ -155,6 +155,38 @@ defmodule RavixWeb.WorkspaceFiltersTest do
     assert Sections.closed_shown(ctx.viewer) == []
   end
 
+  test "Show closed lists the 20 most recently closed and pages older ones", ctx do
+    base = ~U[2026-09-01 00:00:00.000000Z]
+
+    closed =
+      for n <- 1..25 do
+        insert_track(
+          project: ctx.project,
+          title: "Old #{n}",
+          closed_at: DateTime.add(base, n, :hour)
+        )
+      end
+
+    {:ok, _} = Sections.show_closed(ctx.viewer, ctx.project.id, true)
+    view = open(ctx.conn, ctx.viewer, "/p/#{ctx.project.id}")
+    list = "#closed-tracks-#{ctx.project.id}"
+    {older, newest} = Enum.split(closed, 5)
+
+    for track <- newest, do: assert(has_element?(view, "#closed-track-#{track.id}"))
+    for track <- older, do: refute(has_element?(view, "#closed-track-#{track.id}"))
+    # Most recently closed first.
+    [first | _] = String.split(render(element(view, list)), ~s(id="closed-track-)) |> tl()
+    assert first =~ List.last(closed).id
+
+    view |> element("#closed-older-#{ctx.project.id}", "Show older") |> render_click()
+    render_async(view, 5_000)
+    for track <- closed, do: assert(has_element?(view, "#closed-track-#{track.id}"))
+    refute has_element?(view, "#closed-older-#{ctx.project.id}")
+    # Counts and badges only count open tracks.
+    assert has_element?(view, "#project-track-tab-#{ctx.mine.id}")
+    refute has_element?(view, "#project-link-#{ctx.project.id} .badge")
+  end
+
   test "Show closed and Reopen belong to project access; track-only members and forged projects are refused",
        ctx do
     shared = insert_track(project: ctx.project, title: "Shared", closed_at: DateTime.utc_now())

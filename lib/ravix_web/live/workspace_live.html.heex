@@ -421,7 +421,10 @@
                         <li
                           :for={
                             track <-
-                              rail_rows(@closed_tracks[project.id] || [], @current_user, nil)
+                              @closed_tracks[project.id]
+                              |> Kernel.||([])
+                              |> Enum.take(closed_shown_count(@closed_pages, project.id))
+                              |> rail_rows(@current_user, nil)
                           }
                           id={"closed-track-#{track.id}"}
                           class="workspace-track closed-track"
@@ -452,6 +455,19 @@
                       >
                         No closed tracks
                       </p>
+                      <button
+                        :if={
+                          length(@closed_tracks[project.id] || []) >
+                            closed_shown_count(@closed_pages, project.id)
+                        }
+                        type="button"
+                        id={"closed-older-#{project.id}"}
+                        class="ghost"
+                        phx-click="closed-older"
+                        phx-value-project={project.id}
+                      >
+                        Show older
+                      </button>
                     </div>
                   </nav>
                 </section>

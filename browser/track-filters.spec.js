@@ -61,7 +61,7 @@ test('Mine/Everyone filters the rail by creator, and Show closed lists closed tr
 
   // Quick-jump still searches everything unless asked for `mine:`.
   await page.locator('#quick-jump-trigger').click();
-  const search = page.getByLabel('Search projects and tracks');
+  const search = page.getByLabel('Search projects, tracks and plans');
   await search.fill('member-work');
   await expect(page.locator('#search-dialog [data-jump-result]', { hasText: 'member-work' })).toHaveCount(1);
   await search.fill('mine: member-work');

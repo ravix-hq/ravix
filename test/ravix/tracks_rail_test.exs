@@ -126,7 +126,7 @@ defmodule Ravix.TracksRailTest do
     ids = [owned.id, member.id]
 
     {rows, queries} =
-      QueryCount.count(fn -> Access.open_tracks(viewer, ids, closed: ids) end)
+      QueryCount.count(fn -> Access.open_tracks(viewer, ids, closed: Map.new(ids, &{&1, 20})) end)
 
     assert length(queries) == 1
     found = MapSet.new(rows, fn {track, _} -> track.id end)
@@ -137,7 +137,7 @@ defmodule Ravix.TracksRailTest do
     refute foreign_private.id in found
     refute revoked.id in found
 
-    only_owned = Access.open_tracks(viewer, ids, closed: [owned.id])
+    only_owned = Access.open_tracks(viewer, ids, closed: %{owned.id => 20})
 
     assert MapSet.new(only_owned, fn {track, _} -> track.id end) ==
              MapSet.new([open.id, closed.id, legacy.id])
@@ -151,15 +151,57 @@ defmodule Ravix.TracksRailTest do
     assert Access.created_by?(viewer, legacy)
     refute Access.created_by?(viewer, closed)
 
-    tracks = Tracks.list_many(viewer, ids, closed: [owned.id])
+    tracks = Tracks.list_many(viewer, ids, closed: %{owned.id => 20})
 
     assert tracks[owned.id] |> Enum.filter(&(&1.status == :closed)) |> Enum.map(& &1.id) == [
              closed.id
            ]
 
     refute Map.has_key?(tracks, member.id)
-    assert {:ok, listed} = Tracks.list(viewer, member.id, closed: true)
+    assert {:ok, listed} = Tracks.list(viewer, member.id, closed: 20)
     assert MapSet.new(listed, & &1.id) == MapSet.new([closed_member.id, own_private.id])
+  end
+
+  test "closed tracks are capped per project to the most recently closed, still in one query" do
+    viewer = insert_user()
+    other = insert_user()
+    busy = insert_project(user: viewer)
+    quiet = insert_project(user: viewer)
+    open = insert_track(project: busy)
+    base = ~U[2026-09-01 00:00:00.000000Z]
+
+    closed =
+      for n <- 1..25 do
+        insert_track(project: busy, closed_at: DateTime.add(base, n, :hour))
+      end
+
+    # Newer than all of them, but another person's private track: it is not
+    # shown and must not take one of the places.
+    insert_track(
+      project: busy,
+      visibility: :private,
+      created_by: other.id,
+      sandbox_layout: :dedicated,
+      closed_at: DateTime.add(base, 100, :hour)
+    )
+
+    quiet_closed = insert_track(project: quiet, closed_at: base)
+    ids = [busy.id, quiet.id]
+
+    {rows, queries} =
+      QueryCount.count(fn ->
+        Access.open_tracks(viewer, ids, closed: %{busy.id => 20, quiet.id => 20})
+      end)
+
+    assert length(queries) == 1
+    found = Enum.map(rows, fn {track, _} -> track.id end)
+    newest = closed |> Enum.reverse() |> Enum.take(20) |> Enum.map(& &1.id)
+    assert MapSet.new(found) == MapSet.new([open.id, quiet_closed.id | newest])
+
+    # A larger limit is the next page; open tracks are never capped.
+    more = Access.open_tracks(viewer, ids, closed: %{busy.id => 21})
+    assert length(more) == 22
+    refute quiet_closed.id in Enum.map(more, fn {track, _} -> track.id end)
   end
 
   test "a failed provider presentation is isolated to its project" do
