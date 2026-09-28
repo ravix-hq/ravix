@@ -82,6 +82,15 @@ defmodule RavixWeb.WorkspaceScopeLiveTest do
     |> Enum.map(&(&1 |> LazyHTML.text() |> String.trim()))
   end
 
+  # A project changing workspace, as the owner's Move to workspace does:
+  # the row, then the notices open pages hear.
+  defp move(project, workspace_id) do
+    from = Repo.get!(Ravix.Projects.Project, project.id)
+    from |> Ecto.Changeset.change(workspace_id: workspace_id) |> Repo.update!()
+    Workspaces.members_changed(from.workspace_id)
+    Workspaces.members_changed(workspace_id)
+  end
+
   defp search(view, query) do
     render_click(view, "dialog", %{name: "search"})
     view |> form("#search-form", q: query) |> render_change()
@@ -216,28 +225,42 @@ defmodule RavixWeb.WorkspaceScopeLiveTest do
     assert render(view) =~ "Project not found."
   end
 
-  test "a project its owner moves elsewhere while open leaves the page, not the choice", ctx do
-    {:ok, _} = Accounts.put_current_workspace(ctx.me, ctx.team.id)
-    view = open(ctx.conn, "/p/#{ctx.team_project.id}")
-    assert has_element?(view, "#workspace-switcher-trigger", "Team")
+  test "somebody else's project moved elsewhere while open leaves the page, not the choice",
+       ctx do
+    boss = insert_user(login: "boss")
+    {:ok, here} = Workspaces.create(boss, "Here")
+    {:ok, there} = Workspaces.create(boss, "There")
+    :ok = Store.add_member(here.id, ctx.me.id, :member, boss.id)
+    :ok = Store.add_member(there.id, ctx.me.id, :member, boss.id)
+    moving = insert_project(user: boss, name: "Moving", repo_full_name: "boss/moving")
+    Store.move_project(moving.id, here.id)
+    {:ok, _} = Accounts.put_current_workspace(ctx.me, here.id)
 
-    # Into the personal workspace: still reachable, but a background read
-    # does not follow it there. (`Store.move_project/2` only moves legacy
-    # rows; this is the owner's move, which is another item's UI.)
-    Ravix.Projects.Project
-    |> Repo.get!(ctx.team_project.id)
-    |> Ecto.Changeset.change(workspace_id: ctx.personal.id)
-    |> Repo.update!()
+    view = open(ctx.conn, "/p/#{moving.id}")
+    assert has_element?(view, "#workspace-switcher-trigger", "Here")
 
-    Ravix.Hub.publish(ctx.team_project.id, :settings)
-    # The notice starts a rail read; `render/1` waits for it to be handled.
+    # Still reachable in There, but a background read does not follow it.
+    move(moving, there.id)
     render(view)
     render_async(view)
 
     assert_patch(view, "/")
-    assert has_element?(view, "#workspace-switcher-trigger", "Team")
-    refute has_element?(view, "#project-row-#{ctx.team_project.id}")
-    assert Repo.reload!(ctx.me).current_workspace_id == ctx.team.id
+    assert has_element?(view, "#workspace-switcher-trigger", "Here")
+    refute has_element?(view, "#project-row-#{moving.id}")
+    assert Repo.reload!(ctx.me).current_workspace_id == here.id
+  end
+
+  test "the owner's own move of an open project takes the page with it", ctx do
+    {:ok, _} = Accounts.put_current_workspace(ctx.me, ctx.team.id)
+    view = open(ctx.conn, "/p/#{ctx.team_project.id}")
+
+    move(ctx.team_project, ctx.personal.id)
+    render(view)
+    render_async(view)
+
+    assert has_element?(view, "#workspace-switcher-trigger", "me")
+    assert has_element?(view, "#project-row-#{ctx.team_project.id}.current")
+    assert Repo.reload!(ctx.me).current_workspace_id == ctx.personal.id
   end
 
   test "a /p/:id link into another of the viewer's workspaces switches to it", ctx do

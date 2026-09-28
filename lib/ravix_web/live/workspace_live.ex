@@ -412,18 +412,20 @@ defmodule RavixWeb.WorkspaceLive do
   # already holds every workspace's projects and tracks, so it is scoped
   # again from those, with membership and visibility re-read and no provider
   # asked. A project left open from the workspace being left is closed, for
-  # the new workspace's home.
+  # the new workspace's home; closed first, or an owned one would be
+  # followed straight back (`scope_rail/2`).
   def handle_event("workspace-select", %{"workspace" => id}, socket) do
     case WorkspaceSwitcher.select(socket, id) do
       {:ok, socket} ->
         open = socket.assigns.project
-        socket = recheck_rail(socket)
+        socket = socket |> assign(project: nil) |> recheck_rail()
 
         {:noreply,
-         if(open && is_nil(socket.assigns.project),
-           do: push_patch(socket, to: "/home"),
-           else: socket
-         )}
+         case open && Enum.find(socket.assigns.projects, &(&1.id == open.id)) do
+           nil when is_nil(open) -> socket
+           nil -> push_patch(socket, to: "/home")
+           project -> assign(socket, project: project)
+         end}
 
       {:error, socket} ->
         {:noreply, recheck_rail(socket)}
@@ -1249,24 +1251,17 @@ defmodule RavixWeb.WorkspaceLive do
   def handle_info({:hub, %Event{name: :read} = event}, socket),
     do: {:noreply, clear_unread(socket, event)}
 
-  def handle_info({:hub, %Event{name: name}}, socket) when name in [:people, :tracks] do
-    previous_project = socket.assigns.project
-    socket = recheck_rail(socket)
-
-    socket =
-      if previous_project && is_nil(socket.assigns.project),
-        do: push_patch(socket, to: "/"),
-        else: socket
-
-    {:noreply, reload_async(socket)}
-  end
+  def handle_info({:hub, %Event{name: name}}, socket) when name in [:people, :tracks],
+    do: {:noreply, socket |> recheck_or_leave() |> reload_async()}
 
   def handle_info({:hub, %Event{}}, socket), do: {:noreply, reload_async(socket)}
 
   # The current workspace's members changed, perhaps to leave this viewer
-  # out: scope again, falling back to the default if so.
+  # out: scope again, falling back to the default if so. A project that goes
+  # with it is left here, since this notice can beat the project's own
+  # `:people` event, which would then find nothing open to leave.
   def handle_info({:workspace_hub, _id, :members}, socket),
-    do: {:noreply, recheck_rail(socket)}
+    do: {:noreply, recheck_or_leave(socket)}
 
   defp clear_unread(
          %{assigns: %{current_user: %Accounts.User{id: user_id}, all_tracks: tracks}} = socket,
@@ -1370,6 +1365,17 @@ defmodule RavixWeb.WorkspaceLive do
   defp section_key(%{shared: true}), do: "shared"
   defp section_key(%{id: nil}), do: "other"
   defp section_key(%{id: id}), do: id
+
+  # Scope again from the database, and leave the open project if that took
+  # it away.
+  defp recheck_or_leave(socket) do
+    previous_project = socket.assigns.project
+    socket = recheck_rail(socket)
+
+    if previous_project && is_nil(socket.assigns.project),
+      do: push_patch(socket, to: "/"),
+      else: socket
+  end
 
   # Only the connected, already-loaded rail is revalidated here. Initial
   # discovery remains in start_async; this reads membership, never providers.
@@ -1548,16 +1554,19 @@ defmodule RavixWeb.WorkspaceLive do
   # default. Nothing is read from a provider and nothing is granted: the
   # projects are `Projects.list/2`'s, already admitted one by one.
   #
-  # `follow` is a project a URL just named, on mount or a patch, and only
-  # then. When it is one the viewer reaches but sits in another of their
-  # workspaces, that workspace becomes current, so a `/p/:id` link from
-  # somewhere else opens where it lives rather than as "not found". A
-  # background read never follows: a project its owner moved elsewhere
-  # while it was open leaves the page, and the choice stays the viewer's.
+  # `follow` is a project a URL just named, on mount or a patch. When it is
+  # one the viewer reaches but sits in another of their workspaces, that
+  # workspace becomes current, so a `/p/:id` link from somewhere else opens
+  # where it lives rather than as "not found". A background read follows
+  # only a project the viewer owns and has open: only its owner can move a
+  # project, so that is their own move, from this page or another. Anybody
+  # else's project moved elsewhere while open leaves the page, and their
+  # choice of workspace stays theirs.
   defp scope_rail(socket, follow) do
     user = socket.assigns.current_user
     listed = WorkspaceSwitcher.list(user)
     all = socket.assigns.all_projects
+    follow = follow || owned_open_project(socket)
 
     current =
       case Workspaces.current(user, listed) do
@@ -1597,6 +1606,12 @@ defmodule RavixWeb.WorkspaceLive do
     )
     |> derive_scope()
   end
+
+  defp owned_open_project(%{assigns: %{project: %{id: id}, all_projects: all}}) do
+    if Enum.any?(all, &(&1.id == id and &1.access == :owner)), do: id
+  end
+
+  defp owned_open_project(_socket), do: nil
 
   # A `/p/:id` link to a project the viewer reaches in another of their
   # workspaces switches to it; anything else is left to `open_url/2`.
