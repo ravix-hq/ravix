@@ -264,12 +264,14 @@ defmodule Ravix.Tracks.TranscriptLoadTest do
     project = insert_project(user: owner, runtime: "codex")
     track = insert_track(project: project, conversation_id: "scan")
     base = "/api/conversations/scan"
-    # Three whole-turn pages: t5-t6, t3-t4, t1-t2.
-    log = settled_turns(6, 600)
-    assert [p1, p2, _p3] = Fixture.desc_routes(base <> "/events", log)
+    # The read's 200-event page is t7, whole; the scan's 1,000-event pages
+    # are t5-t6, t3-t4, t1-t2.
+    log = settled_turns(7, 600)
+    assert [p1, p2, p3, _p4] = Fixture.desc_routes(base <> "/events", log, then: 1000)
+    assert match?({%{query: %{"limit" => "1000"}}, _}, p2)
     {:ok, _} = Store.classify_turn_once("scan", "t3", fn -> {:ok, nil} end)
     turns = {%{method: "GET", path: base <> "/turns"}, {200, [], %{data: []}}}
-    client = FakeTransport.client([p1, turns, p2])
+    client = FakeTransport.client([p1, turns, p2, p3])
     stub(Fountain, :client, fn -> client end)
     parent = self()
 
@@ -279,20 +281,20 @@ defmodule Ravix.Tracks.TranscriptLoadTest do
     end)
 
     assert {:ok, page} = Tracks.events(owner, track.id)
-    assert Enum.map(page.turns, & &1.id) == ["t5", "t6"]
+    assert Enum.map(page.turns, & &1.id) == ["t7"]
     await_scan()
-    # The read took one page and the scan one more, stopping at t3: t1 and t2
+    # The read took one page and the scan two more, stopping at t3: t1 and t2
     # were never read.
-    assert event_paths(client) == [base <> "/events", base <> "/events"]
-    assert classified("scan") == ~w(t3 t4 t5 t6)
+    assert length(event_paths(client)) == 3
+    assert classified("scan") == ~w(t3 t4 t5 t6 t7)
 
     FakeTransport.expect(client, elem(p1, 0), elem(p1, 1))
     FakeTransport.expect(client, elem(turns, 0), elem(turns, 1))
     assert {:ok, _} = Tracks.events(owner, track.id)
     await_scan()
     # Everything on the newest page is classified: no request beyond the read.
-    assert length(event_paths(client)) == 3
-    assert classified("scan") == ~w(t3 t4 t5 t6)
+    assert length(event_paths(client)) == 4
+    assert classified("scan") == ~w(t3 t4 t5 t6 t7)
   end
 
   test "unscrolled settled turns on older pages classify in the background, bounded and off the read" do
@@ -305,10 +307,11 @@ defmodule Ravix.Tracks.TranscriptLoadTest do
       Ravix.AgentOutageFixture.events() ++
         (settled_turns(3, 600) |> Enum.map(&Map.update!(&1, "id", fn id -> id + 100 end)))
 
-    assert [first, second] = Fixture.desc_routes(base <> "/events", log)
+    # The read's page is t3; the scan's are t1-t2, then the outage turn.
+    assert [first, second, third] = Fixture.desc_routes(base <> "/events", log, then: 1000)
     refute Enum.any?(elem(elem(first, 1), 2)["data"], &(&1["turn_id"] == "mine"))
     turns = {%{method: "GET", path: base <> "/turns"}, {200, [], %{data: []}}}
-    client = FakeTransport.client([first, turns, second])
+    client = FakeTransport.client([first, turns, second, third])
     stub(Fountain, :client, fn -> client end)
     parent = self()
 
@@ -322,10 +325,10 @@ defmodule Ravix.Tracks.TranscriptLoadTest do
     refute Enum.any?(page.turns, &(&1.id == "mine"))
     assert_receive {:scanning, worker}, 1_000
     monitor = Process.monitor(worker)
-    # Each classification waits on the test; the read already returned. Two
-    # pages, four settled turns: t2 and t3, then t1 and "mine".
+    # Each classification waits on the test; the read already returned.
+    # Three pages, four settled turns: t3, t1 and t2, then "mine".
     assert release_classifications(worker, monitor, 0) == 4
-    assert length(event_paths(client)) == 2
+    assert length(event_paths(client)) == 3
 
     assert Enum.any?(
              Repo.all(TurnFailure),

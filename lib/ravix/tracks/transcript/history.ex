@@ -30,11 +30,14 @@ defmodule Ravix.Tracks.Transcript.History do
   @type t :: %__MODULE__{}
   @turns_per_chunk 10
 
-  # Sized from Fountain's own conversations: an agent turn is typically a few
-  # hundred to two thousand events, so a thousand is one to a few complete
-  # turns, `whole_turns` extends it to the last turn's start, and it is the
-  # size of the forward page it replaces.
-  @page_limit 1000
+  # A read is sized by turns, not events. `whole_turns` extends a page to
+  # the first event of every turn it touches (up to Fountain's 5,000-event
+  # ceiling: in production `limit=50` has returned 1,001 events of one long
+  # turn), so a small `limit` still answers complete turns: the newest one or
+  # two of an agent's long turns, several short ones. The background scan
+  # asks for more per page, to cover history within its page budget.
+  @read_limit 200
+  @scan_limit 1000
 
   @doc "The fallback: a forward-read log, partitioned into complete-turn chunks, newest first."
   @spec new([map()], list(), String.t(), list(), term()) :: t()
@@ -76,26 +79,30 @@ defmodule Ravix.Tracks.Transcript.History do
   longer than a page). Returns the raw events to render, ascending, the
   advanced history, and the pages and events read.
   """
-  @spec read(Fountain.Client.t(), t()) ::
+  @spec read(Fountain.Client.t(), t(), :read | :scan) ::
           {:ok, [map()], t(), %{pages: pos_integer(), events: non_neg_integer()}}
           | {:error, Fountain.failure()}
-  def read(client, history), do: fetch(client, history, %{pages: 0, events: 0})
+  def read(client, history, purpose \\ :read),
+    do: fetch(client, history, purpose, %{pages: 0, events: 0})
 
   @doc "Continue `read/2` past a page absorbed already, when all of it was held."
   @spec settle(Fountain.Client.t(), [map()], t(), map()) ::
           {:ok, [map()], t(), map()} | {:error, Fountain.failure()}
   def settle(client, [], %{before: before} = history, stats) when is_integer(before),
-    do: fetch(client, history, stats)
+    do: fetch(client, history, :read, stats)
 
   def settle(_client, events, history, stats), do: {:ok, events, history, stats}
 
-  defp fetch(client, history, stats) do
+  defp fetch(client, history, purpose, stats) do
     with {:ok, fetched} <-
-           Fountain.events_page(client, history.conversation_id, page_opts(history)),
+           Fountain.events_page(client, history.conversation_id, page_opts(history, purpose)),
          :ok <- advanced(history, fetched) do
       {events, history} = absorb(history, fetched)
       stats = %{pages: stats.pages + 1, events: stats.events + length(fetched.events)}
-      settle(client, events, history, stats)
+
+      if events == [] and is_integer(history.before),
+        do: fetch(client, history, purpose, stats),
+        else: {:ok, events, history, stats}
     end
   end
 
@@ -114,9 +121,10 @@ defmodule Ravix.Tracks.Transcript.History do
   defp advanced(_history, _fetched), do: :ok
 
   @doc "The newest-first page request after `history`'s cursor."
-  @spec page_opts(t()) :: keyword()
-  def page_opts(history) do
-    opts = [order: :desc, whole_turns: true, prompts: true, limit: @page_limit]
+  @spec page_opts(t(), :read | :scan) :: keyword()
+  def page_opts(history, purpose \\ :read) do
+    limit = if purpose == :scan, do: @scan_limit, else: @read_limit
+    opts = [order: :desc, whole_turns: true, prompts: true, limit: limit]
     if history.before, do: [{:before, history.before} | opts], else: opts
   end
 

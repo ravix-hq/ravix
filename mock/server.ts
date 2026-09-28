@@ -1649,18 +1649,19 @@ Bun.serve({
       const conv = state.conversations.find(c => c.id === id);
       if (!conv) return json({ error: "invalid_fixture" }, 400);
       const records = state.turns.get(id) ?? [];
-      for (let i = 1; i <= 35; i++) {
+      // 350 turns of 20 events: 7,000 in all, and a 200-event page is ten whole turns.
+      for (let i = 1; i <= 350; i++) {
         const turn = `history-${id}-${i}`;
         records.push({ id: turn, prompt: `History prompt ${i}`, status: "completed", image_count: 0 });
         push(id, { kind: "stage", stage: "turn", state: "started", turn_id: turn });
-        for (let j = 0; j < 198; j++) {
+        for (let j = 0; j < 18; j++) {
           push(id, { kind: "output", stream: "acp", turn_id: turn,
             data: text(`History answer ${i}: line ${j}.\n\n`) });
         }
         push(id, { kind: "stage", stage: "turn", state: "completed", turn_id: turn });
       }
       state.turns.set(id, records);
-      conv.turn_count += 35;
+      conv.turn_count += 350;
       return json({ status: "ok" });
     }
 

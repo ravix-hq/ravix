@@ -1205,7 +1205,7 @@ defmodule Ravix.TracksTest do
              method: "GET",
              path: "/api/conversations/c1/events",
              query: %{
-               limit: "1000",
+               limit: "200",
                order: "desc",
                whole_turns: "true",
                blocks: "true",
@@ -1234,7 +1234,7 @@ defmodule Ravix.TracksTest do
                   blocks: [%{kind: "prompt", body: "say hi"}]
                 }
               ],
-              meta: %{limit: 1000, has_more: false, next_cursor: 1},
+              meta: %{limit: 200, has_more: false, next_cursor: 1},
               page: %{order: "desc", oldest_cursor: 1, newest_cursor: 2, turn_split: false}
             }}}
         ])

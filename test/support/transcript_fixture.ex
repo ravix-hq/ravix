@@ -205,16 +205,22 @@ defmodule Ravix.TranscriptFixture do
 
   @doc """
   The chain of newest-first requests a reader makes over `log`, each with
-  the `before` the previous page handed back: `[{query, body}]`.
+  the `before` the previous page handed back: `[{query, body}]`. `:limit`
+  is the first page's (a read's, 200) and `:then` every later one's, which
+  is 1,000 for the classification scan continuing from a read.
   """
   def desc_pages(log, opts \\ []) do
+    first = Keyword.get(opts, :limit, 200)
+
     base = %{
       "order" => "desc",
       "whole_turns" => "true",
-      "limit" => "1000",
+      "limit" => to_string(first),
       "blocks" => "true",
       "prompts" => "true"
     }
+
+    later = Map.put(base, "limit", to_string(Keyword.get(opts, :then, first)))
 
     Stream.unfold(base, fn
       nil ->
@@ -222,12 +228,9 @@ defmodule Ravix.TranscriptFixture do
 
       query ->
         body = events_body(log, query, opts)
-
-        next =
-          body["meta"]["has_more"] &&
-            Map.put(base, "before", to_string(body["meta"]["next_cursor"]))
-
-        {{query, body}, next || nil}
+        more? = body["meta"]["has_more"]
+        next = if more?, do: Map.put(later, "before", to_string(body["meta"]["next_cursor"]))
+        {{query, body}, next}
     end)
     |> Enum.to_list()
   end

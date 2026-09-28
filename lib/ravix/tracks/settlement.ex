@@ -67,7 +67,7 @@ defmodule Ravix.Tracks.Settlement do
 
   defp walk(client, %{before: before} = history, classified, runtime, binding, pages)
        when is_integer(before) and pages < @scan_pages do
-    case Transcript.History.read(client, history) do
+    case Transcript.History.read(client, history, :scan) do
       {:ok, events, history, stats} ->
         pages = pages + stats.pages
         Trace.annotate(%{"ravix.event_pages" => pages})

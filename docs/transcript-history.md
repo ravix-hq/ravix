@@ -1,7 +1,7 @@
 # Transcript history (RAV-28)
 
 Opening a thread reads **one** newest-first page of its current conversation:
-`GET /api/conversations/:id/events?order=desc&whole_turns=true&prompts=true&limit=1000`
+`GET /api/conversations/:id/events?order=desc&whole_turns=true&prompts=true&limit=200`
 ([managoat/fountain#2531](https://github.com/managoat/fountain/issues/2531)).
 The page renders as it is, and the live follow resumes from its
 `page.newest_cursor` (the SSE `Last-Event-ID`). Nothing older is downloaded until
@@ -9,13 +9,20 @@ somebody asks for it.
 
 ## Page size
 
-`limit=1000` is measured, not guessed. The newest page of 30 recent Fountain
-conversations held 54 complete turns: 23 under 200 events, and 31 from 275 to
-2,915 (median about 850). A page of 300–500 would usually hold part of one long
-turn, which `whole_turns` then extends anyway. A thousand is one to a few complete
-turns (`whole_turns` extends a page to its oldest turn's first event), and it is
-the size of one forward page of the read it replaces. The browser fixture's
-200-event turns open five at a time.
+A read is sized by turns, not events. `whole_turns` extends a page to the first
+event of every turn it touches, up to Fountain's 5,000-event ceiling, so
+`limit` is only where the page starts looking: in production, `limit=50`
+returned 1,001 events of one long turn with `turn_split: false`.
+
+The newest page of 30 recent Fountain conversations held 54 complete turns: 23
+under 200 events, and 31 from 275 to 2,915 (median about 850). Reads therefore
+ask for `limit=200`: several short turns, or the newest long turn whole, and
+never more than one page of a turn the reader is about to see. A 5,000-event
+single-turn page renders in about 35 ms and holds about 1.1 MB as a page (the
+turn keeps its events, as a full build's does); only the cursor is retained
+after it. The background classification scan asks for `limit=1000`, so its
+page budget covers more history. The browser fixture's 20-event turns open ten
+at a time.
 
 ## Load earlier
 

@@ -33,10 +33,11 @@ defmodule Ravix.Tracks.TranscriptHistoryTest do
         conversation_id: "long"
       )
 
-    log = sparse(35, 200)
+    # 350 turns of 20 events: a 200-event page is the newest ten, whole.
+    log = sparse(350, 20)
     base = "/api/conversations/long"
     [first | earlier] = Fixture.desc_routes(base <> "/events", log)
-    records = [%{"id" => "t26", "image_count" => 2}, %{"id" => "t33", "image_count" => 1}]
+    records = [%{"id" => "t26", "image_count" => 2}, %{"id" => "t345", "image_count" => 1}]
     turns = {%{method: "GET", path: base <> "/turns"}, {200, [], %{data: records}}}
     client = FakeTransport.client([first, turns | earlier])
     stub(Fountain, :client, fn -> client end)
@@ -49,10 +50,12 @@ defmodule Ravix.Tracks.TranscriptHistoryTest do
       |> Transcript.with_images(Fountain.Shapes.turns(records))
 
     assert [%{query: query}] = event_calls(client, base)
-    assert %{"order" => "desc", "whole_turns" => "true", "prompts" => "true"} = query
+
+    assert %{"order" => "desc", "whole_turns" => "true", "prompts" => "true", "limit" => "200"} =
+             query
+
     refute Map.has_key?(query, "before")
-    # A thousand events of 200-event turns: the newest five, complete.
-    assert comparable(page.turns) == comparable(Enum.take(full.turns, -5))
+    assert comparable(page.turns) == comparable(Enum.take(full.turns, -10))
     {_, {200, [], body}} = first
     assert page.last_event_id == body["page"]["newest_cursor"]
     assert page.last_event_id == List.last(log)["id"]
@@ -60,7 +63,7 @@ defmodule Ravix.Tracks.TranscriptHistoryTest do
     assert scanned == body["data"] |> Enum.map(& &1["id"]) |> Enum.reverse()
     assert_receive {:span, initial = span(name: "tracks.events")}
     assert attributes(initial)["ravix.event_pages"] == 1
-    assert attributes(initial)["ravix.events_fetched"] == 1000
+    assert attributes(initial)["ravix.events_fetched"] == 200
     assert attributes(initial)["ravix.events_order"] == "desc"
 
     assert {:error, :not_found} = Tracks.earlier_events(insert_user(), track.id, page.history)
@@ -93,6 +96,48 @@ defmodule Ravix.Tracks.TranscriptHistoryTest do
     assert page.last_event_id == live
   end
 
+  test "one huge turn is a single whole page far past the limit, rendered once" do
+    owner = insert_user()
+
+    track =
+      insert_track(
+        project: insert_project(user: owner, runtime: "codex"),
+        conversation_id: "huge"
+      )
+
+    # Three short turns, then a 5,000-event one: Fountain's ceiling exactly.
+    log = sparse(3, 10, prefix: "s") ++ sparse(1, 5000, prefix: "huge", from: 30)
+    base = "/api/conversations/huge"
+    [first, older] = Fixture.desc_routes(base <> "/events", log)
+    {_, {200, [], body}} = first
+    assert length(body["data"]) == 5000 and body["page"]["turn_split"] == false
+
+    client =
+      FakeTransport.client([
+        first,
+        {%{method: "GET", path: base <> "/turns"}, {200, [], %{data: []}}},
+        older
+      ])
+
+    stub(Fountain, :client, fn -> client end)
+    assert {:ok, page} = Tracks.events(owner, track.id)
+    assert [%{query: %{"limit" => "200"}}] = event_calls(client)
+    assert [%{id: "huge1"} = huge] = page.turns
+    assert length(huge.events) == 5000
+    full = full("huge", log)
+    assert comparable(page.turns) == comparable(Enum.take(full.turns, -1))
+    assert page.last_event_id == List.last(log)["id"]
+    assert_receive {:span, initial = span(name: "tracks.events")}
+    assert attributes(initial)["ravix.events_fetched"] == 5000
+    # The page is not held raw: only the cursor remains.
+    assert page.history.held == [] and is_integer(page.history.before)
+
+    assert {:ok, page} = earlier(owner, track.id, page)
+    assert length(event_calls(client)) == 2
+    refute Transcript.History.more?(page.history)
+    assert comparable(page.turns) == comparable(full.turns)
+  end
+
   test "a turn split at Fountain's ceiling, turn-less runs cut by the limit and older conversations each render once, whole" do
     owner = insert_user()
     project = insert_project(user: owner, runtime: "codex")
@@ -105,8 +150,8 @@ defmodule Ravix.Tracks.TranscriptHistoryTest do
       unbound(1..3, "setup ") ++
         sparse(1, 6000, prefix: "big", from: 3) ++ sparse(3, 10, prefix: "small", from: 6003)
 
-    # 1,500 events of turn-less output, which `limit` alone pages, then a turn.
-    middle = unbound(1..1500, "boot ") ++ sparse(1, 10, prefix: "m", from: 1500)
+    # 300 events of turn-less output, which `limit` alone pages, then a turn.
+    middle = unbound(1..300, "boot ") ++ sparse(1, 10, prefix: "m", from: 300)
     old = sparse(1, 5, prefix: "o")
     logs = %{"new" => new, "middle" => middle, "old" => old}
 
@@ -226,14 +271,16 @@ defmodule Ravix.Tracks.TranscriptHistoryTest do
     base = "/api/conversations/long"
     [first_query | _] = for {query, _} <- Fixture.desc_pages(log), do: query
 
+    # The desc page an older Fountain answered forward (200 events), then the
+    # forward read's 1,000-event pages from its cursor.
     queries =
       [first_query] ++
-        for index <- 1..6,
+        for index <- 0..6,
             do: %{
               "limit" => "1000",
               "blocks" => "true",
               "prompts" => "true",
-              "after" => to_string(Enum.at(log, index * 1000 - 1)["id"])
+              "after" => to_string(Enum.at(log, 199 + index * 1000)["id"])
             }
 
     routes =
@@ -261,10 +308,10 @@ defmodule Ravix.Tracks.TranscriptHistoryTest do
     assert page.oldest_event_id == Enum.at(log, 5000)["id"]
     assert page.last_event_id == List.last(log)["id"]
     assert Transcript.add_event(page, hd(log)) == page
-    # The desc request an older Fountain answered forward is the first of seven.
-    assert length(event_calls(client, base)) == 7
+    # The desc request an older Fountain answered forward is the first of eight.
+    assert length(event_calls(client, base)) == 8
     assert_receive {:span, initial = span(name: "tracks.events")}
-    assert attributes(initial)["ravix.event_pages"] == 7
+    assert attributes(initial)["ravix.event_pages"] == 8
     assert attributes(initial)["ravix.events_fetched"] == 7000
     assert attributes(initial)["ravix.events_order"] == "asc"
     calls = FakeTransport.calls(client)
