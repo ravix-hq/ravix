@@ -56,10 +56,12 @@ defmodule Ravix.Tooling.Catalog do
       ),
       tool(
         "create_track",
-        "Open a track. Supply branch_name (or the compatibility alias title) without the fixed ravix/ prefix; returns the full branch. PR origins keep their existing branch; supply the PR number to resolve its head from GitHub.",
+        "Open a track. Without runtime, use your preferred agent/model when the project payer can use it, otherwise the project default. Supply branch_name (or the compatibility alias title) without the fixed ravix/ prefix; returns the full branch. PR origins keep their existing branch; supply the PR number to resolve its head from GitHub.",
         "tracks:write",
         %{
           "project_id" => string(),
+          "runtime" => %{"type" => "string", "enum" => ["claude", "codex"]},
+          "model" => string(),
           "branch_name" => %{"type" => "string"},
           "visibility" => %{"type" => "string", "enum" => ["project", "private"]},
           "title" => %{"type" => "string"},
@@ -70,7 +72,7 @@ defmodule Ravix.Tooling.Catalog do
       ),
       tool(
         "send_prompt",
-        "Queue a prompt durably. Reuse request_id only to retry the same prompt; use wait_task for completion.",
+        "Queue a prompt durably on an existing thread; its runtime and model stay unchanged. Reuse request_id only to retry the same prompt; use wait_task for completion.",
         "tracks:write",
         %{
           "thread_id" => string(),

@@ -2,6 +2,15 @@ defmodule Ravix.Changelog do
   @moduledoc "Curated user-facing changes shipped with Ravix."
   @entries [
     %{
+      id: "2026-09-28-thread-default",
+      date: ~D[2026-09-28],
+      kind: :new,
+      title: "Your default agent and model",
+      body:
+        "Choose a default for new threads in Your account. Choosing a model in a thread also remembers it for next time.",
+      action: "Open Your account"
+    },
+    %{
       id: "2026-09-26-threads",
       date: ~D[2026-09-26],
       kind: :new,

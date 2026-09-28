@@ -2,7 +2,7 @@ defmodule RavixWeb.TrackLiveTest do
   use RavixWeb.ConnCase, async: true
   import Phoenix.LiveViewTest
   import Mimic
-  alias Ravix.Accounts.{Access, Session}
+  alias Ravix.Accounts.{Access, Session, ThreadPreference}
   alias Ravix.Fountain.Error, as: FountainError
   alias Ravix.Fountain.{FakeTransport, Shapes}
   alias Ravix.Hub.Event
@@ -993,6 +993,7 @@ defmodule RavixWeb.TrackLiveTest do
     ctx.view |> element("#thread-switcher button[aria-label='Add thread']") |> render_click()
     render_async(ctx.view, 2_000)
     assert has_element?(ctx.view, "#new-thread-form")
+    assert has_element?(ctx.view, ".thread-default-source", "Project default")
 
     ctx.view
     |> form("#new-thread-form", new_thread: %{runtime: "claude", model: ctx.project.model})
@@ -1002,6 +1003,28 @@ defmodule RavixWeb.TrackLiveTest do
     [_, thread] = Tracks.Store.threads_of(ctx.track.id)
     assert thread.conversation_id == "added"
     assert has_element?(ctx.view, "#composer-#{thread.id}")
+  end
+
+  test "thread dialog shows the saved personal default and its source", ctx do
+    Repo.update!(Ecto.Changeset.change(ctx.project, runtime: "claude"))
+    stub(Ravix.MachineCache, :machine_for_track, fn _, _, _ -> {:ok, nil} end)
+
+    catalog = %Shapes.Catalog{
+      runtimes: ["claude"],
+      models: %{"claude" => ["anthropic/claude-opus-5"]}
+    }
+
+    {:ok, _} =
+      ThreadPreference.put(ctx.user, "claude", "anthropic/claude-opus-5", catalog)
+
+    stub(Ravix.Fountain, :client, fn -> FakeTransport.client([], verify: false) end)
+    stub(Ravix.Accounts.Inference, :usable_agents, fn _ -> {:ok, [:claude]} end)
+    stub(Ravix.MachineCache, :catalog, fn _ -> {:ok, catalog} end)
+    stub(Ravix.MachineCache, :machine_of, fn _, _ -> {:ok, nil} end)
+    ctx.view |> element("#thread-switcher button[aria-label='Add thread']") |> render_click()
+    render_async(ctx.view)
+    assert has_element?(ctx.view, ".thread-default-source", "Your default: Claude Code")
+    assert has_element?(ctx.view, "#new_thread-model option[selected]", "Claude Opus 5")
   end
 
   test "thread picker explains unavailable agents and uses product and model names", ctx do

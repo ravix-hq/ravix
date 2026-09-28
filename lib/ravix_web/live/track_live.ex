@@ -213,7 +213,12 @@ defmodule RavixWeb.TrackLive do
        |> settle(:thread_options)
        |> assign(thread_options: nil, thread_params: %{}, thread_connect: nil, thread_error: nil)}
 
-  def handle_event("edit-thread", %{"new_thread" => params}, socket) do
+  def handle_event("edit-thread", %{"new_thread" => params} = event, socket) do
+    params =
+      if event["_target"] in [["new_thread", "runtime"], ["new_thread", "model"]],
+        do: Map.put(params, "preference_explicit", "true"),
+        else: params
+
     params =
       if params["runtime"] != socket.assigns.thread_params["runtime"],
         do: Map.delete(params, "model"),

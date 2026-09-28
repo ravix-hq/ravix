@@ -55,7 +55,7 @@ defmodule RavixWeb.Live.AgentPanel do
   """
   use RavixWeb, :live_component
 
-  alias Ravix.Accounts.{Inference, User}
+  alias Ravix.Accounts.{Inference, ThreadPreference, User}
   alias RavixWeb.Live.Form
 
   # What the buttons send, as the atoms this module and the context use. Two
@@ -79,6 +79,9 @@ defmodule RavixWeb.Live.AgentPanel do
        subscription: nil,
        # What the set holds, as Fountain reports it: nil until it has answered.
        held: nil,
+       thread_defaults: nil,
+       thread_default_error: nil,
+       thread_default_saved: false,
        scoped_agent: nil,
        onboarding: false,
        poll_token: make_ref(),
@@ -129,6 +132,30 @@ defmodule RavixWeb.Live.AgentPanel do
   end
 
   @impl true
+  def handle_event(
+        "save-thread-default",
+        %{"preference" => %{"choice" => choice}},
+        %{assigns: %{busy: false, scoped_agent: nil, thread_defaults: %{}}} = socket
+      )
+      when is_binary(choice) do
+    case String.split(choice, "|", parts: 2) do
+      [runtime, model] ->
+        user = socket.assigns.current_user
+
+        {:noreply,
+         socket
+         |> assign(busy: true)
+         |> traced_async(:thread_default, fn ->
+           ThreadPreference.save(user, runtime, model)
+         end)}
+
+      _ ->
+        {:noreply, socket}
+    end
+  end
+
+  def handle_event("save-thread-default", _params, socket), do: {:noreply, socket}
+
   def handle_event("choose-agent", _, %{assigns: %{scoped_agent: agent}} = socket)
       when not is_nil(agent), do: {:noreply, socket}
 
@@ -306,8 +333,47 @@ defmodule RavixWeb.Live.AgentPanel do
   # Nothing to say about a subscription Fountain would not describe.
   def handle_async(:subscription, _other, socket), do: {:noreply, socket}
 
-  def handle_async(:held, {:ok, {:ok, held}}, socket) when is_list(held),
-    do: {:noreply, assign(socket, held: held)}
+  def handle_async(:held, {:ok, {:ok, held}}, socket) when is_list(held) do
+    user = socket.assigns.current_user
+
+    {:noreply,
+     socket
+     |> assign(held: held)
+     |> traced_async(:thread_defaults, fn ->
+       ThreadPreference.options(user, held)
+     end)}
+  end
+
+  def handle_async(:thread_defaults, {:ok, {:ok, defaults}}, socket),
+    do: {:noreply, assign(socket, thread_defaults: defaults)}
+
+  def handle_async(:thread_defaults, _result, socket), do: {:noreply, socket}
+
+  def handle_async(:thread_default, {:ok, {:ok, user}}, socket) do
+    send(self(), {:agent_default_changed, user})
+
+    defaults = %{
+      socket.assigns.thread_defaults
+      | preference: %{
+          runtime: to_string(user.preferred_runtime),
+          model: user.preferred_model
+        }
+    }
+
+    {:noreply,
+     assign(socket,
+       current_user: user,
+       busy: false,
+       thread_defaults: defaults,
+       thread_default_error: nil,
+       thread_default_saved: true
+     )}
+  end
+
+  def handle_async(:thread_default, {:ok, {:error, reason}}, socket),
+    do:
+      {:noreply,
+       assign(socket, busy: false, thread_default_error: RavixWeb.Error.from(reason).message)}
 
   # A set Fountain would not list is not drawn as empty: empty is a claim.
   def handle_async(:held, _other, socket), do: {:noreply, socket}
@@ -497,6 +563,29 @@ defmodule RavixWeb.Live.AgentPanel do
 
     ~H"""
     <div class="agent-panel" id={@id} phx-hook="AgentConfirmation">
+      <form
+        :if={is_nil(@scoped_agent) && @thread_defaults && @thread_defaults.choices != []}
+        id="thread-default-form"
+        phx-submit="save-thread-default"
+        phx-target={@myself}
+      >
+        <label for="thread-default-choice">Default agent for new threads</label>
+        <select id="thread-default-choice" name="preference[choice]" disabled={@busy}>
+          <option
+            :for={choice <- @thread_defaults.choices}
+            value={choice.runtime <> "|" <> choice.model}
+            selected={choice == @thread_defaults.preference}
+          >
+            {RavixWeb.AgentName.label(choice.runtime)} · {RavixWeb.ModelName.friendly(choice.model)}
+          </option>
+        </select>
+        <button type="submit" disabled={@busy}>Save thread default</button>
+        <p>
+          Used when the project's payer has connected this agent. Existing threads keep their agent.
+        </p>
+        <p :if={@thread_default_saved} role="status">Thread default saved.</p>
+        <p :if={@thread_default_error} role="alert">{@thread_default_error}</p>
+      </form>
       <div
         :if={@disconnect_confirmation}
         id="agent-disconnect-confirmation"

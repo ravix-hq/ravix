@@ -319,6 +319,7 @@ defmodule Ravix.Accounts.InferenceTest do
       ])
 
       assert {:ok, %User{credential_kind: :subscription}} = Inference.poll_link(me, link("s"))
+      assert is_binary(Repo.get!(User, me.id).credential_connected_at["codex:subscription"])
     end
 
     test "a reconnect names what is named already and deletes nothing" do
@@ -988,6 +989,7 @@ defmodule Ravix.Accounts.InferenceTest do
                  make_default: true
                })
 
+      assert is_binary(Repo.get!(User, user.id).credential_connected_at["codex:api_key"])
       assert Enum.any?(PostHog.Test.all_captured(), &(&1.event == "default agent changed"))
     end
 

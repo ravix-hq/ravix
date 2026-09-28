@@ -11,6 +11,7 @@ defmodule RavixWeb.Live.AgentPanelTest do
 
   alias Ravix.{Accounts, Repo}
   alias Ravix.Accounts.{Inference, User}
+  alias Ravix.Fountain.FakeTransport
 
   setup :verify_on_exit!
 
@@ -18,6 +19,36 @@ defmodule RavixWeb.Live.AgentPanelTest do
     {:ok, view, _} = live(log_in_user(conn, user), "/home")
     view |> element("#open-account") |> render_click()
     view
+  end
+
+  test "the thread default round trips and offers only connected runtimes", %{conn: conn} do
+    user = insert_user()
+
+    catalog = %Ravix.Fountain.Shapes.Catalog{
+      runtimes: ["claude", "codex"],
+      models: %{
+        "claude" => ["sonnet", "opus"],
+        "codex" => ["gpt"]
+      }
+    }
+
+    stub(Ravix.Fountain, :client, fn -> FakeTransport.client([], verify: false) end)
+
+    stub(Ravix.MachineCache, :catalog, fn _ -> {:ok, catalog} end)
+    stub(Inference, :held, fn _ -> {:ok, [{:claude, :api_key}]} end)
+    stub(Inference, :usable?, fn _, runtime, _ -> {:ok, runtime == "claude"} end)
+    view = open_account(conn, user)
+    render_async(view)
+    render_async(view)
+    assert has_element?(view, "#thread-default-choice option[value='claude|opus']")
+    refute has_element?(view, "#thread-default-choice option[value='codex|gpt']")
+    view |> form("#thread-default-form", preference: %{choice: "claude|opus"}) |> render_submit()
+    render_async(view)
+    assert Repo.get!(User, user.id).preferred_model == "opus"
+    view = open_account(conn, user)
+    render_async(view)
+    render_async(view)
+    assert has_element?(view, "#thread-default-choice option[value='claude|opus'][selected]")
   end
 
   test "opens from the rail, shows what is connected, and says who pays", %{conn: conn} do
