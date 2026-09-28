@@ -23,12 +23,12 @@ test('narrow track views give the conversation space and preserve drafts', async
   const composer = page.getByRole('textbox', { name: 'Message', exact: true });
   await expect(composer).toBeEnabled();
   await expect(page.locator('#transcript-status')).toHaveText('Agent replied');
-  // A newly idle queue may wait for its 30-second sweep before delivery.
+  // Saving a prompt wakes the queue worker, so each goes out on Send.
   for (let turn = 0; turn < 3; turn++) {
     const prompt = `Explain this project, narrow turn ${turn}`;
     await composer.fill(prompt);
     await page.getByRole('button', { name: 'Send', exact: true }).click();
-    await expect(page.locator('.workspace-turn').filter({ hasText: prompt }).locator('.agent-terminal-output')).toContainText('There is one TODO worth doing here', { timeout: 45_000 });
+    await expect(page.locator('.workspace-turn').filter({ hasText: prompt }).locator('.agent-terminal-output')).toContainText('There is one TODO worth doing here', { timeout: 20_000 });
   }
   await composer.fill('Keep this conversation draft');
   const views = page.getByRole('navigation', { name: 'Track views', exact: true });

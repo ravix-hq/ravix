@@ -54,7 +54,8 @@ defmodule Ravix.PromptQueueTest do
   # stubs (its delivery tasks inherit both through `$callers`).
   defp start_server(opts \\ []) do
     spec =
-      Supervisor.child_spec({Server, Keyword.merge([name: nil, interval: false], opts)},
+      Supervisor.child_spec(
+        {Server, Keyword.merge([name: nil, interval: false, wake: false], opts)},
         id: make_ref()
       )
 
@@ -978,6 +979,74 @@ defmodule Ravix.PromptQueueTest do
     assert Enum.all?(waiting, &(&1.status == :queued))
   end
 
+  describe "waking on a saved prompt" do
+    test "an idle thread's prompt goes out on save, not on the timer", f do
+      # No timer at all: only the wake can deliver this.
+      server = start_server(wake: true)
+      fountain_hooks(fn -> "idle" end, fn -> :ok end)
+
+      {:ok, %Item{id: id}} = send_prompt(f.track, f.owner, "straight away")
+
+      assert_receive {:posted, "c1", %{"prompt" => "straight away"}}, 1_000
+      assert delivered?(id)
+      Server.stop(server)
+    end
+
+    test "a save during a sweep is swept again once that sweep ends", f do
+      test = self()
+      {:ok, reads} = Agent.start_link(fn -> 0 end)
+
+      # The first read holds its sweep open until the test says so; the
+      # second prompt is saved meanwhile, after that sweep listed its heads.
+      fountain_hooks(
+        fn ->
+          if Agent.get_and_update(reads, &{&1, &1 + 1}) == 0 do
+            send(test, {:reading, self()})
+            receive do: (:go -> :ok)
+          end
+
+          "idle"
+        end,
+        fn -> :ok end
+      )
+
+      server = start_server(wake: true)
+      send_prompt(f.track, f.owner, "first")
+      assert_receive {:reading, reader}, 1_000
+
+      second = thread(f.track, "c2")
+      {:ok, %Item{id: id}} = send_prompt(f.track, f.owner, "second", thread: second.id)
+      send(reader, :go)
+
+      assert_receive {:posted, "c1", %{"prompt" => "first"}}, 1_000
+      # A second thread's prompt carries the track preamble ahead of its text.
+      assert_receive {:posted, "c2", %{"prompt" => second_prompt}}, 1_000
+      assert second_prompt =~ ~r/\n\nsecond$/
+      assert delivered?(id)
+      Server.stop(server)
+    end
+
+    test "a retried prompt is swept on retry", f do
+      fountain_hooks(fn -> "idle" end, fn -> :ok end)
+      # Saved and refused before this worker exists, so only the retry's wake
+      # can deliver it.
+      {:ok, %Item{id: id}} = send_prompt(f.track, f.owner, "again please")
+
+      Ravix.Repo.update_all(
+        Ecto.Query.from(p in Item, where: p.id == ^id),
+        set: [status: :failed]
+      )
+
+      server = start_server(wake: true)
+      refute_receive {:posted, _, _}, 100
+
+      assert :ok = PromptQueue.retry(f.owner, f.track.id, id)
+      assert_receive {:posted, "c1", %{"prompt" => "again please"}}, 1_000
+      assert delivered?(id)
+      Server.stop(server)
+    end
+  end
+
   describe "waking on a settled turn" do
     # A follower broadcasts on its *thread's* topic, which is the track's only
     # for the first thread. A prompt waiting on a second thread is the case a
@@ -1260,9 +1329,10 @@ defmodule Ravix.PromptQueueTest do
     # been handed neither. The two further reads of `tracks` are the
     # publishes: `Store.claim/1` and `Store.mark_delivered/1` each tell the
     # project's hub, and find the project through the track. The setup sweep
-    # adds one indexed read of unfinished tracks.
+    # adds two indexed reads of unfinished tracks: the checks due now, and
+    # when the next one falls due.
     assert Enum.count(queries, &(&1 == "projects")) == 3
-    assert Enum.count(queries, &(&1 == "tracks")) == 3 + 2 + 1
+    assert Enum.count(queries, &(&1 == "tracks")) == 3 + 2 + 2
   end
 
   test "the sweep's two reads are answered from the indexes made for them" do

@@ -42,7 +42,7 @@ config :phoenix,
 config :ravix, :req_options, plug: {Req.Test, Ravix.ReqFake}
 
 # Background sweeps stay off under test; tests drive `tick/0` themselves.
-config :ravix, Ravix.PromptQueue.Server, interval: false
+config :ravix, Ravix.PromptQueue.Server, interval: false, wake: false
 
 # Spans are built but exported nowhere; `Ravix.TraceCase` swaps in the in-memory
 # exporter for the suites that assert on them. `:simple` rather than `:batch` so

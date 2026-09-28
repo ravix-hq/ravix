@@ -150,175 +150,180 @@ test('public design loads local Plex fonts and works in dark, light, and narrow 
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'daylight');
 });
 
-test('a first visit is walked through how it works, the agent, and GitHub', async ({ page }) => {
-  test.setTimeout(120_000);
-  await page.goto('/');
-  await page.getByRole('link', { name: 'Sign in with GitHub', exact: true }).click();
-  await page.getByRole('link', { name: 'Sign in as @mockuser', exact: true }).click();
+// The account dialog test continues the walkthrough: it expects both agents
+// the first visit connected. Serial keeps the two in one shard, in order.
+test.describe.serial('first visit, then the account dialog', () => {
+  test('a first visit is walked through how it works, the agent, and GitHub', async ({ page }) => {
+    test.setTimeout(120_000);
+    await page.goto('/');
+    await page.getByRole('link', { name: 'Sign in with GitHub', exact: true }).click();
+    await page.getByRole('link', { name: 'Sign in as @mockuser', exact: true }).click();
 
-  // Nobody chose to be here, so this is where a first visit lands.
-  await expect(page).toHaveURL(/\/welcome$/);
-  await expect(page).toHaveTitle('Welcome · Ravix');
-  await expect(page.locator('[data-phx-main]')).toHaveClass(/phx-connected/);
-  await expect(page.getByRole('heading', { name: /^Welcome to Ravix/ })).toBeVisible();
-  await expect(page.getByText('Describe a change. Ravix opens a branch, and your agent starts there.', { exact: true })).toBeVisible();
-  await expect(page.getByText('You describe the task. Ravix opens a branch, and the agent starts there.', { exact: true })).toBeVisible();
-  await page.locator('summary', { hasText: 'Review the work' }).click();
-  await expect(page.getByText('The diff sits next to the conversation. The preview is the app, already running.', { exact: true })).toBeVisible();
-  await page.locator('summary', { hasText: 'Bring someone into the same thread' }).click();
-  await expect(page.getByText('Share the track. They continue the thread, with the earlier decisions still there.', { exact: true })).toBeVisible();
-  await accessible(page);
-  await capture(page, 'welcome-intro');
+    // Nobody chose to be here, so this is where a first visit lands.
+    await expect(page).toHaveURL(/\/welcome$/);
+    await expect(page).toHaveTitle('Welcome · Ravix');
+    await expect(page.locator('[data-phx-main]')).toHaveClass(/phx-connected/);
+    await expect(page.getByRole('heading', { name: /^Welcome to Ravix/ })).toBeVisible();
+    await expect(page.getByText('Describe a change. Ravix opens a branch, and your agent starts there.', { exact: true })).toBeVisible();
+    await expect(page.getByText('You describe the task. Ravix opens a branch, and the agent starts there.', { exact: true })).toBeVisible();
+    await page.locator('summary', { hasText: 'Review the work' }).click();
+    await expect(page.getByText('The diff sits next to the conversation. The preview is the app, already running.', { exact: true })).toBeVisible();
+    await page.locator('summary', { hasText: 'Bring someone into the same thread' }).click();
+    await expect(page.getByText('Share the track. They continue the thread, with the earlier decisions still there.', { exact: true })).toBeVisible();
+    await accessible(page);
+    await capture(page, 'welcome-intro');
 
-  await page.getByRole('link', { name: 'Set up your agent', exact: true }).click();
-  await expect(page).toHaveURL(/\/welcome\/agent$/);
-  await expect(page).toHaveTitle('Connect your agents · Ravix');
+    await page.getByRole('link', { name: 'Set up your agent', exact: true }).click();
+    await expect(page).toHaveURL(/\/welcome\/agent$/);
+    await expect(page).toHaveTitle('Connect your agents · Ravix');
 
-  // Codex on a ChatGPT subscription is a sign-in, not a paste: the page shows
-  // the code the mock Fountain hands out and notices the approval by itself
-  // (the mock approves on the third poll). Nothing here is ever a token.
-  await page.getByRole('button', { name: /^Codex/ }).click();
-  await expect(page.getByRole('button', { name: 'Subscription', exact: true })).toHaveAttribute('aria-pressed', 'true');
-  await expect(page.getByLabel('API key', { exact: true })).toHaveCount(0);
-  await accessible(page);
-  await page.getByRole('button', { name: 'Connect ChatGPT', exact: true }).click();
-  await expect(page.locator('#chatgpt-user-code')).toHaveText('MOCK-CODE');
-  await expect(page.getByRole('link', { name: 'https://auth.openai.com/codex/device' })).toHaveAttribute('target', '_blank');
-  await accessible(page);
-  await capture(page, 'welcome-chatgpt');
-  await expect(page.locator('#second-agent-nudge')).toContainText('Connect Claude Code too (optional)');
-  await page.getByRole('link', { name: 'Continue to GitHub', exact: true }).click();
-  await expect(page).toHaveURL(/\/welcome\/github$/);
-  expect(await page.content()).not.toContain('MOCK-CODE');
+    // Codex on a ChatGPT subscription is a sign-in, not a paste: the page shows
+    // the code the mock Fountain hands out and notices the approval by itself
+    // (the mock approves on the third poll). Nothing here is ever a token.
+    await page.getByRole('button', { name: /^Codex/ }).click();
+    await expect(page.getByRole('button', { name: 'Subscription', exact: true })).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.getByLabel('API key', { exact: true })).toHaveCount(0);
+    await accessible(page);
+    await page.getByRole('button', { name: 'Connect ChatGPT', exact: true }).click();
+    await expect(page.locator('#chatgpt-user-code')).toHaveText('MOCK-CODE');
+    await expect(page.getByRole('link', { name: 'https://auth.openai.com/codex/device' })).toHaveAttribute('target', '_blank');
+    await accessible(page);
+    await capture(page, 'welcome-chatgpt');
+    await expect(page.locator('#second-agent-nudge')).toContainText('Connect Claude Code too (optional)');
+    await page.getByRole('link', { name: 'Continue to GitHub', exact: true }).click();
+    await expect(page).toHaveURL(/\/welcome\/github$/);
+    expect(await page.content()).not.toContain('MOCK-CODE');
 
-  // Back to the agent step by hand: Claude Code takes a pasted token.
-  await page.goto('/welcome/agent');
-  await expect(page.locator('[data-phx-main]')).toHaveClass(/phx-connected/);
-  await expect(page.getByText('Codex is connected with your ChatGPT subscription')).toBeVisible();
-  await page.getByRole('button', { name: /^Claude Code/ }).click();
-  await expect(page.getByText('claude setup-token')).toBeVisible();
-  await accessible(page);
-  await capture(page, 'welcome-agent');
+    // Back to the agent step by hand: Claude Code takes a pasted token.
+    await page.goto('/welcome/agent');
+    await expect(page.locator('[data-phx-main]')).toHaveClass(/phx-connected/);
+    await expect(page.getByText('Codex is connected with your ChatGPT subscription')).toBeVisible();
+    await page.getByRole('button', { name: /^Claude Code/ }).click();
+    await expect(page.getByText('claude setup-token')).toBeVisible();
+    await accessible(page);
+    await capture(page, 'welcome-agent');
 
-  // The mock refuses anything containing "invalid", the way Fountain refuses
-  // a token its provider rejects. The refusal lands on the field and the value
-  // is not given back.
-  await page.getByLabel('Subscription token', { exact: true }).fill('sk-ant-oat01-invalid');
-  await page.getByRole('button', { name: 'Connect Claude Code', exact: true }).click();
-  await expect(page.getByText(/Anthropic did not accept that/)).toBeVisible();
-  await expect(page.getByLabel('Subscription token', { exact: true })).toHaveValue('');
-  await accessible(page);
+    // The mock refuses anything containing "invalid", the way Fountain refuses
+    // a token its provider rejects. The refusal lands on the field and the value
+    // is not given back.
+    await page.getByLabel('Subscription token', { exact: true }).fill('sk-ant-oat01-invalid');
+    await page.getByRole('button', { name: 'Connect Claude Code', exact: true }).click();
+    await expect(page.getByText(/Anthropic did not accept that/)).toBeVisible();
+    await expect(page.getByLabel('Subscription token', { exact: true })).toHaveValue('');
+    await accessible(page);
 
-  await page.getByLabel('Subscription token', { exact: true }).fill('sk-ant-oat01-mock');
-  await page.getByRole('button', { name: 'Connect Claude Code', exact: true }).click();
-  await expect(page.locator('#second-agent-nudge')).toHaveCount(0);
-  await expect(page.locator('#agent-claude-status')).toContainText('Connected');
-  await page.getByRole('link', { name: 'Continue to GitHub', exact: true }).click();
-  await expect(page).toHaveURL(/\/welcome\/github$/);
-  // Adding Claude leaves the first connected agent (Codex) as the default.
-  await page.goto('/welcome/agent');
-  await expect(page.locator('[data-phx-main]')).toHaveClass(/phx-connected/);
-  await expect(page.locator('#agent-claude-status')).toContainText('Connected');
-  await expect(page.locator('#agent-codex-status')).toContainText('Connected');
-  await expect(page.locator('#agent-codex-status')).toContainText('Default for new projects');
-  await page.locator('#make-default-claude').click();
-  await expect(page.locator('#agent-claude-status')).toContainText('Default for new projects');
-  await page.goto('/welcome/github');
-  await expect(page).toHaveTitle('Connect GitHub · Ravix');
-  expect(await page.content()).not.toContain('sk-ant-oat01-mock');
-  await expect(page.getByRole('heading', { name: 'Connect GitHub' })).toBeVisible();
-  await expect(page.locator('#github-connected, #github-none')).toBeVisible();
-  await accessible(page);
-  await capture(page, 'welcome-github');
+    await page.getByLabel('Subscription token', { exact: true }).fill('sk-ant-oat01-mock');
+    await page.getByRole('button', { name: 'Connect Claude Code', exact: true }).click();
+    await expect(page.locator('#second-agent-nudge')).toHaveCount(0);
+    await expect(page.locator('#agent-claude-status')).toContainText('Connected');
+    await page.getByRole('link', { name: 'Continue to GitHub', exact: true }).click();
+    await expect(page).toHaveURL(/\/welcome\/github$/);
+    // Adding Claude leaves the first connected agent (Codex) as the default.
+    await page.goto('/welcome/agent');
+    await expect(page.locator('[data-phx-main]')).toHaveClass(/phx-connected/);
+    await expect(page.locator('#agent-claude-status')).toContainText('Connected');
+    await expect(page.locator('#agent-codex-status')).toContainText('Connected');
+    await expect(page.locator('#agent-codex-status')).toContainText('Default for new projects');
+    await page.locator('#make-default-claude').click();
+    await expect(page.locator('#agent-claude-status')).toContainText('Default for new projects');
+    await page.goto('/welcome/github');
+    await expect(page).toHaveTitle('Connect GitHub · Ravix');
+    expect(await page.content()).not.toContain('sk-ant-oat01-mock');
+    await expect(page.getByRole('heading', { name: 'Connect GitHub' })).toBeVisible();
+    await expect(page.locator('#github-connected, #github-none')).toBeVisible();
+    await accessible(page);
+    await capture(page, 'welcome-github');
 
-  // Coming back part way through carries on from here, not from the top.
-  await page.goto('/');
-  await expect(page).toHaveURL(/\/welcome\/github$/);
-  await expect(page).toHaveTitle('Connect GitHub · Ravix');
+    // Coming back part way through carries on from here, not from the top.
+    await page.goto('/');
+    await expect(page).toHaveURL(/\/welcome\/github$/);
+    await expect(page).toHaveTitle('Connect GitHub · Ravix');
 
-  const continueStyle = await primaryAppearance(page.locator('#github-continue'));
-  const continueHeight = (await page.locator('#github-continue').boundingBox()).height;
-  await page.locator('#github-continue').click();
-  await expect(page).toHaveURL(/\/welcome\/project$/);
-  await expect(page).toHaveTitle('Create your first project · Ravix');
-  await expect(page.getByRole('heading', { name: 'Create your first project' })).toBeVisible();
-  const createProject = page.getByRole('button', { name: 'Create project', exact: true });
-  expect(await primaryAppearance(createProject)).toEqual(continueStyle);
-  expect((await createProject.boundingBox()).height).toBeCloseTo(continueHeight, 0);
-  expect((await createProject.boundingBox()).width).toBeLessThan(
-    (await page.locator('#first-project-form').boundingBox()).width / 2);
-  await accessible(page);
-  await page.setViewportSize({ width: 390, height: 844 });
-  await accessible(page);
-  await capture(page, 'welcome-project-mobile');
+    const continueStyle = await primaryAppearance(page.locator('#github-continue'));
+    const continueHeight = (await page.locator('#github-continue').boundingBox()).height;
+    await page.locator('#github-continue').click();
+    await expect(page).toHaveURL(/\/welcome\/project$/);
+    await expect(page).toHaveTitle('Create your first project · Ravix');
+    await expect(page.getByRole('heading', { name: 'Create your first project' })).toBeVisible();
+    const createProject = page.getByRole('button', { name: 'Create project', exact: true });
+    expect(await primaryAppearance(createProject)).toEqual(continueStyle);
+    expect((await createProject.boundingBox()).height).toBeCloseTo(continueHeight, 0);
+    expect((await createProject.boundingBox()).width).toBeLessThan(
+      (await page.locator('#first-project-form').boundingBox()).width / 2);
+    await accessible(page);
+    await page.setViewportSize({ width: 390, height: 844 });
+    await accessible(page);
+    await capture(page, 'welcome-project-mobile');
 
-  // Leaving is finishing: the workspace stops sending this person back, and
-  // the tests after this one start from an empty workspace as they always did.
-  await page.getByRole('button', { name: 'Skip setup', exact: true }).click();
-  await expect(page).toHaveURL(/\/home$/);
-  await expect(page).toHaveTitle('Home · Ravix');
-  await page.goto('/');
-  await expect(page.getByRole('heading', { name: /Inbox/ })).toBeVisible();
-});
+    // Leaving is finishing: the workspace stops sending this person back, and
+    // the tests after this one start from an empty workspace as they always did.
+    await page.getByRole('button', { name: 'Skip setup', exact: true }).click();
+    await expect(page).toHaveURL(/\/home$/);
+    await expect(page).toHaveTitle('Home · Ravix');
+    await page.goto('/');
+    await expect(page.getByRole('heading', { name: /Inbox/ })).toBeVisible();
+  });
 
-test('the account dialog is where the agent lives after the walkthrough', async ({ page }) => {
-  await signIn(page);
-  const trigger = page.locator('#account-trigger');
-  await trigger.click();
-  const menu = page.locator('#account-menu');
-  await expect(menu).toBeVisible();
-  await accessible(page);
-  await capture(page, 'account-menu');
-  // Escape inside the palette list shuts the list and leaves the menu open;
-  // the next Escape shuts the menu and puts focus back on its trigger.
-  await menu.locator('[data-theme-toggle]').click();
-  await expect(page.getByRole('menu', { name: 'Theme' })).toBeVisible();
-  await page.keyboard.press('Escape');
-  await expect(page.getByRole('menu', { name: 'Theme' })).toBeHidden();
-  await expect(menu).toBeVisible();
-  await page.keyboard.press('Escape');
-  await expect(menu).toBeHidden();
-  await expect(trigger).toBeFocused();
-  // A click outside shuts it too.
-  await trigger.click();
-  await page.locator('#workspace-stage').click({ position: { x: 400, y: 300 } });
-  await expect(menu).toBeHidden();
-  await trigger.click();
-  await menu.getByRole('button', { name: 'Account', exact: true }).click();
-  await expect(menu).toBeHidden();
-  const account = page.getByRole('dialog', { name: 'Your account' });
-  await expect(account).toBeVisible();
-  await expect(account).toContainText('Each project uses its selected agent');
-  await expect(account.getByRole('link', { name: 'Manage connected applications' })).toHaveAttribute('href', '/settings/connections');
+  test('the account dialog is where the agent lives after the walkthrough', async ({ page }) => {
+    await signIn(page);
+    const trigger = page.locator('#account-trigger');
+    await trigger.click();
+    const menu = page.locator('#account-menu');
+    await expect(menu).toBeVisible();
+    await accessible(page);
+    await capture(page, 'account-menu');
+    // Escape inside the palette list shuts the list and leaves the menu open;
+    // the next Escape shuts the menu and puts focus back on its trigger.
+    await menu.locator('[data-theme-toggle]').click();
+    await expect(page.getByRole('menu', { name: 'Theme' })).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(page.getByRole('menu', { name: 'Theme' })).toBeHidden();
+    await expect(menu).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(menu).toBeHidden();
+    await expect(trigger).toBeFocused();
+    // A click outside shuts it too.
+    await trigger.click();
+    await page.locator('#workspace-stage').click({ position: { x: 400, y: 300 } });
+    await expect(menu).toBeHidden();
+    await trigger.click();
+    await menu.getByRole('button', { name: 'Account', exact: true }).click();
+    await expect(menu).toBeHidden();
+    const account = page.getByRole('dialog', { name: 'Your account' });
+    await expect(account).toBeVisible();
+    await expect(account).toContainText('Each project uses its selected agent');
+    await expect(account.getByRole('link', { name: 'Manage connected applications' })).toHaveAttribute('href', '/settings/connections');
 
-  await expect(page.getByRole('group', { name: 'Agent' })).toBeVisible();
-  await accessible(page);
-  await expect(page.locator('#agent-claude-status')).toContainText('Connected');
-  await expect(page.locator('#agent-codex-status')).toContainText('Connected');
-  await page.locator('#make-default-codex').click();
-  await expect(page.locator('#agent-codex-status')).toContainText('Default for new projects');
-  await page.locator('#make-default-claude').click();
-  await expect(page.locator('#agent-claude-status')).toContainText('Default for new projects');
-  const remove = page.locator('#remove-claude-subscription');
-  await expect(account.locator('[data-confirm]')).toHaveCount(0);
-  await remove.click();
-  const confirmation = page.getByRole('group', { name: 'Confirm agent removal' });
-  await expect(confirmation).toBeVisible();
-  await expect(page.locator('#confirm-agent-disconnect')).toBeFocused();
-  await page.keyboard.press('Escape');
-  await expect(confirmation).toBeVisible();
-  await accessible(page);
-  await confirmation.getByRole('button', { name: 'Cancel', exact: true }).click();
-  await expect(confirmation).toHaveCount(0);
-  await expect(remove).toBeFocused();
-  await capture(page, 'account-dialog');
-  await page.keyboard.press('Escape');
-  await expect(page.getByRole('dialog', { name: 'Your account' })).toHaveCount(0);
-  await expect(trigger).toBeFocused();
+    await expect(page.getByRole('group', { name: 'Agent' })).toBeVisible();
+    await accessible(page);
+    await expect(page.locator('#agent-claude-status')).toContainText('Connected');
+    await expect(page.locator('#agent-codex-status')).toContainText('Connected');
+    await page.locator('#make-default-codex').click();
+    await expect(page.locator('#agent-codex-status')).toContainText('Default for new projects');
+    await page.locator('#make-default-claude').click();
+    await expect(page.locator('#agent-claude-status')).toContainText('Default for new projects');
+    const remove = page.locator('#remove-claude-subscription');
+    await expect(account.locator('[data-confirm]')).toHaveCount(0);
+    await remove.click();
+    const confirmation = page.getByRole('group', { name: 'Confirm agent removal' });
+    await expect(confirmation).toBeVisible();
+    await expect(page.locator('#confirm-agent-disconnect')).toBeFocused();
+    await page.keyboard.press('Escape');
+    await expect(confirmation).toBeVisible();
+    await accessible(page);
+    await confirmation.getByRole('button', { name: 'Cancel', exact: true }).click();
+    await expect(confirmation).toHaveCount(0);
+    await expect(remove).toBeFocused();
+    await capture(page, 'account-dialog');
+    await page.keyboard.press('Escape');
+    await expect(page.getByRole('dialog', { name: 'Your account' })).toHaveCount(0);
+    await expect(trigger).toBeFocused();
+  });
 });
 
 test('home quick start creates a scratch project and recent navigation survives theme changes', async ({ page }) => {
   await signIn(page);
+  await connectClaude(page);
   await page.getByRole('link', { name: 'Home', exact: true }).first().click();
   await expect(page.getByRole('button', { name: /Open a local project/ })).toHaveCount(0);
   await accessible(page);
@@ -484,7 +489,7 @@ test('keyboard users can resize panels and close dialogs with focus restored', a
 });
 
 test('project, track, streaming, image upload, reconnect, and revocation', async ({ page, context }) => {
-  // Two independent idle queue sweeps plus the navigation/reconnect checks.
+  // Several streamed replies plus the navigation/reconnect checks.
   test.setTimeout(120_000);
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
@@ -674,8 +679,8 @@ test('project, track, streaming, image upload, reconnect, and revocation', async
   // prompt back, so the transcript contains these words even when the prompt
   // never arrived. It reaches the live page on the turn's opening event, which
   // the follower reads back from the feed because the stream never carries it.
-  // With no prior queued head, the worker may be on its 30-second idle sweep.
-  await expect(page.locator('#transcript-turns .said .workspace-prompt').filter({ hasText: 'Explain this project for the browser smoke test' })).toHaveCount(1, { timeout: 45_000 });
+  // Saving wakes the queue worker, so this does not wait on its backstop timer.
+  await expect(page.locator('#transcript-turns .said .workspace-prompt').filter({ hasText: 'Explain this project for the browser smoke test' })).toHaveCount(1, { timeout: 20_000 });
   await expect(page.locator('.workspace-turn').filter({ hasText: 'Explain this project for the browser smoke test' }).locator('.agent-terminal-output > div > .md')).toContainText('There is one TODO worth doing here');
   // The agent's checklist, as it last stood: one plan, both lines, the first done.
   await expect(page.locator('.workspace-plan')).toHaveCount(1);
@@ -728,9 +733,9 @@ test('project, track, streaming, image upload, reconnect, and revocation', async
   await expect(page.locator('.workspace-upload')).toContainText('pixel.png (100%)');
   await page.getByRole('button', { name: 'Send', exact: true }).click();
   await expect(page.locator('.workspace-upload')).toHaveCount(0);
-  // Reconnecting can leave the queue worker idle with no followed heads. Its
-  // documented backstop is 30 seconds; allow that sweep plus the streamed reply.
-  await expect(page.locator('.workspace-turn').filter({ hasText: 'Draft survives reconnect' }).locator('.agent-terminal-output > div > .md')).toContainText('There is one TODO worth doing here', { timeout: 45_000 });
+  // Reconnecting can leave the queue worker with no followed heads; the save
+  // itself wakes it, so this waits only on the streamed reply.
+  await expect(page.locator('.workspace-turn').filter({ hasText: 'Draft survives reconnect' }).locator('.agent-terminal-output > div > .md')).toContainText('There is one TODO worth doing here', { timeout: 20_000 });
   await capture(page, 'track-Ravix');
   await chooseTheme(page, 'Daylight');
   await accessible(page);
@@ -961,9 +966,10 @@ test('project settings navigate, warn before discarding, and save sections acces
 });
 
 test('composer Send stays compact and keeps its arrow after repeated submissions in every theme', async ({ page, request }) => {
-  // Allow two idle queue sweeps and the five-state theme/viewport matrix.
+  // Two streamed replies and the five-state theme/viewport matrix.
   test.setTimeout(150_000);
   await signIn(page);
+  await connectClaude(page);
   await page.getByRole('button', { name: 'Add a project', exact: true }).first().click();
   const projectDialog = page.getByRole('dialog', { name: 'New project', exact: true });
   await projectDialog.getByLabel('Project name', { exact: true }).fill('Send regression');
@@ -1009,6 +1015,54 @@ test('composer Send stays compact and keeps its arrow after repeated submissions
     expect(await model.evaluate(el => getComputedStyle(el).fontFamily)).toContain('IBM Plex Sans');
     await fitsViewport(page);
   };
+  // The same checks for the 220-cell theme/viewport matrix, read in one
+  // round trip per cell: the button is already settled there, so auto-waiting
+  // locators only cost time. `checkSend` still runs once per status.
+  const matrixSend = async () => {
+    const m = await page.evaluate(() => {
+      const send = document.querySelector('#composer-form button[aria-label="Send"]');
+      const svg = send?.querySelector('svg');
+      const path = svg?.querySelector('path');
+      const images = document.querySelector('#composer-form [aria-label="Choose images"] svg');
+      const model = document.querySelector('.composer-model');
+      const visible = el => !!el && el.getClientRects().length > 0 && getComputedStyle(el).visibility !== 'hidden';
+      const box = send?.getBoundingClientRect();
+      const style = send && getComputedStyle(send);
+      return {
+        visible: visible(send), width: box?.width, height: box?.height,
+        text: send?.textContent.trim(), title: send?.getAttribute('title'),
+        svgVisible: visible(svg), viewBox: svg?.getAttribute('viewBox'), d: path?.getAttribute('d'),
+        namespace: svg?.namespaceURI,
+        ink: style?.color, background: style?.backgroundColor, opacity: Number(style?.opacity),
+        stroke: svg && getComputedStyle(svg).stroke,
+        imagesVisible: visible(images),
+        formText: document.querySelector('#composer-form').textContent,
+        modelText: model?.textContent.trim(), modelTitle: model?.getAttribute('title'),
+        modelFont: model && getComputedStyle(model).fontFamily,
+        fits: document.documentElement.scrollWidth <= window.innerWidth,
+      };
+    });
+    expect(m.visible).toBe(true);
+    expect(m.width).toBeLessThanOrEqual(80);
+    expect(m.height).toBeLessThanOrEqual(44);
+    expect(m.width).toBeGreaterThanOrEqual(32);
+    expect(m.height).toBeGreaterThanOrEqual(32);
+    expect(m.text).toBe('');
+    expect(m.title).toBe('Send');
+    expect(m.svgVisible).toBe(true);
+    expect(m.viewBox).toBe('0 0 24 24');
+    expect(m.d).toBe('M12 19V5M6 11l6-6 6 6');
+    expect(m.namespace).toBe('http://www.w3.org/2000/svg');
+    expect(m.ink).not.toBe(m.background);
+    expect(m.stroke).toBe(m.ink);
+    expect(m.opacity).toBeGreaterThanOrEqual(0.6);
+    expect(m.imagesVisible).toBe(true);
+    expect(m.formText).not.toContain('to send');
+    expect(m.modelText).toMatch(/^\S/);
+    expect(m.modelTitle).toMatch(/^(Claude Code|Codex) · /);
+    expect(m.modelFont).toContain('IBM Plex Sans');
+    expect(m.fits).toBe(true);
+  };
   await chooseTheme(page, 'Bubblegum');
   // Sending previously destroyed the SVG. Exercise both mouse and Enter, and
   // inspect during the LiveView acknowledgement window as well as afterwards.
@@ -1026,26 +1080,31 @@ test('composer Send stays compact and keeps its arrow after repeated submissions
     await page.evaluate(() => window.liveSocket.disableLatencySim());
     // Acknowledgement clears the input before the agent finishes. Keep this
     // button-rendering regression sequential instead of queuing another turn.
-    // An idle sweep can consume 30 seconds before the reply even begins.
-    await expect(page.locator('#transcript-turns .turn-footer')).toHaveCount(++completedAnswers, { timeout: 45_000 });
+    await expect(page.locator('#transcript-turns .turn-footer')).toHaveCount(++completedAnswers, { timeout: 20_000 });
     await expect(page.locator('#composer-form').getByRole('button', { name: 'Stop', exact: true })).toHaveCount(0, { timeout: 30_000 });
   }
   await page.evaluate(() => window.liveSocket.disableLatencySim());
-  // Setup and delivery share the worker's 30-second idle backstop.
-  await expect(page.locator('#transcript-turns')).toContainText('Send regression Enter', { timeout: 45_000 });
+  await expect(page.locator('#transcript-turns')).toContainText('Send regression Enter', { timeout: 20_000 });
   await expect(page.locator('#composer-form').getByRole('button', { name: 'Stop', exact: true })).toHaveCount(0, { timeout: 30_000 });
   const fixture = composerFixture(new URL(page.url()).pathname.split('/').pop());
   const palettes = await page.locator('[data-theme-choice]').evaluateAll(els => [...new Set(els.map(el => el.dataset.themeChoice))]);
   expect(palettes).toHaveLength(22);
   for (const [status, connected] of [['opening', false], ['opening', true], ['running', true], ['ready', true], ['failed', true]]) {
     await fixture.state(request, status, connected);
-    await page.reload();
-    await expect(page.locator('[data-phx-main]')).toHaveClass(/phx-connected/);
+    // An opening page reads the conversation memo (`MachineCache`, five
+    // seconds), and nothing tells it the fixture moved the conversation. This
+    // step used to pass only because the previous one outlasted the memo, so
+    // reload until the page shows the new status instead of relying on that.
+    await expect(async () => {
+      await page.reload();
+      await expect(page.locator('[data-phx-main]')).toHaveClass(/phx-connected/);
+      await expect(page.locator('#composer-form').getByRole('button', { name: 'Stop', exact: true })).toHaveCount(['opening', 'running'].includes(status) ? 1 : 0, { timeout: 1_000 });
+      await expect(page.locator('#composer-form').getByRole('button', { name: 'Wake / retry', exact: true })).toHaveCount(['opening', 'failed'].includes(status) ? 1 : 0, { timeout: 1_000 });
+    }).toPass({ timeout: 15_000 });
     await expect(send).toBeVisible();
     if (connected) await expect(send).toBeEnabled();
     else await expect(send).toBeDisabled();
-    await expect(page.locator('#composer-form').getByRole('button', { name: 'Stop', exact: true })).toHaveCount(['opening', 'running'].includes(status) ? 1 : 0);
-    await expect(page.locator('#composer-form').getByRole('button', { name: 'Wake / retry', exact: true })).toHaveCount(['opening', 'failed'].includes(status) ? 1 : 0);
+    await checkSend();
     for (const theme of palettes) {
       // The picker is hidden behind Menu on phones; set its public palette
       // attribute directly so the matrix measures the same CSS in both sizes.
@@ -1056,7 +1115,7 @@ test('composer Send stays compact and keeps its arrow after repeated submissions
           await new Promise(requestAnimationFrame);
           await Promise.all(document.getAnimations().filter(a => a instanceof CSSTransition).map(a => a.finished.catch(() => {})));
         });
-        await test.step(`${status}, connected=${connected}, ${theme}, ${width}px`, checkSend);
+        await test.step(`${status}, connected=${connected}, ${theme}, ${width}px`, matrixSend);
         if (theme === 'bubblegum') await page.screenshot({ path: test.info().outputPath(`send-${status}-${connected}-${width}.png`), fullPage: true });
       }
     }
@@ -1066,6 +1125,7 @@ test('composer Send stays compact and keeps its arrow after repeated submissions
 test('shared project prefixes stay muted and truncate across every theme', async ({ page, browser }) => {
   test.setTimeout(120_000);
   await signIn(page);
+  await connectClaude(page);
   await page.getByRole('link', { name: 'Home', exact: true }).first().click();
   await page.getByRole('button', { name: /^New project/ }).click();
   const name = 'Shared project with a deliberately long name for a narrow rail';

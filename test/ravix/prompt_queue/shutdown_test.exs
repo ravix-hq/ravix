@@ -204,7 +204,7 @@ defmodule Ravix.PromptQueue.ShutdownTest do
 
   defp server do
     spec =
-      Supervisor.child_spec({Server, name: nil, interval: false},
+      Supervisor.child_spec({Server, name: nil, interval: false, wake: false},
         id: make_ref(),
         restart: :temporary
       )

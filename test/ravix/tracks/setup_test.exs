@@ -125,10 +125,11 @@ defmodule Ravix.Tracks.SetupTest do
     refute_received {:prompt, _, _, _}
   end
 
-  defp server do
+  defp server(opts \\ []) do
     pid =
       start_supervised!(
-        Supervisor.child_spec({Server, name: nil, interval: false},
+        Supervisor.child_spec(
+          {Server, Keyword.merge([name: nil, interval: false, wake: false], opts)},
           id: make_ref()
         )
       )
@@ -274,6 +275,47 @@ defmodule Ravix.Tracks.SetupTest do
     assert row(ctx.track).opened_at
     assert_receive {:prompt, "setup", "user work", _}
     assert QueueStore.get(item.id).status == :sent
+  end
+
+  test "a prompt saved while the track opened goes out as soon as setup verifies it", ctx do
+    item = queue(ctx)
+    # No timer: only a wake can make this worker sweep. The module is
+    # synchronous, so no other test's save can be the one it hears.
+    waker = server(wake: true)
+    refute_receive {:prompt, _, _, _}, 100
+
+    # As `Tracks.open/3` does, outside any sweep: nothing settles after this,
+    # so the queue hears of it from setup or from its backstop timer.
+    turn_status(ctx.track, "completed")
+    due(ctx.track)
+    Setup.advance(ctx.client, ctx.track.id)
+    assert row(ctx.track).setup_state == "ready"
+
+    assert_receive {:prompt, "setup", "user work", _}, 1_000
+    wait_until(fn -> QueueStore.get(item.id).status == :sent end)
+    Server.stop(waker)
+  end
+
+  test "a finished opening is verified when its check falls due, not on the backstop", ctx do
+    turn_status(ctx.track, "completed")
+    # Checked a moment ago, so the next check is not due yet.
+    persist(row(ctx.track), setup_retry_at: DateTime.add(DateTime.utc_now(), 300, :millisecond))
+    # A backstop a minute away: only the due time can bring the next sweep.
+    s = server(interval: 60_000, busy_interval: 60_000)
+
+    Server.tick(s)
+    assert row(ctx.track).setup_state == "running"
+
+    wait_until(fn -> row(ctx.track).setup_state == "ready" end)
+    Server.stop(s)
+  end
+
+  defp wait_until(fun, tries \\ 100) do
+    cond do
+      fun.() -> :ok
+      tries == 0 -> flunk("condition never held")
+      true -> Process.sleep(10) && wait_until(fun, tries - 1)
+    end
   end
 
   test "exhaustion fails all queued prompts and MCP tasks, retaining bodies for explicit retry",

@@ -4,7 +4,10 @@ export default defineConfig({
   testDir: './browser',
   timeout: 60_000,
   expect: { timeout: 15_000 },
-  fullyParallel: false,
+  // One worker per app: tests share its database and provider mock, so a
+  // run is serial. `fullyParallel` only lets `--shard` split by test rather
+  // than by file; CI runs each shard against its own app (see ci.yml).
+  fullyParallel: true,
   workers: 1,
   retries: 0,
   forbidOnly: !!process.env.CI,

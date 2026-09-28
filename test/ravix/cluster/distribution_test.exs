@@ -318,7 +318,9 @@ defmodule Ravix.Cluster.DistributionTest do
 
         stop_peer(ctx.peer, ctx.node)
         # tick's first operation is recovery, even without a configured provider.
-        server = start_supervised!({Ravix.PromptQueue.Server, name: nil, interval: false})
+        server =
+          start_supervised!({Ravix.PromptQueue.Server, name: nil, interval: false, wake: false})
+
         Sandbox.allow(Repo, self(), server)
         Ravix.PromptQueue.Server.tick(server)
         assert Store.get(row.id).status == :unconfirmed
@@ -356,7 +358,7 @@ defmodule Ravix.Cluster.DistributionTest do
 
         opts = Keyword.put(follow_opts(), :conversation_id, track.conversation_id)
         {:ok, follower} = :erpc.call(ctx.node, Follower, :subscribe, [track.id, opts])
-        server = start_supervised!({Server, name: nil, interval: false})
+        server = start_supervised!({Server, name: nil, interval: false, wake: false})
         Sandbox.allow(Repo, self(), server)
         assert :ok = GenServer.call(server, {:heads, [row], false})
         assert Follower.whereis(track.id) == follower

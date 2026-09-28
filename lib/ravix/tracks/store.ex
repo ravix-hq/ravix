@@ -387,14 +387,33 @@ defmodule Ravix.Tracks.Store do
   @doc "Due setup checks, including tracks with no queued prompts or connected page."
   def pending_setups, do: Repo.all(from(t in setup_candidates(), select: t.id))
 
+  @doc """
+  When the soonest setup check that is not due yet falls due, or nil.
+
+  `Ravix.Tracks.Setup` spaces its checks from five seconds up to thirty, so
+  the queue worker sweeps then rather than on its backstop, which could leave
+  a finished opening turn unverified for most of another interval.
+  """
+  def next_setup_due do
+    now = DateTime.utc_now()
+
+    Repo.one(
+      from t in open_setups(), where: t.setup_retry_at > ^now, select: min(t.setup_retry_at)
+    )
+  end
+
   defp setup_candidates do
     now = DateTime.utc_now()
 
-    from t in Track,
+    from t in open_setups(),
       where:
-        is_nil(t.closed_at) and t.setup_state in ["pending", "running", "retry"] and
-          (is_nil(t.setup_retry_at) or t.setup_retry_at <= ^now) and
-          (is_nil(t.setup_lease_until) or t.setup_lease_until < ^now),
+        (is_nil(t.setup_retry_at) or t.setup_retry_at <= ^now) and
+          (is_nil(t.setup_lease_until) or t.setup_lease_until < ^now)
+  end
+
+  defp open_setups do
+    from t in Track,
+      where: is_nil(t.closed_at) and t.setup_state in ["pending", "running", "retry"],
       where:
         t.sandbox_layout == :shared or
           (t.sandbox_state == :provisioning and not is_nil(t.conversation_id))
