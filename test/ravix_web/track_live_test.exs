@@ -4102,6 +4102,97 @@ defmodule RavixWeb.TrackLiveTest do
     assert has_element?(ctx.view, "#turns-turn .workspace-work-body .md", "The answer")
   end
 
+  for {scenario, status, following, ending, recovered, failed} <- [
+        {"recovered by another call", "failed", :tool, "completed", 1, 0},
+        {"recovered by an answer", "failed", :text, "completed", 1, 0},
+        {"final error", "failed", :none, "completed", 0, 1},
+        {"turn failure after recovery", "failed", :tool, "failed", 0, 1},
+        {"no errors", "completed", :text, "completed", 0, 0},
+        {"failure without tool errors", "completed", :text, "failed", 0, 0},
+        {"still running", "failed", :tool, nil, 0, 1},
+        {"cancelled", "failed", :text, "cancelled", 0, 1}
+      ] do
+    @tag scenario: {status, following, ending, recovered, failed}
+    test "work summary: #{scenario}", ctx do
+      {status, following, ending, recovered, failed} = ctx.scenario
+      call = %{sessionUpdate: "tool_call", toolCallId: "test", title: "mix test", kind: "execute"}
+
+      result = %{
+        sessionUpdate: "tool_call_update",
+        toolCallId: "test",
+        status: status,
+        content: [%{type: "content", content: %{type: "text", text: "Original command output"}}]
+      }
+
+      after_error =
+        case following do
+          :tool ->
+            [
+              %{call | toolCallId: "retry"},
+              %{result | toolCallId: "retry", status: "completed"}
+            ]
+
+          :text ->
+            [%{sessionUpdate: "agent_message_chunk", content: %{type: "text", text: "Done"}}]
+
+          :none ->
+            []
+        end
+
+      events =
+        [call, result | after_error]
+        |> Enum.with_index(1)
+        |> Enum.map(fn {update, id} ->
+          %{
+            "id" => id,
+            "turn_id" => "turn",
+            "kind" => "output",
+            "stream" => "acp",
+            "data" =>
+              Jason.encode!(%{
+                jsonrpc: "2.0",
+                method: "session/update",
+                params: %{update: update}
+              })
+          }
+        end)
+
+      terminal =
+        if ending,
+          do: [
+            %{
+              "id" => 99,
+              "turn_id" => "turn",
+              "kind" => "stage",
+              "stage" => "turn",
+              "state" => ending
+            }
+          ],
+          else: []
+
+      page = Transcript.page([opened(0, "turn", "Test") | events] ++ terminal, "claude")
+      stub(Tracks, :events, fn _, _, _ -> {:ok, page} end)
+      render_click(ctx.view, "retry-load")
+      render_async(ctx.view)
+
+      summary = "#turns-turn .workspace-work > summary"
+      assert has_element?(ctx.view, summary <> " .tool-error") == failed > 0
+      assert has_element?(ctx.view, summary <> " .tool-recovered") == recovered > 0
+
+      assert has_element?(ctx.view, "#turns-turn .workspace-tool .tool-error") ==
+               (status == "failed")
+
+      assert has_element?(ctx.view, "#turns-turn .workspace-work-body", "Original command output")
+
+      if ending == "failed" do
+        assert has_element?(
+                 ctx.view,
+                 "#turns-turn .agent-terminal-output > div .workspace-failure"
+               )
+      end
+    end
+  end
+
   test "a finished turn says how long it ran, what it touched, and offers its answer", ctx do
     update = fn data ->
       Jason.encode!(%{jsonrpc: "2.0", method: "session/update", params: %{update: data}})

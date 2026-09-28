@@ -165,6 +165,7 @@
                     <.work
                       :if={match?({:work, _}, segment)}
                       blocks={elem(segment, 1)}
+                      turn={turn}
                       rendered={@rendered}
                     />
                     <div :if={match?({:block, _}, segment)}>
