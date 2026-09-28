@@ -40,7 +40,12 @@ defmodule Ravix.Fountain do
   @type failure :: Error.t() | {:unconfigured, :fountain}
   @type result(value) :: {:ok, value} | {:error, failure()}
   @type outcome :: :ok | {:error, failure()}
-  @type events_page :: %{events: [record()], next_cursor: integer() | nil, has_more: boolean()}
+  @type events_page :: %{
+          events: [record()],
+          next_cursor: integer() | nil,
+          has_more: boolean(),
+          window: Shapes.EventWindow.t() | nil
+        }
 
   @page_limit 1000
 
@@ -546,21 +551,33 @@ defmodule Ravix.Fountain do
   nothing here reads; `Ravix.Tracks.Transcript.Event.from/1` keeps the
   prompt and drops the rest. Only this feed carries prompts: the stream
   never does.
+
+  Newest first (managoat/fountain#2531): `order: :desc` serves the newest
+  events, newest first, and `next_cursor` is then the page's oldest id, to
+  pass back as `:before`. `whole_turns: true` (only with `:desc`) never ends
+  a page inside a turn, so a page can exceed `:limit`. `window` is the
+  response's `page` object as a `Shapes.EventWindow`, or `nil` from a
+  Fountain older than #2531, which ignores the new parameters and answers
+  the oldest page, oldest first.
   """
   @spec events_page(Client.t(), id(), keyword()) :: result(events_page())
   def events_page(client, id, opts \\ []) do
     path = "/api/conversations/#{escape(id)}/events"
+    desc? = opts[:order] == :desc
 
     query = [
       limit: Keyword.get(opts, :limit, @page_limit),
       after: opts[:after],
+      before: opts[:before],
+      order: if(desc?, do: "desc"),
+      whole_turns: if(desc? and opts[:whole_turns], do: "true"),
       blocks: if(opts[:blocks] || opts[:prompts], do: "true"),
       prompts: if(opts[:prompts], do: "true")
     ]
 
     call(client, "GET", path, fn http ->
       with {:ok, page} <- HTTP.request(http, "GET", path, query: query) do
-        {:ok, page_of(page, opts[:after])}
+        {:ok, page_of(page, if(desc?, do: opts[:before], else: opts[:after]))}
       end
     end)
   end
@@ -568,13 +585,31 @@ defmodule Ravix.Fountain do
   @doc """
   Every stored event, reading every page so long tracks retain their later
   replies. Deduplicated by id and sorted by id. Options as `events_page/3`;
-  `:after` limits catch-up to events newer than a held cursor.
+  `:after` limits catch-up to events newer than a held cursor. Always reads
+  forward: `:order`, `:before` and `:whole_turns` are page options only.
+  `:from` is a first forward page already read, which the log continues
+  from instead of reading it again.
   """
   @spec events(Client.t(), id(), keyword()) :: result([record()])
   def events(client, id, opts \\ []) do
-    if Client.configured?(client),
-      do: collect_events(client, id, Keyword.delete(opts, :after), opts[:after], %{}, 0),
-      else: {:error, {:unconfigured, :fountain}}
+    {first, opts} = Keyword.pop(opts, :from)
+    opts = Keyword.drop(opts, [:order, :before, :whole_turns])
+
+    cond do
+      not Client.configured?(client) ->
+        {:error, {:unconfigured, :fountain}}
+
+      first ->
+        seen = Map.new(first.events, &{&1["id"], &1})
+        Trace.annotate(%{"ravix.event_pages" => 1})
+
+        if first.has_more,
+          do: collect_events(client, id, opts, first.next_cursor, seen, 1),
+          else: {:ok, seen |> Map.values() |> Enum.sort_by(& &1["id"])}
+
+      true ->
+        collect_events(client, id, Keyword.delete(opts, :after), opts[:after], %{}, 0)
+    end
   end
 
   @doc """
@@ -794,18 +829,19 @@ defmodule Ravix.Fountain do
     end
   end
 
-  defp page_of(%{"data" => events} = page, after_cursor) when is_list(events) do
+  defp page_of(%{"data" => events} = page, cursor) when is_list(events) do
     meta = if is_map(page["meta"]), do: page["meta"], else: %{}
 
     %{
       events: events,
       has_more: meta["has_more"] == true,
-      next_cursor:
-        if(is_integer(meta["next_cursor"]), do: meta["next_cursor"], else: after_cursor)
+      next_cursor: if(is_integer(meta["next_cursor"]), do: meta["next_cursor"], else: cursor),
+      window: Shapes.event_window(page["page"])
     }
   end
 
-  defp page_of(_page, after_cursor), do: %{events: [], has_more: false, next_cursor: after_cursor}
+  defp page_of(_page, cursor),
+    do: %{events: [], has_more: false, next_cursor: cursor, window: nil}
 
   defp sandbox_identity(body, nil), do: Map.put(body, "sandbox_mode", "persistent")
   defp sandbox_identity(body, ""), do: Map.put(body, "sandbox_mode", "persistent")

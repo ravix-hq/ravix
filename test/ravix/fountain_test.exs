@@ -808,6 +808,103 @@ defmodule Ravix.FountainTest do
                Fountain.events_page(client, "c1", after: 6, limit: 1, prompts: true)
     end
 
+    test "newest first: before, whole turns, and the page window as a struct" do
+      window = %{order: "desc", oldest_cursor: 40, newest_cursor: 97, turn_split: true}
+
+      client =
+        fake([
+          {%{
+             method: "GET",
+             path: "/api/conversations/c1/events",
+             query: %{
+               limit: "300",
+               before: "120",
+               order: "desc",
+               whole_turns: "true",
+               blocks: "true",
+               prompts: "true"
+             }
+           },
+           {200, [],
+            %{
+              data: [%{id: 97}, %{id: 40}],
+              meta: %{limit: 300, has_more: true, next_cursor: 40},
+              page: window
+            }}},
+          # whole_turns is refused by Fountain without desc, so it is not sent.
+          {%{method: "GET", path: "/api/conversations/c1/events", query: %{limit: "1000"}},
+           {200, [],
+            %{data: [], meta: %{has_more: false, next_cursor: nil}, page: %{order: "asc"}}}}
+        ])
+
+      assert {:ok,
+              %{
+                events: [%{"id" => 97}, %{"id" => 40}],
+                has_more: true,
+                next_cursor: 40,
+                window: %Shapes.EventWindow{
+                  order: :desc,
+                  oldest_cursor: 40,
+                  newest_cursor: 97,
+                  turn_split: true
+                }
+              }} =
+               Fountain.events_page(client, "c1",
+                 order: :desc,
+                 before: 120,
+                 whole_turns: true,
+                 limit: 300,
+                 prompts: true
+               )
+
+      assert {:ok,
+              %{
+                events: [],
+                next_cursor: nil,
+                window: %Shapes.EventWindow{order: :asc, oldest_cursor: nil, turn_split: false}
+              }} = Fountain.events_page(client, "c1", whole_turns: true)
+    end
+
+    test "a Fountain without the page object reports no window" do
+      client =
+        fake([
+          {%{method: "GET", path: "/api/conversations/c1/events"},
+           {200, [], %{data: [%{id: 1}], meta: %{has_more: false}, page: %{order: "sideways"}}}},
+          {%{method: "GET", path: "/api/conversations/c1/events"},
+           {200, [], %{data: [%{id: 1}], meta: %{has_more: false}}}}
+        ])
+
+      assert {:ok, %{window: nil}} = Fountain.events_page(client, "c1", order: :desc)
+      assert {:ok, %{window: nil}} = Fountain.events_page(client, "c1", order: :desc)
+    end
+
+    test "a forward read continues from a first page already in hand, and only reads forward" do
+      client =
+        fake([
+          {%{
+             method: "GET",
+             path: "/api/conversations/c1/events",
+             query: %{limit: "1000", after: "5", prompts: "true", blocks: "true"}
+           }, {200, [], %{data: [%{id: 5}, %{id: 9}], meta: %{has_more: false}}}}
+        ])
+
+      first = %{events: [%{"id" => 5}, %{"id" => 2}], has_more: true, next_cursor: 5}
+
+      assert {:ok, [%{"id" => 2}, %{"id" => 5}, %{"id" => 9}]} =
+               Fountain.events(client, "c1",
+                 from: first,
+                 prompts: true,
+                 order: :desc,
+                 whole_turns: true,
+                 before: 3
+               )
+
+      assert {:ok, [%{"id" => 2}]} =
+               Fountain.events(client, "c1",
+                 from: %{first | has_more: false, events: [%{"id" => 2}]}
+               )
+    end
+
     test "reads every stored page, deduplicated and sorted by id" do
       client =
         fake([

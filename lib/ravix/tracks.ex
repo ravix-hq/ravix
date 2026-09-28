@@ -1414,7 +1414,7 @@ defmodule Ravix.Tracks do
          binding
        )
        when is_binary(id),
-       do: read_transcript(client, id, runtime, binding, page)
+       do: catch_up_transcript(client, id, runtime, binding, page)
 
   defp read_thread_transcript(client, thread, runtime, _previous, binding) do
     with {:ok, page} <- read_transcript(client, thread.conversation_id, runtime, binding) do
@@ -1446,9 +1446,10 @@ defmodule Ravix.Tracks do
         conversation_ids: thread.previous_conversation_ids ++ [thread.conversation_id]
       }
 
-      with {:ok, history} <-
-             earlier_history(client, history, thread.runtime || project.runtime, binding) do
-        history_page(history, thread.runtime || project.runtime, binding)
+      runtime = thread.runtime || project.runtime
+
+      with {:ok, log, history, enqueue?} <- earlier_history(client, history, runtime, binding) do
+        history_page(log, history, runtime, binding, enqueue?)
       end
     else
       false -> {:error, :not_found}
@@ -1465,43 +1466,101 @@ defmodule Ravix.Tracks do
 
   defp valid_history?(_page, _track_id, _thread), do: false
 
-  defp earlier_history(
-         client,
-         %{chunks: [], conversations: [id | rest]} = history,
-         runtime,
-         binding
-       ) do
-    with {:ok, log} <- Fountain.events(client, id, prompts: true),
-         {:ok, records} <- Fountain.turns(client, id) do
-      Trace.annotate(%{"ravix.events_fetched" => length(log)})
-      Settlement.enqueue_log(log, id, runtime, binding)
-      {:ok, Transcript.History.new(log, records, id, rest, history.source)}
+  defp earlier_history(_client, %{chunks: [_ | _]} = history, _runtime, _binding) do
+    {events, history} = Transcript.History.take(history)
+    {:ok, events, history, false}
+  end
+
+  # A page read further back classifies the settled turns it rendered; a
+  # newly opened conversation schedules its own scan, and a fallback chunk
+  # was classified with the whole log it came from.
+  defp earlier_history(client, %{before: before} = history, _runtime, _binding)
+       when is_integer(before) do
+    with {:ok, events, history, stats} <- Transcript.History.read(client, history) do
+      annotate_read(stats, "desc")
+      {:ok, Transcript.History.label(events), history, true}
     end
   end
 
-  defp earlier_history(_client, history, _runtime, _binding), do: {:ok, history}
+  defp earlier_history(client, %{conversations: [id | rest]} = history, runtime, binding) do
+    with {:ok, log, history, _newest} <-
+           open_conversation(client, id, rest, history.source, runtime, binding),
+         do: {:ok, log, history, false}
+  end
 
-  defp read_transcript(client, conversation_id, runtime, binding, previous \\ nil) do
-    opts = if previous, do: [prompts: true, after: previous.last_event_id], else: [prompts: true]
+  defp earlier_history(_client, history, _runtime, _binding), do: {:ok, [], history, false}
 
-    with {:ok, log} <- Fountain.events(client, conversation_id, opts),
+  defp read_transcript(client, conversation_id, runtime, binding) do
+    source = {binding.track_id, binding.thread_id, conversation_id}
+
+    with {:ok, log, history, newest} <-
+           open_conversation(client, conversation_id, [], source, runtime, binding),
+         {:ok, page} <- history_page(log, history, runtime, binding, false) do
+      {:ok, %{page | last_event_id: newest || page.last_event_id}}
+    end
+  end
+
+  # Catch-up: only what is newer than the page already holds, read forward.
+  defp catch_up_transcript(client, conversation_id, runtime, binding, previous) do
+    with {:ok, log} <-
+           Fountain.events(client, conversation_id, prompts: true, after: previous.last_event_id),
          {:ok, turns} <- Fountain.turns(client, conversation_id) do
-      Trace.annotate(%{"ravix.events_fetched" => length(log)})
-
-      if previous do
-        build_transcript_page(previous, log, turns, conversation_id, runtime, binding)
-      else
-        Settlement.enqueue_log(log, conversation_id, runtime, binding)
-        source = {binding.track_id, binding.thread_id, conversation_id}
-        history = Transcript.History.new(log, turns, conversation_id, [], source)
-        history_page(history, runtime, binding)
-      end
+      annotate_read(%{events: length(log)}, "asc")
+      build_transcript_page(previous, log, turns, conversation_id, runtime, binding, true)
     end
   end
 
-  defp history_page(history, runtime, binding) do
-    {log, rest} = Transcript.History.take(history)
+  # One conversation's newest events: a single `order=desc&whole_turns=true`
+  # page (managoat/fountain#2531), whose `page.newest_cursor` is where the
+  # live follow starts. A Fountain without `page` answered the oldest page
+  # forward instead, which the fallback reads on from rather than again.
+  defp open_conversation(client, id, conversations, source, runtime, binding) do
+    history = Transcript.History.cursor([], id, conversations, source)
 
+    with {:ok, first} <- Fountain.events_page(client, id, Transcript.History.page_opts(history)),
+         {:ok, records} <- Fountain.turns(client, id) do
+      history = %{history | records: records}
+
+      if first.window,
+        do: open_backward(client, first, history, runtime, binding),
+        else: open_forward(client, first, history, runtime, binding)
+    end
+  end
+
+  defp open_backward(client, first, history, runtime, binding) do
+    {events, history} = Transcript.History.absorb(history, first)
+    stats = %{pages: 1, events: length(first.events)}
+
+    with {:ok, events, history, stats} <-
+           Transcript.History.settle(client, events, history, stats) do
+      annotate_read(stats, "desc")
+      Settlement.scan(client, history, events, runtime, binding)
+      {:ok, Transcript.History.label(events), history, first.window.newest_cursor}
+    end
+  end
+
+  defp open_forward(client, first, history, runtime, binding) do
+    id = history.conversation_id
+
+    with {:ok, log} <- Fountain.events(client, id, prompts: true, from: first) do
+      annotate_read(%{events: length(log)}, "asc")
+      Settlement.enqueue_log(log, id, runtime, binding)
+
+      history =
+        Transcript.History.new(log, history.records, id, history.conversations, history.source)
+
+      {events, history} = Transcript.History.take(history)
+      {:ok, events, history, nil}
+    end
+  end
+
+  # `ravix.event_pages` for a forward read is counted by `Fountain.events/3`.
+  defp annotate_read(stats, order) do
+    Trace.annotate(%{"ravix.events_fetched" => stats.events, "ravix.events_order" => order})
+    if stats[:pages], do: Trace.annotate(%{"ravix.event_pages" => stats.pages})
+  end
+
+  defp history_page(log, history, runtime, binding, enqueue?) do
     with {:ok, page} <-
            build_transcript_page(
              nil,
@@ -1509,7 +1568,8 @@ defmodule Ravix.Tracks do
              history.records,
              history.conversation_id,
              runtime,
-             binding
+             binding,
+             enqueue?
            ) do
       oldest =
         case log do
@@ -1520,14 +1580,14 @@ defmodule Ravix.Tracks do
       {:ok,
        %{
          page
-         | history: rest,
+         | history: history,
            oldest_event_id: oldest,
            oldest_conversation_id: if(oldest, do: history.conversation_id)
        }}
     end
   end
 
-  defp build_transcript_page(previous, log, turns, conversation_id, runtime, binding) do
+  defp build_transcript_page(previous, log, turns, conversation_id, runtime, binding, enqueue?) do
     classifications =
       Trace.span("transcript.failures", %{}, fn ->
         Store.turn_classifications(binding.conversation_ids)
@@ -1547,7 +1607,7 @@ defmodule Ravix.Tracks do
       "ravix.event_count" => length(log)
     })
 
-    if previous, do: Settlement.enqueue(page, classifications.classified, binding)
+    if enqueue?, do: Settlement.enqueue(page, classifications.classified, binding)
     {:ok, %{page | conversation_id: conversation_id}}
   end
 

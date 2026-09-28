@@ -1163,9 +1163,11 @@ defmodule Ravix.TracksTest do
 
       event = Ravix.AgentOutageFixture.events() |> List.last() |> Transcript.Event.from()
       assert {:ok, _} = Settlement.record(client, track.id, "outage-history", event)
-      # Classification must not even fetch events again after settling once.
-      expect(Ravix.Fountain, :events, 2, fn _, "outage-history", [prompts: true] ->
-        {:ok, Ravix.AgentOutageFixture.events()}
+      # Classification must not even fetch events again after settling once:
+      # each read is its one newest-first page.
+      expect(Ravix.Fountain, :events_page, 2, fn _, "outage-history", opts ->
+        assert opts[:order] == :desc and opts[:whole_turns] and opts[:prompts]
+        Ravix.TranscriptFixture.events_page(Ravix.AgentOutageFixture.events(), opts)
       end)
 
       assert {:ok, _} = Settlement.record(client, track.id, "outage-history", event)
@@ -1202,19 +1204,18 @@ defmodule Ravix.TracksTest do
           {%{
              method: "GET",
              path: "/api/conversations/c1/events",
-             query: %{limit: "1000", blocks: "true", prompts: "true"}
+             query: %{
+               limit: "200",
+               order: "desc",
+               whole_turns: "true",
+               blocks: "true",
+               prompts: "true"
+             }
            },
            {200, [],
             %{
+              # Newest first, as `order=desc` serves them.
               data: [
-                %{
-                  id: 1,
-                  kind: "stage",
-                  stage: "turn",
-                  state: "started",
-                  turn_id: "t1",
-                  blocks: [%{kind: "prompt", body: "say hi"}]
-                },
                 %{
                   id: 2,
                   kind: "output",
@@ -1223,9 +1224,18 @@ defmodule Ravix.TracksTest do
                   turn_id: "t1",
                   ts: "2026-09-09T10:00:01Z",
                   blocks: [%{kind: "text", body: "hi"}]
+                },
+                %{
+                  id: 1,
+                  kind: "stage",
+                  stage: "turn",
+                  state: "started",
+                  turn_id: "t1",
+                  blocks: [%{kind: "prompt", body: "say hi"}]
                 }
               ],
-              meta: %{has_more: false}
+              meta: %{limit: 200, has_more: false, next_cursor: 1},
+              page: %{order: "desc", oldest_cursor: 1, newest_cursor: 2, turn_split: false}
             }}}
         ])
 

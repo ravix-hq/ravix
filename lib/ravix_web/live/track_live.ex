@@ -1150,17 +1150,15 @@ defmodule RavixWeb.TrackLive do
   defp history_cursor(page),
     do:
       {page.conversation_id, page.oldest_conversation_id, page.oldest_event_id,
-       page.history && page.history.conversation_id}
+       page.history && {page.history.conversation_id, page.history.before}}
 
   defp retain_earlier(
          %{history: %Transcript.History{} = incoming} = page,
          %{history: %Transcript.History{} = held} = current
        ) do
-    if incoming.source == held.source and
-         {length(held.conversations), length(held.chunks)} <
-           {length(incoming.conversations), length(incoming.chunks)},
-       do: Transcript.prepend_history(page, current),
-       else: page
+    if incoming.source == held.source and Transcript.History.further?(held, incoming),
+      do: Transcript.prepend_history(page, current),
+      else: page
   end
 
   defp retain_earlier(page, _current), do: page

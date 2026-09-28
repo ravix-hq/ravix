@@ -31,8 +31,8 @@ defmodule Ravix.Cluster do
   cluster could collide with them.
   """
 
-  @typedoc "The process family a name belongs to."
-  @type scope :: :follower | :preview | :singleton | :settlement
+  @typedoc "The process family a name (or, for `:settlement_scan`, a lock) belongs to."
+  @type scope :: :follower | :preview | :singleton | :settlement | :settlement_scan
 
   @doc """
   The `:global` name for a scope and key.

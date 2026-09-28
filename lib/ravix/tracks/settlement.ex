@@ -15,6 +15,97 @@ defmodule Ravix.Tracks.Settlement do
     end)
   end
 
+  # The most pages one scan reads back; an older remainder waits for the next open.
+  @scan_pages 20
+
+  @doc """
+  Classify the settled turns on a page read newest first, then page back in
+  the background only until a settled turn that is already classified.
+
+  Classification is durable, so a classified turn marks where an earlier
+  open got to. Steady state reads no further page; the first open of an old
+  conversation walks back once, at most `@scan_pages` pages, off the read
+  path. One walk per conversation runs at a time, and the per-turn
+  registration deduplicates the classifications themselves.
+  """
+  def scan(client, history, events, runtime, binding) do
+    Task.Supervisor.start_child(
+      Ravix.TaskSupervisor,
+      Trace.link(fn -> run_scan(client, history, events, runtime, binding) end)
+    )
+
+    :ok
+  end
+
+  defp run_scan(client, history, events, runtime, binding) do
+    id = history.conversation_id
+
+    Trace.span("transcript.classification_scan", %{"ravix.event_count" => length(events)}, fn ->
+      # ownership: Access.thread_access authorized the page that scheduled this task.
+      classified = Store.turn_classifications([id]).classified
+
+      with :continue <- classify_page(events, id, classified, runtime, binding),
+           true <- is_integer(history.before),
+           do: walk_once(client, history, classified, runtime, binding)
+    end)
+  end
+
+  # A lock rather than a name: `:global` gives a process one name, and this
+  # one takes each turn's `:settlement` name as it classifies it.
+  defp walk_once(client, history, classified, runtime, binding) do
+    lock = {Cluster.name(:settlement_scan, history.conversation_id), self()}
+    nodes = [node() | Node.list()]
+
+    if :global.set_lock(lock, nodes, 0) do
+      try do
+        walk(client, history, classified, runtime, binding, 0)
+      after
+        :global.del_lock(lock, nodes)
+      end
+    end
+  end
+
+  defp walk(client, %{before: before} = history, classified, runtime, binding, pages)
+       when is_integer(before) and pages < @scan_pages do
+    case Transcript.History.read(client, history, :scan) do
+      {:ok, events, history, stats} ->
+        pages = pages + stats.pages
+        Trace.annotate(%{"ravix.event_pages" => pages})
+
+        if classify_page(events, history.conversation_id, classified, runtime, binding) ==
+             :continue,
+           do: walk(client, history, classified, runtime, binding, pages)
+
+      {:error, _reason} ->
+        :ok
+    end
+  end
+
+  defp walk(_client, _history, _classified, _runtime, _binding, _pages), do: :ok
+
+  defp classify_page(events, conversation_id, classified, runtime, binding) do
+    settled = for turn <- Transcript.page(events, runtime, %{}).turns, turn.settled?, do: turn
+
+    {known, unknown} =
+      Enum.split_with(settled, &MapSet.member?(classified, {conversation_id, &1.id}))
+
+    for turn <- unknown do
+      key = conversation_id <> "/" <> turn.id
+      background(key, conversation_id, turn.id, turn.events, runtime, binding)
+    end
+
+    cond do
+      known != [] -> :done
+      unknown != [] -> :continue
+      # Nothing settled here (a running turn over the limit): an earlier open
+      # already classified what is behind it, unless nothing ever was.
+      true -> if first_scan?(classified, conversation_id), do: :continue, else: :done
+    end
+  end
+
+  defp first_scan?(classified, conversation_id),
+    do: not Enum.any?(classified, &match?({^conversation_id, _}, &1))
+
   @doc "Classify every settled turn in a fetched snapshot, including turns outside the visible page."
   def enqueue_log(log, conversation_id, runtime, binding) do
     if Enum.any?(log, &(Event.from(&1) |> Event.settles?())) do
