@@ -231,7 +231,7 @@ defmodule Ravix.Accounts.Access do
   an archived workspace and an id that does not exist all answer not found.
   """
   @spec workspace_access(User.t(), String.t()) ::
-          {:ok, %{workspace: Ravix.Workspaces.Workspace.t(), role: atom()}}
+          {:ok, %{workspace: Ravix.Workspaces.Workspace.t(), role: workspace_role()}}
           | {:error, :not_found}
   def workspace_access(%User{id: user_id}, workspace_id) do
     # ownership: no door before this one -- it is the door, as `member?/2` is.
@@ -242,6 +242,73 @@ defmodule Ravix.Accounts.Access do
     else
       _ -> {:error, :not_found}
     end
+  end
+
+  @typedoc "A role in a workspace, as ADR 0009 names them."
+  @type workspace_role :: :owner | :admin | :member
+
+  @typedoc """
+  What a workspace role may do. `:see_workspace_tracks` is the tracks
+  whose visibility admits the workspace; no role reads a private track it
+  was not given.
+  """
+  @type workspace_capability ::
+          :manage_roles
+          | :delete_workspace
+          | :manage_members
+          | :connect_repos
+          | :manage_projects
+          | :create_project
+          | :create_track
+          | :see_workspace_tracks
+
+  @owner_only [:manage_roles, :delete_workspace]
+  @admin [:manage_members, :connect_repos, :manage_projects, :create_project]
+  @member [:create_track, :see_workspace_tracks]
+
+  @doc """
+  Whether a workspace role carries a capability (ADR 0009's roles).
+
+  Owners transfer ownership, appoint admins and delete the workspace
+  (`:manage_roles`, `:delete_workspace`). Admins also manage members,
+  repository connections and project settings and secrets, and admit
+  repositories as projects. Members work on the tracks visibility admits
+  them to and start tracks. Pure: it answers about a role, not a person;
+  `workspace_grant/3` is the door that asks about a person.
+  """
+  @spec can?(workspace_role(), workspace_capability()) :: boolean()
+  def can?(:owner, capability), do: capability in (@owner_only ++ @admin ++ @member)
+  def can?(:admin, capability), do: capability in (@admin ++ @member)
+  def can?(:member, capability), do: capability in @member
+  def can?(_role, _capability), do: false
+
+  @doc """
+  The workspace door for something a workspace role *grants*.
+
+  `workspace_access/2` plus `can?/2`, behind `Ravix.Config.workspace_access?/0`:
+  while that switch is off a workspace grants nothing, so this answers not
+  found for everybody, members included. With it on, a member whose role
+  lacks the capability is refused rather than told the workspace is absent,
+  because it is not absent to them.
+  """
+  @spec workspace_grant(User.t(), String.t(), workspace_capability()) ::
+          {:ok, %{workspace: Ravix.Workspaces.Workspace.t(), role: workspace_role()}}
+          | {:error, :not_found | {:forbidden, String.t()}}
+  def workspace_grant(%User{} = user, workspace_id, capability) do
+    with true <- Ravix.Config.workspace_access?() || {:error, :not_found},
+         {:ok, %{role: role}} = access <- workspace_access(user, workspace_id),
+         :ok <- require_capability(role, capability) do
+      access
+    end
+  end
+
+  @doc "The refusal for a workspace role without `capability`."
+  @spec require_capability(workspace_role(), workspace_capability()) ::
+          :ok | {:error, {:forbidden, String.t()}}
+  def require_capability(role, capability) do
+    if can?(role, capability),
+      do: :ok,
+      else: {:error, {:forbidden, "Your role in this workspace cannot do that."}}
   end
 
   @doc """

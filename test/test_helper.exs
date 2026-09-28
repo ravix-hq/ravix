@@ -8,6 +8,7 @@ for mod <- [
       Ravix.GitHub,
       Ravix.Sprites,
       Ravix.Accounts.Access,
+      Ravix.Workspaces.Store,
       Ravix.Accounts,
       Ravix.Accounts.Inference,
       Ravix.People,

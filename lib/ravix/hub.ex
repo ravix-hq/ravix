@@ -81,4 +81,38 @@ defmodule Ravix.Hub do
 
     :ok
   end
+
+  # ── workspaces ───────────────────────────────────────────────────────
+
+  @doc "The topic for a workspace's membership changes."
+  @spec workspace_topic(String.t()) :: String.t()
+  def workspace_topic(workspace_id), do: "workspace:" <> workspace_id
+
+  @doc """
+  Subscribe the calling process to a workspace's membership changes.
+  Delivered as `{:workspace_hub, workspace_id, :members}`.
+  """
+  @spec subscribe_workspace(String.t()) :: :ok | {:error, term()}
+  def subscribe_workspace(workspace_id),
+    do: Phoenix.PubSub.subscribe(Ravix.PubSub, workspace_topic(workspace_id))
+
+  @doc "Stop receiving a workspace's membership changes."
+  @spec unsubscribe_workspace(String.t()) :: :ok
+  def unsubscribe_workspace(workspace_id),
+    do: Phoenix.PubSub.unsubscribe(Ravix.PubSub, workspace_topic(workspace_id))
+
+  @doc """
+  Tell everyone holding a workspace answer that its members changed, across
+  the cluster. It names nobody: each subscriber re-reads its own membership,
+  as a project's subscribers do on `:people`. Publish only after the change
+  has committed, or a subscriber re-reads the access it is about to lose.
+  """
+  @spec publish_workspace(String.t(), :members) :: :ok
+  def publish_workspace(workspace_id, :members) do
+    Phoenix.PubSub.broadcast(
+      Ravix.PubSub,
+      workspace_topic(workspace_id),
+      {:workspace_hub, workspace_id, :members}
+    )
+  end
 end

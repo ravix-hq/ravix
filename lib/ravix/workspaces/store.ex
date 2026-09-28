@@ -59,6 +59,114 @@ defmodule Ravix.Workspaces.Store do
     )
   end
 
+  @doc """
+  Give `user` their personal workspace and its owner membership, unless
+  they already have them. Returns the personal workspace.
+
+  The sign-up half of the backfill: `Ravix.Accounts.upsert_user/1` calls it
+  in the sign-in's own transaction, so a person created by this release has
+  a personal workspace from the moment their row exists. Same shape as
+  `insert_personal_workspaces/1` and `insert_owner_memberships/1` (named
+  after the login at creation, never renamed with it), and the same
+  `ON CONFLICT DO NOTHING` on the same unique keys, so it and a backfill
+  running on another instance cannot both mint one. A revoked or archived
+  row is left exactly as it is. Not found only if the row is gone again
+  before the read below, which nothing in this release does.
+  """
+  @spec ensure_personal_workspace(User.t()) :: {:ok, Workspace.t()} | {:error, :not_found}
+  def ensure_personal_workspace(%User{id: user_id, login: login}) do
+    now = DateTime.utc_now()
+
+    Repo.insert_all(
+      Workspace,
+      [
+        %{
+          id: Ecto.UUID.generate(),
+          name: login,
+          kind: :personal,
+          personal_user_id: user_id,
+          created_by_user_id: user_id,
+          created_at: now
+        }
+      ],
+      on_conflict: :nothing,
+      conflict_target: {:unsafe_fragment, "(personal_user_id) WHERE personal_user_id IS NOT NULL"}
+    )
+
+    # A conflict above waited for the other writer to commit, so this read,
+    # a new statement, sees whichever row won.
+    case Repo.one(from w in Workspace, where: w.personal_user_id == ^user_id) do
+      %Workspace{} = workspace ->
+        Repo.insert_all(
+          Membership,
+          [%{workspace_id: workspace.id, user_id: user_id, role: :owner, created_at: now}],
+          on_conflict: :nothing
+        )
+
+        {:ok, workspace}
+
+      nil ->
+        {:error, :not_found}
+    end
+  end
+
+  @doc """
+  Revoke `user_id`'s membership of `workspace_id` on behalf of `actor_id`.
+
+  Stamps `revoked_at` rather than deleting, so the backfill cannot hand a
+  removed owner their membership back. Every live membership of the
+  workspace is locked first, and the remover's own standing is read under
+  that lock: an admin demoted or removed at the same moment cannot finish a
+  removal they started, and two owners removing each other at once cannot
+  leave the workspace with none. Only an owner removes an owner.
+  """
+  @spec revoke_membership(String.t(), String.t(), String.t()) ::
+          {:ok, Membership.t()}
+          | {:error, :not_found | :actor_gone | :not_manager | :owner_only | :last_owner}
+  def revoke_membership(workspace_id, user_id, actor_id) do
+    Repo.transaction(fn ->
+      live =
+        Repo.all(
+          from m in Membership,
+            where: m.workspace_id == ^workspace_id and is_nil(m.revoked_at),
+            order_by: m.user_id,
+            lock: "FOR UPDATE"
+        )
+
+      with {:ok, actor} <- live_member(live, actor_id, :actor_gone),
+           :ok <- manager(actor),
+           {:ok, target} <- live_member(live, user_id, :not_found),
+           :ok <- removable(target, actor, Enum.count(live, &(&1.role == :owner))) do
+        target
+        |> Ecto.Changeset.change(revoked_at: DateTime.utc_now())
+        |> Repo.update!()
+      else
+        {:error, reason} -> Repo.rollback(reason)
+      end
+    end)
+  end
+
+  defp live_member(live, user_id, missing) do
+    case Enum.find(live, &(&1.user_id == user_id)) do
+      %Membership{} = membership -> {:ok, membership}
+      nil -> {:error, missing}
+    end
+  end
+
+  # ownership: `Access.can?/2` is a pure answer about a role, not a door;
+  # asked here so the role table has one home.
+  defp manager(%Membership{role: role}) do
+    if Ravix.Accounts.Access.can?(role, :manage_members), do: :ok, else: {:error, :not_manager}
+  end
+
+  defp removable(%Membership{role: :owner}, %Membership{role: role}, _owners) when role != :owner,
+    do: {:error, :owner_only}
+
+  defp removable(%Membership{role: :owner}, _actor, owners) when owners <= 1,
+    do: {:error, :last_owner}
+
+  defp removable(_target, _actor, _owners), do: :ok
+
   @typedoc """
   Whose creation path a reservation holds back: a workspace's, or, for a
   duplicate still in the legacy layout, its owner's. A reservation row has
