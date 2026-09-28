@@ -9,6 +9,7 @@ defmodule Ravix.Tracks.Sandbox do
   alias Ravix.Projects.Machine
   alias Ravix.Spec
   alias Ravix.Tracks.Sandbox.Maintenance
+  alias Ravix.Tracks.Sandbox.OpenTrace
   alias Ravix.Tracks.Sandbox.Store
   alias Ravix.Tracks.Setup
 
@@ -130,24 +131,36 @@ defmodule Ravix.Tracks.Sandbox do
     cond do
       track.sandbox_generation != op.generation ->
         retire(client, op, track, project)
+        publish(track)
 
       track.setup_state == "ready" ->
-        Store.ready(op)
+        record_ready(client, op, track)
 
       track.setup_state == "failed" ->
         fail(client, op, track, project, track.setup_error_code || "setup_failed")
+        publish(track)
 
       true ->
         pause(op)
+        publish(track)
     end
-
-    publish(track)
   end
 
   defp open_step(client, %{phase: "cleanup"} = op, track, project),
     do: cleanup(client, op, track, project)
 
   defp open_step(_client, _op, _track, _project), do: :ok
+
+  defp record_ready(client, op, track) do
+    result = Store.ready(op)
+    # Readiness must reach subscribers even if best-effort tracing stalls or dies.
+    publish(track)
+
+    with {:ok, completed} <- result do
+      OpenTrace.record(completed, Fountain.events_page(client, track.conversation_id, limit: 100))
+      result
+    end
+  end
 
   # An absent listing cannot prove a timed-out mutation will not arrive later.
   # Keep its cleanup obligation; only bind an identity the provider can confirm.
