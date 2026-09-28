@@ -1329,9 +1329,10 @@ defmodule Ravix.PromptQueueTest do
     # been handed neither. The two further reads of `tracks` are the
     # publishes: `Store.claim/1` and `Store.mark_delivered/1` each tell the
     # project's hub, and find the project through the track. The setup sweep
-    # adds one indexed read of unfinished tracks.
+    # adds two indexed reads of unfinished tracks: the checks due now, and
+    # when the next one falls due.
     assert Enum.count(queries, &(&1 == "projects")) == 3
-    assert Enum.count(queries, &(&1 == "tracks")) == 3 + 2 + 1
+    assert Enum.count(queries, &(&1 == "tracks")) == 3 + 2 + 2
   end
 
   test "the sweep's two reads are answered from the indexes made for them" do

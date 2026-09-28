@@ -8,6 +8,7 @@ defmodule Ravix.Tracks.Setup do
 
   alias Ravix.Fountain
   alias Ravix.Hub
+  alias Ravix.PromptQueue.Server, as: PromptQueueServer
   alias Ravix.Spec
   alias Ravix.Tracks.AgentFailure
   alias Ravix.Tracks.Origin
@@ -232,8 +233,14 @@ defmodule Ravix.Tracks.Setup do
              opened_at: DateTime.utc_now(),
              setup_error: nil,
              setup_error_code: nil
-           ),
-           do: publish(track)
+           ) do
+          publish(track)
+          # Prompts saved while the track opened wait on exactly this. The
+          # opening turn's settle event can reach the queue while another
+          # caller (`Tracks.open/3`) holds this lease, and that sweep cannot
+          # advance setup, so without a wake they would wait for its backstop.
+          PromptQueueServer.wake()
+        end
 
       :missing ->
         failed(track, "The opening turn finished without creating its worktree.")

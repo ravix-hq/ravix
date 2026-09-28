@@ -49,7 +49,7 @@ defmodule Ravix.PromptQueue.Server do
   in milliseconds between sweeps that find nothing waiting (default 30000;
   `false` for no timer at all, for tests), and `:busy_interval`, the shorter
   gap used while a prompt waits (default 30000, and never longer than
-  `:interval`), and `:wake` (default true), whether to sweep on `wake/0`;
+  `:interval`; shorter still when a track's setup check falls due sooner), and `:wake` (default true), whether to sweep on `wake/0`;
   tests that drive `tick/1` turn it off so another test's save cannot
   start a sweep under them.
   """
@@ -158,6 +158,8 @@ defmodule Ravix.PromptQueue.Server do
       busy_interval: Keyword.get(opts, :busy_interval, @busy_interval),
       following: %{},
       running: nil,
+      # When the soonest setup check not yet due falls due, from the last sweep.
+      next_setup: nil,
       # A wake that arrives mid-sweep may name a row that sweep already
       # missed, so it earns one more sweep as soon as this one finishes.
       again?: false,
@@ -182,6 +184,10 @@ defmodule Ravix.PromptQueue.Server do
   def handle_call({:heads, heads, due_setups?}, _from, state) do
     state = follow(state, heads)
     {:reply, :ok, %{state | waiting?: state.waiting? or due_setups?}}
+  end
+
+  def handle_call({:heads, heads, due_setups?, next_setup}, from, state) do
+    handle_call({:heads, heads, due_setups?}, from, %{state | next_setup: next_setup})
   end
 
   # Claim and POST permission are serialized with supervisor shutdown. Once
@@ -279,7 +285,9 @@ defmodule Ravix.PromptQueue.Server do
     if state.timer, do: Process.cancel_timer(state.timer)
     server = self()
     task = Task.Supervisor.async_nolink(Ravix.TaskSupervisor, fn -> sweep(server) end)
-    %{state | running: task}
+    # Only the sweep that finishes may say when setup is next due: one that
+    # crashes must not leave a past time that reschedules it at once, forever.
+    %{state | running: task, next_setup: nil}
   end
 
   defp start_sweep(state), do: state
@@ -300,9 +308,22 @@ defmodule Ravix.PromptQueue.Server do
 
   defp schedule(%{interval: interval, waiting?: waiting?} = state) do
     delay = if waiting?, do: min(interval, state.busy_interval), else: interval
+    delay = until_setup(state.next_setup, delay)
     if state.timer, do: Process.cancel_timer(state.timer)
     %{state | timer: Process.send_after(self(), :tick, delay)}
   end
+
+  # Be there when a setup check falls due rather than up to a backstop later,
+  # a little after it so the check is due when the sweep lists it.
+  defp until_setup(nil, delay), do: delay
+
+  defp until_setup(at, delay),
+    do:
+      at
+      |> DateTime.diff(DateTime.utc_now(), :millisecond)
+      |> Kernel.+(50)
+      |> max(100)
+      |> min(delay)
 
   # ── the sweep ─────────────────────────────────────────────────────────
 
@@ -359,7 +380,9 @@ defmodule Ravix.PromptQueue.Server do
 
     # Release subscriptions as soon as a head settles instead of holding
     # otherwise idle streams until the next backstop sweep.
-    GenServer.call(server, {:heads, Store.heads(), MapSet.size(setups) > 0})
+    # ownership: no door, as for `pending_setups/0` above; a time, not a row.
+    next_setup = Ravix.Tracks.Store.next_setup_due()
+    GenServer.call(server, {:heads, Store.heads(), MapSet.size(setups) > 0, next_setup})
     :ok
   end
 
