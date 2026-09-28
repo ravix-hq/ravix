@@ -294,8 +294,8 @@ defmodule RavixWeb.Live.MachineDock do
               <.empty icon="terminal" title="No commands yet">
                 Run commands, tests, builds and scripts in this track’s worktree.
                 Each command runs on its own, without an interactive terminal.
-                For a server that keeps running, start a preview instead.
-                <:action label="Open Previews" click={JS.push("panel", value: %{name: "preview"})} />
+                For a process that keeps running, use the track’s run script.
+                <:action label="Open Run" click={JS.push("panel", value: %{name: "preview"})} />
               </.empty>
             </div>
           </div>

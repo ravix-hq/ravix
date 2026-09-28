@@ -1,53 +1,16 @@
 defmodule Ravix.Previews.Config do
   @moduledoc """
-  What a track's preview runs, and where: a schema that refuses its own
-  fields.
+  The project run script and per-track override.
 
-  Three values, all three or none: the relative directory inside the track,
-  the startup command, and the HTTP path that answers when the app is up.
-  A track has one as an override, a project has one as a default, and
-  `nil` at either level means "use the one below".
+  Directory and command are required. An optional HTTP readiness path enables
+  the preview; without one, readiness means the managed process is running.
+  An optional stop command runs before the service's process group is stopped.
 
-  ## Why a changeset
-
-  This was `parsePreviewConfig` in `server/previews.ts`, and it was ported
-  the shape it had: a `cond` over three hand-written predicates, answering
-  `{:unprocessable, code, message}` with a *string code* naming the field
-  it was about. `RavixWeb.Live.Form` then held a second table turning that
-  code back into the field --- `"preview_directory" => :directory` --- so
-  the sentence could land beside the input somebody typed it in.
-
-  Two things were wrong with that beyond the bookkeeping. A `cond` answers
-  once, so a form with all three boxes wrong was corrected one box per
-  round trip. And the two tables are a pairing nothing enforces: a code
-  renamed here and not there stops being about a field at all, and the
-  sentence silently goes back to being a toast.
-
-  A changeset is what Ecto already has for this. `cast/4` names the fields,
-  every validation runs, and `RavixWeb.Live.Form.refuse/2` puts each error
-  on the field it is already attached to. There is no second table.
-
-  ## How it is stored
-
-  The `previews.config` and `preview_defaults.config` columns stay `:map`
-  and keep the three string keys they have always had. `from_stored/1` and
-  `to_stored/1` are that representation, and `Ravix.Previews.Config.Type`
-  is the `Ecto.Type` that applies them, so the schemas declare
-  `field :config, Config.Type` and no caller converts anything. Not an
-  `embeds_one`, and the type's own documentation says why.
-
-  `Ravix.Previews.Row.fingerprint/1` encodes the same three-key map it
-  always encoded, so a deploy does not redefine every running service for
-  want of a matching `applied_config`.
-
-  ## Keys
-
-  `changeset/1` takes whichever spelling the caller has. The track page
-  submits `readiness_path`, and the agent's preview helper is shown
-  `readinessPath` in the JSON example it is given
-  (`Ravix.Previews.Agent`), so both arrive in practice. That normalisation
-  is the wire boundary doing its job and belongs here, at the one place
-  the keys are cast, rather than in the three callers.
+  The existing `preview_defaults.config` and `previews.config` maps remain the
+  single source of truth. Readers accept legacy three-field maps and expanded
+  maps. Writers omit an absent stop command, preserving legacy fingerprints
+  and definitions during the expand phase. No table copy or destructive rename
+  is needed; the old preview APIs remain compatibility entry points.
   """
 
   use Ecto.Schema
@@ -59,22 +22,24 @@ defmodule Ravix.Previews.Config do
   @type t :: %__MODULE__{
           directory: String.t(),
           command: String.t(),
-          readiness_path: String.t()
+          readiness_path: String.t() | nil,
+          stop_command: String.t() | nil
         }
 
   # `Ravix.Previews.Agent` answers the preview helper with the configuration
   # in its JSON, and `RavixWeb.PreviewController.agent/2` hands that straight
   # to `json/2`. The three keys are the three this always sent as a map.
-  @derive {Jason.Encoder, only: [:directory, :command, :readiness_path]}
+  @derive {Jason.Encoder, only: [:directory, :command, :readiness_path, :stop_command]}
 
   @primary_key false
   embedded_schema do
     field :directory, :string
     field :command, :string
     field :readiness_path, :string
+    field :stop_command, :string
   end
 
-  @fields [:directory, :command, :readiness_path]
+  @fields [:directory, :command, :readiness_path, :stop_command]
 
   @directory_message "Choose a relative app directory inside this track."
   @command_message "Supply a startup command that honors $PORT and fails if that port is occupied."
@@ -128,6 +93,7 @@ defmodule Ravix.Previews.Config do
     |> cast(Row.normalize_keys(attrs), @fields, empty_values: [])
     |> validate_directory()
     |> validate_command()
+    |> validate_stop_command()
     |> validate_readiness_path()
   end
 
@@ -160,6 +126,25 @@ defmodule Ravix.Previews.Config do
     end
   end
 
+  defp validate_stop_command(changeset) do
+    command = changeset |> get_field(:stop_command) |> trim()
+
+    cond do
+      command in [nil, ""] ->
+        put_change(changeset, :stop_command, nil)
+
+      is_binary(command) and byte_size(command) <= 8_000 and not String.contains?(command, <<0>>) ->
+        put_change(changeset, :stop_command, command)
+
+      true ->
+        add_error(
+          changeset,
+          :stop_command,
+          "Supply a stop command of at most 8,000 bytes without null characters."
+        )
+    end
+  end
+
   # An absolute path on this app and nothing else. `//` would be a
   # protocol-relative URL, and space, `#` and `\` would each end the path
   # somewhere other than where it reads as ending.
@@ -167,6 +152,9 @@ defmodule Ravix.Previews.Config do
     path = get_field(changeset, :readiness_path)
 
     cond do
+      path in [nil, ""] ->
+        put_change(changeset, :readiness_path, nil)
+
       not is_binary(path) ->
         add_error(changeset, :readiness_path, @readiness_message)
 
@@ -202,12 +190,13 @@ defmodule Ravix.Previews.Config do
     %__MODULE__{
       directory: stored["directory"],
       command: stored["command"],
-      readiness_path: stored["readiness_path"]
+      readiness_path: stored["readiness_path"],
+      stop_command: stored["stop_command"]
     }
   end
 
   @doc """
-  A configuration as it is stored: the three string keys, and nothing else.
+  A configuration as stored: legacy keys plus the optional stop command.
 
   `Ravix.Previews.Row.fingerprint/1` hashes this, so the key order and
   spelling are load-bearing across a deploy. This was
@@ -220,6 +209,11 @@ defmodule Ravix.Previews.Config do
       "command" => config.command,
       "readiness_path" => config.readiness_path
     }
+    |> then(fn stored ->
+      if config.stop_command,
+        do: Map.put(stored, "stop_command", config.stop_command),
+        else: stored
+    end)
   end
 
   defp trim(value) when is_binary(value), do: String.trim(value)

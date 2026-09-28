@@ -77,7 +77,12 @@ defmodule RavixWeb.Live.Form do
   # codes that used to be here --- `preview_directory`, `preview_command`,
   # `preview_readiness` --- were a second spelling of the field names, kept
   # in step with the context by hand.
-  @preview_config {%{directory: :string, command: :string, readiness_path: :string}, %{}}
+  @preview_config {%{
+                     directory: :string,
+                     command: :string,
+                     readiness_path: :string,
+                     stop_command: :string
+                   }, %{}}
 
   @forms %{
     # What pays for a person's agent. One field, and it is never given back

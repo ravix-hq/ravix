@@ -267,6 +267,20 @@ defmodule Ravix.Previews.AgentTest do
     end
   end
 
+  test "the helper can run plain processes without an HTTP preview domain" do
+    provider = start_provider()
+    stub_provider(provider)
+    stub(Ravix.Config, :previews, fn -> nil end)
+    owner = insert_user()
+    track = insert_track(project: insert_project(user: owner), conversation_id: "c")
+    prompt = insert_prompt(track: track, user: owner, status: "sending")
+    instructions = Previews.prepare_agent_preview(prompt)
+    assert instructions =~ "HTTP previews are not configured"
+    assert instructions =~ "plain run script"
+    assert instructions =~ "run is an alias for start"
+    assert [_] = Repo.all(Ravix.Previews.PreviewAgentGrant)
+  end
+
   test "helper preparation that fails leaves the prompt runnable and no grant behind" do
     start_tree()
     provider = start_provider()
@@ -287,7 +301,7 @@ defmodule Ravix.Previews.AgentTest do
     stub(Ravix.Tracks, :sprite_for, fn _ -> nil end)
     assert Previews.prepare_agent_preview(prompt) =~ "could not be prepared"
 
-    stub(Ravix.Config, :previews, fn -> nil end)
+    stub(Ravix.Config, :sprites, fn -> nil end)
     assert Previews.prepare_agent_preview(prompt) == ""
   end
 end

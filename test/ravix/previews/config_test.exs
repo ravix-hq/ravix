@@ -10,7 +10,7 @@ defmodule Ravix.Previews.ConfigTest do
     changeset.errors |> Keyword.keys() |> Enum.sort() |> Enum.uniq()
   end
 
-  defp valid(overrides \\ %{}),
+  defp valid(overrides),
     do: Map.merge(%{directory: "apps/web", command: "npm start", readiness_path: "/"}, overrides)
 
   test "a whole configuration survives, trimmed" do
@@ -36,8 +36,8 @@ defmodule Ravix.Previews.ConfigTest do
   end
 
   test "a missing field is refused on that field rather than crashing" do
-    assert errors(%{}) == [:command, :directory, :readiness_path]
-    assert errors(%{directory: "."}) == [:command, :readiness_path]
+    assert errors(%{}) == [:command, :directory]
+    assert errors(%{directory: "."}) == [:command]
   end
 
   # The bounds. Each of these is what stops a value reaching a shell, a `cd`
@@ -63,7 +63,6 @@ defmodule Ravix.Previews.ConfigTest do
 
   test "readiness is a path on this app and cannot name another host" do
     paths = [
-      "",
       "health",
       "//evil.example",
       "https://evil.example",
@@ -91,6 +90,21 @@ defmodule Ravix.Previews.ConfigTest do
   test "something that is not a configuration has no field to blame" do
     for other <- ["nope", 7, [], true] do
       assert {:error, %Ecto.Changeset{errors: [config: _]}} = parse(other)
+    end
+  end
+
+  test "plain processes and optional stop commands round trip alongside legacy configs" do
+    for path <- [nil, ""] do
+      assert {:ok, config} = parse(valid(%{readiness_path: path, stop_command: "  npm stop  "}))
+      assert config.readiness_path == nil
+      assert config.stop_command == "npm stop"
+      assert Config.from_stored(Config.to_stored(config)) == config
+    end
+
+    assert {:ok, %{stop_command: nil}} = parse(valid(%{stop_command: "  "}))
+
+    for command <- ["bad\0command", String.duplicate("x", 8_001), 5] do
+      assert :stop_command in errors(valid(%{stop_command: command}))
     end
   end
 

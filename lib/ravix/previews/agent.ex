@@ -31,7 +31,7 @@ defmodule Ravix.Previews.Agent do
   @start "[ravix preview tools for this turn]"
   @end_ "[/ravix preview tools]"
   @grant_ms 2 * 60 * 60_000
-  @actions ~w(configure start restart stop status logs)
+  @actions ~w(configure run start restart stop status logs)
   @delivered [:sending, :sent, :unconfirmed]
   @install_timeout_sec 15
 
@@ -78,8 +78,8 @@ defmodule Ravix.Previews.Agent do
     set -eu
     case "${1:-status}" in
       configure) [ "$#" -eq 2 ] || { echo 'Usage: preview configure <config JSON or null>' >&2; exit 2; }; body='{ "action":"configure", "config":'"$2"'}' ;;
-      status|start|restart|stop|logs) body='{ "action":"'"${1:-status}"'" }' ;;
-      *) echo 'Commands: configure <JSON>, status, start, restart, stop, logs' >&2; exit 2 ;;
+      status|run|start|restart|stop|logs) body='{ "action":"'"${1:-status}"'" }' ;;
+      *) echo 'Commands: configure <JSON>, status, run, start, restart, stop, logs' >&2; exit 2 ;;
     esac
     exec curl --fail-with-body --silent --show-error --max-time 90 \\
       -H #{Sprites.shq("Authorization: Bearer " <> token)} -H 'Content-Type: application/json' \\
@@ -102,7 +102,7 @@ defmodule Ravix.Previews.Agent do
         }) ::
           String.t()
   def prepare(%{track_id: track_id, user_id: user_id, id: prompt_id}) do
-    if Previews.unavailable() do
+    if Previews.run_unavailable() do
       ""
     else
       # ownership: `Ravix.Tracks` calls this while writing a turn on a track
@@ -175,7 +175,7 @@ defmodule Ravix.Previews.Agent do
 
   defp instructions(track, project, path) do
     public_url = Ravix.Config.public_url()
-    domain = Ravix.Config.previews().domain
+    preview_config = Ravix.Config.previews()
 
     # `readiness_path`, spelled the way the column, the form and
     # `Ravix.Previews.Config` spell it. The example said `readinessPath`
@@ -195,8 +195,9 @@ defmodule Ravix.Previews.Agent do
         "You can configure this track's live preview with: sh #{Sprites.shq(path)} <command>.",
         "Commands: configure '<config JSON>', start, status, logs, restart, stop. configure null restores the project default.",
         "Config example: #{example}",
+        "For a plain run script, omit readiness_path: it has state and logs but no preview URL. Optional stop_command runs before the process group stops. run is an alias for start.",
         "When asked to set up a live preview, inspect this track's app and dependencies, choose the correct relative directory and startup command, then configure and start it. Poll status until Ready; use logs to fix failures. Do not claim readiness before the server reports it.",
-        "The app must honor $PORT, refuse port fallback, and allow hosts under .#{domain}. Keep HMR on the browser's current host/port. Scope other ports and writable data to this track.",
+        http_instructions(preview_config),
         "Use this helper for managed previews; do not launch a detached dev server or change project defaults. The helper contains a temporary credential: execute it, but do not read, print, copy, or commit it. It expires after two hours and is renewed on the next user turn.",
         "When Ready, direct the user to Open preview on their track: #{public_url}/p/#{project.id}/t/#{track.id}. Browser sign-in stays required.",
         @end_
@@ -204,6 +205,13 @@ defmodule Ravix.Previews.Agent do
       "\n"
     )
   end
+
+  defp http_instructions(nil),
+    do: "HTTP previews are not configured. Omit readiness_path for a plain run script."
+
+  defp http_instructions(%{domain: domain}),
+    do:
+      "HTTP apps must honor $PORT, refuse port fallback, and allow hosts under .#{domain}. Keep HMR on the browser's current host/port. Scope other ports and writable data to this track."
 
   @doc """
   `POST /api/tracks/:id/preview/agent`: what the helper's bearer token may
@@ -317,7 +325,7 @@ defmodule Ravix.Previews.Agent do
   end
 
   defp available do
-    case Previews.unavailable() do
+    case Previews.run_unavailable() do
       nil -> :ok
       why -> {:error, {:preview_unavailable, why}}
     end
@@ -380,7 +388,7 @@ defmodule Ravix.Previews.Agent do
     end
   end
 
-  defp perform(action, track_id, _body) when action in ["start", "restart"] do
+  defp perform(action, track_id, _body) when action in ["run", "start", "restart"] do
     # The helper's word and the context's are the same word, but the
     # conversion happens here rather than being assumed: `@actions` is the
     # fixed table of what the agent may say, and nothing past this point

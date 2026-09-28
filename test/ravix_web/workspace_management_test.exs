@@ -642,7 +642,7 @@ defmodule RavixWeb.WorkspaceManagementTest do
     refute render(ctx.view) =~ "private-value"
   end
 
-  test "preview defaults can be saved and cleared", ctx do
+  test "run scripts can be saved and cleared", ctx do
     settings(ctx)
     # Exercise actual scoped persistence and config validation.
     ctx.view
@@ -650,12 +650,15 @@ defmodule RavixWeb.WorkspaceManagementTest do
       preview_defaults: [
         directory: ".",
         command: "PORT=$PORT mix phx.server",
-        readiness_path: "/healthz"
+        readiness_path: "",
+        stop_command: "mix stop_worker"
       ]
     )
     |> render_submit()
 
-    assert {:ok, %{readiness_path: "/healthz"}} = Previews.defaults(ctx.user, ctx.project.id)
+    assert {:ok, %{readiness_path: nil, stop_command: "mix stop_worker"}} =
+             Previews.defaults(ctx.user, ctx.project.id)
+
     ctx.view |> form("#preview-defaults-form") |> render_submit(%{clear: "true"})
     assert Previews.defaults(ctx.user, ctx.project.id) == {:ok, nil}
   end
@@ -1129,7 +1132,7 @@ defmodule RavixWeb.WorkspaceManagementTest do
     settings(ctx)
 
     assert has_element?(ctx.view, "#default-directory[value='.']")
-    assert has_element?(ctx.view, "#default-readiness[value='/']")
+    assert has_element?(ctx.view, "#default-readiness[value='']")
   end
 
   describe "a session that went without notice" do

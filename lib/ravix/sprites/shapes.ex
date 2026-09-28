@@ -21,8 +21,8 @@ defmodule Ravix.Sprites.Shapes do
   `Service` carries the fields the preview startup actually decides on: the
   definition it compares against what it asked for (`cmd`, `args`, `dir`,
   `env`, `http_port`, `needs`), and the `state` it polls (`status`,
-  `restart_count`). `running?/1` and `crash_looping?/1` are the two questions
-  asked of the state.
+  `restart_count`, optional `exit_code` and `error`). `run_outcome/1` also
+  distinguishes plain-process completion from an HTTP service awaiting readiness.
 
   `env` stays a plain string-keyed map. It is Sprites' copy of a process
   environment -- an open set of names Ravix writes two of and reads the same
@@ -30,8 +30,8 @@ defmodule Ravix.Sprites.Shapes do
   struct for every variable a startup command might want.
 
   `status` is left as the string Sprites sent rather than mapped to atoms.
-  Ravix asks exactly one thing of it, `running?/1`; the rest of the
-  vocabulary is Sprites' own, open, and reported rather than branched on.
+  Known running/stopped/failed states drive lifecycle decisions; other states
+  remain pending. The vocabulary stays open without creating external atoms.
   This is the same line `Ravix.Tracks.Transcript.Event` draws between `kind`,
   which it matches on and closes, and `stage`, which it does not.
   """
@@ -73,7 +73,7 @@ defmodule Ravix.Sprites.Shapes do
     @moduledoc "A managed service, as `GET /v1/services/:name` describes it."
 
     @enforce_keys [:name, :cmd, :args, :dir, :env, :http_port, :needs, :status, :restart_count]
-    defstruct @enforce_keys
+    defstruct @enforce_keys ++ [exit_code: nil, error: nil]
 
     @type t :: %__MODULE__{
             name: String.t() | nil,
@@ -84,7 +84,9 @@ defmodule Ravix.Sprites.Shapes do
             http_port: term(),
             needs: [term()],
             status: String.t() | nil,
-            restart_count: integer()
+            restart_count: integer(),
+            exit_code: integer() | nil,
+            error: String.t() | nil
           }
   end
 
@@ -112,7 +114,9 @@ defmodule Ravix.Sprites.Shapes do
       http_port: raw["http_port"],
       needs: list(raw["needs"]),
       status: state["status"],
-      restart_count: if(is_integer(state["restart_count"]), do: state["restart_count"], else: 0)
+      restart_count: if(is_integer(state["restart_count"]), do: state["restart_count"], else: 0),
+      exit_code: if(is_integer(state["exit_code"]), do: state["exit_code"]),
+      error: if(is_binary(state["error"]), do: state["error"])
     }
   end
 
@@ -139,6 +143,27 @@ defmodule Ravix.Sprites.Shapes do
   @spec crash_looping?(Service.t() | nil) :: boolean()
   def crash_looping?(nil), do: false
   def crash_looping?(%Service{restart_count: count}), do: count >= 3
+
+  @doc "Observe a plain command; provider restarts are failures, not permission to run again."
+  @spec run_outcome(Service.t() | nil) :: :running | :pending | :stopped | {:failed, String.t()}
+  def run_outcome(nil), do: {:failed, "The run service is no longer available."}
+
+  def run_outcome(%Service{exit_code: 0, restart_count: count}) when count > 0, do: :stopped
+
+  def run_outcome(%Service{restart_count: count}) when count > 0,
+    do: {:failed, "The run command exited and the provider restarted it."}
+
+  def run_outcome(%Service{error: error}) when is_binary(error) and error != "",
+    do: {:failed, error}
+
+  def run_outcome(%Service{status: "failed"}), do: {:failed, "The run command failed."}
+
+  def run_outcome(%Service{exit_code: code}) when is_integer(code) and code != 0,
+    do: {:failed, "The run command exited with status #{code}."}
+
+  def run_outcome(%Service{status: "stopped"}), do: :stopped
+  def run_outcome(%Service{status: "running"}), do: :running
+  def run_outcome(%Service{}), do: :pending
 
   @doc """
   The service is defined exactly as `Ravix.Sprites.define_service/6` asks for.

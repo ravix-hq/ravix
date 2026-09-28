@@ -48,7 +48,7 @@ defmodule Ravix.Previews.Reconciler do
   @doc "One reconciliation pass over every preview row, waited for."
   @spec tick() :: :ok
   def tick do
-    if Previews.unavailable() == nil do
+    if Previews.run_unavailable() == nil do
       rows = Store.all()
 
       Ravix.TaskSupervisor
@@ -103,9 +103,9 @@ defmodule Ravix.Previews.Reconciler do
     end)
   end
 
-  @doc "What one row needs, as a pure decision (`:cleanup`, `:stop`, `:ensure` or `:leave`)."
+  @doc "What one row needs, as a pure decision (`:cleanup`, `:stop`, `:ensure`, `:observe` or `:leave`)."
   @spec decide(Row.t(), Track.t() | nil, Project.t() | nil, integer()) ::
-          :cleanup | :stop | :ensure | :leave
+          :cleanup | :stop | :ensure | :observe | :leave
   def decide(%Row{} = row, track, project, now) do
     cond do
       gone?(track, project) or row.cleanup -> if row.sprite, do: :cleanup, else: :leave
@@ -121,6 +121,7 @@ defmodule Ravix.Previews.Reconciler do
 
   defp decide_running(row, now) do
     cond do
+      Row.plain?(row) -> if Server.busy?(row.track_id), do: :leave, else: :observe
       now - row.last_activity > Previews.idle_ms() -> :stop
       row.lease_until > now and not Server.busy?(row.track_id) -> :ensure
       true -> :leave
@@ -134,6 +135,7 @@ defmodule Ravix.Previews.Reconciler do
       case decide(row, track, project, Clock.now_ms()) do
         :cleanup -> Lifecycle.stop_service(track_id, :cleanup)
         :stop -> Lifecycle.stop_service(track_id, :stop, row.generation)
+        :observe -> Server.run(track_id, {:observe, row.generation})
         :ensure -> Server.run(track_id, {:ensure_running, row.generation, :start})
         :leave -> :ok
       end

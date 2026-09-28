@@ -44,14 +44,15 @@ defmodule Ravix.Previews.View do
   # Not enforced, because it is only ever present in the answer to an "open"
   # or "restart": a single-use ticket URL, minted for the session that asked
   # and never read back off a row.
-  defstruct @enforce_keys ++ [open_url: nil]
+  defstruct @enforce_keys ++ [open_url: nil, keeps_awake: false]
 
   @type t :: %__MODULE__{
           available: boolean(),
+          keeps_awake: boolean(),
           unavailable_reason: String.t() | nil,
           config: Row.config() | nil,
           override: Row.config() | nil,
-          state: Row.state(),
+          state: Row.state() | :running,
           error: String.t() | nil,
           logs: String.t() | nil,
           url: String.t() | nil,

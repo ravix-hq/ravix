@@ -4,8 +4,10 @@ defmodule RavixWeb.PreviewPresentation do
   @limit 32_000
 
   def loading_label(config) do
-    path = (config || %{})[:readiness_path] || "/"
-    "Starting the app… Waiting for it to answer on #{path}."
+    case Map.get(config || %{}, :readiness_path) do
+      nil -> "Starting the process…"
+      path -> "Starting the app… Waiting for it to answer on #{path}."
+    end
   end
 
   def logs(text) when is_binary(text) do

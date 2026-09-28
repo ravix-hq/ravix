@@ -185,6 +185,21 @@ defmodule Ravix.Previews.Row do
   @spec fingerprint(config()) :: String.t()
   def fingerprint(config), do: Jason.encode!(Config.to_stored(config))
 
+  @doc "Configuration used to define the current service, including legacy fingerprints."
+  @spec applied(t()) :: Config.t() | nil
+  def applied(%__MODULE__{applied_config: value}) when is_binary(value) do
+    case Jason.decode(value) do
+      {:ok, %{} = config} -> Config.from_stored(config)
+      _ -> nil
+    end
+  end
+
+  def applied(_row), do: nil
+
+  @doc "A plain process has no HTTP viewing lease."
+  @spec plain?(t()) :: boolean()
+  def plain?(row), do: match?(%Config{readiness_path: nil}, applied(row))
+
   @doc "String keys, snake case, whichever spelling the document came in."
   @spec normalize_keys(map()) :: map()
   def normalize_keys(map) do

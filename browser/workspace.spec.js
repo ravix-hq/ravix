@@ -623,7 +623,7 @@ test('project, track, streaming, image upload, reconnect, and revocation', async
   await expect(page.getByLabel('Command', { exact: true })).not.toBeVisible();
   await page.getByRole('button', { name: 'Commands', exact: true }).click();
   await expect(page.locator('#track-terminal .dock-empty')).toContainText('without an interactive terminal');
-  await expect(page.getByRole('button', { name: 'Run', exact: true })).toHaveCount(0);
+  await expect(page.locator('#track-terminal').getByRole('button', { name: 'Run', exact: true })).toHaveCount(0);
   await page.getByLabel('Command', { exact: true }).fill('echo draft');
   await page.getByRole('button', { name: 'Collapse the dock' }).click();
   await expect(page.getByLabel('Command', { exact: true })).not.toBeVisible();
@@ -915,14 +915,14 @@ test('project settings navigate, warn before discarding, and save sections acces
   await settings.getByLabel('Name', { exact: true }).fill('Settings organized');
   await settings.getByRole('button', { name: 'Save general', exact: true }).click();
   await expect(settings.getByRole('status')).toHaveText('Saved.');
-  await settings.getByRole('button', { name: 'Previews', exact: true }).click();
-  await settings.getByLabel('Command (must honor $PORT)', { exact: true }).fill('npm run dev -- --port "$PORT" --strictPort');
+  await settings.getByRole('button', { name: 'Run script', exact: true }).click();
+  await settings.getByLabel('Run command', { exact: true }).fill('npm run dev -- --port "$PORT" --strictPort');
   // A readiness path must be an absolute HTTP path; the refusal lands on its field.
-  await settings.getByLabel('Readiness path', { exact: true }).fill('health');
+  await settings.getByLabel('Readiness path (optional)', { exact: true }).fill('health');
   await settings.getByRole('button', { name: 'Save defaults', exact: true }).click();
   await expect(settings.locator('.field p.error')).toContainText('Readiness must be an HTTP path');
   await expect(settings.getByRole('status')).toContainText('Could not save');
-  await settings.getByLabel('Readiness path', { exact: true }).fill('/health');
+  await settings.getByLabel('Readiness path (optional)', { exact: true }).fill('/health');
   await settings.getByRole('button', { name: 'Save defaults', exact: true }).click();
   await expect(settings.getByRole('status')).toHaveText('Saved.');
   const top = (await settings.boundingBox()).y;

@@ -71,6 +71,23 @@ defmodule Ravix.Previews.DualLayoutTest do
     assert FakeTransport.calls(ctx.client) == []
   end
 
+  test "plain run scripts use each dedicated machine and keep allocations separate", ctx do
+    assert {:ok, _} =
+             Previews.set_defaults(ctx.owner, ctx.project.id, %{directory: ".", command: "worker"})
+
+    for track <- ctx.tracks do
+      assert {:ok, %{state: :running, url: nil}} = Previews.run(ctx.owner, track.id)
+      row = Store.get(track.id)
+      assert row.sprite == track.sandbox_id
+      assert {:ok, %{state: :running}} = Previews.run(ctx.owner, track.id, :restart)
+      assert {:ok, %{state: :stopped}} = Previews.stop(ctx.owner, track.id)
+    end
+
+    [one, two] = Enum.map(ctx.tracks, &Store.get(&1.id))
+    assert one.port == two.port
+    refute one.sprite == two.sprite
+  end
+
   test "a startup from an older sandbox generation cannot publish ready", ctx do
     [track | _] = ctx.tracks
 

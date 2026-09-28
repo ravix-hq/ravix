@@ -76,6 +76,22 @@ defmodule Ravix.Sprites.ShapesTest do
     end
   end
 
+  test "plain outcomes preserve exit details and do not assume unknown states succeeded" do
+    for {state, outcome} <- [
+          {%{"status" => "stopped", "exit_code" => 0}, :stopped},
+          {%{"status" => "running", "exit_code" => 0, "restart_count" => 1}, :stopped},
+          {%{"status" => "stopped", "exit_code" => 4},
+           {:failed, "The run command exited with status 4."}},
+          {%{"status" => "failed", "error" => "exit status 7"}, {:failed, "exit status 7"}},
+          {%{"status" => "failed"}, {:failed, "The run command failed."}},
+          {%{"status" => "starting", "exit_code" => "unknown", "error" => %{}}, :pending}
+        ] do
+      assert Shapes.run_outcome(Shapes.service(%{"state" => state})) == outcome
+    end
+
+    assert {:failed, _} = Shapes.run_outcome(nil)
+  end
+
   describe "defined_as?/4" do
     test "the definition Ravix asked for" do
       assert Shapes.defined_as?(Shapes.service(@defined), "npm run dev", "/work/t1", 20_123)
