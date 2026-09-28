@@ -39,6 +39,9 @@ test('project run script is inherited: run, ready, restart, stop and plain overr
   await expect(status).toHaveText('Status: stopped');
 
   await page.getByText('Run script override', { exact: true }).click();
+  // Open by the reader and left open by every patch that follows: a status
+  // refresh landing here used to collapse the section mid-edit.
+  await expect(page.locator('#preview-path')).toBeVisible();
   await page.locator('#preview-path').fill('');
   await page.locator('#preview-config-form').getByRole('button', { name: 'Save', exact: true }).click();
   await expect(page.locator('#run-keeps-awake')).toHaveText("Keeps this track's machine awake while running");
