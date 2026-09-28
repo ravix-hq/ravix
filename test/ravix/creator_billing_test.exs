@@ -10,6 +10,7 @@ defmodule Ravix.CreatorBillingTest do
   """
   use Ravix.DataCase, async: false
   use Mimic
+  require Logger
 
   alias Ravix.Accounts.Inference
   alias Ravix.Fountain
@@ -17,6 +18,7 @@ defmodule Ravix.CreatorBillingTest do
   alias Ravix.Projects
   alias Ravix.Projects.RuntimeAgents
   alias Ravix.PromptQueue.Server, as: QueueServer
+  alias Ravix.Schedules
   alias Ravix.Tooling
   alias Ravix.Tracks
   alias Ravix.Tracks.{Billing, Track}
@@ -521,6 +523,209 @@ defmodule Ravix.CreatorBillingTest do
       track = Tracks.Store.get_track(ctx.track.id)
       assert %{"codex" => %{"until" => stored}} = track.billing_pauses
       assert {:ok, ^until, 0} = DateTime.from_iso8601(stored)
+    end
+  end
+
+  # ── every launch path ─────────────────────────────────────────────────
+  #
+  # There is no live check before activation, so these are the guard against
+  # the silent fallback: each path that creates a creator-billed conversation
+  # sends exactly the creator's set, and a launch that names nothing (the
+  # agent's default, the owner's set) or another set is refused before any
+  # request reaches Fountain, whatever built it.
+
+  describe "every creator-billed launch path" do
+    setup ctx do
+      connections(%{ctx.creator.id => [:claude], ctx.owner.id => [:claude]})
+      %{track: creator_billed(ready_track(ctx))}
+    end
+
+    # `Billing.bind/3` is where a path puts the set; forcing it to produce a
+    # wrong launch shows the door itself refuses, not just the builder.
+    defp mislabel(set) do
+      stub(Billing, :bind, fn launch, _track, _project ->
+        {:ok, %{launch | inference_credential_id: set}}
+      end)
+    end
+
+    defp open_op(ctx, track, phase, resources \\ %{}) do
+      {:ok, op} = Tracks.Sandbox.Store.begin_operation(track.id, track.sandbox_generation, :open)
+
+      {:ok, op} =
+        Tracks.Sandbox.Store.update_operation(op, %{
+          phase: phase,
+          resource_ids:
+            Map.merge(
+              %{
+                "agent_id" => ctx.project.agent_id,
+                "environment_id" => ctx.project.environment_id,
+                "vault_id" => "track-vault",
+                "source_vault_id" => ctx.project.vault_id,
+                "runtime" => "claude",
+                "model" => "anthropic/claude-opus-5-5",
+                "channel_id" => "open-channel"
+              },
+              resources
+            )
+        })
+
+      op
+    end
+
+    defp opening_fountain(ctx, vault, post) do
+      agent_id = ctx.project.agent_id
+
+      FakeTransport.client(
+        clean(ctx.project.environment_id, vault) ++
+          [
+            {%{method: "GET", path: "/api/agents/#{agent_id}"},
+             agent(agent_id, "owner-set", ["creator-set"])}
+          ] ++ post,
+        verify: false
+      )
+    end
+
+    defp opened,
+      do: [
+        {%{method: "POST", path: "/api/conversations"},
+         {201, [], %{data: %{id: "opened", sandbox_id: "fresh"}}}}
+      ]
+
+    test "thread start", ctx do
+      previous_level = Logger.level()
+      Logger.configure(level: :info)
+      on_exit(fn -> Logger.configure(level: previous_level) end)
+
+      client =
+        fountain(
+          [
+            {%{method: "GET", path: "/api/agents/#{ctx.project.agent_id}"},
+             agent(ctx.project.agent_id, "owner-set", ["creator-set"])}
+          ] ++
+            clean(ctx.project.environment_id, "track-vault") ++ opened(),
+          verify: false
+        )
+
+      log =
+        ExUnit.CaptureLog.capture_log([level: :info], fn ->
+          assert {:ok, _} = start_thread(ctx.collab, ctx.track, "claude")
+        end)
+
+      assert [%{"inference_credential_id" => "creator-set"}] = created(client)
+
+      assert log =~
+               "creator billing launch track=#{ctx.track.id} payer=#{ctx.creator.id} set=creator-set"
+
+      for bad <- [nil, "owner-set", "collab-set"] do
+        mislabel(bad)
+
+        client =
+          fountain(
+            [
+              {%{method: "GET", path: "/api/agents/#{ctx.project.agent_id}"},
+               agent(ctx.project.agent_id, "owner-set", ["creator-set"])}
+            ] ++
+              clean(ctx.project.environment_id, "track-vault"),
+            verify: false
+          )
+
+        assert {:error, {:conflict, "payer_mismatch", _}} =
+                 start_thread(ctx.collab, ctx.track, "claude")
+
+        assert created(client) == []
+      end
+    end
+
+    test "the opening conversation", ctx do
+      track = creator_billed(ready_track(ctx, conversation_id: nil, sandbox_id: nil))
+      client = opening_fountain(ctx, "track-vault", opened())
+      Tracks.Sandbox.advance(client, open_op(ctx, track, "vault_ready").id)
+      assert [%{"inference_credential_id" => "creator-set"}] = created(client)
+
+      for bad <- [nil, "owner-set"] do
+        mislabel(bad)
+        track = creator_billed(ready_track(ctx, conversation_id: nil, sandbox_id: nil))
+        client = opening_fountain(ctx, "track-vault", [])
+        Tracks.Sandbox.advance(client, open_op(ctx, track, "vault_ready").id)
+        assert created(client) == []
+        assert %{setup_error_code: "payer_mismatch"} = Tracks.Store.get_track(track.id)
+      end
+    end
+
+    test "a retried open", ctx do
+      track = creator_billed(ready_track(ctx, conversation_id: nil, sandbox_id: nil))
+      op = open_op(ctx, track, "failed")
+      Repo.update!(Ecto.Changeset.change(Tracks.Store.get_track(track.id), setup_state: "failed"))
+      stub(Fountain, :client, fn -> FakeTransport.client([], verify: false) end)
+      assert :ok = Tracks.retry(ctx.creator, track.id)
+
+      client =
+        opening_fountain(ctx, "retry-vault", opened())
+        |> tap(fn client ->
+          FakeTransport.expect(
+            client,
+            %{method: "POST", path: "/api/vaults/#{ctx.project.vault_id}/copy"},
+            {201, [], %{data: %{id: "retry-vault", name: "copy", secret_count: 0}}}
+          )
+        end)
+
+      Tracks.Sandbox.advance(client, op.id)
+
+      assert [%{"inference_credential_id" => "creator-set", "vault_id" => "retry-vault"}] =
+               created(client)
+    end
+
+    test "a credential-recovery successor", ctx do
+      {:ok, _} = Tracks.Store.recover_credentials(ctx.track, ctx.track.id)
+      thread = Tracks.Store.thread(ctx.track.id)
+      assert thread.credential_recovery
+
+      client =
+        opening_fountain(ctx, "track-vault", [
+          {%{method: "POST", path: "/api/conversations"},
+           {201, [], %{data: %{id: "successor", sandbox_id: ctx.track.sandbox_id}}}}
+        ])
+
+      assert :rebound =
+               Tracks.CredentialRecovery.prepare(client, ctx.track, ctx.project, ctx.track.id)
+
+      assert [%{"inference_credential_id" => "creator-set"}] = created(client)
+
+      for bad <- [nil, "owner-set"] do
+        mislabel(bad)
+        track = creator_billed(ready_track(ctx))
+        {:ok, _} = Tracks.Store.recover_credentials(track, track.id)
+        client = opening_fountain(ctx, "track-vault", [])
+        assert :waiting = Tracks.CredentialRecovery.prepare(client, track, ctx.project, track.id)
+        assert created(client) == []
+        assert %{"attempted" => false} = Tracks.Store.thread(track.id).credential_recovery
+      end
+    end
+
+    test "a scheduled prompt opens a track its schedule's owner pays for", ctx do
+      switch(true)
+      agent_id = ctx.project.agent_id
+
+      fountain(
+        clean(ctx.project.environment_id, ctx.project.vault_id) ++
+          [
+            {%{method: "GET", path: "/api/agents/#{agent_id}"},
+             agent(agent_id, "owner-set", ["creator-set"])}
+          ],
+        verify: false
+      )
+
+      {:ok, schedule} =
+        Schedules.create(ctx.creator, ctx.project.id, %{
+          name: "nightly",
+          prompt: "check the build",
+          frequency: :daily,
+          time: ~T[03:00:00]
+        })
+
+      Schedules.Runner.run(schedule.id, DateTime.add(schedule.next_run_at, 1))
+      [track] = Enum.filter(Tracks.Store.tracks_of(ctx.project.id), &(&1.id != ctx.track.id))
+      assert {track.billing_policy, track.payer_user_id} == {:creator, ctx.creator.id}
     end
   end
 

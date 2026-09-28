@@ -431,6 +431,14 @@ for an explicit decision rather than losing a working tree.
 
 ## Before enabling
 
+> **Dropped by an owner decision (2026-09-28):** these live checks are not
+> run before activation. Instead, tests assert the exact
+> `inference_credential_id` sent on every creator-billed launch path, and
+> that a nil or mismatched one is refused before any request
+> (`test/ravix/creator_billing_test.exs`, "every creator-billed launch
+> path"). The provider-named value inventory is still required. What follows
+> is kept as a record of what a live check would cover.
+
 ADR 0009 phase 1 (`decisions/0009-workspaces.md:435-442`) requires deployed,
 not only source, checks. They need Ravix's Fountain account and should use a
 **disposable test user's set**, never a real person's set or grant:
@@ -550,5 +558,9 @@ exactly what it was.
   source's revision, so the recovery successor meets
   `codex_inference_conflict` on the same sandbox (§3). This is unchanged from
   owner-billed tracks today. A ChatGPT subscription is not affected.
-- The ["Before enabling"](#before-enabling) live checks still need to run
-  against the deployed Fountain, with a disposable test user.
+- There is no live check against the deployed Fountain before activation
+  (owner decision). Every dedicated create goes through
+  `Billing.create_conversation/4`: it verifies the payer's set immediately
+  before the POST, and logs `ravix: creator billing launch track=<id>
+  payer=<user id> set=<set id>` for each creator-billed create. That log
+  line, and the tests, are the guard.

@@ -863,8 +863,26 @@ defmodule Ravix.Tracks do
 
   # Fountain refusing a creator's credential pauses that harness on the track
   # and says whose it was; nothing is retried on anybody else's.
-  defp create_thread_conversation(client, launch, track, project, runtime) do
-    case Fountain.create_conversation(client, launch) do
+  defp create_thread_conversation(
+         client,
+         launch,
+         %{sandbox_layout: :dedicated} = track,
+         project,
+         runtime
+       ),
+       do:
+         refused_payer(
+           Billing.create_conversation(client, launch, track, project),
+           track,
+           project,
+           runtime
+         )
+
+  defp create_thread_conversation(client, launch, _track, _project, _runtime),
+    do: Fountain.create_conversation(client, launch)
+
+  defp refused_payer(result, track, project, runtime) do
+    case result do
       {:error, %Fountain.Error{} = error} = refused ->
         with true <- Track.creator_billed?(track),
              {:ok, payer} <- Billing.payer(track, project),

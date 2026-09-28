@@ -81,7 +81,7 @@ defmodule Ravix.Tracks.CredentialRecovery do
         result =
           with {:ok, launch} <- Billing.bind(launch, track, project),
                :ok <- refuse_overrides(client, track, project),
-               do: Fountain.create_conversation(client, launch)
+               do: Billing.create_conversation(client, launch, track, project)
 
         created(result, client, track, project, thread)
 

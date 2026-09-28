@@ -254,7 +254,13 @@ defmodule Ravix.Tracks.Sandbox do
 
     case bind_launch(client, launch, track, project) do
       {:ok, launch} ->
-        launched(Fountain.create_conversation(client, launch), client, op, track, project)
+        launched(
+          Billing.create_conversation(client, launch, track, project),
+          client,
+          op,
+          track,
+          project
+        )
 
       {:error, %Error{} = error} ->
         mutation_failed(error, error.code || "setup_failed", client, op, track, project)
@@ -313,6 +319,11 @@ defmodule Ravix.Tracks.Sandbox do
         fail(client, op, track, project, error.code, Billing.message(pause))
     end
   end
+
+  # Refused before any request: a launch that does not name its payer's set.
+  defp launched({:error, {_kind, code, message}}, client, op, track, project)
+       when is_binary(code),
+       do: fail(client, op, track, project, code, message)
 
   defp launched(_, _client, op, _track, _project), do: defer(op, "sandbox_outcome_unknown")
 

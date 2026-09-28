@@ -185,6 +185,32 @@ defmodule Ravix.Tracks.Billing do
        {:conflict, "payer_mismatch",
         "This track's agent must run on @#{payer.login}'s account, and this launch did not."}}
 
+  @doc """
+  The one door a dedicated track's conversation is created through: the
+  launch is verified against the track's payer immediately before the POST,
+  whatever built it, and a creator-billed create is logged by track, payer
+  and set id (never a credential). A refused launch reaches no provider.
+  """
+  @spec create_conversation(Fountain.Client.t(), Launch.t(), Track.t(), Project.t()) ::
+          {:ok, term()} | {:error, term()}
+  def create_conversation(client, %Launch{} = launch, %Track{} = track, %Project{} = project) do
+    with {:ok, launch} <- verify(launch, track, project) do
+      if Track.creator_billed?(track) do
+        Logger.info(
+          "ravix: creator billing launch track=#{track.id} payer=#{track.payer_user_id} set=#{launch.inference_credential_id}"
+        )
+
+        Trace.annotate(%{
+          "ravix.billing_policy" => "creator",
+          "ravix.payer_user_id" => track.payer_user_id,
+          "ravix.credential_set_id" => launch.inference_credential_id
+        })
+      end
+
+      Fountain.create_conversation(client, launch)
+    end
+  end
+
   @doc "Admit the payer's set on `agent_id` before a creator-billed create; nothing otherwise."
   @spec admit(Fountain.Client.t(), Track.t(), Project.t(), String.t()) :: :ok | {:error, term()}
   def admit(client, %Track{} = track, %Project{} = project, agent_id) do
