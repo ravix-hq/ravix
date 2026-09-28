@@ -60,6 +60,7 @@ defmodule Ravix.Tracks do
   alias Ravix.Spec
   alias Ravix.Trace
   alias Ravix.Tracks.Sandbox.Maintenance
+  alias Ravix.Tracks.Settlement
 
   require Logger
 
@@ -1143,7 +1144,18 @@ defmodule Ravix.Tracks do
          {:ok, client} <- fountain() do
       if thread.conversation_id,
         do:
-          read_thread_transcript(client, thread, thread.runtime || project.runtime, opts[:page]),
+          read_thread_transcript(
+            client,
+            thread,
+            thread.runtime || project.runtime,
+            opts[:page],
+            %{
+              project_id: project.id,
+              track_id: track_id,
+              thread_id: thread.id,
+              conversation_ids: thread.previous_conversation_ids ++ [thread.conversation_id]
+            }
+          ),
         else: {:ok, Transcript.empty(thread.runtime || project.runtime)}
     end
   end
@@ -1184,17 +1196,18 @@ defmodule Ravix.Tracks do
          client,
          %{conversation_id: id},
          runtime,
-         %Transcript.Page{conversation_id: id} = page
+         %Transcript.Page{conversation_id: id} = page,
+         binding
        )
        when is_binary(id),
-       do: read_transcript(client, id, runtime, page)
+       do: read_transcript(client, id, runtime, binding, page)
 
-  defp read_thread_transcript(client, thread, runtime, _previous) do
+  defp read_thread_transcript(client, thread, runtime, _previous, binding) do
     Enum.reduce_while(
       thread.previous_conversation_ids ++ [thread.conversation_id],
       {:ok, Transcript.empty(runtime)},
       fn id, {:ok, previous} ->
-        case read_transcript(client, id, runtime) do
+        case read_transcript(client, id, runtime, binding) do
           {:ok, page} -> {:cont, {:ok, %{page | turns: previous.turns ++ page.turns}}}
           error -> {:halt, error}
         end
@@ -1202,17 +1215,21 @@ defmodule Ravix.Tracks do
     )
   end
 
-  defp read_transcript(client, conversation_id, runtime, previous \\ nil) do
+  defp read_transcript(client, conversation_id, runtime, binding, previous \\ nil) do
     opts = if previous, do: [prompts: true, after: previous.last_event_id], else: [prompts: true]
 
     with {:ok, log} <- Fountain.events(client, conversation_id, opts),
          {:ok, turns} <- Fountain.turns(client, conversation_id) do
-      failures =
-        Trace.span("transcript.failures", %{}, fn -> Store.turn_failures(conversation_id) end)
+      classifications =
+        Trace.span("transcript.failures", %{}, fn ->
+          Store.turn_classifications(binding.conversation_ids)
+        end)
 
       page =
         Trace.span("transcript.build", %{"ravix.event_count" => length(log)}, fn ->
-          build_transcript(previous, log, runtime, failures)
+          previous
+          |> build_transcript(log, runtime, classifications.failures)
+          |> transcript_source(conversation_id)
         end)
 
       page = Trace.span("transcript.images", %{}, fn -> Transcript.with_images(page, turns) end)
@@ -1225,8 +1242,19 @@ defmodule Ravix.Tracks do
         "ravix.event_count" => length(log)
       })
 
+      Settlement.enqueue(page, classifications.classified, binding)
       {:ok, %{page | conversation_id: conversation_id}}
     end
+  end
+
+  defp transcript_source(page, id) do
+    %{
+      page
+      | turns:
+          Enum.map(page.turns, fn turn ->
+            %{turn | conversation_id: turn.conversation_id || id}
+          end)
+    }
   end
 
   defp build_transcript(nil, log, runtime, failures), do: Transcript.page(log, runtime, failures)

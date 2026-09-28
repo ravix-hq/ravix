@@ -49,14 +49,29 @@ defmodule Ravix.Tracks.Store do
     )
   end
 
-  @doc "Stored turn corrections for an already authorized conversation read."
-  def turn_failures(conversation_id) do
-    Repo.all(
-      from f in Ravix.Tracks.TurnFailure,
-        where: f.conversation_id == ^conversation_id and f.stage == "turn" and f.state == "failed"
-    )
-    |> Map.new(&{&1.turn_id, %{code: &1.code, reason: &1.reason}})
+  @doc "Corrections and completion markers for the authorized thread's conversations."
+  def turn_classifications(conversation_ids) do
+    rows =
+      Repo.all(
+        from f in Ravix.Tracks.TurnFailure,
+          where: f.conversation_id in ^conversation_ids and f.stage in ["turn", "classification"]
+      )
+
+    failures =
+      rows
+      |> Enum.filter(&(&1.stage == "turn" and &1.state == "failed"))
+      |> Map.new(&{&1.turn_id, %{code: &1.code, reason: &1.reason}})
+
+    %{failures: failures, classified: MapSet.new(rows, &{&1.conversation_id, &1.turn_id})}
   end
+
+  def turn_failure(conversation_id, turn_id),
+    do:
+      Repo.get_by(Ravix.Tracks.TurnFailure,
+        conversation_id: conversation_id,
+        turn_id: turn_id,
+        stage: "turn"
+      )
 
   @doc "Serialize settlement across followers/restarts, including successful classifications."
   def classify_turn_once(conversation_id, turn_id, fun) do

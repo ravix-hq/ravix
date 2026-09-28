@@ -62,6 +62,16 @@ suspension, setup visibility and tool details.
 `tracks.events` now contains `transcript.build` (with `ravix.event_count`),
 `transcript.images`, and `transcript.failures` (stored-correction lookup).
 `transcript.failure_detection` measures classification at settlement instead.
+For a settled turn with no stored classification, the read returns immediately
+and starts catch-up under `Ravix.TaskSupervisor`. The task reuses the already
+loaded events rather than fetching them again. A cluster-wide name per
+conversation/turn excludes overlapping workers, and the database marker/lock
+also protects against concurrent node joins. `transcript.background` traces
+this asynchronous work. A newly stored failure publishes a hub event so the
+open page picks it up through incremental catch-up, including failures from
+archived conversations. Worker failure leaves no completion marker; another
+read can retry.
+
 Successful as well as failed classifications get durable completion markers;
 a transaction lock prevents duplicate classification across follower restarts
 or concurrent backfills. Provider acquisition happens outside that lock. An
@@ -82,16 +92,16 @@ once to get complete evidence, then classifies only that turn. Sandbox-wide
 suspensions need history to identify the preceding open turn. This hotfix does
 not introduce a transcript cache or change Markdown rendering.
 
-Old settled turns without a stored correction need an explicit one-off backfill
-if their provider failure should be corrected locally. Run against the intended
-environment with its normal configured DB/Fountain connection:
+Settled turns without a stored correction are classified automatically in the
+background when read, including turns that finished with no follower running.
+The first page can briefly lack an inferred correction until that worker
+publishes its result. Repeated reads skip completed/in-flight work. Classification
+is never awaited by the reader. An explicit bulk maintenance command also remains:
 
 ```sh
 mix ravix.backfill_turn_failures THREAD_ID [THREAD_ID ...]
 ```
 
 It includes the thread's previous conversations, skips live turns, and can be
-resumed safely. Nothing schedules it from a read or runs it automatically in
-production. Without backfill, existing raw failure-stage blocks still render,
-but historical inferred provider-failure corrections are not newly discovered
-by visiting the page.
+resumed safely. No production backfill has been run. Raw failure-stage blocks
+remain visible immediately, independently of inferred failure corrections.

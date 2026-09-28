@@ -1,8 +1,66 @@
 defmodule Ravix.Tracks.Settlement do
-  @moduledoc "Durable failure classification at the follower's turn-settlement boundary."
-  alias Ravix.{Fountain, Trace}
+  @moduledoc "Durable settlement classification, with supervised catch-up for previously unwatched turns."
+  alias Ravix.{Cluster, Fountain, Hub, Trace}
   alias Ravix.Tracks.{AgentFailure, Store, Transcript}
   alias Ravix.Tracks.Transcript.Event
+
+  @doc "Schedule missing settled turns without making the reader wait for classification."
+  def enqueue(page, classified, binding) do
+    Enum.each(page.turns, fn turn ->
+      key = {turn.conversation_id, turn.id}
+
+      if turn.settled? and turn.conversation_id in binding.conversation_ids and
+           not MapSet.member?(classified, key),
+         do: enqueue_turn(turn, binding)
+    end)
+  end
+
+  defp enqueue_turn(turn, binding) do
+    key = turn.conversation_id <> "/" <> turn.id
+
+    if is_nil(Cluster.whereis(:settlement, key)) do
+      # Copy only this turn's evidence, not its fold or the whole page. A racing
+      # reader can start a task too, but only one registers and does any work.
+      events = turn.events
+      conversation_id = turn.conversation_id
+      turn_id = turn.id
+      runtime = turn.runtime
+
+      Task.Supervisor.start_child(
+        Ravix.TaskSupervisor,
+        Trace.link(fn ->
+          background(key, conversation_id, turn_id, events, runtime, binding)
+        end)
+      )
+    end
+  end
+
+  defp background(key, conversation_id, turn_id, events, runtime, binding) do
+    name = Cluster.name(:settlement, key)
+
+    if :global.register_name(name, self()) == :yes do
+      try do
+        Trace.span("transcript.background", %{"ravix.event_count" => length(events)}, fn ->
+          result = persist(conversation_id, turn_id, Enum.reverse(events), runtime)
+          publish_correction(result, conversation_id, turn_id, binding)
+        end)
+      after
+        :global.unregister_name(name)
+      end
+    end
+  end
+
+  defp publish_correction({:ok, _}, conversation_id, turn_id, binding) do
+    # ownership: Access.thread_access authorized the read that scheduled this evidence.
+    if Store.turn_failure(conversation_id, turn_id) do
+      Hub.publish(binding.project_id, :turn,
+        track_id: binding.track_id,
+        thread_id: binding.thread_id
+      )
+    end
+  end
+
+  defp publish_correction(_error, _conversation_id, _turn_id, _binding), do: :ok
 
   def record(client, thread_id, conversation_id, %Event{turn_id: "pending"} = event) do
     if Event.suspension(event),

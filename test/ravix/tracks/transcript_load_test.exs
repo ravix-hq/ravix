@@ -4,8 +4,9 @@ defmodule Ravix.Tracks.TranscriptLoadTest do
   import Mimic
   alias Ravix.Fountain
   alias Ravix.Fountain.FakeTransport
+  alias Ravix.Trace
   alias Ravix.Tracks
-  alias Ravix.Tracks.{Settlement, Transcript, TurnFailure}
+  alias Ravix.Tracks.{AgentFailure, Settlement, Thread, Transcript, TurnFailure}
   alias Ravix.TranscriptFixture, as: Fixture
 
   setup :verify_on_exit!
@@ -43,7 +44,7 @@ defmodule Ravix.Tracks.TranscriptLoadTest do
         "archived" => %{code: "agent_provider_unreachable", reason: "Retained failure"}
       }).turns
 
-    historical = %{historical | image_count: 2}
+    historical = %{historical | image_count: 2, conversation_id: "archived-conversation"}
     page = %{page | turns: [historical | page.turns]}
     base = "/api/conversations/catch-up"
 
@@ -173,6 +174,77 @@ defmodule Ravix.Tracks.TranscriptLoadTest do
     assert :ok = Settlement.record(client, track.id, "sleep", Transcript.Event.from(suspension))
   end
 
+  for mode <- [:current, :archived, :retry] do
+    @tag classification_source: mode, capture_log: true
+    test "unwatched #{mode} turns classify in the background once and publish their correction",
+         %{classification_source: mode} do
+      owner = insert_user()
+      project = insert_project(user: owner, runtime: "codex")
+      target_id = "unwatched-#{mode}"
+      active_id = if mode == :archived, do: "active-#{mode}", else: target_id
+      track = insert_track(project: project, conversation_id: active_id)
+      thread = Repo.get!(Thread, track.id)
+
+      if mode == :archived,
+        do: Repo.update!(Ecto.Changeset.change(thread, previous_conversation_ids: [target_id]))
+
+      client = Fountain.Client.new("https://fountain.test", "key")
+      stub(Fountain, :client, fn -> client end)
+      log = Ravix.AgentOutageFixture.events()
+
+      stub(Fountain, :events, fn _, id, _opts -> {:ok, if(id == target_id, do: log, else: [])} end)
+
+      stub(Fountain, :turns, fn _, _ -> {:ok, []} end)
+      parent = self()
+
+      stub(Trace, :span, fn name, attributes, fun ->
+        if name == "transcript.background", do: await_background(parent)
+        Mimic.call_original(Trace, :span, [name, attributes, fun])
+      end)
+
+      if mode == :retry do
+        expect(AgentFailure, :detect, fn _, _, _ -> raise "classification interrupted" end)
+      end
+
+      expect(AgentFailure, :detect, fn events, runtime, blocks ->
+        Mimic.call_original(AgentFailure, :detect, [events, runtime, blocks])
+      end)
+
+      Ravix.Hub.subscribe(project.id)
+      refute Tracks.Follower.whereis(track.id)
+      # This returns while the classifier is deliberately blocked. It cannot
+      # be a synchronous scan or wait hidden inside tracks.events.
+      assert {:ok, page} = Tracks.events(owner, track.id)
+      assert_receive {:classifying, worker}
+      worker = if mode == :retry, do: retry_background(worker, owner, track), else: worker
+      on_exit(fn -> if Process.alive?(worker), do: Process.exit(worker, :kill) end)
+      assert worker != self()
+      assert worker in Task.Supervisor.children(Ravix.TaskSupervisor)
+      assert Ravix.Cluster.whereis(:settlement, target_id <> "/mine") == worker
+      assert [%{blocks: []}] = page.turns
+      for _ <- 1..3, do: assert({:ok, _} = Tracks.events(owner, track.id))
+      assert Ravix.Cluster.whereis(:settlement, target_id <> "/mine") == worker
+      monitor = Process.monitor(worker)
+      send(worker, :finish)
+      track_id = track.id
+      assert_receive {:hub, %{name: :turn, track_id: ^track_id, thread_id: ^track_id}}, 2_000
+      assert_receive {:DOWN, ^monitor, :process, ^worker, :normal}
+      refute Ravix.Cluster.whereis(:settlement, target_id <> "/mine")
+      assert length(Repo.all(TurnFailure)) == 2
+
+      # The hub repair fetches only the active conversation's delta, yet picks
+      # up a newly recorded correction from an archived conversation too.
+      expect(Fountain, :events, fn _, ^active_id, opts ->
+        assert opts[:after] == page.last_event_id
+        {:ok, []}
+      end)
+
+      assert {:ok, repaired} = Tracks.events(owner, track.id, page: page)
+      assert [%{blocks: [%Transcript.Block.Failure{}], visible?: true}] = repaired.turns
+      refute_receive {:classifying, _}
+    end
+  end
+
   test "historical backfill is explicit, idempotent and keeps live turns unclassified" do
     owner = insert_user()
 
@@ -195,5 +267,26 @@ defmodule Ravix.Tracks.TranscriptLoadTest do
     assert :ok = Settlement.backfill(track.id, client)
     assert Repo.all(TurnFailure) == rows
     assert {:error, :not_found} = Settlement.backfill(Ecto.UUID.generate(), client)
+  end
+
+  defp retry_background(worker, owner, track) do
+    monitor = Process.monitor(worker)
+    send(worker, :finish)
+    assert_receive {:DOWN, ^monitor, :process, ^worker, reason}, 2_000
+    refute reason == :normal
+    assert Repo.all(TurnFailure) == []
+    refute Ravix.Cluster.whereis(:settlement, track.conversation_id <> "/mine")
+    assert {:ok, _} = Tracks.events(owner, track.id)
+    assert_receive {:classifying, replacement}
+    refute replacement == worker
+    replacement
+  end
+
+  defp await_background(parent) do
+    send(parent, {:classifying, self()})
+
+    receive do
+      :finish -> :ok
+    end
   end
 end

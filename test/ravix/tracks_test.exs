@@ -1149,8 +1149,6 @@ defmodule Ravix.TracksTest do
       assert {:error, :not_found} = Tracks.events(insert_user(), track.id)
 
       event = Ravix.AgentOutageFixture.events() |> List.last() |> Transcript.Event.from()
-      assert {:ok, %{turns: [%{blocks: []}]}} = Tracks.events(owner, track.id)
-      assert Repo.all(Ravix.Tracks.TurnFailure) == []
       assert {:ok, _} = Settlement.record(client, track.id, "outage-history", event)
       # Classification must not even fetch events again after settling once.
       expect(Ravix.Fountain, :events, 2, fn _, "outage-history", [prompts: true] ->
