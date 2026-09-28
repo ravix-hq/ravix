@@ -208,6 +208,9 @@ defmodule Ravix.DedicatedLifecycleTest do
          {200, [], %{data: [], meta: %{has_more: false, next_cursor: nil}}}},
         {%{method: "GET", path: "/api/sandboxes/disk/files"},
          {200, [], %{data: %{path: track.workdir, entries: []}}}},
+        # Completion tracing independently reads provisioning stages.
+        {%{method: "GET", path: "/api/conversations/conversation/events"},
+         {200, [], %{data: [], meta: %{has_more: false, next_cursor: nil}}}},
         {%{method: "POST", path: "/api/conversations/conversation/terminate"}, {200, [], %{}}},
         {%{method: "DELETE", path: "/api/sandboxes/disk"}, {204, [], ""}},
         {%{method: "GET", path: "/api/sandboxes/disk"},
