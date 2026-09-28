@@ -29,7 +29,7 @@ defmodule RavixWeb.Live.PeopleDialog do
   def scopes, do: [:track, :project]
 
   @impl true
-  def mount(socket), do: {:ok, assign(socket, invite: nil, inviting?: false)}
+  def mount(socket), do: {:ok, assign(socket, invite: nil, inviting?: false, login: "")}
 
   @impl true
   def update(assigns, socket) do
@@ -58,12 +58,21 @@ defmodule RavixWeb.Live.PeopleDialog do
      end)}
   end
 
+  # What has been typed into the invite box, held here rather than only in
+  # the browser. The box sits inside the track page, which re-renders on
+  # every change to the track -- setup progress, a rename, a turn -- and an
+  # input the server does not know the value of is redrawn empty once it has
+  # lost focus: a login typed and then left for the Invite button was gone
+  # by the time the button was pressed.
+  def handle_event("type-login", %{"login" => login}, socket),
+    do: {:noreply, assign(socket, login: login)}
+
   def handle_event("invite-person", %{"login" => login}, socket) do
     %{scope: scope, subject_id: id, current_user: user} = socket.assigns
 
     {:noreply,
      socket
-     |> assign(inviting?: true)
+     |> assign(inviting?: true, login: login)
      |> traced_async(:invite, fn -> add(scope, user, id, login) end)}
   end
 
@@ -93,8 +102,12 @@ defmodule RavixWeb.Live.PeopleDialog do
   end
 
   @impl true
+  # A refused invitation keeps what was typed, to be corrected; a sent one
+  # empties the box for the next.
   def handle_async(:invite, {:ok, response}, socket),
-    do: {:noreply, result(assign(socket, inviting?: false), response, &assign(&1, people: &2))}
+    do:
+      {:noreply,
+       result(assign(socket, inviting?: false), response, &assign(&1, people: &2, login: ""))}
 
   def handle_async(:invite, {:exit, reason}, socket),
     do: {:noreply, socket |> assign(inviting?: false) |> exit(reason)}
@@ -218,8 +231,20 @@ defmodule RavixWeb.Live.PeopleDialog do
             </button>
           </li>
         </ul>
-        <form :if={@owner} id={"#{@id}-invite-form"} phx-submit="invite-person" phx-target={@myself}>
-          <.input name="login" id={"#{@id}-invite-login"} label="GitHub username" value="" required />
+        <form
+          :if={@owner}
+          id={"#{@id}-invite-form"}
+          phx-change="type-login"
+          phx-submit="invite-person"
+          phx-target={@myself}
+        >
+          <.input
+            name="login"
+            id={"#{@id}-invite-login"}
+            label="GitHub username"
+            value={@login}
+            required
+          />
           <.loading_status :if={@inviting?}>Sending invitation…</.loading_status>
           <button class="primary" phx-disable-with="Inviting…" disabled={@inviting?}>Invite</button>
         </form>

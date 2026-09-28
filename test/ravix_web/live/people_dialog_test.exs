@@ -270,6 +270,39 @@ defmodule RavixWeb.Live.PeopleDialogTest do
     end
   end
 
+  describe "what is typed into the invite box" do
+    # The box sits in the track page, which re-renders whenever the track
+    # changes (setup progress, a rename, a turn). A value only the browser
+    # held was redrawn empty once the box lost focus -- which it does as
+    # soon as somebody reaches for Invite.
+    test "survives the track re-rendering under it", ctx do
+      view = ctx.conn |> track_page(ctx.owner, ctx.project, ctx.track) |> open_people()
+      view |> form("#track-people-invite-form", login: "somebody") |> render_change()
+
+      Ravix.Hub.publish(ctx.project.id, :tracks, track_id: ctx.track.id)
+      render_async(view, 5_000)
+
+      assert has_element?(view, "#track-people-invite-login[value=somebody]")
+    end
+
+    test "is kept when the invitation is refused and cleared when it is sent", ctx do
+      guest = insert_user()
+      view = ctx.conn |> track_page(ctx.owner, ctx.project, ctx.track) |> open_people()
+
+      view
+      |> form("#track-people-invite-form", login: "nobody-here-by-that-name")
+      |> render_submit()
+
+      render_async(view, 5_000)
+      assert has_element?(view, "#track-people-invite-login[value=nobody-here-by-that-name]")
+
+      view |> form("#track-people-invite-form", login: guest.login) |> render_submit()
+      render_async(view, 5_000)
+      assert has_element?(view, "#track-people-dialog", "@#{guest.login}")
+      assert has_element?(view, "#track-people-invite-login[value='']")
+    end
+  end
+
   describe "inviting somebody asks GitHub off the page" do
     test "the button is disabled until GitHub answers, and the page still answers", ctx do
       {:ok, view, _} = live(log_in_user(ctx.conn, ctx.owner), "/p/#{ctx.project.id}")
