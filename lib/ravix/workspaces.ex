@@ -91,5 +91,19 @@ defmodule Ravix.Workspaces do
   """
   @spec reserved_for?(User.t(), String.t() | nil) :: boolean()
   def reserved_for?(%User{id: user_id}, repo),
-    do: not is_nil(Store.legacy_reservation(user_id, Project.normalize_repo(repo)))
+    do: not is_nil(Store.reservation({:legacy, user_id}, Project.normalize_repo(repo)))
+
+  @doc """
+  Whether a legacy duplicate holds `repo` back inside a workspace the caller
+  belongs to. Read-only in this release, as `reserved_for?/2` is; a
+  workspace the caller is not a member of answers not found.
+  """
+  @spec reserved_in?(User.t(), String.t(), String.t() | nil) ::
+          {:ok, boolean()} | {:error, :not_found}
+  def reserved_in?(%User{} = user, workspace_id, repo) do
+    with {:ok, %{workspace: workspace}} <- Access.workspace_access(user, workspace_id) do
+      reservation = Store.reservation({:workspace, workspace.id}, Project.normalize_repo(repo))
+      {:ok, not is_nil(reservation)}
+    end
+  end
 end

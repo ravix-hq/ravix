@@ -59,23 +59,37 @@ defmodule Ravix.Workspaces.Store do
     )
   end
 
-  @doc """
-  The reservation holding `normalized_repo` back from a legacy owner's
-  creation path, or nil. Read by the creation guard once it ships.
+  @typedoc """
+  Whose creation path a reservation holds back: a workspace's, or, for a
+  duplicate still in the legacy layout, its owner's. A reservation row has
+  exactly one of the two, so the write and the lookup cannot disagree.
   """
-  @spec legacy_reservation(String.t(), String.t() | nil) :: RepositoryReservation.t() | nil
-  def legacy_reservation(user_id, normalized_repo) when is_binary(normalized_repo) do
+  @type scope :: {:workspace, String.t()} | {:legacy, String.t()}
+
+  @doc """
+  The reservation holding `normalized_repo` back from `scope`'s creation
+  path, or nil. Read by the creation guard once it ships.
+  """
+  @spec reservation(scope(), String.t() | nil) :: RepositoryReservation.t() | nil
+  def reservation(scope, normalized_repo) when is_binary(normalized_repo) do
     Repo.one(
       from r in RepositoryReservation,
-        where:
-          r.user_id == ^user_id and is_nil(r.workspace_id) and
-            r.normalized_repo_full_name == ^normalized_repo,
+        where: ^scope_filter(scope),
+        where: r.normalized_repo_full_name == ^normalized_repo,
         order_by: [asc: r.created_at],
         limit: 1
     )
   end
 
-  def legacy_reservation(_user_id, _normalized_repo), do: nil
+  def reservation(_scope, _normalized_repo), do: nil
+
+  defp scope_filter({:workspace, id}), do: dynamic([r], r.workspace_id == ^id)
+
+  defp scope_filter({:legacy, user_id}),
+    do: dynamic([r], r.user_id == ^user_id and is_nil(r.workspace_id))
+
+  defp scope_of(%Project{workspace_id: id}) when is_binary(id), do: {:workspace, id}
+  defp scope_of(%Project{user_id: user_id}), do: {:legacy, user_id}
 
   @doc """
   Mark `duplicate_id` as the legacy duplicate of `canonical_id`, and reserve
@@ -85,13 +99,25 @@ defmodule Ravix.Workspaces.Store do
   reaches this, which is ADR 0009's "only the reviewed migration can mark a
   legacy duplicate". The canonical project is the one created first, by the
   persisted `created_at`; equal timestamps are ambiguous and need the owner
-  to decide, so they are refused rather than guessed. Marking twice is a
-  no-op. The duplicate keeps its ids, owner, members and machine.
+  to decide, so they are refused rather than guessed. Marking the same
+  pair twice is a no-op; marking an already-marked duplicate against a
+  different canonical project is refused, as is a canonical project that is
+  itself a marked duplicate. The duplicate keeps its ids, owner, members
+  and machine.
+
+  The reservation is scoped as the duplicate is: to its workspace when it
+  has one, otherwise to its legacy owner (see `t:scope/0`).
   """
   @spec mark_legacy_duplicate(String.t(), String.t()) ::
           {:ok, Project.t()}
           | {:error,
-             :not_found | :same_project | :different_repository | :ambiguous_order | :not_later}
+             :not_found
+             | :same_project
+             | :different_repository
+             | :ambiguous_order
+             | :not_later
+             | :already_marked
+             | :canonical_is_duplicate}
   def mark_legacy_duplicate(id, id), do: {:error, :same_project}
 
   def mark_legacy_duplicate(duplicate_id, canonical_id) do
@@ -111,6 +137,7 @@ defmodule Ravix.Workspaces.Store do
       canonical = Enum.find(rows, &(&1.id == canonical_id))
 
       with {:ok, repo} <- same_repository(duplicate, canonical),
+           :ok <- markable(duplicate, canonical),
            :ok <- later(duplicate, canonical) do
         mark(duplicate, canonical, repo)
       else
@@ -129,6 +156,14 @@ defmodule Ravix.Workspaces.Store do
       do: {:ok, repo},
       else: {:error, :different_repository}
   end
+
+  defp markable(_duplicate, %Project{legacy_duplicate_at: %DateTime{}}),
+    do: {:error, :canonical_is_duplicate}
+
+  defp markable(%Project{legacy_duplicate_at: nil}, _canonical), do: :ok
+
+  defp markable(%Project{legacy_duplicate_of: id}, %Project{id: id}), do: :ok
+  defp markable(_duplicate, _canonical), do: {:error, :already_marked}
 
   defp later(duplicate, canonical) do
     case DateTime.compare(duplicate.created_at, canonical.created_at) do
@@ -155,14 +190,20 @@ defmodule Ravix.Workspaces.Store do
         ]
       )
 
+    {workspace_id, user_id} =
+      case scope_of(duplicate) do
+        {:workspace, id} -> {id, nil}
+        {:legacy, id} -> {nil, id}
+      end
+
     Repo.insert_all(
       RepositoryReservation,
       [
         %{
           id: Ecto.UUID.generate(),
           normalized_repo_full_name: repo,
-          workspace_id: duplicate.workspace_id,
-          user_id: duplicate.user_id,
+          workspace_id: workspace_id,
+          user_id: user_id,
           reserved_project_id: duplicate.id,
           canonical_project_id: canonical.id,
           reason: :legacy_duplicate,
@@ -180,6 +221,25 @@ defmodule Ravix.Workspaces.Store do
     do: project.normalized_repo_full_name || Project.normalize_repo(project.repo_full_name)
 
   # ── the backfill ─────────────────────────────────────────────────────
+
+  @doc """
+  Run one backfill batch in its own transaction, bounded by `timeout_ms` of
+  statement time, so a slow batch in `bin/migrate` fails that deploy step
+  instead of holding locks against the serving release. A batch that fails
+  rolls back whole; the next run resumes from it.
+  """
+  @spec bounded((-> result), pos_integer()) :: result when result: term()
+  def bounded(batch, timeout_ms) when is_integer(timeout_ms) and timeout_ms > 0 do
+    {:ok, result} =
+      Repo.transaction(fn ->
+        # `SET LOCAL`, parameterized: `true` scopes it to this transaction.
+        Repo.query!("SELECT set_config('statement_timeout', $1, true)", ["#{timeout_ms}ms"])
+        batch.()
+      end)
+
+    result
+  end
+
   #
   # Each function is one bounded batch that selects only rows still missing
   # what it writes, so running it again -- after an interruption, on a second
@@ -261,7 +321,8 @@ defmodule Ravix.Workspaces.Store do
   """
   @spec fill_project_attribution(pos_integer()) :: non_neg_integer()
   def fill_project_attribution(limit) do
-    # The SQL spelling of `Project.normalize_repo/1`. GitHub names are ASCII,
+    # The SQL spelling of `Project.normalize_repo/1`: the same four
+    # whitespace characters trimmed, then lowercased. GitHub names are ASCII,
     # where `lower/1` and `String.downcase/1` agree.
     # ownership: no door -- the release-time backfill, which runs as no user.
     pending =
@@ -269,7 +330,7 @@ defmodule Ravix.Workspaces.Store do
         where:
           is_nil(p.created_by_user_id) or
             (is_nil(p.normalized_repo_full_name) and
-               fragment("coalesce(btrim(?), '') <> ''", p.repo_full_name)),
+               fragment("coalesce(btrim(?, E' \\t\\r\\n'), '') <> ''", p.repo_full_name)),
         order_by: p.id,
         limit: ^limit,
         select: p.id
@@ -284,7 +345,7 @@ defmodule Ravix.Workspaces.Store do
               created_by_user_id: coalesce(p.created_by_user_id, p.user_id),
               normalized_repo_full_name:
                 fragment(
-                  "coalesce(?, nullif(lower(btrim(?)), ''))",
+                  "coalesce(?, nullif(lower(btrim(?, E' \\t\\r\\n')), ''))",
                   p.normalized_repo_full_name,
                   p.repo_full_name
                 )

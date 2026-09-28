@@ -98,6 +98,10 @@ defmodule Ravix.Projects.Project do
     |> validate_number(:rev, greater_than_or_equal_to: 1)
     |> foreign_key_constraint(:user_id)
     |> unique_constraint(:id, name: :projects_pkey)
+    |> unique_constraint(:repo_full_name,
+      name: :projects_workspace_repo,
+      message: "is already a project in this workspace"
+    )
   end
 
   # The dual write for the two ADR 0009 fields whose meaning is the same as
@@ -117,13 +121,16 @@ defmodule Ravix.Projects.Project do
   end
 
   @doc """
-  The comparison form of a repository name: trimmed and lowercased, as
+  The comparison form of a repository name: trimmed of spaces, tabs and
+  line breaks, and lowercased, as
   GitHub compares `owner/repository`. The display casing stays in
   `repo_full_name`. Nil for a scratch project, which has no repository.
   """
   @spec normalize_repo(String.t() | nil) :: String.t() | nil
   def normalize_repo(repo) when is_binary(repo) do
-    case repo |> String.trim() |> String.downcase() do
+    # Exactly the characters the backfill's `btrim(?, E' \t\r\n')` strips,
+    # so a row reads the same whichever of the two normalized it.
+    case repo |> String.replace(~r/\A[ \t\r\n]+|[ \t\r\n]+\z/, "") |> String.downcase() do
       "" -> nil
       normalized -> normalized
     end

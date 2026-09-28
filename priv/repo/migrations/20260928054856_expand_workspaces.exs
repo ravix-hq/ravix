@@ -9,10 +9,22 @@ defmodule Ravix.Repo.Migrations.ExpandWorkspaces do
   Nothing reads these to authorize yet. `Ravix.Workspaces.Backfill` fills
   the personal workspaces and the equivalent project fields afterwards, in
   resumable batches, and again for whatever an old writer inserted since.
+
+  The `ALTER TABLE`s take brief exclusive locks on `projects` and `threads`
+  while the old release serves them, so the transaction gives up after
+  `lock_timeout` rather than queueing every request behind a long reader.
+  It is set at both ends so it applies first whichever way this runs.
+  The thread check is added `NOT VALID` (new writes are still checked) and
+  validated by `20260928063025_validate_threads_billing_policy`, which does
+  not block writes.
   """
   use Ecto.Migration
 
+  @lock_timeout "SET LOCAL lock_timeout = '5s'"
+
   def change do
+    execute @lock_timeout, "SELECT 1"
+
     # A named team, or the one personal workspace a user starts in. Not the
     # track's working directory, which ADR 0006 also calls a workspace.
     create table(:workspaces, primary_key: false) do
@@ -146,7 +158,10 @@ defmodule Ravix.Repo.Migrations.ExpandWorkspaces do
     end
 
     create constraint(:threads, :threads_billing_policy,
-             check: "billing_policy IS NULL OR billing_policy IN ('legacy_owner', 'starter')"
+             check: "billing_policy IS NULL OR billing_policy IN ('legacy_owner', 'starter')",
+             validate: false
            )
+
+    execute "SELECT 1", @lock_timeout
   end
 end

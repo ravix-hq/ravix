@@ -147,6 +147,24 @@ defmodule Ravix.WorkspacesTest do
     end
   end
 
+  describe "bounded batches" do
+    test "a batch past its statement timeout is cancelled and rolled back" do
+      user = insert_user()
+
+      assert_raise Postgrex.Error, ~r/statement timeout/, fn ->
+        Store.bounded(
+          fn ->
+            Store.insert_personal_workspaces(10)
+            Repo.query!("SELECT pg_sleep(1)")
+          end,
+          50
+        )
+      end
+
+      assert personal(user) == nil
+    end
+  end
+
   describe "dual readers" do
     test "an old writer's project reads as legacy, with every fallback" do
       owner = insert_user()
@@ -221,6 +239,39 @@ defmodule Ravix.WorkspacesTest do
           thread.id
         ])
       end
+
+      # Added NOT VALID under the expand's lock timeout, then validated.
+      assert %{rows: [[true]]} =
+               Repo.query!(
+                 "SELECT convalidated FROM pg_constraint WHERE conname = 'threads_billing_policy'"
+               )
+    end
+
+    test "the Elixir and SQL normalizations agree, whitespace included" do
+      owner = insert_user()
+
+      inputs = [
+        "Acme/Widget",
+        " Acme/Widget ",
+        "\tAcme/Widget\n",
+        "\r\n Acme/Widget\t \r",
+        "ACME/widget-2.0_x",
+        "   ",
+        "\t\n",
+        nil
+      ]
+
+      rows = for repo <- inputs, do: {repo, old_writer_project(owner, repo_full_name: repo)}
+      Backfill.run()
+
+      for {repo, project} <- rows do
+        assert Repo.get!(Project, project.id).normalized_repo_full_name ==
+                 Project.normalize_repo(repo),
+               "SQL and Elixir disagree about #{inspect(repo)}"
+      end
+
+      assert Project.normalize_repo("\tAcme/Widget\n") == "acme/widget"
+      assert Project.normalize_repo("\t\n") == nil
     end
   end
 
@@ -243,6 +294,16 @@ defmodule Ravix.WorkspacesTest do
       assert_raise Postgrex.Error, ~r/projects_workspace_repo/, fn ->
         admit(second, ctx.workspace)
       end
+
+      # The changeset turns the same violation into an error, not a crash.
+      attrs = project_attrs(user_id: ctx.owner.id, repo_full_name: "Acme/ONE")
+
+      assert {:error, changeset} =
+               %Project{workspace_id: ctx.workspace.id}
+               |> Project.changeset(attrs)
+               |> Repo.insert()
+
+      assert %{repo_full_name: ["is already a project in this workspace"]} = errors_on(changeset)
     end
 
     test "ignores legacy rows, scratch projects, marked duplicates and other workspaces", ctx do
@@ -340,6 +401,49 @@ defmodule Ravix.WorkspacesTest do
 
       assert Repo.aggregate(RepositoryReservation, :count) == 0
       refute Workspaces.legacy_duplicate?(Repo.get!(Project, ctx.duplicate.id))
+    end
+
+    test "refuses re-marking against another canonical, and a duplicate as canonical", ctx do
+      third = insert_project(user: insert_user(), repo_full_name: "ravix-hq/RAVIX")
+      bump(third, 120)
+      assert {:ok, marked} = Store.mark_legacy_duplicate(ctx.duplicate.id, ctx.canonical.id)
+
+      # Same pair again: a no-op. Another canonical: refused, nothing moves.
+      assert {:ok, ^marked} = Store.mark_legacy_duplicate(ctx.duplicate.id, ctx.canonical.id)
+
+      assert {:error, :canonical_is_duplicate} =
+               Store.mark_legacy_duplicate(third.id, ctx.duplicate.id)
+
+      assert {:ok, _} = Store.mark_legacy_duplicate(third.id, ctx.canonical.id)
+      other_earlier = insert_project(user: insert_user(), repo_full_name: "ravix-hq/ravix")
+      bump(other_earlier, -600)
+
+      assert {:error, :already_marked} =
+               Store.mark_legacy_duplicate(ctx.duplicate.id, other_earlier.id)
+
+      assert Repo.get!(Project, ctx.duplicate.id).legacy_duplicate_of == ctx.canonical.id
+      assert Repo.aggregate(RepositoryReservation, :count) == 2
+    end
+
+    test "a duplicate in a workspace reserves the repository in that workspace", ctx do
+      workspace = workspace!(name: "team", kind: :team)
+      member!(workspace, ctx.raunak, :member)
+      Repo.update_all(where(Project, id: ^ctx.duplicate.id), set: [workspace_id: workspace.id])
+
+      assert {:ok, _} = Store.mark_legacy_duplicate(ctx.duplicate.id, ctx.canonical.id)
+
+      assert [%RepositoryReservation{workspace_id: workspace_id, user_id: nil}] =
+               Repo.all(RepositoryReservation)
+
+      assert workspace_id == workspace.id
+      assert {:ok, true} = Workspaces.reserved_in?(ctx.raunak, workspace.id, "Ravix-HQ/Ravix")
+      assert {:ok, false} = Workspaces.reserved_in?(ctx.raunak, workspace.id, "acme/else")
+
+      assert {:error, :not_found} =
+               Workspaces.reserved_in?(ctx.owner, workspace.id, "ravix-hq/ravix")
+
+      # A workspace reservation is not the owner's legacy one.
+      refute Workspaces.reserved_for?(ctx.raunak, "ravix-hq/ravix")
     end
   end
 
