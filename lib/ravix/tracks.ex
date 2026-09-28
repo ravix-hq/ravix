@@ -1704,8 +1704,10 @@ defmodule Ravix.Tracks do
   Without `force: true` a track with a turn running on any of its threads,
   or a prompt queued or being sent, is refused, and so is one whose running
   state Fountain cannot tell us: this fails closed. `require_merged: true`
-  refuses unless the track's pull request is merged, and an unreadable pull
-  request is not merged. The pull request comes back either way.
+  refuses unless the track's pull request is merged, read past GitHub's
+  cache so a PR opened on the branch since the last one merged is seen; an
+  unreadable pull request is not merged. The pull request comes back either
+  way.
 
   Calling this is the confirmation a dedicated machine's close asks for; a
   shared worktree is removed with `--force` only when `force` is given.
@@ -1714,15 +1716,18 @@ defmodule Ravix.Tracks do
           {:ok, %{pr: pull_summary()}} | {:error, reason()}
   def close_finished(%User{} = user, track_id, opts \\ []) do
     force = Keyword.get(opts, :force, false) == true
+    merged = Keyword.get(opts, :require_merged, false) == true
 
     with {:ok, %{track: track, project: project, role: role}} <-
            Access.track_access(user, track_id),
          :ok <- Access.require_owner_or_cutter(role, user, track, "close a track"),
          :ok <- require_not_closed(track),
+         pr = pull_summary(track, project, if(merged, do: :fresh, else: :cached)),
+         :ok <- require_merged(pr, merged),
+         # Last before the close, after the GitHub read, so a turn or prompt
+         # has the least time to start between the check and the close.
          {:ok, client} <- fountain(),
          :ok <- if(force, do: :ok, else: require_idle(client, track, project)),
-         pr = pull_summary(track, project),
-         :ok <- require_merged(pr, Keyword.get(opts, :require_merged, false) == true),
          :ok <-
            close_track(user, track, project, client,
              force: force or track.sandbox_layout == :dedicated
@@ -1782,7 +1787,7 @@ defmodule Ravix.Tracks do
 
   # A GitHub that cannot answer is reported as "unknown" rather than stopping
   # a close that did not ask about merging.
-  defp pull_summary(%Track{branch: branch} = track, project)
+  defp pull_summary(%Track{branch: branch} = track, project, freshness)
        when is_binary(branch) and branch != "" do
     with :ok <- require_repo(project, ""),
          {:ok, app} <- github(),
@@ -1795,7 +1800,8 @@ defmodule Ravix.Tracks do
              %{
                created_at: track.created_at,
                origin_number: if(track.origin_kind == :pr, do: track.origin_number)
-             }
+             },
+             freshness
            ) do
       case pull do
         nil -> %{number: nil, state: "none"}
@@ -1807,7 +1813,7 @@ defmodule Ravix.Tracks do
     end
   end
 
-  defp pull_summary(_track, _project), do: %{number: nil, state: "none"}
+  defp pull_summary(_track, _project, _freshness), do: %{number: nil, state: "none"}
 
   @doc "Owner-only count of private tracks with no remaining participants; no track metadata."
   def orphan_private_count(%User{} = user, project_id) do

@@ -306,7 +306,8 @@ Without `force: true` it refuses a track with a running turn on any thread
 running state Fountain cannot report (`status_unavailable`). On a shared
 machine `force` also removes the worktree with its uncommitted changes.
 `require_merged: true` refuses unless the track's pull request is merged
-(`pr_not_merged`). A successful close returns `{"closed": true, "pr": {"number":
+(`pr_not_merged`), reading GitHub past its five-minute cache. The pull request
+is read before the running and queue checks, which come last before the close. A successful close returns `{"closed": true, "pr": {"number":
 218, "state": "merged"}}`; `state` is `merged`, `open`, `closed`, `none` or
 `unknown` (GitHub could not be read, which `require_merged` treats as not
 merged). A refusal releases its `request_id`; retrying a completed close with

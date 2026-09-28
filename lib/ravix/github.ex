@@ -411,14 +411,23 @@ defmodule Ravix.GitHub do
     end
   end
 
-  @doc "The PR belonging to a track, without fetching its branch or CI checks."
-  @spec pull_for_track(app(), installation_id(), String.t(), String.t(), track()) ::
+  @doc """
+  The PR belonging to a track, without fetching its branch or CI checks.
+
+  Cached for five minutes like the Checks tab; `:fresh` reads past the cache
+  for a decision that must not act on a PR list that has since changed, such
+  as closing a track only once its PR is merged.
+  """
+  @spec pull_for_track(app(), installation_id(), String.t(), String.t(), track(), freshness()) ::
           {:ok, Shapes.PullRef.t() | nil} | error()
-  def pull_for_track(nil, _installation_id, _full_name, _ref, _track),
+  def pull_for_track(app, installation_id, full_name, ref, track, freshness \\ :cached)
+
+  def pull_for_track(nil, _installation_id, _full_name, _ref, _track, _freshness),
     do: {:error, {:unconfigured, :github}}
 
-  def pull_for_track(%GitHubApp{} = app, installation_id, full_name, ref, track) do
-    with {:ok, pulls} <- pulls_for_head(app, installation_id, full_name, ref) do
+  def pull_for_track(%GitHubApp{} = app, installation_id, full_name, ref, track, freshness)
+      when freshness in [:cached, :fresh] do
+    with {:ok, pulls} <- pulls_for_head(app, installation_id, full_name, ref, freshness) do
       {:ok, choose_pull(pulls, ref, to_ms(track.created_at), track.origin_number)}
     end
   end
@@ -455,7 +464,7 @@ defmodule Ravix.GitHub do
   defp read_checks(app, installation_id, full_name, ref, created_at_ms, origin_number) do
     with {:ok, sha} <- branch_sha(app, installation_id, full_name, ref),
          {:ok, runs} <- check_runs(app, installation_id, full_name, sha),
-         {:ok, pulls} <- pulls_for_head(app, installation_id, full_name, ref) do
+         {:ok, pulls} <- pulls_for_head(app, installation_id, full_name, ref, :cached) do
       {:ok,
        %ChecksReport{
          ref: ref,
@@ -496,7 +505,7 @@ defmodule Ravix.GitHub do
   # merged is the *most* interesting case (it is the one where the work
   # landed) and asking only for open ones answered "no pull request for this
   # branch" beside two green checks that plainly came from one.
-  defp pulls_for_head(app, installation_id, full_name, ref) do
+  defp pulls_for_head(app, installation_id, full_name, ref, freshness) do
     [owner | _] = String.split(full_name, "/")
     head = encode(owner <> ":" <> ref)
 
@@ -505,7 +514,7 @@ defmodule Ravix.GitHub do
       installation_id,
       :get,
       "/repos/#{full_name}/pulls?state=all&per_page=20&head=#{head}",
-      cache_ttl: 300_000
+      if(freshness == :cached, do: [cache_ttl: 300_000], else: [])
     )
   end
 

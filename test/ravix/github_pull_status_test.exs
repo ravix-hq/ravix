@@ -94,6 +94,40 @@ defmodule Ravix.GitHubPullStatusTest do
     refute_received {:reads_changed, _, _}
   end
 
+  test "a fresh read sees a PR opened on the branch after the cached one merged" do
+    app = Fake.app()
+
+    merged = %{
+      number: 1,
+      head: %{ref: "branch"},
+      state: "closed",
+      merged_at: "2026-02-01T00:00:00Z",
+      created_at: "2026-01-02T00:00:00Z",
+      updated_at: "2026-02-01T00:00:00Z"
+    }
+
+    Fake.install([Fake.token_route(app), {"GET", "/repos/o/r/pulls", [merged]}])
+
+    assert {:ok, %{number: 1, state: :merged}} =
+             GitHub.pull_for_track(app, 1, "o/r", "branch", @track)
+
+    reopened = %{
+      merged
+      | number: 2,
+        state: "open",
+        merged_at: nil,
+        updated_at: "2026-02-02T00:00:00Z"
+    }
+
+    Fake.install([Fake.token_route(app), {"GET", "/repos/o/r/pulls", [reopened, merged]}])
+
+    assert {:ok, %{number: 1, state: :merged}} =
+             GitHub.pull_for_track(app, 1, "o/r", "branch", @track)
+
+    assert {:ok, %{number: 2, state: :open}} =
+             GitHub.pull_for_track(app, 1, "o/r", "branch", @track, :fresh)
+  end
+
   test "PR status revalidates after five minutes and an unconfigured app is explicit" do
     app = Fake.app()
     Clock.freeze(1_000_000)

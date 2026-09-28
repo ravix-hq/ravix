@@ -72,7 +72,11 @@ defmodule Ravix.Tooling.CloseTrackTest do
   defp pull(raw) do
     stub(Ravix.Config, :github, fn -> Ravix.GitHubFake.app() end)
 
-    stub(Ravix.GitHub, :pull_for_track, fn _app, 7, "acme/ledger", _branch, _track ->
+    test = self()
+
+    stub(Ravix.GitHub, :pull_for_track, fn _app, 7, "acme/ledger", _branch, _track, freshness ->
+      send(test, {:pull_read, freshness})
+
       {:ok,
        raw &&
          GitHubShapes.pull_ref(
@@ -225,7 +229,7 @@ defmodule Ravix.Tooling.CloseTrackTest do
       assert {:error, {:conflict, "pr_not_merged", _}} =
                close(c.owner, c.track, %{"require_merged" => true})
 
-      stub(Ravix.GitHub, :pull_for_track, fn _, _, _, _, _ -> {:error, :timeout} end)
+      stub(Ravix.GitHub, :pull_for_track, fn _, _, _, _, _, _ -> {:error, :timeout} end)
 
       assert {:error, {:conflict, "pr_not_merged", _}} =
                close(c.owner, c.track, %{"require_merged" => true})
@@ -237,13 +241,35 @@ defmodule Ravix.Tooling.CloseTrackTest do
       closing()
       pull(%{"number" => 9, "state" => "open"})
       assert {:ok, %{pr: %{number: 9, state: "open"}}} = close(c.owner, c.track)
+      assert_received {:pull_read, :cached}
       await_teardown()
+    end
+
+    test "require_merged reads the pull request past GitHub's cache", c do
+      closing()
+
+      assert {:ok, %{pr: %{number: 218, state: "merged"}}} =
+               close(c.owner, c.track, %{"require_merged" => true})
+
+      assert_received {:pull_read, :fresh}
+      await_teardown()
+    end
+
+    test "the pull request is read before the running and queue checks", c do
+      pull(%{"number" => 9, "state" => "open"})
+      reject(Ravix.MachineCache, :conversations, 3)
+      reject(Ravix.PromptQueue.Store, :pending?, 1)
+
+      assert {:error, {:conflict, "pr_not_merged", _}} =
+               close(c.owner, c.track, %{"require_merged" => true})
+
+      assert_received {:pull_read, :fresh}
     end
 
     test "a project without a repository reports no pull request", c do
       project = insert_project(user: c.owner, repo_full_name: nil)
       track = insert_track(project: project)
-      reject(Ravix.GitHub, :pull_for_track, 5)
+      reject(Ravix.GitHub, :pull_for_track, 6)
       assert {:ok, %{pr: %{number: nil, state: "none"}}} = close(c.owner, track)
       await_teardown()
     end
@@ -257,8 +283,15 @@ defmodule Ravix.Tooling.CloseTrackTest do
           workdir: "/workspace/one"
         )
 
-      assert {:ok, %{closed: true}} = close(c.owner, track)
+      queued = insert_prompt(track: track)
+
+      assert {:error, {:conflict, "prompts_queued", _}} = close(c.owner, track)
+
+      assert {:ok, %{closed: true}} =
+               close(c.owner, track, %{"force" => true, "request_id" => "forced"})
+
       assert Repo.get!(Track, track.id).sandbox_stage == "closing"
+      assert Repo.get_by!(Item, id: queued.id).status == :cancelled
 
       assert {:error, {:conflict, "track_closed", _}} =
                close(c.owner, track, %{"request_id" => "again"})
