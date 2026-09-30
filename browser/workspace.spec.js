@@ -1117,8 +1117,12 @@ test('composer Send stays compact and keeps its arrow after repeated submissions
     await expect(page.locator('#composer-form')).toHaveClass(/phx-submit-loading/);
     await checkSend();
     await expect(composer).toHaveValue('');
+    // RAV-87: an empty box has nothing to send, so send is disabled or, while
+    // the turn runs, stands aside for Stop. Typing brings it back, enabled.
+    await composer.fill('Not sent');
     await expect(send).toBeEnabled();
     await checkSend();
+    await composer.fill('');
     await page.evaluate(() => window.liveSocket.disableLatencySim());
     // Acknowledgement clears the input before the agent finishes. Keep this
     // button-rendering regression sequential instead of queuing another turn.
@@ -1140,17 +1144,22 @@ test('composer Send stays compact and keeps its arrow after repeated submissions
     await expect(async () => {
       await page.reload();
       await expect(page.locator('[data-phx-main]')).toHaveClass(/phx-connected/);
-      await expect(page.locator('#composer-form').getByRole('button', { name: 'Stop agent', exact: true })).toHaveCount(['opening', 'running'].includes(status) ? 1 : 0, { timeout: 1_000 });
+      await expect(page.locator('#composer-form').getByRole('button', { name: 'Stop agent', exact: true })).toHaveCount(status === 'running' ? 1 : 0, { timeout: 1_000 });
       await expect(page.locator('#composer-form').getByRole('button', { name: 'Wake / retry', exact: true })).toHaveCount(['opening', 'failed'].includes(status) ? 1 : 0, { timeout: 1_000 });
     }).toPass({ timeout: 15_000 });
-    // RAV-87: with a turn running and nothing typed, Stop stands where send
-    // is and send steps aside; something to send brings it back, so the
-    // matrix below still measures it. The value is set without an input
-    // event, so no draft is saved for the next state.
-    if (['opening', 'running'].includes(status)) {
-      await expect(send).toBeHidden();
-      await composer.evaluate(el => { el.value = 'Queued while the agent works'; });
-    }
+    // RAV-87: Stop is drawn from the thread's tab, which says Running only
+    // while a turn runs, not while the track is opening. With nothing typed,
+    // send is disabled, or stands aside for Stop mid-turn; something to send
+    // brings it back, so the matrix below still measures it. Setting the box
+    // through `input` is how the hook hears it, disabled or not.
+    const typeIn = value => composer.evaluate((el, value) => {
+      el.value = value;
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+    }, value);
+    await typeIn('');
+    if (status === 'running') await expect(send).toBeHidden();
+    else await expect(send).toBeDisabled();
+    await typeIn('Queued while the agent works');
     await expect(send).toBeVisible();
     if (connected) await expect(send).toBeEnabled();
     else await expect(send).toBeDisabled();

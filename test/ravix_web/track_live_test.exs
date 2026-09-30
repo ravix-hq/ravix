@@ -477,6 +477,8 @@ defmodule RavixWeb.TrackLiveTest do
     assert has_element?(ctx.view, "#track-agent-health-banner", "Your agent connection")
     assert has_element?(ctx.view, "#track-agent-health-banner", "subscription or API key")
     refute has_element?(ctx.view, "#track-agent-owner")
+    # With something typed, the warning leaves send enabled.
+    render_hook(ctx.view, "composer-draft", %{"empty" => false})
     refute has_element?(ctx.view, "#composer-form button[type=submit][disabled]")
 
     expect(Tracks, :prompt, fn caller, id, %{prompt: "accepted"} ->
@@ -787,6 +789,8 @@ defmodule RavixWeb.TrackLiveTest do
   end
 
   test "unavailable status clears on reconnect and a provider outage stays advisory", ctx do
+    render_hook(ctx.view, "composer-draft", %{"empty" => false})
+
     for result <- [{:ok, true}, {:error, :offline}] do
       stub(Ravix.Accounts.Inference, :usable?, fn _, _, [] -> result end)
       send(ctx.view.pid, :refresh_agent_health)
@@ -2105,7 +2109,10 @@ defmodule RavixWeb.TrackLiveTest do
 
     test "is disabled while a turn runs, and a plain label with no catalog", ctx do
       ctx.serve.(:running, nil)
-      # RAV-87: marked busy, which keeps its contrast, and its title says why.
+      assert has_element?(ctx.view, "#model-trigger[disabled]")
+      # RAV-87: once the shown thread's tab says Running it is marked busy,
+      # which keeps its contrast, and its title says why.
+      turn_stage(ctx.view, ctx.track.id, "started")
       assert has_element?(ctx.view, "#model-trigger[disabled][data-busy]")
 
       assert has_element?(
@@ -2113,6 +2120,7 @@ defmodule RavixWeb.TrackLiveTest do
                "#model-trigger[title*=\"Can't change while the agent is working\"]"
              )
 
+      turn_stage(ctx.view, ctx.track.id, "completed")
       ctx.serve.(:ready, nil)
       refute has_element?(ctx.view, "#model-trigger[data-busy]")
       refute render(ctx.view) =~ "change while the agent is working"
@@ -2701,6 +2709,18 @@ defmodule RavixWeb.TrackLiveTest do
     ctx.view |> element("#thread-switcher button[aria-label='Add thread']") |> render_click()
     render_async(ctx.view)
     assert has_element?(ctx.view, "#thread-tab-draft[aria-selected=true]")
+  end
+
+  # A turn on a thread starting or ending, as its follower delivers it: what
+  # the thread's tab, and since RAV-87 the composer's Stop, are drawn from.
+  defp turn_stage(view, thread_id, state) do
+    send(
+      view.pid,
+      {:transcript, thread_id,
+       %{"id" => 1, "turn_id" => "t1", "kind" => "stage", "stage" => "turn", "state" => state}}
+    )
+
+    render(view)
   end
 
   defp thread_options(id) do
@@ -3496,6 +3516,9 @@ defmodule RavixWeb.TrackLiveTest do
   end
 
   test "Send keeps its icon and accessible name through every track state", ctx do
+    # Something typed, so send is drawn and enabled wherever it can send.
+    render_hook(ctx.view, "composer-draft", %{"empty" => false})
+
     for status <- [:opening, :running, :ready, :failed],
         conversation_id <- [nil, "live-conversation"] do
       stub(Tracks, :get, fn _, _, _ ->
@@ -3525,12 +3548,9 @@ defmodule RavixWeb.TrackLiveTest do
       refute has_element?(ctx.view, button <> "[phx-disable-with]")
       assert has_element?(ctx.view, button <> "[disabled]") == is_nil(conversation_id)
 
-      # RAV-87: Stop is an icon button in send's place, never a row of its own.
-      assert has_element?(
-               ctx.view,
-               "#composer-form #composer-stop[type=button][phx-click=interrupt][aria-label='Stop agent'] svg"
-             ) == status in [:opening, :running]
-
+      # RAV-87: the track's status alone draws no Stop, and no text "Stop"
+      # row; Stop follows the shown thread's tab (see the send slot tests).
+      refute has_element?(ctx.view, "#composer-stop")
       refute has_element?(ctx.view, "#composer-form button", "Stop")
 
       assert has_element?(ctx.view, "#composer-form button", "Wake / retry") ==
@@ -3544,6 +3564,76 @@ defmodule RavixWeb.TrackLiveTest do
                ".composer-model[title='Claude Code · Claude Sonnet 5']",
                "Claude Sonnet 5"
              )
+    end
+  end
+
+  describe "the send slot (RAV-87)" do
+    @send "#composer-form #composer-send[type=submit][aria-label=Send]"
+    @stop "#composer-form #composer-stop[type=button][phx-click=interrupt][aria-label='Stop agent']"
+
+    test "idle and empty, send is disabled; idle with text, it is enabled", ctx do
+      assert has_element?(ctx.view, @send <> "[disabled]")
+      refute has_element?(ctx.view, "#composer-stop")
+
+      render_hook(ctx.view, "composer-draft", %{"empty" => false})
+      assert has_element?(ctx.view, @send <> ":not([disabled])")
+      refute has_element?(ctx.view, "#composer-stop")
+
+      render_hook(ctx.view, "composer-draft", %{"empty" => true})
+      assert has_element?(ctx.view, @send <> "[disabled]")
+    end
+
+    test "while the turn runs, Stop holds the slot, and send comes back beside it to queue text",
+         ctx do
+      turn_stage(ctx.view, ctx.track.id, "started")
+      assert has_element?(ctx.view, @stop <> " svg")
+      refute has_element?(ctx.view, "#composer-send")
+
+      render_hook(ctx.view, "composer-draft", %{"empty" => false})
+      assert has_element?(ctx.view, @stop)
+      assert has_element?(ctx.view, @send <> ":not([disabled])")
+
+      # Stop comes first, so it sits to send's left.
+      html = render(ctx.view)
+      {stop_at, _} = :binary.match(html, ~s(id="composer-stop"))
+      {send_at, _} = :binary.match(html, ~s(id="composer-send"))
+      assert stop_at < send_at
+
+      # Queuing while it runs sends the text as a prompt, as ever.
+      expect(Tracks, :prompt, fn _, _, %{prompt: "next"} -> {:ok, %{}} end)
+      ctx.view |> form("#composer-form", text: "next") |> render_submit()
+      assert_push_event(ctx.view, "composer:clear", %{})
+    end
+
+    test "Stop and the thread tab change in the same render", ctx do
+      tab = "#thread-tab-#{ctx.track.id}"
+
+      for {state, running?} <- [{"started", true}, {"completed", false}, {"started", true}] do
+        html = turn_stage(ctx.view, ctx.track.id, state)
+        doc = LazyHTML.from_document(html)
+        [label] = doc |> LazyHTML.query(tab) |> LazyHTML.attribute("aria-label")
+        stop? = doc |> LazyHTML.query("#composer-stop") |> Enum.count() == 1
+
+        assert String.ends_with?(label, if(running?, do: "· Running", else: "· Idle"))
+        assert stop? == running?
+        # The `/stop` command follows the same state.
+        assert html =~ ~s(&quot;name&quot;:&quot;stop&quot;) == running?
+      end
+    end
+
+    test "a sibling thread's running turn draws no Stop on the shown one", ctx do
+      {:ok, sibling} =
+        Tracks.Store.create_thread(%{
+          track_id: ctx.track.id,
+          conversation_id: "live-sibling",
+          title: "Sibling"
+        })
+
+      send(ctx.view.pid, {:hub, Event.new(:tracks, ctx.project.id, track_id: ctx.track.id)})
+      settle(ctx.view)
+      turn_stage(ctx.view, sibling.id, "started")
+      assert has_element?(ctx.view, "#thread-tab-#{sibling.id}[aria-label$='· Running']")
+      refute has_element?(ctx.view, "#composer-stop")
     end
   end
 
@@ -3655,6 +3745,7 @@ defmodule RavixWeb.TrackLiveTest do
 
     ctx.view |> element("button", "Wake / retry") |> render_click()
     render_async(ctx.view)
+    turn_stage(ctx.view, ctx.track.id, "started")
     ctx.view |> element("#composer-stop") |> render_click()
     # Both are Fountain round trips and run off the page.
     render_async(ctx.view)
@@ -3674,6 +3765,7 @@ defmodule RavixWeb.TrackLiveTest do
       end
     end)
 
+    turn_stage(ctx.view, ctx.track.id, "started")
     ctx.view |> element("#composer-stop") |> render_click()
 
     assert_receive {:stopping, stopping}
@@ -3688,6 +3780,7 @@ defmodule RavixWeb.TrackLiveTest do
 
   test "a revoked session cannot interrupt", ctx do
     reject(Tracks, :interrupt, 3)
+    turn_stage(ctx.view, ctx.track.id, "started")
     token = Plug.Conn.get_session(ctx.conn, :session_token)
     Repo.delete!(Repo.get_by!(Session, token_hash: Ravix.Crypto.sha256(token)))
 
@@ -3702,6 +3795,7 @@ defmodule RavixWeb.TrackLiveTest do
   @tag capture_log: true
   test "a stop that crashes says so, and not that something failed to load", ctx do
     stub(Tracks, :interrupt, fn _, _, _thread_opts -> raise "Fountain fell over" end)
+    turn_stage(ctx.view, ctx.track.id, "started")
     ctx.view |> element("#composer-stop") |> render_click()
 
     render_async(ctx.view)
@@ -5087,14 +5181,17 @@ defmodule RavixWeb.TrackLiveTest do
       assert has_element?(ctx.view, "#composer-suggestions-status[role=status].sr-only")
       assert has_element?(ctx.view, "#composer-shortcut kbd", "Ctrl+L")
 
-      # The track is still opening, so, like the Stop button, `/stop` is there.
+      # Nothing is running, so, like the Stop button, `/stop` is not offered.
       assert composer_commands(ctx.view) == [
-               {"stop", "ravix", "interrupt"},
                {"new", "ravix", "draft-thread"},
                {"comment", "ravix", "composer-mode"},
                {"changes", "ravix", "panel"},
                {"checks", "ravix", "panel"}
              ]
+
+      # Once the shown thread's turn runs, it is, first among Ravix's.
+      turn_stage(ctx.view, ctx.track.id, "started")
+      assert [{"stop", "ravix", "interrupt"} | _] = composer_commands(ctx.view)
 
       # Comment mode has its own list of people and no commands.
       render_click(ctx.view, "composer-mode", %{mode: "comment"})
@@ -5115,7 +5212,7 @@ defmodule RavixWeb.TrackLiveTest do
       render_async(ctx.view)
 
       assert [{"review", "agent", nil} | ravix] = composer_commands(ctx.view)
-      assert length(ravix) == 5
+      assert length(ravix) == 4
 
       assert has_element?(
                ctx.view,
@@ -5130,19 +5227,9 @@ defmodule RavixWeb.TrackLiveTest do
                composer_commands(drawn(ctx.view))
 
       # Stop is a command only while there is something to stop.
-      Repo.update!(
-        Ecto.Changeset.change(Repo.get!(Track, ctx.track.id),
-          setup_state: "ready",
-          opened_at: DateTime.utc_now()
-        )
-      )
-
-      send(
-        ctx.view.pid,
-        {:hub, %Event{name: :tracks, project_id: ctx.project.id, track_id: ctx.track.id}}
-      )
-
-      render_async(ctx.view)
+      turn_stage(ctx.view, ctx.track.id, "started")
+      assert Enum.any?(composer_commands(ctx.view), &match?({"stop", _, _}, &1))
+      turn_stage(ctx.view, ctx.track.id, "completed")
       refute Enum.any?(composer_commands(ctx.view), &match?({"stop", _, _}, &1))
     end
 

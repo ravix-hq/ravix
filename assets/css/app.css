@@ -1093,7 +1093,7 @@ html[data-yard="closed"] .workspace-trigger-skeleton { flex: none; width: 28px; 
 /* RAV-87: Stop, while a turn runs, is where send is and the same size, so
    the row never grows. With nothing to send, send steps aside and Stop is
    alone in its place; typed text or held images bring send back to its
-   right, where it queues the prompt. `:placeholder-shown` is an empty box. */
+   right, where it queues the prompt. The template decides which is drawn. */
 .workspace-composer .composer-stop {
   display: inline-flex; align-items: center; justify-content: center;
   flex: 0 0 34px; width: 34px; height: 34px; padding: 0; border-radius: var(--radius);
@@ -1101,9 +1101,6 @@ html[data-yard="closed"] .workspace-trigger-skeleton { flex: none; width: 28px; 
 }
 .workspace-composer .composer-stop svg { flex: none; }
 .workspace-composer .composer-stop:hover:not(:disabled) { background: var(--surface-hover); }
-.composer-box:has(.composer-stop):has(textarea:placeholder-shown):not(:has(.workspace-upload, [phx-click="clear-attachments"])) .composer-send {
-  display: none;
-}
 /* Both buttons need the room the shortcut hint takes, and the model's name
    gives way before the row wraps and the composer grows a line. */
 .workspace-actions:has(.composer-stop) .composer-shortcut { display: none; }

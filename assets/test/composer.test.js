@@ -71,6 +71,45 @@ test("typing saves and grows the draft while throttling presence events", () => 
   expect(hook.el.dataset.dirty).toBeUndefined()
 })
 
+// RAV-87: the server draws the send slot from whether the box is empty.
+test("the box reports turning empty or not, once per change, and again on reconnect", () => {
+  localStorage.setItem("ravix.draft.track:a", "Saved draft")
+  document.querySelector("textarea").dataset.emptyEvent = "composer-draft"
+  const {hook, events, receive} = mountHook(Composer, "textarea")
+  const reported = () => events.filter(e => e.name === "composer-draft").map(e => e.payload.empty)
+  // A restored draft is reported as it mounts.
+  expect(reported()).toEqual([false])
+  const type = value => {
+    hook.el.value = value
+    hook.el.dispatchEvent(new Event("input"))
+  }
+  type("Saved draft, longer")
+  expect(reported()).toEqual([false])
+  // Whitespace is nothing to send.
+  type("   ")
+  type("")
+  expect(reported()).toEqual([false, true])
+  receive("composer:insert", {text: "Starter prompt"})
+  expect(reported()).toEqual([false, true, false])
+  receive("composer:clear")
+  expect(reported()).toEqual([false, true, false, true])
+  receive("composer:retry", {text: "Try again", images: false})
+  expect(reported()).toEqual([false, true, false, true, false])
+  hook.updated()
+  expect(reported()).toHaveLength(5)
+  // A new page process starts out believing the box is empty.
+  hook.reconnected()
+  expect(reported()).toEqual([false, true, false, true, false, false])
+})
+
+test("a box without an empty event reports nothing", () => {
+  const {hook, events} = mountHook(Composer, "textarea")
+  hook.el.value = "Hello"
+  hook.el.dispatchEvent(new Event("input"))
+  hook.reconnected()
+  expect(events.some(e => e.name === "composer-draft")).toBe(false)
+})
+
 test("paste and drop populate the LiveView file input and notify its upload listeners", () => {
   const {hook} = mountHook(Composer, "textarea")
   const picker = document.querySelector("input")

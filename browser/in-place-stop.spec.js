@@ -1,10 +1,13 @@
 import { test, expect } from '@playwright/test';
 import { signIn, connectClaude } from './sign-in.js';
 
-// RAV-87: while a turn runs, Stop takes the send button's place instead of
-// adding a row under the composer, so the composer keeps its height when a
-// turn starts and ends, and Stop is reachable from the keyboard.
-test('Stop replaces send in place while the agent works, without resizing the composer', async ({ page }) => {
+// RAV-87: the send slot has three states --- idle and empty (send disabled),
+// idle with text (send enabled), and a running turn (Stop in the same slot,
+// with send beside it once something is typed). None of them moves the
+// composer: its top edge and height are the same in every one. Stop follows
+// the shown thread's tab, so the two never disagree, and it is reachable
+// from the keyboard.
+test('Stop replaces send in place while the agent works, without moving the composer', async ({ page }) => {
   test.setTimeout(120_000);
   await signIn(page, 'dana');
   await connectClaude(page);
@@ -24,27 +27,50 @@ test('Stop replaces send in place while the agent works, without resizing the co
   const box = page.locator('#composer-form .composer-box');
   const send = form.getByRole('button', { name: 'Send', exact: true });
   const stop = form.getByRole('button', { name: 'Stop agent', exact: true });
-  const height = async () => (await box.boundingBox()).height;
+  const tab = page.locator('#thread-tablist [role=tab][aria-selected=true]');
+  const footprint = async () => {
+    const { y, height } = await box.boundingBox();
+    return { top: y, height };
+  };
 
-  // Idle: send, no Stop.
+  // Every DOM change from here on records whether Stop is drawn and whether
+  // the shown thread's tab says Running. They must never disagree.
+  await expect(tab).toBeVisible();
+  await page.evaluate(() => {
+    window.slotRecord = [];
+    const read = () => {
+      const label = document.querySelector('#thread-tablist [role=tab][aria-selected=true]')?.getAttribute('aria-label') ?? '';
+      window.slotRecord.push({ running: label.includes('· Running'), stop: !!document.querySelector('#composer-stop') });
+    };
+    new MutationObserver(read).observe(document.body, { subtree: true, childList: true, attributes: true, characterData: true });
+    read();
+  });
+
+  // 1. Idle, empty: send is disabled, and there is no Stop.
   await expect(send).toBeVisible();
+  await expect(send).toBeDisabled();
   await expect(stop).toHaveCount(0);
-  const idle = await height();
+  const idle = await footprint();
   const sendAt = await send.boundingBox();
 
+  // 2. Idle, with text: send is enabled.
   await composer.fill('Demonstrate a long-running turn');
+  await expect(send).toBeEnabled();
+  expect(await footprint()).toEqual(idle);
   await composer.press('Enter');
 
-  // Working, empty box: Stop alone, where send was, and the same size.
+  // 3. Running, empty: Stop alone, where send was, and the same size; the
+  // composer has not moved.
   await expect(stop).toBeVisible({ timeout: 30_000 });
+  await expect(tab).toHaveAttribute('aria-label', /· Running/);
   await expect(composer).toHaveValue('');
-  await expect(send).toBeHidden();
+  await expect(send).toHaveCount(0);
   const stopAt = await stop.boundingBox();
   expect(stopAt.x).toBeCloseTo(sendAt.x, 0);
   expect(stopAt.y).toBeCloseTo(sendAt.y, 0);
   expect(stopAt.width).toBeCloseTo(sendAt.width, 0);
   expect(stopAt.height).toBeCloseTo(sendAt.height, 0);
-  expect(await height()).toBe(idle);
+  expect(await footprint()).toEqual(idle);
   await expect(stop.locator('svg')).toBeVisible();
 
   // The model is waiting on the turn, not unavailable: full contrast, and
@@ -56,17 +82,17 @@ test('Stop replaces send in place while the agent works, without resizing the co
     expect(Number(await model.evaluate(el => getComputedStyle(el).opacity))).toBe(1);
   }
 
-  // Working with text typed: send comes back in its place to queue it, and
-  // Stop sits to its left. Still the same height.
+  // Running, with text typed: send comes back in its place, enabled, to
+  // queue it, and Stop sits to its left. Still not moved.
   await composer.fill('Queue this next');
-  await expect(send).toBeVisible();
+  await expect(send).toBeEnabled();
   const both = { send: await send.boundingBox(), stop: await stop.boundingBox() };
   expect(both.send.x).toBeCloseTo(sendAt.x, 0);
   expect(both.stop.x + both.stop.width).toBeLessThanOrEqual(both.send.x);
   expect(both.stop.y).toBeCloseTo(both.send.y, 0);
-  expect(await height()).toBe(idle);
+  expect(await footprint()).toEqual(idle);
   await composer.fill('');
-  await expect(send).toBeHidden();
+  await expect(send).toHaveCount(0);
 
   // Keyboard: Tab from the message box reaches Stop, and Enter stops the turn.
   await composer.focus();
@@ -78,11 +104,18 @@ test('Stop replaces send in place while the agent works, without resizing the co
   expect(reached).toBe(true);
   await page.keyboard.press('Enter');
 
-  // Turn over: send is back where it was, and the composer never moved.
+  // Turn over: the tab and the slot go back together, send is disabled
+  // where it was, and the composer never moved.
   await expect(stop).toHaveCount(0, { timeout: 30_000 });
-  await expect(send).toBeVisible();
+  await expect(tab).not.toHaveAttribute('aria-label', /· Running/);
+  await expect(send).toBeDisabled();
   const after = await send.boundingBox();
   expect(after.x).toBeCloseTo(sendAt.x, 0);
   expect(after.y).toBeCloseTo(sendAt.y, 0);
-  expect(await height()).toBe(idle);
+  expect(await footprint()).toEqual(idle);
+
+  const record = await page.evaluate(() => window.slotRecord);
+  expect(record.some(r => r.running && r.stop)).toBe(true);
+  expect(record.some(r => !r.running && !r.stop)).toBe(true);
+  expect(record.filter(r => r.running !== r.stop)).toEqual([]);
 });
