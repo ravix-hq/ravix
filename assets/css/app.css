@@ -1451,10 +1451,10 @@ html[data-yard="closed"] .workspace-trigger-skeleton { flex: none; width: 28px; 
   padding: 2px 2px 0; overflow-x: auto; scrollbar-width: none; overscroll-behavior-x: contain;
 }
 .thread-tablist::-webkit-scrollbar { display: none; }
-.thread-tabs[data-overflow~="start"] .thread-tablist { mask-image: linear-gradient(to right, transparent, #000 28px); }
-.thread-tabs[data-overflow~="end"] .thread-tablist { mask-image: linear-gradient(to left, transparent, #000 28px); }
+.thread-tabs[data-overflow~="start"] .thread-tablist { mask-image: linear-gradient(to right, transparent, black 28px); }
+.thread-tabs[data-overflow~="end"] .thread-tablist { mask-image: linear-gradient(to left, transparent, black 28px); }
 .thread-tabs[data-overflow~="start"][data-overflow~="end"] .thread-tablist {
-  mask-image: linear-gradient(to right, transparent, #000 28px, #000 calc(100% - 28px), transparent);
+  mask-image: linear-gradient(to right, transparent, black 28px, black calc(100% - 28px), transparent);
 }
 .thread-picker { display: none; min-width: 0; flex: 1; }
 .thread-picker select { width: 100%; min-width: 0; }

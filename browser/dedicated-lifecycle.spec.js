@@ -52,7 +52,7 @@ test('a flagged track copies secrets, becomes ready, and deletes its own machine
   await expect(page.locator('#rebuild-track-machine')).toHaveCount(0);
   // A long name and every header button must not widen the track past its
   // column: the pinned inspector would cover Close and the composer's edge,
-  // and its resize handle would swallow clicks on Add thread.
+  // and its resize handle would swallow clicks on the thread strip's "+" and ⋯.
   // Rebuild is only in the header's ⋯ (RAV-82), beside Close.
   const more = page.getByRole('button', { name: 'More for this track', exact: true });
   await expect(page.getByRole('button', { name: 'Rebuild machine', exact: true })).toBeHidden();
@@ -65,11 +65,13 @@ test('a flagged track copies secrets, becomes ready, and deletes its own machine
       track: right('.track-workspace'),
       close: right('#track-more-trigger'),
       add: right('.thread-add'),
+      threadMore: right('#thread-more-trigger'),
     };
   });
   expect(layout.track).toBeLessThanOrEqual(layout.inspector);
   expect(layout.close).toBeLessThanOrEqual(layout.inspector);
   expect(layout.add).toBeLessThanOrEqual(layout.inspector - 8);
+  expect(layout.threadMore).toBeLessThanOrEqual(layout.inspector - 8);
   await page.getByRole('button', { name: 'Rebuild machine', exact: true }).click();
   const rebuild = page.getByRole('dialog', { name: 'Rebuild machine', exact: true });
   await expect(rebuild).toContainText("Rebuilding deletes only this track's machine");
