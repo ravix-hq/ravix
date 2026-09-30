@@ -14,10 +14,10 @@ test('Machine saves everything behind one Save & rebuild; old tabs land on their
   test.setTimeout(120_000);
   await signIn(page, 'dana', '/home');
   await connectClaude(page);
-  await page.getByRole('button', { name: 'Add a project', exact: true }).first().click();
-  const create = page.getByRole('dialog', { name: 'New project' });
+  await page.getByRole('button', { name: 'Add a repository', exact: true }).first().click();
+  const create = page.getByRole('dialog', { name: 'Add a repository' });
   await create.getByLabel('Project name', { exact: true }).fill('Machine page browser');
-  await create.getByRole('button', { name: 'Create project', exact: true }).click();
+  await create.getByRole('button', { name: 'Create scratch project', exact: true }).click();
   await expect(create).not.toBeVisible();
   const projectPath = new URL(page.url()).pathname;
 

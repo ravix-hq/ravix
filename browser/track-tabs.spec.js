@@ -8,12 +8,12 @@ test('project track links scroll vertically and preserve the mobile drawer', asy
   // Keep mockuser's first-visit state for the onboarding walkthrough.
   await signIn(page, 'eli');
   await connectClaude(page);
-  await page.getByRole('button', { name: 'Add a project', exact: true }).first().click();
-  const project = page.getByRole('dialog', { name: 'New project' });
+  await page.getByRole('button', { name: 'Add a repository', exact: true }).first().click();
+  const project = page.getByRole('dialog', { name: 'Add a repository' });
   await project.getByLabel('Project name', { exact: true }).fill('Scrolling tracks');
-  await expect(project.locator('#project-repositories option')).not.toHaveCount(0);
-  await project.getByLabel('Repository', { exact: true }).fill('mockuser/atlas-api');
-  await project.getByRole('button', { name: 'Create project' }).click();
+  await expect(project.locator('#project-repositories input[type=radio]')).not.toHaveCount(0);
+  await project.getByRole('radio', { name: 'mockuser/atlas-api', exact: true }).check();
+  await project.getByRole('button', { name: 'Add repository' }).click();
   await expect(project).not.toBeVisible();
   for (let index = 0; index < 12; index++) {
     await page.locator('#yard .workspace-project.current .project-add').click();
@@ -54,11 +54,15 @@ test('project track links scroll vertically and preserve the mobile drawer', asy
       expect((await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze()).violations).toEqual([]);
     }
   }
-  // The direct action still confirms and restores focus when dismissed.
+  // Close is in the header's ⋯ (RAV-82). It still confirms, and dismissing
+  // returns focus to ⋯.
   const header = page.locator('.track-crumbs');
+  const more = header.getByRole('button', { name: 'More for this track', exact: true });
   const close = header.getByRole('button', { name: 'Close track', exact: true });
   await expect(header.getByRole('button', { name: 'Project settings', exact: true })).toHaveCount(0);
   await expect(header.getByRole('button', { name: /^Track sharing/ })).toHaveAttribute('title', /viewing now/);
+  await expect(close).toBeHidden();
+  await more.click();
   await expect(close).toBeVisible();
   await close.click();
   const dialog = page.getByRole('dialog', { name: 'Close track', exact: true });
@@ -67,5 +71,5 @@ test('project track links scroll vertically and preserve the mobile drawer', asy
   await expectInlineChoice(dialog.locator('label[for="close-force"]'));
   await page.keyboard.press('Escape');
   await expect(dialog).toHaveCount(0);
-  await expect(close).toBeFocused();
+  await expect(more).toBeFocused();
 });

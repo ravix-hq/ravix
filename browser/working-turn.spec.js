@@ -21,10 +21,10 @@ test('the tab, Stop, the machine chip and Checks agree throughout a turn', async
   test.setTimeout(150_000);
   await signIn(page, 'workingturn');
   await connectClaude(page);
-  await page.getByRole('button', { name: 'Add a project', exact: true }).first().click();
-  const project = page.getByRole('dialog', { name: 'New project', exact: true });
+  await page.getByRole('button', { name: 'Add a repository', exact: true }).first().click();
+  const project = page.getByRole('dialog', { name: 'Add a repository', exact: true });
   await project.getByLabel('Project name', { exact: true }).fill('Working turn');
-  await project.getByRole('button', { name: 'Create project', exact: true }).click();
+  await project.getByRole('button', { name: 'Create scratch project', exact: true }).click();
   await expect(project).toHaveCount(0);
   await page.locator('#yard .workspace-project.current .project-add').click();
   await page.getByRole('dialog', { name: 'New track', exact: true })

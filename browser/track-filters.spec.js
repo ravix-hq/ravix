@@ -16,10 +16,10 @@ test('Mine/Everyone filters the rail by creator, and Show closed lists closed tr
   test.setTimeout(120_000);
   await signIn(page, 'filterowner');
   await connectClaude(page);
-  await page.getByRole('button', { name: 'Add a project', exact: true }).first().click();
-  const project = page.getByRole('dialog', { name: 'New project', exact: true });
+  await page.getByRole('button', { name: 'Add a repository', exact: true }).first().click();
+  const project = page.getByRole('dialog', { name: 'Add a repository', exact: true });
   await project.getByLabel('Project name', { exact: true }).fill('Filter project');
-  await project.getByRole('button', { name: 'Create project', exact: true }).click();
+  await project.getByRole('button', { name: 'Create scratch project', exact: true }).click();
   await expect(project).toHaveCount(0);
   const projectPath = new URL(page.url()).pathname;
   // The owner's People is the project's Access settings page (RAV-74).
@@ -76,6 +76,7 @@ test('Mine/Everyone filters the rail by creator, and Show closed lists closed tr
   // Close one of the owner's tracks, then find it again through the project menu.
   await rail.getByRole('link', { name: /Owner finished/ }).click();
   await expect(page.locator('.track-crumbs')).toContainText('Owner finished');
+  await page.getByRole('button', { name: 'More for this track', exact: true }).click();
   await page.getByRole('button', { name: 'Close track', exact: true }).click();
   const close = page.getByRole('dialog', { name: 'Close track', exact: true });
   await close.getByRole('button', { name: 'Close track', exact: true }).click();

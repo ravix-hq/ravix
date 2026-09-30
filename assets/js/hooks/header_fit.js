@@ -8,7 +8,7 @@
 // viewer count, the close button) is compact too, whatever its labels say. Layout is the browser's
 // to measure, which is why this is a hook and not a template.
 
-// The grid gap a label brings back with it (`.track-header-status .chip`).
+// The grid gap a label brings back with it (`.track-crumbs .track-plan-chip`).
 export const LABEL_GAP = 5
 
 const cut = el => el.scrollWidth > el.clientWidth + 1

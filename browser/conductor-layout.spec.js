@@ -10,10 +10,10 @@ test('conversation tabs, project picker, settings gears and inspector at desktop
   await connectClaude(page);
   const projects = [];
   for (const name of ['Layout alternate', 'Layout current']) {
-    await page.getByRole('button', { name: 'Add a project', exact: true }).first().click();
-    const dialog = page.getByRole('dialog', { name: 'New project', exact: true });
+    await page.getByRole('button', { name: 'Add a repository', exact: true }).first().click();
+    const dialog = page.getByRole('dialog', { name: 'Add a repository', exact: true });
     await dialog.getByLabel('Project name', { exact: true }).fill(name);
-    await dialog.getByRole('button', { name: 'Create project', exact: true }).click();
+    await dialog.getByRole('button', { name: 'Create scratch project', exact: true }).click();
     await expect(dialog).not.toBeVisible();
     projects.push(new URL(page.url()).pathname.split('/')[2]);
   }
@@ -28,7 +28,9 @@ test('conversation tabs, project picker, settings gears and inspector at desktop
     await page.getByRole('button', { name: 'Add thread', exact: true }).click();
     const draft = page.locator('#draft-runtime');
     await expect(draftChoice(page, 'runtime')).toHaveValue('claude');
-    await composer.fill(`Layout thread ${i + 1}`);
+    // Long enough that four title-only tabs (RAV-82) still overrun the row:
+    // a thread is titled with its first message's first five words.
+    await composer.fill(`Layout thread ${i + 1} overflowing horizontally`);
     await page.getByRole('button', { name: 'Send', exact: true }).click();
     await expect(draft).not.toBeVisible();
     await expect(page.locator('#thread-tab-draft')).toHaveCount(0);

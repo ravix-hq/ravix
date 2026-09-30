@@ -2083,6 +2083,13 @@ defmodule Ravix.ProjectsTest do
       member = person("member")
       insert_project_member(project, member)
       track = insert_track(project: project, id: "t", slug: "t")
+
+      # One from an earlier change keeps the repository it was cut from.
+      older =
+        insert_track(project: project, id: "o", slug: "o", closed_at: DateTime.utc_now())
+        |> Ecto.Changeset.change(repo_full_name: "owner/older", repo_installation_id: 9)
+        |> Repo.update!()
+
       readable([repo("owner/new", private: false, default_branch: "trunk") |> Map.put(:id, 42)])
       quiet_peers()
 
@@ -2140,7 +2147,32 @@ defmodule Ravix.ProjectsTest do
       assert Repo.get_by!(Ravix.Projects.ProjectMember, project_id: project.id).user_id ==
                member.id
 
-      assert Repo.get!(Ravix.Tracks.Track, track.id).project_id == project.id
+      # The tracks are branches of the old repository, and say so.
+      assert %Ravix.Tracks.Track{repo_full_name: "owner/old", repo_installation_id: 1} =
+               Repo.get!(Ravix.Tracks.Track, track.id)
+
+      assert %Ravix.Tracks.Track{repo_full_name: "owner/older", repo_installation_id: 9} =
+               Repo.get!(Ravix.Tracks.Track, older.id)
+    end
+
+    test "secrets survive: the vault and the environment's secrets are never touched", ctx do
+      readable([repo("owner/new")])
+      quiet_peers()
+
+      # Every secrets path is left unscripted, so the fake refuses any call
+      # to one; and the environment patch names only the clone.
+      client =
+        fountain(
+          [{%{method: "PUT", path: "/api/environments/e"}, {200, [], %{data: %{id: "e"}}}}] ++
+            rebuild_script()
+        )
+
+      assert {:ok, _} = Projects.change_repository(ctx.owner, ctx.project.id, "owner/new")
+      assert Map.keys(body_of(client, "PUT", "/api/environments/e")) == ["repositories"]
+      refute Enum.any?(requests(client), fn {_, path} -> path =~ ~r{/secrets|/vaults} end)
+      assert %Project{vault_id: "v", environment_id: "e"} = Repo.get!(Project, ctx.project.id)
+      # The new agent is built on the same vault, so its secrets reach it.
+      assert body_of(client, "POST", "/api/agents")["vault_id"] == "v"
     end
 
     test "a scratch project can be given a repository", ctx do
@@ -2198,11 +2230,17 @@ defmodule Ravix.ProjectsTest do
     test "nobody but the owner, and nobody with another project's id", ctx do
       no_github()
       client = fountain()
-      member = person("member")
-      insert_project_member(ctx.project, member, role: :admin)
+
+      members =
+        for role <- [:admin, :write, :read] do
+          member = person("member-#{role}")
+          insert_project_member(ctx.project, member, role: role)
+          member
+        end
+
       stranger = person("stranger", "stranger-token")
 
-      for user <- [member, stranger] do
+      for user <- members ++ [stranger] do
         assert {:error, :not_found} =
                  Projects.change_repository(user, ctx.project.id, "owner/new")
 
@@ -2215,6 +2253,7 @@ defmodule Ravix.ProjectsTest do
     end
 
     test "Fountain refusing the new clone puts the row back", ctx do
+      track = insert_track(project: ctx.project, id: "t", slug: "t")
       readable([repo("owner/new")])
       reject(&Ravix.Tracks.close_all_for_rebuild/2)
 
@@ -2233,6 +2272,10 @@ defmodule Ravix.ProjectsTest do
                installation_id: 1,
                agent_id: "a"
              } = Repo.get!(Project, ctx.project.id)
+
+      # The stamp went in with the change and stays: it names the repository
+      # the project is on again, so it reads the same.
+      assert Repo.get!(Ravix.Tracks.Track, track.id).repo_full_name == "owner/old"
 
       refute_received {:hub, _}
     end
@@ -2325,7 +2368,8 @@ defmodule Ravix.ProjectsTest do
         {"GET", "/user/installations/2/repositories", {500, %{message: "down"}}}
       ])
 
-      assert {:ok, ["owner/new"]} = Projects.repository_choices(owner, project.id)
+      assert {:ok, [%{repo: "owner/new", private: true}]} =
+               Projects.repository_choices(owner, project.id)
     end
   end
 

@@ -475,21 +475,25 @@ defmodule Ravix.Projects.Machine do
             Map.take(
               project,
               ~w(repo_full_name repo_private default_branch installation_id github_repo_id workspace_installation_id)a
-            )
+            ),
+            stamp: false
           )
 
         {:error, reason}
     end
   end
 
+  # The one rebuild there is (`rebuild/2`, as Machine's Save & rebuild and
+  # the Danger zone's Rebuild use). On the maintenance path it retires the
+  # shared machine and keeps the agents, so their prompts are rewritten.
   defp rebuild_on(changed, client) do
-    if Project.maintenance?(changed) do
-      with {:ok, outcome} <- Projects.Deletion.retire_shared(changed, client),
-           :ok <- rewrite_prompts(changed, client),
-           do: {:ok, outcome}
-    else
-      rebuild(changed, client)
-    end
+    with {:ok, outcome} <- rebuild(changed, client),
+         :ok <- kept_agents(changed, client),
+         do: {:ok, outcome}
+  end
+
+  defp kept_agents(project, client) do
+    if Project.maintenance?(project), do: rewrite_prompts(project, client), else: :ok
   end
 
   # The agents stay on the maintenance path, so their system prompts, which
