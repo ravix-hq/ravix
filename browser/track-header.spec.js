@@ -57,7 +57,7 @@ test('the track header keeps the project and title readable and still as late pa
     const titleStyle = getComputedStyle(title);
     const titleText = title.clientWidth - parseFloat(titleStyle.paddingLeft) - parseFloat(titleStyle.paddingRight);
     const label = document.querySelector('.project-crumb .project-label');
-    const close = document.querySelector('.track-crumbs [aria-label="Close track"]').getBoundingClientRect();
+    const close = document.querySelector('#track-more-trigger').getBoundingClientRect();
     return {
       header: box('header.track-crumbs'),
       project: box('.project-crumb'),

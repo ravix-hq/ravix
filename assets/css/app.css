@@ -806,12 +806,13 @@ html[data-yard="closed"] .workspace-trigger-skeleton { flex: none; width: 28px; 
    (RAV-63). Its two groups are `display: contents`, so every crumb and chip
    is a flex item of the header with its own shrink factor and floor. Flex
    takes space from items in proportion to factor times width, so the
-   factors are far apart: the status chips (a million) give way all but
-   entirely before the branch (ten thousand), and the branch before the
-   project and the title (1), whose share is then well under a pixel. Each stops at a floor:
-   a status chip at its icon, dot or count, the branch at a stub, the title
-   at about sixteen characters and the project at twelve. A crumb shorter
-   than its floor is marked by the server as not `.long` and never shrinks. */
+   factors are far apart: the plan chip (a million) gives way all but
+   entirely before the project and the title (1), whose share is then well
+   under a pixel. Each stops at a floor: the plan chip at its count, the
+   title at about sixteen characters and the project at twelve. A crumb
+   shorter than its floor is marked by the server as not `.long` and never
+   shrinks. Since RAV-82 the rest is Share, the ⋯ popover, and the machine
+   chip only while its state is out of the ordinary, always in words. */
 .track-crumbs { flex-wrap: nowrap; }
 .track-header-path, .track-header-status { display: contents; }
 .track-crumbs > *, .track-header-path > *, .track-header-status > *, .track-plan-items > * { flex: none; }
@@ -823,18 +824,34 @@ html[data-yard="closed"] .workspace-trigger-skeleton { flex: none; width: 28px; 
 /* Label columns are `minmax(0, max-content)`: a grid's smallest width
    counts a column's minimum rather than its text, which is what lets a chip
    give way to its icon while a flex chip would stop at its longest word. */
-.track-header-status .chip, .track-crumbs .track-plan-chip {
+.track-crumbs .track-plan-chip {
   display: inline-grid; grid-auto-flow: column; grid-template-columns: auto minmax(0, max-content);
   align-items: center; --label-gap: 5px; gap: var(--label-gap); flex: 0 1000000 auto; min-width: min-content; max-width: 18rem;
 }
 .track-crumbs .track-plan-toggle { grid-template-columns: auto minmax(0, max-content) auto auto; --label-gap: 4px; }
-.track-header-status .chip-label, .track-crumbs .track-plan-chip .truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.track-crumbs .track-plan-chip .truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* HeaderFit's compact state: a label that would be cut is not drawn at
    all, so each chip is its icon, dot or count. Width, not `display`, so the
    hook can still read how wide each label would be. */
 .track-crumbs[data-compact] [data-fit-label] { max-width: 0; margin-left: calc(-1 * var(--label-gap)); }
 .track-crumbs[data-compact] .track-plan-sep { display: none; }
-.track-header-status .status-note { flex: 0 1000000 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Who is here, on Share: faces overlapping to the left, as a stack. */
+.track-share { gap: 6px; }
+.track-viewers { display: inline-flex; align-items: center; padding-left: 4px; }
+.track-viewer {
+  display: grid; place-items: center; width: 20px; height: 20px; margin-left: -6px; overflow: hidden;
+  border-radius: 50%; border: 2px solid var(--panel); background: var(--surface);
+  font-size: 10px; color: var(--dim);
+}
+.track-viewer img { width: 100%; height: 100%; object-fit: cover; }
+.track-viewer-more { width: auto; min-width: 20px; padding: 0 4px; border-radius: 999px; }
+/* The ⋯ popover's facts: whose machine, who pays. Read, not chosen. */
+.track-more { width: min(300px, calc(100vw - 32px)); }
+.track-more hr { margin: 4px 2px; border: none; border-top: 1px solid var(--line); }
+.track-facts { margin: 0; padding: 4px 0; }
+.track-facts > div { display: flex; align-items: baseline; gap: 10px; padding: 4px 8px; font-size: 13px; }
+.track-facts dt { flex: none; width: 14px; color: var(--dim); }
+.track-facts dd { margin: 0; min-width: 0; }
 /* Header icons are named by aria-label and tooltip; closing confirms first. */
 .crumbs .icon-button { justify-content: center; width: 30px; height: 30px; padding: 0; }
 
@@ -1386,7 +1403,6 @@ html[data-yard="closed"] .workspace-trigger-skeleton { flex: none; width: 28px; 
 }
 .thread-tabs button:hover:not(:disabled) { background: transparent; border-color: transparent; color: var(--ink); }
 .thread-tab { max-width: 360px; }
-.thread-tab-state { flex: none; }
 .threads-working { margin: 0; padding: 4px 20px; color: var(--dim); font-size: 12px; overflow-wrap: anywhere; }
 .thread-tab[aria-selected="true"],
 .thread-tab[aria-selected="true"]:hover:not(:disabled) {

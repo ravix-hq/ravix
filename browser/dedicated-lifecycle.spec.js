@@ -53,13 +53,17 @@ test('a flagged track copies secrets, becomes ready, and deletes its own machine
   // A long name and every header button must not widen the track past its
   // column: the pinned inspector would cover Close and the composer's edge,
   // and its resize handle would swallow clicks on Add thread.
-  await expect(page.locator('.track-crumbs').getByRole('button', { name: 'Rebuild machine', exact: true })).toBeVisible();
+  // Rebuild is only in the header's ⋯ (RAV-82), beside Close.
+  const more = page.getByRole('button', { name: 'More for this track', exact: true });
+  await expect(page.getByRole('button', { name: 'Rebuild machine', exact: true })).toBeHidden();
+  await more.click();
+  await expect(page.locator('#track-more-panel').getByRole('button', { name: 'Rebuild machine', exact: true })).toBeVisible();
   const layout = await page.evaluate(() => {
     const right = sel => document.querySelector(sel).getBoundingClientRect().right;
     return {
       inspector: document.querySelector('#inspector').getBoundingClientRect().left,
       track: right('.track-workspace'),
-      close: right('.track-crumbs [aria-label="Close track"]'),
+      close: right('#track-more-trigger'),
       add: right('.thread-add'),
     };
   });
@@ -93,6 +97,7 @@ test('a flagged track copies secrets, becomes ready, and deletes its own machine
   await page.goBack();
   await page.goBack();
   await expect(page).toHaveURL(trackUrl);
+  await more.click();
   await page.getByRole('button', { name: 'Close track', exact: true }).click();
   const close = page.getByRole('dialog', { name: 'Close track', exact: true });
   await expect(close).toContainText('uncommitted changes and unpushed commits will be deleted');

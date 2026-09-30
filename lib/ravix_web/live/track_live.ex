@@ -1995,19 +1995,20 @@ defmodule RavixWeb.TrackLive do
 
   defp billing_notice(socket, _track), do: socket
 
-  # "Paid by …" beside the model picker and in the header (ADR 0009 phase 6):
-  # the creator of a creator-billed track sees themselves, everybody else
-  # sees who; an owner-billed track names its project's owner.
+  # "Paid by …" (ADR 0009 phase 6), said once, in the header's ⋯ popover
+  # (RAV-82). Until then the header and the composer both said it, and the
+  # header also said "Runs on @owner's agent", the same fact in other words.
+  # The creator of a creator-billed track sees themselves, everybody else
+  # sees who; an owner-billed track names its project's owner, and its owner
+  # is not told they pay for their own project.
+  defp payer_shown?(track, project), do: track.billing == :creator or project.role != :owner
+
   defp payer_label(%{payer?: true}), do: "Paid by you"
 
   defp payer_label(%{payer_login: login}) when is_binary(login) and login != "",
     do: "Paid by @#{login}"
 
   defp payer_label(%{owner_login: login}), do: "Paid by @#{login}"
-
-  defp agent_owner_label(project, track),
-    do:
-      "Runs on @#{project.owner_login}'s #{RavixWeb.AgentName.label(track.runtime || project.runtime)}"
 
   defp machine_scope(%{sandbox_layout: :dedicated}), do: "Own machine"
   defp machine_scope(_track), do: "Shared machine"
@@ -2332,6 +2333,7 @@ defmodule RavixWeb.TrackLive do
   attr :adding, :boolean, default: false
   attr :enabled, :boolean, required: true
   attr :draft, :map, default: nil, doc: "this page's unsent thread, if it has one"
+  attr :track_label, :string, default: nil, doc: "`Track.label/1`: the first thread's name"
 
   @doc """
   The track's threads as a row of tabs above the conversation, with "+" at the
@@ -2341,19 +2343,26 @@ defmodule RavixWeb.TrackLive do
   A draft ("+" pressed, nothing sent yet) is the trailing tab, with its own
   close button beside the row: a tablist holds tabs and nothing else.
 
+  A tab shows its thread's title and nothing else (RAV-82). Its agent, model
+  and state are in its tooltip and accessible name; a dot is drawn only while
+  it is running or has failed. The track's first thread, which every track
+  has and which is stored as "Default", is named after the track.
+
   Manual-activation tabs use roving focus, Enter/Space selection, and one
   associated transcript panel. Narrow screens use the native picker.
   """
   def thread_tabs(assigns) do
     drafting? = match?(%{selected?: true}, assigns.draft)
     shown = if drafting?, do: nil, else: assigns.thread_id
+    threads = Enum.map(assigns.threads, &first_thread_named(&1, assigns.track_label))
 
     assigns =
       assign(assigns,
+        threads: threads,
         shown: shown,
         draft_label: assigns.draft && draft_label(assigns.draft),
         working:
-          Enum.filter(assigns.threads, fn thread ->
+          Enum.filter(threads, fn thread ->
             thread.id != shown and tab_status(thread, assigns.states) == "Running"
           end)
       )
@@ -2388,14 +2397,14 @@ defmodule RavixWeb.TrackLive do
           phx-click="select-thread"
           phx-value-thread_id={thread.id}
           data-thread-id={thread.id}
-          title={thread.title <> " · " <> agent_model(Map.get(thread, :runtime), Map.get(thread, :model))}
+          title={thread.title <> " · " <> agent_model(Map.get(thread, :runtime), Map.get(thread, :model)) <> " · " <> tab_status(thread, @states)}
           aria-label={thread.title <> " · " <> agent_model(Map.get(thread, :runtime), Map.get(thread, :model)) <> " · " <> tab_status(thread, @states) <> if(thread.unread && thread.id != @shown, do: " (unread)", else: "")}
         >
-          <.status_dot status={String.downcase(tab_status(thread, @states))} />
-          <span class="thread-tab-title">{thread.title}</span><span class="thread-tab-agent"> · {agent_model(
-            Map.get(thread, :runtime),
-            Map.get(thread, :model)
-          )}</span><span class="thread-tab-state"> · {tab_status(thread, @states)}</span><span
+          <.status_dot
+            :if={tab_status(thread, @states) in ["Running", "Failed"]}
+            status={String.downcase(tab_status(thread, @states))}
+          />
+          <span class="thread-tab-title">{thread.title}</span><span
             :if={thread.unread && thread.id != @shown}
             class="thread-unread"
           ><span class="sr-only">(unread)</span></span>
@@ -2415,10 +2424,7 @@ defmodule RavixWeb.TrackLive do
           title={@draft_label}
           aria-label={@draft_label <> " · Not started"}
         >
-          <span class="thread-tab-title">New thread</span><span
-            :if={@draft.runtime}
-            class="thread-tab-agent"
-          > · {agent_model(@draft.runtime, @draft.model)}</span>
+          <span class="thread-tab-title">New thread</span>
         </button>
       </div>
       <button
@@ -2451,6 +2457,12 @@ defmodule RavixWeb.TrackLive do
     </p>
     """
   end
+
+  defp first_thread_named(%{default: true, title: "Default"} = thread, label)
+       when is_binary(label) and label != "",
+       do: %{thread | title: label}
+
+  defp first_thread_named(thread, _label), do: thread
 
   defp draft_label(%{runtime: nil}), do: "New thread"
   defp draft_label(draft), do: "New thread · " <> agent_model(draft.runtime, draft.model)
@@ -2997,20 +3009,52 @@ defmodule RavixWeb.TrackLive do
 
   # The header's state chip, and the page's one live region for the machine's
   # state. Only the word is announced: the detail can tick (a retry
-  # countdown), so it describes the chip rather than announcing.
+  # countdown), so it describes the chip rather than announcing. Idle and
+  # Working are the normal states, and the header does not draw them
+  # (RAV-82): the chip is then visually hidden, not removed, so the live
+  # region stays put and still announces the change. Its word is always
+  # drawn whole; it never shrinks to its dot.
   defp machine_chip(assigns) do
+    assigns = assign(assigns, normal?: assigns.machine.state in [:idle, :working])
+
     ~H"""
     <span
       id="track-machine-state"
-      class={"chip machine-chip machine-#{@machine.state}"}
+      class={["chip machine-chip machine-#{@machine.state}", @normal? && "sr-only"]}
       role="status"
       aria-live="polite"
       aria-describedby={@machine.detail && "track-machine-detail"}
       title={@machine.detail || MachineState.label(@machine.state)}
-    ><.status_dot status={to_string(@machine.state)} /><span class="chip-label" data-fit-label>{MachineState.label(
+    ><.status_dot status={to_string(@machine.state)} /><span class="chip-label">{MachineState.label(
       @machine.state
     )}</span></span>
     <span :if={@machine.detail} id="track-machine-detail" class="sr-only">{@machine.detail}</span>
+    """
+  end
+
+  attr :present, :list, required: true
+
+  # Who is looking at the track now, as Share's stacked avatars (RAV-82)
+  # rather than a bare count. The count is said in words to assistive tech;
+  # past three faces the rest are a "+n".
+  defp viewers(assigns) do
+    assigns =
+      assign(assigns, shown: Enum.take(assigns.present, 3), more: length(assigns.present) - 3)
+
+    ~H"""
+    <span :if={@present != []} class="track-viewers">
+      <span
+        :for={viewer <- @shown}
+        class="track-viewer"
+        aria-hidden="true"
+        title={"@" <> viewer.login}
+      >
+        <img :if={Map.get(viewer, :avatar_url)} src={viewer.avatar_url} alt="" loading="lazy" />
+        <span :if={!Map.get(viewer, :avatar_url)}>{viewer.login |> String.first() |> String.upcase()}</span>
+      </span>
+      <span :if={@more > 0} class="track-viewer track-viewer-more" aria-hidden="true">+{@more}</span>
+      <span class="sr-only">{length(@present)} viewing now</span>
+    </span>
     """
   end
 

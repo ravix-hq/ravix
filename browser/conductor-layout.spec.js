@@ -28,7 +28,9 @@ test('conversation tabs, project picker, settings gears and inspector at desktop
     await page.getByRole('button', { name: 'Add thread', exact: true }).click();
     const draft = page.locator('#draft-runtime');
     await expect(draftChoice(page, 'runtime')).toHaveValue('claude');
-    await composer.fill(`Layout thread ${i + 1}`);
+    // Long enough that four title-only tabs (RAV-82) still overrun the row:
+    // a thread is titled with its first message's first five words.
+    await composer.fill(`Layout thread ${i + 1} overflowing horizontally`);
     await page.getByRole('button', { name: 'Send', exact: true }).click();
     await expect(draft).not.toBeVisible();
     await expect(page.locator('#thread-tab-draft')).toHaveCount(0);
