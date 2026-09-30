@@ -4207,6 +4207,159 @@ defmodule RavixWeb.TrackLiveTest do
   # the next thing a test measures from paying for somebody else's read.
   # A turn's opening event as the feed serves it with `?prompts=true`, which is
   # where the transcript reads what somebody asked for.
+  describe "the composer's @ files and / commands" do
+    defp composer_commands(view) do
+      view
+      |> render()
+      |> LazyHTML.from_fragment()
+      |> LazyHTML.query("#composer-form textarea[phx-hook=Composer]")
+      |> LazyHTML.attribute("data-commands")
+      |> case do
+        [json] -> json |> Jason.decode!() |> Enum.map(&{&1["name"], &1["source"], &1["event"]})
+        [] -> nil
+      end
+    end
+
+    defp advertised(id, names) do
+      line =
+        Jason.encode!(%{
+          jsonrpc: "2.0",
+          method: "session/update",
+          params: %{
+            update: %{
+              sessionUpdate: "available_commands_update",
+              availableCommands: Enum.map(names, &%{name: &1, description: "Does #{&1}"})
+            }
+          }
+        })
+
+      %{"id" => id, "turn_id" => "t1", "kind" => "output", "stream" => "acp", "data" => line}
+    end
+
+    test "the box advertises them, names its list, and offers Ravix's actions as commands", ctx do
+      assert has_element?(
+               ctx.view,
+               "#composer-form textarea[aria-controls=composer-suggestions][aria-autocomplete=list]" <>
+                 "[aria-keyshortcuts='Control+L Meta+L'][data-files-event=mention-files]" <>
+                 "[placeholder='Ask to make changes, @mention files, run /commands']"
+             )
+
+      assert has_element?(ctx.view, "#composer-suggestions[role=listbox][phx-update=ignore]")
+      assert has_element?(ctx.view, "#composer-suggestions-status[role=status].sr-only")
+      assert has_element?(ctx.view, "#composer-shortcut kbd", "Ctrl+L")
+
+      # The track is still opening, so, like the Stop button, `/stop` is there.
+      assert composer_commands(ctx.view) == [
+               {"stop", "ravix", "interrupt"},
+               {"new", "ravix", "draft-thread"},
+               {"comment", "ravix", "composer-mode"},
+               {"changes", "ravix", "panel"},
+               {"checks", "ravix", "panel"}
+             ]
+
+      # Comment mode has its own list of people and no commands.
+      render_click(ctx.view, "composer-mode", %{mode: "comment"})
+      assert has_element?(ctx.view, "#composer-form textarea[aria-controls=mention-options]")
+      refute has_element?(ctx.view, "#composer-suggestions")
+      assert composer_commands(ctx.view) == nil
+    end
+
+    test "the agent's advertised commands come first, from the transcript and then live", ctx do
+      page =
+        Transcript.page(
+          [opened(1, "t1", "Hello"), advertised(2, ["review", "has space"])],
+          "claude"
+        )
+
+      stub(Tracks, :events, fn _, _, _ -> {:ok, page} end)
+      render_click(ctx.view, "retry-load")
+      render_async(ctx.view)
+
+      assert [{"review", "agent", nil} | ravix] = composer_commands(ctx.view)
+      assert length(ravix) == 5
+
+      assert has_element?(
+               ctx.view,
+               "#composer-form textarea[placeholder='Add a follow-up, @mention files, run /commands']"
+             )
+
+      # A newer list replaces it; output that is not a list leaves it alone.
+      send(ctx.view.pid, {:transcript, ctx.track.id, advertised(3, ["plan", "compact"])})
+      send(ctx.view.pid, {:transcript, ctx.track.id, %{advertised(4, []) | "data" => "text"}})
+
+      assert [{"plan", "agent", nil}, {"compact", "agent", nil} | _] =
+               composer_commands(drawn(ctx.view))
+
+      # Stop is a command only while there is something to stop.
+      Repo.update!(
+        Ecto.Changeset.change(Repo.get!(Track, ctx.track.id),
+          setup_state: "ready",
+          opened_at: DateTime.utc_now()
+        )
+      )
+
+      send(
+        ctx.view.pid,
+        {:hub, %Event{name: :tracks, project_id: ctx.project.id, track_id: ctx.track.id}}
+      )
+
+      render_async(ctx.view)
+      refute Enum.any?(composer_commands(ctx.view), &match?({"stop", _, _}, &1))
+    end
+
+    test "@ reads the track's files once and answers from what it read", ctx do
+      index = %Files.Index{paths: ["README.md", "lib/app.ex"], truncated: false}
+      test_pid = self()
+
+      expect(Tracks, :file_index, fn user, id ->
+        send(test_pid, {:indexed, user.id, id})
+        {:ok, index}
+      end)
+
+      render_hook(ctx.view, "mention-files", %{})
+      render_async(ctx.view)
+      assert_receive {:indexed, user_id, track_id}
+      assert {user_id, track_id} == {ctx.user.id, ctx.track.id}
+
+      assert_push_event(ctx.view, "composer:files", %{
+        paths: ["README.md", "lib/app.ex"],
+        truncated: false
+      })
+
+      # The second `@` is answered from memory; `expect` above allows one read.
+      render_hook(ctx.view, "mention-files", %{})
+      assert_push_event(ctx.view, "composer:files", %{paths: ["README.md", "lib/app.ex"]})
+    end
+
+    test "@ on a sleeping or unreachable machine says so instead of listing nothing", ctx do
+      stub(Tracks, :file_index, fn _, _ -> {:error, :machine_asleep} end)
+      render_hook(ctx.view, "mention-files", %{})
+      render_async(ctx.view)
+      assert_push_event(ctx.view, "composer:files", %{paths: [], error: asleep})
+      assert asleep =~ "asleep"
+
+      stub(Tracks, :file_index, fn _, _ ->
+        {:error, {:conflict, "no_machine", "No machine yet."}}
+      end)
+
+      render_hook(ctx.view, "mention-files", %{})
+      render_async(ctx.view)
+      assert_push_event(ctx.view, "composer:files", %{paths: [], error: "No machine yet."})
+
+      stub(Tracks, :file_index, fn _, _ -> exit(:boom) end)
+
+      ExUnit.CaptureLog.capture_log(fn ->
+        render_hook(ctx.view, "mention-files", %{})
+        render_async(ctx.view)
+      end)
+
+      assert_push_event(ctx.view, "composer:files", %{
+        paths: [],
+        error: "Could not read the files."
+      })
+    end
+  end
+
   defp opened(id, turn, prompt) do
     %{
       "id" => id,
@@ -4647,7 +4800,12 @@ defmodule RavixWeb.TrackLiveTest do
     refute has_element?(ctx.view, ".track-ribbon", ctx.track.workdir)
     refute has_element?(ctx.view, "#turns-bootstrap")
     assert has_element?(ctx.view, ".workspace-welcome", "What are we working on?")
-    assert has_element?(ctx.view, "#composer-form textarea[placeholder='Ask to make changes…']")
+
+    assert has_element?(
+             ctx.view,
+             "#composer-form textarea[placeholder='Ask to make changes, @mention files, run /commands']"
+           )
+
     assert has_element?(ctx.view, ~s|.jump-latest svg path[d="M12 5v14M6 13l6 6 6-6"]|)
   end
 

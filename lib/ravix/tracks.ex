@@ -2281,6 +2281,44 @@ defmodule Ravix.Tracks do
     end
   end
 
+  @doc """
+  The files the composer's `@` searches: the Files panel's listing, walked
+  breadth first from the track's working directory and bounded. See
+  `Ravix.Tracks.Files.index/2` for the bounds and for why nothing outside the
+  worktree is read. Like the panel, it never wakes a parked machine: the
+  first read answers `{:error, :machine_asleep}` on a suspended one, and a
+  directory that fails later is skipped and reported as `truncated`.
+  """
+  @spec file_index(User.t(), String.t()) :: {:ok, Files.Index.t()} | {:error, reason()}
+  def file_index(%User{} = user, track_id) do
+    with {:ok, track, client, sandbox_id} <- machine_read(user, track_id),
+         {:ok, raw} <-
+           disk_result(track, Fountain.listing(client, sandbox_id, track.workdir)) do
+      root = Files.present_listing(raw)
+
+      {:ok,
+       Files.index(track.workdir, fn
+         [dir] when dir == track.workdir -> [root]
+         dirs -> read_listings(client, sandbox_id, dirs)
+       end)}
+    end
+  end
+
+  defp read_listings(client, sandbox_id, dirs) do
+    Ravix.TaskSupervisor
+    |> Task.Supervisor.async_stream_nolink(
+      dirs,
+      Ravix.Trace.link_each(fn dir -> Fountain.listing(client, sandbox_id, dir) end),
+      max_concurrency: 8,
+      timeout: 5_000,
+      on_timeout: :kill_task
+    )
+    |> Enum.map(fn
+      {:ok, {:ok, raw}} when is_map(raw) -> Files.present_listing(raw)
+      _ -> nil
+    end)
+  end
+
   @doc "Optional metadata for an already-rendered listing, only on a running machine."
   @spec file_metadata(User.t(), String.t(), Files.Listing.t()) ::
           {:ok, Files.Listing.t()} | {:error, reason()}
