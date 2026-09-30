@@ -65,7 +65,7 @@ defmodule RavixWeb.ComponentsTest do
       doc = LazyHTML.from_fragment(html)
       link = LazyHTML.query(doc, "a[href='/settings'][aria-label=Settings][data-tip=Settings]")
       assert Enum.count(link) == 1
-      assert Enum.count(LazyHTML.query(doc, "button")) == 0
+      assert Enum.empty?(LazyHTML.query(doc, "button"))
     end
   end
 
