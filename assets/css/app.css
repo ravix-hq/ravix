@@ -1393,11 +1393,22 @@ html[data-yard="closed"] .workspace-trigger-skeleton { flex: none; width: 28px; 
    margins in a column rather than by the pane's `justify-content`, so a pane
    too short for it scrolls to its top instead of cutting that off. */
 .dock-empty { font-family: var(--sans); }
-.workspace-terminal .term-scroll:has(> .dock-empty) { display: flex; flex-direction: column; padding: 8px 12px; }
+.workspace-terminal .term-scroll:has(> .dock-empty) {
+  display: flex; flex-direction: column; padding: 8px 12px;
+  container: dock-pane / size;
+}
 .term-scroll > .dock-empty { margin-block: auto; }
 .dock-empty .empty { padding: 8px 12px; gap: 4px; }
 .dock-empty .empty .mark { width: 28px; height: 28px; margin-bottom: 0; }
 .dock-empty .empty p { font-size: 12px; max-width: 60ch; }
+/* A pane shorter than the whole of it (a narrow, short window) keeps one
+   line and the button: the title says what is missing, the button what to
+   do, and the sentence about the tab is what gives way. The pane is the
+   container, not the page, since the dock's height is not the window's. */
+@container dock-pane (max-height: 172px) {
+  .dock-empty .empty .mark,
+  .dock-empty .empty p { display: none; }
+}
 /* The preview is somebody else's page in a frame; the panel colour is the
    ground it paints over, so the wait for it is not a hole in the inspector. */
 .workspace-preview { width: 100%; height: 360px; background: var(--panel); border: 0; margin: 12px 0; }
