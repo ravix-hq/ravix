@@ -35,6 +35,7 @@ defmodule RavixWeb.Markdown do
   @type level :: %{ordered: boolean(), indent: non_neg_integer(), item_open: boolean()}
 
   @typep state :: %{
+           breaks: boolean(),
            out: [String.t()],
            lists: [level()],
            para: [String.t()],
@@ -48,9 +49,13 @@ defmodule RavixWeb.Markdown do
 
   Every byte of the input is escaped before any markup is added, and the
   result is always a well-formed sequence of the tags this module opens.
+
+  `breaks: true` keeps a single newline inside a paragraph, quote or bullet
+  as a `<br />` rather than folding it into a space. A person types a prompt
+  with plain newlines and means them; an agent's reply does not.
   """
-  @spec render(String.t()) :: String.t()
-  def render(src) when is_binary(src) do
+  @spec render(String.t(), keyword()) :: String.t()
+  def render(src, opts \\ []) when is_binary(src) do
     # The code-span placeholders below are NUL-framed, which is only safe
     # while the input has no NUL of its own. Agent output is whatever ran on
     # somebody's machine -- `cat` on a binary, a UTF-16 file -- so strip them
@@ -61,7 +66,15 @@ defmodule RavixWeb.Markdown do
       |> String.replace("\r\n", "\n")
       |> String.split("\n")
 
-    state = %{out: [], lists: [], para: [], quote: [], fence: nil, blank: false}
+    state = %{
+      breaks: Keyword.get(opts, :breaks, false),
+      out: [],
+      lists: [],
+      para: [],
+      quote: [],
+      fence: nil,
+      blank: false
+    }
 
     lines
     |> Enum.reduce(state, &line/2)
@@ -77,10 +90,10 @@ defmodule RavixWeb.Markdown do
   @doc """
   `render/1`, wrapped as safe HTML for a template.
   """
-  @spec render_safe(String.t()) :: Phoenix.HTML.safe()
-  # render/1 escapes input before adding markup; malicious HTML/link tests cover it.
+  @spec render_safe(String.t(), keyword()) :: Phoenix.HTML.safe()
+  # render/2 escapes input before adding markup; malicious HTML/link tests cover it.
   # sobelow_skip ["XSS.Raw"]
-  def render_safe(src), do: Phoenix.HTML.raw(render(src))
+  def render_safe(src, opts \\ []), do: Phoenix.HTML.raw(render(src, opts))
 
   # --- one line at a time ---------------------------------------------------
 
@@ -139,7 +152,7 @@ defmodule RavixWeb.Markdown do
 
       # Indented text under an open bullet belongs to that bullet.
       state.lists != [] and Regex.match?(~r/^\s/, line) ->
-        state |> emit(" " <> inline(String.trim(line))) |> Map.put(:blank, false)
+        state |> emit(joint(state) <> inline(String.trim(line))) |> Map.put(:blank, false)
 
       true ->
         state = state |> close_lists(0) |> flush_quote()
@@ -201,16 +214,23 @@ defmodule RavixWeb.Markdown do
   defp flush_para(%{para: []} = state), do: state
 
   defp flush_para(state) do
-    text = state.para |> Enum.reverse() |> Enum.join(" ")
-    %{emit(state, "<p>#{inline(text)}</p>") | para: []}
+    %{emit(state, "<p>#{lines(state, state.para)}</p>") | para: []}
   end
 
   defp flush_quote(%{quote: []} = state), do: state
 
   defp flush_quote(state) do
-    text = state.quote |> Enum.reverse() |> Enum.join(" ")
-    %{emit(state, "<blockquote><p>#{inline(text)}</p></blockquote>") | quote: []}
+    %{emit(state, "<blockquote><p>#{lines(state, state.quote)}</p></blockquote>") | quote: []}
   end
+
+  # A block's lines, newest first as collected. Joined before the spans are
+  # read, so emphasis may still run across a folded line; kept apart with
+  # `breaks`, where each line is its own run of spans.
+  defp lines(%{breaks: false}, rev), do: rev |> Enum.reverse() |> Enum.join(" ") |> inline()
+  defp lines(state, rev), do: rev |> Enum.reverse() |> Enum.map_join(joint(state), &inline/1)
+
+  defp joint(%{breaks: true}), do: "<br />"
+  defp joint(_state), do: " "
 
   defp close_lists(state, depth) when length(state.lists) > depth do
     [level | rest] = state.lists
