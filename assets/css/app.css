@@ -1774,7 +1774,10 @@ html[data-yard="closed"] .workspace-trigger-skeleton { flex: none; width: 28px; 
    centred both ways, and one quiet line: the pane is waiting, not failing. */
 /* `:where` keeps this at no specificity, so a layout that hides the panel
    (the narrow views) still wins. */
-:where(.workspace-panel:has(> .empty.pane)) { display: flex; flex-direction: column; }
+:where(.workspace-panel:has(> .empty.pane, > .panel-slot > .empty.pane)) { display: flex; flex-direction: column; }
+/* A stable home for what comes and goes ahead of the preview's controls, so
+   they are never moved in the DOM (RAV-105); it lays out as its children. */
+.panel-slot { display: contents; }
 .empty.pane { flex: 1; min-height: 120px; padding: 24px 16px; gap: 6px; }
 .empty.pane .mark { width: 32px; height: 32px; margin-bottom: 2px; }
 .empty.pane h3 { color: var(--dim); font-weight: 400; }

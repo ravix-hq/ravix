@@ -47,6 +47,19 @@ test('project run script is inherited: run, ready, restart, stop and plain overr
     await page.locator('#preview-logs summary').click();
     await expect(page.locator('#preview-logs pre')).toContainText('VITE', { timeout: 2_000 });
   }).toPass({ timeout: 20_000 });
+  // RAV-105: every panel update from here on (Stop, its answer, each reload)
+  // used to take the run script override out of the page and put it back,
+  // because what comes and goes ahead of it moved it. A moved input loses
+  // focus until LiveView restores it, so typing in between went nowhere and
+  // Save sent the old value. Count every time it leaves the page.
+  await page.evaluate(() => {
+    window.__overrideMoves = 0;
+    new MutationObserver(records => {
+      for (const record of records) for (const node of record.removedNodes) {
+        if (node.nodeType === 1 && (node.matches('#preview-config') || node.querySelector('#preview-config'))) window.__overrideMoves++;
+      }
+    }).observe(document.querySelector('.workspace-panel'), { childList: true, subtree: true });
+  });
   await stop.click();
   await expect(empty).toContainText('No preview running');
 
@@ -58,6 +71,8 @@ test('project run script is inherited: run, ready, restart, stop and plain overr
   await expect(page.locator('#preview-path')).toBeVisible();
   await page.locator('#preview-path').fill('');
   await page.locator('#preview-config-form').getByRole('button', { name: 'Save', exact: true }).click();
+  await expect(page.locator('#preview-path')).toHaveValue('');
+  expect(await page.evaluate(() => window.__overrideMoves)).toBe(0);
   await run.click();
   await expect(status).toHaveText('Status: running');
   await expect(page.locator('#run-keeps-awake')).toHaveText("Keeps this track's machine awake while running");
