@@ -14,7 +14,7 @@ defmodule Ravix.Release do
   that reach a context do the same.
   """
   alias Ravix.People.Cutover
-  alias Ravix.Tracks.Billing
+  alias Ravix.Tracks.{Billing, TitleBackfill}
   alias Ravix.Workspaces.{Backfill, PersonalAssignment, RaviSeed}
 
   @app :ravix
@@ -64,6 +64,21 @@ defmodule Ravix.Release do
     load_app()
     summary = with_repo_only(fn -> PersonalAssignment.run(apply: apply?) end)
     Enum.each(PersonalAssignment.format(summary), &IO.puts/1)
+    summary
+  end
+
+  @doc """
+  Title the open tracks still called by their branch
+  (`Ravix.Tracks.TitleBackfill`), for a release with no Mix: a dry run
+  unless `apply?`. Prints its summary, ids only, and returns it. Starts the
+  `Ravix.Repo` and nothing else:
+
+      bin/ravix eval "Ravix.Release.retitle_tracks(true)"
+  """
+  def retitle_tracks(apply? \\ false) do
+    load_app()
+    summary = with_repo_only(fn -> TitleBackfill.run(apply: apply?) end)
+    Enum.each(TitleBackfill.format(summary), &IO.puts/1)
     summary
   end
 

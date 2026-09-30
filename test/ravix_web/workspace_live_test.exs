@@ -122,33 +122,56 @@ defmodule RavixWeb.WorkspaceLiveTest do
     {:ok, view, _} = live(log_in_user(conn, user), "/inbox")
     render_async(view)
 
-    card = fn row -> element(view, ~s|.inbox-item[href^="/p/#{project.id}/t/#{row.id}?"]|) end
-    tab = fn row -> element(view, "#project-track-tab-#{row.id}") end
+    card = ~s|.inbox-item[href^="/p/#{project.id}/t/#{titled.id}?"]|
+    other_card = ~s|.inbox-item[href^="/p/#{project.id}/t/#{untitled.id}?"]|
+    tab = &"#project-track-tab-#{&1.id}"
+    # What the page draws, as against what a tooltip holds.
+    shown = fn selector ->
+      view |> element(selector) |> render() |> LazyHTML.from_fragment() |> LazyHTML.text()
+    end
 
-    # The Inbox and the sidebar say the title, and nothing of the branch.
-    assert render(card.(titled)) =~ "<strong>Pull Latest Main</strong>"
-    refute render(card.(titled)) =~ "crewe"
-    assert render(tab.(titled)) =~ ~s|<span class="track-title">Pull Latest Main</span>|
-    refute render(tab.(titled)) =~ "crewe"
+    # The Inbox and the sidebar say the title, and nothing of the branch,
+    # which is the tooltip's.
+    assert has_element?(
+             view,
+             "#{card} strong[title^='Pull Latest Main'][title$='ravix/crewe']",
+             "Pull Latest Main"
+           )
 
-    # Until it is titled, a track goes by its branch less the namespace.
-    assert render(card.(untitled)) =~ "<strong>fix-login</strong>"
-    refute render(card.(untitled)) =~ "ravix/fix-login"
-    assert render(tab.(untitled)) =~ ~s|<span class="track-title">fix-login</span>|
-    refute render(tab.(untitled)) =~ "ravix/fix-login"
+    refute shown.(card) =~ "crewe"
+
+    assert has_element?(
+             view,
+             "#{tab.(titled)}[title^='Pull Latest Main'][title$='ravix/crewe'] .track-title",
+             "Pull Latest Main"
+           )
+
+    refute shown.(tab.(titled)) =~ "crewe"
+
+    # Until it is titled, a track goes by its branch read as words.
+    assert has_element?(view, "#{other_card} strong", "Fix login")
+    refute shown.(other_card) =~ "ravix/"
+
+    assert has_element?(
+             view,
+             "#{tab.(untitled)}[title^='Fix login'][title$='ravix/fix-login'] .track-title",
+             "Fix login"
+           )
+
+    refute shown.(tab.(untitled)) =~ "ravix/"
 
     # Quick jump reads the same label, and still finds a track by its branch.
     render_click(view, "dialog", %{name: "search"})
     view |> form("#search-form", q: "crewe") |> render_change()
-    result = element(view, "#search-track-link-#{titled.id}")
-    assert render(result) =~ ~s|<span class="search-label">Pull Latest Main</span>|
-    refute render(result) =~ "ravix/crewe"
+    result = "#search-track-link-#{titled.id}"
+    assert has_element?(view, "#{result} .search-label", "Pull Latest Main")
+    refute shown.(result) =~ "crewe"
 
     # The project's recent tracks, and the page title of an open track.
     render_patch(view, "/p/#{project.id}")
-    recent = view |> element("#project-start") |> render()
+    recent = shown.("#project-start")
     assert recent =~ "Pull Latest Main"
-    assert recent =~ "fix-login"
+    assert recent =~ "Fix login"
     refute recent =~ "ravix/"
 
     stub_track(titled)
@@ -1128,13 +1151,13 @@ defmodule RavixWeb.WorkspaceLiveTest do
       closing
     ] = tracks
 
-    # The namespace every default title shares is left off the tab, its
-    # tooltip and its accessible name alike (`Track.label/1`); the name, its
-    # creator and its machine state are the accessible name. The age the
-    # `RelativeTime` hook keeps current ends it.
+    # The namespace every default title shares is left off the tab and its
+    # accessible name alike (`Track.label/1`); the name, its creator and its
+    # machine state are the accessible name, and the tooltip adds the raw
+    # branch. The age the `RelativeTime` hook keeps current ends it.
     assert has_element?(
              view,
-             "#{tab.(idle)}[data-label='idle, created by @user, Idle'][title='idle']"
+             "#{tab.(idle)}[data-label='idle, created by @user, Idle'][title^='idle'][title$='#{idle.branch}']"
            )
 
     assert has_element?(

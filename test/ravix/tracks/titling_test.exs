@@ -114,6 +114,41 @@ defmodule Ravix.Tracks.TitlingTest do
     end
   end
 
+  describe "a turn Ravix sent itself" do
+    test "is passed over: the first prompt a person wrote titles the thread", ctx do
+      send_prompt(ctx, "[ravix] Open this track. Make its working directory, then stop.")
+      refute_receive {:hub, %Event{name: :tracks}}, 100
+      assert Repo.get!(Track, ctx.track.id).title == "ravix/crewe"
+
+      send_prompt(ctx, "Can you pull the latest main and fix the conflicts?")
+      assert_titled(ctx.track.id)
+      assert Repo.get!(Track, ctx.track.id).title == "Pull Latest Main"
+      assert %Thread{title: "Pull Latest Main"} = thread(ctx.track)
+    end
+  end
+
+  describe "titling after a caller's commit" do
+    test "titles through the thread's door, for a member only", ctx do
+      id = send_prompt(ctx, "Can you pull the latest main and fix the conflicts?")
+      assert_titled(ctx.track.id)
+
+      # Another user's ids are refused before anything is scheduled.
+      stranger = insert_user()
+
+      other =
+        insert_track(conversation_id: "c-other", title: "ravix/other", branch: "ravix/other")
+
+      assert {:error, _} =
+               Tracks.title_after_prompt(stranger, ctx.track.id, ctx.track.id, id, "Anything")
+
+      assert {:error, _} =
+               Tracks.title_after_prompt(ctx.owner, other.id, other.id, id, "Fix the build")
+
+      refute_receive {:hub, %Event{name: :tracks}}, 100
+      assert Repo.get!(Track, other.id).title == "ravix/other"
+    end
+  end
+
   describe "a manual rename wins" do
     test "made before the first prompt: the track keeps it, the thread is still titled", ctx do
       :ok = Tracks.rename(ctx.owner, ctx.track.id, "Ledger cleanup")
