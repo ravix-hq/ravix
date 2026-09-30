@@ -3287,7 +3287,8 @@ defmodule RavixWeb.TrackLiveTest do
       render_click(ctx.view, "panel", %{name: "checks"})
       render_async(ctx.view)
 
-      assert has_element?(ctx.view, "#git-uncommitted .chip.ok", "0")
+      assert has_element?(ctx.view, "#git-uncommitted .git-count.zero", "–")
+      refute has_element?(ctx.view, "#git-uncommitted .chip")
       assert has_element?(ctx.view, "#git-uncommitted", "No uncommitted changes")
       assert has_element?(ctx.view, "#git-unpushed", "No unpushed commits")
       refute has_element?(ctx.view, "#git-commit")
@@ -5212,7 +5213,30 @@ defmodule RavixWeb.TrackLiveTest do
       assert has_element?(ctx.view, "button[phx-value-action='stop']:not([disabled])") ==
                unquote(stop?)
 
-      assert has_element?(ctx.view, "button[phx-value-action='logs']:not([disabled])", "Logs")
+      # The logs are the disclosure's, read when it opens; there is no second
+      # "Logs" button, and nothing about a run shows while nothing has run.
+      refute has_element?(ctx.view, "button[phx-value-action='logs']")
+
+      assert has_element?(ctx.view, "#preview-logs summary[phx-value-action='logs']") ==
+               (unquote(state) != :stopped)
+
+      assert has_element?(ctx.view, ".preview-actions") == (unquote(state) != :stopped)
+      assert has_element?(ctx.view, "#preview-controls.idle") == (unquote(state) == :stopped)
+
+      if unquote(state) == :stopped do
+        assert has_element?(ctx.view, "#preview-empty button.primary", "Run")
+
+        assert [_] =
+                 ctx.view
+                 |> render()
+                 |> LazyHTML.from_fragment()
+                 |> LazyHTML.query("#preview-empty button.primary")
+                 |> Enum.to_list()
+
+        assert has_element?(ctx.view, "#preview-empty #preview-run-script", "Run script…")
+        refute has_element?(ctx.view, "#run-keeps-awake")
+      end
+
       refute has_element?(ctx.view, "button.ghost[phx-click='preview']")
     end
   end
@@ -5286,7 +5310,24 @@ defmodule RavixWeb.TrackLiveTest do
     assert has_element?(ctx.view, "#preview-run[disabled]", "Run")
     assert has_element?(ctx.view, "#preview-empty .dimmer", "Preview domain is not configured")
     refute has_element?(ctx.view, "button[phx-value-action='stop']")
-    assert has_element?(ctx.view, "button[phx-value-action='logs']:not([disabled])")
+    refute has_element?(ctx.view, "#preview-logs")
+  end
+
+  test "an unavailable preview that failed keeps its logs", ctx do
+    stub(Previews, :status, fn _, _ ->
+      {:ok,
+       %{
+         preview()
+         | state: :failed,
+           error: "App failed",
+           available: false,
+           unavailable_reason: "Preview domain is not configured"
+       }}
+    end)
+
+    render_click(ctx.view, "panel", %{name: "preview"})
+    render_async(ctx.view)
+    assert has_element?(ctx.view, "#preview-logs[open] summary", "Show logs")
   end
 
   test "preview actions keep status and use fresh tickets for the iframe", ctx do
@@ -5327,13 +5368,13 @@ defmodule RavixWeb.TrackLiveTest do
     ctx.view |> element("button[phx-value-action='restart-run']") |> render_click()
     assert render_async(ctx.view) =~ "service output"
 
-    for action <- [:logs, :stop] do
+    for {action, target} <- [logs: "#preview-logs summary", stop: "button"] do
       expect(Previews, action, fn user, id ->
         assert {user.id, id} == {ctx.user.id, ctx.track.id}
         {:ok, answered}
       end)
 
-      ctx.view |> element("button[phx-value-action='#{action}']") |> render_click()
+      ctx.view |> element("#{target}[phx-value-action='#{action}']") |> render_click()
       assert render_async(ctx.view) =~ "service output"
     end
 

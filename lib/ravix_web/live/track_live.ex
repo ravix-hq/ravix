@@ -2699,6 +2699,7 @@ defmodule RavixWeb.TrackLive do
       :if={@data.runs == []}
       pane
       id="checks-empty"
+      class="checks-empty"
       icon="check"
       title={if @data.pushed, do: "No checks yet", else: "No checks until the branch is pushed"}
     />
@@ -2774,9 +2775,7 @@ defmodule RavixWeb.TrackLive do
       <.asleep :if={@git && @git.asleep?} id="git-asleep" can_wake={@can_wake} waking={@waking} />
       <ul class="git-rows">
         <li :if={@status} id="git-uncommitted" class="git-row">
-          <span class={["chip", if(@status.uncommitted > 0, do: "warn", else: "ok")]}>
-            {@status.uncommitted}
-          </span>
+          <.git_count count={@status.uncommitted} />
           <span class="git-row-label">
             {count_label(@status.uncommitted, "uncommitted change", "uncommitted changes")}
           </span>
@@ -2793,9 +2792,7 @@ defmodule RavixWeb.TrackLive do
           </button>
         </li>
         <li :if={@status} id="git-unpushed" class="git-row">
-          <span class={["chip", if(@status.unpushed > 0, do: "warn", else: "ok")]}>
-            {@status.unpushed}
-          </span>
+          <.git_count count={@status.unpushed} />
           <span class="git-row-label">
             {count_label(@status.unpushed, "unpushed commit", "unpushed commits")}<span
               :if={!@status.upstream? && @status.unpushed > 0}
@@ -2841,6 +2838,25 @@ defmodule RavixWeb.TrackLive do
     </section>
     """
   end
+
+  attr :count, :integer, required: true
+
+  # A number to act on, in amber; none is a grey dash rather than a green 0,
+  # which reads as a count of successes. The row's words say it either way.
+  defp git_count(%{count: 0} = assigns) do
+    ~H"""
+    <span class="git-count zero" aria-hidden="true">–</span>
+    """
+  end
+
+  defp git_count(assigns) do
+    ~H"""
+    <span class="chip warn git-count" aria-hidden="true">{@count}</span>
+    """
+  end
+
+  # Nothing running and nothing failed: the Preview tab is its empty state.
+  defp preview_idle?(preview), do: preview.state == :stopped and !preview.error
 
   defp count_label(0, _one, many), do: "No " <> many
   defp count_label(1, one, _many), do: "1 " <> one

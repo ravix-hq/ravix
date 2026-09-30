@@ -72,15 +72,19 @@ test('track logs stay open through status patches and failure still opens diagno
   const summary = disclosure.locator('summary');
   const logs = disclosure.locator('pre');
   const refresh = page.locator('button[phx-click="refresh-panel"]');
-  await expect(disclosure).toBeAttached();
+  // Idle, the tab is its empty state alone: no logs to show for no run.
+  await expect(page.locator('#preview-empty')).toBeVisible();
+  await expect(disclosure).toHaveCount(0);
 
-  for (const opener of ['summary', 'button']) {
+  // RAV-101: the summary is the one way to the logs; there is no second
+  // "Logs" button beside it.
+  for (const opener of ['summary']) {
     status('starting', `Before ${opener}`);
     await refresh.click();
     await expect(logs).toHaveText(`Before ${opener}`);
     await expect(disclosure).toHaveJSProperty('open', false);
-    if (opener === 'summary') await summary.click();
-    else await page.locator('button[phx-value-action="logs"]').click();
+    await expect(page.locator('button[phx-value-action="logs"]')).toHaveCount(0);
+    await summary.click();
     await expect(logs).toBeVisible();
 
     status('starting', `After ${opener}`);

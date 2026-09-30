@@ -862,7 +862,21 @@ html[data-yard="closed"] .workspace-trigger-skeleton { flex: none; width: 28px; 
 .workspace-turn { margin: 0 0 18px; max-width: none; line-height: 1.6; overflow-wrap: anywhere; }
 .workspace-turn pre, .workspace-panel pre, .term-scroll pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; }
 .workspace-panel #preview-logs { margin-block: 16px; }
-.workspace-panel #preview-logs summary { cursor: pointer; }
+.empty .empty-link { font-size: 12px; margin-top: 2px; text-align: center; }
+/* Idle, the run script is reached through the empty state's link alone. */
+.preview-controls.idle #preview-config:not([open]) { display: none; }
+.preview-controls .preview-actions { align-items: center; margin-block: 8px 0; }
+/* The app's chevron, turned by `[open]`, in place of the native marker,
+   and aligned with the action row above it. */
+.preview-disclosure > summary {
+  display: flex; align-items: center; gap: 6px; list-style: none; cursor: pointer;
+  padding: 6px 0; color: var(--dim); font-size: 13px;
+}
+.preview-disclosure > summary:hover { color: var(--ink); }
+.preview-disclosure > summary::-webkit-details-marker { display: none; }
+.preview-disclosure > summary > .disclosure-chevron { flex: none; color: var(--dimmer); transition: transform 120ms; }
+.preview-disclosure[open] > summary > .disclosure-chevron { transform: rotate(90deg); }
+@media (prefers-reduced-motion: reduce) { .preview-disclosure > summary > .disclosure-chevron { transition: none; } }
 .workspace-panel #preview-logs pre { max-height: 320px; overflow: auto; }
 /* Prose is set in the sans face at a readable measure; mono is for code,
    commands and tool output, which the fold below keeps in it. */
@@ -2235,10 +2249,15 @@ section.first-prompt#project-start { align-self: center; padding: 32px 24px; }
 .git-branch { display: inline-flex; align-items: center; gap: 4px; min-width: 0; color: var(--dim); font-weight: 400; }
 .git-branch code { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .git-rows { list-style: none; margin: 0; padding: 0; }
-.git-row { display: flex; align-items: center; gap: 8px; min-height: 36px; padding: 4px .25rem; font-size: 13px; }
+/* Every row the same height, with a button or without one. */
+.git-row { display: flex; align-items: center; gap: 8px; height: 40px; padding: 0 .25rem; font-size: 13px; }
+.git-row button { padding-top: 4px; padding-bottom: 4px; }
 .git-row + .git-row { border-top: 1px solid var(--line); }
 .git-row-icon { flex: none; width: 23px; color: var(--dim); }
-.git-row .chip { flex: none; justify-content: center; min-width: 23px; font-variant-numeric: tabular-nums; }
+.git-row .git-count { flex: none; justify-content: center; min-width: 23px; font-variant-numeric: tabular-nums; }
+.git-count.zero { display: inline-flex; color: var(--dimmer); }
+/* No runs: said directly under the Git rows, not centred in the pane. */
+.empty.pane.checks-empty { flex: 0 0 auto; min-height: 0; padding: 20px 16px; }
 .git-row-label { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .git-row button { flex: none; margin-left: auto; }
 .git-hint, .git-note { color: var(--dim); font-size: 12px; }

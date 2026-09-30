@@ -731,6 +731,12 @@ defmodule RavixWeb.CoreComponents do
   slot :inner_block, doc: "one or two sentences: what this panel is for"
   slot :because_block, doc: "a `because` with markup in it, instead of the attr"
 
+  slot :link, doc: "a small secondary action under the button, styled as a link" do
+    attr :label, :string, required: true
+    attr :click, :any, required: true
+    attr :id, :string
+  end
+
   slot :action, doc: "one button" do
     attr :label, :string, required: true
     attr :click, :any, required: true
@@ -766,6 +772,15 @@ defmodule RavixWeb.CoreComponents do
         disabled={action[:disabled]}
       >
         {action.label}
+      </button>
+      <button
+        :for={link <- @link}
+        id={link[:id]}
+        type="button"
+        class="linkish empty-link"
+        phx-click={link.click}
+      >
+        {link.label}
       </button>
     </div>
     """
