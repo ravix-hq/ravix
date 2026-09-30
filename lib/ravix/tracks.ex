@@ -241,6 +241,8 @@ defmodule Ravix.Tracks do
       %{
         view
         | threads: threads,
+          activity_at:
+            activity_at(row, [view.last_active_at | Enum.map(conversations, & &1.last_active_at)]),
           unread: Enum.any?(threads, & &1.unread),
           reply_unread: Enum.any?(threads, & &1.reply_unread),
           mention: threads |> Enum.map(& &1.mention) |> Enum.reject(&is_nil/1) |> newest()
@@ -250,6 +252,14 @@ defmodule Ravix.Tracks do
 
   defp newest([]), do: nil
   defp newest(mentions), do: Enum.max_by(mentions, & &1.at, DateTime)
+
+  # The newest thing already in hand: the row's own times, the prompt the tree
+  # query joined, and what the conversations Fountain listed last did.
+  defp activity_at(%Track{} = row, conversation_times) do
+    [row.created_at, row.opened_at, row.closed_at, row.last_prompt_at | conversation_times]
+    |> Enum.reject(&is_nil/1)
+    |> Enum.max(DateTime, fn -> nil end)
+  end
 
   # ownership: every caller admitted these threads through Access.open_tracks/2,
   # Access.thread_access/3 or Access.track_access/2; this is the caller's own
@@ -2684,6 +2694,7 @@ defmodule Ravix.Tracks do
       visibility: row.visibility,
       created_by_login: row.created_by_login,
       creator_avatar_url: row.creator_avatar_url,
+      activity_at: activity_at(row, [last_active]),
       closed_at: row.closed_at,
       people: Keyword.get(opts, :people, []),
       threads: Keyword.get(opts, :threads, []),

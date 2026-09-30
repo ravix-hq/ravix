@@ -107,6 +107,9 @@ defmodule Ravix.Tracks.Track do
     field :creator_revoked_at, :utc_datetime_usec
     # The creator's GitHub avatar, joined by `Access.open_tracks/3` for the rail.
     field :creator_avatar_url, :string, virtual: true
+    # When its newest prompt was accepted, joined by the same query: the
+    # rail's last-activity age must not cost a query per row.
+    field :last_prompt_at, :utc_datetime_usec, virtual: true
     field :visibility, Ecto.Enum, values: [:project, :private], default: :project
     # ADR 0009: who pays for this track's inference. `created_by` is the
     # creator. Written once, when a dedicated track is opened while

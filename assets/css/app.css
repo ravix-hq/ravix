@@ -1983,6 +1983,11 @@ body:has(.phx-error) #request-progress { display: none; }
   font-size: 8px; font-weight: 600; line-height: 1; color: var(--ink); background: var(--surface-active);
 }
 .track-creator img { width: 100%; height: 100%; object-fit: cover; }
+/* How long since the track last did anything. It never shrinks: at the
+   narrowest rail the title truncates first. */
+.track-age { flex: none; margin-left: auto; color: var(--dim); font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.workspace-track.selected .track-age { color: inherit; }
+.track-private { flex: none; display: inline-flex; align-items: center; gap: 3px; white-space: nowrap; }
 .rail-scope { display: flex; gap: 2px; margin: 0 8px 6px; padding: 2px; background: var(--surface); border-radius: var(--radius); }
 .rail-scope button { flex: 1; padding: 2px 8px; font-size: 12px; border: none; border-radius: var(--radius); }
 .rail-scope button.on { color: var(--ink); background: var(--panel); box-shadow: 0 1px 2px var(--shadow); }
