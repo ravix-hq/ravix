@@ -3516,7 +3516,8 @@ defmodule RavixWeb.TrackLiveTest do
       render_click(ctx.view, "panel", %{name: "checks"})
       render_async(ctx.view)
 
-      assert has_element?(ctx.view, "#git-uncommitted .chip.ok", "0")
+      assert has_element?(ctx.view, "#git-uncommitted .git-count.zero", "–")
+      refute has_element?(ctx.view, "#git-uncommitted .chip")
       assert has_element?(ctx.view, "#git-uncommitted", "No uncommitted changes")
       assert has_element?(ctx.view, "#git-unpushed", "No unpushed commits")
       refute has_element?(ctx.view, "#git-commit")
@@ -3712,6 +3713,64 @@ defmodule RavixWeb.TrackLiveTest do
     end
   end
 
+  test "Checks with no runs says so directly under the Git rows", ctx do
+    stub(Tracks, :checks, fn _, _ -> {:ok, %{checks_fixture(:open) | runs: []}} end)
+    render_click(ctx.view, "panel", %{name: "checks"})
+    render_async(ctx.view)
+    assert has_element?(ctx.view, "#checks-empty.empty.pane.checks-empty")
+  end
+
+  test "untracked files are listed as new, and one too large to show says so", ctx do
+    untracked =
+      "diff --git a/notes.md b/notes.md\nnew file mode 100644\n--- /dev/null\n" <>
+        "+++ b/notes.md\n@@ -0,0 +1 @@\n+draft\n" <>
+        "diff --git a/dump.sql b/dump.sql\nnew file mode 100644\n"
+
+    output =
+      Jason.encode!(%{available: true, diff: untracked, large: ["dump.sql"], truncated: false})
+
+    diff = Diff.with_untracked(changes_fixture(), {:ok, %{code: 0, stdout: output}})
+    expect(Tracks, :diff, fn _, _ -> {:ok, diff} end)
+    render_click(ctx.view, "panel", %{name: "changes"})
+    render_async(ctx.view, 1_000)
+
+    assert has_element?(
+             ctx.view,
+             ".change-file:has(.change-untracked[title='New, untracked'])",
+             "notes.md"
+           )
+
+    assert has_element?(ctx.view, ".change-file .sr-only", "New, untracked:")
+    tab = "nav[aria-label='Inspector panels'] button[phx-value-name=changes]"
+    count = length(diff.files)
+    assert count == length(changes_fixture().files) + 2
+    assert has_element?(ctx.view, "#{tab} .tab-count", "#{count}")
+    assert has_element?(ctx.view, "#{tab} .sr-only", "#{count} changed files")
+    assert has_element?(ctx.view, ".change-file", "added.txt")
+    render_click(ctx.view, "select-diff", %{path: "notes.md"})
+    assert has_element?(ctx.view, ".diff-line.diff-add code", "draft")
+    render_click(ctx.view, "close-diff")
+    render_click(ctx.view, "select-diff", %{path: "dump.sql"})
+    assert has_element?(ctx.view, ".changes-panel p", "New file too large to show here.")
+    refute has_element?(ctx.view, ".file-diff")
+  end
+
+  test "an empty diff from a sleeping machine does not claim there are no changes", ctx do
+    diff = %{changes_fixture() | diff: "", changes: [], files: [], untracked: :asleep}
+    expect(Tracks, :diff, fn _, _ -> {:ok, diff} end)
+    stub(Tracks, :checks, fn _, _ -> {:ok, checks_fixture(:open)} end)
+    render_click(ctx.view, "panel", %{name: "changes"})
+    render_async(ctx.view, 1_000)
+    assert has_element?(ctx.view, "#changes-empty h3", "No tracked changes")
+    assert has_element?(ctx.view, "#changes-empty", "The machine is asleep")
+    refute has_element?(ctx.view, "#changes-empty", "No changes yet")
+
+    expect(Tracks, :diff, fn _, _ -> {:ok, %{changes_fixture() | untracked: :asleep}} end)
+    render_click(ctx.view, "refresh-panel")
+    render_async(ctx.view, 1_000)
+    assert has_element?(ctx.view, "#changes-untracked-asleep")
+  end
+
   test "nonempty Changes does not fetch PR state", ctx do
     expect(Tracks, :diff, fn _, _ -> {:ok, changes_fixture()} end)
     reject(Tracks, :checks, 2)
@@ -3861,8 +3920,18 @@ defmodule RavixWeb.TrackLiveTest do
 
     assert has_element?(ctx.view, "#inspector-toggle .label-show", "Show inspector")
 
-    button = "nav[aria-label='Inspector panels'] button.panel-refresh[aria-label=Refresh]"
-    assert has_element?(ctx.view, "#{button} svg")
+    # Labelled, and its tooltip says which tab it reads again (RAV-101).
+    button = "nav[aria-label='Inspector panels'] button.panel-refresh"
+
+    assert has_element?(
+             ctx.view,
+             "#{button}[aria-label='Refresh files'][title='Refresh files'] svg"
+           )
+
+    render_click(ctx.view, "panel", %{name: "checks"})
+    assert has_element?(ctx.view, "#{button}[aria-label='Refresh checks']")
+    render_click(ctx.view, "panel", %{name: "files"})
+    render_async(ctx.view)
     refute has_element?(ctx.view, ".workspace-panel button", "Refresh")
 
     expect(Tracks, :files, fn _, _, nil ->
@@ -5389,7 +5458,22 @@ defmodule RavixWeb.TrackLiveTest do
     assert rendered =~ "32.0 MB"
     assert rendered =~ "12%"
     refute rendered =~ "33554432"
-    assert has_element?(ctx.view, ~s(meter[aria-label="CPU in use"][value="0.12"]))
+    # A 6px bar drawn by the page, still a meter to assistive tech.
+    assert has_element?(
+             ctx.view,
+             ~s(.stat-bar[role=meter][aria-label="CPU in use"][aria-valuenow="12"][aria-valuetext="12%"])
+           )
+
+    assert has_element?(ctx.view, ~s(.stat-bar > span[style="width: 12.0%"]))
+    # When the readings were taken, kept current by `RelativeTime`.
+    assert has_element?(ctx.view, "#machine-stats-updated", "Updated")
+    assert has_element?(ctx.view, "#machine-stats-updated-at[phx-hook=RelativeTime]", "just now")
+
+    assert has_element?(
+             ctx.view,
+             "#machine-stats-updated button[aria-label='Refresh machine stats']"
+           )
+
     # A reading the machine could not give is left out, not drawn as a blank
     # row: `mem_total_bytes` is nil and no "Memory total" appears.
     refute rendered =~ "Memory total"
@@ -5493,7 +5577,30 @@ defmodule RavixWeb.TrackLiveTest do
       assert has_element?(ctx.view, "button[phx-value-action='stop']:not([disabled])") ==
                unquote(stop?)
 
-      assert has_element?(ctx.view, "button[phx-value-action='logs']:not([disabled])", "Logs")
+      # The logs are the disclosure's, read when it opens; there is no second
+      # "Logs" button, and nothing about a run shows while nothing has run.
+      refute has_element?(ctx.view, "button[phx-value-action='logs']")
+
+      assert has_element?(ctx.view, "#preview-logs summary[phx-value-action='logs']") ==
+               (unquote(state) != :stopped)
+
+      assert has_element?(ctx.view, ".preview-actions") == (unquote(state) != :stopped)
+      assert has_element?(ctx.view, "#preview-controls.idle") == (unquote(state) == :stopped)
+
+      if unquote(state) == :stopped do
+        assert has_element?(ctx.view, "#preview-empty button.primary", "Run")
+
+        assert [_] =
+                 ctx.view
+                 |> render()
+                 |> LazyHTML.from_fragment()
+                 |> LazyHTML.query("#preview-empty button.primary")
+                 |> Enum.to_list()
+
+        assert has_element?(ctx.view, "#preview-empty #preview-run-script", "Run script…")
+        refute has_element?(ctx.view, "#run-keeps-awake")
+      end
+
       refute has_element?(ctx.view, "button.ghost[phx-click='preview']")
     end
   end
@@ -5567,7 +5674,24 @@ defmodule RavixWeb.TrackLiveTest do
     assert has_element?(ctx.view, "#preview-run[disabled]", "Run")
     assert has_element?(ctx.view, "#preview-empty .dimmer", "Preview domain is not configured")
     refute has_element?(ctx.view, "button[phx-value-action='stop']")
-    assert has_element?(ctx.view, "button[phx-value-action='logs']:not([disabled])")
+    refute has_element?(ctx.view, "#preview-logs")
+  end
+
+  test "an unavailable preview that failed keeps its logs", ctx do
+    stub(Previews, :status, fn _, _ ->
+      {:ok,
+       %{
+         preview()
+         | state: :failed,
+           error: "App failed",
+           available: false,
+           unavailable_reason: "Preview domain is not configured"
+       }}
+    end)
+
+    render_click(ctx.view, "panel", %{name: "preview"})
+    render_async(ctx.view)
+    assert has_element?(ctx.view, "#preview-logs[open] summary", "Show logs")
   end
 
   test "preview actions keep status and use fresh tickets for the iframe", ctx do
@@ -5608,13 +5732,13 @@ defmodule RavixWeb.TrackLiveTest do
     ctx.view |> element("button[phx-value-action='restart-run']") |> render_click()
     assert render_async(ctx.view) =~ "service output"
 
-    for action <- [:logs, :stop] do
+    for {action, target} <- [logs: "#preview-logs summary", stop: "button"] do
       expect(Previews, action, fn user, id ->
         assert {user.id, id} == {ctx.user.id, ctx.track.id}
         {:ok, answered}
       end)
 
-      ctx.view |> element("button[phx-value-action='#{action}']") |> render_click()
+      ctx.view |> element("#{target}[phx-value-action='#{action}']") |> render_click()
       assert render_async(ctx.view) =~ "service output"
     end
 

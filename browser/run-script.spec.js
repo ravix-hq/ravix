@@ -44,21 +44,23 @@ test('project run script is inherited: run, ready, restart, stop and plain overr
   // before the restart: the new process may not have printed yet. Ask again
   // until its output arrives rather than reading one early snapshot.
   await expect(async () => {
-    await page.locator('button[phx-value-action="logs"]').click();
+    await page.locator('#preview-logs summary').click();
     await expect(page.locator('#preview-logs pre')).toContainText('VITE', { timeout: 2_000 });
   }).toPass({ timeout: 20_000 });
   await stop.click();
   await expect(empty).toContainText('No preview running');
 
-  await page.getByText('Run script override', { exact: true }).click();
+  // Idle, the override is reached through the empty state's small link.
+  await expect(page.getByText('Run script override', { exact: true })).toBeHidden();
+  await empty.getByRole('button', { name: 'Run script…', exact: true }).click();
   // Open by the reader and left open by every patch that follows: a status
   // refresh landing here used to collapse the section mid-edit.
   await expect(page.locator('#preview-path')).toBeVisible();
   await page.locator('#preview-path').fill('');
   await page.locator('#preview-config-form').getByRole('button', { name: 'Save', exact: true }).click();
-  await expect(page.locator('#run-keeps-awake')).toHaveText("Keeps this track's machine awake while running");
   await run.click();
   await expect(status).toHaveText('Status: running');
+  await expect(page.locator('#run-keeps-awake')).toHaveText("Keeps this track's machine awake while running");
   await expect(page.locator('button[phx-value-action="open"]')).toHaveCount(0);
   await expect(page.locator('iframe.workspace-preview')).toHaveCount(0);
   await stop.click();

@@ -730,9 +730,16 @@ defmodule RavixWeb.CoreComponents do
   attr :pane, :boolean, default: false, doc: "fill the pane it is in, centred, on one line"
   attr :status, :boolean, default: false, doc: "announce the title as a status"
   attr :busy, :boolean, default: false, doc: "turn the icon, for a state that is in progress"
+  attr :class, :string, default: nil, doc: "extra classes, after the component's own"
   attr :rest, :global
   slot :inner_block, doc: "one or two sentences: what this panel is for"
   slot :because_block, doc: "a `because` with markup in it, instead of the attr"
+
+  slot :link, doc: "a small secondary action under the button, styled as a link" do
+    attr :label, :string, required: true
+    attr :click, :any, required: true
+    attr :id, :string
+  end
 
   slot :action, doc: "one button" do
     attr :label, :string, required: true
@@ -746,7 +753,10 @@ defmodule RavixWeb.CoreComponents do
     <div
       class={
         Enum.join(
-          ["empty" | for({on, name} <- [{@pane, "pane"}, {@busy, "busy"}], on, do: name)],
+          [
+            "empty"
+            | for({on, name} <- [{@pane, "pane"}, {@busy, "busy"}, {@class, @class}], on, do: name)
+          ],
           " "
         )
       }
@@ -769,6 +779,15 @@ defmodule RavixWeb.CoreComponents do
         disabled={action[:disabled]}
       >
         {action.label}
+      </button>
+      <button
+        :for={link <- @link}
+        id={link[:id]}
+        type="button"
+        class="linkish empty-link"
+        phx-click={link.click}
+      >
+        {link.label}
       </button>
     </div>
     """

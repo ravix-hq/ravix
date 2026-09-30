@@ -18,8 +18,11 @@ test('terminal tabs: open, type, resize, several, reconnect, reload and close', 
   // The machine exists once setup has run; the chip says Idle then.
   await expect(page.locator('#track-machine-state')).toHaveText('Idle', { timeout: 30_000 });
 
-  const newTerminal = page.getByRole('button', { name: 'New terminal', exact: true });
-  await newTerminal.click();
+  // "+" is a menu (RAV-101): New terminal is its first item.
+  await page.locator('#dock-add-trigger').click();
+  await expect(page.locator('#dock-add-menu')).toBeVisible();
+  await page.getByRole('menuitem', { name: /New terminal/ }).click();
+  await expect(page.locator('#dock-add-menu')).toBeHidden();
   const one = page.locator('.shell-pane:not([hidden]) .xterm');
   await expect(one).toBeVisible();
   // RAV-88: one prompt, naming the directory and not the machine's user or
@@ -65,7 +68,8 @@ test('terminal tabs: open, type, resize, several, reconnect, reload and close', 
   await expect(one.locator('.xterm-rows')).toContainText('iex(2)>');
 
   // A second tab is a second shell.
-  await newTerminal.click();
+  // The second through its shortcut, from inside the first terminal.
+  await page.keyboard.press('Control+Backquote');
   await expect(page.locator('[data-shell-tab]')).toHaveCount(2);
   const two = page.locator('.shell-pane:not([hidden]) .xterm');
   await expect(two.locator('.xterm-rows')).toContainText(/\S+ \$ /, { timeout: 15_000 });
