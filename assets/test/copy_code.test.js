@@ -71,3 +71,14 @@ test("a copy that names what it copies says so when it fails", async () => {
   await Promise.resolve()
   expect(status.textContent).toBe("Copy failed. Select the link and copy it.")
 })
+
+test("a link it does not print is copied from data-copy (RAV-84)", async () => {
+  document.body.innerHTML = `<div id="example" data-copy="https://ravix.test/p/1/t/2">
+    <button type="button">Copy link</button><span role="status"></span></div>`
+  const write = mock(async () => {})
+  const {button, status} = setup(write)
+  button.click()
+  await Promise.resolve()
+  expect(write).toHaveBeenCalledWith("https://ravix.test/p/1/t/2")
+  expect(status.textContent).toBe("Copied")
+})

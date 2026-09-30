@@ -160,12 +160,21 @@ defmodule RavixWeb.ShareDialogTest do
     test "the creator switches visibility between the workspace and only people they add", ctx do
       view = ctx.creator |> track_page(ctx.secret) |> open_share()
 
-      assert has_element?(view, "input[name=visibility][value=private][checked]")
-      assert has_element?(view, "label", "Everyone in #{ctx.workspace.name}")
+      # RAV-84: one General access row, a scope dropdown and its role.
+      assert has_element?(view, "#share-visibility-scope option[value=private][selected]")
+
+      assert has_element?(
+               view,
+               "#share-visibility-scope option",
+               "Everyone in #{ctx.workspace.name}"
+             )
+
+      refute has_element?(view, "#share-visibility-form .role-label")
 
       view |> form("#share-visibility-form", visibility: "project") |> render_change()
       assert Repo.get!(Track, ctx.secret.id).visibility == :project
-      assert has_element?(view, "input[name=visibility][value=project][checked]")
+      assert has_element?(view, "#share-visibility-scope option[value=project][selected]")
+      assert has_element?(view, "#share-visibility-form .role-label", "Write")
       refute has_element?(view, "#share-person-form")
 
       view |> form("#share-visibility-form", visibility: "private") |> render_change()
@@ -183,7 +192,8 @@ defmodule RavixWeb.ShareDialogTest do
         )
 
       view = ctx.creator |> track_page(shared) |> open_share()
-      refute has_element?(view, "input[name=visibility][value=private]")
+      assert has_element?(view, "#share-visibility-scope option[value=project]")
+      refute has_element?(view, "#share-visibility-scope option[value=private]")
       assert render(view) =~ "Private tracks need their own machine."
     end
 
@@ -210,7 +220,8 @@ defmodule RavixWeb.ShareDialogTest do
                where(TrackPermission, track_id: ^ctx.secret.id, user_id: ^ctx.holder.id)
              )
 
-      assert has_element?(view, "ul[aria-label='Shared with'] li", "@shareholder")
+      assert has_element?(view, "#share-access-shareholder", "Write")
+      assert has_element?(view, "#share-access-shareholder .people-source", "direct")
       assert has_element?(view, "#share-person[aria-expanded=false]")
 
       view |> element("button[aria-label='Remove @shareholder']") |> render_click()
@@ -229,13 +240,78 @@ defmodule RavixWeb.ShareDialogTest do
                Ravix.Accounts.Access.track_access(ctx.outsider, ctx.secret.id)
     end
 
-    test "copy link copies the track's own URL", ctx do
+    test "copy link copies the track's own URL without printing it (RAV-84)", ctx do
       view = ctx.creator |> track_page(ctx.secret) |> open_share()
+      url = "/p/#{ctx.project.id}/t/#{ctx.secret.id}"
 
-      assert has_element?(view, "#share-link[phx-hook=CopyCode] button", "Copy link")
+      assert has_element?(
+               view,
+               "#share-link[phx-hook=CopyCode] button[aria-keyshortcuts=c]",
+               "Copy link"
+             )
 
-      assert view |> element("#share-link code") |> render() =~
-               "/p/#{ctx.project.id}/t/#{ctx.secret.id}"
+      assert has_element?(view, ~s(#share-link[data-copy$="#{url}"]))
+      refute has_element?(view, "#share-link code")
+      refute view |> element("#track-share-dialog .dialog-body") |> render() =~ ~r{>[^<]*#{url}}
+
+      assert has_element?(
+               view,
+               "#share-link-hint",
+               "The link opens this track only for people who can already see it."
+             )
+    end
+
+    test "is a popover under Share, with no scrim, and Share says it is open (RAV-84)", ctx do
+      view = track_page(ctx.creator, ctx.secret)
+      assert has_element?(view, "#track-share-button[aria-expanded=false]")
+
+      open_share(view)
+      assert has_element?(view, "#track-share-button[aria-expanded=true]")
+
+      assert has_element?(
+               view,
+               "#track-share-dialog.share-layer[phx-hook=SharePopover][data-anchor=track-share-button]"
+             )
+
+      refute has_element?(view, "#track-share-dialog.scrim")
+      refute has_element?(view, ".scrim")
+
+      render_click(view, "dismiss", %{})
+      refute has_element?(view, "#track-share-dialog")
+      assert has_element?(view, "#track-share-button[aria-expanded=false]")
+    end
+
+    test "people with access show whatever the general access", ctx do
+      :ok = People.share(ctx.creator, ctx.secret.id, ctx.holder.id)
+      view = ctx.creator |> track_page(ctx.secret) |> open_share()
+      assert has_element?(view, "#share-access-sharecreator", "Admin")
+      assert has_element?(view, "#share-access-shareholder button", "Remove")
+
+      view |> form("#share-visibility-form", visibility: "project") |> render_change()
+      assert has_element?(view, "#share-access-sharecreator")
+      assert has_element?(view, "#share-access-shareowner", "Admin")
+      assert has_element?(view, "#share-access-shareowner .people-source", "owner")
+      assert has_element?(view, "#share-access-shareholder")
+      assert has_element?(view, "#share-access-sharecolleague .people-source", "from workspace")
+      # Nothing to remove on a workspace-visible track: it reaches everyone.
+      refute has_element?(view, "#share-access button")
+    end
+
+    test "a revoked session changes nothing through the popover", ctx do
+      {token, session} = insert_session(ctx.creator)
+      conn = Plug.Test.init_test_session(build_conn(), session_token: token)
+      {:ok, parent, _} = live(conn, "/p/#{ctx.project.id}/t/#{ctx.secret.id}")
+      view = find_live_child(parent, "track-host")
+      render_async(view, 5_000)
+      open_share(view)
+
+      Repo.delete!(session)
+
+      assert {:error, {:redirect, %{to: "/login"}}} =
+               view |> form("#share-visibility-form", visibility: "project") |> render_change()
+
+      assert Repo.get!(Track, ctx.secret.id).visibility == :private
+      refute Repo.exists?(where(TrackPermission, track_id: ^ctx.secret.id))
     end
 
     test "only whoever manages sharing sees Share; a holder and a member do not", ctx do
@@ -284,6 +360,84 @@ defmodule RavixWeb.ShareDialogTest do
       refute has_element?(view, "#track-share-button")
       assert has_element?(view, "#track-people-invite-form")
       refute has_element?(view, "#track-share-dialog")
+    end
+  end
+
+  defmodule Host do
+    @moduledoc false
+    # The popover on its own, for a viewer the header offers no Share to:
+    # what it would show them is still `People.sharing/2`'s to decide.
+    use Phoenix.LiveView
+    on_mount {RavixWeb.Live.Hooks, :require_authenticated_user}
+
+    def mount(_params, %{"track_id" => track_id}, socket),
+      do: {:ok, assign(socket, track_id: track_id)}
+
+    def render(assigns) do
+      ~H"""
+      <.live_component
+        module={RavixWeb.Live.ShareDialog}
+        id="track-share"
+        track_id={@track_id}
+        current_user={@current_user}
+        session_hash={@session_hash}
+      />
+      """
+    end
+
+    def handle_event("dismiss", _params, socket), do: {:noreply, socket}
+    def handle_info(_message, socket), do: {:noreply, socket}
+  end
+
+  describe "a Read viewer" do
+    setup ctx do
+      open =
+        insert_track(
+          project: ctx.project,
+          title: "Open work",
+          created_by: ctx.creator.id,
+          created_by_login: ctx.creator.login
+        )
+
+      insert_track_member(open, ctx.holder, role: :read)
+
+      {:ok, view, _} =
+        live_isolated(log_in_user(build_conn(), ctx.holder), Host,
+          session: %{"track_id" => open.id}
+        )
+
+      %{view: view, open: open}
+    end
+
+    test "sees who has access and the general access, with no controls", ctx do
+      assert has_element?(ctx.view, "#share-access-shareholder", "Read")
+      assert has_element?(ctx.view, "#share-access-shareholder .people-source", "direct")
+      assert has_element?(ctx.view, "#share-access-shareowner .people-source", "owner")
+
+      assert has_element?(
+               ctx.view,
+               "#share-access-sharecolleague .people-source",
+               "from workspace"
+             )
+
+      assert has_element?(ctx.view, ".share-general-row", "Everyone in #{ctx.workspace.name}")
+      assert has_element?(ctx.view, ".share-general-row .role-label", "Write")
+      refute has_element?(ctx.view, "#share-visibility-form")
+      refute has_element?(ctx.view, "select")
+      refute has_element?(ctx.view, "#share-person-form")
+      refute has_element?(ctx.view, "#share-access button")
+      assert has_element?(ctx.view, "#share-link button", "Copy link")
+    end
+
+    test "is refused whatever events the browser sends", ctx do
+      target = with_target(ctx.view, "#track-share")
+      render_click(target, "visibility", %{"visibility" => "private"})
+      render_click(target, "add", %{"login" => "sharecolleague"})
+      render_click(target, "search", %{"q" => "share"})
+
+      assert Repo.get!(Track, ctx.open.id).visibility == :project
+      refute Repo.exists?(where(TrackPermission, track_id: ^ctx.open.id))
+      refute has_element?(ctx.view, "[role=option]")
     end
   end
 

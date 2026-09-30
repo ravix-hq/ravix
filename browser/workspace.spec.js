@@ -635,7 +635,7 @@ test('project, track, streaming, image upload, reconnect, and revocation', async
 
   await expect(page.getByLabel('Command', { exact: true })).not.toBeVisible();
   await page.getByRole('button', { name: 'Commands', exact: true }).click();
-  await expect(page.locator('#track-terminal .dock-empty')).toContainText('For an interactive shell, such as a console or a REPL, open a terminal with +.');
+  await expect(page.locator('#track-terminal .dock-empty')).toContainText('For an interactive shell, open a terminal with +.');
   await expect(page.locator('#track-terminal').getByRole('button', { name: 'Run', exact: true })).toHaveCount(0);
   await page.getByLabel('Command', { exact: true }).fill('echo draft');
   await page.getByRole('button', { name: 'Collapse the dock' }).click();

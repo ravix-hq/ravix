@@ -17,4 +17,5 @@ export function watchDialogs(target) {
 }
 
 // A closing dialog is `hidden` until the server removes it; it is not open.
-const openDialog = (doc) => [...doc.querySelectorAll(".scrim")].some((scrim) => !scrim.hidden)
+// The Share popover (RAV-84) is a dialog with no scrim of its own.
+const openDialog = (doc) => [...doc.querySelectorAll(".scrim, .share-layer")].some((layer) => !layer.hidden)

@@ -8,6 +8,11 @@ defmodule RavixWeb.ThemeContrastTest do
   are the ones the shell actually draws as sentences — `--dimmer` is the
   colour of hints, placeholders and the yard's captions, not a decoration.
 
+  The Files tab's kinds of file are the same promise for graphics: every
+  kind's colour, a token or a `color-mix` of two, is an icon that must clear
+  WCAG's 3:1 for non-text contrast on the panel and on the selected row, in
+  every palette. A colour is only "from the theme" if every theme can read it.
+
   The second is the file's own rule from its head comment: every colour is a
   token, and nothing below the palettes hard-codes a hex value. A hex in the
   body is a colour one theme cannot change.
@@ -42,6 +47,24 @@ defmodule RavixWeb.ThemeContrastTest do
             do: "#{theme}: --#{fg} on --#{bg} is #{Float.round(ratio, 2)}:1"
 
       assert failures == [], Enum.join(["below #{@aa}:1:" | failures], "\n  ")
+    end
+  end
+
+  describe "the Files tab's kinds of file" do
+    test "are drawn at 3:1 or better on the panel and the selected row", %{css: css} do
+      kinds = kinds(css)
+      assert map_size(kinds) >= 10, "expected at least ten coloured kinds, got #{inspect(kinds)}"
+
+      failures =
+        for {theme, tokens} <- palettes(css),
+            {kind, value} <- kinds,
+            ground <- ["panel", "line"],
+            colour = resolve(value, tokens),
+            ratio = contrast(colour, rgb(Map.fetch!(tokens, ground))),
+            ratio < 3.0,
+            do: "#{theme}: #{kind} on --#{ground} is #{Float.round(ratio, 2)}:1"
+
+      assert failures == [], Enum.join(["below 3:1:" | failures], "\n  ")
     end
   end
 
@@ -109,7 +132,72 @@ defmodule RavixWeb.ThemeContrastTest do
     |> Enum.map(fn [_, inner] -> inner end)
   end
 
+  # `.file-kind.kind-x { color: ... }`, as kind => the colour's source text.
+  defp kinds(css) do
+    ~r/\.file-kind\.kind-([\w-]+)\s*\{\s*color:\s*([^;]+);/
+    |> Regex.scan(css)
+    |> Map.new(fn [_, kind, value] -> {kind, String.trim(value)} end)
+  end
+
+  # A kind's colour in one palette, as `{r, g, b}`: a token, or an oklab mix
+  # of two. Anything else fails to match, which is the point.
+  defp resolve("var(--" <> rest, tokens),
+    do: tokens |> Map.fetch!(String.trim_trailing(rest, ")")) |> rgb()
+
+  defp resolve(value, tokens) do
+    [_, a, share, b] =
+      Regex.run(
+        ~r/^color-mix\(in oklab, var\(--([\w-]+)\) (\d+)%, var\(--([\w-]+)\)\)$/,
+        value
+      )
+
+    mix(rgb(tokens[a]), String.to_integer(share) / 100, rgb(tokens[b]))
+  end
+
+  # CSS Color 4's `color-mix` for two opaque colours: interpolate in OKLab,
+  # then back to sRGB, clamped to the gamut.
+  defp mix(a, share, b) do
+    {l1, a1, b1} = oklab(a)
+    {l2, a2, b2} = oklab(b)
+    lerp = fn x, y -> x * share + y * (1 - share) end
+    srgb({lerp.(l1, l2), lerp.(a1, a2), lerp.(b1, b2)})
+  end
+
+  defp oklab({r, g, b}) do
+    [r, g, b] = Enum.map([r, g, b], &channel/1)
+    l = :math.pow(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b, 1 / 3)
+    m = :math.pow(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b, 1 / 3)
+    s = :math.pow(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b, 1 / 3)
+
+    {0.2104542553 * l + 0.7936177850 * m - 0.0040720468 * s,
+     1.9779984951 * l - 2.4285922050 * m + 0.4505937099 * s,
+     0.0259040371 * l + 0.7827717662 * m - 0.8086757660 * s}
+  end
+
+  defp srgb({l, a, b}) do
+    l_ = :math.pow(l + 0.3963377774 * a + 0.2158037573 * b, 3)
+    m_ = :math.pow(l - 0.1055613458 * a - 0.0638541728 * b, 3)
+    s_ = :math.pow(l - 0.0894841775 * a - 1.2914855480 * b, 3)
+
+    [
+      4.0767416621 * l_ - 3.3077115913 * m_ + 0.2309699292 * s_,
+      -1.2684380046 * l_ + 2.6097574011 * m_ - 0.3413193965 * s_,
+      -0.0041960863 * l_ - 0.7034186147 * m_ + 1.7076147010 * s_
+    ]
+    |> Enum.map(fn c ->
+      c = min(max(c, 0.0), 1.0)
+      c = if c <= 0.0031308, do: 12.92 * c, else: 1.055 * :math.pow(c, 1 / 2.4) - 0.055
+      c * 255
+    end)
+    |> List.to_tuple()
+  end
+
   # ── WCAG ───────────────────────────────────────────────────────────────
+
+  defp contrast({_, _, _} = fg, {_, _, _} = bg) do
+    {lf, lb} = {luminance(fg), luminance(bg)}
+    (max(lf, lb) + 0.05) / (min(lf, lb) + 0.05)
+  end
 
   defp contrast(fg, bg) do
     {lf, lb} = {luminance(rgb(fg)), luminance(rgb(bg))}
