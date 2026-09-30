@@ -76,6 +76,7 @@ defmodule RavixWeb.TrackLive do
   alias RavixWeb.Live.Panel
   alias RavixWeb.Live.Params
   alias RavixWeb.Live.ThreadConnect
+  alias RavixWeb.Live.ToolCall
   alias RavixWeb.Markdown
   alias RavixWeb.ModelName
 
@@ -3243,35 +3244,76 @@ defmodule RavixWeb.TrackLive do
   attr :blocks, :list, required: true
   attr :rendered, :map, required: true
   attr :turn, :map, required: true
+  attr :workdir, :string, default: nil
 
   # `open` is the reader's: the server never sets it, and ignoring it keeps a
-  # patch to a live turn from closing the fold somebody just opened.
+  # patch to a live turn from closing the fold somebody just opened. That
+  # only holds for an element the patch keeps, and LiveView matches elements
+  # by `id`, falling back to a render-scoped `data-phx-id` that a turn's
+  # re-insert changes; so the fold, the thoughts and every call carry an id.
+  #
+  # The turn's thoughts are one toggle at the head of the fold rather than a
+  # row between every call. Agents think between nearly every pair of calls,
+  # so merging only adjacent thoughts would still leave one in every other
+  # row, and the calls are what a reader scans the fold for. Inside the
+  # toggle they keep their order.
   defp work(assigns) do
-    tools = for %TranscriptBlock.Tool{} = tool <- assigns.blocks, do: tool
+    {thoughts, rows} = Enum.split_with(assigns.blocks, &match?(%TranscriptBlock.Thinking{}, &1))
+    tools = for %TranscriptBlock.Tool{} = tool <- rows, do: tool
 
     # No failure count on the folded line: agents usually recover from a
     # failing tool call, and a red "N failed" reads as the turn failing. A
     # turn that really fails says so with its own failure block; each call's
     # own status is still inside the fold, in the same muted tone.
+    now = tools |> Enum.reverse() |> Enum.find(&(&1.status == :running))
+
     assigns =
       assign(assigns,
         label: work_label(assigns.blocks, length(tools)),
-        now: tools |> Enum.reverse() |> Enum.find(&(&1.status == :running))
+        now: now && running(now, assigns.workdir),
+        thoughts: thoughts,
+        rows: rows
       )
 
     ~H"""
-    <details class="workspace-work" phx-mounted={JS.ignore_attributes("open")}>
+    <details
+      id={"work-#{@turn.id}"}
+      class="workspace-work"
+      phx-mounted={JS.ignore_attributes("open")}
+    >
       <summary>
         <span>{@label}</span>
-        <span :if={@now} class="work-now">{@now.name}</span>
+        <span :if={@now} class="work-now">{@now}</span>
       </summary>
       <div class="workspace-work-body">
-        <div :for={block <- @blocks}>
-          <.block block={block} html={rendered(@rendered, block)} />
+        <details
+          :if={@thoughts != []}
+          id={"thoughts-#{@turn.id}"}
+          class="workspace-thinking"
+          phx-mounted={JS.ignore_attributes("open")}
+        >
+          <summary>{counted(length(@thoughts), "thought")}</summary>
+          <.block :for={thought <- @thoughts} block={thought} html={rendered(@rendered, thought)} />
+        </details>
+        <div :for={{block, index} <- Enum.with_index(@rows)}>
+          <.block
+            block={block}
+            html={rendered(@rendered, block)}
+            workdir={@workdir}
+            id={"work-#{@turn.id}-#{index}"}
+          />
         </div>
       </div>
     </details>
     """
+  end
+
+  # The folded line's "now": the running call as its row names it.
+  defp running(tool, workdir) do
+    case ToolCall.first_line(ToolCall.target(tool), workdir) do
+      {nil, _more} -> ToolCall.label(tool)
+      {line, _more} -> "#{ToolCall.label(tool)} #{line}"
+    end
   end
 
   defp work_label(blocks, tools) do
@@ -3431,32 +3473,6 @@ defmodule RavixWeb.TrackLive do
         else: path
       )
 
-  # What a call was run on, when its name does not already say so. An
-  # adapter commonly titles a shell call with the command itself, and the
-  # summary the ACP library builds is every argument as `key=value`, so the
-  # row used to read the command twice and then the working directory. The
-  # arguments are all in the expanded body; the row names one of them.
-  @primary_inputs ~w(command cmd file_path path pattern query url)
-
-  defp tool_summary(%TranscriptBlock.Tool{name: name, detail: detail}) do
-    candidate =
-      List.first(detail.paths) ||
-        Enum.find_value(@primary_inputs, fn key ->
-          case detail.input[key] do
-            value when is_binary(value) and value != "" -> value
-            _ -> nil
-          end
-        end)
-
-    if candidate && !names?(name || "", candidate), do: candidate
-  end
-
-  # A title may be the command cut short with an ellipsis.
-  defp names?(name, candidate) do
-    stem = name |> String.trim_trailing("…") |> String.trim_trailing("...")
-    String.contains?(name, candidate) or (stem != "" and String.starts_with?(candidate, stem))
-  end
-
   # One head per block struct, rather than five `:if` comparisons against a
   # `:kind` field the blocks no longer carry. A block shape added to
   # `Ravix.Tracks.Transcript.Block` and not drawn here is a
@@ -3464,6 +3480,8 @@ defmodule RavixWeb.TrackLive do
   # blank, which is the trade this conversion was for.
   attr :block, :map, required: true
   attr :html, :any, default: nil, doc: "this body's markdown, if `memoize/1` has it"
+  attr :workdir, :string, default: nil, doc: "the track directory tool rows name paths from"
+  attr :id, :string, default: nil, doc: "a tool row's DOM id, stable across patches"
 
   defp block(%{block: %TranscriptBlock.Text{}} = assigns) do
     ~H"""
@@ -3471,12 +3489,10 @@ defmodule RavixWeb.TrackLive do
     """
   end
 
+  # One thought, as `work/1` lists them inside the turn's thoughts toggle.
   defp block(%{block: %TranscriptBlock.Thinking{}} = assigns) do
     ~H"""
-    <details class="workspace-thinking">
-      <summary>Thinking</summary>
-      <div class="md">{@html || Markdown.render_safe(@block.body)}</div>
-    </details>
+    <div class="md">{@html || Markdown.render_safe(@block.body)}</div>
     """
   end
 
@@ -3510,22 +3526,8 @@ defmodule RavixWeb.TrackLive do
   end
 
   defp block(%{block: %TranscriptBlock.Tool{}} = assigns) do
-    assigns = assign(assigns, :summary, tool_summary(assigns.block))
-
     ~H"""
-    <details class="workspace-tool">
-      <summary>
-        <span :if={@block.status != :done} class={"chip tool-#{@block.status}"}>{@block.status}</span>
-        {@block.name}
-        <span :if={@summary} class="tool-summary">{@summary}</span>
-      </summary>
-      <pre :if={@block.detail.input != %{}}>{Jason.encode!(@block.detail.input, pretty: true)}</pre>
-      <p :for={path <- @block.detail.paths}><code>{path}</code></p>
-      <div :for={edit <- @block.detail.edits}>
-        <strong>{edit.path}</strong><pre><span :for={line <- edit.lines} class={"diff-#{line.kind}"}>{line.text}{"\n"}</span></pre>
-      </div>
-      <pre :if={@block.output != ""}>{@block.output}</pre>
-    </details>
+    <ToolCall.tool_call id={@id} block={@block} workdir={@workdir} />
     """
   end
 
