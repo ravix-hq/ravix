@@ -127,7 +127,7 @@ defmodule RavixWeb.StagePagesTest do
 
       assert has_element?(
                view,
-               "#home-track-#{newer.id}[aria-label^='ravix/tidy-router in ravix, by @sasha']"
+               "#home-track-#{newer.id}[aria-label^='tidy-router in ravix, by @sasha']"
              )
 
       # "Add a project" in the sidebar is the way in; Home keeps no copy.

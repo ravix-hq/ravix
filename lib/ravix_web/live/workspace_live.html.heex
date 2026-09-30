@@ -788,13 +788,13 @@
                   aria-label={
                     row_label(
                       track,
-                      "#{track.title} in #{project.display_name}, by @#{track.created_by_login}"
+                      "#{Track.label(track)} in #{project.display_name}, by @#{track.created_by_login}"
                     )
                   }
                 >
                   <.creator track={track} />
                   <span class="recent-main">
-                    <strong class="truncate" title={track.title}>{tab_label(track)}</strong>
+                    <strong class="truncate" title={Track.tooltip(track)}>{Track.label(track)}</strong>
                     <span class="recent-meta truncate">
                       <.project_name project={project} /><span :if={project.repo} class="mono">
                         · {project.repo}

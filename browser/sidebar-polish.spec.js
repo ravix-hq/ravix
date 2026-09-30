@@ -12,7 +12,7 @@ test('sidebar rows keep one rhythm, spin while working and keep the open track i
   await page.setViewportSize({ width: 1280, height: 640 });
   await signIn(page, 'sidebarpolish', '/home');
   await connectClaude(page);
-  await page.getByRole('button', { name: /^New project/ }).click();
+  await page.getByRole('button', { name: 'Add a project', exact: true }).first().click();
   await page.getByLabel('Project name', { exact: true }).fill(`Sidebar polish ${Date.now().toString(36)}`);
   await page.getByRole('button', { name: 'Create project', exact: true }).click();
   const projectRow = page.locator('#yard .workspace-project.current');
