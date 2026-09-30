@@ -2636,9 +2636,11 @@ defmodule RavixWeb.TrackLive do
   defp hub(%Event{name: name}, socket) when name in [:people, :tracks, :settings] do
     # The Share dialog lists whom the track is shared with; somebody else
     # sharing or unsharing it changes that under an open dialog.
-    if name == :people and socket.assigns[:dialog] == :people and
-         Ravix.People.workspace_sharing?(socket.assigns.project || %{}),
-       do: send_update(RavixWeb.Live.ShareDialog, id: "track-share", reload: true)
+    if name == :people and socket.assigns[:dialog] == :people do
+      if Ravix.People.workspace_sharing?(socket.assigns.project || %{}),
+        do: send_update(RavixWeb.Live.ShareDialog, id: "track-share", reload: true),
+        else: send_update(RavixWeb.Live.PeopleDialog, id: "track-people", reload: true)
+    end
 
     socket |> refresh_detail() |> refresh_plan_items()
   end

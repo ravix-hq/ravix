@@ -779,7 +779,11 @@ defmodule RavixWeb.WorkspaceManagementTest do
     member = insert_user()
     People.Store.add_project_member(ctx.project.id, member.id, ctx.user.id)
     render_click(ctx.view, "dialog", %{name: "people"})
-    ctx.view |> element("button[phx-value-login='#{member.login}']") |> render_click()
+
+    ctx.view
+    |> element("button[phx-click=remove-person][phx-value-login='#{member.login}']")
+    |> render_click()
+
     render_async(ctx.view, 1000)
     assert {:error, :not_found} = Projects.get(member, ctx.project.id)
     assert_patch(ctx.view, "/")

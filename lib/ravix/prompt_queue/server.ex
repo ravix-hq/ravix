@@ -951,8 +951,10 @@ defmodule Ravix.PromptQueue.Server do
     # here rather than trusted from whenever it was accepted: the row's own
     # `user_id` becomes the person `Access.track_access/2` is asked about.
     with %User{} = user <- Ravix.Accounts.Store.get_user(row.user_id),
+         # A sender whose role has since dropped to read (ADR 0010) no longer
+         # sends: what they queued is revoked as a removal's would be.
          {:ok, %{track: track, project: project, thread: thread}} <-
-           Access.thread_access(user, row.track_id, row.thread_id),
+           Access.thread_access(user, row.track_id, row.thread_id, :write),
          true <- is_nil(thread.closed_at),
          track = %{track | conversation_id: thread.conversation_id},
          true <- open?(track) do

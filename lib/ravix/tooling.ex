@@ -116,13 +116,14 @@ defmodule Ravix.Tooling do
   defp mutation_access(_p, "create_project", _), do: :ok
 
   defp mutation_access(p, "create_track", a),
-    do: access_result(Access.project_access(p.user, a["project_id"]))
+    do: access_result(Access.project_access(p.user, a["project_id"], :write))
 
   defp mutation_access(p, "update_project_settings", a),
     do: access_result(Access.project_of(p.user, a["project_id"]))
 
   defp mutation_access(p, "close_track", a) do
-    with {:ok, %{track: track, role: role}} <- Access.track_access(p.user, a["track_id"]) do
+    with {:ok, %{track: track, role: role}} <-
+           Access.track_access(p.user, a["track_id"], :write) do
       Access.require_owner_or_cutter(role, p.user, track, "close a track")
     end
   end

@@ -187,16 +187,14 @@ defmodule Ravix.People do
   a row naming a login that has never appeared would be a permission
   granted to whoever claimed that name first.
 
-  Owner-only. Returns the track's people, as `list/2` would. Refused on a
+  Admins only (ADR 0010). Returns the track's people, as `list/2` would. Refused on a
   project shared through its workspace (`workspace_sharing?/1`), where the
   Share dialog adds workspace members instead.
   """
   @spec add(User.t(), String.t(), String.t() | nil) ::
           {:ok, [Store.person()]} | {:error, reason()}
   def add(%User{} = user, track_id, login) do
-    with {:ok, %{track: track, project: project, role: role}} <-
-           Access.track_access(user, track_id),
-         :ok <- Access.require_track_manager(role, user, track, "invite people to a track"),
+    with {:ok, %{track: track, project: project}} <- Access.track_access(user, track_id, :admin),
          :ok <- links_kept(project),
          {:ok, found} <- resolve_login(login),
          :ok <- refuse_track_grade(found, project, track) do
@@ -233,27 +231,26 @@ defmodule Ravix.People do
   @spec remove(User.t(), String.t(), String.t()) ::
           {:ok, [Store.person()] | :left} | {:error, reason()}
   def remove(%User{} = user, track_id, login) do
-    with {:ok, %{track: track, project: project, role: role}} <-
+    with {:ok, %{track: track, project: project, role: role, level: level}} <-
            Access.track_access(user, track_id) do
       wanted = strip_at(login)
 
       # An invitation that has not been taken up yet is cancelled rather
       # than removed: there is no membership to delete, only a promise to
-      # withdraw. Owner-only, because a pending person has no session to ask
+      # withdraw. Admins only, because a pending person has no session to ask
       # with.
-      if Access.require_track_manager(role, user, track, "remove invitations") == :ok and
-           Store.remove_invite_by_login(track.id, wanted) do
+      if Access.allows?(level, :admin) and Store.remove_invite_by_login(track.id, wanted) do
         Ravix.Hub.publish(project.id, :people, track_id: track.id)
         {:ok, Store.people_of(track.id, project.user_id, project.id)}
       else
-        remove_from_track(user, track, project, role, wanted)
+        remove_from_track(user, track, project, {role, level}, wanted)
       end
     end
   end
 
-  defp remove_from_track(user, track, project, role, wanted) do
+  defp remove_from_track(user, track, project, {role, level}, wanted) do
     with {:ok, target} <- find_person(wanted),
-         :ok <- may_remove_track(role, user, target, track),
+         :ok <- may_remove(level, user, target),
          :ok <- refuse_track_project_member(project, user, target, track) do
       # `remove_member/2` tells the hub; saying it again here would only make
       # every page on the project re-read twice.
@@ -265,6 +262,89 @@ defmodule Ravix.People do
       if target.id == user.id and role != :owner,
         do: {:ok, :left},
         else: {:ok, Store.people_of(track.id, project.user_id, project.id)}
+    end
+  end
+
+  # ── roles (ADR 0010) ────────────────────────────────────────────────
+
+  @doc """
+  Change what somebody named on this track may do: `"read"`, `"write"` or
+  `"admin"`. An admin of the track only, and never their own role -- nobody
+  demotes themselves out of the dialog they are standing in, and nobody
+  promotes themselves. The owner and a private track's creator are always
+  admin and have no seat to change; somebody here by way of the project has
+  their role in the project's people, and the sentence says so.
+
+  A live page of the person changed hears `:people` and re-reads; every
+  action they take is checked again against the new role anyway. Returns
+  the track's people, as `list/2` would.
+  """
+  @spec set_role(User.t(), String.t(), String.t(), String.t()) ::
+          {:ok, [Store.person()]} | {:error, reason()}
+  def set_role(%User{} = user, track_id, login, role) do
+    with {:ok, %{track: track, project: project}} <- Access.track_access(user, track_id, :admin),
+         {:ok, role} <- parse_role(role),
+         {:ok, target} <- find_person(strip_at(to_string(login))),
+         :ok <- not_self(user, target),
+         :ok <- seated_on_track(project, track, target, role) do
+      {:ok, Store.people_of(track.id, project.user_id, project.id)}
+    end
+  end
+
+  @doc """
+  `set_role/4` one level up: a project member's role across every
+  project-visible track and the project itself. The project's admins only.
+  """
+  @spec set_project_role(User.t(), String.t(), String.t(), String.t()) ::
+          {:ok, [Store.person()]} | {:error, reason()}
+  def set_project_role(%User{} = user, project_id, login, role) do
+    with {:ok, %{project: project}} <- Access.project_access(user, project_id, :admin),
+         {:ok, role} <- parse_role(role),
+         {:ok, target} <- find_person(strip_at(to_string(login))),
+         :ok <- not_self(user, target),
+         :ok <- refuse_owner_role(project, target) do
+      if Store.set_project_member_role(project.id, target.id, role),
+        do: {:ok, Store.project_people_of(project.id, project.user_id)},
+        else: {:error, :not_found}
+    end
+  end
+
+  defp parse_role(role) when role in ["read", "write", "admin"],
+    do: {:ok, String.to_existing_atom(role)}
+
+  defp parse_role(role) when role in [:read, :write, :admin], do: {:ok, role}
+
+  defp parse_role(_role),
+    do: {:error, {:unprocessable, "invalid_role", "A role is Read, Write or Admin."}}
+
+  defp not_self(%User{id: id}, %User{id: id}),
+    do: {:error, {:unprocessable, "own_role", "You cannot change your own role."}}
+
+  defp not_self(_user, _target), do: :ok
+
+  defp refuse_owner_role(%Project{user_id: owner_id}, %User{id: owner_id}),
+    do: {:error, {:unprocessable, "owner", "The owner is always an admin."}}
+
+  defp refuse_owner_role(_project, _target), do: :ok
+
+  defp seated_on_track(project, track, target, role) do
+    cond do
+      target.id == project.user_id ->
+        refuse_owner_role(project, target)
+
+      track.visibility == :private and Access.creator?(target, track) ->
+        {:error, {:unprocessable, "creator", "Whoever made a private track is always its admin."}}
+
+      Store.set_member_role(track.id, target.id, role) ->
+        :ok
+
+      Store.project_member?(project.id, target.id) ->
+        {:error,
+         {:conflict, "in_whole_project",
+          "@#{target.login} is in this whole project. Change their role in the project's people."}}
+
+      true ->
+        {:error, :not_found}
     end
   end
 
@@ -526,19 +606,6 @@ defmodule Ravix.People do
   # machine" would be the most surprising thing either dialog could do, so
   # it is named and refused, and the sentence says where the control
   # actually is.
-  defp may_remove_track(role, user, target, track) do
-    cond do
-      user.id == target.id ->
-        :ok
-
-      track.visibility == :private ->
-        Access.require_track_manager(role, user, track, "remove people")
-
-      true ->
-        may_remove(role, user, target)
-    end
-  end
-
   defp refuse_track_project_member(_project, _user, _target, %{visibility: :private}), do: :ok
 
   defp refuse_track_project_member(project, user, target, _track),
@@ -577,9 +644,9 @@ defmodule Ravix.People do
   GitHub for somebody who has not. What differs is what it grants, and that
   difference is the dialog's to explain; see the module documentation.
 
-  Owner-only, and there is no argument for widening it. A member who could
-  invite could hand out the machine they were lent, and the owner would
-  find out from the people list.
+  The owner and the project's admins (ADR 0010). Anybody else who could
+  invite could hand out the machine they were lent; an admin is somebody the
+  owner chose to trust with exactly that.
 
   Refused on a project shared through its workspace (`workspace_sharing?/1`,
   RAV-32): people join the workspace from its members page instead, and
@@ -588,8 +655,7 @@ defmodule Ravix.People do
   @spec add_project(User.t(), String.t(), String.t() | nil) ::
           {:ok, [Store.person()]} | {:error, reason()}
   def add_project(%User{} = user, project_id, login) do
-    with {:ok, %{project: project, role: role}} <- Access.project_access(user, project_id),
-         :ok <- Access.require_owner(role, "invite people to a project"),
+    with {:ok, %{project: project}} <- Access.project_access(user, project_id, :admin),
          :ok <- project_links_kept(project),
          {:ok, found} <- resolve_login(login),
          :ok <- refuse_owner(found, project, "That is the owner of this project.") do
@@ -630,24 +696,27 @@ defmodule Ravix.People do
   @spec remove_project(User.t(), String.t(), String.t()) ::
           {:ok, [Store.person()] | :left} | {:error, reason()}
   def remove_project(%User{} = user, project_id, login) do
-    with {:ok, %{project: project, role: role}} <- Access.project_access(user, project_id) do
+    with {:ok, %{project: project, role: role, level: level}} <-
+           Access.project_access(user, project_id) do
       wanted = strip_at(login)
 
       # As on a track: an invitation nobody has taken up is withdrawn rather
-      # than removed. Owner-only, because a pending person has no session to
+      # than removed. Admins only, because a pending person has no session to
       # ask with.
-      if role == :owner and Store.remove_project_invite_by_login(project.id, wanted) do
+      if Access.allows?(level, :admin) and
+           Store.remove_project_invite_by_login(project.id, wanted) do
         Ravix.Hub.publish(project.id, :people)
         {:ok, Store.project_people_of(project.id, project.user_id)}
       else
-        remove_from_project(user, project, role, wanted)
+        remove_from_project(user, project, {role, level}, wanted)
       end
     end
   end
 
-  defp remove_from_project(user, project, role, wanted) do
+  defp remove_from_project(user, project, {role, level}, wanted) do
     with {:ok, target} <- find_person(wanted),
-         :ok <- may_remove(role, user, target) do
+         :ok <- refuse_removing_owner(project, target),
+         :ok <- may_remove(level, user, target) do
       Store.remove_project_member(project.id, target.id)
 
       # Nothing left to hand back to somebody who just removed their own
@@ -766,11 +835,17 @@ defmodule Ravix.People do
     end
   end
 
-  defp may_remove(:owner, _user, _target), do: :ok
-  defp may_remove(_role, %User{id: id}, %User{id: id}), do: :ok
+  # Anybody may leave; only an admin (ADR 0010) removes somebody else.
+  defp may_remove(_level, %User{id: id}, %User{id: id}), do: :ok
+  defp may_remove(:admin, _user, _target), do: :ok
 
-  defp may_remove(_role, _user, _target),
-    do: {:error, {:forbidden, "Only the owner of this project can remove somebody else."}}
+  defp may_remove(_level, _user, _target),
+    do: {:error, {:forbidden, "Only an admin can remove somebody else."}}
+
+  defp refuse_removing_owner(%Project{user_id: owner_id}, %User{id: owner_id}),
+    do: {:error, {:unprocessable, "owner", "The owner is always in the project."}}
+
+  defp refuse_removing_owner(_project, _target), do: :ok
 
   defp strip_at("@" <> login), do: login
   defp strip_at(login) when is_binary(login), do: login
@@ -800,14 +875,33 @@ defmodule Ravix.People do
       else: :ok
   end
 
+  # ── a plain link (ADR 0010) ──────────────────────────────────────────
+
+  @doc """
+  The track's own address, for anybody who can see it to copy. Not an
+  invitation: it opens the track only for somebody who already reaches it,
+  and anybody else gets the same not found a stranger does. Always there,
+  unlike an invite link, whose address is shown once.
+  """
+  @spec track_url(User.t(), String.t()) :: {:ok, String.t()} | {:error, :not_found}
+  def track_url(%User{} = user, track_id) do
+    with {:ok, %{track: track, project: project}} <- Access.track_access(user, track_id),
+         do: {:ok, "#{Ravix.Config.public_url()}/p/#{project.id}/t/#{track.id}"}
+  end
+
+  @doc "The project's own address, on the same terms as `track_url/2`."
+  @spec project_url(User.t(), String.t()) :: {:ok, String.t()} | {:error, :not_found}
+  def project_url(%User{} = user, project_id) do
+    with {:ok, %{project: project}} <- Access.project_access(user, project_id),
+         do: {:ok, "#{Ravix.Config.public_url()}/p/#{project.id}"}
+  end
+
   # ── the other way in: a link ─────────────────────────────────────────
 
   @doc "Whether a track link is out, never the link itself. Owner-only."
   @spec link(User.t(), String.t()) :: {:ok, invite_link() | nil} | {:error, reason()}
   def link(%User{} = user, track_id) do
-    with {:ok, %{track: track, project: project, role: role}} <-
-           Access.track_access(user, track_id),
-         :ok <- Access.require_track_manager(role, user, track, "see this track's invite link") do
+    with {:ok, %{track: track, project: project}} <- Access.track_access(user, track_id, :admin) do
       # The URL is deliberately absent. Only the hash is stored, so it
       # genuinely cannot be shown again, which is worth being honest about
       # rather than implying it was lost. A retired link is no link.
@@ -829,9 +923,7 @@ defmodule Ravix.People do
   """
   @spec mint_link(User.t(), String.t()) :: {:ok, invite_link()} | {:error, reason()}
   def mint_link(%User{} = user, track_id) do
-    with {:ok, %{track: track, project: project, role: role}} <-
-           Access.track_access(user, track_id),
-         :ok <- Access.require_track_manager(role, user, track, "make an invite link for a track"),
+    with {:ok, %{track: track, project: project}} <- Access.track_access(user, track_id, :admin),
          :ok <- links_kept(project) do
       token = Ravix.Crypto.random_token()
       Store.put_link(track.id, Ravix.Crypto.sha256(token), user.id, @link_ttl_ms)
@@ -849,8 +941,7 @@ defmodule Ravix.People do
   """
   @spec drop_link(User.t(), String.t()) :: :ok | {:error, reason()}
   def drop_link(%User{} = user, track_id) do
-    with {:ok, %{track: track, role: role}} <- Access.track_access(user, track_id),
-         :ok <- Access.require_track_manager(role, user, track, "revoke this track's invite link") do
+    with {:ok, %{track: track}} <- Access.track_access(user, track_id, :admin) do
       Store.drop_link(track.id)
     end
   end
@@ -858,8 +949,7 @@ defmodule Ravix.People do
   @doc "Whether a project link is out, never the link itself. Owner-only."
   @spec project_link(User.t(), String.t()) :: {:ok, invite_link() | nil} | {:error, reason()}
   def project_link(%User{} = user, project_id) do
-    with {:ok, %{project: project, role: role}} <- Access.project_access(user, project_id),
-         :ok <- Access.require_owner(role, "see this project's invite link") do
+    with {:ok, %{project: project}} <- Access.project_access(user, project_id, :admin) do
       # As `link/2`: a retired link is no link.
       if workspace_sharing?(project),
         do: {:ok, nil},
@@ -873,8 +963,7 @@ defmodule Ravix.People do
   """
   @spec mint_project_link(User.t(), String.t()) :: {:ok, invite_link()} | {:error, reason()}
   def mint_project_link(%User{} = user, project_id) do
-    with {:ok, %{project: project, role: role}} <- Access.project_access(user, project_id),
-         :ok <- Access.require_owner(role, "make an invite link for a project"),
+    with {:ok, %{project: project}} <- Access.project_access(user, project_id, :admin),
          :ok <- project_links_kept(project) do
       token = Ravix.Crypto.random_token()
 
@@ -892,8 +981,7 @@ defmodule Ravix.People do
   @doc "Revoke a project link: nobody new gets in on it. Owner-only."
   @spec drop_project_link(User.t(), String.t()) :: :ok | {:error, reason()}
   def drop_project_link(%User{} = user, project_id) do
-    with {:ok, %{project: project, role: role}} <- Access.project_access(user, project_id),
-         :ok <- Access.require_owner(role, "revoke this project's invite link") do
+    with {:ok, %{project: project}} <- Access.project_access(user, project_id, :admin) do
       Store.drop_project_link(project.id)
     end
   end

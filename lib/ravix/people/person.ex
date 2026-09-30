@@ -29,17 +29,26 @@ defmodule Ravix.People.Person do
   alias Ravix.Accounts.User
   alias Ravix.People.Profile
 
+  @typedoc """
+  What this person may do here (ADR 0010): the role on the seat that put
+  them in the list. `:owner` and `:creator` are always `:admin`; somebody
+  here by way of the workspace works as `:write`. Nil on a pending
+  invitation, which grants nothing until it is claimed.
+  """
+  @type role :: :read | :write | :admin
+
   @typedoc "How this person comes to be in the list."
   @type via :: :owner | :creator | :project | :workspace | :track | :shared | :pending
 
   @enforce_keys [:login, :name, :avatar_url, :via]
-  defstruct @enforce_keys
+  defstruct @enforce_keys ++ [role: nil]
 
   @type t :: %__MODULE__{
           login: String.t(),
           name: String.t() | nil,
           avatar_url: String.t() | nil,
-          via: via()
+          via: via(),
+          role: role() | nil
         }
 
   @doc "A profile, or the user row behind one, placed in a list by `via`."

@@ -435,6 +435,13 @@
             >
               <div class="composer-note" role="status" data-composer-note hidden></div>
               <p
+                :if={@track.level == :read && @composer_mode == :ask}
+                id="composer-read-only"
+                class="composer-mode-hint composer-read-only"
+              >
+                <.icon name="person" size={12} />You have Read access. Ask an admin for Write to send prompts; you can still comment.
+              </p>
+              <p
                 :if={@composer_mode == :comment}
                 id="composer-mode-hint"
                 class="composer-mode-hint"
@@ -452,7 +459,7 @@
                 aria-label="Message"
                 data-draft-key={"track:#{@track.id}:thread:draft:#{@thread_draft.id}"}
                 data-typing-event="typing"
-                disabled={is_nil(@track.conversation_id)}
+                disabled={is_nil(@track.conversation_id) or @track.level == :read}
               ></textarea>
               <textarea
                 :if={!@thread_draft[:selected?]}
@@ -467,13 +474,19 @@
                     else: "Ask to make changes…"
                 }
                 aria-label={if @composer_mode == :comment, do: "Comment", else: "Message"}
-                aria-describedby={@composer_mode == :comment && "composer-mode-hint"}
+                aria-describedby={
+                  (@composer_mode == :comment && "composer-mode-hint") ||
+                    (@track.level == :read && "composer-read-only")
+                }
                 aria-autocomplete={@composer_mode == :comment && "list"}
                 aria-controls={@composer_mode == :comment && "mention-options"}
                 data-mode={@composer_mode}
                 data-draft-key={"track:#{@track.id}:thread:#{@thread_id}"}
                 data-typing-event="typing"
-                disabled={@composer_mode == :ask && is_nil(@track.conversation_id)}
+                disabled={
+                  @composer_mode == :ask &&
+                    (is_nil(@track.conversation_id) or @track.level == :read)
+                }
               ></textarea>
               <ul
                 :if={@composer_mode == :comment}
@@ -601,7 +614,7 @@
                   models={@models}
                   disabled={
                     is_nil(@track.conversation_id) or @track.status in [:running, :opening] or
-                      :model in @pending
+                      :model in @pending or @track.level == :read
                   }
                 /><span class="spacer"></span>
                 <button
@@ -612,7 +625,7 @@
                   disabled={
                     (@composer_mode == :comment && @transcript_loading) ||
                       (@composer_mode == :ask &&
-                         (is_nil(@track.conversation_id) or
+                         (is_nil(@track.conversation_id) or @track.level == :read or
                             (@thread_draft[:selected?] &&
                                (is_nil(@thread_draft.options) or :start_thread in @pending))))
                   }
@@ -620,7 +633,10 @@
                   <.icon name="arrow-up" size={16} />
                 </button>
                 <button
-                  :if={!@thread_draft[:selected?] && @track.status in [:running, :opening]}
+                  :if={
+                    !@thread_draft[:selected?] && @track.status in [:running, :opening] &&
+                      @track.level != :read
+                  }
                   type="button"
                   class="ghost"
                   phx-click="interrupt"
@@ -952,10 +968,6 @@
       project={@project}
       subject_id={@track_id}
       track={@track}
-      owner={
-        (@track.visibility == :private && Ravix.Accounts.Access.creator?(@current_user, @track)) ||
-          (@track.role == :owner && @track.visibility == :project)
-      }
       current_user={@current_user}
       session_hash={@session_hash}
     />

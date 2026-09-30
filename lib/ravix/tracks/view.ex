@@ -94,7 +94,8 @@ defmodule Ravix.Tracks.View do
                 billing: :owner,
                 payer_login: nil,
                 payer?: false,
-                billing_pause: nil
+                billing_pause: nil,
+                level: nil
               ]
 
   @type t :: %__MODULE__{
@@ -118,6 +119,7 @@ defmodule Ravix.Tracks.View do
           closed_at: DateTime.t() | nil,
           people: [Person.t()],
           role: :owner | :member,
+          level: Ravix.Accounts.Access.level() | nil,
           unread: boolean(),
           reply_unread: boolean() | nil,
           mention: %{comment_id: String.t(), author_login: String.t(), at: DateTime.t()} | nil,

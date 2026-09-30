@@ -376,12 +376,18 @@ defmodule RavixWeb.Live.PeopleDialogTest do
       # read before they were added.
       render_click(ctx.view, "dismiss")
       open_people(ctx.view)
-      assert has_element?(ctx.view, "button[phx-value-login='#{member.login}']")
+
+      assert has_element?(
+               ctx.view,
+               "button[phx-click=remove-person][phx-value-login='#{member.login}']"
+             )
 
       Repo.delete!(ctx.session)
 
       assert {:error, {:redirect, %{to: "/login"}}} =
-               ctx.view |> element("button[phx-value-login='#{member.login}']") |> render_click()
+               ctx.view
+               |> element("button[phx-click=remove-person][phx-value-login='#{member.login}']")
+               |> render_click()
 
       assert {:ok, _project} = Projects.get(member, ctx.project.id)
     end
@@ -517,7 +523,7 @@ defmodule RavixWeb.Live.PeopleDialogTest do
 
       view
       |> open_people()
-      |> element("button[phx-value-login='#{member.login}']")
+      |> element("button[phx-click=remove-person][phx-value-login='#{member.login}']")
       |> render_click()
 
       assert_redirect(parent, "/")
@@ -532,7 +538,7 @@ defmodule RavixWeb.Live.PeopleDialogTest do
 
       view
       |> open_people()
-      |> element("button[phx-value-login='#{member.login}']")
+      |> element("button[phx-click=remove-person][phx-value-login='#{member.login}']")
       |> render_click()
 
       refute Access.member?(ctx.track.id, member.id)

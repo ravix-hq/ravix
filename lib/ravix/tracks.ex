@@ -303,7 +303,7 @@ defmodule Ravix.Tracks do
   end
 
   defp do_get(user, track_id, fresh, thread_id) do
-    with {:ok, %{track: track, project: project, role: role, thread: thread}} <-
+    with {:ok, %{track: track, project: project, role: role, level: level, thread: thread}} <-
            Access.thread_access(user, track_id, thread_id),
          {:ok, client} <- fountain() do
       live = conversations_of(project, fresh: fresh)
@@ -345,6 +345,7 @@ defmodule Ravix.Tracks do
              # very track; both of these are that caller's own view of it.
              people: People.Store.people_of(track.id, project.user_id, project.id),
              role: role,
+             level: level,
              last_read: reads[thread.id],
              viewer: user
            )
@@ -546,7 +547,7 @@ defmodule Ravix.Tracks do
   """
   @spec resume_billing(User.t(), String.t(), String.t()) :: :ok | {:error, reason()}
   def resume_billing(%User{} = user, track_id, runtime) when is_binary(runtime) do
-    with {:ok, %{track: track, project: project}} <- Access.track_access(user, track_id),
+    with {:ok, %{track: track, project: project}} <- Access.track_access(user, track_id, :write),
          true <- Track.creator_billed?(track) or {:error, :not_found},
          {:ok, payer} <- Billing.payer(track, project),
          true <-
@@ -641,7 +642,7 @@ defmodule Ravix.Tracks do
   def start_thread(%User{} = user, track_id, attrs, payload) do
     payload = stringify(payload)
 
-    with {:ok, %{track: track, project: project}} <- Access.track_access(user, track_id),
+    with {:ok, %{track: track, project: project}} <- Access.track_access(user, track_id, :write),
          :ok <-
            check(
              Ravix.Config.threads_enabled?(),
@@ -790,7 +791,7 @@ defmodule Ravix.Tracks do
            create_thread_conversation(client, launch, track, project, selection.runtime) do
       result =
         with {:ok, %{track: %{closed_at: nil}, project: %{runtime_agents_retiring: false}}} <-
-               Access.track_access(user, track.id),
+               Access.track_access(user, track.id, :write),
              :ok <- Runtime.gate(user, %{project | runtime: selection.home}, selection.runtime),
              do:
                save_started_thread(
@@ -949,7 +950,7 @@ defmodule Ravix.Tracks do
   defp open_dedicated(user, project_id, attrs) do
     creator? = Billing.creator_opening?()
 
-    with {:ok, %{project: project, role: role}} <- Access.project_access(user, project_id),
+    with {:ok, %{project: project, role: role}} <- Access.project_access(user, project_id, :write),
          :ok <- not_legacy_duplicate(project),
          :ok <- plan_origin_access(user, project_id, attrs["origin"]),
          {:ok, attrs} <- resolve_pr_origin(project, attrs),
@@ -1036,7 +1037,7 @@ defmodule Ravix.Tracks do
         "This project is a duplicate of its repository's project in the workspace. Open the track there instead."}}
 
   defp open_shared_available(user, project_id, attrs, opts) do
-    with {:ok, %{project: project, role: role}} <- Access.project_access(user, project_id),
+    with {:ok, %{project: project, role: role}} <- Access.project_access(user, project_id, :write),
          :ok <- plan_origin_access(user, project_id, attrs["origin"]),
          {:ok, attrs} <- resolve_pr_origin(project, attrs),
          {:ok, client} <- fountain(),
@@ -1150,7 +1151,7 @@ defmodule Ravix.Tracks do
 
   @doc "Only the creator can change a track's visibility."
   def set_visibility(%User{} = user, track_id, value) do
-    with {:ok, %{track: track}} <- Access.track_access(user, track_id),
+    with {:ok, %{track: track}} <- Access.track_access(user, track_id, :write),
          true <- Access.creator?(user, track),
          {:ok, visibility} <- visibility(value),
          :ok <- visibility_layout(visibility, track.sandbox_layout),
@@ -1299,7 +1300,7 @@ defmodule Ravix.Tracks do
   @spec retry(User.t(), String.t(), String.t() | nil) :: :ok | {:error, reason()}
   def retry(%User{} = user, track_id, thread_id \\ nil) do
     with {:ok, %{track: track, project: project, thread: thread}} <-
-           Access.thread_access(user, track_id, thread_id),
+           Access.thread_access(user, track_id, thread_id, :write),
          {:ok, client} <- fountain() do
       retry_layout(client, track, project, thread)
     end
@@ -1396,7 +1397,7 @@ defmodule Ravix.Tracks do
     payload = stringify(payload)
 
     with {:ok, %{track: track, thread: thread}} <-
-           Access.thread_access(user, track_id, payload["thread_id"]),
+           Access.thread_access(user, track_id, payload["thread_id"], :write),
          {:ok, _client} <- fountain(),
          {:ok, images} <- read_images(payload["images"]),
          text = text(payload["prompt"], 100_000),
@@ -1465,7 +1466,7 @@ defmodule Ravix.Tracks do
   @doc "Stop the running turn."
   @spec interrupt(User.t(), String.t(), String.t() | nil) :: :ok | {:error, reason()}
   def interrupt(%User{} = user, track_id, thread_id \\ nil) do
-    with {:ok, %{thread: thread}} <- Access.thread_access(user, track_id, thread_id),
+    with {:ok, %{thread: thread}} <- Access.thread_access(user, track_id, thread_id, :write),
          {:ok, client} <- fountain(),
          :ok <-
            check(
@@ -1497,7 +1498,7 @@ defmodule Ravix.Tracks do
   def set_model(%User{} = user, track_id, thread_id, model)
       when is_binary(model) or is_nil(model) do
     with {:ok, %{track: track, project: project, thread: thread}} <-
-           Access.thread_access(user, track_id, thread_id),
+           Access.thread_access(user, track_id, thread_id, :write),
          :ok <-
            check(
              is_nil(track.closed_at) and track.sandbox_state not in [:closing, :terminated],
@@ -1903,7 +1904,7 @@ defmodule Ravix.Tracks do
   @spec rename(User.t(), String.t(), String.t()) :: :ok | {:error, reason()}
   def rename(%User{} = user, track_id, title) do
     with {:ok, %{track: track, project: project, role: role}} <-
-           Access.track_access(user, track_id),
+           Access.track_access(user, track_id, :write),
          :ok <- Access.require_owner_or_cutter(role, user, track, "rename a track"),
          title when is_binary(title) <-
            text(title, 200) |> non_empty() ||
@@ -1944,7 +1945,7 @@ defmodule Ravix.Tracks do
           :ok | {:error, reason()}
   def close(%User{} = user, track_id, opts \\ []) do
     with {:ok, %{track: track, project: project, role: role}} <-
-           Access.track_access(user, track_id),
+           Access.track_access(user, track_id, :write),
          :ok <- Access.require_owner_or_cutter(role, user, track, "close a track"),
          {:ok, client} <- fountain() do
       close_track(user, track, project, client, opts)
@@ -1978,7 +1979,7 @@ defmodule Ravix.Tracks do
     merged = Keyword.get(opts, :require_merged, false) == true
 
     with {:ok, %{track: track, project: project, role: role}} <-
-           Access.track_access(user, track_id),
+           Access.track_access(user, track_id, :write),
          :ok <- Access.require_owner_or_cutter(role, user, track, "close a track"),
          :ok <- require_not_closed(track),
          pr = pull_summary(track, project, if(merged, do: :fresh, else: :cached)),
@@ -2091,7 +2092,7 @@ defmodule Ravix.Tracks do
   @doc "Read-only close warning, scoped to the selected track's disk."
   def close_info(%User{} = user, track_id) do
     with {:ok, %{track: track, project: project, role: role}} <-
-           Access.track_access(user, track_id),
+           Access.track_access(user, track_id, :write),
          :ok <- Access.require_owner_or_cutter(role, user, track, "close a track") do
       inspect_changes(user, track, project)
     end
@@ -2128,7 +2129,7 @@ defmodule Ravix.Tracks do
   @doc "Rebuild an isolated machine only after explicit destructive confirmation."
   def rebuild_machine(%User{} = user, track_id, force: true) do
     with {:ok, %{track: %{sandbox_layout: :dedicated} = track, project: project, role: role}} <-
-           Access.track_access(user, track_id),
+           Access.track_access(user, track_id, :write),
          :ok <- Access.require_owner_or_cutter(role, user, track, "rebuild a machine"),
          {:ok, _} <- Ravix.Tracks.Sandbox.Store.request_rebuild(track, project) do
       publish_tracks(project.id, track.id)
@@ -2427,7 +2428,7 @@ defmodule Ravix.Tracks do
     attrs = stringify(attrs)
 
     with {:ok, app} <- github(),
-         {:ok, %{track: track, project: project}} <- Access.track_access(user, track_id),
+         {:ok, %{track: track, project: project}} <- Access.track_access(user, track_id, :write),
          :ok <- require_repo(project, "This project has no repository.") do
       body =
         text(attrs["body"], 20_000) |> non_empty() || "Opened from Ravix track `#{track.slug}`."
@@ -2572,6 +2573,7 @@ defmodule Ravix.Tracks do
       people: Keyword.get(opts, :people, []),
       threads: Keyword.get(opts, :threads, []),
       role: Keyword.get(opts, :role, :owner),
+      level: Keyword.get(opts, :level),
       unread: unread?(last_active, Keyword.get(opts, :last_read)),
       model: live && live.model
     }
