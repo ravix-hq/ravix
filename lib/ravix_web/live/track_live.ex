@@ -4128,10 +4128,15 @@ defmodule RavixWeb.TrackLive do
 
   # The box says what it can do until somebody has used it; after the first
   # turn the conversation is under way and "a follow-up" is the honest word.
-  defp composer_placeholder(:comment, _page),
-    do: "Comment for people on this thread. @ to mention…"
+  # While a turn runs, what is sent waits for it (RAV-94), so the box says
+  # that. One shape throughout: what to write, then what `@` and `/` do.
+  defp composer_placeholder(:comment, _page, _running?),
+    do: "Comment for people on this thread, @mention someone"
 
-  defp composer_placeholder(:ask, page) do
+  defp composer_placeholder(:ask, _page, true),
+    do: "Queue a follow-up, @mention files, run /commands"
+
+  defp composer_placeholder(:ask, page, false) do
     if Enum.any?(page.turns, & &1.visible?),
       do: "Add a follow-up, @mention files, run /commands",
       else: "Ask to make changes, @mention files, run /commands"

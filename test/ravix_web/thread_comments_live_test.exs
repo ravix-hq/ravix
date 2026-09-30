@@ -102,11 +102,33 @@ defmodule RavixWeb.ThreadCommentsLiveTest do
     assert has_element?(view, "button[aria-label='Choose images']")
     refute has_element?(view, "#mention-options")
 
+    # RAV-94: the browser switches before the server answers, so the box
+    # carries both modes' placeholders, the buttons say which mode is
+    # theirs, and Comment's hint is already in the row, shown by the
+    # `commenting` class and describing nothing until Comment is chosen.
+    assert has_element?(
+             view,
+             "textarea[data-mode=ask][data-ask-disabled=false]" <>
+               "[data-placeholder-ask='Add a follow-up, @mention files, run /commands']" <>
+               "[data-placeholder-comment='Comment for people on this thread, @mention someone']"
+           )
+
+    assert has_element?(view, "#composer-mode-ask[data-composer-mode=ask]")
+    assert has_element?(view, "#composer-mode-comment[data-composer-mode=comment]")
+    assert has_element?(view, ".workspace-actions #composer-mode-hint")
+    refute has_element?(view, "textarea[aria-describedby=composer-mode-hint]")
+
     comment_mode(view)
     assert has_element?(view, "#composer-mode-comment[aria-pressed=true]")
     assert has_element?(view, ".composer-box.commenting")
     assert has_element?(view, "#composer-mode-hint", "Comment — not sent to the agent")
-    assert has_element?(view, "textarea[aria-label=Comment][aria-describedby=composer-mode-hint]")
+
+    assert has_element?(
+             view,
+             "textarea[data-mode=comment][aria-label=Comment][aria-describedby=composer-mode-hint]" <>
+               "[placeholder='Comment for people on this thread, @mention someone']"
+           )
+
     assert has_element?(view, "button.composer-send[aria-label='Post comment']")
     refute has_element?(view, "button[aria-label='Choose images']")
 
