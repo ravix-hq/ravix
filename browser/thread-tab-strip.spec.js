@@ -152,7 +152,7 @@ test('thread tab strip: underline, overflow, + menu, rename, close and aligned p
   await expect(close).toBeHidden();
   await last.hover();
   await expect(close).toBeVisible();
-  await expect(close).toHaveAttribute('title', 'Close thread');
+  await expect(close).toHaveAttribute('data-tip', 'Close thread');
   expect((await close.boundingBox()).width).toBe(20);
   await close.click();
   await expect(page.locator(`#thread-tab-${closing}`)).toHaveCount(0);

@@ -164,9 +164,7 @@ defmodule RavixWeb.Live.ShareDialog do
           <div class="dialog-head">
             <h2 id={"#{@id}-dialog-title"}>Share track</h2>
             <span class="spacer" />
-            <button type="button" class="x" phx-click={@close} aria-label="Close">
-              <.icon name="x" size={16} />
-            </button>
+            <.icon_button icon="x" size={16} label="Close" class="x" phx-click={@close} />
           </div>
           <div :if={@sharing} class="dialog-body share-dialog">
             <div :if={@sharing.consent} id="share-consent" class="share-consent" role="note">

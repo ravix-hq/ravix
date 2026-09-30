@@ -14,6 +14,7 @@
 //   <button phx-hook="PanelToggle" id="yard-toggle" type="button"
 //           data-panel="yard" data-key="ravix.panel.yard"
 //           data-hide-label="Hide projects" data-show-label="Show projects"
+//           data-tip="Hide projects" data-tip-kbd="⌘B"
 //           aria-controls="yard" aria-expanded="true">
 //
 //   data-panel       `yard` or `inspector`: the attribute set on `<html>`
@@ -99,6 +100,6 @@ export const PanelToggle = {
   reflect() {
     const closed = this.closed()
     this.el.setAttribute("aria-expanded", closed ? "false" : "true")
-    this.el.title = closed ? this.el.dataset.showLabel : this.el.dataset.hideLabel
+    this.el.dataset.tip = closed ? this.el.dataset.showLabel : this.el.dataset.hideLabel
   },
 }

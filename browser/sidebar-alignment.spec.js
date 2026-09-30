@@ -38,7 +38,7 @@ test('sidebar avatars line up whether or not a row shows a status dot', async ({
   await expect(dot).toBeVisible();
   await expect(dot).toHaveAttribute('role', 'img');
   await expect(dot).toHaveAttribute('aria-label', 'Error');
-  await expect(dot).toHaveAttribute('title', "Error: This track's machine failed.");
+  await expect(dot).toHaveAttribute('data-tip', "Error: This track's machine failed.");
   for (const index of [0, 2]) await expect(rows[index].locator('.dot')).toHaveCount(0);
 
   // Avatars are left out while one person made every track shown (RAV-96),
@@ -76,7 +76,7 @@ test('the sidebar tree steps in per level and its chevrons follow their state', 
   await expect(newTrack).not.toBeVisible();
 
   const manage = page.getByRole('button', { name: 'Manage sections', exact: true });
-  await expect(manage).toHaveAttribute('title', 'Organize projects into sections');
+  await expect(manage).toHaveAttribute('data-tip', 'Organize projects into sections');
   const sections = page.getByRole('dialog', { name: 'Project sections', exact: true });
   await manage.click();
   for (const [index, name] of ['Filed', 'Empty shelf'].entries()) {

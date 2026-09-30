@@ -53,7 +53,7 @@
           class={["ghost track-title-crumb", !fits?(Track.label(@track), 16) && "long"]}
           phx-click={JS.push_focus() |> JS.push("dialog")}
           phx-value-name="rename"
-          title="Rename track"
+          data-tip="Rename track"
           aria-label={"Rename track: #{Track.label(@track)}"}
         >
           {Track.label(@track)}
@@ -68,7 +68,10 @@
           :if={@track.visibility == :private}
           id="track-private"
           class="track-private"
-          title="Private: only its creator and the people they invite"
+          role="img"
+          tabindex="0"
+          aria-label="Private"
+          data-tip="Private: only its creator and the people they invite"
         >
           <.icon name="lock" size={12} /><span class="sr-only">Private</span>
         </span>
@@ -95,14 +98,14 @@
         phx-value-name="people"
         aria-haspopup="dialog"
         aria-expanded={to_string(@dialog == :people)}
-        title={"Share track (#{length(@present)} viewing now)"}
+        data-tip={"Share track (#{length(@present)} viewing now)"}
       ><.icon name="add-person" size={15} /><span>Share</span><.viewers present={@present} /></button><button
         :if={!Ravix.People.workspace_sharing?(@project)}
         class="ghost track-share"
         phx-click={JS.push_focus() |> JS.push("dialog")}
         phx-value-name="people"
         aria-label={"Track sharing (#{length(@present)} viewing now)"}
-        title={"Track sharing (#{length(@present)} viewing now)"}
+        data-tip={"Track sharing (#{length(@present)} viewing now)"}
       ><.icon name="add-person" size={15} /><.viewers present={@present} /></button>
       <div id="track-more" class="chip-menu" phx-hook="ChipMenu">
         <button
@@ -114,7 +117,7 @@
           aria-expanded="false"
           aria-controls="track-more-panel"
           aria-label="More for this track"
-          title="More for this track"
+          data-tip="More for this track"
           phx-mounted={JS.ignore_attributes(["aria-expanded"])}
           style="anchor-name: --track-more"
         >
@@ -762,6 +765,7 @@
                   type="button"
                   class="ghost composer-ask-only composer-attach"
                   aria-label="Choose images"
+                  data-tip="Choose images"
                   phx-click={JS.dispatch("click", to: "##{@uploads.images.ref}")}
                 >
                   <.icon name="picture" size={17} />
@@ -843,7 +847,7 @@
                   type="button"
                   class="composer-stop"
                   aria-label="Stop agent"
-                  title="Stop agent"
+                  data-tip="Stop agent"
                   phx-click="interrupt"
                   disabled={:interrupt in @pending}
                 >
@@ -864,7 +868,8 @@
                   type="submit"
                   class="primary composer-send"
                   aria-label={if @composer_mode == :comment, do: "Post comment", else: "Send"}
-                  title={if @composer_mode == :comment, do: "Post comment", else: "Send"}
+                  data-tip={if @composer_mode == :comment, do: "Post comment", else: "Send"}
+                  data-tip-kbd="↵"
                   disabled={
                     !composer_filled?(
                       @composer_empty?,
@@ -937,7 +942,7 @@
             data-show-label="Show inspector"
             aria-controls="inspector"
             aria-expanded="true"
-            title="Hide inspector"
+            data-tip="Hide inspector"
           >
             <.icon name="panel-right" size={16} />
             <span class="sr-only label-hide">Hide inspector</span>
@@ -967,7 +972,7 @@
             class={["ghost panel-ignored", @show_ignored? && "pressed"]}
             phx-click="toggle-ignored"
             aria-pressed={to_string(@show_ignored?)}
-            title="Show ignored files"
+            data-tip="Show ignored files"
           >
             <.icon name={if @show_ignored?, do: "eye", else: "eye-off"} size={14} />
             <span class="sr-only">Show ignored files</span>
@@ -977,7 +982,7 @@
             phx-click="refresh-panel"
             disabled={@panel.busy?}
             aria-label={refresh_label(@panel.tab)}
-            title={refresh_label(@panel.tab)}
+            data-tip={refresh_label(@panel.tab)}
           >
             <.icon name="refresh" size={14} />
           </button>

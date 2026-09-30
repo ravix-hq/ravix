@@ -4,11 +4,11 @@ import {mountHook} from "./setup.js"
 
 function markup({panel, key, hide, show}) {
   document.body.innerHTML = `<button id="toggle" data-panel="${panel}" data-key="${key}"
-    data-hide-label="${hide}" data-show-label="${show}" aria-expanded="true" title="${hide}"></button>`
+    data-hide-label="${hide}" data-show-label="${show}" aria-expanded="true" data-tip="${hide}" data-tip-kbd="Ctrl+B"></button>`
 }
 
 function mountYard() {
-  markup({panel: "yard", key: YARD_KEY, hide: "Hide sidebar (Ctrl+B)", show: "Show sidebar (Ctrl+B)"})
+  markup({panel: "yard", key: YARD_KEY, hide: "Hide sidebar", show: "Show sidebar"})
   return mountHook(PanelToggle, "#toggle")
 }
 
@@ -21,19 +21,19 @@ test("a sidebar starts open and a click closes it, then opens it again", () => {
   const {hook} = mountYard()
   expect(document.documentElement.dataset.yard).toBeUndefined()
   expect(hook.el.getAttribute("aria-expanded")).toBe("true")
-  expect(hook.el.title).toBe("Hide sidebar (Ctrl+B)")
+  expect(hook.el.dataset.tip).toBe("Hide sidebar")
   expect(localStorage.getItem(YARD_KEY)).toBeNull()
 
   hook.el.click()
   expect(document.documentElement.dataset.yard).toBe("closed")
   expect(hook.el.getAttribute("aria-expanded")).toBe("false")
-  expect(hook.el.title).toBe("Show sidebar (Ctrl+B)")
+  expect(hook.el.dataset.tip).toBe("Show sidebar")
   expect(localStorage.getItem(YARD_KEY)).toBe("closed")
 
   hook.el.click()
   expect(document.documentElement.dataset.yard).toBeUndefined()
   expect(hook.el.getAttribute("aria-expanded")).toBe("true")
-  expect(hook.el.title).toBe("Hide sidebar (Ctrl+B)")
+  expect(hook.el.dataset.tip).toBe("Hide sidebar")
   expect(localStorage.getItem(YARD_KEY)).toBe("open")
 })
 
@@ -42,13 +42,13 @@ test("a closed sidebar is restored, and a server patch cannot report it as open"
   const {hook} = mountYard()
   expect(document.documentElement.dataset.yard).toBe("closed")
   expect(hook.el.getAttribute("aria-expanded")).toBe("false")
-  expect(hook.el.title).toBe("Show sidebar (Ctrl+B)")
+  expect(hook.el.dataset.tip).toBe("Show sidebar")
 
   hook.el.setAttribute("aria-expanded", "true")
-  hook.el.title = "Hide sidebar (Ctrl+B)"
+  hook.el.dataset.tip = "Hide sidebar"
   hook.updated()
   expect(hook.el.getAttribute("aria-expanded")).toBe("false")
-  expect(hook.el.title).toBe("Show sidebar (Ctrl+B)")
+  expect(hook.el.dataset.tip).toBe("Show sidebar")
 })
 
 test("anything other than closed leaves the sidebar open", () => {
@@ -64,7 +64,7 @@ test("anything other than closed leaves the sidebar open", () => {
   hook.el.click()
   expect(document.documentElement.dataset.inspector).toBe("closed")
   expect(localStorage.getItem(INSPECTOR_KEY)).toBe("closed")
-  expect(hook.el.title).toBe("Show inspector")
+  expect(hook.el.dataset.tip).toBe("Show inspector")
 })
 
 test("a control that names no sidebar does nothing", () => {
@@ -102,7 +102,7 @@ test("a browser that refuses storage still toggles for this visit", () => {
 // RAV-96: Ctrl/⌘B shows and hides the yard while its toggle is on screen.
 test("the sidebar's shortcut clicks its toggle, and nothing else does", () => {
   document.body.innerHTML = `<button id="toggle" data-panel="yard" data-key="${YARD_KEY}" data-shortcut="b"
-    data-hide-label="Hide sidebar (⌘B)" data-show-label="Show sidebar (⌘B)" aria-expanded="true"></button>`
+    data-hide-label="Hide sidebar" data-show-label="Show sidebar" data-tip-kbd="⌘B" aria-expanded="true"></button>`
   const {hook} = mountHook(PanelToggle, "#toggle")
   const press = options => {
     const event = new KeyboardEvent("keydown", {key: "b", bubbles: true, cancelable: true, ...options})
@@ -117,7 +117,8 @@ test("the sidebar's shortcut clicks its toggle, and nothing else does", () => {
   hook.el.getClientRects = () => [{}]
   expect(press({metaKey: true}).defaultPrevented).toBe(true)
   expect(document.documentElement.dataset.yard).toBe("closed")
-  expect(hook.el.title).toBe("Show sidebar (⌘B)")
+  expect(hook.el.dataset.tip).toBe("Show sidebar")
+  expect(hook.el.dataset.tipKbd).toBe("⌘B")
   press({key: "B", ctrlKey: true})
   expect(document.documentElement.dataset.yard).toBeUndefined()
 

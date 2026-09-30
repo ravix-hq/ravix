@@ -29,7 +29,7 @@ test('inspector and dock polish', async ({ page }) => {
   const top = async locator => Math.round((await locator.boundingBox()).y);
 
   // The toolbar's icon says what it refreshes.
-  await expect(tabs.locator('.panel-refresh')).toHaveAttribute('title', 'Refresh files');
+  await expect(tabs.locator('.panel-refresh')).toHaveAttribute('data-tip', 'Refresh files');
 
   // Checks: no green 0, even rows, and "no checks" right under them.
   await tabs.getByRole('button', { name: 'Checks', exact: true }).click();
@@ -39,7 +39,7 @@ test('inspector and dock polish', async ({ page }) => {
   const rows = await page.locator('#git-status').boundingBox();
   // Its mark, not just its box, sits right under the rows.
   expect((await page.locator('#checks-empty .mark').boundingBox()).y - (rows.y + rows.height)).toBeLessThan(40);
-  await expect(tabs.locator('.panel-refresh')).toHaveAttribute('title', 'Refresh checks');
+  await expect(tabs.locator('.panel-refresh')).toHaveAttribute('data-tip', 'Refresh checks');
   await shoot(page.locator('#inspector'), 'checks');
 
   // Preview, idle: one empty state, one primary action, a small link.

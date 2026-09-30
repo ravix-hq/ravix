@@ -107,7 +107,7 @@ test('sidebar rows keep one rhythm, spin while working and keep the open track i
   // Private: a lock with a tooltip, in the row's name, not a word in its room.
   const lock = page.locator(`#project-track-tab-${privateId} .track-private`);
   await expect(lock.locator('svg')).toBeVisible();
-  await expect(lock).toHaveAttribute('title', /^Private/);
+  await expect(lock).toHaveAttribute('data-tip', /^Private/);
   await expect(page.locator(`#project-track-tab-${privateId}`)).toHaveAttribute('aria-label', /, private,/);
   expect((await lock.boundingBox()).width).toBeLessThan(16);
 
@@ -207,11 +207,11 @@ test('the sidebar nav and You menu keep one pitch and say what they do', async (
 
   // The toggle hides the sidebar, says so, and Ctrl+B does the same.
   const toggle = page.locator('#yard-toggle');
-  await expect(toggle).toHaveAttribute('title', 'Hide sidebar (Ctrl+B)');
+  await expect(toggle).toHaveAttribute('data-tip', 'Hide sidebar');
   await expect(toggle).toHaveAccessibleName('Hide sidebar');
   await page.keyboard.press('Control+b');
   await expect(page.locator('html')).toHaveAttribute('data-yard', 'closed');
-  await expect(toggle).toHaveAttribute('title', 'Show sidebar (Ctrl+B)');
+  await expect(toggle).toHaveAttribute('data-tip', 'Show sidebar');
   await page.keyboard.press('Control+b');
   await expect(page.locator('html')).not.toHaveAttribute('data-yard', 'closed');
 

@@ -75,7 +75,7 @@ defmodule RavixWeb.ProjectSectionsLiveTest do
     # Manage sections is an icon button whose name and tooltip say what it is for.
     assert has_element?(
              view,
-             "#manage-sections[aria-label='Manage sections'][title='Organize projects into sections'] svg"
+             "#manage-sections[aria-label='Manage sections'][data-tip='Organize projects into sections'] svg"
            )
 
     refute has_element?(view, "#manage-sections", "Manage sections")

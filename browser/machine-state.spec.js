@@ -50,7 +50,7 @@ for (const width of [1280, 500]) {
     await composer.fill(prompt);
     await page.getByRole('button', { name: 'Send', exact: true }).click();
     await expect(chip).toHaveText('Working', { timeout: 20_000 });
-    await expect(chip).toHaveAttribute('title', 'The agent is taking a turn.');
+    await expect(chip).toHaveAttribute('data-tip', 'The agent is taking a turn.');
     if (width < 760) await page.getByRole('button', { name: 'Menu', exact: true }).click();
     const row = page.locator('#yard .workspace-project.current .workspace-track[aria-current=page]');
     await expect(row).toHaveAttribute('aria-label', /, Working/);

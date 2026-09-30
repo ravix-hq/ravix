@@ -74,7 +74,7 @@ test('conversation tabs, project picker, settings gears and inspector at desktop
       await page.getByRole('button', { name: 'Menu', exact: true }).click();
     }
     await page.locator('.workspace-project.current .workspace-project-row').hover();
-    const gear = page.locator('.workspace-project.current button[title="Project settings"]');
+    const gear = page.locator('.workspace-project.current button[data-tip="Project settings"]');
     await gear.focus();
     await expect(gear).toHaveCSS('opacity', '1');
     await gear.click();

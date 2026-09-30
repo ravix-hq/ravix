@@ -362,10 +362,15 @@ button {
 button:hover:not(:disabled) { border-color: var(--line-strong); background: var(--surface-hover); }
 button:active:not(:disabled) { background: var(--surface-active); }
 button:disabled { opacity: 0.42; cursor: default; }
-button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible, [tabindex]:focus-visible {
-  outline: 1px solid var(--accent);
+/* One focus ring, for the keyboard only (RAV-98): every focusable thing,
+   two pixels of accent, so it reads on every theme. A rule below that moves
+   it inside its box (a scroller would clip it) changes the offset, never
+   the ring. A click draws none. */
+:focus-visible {
+  outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
+:focus:not(:focus-visible) { outline: none; }
 button.primary { background: var(--accent-soft); border-color: var(--accent-line); color: var(--accent-ink); }
 button.primary:hover:not(:disabled) { background: color-mix(in srgb, var(--accent-soft) 80%, var(--accent)); }
 button.ghost { background: transparent; border-color: transparent; color: var(--dim); }
@@ -465,7 +470,8 @@ h4 { font-size: 12px; color: var(--dim); font-weight: 500; letter-spacing: 0; }
 .inspector { position: relative; display: flex; flex-direction: column; border-left: 1px solid var(--line); background: var(--panel); min-width: 0; min-height: 0; }
 
 .panel-resize-handle { position: absolute; left: -4px; top: 0; bottom: 0; width: 8px; z-index: 10; cursor: col-resize; touch-action: none; }
-.panel-resize-handle:hover, .panel-resize-handle:focus-visible, .panel-resize-handle[data-dragging="true"] { background: var(--accent); outline: none; }
+.panel-resize-handle:hover, .panel-resize-handle:focus-visible, .panel-resize-handle[data-dragging="true"] { background: var(--accent); }
+.panel-resize-handle:focus-visible { outline-offset: 0; }
 .app:has(.panel-resize-handle[data-dragging="true"]) { user-select: none; cursor: col-resize; }
 
 /* Show or hide a sidebar. The icon is the page with that side drawn in;
@@ -500,7 +506,9 @@ html[data-inspector="closed"] #inspector-toggle .label-show { display: inline; }
 /* ── the yard (left rail) ──────────────────────────────────────────────── */
 
 .yard { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--sidebar); border-right: 1px solid var(--line); }
+/* Drawn first, tabbed to after the nav (RAV-98): see the template. */
 .yard-top {
+  order: -1;
   display: flex; align-items: center; gap: 4px; flex: none;
   height: var(--pane-head); padding: 0 8px; border-bottom: 1px solid var(--line);
 }
@@ -893,8 +901,7 @@ html[data-yard="closed"] .workspace-trigger-skeleton { flex: none; width: 28px; 
 .transcript-scroll { position: relative; display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: auto; padding: 8px 20px 20px; }
 /* The scroller takes focus so the keyboard can scroll it; a click into it
    draws no ring, only keyboard focus does (RAV-93). */
-.transcript-scroll:focus:not(:focus-visible) { outline: none; }
-.transcript-scroll:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.transcript-scroll:focus-visible { outline-offset: -2px; }
 /* Once scrolled, text fades out under the tab strip over 12px instead of
    being cut off at its edge. `TranscriptTail` sets `scrolled`. The negative
    margins take the fade out of the flow and out to the scroller's edges. */
@@ -1033,7 +1040,6 @@ html[data-yard="closed"] .workspace-trigger-skeleton { flex: none; width: 28px; 
   border: 1px solid var(--line); border-radius: 4px; padding: 3px 8px; cursor: pointer;
 }
 .md .code-copy:hover { background: var(--code-bg); }
-.md .code-copy:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .md .code-block pre { margin: 0; border: 0; border-radius: 0; }
 .md pre code { padding: 0; border: 0; background: none; font-size: 12px; line-height: 1.55; }
 /* Links are the accent colour. Every link the renderer writes opens in a
@@ -2212,7 +2218,7 @@ section.first-prompt#project-start { align-self: center; padding: 32px 24px; }
 }
 .inbox-item:hover { background: var(--surface); border-color: var(--line-strong); color: var(--ink); text-decoration: none; }
 .inbox-item:hover strong { color: var(--ink); }
-.inbox-item:focus-visible { outline: 1px solid var(--accent); outline-offset: 4px; }
+.inbox-item:focus-visible { outline-offset: 4px; }
 .inbox-item strong { font-size: 14px; font-weight: 600; overflow-wrap: anywhere; }
 .inbox-item time { font-size: 11px; flex-shrink: 0; }
 .inbox-item code { overflow-wrap: anywhere; }
@@ -2421,7 +2427,7 @@ section.first-prompt#project-start { align-self: center; padding: 32px 24px; }
 /* Desktop tooling instructions stay readable inside the shared dialog shell. */
 .tooling-help details { border-top: 1px solid var(--line); padding: 12px 0; }
 .tooling-help summary { cursor: pointer; font-weight: 500; }
-.tooling-help summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+.tooling-help summary:focus-visible { outline-offset: 4px; }
 .tooling-help li { margin: 8px 0; }
 .tooling-help pre { white-space: pre-wrap; overflow-wrap: anywhere; padding: 12px; background: var(--surface); border-radius: var(--radius); }
 .tooling-help code, .tooling-help dd { overflow-wrap: anywhere; }
@@ -2671,7 +2677,7 @@ body:has(.phx-error) #request-progress { display: none; }
 .workspace-tabpanel { display: flex; flex: 1; flex-direction: column; min-height: 0; min-width: 0; overflow: hidden; }
 .track-tab:hover { background: var(--surface-hover); }
 .track-tab.selected { color: var(--ink); background: var(--surface-active); border-radius: 8px; }
-.track-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.track-tab:focus-visible { outline-offset: -2px; }
 .track-tab .track-title { position: relative; overflow: hidden; text-overflow: ellipsis; }
 /* A reply waiting to be read: still, where working pulses. */
 .track-tab .dot { width: 7px; height: 7px; }
@@ -2743,7 +2749,7 @@ body:has(.phx-error) #request-progress { display: none; }
 .connection-heading h2 { font-size: 16px; overflow-wrap: anywhere; }
 .connection-resource { color: var(--dim); overflow-wrap: anywhere; }
 .connection-card summary { cursor: pointer; }
-.connection-card summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+.connection-card summary:focus-visible { outline-offset: 4px; }
 
 /* People rows have the same rhythm whether or not they offer Remove. */
 .people-list { list-style: none; margin: 16px 0; padding: 0; }
@@ -2867,7 +2873,8 @@ body:has(.phx-error) #request-progress { display: none; }
 .track-private { flex: none; display: inline-flex; align-items: center; color: var(--dim); }
 .rail-scope { display: flex; gap: 2px; margin: 0 8px 6px; padding: 2px; background: var(--surface); border-radius: var(--radius); }
 .rail-scope button { flex: 1; padding: 2px 8px; font-size: 12px; border: none; border-radius: var(--radius); }
-.rail-scope button.on { color: var(--ink); background: var(--panel); box-shadow: 0 1px 2px var(--shadow); }
+/* Selected by its fill and a hairline, not a shadow that reads as a focus ring (RAV-98). */
+.rail-scope button.on { color: var(--ink); background: var(--panel); box-shadow: inset 0 0 0 1px var(--line); }
 .project-menu { bottom: auto; top: 64px; width: min(220px, calc(100vw - 16px)); }
 @supports (position-area: bottom) {
   .project-menu { top: auto; position-area: bottom span-left; margin-top: 4px; }
@@ -2899,7 +2906,6 @@ body:has(.phx-error) #request-progress { display: none; }
 #search-dialog .search-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #search-dialog .workspace-track .search-label { flex: 1; }
 #search-dialog [data-jump-result]:focus { background: var(--surface-active); color: var(--ink); }
-#search-dialog [data-jump-result]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 #search-dialog .search-empty { margin: 14px 0 4px; color: var(--dim); }
 
 /* ── the settings frame (RAV-72) ──────────────────────────────────────────
@@ -2991,15 +2997,10 @@ body:has(.phx-error) #request-progress { display: none; }
 .unsaved-sep { color: var(--dimmer); }
 .unsaved-leave .dialog { width: min(440px, 100%); }
 
-/* The workspace gear, beside the switcher: named by aria-label and a tooltip
-   drawn here, which a pointer and the keyboard both show. */
+/* The workspace gear, beside the switcher: named by aria-label, with the
+   shared tooltip. */
 .workspace-gear { position: relative; display: inline-flex; align-items: center; justify-content: center; flex: none; width: 28px; height: 28px; padding: 0; border-radius: 6px; color: var(--dim); }
 .workspace-gear:hover, .workspace-gear:focus-visible { background: var(--surface-hover); color: var(--ink); }
-.workspace-gear[data-tip]:hover::after, .workspace-gear[data-tip]:focus-visible::after {
-  content: attr(data-tip); position: absolute; top: calc(100% + 6px); left: 50%; transform: translateX(-50%); z-index: 30;
-  padding: 4px 8px; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--panel);
-  color: var(--ink); font-size: 12px; font-weight: 400; white-space: nowrap; pointer-events: none;
-}
 html[data-yard="closed"] .workspace-gear { display: none; }
 
 @media (max-width: 760px) {
@@ -3011,3 +3012,23 @@ html[data-yard="closed"] .workspace-gear { display: none; }
   .settings-group.danger { padding-top: 0; border-top: none; }
   .settings-link { white-space: nowrap; }
 }
+
+/* The one tooltip (RAV-98; `assets/js/tooltip.js`): the control's name, and
+   its shortcut when it has one. A manual popover, so it is in the top layer;
+   the script sets its top and left. */
+.tooltip {
+  position: fixed; inset: auto; margin: 0; z-index: 1000; max-width: min(320px, calc(100vw - 8px));
+  display: flex; align-items: center; gap: 8px; padding: 4px 8px;
+  border: 1px solid var(--line-strong); border-radius: 6px; background: var(--panel);
+  box-shadow: 0 4px 12px var(--shadow); color: var(--ink);
+  font-size: 12px; font-weight: 400; line-height: 1.4; white-space: normal; overflow-wrap: anywhere; pointer-events: none;
+}
+.tooltip[hidden] { display: none; }
+.tooltip kbd { flex: none; padding: 0 4px; font-size: 11px; }
+
+/* A pointer came last (`assets/js/focus_ring.js`): focus a script hands
+   back, to Share after its popover closes, say, draws no ring. The next
+   Tab or arrow key brings rings back. Last in the file so it outranks
+   every control's own ring. */
+html[data-input="pointer"] :focus-visible,
+html[data-input="pointer"] .model-option:has(input:focus-visible) { outline: none; }

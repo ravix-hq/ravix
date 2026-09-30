@@ -35,7 +35,7 @@ defmodule RavixWeb.CoreComponents do
       role={if @label, do: "img"}
       aria-label={@label}
       aria-hidden={if is_nil(@label), do: "true"}
-      title={@title || @label}
+      data-tip={@title || @label}
     ></span>
     """
   end
@@ -151,15 +151,14 @@ defmodule RavixWeb.CoreComponents do
     <div id={@id} class={["toast", @kind == :error && "bad"]} role="status" {@rest}>
       <span class="ico"><.icon name="info" size={14} /></span>
       <span>{render_slot(@inner_block)}</span>
-      <button
+      <.icon_button
         :if={@on_dismiss}
-        type="button"
+        icon="x"
+        size={12}
+        label="Dismiss"
         class="x"
-        aria-label="Dismiss"
         phx-click={@on_dismiss}
-      >
-        <.icon name="x" size={12} />
-      </button>
+      />
     </div>
     """
   end
@@ -229,6 +228,65 @@ defmodule RavixWeb.CoreComponents do
       <button class={@class} {@rest}>
         {render_slot(@inner_block)}
       </button>
+      """
+    end
+  end
+
+  @doc """
+  A button, or a link, that shows only an icon (RAV-98).
+
+  `label` is its accessible name and its tooltip, so the two cannot drift;
+  `tip` replaces the tooltip when it should say more than the name.
+  `shortcut` is the key the tooltip shows beside it, `Mod+` being ⌘ on a Mac
+  and Ctrl+ elsewhere ("Mod+K"), and `keys` the same key for assistive
+  technology (`aria-keyshortcuts`, "Control+K Meta+K"). The
+  tooltip itself is `assets/js/tooltip.js`, which every `data-tip` shares;
+  `test/ravix_web/icon_labels_test.exs` fails on an icon-only control that has
+  no name or no tooltip.
+
+      <.icon_button icon="x" label="Close" class="x" phx-click={@close} />
+      <.icon_button icon="search" label="Search" shortcut="Mod+K" keys="Control+K Meta+K" />
+  """
+  attr :icon, :string, required: true
+  attr :label, :string, required: true
+  attr :tip, :string, default: nil
+  attr :shortcut, :string, default: nil
+  attr :keys, :string, default: nil
+  attr :size, :integer, default: 15
+  attr :class, :any, default: nil
+  attr :type, :string, default: "button"
+
+  attr :rest, :global,
+    include:
+      ~w(href navigate patch replace method disabled form name value popovertarget popovertargetaction)
+
+  slot :inner_block, doc: "anything drawn beside the icon, such as a status dot"
+
+  def icon_button(%{rest: rest} = assigns) do
+    assigns = assign(assigns, :tip, assigns.tip || assigns.label)
+
+    if rest[:href] || rest[:navigate] || rest[:patch] do
+      ~H"""
+      <.link
+        class={@class}
+        aria-label={@label}
+        data-tip={@tip}
+        data-tip-kbd={@shortcut}
+        aria-keyshortcuts={@keys}
+        {@rest}
+      ><.icon name={@icon} size={@size} />{render_slot(@inner_block)}</.link>
+      """
+    else
+      ~H"""
+      <button
+        type={@type}
+        class={@class}
+        aria-label={@label}
+        data-tip={@tip}
+        data-tip-kbd={@shortcut}
+        aria-keyshortcuts={@keys}
+        {@rest}
+      ><.icon name={@icon} size={@size} />{render_slot(@inner_block)}</button>
       """
     end
   end
@@ -688,9 +746,7 @@ defmodule RavixWeb.CoreComponents do
         <div class="dialog-head">
           <h2 id={"#{@id}-title"}>{@title}</h2>
           <span class="spacer" />
-          <button type="button" class="x" phx-click={@close} aria-label="Close">
-            <.icon name="x" size={16} />
-          </button>
+          <.icon_button icon="x" size={16} label="Close" class="x" phx-click={@close} />
         </div>
         <div class="dialog-body">{render_slot(@inner_block)}</div>
         <div :if={@footer != []} class="dialog-foot">{render_slot(@footer)}</div>

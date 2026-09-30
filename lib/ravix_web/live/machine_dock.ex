@@ -545,6 +545,7 @@ defmodule RavixWeb.Live.MachineDock do
           aria-expanded={to_string(@dock_open)}
           aria-controls="machine-dock"
           aria-label={if @dock_open, do: "Collapse the dock", else: "Expand the dock"}
+          data-tip={if @dock_open, do: "Collapse the dock", else: "Expand the dock"}
         >
           <.icon name="chevron" size={13} open={@dock_open} />
         </button>
@@ -574,7 +575,7 @@ defmodule RavixWeb.Live.MachineDock do
             phx-target={@myself}
             phx-value-id={shell.tab.id}
             aria-label={"Close " <> Tab.label(shell.tab)}
-            title={"Close " <> Tab.label(shell.tab)}
+            data-tip={"Close " <> Tab.label(shell.tab)}
           >
             <.icon name="x" size={11} />
           </button>
@@ -591,7 +592,7 @@ defmodule RavixWeb.Live.MachineDock do
             aria-label="Open in the dock"
             aria-haspopup="menu"
             aria-expanded="false"
-            title="Open in the dock"
+            data-tip="Open in the dock"
             popovertarget="dock-add-menu"
           >
             <.icon name="plus" size={13} />
@@ -775,15 +776,13 @@ defmodule RavixWeb.Live.MachineDock do
               datetime={DateTime.to_iso8601(@vitals_at)}
               title={"Read " <> RavixWeb.LocalTime.full(@vitals_at, nil)}
             >{RavixWeb.LocalTime.ago_words(@vitals_at)}</time>
-            <button
-              type="button"
+            <.icon_button
+              icon="refresh"
+              size={12}
+              label="Refresh machine stats"
               class="ghost stats-refresh"
               phx-click={JS.push("dock", target: @myself, value: %{name: "vitals"})}
-              aria-label="Refresh machine stats"
-              title="Refresh machine stats"
-            >
-              <.icon name="refresh" size={12} />
-            </button>
+            />
           </p>
         </div>
       </div>

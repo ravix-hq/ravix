@@ -2530,7 +2530,7 @@ defmodule RavixWeb.TrackLive do
         id="thread-scroll-back"
         class="ghost icon-button thread-scroll"
         aria-label="Scroll threads left"
-        title="Scroll threads left"
+        data-tip="Scroll threads left"
         data-scroll="-1"
       >
         <.icon name="chevron" size={12} class="flip-x" />
@@ -2563,14 +2563,16 @@ defmodule RavixWeb.TrackLive do
             :if={@can_write and thread.id == @shown}
             class="thread-tab-action thread-tab-rename"
             aria-hidden="true"
-            title="Rename thread"
+            data-tip="Rename thread"
+            data-tip-kbd="F2"
             phx-click="edit-thread-title"
             phx-value-thread_id={thread.id}
           ><.icon name="pencil" size={11} /></span><span
             :if={@closable}
             class="thread-tab-action thread-tab-close"
             aria-hidden="true"
-            title="Close thread"
+            data-tip="Close thread"
+            data-tip-kbd="Del"
             phx-click="close-thread"
             phx-value-thread_id={thread.id}
           ><.icon name="x" size={11} /></span>
@@ -2598,7 +2600,7 @@ defmodule RavixWeb.TrackLive do
         id="thread-scroll-forward"
         class="ghost icon-button thread-scroll"
         aria-label="Scroll threads right"
-        title="Scroll threads right"
+        data-tip="Scroll threads right"
         data-scroll="1"
       >
         <.icon name="chevron" size={12} />
@@ -2627,7 +2629,7 @@ defmodule RavixWeb.TrackLive do
         id="thread-draft-discard"
         class="ghost icon-button thread-draft-discard"
         aria-label="Discard new thread"
-        title="Discard new thread"
+        data-tip="Discard new thread"
         phx-click="discard-draft"
       >
         <.icon name="x" size={12} />
@@ -2642,7 +2644,8 @@ defmodule RavixWeb.TrackLive do
           aria-expanded="false"
           aria-controls="thread-add-menu"
           aria-label="Add thread"
-          title="Add thread"
+          data-tip="Add thread"
+          data-tip-kbd="Mod+T"
           disabled={@adding}
           phx-mounted={JS.ignore_attributes(["aria-expanded"])}
           style="anchor-name: --thread-add"
@@ -2682,7 +2685,7 @@ defmodule RavixWeb.TrackLive do
           aria-expanded="false"
           aria-controls="thread-more-menu"
           aria-label="More for this thread"
-          title="More for this thread"
+          data-tip="More for this thread"
           phx-mounted={JS.ignore_attributes(["aria-expanded"])}
           style="anchor-name: --thread-more"
         >
@@ -3428,7 +3431,7 @@ defmodule RavixWeb.TrackLive do
       role="status"
       aria-live="polite"
       aria-describedby={@machine.detail && "track-machine-detail"}
-      title={@machine.detail || MachineState.label(@machine.state)}
+      data-tip={@machine.detail || MachineState.label(@machine.state)}
     ><.status_dot status={to_string(@machine.state)} /><span class="chip-label">{MachineState.label(
       @machine.state
     )}</span></span>
@@ -4220,7 +4223,7 @@ defmodule RavixWeb.TrackLive do
           type="button"
           class="ghost turn-copy"
           aria-label="Copy answer"
-          title="Copy answer"
+          data-tip="Copy answer"
           data-copy={@answer}
         >
           <.icon name="copy" size={13} />
@@ -4235,7 +4238,7 @@ defmodule RavixWeb.TrackLive do
             aria-expanded="false"
             aria-controls={@id <> "-more-menu"}
             aria-label="More for this turn"
-            title="More"
+            data-tip="More"
             phx-mounted={JS.ignore_attributes(["aria-expanded"])}
             style={"anchor-name: --#{@id}-more"}
           >
@@ -4527,6 +4530,7 @@ defmodule RavixWeb.TrackLive do
           target="_blank"
           rel="noopener"
           aria-label={"Open attached image #{position + 1} in a new tab"}
+          data-tip={"Open attached image #{position + 1} in a new tab"}
         >
           <img
             src={~p"/tracks/#{@track_id}/threads/#{@thread_id}/turns/#{@turn_id}/images/#{position}"}
