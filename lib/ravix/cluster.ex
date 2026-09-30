@@ -32,7 +32,8 @@ defmodule Ravix.Cluster do
   """
 
   @typedoc "The process family a name (or, for `:settlement_scan`, a lock) belongs to."
-  @type scope :: :follower | :preview | :singleton | :settlement | :settlement_scan
+  @type scope ::
+          :follower | :preview | :singleton | :settlement | :settlement_scan | :reply_backfill
 
   @doc """
   The `:global` name for a scope and key.

@@ -104,6 +104,10 @@ defmodule RavixWeb.WorkspaceLive do
         reopen: nil,
         track_errors: MapSet.new(),
         track_loading: MapSet.new(),
+        # An Inbox reply-excerpt fetch in flight; see `backfill_inbox/1`.
+        replies_loading: false,
+        # Projects whose `:reply` waits on a rail read in flight.
+        replies_behind: MapSet.new(),
         # How many tracks across every project want somebody. Counted where
         # the rail is read rather than in the template, which asked for it
         # four times a render --- twice in the sidebar badge and twice in the
@@ -933,6 +937,11 @@ defmodule RavixWeb.WorkspaceLive do
 
   # One project's tracks, in the place the rail keeps them. A project that has
   # gone since the read started is not put back.
+  # The fills published `:reply` for whatever they kept, and the rail read
+  # that it starts redraws the cards and allows the next fetch from there.
+  def handle_async(:replies, _result, socket),
+    do: {:noreply, assign(socket, replies_loading: false)}
+
   def handle_async({:tracks, id}, {:ok, {:ok, tracks}}, socket) do
     socket = finish_track_load(socket, id)
 
@@ -1261,6 +1270,16 @@ defmodule RavixWeb.WorkspaceLive do
   def handle_info({:hub, %Event{name: :machine, project_id: id}}, socket),
     do: {:noreply, refresh_tracks(socket, id, fresh: false)}
 
+  # An Inbox card's reply excerpt was kept on its thread row: the database
+  # has it, and the memo serves the rest. It arrives as a turn settles, when
+  # the project's live read may be in flight; a memo read started now would
+  # replace that one, so it waits for it instead (`finish_track_load/2`).
+  def handle_info({:hub, %Event{name: :reply, project_id: id}}, socket) do
+    if MapSet.member?(socket.assigns.track_loading, id),
+      do: {:noreply, update(socket, :replies_behind, &MapSet.put(&1, id))},
+      else: {:noreply, refresh_tracks(socket, id, fresh: false)}
+  end
+
   # A read mark is one person's own, and the only thing on this page it can
   # move is that person's unread dot on the track it names. So it is applied
   # to the rail in hand and reads nothing: not Fountain, not the database.
@@ -1484,8 +1503,17 @@ defmodule RavixWeb.WorkspaceLive do
     end)
   end
 
-  defp finish_track_load(socket, id),
-    do: assign(socket, :track_loading, MapSet.delete(socket.assigns.track_loading, id))
+  defp finish_track_load(socket, id) do
+    socket = assign(socket, :track_loading, MapSet.delete(socket.assigns.track_loading, id))
+
+    if MapSet.member?(socket.assigns.replies_behind, id) do
+      socket
+      |> update(:replies_behind, &MapSet.delete(&1, id))
+      |> refresh_tracks(id, fresh: false)
+    else
+      socket
+    end
+  end
 
   defp track_load_failed(socket, id) do
     socket = finish_track_load(socket, id)
@@ -1714,13 +1742,39 @@ defmodule RavixWeb.WorkspaceLive do
     {shown, hidden} = Enum.split_with(notices, &notice_here?(&1, socket.assigns))
     tracks = Map.new(here)
 
-    assign(socket,
+    socket
+    |> assign(
       tracks: tracks,
       access_notices: shown,
       attention: attention_count(tracks) + length(shown),
       other_attention: attention_count(elsewhere) + length(hidden)
     )
+    |> backfill_inbox()
   end
+
+  # An Inbox card whose reply excerpt its thread does not hold yet asks for
+  # one off this process (`Tracks.backfill_replies/2`); the `:reply` that
+  # answers redraws the card. Only while the Inbox is what is on screen, and
+  # one fetch at a time.
+  defp backfill_inbox(
+         %{assigns: %{project: nil, live_action: action, replies_loading: false}} = socket
+       )
+       when action not in [:projects, :schedules, :connections] do
+    views =
+      socket.assigns.tracks |> Map.values() |> List.flatten() |> Enum.filter(&attention?/1)
+
+    user = socket.assigns.current_user
+
+    if connected?(socket) and Tracks.stale_replies?(user, views) do
+      socket
+      |> assign(replies_loading: true)
+      |> traced_async(:replies, fn -> Tracks.backfill_replies(user, views) end)
+    else
+      socket
+    end
+  end
+
+  defp backfill_inbox(socket), do: socket
 
   defp notice_here?(_notice, %{current_workspace: nil}), do: true
 
@@ -2232,9 +2286,36 @@ defmodule RavixWeb.WorkspaceLive do
       class="track-age"
       phx-hook="RelativeTime"
       datetime={DateTime.to_iso8601(@at)}
-      title={"Last active #{Calendar.strftime(@at, "%b %-d, %Y %H:%M UTC")}"}
+      title={"Last active " <> RavixWeb.LocalTime.full(@at, nil)}
     >{elem(ago(@at), 0)}</time>
     """
+  end
+
+  # An Inbox card's age, in words ("2h ago"), kept current by the same hook
+  # as the rail's; its tooltip is the full time in the viewer's zone.
+  attr :id, :string, required: true
+  attr :at, DateTime, default: nil
+  attr :zone, :string, default: nil
+
+  defp inbox_age(assigns) do
+    ~H"""
+    <time
+      :if={@at}
+      id={@id}
+      phx-hook="RelativeTime"
+      data-style="ago"
+      data-title-prefix=""
+      datetime={DateTime.to_iso8601(@at)}
+      title={RavixWeb.LocalTime.full(@at, @zone)}
+    >{ago_words(@at)}</time>
+    """
+  end
+
+  defp ago_words(at) do
+    case ago(at) do
+      {"now", _words} -> "just now"
+      {short, _words} -> short <> " ago"
+    end
   end
 
   # The link's accessible name, with the age the hook keeps current in words.

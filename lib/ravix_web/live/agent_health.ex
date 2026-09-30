@@ -139,7 +139,7 @@ defmodule RavixWeb.Live.AgentHealth do
         </button>
         <p :if={@health.exhausted_until && !Map.get(@health, :pause)}>
           {@health.owner_login}'s ChatGPT usage resets at
-          <.provider_time value={@health.exhausted_until} />.
+          <.provider_time id={@id <> "-resets"} value={@health.exhausted_until} />.
         </p>
         <p :if={
           !@health.exhausted_until && !Map.get(@health, :pause) &&

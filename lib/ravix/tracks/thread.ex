@@ -29,6 +29,12 @@ defmodule Ravix.Tracks.Thread do
     # Attribution, never billing -- the track's creator pays (see
     # `Ravix.Tracks.Track.payer/2`). Unwritten yet; nil is an unknown starter.
     field :started_by, :string
+    # RAV-66, expand only: the opening lines of the newest reply, plain and
+    # bounded (`Ravix.Tracks.Reply`), and when it settled. The Inbox reads
+    # them off the thread rows it already holds. Written only through
+    # `Tracks.Store.put_reply/3`.
+    field :reply_excerpt, :string
+    field :reply_at, :utc_datetime_usec
   end
 
   @title_length 40

@@ -89,6 +89,9 @@ defmodule RavixWeb.TrackLive do
       assign(socket,
         track_id: session["track_id"],
         thread_id: session["track_id"],
+        # The zone the browser reported to the workspace on connect, for the
+        # server's reading of timestamps before `LocalTime` rewrites them.
+        timezone: Ravix.Schedules.timezone(session["timezone"]),
         thread_generation: 0,
         threads: [],
         sibling_followers: %{},
@@ -3189,6 +3192,9 @@ defmodule RavixWeb.TrackLive do
   # trips, on every load, stage and send of every other page on this track.
   defp hub(%Event{name: :read}, socket), do: socket
 
+  # An Inbox excerpt was kept; this page reads the transcript itself.
+  defp hub(%Event{name: :reply}, socket), do: socket
+
   # A comment on the shown thread is drawn and, since this person is looking
   # at it, read. One on a sibling thread moves only that tab's dot.
   defp hub(%Event{name: :comment, thread_id: thread_id}, socket) do
@@ -3511,14 +3517,16 @@ defmodule RavixWeb.TrackLive do
   defp counted(1, noun), do: "1 #{noun}"
   defp counted(n, noun), do: "#{n} #{noun}s"
 
+  attr :id, :string, required: true
   attr :turn, :map, required: true
   attr :workdir, :string, default: nil
   attr :options, :list, default: nil
+  attr :zone, :string, default: nil
 
   # What a finished turn cost and left behind: how long it ran, when it
   # ended, the answer to copy, the files its edits touched, and the effort
-  # and Fast it ran with (RAV-52). The time is written in UTC, matching the
-  # inbox and schedule timestamps.
+  # and Fast it ran with (RAV-52). The time is the viewer's own
+  # (`RavixWeb.CoreComponents.local_time/1`).
   defp turn_footer(assigns) do
     %{turn: turn, workdir: workdir} = assigns
     config = SessionConfig.describe(turn.config_selection, assigns.options)
@@ -3545,9 +3553,13 @@ defmodule RavixWeb.TrackLive do
       <span :if={@applied != []} aria-hidden="true">·</span>
       <span :if={@duration}>{@duration}</span>
       <span :if={@duration && @ended} aria-hidden="true">·</span>
-      <time :if={@ended} datetime={DateTime.to_iso8601(@ended)}>
-        {Calendar.strftime(@ended, "%H:%M")} UTC
-      </time>
+      <.local_time
+        :if={@ended}
+        id={@id <> "-ended"}
+        at={@ended}
+        zone={@zone}
+        title_prefix="Ended "
+      />
       <button
         :if={@answer != ""}
         type="button"
@@ -3580,6 +3592,7 @@ defmodule RavixWeb.TrackLive do
   end
 
   attr :turn, :map, required: true
+  attr :zone, :string, default: nil
 
   # How long a running turn has been going. The server writes the elapsed
   # time as of this render; `assets/js/hooks/turn_timer.js` keeps it ticking
@@ -3598,7 +3611,7 @@ defmodule RavixWeb.TrackLive do
         phx-hook="TurnTimer"
         data-started={DateTime.to_iso8601(@started)}
         data-now={DateTime.to_iso8601(@now)}
-        title={"Running since #{Calendar.strftime(@started, "%H:%M")} UTC"}
+        title={"Running since #{RavixWeb.LocalTime.full(@started, @zone)}"}
       >{duration(DateTime.diff(@now, @started))}</span>
     </footer>
     """
@@ -3801,6 +3814,7 @@ defmodule RavixWeb.TrackLive do
   attr :comment, :map, required: true
   attr :current_user, :map, required: true
   attr :editing, :any, default: nil
+  attr :zone, :string, default: nil
 
   defp thread_comment(assigns) do
     comment = assigns.comment
@@ -3824,9 +3838,11 @@ defmodule RavixWeb.TrackLive do
         <strong>@{@login}</strong>
         <span class="chip">Comment · not sent to the agent</span>
         <span class="spacer"></span>
-        <time datetime={DateTime.to_iso8601(@comment.inserted_at)}>
-          {Calendar.strftime(@comment.inserted_at, "%b %-d, %H:%M UTC")}
-        </time>
+        <.local_time
+          id={"comment-#{@comment.id}-at"}
+          at={@comment.inserted_at}
+          zone={@zone}
+        />
         <span :if={@comment.edited_at && !@deleted?} class="thread-comment-edited">edited</span>
       </header>
       <p :if={@deleted?} class="thread-comment-deleted">Comment deleted</p>

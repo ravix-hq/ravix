@@ -23,6 +23,8 @@ defmodule RavixWeb.WorkspaceMemoTest do
             opened_at: DateTime.utc_now()
           )
 
+        # Its reply's excerpt is kept: the count below is the rail's alone.
+        keep_reply(track)
         {project, track}
       end
 

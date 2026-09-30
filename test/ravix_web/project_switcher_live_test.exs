@@ -29,6 +29,8 @@ defmodule RavixWeb.ProjectTreeLiveTest do
       end
 
     [_, _, visible, hidden] = rows
+    # Replies whose excerpts are already kept: this is about the rail.
+    Enum.each(rows, &keep_reply/1)
     creator = insert_user()
 
     for project <- [owned, member] do
@@ -188,6 +190,8 @@ defmodule RavixWeb.ProjectTreeLiveTest do
             ]
           }}}
       ])
+
+    keep_reply(track)
 
     stub(Fountain, :client, fn -> client end)
     {:ok, view, _} = live(log_in_user(conn, creator), "/home")

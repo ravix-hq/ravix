@@ -10,6 +10,8 @@ defmodule Ravix.Tracks.View do
   and `mention` the newest unread comment naming this person; those two are
   what the Inbox lists. `reply_unread` is nil where only the agent's side
   was read (a single `present/2`), and then means the same as `unread`.
+  `reply` is the opening of the newest unread reply, as its thread kept it
+  (`Ravix.Tracks.Reply`), for the Inbox card; nil until one is kept.
 
   `billing` is who pays for the track's agent (ADR 0009 phase 6): `:creator`
   on a creator-billed track, `:owner` otherwise; `payer_login` names them and
@@ -102,6 +104,7 @@ defmodule Ravix.Tracks.View do
                 session_config: %{},
                 session_options: nil,
                 reply_unread: nil,
+                reply: nil,
                 mention: nil,
                 billing: :owner,
                 payer_login: nil,
@@ -135,6 +138,7 @@ defmodule Ravix.Tracks.View do
           level: Ravix.Accounts.Access.level() | nil,
           unread: boolean(),
           reply_unread: boolean() | nil,
+          reply: %{excerpt: String.t(), at: DateTime.t()} | nil,
           mention: %{comment_id: String.t(), author_login: String.t(), at: DateTime.t()} | nil,
           model: String.t() | nil,
           runtime: String.t() | nil,
