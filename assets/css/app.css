@@ -1274,7 +1274,9 @@ html[data-yard="closed"] .yard .workspace-gear { display: none; }
 .empty code { color: var(--ink); background: var(--code-bg); padding: 1px 5px; border-radius: 4px; }
 /* In a pane it is everything the pane holds below whatever sits at its top,
    centred both ways, and one quiet line: the pane is waiting, not failing. */
-.workspace-panel:has(> .empty.pane) { display: flex; flex-direction: column; }
+/* `:where` keeps this at no specificity, so a layout that hides the panel
+   (the narrow views) still wins. */
+:where(.workspace-panel:has(> .empty.pane)) { display: flex; flex-direction: column; }
 .empty.pane { flex: 1; min-height: 120px; padding: 24px 16px; gap: 6px; }
 .empty.pane .mark { width: 32px; height: 32px; margin-bottom: 2px; }
 .empty.pane h3 { color: var(--dim); font-weight: 400; }
