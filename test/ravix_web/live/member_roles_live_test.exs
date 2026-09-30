@@ -106,6 +106,29 @@ defmodule RavixWeb.Live.MemberRolesLiveTest do
       assert render(parent) =~ "Your role on this track is Read."
     end
 
+    test "an asleep machine offers a writer Wake and shows a reader the state alone", ctx do
+      stub(Tracks, :files, fn _, _, _ -> {:error, :machine_asleep} end)
+
+      {writer, _} = track_page(ctx, ctx.writer)
+      assert has_element?(writer, "#panel-asleep [role=status]", "Machine is asleep")
+      assert has_element?(writer, "#panel-asleep #panel-wake", "Wake")
+
+      {reader, _} = track_page(ctx, ctx.reader)
+      assert has_element?(reader, "#panel-asleep [role=status]", "Machine is asleep")
+      refute has_element?(reader, "#panel-wake")
+    end
+
+    test "a reader's forged wake is refused by the context and nothing is probed", ctx do
+      stub(Tracks, :files, fn _, _, _ -> {:error, :machine_asleep} end)
+      reject(&Ravix.Terminal.status/2)
+      {view, parent} = track_page(ctx, ctx.reader)
+
+      render_click(view, "wake", %{})
+      render_async(view)
+      assert render(parent) =~ "Your role on this track is Read. Ask an admin for Write"
+      assert has_element?(view, "#panel-asleep")
+    end
+
     test "a writer's page is not read-only", ctx do
       {view, _} = track_page(ctx, ctx.writer)
       refute has_element?(view, "#composer-read-only")

@@ -261,7 +261,7 @@ test("Comment mode keeps its people list and opens neither Ask menu", () => {
   expect(events).toEqual([])
 })
 
-test("⌘L or Ctrl+L focuses the box from the page, but not from the terminal", () => {
+test("⌘L or Ctrl+L focuses the box from the page, but not from the terminal", async () => {
   const {hook} = mountHook(Composer, "#composer-t1")
   expect(document.querySelector("[data-composer-shortcut]").textContent).toBe(`${shortcutLabel()} to focus`)
   hook.el.value = "half a thought"
@@ -288,4 +288,8 @@ test("⌘L or Ctrl+L focuses the box from the page, but not from the terminal", 
   hook.destroyed()
   hook.el.disabled = false
   expect(key(document.body, "l", {ctrlKey: true}).defaultPrevented).toBe(false)
+  // The blurs above each queued the box's blur timer. Let them run here:
+  // aborting happy-dom with one still queued leaves its timers stalled, and
+  // every `setTimeout` in whichever test file runs next never fires.
+  await new Promise(resolve => setTimeout(resolve))
 })

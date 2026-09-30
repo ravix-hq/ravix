@@ -67,6 +67,11 @@ defmodule RavixWeb.Live.TrackPlanItems do
   defp label(:closed_without_merge), do: "Closed without merge"
   defp label(:blocked), do: "Blocked"
 
+  defp chip_label(%{plan: nil}), do: "Plan items"
+  defp chip_label(%{plan: plan}), do: "Plan: #{plan.title}"
+
+  # The header's compact state (HeaderFit) hides the words and the dot, so
+  # the button names itself rather than leaning on what is drawn.
   defp count([_]), do: "1 item"
   defp count(items), do: "#{length(items)} items"
 
@@ -92,7 +97,7 @@ defmodule RavixWeb.Live.TrackPlanItems do
         navigate={@summary.plan.url}
         class="chip track-plan-chip"
         title={@summary.plan.title}
-      >Plan: {@summary.plan.title}</.link>
+      ><.icon name="document" size={12} /><span class="truncate" data-fit-label>Plan: {@summary.plan.title}</span></.link>
       <button
         :if={@items != []}
         type="button"
@@ -100,12 +105,13 @@ defmodule RavixWeb.Live.TrackPlanItems do
         phx-click="toggle"
         phx-target={@myself}
         title={@summary.plan && @summary.plan.title}
+        aria-label={"#{chip_label(@summary)} · #{count(@items)}"}
         aria-expanded={to_string(@expanded)}
         aria-controls={"#{@id}-panel"}
       >
-        <span class="truncate">{if @summary.plan,
-          do: "Plan: #{@summary.plan.title}",
-          else: "Plan items"}</span><span class="track-plan-count">{" · " <> count(@items)}</span>
+        <.icon name="document" size={12} /><span class="truncate" data-fit-label>{chip_label(@summary)}</span><span class="track-plan-count"><span class="track-plan-sep">{" · "}</span>{count(
+          @items
+        )}</span>
         <.icon name="chevron" size={11} open={@expanded} />
       </button>
       <div

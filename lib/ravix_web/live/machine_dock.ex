@@ -82,7 +82,11 @@ defmodule RavixWeb.Live.MachineDock do
        shells: [],
        # Whether this person may open a shell (Write, ADR 0010). Hiding the
        # button is courtesy; `Ravix.Terminal` refuses a Read member anyway.
-       can_write: true
+       can_write: true,
+       # Whether the inspector above is already saying what the machine is
+       # doing (asleep, or the setup step). The status line then says only
+       # the word, so a screen says the state once.
+       said: false
      )}
   end
 
@@ -442,13 +446,20 @@ defmodule RavixWeb.Live.MachineDock do
   defp machine_status(_status, %{state: state, detail: detail}),
     do: "#{MachineState.label(state)}. #{detail}"
 
+  # The inspector is already saying the rest.
+  defp machine_status(_status, %{state: state}, true)
+       when state in [:asleep, :starting, :restarting],
+       do: "#{MachineState.label(state)}."
+
+  defp machine_status(status, machine, _said), do: machine_status(status, machine)
+
   @impl true
   def render(assigns) do
     ~H"""
-    <div class="machine-dock-host">
+    <div class={["machine-dock-host", @said && "dock-compact"]}>
       <p id="track-machine-label">{machine_label(@machine_identity)}</p>
       <p id="track-machine-status" role="status">
-        {machine_status(@machine_status, @machine)}
+        {machine_status(@machine_status, @machine, @said)}
       </p>
       <nav class="workspace-tabs dock-tabs" aria-label="Machine panels">
         <button

@@ -761,12 +761,42 @@ html[data-yard="closed"] .workspace-trigger-skeleton { flex: none; width: 28px; 
 .crumbs > strong, .project-crumb > strong { min-width: 0; }
 .project-crumb > strong { overflow: hidden; text-overflow: ellipsis; }
 .project-crumb { min-width: 0; max-width: 40%; color: var(--ink); text-decoration: none; }
-/* The title and the branch each get a share of the strip, so a long one
-   cannot push the buttons off the right end. The branch chip's own share is
-   written after the general chip's so it wins on the element carrying both. */
 .crumbs .chip { max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.track-crumbs .track-branch { max-width: 33%; }
-.track-crumbs > button:first-of-type { max-width: 40%; overflow: hidden; text-overflow: ellipsis; display: block; }
+
+/* A track's header is one line that never wraps and never moves once drawn
+   (RAV-63). Its two groups are `display: contents`, so every crumb and chip
+   is a flex item of the header with its own shrink factor and floor. Flex
+   takes space from items in proportion to factor times width, so the
+   factors are far apart: the status chips (a million) give way all but
+   entirely before the branch (ten thousand), and the branch before the
+   project and the title (1), whose share is then well under a pixel. Each stops at a floor:
+   a status chip at its icon, dot or count, the branch at a stub, the title
+   at about sixteen characters and the project at twelve. A crumb shorter
+   than its floor is marked by the server as not `.long` and never shrinks. */
+.track-crumbs { flex-wrap: nowrap; }
+.track-header-path, .track-header-status { display: contents; }
+.track-crumbs > *, .track-header-path > *, .track-header-status > *, .track-plan-items > * { flex: none; }
+.track-crumbs > .spacer { flex: 1 1 0; min-width: 0; }
+.track-crumbs .project-crumb { max-width: 16rem; }
+.track-crumbs .project-crumb.long { flex: 0 1 auto; min-width: calc(25px + 12ch); }
+.track-crumbs .track-title-crumb { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.track-crumbs .track-title-crumb.long { flex: 0 1 auto; min-width: 17ch; }
+.track-crumbs .track-branch { display: block; flex: 0 10000 auto; min-width: 3.5rem; max-width: 33%; }
+/* Label columns are `minmax(0, max-content)`: a grid's smallest width
+   counts a column's minimum rather than its text, which is what lets a chip
+   give way to its icon while a flex chip would stop at its longest word. */
+.track-header-status .chip, .track-crumbs .track-plan-chip {
+  display: inline-grid; grid-auto-flow: column; grid-template-columns: auto minmax(0, max-content);
+  align-items: center; --label-gap: 5px; gap: var(--label-gap); flex: 0 1000000 auto; min-width: min-content; max-width: 18rem;
+}
+.track-crumbs .track-plan-toggle { grid-template-columns: auto minmax(0, max-content) auto auto; --label-gap: 4px; }
+.track-header-status .chip-label, .track-crumbs .track-plan-chip .truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* HeaderFit's compact state: a label that would be cut is not drawn at
+   all, so each chip is its icon, dot or count. Width, not `display`, so the
+   hook can still read how wide each label would be. */
+.track-crumbs[data-compact] [data-fit-label] { max-width: 0; margin-left: calc(-1 * var(--label-gap)); }
+.track-crumbs[data-compact] .track-plan-sep { display: none; }
+.track-header-status .status-note { flex: 0 1000000 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* Header icons are named by aria-label and tooltip; closing confirms first. */
 .crumbs .icon-button { justify-content: center; width: 30px; height: 30px; padding: 0; }
 
@@ -1218,6 +1248,11 @@ html[data-yard="closed"] .workspace-trigger-skeleton { flex: none; width: 28px; 
 .dock-empty .empty { padding: 14px 12px; gap: 6px; }
 .dock-empty .empty .mark { width: 30px; height: 30px; margin-bottom: 0; }
 .dock-empty .empty p { font-size: 12px; }
+/* With the inspector already saying what the machine is doing, the dock's
+   two lines are one: whose machine, then the word. */
+.machine-dock-host.dock-compact > #track-machine-label,
+.machine-dock-host.dock-compact > #track-machine-status { display: inline; }
+.machine-dock-host.dock-compact > #track-machine-label { margin-right: 8px; color: var(--dim); }
 /* The preview is somebody else's page in a frame; the panel colour is the
    ground it paints over, so the wait for it is not a hole in the inspector. */
 .workspace-preview { width: 100%; height: 360px; background: var(--panel); border: 0; margin: 12px 0; }
@@ -1315,6 +1350,16 @@ html[data-yard="closed"] .workspace-trigger-skeleton { flex: none; width: 28px; 
   color: var(--accent-ink); background: var(--accent-soft); border: 1px solid var(--accent-line);
 }
 .empty code { color: var(--ink); background: var(--code-bg); padding: 1px 5px; border-radius: 4px; }
+/* In a pane it is everything the pane holds below whatever sits at its top,
+   centred both ways, and one quiet line: the pane is waiting, not failing. */
+/* `:where` keeps this at no specificity, so a layout that hides the panel
+   (the narrow views) still wins. */
+:where(.workspace-panel:has(> .empty.pane)) { display: flex; flex-direction: column; }
+.empty.pane { flex: 1; min-height: 120px; padding: 24px 16px; gap: 6px; }
+.empty.pane .mark { width: 32px; height: 32px; margin-bottom: 2px; }
+.empty.pane h3 { color: var(--dim); font-weight: 400; }
+.empty.busy .mark svg { animation: request-spin 1200ms linear infinite; }
+@media (prefers-reduced-motion: reduce) { .empty.busy .mark svg { animation: none; } }
 .empty-icon { width: 42px; height: 42px; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); color: var(--dim); }
 
 /* A project with no track open yet. */
@@ -1686,7 +1731,6 @@ button.primary.home-action .ico { color: inherit; }
   .split { display: flex; flex-direction: column; overflow: auto; }
   .inspector { width: 100%; min-height: 560px; border-top: 1px solid var(--line); }
   .track-conversation { min-height: 65vh; }
-  .track-crumbs { flex-wrap: wrap; height: auto; padding-block: 6px; }
 }
 
 @media (max-width: 760px) {
@@ -1716,11 +1760,11 @@ button.primary.home-action .ico { color: inherit; }
   .workspace-mobile-nav a:hover { color: var(--ink); background: var(--surface-hover); }
   .workspace-mobile-nav a[aria-current="page"] { color: var(--ink); background: var(--surface-active); border-color: var(--line-strong); font-weight: 600; }
   .crumbs { flex-wrap: wrap; row-gap: 6px; height: auto; min-height: 44px; padding: 8px 12px; }
-  /* The actions stay on the title's line; the title and chips give way. */
+  /* A phone has no room for the desktop floors; the same order holds. */
   .track-crumbs { flex-wrap: nowrap; }
-  .track-crumbs > * { flex-shrink: 0; }
-  .track-crumbs > .project-crumb, .track-crumbs > button:first-of-type, .track-crumbs > .chip { flex-shrink: 1; min-width: 0; }
-  .track-crumbs .track-branch { max-width: 44%; }
+  .track-crumbs .project-crumb.long { min-width: calc(25px + 4ch); }
+  .track-crumbs .track-title-crumb.long { min-width: 8ch; }
+  .track-crumbs .track-branch { min-width: 2.5rem; }
   .workspace-welcome { padding: 24px; }
   .said { max-width: 100%; }
   .transcript-scroll { padding-inline: 12px; }
@@ -1985,10 +2029,8 @@ body:has(.phx-error) #request-progress { display: none; }
 /* Assigned plan material is one header chip until the reader opens it; the
    items open in a panel hung from the header, over the transcript. */
 .track-crumbs { position: relative; }
-.track-crumbs .track-plan-chip { min-width: 0; max-width: 18rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .track-plan-items { display: contents; }
-.track-crumbs .track-plan-toggle { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; font: inherit; font-size: 12px; min-height: 24px; }
-.track-plan-toggle .truncate { min-width: 0; }
+.track-crumbs .track-plan-toggle { cursor: pointer; font: inherit; font-size: 12px; min-height: 24px; }
 .track-plan-count { flex: none; color: var(--dim); }
 .track-plan-popover {
   position: absolute; top: 100%; left: 12px; z-index: 30; width: min(32rem, calc(100% - 24px));

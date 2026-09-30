@@ -23,65 +23,92 @@
     <button class="primary" phx-click="retry-load">Try again</button>
   </div>
   <div :if={@track} class="track-workspace-body" data-narrow-view={@narrow_view}>
-    <header class="crumbs track-crumbs">
-      <.link navigate={"/p/#{@project.id}"} class="project-crumb">
-        <span class="project-mark" aria-hidden="true">
-          {String.first(@project.name) |> String.upcase()}
+    <%!-- Two groups either side of the spacer: what the track is on the
+      left, how it is on the right beside the actions. The status half is
+      where anything that arrives late (the plan chip) or changes length
+      (the machine's state) lives, so it grows into the spacer and never
+      moves the title. When the strip is short the status chips give way
+      first, down to their icon or count, then the branch, and the title
+      last; see "the track's own header" in app.css, and HeaderFit for
+      why a chip's words show whole or not at all. --%>
+    <header id="track-header" class="crumbs track-crumbs" phx-hook="HeaderFit">
+      <div class="track-header-path">
+        <.link
+          navigate={"/p/#{@project.id}"}
+          class={["project-crumb", !fits?(@project.display_name, 12) && "long"]}
+        >
+          <span class="project-mark" aria-hidden="true">
+            {String.first(@project.name) |> String.upcase()}
+          </span>
+          <strong><.project_name project={@project} /></strong>
+        </.link>
+        <span class="dimmer" aria-hidden="true">›</span>
+        <button
+          :if={owner_or_creator?(@current_user, @track)}
+          class={["ghost track-title-crumb", !fits?(@track.title, 16) && "long"]}
+          phx-click={JS.push_focus() |> JS.push("dialog")}
+          phx-value-name="rename"
+          title="Rename track"
+          aria-label={"Rename track: #{@track.title}"}
+        >
+          {@track.title}
+        </button>
+        <strong
+          :if={!owner_or_creator?(@current_user, @track)}
+          class={["track-title-crumb", !fits?(@track.title, 16) && "long"]}
+          title={@track.title}
+        >{@track.title}</strong>
+        <%!-- A new track is titled with its branch, so the chip appears only
+          once the two say different things: after a rename, say. --%>
+        <span
+          :if={@track.branch != @track.title}
+          class="chip mono track-branch"
+          title={@track.branch}
+        >{@track.branch}</span>
+      </div>
+      <span class="spacer"></span>
+      <div class="track-header-status">
+        <.live_component
+          module={RavixWeb.Live.TrackPlanItems}
+          id={"track-plan-items-#{@track.id}"}
+          current_user={@current_user}
+          session_hash={@session_hash}
+          track_id={@track.id}
+          summary={@assigned_plan}
+        />
+        <span :if={@track.visibility == :private} class="chip" title="Private">
+          <.icon name="lock" /><span class="chip-label" data-fit-label>Private</span>
         </span>
-        <strong><.project_name project={@project} /></strong>
-      </.link>
-      <span class="dimmer" aria-hidden="true">›</span>
+        <.machine_chip machine={machine(@track, @threads, @thread_states, @setup_now)} />
+        <span
+          :if={
+            @track.sandbox_layout == :dedicated ||
+              Ravix.Config.dedicated_opens_enabled?(@current_user)
+          }
+          class="chip"
+          id="track-machine-scope"
+          title={machine_scope(@track)}
+        ><.icon name="machine" size={12} /><span class="chip-label" data-fit-label>{machine_scope(
+          @track
+        )}</span></span>
+        <span
+          :if={@track.billing == :creator}
+          id="track-payer"
+          class="dim status-note"
+          title={payer_label(@track)}
+        >
+          {payer_label(@track)}
+        </span>
+        <span
+          :if={@track.billing != :creator && @project.role != :owner}
+          id="track-agent-owner"
+          class="dim status-note"
+          title={agent_owner_label(@project, @track)}
+        >
+          {agent_owner_label(@project, @track)}
+        </span>
+      </div>
       <button
-        :if={owner_or_creator?(@current_user, @track)}
-        class="ghost"
-        phx-click={JS.push_focus() |> JS.push("dialog")}
-        phx-value-name="rename"
-        title="Rename track"
-        aria-label={"Rename track: #{@track.title}"}
-      >
-        {@track.title}
-      </button>
-      <strong :if={!owner_or_creator?(@current_user, @track)}>{@track.title}</strong>
-      <span :if={@track.visibility == :private}><.icon name="lock" /> Private</span>
-      <.machine_chip machine={machine(@track, @threads, @thread_states, @setup_now)} />
-      <.live_component
-        module={RavixWeb.Live.TrackPlanItems}
-        id={"track-plan-items-#{@track.id}"}
-        current_user={@current_user}
-        session_hash={@session_hash}
-        track_id={@track.id}
-        summary={@assigned_plan}
-      />
-      <%!-- A new track is titled with its branch, so the chip appears only
-        once the two say different things: after a rename, say. --%>
-      <span
-        :if={@track.branch != @track.title}
-        class="chip mono track-branch"
-        title={@track.branch}
-      >{@track.branch}</span>
-      <span
-        :if={
-          @track.sandbox_layout == :dedicated ||
-            Ravix.Config.dedicated_opens_enabled?(@current_user)
-        }
-        class="chip"
-        id="track-machine-scope"
-      >{if @track.sandbox_layout == :dedicated,
-        do: "Own machine",
-        else: "Shared project machine"}</span>
-      <span :if={@track.billing == :creator} id="track-payer" class="dim">
-        {payer_label(@track)}
-      </span>
-      <span
-        :if={@track.billing != :creator && @project.role != :owner}
-        id="track-agent-owner"
-        class="dim"
-      >
-        Runs on @{@project.owner_login}'s {RavixWeb.AgentName.label(
-          @track.runtime || @project.runtime
-        )}
-      </span>
-      <span class="spacer"></span><button
         :if={
           Ravix.People.workspace_sharing?(@project) && owner_or_creator?(@current_user, @track)
         }
@@ -778,158 +805,196 @@
           </button>
         </nav>
         <div class="workspace-panel">
-          <%!-- A diff being re-read stays on screen; the refresh button turns instead. --%>
-          <.loading_status :if={@panel.busy? && !is_struct(@panel.data, Ravix.Tracks.Diff)}>
-            Loading inspector…
-          </.loading_status>
-          <.git_status
-            :if={@panel.tab == :checks}
-            git={@git}
-            loading={@git_loading?}
-            checks={match?(%Ravix.GitHub.ChecksReport{}, @panel.data) && @panel.data}
-            checks_error={@panel.error}
-            project={@project}
-            writing={if :git in @pending, do: @git_step}
-            failure={@git_failure}
-          />
-          <p :if={@panel.error} role="alert">{@panel.error}</p>
-          <.panel_body
-            :if={@panel.data}
-            data={@panel.data}
-            show_ignored?={@show_ignored?}
-            branch_merged?={@branch_merged?}
-            directories={@panel.directories}
-            metadata={@panel.metadata}
-            file={@panel.file}
-            project={@project}
-            diff_path={@diff_path}
-            diff_filter={@diff_filter}
-            diff_show_large={@diff_show_large}
-          />
-          <div :if={@panel.tab == :preview && @preview}>
-            <p id="run-status">
-              Status: {@preview.state}
-            </p>
-            <.loading_status :if={@preview.state == :starting} id="preview-loading">
-              {RavixWeb.PreviewPresentation.loading_label(@preview.config)}
-            </.loading_status>
-            <p
-              :if={@preview.error}
-              id="preview-error"
-              role="alert"
-              phx-mounted={JS.set_attribute({"open", ""}, to: "#preview-logs")}
-            >
-              {@preview.error}
-            </p>
-            <p :if={@preview.unavailable_reason}>{@preview.unavailable_reason}</p>
-            <p :if={@preview.keeps_awake} id="run-keeps-awake" class="hint">
-              Keeps this track's machine awake while running
-            </p>
-            <div class="workspace-actions">
-              <button
-                class="primary"
-                phx-click="preview"
-                phx-value-action="run"
-                disabled={
-                  @panel.busy? || !@preview.available ||
-                    @preview.state in [:starting, :ready, :running]
+          <%= case inspector_state(@track, machine(@track, @threads, @thread_states, @setup_now), @panel) do %>
+            <% {:setup, step} -> %>
+              <%!-- The setup banner is the live region for these words. --%>
+              <.empty pane busy id="panel-setup" icon="spinner" title={step} />
+            <% :asleep -> %>
+              <.asleep
+                id="panel-asleep"
+                can_wake={@track.level != :read}
+                waking={:wake in @pending}
+              />
+            <% nil -> %>
+              <%!-- A diff being re-read stays on screen; the refresh button turns instead. --%>
+              <.loading_status :if={@panel.busy? && !is_struct(@panel.data, Ravix.Tracks.Diff)}>
+                Loading inspector…
+              </.loading_status>
+              <.git_status
+                :if={@panel.tab == :checks}
+                git={@git}
+                loading={@git_loading?}
+                checks={match?(%Ravix.GitHub.ChecksReport{}, @panel.data) && @panel.data}
+                checks_error={@panel.error}
+                project={@project}
+                writing={if :git in @pending, do: @git_step}
+                failure={@git_failure}
+                can_wake={@track.level != :read}
+                waking={:wake in @pending}
+              />
+              <p :if={@panel.error} role="alert">{@panel.error}</p>
+              <.panel_body
+                :if={@panel.data}
+                data={@panel.data}
+                show_ignored?={@show_ignored?}
+                branch_merged?={@branch_merged?}
+                directories={@panel.directories}
+                metadata={@panel.metadata}
+                file={@panel.file}
+                project={@project}
+                diff_path={@diff_path}
+                diff_filter={@diff_filter}
+                diff_show_large={@diff_show_large}
+              />
+              <.empty
+                :if={
+                  @panel.tab == :preview && @preview && @preview.state == :stopped &&
+                    !@preview.error
                 }
+                pane
+                id="preview-empty"
+                icon="globe"
+                title="No preview running"
+                because={@preview.unavailable_reason}
               >
-                Run
-              </button>
-              <button
-                :if={@preview.url}
-                phx-click="preview"
-                phx-value-action="open"
-                disabled={@panel.busy? || !@preview.available}
-              >Open preview</button>
-              <button
-                :if={@preview.state in [:starting, :ready, :running]}
-                phx-click="preview"
-                phx-value-action="restart-run"
-                disabled={@panel.busy? || !@preview.available}
-              >
-                Restart
-              </button>
-              <button
-                phx-click="preview"
-                phx-value-action="stop"
-                disabled={@panel.busy? || @preview.state == :stopped}
-              >
-                Stop
-              </button>
-              <button
-                phx-click={
-                  JS.push("preview") |> JS.set_attribute({"open", ""}, to: "#preview-logs")
-                }
-                phx-value-action="logs"
-                disabled={@panel.busy?}
-              >
-                Logs
-              </button>
-            </div>
-            <a
-              :if={@preview_url && @preview.state == :ready}
-              href={~p"/preview/#{@track_id}"}
-              target="_blank"
-              rel="noreferrer"
-            >
-              Open preview in new tab ↗
-            </a>
-            <iframe
-              :if={@preview_url && @preview.state == :ready}
-              src={@preview_url}
-              title="Track preview"
-              class="workspace-preview"
-              sandbox="allow-scripts allow-forms allow-same-origin allow-popups allow-downloads"
-            ></iframe>
-            <details
-              id="preview-logs"
-              open={@preview.state == :failed}
-              phx-mounted={JS.ignore_attributes(["open"])}
-            >
-              <summary>Show logs</summary>
-              <pre>{RavixWeb.PreviewPresentation.logs(@preview.logs) |> then(&if(&1 == "", do: "No logs yet.", else: &1))}</pre>
-            </details>
-            <!-- Open by the reader, not by the server, and the same
+                <:action
+                  id="preview-run"
+                  label="Run"
+                  click={JS.push("preview", value: %{action: "run"})}
+                  disabled={@panel.busy? || !@preview.available}
+                />
+              </.empty>
+              <div :if={@panel.tab == :preview && @preview}>
+                <p :if={@preview.state != :stopped || @preview.error} id="run-status">
+                  Status: {@preview.state}
+                </p>
+                <.loading_status :if={@preview.state == :starting} id="preview-loading">
+                  {RavixWeb.PreviewPresentation.loading_label(@preview.config)}
+                </.loading_status>
+                <p
+                  :if={@preview.error}
+                  id="preview-error"
+                  role="alert"
+                  phx-mounted={JS.set_attribute({"open", ""}, to: "#preview-logs")}
+                >
+                  {@preview.error}
+                </p>
+                <p :if={
+                  @preview.unavailable_reason && (@preview.state != :stopped || @preview.error)
+                }>
+                  {@preview.unavailable_reason}
+                </p>
+                <p :if={@preview.keeps_awake} id="run-keeps-awake" class="hint">
+                  Keeps this track's machine awake while running
+                </p>
+                <div class="workspace-actions">
+                  <button
+                    :if={@preview.state != :stopped || @preview.error}
+                    class="primary"
+                    phx-click="preview"
+                    phx-value-action="run"
+                    disabled={
+                      @panel.busy? || !@preview.available ||
+                        @preview.state in [:starting, :ready, :running]
+                    }
+                  >
+                    Run
+                  </button>
+                  <button
+                    :if={@preview.url}
+                    phx-click="preview"
+                    phx-value-action="open"
+                    disabled={@panel.busy? || !@preview.available}
+                  >Open preview</button>
+                  <button
+                    :if={@preview.state in [:starting, :ready, :running]}
+                    phx-click="preview"
+                    phx-value-action="restart-run"
+                    disabled={@panel.busy? || !@preview.available}
+                  >
+                    Restart
+                  </button>
+                  <button
+                    :if={@preview.state != :stopped}
+                    phx-click="preview"
+                    phx-value-action="stop"
+                    disabled={@panel.busy? || @preview.state == :stopped}
+                  >
+                    Stop
+                  </button>
+                  <button
+                    phx-click={
+                      JS.push("preview") |> JS.set_attribute({"open", ""}, to: "#preview-logs")
+                    }
+                    phx-value-action="logs"
+                    disabled={@panel.busy?}
+                  >
+                    Logs
+                  </button>
+                </div>
+                <a
+                  :if={@preview_url && @preview.state == :ready}
+                  href={~p"/preview/#{@track_id}"}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Open preview in new tab ↗
+                </a>
+                <iframe
+                  :if={@preview_url && @preview.state == :ready}
+                  src={@preview_url}
+                  title="Track preview"
+                  class="workspace-preview"
+                  sandbox="allow-scripts allow-forms allow-same-origin allow-popups allow-downloads"
+                ></iframe>
+                <details
+                  id="preview-logs"
+                  open={@preview.state == :failed}
+                  phx-mounted={JS.ignore_attributes(["open"])}
+                >
+                  <summary>Show logs</summary>
+                  <pre>{RavixWeb.PreviewPresentation.logs(@preview.logs) |> then(&if(&1 == "", do: "No logs yet.", else: &1))}</pre>
+                </details>
+                <!-- Open by the reader, not by the server, and the same
             `ignore_attributes` as the logs above it: a status patch arriving
             while somebody is typing in here used to collapse the section
             under them. -->
-            <details id="preview-config" phx-mounted={JS.ignore_attributes(["open"])}>
-              <summary>Run script override</summary>
-              <.form
-                :let={f}
-                for={@preview_form}
-                id="preview-config-form"
-                phx-submit="preview-config"
-              >
-                <.input field={f[:directory]} id="preview-directory" label="App directory" />
-                <.input
-                  field={f[:command]}
-                  id="preview-command"
-                  label="Run command"
-                />
-                <.input
-                  field={f[:readiness_path]}
-                  id="preview-path"
-                  label="Readiness path (optional)"
-                />
-                <.input
-                  field={f[:stop_command]}
-                  id="run-stop-command"
-                  label="Stop command (optional)"
-                />
-                <p class="hint">
-                  Leave readiness blank for a process without a preview. HTTP apps must honor $PORT and fail on a collision. Without a stop command, Stop signals the process group.
-                </p>
-                <button class="primary">Save</button><button
-                  class="ghost"
-                  name="clear"
-                  value="true"
-                >Use project defaults</button>
-              </.form>
-            </details>
-          </div>
+                <details id="preview-config" phx-mounted={JS.ignore_attributes(["open"])}>
+                  <summary>Run script override</summary>
+                  <.form
+                    :let={f}
+                    for={@preview_form}
+                    id="preview-config-form"
+                    phx-submit="preview-config"
+                  >
+                    <.input field={f[:directory]} id="preview-directory" label="App directory" />
+                    <.input
+                      field={f[:command]}
+                      id="preview-command"
+                      label="Run command"
+                    />
+                    <.input
+                      field={f[:readiness_path]}
+                      id="preview-path"
+                      label="Readiness path (optional)"
+                    />
+                    <.input
+                      field={f[:stop_command]}
+                      id="run-stop-command"
+                      label="Stop command (optional)"
+                    />
+                    <p class="hint">
+                      Leave readiness blank for a process without a preview. HTTP apps must honor $PORT and fail on a collision. Without a stop command, Stop signals the process group.
+                    </p>
+                    <button class="primary">Save</button><button
+                      class="ghost"
+                      name="clear"
+                      value="true"
+                    >Use project defaults</button>
+                  </.form>
+                </details>
+              </div>
+          <% end %>
           <p :if={@pull}>
             <a href={@pull.url} target="_blank" rel="noreferrer">View pull request ↗</a>
           </p>
@@ -947,6 +1012,10 @@
           current_user={@current_user}
           session_hash={@session_hash}
           can_write={@track.level != :read}
+          said={
+            inspector_state(@track, machine(@track, @threads, @thread_states, @setup_now), @panel) !=
+              nil || (@panel.tab == :checks && match?(%{asleep?: true}, @git))
+          }
         />
       </aside>
     </div>
