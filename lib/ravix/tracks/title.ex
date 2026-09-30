@@ -117,8 +117,8 @@ defmodule Ravix.Tracks.Title do
   def from_prompt(_prompt), do: nil
 
   @doc """
-  A title the runtime wrote for its session (ACP `session_info_update`),
-  tidied to the same length. Its wording is kept: somebody chose it.
+  A title the runtime wrote for its session (ACP `session_info_update`), as
+  Fountain saved it on the conversation, tidied to the same length. Its wording is kept: somebody chose it.
   """
   @spec runtime(String.t() | nil) :: String.t() | nil
   def runtime(title) when is_binary(title) do

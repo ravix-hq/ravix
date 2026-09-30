@@ -238,7 +238,6 @@ defmodule Ravix.TrackMaintenanceTest do
       vault_id: "one-track",
       sandbox_id: "one-disk",
       channel_id: "one-thread",
-      title: nil,
       prompt: nil
     }
 

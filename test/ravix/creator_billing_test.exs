@@ -789,7 +789,6 @@ defmodule Ravix.CreatorBillingTest do
         vault_id: "v",
         sandbox_id: "s",
         channel_id: "c",
-        title: "t",
         prompt: nil
       }
 
@@ -816,7 +815,6 @@ defmodule Ravix.CreatorBillingTest do
         vault_id: "v",
         sandbox_id: "s",
         channel_id: "c",
-        title: "t",
         prompt: nil
       }
 

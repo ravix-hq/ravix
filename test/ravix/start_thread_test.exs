@@ -97,7 +97,6 @@ defmodule Ravix.StartThreadTest do
              Tracks.start_thread(ctx.owner, ctx.track.id, %{runtime: "claude"}, request)
 
     assert_received {:launched, launch}
-    assert launch.title == "Explain Prompt Queue"
     assert launch.prompt == nil
     assert thread.title == "Explain Prompt Queue"
     assert thread.conversation_id == "started"

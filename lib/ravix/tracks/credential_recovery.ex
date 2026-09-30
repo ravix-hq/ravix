@@ -74,7 +74,6 @@ defmodule Ravix.Tracks.CredentialRecovery do
             vault_id: track.vault_id,
             sandbox_id: track.sandbox_id,
             channel_id: thread.credential_recovery["channel"],
-            title: thread.title,
             prompt: nil
           }
 

@@ -58,6 +58,7 @@ defmodule Ravix.MachineCache do
   alias Ravix.Projects.Project
   alias Ravix.Projects.RuntimeAgents
   alias Ravix.Tracks.Store, as: TracksStore
+  alias Ravix.Tracks.Titling
 
   @memo __MODULE__
   @ttl_ms 5_000
@@ -96,6 +97,9 @@ defmodule Ravix.MachineCache do
   do -- the load in flight if it is that new, else one more -- and the memo
   is refreshed with it. Narrowed to the project's agent, never the whole
   account. A failed read is nobody's answer: the next caller retries.
+
+  Each successful load also hands the list to `Ravix.Tracks.Titling.after_list/2`,
+  which is how a thread takes the title Fountain saved from its harness.
   """
   @spec conversations(Client.t(), Project.t(), opts()) ::
           {:ok, [conversation()]} | {:error, Fountain.failure()}
@@ -105,7 +109,13 @@ defmodule Ravix.MachineCache do
 
     memo(
       list_key(client, project),
-      fn -> project_conversations(client, agent_ids) end,
+      fn ->
+        with {:ok, all} = loaded <- project_conversations(client, agent_ids) do
+          # Once per load, not per read: Fountain's titles ride on this list.
+          Titling.after_list(project.id, all)
+          loaded
+        end
+      end,
       fn _ -> @ttl_ms end,
       opts
     )

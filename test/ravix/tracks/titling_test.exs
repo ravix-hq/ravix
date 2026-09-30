@@ -4,6 +4,7 @@ defmodule Ravix.Tracks.TitlingTest do
   import Mimic
 
   alias Ravix.Fountain.FakeTransport
+  alias Ravix.Fountain.Shapes.Conversation
   alias Ravix.Hub
   alias Ravix.Hub.Event
   alias Ravix.Tracks
@@ -59,6 +60,23 @@ defmodule Ravix.Tracks.TitlingTest do
   end
 
   defp thread(track), do: Store.thread(track.id)
+
+  defp listed(id, title, source \\ "harness"),
+    do: %Conversation{
+      id: id,
+      status: :idle,
+      sandbox_id: nil,
+      sprite_name: nil,
+      inserted_at: nil,
+      last_active_at: nil,
+      turn_count: 1,
+      model: nil,
+      title: title,
+      title_source: source
+    }
+
+  defp from_list(ctx, conversations),
+    do: Titling.from_fountain(ctx.project.id, Titling.harness_titles(conversations))
 
   describe "the first prompt" do
     test "titles the default thread and its track, and says so on the hub", ctx do
@@ -210,7 +228,7 @@ defmodule Ravix.Tracks.TitlingTest do
     end
   end
 
-  describe "a runtime's own title" do
+  describe "a harness title saved by Fountain" do
     setup ctx do
       send_prompt(ctx, "pull latest main")
       assert_titled(ctx.track.id)
@@ -218,35 +236,82 @@ defmodule Ravix.Tracks.TitlingTest do
     end
 
     test "replaces the prompt's title on thread and track", ctx do
-      assert :ok =
-               Titling.from_runtime(ctx.track.id, ctx.track.conversation_id, "Main branch pull")
+      assert [:ok] = from_list(ctx, [listed(ctx.track.conversation_id, "Main branch pull")])
 
       assert_titled(ctx.track.id)
       assert Repo.get!(Track, ctx.track.id).title == "Main branch pull"
       assert thread(ctx.track).title == "Main branch pull"
+      assert thread(ctx.track).title_source == :auto
+    end
+
+    test "is tidied, and skipped without a write when the thread already has it", ctx do
+      assert [:ok] =
+               from_list(ctx, [listed(ctx.track.conversation_id, "  \"Main branch pull\" ")])
+
+      assert_titled(ctx.track.id)
+
+      assert [:skipped] = from_list(ctx, [listed(ctx.track.conversation_id, "Main branch pull")])
+      refute_receive {:hub, %Event{name: :tracks}}, 50
     end
 
     test "never replaces a person's rename of the track", ctx do
       :ok = Tracks.rename(ctx.owner, ctx.track.id, "Ledger cleanup")
 
-      assert :ok =
-               Titling.from_runtime(ctx.track.id, ctx.track.conversation_id, "Main branch pull")
+      assert [:ok] = from_list(ctx, [listed(ctx.track.conversation_id, "Main branch pull")])
 
       assert Repo.get!(Track, ctx.track.id).title == "Ledger cleanup"
       assert thread(ctx.track).title == "Main branch pull"
     end
 
-    test "is ignored by a thread Ravix never titled, and for an unknown conversation", ctx do
-      other = insert_track(project: ctx.project, conversation_id: "c-legacy")
+    test "never replaces a person's rename of the thread", ctx do
+      :ok = Tracks.rename_thread(ctx.owner, ctx.track.id, ctx.track.id, "Mine")
 
-      assert Titling.from_runtime(other.id, "c-legacy", "Main branch pull") == :skipped
-      assert thread(other).title == "Default"
-      assert Titling.from_runtime(ctx.track.id, "c-unknown", "Anything") == :skipped
-      assert Titling.from_runtime(ctx.track.id, ctx.track.conversation_id, "  ") == :skipped
+      assert [] = from_list(ctx, [listed(ctx.track.conversation_id, "Main branch pull")])
+      assert thread(ctx.track).title == "Mine"
+      assert thread(ctx.track).title_source == :manual
     end
 
-    test "is adopted in the background", ctx do
-      :ok = Titling.runtime_title(ctx.track.id, ctx.track.conversation_id, "Main branch pull")
+    test "adopts only harness titles, or unsourced ones that are not Ravix's own opening name",
+         ctx do
+      id = ctx.track.conversation_id
+
+      assert Titling.harness_titles([
+               listed("a", "Set by the owner", "user"),
+               listed("b", "   "),
+               listed("c", nil),
+               listed(nil, "No id")
+             ]) == %{}
+
+      # Before this release Ravix opened every conversation with the branch as
+      # its title, which Fountain keeps as the owner's. Unsourced, it would
+      # otherwise undo the prompt's title.
+      assert [:skipped] = from_list(ctx, [listed(id, "ravix/crewe", nil)])
+      assert thread(ctx.track).title == "Pull Latest Main"
+
+      assert [:ok] = from_list(ctx, [listed(id, "Main branch pull", nil)])
+      assert thread(ctx.track).title == "Main branch pull"
+    end
+
+    test "is scoped to the project, and ignores unknown conversations", ctx do
+      other_project = insert_project(user: ctx.owner)
+
+      assert [] =
+               Titling.from_fountain(
+                 other_project.id,
+                 Titling.harness_titles([listed(ctx.track.conversation_id, "Elsewhere")])
+               )
+
+      assert [] = from_list(ctx, [listed("c-unknown", "Anything")])
+      assert thread(ctx.track).title == "Pull Latest Main"
+    end
+
+    test "after_list/2 adopts in the background and reads nothing for an untitled list", ctx do
+      :ok = Titling.after_list(ctx.project.id, [listed(ctx.track.conversation_id, nil)])
+      refute_receive {:hub, %Event{name: :tracks}}, 50
+
+      :ok =
+        Titling.after_list(ctx.project.id, [listed(ctx.track.conversation_id, "Main branch pull")])
+
       assert_titled(ctx.track.id)
       assert Repo.get!(Track, ctx.track.id).title == "Main branch pull"
     end

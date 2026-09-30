@@ -4,8 +4,12 @@ defmodule Ravix.Tracks.Titling do
   (RAV-48).
 
   Two sources, and no third. A runtime that titles its own session says so
-  on the ACP stream (`session_info_update`, which the Claude adapter writes
-  a second after its first reply, and Codex writes too); that title is
+  on the ACP stream (`session_info_update`), and Fountain keeps that title
+  on the conversation, redacted and tidied, marked `title_source: "harness"`
+  (RAV-107). Ravix does not read the stream for it: it adopts the title from
+  the conversation list it already fetches (`Ravix.MachineCache.conversations/3`),
+  so a title given during a turn nobody was watching still arrives, and
+  Fountain's parsing and redaction are the only ones. That title is
   preferred, because the runtime has read the whole exchange. Until one
   arrives, or when none ever does, the thread is called what
   `Ravix.Tracks.Title.from_prompt/1` reads out of its first prompt. Nothing
@@ -20,13 +24,18 @@ defmodule Ravix.Tracks.Titling do
   opened with or an earlier automatic title; its branch never moves.
 
   All of it runs under `Ravix.TaskSupervisor` (in the caller under test; see
-  `Ravix.Config.background_titling?/0`), after the prompt was accepted, and
-  fails silently: a missing title costs a label, and the
-  person who sent the prompt is not told about it.
+  `Ravix.Config.background_titling?/0`), after the prompt was accepted or
+  the list was read, and fails silently: a missing title costs a label, and
+  the person who sent the prompt is not told about it.
+
+  Every instance reads its own list, so each may reach the same title. The
+  compare-and-set lets one write it; the others read `:stale` and publish
+  nothing, and a title already in place is skipped before any write.
   """
 
   require Logger
 
+  alias Ravix.Fountain.Shapes.Conversation
   alias Ravix.Hub
   alias Ravix.Tracks.{Store, Thread, Title, Track}
 
@@ -39,14 +48,19 @@ defmodule Ravix.Tracks.Titling do
     do: background(fn -> from_prompt(track_id, thread_id, item_id, prompt) end)
 
   @doc """
-  The runtime titled the session on `conversation_id`. Adopted, in the
-  background, by a thread Ravix already titled automatically; one that still
-  has its opening name was prompted before automatic titles existed, and
-  keeps it.
+  Fountain listed `conversations` for the project `project_id`. Each thread
+  on one of them whose title is still automatic adopts the conversation's
+  harness title, in the background. Answers at once, and costs no database
+  read when no conversation carries a harness title.
   """
-  @spec runtime_title(String.t(), String.t(), String.t()) :: :ok
-  def runtime_title(track_id, conversation_id, title),
-    do: background(fn -> from_runtime(track_id, conversation_id, title) end)
+  @spec after_list(String.t(), [Conversation.t()]) :: :ok
+  def after_list(project_id, conversations) do
+    titles = harness_titles(conversations)
+
+    if map_size(titles) == 0,
+      do: :ok,
+      else: background(fn -> from_fountain(project_id, titles) end)
+  end
 
   @doc """
   `after_prompt/4`, in the calling process. Answers what happened, which is
@@ -67,18 +81,56 @@ defmodule Ravix.Tracks.Titling do
     end
   end
 
-  @doc "`runtime_title/3`, in the calling process."
-  @spec from_runtime(String.t(), String.t(), String.t()) :: :ok | :stale | :skipped
-  def from_runtime(track_id, conversation_id, title) do
-    with %Thread{title_source: :auto} = thread <-
-           Store.thread_by_conversation(track_id, conversation_id),
-         %Track{} = track <- Store.get_track(track_id),
-         title when is_binary(title) and title != thread.title <- Title.runtime(title) do
-      write(thread, track, title)
-    else
-      _ -> :skipped
-    end
+  @doc """
+  `after_list/2`, in the calling process, given what `harness_titles/1`
+  read off the list. Answers what happened to each thread, which is only
+  ever logged.
+
+  Idempotent: a thread already carrying the title is skipped without a
+  write, and every write is `Store.auto_title/3`'s compare-and-set, so two
+  instances reading the same list write it once and publish once.
+  """
+  @spec from_fountain(String.t(), %{String.t() => {String.t(), String.t() | nil}}) ::
+          [:ok | :stale | :skipped]
+  def from_fountain(project_id, titles) do
+    project_id
+    |> Store.auto_titled_threads(Map.keys(titles))
+    |> Enum.map(fn {thread, track} ->
+      {title, source} = Map.fetch!(titles, thread.conversation_id)
+      adopt(thread, track, Title.runtime(title), source)
+    end)
   end
+
+  @doc """
+  The harness titles on a conversation list, by conversation id, each with
+  the `title_source` Fountain gave (nil when it gave none).
+
+  A title is the harness's when Fountain says so. A Fountain that does not
+  send `title_source` still sends `title`, and then a non-blank one is taken
+  for the harness's; `adopt/4` refuses the one case where that is known to
+  be wrong. A `"user"` title is the conversation owner's, set in Fountain,
+  and is not the harness's.
+  """
+  @spec harness_titles([Conversation.t()]) :: %{String.t() => {String.t(), String.t() | nil}}
+  def harness_titles(conversations) do
+    for %Conversation{id: id, title: title, title_source: source} <- conversations,
+        is_binary(id) and is_binary(title) and String.trim(title) != "",
+        source in ["harness", nil],
+        into: %{},
+        do: {id, {title, source}}
+  end
+
+  defp adopt(_thread, _track, nil, _source), do: :skipped
+  defp adopt(%Thread{title: title}, _track, title, _source), do: :skipped
+
+  # Until this release every conversation was opened with a title, which
+  # Fountain keeps as its owner's and never lets the harness replace. For a
+  # track's first thread that was the branch. Without `title_source` it
+  # cannot be told from a harness title, and adopting it would undo the title
+  # the first prompt gave.
+  defp adopt(_thread, %Track{branch: branch}, branch, nil), do: :skipped
+
+  defp adopt(thread, track, title, _source), do: write(thread, track, title)
 
   defp write(thread, track, title) do
     with :ok <- Store.auto_title(thread, track, title) do
