@@ -336,8 +336,12 @@
         </div>
         <div :if={!@thread_draft[:selected?] && @queue != []} class="workspace-queue">
           <div :for={item <- @queue}>
-            <span class="chip">{queue_label(item.status)}</span> {item.prompt}
-            <p :if={queue_feedback(item, @track.runtime || @project.runtime)}>
+            <span class="chip">{queue_label(item.status)}</span>
+            <div :if={item.prompt} class="queue-prompt md">{queue_prompt_html(item.prompt)}</div>
+            <p
+              :if={queue_feedback(item, @track.runtime || @project.runtime)}
+              class="queue-feedback"
+            >
               {queue_feedback(item, @track.runtime || @project.runtime)}
             </p>
             <span :if={item.error && item.status != :queued}>{item.error}</span>

@@ -436,24 +436,17 @@ defmodule RavixWeb.WorkspaceLive do
     end
   end
 
-  def handle_event("dismiss", _, socket) do
-    socket = assign(socket, dialog: nil)
-
-    {:noreply,
-     if(socket.assigns.project,
-       do:
-         push_patch(socket,
-           to: "/p/#{socket.assigns.project.id}" <> track_suffix(socket.assigns.track_id)
-         ),
-       else: socket
-     )}
-  end
+  # Without a project; with one, a dialog closes by patching (`dismiss/2`).
+  def handle_event("dismiss", _, socket), do: {:noreply, assign(socket, dialog: nil)}
 
   def handle_event("dismiss-switcher", _, socket), do: {:noreply, assign(socket, dialog: nil)}
 
   def handle_event("yard", _, socket),
     do: {:noreply, assign(socket, yard_open: !socket.assigns.yard_open)}
 
+  # An Escape that closed a dialog over the yard closes only the dialog
+  # (`assets/js/dialog_escape.js`).
+  def handle_event("yard-close", %{"dialog" => true}, socket), do: {:noreply, socket}
   def handle_event("yard-close", _, socket), do: {:noreply, assign(socket, yard_open: false)}
 
   def handle_event("create-section", %{"section" => attrs}, socket) do
@@ -1903,6 +1896,15 @@ defmodule RavixWeb.WorkspaceLive do
   defp track_suffix(nil), do: ""
   defp track_suffix(id), do: "/t/#{id}"
 
+  # How a workspace dialog closes. With a project selected, closing also
+  # drops the dialog's query (`?new=track`, `?settings=true`), and the client
+  # patches the URL itself: `handle_params/3` clears the dialog. A patch pushed
+  # by the server instead took the URL back from a link clicked while the
+  # close was in flight, leaving that track on screen under the old address
+  # (RAV-68).
+  defp dismiss(nil, _track_id), do: "dismiss"
+  defp dismiss(project, track_id), do: JS.patch("/p/#{project.id}" <> track_suffix(track_id))
+
   # Today's New track, while RAVIX_WORKSPACE_ACCESS is off.
   defp top_new_track(socket, project) do
     project =
@@ -2150,6 +2152,25 @@ defmodule RavixWeb.WorkspaceLive do
   defp jump_query(query) do
     words = String.split(query)
     {"mine:" in words, words |> Enum.reject(&(&1 == "mine:")) |> Enum.join(" ")}
+  end
+
+  # A row's dot sits in a slot of its own width whether or not there is one,
+  # so every row's avatar and title start at the same x.
+  attr :track, :map, required: true
+
+  defp status_slot(assigns) do
+    assigns = assign(assigns, :status, tab_status(assigns.track))
+
+    ~H"""
+    <span class="track-status" aria-hidden={if is_nil(@status), do: "true"}>
+      <.status_dot
+        :if={@status}
+        status={to_string(@status)}
+        label={tab_status_label(@status)}
+        title={tab_status_title(@track)}
+      />
+    </span>
+    """
   end
 
   attr :track, :map, required: true

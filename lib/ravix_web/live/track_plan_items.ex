@@ -29,6 +29,9 @@ defmodule RavixWeb.Live.TrackPlanItems do
   defp event("toggle", _, socket),
     do: {:noreply, assign(socket, expanded: !socket.assigns.expanded)}
 
+  # An Escape that closed a dialog closes only the dialog
+  # (`assets/js/dialog_escape.js`).
+  defp event("close", %{"dialog" => true}, socket), do: {:noreply, socket}
   defp event("close", _, socket), do: {:noreply, assign(socket, expanded: false)}
 
   defp event("detail", %{"id" => id}, socket),
