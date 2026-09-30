@@ -783,17 +783,32 @@
             </ul>
           <% end %>
         </section>
-        <div :if={is_nil(@project) && @live_action == :projects} class="centred workspace-home">
+        <%!-- Home (RAV-100): the recent tracks across the rail, in the same
+          page container as the Inbox and Schedules. Adding a project is the
+          sidebar's "Add a project"; Home has no button of its own for it. --%>
+        <.stage_page
+          :if={is_nil(@project) && @live_action == :projects}
+          id="home"
+          class="workspace-home"
+          title_id="home-title"
+        >
+          <:title>
+            {if @rail_loaded && fresh_start?(@projects),
+              do: "Start your first track",
+              else: "Home"}
+          </:title>
+          <:subtitle :if={@rail_loaded && fresh_start?(@projects)}>
+            Pick a repository and describe the change. Ravix opens a track, and your agent starts there.
+          </:subtitle>
+          <:subtitle :if={!@rail_loaded || !fresh_start?(@projects)}>
+            Pick up where you left off.
+          </:subtitle>
           <section
             :if={@rail_loaded && fresh_start?(@projects)}
             id="home-start"
             class="first-prompt"
-            aria-labelledby="home-start-h"
+            aria-labelledby="home-title"
           >
-            <h1 id="home-start-h">Start your first track</h1>
-            <p class="hero-sub">
-              Pick a repository and describe the change. Ravix opens a track, and your agent starts there.
-            </p>
             <QuickStart.composer
               id="home-quick-start"
               form={@quick_form}
@@ -803,55 +818,62 @@
             />
             <QuickStart.explainer id="home-explainer" />
             <p class="hint first-prompt-alt">
-              <button
-                class="ghost home-action"
-                phx-click={JS.push_focus() |> JS.push("dialog")}
-                phx-value-name="new-project"
-              >
-                <.icon name="plus" size={14} class="ico" /> New project
-              </button>
-              to add a repository without starting a track yet.
+              To add a repository without starting a track yet, use Add a project in the sidebar.
             </p>
           </section>
-          <div
+          <section
             :if={!@rail_loaded || !fresh_start?(@projects)}
-            class="hero"
+            id="home-recent"
+            class="home-recent"
+            aria-labelledby="home-recent-h"
           >
-            <div class="home-heading">
-              <h1 :if={@rail_loaded}>
-                {if @projects == [],
-                  do: "What will you build?",
-                  else: "Pick up where you left off"}
-              </h1>
-              <p :if={@rail_loaded && @projects == []} class="hero-sub">
-                Start from a repository, or a scratch machine.
-              </p>
+            <h2 id="home-recent-h">Recent tracks</h2>
+            <div :if={!@rail_loaded} id="home-loading" class="recent-list" role="status">
+              <span class="sr-only">Loading your tracks…</span>
+              <div :for={_ <- 1..2} class="recent-row recent-row-skeleton" aria-hidden="true">
+                <span class="skeleton skeleton-avatar"></span>
+                <span class="skeleton skeleton-line"></span>
+              </div>
             </div>
-            <div class="home-actions">
-              <button
-                class="primary home-action"
-                phx-click={JS.push_focus() |> JS.push("dialog")}
-                phx-value-name="new-project"
-              >
-                <.icon name="plus" size={16} class="ico" /> New project
-              </button>
-            </div>
-            <section :if={@projects != []} class="home-recent" aria-label="Recent projects">
-              <h2>Recent</h2>
-              <.link
-                :for={project <- Enum.take(@projects, 8)}
-                patch={"/p/#{project.id}"}
-                class="pick-row"
-              >
-                <span class="project-mark" aria-hidden="true">
-                  {String.first(project.name) |> String.upcase()}
-                </span>
-                <.project_name project={project} /><span class="meta mono">{project.repo ||
-                  "no repository"}</span>
-              </.link>
-            </section>
-          </div>
-        </div>
+            <ul
+              :if={@rail_loaded && recent_tracks(@projects, @tracks, @current_user) != []}
+              class="recent-list"
+            >
+              <li :for={{project, track} <- recent_tracks(@projects, @tracks, @current_user)}>
+                <.link
+                  id={"home-track-#{track.id}"}
+                  patch={"/p/#{project.id}/t/#{track.id}"}
+                  class="recent-row"
+                  aria-label={
+                    row_label(
+                      track,
+                      "#{Track.label(track)} in #{project.display_name}, by @#{track.created_by_login}"
+                    )
+                  }
+                >
+                  <.creator track={track} />
+                  <span class="recent-main">
+                    <strong class="truncate" title={Track.tooltip(track)}>{Track.label(track)}</strong>
+                    <span class="recent-meta truncate">
+                      <.project_name project={project} /><span :if={project.repo} class="mono">
+                        · {project.repo}
+                      </span>
+                    </span>
+                  </span>
+                  <span class="recent-owner truncate">@{track.created_by_login}</span>
+                  <.age id={"home-track-age-#{track.id}"} at={track.activity_at} />
+                </.link>
+              </li>
+            </ul>
+            <p
+              :if={@rail_loaded && recent_tracks(@projects, @tracks, @current_user) == []}
+              id="home-no-tracks"
+              class="hint"
+            >
+              No open tracks yet. New track starts one in any of your projects.
+            </p>
+          </section>
+        </.stage_page>
         <.live_component
           :if={@live_action == :schedules}
           module={RavixWeb.Live.SchedulesPanel}
@@ -870,31 +892,60 @@
           current_user={@current_user}
           session_hash={@session_hash}
         />
-        <div
+        <%!-- An address nothing answers, for somebody signed in: the page is
+          still the app, with the sidebar and a way on (RAV-100). The plug in
+          front of the route has already set the 404. --%>
+        <.stage_page :if={@live_action == :not_found} id="not-found" title_id="not-found-title">
+          <:title>Page not found</:title>
+          <:subtitle>
+            Nothing is at this address. It may have moved, or the link may be incomplete.
+          </:subtitle>
+          <div class="page-actions">
+            <.link id="not-found-inbox" patch="/inbox" class="button primary">Go to Inbox</.link>
+            <button
+              id="not-found-search"
+              type="button"
+              class="secondary"
+              data-quick-jump-trigger
+              phx-click={JS.push_focus() |> JS.push("dialog")}
+              phx-value-name="search"
+            >
+              <.icon name="search" size={14} />Search
+            </button>
+          </div>
+        </.stage_page>
+        <.stage_page
           :if={
             is_nil(@project) &&
-              @live_action not in [:projects, :schedules, :user_settings, :workspace_settings]
+              @live_action not in [
+                :projects,
+                :schedules,
+                :user_settings,
+                :workspace_settings,
+                :not_found
+              ]
           }
+          id="inbox"
           class="inbox"
         >
-          <header>
-            <div class="row">
-              <h1>
-                Inbox <span :if={@attention > 0} class="badge">{@attention}</span>
-              </h1>
-            </div>
-            <p :if={is_nil(@current_workspace)}>
-              Replies, mentions, failed turns and sharing changes across all your projects.
-            </p>
-            <p :if={@current_workspace}>
-              Replies, mentions, failed turns and sharing changes in {@current_workspace.workspace.name}.
-            </p>
-            <p :if={@other_attention > 0} id="inbox-elsewhere" class="hint">
+          <:title>
+            Inbox <span :if={@attention > 0} class="badge">{@attention}</span>
+          </:title>
+          <:subtitle :if={is_nil(@current_workspace)}>
+            Replies, mentions, failed turns and sharing changes across all your projects.
+          </:subtitle>
+          <:subtitle :if={@current_workspace}>
+            Replies, mentions, failed turns and sharing changes in {@current_workspace.workspace.name}.
+          </:subtitle>
+          <:subtitle :if={@other_attention > 0}>
+            <span id="inbox-elsewhere" class="hint">
               {@other_attention} in other workspaces. Switch workspace to see them.
-            </p>
-          </header>
+            </span>
+          </:subtitle>
           <%!-- Nothing is known about the inbox until the rail has been read:
-            skeleton cards, never "all caught up" before it has (RAV-67). --%>
+            skeleton cards, never "all caught up" before it has (RAV-67). Two
+            of them, the shape of a real card, rather than a guess at a count
+            (RAV-100). --%>
           <div
             :if={!@rail_loaded && !@rail_error}
             id="inbox-loading"
@@ -902,10 +953,15 @@
             role="status"
           >
             <span class="sr-only">Loading your inbox…</span>
-            <div :for={_ <- 1..3} class="inbox-item inbox-item-skeleton" aria-hidden="true">
-              <span class="skeleton skeleton-chip"></span>
+            <div :for={_ <- 1..2} class="inbox-item inbox-item-skeleton" aria-hidden="true">
+              <div class="row">
+                <span class="skeleton skeleton-chip"></span>
+                <span class="skeleton skeleton-project"></span>
+                <span class="spacer"></span>
+                <span class="skeleton skeleton-age"></span>
+              </div>
+              <span class="skeleton skeleton-title"></span>
               <span class="skeleton skeleton-line"></span>
-              <span class="skeleton skeleton-line short"></span>
             </div>
           </div>
           <div :if={@rail_error} id="inbox-error" role="alert" class="inbox-empty">
@@ -998,7 +1054,7 @@
               </.link>
             </div>
           </div>
-        </div>
+        </.stage_page>
       </div>
     </main>
     <.dialog

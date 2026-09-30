@@ -89,7 +89,7 @@ test('settings explicitly rebuilds when switching agents and the next track work
 test('settings connects an unavailable agent inline, retains the draft, and can discard before leaving', async ({ page }) => {
   await signIn(page, 'eli', '/home');
   await connectClaude(page);
-  await page.getByRole('button', { name: /^New project/ }).click();
+  await page.getByRole('button', { name: 'Add a project', exact: true }).first().click();
   const create = page.getByRole('dialog', { name: 'New project' });
   await create.getByLabel('Project name', { exact: true }).fill('Inline settings connection');
   await create.locator('#project-agent-claude').click();

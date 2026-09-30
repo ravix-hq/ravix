@@ -5,7 +5,7 @@ import { openAgentSettings } from './settings.js';
 
 test('connect Codex inline without losing the new project draft', async ({ page }) => {
   await signIn(page, 'dana', '/home');
-  await page.getByRole('button', { name: /^New project/ }).click();
+  await page.getByRole('button', { name: 'Add a project', exact: true }).first().click();
   const dialog = page.getByRole('dialog', { name: 'New project' });
   await dialog.getByLabel('Project name', { exact: true }).fill('Credential gate');
   await dialog.locator('#project-agent-codex').click();
@@ -45,7 +45,7 @@ test('connect ChatGPT inline by device code and preserve the project draft', asy
   await expect(panel.locator('#agent-codex')).toBeVisible();
   await page.goto('/home');
   await expect(page.locator('[data-phx-main]')).toHaveClass(/phx-connected/);
-  await page.getByRole('button', { name: /^New project/ }).click();
+  await page.getByRole('button', { name: 'Add a project', exact: true }).first().click();
   const dialog = page.getByRole('dialog', { name: 'New project' });
   await dialog.getByLabel('Project name', { exact: true }).fill('ChatGPT inline');
   await dialog.locator('#project-agent-codex').click();
@@ -66,7 +66,7 @@ test('connect ChatGPT inline by device code and preserve the project draft', asy
 
 test('late dialog focus never steals typing from the project name', async ({ page }) => {
   await signIn(page, 'dana', '/home');
-  await page.getByRole('button', { name: /^New project/ }).click();
+  await page.getByRole('button', { name: 'Add a project', exact: true }).first().click();
   const dialog = page.getByRole('dialog', { name: 'New project' });
   await expect(dialog.getByRole('combobox', { name: 'Repository', exact: true })).toBeFocused();
   const name = dialog.getByLabel('Project name', { exact: true });
