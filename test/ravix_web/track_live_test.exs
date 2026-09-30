@@ -2495,6 +2495,212 @@ defmodule RavixWeb.TrackLiveTest do
     assert has_element?(ctx.view, "#pull-dialog")
   end
 
+  describe "the Checks tab's Git status" do
+    defp git(uncommitted, unpushed, opts \\ []) do
+      %Ravix.Tracks.Git.Status{
+        uncommitted: uncommitted,
+        unpushed: unpushed,
+        upstream?: Keyword.get(opts, :upstream?, true),
+        branch: Keyword.get(opts, :branch, "ravix/track")
+      }
+    end
+
+    defp open_checks(ctx, status) do
+      stub(Tracks, :checks, fn _, _ -> {:ok, %{checks_fixture(:open) | pull: nil}} end)
+
+      expect(Tracks, :git_status, fn user, id ->
+        assert {user.id, id} == {ctx.user.id, ctx.track.id}
+        status
+      end)
+
+      render_click(ctx.view, "panel", %{name: "checks"})
+      render_async(ctx.view)
+    end
+
+    test "shows the machine's uncommitted and unpushed counts beside the pull request", ctx do
+      open_checks(ctx, {:ok, git(3, 1, upstream?: false)})
+
+      assert has_element?(ctx.view, "#git-status .git-branch", "ravix/track")
+      assert has_element?(ctx.view, "#git-uncommitted .chip.warn", "3")
+      assert has_element?(ctx.view, "#git-uncommitted", "3 uncommitted changes")
+      assert has_element?(ctx.view, "#git-uncommitted button", "Commit and push")
+      assert has_element?(ctx.view, "#git-unpushed", "1 unpushed commit")
+      assert has_element?(ctx.view, "#git-unpushed", "branch not on GitHub yet")
+      assert has_element?(ctx.view, "#git-unpushed button", "Push")
+      assert has_element?(ctx.view, "#git-pull", "No pull request")
+      assert has_element?(ctx.view, "#git-pull button", "Create pull request")
+    end
+
+    test "a clean, pushed worktree offers nothing to do and links its pull request", ctx do
+      stub(Tracks, :checks, fn _, _ -> {:ok, checks_fixture(:open)} end)
+      expect(Tracks, :git_status, fn _, _ -> {:ok, git(0, 0)} end)
+      render_click(ctx.view, "panel", %{name: "checks"})
+      render_async(ctx.view)
+
+      assert has_element?(ctx.view, "#git-uncommitted .chip.ok", "0")
+      assert has_element?(ctx.view, "#git-uncommitted", "No uncommitted changes")
+      assert has_element?(ctx.view, "#git-unpushed", "No unpushed commits")
+      refute has_element?(ctx.view, "#git-commit")
+      refute has_element?(ctx.view, "#git-push")
+
+      assert has_element?(
+               ctx.view,
+               "#git-pull a[href='https://github.com/acme/repo/pull/209']",
+               "Pull request #209"
+             )
+    end
+
+    test "a machine that cannot be read says so and still shows the pull request row", ctx do
+      open_checks(ctx, {:error, :machine_asleep})
+      assert has_element?(ctx.view, "#git-status-error[role=alert]", "machine is asleep")
+      refute has_element?(ctx.view, "#git-uncommitted")
+      assert has_element?(ctx.view, "#git-pull button", "Create pull request")
+    end
+
+    test "commit and push opens on the track's title, commits the edited message and re-reads",
+         ctx do
+      open_checks(ctx, {:ok, git(2, 0)})
+      ctx.view |> element("#git-commit") |> render_click()
+      assert has_element?(ctx.view, "#commit-dialog textarea#commit-message", ctx.track.title)
+      test_pid = self()
+
+      expect(Tracks, :commit_and_push, fn user, id, message ->
+        send(test_pid, {:committing, self()})
+        receive do: (:finish -> :ok)
+        assert {user.id, id, message} == {ctx.user.id, ctx.track.id, "Fix the login redirect"}
+        :ok
+      end)
+
+      expect(Tracks, :git_status, fn _, _ -> {:ok, git(0, 0)} end)
+
+      ctx.view
+      |> form("#commit-form", %{message: "Fix the login redirect"})
+      |> render_submit()
+
+      assert_receive {:committing, worker}
+      assert has_element?(ctx.view, "#git-writing", "Committing and pushing…")
+      assert has_element?(ctx.view, "#commit-form button[disabled]")
+      # A second press while the first is out is dropped, not queued.
+      render_hook(ctx.view, "push", %{})
+      send(worker, :finish)
+
+      assert toasted(ctx) =~ "Committed and pushed."
+      refute has_element?(ctx.view, "#commit-dialog")
+      refute has_element?(ctx.view, "#git-writing")
+      assert has_element?(ctx.view, "#git-uncommitted", "No uncommitted changes")
+    end
+
+    test "a refused commit keeps the message and says what refused it", ctx do
+      open_checks(ctx, {:ok, git(1, 0)})
+      ctx.view |> element("#git-commit") |> render_click()
+
+      expect(Tracks, :commit_and_push, fn _, _, _ ->
+        {:error,
+         {:conflict, "commit_failed",
+          "The commit was refused, so nothing was pushed. A commit hook may have failed.\n\nlint: 2 errors"}}
+      end)
+
+      expect(Tracks, :git_status, fn _, _ -> {:ok, git(1, 0)} end)
+      ctx.view |> form("#commit-form", %{message: "WIP: my words"}) |> render_submit()
+      render_async(ctx.view)
+
+      assert has_element?(ctx.view, "#commit-failure[role=alert]", "lint: 2 errors")
+      assert has_element?(ctx.view, "#commit-dialog textarea#commit-message", "WIP: my words")
+      assert has_element?(ctx.view, "#git-failure[role=alert]", "commit was refused")
+      refute has_element?(ctx.view, "#commit-form button[disabled]")
+    end
+
+    test "a rejected push is surfaced in the Git status block", ctx do
+      open_checks(ctx, {:ok, git(0, 2)})
+
+      expect(Tracks, :push, fn user, id ->
+        assert {user.id, id} == {ctx.user.id, ctx.track.id}
+
+        {:error,
+         {:conflict, "push_rejected",
+          "The push was rejected: the remote branch has commits this one does not."}}
+      end)
+
+      expect(Tracks, :git_status, fn _, _ -> {:ok, git(0, 2)} end)
+      ctx.view |> element("#git-push") |> render_click()
+      render_async(ctx.view)
+
+      assert has_element?(ctx.view, "#git-failure[role=alert]", "The push was rejected")
+      assert has_element?(ctx.view, "#git-unpushed", "2 unpushed commits")
+      refute has_element?(ctx.view, "#git-push[disabled]")
+    end
+
+    test "a crashed write is reported rather than left spinning", ctx do
+      open_checks(ctx, {:ok, git(0, 1)})
+      expect(Tracks, :push, fn _, _ -> exit(:boom) end)
+      expect(Tracks, :git_status, fn _, _ -> {:ok, git(0, 1)} end)
+      ctx.view |> element("#git-push") |> render_click()
+      render_async(ctx.view)
+
+      assert has_element?(ctx.view, "#git-failure[role=alert]")
+      refute has_element?(ctx.view, "#git-writing")
+    end
+
+    for event <- ["commit-push", "push"] do
+      @git_event event
+      test "a revoked session cannot #{event}", ctx do
+        reject(Tracks, :commit_and_push, 3)
+        reject(Tracks, :push, 2)
+        token = Plug.Conn.get_session(ctx.conn, :session_token)
+        Repo.delete!(Repo.get_by!(Session, token_hash: Ravix.Crypto.sha256(token)))
+
+        :sys.replace_state(ctx.view.pid, fn state ->
+          update_in(state.socket.assigns.session_guard, &%{&1 | stale?: true})
+        end)
+
+        assert {:error, {:redirect, %{to: "/login"}}} =
+                 render_hook(ctx.view, @git_event, %{message: "sneaky"})
+      end
+    end
+
+    test "a member removed from the track cannot commit", ctx do
+      member = insert_user()
+      membership = insert_track_member(ctx.track, member)
+
+      {:ok, parent, _} =
+        live(log_in_user(build_conn(), member), "/p/#{ctx.project.id}/t/#{ctx.track.id}")
+
+      view = find_live_child(parent, "track-host")
+      settle(view)
+      reject(Tracks, :commit_and_push, 3)
+      Repo.delete!(membership)
+
+      :sys.replace_state(view.pid, fn state ->
+        update_in(state.socket.assigns.track_guard, &%{&1 | stale?: true})
+      end)
+
+      assert {:error, {:redirect, %{to: "/"}}} =
+               render_hook(view, "commit-push", %{message: "after removal"})
+    end
+
+    test "a session revoked mid-push does not render the push's answer", ctx do
+      view = ctx.view
+      stub(Tracks, :checks, fn _, _ -> {:ok, checks_fixture(:open)} end)
+      stub(Tracks, :git_status, fn _, _ -> {:ok, git(0, 1)} end)
+      render_click(view, "panel", %{name: "checks"})
+      render_async(view)
+      test_pid = self()
+
+      expect(Tracks, :push, fn _, _ ->
+        send(test_pid, {:pushing, self()})
+        receive do: (:finish -> :ok)
+        {:error, {:conflict, "push_failed", "revoked secret"}}
+      end)
+
+      view |> element("#git-push") |> render_click()
+      assert_receive {:pushing, worker}
+      token = Plug.Conn.get_session(ctx.conn, :session_token)
+      Ravix.Accounts.end_session(Ravix.Crypto.sha256(token))
+      send(worker, :finish)
+      assert_redirect(ctx.parent, "/login", 1_000)
+    end
+  end
+
   for state <- [:merged, :closed, :open, :missing, :unavailable] do
     test "empty Changes handles #{state} PR state without visiting Checks first", ctx do
       diff = %{changes_fixture() | diff: "", changes: [], files: []}

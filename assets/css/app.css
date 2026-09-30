@@ -1715,6 +1715,25 @@ button.primary.home-action .ico { color: inherit; }
 .plan-graph-closed_without_merge a { border-left-color: var(--bad); }
 @media (max-width: 600px) { .plans-panel { padding: .75rem; } .plan-item, .plan-editor-item { padding: .75rem; } .plans-toolbar select { width: 100%; } }
 
+/* Checks opens on what the worktree holds that GitHub does not: one row per
+   state, its count, and the one action that moves it along. */
+.git-status { margin: 0 0 14px; padding: 0 0 12px; border-bottom: 1px solid var(--line); }
+.git-status-title { display: flex; align-items: center; gap: 8px; margin: 0 0 8px; font-size: 13px; font-weight: 600; }
+.git-branch { display: inline-flex; align-items: center; gap: 4px; min-width: 0; color: var(--dim); font-weight: 400; }
+.git-branch code { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.git-rows { list-style: none; margin: 0; padding: 0; }
+.git-row { display: flex; align-items: center; gap: 8px; min-height: 36px; padding: 4px .25rem; font-size: 13px; }
+.git-row + .git-row { border-top: 1px solid var(--line); }
+.git-row-icon { flex: none; width: 23px; color: var(--dim); }
+.git-row .chip { flex: none; justify-content: center; min-width: 23px; font-variant-numeric: tabular-nums; }
+.git-row-label { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.git-row button { flex: none; margin-left: auto; }
+.git-hint, .git-note { color: var(--dim); font-size: 12px; }
+.git-failure {
+  margin: 8px 0 0; padding: 8px 10px; border: 1px solid color-mix(in srgb, var(--bad) 35%, var(--line));
+  border-radius: var(--radius); background: var(--bad-soft); color: var(--bad); font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere;
+}
+
 /* Changes inspector shares transcript diff colors and contains wide source lines. */
 .changes-panel { min-width: 0; max-width: 100%; }
 .changes-panel input { width: 100%; min-width: 0; }
