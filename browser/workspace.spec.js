@@ -916,7 +916,7 @@ test('project settings navigate, warn before discarding, and save sections acces
   await settings.locator('#settings-agent-codex').click();
   await expect(settings.getByLabel('Model', { exact: true }).locator('option')).toHaveText(['GPT-6 Astra', 'GPT-5.5']);
   await settings.locator('#settings-agent-claude').click();
-  await expect(settings.getByLabel('Model', { exact: true }).locator('option')).toHaveText(['Claude Opus 5', 'Claude Sonnet 5']);
+  await expect(settings.getByLabel('Model', { exact: true }).locator('option')).toHaveText(['Claude Opus 5.5', 'Claude Opus 5', 'Claude Sonnet 5']);
   await settings.getByLabel('Instructions', { exact: true }).fill('Explain changes and run focused tests.');
   await settings.getByRole('button', { name: 'Save agent', exact: true }).click();
   await expect(settings.getByRole('status')).toHaveText('Saved.');

@@ -51,11 +51,14 @@ defmodule RavixWeb.WorkspacePeopleLive do
          page_title: people.workspace.name,
          catalog: nil,
          refreshing: false,
-         adding: nil
+         adding: nil,
+         available: nil,
+         attaching: nil
        )
        |> assign_people(people)
        |> load_catalog()
-       |> refresh_if_stale()}
+       |> refresh_if_stale()
+       |> WorkspaceGitHub.load_available(people.workspace.id)}
     else
       _ ->
         {:ok,
@@ -99,6 +102,9 @@ defmodule RavixWeb.WorkspacePeopleLive do
        |> start_async(:add_repo, fn -> Repositories.add(user, id, repo) end)}
     end
   end
+
+  def handle_event("add-installation", %{"installation" => id}, socket),
+    do: {:noreply, WorkspaceGitHub.add_installation(socket, workspace_id(socket), id)}
 
   @impl true
   def handle_event("workspace-create", %{"name" => name}, socket),
@@ -165,7 +171,12 @@ defmodule RavixWeb.WorkspacePeopleLive do
   # announces itself the same way.
   @impl true
   def handle_info({:workspace_hub, _id, :members}, socket),
-    do: {:noreply, socket |> reload() |> load_catalog()}
+    do:
+      {:noreply,
+       socket
+       |> reload()
+       |> load_catalog()
+       |> WorkspaceGitHub.load_available(workspace_id(socket))}
 
   def handle_info(_message, socket), do: {:noreply, socket}
 
@@ -192,6 +203,17 @@ defmodule RavixWeb.WorkspacePeopleLive do
        socket
        |> assign(refreshing: false)
        |> put_flash(:error, "GitHub could not be read. Try Refresh again.")}
+
+  def handle_async(:available, result, socket),
+    do: {:noreply, WorkspaceGitHub.available_result(socket, result)}
+
+  def handle_async(:add_installation, result, socket) do
+    {:noreply,
+     socket
+     |> WorkspaceGitHub.installation_added(result)
+     |> load_catalog()
+     |> WorkspaceGitHub.load_available(workspace_id(socket))}
+  end
 
   def handle_async(:add_repo, {:ok, {:ok, %{project: %{id: id}}}}, socket),
     do: {:noreply, socket |> assign(adding: nil) |> push_navigate(to: "/p/#{id}")}
@@ -411,6 +433,8 @@ defmodule RavixWeb.WorkspacePeopleLive do
           catalog={@catalog}
           refreshing={@refreshing}
           adding={@adding}
+          available={@available}
+          attaching={@attaching}
         />
       </main>
     </Layouts.app>

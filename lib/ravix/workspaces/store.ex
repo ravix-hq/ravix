@@ -26,6 +26,11 @@ defmodule Ravix.Workspaces.Store do
     Workspace
   }
 
+  # A project moving in brings the installation it clones through, when
+  # `attach_backing_installations/2` allows it; at most this many for one
+  # workspace at a time, which no workspace comes near.
+  @attach_on_move 1_000
+
   @doc "A workspace that exists and has not been archived, or nil."
   @spec live_workspace(String.t() | nil) :: Workspace.t() | nil
   def live_workspace(id) when is_binary(id) do
@@ -1123,6 +1128,7 @@ defmodule Ravix.Workspaces.Store do
         []
       )
 
+    if count == 1, do: attach_backing_installations(@attach_on_move, workspace_id)
     count
   end
 
@@ -1223,7 +1229,12 @@ defmodule Ravix.Workspaces.Store do
         []
       )
 
-    if count == 1, do: :moved, else: :skipped
+    if count == 1 do
+      _ = attach_backing_installations(@attach_on_move, workspace_id)
+      :moved
+    else
+      :skipped
+    end
   rescue
     error in Postgrex.Error ->
       if error.postgres[:code] == :unique_violation,
@@ -1247,7 +1258,9 @@ defmodule Ravix.Workspaces.Store do
   live, and that `to` has no project for its repository; the partial unique
   index answers a concurrent admission the same way. Tracks, threads,
   permission rows and legacy members are other tables' rows and stay as
-  they are. The GitHub connection is `from`'s, so it is cleared.
+  they are. The GitHub connection is `from`'s, so it is cleared, and the
+  installation the project clones through is connected to `to` when
+  `attach_backing_installations/2` allows it.
   """
   @spec move_owned_project(String.t(), String.t(), String.t() | nil, String.t()) ::
           {:ok, Project.t()} | {:error, :not_found | {:taken, Project.t() | nil}}
@@ -1269,6 +1282,7 @@ defmodule Ravix.Workspaces.Store do
            normalized = repo_key(project),
            {:free, nil} <- {:free, normalized && index_holder(to, normalized)},
            {:ok, moved} <- put_workspace(project, to, normalized) do
+        _ = attach_backing_installations(@attach_on_move, to)
         moved
       else
         {:free, %Project{} = holder} -> Repo.rollback({:taken, holder})
@@ -1430,6 +1444,89 @@ defmodule Ravix.Workspaces.Store do
           ]
         ),
         []
+      )
+
+    count
+  end
+
+  @doc """
+  Connect to a workspace, for up to `limit` pairs, the GitHub installations
+  that already back one of its live projects (RAV-69). Returns the count.
+
+  Phase 4b read the catalog from `workspace_installations`, but projects
+  that were in a workspace before it (moved, assigned, seeded) came with
+  only their own `installation_id`, so their workspace said no GitHub
+  account was connected while their tracks cloned through it. An
+  installation a project of the workspace already uses is no wider grant:
+  every member already works on that project through it.
+
+  Nothing else is connected. A pair that has any row at all -- revoked,
+  suspended or live -- is left as it is, so a connection somebody revoked
+  stays revoked. A **personal** account's installation is never connected
+  to a team workspace this way: that is the owner's explicit "Add to
+  workspace" (`Ravix.Workspaces.Connect.add/3`). The account is the
+  repository's owner, and it is taken to be personal when it is the login
+  of somebody who has signed in here.
+
+  `workspace_id` narrows it to one workspace, for the moment a project
+  moves in. Idempotent and safe beside a concurrent run: the anti-join
+  selects only what is missing and the unique index takes the rest.
+  """
+  @spec attach_backing_installations(pos_integer(), String.t() | nil) :: non_neg_integer()
+  def attach_backing_installations(limit, workspace_id \\ nil) do
+    now = DateTime.utc_now()
+
+    # ownership: no door -- the release-time backfill, which runs as no
+    # user, or a project move whose caller already went through its door.
+    missing =
+      from p in Project,
+        as: :project,
+        join: w in Workspace,
+        on: w.id == p.workspace_id and is_nil(w.archived_at),
+        where:
+          not is_nil(p.installation_id) and is_nil(p.archived_at) and
+            is_nil(p.deletion_requested_at) and
+            not exists(
+              from i in Installation,
+                where:
+                  i.workspace_id == parent_as(:project).workspace_id and
+                    i.installation_id == parent_as(:project).installation_id,
+                select: 1
+            ) and
+            (w.kind == :personal or
+               not exists(
+                 from u in User,
+                   where:
+                     fragment("lower(?)", u.login) ==
+                       fragment(
+                         "lower(split_part(btrim(?, E' \\t\\r\\n'), '/', 1))",
+                         parent_as(:project).repo_full_name
+                       ),
+                   select: 1
+               )),
+        distinct: [p.workspace_id, p.installation_id],
+        order_by: [asc: p.created_at, asc: p.id],
+        limit: ^limit,
+        select: %{
+          id: fragment("gen_random_uuid()::text"),
+          workspace_id: p.workspace_id,
+          installation_id: p.installation_id,
+          account_login:
+            fragment(
+              "nullif(split_part(btrim(?, E' \\t\\r\\n'), '/', 1), '')",
+              p.repo_full_name
+            ),
+          connected_by_user_id: p.user_id,
+          connected_at: type(^now, :utc_datetime_usec)
+        }
+
+    missing =
+      if workspace_id, do: where(missing, [p], p.workspace_id == ^workspace_id), else: missing
+
+    {count, _} =
+      Repo.insert_all(Installation, missing,
+        on_conflict: :nothing,
+        conflict_target: [:workspace_id, :installation_id]
       )
 
     count

@@ -245,6 +245,7 @@
               comment={comment}
               current_user={@current_user}
               editing={@comment_editing}
+              zone={@timezone}
             />
           </div>
           <div :if={!@thread_draft[:selected?]} id="transcript-turns" phx-update="stream">
@@ -285,14 +286,22 @@
                   phx-click="retry-turn"
                   phx-value-turn={turn.id}
                 >Retry message</button>
-                <.turn_footer :if={turn.settled?} turn={turn} workdir={@track.workdir} />
-                <.turn_timer :if={!turn.settled?} turn={turn} />
+                <.turn_footer
+                  :if={turn.settled?}
+                  id={dom_id}
+                  turn={turn}
+                  workdir={@track.workdir}
+                  options={@track.session_options}
+                  zone={@timezone}
+                />
+                <.turn_timer :if={!turn.settled?} turn={turn} zone={@timezone} />
               </section>
               <.thread_comment
                 :for={comment <- comments_after(@comments, turn.id)}
                 comment={comment}
                 current_user={@current_user}
                 editing={@comment_editing}
+                zone={@timezone}
               />
             </article>
           </div>
@@ -675,6 +684,8 @@
                   :if={!@thread_draft[:selected?] && @composer_mode == :ask}
                   runtime={@track.runtime || @project.runtime}
                   model={@track.model || @track.default_model || @project.model}
+                  session_options={@track.session_options}
+                  session_config={@track.session_config}
                   project_model={
                     if is_nil(@track.runtime) or @track.runtime == @project.runtime,
                       do: @project.model

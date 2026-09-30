@@ -8,6 +8,12 @@ defmodule Ravix.Workspaces.Backfill do
   move any project into a workspace and admits nobody to anything: that is
   an explicit, consented admission in a later phase.
 
+  Its last step (RAV-69) connects to each workspace the GitHub App
+  installations its own live projects already clone through, so the
+  workspace's GitHub section and catalog agree with the projects it holds.
+  Never a personal account's installation to a team workspace, and never
+  one somebody revoked; see `Ravix.Workspaces.Store.attach_backing_installations/2`.
+
   Resumable by construction rather than by a checkpoint. Each batch selects
   only what is still missing (see `Ravix.Workspaces.Store`), so a run cut
   off halfway, a second run, a run on another instance at the same moment
@@ -32,7 +38,8 @@ defmodule Ravix.Workspaces.Backfill do
   @type result :: %{
           workspaces: non_neg_integer(),
           memberships: non_neg_integer(),
-          projects: non_neg_integer()
+          projects: non_neg_integer(),
+          installations: non_neg_integer()
         }
 
   @doc """
@@ -51,7 +58,8 @@ defmodule Ravix.Workspaces.Backfill do
     result = %{
       workspaces: drain(step.(&Store.insert_personal_workspaces/1), max),
       memberships: drain(step.(&Store.insert_owner_memberships/1), max),
-      projects: drain(step.(&Store.fill_project_attribution/1), max)
+      projects: drain(step.(&Store.fill_project_attribution/1), max),
+      installations: drain(step.(&Store.attach_backing_installations/1), max)
     }
 
     Logger.info("workspace backfill: #{inspect(result)}")

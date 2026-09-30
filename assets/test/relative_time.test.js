@@ -98,3 +98,15 @@ test('ages read the same as the server writes them', () => {
   ]
   for (const [ms, short, words] of cases) expect(age(now - ms, now)).toEqual({short, words})
 })
+
+test('the Inbox\'s "ago" style says so in words, with its own tooltip prefix', () => {
+  document.body.innerHTML = `
+    <time id="ago-a" data-style="ago" data-title-prefix="" datetime="2026-09-30T10:00:00Z">2h ago</time>
+    <time id="ago-b" data-style="ago" data-title-prefix="" datetime="2026-09-30T11:59:50Z">now</time>`
+  mountHook(RelativeTime, '#ago-a')
+  mountHook(RelativeTime, '#ago-b')
+  expect(document.getElementById('ago-a').textContent).toBe('2h ago')
+  expect(document.getElementById('ago-a').title).toContain('2026')
+  expect(document.getElementById('ago-a').title).not.toStartWith('Last active')
+  expect(document.getElementById('ago-b').textContent).toBe('just now')
+})

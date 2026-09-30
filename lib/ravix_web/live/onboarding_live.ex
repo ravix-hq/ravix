@@ -44,7 +44,8 @@ defmodule RavixWeb.OnboardingLive do
   alias RavixWeb.Live.NewProject
 
   alias Ravix.{Accounts, Projects}
-  alias Ravix.Accounts.{Inference, User}
+  alias Ravix.Accounts.{Access, Inference, User}
+  alias Ravix.Workspaces.{Installation, Repositories}
   alias RavixWeb.Live.{AgentPanel, Form, Guard}
 
   @steps [:intro, :agent, :github, :project]
@@ -76,7 +77,8 @@ defmodule RavixWeb.OnboardingLive do
        installation: nil,
        repos: [],
        repos_loading: false,
-       busy: false
+       busy: false,
+       workspace_github: nil
      )}
   end
 
@@ -109,7 +111,10 @@ defmodule RavixWeb.OnboardingLive do
 
   # The two steps that read GitHub do it on arrival and off this process.
   defp enter(socket, :project), do: socket |> NewProject.init() |> load_repos(nil)
-  defp enter(socket, step) when step == :github, do: load_repos(socket, nil)
+
+  defp enter(socket, step) when step == :github,
+    do: socket |> load_repos(nil) |> workspace_github()
+
   defp enter(socket, _step), do: socket
 
   # A URL patch is not a message, so no hook has run for it. See the same
@@ -245,6 +250,40 @@ defmodule RavixWeb.OnboardingLive do
       assign(socket, repos_loading: false, repos: [], installations: [], installation: nil)
     end
   end
+
+  # RAV-69: which of the person's GitHub accounts their current workspace
+  # uses, from the same cached catalog the workspace page reads, so the two
+  # say the same thing. Nil with workspaces off or none current.
+  defp workspace_github(socket) do
+    user = socket.assigns.current_user
+
+    with {:ok, %{workspace: workspace, role: role}} <- Ravix.Workspaces.current(user),
+         {:ok, catalog} <- Repositories.catalog(user, workspace.id) do
+      connected =
+        for installation <- catalog.installations,
+            Installation.status(installation) == :active,
+            into: MapSet.new(),
+            do: installation.installation_id
+
+      assign(socket,
+        workspace_github: %{
+          workspace: workspace,
+          owner?: Access.can?(role, :add_installations),
+          connected: connected
+        }
+      )
+    else
+      _ -> assign(socket, workspace_github: nil)
+    end
+  end
+
+  # One pair or none, for the template's `:for`.
+  defp in_workspace(installations, %{connected: connected}),
+    do: [Enum.split_with(installations, &MapSet.member?(connected, &1.id))]
+
+  defp in_workspace(_installations, nil), do: []
+
+  defp handles(installations), do: Enum.map_join(installations, ", ", &"@#{&1.account}")
 
   # ── what the template asks ───────────────────────────────────────────
 

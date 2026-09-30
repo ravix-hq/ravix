@@ -11,12 +11,16 @@ defmodule RavixWeb.WorkspaceGitHubTest do
   use RavixWeb.ConnCase, async: false
   use Mimic
 
+  import Ecto.Query, only: [from: 2]
   import Phoenix.LiveViewTest
   import Ravix.WorkspaceGitHubFixture
 
   alias Ravix.Fountain.FakeTransport
+  alias Ravix.GitHub.Shapes
+  alias Ravix.Repo
   alias Ravix.Workspaces
-  alias Ravix.Workspaces.{Installation, Repositories, Store}
+  alias Ravix.Workspaces.{Backfill, Installation, Repositories, Store}
+  alias RavixWeb.Live.Guard
 
   setup do
     previous = Application.fetch_env(:ravix, :workspace_access)
@@ -33,14 +37,23 @@ defmodule RavixWeb.WorkspaceGitHubTest do
       github(
         %{
           77 => %{account: "acme", repos: [repo(1, "acme/api"), repo(2, "acme/web")]},
-          55 => %{account: "victim", repos: [repo(9, "victim/secret")]}
+          55 => %{account: "victim", repos: [repo(9, "victim/secret")]},
+          88 => %{account: "owner", type: "User", repos: [repo(20, "owner/dotfiles")]}
         },
-        %{"owner-code" => [77]}
+        %{"owner-code" => [77, 88]}
       )
 
     stub(Ravix.Config, :github, fn -> app end)
 
-    owner = insert_user(login: "owner", credential_set_id: "set-me")
+    # Signed in with the token GitHub's "owner-code" buys, so their own
+    # installations (77 and 88) read as they would in production.
+    owner =
+      insert_user(
+        login: "owner",
+        credential_set_id: "set-me",
+        token_enc: Ravix.Crypto.encrypt("user-owner-code")
+      )
+
     {:ok, team} = Workspaces.create(owner, "Acme")
     %{owner: owner, team: team, conn: log_in_user(build_conn(), owner)}
   end
@@ -238,6 +251,150 @@ defmodule RavixWeb.WorkspaceGitHubTest do
 
       {:ok, _view, html} = live(ctx.conn, "/w/#{ctx.team.id}?github_error=stale_connect")
       assert html =~ "expired or was already used"
+    end
+  end
+
+  # What waiting out `Guard.ttl_ms/0` amounts to; see the same helper in
+  # `RavixWeb.WorkspaceLiveTest`.
+  defp age_session_guard(state) do
+    update_in(state.socket.assigns.session_guard, fn guard ->
+      %{guard | verified_at_ms: guard.verified_at_ms - Guard.ttl_ms() - 1}
+    end)
+  end
+
+  describe "RAV-69: the accounts a workspace uses" do
+    # A project on acme/api that reached the team before the catalog did,
+    # through installation 77, with no connection row: production's state.
+    defp predating_project(ctx) do
+      project =
+        insert_project(user: ctx.owner, repo_full_name: "acme/api", installation_id: 77)
+
+      1 = Store.move_project(project.id, ctx.team.id)
+      Repo.delete_all(from i in Installation, where: i.workspace_id == ^ctx.team.id)
+      project
+    end
+
+    test "a workspace whose project predates the catalog shows connected after the backfill",
+         ctx do
+      predating_project(ctx)
+      admin = insert_user()
+      :ok = Store.add_member(ctx.team.id, admin.id, :admin, ctx.owner.id)
+      admin_conn = log_in_user(build_conn(), admin)
+
+      {:ok, view, _html} = live(admin_conn, "/w/#{ctx.team.id}")
+      assert has_element?(view, "#github-empty", "No GitHub account is connected yet.")
+
+      Backfill.run()
+
+      {:ok, view, _html} = live(admin_conn, "/w/#{ctx.team.id}")
+      refute has_element?(view, "#github-empty")
+
+      assert has_element?(
+               view,
+               "#workspace-installations li[data-account=acme][data-status=active]",
+               "Connected"
+             )
+
+      # The never-read connection is read once the page connects.
+      render_async(view)
+      assert has_element?(view, "li[data-repo='acme/api']", "Open project")
+      assert has_element?(view, "li[data-repo='acme/web'] button", "Add")
+    end
+
+    test "the empty state offers the owner's own accounts, and Add connects one", ctx do
+      {:ok, view, _html} = live(ctx.conn, "/w/#{ctx.team.id}")
+      render_async(view)
+
+      assert has_element?(view, "#github-empty", "Add one of yours")
+      assert has_element?(view, "#available-77[data-account=acme] button", "Add to workspace")
+      assert has_element?(view, "#available-88", "Personal account")
+      # Somebody else's installation is never offered.
+      refute has_element?(view, "#available-55")
+      # The empty state's action is Add, not a fresh install.
+      assert has_element?(view, "#connect-github.ghost")
+
+      view |> element("#available-77 button") |> render_click()
+      html = render_async(view)
+      assert html =~ "Added @acme to this workspace."
+
+      assert [%Installation{installation_id: 77, account_login: "acme"} = connection] =
+               Store.installations(ctx.team.id)
+
+      assert connection.connected_by_user_id == ctx.owner.id
+      assert has_element?(view, "#workspace-installations li[data-account=acme]", "Connected")
+      assert has_element?(view, "li[data-repo='acme/api']")
+      refute has_element?(view, "#available-77")
+      assert has_element?(view, "#available-88")
+    end
+
+    test "Add is refused for an admin and a member, who are never offered it", ctx do
+      for role <- [:admin, :member] do
+        person = insert_user(token_enc: Ravix.Crypto.encrypt("user-owner-code"))
+        :ok = Store.add_member(ctx.team.id, person.id, role, ctx.owner.id)
+
+        {:ok, view, _html} = live(log_in_user(build_conn(), person), "/w/#{ctx.team.id}")
+        render_async(view)
+        refute has_element?(view, "#available-installations")
+
+        render_hook(view, "add-installation", %{"installation" => "77"})
+        assert render_async(view) =~ "Your role in this workspace cannot do that."
+      end
+
+      assert Store.installations(ctx.team.id) == []
+    end
+
+    test "Add is refused for an installation the owner cannot see on GitHub", ctx do
+      {:ok, view, _html} = live(ctx.conn, "/w/#{ctx.team.id}")
+      render_async(view)
+
+      render_hook(view, "add-installation", %{"installation" => "55"})
+      assert render_async(view) =~ "not one you can see"
+      assert Store.installations(ctx.team.id) == []
+    end
+
+    test "a revoked session cannot add", ctx do
+      {token, session} = insert_session(ctx.owner)
+      conn = Plug.Test.init_test_session(build_conn(), session_token: token)
+      {:ok, view, _html} = live(conn, "/w/#{ctx.team.id}")
+      render_async(view)
+      Repo.delete!(session)
+      :sys.replace_state(view.pid, &age_session_guard/1)
+
+      assert {:error, {:redirect, %{to: "/login"}}} =
+               view |> element("#available-77 button") |> render_click()
+
+      assert Store.installations(ctx.team.id) == []
+    end
+
+    test "onboarding's GitHub step names the same accounts the workspace uses", ctx do
+      predating_project(ctx)
+      Backfill.run()
+      {:ok, _} = Ravix.Accounts.put_current_workspace(ctx.owner, ctx.team.id)
+
+      stub(Ravix.Projects, :repos, fn _user, id ->
+        {:ok,
+         %{
+           installations: [
+             %Shapes.Installation{id: 77, account: "acme", avatar_url: nil},
+             %Shapes.Installation{id: 88, account: "owner", avatar_url: nil}
+           ],
+           repos: [],
+           selected: id || 77
+         }}
+      end)
+
+      {:ok, view, _html} = live(ctx.conn, "/welcome/github")
+      render_async(view)
+
+      assert has_element?(view, "#github-connected", "Connected to acme, owner.")
+      assert has_element?(view, "#github-workspace-in", "Acme uses @acme.")
+      assert has_element?(view, "#github-workspace-out", "Not in Acme yet: @owner.")
+
+      assert has_element?(
+               view,
+               ~s(#github-workspace-out a[href="/w/#{ctx.team.id}#workspace-github"]),
+               "Add to workspace"
+             )
     end
   end
 end

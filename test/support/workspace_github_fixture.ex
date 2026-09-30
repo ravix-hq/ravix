@@ -45,7 +45,7 @@ defmodule Ravix.WorkspaceGitHubFixture do
 
   @doc """
   Route GitHub for `installations`: `%{id => %{account: login, repos: [repo],
-  suspended: bool, gone: bool}}`. Returns the App.
+  suspended: bool, gone: bool, type: "User" | "Organization"}}`. Returns the App.
   """
   @spec github(%{integer() => map()}, %{String.t() => [integer()]}) ::
           Ravix.Config.GitHubApp.t()
@@ -161,9 +161,14 @@ defmodule Ravix.WorkspaceGitHubFixture do
 
         %{
           "id" => id,
-          "account" => %{"login" => account, "id" => id + 50, "avatar_url" => nil},
+          "account" => %{
+            "login" => account,
+            "id" => id + 50,
+            "avatar_url" => nil,
+            "type" => get_in(installations, [id, :type]) || "Organization"
+          },
           "app_id" => 1,
-          "target_type" => "Organization"
+          "target_type" => get_in(installations, [id, :type]) || "Organization"
         }
       end
 
