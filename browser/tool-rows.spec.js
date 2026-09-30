@@ -15,7 +15,7 @@ test('tool calls stream in as one labelled line each, with the thoughts in one t
   await page.getByRole('dialog', { name: 'New track', exact: true })
     .getByRole('button', { name: 'Create track', exact: true }).click();
   await expect(page.getByRole('textbox', { name: 'Message', exact: true })).toBeEnabled({ timeout: 30_000 });
-  await expect(page.getByRole('button', { name: 'New thread or terminal', exact: true }))
+  await expect(page.getByRole('button', { name: 'Add thread', exact: true }))
     .toBeEnabled({ timeout: 60_000 });
   await expect(page.locator('#track-setup-status')).toHaveCount(0, { timeout: 45_000 });
   const mock = `http://localhost:${process.env.MOCK_PORT || 8893}`;

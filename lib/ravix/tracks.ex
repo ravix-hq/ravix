@@ -218,7 +218,7 @@ defmodule Ravix.Tracks do
       threads =
         thread_views(
           row.id,
-          Map.get(thread_rows, row.id, []),
+          open_threads(row, Map.get(thread_rows, row.id, [])),
           {thread_reads, comments},
           live,
           project
@@ -377,7 +377,7 @@ defmodule Ravix.Tracks do
          {:ok, client} <- fountain() do
       live = conversations_of(project, fresh: fresh)
       reads = Store.thread_reads(user.id, project.id)
-      thread_rows = Store.threads_of(track_id)
+      thread_rows = track |> open_threads(Store.threads_of(track_id))
       marks = {reads, comment_activity(user, thread_rows)}
       threads = thread_views(track_id, thread_rows, marks, live, project)
       threads = guest_thread_views(track, project, threads)
@@ -443,7 +443,9 @@ defmodule Ravix.Tracks do
   @doc "The memoised conversations on a track, with this person's current unread state."
   def threads(%User{} = user, track_id) do
     with {:ok, %{track: track, project: project}} <- Access.track_access(user, track_id) do
-      threads = thread_views(track_id, user, project, conversations_of(project, fresh: false))
+      threads =
+        thread_views(track, user, project, conversations_of(project, fresh: false))
+
       {:ok, guest_thread_views(track, project, threads)}
     end
   end
@@ -469,11 +471,16 @@ defmodule Ravix.Tracks do
     end
   end
 
-  defp thread_views(track_id, %User{} = user, project, live) do
-    threads = Store.threads_of(track_id)
+  defp thread_views(track, %User{} = user, project, live) do
+    threads = open_threads(track, Store.threads_of(track.id))
     marks = {Store.thread_reads(user.id, project.id), comment_activity(user, threads)}
-    thread_views(track_id, threads, marks, live, project)
+    thread_views(track.id, threads, marks, live, project)
   end
+
+  # The threads a track shows: a thread closed on its own (RAV-97) is not
+  # among them. A closed track closed every thread with it, and keeps them.
+  defp open_threads(%{closed_at: nil}, threads), do: Enum.filter(threads, &is_nil(&1.closed_at))
+  defp open_threads(_closed_track, threads), do: threads
 
   # `unread` is the thread's dot: the agent said something, or somebody else
   # commented, since this person last looked. `reply_unread` is the agent
@@ -1538,6 +1545,11 @@ defmodule Ravix.Tracks do
            check(
              is_nil(track.closed_at) and track.sandbox_state not in [:closing, :terminated],
              {:conflict, "closed_track", "This track is closing or closed."}
+           ),
+         :ok <-
+           check(
+             is_nil(thread.closed_at),
+             {:conflict, "thread_closed", "This thread is closed. Send from an open one."}
            ) do
       # Length and image count, never the prompt itself: it is the customer's
       # words, and `Ravix.Analytics` is where that rule is written down.
@@ -2148,6 +2160,64 @@ defmodule Ravix.Tracks do
     else
       :stale -> {:error, :not_found}
       error -> error
+    end
+  end
+
+  @doc """
+  Close one thread's tab (RAV-97): archive it, and only it.
+
+  The row is stamped closed, not deleted: its transcript, comments and
+  history stay, and closing the whole track later still ends its
+  conversation. The tabs stop showing it, the prompt queue stops sending to
+  it, and a prompt aimed at it is refused. A track keeps at least one open
+  thread, so the last is refused. Anybody who can prompt the track may close
+  one of its threads, as they may name one.
+
+  A turn still running on it is interrupted afterwards under
+  `Ravix.TaskSupervisor`, best effort: the page that asked is a socket that
+  must not wait on Fountain, and nothing the interrupt learns could reopen
+  the thread. The page confirms first while one runs.
+  """
+  @spec close_thread(User.t(), String.t(), String.t()) :: :ok | {:error, reason()}
+  def close_thread(%User{} = user, track_id, thread_id) do
+    with {:ok, %{track: track, project: project, thread: thread}} <-
+           Access.thread_access(user, track_id, thread_id, :write),
+         :ok <- require_not_closed(track),
+         :ok <- Store.close_thread(track.id, thread.id) |> closed_thread() do
+      publish_tracks(project.id, track.id)
+      interrupt_closed(thread)
+      :ok
+    end
+  end
+
+  defp closed_thread(:ok), do: :ok
+  defp closed_thread(:stale), do: {:error, :not_found}
+
+  defp closed_thread(:last),
+    do: {:error, {:conflict, "last_thread", "A track keeps at least one thread open."}}
+
+  defp interrupt_closed(%Thread{conversation_id: id}) when is_binary(id) and id != "" do
+    with {:ok, client} <- fountain() do
+      {:ok, _pid} =
+        Task.Supervisor.start_child(
+          Ravix.TaskSupervisor,
+          Ravix.Trace.link(fn -> interrupt_quietly(client, id) end)
+        )
+    end
+
+    :ok
+  end
+
+  defp interrupt_closed(_thread), do: :ok
+
+  # Nothing is waiting on this answer; a refusal is for whoever runs the service.
+  defp interrupt_quietly(client, id) do
+    case Fountain.interrupt(client, id) do
+      {:error, reason} ->
+        Logger.info("ravix: closed thread's interrupt refused: #{inspect(reason)}")
+
+      _ ->
+        :ok
     end
   end
 
