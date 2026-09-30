@@ -3578,7 +3578,7 @@ defmodule RavixWeb.TrackLiveTest do
     assert has_element?(
              ctx.view,
              "#track-terminal .dock-empty",
-             "without an interactive terminal"
+             "For an interactive shell, such as a console or a REPL, open a terminal with +."
            )
 
     assert has_element?(

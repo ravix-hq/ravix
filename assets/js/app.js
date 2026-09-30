@@ -7,7 +7,9 @@
 // live in `hooks/`, one file each, and this file registers them. The
 // page_loading helper also reflects pending navigation in the shared status
 // indicator, and the connect params carry the browser's time zone. There is
-// no framework or package beyond Phoenix's own.
+// no framework, and one library beyond Phoenix's own:
+// xterm.js, vendored, which is its own bundle (`xterm.js`) loaded by the Shell
+// hook the first time a terminal is opened, so it costs this file nothing.
 //
 // The hooks, and what they are for:
 //
@@ -17,7 +19,8 @@
 //   PanelToggle     whether those sidebars are open; a preference of this browser
 //   TranscriptTail  a scrollback that follows new output while you are at the bottom
 //   Composer        the prompt box: Enter sends, pasted images become uploads
-//   Terminal        the shell panel: history, Ctrl+L, output that follows itself
+//   Terminal        the Commands panel: history, Ctrl+L, output that follows itself
+//   Shell           an interactive terminal tab: xterm.js over the page's socket
 //   Notify          desktop notifications when a track needs you and you are not looking
 //   SettingsSections section navigation and unsaved input warnings
 //   ProjectTree     viewer-local collapse preferences for project and section rows
@@ -45,6 +48,7 @@ import {PanelToggle} from "./hooks/panel_toggle"
 import {TranscriptTail} from "./hooks/transcript_tail"
 import {Composer} from "./hooks/composer"
 import {Terminal} from "./hooks/terminal"
+import {Shell} from "./hooks/shell"
 import {Notify} from "./hooks/notify"
 import {ProjectTree} from "./hooks/project_tree"
 import {QuickJump} from "./hooks/quick_jump"
@@ -58,7 +62,8 @@ import {TurnTimer} from "./hooks/turn_timer"
 import {RelativeTime} from "./hooks/relative_time"
 import {SubmitOnEnter} from "./hooks/submit_on_enter"
 
-const hooks = {ThreadTabs, AgentConfirmation, Theme, PanelResize, PanelToggle, TranscriptTail, Composer, Terminal, Notify, SettingsSections, ProjectTree, QuickJump, ProjectSections, CopyCode, ProjectFormFocus, ShareMention, TurnTimer, RelativeTime, SubmitOnEnter}
+
+const hooks = {ThreadTabs, AgentConfirmation, Theme, PanelResize, PanelToggle, TranscriptTail, Composer, Terminal, Notify, SettingsSections, ProjectTree, QuickJump, ProjectSections, CopyCode, ProjectFormFocus, ShareMention, TurnTimer, RelativeTime, SubmitOnEnter, Shell}
 
 const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
 clearTransportFallback(window)

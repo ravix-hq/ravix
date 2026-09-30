@@ -5,7 +5,10 @@ defmodule Ravix.Workspaces.RaviSeedTest do
   missing owner refuses the whole step. The legacy duplicate's open track
   keeps working for its members.
   """
-  use Ravix.DataCase, async: true
+  # Not async: the Mix task tests below swap the global `Mix.shell/1`, and a
+  # concurrent test whose own Mix task prints through it
+  # (`Ravix.Workspaces.PersonalAssignmentTest`) then captures nothing.
+  use Ravix.DataCase, async: false
 
   # The explicit canonical override logs a warning by design.
   @moduletag :capture_log

@@ -111,9 +111,10 @@ defmodule Ravix.MixProject do
       "ecto.reset": ["ecto.drop", "ecto.setup"],
       test: ["ecto.create --quiet", "ecto.migrate --quiet", "assets.setup", "test"],
       "assets.setup": ["esbuild.install --if-missing"],
-      "assets.build": ["compile", "esbuild ravix"],
+      "assets.build": ["compile", "esbuild ravix", "esbuild xterm"],
       "assets.deploy": [
         "esbuild ravix --minify",
+        "esbuild xterm --minify",
         "phx.digest"
       ],
       # The local gate, in the test build: analysis, the suite with the
