@@ -781,7 +781,11 @@
           </form>
         </div>
       </section>
-      <aside id="inspector" class="inspector" aria-label="Track inspector">
+      <aside
+        id="inspector"
+        class={["inspector", diff_open?(@panel, @diff_path) && "diff-open"]}
+        aria-label="Track inspector"
+      >
         <div
           id="inspector-resize"
           phx-hook="PanelResize"
@@ -830,6 +834,20 @@
           >
             {label}<.change_badge :if={tab == :changes} count={@panel.change_count} />
           </button>
+          <%!-- Files' own control, so it sits with the tab bar's other icon and
+          goes when Files does. The name stays put; `aria-pressed` is the state. --%>
+          <button
+            :if={@panel.tab == :files}
+            type="button"
+            id="toggle-ignored"
+            class={["ghost panel-ignored", @show_ignored? && "pressed"]}
+            phx-click="toggle-ignored"
+            aria-pressed={to_string(@show_ignored?)}
+            title="Show ignored files"
+          >
+            <.icon name={if @show_ignored?, do: "eye", else: "eye-off"} size={14} />
+            <span class="sr-only">Show ignored files</span>
+          </button>
           <button
             class={["ghost panel-refresh", @panel.busy? && "busy"]}
             phx-click="refresh-panel"
@@ -852,8 +870,11 @@
                 waking={:wake in @pending}
               />
             <% nil -> %>
-              <%!-- A diff being re-read stays on screen; the refresh button turns instead. --%>
-              <.loading_status :if={@panel.busy? && !is_struct(@panel.data, Ravix.Tracks.Diff)}>
+              <%!-- A tree or diff being re-read stays on screen; the refresh button turns instead. --%>
+              <.loading_status :if={
+                @panel.busy? && !is_struct(@panel.data, Ravix.Tracks.Diff) &&
+                  !is_struct(@panel.data, Ravix.Tracks.Files.Listing)
+              }>
                 Loading inspector…
               </.loading_status>
               <.git_status
