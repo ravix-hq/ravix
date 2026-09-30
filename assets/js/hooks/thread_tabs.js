@@ -59,6 +59,14 @@ export const ThreadTabs = {
       if (input.id !== 'thread-rename-input' || this.cancelled) return
       this.pushEvent('rename-thread', {thread_id: input.form.dataset.threadId, title: input.value})
     }
+    this.reveal = (tab = this.el.querySelector('.thread-tab[aria-selected="true"]')) => {
+      const list = this.list()
+      if (!tab || !list) return
+      const box = list.getBoundingClientRect()
+      const at = tab.getBoundingClientRect()
+      if (at.left < box.left) list.scrollLeft -= box.left - at.left
+      else if (at.right > box.right) list.scrollLeft += at.right - box.right
+    }
     this.overflow = () => {
       const list = this.list()
       if (!list) return
@@ -75,9 +83,11 @@ export const ThreadTabs = {
     this.el.addEventListener('mousedown', this.mousedown)
     this.list()?.addEventListener('scroll', this.overflow, {passive: true})
     if (typeof ResizeObserver !== 'undefined') {
-      // A narrower row keeps the selected tab in sight.
+      // A narrower row keeps the selected tab in sight. This moves the
+      // tablist alone: `scrollIntoView` would scroll every ancestor too, and
+      // shift what the terminal below has measured itself against.
       this.resize = new ResizeObserver(() => {
-        this.el.querySelector('.thread-tab[aria-selected="true"]')?.scrollIntoView({block: 'nearest', inline: 'nearest'})
+        this.reveal()
         this.overflow()
       })
       this.resize.observe(this.el)
@@ -97,7 +107,7 @@ export const ThreadTabs = {
     const input = this.el.querySelector('#thread-rename-input')
     if (renaming && input && renaming !== this.renamingId) {
       this.cancelled = false
-      document.getElementById(`thread-tab-${renaming}`)?.scrollIntoView({block: 'nearest', inline: 'nearest'})
+      this.reveal(document.getElementById(`thread-tab-${renaming}`))
       input.focus()
       input.select()
     } else if (!renaming && this.renamingId) {

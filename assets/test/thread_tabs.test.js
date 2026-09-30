@@ -131,3 +131,25 @@ test('RAV-97: the rename field takes focus; leaving it saves, Escape cancels, an
   renamed(hook)
   expect(document.activeElement).toBe(tab)
 })
+
+test('RAV-97: keeping the selected tab in sight scrolls the tablist and nothing else', () => {
+  strip()
+  const {hook} = mountHook(ThreadTabs, '#threads')
+  const list = document.querySelector('.thread-tablist')
+  const tab = document.getElementById('thread-tab-a')
+  const rect = (left, right) => () => ({left, right, top: 0, bottom: 30, width: right - left, height: 30})
+  let scrolled = false
+  tab.scrollIntoView = () => { scrolled = true }
+  list.getBoundingClientRect = rect(100, 300)
+  list.scrollLeft = 50
+  tab.getBoundingClientRect = rect(260, 340)
+  hook.reveal()
+  expect(list.scrollLeft).toBe(90)
+  tab.getBoundingClientRect = rect(80, 160)
+  hook.reveal()
+  expect(list.scrollLeft).toBe(70)
+  tab.getBoundingClientRect = rect(120, 200)
+  hook.reveal()
+  expect(list.scrollLeft).toBe(70)
+  expect(scrolled).toBe(false)
+})
