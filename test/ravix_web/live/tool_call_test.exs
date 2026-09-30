@@ -106,6 +106,31 @@ defmodule RavixWeb.Live.ToolCallTest do
              {"python3 - <<'PY'", 2}
   end
 
+  test "the claude adapter's placeholder titles are never a target" do
+    assert ToolCall.target(call("Preparing file…", %{kind: "edit", rawInput: %{}})) == nil
+    assert ToolCall.target(call("Terminal", %{kind: "execute", rawInput: %{}})) == nil
+  end
+
+  test "relative/2 takes the track's directory out wherever the text names it" do
+    w = "/home/sprite/work/kyoto"
+
+    for {text, expected} <- [
+          {"cd #{w} && bun test", "bun test"},
+          {"cd '#{w}/' ; git status", "git status"},
+          {"git -C #{w} diff #{w}/lib/a.ex", "git -C . diff lib/a.ex"},
+          {w, "."},
+          {"#{w}/", "."},
+          {"ls #{w}-other/a #{w}.bak", "ls #{w}-other/a #{w}.bak"},
+          {"/x#{w}/a", "/x#{w}/a"},
+          {"cd /elsewhere && ls", "cd /elsewhere && ls"}
+        ] do
+      assert ToolCall.relative(text, w <> "/") == expected
+    end
+
+    assert ToolCall.relative("#{w}/a", nil) == "#{w}/a"
+    assert ToolCall.relative("#{w}/a", "") == "#{w}/a"
+  end
+
   describe "tool_call/1" do
     test "the row is one line: icon, name, first line of the target" do
       tool =
@@ -180,6 +205,28 @@ defmodule RavixWeb.Live.ToolCallTest do
       assert doc |> LazyHTML.query(".tool-name") |> LazyHTML.text() == "Write"
       assert doc |> LazyHTML.query("pre.tool-content") |> LazyHTML.text() == "line 1\nline 2"
       assert doc |> LazyHTML.query(".tool-args") |> Enum.count() == 0
+    end
+
+    test "a streamed write names its path relative to the track, in the row and the body" do
+      w = "/home/sprite/work/kyoto"
+
+      tool =
+        call("Write src/day.ts", %{
+          kind: "edit",
+          rawInput: %{file_path: "#{w}/src/day.ts", content: "one\n"},
+          locations: [%{path: "#{w}/src/day.ts"}],
+          content: [%{type: "diff", path: "#{w}/src/day.ts", oldText: nil, newText: "one\n"}]
+        })
+
+      html = draw(%{tool | status: :done}, w)
+      doc = LazyHTML.from_fragment(html)
+
+      assert doc |> LazyHTML.query(".tool-target") |> LazyHTML.text() == "src/day.ts"
+      assert doc |> LazyHTML.query(".tool-body > p > code") |> LazyHTML.text() == "src/day.ts"
+      assert doc |> LazyHTML.query(".tool-body strong") |> LazyHTML.text() == "src/day.ts"
+      # The adapter's own title only repeats the path, relative, so is no note.
+      assert doc |> LazyHTML.query(".tool-note") |> Enum.count() == 0
+      refute html =~ w
     end
 
     test "a read with a descriptive title keeps the title as a note" do
