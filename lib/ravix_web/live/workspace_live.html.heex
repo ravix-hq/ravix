@@ -336,6 +336,8 @@
                       id={"project-menu-trigger-#{project.id}"}
                       class="project-action"
                       aria-label={"More for #{project.display_name}"}
+                      aria-haspopup="menu"
+                      aria-expanded="false"
                       title="More"
                       popovertarget={"project-menu-#{project.id}"}
                     >
@@ -420,10 +422,8 @@
                       <.status_slot track={track} />
                       <.creator track={track} />
                       <span class="track-title">{Track.label(track)}</span>
-                      <span :if={track.visibility == :private} class="track-private">
-                        <.icon name="lock" /> Private
-                      </span>
-                      <.age id={"track-age-#{track.id}"} at={track.activity_at} />
+                      <.private_mark :if={track.visibility == :private} />
+                      <.meta_slot track={track} />
                     </.link>
                     <div :if={MapSet.member?(@track_errors, project.id)} role="status">
                       <p class="hint">Couldn't load tracks</p>
@@ -471,10 +471,10 @@
                           <span class="track-title truncate" title={Track.tooltip(track)}>
                             {Track.label(track)}<span class="sr-only">, closed</span>
                           </span>
-                          <span :if={track.visibility == :private} class="track-private">
-                            <.icon name="lock" /> Private
+                          <.private_mark :if={track.visibility == :private} />
+                          <span class="track-meta">
+                            <.age id={"closed-track-age-#{track.id}"} at={track.activity_at} />
                           </span>
-                          <.age id={"closed-track-age-#{track.id}"} at={track.activity_at} />
                           <button
                             :if={reopenable?(project)}
                             type="button"
@@ -520,15 +520,21 @@
           type="button"
           id="account-trigger"
           class="yard-account"
-          aria-label={"You" <> if(@changes_unseen > 0, do: ", #{@changes_unseen} new in What's new", else: "")}
-          title="You"
+          aria-label={"You" <> unseen_note(@changes_unseen, ", ")}
+          title={"You" <> unseen_note(@changes_unseen, " · ")}
           popovertarget="account-menu"
         >
+          <%!-- The gear's dot (RAV-96): What's new has entries this person
+            has not opened, and opening it clears the dot. The button's name
+            and tooltip both say so. --%>
           <span class="account-icon">
             <.icon name="settings" size={18} />
-            <span :if={@changes_unseen > 0} class="account-unseen" id="account-unseen">
-              <span class="sr-only">, {@changes_unseen} new in What's new</span>
-            </span>
+            <span
+              :if={@changes_unseen > 0}
+              class="account-unseen"
+              id="account-unseen"
+              aria-hidden="true"
+            ></span>
           </span>
           <span class="yard-who">
             <strong class="truncate">You</strong><small class="truncate">@{@current_user.login}</small>
