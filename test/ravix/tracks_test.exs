@@ -1915,6 +1915,77 @@ defmodule Ravix.TracksTest do
               }} = Tracks.diff(ctx.owner, ctx.track.id)
     end
 
+    defp diff_route(diff) do
+      {%{
+         method: "GET",
+         path: "/api/sandboxes/sb-1/diff",
+         query: %{path: "/home/sprite/work/kyoto"}
+       }, {200, [], %{data: %{path: "/home/sprite/work/kyoto", diff: diff, truncated: false}}}}
+    end
+
+    @edit "diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-x\n+y\n"
+    @new_file "diff --git a/new.txt b/new.txt\nnew file mode 100644\n--- /dev/null\n+++ b/new.txt\n@@ -0,0 +1 @@\n+n\n"
+
+    test "untracked files on a running machine join the diff through a bounded exec", ctx do
+      machine_fountain(ctx.project, [diff_route(@edit)])
+      expect(Ravix.Terminal, :status, fn _, _, [passive: true] -> {:ok, %{available: true}} end)
+
+      expect(Ravix.Terminal, :exec, fn user, id, request ->
+        assert {user.id, id} == {ctx.owner.id, ctx.track.id}
+        assert request.cwd == ctx.track.workdir
+        assert request.command == Diff.untracked_command(ctx.track.workdir)
+        assert request.timeout_sec == Diff.untracked_timeout_sec()
+
+        output =
+          Jason.encode!(%{available: true, diff: @new_file, large: [], truncated: false})
+
+        {:ok, %{code: 0, stdout: output}}
+      end)
+
+      assert {:ok, %Diff{changes: changes}} = Tracks.diff(ctx.owner, ctx.track.id)
+
+      assert Enum.map(changes, &{&1.path, &1.status}) == [
+               {"a.txt", :modified},
+               {"new.txt", :untracked}
+             ]
+    end
+
+    test "an outsider's diff is refused before the machine is asked anything", ctx do
+      reject(Ravix.Terminal, :exec, 3)
+      reject(Ravix.Terminal, :status, 3)
+      assert {:error, :not_found} = Tracks.diff(insert_user(), ctx.track.id)
+    end
+
+    test "a parked machine is not woken for its untracked files", ctx do
+      reject(Ravix.Terminal, :exec, 3)
+      machine_fountain(ctx.project, [diff_route(@edit)])
+
+      expect(Ravix.Terminal, :status, fn _, _, [passive: true] -> {:ok, %{available: false}} end)
+
+      assert {:ok, %Diff{changes: [%{path: "a.txt", status: :modified}]}} =
+               Tracks.diff(ctx.owner, ctx.track.id)
+    end
+
+    test "a machine that hangs costs the untracked files, not the diff, and no task", ctx do
+      machine_fountain(ctx.project, [diff_route(@edit)])
+      parent = self()
+      expect(Ravix.Terminal, :status, fn _, _, _ -> {:ok, %{available: true}} end)
+
+      expect(Ravix.Terminal, :exec, fn _, _, _ ->
+        send(parent, {:untracked_worker, self()})
+        receive do: (:never -> {:error, :unavailable})
+      end)
+
+      task = Task.async(fn -> Tracks.diff(ctx.owner, ctx.track.id) end)
+      assert_receive {:untracked_worker, worker}
+      monitor = Process.monitor(worker)
+
+      assert {:ok, %Diff{changes: [%{path: "a.txt"}]}} =
+               Task.await(task, (Diff.untracked_timeout_sec() + 4) * 1_000)
+
+      assert_receive {:DOWN, ^monitor, :process, ^worker, :killed}
+    end
+
     defp listing_route(path, entries, answered_path \\ nil) do
       {%{method: "GET", path: "/api/sandboxes/sb-1/files", query: %{path: path}},
        {200, [], %{data: %{path: answered_path || path, entries: entries, truncated: false}}}}
