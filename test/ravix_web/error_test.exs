@@ -52,6 +52,37 @@ defmodule RavixWeb.ErrorTest do
     assert Error.from(%Ravix.GitHub.Error{status: 403, message: "denied"}).status >= 400
   end
 
+  # RAV-81: which provider runs the machines is not the reader's business.
+  # These are the sentences `Ravix.Sprites` writes that name it.
+  test "a machine error never names the provider, and says what happened in the app's words" do
+    for {status, message, words} <- [
+          {502, "Sprites did not answer the terminal request in time.",
+           "The machine didn't answer."},
+          {502, "Could not reach Sprites: connection refused", "Could not reach the machine."},
+          {502, "Sprites closed the terminal: closed", "Could not reach the machine."},
+          {401, "Sprites refused the terminal (401). Check the deployment token.",
+           "The machine connection was refused."},
+          {502, "Invalid Sprites WebSocket handshake.", "Could not reach the machine."},
+          {404,
+           "This machine is not reachable over Sprites. It may be asleep, or built somewhere this token cannot see.",
+           "The machine is not reachable. It may be asleep."},
+          {500, "Sprites said 500. boom", "Could not reach the machine."},
+          {501, "This Sprite does not support expiring preview activity tasks.",
+           "The machine does not support this."}
+        ] do
+      error = Error.from(%Ravix.Sprites.Error{status: status, message: message})
+      assert error.message == words
+      assert error.status == status
+      refute error.message =~ ~r/sprite/i
+    end
+
+    # One that does not name it is already in the app's words.
+    assert Error.from(%Ravix.Sprites.Error{status: 502, message: "The preview ended."}).message ==
+             "The preview ended."
+
+    assert Error.from(%Ravix.Sprites.Error{status: 502, message: nil}).message == nil
+  end
+
   describe "a missing integration" do
     test "is one code and one sentence per provider, whichever context handed it over" do
       # `Ravix.Providers` and the three adapters all answer this one shape,
@@ -61,7 +92,7 @@ defmodule RavixWeb.ErrorTest do
       for {provider, code, words} <- [
             {:fountain, "no_fountain", "no machine service account"},
             {:github, "no_github", "no GitHub App"},
-            {:sprites, "no_sprites", "no Sprites token"}
+            {:sprites, "no_sprites", "no machine connection configured"}
           ] do
         error = Error.from({:unconfigured, provider})
         assert error.status == 503
