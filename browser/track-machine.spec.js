@@ -47,11 +47,11 @@ test('machine status follows the selected dedicated track, never its shared proj
     const chip = page.locator('#track-machine-state');
     await expect(chip).toHaveText('Idle');
     if (index === 0) {
-      await expect(chip).toHaveAttribute('title', 'Idle');
+      await expect(chip).toHaveAttribute('data-tip', 'Idle');
       await expect(page.locator('#track-machine-detail')).toHaveCount(0);
     } else {
       const note = 'The machine did not answer just now; your next message wakes it.';
-      await expect(chip).toHaveAttribute('title', note);
+      await expect(chip).toHaveAttribute('data-tip', note);
       await expect(page.locator('#track-machine-detail')).toHaveText(note);
     }
   }

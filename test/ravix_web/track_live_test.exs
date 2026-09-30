@@ -6336,7 +6336,9 @@ defmodule RavixWeb.TrackLiveTest do
     ctx.view |> form("#track-visibility-form", visibility: "private") |> render_change()
     assert Repo.get!(Track, ctx.track.id).visibility == :private
     settle(ctx.view)
-    # A lock after the title rather than a chip (RAV-82).
+    # A lock after the title rather than a chip (RAV-82), named and tipped (RAV-98).
+    assert has_element?(ctx.view, ".track-crumbs #track-private .sr-only", "Private")
+
     assert has_element?(
              ctx.view,
              ".track-crumbs #track-private[role=img][aria-label=Private][data-tip^=Private]"

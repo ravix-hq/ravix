@@ -786,14 +786,14 @@ test('project, track, streaming, image upload, reconnect, and revocation', async
   // behind Menu. The owner's "Project settings" is the one worth proving
   // reachable from the current project row.
   const trackMenu = page.getByRole('navigation', { name: 'Workspace navigation' }).getByRole('button', { name: 'Menu' });
-  await expect(page.locator('#yard .workspace-project.current button[title="Project settings"]')).toBeHidden();
+  await expect(page.locator('#yard .workspace-project.current button[data-tip="Project settings"]')).toBeHidden();
   await trackMenu.click();
-  await expect(page.locator('#yard .workspace-project.current button[title="Project settings"]')).toBeVisible();
+  await expect(page.locator('#yard .workspace-project.current button[data-tip="Project settings"]')).toBeVisible();
   await expect(page.locator('#account-trigger')).toBeVisible();
   await accessible(page);
   await capture(page, 'track-mobile-menu');
   await page.getByRole('button', { name: 'Close menu' }).click();
-  await expect(page.locator('#yard .workspace-project.current button[title="Project settings"]')).toBeHidden();
+  await expect(page.locator('#yard .workspace-project.current button[data-tip="Project settings"]')).toBeHidden();
   await page.setViewportSize({ width: 1280, height: 720 });
   // The same session is revoked from a second tab while the first remains connected.
   const trackURL = page.url();
@@ -1071,7 +1071,7 @@ test('composer Send stays compact and keeps its arrow after repeated submissions
     expect(box.width).toBeGreaterThanOrEqual(28);
     expect(box.height).toBeGreaterThanOrEqual(28);
     await expect(send).toHaveText('');
-    await expect(send).toHaveAttribute('title', 'Send');
+    await expect(send).toHaveAttribute('data-tip', 'Send');
     const svg = send.locator('svg');
     await expect(svg).toBeVisible();
     await expect(svg).toHaveAttribute('viewBox', '0 0 24 24');
@@ -1108,7 +1108,7 @@ test('composer Send stays compact and keeps its arrow after repeated submissions
       const style = send && getComputedStyle(send);
       return {
         visible: visible(send), width: box?.width, height: box?.height,
-        text: send?.textContent.trim(), title: send?.getAttribute('title'),
+        text: send?.textContent.trim(), title: send?.getAttribute('data-tip'),
         svgVisible: visible(svg), viewBox: svg?.getAttribute('viewBox'), d: path?.getAttribute('d'),
         namespace: svg?.namespaceURI,
         ink: style?.color, background: style?.backgroundColor, opacity: Number(style?.opacity),

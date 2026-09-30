@@ -207,11 +207,11 @@ test('the sidebar nav and You menu keep one pitch and say what they do', async (
 
   // The toggle hides the sidebar, says so, and Ctrl+B does the same.
   const toggle = page.locator('#yard-toggle');
-  await expect(toggle).toHaveAttribute('title', 'Hide sidebar (Ctrl+B)');
+  await expect(toggle).toHaveAttribute('data-tip', 'Hide sidebar');
   await expect(toggle).toHaveAccessibleName('Hide sidebar');
   await page.keyboard.press('Control+b');
   await expect(page.locator('html')).toHaveAttribute('data-yard', 'closed');
-  await expect(toggle).toHaveAttribute('title', 'Show sidebar (Ctrl+B)');
+  await expect(toggle).toHaveAttribute('data-tip', 'Show sidebar');
   await page.keyboard.press('Control+b');
   await expect(page.locator('html')).not.toHaveAttribute('data-yard', 'closed');
 
