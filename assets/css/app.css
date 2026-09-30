@@ -1360,6 +1360,13 @@ html[data-yard="closed"] .workspace-trigger-skeleton { flex: none; width: 28px; 
 }
 .workspace-tabs .panel-toggle:hover:not(:disabled) { background: var(--surface-hover); color: var(--ink); }
 .workspace-tabs .panel-refresh.busy svg { animation: request-spin 900ms linear infinite; }
+/* Files' "Show ignored files", the refresh's neighbour: an icon that reads as
+   pressed (`aria-pressed`) by its ground as well as by its open eye. */
+.workspace-tabs .panel-ignored { margin-left: auto; display: inline-grid; place-items: center; width: 26px; height: 26px; padding: 0; border-radius: var(--radius); color: var(--dim); }
+.workspace-tabs .panel-ignored:hover:not(:disabled) { color: var(--ink); background: var(--surface-hover); }
+.workspace-tabs .panel-ignored[aria-pressed="true"],
+.workspace-tabs .panel-ignored[aria-pressed="true"]:hover:not(:disabled) { color: var(--ink); background: var(--surface-active); }
+.workspace-tabs .panel-ignored + .panel-refresh { margin-left: 0; }
 @media (prefers-reduced-motion: reduce) { .workspace-tabs .panel-refresh.busy svg { animation: none; } }
 .tab-count {
   display: inline-block; min-width: 18px; margin-left: 6px; padding: 0 5px; border-radius: 9px;
@@ -2011,6 +2018,12 @@ section.first-prompt#project-start { align-self: center; padding: 32px 24px; }
     width: var(--inspector-span);
   }
   .split:has(.inspector) { grid-template-columns: minmax(0, 1fr); }
+  /* One file's diff wants room: while one is open the inspector takes about
+     half the stage, or more if it was already dragged wider, and still
+     leaves the conversation its 420px. Closing the diff gives it back. */
+  .stage:has(.inspector.diff-open) {
+    --inspector-span: min(max(clamp(280px, var(--inspector-width, max(340px, 30vw)), min(800px, calc(100% - 420px))), 50%), calc(100% - 420px));
+  }
   html[data-inspector="closed"] .stage:has(.inspector) { --inspector-span: 44px; }
   html[data-inspector="closed"] #inspector { align-items: center; }
   html[data-inspector="closed"] #inspector > :not(.workspace-tabs) { display: none; }
@@ -2223,16 +2236,19 @@ section.first-prompt#project-start { align-self: center; padding: 32px 24px; }
 #diff-filter-form { margin-bottom: 4px; }
 .change-file { border: 0; border-radius: var(--radius); background: transparent; color: inherit; cursor: pointer; font-size: 13px; }
 .change-file:hover { background: var(--surface); }
-.file-diff { overflow-x: auto; max-width: 100%; font-family: var(--font-mono, monospace); font-size: .75rem; border: 1px solid var(--line); }
-.diff-hunk { min-width: max-content; }
-.diff-hunk-header { background: var(--surface); color: var(--dim); padding: .4rem; white-space: pre; }
-.diff-line { display: flex; white-space: pre; min-height: 1.5em; }
+/* Long lines wrap rather than scroll: every character of a line is on
+   screen, and the gutter stays beside the first row of a wrapped line. */
+.file-diff { max-width: 100%; font-family: var(--font-mono, monospace); font-size: .75rem; border: 1px solid var(--line); }
+.diff-hunk { min-width: 0; }
+.diff-hunk-header { background: var(--surface); color: var(--dim); padding: .4rem; white-space: pre-wrap; overflow-wrap: anywhere; }
+.diff-line { display: flex; white-space: pre-wrap; min-height: 1.5em; }
+.diff-line code { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .diff-number { width: 5ch; flex: 0 0 5ch; text-align: right; padding-right: 1ch; user-select: none; }
 .diff-marker { width: 2ch; flex: 0 0 2ch; }
 .diff-line.diff-add { background: color-mix(in srgb, var(--ok) 10%, transparent); }
 .diff-line.diff-del { background: color-mix(in srgb, var(--bad) 10%, transparent); }
 .diff-line code { font: inherit; }
-.diff-no-newline { padding-left: 12ch; white-space: pre; }
+.diff-no-newline { padding-left: 12ch; white-space: pre-wrap; }
 
 
 /* Nested disclosures keep the explorer rooted in the track worktree. */
@@ -2243,7 +2259,24 @@ section.first-prompt#project-start { align-self: center; padding: 32px 24px; }
 .file-explorer .workspace-file { display: flex; align-items: center; gap: 6px; padding: 4px 6px; font-size: 12px; border-radius: 3px; }
 .file-explorer .workspace-file:hover, .file-explorer .workspace-file.selected { background: var(--line); }
 .file-disclosure { width: 12px; flex: none; }
-.file-kind { flex: none; color: var(--dim); }
+/* A kind of file is a shape and a colour (`TrackLive.file_icon/1`). Every
+   colour is a palette token or a mix of two, so each theme recolours the
+   set, and `theme_contrast_test.exs` holds each one to 3:1 against
+   the panel and the selected row in every palette. */
+.file-kind { flex: none; display: inline-grid; place-items: center; color: var(--dim); }
+.file-kind.kind-elixir { color: color-mix(in oklab, var(--accent) 50%, var(--bad)); }
+.file-kind.kind-script { color: color-mix(in oklab, var(--warn) 35%, var(--ink)); }
+.file-kind.kind-typescript { color: var(--accent); }
+.file-kind.kind-json { color: color-mix(in oklab, var(--bad) 60%, var(--warn)); }
+.file-kind.kind-markdown { color: var(--accent-ink); }
+.file-kind.kind-style { color: color-mix(in oklab, var(--accent) 60%, var(--ok)); }
+.file-kind.kind-markup { color: var(--bad); }
+.file-kind.kind-yaml { color: color-mix(in oklab, var(--bad) 65%, var(--ink)); }
+.file-kind.kind-lock { color: var(--dimmer); }
+.file-kind.kind-image { color: color-mix(in oklab, var(--ok) 70%, var(--ink)); }
+.file-kind.kind-docker { color: var(--accent); }
+.file-kind.kind-shell { color: color-mix(in oklab, var(--ok) 70%, var(--ink)); }
+.file-kind.kind-dotfile { color: color-mix(in oklab, var(--dim) 60%, var(--ink)); }
 .file-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .file-note { padding: 4px 12px; font-size: 12px; color: var(--dim); }
 /* Keep the current page usable while a request or navigation is in flight.
