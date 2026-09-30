@@ -79,7 +79,10 @@ defmodule RavixWeb.Live.MachineDock do
        vitals_busy?: false,
        # This person's terminal tabs on the track, each with what the page
        # last heard about it. See `shell/2`.
-       shells: []
+       shells: [],
+       # Whether this person may open a shell (Write, ADR 0010). Hiding the
+       # button is courtesy; `Ravix.Terminal` refuses a Read member anyway.
+       can_write: true
      )}
   end
 
@@ -489,6 +492,7 @@ defmodule RavixWeb.Live.MachineDock do
           </button>
         </span>
         <button
+          :if={@can_write}
           id="dock-shell-new"
           class="ghost dock-shell-new"
           phx-click="shell-new"

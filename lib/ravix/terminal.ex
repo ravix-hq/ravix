@@ -366,7 +366,7 @@ defmodule Ravix.Terminal do
   """
   @spec tabs(User.t(), String.t()) :: {:ok, [Tab.t()]} | {:error, :not_found}
   def tabs(%User{} = user, track_id) do
-    with {:ok, _access} <- open_track(user, track_id) do
+    with {:ok, _access} <- open_track(user, track_id, :read) do
       # ownership: open_track/2 (Access.track_access) admitted this person to this track.
       {:ok, Store.list(track_id, user.id)}
     end
@@ -480,7 +480,7 @@ defmodule Ravix.Terminal do
   """
   @spec close_tab(User.t(), String.t(), String.t()) :: :ok | {:error, :not_found}
   def close_tab(%User{} = user, track_id, tab_id) do
-    with {:ok, _access} <- open_track(user, track_id),
+    with {:ok, _access} <- open_track(user, track_id, :read),
          # ownership: open_track/2 (Access.track_access) admitted this person to this track.
          %Tab{} = tab <- Store.get(track_id, user.id, tab_id) || {:error, :not_found} do
       if tab.session_id, do: Pty.kill(Sprites.config(), tab.sprite, tab.session_id)
@@ -491,8 +491,11 @@ defmodule Ravix.Terminal do
 
   # A terminal is on a track somebody may still work in: access, and not
   # closed, which is the same thing `RavixWeb.TrackLive` asks of its page.
-  defp open_track(user, track_id) do
-    case Access.track_access(user, track_id) do
+  # A shell can do anything a command can, so opening or attaching one needs
+  # Write (ADR 0010), as `exec/3` does; listing and closing your own tabs
+  # only needs to see the track, so a person demoted to Read can clean up.
+  defp open_track(user, track_id, need \\ :write) do
+    case Access.track_access(user, track_id, need) do
       {:ok, %{track: %{closed_at: nil}} = access} -> {:ok, access}
       _ -> {:error, :not_found}
     end

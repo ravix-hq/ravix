@@ -941,6 +941,7 @@
           workdir={@track.workdir}
           current_user={@current_user}
           session_hash={@session_hash}
+          can_write={@track.level != :read}
         />
       </aside>
     </div>

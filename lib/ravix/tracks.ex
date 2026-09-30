@@ -2218,7 +2218,7 @@ defmodule Ravix.Tracks do
   end
 
   defp writable_worktree(user, track_id) do
-    with {:ok, %{track: track}} <- Access.track_access(user, track_id),
+    with {:ok, %{track: track}} <- Access.track_access(user, track_id, :write),
          :ok <-
            check(
              is_nil(track.closed_at) and track.sandbox_state not in [:closing, :terminated],

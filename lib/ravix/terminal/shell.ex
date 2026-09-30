@@ -342,7 +342,7 @@ defmodule Ravix.Terminal.Shell do
   defp allowed(state) do
     with {:ok, %User{id: id}, expires_at} <- Accounts.open_session(state.session_hash),
          true <- id == state.user.id,
-         {:ok, %{track: track}} <- Access.track_access(state.user, state.tab.track_id),
+         {:ok, %{track: track}} <- Access.track_access(state.user, state.tab.track_id, :write),
          true <- track.project_id == state.project_id and is_nil(track.closed_at) do
       {:ok, expires_at}
     else

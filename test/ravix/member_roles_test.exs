@@ -152,6 +152,22 @@ defmodule Ravix.MemberRolesTest do
       assert {:error, {:forbidden, _}} = Terminal.exec(c.reader, c.track.id, %{command: "pwd"})
     end
 
+    test "cannot open or attach an interactive terminal, but can list and close their own", c do
+      assert {:error, :not_found} = Terminal.open_tab(c.reader, c.track.id)
+      assert {:error, :not_found} = Terminal.attach(c.reader, "session", c.track.id, "tab")
+      assert {:ok, []} = Terminal.tabs(c.reader, c.track.id)
+      assert {:error, :not_found} = Terminal.close_tab(c.reader, c.track.id, Ecto.UUID.generate())
+
+      # The same doors let a writer through: whatever comes back, it is not
+      # the refusal a reader gets.
+      refute Terminal.open_tab(c.writer, c.track.id) == {:error, :not_found}
+    end
+
+    test "cannot commit or push from Checks", c do
+      assert {:error, {:forbidden, _}} = Tracks.commit_and_push(c.reader, c.track.id, "wip")
+      assert {:error, {:forbidden, _}} = Tracks.push(c.reader, c.track.id)
+    end
+
     test "cannot change the track's settings or open a pull request", c do
       mine =
         insert_track(project: c.project, created_by: c.reader.id, created_by_login: "reader")
