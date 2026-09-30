@@ -1823,7 +1823,12 @@ defmodule RavixWeb.Live.ProjectSettings do
             else: []
           ),
         picked: assigns.change["repo"],
-        busy: MapSet.member?(assigns.pending, :change_repository)
+        busy: MapSet.member?(assigns.pending, :change_repository),
+        closing:
+          if(is_integer(assigns.count),
+            do: "#{plural(assigns.count, "open track")} will close",
+            else: "Every open track will close"
+          )
       )
 
     ~H"""
@@ -1892,11 +1897,7 @@ defmodule RavixWeb.Live.ProjectSettings do
           </div>
           <h3>2. What happens</h3>
           <p id="change-repository-review">
-            The machine is rebuilt from {if @picked, do: @picked, else: "the new repository"}. <strong id="change-repository-closing">
-              {if is_integer(@count),
-                do: "#{plural(@count, "open track")} will close",
-                else: "Every open track will close"}
-            </strong>, including private tracks you cannot see; their branches stay on GitHub, and unpushed work on the machine is lost. Settings, secrets, environment variables, members and history are kept.
+            The machine is rebuilt from {if @picked, do: @picked, else: "the new repository"}. <strong id="change-repository-closing">{@closing}</strong>, including private tracks you cannot see; their branches stay on GitHub, and unpushed work on the machine is lost. Settings, secrets, environment variables, members and history are kept.
           </p>
           <h3>3. Confirm</h3>
           <form
@@ -1997,17 +1998,17 @@ defmodule RavixWeb.Live.ProjectSettings do
         >
           Change repository…
         </button>
+        <.change_repository_dialog
+          :if={@change_dialog}
+          project={@project}
+          choices={@repository_choices}
+          query={@change_query}
+          change={@change_repository}
+          count={@change_count}
+          pending={@pending}
+          myself={@myself}
+        />
       </section>
-      <.change_repository_dialog
-        :if={@change_dialog}
-        project={@project}
-        choices={@repository_choices}
-        query={@change_query}
-        change={@change_repository}
-        count={@change_count}
-        pending={@pending}
-        myself={@myself}
-      />
       <form
         :for={
           {action, label} <- [

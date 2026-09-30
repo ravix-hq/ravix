@@ -2230,7 +2230,7 @@ section.first-prompt#project-start { align-self: center; padding: 32px 24px; }
 .settings-feedback { color: var(--ink); min-height: 1.5em; margin: 0 0 20px; }
 .settings-danger { border: 1px solid var(--bad); border-radius: var(--radius); padding: 16px; }
 .settings-danger h3 { color: var(--bad); }
-.settings-danger form + form { margin-top: 24px; padding-top: 20px; border-top: 1px solid var(--line); }
+.settings-danger :is(form, section) + :is(form, section) { margin-top: 24px; padding-top: 20px; border-top: 1px solid var(--line); }
 .settings-discard { margin-bottom: 20px; }
 /* RAV-74: a project page's parts, GitHub-settings style: a heading and a rule. */
 .settings-part { margin-top: 32px; padding-top: 20px; border-top: 1px solid var(--line); }
@@ -2249,7 +2249,7 @@ section.first-prompt#project-start { align-self: center; padding: 32px 24px; }
 .machine-review { width: min(520px, 100%); }
 /* RAV-76: Change repository's dialog; its list is the repo picker's. */
 .dialog.change-repository { width: min(560px, 100%); }
-.dialog.change-repository h3 { margin: 16px 0 6px; font-size: 13px; }
+.dialog.change-repository h3 { margin: 16px 0 6px; font-size: 13px; color: var(--ink); }
 .dialog.change-repository .repo-picker-list { max-height: min(30vh, 220px); }
 .access-page .access-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin: 0 0 20px; font-size: 13px; }
 .access-page .access-summary li { padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
