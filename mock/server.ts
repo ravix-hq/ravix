@@ -362,6 +362,12 @@ const commands = () => acp({
     { name: "init", description: "Write a CLAUDE.md describing this codebase" },
     { name: "compact", description: "Summarise the conversation so far to free up context" },
     { name: "pr-comments", description: "Read the comments on this branch's pull request" },
+    // Skills arrive as commands too, described for the model rather than for
+    // a person: the composer shows each one's own purpose (RAV-95).
+    { name: "sprite", description: "Use this skill when users are modifying system configuration, starting dev servers, or requesting services. Also use it for checkpoints." },
+    { name: "api-gateway", description: "Use this skill when users want to call external APIs (GitHub, Slack, Linear, etc.) with authenticated requests. The gateway holds the keys." },
+    { name: "ravix-testing", description: "Use when adding regression tests or raising coverage in this repository. Covers server, LiveView and hooks." },
+    { name: "dataviz", description: "Use this skill whenever you are about to create any chart, graph or plot." },
   ],
 });
 const thought = (t: string) => acp({ sessionUpdate: "agent_thought_chunk", content: { type: "text", text: t } });
@@ -432,7 +438,7 @@ function advertised(conv: Conv): SessionConfigOption[] {
   } else {
     if (!model.includes("haiku")) {
       const levels: [string, string][] = [["default", "Default"], ["low", "Low"], ["medium", "Medium"], ["high", "High"]];
-      if (!model.includes("sonnet")) levels.push(["xhigh", "Extra high"], ["max", "Max"]);
+      if (!model.includes("sonnet")) levels.push(["xhigh", "Xhigh"], ["max", "Max"]);
       opts.push({ id: "effort", name: "Effort", category: "thought_level", type: "select", currentValue: "default", options: select(levels) });
     }
     if (model.endsWith("claude-opus-5-5")) opts.push({ id: "fast", name: "Fast mode", category: "model_config", type: "boolean", currentValue: false });
