@@ -267,6 +267,26 @@
               />
             </article>
           </div>
+          <%!-- The servers the last answer named, once the machine says
+            they are listening: one click from "Open: localhost:5173" to it. --%>
+          <div
+            :if={
+              !@thread_draft[:selected?] && offered_ports(@reported_ports, @preview_ports) != []
+            }
+            id="preview-offers"
+            class="preview-offers"
+          >
+            <span class="dimmer">The agent started a server</span>
+            <button
+              :for={port <- offered_ports(@reported_ports, @preview_ports)}
+              type="button"
+              class="ghost"
+              phx-click="preview-port"
+              phx-value-port={port}
+            >
+              <.icon name="globe" size={13} />Preview :{port}
+            </button>
+          </div>
           <%!-- Shown by `assets/js/hooks/transcript_tail.js` once the reader
             has scrolled up: it toggles `unpinned` on the scroller, and the
             stylesheet shows this only under that class. A click re-pins. --%>
@@ -792,21 +812,124 @@
                 Logs
               </button>
             </div>
-            <a
-              :if={@preview_url && @preview.state == :ready}
-              href={~p"/preview/#{@track_id}"}
-              target="_blank"
-              rel="noreferrer"
+            <%!-- What the frame shows: the run script, or one port listening
+              on the track's machine. The path bar drives the frame through
+              the gateway's own bridge (`preview_frame.js`), so every
+              navigation stays on the preview's origin and its session. --%>
+            <div
+              id="preview-view"
+              class="preview-view"
+              phx-hook="PreviewFrame"
+              data-origin={preview_origin(@preview_url)}
             >
-              Open preview in new tab ↗
-            </a>
-            <iframe
-              :if={@preview_url && @preview.state == :ready}
-              src={@preview_url}
-              title="Track preview"
-              class="workspace-preview"
-              sandbox="allow-scripts allow-forms allow-same-origin allow-popups allow-downloads"
-            ></iframe>
+              <div class="preview-bar">
+                <form id="preview-port-form" phx-change="preview-port" class="preview-port">
+                  <label for="preview-port" class="sr-only">Port</label>
+                  <select id="preview-port" name="port" disabled={@panel.busy?}>
+                    <option value="" selected={is_nil(@preview_port)} disabled={!@preview.url}>
+                      Run script
+                    </option>
+                    <option
+                      :for={port <- port_choices(@preview_ports, @preview_port)}
+                      value={port}
+                      selected={port == @preview_port}
+                    >
+                      :{port}
+                    </option>
+                  </select>
+                </form>
+                <button
+                  type="button"
+                  class="ghost icon-button"
+                  data-preview-nav="back"
+                  aria-label="Back"
+                  title="Back"
+                  disabled={!preview_frame?(assigns)}
+                >
+                  <.icon name="arrow-left" size={14} />
+                </button>
+                <button
+                  type="button"
+                  class="ghost icon-button"
+                  data-preview-nav="forward"
+                  aria-label="Forward"
+                  title="Forward"
+                  disabled={!preview_frame?(assigns)}
+                >
+                  <.icon name="arrow-right" size={14} />
+                </button>
+                <button
+                  type="button"
+                  class="ghost icon-button"
+                  data-preview-nav="reload"
+                  aria-label="Reload"
+                  title="Reload"
+                  disabled={!preview_frame?(assigns)}
+                >
+                  <.icon name="refresh" size={14} />
+                </button>
+                <form id="preview-location-form" class="preview-location" data-preview-go>
+                  <label for="preview-location" class="sr-only">Path</label>
+                  <input
+                    id="preview-location"
+                    name="path"
+                    type="text"
+                    value="/"
+                    autocomplete="off"
+                    spellcheck="false"
+                    phx-update="ignore"
+                  />
+                </form>
+                <a
+                  :if={preview_frame?(assigns)}
+                  href={preview_tab_path(@track_id, @preview_port)}
+                  target="_blank"
+                  rel="noreferrer"
+                  class="ghost icon-button"
+                  aria-label="Open preview in new tab"
+                  title="Open preview in new tab"
+                >
+                  <.icon name="external" size={14} />
+                </a>
+              </div>
+              <div
+                :if={match?({:unreachable, _}, @preview_frame)}
+                id="preview-unreachable"
+                class="empty preview-empty"
+                role="status"
+              >
+                <span class="mark"><.icon name="globe" size={20} /></span>
+                <h3>{unreachable_title(@preview_frame)}</h3>
+                <p>
+                  Start the app on this track's machine, or run the track's run script, then retry.
+                </p>
+                <div class="workspace-actions">
+                  <button
+                    type="button"
+                    class="primary"
+                    phx-click="preview"
+                    phx-value-action="run"
+                    disabled={
+                      @panel.busy? || !@preview.available ||
+                        @preview.state in [:starting, :ready, :running]
+                    }
+                  >
+                    Run
+                  </button>
+                  <button type="button" phx-click="preview-retry" disabled={@panel.busy?}>
+                    Retry
+                  </button>
+                </div>
+              </div>
+              <iframe
+                :if={preview_frame?(assigns)}
+                id="preview-frame"
+                src={@preview_url}
+                title="Track preview"
+                class="workspace-preview"
+                sandbox="allow-scripts allow-forms allow-same-origin allow-popups allow-downloads"
+              ></iframe>
+            </div>
             <details
               id="preview-logs"
               open={@preview.state == :failed}

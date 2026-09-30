@@ -128,6 +128,10 @@ defmodule RavixWeb.TrackLive do
         preview: nil,
         preview_form: Form.new(:preview_config),
         preview_url: nil,
+        preview_port: nil,
+        preview_ports: nil,
+        preview_frame: :loading,
+        reported_ports: [],
         dialog: nil,
         close_info: nil,
         rename_form: Form.new(:rename_track),
@@ -520,10 +524,50 @@ defmodule RavixWeb.TrackLive do
        preview_async(socket, fn user, id, _hash -> Previews.run(user, id, :restart) end)}
 
   def handle_event("preview", %{"action" => "open"}, socket),
-    do: {:noreply, preview_async(socket, &Previews.open(&1, &2, &3))}
+    do: {:noreply, socket |> run_script_view() |> preview_async(&Previews.open(&1, &2, &3))}
 
   def handle_event("preview", %{"action" => "restart"}, socket),
-    do: {:noreply, preview_async(socket, &Previews.restart(&1, &2, &3))}
+    do: {:noreply, socket |> run_script_view() |> preview_async(&Previews.restart(&1, &2, &3))}
+
+  # The port picker, and the "Preview :<port>" an agent's answer offers. The
+  # port is whatever the browser sent; `Previews.open_port/4` is what decides
+  # whether it is one, and whether it is listening, before a ticket exists.
+  def handle_event("preview-port", %{"port" => ""}, socket),
+    do: {:noreply, socket |> run_script_view() |> preview_async(&Previews.open(&1, &2, &3))}
+
+  def handle_event("preview-port", %{"port" => port}, socket) do
+    port =
+      case is_binary(port) && Integer.parse(port) do
+        {number, ""} -> number
+        _ -> port
+      end
+
+    {:noreply, socket |> show_preview_tab() |> open_port(port)}
+  end
+
+  def handle_event("preview-retry", _params, %{assigns: %{preview_port: nil}} = socket),
+    do: {:noreply, socket |> run_script_view() |> preview_async(&Previews.open(&1, &2, &3))}
+
+  def handle_event("preview-retry", _params, socket),
+    do: {:noreply, open_port(socket, socket.assigns.preview_port)}
+
+  def handle_event("preview-ports", _params, socket),
+    do: {:noreply, load_preview_ports(socket)}
+
+  # What the frame says about itself, through `assets/js/hooks/preview_frame.js`.
+  # Only ever a picture of the frame: the port is shown, never dialled.
+  def handle_event("preview-frame", %{"state" => "unreachable"} = params, socket) do
+    port =
+      case params["port"] do
+        port when is_integer(port) and port in 1..65_535 -> port
+        _ -> socket.assigns.preview_port
+      end
+
+    {:noreply, assign(socket, preview_frame: {:unreachable, port})}
+  end
+
+  def handle_event("preview-frame", %{"state" => "ok"}, socket),
+    do: {:noreply, assign(socket, preview_frame: :ok)}
 
   def handle_event("preview", %{"action" => "stop"}, socket),
     do: {:noreply, preview_async(socket, fn user, id, _hash -> Previews.stop(user, id) end)}
@@ -1104,6 +1148,27 @@ defmodule RavixWeb.TrackLive do
   defp async_result(:panel, {:ok, {:error, reason}}, socket),
     do: update_panel(socket, &Panel.failed(&1, Error.from(reason).message))
 
+  defp async_result(:preview_port, {:ok, {:ok, url}}, socket),
+    do: assign(socket, preview_url: url, preview_frame: :loading)
+
+  # Nothing listening there now: the empty state, with Run and Retry.
+  defp async_result(:preview_port, {:ok, {:error, {:unprocessable, "port", _}}}, socket) do
+    port = if is_integer(socket.assigns.preview_port), do: socket.assigns.preview_port
+
+    assign(socket, preview_url: nil, preview_frame: {:unreachable, port})
+  end
+
+  defp async_result(:preview_port, {:ok, {:error, reason}}, socket),
+    do: socket |> assign(preview_port: nil, preview_url: nil) |> error(reason)
+
+  defp async_result(:preview_ports, {:ok, {:ok, ports}}, socket),
+    do: assign(socket, preview_ports: ports)
+
+  # A machine that cannot say what it is listening on offers nothing extra;
+  # the run script and its own controls are unaffected.
+  defp async_result(:preview_ports, _response, socket),
+    do: assign(socket, preview_ports: socket.assigns.preview_ports || [])
+
   defp async_result(:preview_action, {:ok, response}, socket) do
     result(update_panel(socket, &Panel.settled/1), response, fn s, preview ->
       s
@@ -1194,7 +1259,9 @@ defmodule RavixWeb.TrackLive do
   defp repair(socket, page) do
     was = Transcript.visible_turns(socket.assigns.page)
     now = Transcript.visible_turns(page)
-    socket = socket |> assign(page: page) |> replay_thread_activity(page) |> memoize()
+
+    socket =
+      socket |> assign(page: page) |> replay_thread_activity(page) |> memoize() |> report_ports()
 
     if appended_to?(was, now),
       do: Enum.reduce(now, socket, &insert_changed(&2, was, &1)),
@@ -1526,6 +1593,10 @@ defmodule RavixWeb.TrackLive do
       preview: nil,
       preview_form: Form.new(:preview_config),
       preview_url: nil,
+      preview_port: nil,
+      preview_ports: nil,
+      preview_frame: :loading,
+      reported_ports: [],
       dialog: nil,
       rename_form: Form.new(:rename_track),
       pull: nil
@@ -1870,6 +1941,62 @@ defmodule RavixWeb.TrackLive do
   # The four preview buttons all do the same thing to the page -- mark the
   # panel busy and answer later -- and differ only in which context call they
   # make, so that call is what they pass in.
+  # The frame is up for a port as soon as it has a ticket, and for the run
+  # script once it is ready; neither while it is known to be unreachable.
+  defp preview_frame?(assigns) do
+    assigns.preview_url != nil and not match?({:unreachable, _}, assigns.preview_frame) and
+      (assigns.preview_port != nil or match?(%{state: :ready}, assigns.preview))
+  end
+
+  # Only the origin: the ticket in the URL's fragment is the frame's, not
+  # the hook's.
+  defp preview_origin(nil), do: nil
+
+  defp preview_origin(url) do
+    uri = URI.parse(url)
+    URI.to_string(%URI{uri | path: nil, query: nil, fragment: nil, userinfo: nil})
+  end
+
+  defp preview_tab_path(track_id, nil), do: ~p"/preview/#{track_id}"
+  defp preview_tab_path(track_id, port), do: ~p"/preview/#{track_id}?#{[port: port]}"
+
+  defp port_choices(ports, current) do
+    extra = if is_integer(current), do: [current], else: []
+    Enum.sort(Enum.uniq((ports || []) ++ extra))
+  end
+
+  defp offered_ports(_reported, nil), do: []
+  defp offered_ports(reported, listening), do: Enum.filter(reported, &(&1 in listening))
+
+  defp unreachable_title({:unreachable, port}) when is_integer(port),
+    do: "Nothing is listening on :#{port} yet"
+
+  defp unreachable_title(_), do: "Nothing is listening yet"
+
+  defp run_script_view(socket),
+    do: assign(socket, preview_port: nil, preview_frame: :loading)
+
+  defp show_preview_tab(%{assigns: %{panel: %{tab: :preview}}} = socket), do: socket
+
+  defp show_preview_tab(socket) do
+    socket
+    |> assign(panel: Panel.select(socket.assigns.panel, :preview), narrow_view: "files")
+    |> reload_panel()
+  end
+
+  defp open_port(socket, port) do
+    %{current_user: user, track_id: id, session_hash: hash} = socket.assigns
+
+    socket
+    |> assign(preview_port: port, preview_url: nil, preview_frame: :loading)
+    |> workspace_async(:preview_port, fn -> Previews.open_port(user, id, hash, port) end)
+  end
+
+  defp load_preview_ports(socket) do
+    %{current_user: user, track_id: id} = socket.assigns
+    workspace_async(socket, :preview_ports, fn -> Previews.listening_ports(user, id) end)
+  end
+
   defp preview_async(socket, call) do
     user = socket.assigns.current_user
     id = socket.assigns.track_id
@@ -2508,10 +2635,43 @@ defmodule RavixWeb.TrackLive do
 
   defp after_turn(socket, %TranscriptEvent{} = event) do
     cond do
-      not TranscriptEvent.settles?(event) -> socket
-      socket.assigns.panel.tab == :changes -> load_panel(socket, &Panel.reloading/1)
-      true -> update_panel(socket, &Panel.forget_changes/1)
+      not TranscriptEvent.settles?(event) ->
+        socket
+
+      socket.assigns.panel.tab == :changes ->
+        socket |> load_panel(&Panel.reloading/1) |> report_ports()
+
+      true ->
+        socket |> update_panel(&Panel.forget_changes/1) |> report_ports()
     end
+  end
+
+  # The servers the last finished answer told the reader to open. Offered as
+  # "Preview :<port>" once the machine says the port is listening, so an
+  # answer that names a server which has since stopped offers nothing.
+  defp report_ports(socket) do
+    ports = reported_ports(socket.assigns.page)
+    changed? = ports != socket.assigns.reported_ports
+    socket = assign(socket, reported_ports: ports)
+
+    if ports != [] and changed?, do: load_preview_ports(socket), else: socket
+  end
+
+  defp reported_ports(page) do
+    case page |> Transcript.visible_turns() |> Enum.filter(& &1.settled?) |> List.last() do
+      nil -> []
+      turn -> ports_in(answer(turn.blocks))
+    end
+  end
+
+  @doc false
+  # `localhost:<port>` and `127.0.0.1:<port>`, in the order the answer names them.
+  def ports_in(text) do
+    ~r/(?<![\w.-])(?:localhost|127\.0\.0\.1):(\d{1,5})(?!\d)/i
+    |> Regex.scan(text, capture: :all_but_first)
+    |> Enum.map(fn [digits] -> String.to_integer(digits) end)
+    |> Enum.filter(&(&1 in 1..65_535))
+    |> Enum.uniq()
   end
 
   defp workspace_async(socket, name, fun) do
@@ -2551,6 +2711,7 @@ defmodule RavixWeb.TrackLive do
         :preview -> Previews.status(user, id)
       end
     end)
+    |> then(&if(tab == :preview, do: load_preview_ports(&1), else: &1))
   end
 
   defp enrich_listing(panel, path, {:ok, {:ok, %Files.Listing{path: path} = listing}}) do
@@ -2669,7 +2830,8 @@ defmodule RavixWeb.TrackLive do
 
     assign(socket,
       preview: preview,
-      preview_url: if(preview.url, do: socket.assigns.preview_url),
+      # A machine port's frame does not depend on the run script having a URL.
+      preview_url: if(preview.url || socket.assigns.preview_port, do: socket.assigns.preview_url),
       preview_form:
         Form.new(:preview_config, %{
           "directory" => Map.get(config, :directory, "."),

@@ -35,6 +35,17 @@ defmodule RavixWeb.Endpoint do
     end
   end
 
+  @doc """
+  Whether a request names a loopback host: `localhost`, `127.0.0.1`, or a
+  name under `.localhost`, which RFC 6761 reserves for loopback so no
+  deployment can be reached by one. `force_ssl` leaves these on plain HTTP,
+  as it already did `localhost` itself, so the production build the browser
+  suite runs can frame a preview on `<host>.preview.localhost`.
+  """
+  @spec loopback?(Plug.Conn.t()) :: boolean()
+  def loopback?(%Plug.Conn{host: host}),
+    do: host in ["localhost", "127.0.0.1"] or String.ends_with?(host, ".localhost")
+
   socket "/live", Phoenix.LiveView.Socket,
     websocket: [connect_info: [session: @session_options]],
     longpoll: [connect_info: [session: @session_options]]

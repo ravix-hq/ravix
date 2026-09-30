@@ -15,7 +15,10 @@ config :ravix, RavixWeb.Endpoint,
     rewrite_on: [:x_forwarded_proto],
     exclude: [
       # paths: ["/health"],
-      hosts: ["localhost", "127.0.0.1"]
+      hosts: ["localhost", "127.0.0.1"],
+      # And their subdomains, which is where the browser suite's preview
+      # hosts live (`PREVIEW_DOMAIN=preview.localhost`); see the function.
+      conn: {RavixWeb.Endpoint, :loopback?, []}
     ]
   ]
 

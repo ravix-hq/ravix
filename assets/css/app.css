@@ -1139,6 +1139,32 @@ html[data-yard="closed"] .yard .workspace-gear { display: none; }
 /* The preview is somebody else's page in a frame; the panel colour is the
    ground it paints over, so the wait for it is not a hole in the inspector. */
 .workspace-preview { width: 100%; height: 360px; background: var(--panel); border: 0; margin: 12px 0; }
+/* The Preview tab's own chrome around that frame: which port, then back,
+   forward, reload and the path, one row, the way a browser's is. The frame
+   sits flush under it so the two read as one window. */
+.preview-view { margin: 12px 0; border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+.preview-view .workspace-preview { margin: 0; display: block; }
+.preview-bar {
+  display: flex; align-items: center; gap: 2px; padding: 4px;
+  border-bottom: 1px solid var(--line); background: var(--surface);
+}
+.preview-bar .icon-button, .preview-bar a.icon-button {
+  display: inline-grid; place-items: center; flex: none; width: 28px; height: 28px; padding: 0;
+  color: var(--dim); border-radius: var(--radius);
+}
+.preview-bar a.icon-button:hover { background: var(--surface-hover); color: var(--ink); text-decoration: none; }
+.preview-port { flex: none; }
+.preview-port select { width: auto; padding: 3px 6px; font-family: var(--mono); font-size: 12px; }
+.preview-location { flex: 1; min-width: 0; margin-left: 4px; }
+.preview-location input { padding: 3px 8px; font-family: var(--mono); font-size: 12px; }
+.preview-empty { min-height: 0; padding: 32px 16px; }
+.preview-empty .workspace-actions { justify-content: center; padding: 6px 0 0; }
+/* "Preview :5173" under the answer that named the server. */
+.preview-offers {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 6px;
+  margin: 4px 0 12px; font-size: 13px;
+}
+.preview-offers button { display: inline-flex; align-items: center; gap: 6px; font-family: var(--mono); font-size: 12px; }
 .workspace-failure { background: var(--danger-bg); border: 1px solid var(--danger-line); border-radius: var(--radius); padding: 10px 12px; margin: 8px 0; }
 .workspace-failure strong { display: block; font-weight: 500; margin-bottom: 6px; }
 .workspace-failure pre { margin: 0; white-space: pre-wrap; word-break: break-word; font-size: 12px; color: var(--dim); }

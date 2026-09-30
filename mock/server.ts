@@ -29,6 +29,7 @@ import { existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { WORKSPACE_ROOT, WORK_ROOT, RECEIPT_PATH, parseChannel } from "../shared/contract";
 let updateMockPreview = (_workdir: string): void => {};
+let startMachineApp = (_port: number): boolean => false;
 
 const PORT = Number(process.env.MOCK_PORT || 8793);
 const BASE = `http://localhost:${PORT}`;
@@ -460,6 +461,18 @@ async function act(prompt: string, emit: Emit, say: Say, conv: Conv, disk: Disk,
     emit({ kind: "output", stream: "acp", data: tool("retry-test", "mix test") });
     emit({ kind: "output", stream: "acp", data: toolDone("retry-test", "All tests passed") });
     await say("The fix is complete.");
+    return;
+  }
+
+  // An agent starting its own dev server, and saying where, the way agents
+  // do: the Preview tab's "Preview :<port>" is offered from that sentence.
+  if (prompt.trim().endsWith("Start the dev server")) {
+    const port = Number(process.env.MOCK_DEV_PORT || 5173);
+    emit({ kind: "output", stream: "acp", data: tool("dev1", `npm run dev -- --port ${port}`) });
+    const started = startMachineApp(port);
+    await pause(1500);
+    emit({ kind: "output", stream: "acp", data: toolDone("dev1", `VITE ready\n  ➜  Local:   http://localhost:${port}/`) });
+    await say(started ? `The dev server is up.\n\nOpen: http://localhost:${port}/` : "No dev server port is configured for this mock.");
     return;
   }
 
@@ -1674,7 +1687,7 @@ function githubWeb(req: Request, url: URL, webBody: Record<string, unknown> = {}
 // ── the port ───────────────────────────────────────────────────────────
 
 if (import.meta.main) {
-({ updateMockPreview } = await import("./previews"));
+({ updateMockPreview, startMachineApp } = await import("./previews"));
 Bun.serve({
   port: PORT,
   // A track's transcript stream stays open as long as its tab is; the default

@@ -89,12 +89,17 @@ defmodule RavixWeb.PreviewGateway.Watch do
   defp check(%{backend: backend, row: row, grant: grant} = state) do
     current = backend.preview(row.track_id)
 
-    if allowed?(backend, row, grant) and current != nil and current.generation == row.generation do
+    if allowed?(backend, row, grant) and current != nil and same_service?(grant, current, row) do
       state
     else
       close(state)
     end
   end
+
+  # A new generation is a new run script; a machine port's app is not the
+  # run script, so restarting that is no reason to cut its connections.
+  defp same_service?(%{port: port}, _current, _row) when is_integer(port), do: true
+  defp same_service?(_grant, current, row), do: current.generation == row.generation
 
   defp close(state) do
     send(state.owner, {:preview_gateway, :close})

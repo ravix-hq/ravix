@@ -26,15 +26,31 @@ def start(args, env):
     return process
 
 # Never attach to another developer's server or database.
+# MOCK_DEV_PORT is the one "machine" port an agent's dev server may use
+# outside the run script (browser/preview-ports.spec.js); it must be free too.
 ports = tuple(int(os.environ.get(key, default)) for key, default in
-              (("BROWSER_PORT", "4103"), ("MOCK_PORT", "8893"), ("MOCK_SPRITES_PORT", "8894")))
+              (("BROWSER_PORT", "4103"), ("MOCK_PORT", "8893"), ("MOCK_SPRITES_PORT", "8894"),
+               ("MOCK_DEV_PORT", "8895")))
 for port in ports:
     with socket.socket() as probe:
         probe.bind(("127.0.0.1", port))
 
+# The app's host, and its previews' domain beside it. A preview frame only
+# keeps its SameSite=Strict session when the two are one site, as
+# `app.ravix.sh` and `*.preview.ravix.sh` are in production. `localhost` and
+# `*.preview.localhost` are not, so `bun run test:browser:previews` runs on
+# `app.ravix.localhost` with previews under `preview.ravix.localhost`. Only
+# loopback names are accepted.
+host = os.environ.get("BROWSER_HOST", "localhost")
+if host != "localhost" and not (host.endswith(".localhost") and host.count(".") >= 2
+                                and host.replace(".", "").replace("-", "").isalnum()):
+    raise SystemExit("BROWSER_HOST must be localhost or <app>.<site>.localhost")
+preview_domain = "preview.localhost" if host == "localhost" else "preview." + host.split(".", 1)[1]
 env = dict(os.environ, MIX_ENV="prod", PORT=str(ports[0]), PHX_SERVER="true",
-           PUBLIC_URL=f"http://localhost:{ports[0]}", RAVIX_URL=f"http://localhost:{ports[0]}",
+           PUBLIC_URL=f"http://{host}:{ports[0]}", RAVIX_URL=f"http://{host}:{ports[0]}",
+           RAVIX_HOST=host, PREVIEW_DOMAIN=preview_domain,
            MOCK_PORT=str(ports[1]), MOCK_SPRITES_PORT=str(ports[2]),
+           MOCK_DEV_PORT=str(ports[3]), MOCK_MACHINE_PORTS=str(ports[3]),
            RAVIX_SECRET="browser-test-only-secret-never-used-outside-this-process",
            RAVIX_BROWSER_TEST="1", RAVIX_THREADS_ENABLED="true",
            RAVIX_DEDICATED_OPEN_USER_IDS="00000000-0000-4000-8000-000000009003,00000000-0000-4000-8000-000000009004,"

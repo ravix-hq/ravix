@@ -402,6 +402,16 @@ defmodule Ravix.PreviewGatewayFake do
     end
 
     @impl true
+    def machine_sprite(track_id) do
+      Store.record({:machine_sprite, track_id})
+
+      case Store.row(track_id) do
+        %{sprite: sprite} when is_binary(sprite) -> {:ok, sprite}
+        _ -> {:error, :no_machine}
+      end
+    end
+
+    @impl true
     def public_url, do: "http://localhost:5183"
 
     @impl true

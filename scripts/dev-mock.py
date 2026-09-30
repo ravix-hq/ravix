@@ -6,6 +6,9 @@ from pathlib import Path
 root = Path(__file__).resolve().parent.parent
 os.chdir(root)
 port = os.environ.get("PORT", "4000")
+# A loopback name, and the previews' domain beside it (see browser/server.py).
+host = os.environ.get("RAVIX_HOST", "localhost")
+preview_domain = os.environ.get("PREVIEW_DOMAIN", "preview.localhost")
 mock_port = os.environ.get("MOCK_PORT", "8793")
 sprites_port = os.environ.get("MOCK_SPRITES_PORT", "8794")
 key = Path(os.environ.get("MOCK_KEY_PATH", str(root / "mock/dev-key.pem")))
@@ -13,12 +16,12 @@ if not key.exists():
     raise SystemExit("Start bun run mock first to generate the development key.")
 os.environ.update({
     "PORT": port,
-    "PUBLIC_URL": f"http://localhost:{port}",
+    "PUBLIC_URL": f"http://{host}:{port}",
     "FOUNTAIN_URL": f"http://localhost:{mock_port}",
     "FOUNTAIN_API_KEY": "ftn_mock",
     "SPRITES_TOKEN": "sprites_mock",
     "SPRITES_URL": f"http://localhost:{sprites_port}",
-    "PREVIEW_DOMAIN": "preview.localhost",
+    "PREVIEW_DOMAIN": preview_domain,
     "GITHUB_API_URL": f"http://localhost:{mock_port}/gh",
     "GITHUB_WEB_URL": f"http://localhost:{mock_port}/ghweb",
     "GITHUB_APP_ID": "1",

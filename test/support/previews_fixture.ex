@@ -28,6 +28,7 @@ defmodule Ravix.PreviewsFixture do
           crash: non_neg_integer(),
           collide: boolean(),
           exec_error: term(),
+          listening: String.t(),
           creates: non_neg_integer(),
           stops: [String.t()],
           deletes: [String.t()],
@@ -64,6 +65,7 @@ defmodule Ravix.PreviewsFixture do
       service_error: nil,
       collide: false,
       exec_error: nil,
+      listening: "",
       creates: 0,
       stops: [],
       deletes: [],
@@ -214,9 +216,18 @@ defmodule Ravix.PreviewsFixture do
       cond do
         # A machine that is asleep, gone, or unreachable, which is what
         # `Sprites.exec/4` answers with rather than raising.
-        error = state(pid).exec_error -> {:error, error}
-        state(pid).collide -> {:ok, %{stdout: "", stderr: "Port occupied", code: 1}}
-        true -> {:ok, %{stdout: "", stderr: "", code: 0}}
+        error = state(pid).exec_error ->
+          {:error, error}
+
+        # `Lifecycle.listening/1`: what `ss -H -ltn` prints on the machine.
+        List.last(argv) =~ "ravix:listening" ->
+          {:ok, %{stdout: state(pid).listening, stderr: "", code: 0}}
+
+        state(pid).collide ->
+          {:ok, %{stdout: "", stderr: "Port occupied", code: 1}}
+
+        true ->
+          {:ok, %{stdout: "", stderr: "", code: 0}}
       end
     end)
 

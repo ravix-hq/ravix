@@ -28,6 +28,20 @@ defmodule RavixWeb.PreviewGateway do
        relaying WebSockets frame for frame. Open connections are watched and
        cut when access ends.
 
+  A host is either the track's run script (`<hostname>`) or one port on the
+  track's machine (`<hostname>--p<port>`, `Ravix.Previews.host_label/2`).
+  The port in the host is only a request: a session is admitted on a port
+  host when its grant was minted for exactly that port, and grants for a
+  port are minted by `Ravix.Previews.open_port/4` after the server has seen
+  it listening. A run-script session is refused on every port host and a
+  port session on every other host, so neither a forged host nor a copied
+  cookie reaches a port the server did not choose.
+
+  When nothing answers on the port, the reader gets a page saying so rather
+  than a proxy error, and the page (like the activity script on every app
+  page) tells an embedding Ravix track where the frame is, so the track can
+  draw its own path bar and empty state around it.
+
   Everything Ravix-specific comes through `RavixWeb.PreviewGateway.Backend`;
   the tunnel module is read from application env so tests stand in a local
   upstream.
@@ -38,6 +52,7 @@ defmodule RavixWeb.PreviewGateway do
   import Plug.Conn
 
   alias Ravix.Crypto
+  alias Ravix.Previews
   alias Ravix.Previews.Grant
   alias RavixWeb.PreviewGateway.{Headers, Html, Relay, Watch}
 
@@ -57,8 +72,14 @@ defmodule RavixWeb.PreviewGateway do
     since it happens after the headers are out and there is no conn left to
     return --- is its neighbour.
     """
-    defexception [:status, :code, :message]
-    @type t :: %__MODULE__{status: pos_integer(), code: String.t(), message: String.t()}
+    defexception [:status, :code, :message, :port]
+
+    @type t :: %__MODULE__{
+            status: pos_integer(),
+            code: String.t(),
+            message: String.t(),
+            port: pos_integer() | nil
+          }
   end
 
   defmodule ErrorAborted do
@@ -90,6 +111,7 @@ defmodule RavixWeb.PreviewGateway do
   @body_timeout 120_000
   @conn_key :preview_gateway_conn
   @generic "The preview did not answer. Return to the track to restart it or read its logs."
+  @unreachable "preview_unreachable"
   @not_found "Preview not found."
   @unknown_control "Unknown preview control."
   @closed_track "This track is closed or being retired."
@@ -151,13 +173,16 @@ defmodule RavixWeb.PreviewGateway do
   # is what stops a seventh being forgotten at one of the call sites.
   defmodule Site do
     @moduledoc false
-    @enforce_keys [:backend, :cfg, :row, :host, :origin]
+    # `port` is the machine port a `--p<port>` host names, nil for the run script.
+    @enforce_keys [:backend, :cfg, :row, :host, :origin, :port]
     defstruct @enforce_keys
   end
 
   defp resolve(backend, cfg, name) do
-    with {:ok, row} <- resolve_host(backend, name) do
-      host = "#{row.hostname}.#{cfg.domain}#{cfg.public_port}"
+    {hostname, port} = Previews.parse_host_label(name)
+
+    with {:ok, row} <- resolve_host(backend, hostname) do
+      host = "#{Previews.host_label(row.hostname, port)}.#{cfg.domain}#{cfg.public_port}"
 
       {:ok,
        %Site{
@@ -165,7 +190,8 @@ defmodule RavixWeb.PreviewGateway do
          cfg: cfg,
          row: row,
          host: host,
-         origin: "#{cfg.protocol}://#{host}"
+         origin: "#{cfg.protocol}://#{host}",
+         port: port
        }}
     end
   end
@@ -195,7 +221,8 @@ defmodule RavixWeb.PreviewGateway do
 
     grant = site.backend.get_grant(hash, site.row.track_id, :session, :peek)
 
-    if grant && site.backend.allowed?(site.row, grant),
+    # A grant is for one host: the run script's (port nil) or one port's.
+    if grant && grant.port == site.port && site.backend.allowed?(site.row, grant),
       do: {:ok, grant},
       else: refuse(401, "preview_signin", @sign_in)
   end
@@ -207,9 +234,19 @@ defmodule RavixWeb.PreviewGateway do
     end
   end
 
-  defp destination(%Site{} = site) do
+  # Where the tunnel goes: the run script's sprite and port as the row had
+  # them when the request resolved, or the machine's sprite and the host's
+  # port, whether or not the run script was ever defined there.
+  defp destination(%Site{port: nil} = site) do
     case site.backend.destination(site.row.track_id) do
-      {:ok, _} -> :ok
+      {:ok, _} -> {:ok, {site.row.sprite, site.row.port}}
+      {:error, reason} -> refusal(reason, 502, "preview_unavailable", @generic)
+    end
+  end
+
+  defp destination(%Site{port: port} = site) do
+    case site.backend.machine_sprite(site.row.track_id) do
+      {:ok, sprite} -> {:ok, {sprite, port}}
       {:error, reason} -> refusal(reason, 502, "preview_unavailable", @generic)
     end
   end
@@ -221,13 +258,25 @@ defmodule RavixWeb.PreviewGateway do
     end
   end
 
-  defp open_tunnel(%Site{} = site) do
+  defp open_tunnel(%Site{} = site, {sprite, port}) do
     with %Ravix.Config.Sprites{} = sprites <- site.backend.sprites_config(),
-         {:ok, tunnel} <- tunnel_module().open(sprites, site.row.sprite, site.row.port, []) do
+         {:ok, tunnel} <- tunnel_module().open(sprites, sprite, port, []) do
       {:ok, tunnel}
     else
-      _ -> refuse(502, "preview_unavailable", @generic)
+      _ -> unreachable(port)
     end
+  end
+
+  # The tunnel could not reach the port, or the port did not answer: said
+  # as what the person can do something about, not as a proxy error.
+  defp unreachable(port) do
+    {:error,
+     %Error{
+       status: 502,
+       code: @unreachable,
+       message: "Nothing is listening on :#{port} yet.",
+       port: port
+     }}
   end
 
   # `refuse/3` is a refusal the gateway decided on; `refusal/4` is one a
@@ -247,7 +296,7 @@ defmodule RavixWeb.PreviewGateway do
 
   defp request(conn, %Site{} = site) do
     case {conn.request_path, conn.method} do
-      {@open, "GET"} -> reply(conn, 200, open_page())
+      {@open, "GET"} -> reply(conn, 200, open_page(site))
       {@exchange, "POST"} -> exchange(conn, site)
       _ -> authorized(conn, site)
     end
@@ -257,6 +306,7 @@ defmodule RavixWeb.PreviewGateway do
     with :ok <- same_origin_exactly(conn, site.origin, "Open previews from their own host."),
          {:ok, body, conn} <- read_ticket(conn),
          {:ok, ticket} <- claim_ticket(site, body),
+         :ok <- same_port(ticket, site),
          {:ok, token} <- mint_session(site, ticket) do
       secure = if site.cfg.protocol == :https, do: "; Secure", else: ""
 
@@ -284,6 +334,13 @@ defmodule RavixWeb.PreviewGateway do
        else: refuse(401, "ticket", "This preview link expired. Open it again from Ravix.")
   end
 
+  # The ticket is already spent: one minted for another port, or for the run
+  # script, buys nothing here and cannot be tried again on the right host.
+  defp same_port(%Grant{port: port}, %Site{port: port}), do: :ok
+
+  defp same_port(_ticket, _site),
+    do: refuse(401, "ticket", "This preview link expired. Open it again from Ravix.")
+
   defp mint_session(%Site{} = site, ticket) do
     token = Crypto.random_token()
 
@@ -292,7 +349,8 @@ defmodule RavixWeb.PreviewGateway do
       track_id: ticket.track_id,
       session_hash: ticket.session_hash,
       expires: System.system_time(:millisecond) + @session_ttl_ms,
-      kind: :session
+      kind: :session,
+      port: ticket.port
     }
 
     case site.backend.grant_session(session) do
@@ -318,7 +376,8 @@ defmodule RavixWeb.PreviewGateway do
         String.starts_with?(conn.request_path, @control) ->
           control(conn, site, back)
 
-        site.row.state != :ready ->
+        # A machine port has no startup to wait for: it answers or it does not.
+        site.port == nil and site.row.state != :ready ->
           conn
           |> put_resp_header("location", @start)
           |> put_resp_header("cache-control", "no-store")
@@ -380,7 +439,12 @@ defmodule RavixWeb.PreviewGateway do
         end
 
       {@activity, _} ->
-        reply(conn, 200, activity_script(back), "application/javascript; charset=utf-8")
+        reply(
+          conn,
+          200,
+          activity_script(back, public_origin(site.backend)),
+          "application/javascript; charset=utf-8"
+        )
 
       _ ->
         refuse(404, "preview", @unknown_control)
@@ -400,16 +464,16 @@ defmodule RavixWeb.PreviewGateway do
   # ── the reverse proxy ────────────────────────────────────────────────
 
   defp proxy(conn, %Site{} = site, grant, track) do
-    with :ok <- destination(site),
+    with {:ok, upstream} <- destination(site),
          _ = site.backend.touch(site.row.track_id),
          {:ok, watch} <- watch(site, grant, track.project_id) do
       try do
-        with {:ok, tunnel} <- open_tunnel(site) do
+        with {:ok, tunnel} <- open_tunnel(site, upstream) do
           tunnel_module = tunnel_module()
           Watch.attach(watch, fn -> tunnel_module.close(tunnel) end)
 
           try do
-            relay(conn, site, tunnel)
+            relay(conn, site, tunnel, elem(upstream, 1))
           after
             tunnel_module.close(tunnel)
           end
@@ -420,7 +484,7 @@ defmodule RavixWeb.PreviewGateway do
     end
   end
 
-  defp relay(conn, %Site{} = site, tunnel) do
+  defp relay(conn, %Site{} = site, tunnel, port) do
     headers = Headers.upstream_headers(conn.req_headers, site.host)
     body = if conn.method in ["GET", "HEAD"], do: nil, else: request_body(conn)
 
@@ -436,7 +500,7 @@ defmodule RavixWeb.PreviewGateway do
         respond(conn, status, response_headers, stream, site.origin)
 
       {:error, _reason} ->
-        refuse(502, "preview_unavailable", @generic)
+        unreachable(port)
     end
   end
 
@@ -567,12 +631,12 @@ defmodule RavixWeb.PreviewGateway do
     with :ok <- same_origin_exactly(conn, site.origin, "Invalid WebSocket origin."),
          :ok <- not_control(conn),
          {:ok, grant} <- authorize(conn, site),
-         :ok <- destination(site),
+         {:ok, upstream} <- destination(site),
          :ok <- ready(site),
          _ = site.backend.touch(site.row.track_id),
          {:ok, track} <- track(site),
          {:ok, watch} <- watch(site, grant, track.project_id) do
-      case open_tunnel(site) do
+      case open_tunnel(site, upstream) do
         {:ok, tunnel} -> relay_socket(conn, site, tunnel, watch)
         {:error, _} = refusal -> stop_watch(watch, refusal)
       end
@@ -585,6 +649,7 @@ defmodule RavixWeb.PreviewGateway do
       else: :ok
   end
 
+  defp ready(%Site{port: port}) when is_integer(port), do: :ok
   defp ready(%Site{row: %{state: :ready}}), do: :ok
   defp ready(%Site{}), do: refuse(503, "starting", "Preview is not ready.")
 
@@ -656,6 +721,19 @@ defmodule RavixWeb.PreviewGateway do
     |> send_resp(status, body)
   end
 
+  defp fail(conn, backend, %Error{code: @unreachable} = error) do
+    reply(
+      conn,
+      error.status,
+      unreachable_page(
+        error.message,
+        error.port,
+        backend.public_url(),
+        bridge_script(public_origin(backend))
+      )
+    )
+  end
+
   defp fail(conn, backend, %Error{status: status, message: message}) do
     reply(
       conn,
@@ -665,12 +743,15 @@ defmodule RavixWeb.PreviewGateway do
     )
   end
 
-  # The ticket lives in a fragment: absent from access logs and Referer.
-  defp open_page do
+  # The ticket lives in a fragment: absent from access logs and Referer. A
+  # run script waits on its starting page; a machine port goes straight in.
+  defp open_page(%Site{port: port}) do
+    next = if port, do: "/", else: @start
+
     """
     <meta name="viewport" content="width=device-width,initial-scale=1"><p>Opening private preview…</p><script>
     const ticket=location.hash.slice(1);history.replaceState(null,'',location.pathname);
-    fetch('#{@control}exchange',{method:'POST',headers:{'content-type':'text/plain'},body:ticket}).then(r=>{if(!r.ok)throw Error('This preview link expired. Open it again from Ravix.');location.replace('#{@control}start')}).catch(e=>document.querySelector('p').textContent=e.message);
+    fetch('#{@control}exchange',{method:'POST',headers:{'content-type':'text/plain'},body:ticket}).then(r=>{if(!r.ok)throw Error('This preview link expired. Open it again from Ravix.');location.replace('#{next}')}).catch(e=>document.querySelector('p').textContent=e.message);
     </script>
     """
   end
@@ -684,8 +765,49 @@ defmodule RavixWeb.PreviewGateway do
     [:back, :label]
   )
 
-  defp activity_script(back) do
-    "(()=>{const beat=()=>{if(document.visibilityState==='visible')fetch('#{@control}heartbeat',{method:'POST'}).catch(()=>{})};" <>
+  EEx.function_from_file(
+    :defp,
+    :unreachable_page,
+    Path.expand("preview_gateway/unreachable.html.eex", __DIR__),
+    [:message, :port, :back, :bridge]
+  )
+
+  # The Ravix origin an embedding track page is served from, which is the
+  # only origin the bridge below will talk to.
+  defp public_origin(backend) do
+    uri = URI.parse(backend.public_url())
+    URI.to_string(%URI{uri | path: nil, query: nil, fragment: nil, userinfo: nil})
+  end
+
+  # What lets a Ravix track page draw a path bar around a cross-origin
+  # frame. The page cannot read the frame's location or drive its history,
+  # and a navigation it started itself would arrive cross-site and be
+  # refused (`same_origin/2`), so the frame does both: it reports where it
+  # is to Ravix's origin only, and takes back, forward, reload and "go to
+  # this path" from its parent on Ravix's origin only. "Go" stays on the
+  # frame's own origin, so it is an ordinary same-origin navigation that
+  # carries the session cookie and nothing more. Outside a frame it does
+  # nothing.
+  defp bridge_script(app) do
+    "(()=>{if(window.parent===window)return;const app=#{Jason.encode!(app)};" <>
+      "const state=document.documentElement.dataset.ravixPreview||'ok';" <>
+      "const port=Number(document.documentElement.dataset.ravixPort)||null;" <>
+      "const report=()=>parent.postMessage({source:'ravix-preview',type:'location',state,port," <>
+      "path:location.pathname+location.search+location.hash},app);" <>
+      "for(const k of['pushState','replaceState']){const f=history[k];" <>
+      "history[k]=function(){const r=f.apply(this,arguments);report();return r}}" <>
+      "addEventListener('popstate',report);addEventListener('hashchange',report);report();" <>
+      "addEventListener('message',e=>{const d=e.data;" <>
+      "if(e.origin!==app||e.source!==parent||!d||d.source!=='ravix')return;" <>
+      "if(d.type==='back')history.back();else if(d.type==='forward')history.forward();" <>
+      "else if(d.type==='reload')location.reload();" <>
+      "else if(d.type==='go'&&typeof d.path==='string'&&d.path.startsWith('/')){" <>
+      "const u=new URL(d.path,location.origin);if(u.origin===location.origin)location.assign(u.href)}})})();"
+  end
+
+  defp activity_script(back, app) do
+    bridge_script(app) <>
+      "(()=>{const beat=()=>{if(document.visibilityState==='visible')fetch('#{@control}heartbeat',{method:'POST'}).catch(()=>{})};" <>
       "beat();setInterval(beat,30000);document.addEventListener('visibilitychange',beat);" <>
       "const host=document.createElement('div');const root=host.attachShadow({mode:'open'});const a=document.createElement('a');" <>
       "a.href=#{Jason.encode!(back)};a.textContent='Live working copy · Back to track';" <>

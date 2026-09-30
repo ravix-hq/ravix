@@ -102,6 +102,12 @@ defmodule RavixWeb.PreviewGateway.Backend do
   @doc "Make sure the sprite is awake and the row names it (`manager.destination`)."
   @callback destination(track_id :: String.t()) :: {:ok, row()} | {:error, refusal()}
 
+  @doc """
+  The sprite in front of the track's machine, for a machine port's host
+  (`Ravix.Previews.machine_sprite/1`). Asked after authorization only.
+  """
+  @callback machine_sprite(track_id :: String.t()) :: {:ok, String.t()} | {:error, refusal()}
+
   @doc "`Ravix.Config.public_url/0`."
   @callback public_url() :: String.t()
 

@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en" data-ravix-preview="unreachable" data-ravix-port="<%= port %>">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>Nothing listening · Ravix</title>
+<style>
+:root{color-scheme:dark;font:16px/1.6 system-ui,sans-serif;background:#0c0d0f;color:#e6e8ec}
+*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;padding:24px}
+main{width:min(100%,640px)}h1{font-size:24px;font-weight:600;margin:0 0 8px}p{color:#8e939c;margin:0 0 24px}
+button{font:inherit;color:#0c0d0f;background:#7ea8ff;border:0;border-radius:6px;padding:8px 16px;cursor:pointer}
+a{color:#7ea8ff;margin-left:16px}a:focus-visible,button:focus-visible{outline:2px solid #7ea8ff;outline-offset:4px}
+</style>
+</head>
+<body>
+<main>
+<h1><%= escape(message) %></h1>
+<p>Start the app on the track's machine, or run the track's run script, then retry.</p>
+<button type="button" onclick="location.reload()">Retry</button><a href="<%= escape(back) %>">Back to Ravix</a>
+</main>
+<script><%= bridge %></script>
+</body>
+</html>

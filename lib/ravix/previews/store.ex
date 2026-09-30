@@ -38,6 +38,14 @@ defmodule Ravix.Previews.Store do
   @typedoc "A browser grant; see `Ravix.Previews.Grant`."
   @type grant :: Grant.t()
 
+  @doc """
+  The range run-script ports are allocated from. On a shared machine every
+  track's run script listens somewhere in it, so a port picker that is not
+  that track's leaves the whole range out.
+  """
+  @spec preview_ports() :: Range.t()
+  def preview_ports, do: @first_port..@last_port
+
   @typedoc "The helper's grant for one delivered turn; see `Ravix.Previews.AgentGrant`."
   @type agent_grant :: AgentGrant.t()
 
@@ -340,7 +348,8 @@ defmodule Ravix.Previews.Store do
       track_id: g.track_id,
       session_hash: g.session_hash,
       expires: g.expires,
-      kind: g.kind
+      kind: g.kind,
+      port: g.port
     }
   end
 

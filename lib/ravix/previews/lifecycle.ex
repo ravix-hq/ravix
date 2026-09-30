@@ -38,6 +38,10 @@ defmodule Ravix.Previews.Lifecycle do
   alias Ravix.Tracks.Track
 
   @probe_ms 3_000
+  @listing_timeout_sec 15
+  # `ss` lists what is listening; the marker lets a fixture tell this apart
+  # from the run script's collision check, which also runs `ss`.
+  @listing "ss -H -ltn # ravix:listening"
 
   # ── what is there ────────────────────────────────────────────────────
 
@@ -190,6 +194,62 @@ defmodule Ravix.Previews.Lifecycle do
       {:error, reason} ->
         {:error, reason}
     end
+  end
+
+  # ── the machine's other ports ────────────────────────────────────────
+
+  @doc """
+  The sprite in front of the track's machine, for the gateway to tunnel to a
+  machine port directly. Unlike `destination/1` this does not care whether
+  the run script was ever defined there: a port an agent started by hand is
+  on the machine whether or not the run script is.
+  """
+  @spec machine_sprite(String.t()) :: {:ok, String.t()} | {:error, Previews.reason()}
+  def machine_sprite(track_id) do
+    with {:ok, %{track: track, project: project}} <- assert_open(track_id),
+         {:ok, _machine, sprite} <- locate(project, track),
+         do: {:ok, sprite}
+  end
+
+  @doc """
+  TCP ports listening on the track's machine that a person may preview, in
+  order: `ss` on the sprite, less the system range below 1024 and the range
+  run scripts are allocated from (`Ravix.Previews.Store.preview_ports/0`),
+  which on a shared machine belongs to every track at once. The track's own
+  run script is reached through its own preview host, not through this list.
+  """
+  @spec listening(String.t()) :: {:ok, [pos_integer()]} | {:error, Previews.reason()}
+  def listening(track_id) do
+    with {:ok, sprite} <- machine_sprite(track_id) do
+      case Sprites.exec(Sprites.config(), sprite, ["sh", "-lc", @listing], @listing_timeout_sec) do
+        {:ok, %{code: 0, stdout: stdout}} ->
+          {:ok, listening_ports(stdout)}
+
+        _ ->
+          {:error, {:unavailable, "Could not read which ports are listening on this machine."}}
+      end
+    end
+  end
+
+  # `ss -H -ltn` prints one socket a line; the fourth column is the local
+  # address, `0.0.0.0:5173`, `[::]:5173`, `127.0.0.53%lo:53` or `*:80`.
+  defp listening_ports(stdout) do
+    reserved = Store.preview_ports()
+
+    stdout
+    |> String.split("\n", trim: true)
+    |> Enum.flat_map(fn line ->
+      with [_state, _recv, _send, local | _] <- String.split(line),
+           [_, digits] <- Regex.run(~r/:(\d{1,5})$/, local),
+           {port, ""} when port >= 1024 and port <= 65_535 <- Integer.parse(digits),
+           false <- port in reserved do
+        [port]
+      else
+        _ -> []
+      end
+    end)
+    |> Enum.uniq()
+    |> Enum.sort()
   end
 
   # ── intent: start, stop, configure ───────────────────────────────────

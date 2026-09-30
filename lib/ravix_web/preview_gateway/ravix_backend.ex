@@ -78,6 +78,14 @@ defmodule RavixWeb.PreviewGateway.RavixBackend do
   end
 
   @impl true
+  def machine_sprite(track_id) do
+    case Previews.machine_sprite(track_id) do
+      {:ok, sprite} -> {:ok, sprite}
+      {:error, reason} -> {:error, Error.from(reason)}
+    end
+  end
+
+  @impl true
   def public_url, do: Ravix.Config.public_url()
 
   @impl true

@@ -14,7 +14,8 @@ export default defineConfig({
   reporter: [['list'], ['html', { open: 'never' }]],
   use: {
     ...devices['Desktop Chrome'],
-    baseURL: `http://localhost:${process.env.BROWSER_PORT || 4103}`,
+    // BROWSER_HOST is a loopback name under `.localhost`; see browser/server.py.
+    baseURL: `http://${process.env.BROWSER_HOST || 'localhost'}:${process.env.BROWSER_PORT || 4103}`,
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
   },

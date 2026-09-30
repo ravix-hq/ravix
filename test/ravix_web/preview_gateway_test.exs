@@ -453,19 +453,146 @@ defmodule RavixWeb.PreviewGatewayTest do
     assert {:error, _reason, _received, _client} = Client.drain(client)
   end
 
+  test "a run-script restart leaves a machine port's streams open, and revocation still cuts them",
+       %{f: f} do
+    host = port_host(f, f.app_port)
+    cookie = port_session(f, "stream", f.app_port)
+    client = Client.stream(f.port, "GET", "/stream", [{"host", host}, {"cookie", cookie}])
+    assert {:data, "first\n", client} = Client.next(client)
+
+    Store.update_row(f.t1, &%{&1 | generation: 1})
+    Hub.publish(f.project, :tracks)
+
+    # The watcher answers the hub within milliseconds; ten more chunks, a
+    # quarter of a second of them, is the stream having stayed open.
+    client =
+      Enum.reduce(1..10, client, fn _, client ->
+        assert {:data, "later\n", client} = Client.next(client)
+        client
+      end)
+
+    Store.remove_member(f.t1, f.guest.id)
+    Hub.publish(f.project, :tracks)
+    assert {:error, _reason, _received, _client} = Client.drain(client)
+  end
+
   test "revocation is noticed without a hub event, on the timer", %{f: f} do
     {:ok, ws} = Client.ws_connect(f.port, "/hmr", ws_headers(f))
     Store.end_session(Crypto.sha256(f.app_session))
     assert {:close, 1008, _reason, _ws} = Client.ws_await_close(ws, 5_000)
   end
 
-  test "a sprite that does not answer is a 502 with the way back", %{f: f} do
-    Store.update_row(f.t1, &%{&1 | port: closed_port()})
+  test "a sprite that does not answer says nothing is listening, with a retry and the way back",
+       %{f: f} do
+    closed = closed_port()
+    Store.update_row(f.t1, &%{&1 | port: closed})
     res = get(f)
     assert res.status == 502
-    assert res.body =~ "The preview did not answer."
+    assert res.body =~ "Nothing is listening on :#{closed} yet."
+    assert res.body =~ ~s(data-ravix-preview="unreachable" data-ravix-port="#{closed}")
+    assert res.body =~ "Retry</button>"
     assert res.body =~ "Back to Ravix"
+    refute res.body =~ "proxy error"
     assert {:error, 502} = Client.ws_connect(f.port, "/hmr", ws_headers(f))
+  end
+
+  # ── machine ports (RAV-51) ───────────────────────────────────────────
+
+  test "a port host admits only a session minted for exactly that port", %{f: f} do
+    port = f.app_port
+    host = port_host(f, port)
+
+    # The run script's session is not a key to the machine's other ports.
+    assert get(f, "/", host: host).status == 401
+    assert f.tunnels.() == 0
+
+    cookie = port_session(f, "five-one-seven-three", port)
+    res = get(f, "/", host: host, cookie: cookie)
+    assert res.status == 200
+    assert res.body =~ "track app"
+    assert res.body =~ "/__ravix/activity.js"
+    assert_receive {:upstream, "GET", "/", "", headers}
+    assert header(headers, "host") == host
+    assert :machine_sprite in Store.calls(f.t1)
+
+    # A forged host naming another port, and the run script's own host, both
+    # refuse the port's session, and nothing is tunneled for either.
+    tunnels = f.tunnels.()
+    assert get(f, "/", host: port_host(f, 22), cookie: cookie).status == 401
+    assert get(f, "/", host: port_host(f, port + 1), cookie: cookie).status == 401
+    assert get(f, "/", cookie: cookie).status == 401
+    assert f.tunnels.() == tunnels
+
+    # A machine port has no run-script startup to wait for.
+    Store.update_row(f.t1, &%{&1 | state: :stopped, desired: :stopped})
+    assert get(f, "/hello", host: host, cookie: cookie).body == "hello #{host}"
+  end
+
+  test "path navigation on a port host keeps the session's authorization", %{f: f} do
+    host = port_host(f, f.app_port)
+    cookie = port_session(f, "paths", f.app_port)
+
+    assert get(f, "/deep/page?tab=2", host: host, cookie: cookie).status == 200
+    assert_receive {:upstream, "GET", "/deep/page", "tab=2", _headers}
+    assert get(f, "/deep/page?tab=2", host: host, cookie: "").status == 401
+
+    {:ok, ws} =
+      Client.ws_connect(f.port, "/hmr", [
+        {"host", host},
+        {"origin", "http://#{host}"},
+        {"cookie", cookie}
+      ])
+
+    ws = Client.ws_send(ws, {:text, "hmr"})
+    assert {:ok, {:text, "hmr"}, _ws} = Client.ws_recv(ws)
+
+    Store.remove_member(f.t1, f.guest.id)
+    assert get(f, "/deep/page", host: host, cookie: cookie).status == 401
+  end
+
+  test "the frame bridge talks only to Ravix and navigates only on its own origin", %{f: f} do
+    script = get(f, "/__ravix/activity.js").body
+    assert script =~ ~s(const app="http://localhost:5183")
+    assert script =~ "e.origin!==app||e.source!==parent"
+    assert script =~ "if(u.origin===location.origin)location.assign(u.href)"
+    assert script =~ "parent.postMessage({source:'ravix-preview',type:'location'"
+    assert script =~ "if(window.parent===window)return"
+  end
+
+  test "a ticket exchanges only on the host of the port it was minted for, and only once",
+       %{f: f} do
+    port = f.app_port
+    host = port_host(f, port)
+    exchange = fn value, host -> exchange(f, value, host) end
+
+    # Minted for another port: refused, and spent, so it cannot be retried.
+    wrong = ticket(f, "wrong-port", f.t1, Fake.now() + 60_000, port + 1)
+    assert exchange.(wrong, host).status == 401
+    assert exchange.(wrong, port_host(f, port + 1)).status == 401
+
+    # A run-script ticket buys nothing on a port host either.
+    assert exchange.(ticket(f, "run-script", f.t1), host).status == 401
+
+    ok = exchange.(ticket(f, "right-port", f.t1, Fake.now() + 60_000, port), host)
+    assert ok.status == 204
+    [pair | _] = ok |> headers("set-cookie") |> hd() |> String.split(";")
+    assert get(f, "/", host: host, cookie: pair).status == 200
+    assert get(f, "/", cookie: pair).status == 401
+
+    open = get(f, "/__ravix/open", host: host, cookie: "")
+    assert open.body =~ "location.replace('/')"
+  end
+
+  test "a port with nothing listening shows the empty state, not a proxy error", %{f: f} do
+    closed = closed_port()
+    host = port_host(f, closed)
+    res = get(f, "/", host: host, cookie: port_session(f, "closed", closed))
+
+    assert res.status == 502
+    assert res.body =~ "Nothing is listening on :#{closed} yet."
+    assert res.body =~ ~s(data-ravix-preview="unreachable")
+    assert res.body =~ "e.origin!==app||e.source!==parent"
+    assert header(res.headers, "cache-control") == "no-store"
   end
 
   test "the test tunnel retains close bytes when rearming a closed socket fails", %{f: f} do
@@ -653,6 +780,26 @@ defmodule RavixWeb.PreviewGatewayTest do
     end
   end
 
+  describe "Endpoint.loopback?/1" do
+    test "plain HTTP stays allowed for loopback names only, preview hosts under them included" do
+      for host <- [
+            "localhost",
+            "127.0.0.1",
+            "t-abc.preview.localhost",
+            "t-abc--p5173.preview.localhost"
+          ],
+          do: assert(RavixWeb.Endpoint.loopback?(%Plug.Conn{host: host}))
+
+      for host <- [
+            "ravix.example",
+            "t-abc.preview.example",
+            "localhost.evil.example",
+            "notlocalhost"
+          ],
+          do: refute(RavixWeb.Endpoint.loopback?(%Plug.Conn{host: host}))
+    end
+  end
+
   describe "Html" do
     test "injects before </head> even when the tag straddles chunks" do
       html = Html.new()
@@ -717,7 +864,7 @@ defmodule RavixWeb.PreviewGatewayTest do
 
   defp ws_headers(f), do: [{"host", f.host}, {"origin", f.origin}, {"cookie", f.cookie}]
 
-  defp ticket(f, secret, track_id, expires \\ Fake.now() + 60_000) do
+  defp ticket(f, secret, track_id, expires \\ Fake.now() + 60_000, port \\ nil) do
     value = "#{secret}-#{f.row.hostname}"
 
     Store.put_grant(%Grant{
@@ -725,10 +872,39 @@ defmodule RavixWeb.PreviewGatewayTest do
       track_id: track_id,
       session_hash: Crypto.sha256(f.app_session),
       expires: expires,
-      kind: :ticket
+      kind: :ticket,
+      port: port
     })
 
     value
+  end
+
+  defp port_host(f, port), do: "#{f.row.hostname}--p#{port}.preview.localhost:#{f.port}"
+
+  # A session grant minted for one machine port, as the cookie header carrying it.
+  defp port_session(f, secret, port) do
+    token = "#{secret}-#{f.row.hostname}"
+
+    Store.put_grant(%Grant{
+      hash: Crypto.sha256(token),
+      track_id: f.t1,
+      session_hash: Crypto.sha256(f.app_session),
+      expires: Fake.now() + 60_000,
+      kind: :session,
+      port: port
+    })
+
+    "ravix_preview_local=#{token}"
+  end
+
+  defp exchange(f, value, host) do
+    get(f, "/__ravix/exchange",
+      method: "POST",
+      body: value,
+      host: host,
+      cookie: "",
+      origin: "http://#{host}"
+    )
   end
 
   defp header(headers, name),

@@ -29,16 +29,19 @@ defmodule Ravix.Previews.PreviewGrant do
 
     field :expires, :integer
     field :kind, Ecto.Enum, values: [:ticket, :session]
+    # The machine port this grant admits to; nil is the track's run script.
+    field :port, :integer
   end
 
   @fields ~w(hash track_id session_hash expires kind)a
 
-  @doc "A grant. Every field is required; the caller hashes the token."
+  @doc "A grant. Every field but `port` is required; the caller hashes the token."
   @spec changeset(t(), map()) :: Ecto.Changeset.t()
   def changeset(grant, attrs) do
     grant
-    |> cast(attrs, @fields)
+    |> cast(attrs, [:port | @fields])
     |> validate_required(@fields)
+    |> validate_number(:port, greater_than: 0, less_than: 65_536)
     |> foreign_key_constraint(:track_id)
     |> foreign_key_constraint(:session_hash)
     |> unique_constraint(:hash, name: :preview_grants_pkey)

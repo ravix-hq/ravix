@@ -35,13 +35,18 @@ defmodule Ravix.Previews.Grant do
   @type kind :: :ticket | :session
 
   @enforce_keys [:hash, :track_id, :session_hash, :expires, :kind]
-  defstruct @enforce_keys
+
+  # `port` is the machine port the grant admits its holder to, or nil for the
+  # track's own run script. Not enforced: every grant minted before RAV-51,
+  # and every run-script grant since, is nil.
+  defstruct @enforce_keys ++ [port: nil]
 
   @type t :: %__MODULE__{
           hash: String.t(),
           track_id: String.t(),
           session_hash: String.t(),
           expires: integer(),
-          kind: kind()
+          kind: kind(),
+          port: pos_integer() | nil
         }
 end

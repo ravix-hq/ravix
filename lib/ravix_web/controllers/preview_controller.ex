@@ -15,14 +15,30 @@ defmodule RavixWeb.PreviewController do
     end
   end
 
-  def open(conn, %{"track_id" => track_id}) do
+  # With `?port=`, a port on the track's machine rather than the run script;
+  # `Previews.open_port/4` decides whether it is one this person may open.
+  def open(conn, %{"track_id" => track_id} = params) do
     with {:ok, user} <- CurrentUser.require_user(conn),
          token when is_binary(token) <- get_session(conn, CurrentUser.session_key()),
-         {:ok, %{open_url: url}} <- Previews.open(user, track_id, Crypto.sha256(token)) do
+         {:ok, url} <- open_url(user, track_id, Crypto.sha256(token), params["port"]) do
       redirect(conn, external: url)
     else
       {:error, reason} -> Error.send_json(conn, reason)
       _ -> Error.send_json(conn, :unauthenticated)
     end
+  end
+
+  defp open_url(user, track_id, session_hash, nil) do
+    with {:ok, %{open_url: url}} <- Previews.open(user, track_id, session_hash), do: {:ok, url}
+  end
+
+  defp open_url(user, track_id, session_hash, port) do
+    port =
+      case is_binary(port) && Integer.parse(port) do
+        {number, ""} -> number
+        _ -> port
+      end
+
+    Previews.open_port(user, track_id, session_hash, port)
   end
 end

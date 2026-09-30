@@ -27,8 +27,9 @@ defmodule Ravix.Previews do
   `Ravix.Accounts.Access` first, apart from configuration (`unavailable/0`,
   `parse_config/1`, the timings) and the gateway's section below, which runs
   before there is a signed-in caller: `origin/1`, `by_host/1`, `allowed?/2`
-  and the delegates beside them. Naming those three here is what keeps that
-  list from growing quietly. Row access with no user in hand is
+  and the delegates beside them, and the pure host naming the gateway and
+  `origin/2` share, `host_label/2` and `parse_host_label/1`. Naming those
+  five here is what keeps that list from growing quietly. Row access with no user in hand is
   `Ravix.Previews.Store`; the service's id-only lifecycle (start, stop,
   configure, retire, and the questions the gateway asks) is
   `Ravix.Previews.Lifecycle`, and a context calling either says which door
@@ -147,15 +148,43 @@ defmodule Ravix.Previews do
     end
   end
 
-  @doc "The browser origin of a preview row, or nil when `PREVIEW_DOMAIN` is unset."
-  @spec origin(Row.t()) :: String.t() | nil
-  def origin(%Row{hostname: hostname}) do
+  @doc """
+  The browser origin of a preview row, or nil when `PREVIEW_DOMAIN` is unset.
+
+  With a machine port, the origin of that port's own host (`host_label/2`):
+  one origin per app, so two apps on one machine never share cookies,
+  storage or a service worker, and a session cookie for one is never sent
+  to the other.
+  """
+  @spec origin(Row.t(), pos_integer() | nil) :: String.t() | nil
+  def origin(%Row{hostname: hostname}, machine_port \\ nil) do
     case Ravix.Config.previews() do
       nil ->
         nil
 
       %{protocol: protocol, domain: domain, public_port: port} ->
-        "#{protocol}://#{hostname}.#{domain}#{port}"
+        "#{protocol}://#{host_label(hostname, machine_port)}.#{domain}#{port}"
+    end
+  end
+
+  @doc """
+  The first label of a preview host: the row's hostname for its run script,
+  or `<hostname>--p<port>` for a port on the track's machine. Hostnames are
+  `t-` and hex (`Ravix.Previews.Row.new/1`), so the suffix cannot be part of
+  one.
+  """
+  @spec host_label(String.t(), pos_integer() | nil) :: String.t()
+  def host_label(hostname, nil), do: hostname
+  def host_label(hostname, port) when is_integer(port), do: "#{hostname}--p#{port}"
+
+  @doc "`host_label/2` read back: the row's hostname, and the machine port if it names one."
+  @spec parse_host_label(String.t()) :: {String.t(), pos_integer() | nil}
+  def parse_host_label(label) do
+    with [_, hostname, digits] <- Regex.run(~r/\A(.+)--p([1-9]\d{0,4})\z/, label),
+         port when port <= 65_535 <- String.to_integer(digits) do
+      {hostname, port}
+    else
+      _ -> {label, nil}
     end
   end
 
@@ -215,6 +244,10 @@ defmodule Ravix.Previews do
   @spec touch(String.t()) :: :ok | {:error, reason()}
   defdelegate touch(track_id), to: Lifecycle
 
+  @doc "The sprite a machine port is tunneled on; see `Ravix.Previews.Lifecycle.machine_sprite/1`."
+  @spec machine_sprite(String.t()) :: {:ok, String.t()} | {:error, reason()}
+  defdelegate machine_sprite(track_id), to: Lifecycle
+
   @doc "The row the gateway may tunnel to; see `Ravix.Previews.Lifecycle.destination/1`."
   @spec destination(String.t()) :: {:ok, Row.t()} | {:error, reason()}
   defdelegate destination(track_id), to: Lifecycle
@@ -239,6 +272,10 @@ defmodule Ravix.Previews do
   @doc """
   Whether a grant still admits its holder.
 
+  A grant for a machine port also re-asks `machine_ports/3`, so somebody
+  who loses the project and keeps only a track share loses the shared
+  machine's ports with it.
+
   Four things have to hold at once, and they are re-asked on every request
   rather than trusted from the one that minted the grant: the grant exists,
   the Ravix session behind it is alive, that person still has access to the
@@ -249,7 +286,8 @@ defmodule Ravix.Previews do
   def allowed?(%Row{} = row, %Grant{} = grant) do
     with %{} <- Store.get_grant(grant.hash, row.track_id, grant.kind, :peek),
          %{} = user <- Ravix.Accounts.session_user(grant.session_hash),
-         {:ok, %{track: %{closed_at: nil}}} <- Access.track_access(user, row.track_id) do
+         {:ok, %{track: %{closed_at: nil} = track}} <- Access.track_access(user, row.track_id),
+         :ok <- machine_ports(user, track, grant.port) do
       not match?(%Row{cleanup: true}, Store.get(row.track_id))
     else
       _ -> false
@@ -372,15 +410,67 @@ defmodule Ravix.Previews do
     with {:ok, _track} <- open_track(user, track_id), do: mint_ticket(track_id, session_hash)
   end
 
-  defp mint_ticket(_track_id, nil),
+  @doc """
+  The ports listening on the track's machine that the caller may preview;
+  see `Ravix.Previews.Lifecycle.listening/1` for what is left out.
+  """
+  @spec listening_ports(User.t(), String.t()) :: {:ok, [pos_integer()]} | {:error, reason()}
+  def listening_ports(%User{} = user, track_id) do
+    with {:ok, track} <- open_track(user, track_id),
+         :ok <- machine_ports(user, track, :any),
+         do: Lifecycle.listening(track_id)
+  end
+
+  @doc """
+  A ticket, as `open_ticket/3`, for a port on the track's machine rather
+  than its run script.
+
+  The port is checked here, against what is listening on the machine right
+  now, and nowhere else: the ticket and the session it buys carry it, and
+  the gateway admits that session on that port's host and no other. A port
+  the browser names that the machine is not listening on, or that the
+  caller may not reach, never gets a ticket.
+  """
+  @spec open_port(User.t(), String.t(), String.t() | nil, term()) ::
+          {:ok, String.t()} | {:error, reason()}
+  def open_port(%User{} = user, track_id, session_hash, port) do
+    with {:ok, track} <- open_track(user, track_id),
+         :ok <- machine_ports(user, track, port),
+         {:ok, ports} <- Lifecycle.listening(track_id) do
+      if is_integer(port) and port in ports,
+        do: mint_ticket(track_id, session_hash, port),
+        else: {:error, {:unprocessable, "port", "Nothing is listening on that port yet."}}
+    end
+  end
+
+  # Who may reach the machine's other ports. A dedicated machine is the
+  # track's own, so track access is enough. A shared one runs every track of
+  # the project, and a port on it may be another track's app, so it takes
+  # the project: a track share is to a branch, not to the machine
+  # (`Access.track_access/2`). `nil` is the track's run script, which is the
+  # track's own whatever the machine.
+  defp machine_ports(_user, _track, nil), do: :ok
+
+  defp machine_ports(user, %Track{} = track, _port) do
+    cond do
+      Ravix.Config.dedicated_rollout?() and track.sandbox_layout == :dedicated -> :ok
+      match?({:ok, _}, Access.project_access(user, track.project_id)) -> :ok
+      true -> {:error, :not_found}
+    end
+  end
+
+  defp mint_ticket(track_id, session_hash, port \\ nil)
+
+  defp mint_ticket(_track_id, nil, _port),
     do: {:error, {:unprocessable, "session", "Open preview controls from a signed-in session."}}
 
-  defp mint_ticket(track_id, session_hash) do
+  defp mint_ticket(track_id, session_hash, port) do
     row = Store.ensure(track_id)
 
     config = Lifecycle.info(track_id).config
+    plain? = is_nil(port) and config != nil and is_nil(config.readiness_path)
 
-    case if(config && is_nil(config.readiness_path), do: :plain, else: origin(row)) do
+    case if(plain?, do: :plain, else: origin(row, port)) do
       :plain ->
         {:error, {:conflict, "no_preview", "This run script has no HTTP readiness path."}}
 
@@ -396,7 +486,8 @@ defmodule Ravix.Previews do
                  track_id: track_id,
                  session_hash: session_hash,
                  expires: Clock.now_ms() + @ticket_ms,
-                 kind: :ticket
+                 kind: :ticket,
+                 port: port
                }) do
           {:ok, "#{origin}/__ravix/open##{ticket}"}
         end

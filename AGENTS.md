@@ -139,7 +139,7 @@ The file is tagged `:distributed` and a plain `mix test` leaves it out; CI and
 `mix precommit` pass `--include distributed`, as a focused run of it must.
 
 Browser tests use production configuration and create/drop only a generated
-`ravix_browser_*` database. Ports 4103/8893/8894 must be free; no existing server
+`ravix_browser_*` database. Ports 4103/8893/8894/8895 must be free; no existing server
 is reused. `BROWSER_DATABASE_SERVER` can change local PostgreSQL credentials.
 Keep browser tests under `browser/` and retain failure traces. Axe covers the
 default theme; manual checks still matter for other themes and assistive devices.

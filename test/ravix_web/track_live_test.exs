@@ -47,6 +47,9 @@ defmodule RavixWeb.TrackLiveTest do
     stub(Tracks, :follow, fn _, _, _ -> {:ok, self()} end)
     stub(Tracks, :beat, fn _, _, _ -> :ok end)
     stub(Tracks, :mark_read, fn _, _, _thread_opts -> :ok end)
+    # The machine's ports are read beside the Preview tab and after a turn
+    # that names a server; nothing is listening unless a test says so.
+    stub(Previews, :listening_ports, fn _, _ -> {:ok, []} end)
 
     stub(Tracks, :files, fn _, _, path ->
       {:ok,
@@ -3758,6 +3761,196 @@ defmodule RavixWeb.TrackLiveTest do
 
     assert has_element?(ctx.view, "iframe[src='https://preview.test/__ravix/open#fresh']")
     assert has_element?(ctx.view, "a[href='/preview/#{ctx.track.id}']")
+  end
+
+  # ── RAV-51: path bar, port picker, agent-reported ports ─────────────
+
+  test "the port picker lists what the machine is listening on and frames the chosen port",
+       ctx do
+    stub(Previews, :status, fn _, _ ->
+      {:ok, %{preview() | state: :ready, url: "https://t.test"}}
+    end)
+
+    stub(Previews, :listening_ports, fn user, id ->
+      assert {user.id, id} == {ctx.user.id, ctx.track.id}
+      {:ok, [3000, 5173]}
+    end)
+
+    render_click(ctx.view, "panel", %{name: "preview"})
+    render_async(ctx.view)
+
+    assert has_element?(ctx.view, "#preview-port option[value='']", "Run script")
+    assert has_element?(ctx.view, "#preview-port option[value='3000']", ":3000")
+    assert has_element?(ctx.view, "#preview-port option[value='5173']", ":5173")
+
+    url = "http://t-abc--p5173.preview.test/__ravix/open#ticket"
+
+    expect(Previews, :open_port, fn user, id, hash, 5173 ->
+      assert {user.id, id} == {ctx.user.id, ctx.track.id}
+      assert is_binary(hash)
+      {:ok, url}
+    end)
+
+    ctx.view |> element("#preview-port-form") |> render_change(%{port: "5173"})
+    render_async(ctx.view)
+
+    assert has_element?(ctx.view, "#preview-frame[src='#{url}']")
+    assert has_element?(ctx.view, "#preview-view[data-origin='http://t-abc--p5173.preview.test']")
+    assert has_element?(ctx.view, "#preview-port option[value='5173'][selected]")
+    assert has_element?(ctx.view, "a[href='/preview/#{ctx.track.id}?port=5173']")
+    # The path bar is live once there is a frame to drive.
+    assert has_element?(ctx.view, "[data-preview-nav='back']:not([disabled])")
+    assert has_element?(ctx.view, "#preview-location[phx-update=ignore]")
+    refute render(ctx.view) =~ "#ticket\" data-origin"
+
+    # The frame reporting itself up changes nothing visible; unreachable
+    # swaps the frame for the empty state.
+    render_hook(ctx.view, "preview-frame", %{state: "ok"})
+    assert has_element?(ctx.view, "#preview-frame")
+    render_hook(ctx.view, "preview-frame", %{state: "unreachable", port: 5173})
+    refute has_element?(ctx.view, "#preview-frame")
+    assert has_element?(ctx.view, "#preview-unreachable h3", "Nothing is listening on :5173 yet")
+
+    # Retry mints a fresh ticket for the same port.
+    expect(Previews, :open_port, fn _, _, _, 5173 -> {:ok, url <> "2"} end)
+    ctx.view |> element("#preview-unreachable button", "Retry") |> render_click()
+    render_async(ctx.view)
+    assert has_element?(ctx.view, "#preview-frame[src='#{url}2']")
+
+    # Back to the run script.
+    expect(Previews, :open, fn _, _, _ ->
+      {:ok,
+       %{
+         preview()
+         | state: :ready,
+           url: "https://t.test",
+           open_url: "https://t.test/__ravix/open#run"
+       }}
+    end)
+
+    ctx.view |> element("#preview-port-form") |> render_change(%{port: ""})
+    render_async(ctx.view)
+    assert has_element?(ctx.view, "#preview-frame[src='https://t.test/__ravix/open#run']")
+    assert has_element?(ctx.view, "a[href='/preview/#{ctx.track.id}']")
+  end
+
+  test "a port that is not listening shows the empty state with Run and Retry, not a frame",
+       ctx do
+    stub(Previews, :status, fn _, _ -> {:ok, preview()} end)
+    render_click(ctx.view, "panel", %{name: "preview"})
+    render_async(ctx.view)
+
+    expect(Previews, :open_port, fn _, _, _, 8080 ->
+      {:error, {:unprocessable, "port", "Nothing is listening on that port yet."}}
+    end)
+
+    render_click(ctx.view, "preview-port", %{port: "8080"})
+    render_async(ctx.view)
+
+    refute has_element?(ctx.view, "iframe")
+
+    assert has_element?(
+             ctx.view,
+             "#preview-unreachable[role=status] h3",
+             "Nothing is listening on :8080 yet"
+           )
+
+    assert has_element?(
+             ctx.view,
+             "#preview-unreachable button.primary[phx-value-action='run']",
+             "Run"
+           )
+
+    assert has_element?(
+             ctx.view,
+             "#preview-unreachable button[phx-click='preview-retry']",
+             "Retry"
+           )
+
+    refute render(ctx.view) =~ "preview_unavailable"
+  end
+
+  test "a forged port never reaches a ticket unchecked", ctx do
+    stub(Previews, :status, fn _, _ -> {:ok, preview()} end)
+    render_click(ctx.view, "panel", %{name: "preview"})
+    render_async(ctx.view)
+
+    # Whatever the browser sends is handed to the context as it is, and the
+    # context's refusal is the page's answer.
+    for {sent, received} <- [{"22; rm", "22; rm"}, {"5173x", "5173x"}, {%{"a" => 1}, %{"a" => 1}}] do
+      expect(Previews, :open_port, fn _, _, _, ^received ->
+        {:error, {:unprocessable, "port", "Nothing is listening on that port yet."}}
+      end)
+
+      render_click(ctx.view, "preview-port", %{port: sent})
+      render_async(ctx.view)
+      refute has_element?(ctx.view, "iframe")
+    end
+
+    expect(Previews, :open_port, fn _, _, _, 5173 -> {:error, :not_found} end)
+    render_click(ctx.view, "preview-port", %{port: "5173"})
+    render_async(ctx.view)
+    refute has_element?(ctx.view, "iframe")
+    refute has_element?(ctx.view, "#preview-unreachable")
+  end
+
+  test "a finished answer naming a listening server offers Preview :port", ctx do
+    stub(Previews, :listening_ports, fn _, _ -> {:ok, [5173]} end)
+
+    send(ctx.view.pid, {:transcript, ctx.track.id, opened(1, "turn-one", "Start the app")})
+
+    send(
+      ctx.view.pid,
+      {:transcript, ctx.track.id,
+       %{
+         "id" => 2,
+         "turn_id" => "turn-one",
+         "kind" => "output",
+         "stream" => "acp",
+         "data" =>
+           Jason.encode!(%{
+             jsonrpc: "2.0",
+             method: "session/update",
+             params: %{
+               update: %{
+                 sessionUpdate: "agent_message_chunk",
+                 content: %{
+                   type: "text",
+                   text: "Open: http://localhost:5173/ (the API is on 127.0.0.1:3000)"
+                 }
+               }
+             }
+           })
+       }}
+    )
+
+    render(drawn(ctx.view))
+    refute has_element?(ctx.view, "#preview-offers")
+
+    settled = %{"id" => 3, "turn_id" => "turn-one", "kind" => "stage", "stage" => "turn"}
+    send(ctx.view.pid, {:transcript, ctx.track.id, Map.put(settled, "state", "completed")})
+    render_async(drawn(ctx.view))
+
+    # 3000 was named but is not listening, so only 5173 is offered.
+    assert has_element?(ctx.view, "#preview-offers button", "Preview :5173")
+    refute has_element?(ctx.view, "#preview-offers button", "Preview :3000")
+
+    stub(Previews, :status, fn _, _ -> {:ok, preview()} end)
+    expect(Previews, :open_port, fn _, _, _, 5173 -> {:ok, "http://p.test/__ravix/open#t"} end)
+    ctx.view |> element("#preview-offers button", "Preview :5173") |> render_click()
+    render_async(ctx.view)
+
+    assert has_element?(ctx.view, "button.selected", "Preview")
+    assert has_element?(ctx.view, "#preview-frame[src='http://p.test/__ravix/open#t']")
+  end
+
+  test "ports named in an answer are read in order, once, and only as local addresses" do
+    assert RavixWeb.TrackLive.ports_in(
+             "Open: http://localhost:5173/ or LOCALHOST:5173, then 127.0.0.1:3000/api"
+           ) == [5173, 3000]
+
+    assert RavixWeb.TrackLive.ports_in("mylocalhost:80 localhost:0 localhost:99999 host:1") == []
+    assert RavixWeb.TrackLive.ports_in("localhost:8080.") == [8080]
   end
 
   for action <- ["run", "restart-run", "stop"] do
