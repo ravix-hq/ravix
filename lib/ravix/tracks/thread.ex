@@ -16,6 +16,10 @@ defmodule Ravix.Tracks.Thread do
     field :runtime, :string
     field :model, :string
     field :title, :string
+    # RAV-48: `:auto` when Ravix titled it from the first prompt or the
+    # runtime's session title, `:manual` when a person named it, nil for the
+    # name it opened with. Written only through `Tracks.Store`.
+    field :title_source, Ecto.Enum, values: [:auto, :manual]
     field :created_at, :utc_datetime_usec
     field :closed_at, :utc_datetime_usec
     # ADR 0009, expand only: who started the thread, for `Co-authored-by`.

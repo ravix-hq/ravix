@@ -60,6 +60,7 @@ defmodule Ravix.Tracks.Follower do
   alias Ravix.Tracks.{Settlement, Sleep}
   alias Ravix.Tracks.Store
   alias Ravix.Tracks.Thread
+  alias Ravix.Tracks.Titling
   alias Ravix.Tracks.Transcript.Event
 
   @supervisor __MODULE__.Supervisor
@@ -300,6 +301,7 @@ defmodule Ravix.Tracks.Follower do
     # the database, and one process per track keeps a suspension and the turn
     # that wakes it in the order Fountain sent them.
     if Event.suspension(event) || Event.starts_turn?(event), do: send(follower, {:sleep, event})
+    session_title(event, track_id, conversation_id)
 
     if Event.settles?(event) do
       case Settlement.record(client, track_id, conversation_id, event) do
@@ -320,6 +322,14 @@ defmodule Ravix.Tracks.Follower do
 
     if is_integer(event.id), do: send(follower, {:seen, event.id})
     :cont
+  end
+
+  # A runtime that titles its session says so on this stream.
+  defp session_title(event, track_id, conversation_id) do
+    case Event.session_title(event) do
+      nil -> :ok
+      title -> Titling.runtime_title(track_id, conversation_id, title)
+    end
   end
 
   # The one event a prompt is served on, read back from the feed. `after` is

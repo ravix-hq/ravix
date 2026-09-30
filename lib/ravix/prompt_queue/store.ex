@@ -162,6 +162,22 @@ defmodule Ravix.PromptQueue.Store do
   @spec get(String.t()) :: Item.t() | nil
   def get(id), do: Repo.get_by(Item, id: id)
 
+  @doc """
+  Whether the row `id` is the first prompt this thread ever accepted,
+  whatever became of it since. Rows are kept after delivery, so a thread
+  with any earlier one answers false.
+  """
+  @spec first_on_thread?(String.t(), String.t(), String.t()) :: boolean()
+  def first_on_thread?(track_id, thread_id, id) do
+    Repo.one(
+      from p in Item,
+        where: p.track_id == ^track_id and p.thread_id == ^thread_id,
+        order_by: p.sequence,
+        limit: 1,
+        select: p.id
+    ) == id
+  end
+
   @doc "Delivery metadata for one row, excluding the prompt and attachments."
   def delivery_status(track_id, id) do
     Repo.one(

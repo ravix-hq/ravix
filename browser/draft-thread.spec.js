@@ -62,7 +62,8 @@ test('a draft thread becomes a real thread with its first message running, wide 
     await expect(selected).not.toHaveAttribute('data-thread-id', 'draft');
     const threadId = await selected.getAttribute('data-thread-id');
     await expect(page).toHaveURL(new RegExp(`\\?thread=${threadId}$`));
-    const title = prompt.length > 40 ? 'Summarise the repository layout and…' : prompt;
+    // RAV-48: titled by the prompt's key phrase, not the prompt cut short.
+    const title = width === 1280 ? 'Summarise Repository Layout' : 'Narrow Screens Start Threads Too';
     await expect(page.locator('#thread-picker option:checked')).toContainText(title);
     await expect(page.locator('#transcript-turns .workspace-prompt').filter({ hasText: prompt })).toHaveCount(1, { timeout: 20_000 });
     await expect(page.locator('.workspace-turn').filter({ hasText: prompt }).locator('.agent-terminal-output > div > .md'))

@@ -34,6 +34,42 @@ defmodule Ravix.Tracks.TranscriptTest do
         )
       )
 
+  describe "Event.session_title/1" do
+    defp acp(data), do: Event.from(%{"kind" => "output", "stream" => "acp", "data" => data})
+
+    test "reads the title a runtime gave its session, and nothing else" do
+      assert Event.session_title(
+               acp(update(%{sessionUpdate: "session_info_update", title: "Fix CI"}))
+             ) ==
+               "Fix CI"
+
+      # Some adapters send the update as the params themselves.
+      bare =
+        Jason.encode!(%{
+          jsonrpc: "2.0",
+          method: "session/update",
+          params: %{sessionUpdate: "session_info_update", title: "Fix CI"}
+        })
+
+      assert Event.session_title(acp(bare)) == "Fix CI"
+
+      assert Event.session_title(acp(update(%{sessionUpdate: "session_info_update", title: ""}))) ==
+               nil
+
+      assert Event.session_title(acp(text_chunk("session_info_update"))) == nil
+      assert Event.session_title(acp("session_info_update, not JSON")) == nil
+      assert Event.session_title(acp(nil)) == nil
+
+      assert Event.session_title(
+               Event.from(%{
+                 "kind" => "output",
+                 "stream" => "stdout",
+                 "data" => update(%{sessionUpdate: "session_info_update", title: "Fix CI"})
+               })
+             ) == nil
+    end
+  end
+
   describe "Event.from/1" do
     test "closes the vocabularies it matches on, without growing the atom table" do
       assert Event.from(%{"kind" => "output", "stream" => "acp"}).kind == :output

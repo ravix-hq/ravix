@@ -71,7 +71,7 @@ test('cohort threads attach the other runtime to the home disk and reuse its pro
       await expect(draftTab).toHaveCount(0);
       await expect(page.locator('.composer-model')).toContainText(guest === 'codex' ? 'Codex · ' : 'Claude Code · ');
       await expect(page.locator('.thread-tab[aria-selected=true] .thread-tab-agent')).toContainText(guest === 'codex' ? 'Codex · ' : 'Claude Code · ');
-      await expect(page.locator('.thread-tab[aria-selected=true] .thread-tab-title')).toHaveText(`Guest thread ${n}`);
+      await expect(page.locator('.thread-tab[aria-selected=true] .thread-tab-title')).toHaveText(`Guest Thread ${n}`);
       if (home === 'claude' && n === 1) {
         const homeTab = page.locator('.thread-tab').first();
         const notice = page.locator('#threads-working');

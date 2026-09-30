@@ -75,6 +75,10 @@ defmodule Ravix.Tracks.Track do
     field :conversation_id, :string
     field :slug, :string
     field :title, :string
+    # RAV-48: `:auto` when Ravix titled it from the first prompt or the
+    # runtime's session title, `:manual` when a person named it, nil for the
+    # name it opened with. Written only through `Tracks.Store`.
+    field :title_source, Ecto.Enum, values: [:auto, :manual]
     field :branch, :string
     field :branch_reserved, :boolean, default: true
     field :workdir, :string

@@ -21,6 +21,7 @@ for mod <- [
       Ravix.Tracks.AgentFailure,
       Ravix.Tracks.Billing,
       Ravix.Tracks.Settlement,
+      Ravix.Tracks.Title,
       Ravix.Trace,
       Ravix.Tracks.Sandbox.Store,
       Ravix.Projects,
