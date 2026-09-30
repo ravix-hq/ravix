@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import { signIn, connectClaude } from './sign-in.js';
+import { spoken } from './track-label.js';
 
 async function newTrack(page, name) {
   await page.locator('#yard .workspace-project.current .project-add').click();
@@ -8,7 +9,7 @@ async function newTrack(page, name) {
   await dialog.getByRole('button', { name: 'Options', exact: true }).click();
   await dialog.getByLabel('Branch name', { exact: true }).fill(name);
   await dialog.getByRole('button', { name: 'Create track', exact: true }).click();
-  await expect(page.locator('.track-crumbs')).toContainText(name);
+  await expect(page.locator('.track-crumbs')).toContainText(spoken(name));
 }
 
 test('Mine/Everyone filters the rail by creator, and Show closed lists closed tracks', async ({ page, browser }) => {
@@ -42,8 +43,8 @@ test('Mine/Everyone filters the rail by creator, and Show closed lists closed tr
 
   await page.goto(projectPath);
   const rail = page.locator('#yard');
-  const memberTab = rail.getByRole('link', { name: /member-work, created by @filtermember/ });
-  const ownerTab = rail.getByRole('link', { name: /owner-work, created by @filterowner/ });
+  const memberTab = rail.getByRole('link', { name: /Member work, created by @filtermember/ });
+  const ownerTab = rail.getByRole('link', { name: /Owner work, created by @filterowner/ });
   await expect(memberTab).toBeVisible();
   await expect(memberTab.getByRole('img', { name: 'Created by @filtermember', exact: true })).toBeVisible();
   await expect(memberTab.locator('.track-creator')).toHaveAttribute('title', 'Created by @filtermember');
@@ -63,7 +64,7 @@ test('Mine/Everyone filters the rail by creator, and Show closed lists closed tr
   await page.locator('#quick-jump-trigger').click();
   const search = page.getByLabel('Search projects, tracks and plans');
   await search.fill('member-work');
-  await expect(page.locator('#search-dialog [data-jump-result]', { hasText: 'member-work' })).toHaveCount(1);
+  await expect(page.locator('#search-dialog [data-jump-result]', { hasText: 'Member work' })).toHaveCount(1);
   await search.fill('mine: member-work');
   await expect(page.locator('#search-dialog')).toContainText('No tracks match');
   await page.keyboard.press('Escape');
@@ -72,12 +73,12 @@ test('Mine/Everyone filters the rail by creator, and Show closed lists closed tr
   await expect(memberTab).toBeVisible();
 
   // Close one of the owner's tracks, then find it again through the project menu.
-  await rail.getByRole('link', { name: /owner-finished/ }).click();
-  await expect(page.locator('.track-crumbs')).toContainText('owner-finished');
+  await rail.getByRole('link', { name: /Owner finished/ }).click();
+  await expect(page.locator('.track-crumbs')).toContainText('Owner finished');
   await page.getByRole('button', { name: 'Close track', exact: true }).click();
   const close = page.getByRole('dialog', { name: 'Close track', exact: true });
   await close.getByRole('button', { name: 'Close track', exact: true }).click();
-  await expect(rail.getByRole('link', { name: /owner-finished/ })).toHaveCount(0);
+  await expect(rail.getByRole('link', { name: /Owner finished/ })).toHaveCount(0);
 
   await rail.getByRole('button', { name: 'More for Filter project', exact: true }).click();
   const showClosed = page.getByRole('menuitemcheckbox', { name: 'Show closed tracks', exact: true });
@@ -85,7 +86,7 @@ test('Mine/Everyone filters the rail by creator, and Show closed lists closed tr
   await showClosed.click();
   const closedList = rail.getByRole('list', { name: 'Closed tracks in Filter project', exact: true });
   await expect(closedList.getByRole('listitem')).toHaveCount(1);
-  await expect(closedList).toContainText('owner-finished');
+  await expect(closedList).toContainText('Owner finished');
   await expect(closedList.getByRole('img', { name: 'Created by @filterowner', exact: true })).toBeVisible();
   // Closed tracks are listed, not counted or opened.
   await expect(closedList.getByRole('link')).toHaveCount(0);
@@ -95,5 +96,5 @@ test('Mine/Everyone filters the rail by creator, and Show closed lists closed tr
 
   await page.reload();
   await expect(page.locator('#project-sections[aria-busy="false"]')).toBeAttached();
-  await expect(closedList).toContainText('owner-finished');
+  await expect(closedList).toContainText('Owner finished');
 });

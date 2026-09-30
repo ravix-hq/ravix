@@ -57,7 +57,7 @@
         <strong
           :if={!owner_or_creator?(@current_user, @track)}
           class={["track-title-crumb", !fits?(Track.label(@track), 16) && "long"]}
-          title={Track.label(@track)}
+          title={Track.tooltip(@track)}
         >{Track.label(@track)}</strong>
       </div>
       <span class="spacer"></span>
@@ -1042,6 +1042,10 @@
           current_user={@current_user}
           session_hash={@session_hash}
           can_write={@track.level != :read}
+          asleep={
+            probed(machine(@track, @threads, @thread_states, @setup_now), @machine_probe, @track).state ==
+              :asleep
+          }
         />
       </aside>
     </div>

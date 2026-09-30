@@ -30,6 +30,13 @@ defmodule Ravix.Tooling.Tasks do
         end)
 
       Phoenix.PubSub.broadcast(Ravix.PubSub, "tooling:queue", {:tooling_queue, track_id})
+
+      # Committed now, so the titler can read the row (RAV-83): run inside
+      # the transaction, it looked before the commit and titled nothing.
+      # The queue row's id is the task's.
+      with {:ok, _task} <- result,
+           do: Tracks.title_after_prompt(principal.user, track_id, thread.id, id, prompt)
+
       result
     end
   end
@@ -44,11 +51,12 @@ defmodule Ravix.Tooling.Tasks do
   end
 
   defp enqueue(principal, id, track_id, prompt, fingerprint, thread) do
-    case Tracks.prompt(principal.user, track_id, %{
-           "prompt" => prompt,
-           "request_id" => id,
-           "thread_id" => thread.id
-         }) do
+    case Tracks.prompt(
+           principal.user,
+           track_id,
+           %{"prompt" => prompt, "request_id" => id, "thread_id" => thread.id},
+           title: :after_commit
+         ) do
       {:ok, _} ->
         # The queue serializes on the track; re-read after it to resolve two
         # simultaneous retries before inserting the task's unique receipt.

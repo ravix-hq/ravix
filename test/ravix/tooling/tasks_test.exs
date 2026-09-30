@@ -16,6 +16,37 @@ defmodule Ravix.Tooling.TasksTest do
     %{user: user, p: p, project: project, track: track}
   end
 
+  # RAV-83: the prompt is accepted inside the task's own transaction, which
+  # the titler, reading from another process, cannot see into; it used to
+  # look before the commit and title nothing. It looks after it now.
+  test "the first prompt a person sends over MCP titles its thread and track, once committed",
+       %{p: p, track: track} do
+    track = track |> Ecto.Changeset.change(title: track.branch) |> Repo.update!()
+    test = self()
+
+    stub(QueueStore, :first_person_prompt, fn track_id, thread_id ->
+      send(test, {:looked, Repo.in_transaction?()})
+      Mimic.call_original(QueueStore, :first_person_prompt, [track_id, thread_id])
+    end)
+
+    # Ravix's own opening turn is an instruction, not what the track is about.
+    open = "[ravix] Open this track. Make its working directory, then stop."
+    {:ok, _} = Tasks.send(p, track.id, open, "open-track")
+    assert %{title_source: nil} = Repo.get!(Ravix.Tracks.Track, track.id)
+
+    {:ok, _} =
+      Tasks.send(p, track.id, "Can you pull the latest main and fix the conflicts?", "ask")
+
+    assert_received {:looked, false}
+    refute_received {:looked, true}
+
+    assert %{title: "Pull Latest Main", title_source: :auto, branch: branch} =
+             Repo.get!(Ravix.Tracks.Track, track.id)
+
+    assert branch == track.branch
+    assert %{title: "Pull Latest Main"} = Repo.get!(Ravix.Tracks.Thread, track.id)
+  end
+
   test "provider outage persists a failed MCP task with the agent's public message", %{
     p: p,
     track: track
