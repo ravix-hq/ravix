@@ -112,6 +112,28 @@ defmodule Ravix.Tracks.AttributionTest do
     assert Attribution.delivery_block(anonymous, nil) == ""
   end
 
+  test "the delivered block is taken off a prompt, and nothing else is" do
+    starter = insert_user(login: "maker", github_id: "42", name: "Maker")
+    block = Attribution.commit_block(starter)
+
+    assert Attribution.visible_prompt(block <> "\n\n[from @guest] Fix it") ==
+             "[from @guest] Fix it"
+
+    assert Attribution.visible_prompt(block <> "\n\nLine one\n\nLine two") ==
+             "Line one\n\nLine two"
+
+    assert Attribution.visible_prompt(block <> "\n\n") == ""
+
+    # Not a leading, closed block: the prompt is the person's as typed.
+    for prompt <- [
+          "Fix it",
+          "Quote:\n\n" <> block <> "\n\nend",
+          "[ravix commit attribution]\nunterminated",
+          block
+        ],
+        do: assert(Attribution.visible_prompt(prompt) == prompt)
+  end
+
   describe "pull requests" do
     setup do
       app = GH.app()

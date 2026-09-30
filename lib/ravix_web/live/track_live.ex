@@ -63,7 +63,6 @@ defmodule RavixWeb.TrackLive do
   alias Ravix.GitHub.ChecksReport
   alias Ravix.{Hub, Previews, PromptQueue, SessionConfig, Terminal, Tracks}
   alias Ravix.Hub.Event
-  alias Ravix.PromptQueue.Recovery
   alias Ravix.Tracks.{AgentFailure, Diff, Files, Follower, MachineState}
   alias Ravix.Tracks.Transcript
   alias Ravix.Tracks.Transcript.Block, as: TranscriptBlock
@@ -3938,12 +3937,12 @@ defmodule RavixWeb.TrackLive do
     """
   end
 
-  # A prompt as its author meant it to be read: the preview instructions,
-  # restored context and author marker taken off, which the retry puts back
-  # into the composer as typed and the transcript and queue draw.
+  # A prompt as its author meant it to be read: Ravix's delivery wrappers
+  # and the author marker taken off, which the retry puts back into the
+  # composer as typed and the transcript and queue draw.
   defp visible_prompt(prompt) do
-    {prompt, restored?} = Recovery.visible_prompt(prompt)
-    {speaker, body} = prompt |> Ravix.Previews.Agent.visible_prompt() |> prompt_author()
+    {prompt, restored?} = PromptQueue.visible_prompt(prompt)
+    {speaker, body} = prompt_author(prompt)
     {speaker, body, restored?}
   end
 
