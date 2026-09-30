@@ -988,11 +988,11 @@ html[data-yard="closed"] .workspace-trigger-skeleton { flex: none; width: 28px; 
   white-space: nowrap; vertical-align: bottom; flex: 0 1 auto; min-width: 0;
 }
 .workspace-work-body {
-  display: flex; flex-direction: column; gap: 4px; margin: 4px 0 6px 4px;
+  display: flex; flex-direction: column; gap: 4px; margin: 4px 0 6px 4px; min-width: 0;
   padding-left: 10px; border-left: 1px solid var(--line);
 }
 .workspace-work-body .md { font-size: 12.5px; color: var(--dim); }
-.workspace-tool, .workspace-thinking { padding: 0; border: 0; margin: 0; font-size: 12px; }
+.workspace-tool, .workspace-thinking { padding: 0; border: 0; margin: 0; min-width: 0; font-size: 12px; }
 .workspace-thinking > summary {
   display: flex; align-items: center; gap: 7px;
   padding: 3px 6px; border-radius: 4px; color: var(--dim); cursor: pointer;
@@ -1018,15 +1018,19 @@ html[data-yard="closed"] .workspace-trigger-skeleton { flex: none; width: 28px; 
 }
 .workspace-tool .tool-more { flex: 0 0 auto; font-size: 11px; color: var(--dimmer); }
 .workspace-tool .chip { flex: 0 0 auto; border-radius: 3px; }
+/* The body is a flex column inside a flex column, so without min-width: 0
+   a long line widened it past the transcript, where it was cut off rather
+   than scrolled (RAV-92). Output wraps, and scrolls past its height cap. */
 .workspace-tool .tool-body {
-  display: flex; flex-direction: column; gap: 6px; margin: 2px 0 8px 26px;
+  display: flex; flex-direction: column; gap: 6px; margin: 2px 0 8px 26px; min-width: 0;
   font-family: var(--mono); font-size: 12px; color: var(--dim);
 }
 .workspace-tool .tool-body p { margin: 0; overflow-wrap: anywhere; }
 .workspace-tool .tool-body .tool-note { font-family: var(--sans); }
 .workspace-tool .tool-body pre {
   margin: 0; padding: 7px 10px; border: 1px solid var(--line); border-radius: var(--radius);
-  background: var(--code-bg); overflow-x: auto; max-height: 24em; white-space: pre;
+  background: var(--code-bg); overflow: auto; max-height: 24em; min-width: 0;
+  white-space: pre-wrap; overflow-wrap: anywhere;
 }
 .workspace-tool .tool-body .tool-command { color: var(--ink); }
 .workspace-tool .tool-args {
