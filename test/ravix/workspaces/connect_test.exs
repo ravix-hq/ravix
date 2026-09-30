@@ -233,4 +233,71 @@ defmodule Ravix.Workspaces.ConnectTest do
     stub(Ravix.Config, :github, fn -> nil end)
     assert {:error, {:unconfigured, :github}} = Connect.begin(ctx.owner, ctx.team.id, "s")
   end
+
+  describe "Add to workspace (RAV-69)" do
+    setup ctx do
+      owner = %{ctx.owner | token_enc: Ravix.Crypto.encrypt("user-owner-code")}
+      %{owner: owner}
+    end
+
+    test "offers the owner's own installations the workspace does not use, and adds one", ctx do
+      assert {:ok, [%{id: 77, account: "acme"}]} = Connect.available(ctx.owner, ctx.team.id)
+
+      Ravix.Hub.subscribe_workspace(ctx.team.id)
+
+      assert {:ok, %Installation{installation_id: 77} = added} =
+               Connect.add(ctx.owner, ctx.team.id, "77")
+
+      team_id = ctx.team.id
+      assert_receive {:workspace_hub, ^team_id, :members}
+      assert added.connected_by_user_id == ctx.owner.id
+      assert Repo.aggregate(CatalogRepo, :count) == 2
+
+      assert {:ok, []} = Connect.available(ctx.owner, ctx.team.id)
+
+      # A revoked connection is offered again, and adding it brings it back.
+      Repo.update_all(Installation, set: [revoked_at: DateTime.utc_now()])
+      assert {:ok, [%{id: 77}]} = Connect.available(ctx.owner, ctx.team.id)
+      assert {:ok, %Installation{revoked_at: nil}} = Connect.add(ctx.owner, ctx.team.id, 77)
+    end
+
+    test "is the owner's alone: admins, members and strangers are refused", ctx do
+      for role <- [:admin, :member] do
+        person = insert_user(token_enc: Ravix.Crypto.encrypt("user-owner-code"))
+        :ok = Store.add_member(ctx.team.id, person.id, role, ctx.owner.id)
+        assert {:error, {:forbidden, _}} = Connect.available(person, ctx.team.id)
+        assert {:error, {:forbidden, _}} = Connect.add(person, ctx.team.id, "77")
+      end
+
+      stranger = insert_user(token_enc: Ravix.Crypto.encrypt("user-owner-code"))
+      assert {:error, :not_found} = Connect.add(stranger, ctx.team.id, "77")
+      assert Store.installations(ctx.team.id) == []
+    end
+
+    test "refuses an installation the owner cannot see, or a malformed id", ctx do
+      assert {:error, {:unprocessable, "not_your_installation", _}} =
+               Connect.add(ctx.owner, ctx.team.id, "55")
+
+      assert {:error, {:unprocessable, "no_installation", _}} =
+               Connect.add(ctx.owner, ctx.team.id, "55; drop")
+
+      assert Store.installations(ctx.team.id) == []
+    end
+
+    test "without a stored sign-in token it asks the owner to sign in again", ctx do
+      owner = %{ctx.owner | token_enc: nil}
+
+      assert {:error, {:unprocessable, "no_github_token", _}} =
+               Connect.available(owner, ctx.team.id)
+
+      assert {:error, {:unprocessable, "no_github_token", _}} =
+               Connect.add(owner, ctx.team.id, "77")
+    end
+
+    test "is not found while workspaces are switched off", ctx do
+      Application.put_env(:ravix, :workspace_access, false)
+      assert {:error, :not_found} = Connect.available(ctx.owner, ctx.team.id)
+      assert {:error, :not_found} = Connect.add(ctx.owner, ctx.team.id, "77")
+    end
+  end
 end

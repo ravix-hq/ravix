@@ -128,12 +128,20 @@ defmodule Ravix.GitHub.Shapes do
   end
 
   defmodule Installation do
-    @moduledoc "An installation as the repository picker lists it."
+    @moduledoc """
+    An installation as the repository picker lists it. `personal` is
+    whether it is on a person's account rather than an organization's.
+    """
 
     @enforce_keys [:id, :account, :avatar_url]
-    defstruct @enforce_keys
+    defstruct @enforce_keys ++ [personal: false]
 
-    @type t :: %__MODULE__{id: integer(), account: String.t(), avatar_url: String.t() | nil}
+    @type t :: %__MODULE__{
+            id: integer(),
+            account: String.t(),
+            avatar_url: String.t() | nil,
+            personal: boolean()
+          }
   end
 
   defmodule InstallationState do
@@ -281,7 +289,8 @@ defmodule Ravix.GitHub.Shapes do
     %Installation{
       id: i["id"],
       account: get_in(i, ["account", "login"]) || "(unknown)",
-      avatar_url: get_in(i, ["account", "avatar_url"])
+      avatar_url: get_in(i, ["account", "avatar_url"]),
+      personal: (get_in(i, ["account", "type"]) || i["target_type"]) == "User"
     }
   end
 

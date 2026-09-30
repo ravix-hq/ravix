@@ -100,6 +100,24 @@
             <.icon name="check" size={14} class="ico" />
             Connected to {Enum.map_join(@installations, ", ", & &1.account)}.
           </p>
+          <div
+            :for={{inside, outside} <- in_workspace(@installations, @workspace_github)}
+            id="github-workspace"
+          >
+            <p :if={inside != []} id="github-workspace-in">
+              {@workspace_github.workspace.name} uses {handles(inside)}.
+            </p>
+            <p :if={outside != []} class="hint" id="github-workspace-out">
+              Not in {@workspace_github.workspace.name} yet: {handles(outside)}.
+              <.link
+                :if={@workspace_github.owner?}
+                navigate={"/w/#{@workspace_github.workspace.id}#workspace-github"}
+              >
+                Add to workspace
+              </.link>
+              <span :if={!@workspace_github.owner?}>A workspace owner can add them.</span>
+            </p>
+          </div>
           <p class="hint">
             <a href="/api/auth/install">Add another account, or change which repositories ↗</a>
           </p>

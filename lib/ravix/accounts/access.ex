@@ -560,6 +560,7 @@ defmodule Ravix.Accounts.Access do
   @type workspace_capability ::
           :manage_roles
           | :delete_workspace
+          | :add_installations
           | :manage_members
           | :connect_repos
           | :manage_projects
@@ -567,7 +568,7 @@ defmodule Ravix.Accounts.Access do
           | :create_track
           | :see_workspace_tracks
 
-  @owner_only [:manage_roles, :delete_workspace]
+  @owner_only [:manage_roles, :delete_workspace, :add_installations]
   @admin [:manage_members, :connect_repos, :manage_projects, :create_project]
   @member [:create_track, :see_workspace_tracks]
 
@@ -575,7 +576,8 @@ defmodule Ravix.Accounts.Access do
   Whether a workspace role carries a capability (ADR 0009's roles).
 
   Owners transfer ownership, appoint admins and delete the workspace
-  (`:manage_roles`, `:delete_workspace`). Admins also manage members,
+  (`:manage_roles`, `:delete_workspace`), and add a GitHub installation
+  they can see themselves (`:add_installations`, RAV-69). Admins also manage members,
   repository connections and project settings and secrets, and admit
   repositories as projects. Members work on the tracks visibility admits
   them to and start tracks. Pure: it answers about a role, not a person;

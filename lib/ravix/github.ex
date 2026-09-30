@@ -311,16 +311,25 @@ defmodule Ravix.GitHub do
   The intersection is the point. Asking the App for its installations would
   list every account that has ever installed ravix; asking the user's token
   for theirs lists only the ones they are a member of. The second question
-  is the one the repository picker is actually asking.
+  is the one the repository picker is actually asking. Display reads are
+  cached for 30 seconds; `:fresh` bypasses the cache for access checks.
   """
-  @spec installations_for(app(), String.t()) :: {:ok, [Shapes.Installation.t()]} | error()
-  def installations_for(nil, _user_token), do: {:error, {:unconfigured, :github}}
+  @spec installations_for(app(), String.t(), freshness()) ::
+          {:ok, [Shapes.Installation.t()]} | error()
+  def installations_for(app, user_token, freshness \\ :cached)
 
-  def installations_for(%GitHubApp{} = app, user_token) do
+  def installations_for(nil, _user_token, _freshness), do: {:error, {:unconfigured, :github}}
+
+  def installations_for(%GitHubApp{} = app, user_token, freshness)
+      when freshness in [:cached, :fresh] do
+    opts = if freshness == :cached, do: [cache_ttl: 30_000], else: []
+
     with {:ok, body} <-
-           HTTP.request(app, :get, "/user/installations?per_page=100",
-             user_token: user_token,
-             cache_ttl: 30_000
+           HTTP.request(
+             app,
+             :get,
+             "/user/installations?per_page=100",
+             Keyword.put(opts, :user_token, user_token)
            ) do
       {:ok, Enum.map(body["installations"] || [], &Shapes.installation/1)}
     end

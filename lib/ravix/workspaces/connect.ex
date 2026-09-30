@@ -34,11 +34,15 @@ defmodule Ravix.Workspaces.Connect do
   callback lands. One installation may be connected to several workspaces,
   each by its own round trip. Binding it refreshes that workspace's catalog
   (`Ravix.Workspaces.Repositories`).
+
+  An owner may also add, in one click, an installation GitHub already says
+  they can see (`available/2`, `add/3`, RAV-69): the same proof, read with
+  the token they signed in with instead of a round trip's `code`.
   """
 
   alias Ravix.Accounts.{Access, Auth, User}
   alias Ravix.Crypto
-  alias Ravix.Workspaces.{Repositories, Store}
+  alias Ravix.Workspaces.{Installation, Repositories, Store}
 
   @max_age_s 15 * 60
   @prefix "ws."
@@ -130,6 +134,87 @@ defmodule Ravix.Workspaces.Connect do
   end
 
   def finish(%User{}, _session_hash, _state, _installation_id, _code), do: {:error, :stale}
+
+  # ── Add to workspace (RAV-69) ──────────────────────────────────────────
+
+  @doc """
+  What "Add to workspace" offers: the installations of the Ravix App the
+  caller can see on GitHub themselves, read with their own sign-in token,
+  that the workspace does not use yet. A connection that was revoked or
+  suspended is offered again; a live one is not.
+
+  Owners only (`:add_installations`). Nothing is connected by reading this,
+  and an installation the caller cannot see is never offered: this is the
+  explicit half of RAV-69, beside the automatic
+  `Ravix.Workspaces.Store.attach_backing_installations/2`.
+  """
+  @spec available(User.t(), String.t()) ::
+          {:ok, [Ravix.GitHub.Shapes.Installation.t()]} | {:error, reason()}
+  def available(%User{} = user, workspace_id) do
+    with {:ok, %{workspace: workspace}} <-
+           Access.workspace_grant(user, workspace_id, :add_installations),
+         {:ok, app} <- Ravix.Providers.github(),
+         {:ok, visible} <- visible(app, user, :cached) do
+      live =
+        for installation <- Store.installations(workspace.id),
+            Installation.status(installation) == :active,
+            into: MapSet.new(),
+            do: installation.installation_id
+
+      {:ok, Enum.reject(visible, &MapSet.member?(live, &1.id))}
+    end
+  end
+
+  @doc """
+  Connect one of the caller's own installations to a workspace, in one
+  click: no round trip to GitHub's install page. Owners only; the
+  installation must be among the ones GitHub says the caller can see, read
+  again, uncached, with their own token at the moment they press it. A
+  personal account is connected only this way, never automatically.
+
+  Refreshes the workspace's catalog and tells its open pages, as `finish/5`
+  does. Answers the connection.
+  """
+  @spec add(User.t(), String.t(), term()) :: {:ok, Installation.t()} | {:error, reason()}
+  def add(%User{} = user, workspace_id, installation_id) do
+    with {:ok, %{workspace: workspace}} <-
+           Access.workspace_grant(user, workspace_id, :add_installations),
+         {:ok, installation_id} <- installation_id(installation_id),
+         {:ok, app} <- Ravix.Providers.github(),
+         {:ok, visible} <- visible(app, user, :fresh),
+         {:ok, found} <- among(visible, installation_id) do
+      {:ok, binding} =
+        Store.bind_installation(workspace.id, installation_id, found.account, user.id)
+
+      _ = Repositories.refresh_unchecked(workspace.id)
+      Ravix.Hub.publish_workspace(workspace.id, :members)
+      {:ok, binding}
+    end
+  end
+
+  defp visible(app, user, freshness) do
+    case Ravix.Accounts.user_token(user) do
+      {:ok, token} ->
+        Ravix.GitHub.installations_for(app, token, freshness)
+
+      {:error, _no_token} ->
+        {:error,
+         {:unprocessable, "no_github_token",
+          "Sign in with GitHub again so Ravix can see your GitHub accounts."}}
+    end
+  end
+
+  defp among(visible, installation_id) do
+    case Enum.find(visible, &(&1.id == installation_id)) do
+      nil ->
+        {:error,
+         {:unprocessable, "not_your_installation",
+          "That GitHub installation is not one you can see, so it cannot be added here."}}
+
+      found ->
+        {:ok, found}
+    end
+  end
 
   # The returning person's own installations, read with the token their
   # `code` buys and then forgotten: the ownership proof, not a credential.
