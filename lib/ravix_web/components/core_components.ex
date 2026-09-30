@@ -391,6 +391,44 @@ defmodule RavixWeb.CoreComponents do
   end
 
   @doc """
+  The one container for the stage's own pages (RAV-100): Home, Inbox,
+  Schedules and Not found share its width, left edge and heading, so moving
+  between them moves nothing but the content. It scrolls itself.
+
+      <.stage_page id="schedules-panel">
+        <:title>Schedules</:title>
+        <:subtitle>A prompt that runs on a timer.</:subtitle>
+        <:actions><button>Refresh</button></:actions>
+        ...
+      </.stage_page>
+  """
+  attr :id, :string, default: nil
+  attr :class, :any, default: nil
+  attr :title_id, :string, default: nil
+  attr :rest, :global
+  slot :title, required: true
+  slot :subtitle
+  slot :actions
+  slot :inner_block
+
+  def stage_page(assigns) do
+    ~H"""
+    <div id={@id} class={["stage-page", @class]} {@rest}>
+      <div class="stage-page-inner">
+        <header class="stage-page-header">
+          <div class="stage-page-heading">
+            <h1 id={@title_id}>{render_slot(@title)}</h1>
+            <div :for={subtitle <- @subtitle} class="stage-page-sub">{render_slot(subtitle)}</div>
+          </div>
+          <div :if={@actions != []} class="stage-page-actions">{render_slot(@actions)}</div>
+        </header>
+        {render_slot(@inner_block)}
+      </div>
+    </div>
+    """
+  end
+
+  @doc """
   A plain table. Streams are supported.
 
       <.table id="users" rows={@users}>

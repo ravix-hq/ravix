@@ -2021,6 +2021,7 @@ defmodule RavixWeb.WorkspaceLive do
       case action do
         :projects -> "Home"
         :schedules -> "Schedules"
+        :not_found -> "Page not found"
         :login -> "Sign in"
         _ -> "Inbox"
       end
@@ -2203,6 +2204,22 @@ defmodule RavixWeb.WorkspaceLive do
   end
 
   defp quick_repos(socket), do: socket
+
+  # Home's Recent (RAV-100): the rail's open tracks across every project,
+  # newest activity first, so two tracks of one repository read as the two
+  # pieces of work they are. The sidebar's Everyone / Mine applies here too.
+  defp recent_tracks(projects, tracks, user) do
+    for(
+      project <- projects,
+      track <- rail_rows(tracks[project.id] || [], user, nil),
+      do: {project, track}
+    )
+    |> Enum.sort_by(fn {_project, track} -> activity_key(track.activity_at) end, :desc)
+    |> Enum.take(8)
+  end
+
+  defp activity_key(nil), do: 0
+  defp activity_key(%DateTime{} = at), do: DateTime.to_unix(at, :microsecond)
 
   # Nothing to pick up where one left off: no project in the rail. Somebody
   # with projects keeps their Recent list, and a project with no tracks has
