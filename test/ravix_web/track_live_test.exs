@@ -2098,6 +2098,322 @@ defmodule RavixWeb.TrackLiveTest do
     end
   end
 
+  describe "the model menu's effort and Fast (RAV-52)" do
+    @claude [
+      %{
+        "id" => "effort",
+        "name" => "Effort",
+        "category" => "thought_level",
+        "type" => "select",
+        "currentValue" => "default",
+        "options" => [
+          %{"value" => "default", "name" => "Default"},
+          %{"value" => "high", "name" => "High"},
+          %{"value" => "max", "name" => "Max"}
+        ]
+      },
+      %{
+        "id" => "fast",
+        "name" => "Fast mode",
+        "category" => "model_config",
+        "type" => "boolean",
+        "currentValue" => false
+      },
+      %{
+        "id" => "mode",
+        "name" => "Mode",
+        "category" => "mode",
+        "type" => "select",
+        "currentValue" => "default",
+        "options" => [%{"value" => "default"}, %{"value" => "auto"}]
+      }
+    ]
+
+    @codex [
+      %{
+        "id" => "reasoning_effort",
+        "name" => "Reasoning effort",
+        "category" => "thought_level",
+        "type" => "select",
+        "currentValue" => "medium",
+        "options" => [
+          %{"value" => "low", "name" => "Low"},
+          %{"value" => "medium", "name" => "Medium"},
+          %{"value" => "xhigh", "name" => "Extra high"}
+        ]
+      },
+      %{
+        "id" => "fast-mode",
+        "name" => "Fast mode",
+        "category" => "model_config",
+        "type" => "boolean"
+      }
+    ]
+
+    setup ctx do
+      serve = fn runtime, model, options, config ->
+        stub(Tracks, :get, fn _, id, _ ->
+          track =
+            Tracks.present(Repo.get!(Track, id), role: :owner)
+            |> Map.merge(%{status: :ready, model: model, runtime: runtime})
+            |> Map.merge(%{
+              session_options: Ravix.SessionConfig.options(options),
+              session_config: config
+            })
+
+          {:ok,
+           %{
+             track: track,
+             header: blank_header(),
+             threads: thread_options(id),
+             starters: [],
+             models: ["anthropic/claude-opus-5-5", "anthropic/claude-sonnet-5"]
+           }}
+        end)
+
+        send(ctx.view.pid, {:hub, Event.new(:tracks, ctx.project.id, track_id: ctx.track.id)})
+        settle(ctx.view)
+      end
+
+      serve.("claude", "anthropic/claude-opus-5-5", @claude, %{"effort" => "high", "fast" => true})
+
+      %{serve: serve}
+    end
+
+    test "the chip reads model and effort, and the menu lists what the adapter advertised",
+         ctx do
+      assert has_element?(ctx.view, "#model-trigger", "Claude Opus 5.5 · High · Fast mode")
+      assert has_element?(ctx.view, "#model-effort-label", "Effort")
+
+      for {value, name} <- [{"default", "Default"}, {"high", "High"}, {"max", "Max"}] do
+        assert has_element?(
+                 ctx.view,
+                 ~s(#model-effort [phx-value-id="effort"][phx-value-choice="#{value}"]),
+                 name
+               )
+      end
+
+      assert has_element?(
+               ctx.view,
+               ~s(#model-effort [phx-value-choice="high"][aria-checked=true])
+             )
+
+      assert has_element?(
+               ctx.view,
+               ~s(#model-fast[role=menuitemcheckbox][aria-checked=true][phx-value-id=fast][phx-value-choice=false]),
+               "Fast mode"
+             )
+
+      # The adapter's permission mode is advertised too, and never offered.
+      refute has_element?(ctx.view, ~s(#model-menu [phx-value-id="mode"]))
+    end
+
+    test "codex gets both, under its own ids and names", ctx do
+      ctx.serve.("codex", "openai/gpt-6-astra", @codex, %{})
+
+      assert has_element?(ctx.view, "#model-trigger", "Medium")
+      assert has_element?(ctx.view, "#model-effort-label", "Reasoning effort")
+
+      assert has_element?(
+               ctx.view,
+               ~s(#model-effort [phx-value-id="reasoning_effort"][phx-value-choice="xhigh"]),
+               "Extra high"
+             )
+
+      assert has_element?(ctx.view, ~s(#model-fast[phx-value-id="fast-mode"][aria-checked=false]))
+    end
+
+    test "nothing advertised yet, or an older Fountain: no controls, and no slash commands",
+         ctx do
+      ctx.serve.("claude", "anthropic/claude-opus-5-5", nil, %{"effort" => "high"})
+      refute has_element?(ctx.view, "#model-effort")
+      refute has_element?(ctx.view, "#model-fast")
+      assert has_element?(ctx.view, "#model-trigger[title='Claude Code · Claude Opus 5.5']")
+    end
+
+    test "choosing one goes through the scoped context as the adapter's strings", ctx do
+      user_id = ctx.user.id
+      track_id = ctx.track.id
+
+      expect(Tracks, :set_session_option, fn %{id: ^user_id},
+                                             ^track_id,
+                                             ^track_id,
+                                             "effort",
+                                             "max" ->
+        {:ok, %{"effort" => "max"}}
+      end)
+
+      ctx.view
+      |> element(~s(#model-effort [phx-value-choice="max"]))
+      |> render_click()
+
+      render_async(ctx.view)
+
+      expect(Tracks, :set_session_option, fn _, _, _, "fast", "false" -> {:ok, %{}} end)
+      ctx.view |> element("#model-fast") |> render_click()
+      render_async(ctx.view)
+    end
+
+    test "unadvertised ids and values are refused at the event, before the context", ctx do
+      reject(&Tracks.set_session_option/5)
+      name = "effort_#{System.unique_integer([:positive])}"
+
+      for params <- [
+            %{"id" => "effort", "choice" => name},
+            %{"id" => "effort", "choice" => "xhigh"},
+            %{"id" => "mode", "choice" => "auto"},
+            %{"id" => "reasoning_effort", "choice" => "high"},
+            %{"id" => "fast", "choice" => "yes"},
+            %{"id" => ["effort"], "choice" => "high"},
+            %{"id" => "effort"},
+            %{}
+          ] do
+        render_hook(ctx.view, "set-session-option", params)
+        assert toasted(ctx) =~ "offered for this agent and model"
+      end
+
+      assert_raise ArgumentError, fn -> String.to_existing_atom(name) end
+    end
+
+    test "a refusal from the context is said", ctx do
+      stub(Tracks, :set_session_option, fn _, _, _, _, _ ->
+        {:error,
+         {:unprocessable, "session_config_unsupported",
+          "This agent and model don't offer that setting."}}
+      end)
+
+      ctx.view |> element(~s(#model-effort [phx-value-choice="max"])) |> render_click()
+      render_async(ctx.view)
+      assert toasted(ctx) =~ "offer that setting"
+    end
+
+    test "a revoked session cannot change them", ctx do
+      reject(&Tracks.set_session_option/5)
+      token = Plug.Conn.get_session(ctx.conn, :session_token)
+      Repo.delete!(Repo.get_by!(Session, token_hash: Ravix.Crypto.sha256(token)))
+
+      :sys.replace_state(ctx.view.pid, fn state ->
+        update_in(state.socket.assigns.session_guard, &%{&1 | stale?: true})
+      end)
+
+      assert {:error, {:redirect, %{to: "/login"}}} =
+               render_hook(ctx.view, "set-session-option", %{id: "effort", choice: "high"})
+    end
+
+    test "a turn's footer names what it ran with, and what was skipped", ctx do
+      page =
+        [
+          opened(1, "configured", "Think hard"),
+          %{
+            "id" => 3,
+            "turn_id" => "configured",
+            "kind" => "output",
+            "stream" => "acp",
+            "data" =>
+              Jason.encode!(%{
+                jsonrpc: "2.0",
+                method: "session/update",
+                params: %{
+                  update: %{
+                    sessionUpdate: "agent_message_chunk",
+                    content: %{type: "text", text: "Done thinking"}
+                  }
+                }
+              })
+          },
+          %{
+            "id" => 4,
+            "turn_id" => "configured",
+            "kind" => "stage",
+            "stage" => "turn",
+            "state" => "completed"
+          }
+        ]
+        |> Transcript.page("claude")
+        |> Transcript.with_images([
+          Shapes.turn(%{
+            "id" => "configured",
+            "config_selection" => %{
+              "requested" => %{"effort" => "high", "fast" => true, "reasoning_effort" => "high"},
+              "applied" => %{"effort" => "high", "fast" => true},
+              "skipped" => ["reasoning_effort"]
+            }
+          })
+        ])
+
+      stub(Tracks, :events, fn _, _, _ -> {:ok, page} end)
+      render_click(ctx.view, "retry-load")
+      render_async(ctx.view)
+
+      assert has_element?(ctx.view, "#turns-configured .turn-config", "High · Fast mode")
+
+      assert has_element?(
+               ctx.view,
+               "#turns-configured .turn-config-skipped",
+               "reasoning_effort skipped"
+             )
+    end
+
+    test "a refused option says so in the runtime's words, and offers the menu", ctx do
+      detail =
+        Jason.encode!(%{
+          "id" => "effort",
+          "requested" => "max",
+          "detail" => "Invalid value for config option effort: max"
+        })
+
+      page =
+        Transcript.page(
+          [
+            opened(1, "refused", "Think hard"),
+            %{
+              "id" => 2,
+              "turn_id" => "refused",
+              "kind" => "stage",
+              "stage" => "config",
+              "state" => "failed",
+              "data" => detail
+            },
+            %{
+              "id" => 3,
+              "turn_id" => "refused",
+              "kind" => "stage",
+              "stage" => "turn",
+              "state" => "failed",
+              "data" => Jason.encode!(%{"message" => "Could not set effort"})
+            }
+          ],
+          "claude"
+        )
+
+      stub(Tracks, :events, fn _, _, _ -> {:ok, page} end)
+      render_click(ctx.view, "retry-load")
+      render_async(ctx.view)
+
+      assert has_element?(ctx.view, "#turns-refused .workspace-failure", "Setting not accepted")
+
+      assert has_element?(
+               ctx.view,
+               "#turns-refused .workspace-failure",
+               "Invalid value for config option effort: max"
+             )
+
+      assert has_element?(
+               ctx.view,
+               ~s(#turns-refused .workspace-failure button[popovertarget="model-menu"]),
+               "Change setting"
+             )
+
+      assert has_element?(
+               ctx.view,
+               "#turns-refused button[phx-click=retry-turn]",
+               "Retry message"
+             )
+
+      refute has_element?(ctx.view, "#turns-refused .workspace-failure", "Reply failed")
+    end
+  end
+
   describe "a draft thread" do
     test "+ adds a draft on the personal default with no dialog, and pressing it again reuses it",
          ctx do

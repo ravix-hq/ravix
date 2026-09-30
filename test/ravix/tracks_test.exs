@@ -3,6 +3,7 @@ defmodule Ravix.TracksTest do
 
   import Mimic
 
+  alias Ravix.Accounts.ThreadPreference
   alias Ravix.Fountain.{Client, Error, FakeTransport}
   alias Ravix.Fountain.Shapes
   alias Ravix.Hub
@@ -1046,6 +1047,140 @@ defmodule Ravix.TracksTest do
       assert {:error, :not_found} = Tracks.beat(insert_user(), ctx.track.id, :watching)
       assert :ok = Tracks.leave(ctx.owner, ctx.track.id)
       assert Ravix.Presence.present(ctx.track.id) == []
+    end
+  end
+
+  describe "set_session_option/5" do
+    @claude_options [
+      %{
+        "id" => "effort",
+        "name" => "Effort",
+        "category" => "thought_level",
+        "type" => "select",
+        "currentValue" => "default",
+        "options" => [%{"value" => "default"}, %{"value" => "high"}, %{"value" => "max"}]
+      },
+      %{"id" => "fast", "name" => "Fast mode", "category" => "model_config", "type" => "boolean"},
+      %{
+        "id" => "mode",
+        "category" => "mode",
+        "type" => "select",
+        "options" => [%{"value" => "auto"}]
+      }
+    ]
+
+    setup do
+      owner = insert_user()
+      project = insert_project(user: owner, runtime: "claude", model: "anthropic/claude-opus-5-5")
+      track = insert_track(project: project, conversation_id: "c1")
+      Hub.subscribe(project.id)
+      {:ok, owner: owner, project: project, track: track}
+    end
+
+    defp advertises(options) do
+      client = FakeTransport.client([])
+      stub(Ravix.Fountain, :client, fn -> client end)
+
+      stub(Ravix.Fountain, :get_conversation, fn _client, "c1" ->
+        {:ok,
+         Shapes.conversation(%{
+           "id" => "c1",
+           "status" => "idle",
+           "session_config_options" => options
+         })}
+      end)
+    end
+
+    test "an advertised value is kept on the thread and as the person's default", ctx do
+      advertises(@claude_options)
+
+      assert {:ok, %{"effort" => "max"}} =
+               Tracks.set_session_option(ctx.owner, ctx.track.id, nil, "effort", "max")
+
+      assert {:ok, %{"effort" => "max", "fast" => true}} =
+               Tracks.set_session_option(ctx.owner, ctx.track.id, nil, "fast", "true")
+
+      assert Ravix.Tracks.Store.get_thread(ctx.track.id).session_config ==
+               %{"effort" => "max", "fast" => true}
+
+      assert ThreadPreference.session_config(ctx.owner, "claude") ==
+               %{"effort" => "max", "fast" => true}
+
+      assert ThreadPreference.session_config(ctx.owner, "codex") == %{}
+
+      track_id = ctx.track.id
+      assert_receive {:hub, %Event{name: :tracks, track_id: ^track_id}}
+    end
+
+    test "codex's own ids are taken from what codex advertised", ctx do
+      advertises([
+        %{
+          "id" => "reasoning_effort",
+          "category" => "thought_level",
+          "type" => "select",
+          "options" => [%{"value" => "low"}, %{"value" => "xhigh"}]
+        },
+        %{"id" => "fast-mode", "category" => "model_config", "type" => "boolean"}
+      ])
+
+      assert {:ok, _} =
+               Tracks.set_session_option(
+                 ctx.owner,
+                 ctx.track.id,
+                 nil,
+                 "reasoning_effort",
+                 "xhigh"
+               )
+
+      assert {:ok, config} =
+               Tracks.set_session_option(ctx.owner, ctx.track.id, nil, "fast-mode", "false")
+
+      assert config == %{"reasoning_effort" => "xhigh", "fast-mode" => false}
+    end
+
+    test "an id or value the runtime did not advertise is refused, mode included", ctx do
+      advertises(@claude_options)
+
+      for {id, value} <- [
+            {"effort", "ludicrous"},
+            {"mode", "auto"},
+            {"reasoning_effort", "high"},
+            {"fast", "yes"}
+          ] do
+        assert {:error, {:unprocessable, "session_config_unsupported", _}} =
+                 Tracks.set_session_option(ctx.owner, ctx.track.id, nil, id, value)
+      end
+
+      assert Ravix.Tracks.Store.get_thread(ctx.track.id).session_config == %{}
+      refute_received {:hub, %Event{name: :tracks}}
+    end
+
+    test "a conversation that has advertised nothing offers nothing to set", ctx do
+      advertises(nil)
+
+      assert {:error, {:conflict, "session_config_unavailable", _}} =
+               Tracks.set_session_option(ctx.owner, ctx.track.id, nil, "effort", "high")
+    end
+
+    test "another person's thread, a read-only member, and a closed track are refused", ctx do
+      advertises(@claude_options)
+
+      assert {:error, :not_found} =
+               Tracks.set_session_option(insert_user(), ctx.track.id, nil, "effort", "high")
+
+      reader = insert_user()
+      insert_track_member(ctx.track, reader, role: :read)
+
+      assert {:error, _} =
+               Tracks.set_session_option(reader, ctx.track.id, nil, "effort", "high")
+
+      closed =
+        insert_track(project: ctx.project, conversation_id: "c9", closed_at: DateTime.utc_now())
+
+      assert {:error, {:conflict, "closed_track", _}} =
+               Tracks.set_session_option(ctx.owner, closed.id, nil, "effort", "high")
+
+      assert Ravix.Tracks.Store.get_thread(ctx.track.id).session_config == %{}
     end
   end
 

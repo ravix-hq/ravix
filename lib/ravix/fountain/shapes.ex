@@ -98,6 +98,10 @@ defmodule Ravix.Fountain.Shapes do
     when it follows its agent's. A Fountain that predates the field sends
     none, which reads the same as following the agent, and that is what
     such a Fountain does.
+
+    `session_config_options` is the runtime's ACP option list (ADR 0062) as
+    `Ravix.SessionConfig.options/1` reads it: nil from a Fountain before the
+    field, or before a turn has reported one.
     """
 
     @enforce_keys [
@@ -110,7 +114,7 @@ defmodule Ravix.Fountain.Shapes do
       :turn_count,
       :model
     ]
-    defstruct @enforce_keys ++ [:channel_id]
+    defstruct @enforce_keys ++ [:channel_id, :session_config_options]
 
     @typedoc """
     Fountain's own words for where a conversation is, plus `:other` for one
@@ -126,7 +130,8 @@ defmodule Ravix.Fountain.Shapes do
             inserted_at: String.t() | nil,
             last_active_at: DateTime.t() | nil,
             turn_count: integer() | nil,
-            model: String.t() | nil
+            model: String.t() | nil,
+            session_config_options: [Ravix.SessionConfig.Option.t()] | nil
           }
   end
 
@@ -141,13 +146,25 @@ defmodule Ravix.Fountain.Shapes do
     Ravix reports rather than branches on. `client_request_id` is the name the
     sender gave the prompt that opened the turn, if it gave one; the prompt
     queue sends its row id there.
+
+    `config_selection` is what became of the turn's ACP session config
+    options (ADR 0062): `applied` (id to the value the adapter confirmed) and
+    `skipped` ids. Nil on a turn that requested none, or from a Fountain
+    before the field. A refusal is read off the turn's failed `config` stage
+    instead, which arrives live.
     """
 
     @enforce_keys [:id, :prompt, :origin, :status, :inserted_at, :client_request_id]
-    defstruct @enforce_keys ++ [image_count: 0]
+    defstruct @enforce_keys ++ [image_count: 0, config_selection: nil]
+
+    @type config_selection :: %{
+            applied: %{String.t() => String.t() | boolean()},
+            skipped: [String.t()]
+          }
 
     @type t :: %__MODULE__{
             image_count: non_neg_integer(),
+            config_selection: config_selection() | nil,
             id: String.t(),
             prompt: String.t() | nil,
             origin: String.t() | nil,
@@ -319,7 +336,8 @@ defmodule Ravix.Fountain.Shapes do
       inserted_at: raw["inserted_at"],
       last_active_at: time(raw["last_active_at"]),
       turn_count: raw["turn_count"],
-      model: string_or_nil(raw["model"])
+      model: string_or_nil(raw["model"]),
+      session_config_options: Ravix.SessionConfig.options(raw["session_config_options"])
     }
   end
 
@@ -344,9 +362,31 @@ defmodule Ravix.Fountain.Shapes do
       status: string_or_nil(raw["status"]),
       inserted_at: string_or_nil(raw["inserted_at"]),
       client_request_id: string_or_nil(raw["client_request_id"]),
-      image_count: image_count(raw["image_count"])
+      image_count: image_count(raw["image_count"]),
+      config_selection: config_selection(raw["config_selection"])
     }
   end
+
+  defp config_selection(%{} = raw) do
+    %{
+      applied:
+        for(
+          {id, value} <- map_or_empty(raw["applied"]),
+          is_binary(id),
+          config_value?(value),
+          into: %{},
+          do: {id, value}
+        ),
+      skipped: raw["skipped"] |> List.wrap() |> Enum.filter(&is_binary/1)
+    }
+  end
+
+  defp config_selection(_raw), do: nil
+
+  defp map_or_empty(map) when is_map(map), do: map
+  defp map_or_empty(_map), do: %{}
+
+  defp config_value?(value), do: is_boolean(value) or (is_binary(value) and value != "")
 
   defp image_count(n) when is_integer(n) and n in 0..6, do: n
   defp image_count(_), do: 0

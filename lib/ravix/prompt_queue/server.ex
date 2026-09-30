@@ -75,6 +75,7 @@ defmodule Ravix.PromptQueue.Server do
   alias Ravix.PromptQueue.Recovery
   alias Ravix.PromptQueue.Store
   alias Ravix.Repo
+  alias Ravix.SessionConfig
   alias Ravix.Trace
   alias Ravix.Tracks.Attribution
   alias Ravix.Tracks.Billing
@@ -779,7 +780,8 @@ defmodule Ravix.PromptQueue.Server do
 
       if GenServer.call(server, {:post, row.claim_token}) do
         Fountain.prompt(client, track.conversation_id, text, body.images,
-          client_request_id: row.id
+          client_request_id: row.id,
+          session_config: session_config(row)
         )
       else
         # Discovery lag may have recovered this live preparer's claim. Its
@@ -791,6 +793,17 @@ defmodule Ravix.PromptQueue.Server do
     else
       false -> :revoked
       error -> error
+    end
+  end
+
+  # RAV-52: the thread's ACP session config options (effort, Fast), on every
+  # prompt. Fountain applies a prompt's options to that turn only (ADR 0062),
+  # so the thread's stored choice is the whole of it each time.
+  defp session_config(row) do
+    # ownership: access/1 established Access.thread_access for this queue row.
+    case Ravix.Tracks.Store.thread(row.track_id, row.thread_id) do
+      %{session_config: config} -> SessionConfig.clean(config)
+      nil -> %{}
     end
   end
 
@@ -870,6 +883,16 @@ defmodule Ravix.PromptQueue.Server do
 
       Error.credential?(error) ->
         Store.set_status(row.id, :failed, Error.credential_message(), error.code)
+
+      # Only the map's shape is checked there, so this is a stored choice that
+      # no longer fits Fountain's rules. The person changes it and resends.
+      error.code == "session_config_invalid" ->
+        Store.set_status(
+          row.id,
+          :failed,
+          "Fountain refused this thread's effort or Fast setting. Change it in the model menu, then send again.",
+          error.code
+        )
 
       Error.busy?(error) ->
         Store.set_status(row.id, :queued, "The agent is at capacity; will retry", error.code)

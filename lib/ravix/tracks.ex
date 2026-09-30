@@ -59,6 +59,7 @@ defmodule Ravix.Tracks do
   alias Ravix.PromptQueue.Body
   alias Ravix.PromptQueue.Body.Image
   alias Ravix.PromptQueue.Server, as: QueueServer
+  alias Ravix.SessionConfig
   alias Ravix.Spec
   alias Ravix.Trace
   alias Ravix.Tracks.Sandbox.Maintenance
@@ -363,7 +364,9 @@ defmodule Ravix.Tracks do
              viewer: user
            )
            |> Map.put(:runtime, thread.runtime || project.runtime)
-           |> Map.put(:default_model, thread.model || project.model),
+           |> Map.put(:default_model, thread.model || project.model)
+           |> Map.put(:session_config, SessionConfig.clean(thread.session_config))
+           |> Map.put(:session_options, session_options(live[thread.conversation_id])),
          threads: threads,
          header: header,
          starters: Spec.starters(%{project | runtime: thread.runtime || project.runtime}),
@@ -816,10 +819,16 @@ defmodule Ravix.Tracks do
                    conversation_id: conversation_id,
                    title: title,
                    runtime: selection.runtime,
-                   model: selection.model,
+                   model: selection.model
+                 }
+                 |> Map.put(
+                   :session_config,
+                   ThreadPreference.session_config(user, selection.runtime)
+                 )
+                 |> Map.merge(%{
                    # Attribution only (`Co-authored-by`), never the payer.
                    started_by: user.id
-                 },
+                 }),
                  track,
                  user,
                  request_id,
@@ -1613,6 +1622,69 @@ defmodule Ravix.Tracks do
         error
     end
   end
+
+  @doc """
+  Choose one of the shown conversation's ACP session config options (RAV-52,
+  Fountain ADR 0062): its reasoning effort or its Fast toggle, from its next
+  prompt on, and this person's default for new threads on the same runtime.
+
+  `id` and `value` are the page's strings. They are checked against what
+  the conversation's runtime advertised on its latest turn, read fresh from
+  Fountain: `id` must be the effort or the Fast option
+  (`Ravix.SessionConfig.controls/1`), and `value` one of the effort's listed
+  values or `"true"`/`"false"`. Nothing is sent now; every prompt carries
+  the thread's `session_config`, because Fountain keeps a prompt's options
+  for that turn only. A conversation that has advertised nothing (a
+  Fountain before ADR 0062, or no turn yet) is refused.
+  """
+  @spec set_session_option(User.t(), String.t(), String.t() | nil, term(), term()) ::
+          {:ok, SessionConfig.config()} | {:error, reason()}
+  def set_session_option(%User{} = user, track_id, thread_id, id, value) do
+    with {:ok, %{track: track, project: project, thread: thread}} <-
+           Access.thread_access(user, track_id, thread_id, :write),
+         :ok <-
+           check(
+             is_nil(track.closed_at) and track.sandbox_state not in [:closing, :terminated],
+             {:conflict, "closed_track", "This track is closing or closed."}
+           ),
+         :ok <-
+           check(
+             thread.conversation_id,
+             {:conflict, "not_open", "This track has no conversation yet."}
+           ),
+         {:ok, client} <- fountain(),
+         {:ok, conversation} <- Fountain.get_conversation(client, thread.conversation_id),
+         {:ok, id, value} <- advertised(conversation, id, value),
+         runtime = thread.runtime || project.runtime,
+         {:ok, _} <- ThreadPreference.remember_session_option(user, runtime, id, value) do
+      config = thread.session_config |> SessionConfig.clean() |> Map.put(id, value)
+      Store.set_thread_session_config(thread.id, config)
+      publish_tracks(project.id, track.id)
+      {:ok, config}
+    end
+  end
+
+  defp advertised(%Conversation{session_config_options: nil}, _id, _value),
+    do:
+      {:error,
+       {:conflict, "session_config_unavailable",
+        "This conversation hasn't reported its settings yet. Send a message first."}}
+
+  defp advertised(%Conversation{session_config_options: options}, id, value) do
+    case options |> SessionConfig.controls() |> SessionConfig.choose(id, value) do
+      {:ok, id, value} ->
+        {:ok, id, value}
+
+      :error ->
+        {:error,
+         {:unprocessable, "session_config_unsupported",
+          "This agent and model don't offer that setting."}}
+    end
+  end
+
+  # The options the page offers: the live conversation's, or none known.
+  defp session_options(%Conversation{session_config_options: options}), do: options
+  defp session_options(_conversation), do: nil
 
   defp thread_model(client, project, %{runtime: nil}, model),
     do: model_override(client, project, model)

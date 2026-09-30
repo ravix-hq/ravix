@@ -61,7 +61,7 @@ defmodule RavixWeb.TrackLive do
   alias Ravix.Accounts.Access
   alias Ravix.Comments
   alias Ravix.GitHub.ChecksReport
-  alias Ravix.{Hub, Previews, PromptQueue, Terminal, Tracks}
+  alias Ravix.{Hub, Previews, PromptQueue, SessionConfig, Terminal, Tracks}
   alias Ravix.Hub.Event
   alias Ravix.PromptQueue.Recovery
   alias Ravix.Tracks.{AgentFailure, Diff, Files, Follower, MachineState}
@@ -487,6 +487,25 @@ defmodule RavixWeb.TrackLive do
       do: {:noreply, socket},
       else: {:noreply, begin(socket, :model, &Tracks.set_model(&1, &2, thread_id, model))}
   end
+
+  # RAV-52: one of the shown conversation's session config options (effort
+  # or Fast), from its next prompt. Checked here against the options this
+  # page was shown, and again by the context against a fresh read: an id
+  # that is not the effort or Fast option, or a value the runtime did not
+  # list, never reaches it. Ids and values stay strings; no atom is made.
+  # It shares the model's slot in `pending`: one write from the menu at a time.
+  def handle_event("set-session-option", %{"id" => id, "choice" => value}, socket)
+      when is_binary(id) and is_binary(value) do
+    controls = SessionConfig.controls(socket.assigns.track.session_options)
+
+    case SessionConfig.choose(controls, id, value) do
+      {:ok, id, _value} -> {:noreply, set_session_option(socket, id, value)}
+      :error -> {:noreply, session_option_refused(socket)}
+    end
+  end
+
+  def handle_event("set-session-option", _params, socket),
+    do: {:noreply, session_option_refused(socket)}
 
   def handle_event("retry-track", _, socket) do
     thread_id = socket.assigns.thread_id
@@ -2138,6 +2157,17 @@ defmodule RavixWeb.TrackLive do
     |> traced_async({:git_status, id}, fn -> Tracks.git_status(user, id) end)
   end
 
+  defp set_session_option(socket, id, value) do
+    thread_id = socket.assigns.thread_id
+
+    if MapSet.member?(socket.assigns.pending, :model),
+      do: socket,
+      else: begin(socket, :model, &Tracks.set_session_option(&1, &2, thread_id, id, value))
+  end
+
+  defp session_option_refused(socket),
+    do: flash(socket, :error, "That setting isn't offered for this agent and model.")
+
   # The four preview buttons all do the same thing to the page -- mark the
   # panel busy and answer later -- and differ only in which context call they
   # make, so that call is what they pass in.
@@ -2153,6 +2183,12 @@ defmodule RavixWeb.TrackLive do
 
   attr :runtime, :string, default: nil
   attr :model, :string, required: true, doc: "what the shown conversation runs"
+
+  attr :session_options, :list,
+    default: nil,
+    doc: "the runtime's advertised ACP options (`Ravix.SessionConfig`), nil when unknown"
+
+  attr :session_config, :map, default: %{}, doc: "the thread's chosen option values"
   attr :project_model, :string, required: true
   attr :models, :list, required: true, doc: "the catalog's models for the project's runtime"
   attr :disabled, :boolean, default: false
@@ -2166,15 +2202,36 @@ defmodule RavixWeb.TrackLive do
   is marked as the default, and choosing it puts the conversation back on
   whatever the project runs. With no catalog to offer, or while a turn
   runs, it is the plain label it used to be, or a disabled trigger.
+
+  Effort and Fast (RAV-52) come from what the runtime advertised on the
+  conversation's latest turn (Fountain ADR 0062): the `thought_level`
+  select, with the adapter's own values and names, and a Fast toggle. Which
+  models offer them is the adapter's to say, so nothing here lists models.
+  Before any turn has reported, or on a Fountain without the field, neither
+  is shown and the label is the model alone.
   """
   def model_menu(%{models: []} = assigns) do
+    assigns = assign(assigns, :label, chip_label(assigns))
+
     ~H"""
-    <span class="composer-model" title={agent_model(@runtime, @model)}>{agent_model(@runtime, @model)}</span>
+    <span class="composer-model" title={@label}>{@label}</span>
     """
   end
 
   def model_menu(assigns) do
-    assigns = assign(assigns, :choices, Enum.uniq(assigns.models ++ [assigns.model]))
+    %{effort: effort, fast: fast} = SessionConfig.controls(assigns.session_options)
+
+    assigns =
+      assigns
+      |> assign(:choices, Enum.uniq(assigns.models ++ [assigns.model]))
+      |> assign(:effort, effort)
+      |> assign(:effort_value, SessionConfig.in_force(effort, assigns.session_config))
+      |> assign(:fast, fast)
+      |> assign(
+        :fast_on?,
+        SessionConfig.on?(SessionConfig.in_force(fast, assigns.session_config))
+      )
+      |> assign(:label, chip_label(assigns))
 
     ~H"""
     <button
@@ -2182,10 +2239,10 @@ defmodule RavixWeb.TrackLive do
       id="model-trigger"
       class="composer-model model-trigger"
       popovertarget="model-menu"
-      aria-label={agent_model(@runtime, @model)}
-      title={agent_model(@runtime, @model)}
+      aria-label={@label}
+      title={@label}
       disabled={@disabled}
-    ><span class="truncate">{agent_model(@runtime, @model)}</span><span class="sr-only">, change model</span><.icon
+    ><span class="truncate">{@label}</span><span class="sr-only">, change model</span><.icon
       name="chevron"
       size={10}
       open={true}
@@ -2212,8 +2269,56 @@ defmodule RavixWeb.TrackLive do
           aria-hidden="true"
         >✓</span>
       </button>
+      <div :if={@effort} id="model-effort" role="group" aria-labelledby="model-effort-label">
+        <p id="model-effort-label" class="model-section-label">{@effort.name}</p>
+        <button
+          :for={choice <- @effort.choices}
+          type="button"
+          class="account-item model-option"
+          role="menuitemradio"
+          aria-checked={to_string(choice.value == @effort_value)}
+          popovertarget="model-menu"
+          popovertargetaction="hide"
+          phx-click="set-session-option"
+          phx-value-id={@effort.id}
+          phx-value-choice={choice.value}
+        >
+          <span class="truncate">{choice.name}</span><span class="spacer"></span><span
+            :if={choice.value == @effort_value}
+            class="check"
+            aria-hidden="true"
+          >✓</span>
+        </button>
+      </div>
+      <button
+        :if={@fast}
+        id="model-fast"
+        type="button"
+        class="account-item model-option model-fast"
+        role="menuitemcheckbox"
+        aria-checked={to_string(@fast_on?)}
+        popovertarget="model-menu"
+        popovertargetaction="hide"
+        phx-click="set-session-option"
+        phx-value-id={@fast.id}
+        phx-value-choice={to_string(!@fast_on?)}
+      >
+        <span class="truncate">{@fast.name}</span><span class="spacer"></span><span
+          :if={@fast_on?}
+          class="check"
+          aria-hidden="true"
+        >✓</span>
+      </button>
     </div>
     """
+  end
+
+  # "<model> · <effort>", and the Fast option's name when it is on: what the
+  # runtime advertised, so before it has, the label is the model alone.
+  defp chip_label(assigns) do
+    [agent_model(assigns.runtime, assigns.model)]
+    |> Enum.concat(SessionConfig.summary(assigns.session_options, assigns.session_config))
+    |> Enum.join(" · ")
   end
 
   defp thread_failure(socket, reason) do
@@ -3408,12 +3513,15 @@ defmodule RavixWeb.TrackLive do
 
   attr :turn, :map, required: true
   attr :workdir, :string, default: nil
+  attr :options, :list, default: nil
 
   # What a finished turn cost and left behind: how long it ran, when it
-  # ended, the answer to copy, and the files its edits touched. The time is
-  # written in UTC, matching the inbox and schedule timestamps.
+  # ended, the answer to copy, the files its edits touched, and the effort
+  # and Fast it ran with (RAV-52). The time is written in UTC, matching the
+  # inbox and schedule timestamps.
   defp turn_footer(assigns) do
     %{turn: turn, workdir: workdir} = assigns
+    config = SessionConfig.describe(turn.config_selection, assigns.options)
     {started, ended} = turn_span(turn.events)
     files = changed_files(turn.blocks, workdir)
     {shown, rest} = Enum.split(files, 2)
@@ -3424,11 +3532,17 @@ defmodule RavixWeb.TrackLive do
         ended: ended,
         answer: answer(turn.blocks),
         shown: shown,
-        rest: rest
+        rest: rest,
+        applied: config.applied,
+        skipped: config.skipped
       )
 
     ~H"""
     <footer class="turn-footer">
+      <span :if={@applied != []} class="turn-config" title="Settings this turn ran with">
+        {Enum.join(@applied, " · ")}
+      </span>
+      <span :if={@applied != []} aria-hidden="true">·</span>
       <span :if={@duration}>{@duration}</span>
       <span :if={@duration && @ended} aria-hidden="true">·</span>
       <time :if={@ended} datetime={DateTime.to_iso8601(@ended)}>
@@ -3455,6 +3569,11 @@ defmodule RavixWeb.TrackLive do
       >
         +{length(@rest)} more <span class="diff-add">+{Enum.sum_by(@rest, & &1.added)}</span>
         <span class="diff-del">−{Enum.sum_by(@rest, & &1.removed)}</span>
+      </span>
+      <span :if={@skipped != []} class="turn-config-skipped">
+        {Enum.join(@skipped, ", ")} skipped: this model doesn't offer {if length(@skipped) == 1,
+          do: "it",
+          else: "them"}
       </span>
     </footer>
     """
@@ -3593,6 +3712,12 @@ defmodule RavixWeb.TrackLive do
       <strong>{Transcript.failure_label(@block.stage)}</strong>
       <p :if={@block.body != ""}>{Ravix.Fountain.Error.reason_message(@block.body)}</p>
       <p>{Transcript.failure_next_step(@block)}</p>
+      <button
+        :if={@block.stage == "config"}
+        type="button"
+        class="ghost"
+        popovertarget="model-menu"
+      >Change setting</button>
       <details :if={@block.body != ""}>
         <summary>Technical details</summary>
         <pre>{@block.details || @block.body}</pre>

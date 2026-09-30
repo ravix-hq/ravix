@@ -128,6 +128,36 @@ defmodule Ravix.Accounts.ThreadPreference do
     end
   end
 
+  @doc """
+  The session config this person's new threads on `runtime` start with
+  (RAV-52): the option ids and values they last chose on a thread of that
+  runtime. Kept apart from the runtime and model, so clearing those leaves
+  it alone. Fountain skips an id the new thread's model does not offer.
+  """
+  @spec session_config(User.t(), String.t() | nil) :: map()
+  def session_config(%User{} = person, runtime) do
+    case Store.get_user(person.id) do
+      %User{preferred_session_config: %{} = all} when is_binary(runtime) ->
+        Ravix.SessionConfig.clean(Map.get(all, runtime, %{}))
+
+      _ ->
+        %{}
+    end
+  end
+
+  @doc "Remember `id` = `value` for `runtime`, already checked by the caller."
+  def remember_session_option(%User{} = person, runtime, id, value) when is_binary(runtime) do
+    case Store.get_user(person.id) do
+      %User{} = user ->
+        all = user.preferred_session_config || %{}
+        mine = all |> Map.get(runtime, %{}) |> Map.put(id, value)
+        user |> change(preferred_session_config: Map.put(all, runtime, mine)) |> Repo.update()
+
+      nil ->
+        {:error, :not_found}
+    end
+  end
+
   def remember_model(person, _runtime, nil, _catalog), do: clear(person)
   def remember_model(person, runtime, model, catalog), do: put(person, runtime, model, catalog)
 
