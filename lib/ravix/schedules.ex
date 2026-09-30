@@ -5,6 +5,9 @@ defmodule Ravix.Schedules do
   alias Ravix.Repo
   alias Ravix.Schedules.Schedule
 
+  @doc "A known IANA zone name for untrusted input, or `\"Etc/UTC\"`. Never creates an atom."
+  defdelegate timezone(value), to: Schedule
+
   def list(%User{id: id} = user) do
     Repo.all(from s in Schedule, where: s.user_id == ^id, order_by: [desc: s.inserted_at])
     |> Enum.filter(&match?({:ok, _}, Access.project_access(user, &1.project_id)))

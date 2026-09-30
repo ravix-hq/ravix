@@ -41,6 +41,54 @@ defmodule RavixWeb.SchedulesLiveTest do
     assert Schedules.list(user) == []
   end
 
+  test "explains schedules and runs new ones in the browser's zone", %{conn: conn} do
+    user = insert_user()
+    project = insert_project(user: user)
+    conn = conn |> log_in_user(user) |> put_connect_params(%{"timezone" => "Asia/Kolkata"})
+    {:ok, view, _} = live(conn, "/schedules")
+    render_async(view)
+    assert has_element?(view, "#schedules-panel header", "a prompt that runs on a timer")
+    assert has_element?(view, "#schedules-panel header", "every weekday at 9:00")
+    assert has_element?(view, "#schedule_timezone[value='Asia/Kolkata']")
+
+    view
+    |> form("#schedule-form",
+      schedule: %{name: "Triage", project_id: project.id, prompt: "Triage issues", time: "09:00"}
+    )
+    |> render_submit()
+
+    [row] = Schedules.list(user)
+    assert row.timezone == "Asia/Kolkata"
+    assert {row.next_run_at.hour, row.next_run_at.minute} == {3, 30}
+    assert has_element?(view, "#schedule-#{row.id}", "Daily at 09:00 (Asia/Kolkata)")
+    assert has_element?(view, "#schedule-#{row.id}", "at 09:00 IST")
+
+    # Another viewer's browser changes how the next run is shown, not the zone.
+    other = conn |> recycle() |> log_in_user(user)
+    other = put_connect_params(other, %{"timezone" => "America/New_York"})
+    {:ok, ny, _} = live(other, "/schedules")
+    render_async(ny)
+    assert has_element?(ny, "#schedule-#{row.id}", "Daily at 09:00 (Asia/Kolkata)")
+    assert has_element?(ny, "#schedule-#{row.id}", ~r/at 2[23]:30 E[SD]T/)
+
+    ny |> element("#schedule-#{row.id} button", "Edit") |> render_click()
+    assert has_element?(ny, "#schedule_timezone[value='Asia/Kolkata']")
+    ny |> form("#schedule-form", schedule: %{prompt: "Triage more"}) |> render_submit()
+    assert {:ok, %{timezone: "Asia/Kolkata", prompt: "Triage more"}} = Schedules.get(user, row.id)
+
+    ny |> element("#schedule-#{row.id} button", "Edit") |> render_click()
+    ny |> form("#schedule-form", schedule: %{timezone: "Not/AZone"}) |> render_submit()
+    assert {:ok, %{timezone: "Etc/UTC"}} = Schedules.get(user, row.id)
+    assert has_element?(ny, "#schedule-#{row.id}", "Daily at 09:00 (Etc/UTC)")
+  end
+
+  test "an unknown browser zone prefills UTC", %{conn: conn} do
+    user = insert_user()
+    conn = conn |> log_in_user(user) |> put_connect_params(%{"timezone" => "Mars/Olympus"})
+    {:ok, view, _} = live(conn, "/schedules")
+    assert has_element?(view, "#schedule_timezone[value='Etc/UTC']")
+  end
+
   test "Day follows Repeat and preserves the weekly choice through changes and editing", %{
     conn: conn
   } do

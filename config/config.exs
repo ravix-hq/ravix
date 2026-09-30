@@ -95,6 +95,9 @@ config :logger, :default_formatter,
   format: "$time $metadata[$level] $message\n",
   metadata: [:request_id]
 
+# Schedules run at wall-clock times in their creator's IANA zone.
+config :elixir, :time_zone_database, Tz.TimeZoneDatabase
+
 # Use Jason for JSON parsing in Phoenix
 config :phoenix, :json_library, Jason
 

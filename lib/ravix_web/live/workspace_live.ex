@@ -4,7 +4,7 @@ defmodule RavixWeb.WorkspaceLive do
 
   alias RavixWeb.Live.NewProject
 
-  alias Ravix.{Accounts, Hub, Ids, People, Projects, Tracks, Workspaces}
+  alias Ravix.{Accounts, Hub, Ids, People, Projects, Schedules, Tracks, Workspaces}
   alias Ravix.Accounts.Access
   alias Ravix.Hub.Event
   alias Ravix.Projects.Sections
@@ -52,6 +52,10 @@ defmodule RavixWeb.WorkspaceLive do
     socket =
       assign(socket,
         session_token: session["session_token"],
+        # The viewer's IANA zone from the browser's connect params: what a new
+        # schedule is prefilled with and schedule times are shown in. UTC
+        # before the socket connects, or when the browser names no known zone.
+        timezone: Schedules.timezone((get_connect_params(socket) || %{})["timezone"]),
         github_available: Accounts.capabilities().github,
         reconnect_agent: nil,
         health_refresh: 0,

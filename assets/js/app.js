@@ -6,7 +6,8 @@
 // scroll position, a drag, the palette painted before the first frame. Those
 // live in `hooks/`, one file each, and this file registers them. The
 // page_loading helper also reflects pending navigation in the shared status
-// indicator. There is no framework or package beyond Phoenix's own.
+// indicator, and the connect params carry the browser's time zone. There is
+// no framework or package beyond Phoenix's own.
 //
 // The hooks, and what they are for:
 //
@@ -31,6 +32,7 @@ import "../css/app.css"
 import "phoenix_html"
 import {clearTransportFallback, LONG_POLL_FALLBACK_MS} from "./transport"
 import {trackPageLoading} from "./page_loading"
+import {browserTimeZone} from "./timezone"
 import {Socket} from "phoenix"
 import {LiveSocket} from "phoenix_live_view"
 import {ThreadTabs} from "./hooks/thread_tabs"
@@ -56,7 +58,7 @@ const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute
 clearTransportFallback(window)
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: LONG_POLL_FALLBACK_MS,
-  params: {_csrf_token: csrfToken},
+  params: {_csrf_token: csrfToken, timezone: browserTimeZone()},
   hooks,
 })
 
