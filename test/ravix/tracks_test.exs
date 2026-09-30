@@ -1521,7 +1521,8 @@ defmodule Ravix.TracksTest do
     for {operation, endpoint, path} <- [
           {:files, "files", nil},
           {:file, "file", "a.txt"},
-          {:diff, "diff", nil}
+          {:diff, "diff", nil},
+          {:file_index, "files", nil}
         ],
         layout <- [:dedicated, :shared] do
       test "#{layout} #{operation} handles a suspended sandbox without error logging", ctx do
@@ -1553,7 +1554,7 @@ defmodule Ravix.TracksTest do
         log =
           ExUnit.CaptureLog.capture_log(fn ->
             args =
-              if unquote(operation) == :diff,
+              if unquote(operation) in [:diff, :file_index],
                 do: [ctx.owner, ctx.track.id],
                 else: [ctx.owner, ctx.track.id, unquote(path)]
 
@@ -1777,6 +1778,88 @@ defmodule Ravix.TracksTest do
                 repo_root: "/workspace/ledger",
                 changes: [%Diff.Change{path: "a.txt", added: 1}]
               }} = Tracks.diff(ctx.owner, ctx.track.id)
+    end
+
+    defp listing_route(path, entries, answered_path \\ nil) do
+      {%{method: "GET", path: "/api/sandboxes/sb-1/files", query: %{path: path}},
+       {200, [], %{data: %{path: answered_path || path, entries: entries, truncated: false}}}}
+    end
+
+    test "the composer's file index walks the worktree and never reads outside it", ctx do
+      root = ctx.track.workdir
+
+      # Every listing is scripted, and the fake fails the test on a request
+      # it was not told to expect: a walk that stepped out of `root` -- into
+      # `/etc`, a sibling track, or through a name holding a separator --
+      # would be that request.
+      machine_fountain(ctx.project, [
+        listing_route(root, [
+          %{name: "README.md", type: "file", size: 3},
+          %{name: "lib", type: "directory"},
+          %{name: "node_modules", type: "directory"},
+          %{name: "..", type: "directory"},
+          %{name: "../../osaka", type: "directory"},
+          %{name: "/etc", type: "directory"},
+          %{name: "a/b.txt", type: "file"},
+          %{name: "..\\secrets", type: "directory"},
+          %{name: nil, type: "file"},
+          %{name: "link", type: "other"}
+        ]),
+        listing_route("#{root}/lib", [
+          %{name: "app.ex", type: "file", size: 1},
+          %{name: "web", type: "directory"}
+        ]),
+        # A provider that answers for somewhere else -- a symlink it
+        # followed out of the worktree -- is not believed.
+        listing_route(
+          "#{root}/lib/web",
+          [%{name: "secret.ex", type: "file"}, %{name: "deeper", type: "directory"}],
+          "/home/sprite/work/osaka/web"
+        )
+      ])
+
+      reject(Ravix.Terminal, :exec, 3)
+
+      assert {:ok, %Files.Index{paths: ["README.md", "lib/app.ex"], truncated: true}} =
+               Tracks.file_index(ctx.owner, ctx.track.id)
+    end
+
+    test "the file index is bounded, and a directory that cannot be read is skipped", ctx do
+      root = ctx.track.workdir
+      dirs = for n <- 1..130, do: "d#{String.pad_leading("#{n}", 3, "0")}"
+
+      machine_fountain(
+        ctx.project,
+        [
+          listing_route(root, [
+            %{name: "broken", type: "directory"} | Enum.map(dirs, &%{name: &1, type: "directory"})
+          ]),
+          {%{method: "GET", path: "/api/sandboxes/sb-1/files", query: %{path: "#{root}/broken"}},
+           {500, [], %{error: "boom"}}}
+        ] ++
+          for(
+            dir <- Enum.take(dirs, 118),
+            do: listing_route("#{root}/#{dir}", [%{name: "f.txt", type: "file"}])
+          )
+      )
+
+      {result, _log} =
+        ExUnit.CaptureLog.with_log(fn -> Tracks.file_index(ctx.owner, ctx.track.id) end)
+
+      # One root read, then 119 of the 131 directories: the broken one and
+      # the first 118 of the rest. The other twelve are never asked for.
+      assert {:ok, %Files.Index{paths: paths, truncated: true}} = result
+      assert length(paths) == 118
+      assert hd(paths) == "d001/f.txt"
+    end
+
+    test "another user cannot index a track, and nothing is read for them", ctx do
+      stranger = insert_user()
+      insert_track(project: insert_project(user: stranger), slug: "osaka")
+      reject(Ravix.Fountain, :listing, 3)
+
+      assert {:error, :not_found} = Tracks.file_index(stranger, ctx.track.id)
+      assert {:error, :not_found} = Tracks.file_index(stranger, Ecto.UUID.generate())
     end
 
     test "no machine yet is a conflict the panel names", ctx do

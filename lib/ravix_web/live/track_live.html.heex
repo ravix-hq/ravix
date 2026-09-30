@@ -456,10 +456,14 @@
                 name="text"
                 rows="2"
                 phx-debounce="blur"
-                placeholder="Start a new thread…"
+                placeholder="Start a new thread. @mention files…"
                 aria-label="Message"
+                aria-autocomplete="list"
+                aria-controls="composer-suggestions"
+                aria-keyshortcuts="Control+L Meta+L"
                 data-draft-key={"track:#{@track.id}:thread:draft:#{@thread_draft.id}"}
                 data-typing-event="typing"
+                data-files-event="mention-files"
                 disabled={is_nil(@track.conversation_id) or @track.level == :read}
               ></textarea>
               <textarea
@@ -469,21 +473,27 @@
                 name="text"
                 rows="2"
                 phx-debounce="blur"
-                placeholder={
-                  if @composer_mode == :comment,
-                    do: "Comment for people on this thread. @ to mention…",
-                    else: "Ask to make changes…"
-                }
+                placeholder={composer_placeholder(@composer_mode, @page)}
                 aria-label={if @composer_mode == :comment, do: "Comment", else: "Message"}
                 aria-describedby={
                   (@composer_mode == :comment && "composer-mode-hint") ||
                     (@track.level == :read && "composer-read-only")
                 }
-                aria-autocomplete={@composer_mode == :comment && "list"}
-                aria-controls={@composer_mode == :comment && "mention-options"}
+                aria-autocomplete="list"
+                aria-controls={
+                  if @composer_mode == :comment,
+                    do: "mention-options",
+                    else: "composer-suggestions"
+                }
+                aria-keyshortcuts="Control+L Meta+L"
                 data-mode={@composer_mode}
                 data-draft-key={"track:#{@track.id}:thread:#{@thread_id}"}
                 data-typing-event="typing"
+                data-files-event={@composer_mode == :ask && "mention-files"}
+                data-commands={
+                  @composer_mode == :ask &&
+                    Jason.encode!(composer_commands(@agent_commands, @track, @pending))
+                }
                 disabled={
                   @composer_mode == :ask &&
                     (is_nil(@track.conversation_id) or @track.level == :read)
@@ -509,6 +519,31 @@
                   <span :if={person.name} class="dim">{person.name}</span>
                 </li>
               </ul>
+              <%!-- Ask mode's `@` files and `/` commands. The hook fills the
+                list, names it and opens it, so the server leaves it alone.
+                Open is `hidden` rather than a `data-` flag: a patch strips
+                any `data-` attribute from an ignored element that the
+                template does not have, and keeps the rest. --%>
+              <ul
+                :if={@composer_mode == :ask}
+                id="composer-suggestions"
+                class="mention-options composer-suggestions"
+                role="listbox"
+                aria-label="Suggestions"
+                phx-update="ignore"
+                hidden
+                data-composer-suggestions
+              >
+              </ul>
+              <p
+                :if={@composer_mode == :ask}
+                id="composer-suggestions-status"
+                class="sr-only"
+                role="status"
+                phx-update="ignore"
+                data-composer-announce
+              >
+              </p>
               <.live_file_input upload={@uploads.images} aria-label="Attach images" />
               <div
                 :for={entry <- @uploads.images.entries}
@@ -618,6 +653,15 @@
                       :model in @pending or @track.level == :read
                   }
                 /><span class="spacer"></span>
+                <span
+                  id="composer-shortcut"
+                  class="composer-shortcut"
+                  aria-hidden="true"
+                  phx-update="ignore"
+                  data-composer-shortcut
+                >
+                  <kbd>Ctrl+L</kbd> to focus
+                </span>
                 <button
                   type="submit"
                   class="primary composer-send"

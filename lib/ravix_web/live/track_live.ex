@@ -54,6 +54,10 @@ defmodule RavixWeb.TrackLive do
   # is closed mid-flush.
   @flush_ms 100
 
+  # How long the composer's `@` trusts the file list it read. See
+  # `handle_event("mention-files", ...)`.
+  @file_index_ms 30_000
+
   alias Ravix.Accounts.Access
   alias Ravix.Comments
   alias Ravix.GitHub.ChecksReport
@@ -63,6 +67,7 @@ defmodule RavixWeb.TrackLive do
   alias Ravix.Tracks.{AgentFailure, Diff, Files, Follower, MachineState}
   alias Ravix.Tracks.Transcript
   alias Ravix.Tracks.Transcript.Block, as: TranscriptBlock
+  alias Ravix.Tracks.Transcript.Commands
   alias Ravix.Tracks.Transcript.Event, as: TranscriptEvent
   alias RavixWeb.Error
   alias RavixWeb.Live.Form
@@ -155,6 +160,14 @@ defmodule RavixWeb.TrackLive do
         # for people (`:comment`), and who a comment there can @-mention.
         composer_mode: :ask,
         mentionable: [],
+        # The slash commands the shown thread's agent advertised (ACP
+        # `available_commands_update`), newest list wins. See `absorb/2`.
+        agent_commands: [],
+        # The track's files for the composer's `@`, read on the first `@` and
+        # kept briefly: `%{track_id:, index:, at:}`, or nil. See
+        # `file_index/1`.
+        file_index: nil,
+        file_index_loading?: false,
         # The turns that have taken an event since the last time the page drew,
         # and whether any of those events ended a stage. See `absorb/2`.
         dirty_turns: MapSet.new(),
@@ -427,6 +440,12 @@ defmodule RavixWeb.TrackLive do
       _ -> {:noreply, socket}
     end
   end
+
+  # The composer's `@` in Ask mode. The first `@` reads the track's files;
+  # later ones get what was read, and a copy older than `@file_index_ms` is
+  # answered at once and read again behind it, since the agent is busy
+  # making and removing files while the person types.
+  def handle_event("mention-files", _, socket), do: {:noreply, file_index(socket)}
 
   def handle_event("starter", %{"prompt" => prompt}, socket),
     do: {:noreply, push_event(socket, "composer:insert", %{text: prompt})}
@@ -1063,7 +1082,40 @@ defmodule RavixWeb.TrackLive do
 
     socket
     |> assign(transcript_loading: false)
+    |> advertise(
+      page.turns
+      |> Enum.flat_map(& &1.events)
+      |> Enum.sort_by(& &1.id)
+      |> Commands.latest()
+    )
     |> repair(page)
+  end
+
+  defp async_result({:file_index, track_id}, response, socket) do
+    if track_id == socket.assigns.track_id do
+      socket = assign(socket, file_index_loading?: false)
+
+      case response do
+        {:ok, {:ok, %Files.Index{} = index}} ->
+          socket
+          |> assign(file_index: %{track_id: track_id, index: index, at: now_ms()})
+          |> push_files(index)
+
+        {:ok, {:error, :machine_asleep}} ->
+          push_event(socket, "composer:files", %{
+            paths: [],
+            error: "This track's machine is asleep. Files can be mentioned when it wakes."
+          })
+
+        {:ok, {:error, reason}} ->
+          push_event(socket, "composer:files", %{paths: [], error: Error.from(reason).message})
+
+        {:exit, _reason} ->
+          push_event(socket, "composer:files", %{paths: [], error: "Could not read the files."})
+      end
+    else
+      socket
+    end
   end
 
   defp async_result(:transcript, {:ok, {:error, reason}}, socket),
@@ -1586,6 +1638,8 @@ defmodule RavixWeb.TrackLive do
       thread_generation: socket.assigns.thread_generation + 1,
       threads: [],
       thread_states: %{},
+      file_index: nil,
+      file_index_loading?: false,
       project_id: project.id,
       track: track,
       setup_now: DateTime.utc_now(),
@@ -1664,7 +1718,8 @@ defmodule RavixWeb.TrackLive do
       rendered: %{},
       comments: [],
       comment_editing: nil,
-      composer_mode: :ask
+      composer_mode: :ask,
+      agent_commands: []
     )
     |> load_comments()
     |> drop_pending()
@@ -1706,13 +1761,44 @@ defmodule RavixWeb.TrackLive do
         do: Enum.reduce(page.turns, socket.assigns.dirty_turns, &MapSet.put(&2, &1.id)),
         else: MapSet.put(socket.assigns.dirty_turns, event.turn_id)
 
-    assign(socket,
+    socket
+    |> assign(
       page: page,
       dirty_turns: dirty,
       stage_seen?: socket.assigns.stage_seen? or event.kind == :stage,
       announcement: announce_turn(event, socket.assigns.announcement)
     )
+    |> advertise(Commands.from_event(event))
   end
+
+  defp advertise(socket, nil), do: socket
+  defp advertise(socket, commands), do: assign(socket, agent_commands: commands)
+
+  defp file_index(socket) do
+    %{track_id: track_id, file_index: cached, current_user: user} = socket.assigns
+
+    {socket, fresh?} =
+      case cached do
+        %{track_id: ^track_id, index: index, at: at} ->
+          {push_files(socket, index), now_ms() - at < @file_index_ms}
+
+        _ ->
+          {socket, false}
+      end
+
+    if fresh? or socket.assigns.file_index_loading? do
+      socket
+    else
+      socket
+      |> assign(file_index_loading?: true)
+      |> traced_async({:file_index, track_id}, fn -> Tracks.file_index(user, track_id) end)
+    end
+  end
+
+  defp push_files(socket, %Files.Index{paths: paths, truncated: truncated}),
+    do: push_event(socket, "composer:files", %{paths: paths, truncated: truncated})
+
+  defp now_ms, do: System.monotonic_time(:millisecond)
 
   # The sentence for the live region, if this event is worth one. A turn
   # ending is; a turn starting clears the last one, so that two replies in a
@@ -3567,6 +3653,60 @@ defmodule RavixWeb.TrackLive do
       nil -> {"User", prompt}
       label -> {"Ravix", label}
     end
+  end
+
+  # The box says what it can do until somebody has used it; after the first
+  # turn the conversation is under way and "a follow-up" is the honest word.
+  defp composer_placeholder(:comment, _page),
+    do: "Comment for people on this thread. @ to mention…"
+
+  defp composer_placeholder(:ask, page) do
+    if Enum.any?(page.turns, & &1.visible?),
+      do: "Add a follow-up, @mention files, run /commands",
+      else: "Ask to make changes, @mention files, run /commands"
+  end
+
+  # The `/` menu: what the agent advertised, sent to it as the text of the
+  # message, then the few Ravix actions that are already a button on this
+  # page, which run that button's event instead of sending anything. Stop is
+  # offered only while there is something to stop.
+  defp composer_commands(agent_commands, track, pending) do
+    agent =
+      Enum.map(
+        agent_commands,
+        &%{name: &1.name, description: &1.description, hint: &1.hint, source: "agent"}
+      )
+
+    stop =
+      if track.status in [:running, :opening] and :interrupt not in pending,
+        do: [%{name: "stop", description: "Stop the agent's current turn", event: "interrupt"}],
+        else: []
+
+    ravix =
+      stop ++
+        [
+          %{name: "new", description: "Start a new thread", event: "draft-thread"},
+          %{
+            name: "comment",
+            description: "Write a comment for people, not the agent",
+            event: "composer-mode",
+            value: %{mode: "comment"}
+          },
+          %{
+            name: "changes",
+            description: "Open the Changes tab",
+            event: "panel",
+            value: %{name: "changes"}
+          },
+          %{
+            name: "checks",
+            description: "Open the Checks tab",
+            event: "panel",
+            value: %{name: "checks"}
+          }
+        ]
+
+    agent ++ Enum.map(ravix, &Map.put(&1, :source, "ravix"))
   end
 
   defp upload_error(:too_large), do: "Image is larger than 8 MB."

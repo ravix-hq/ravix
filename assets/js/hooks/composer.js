@@ -37,6 +37,22 @@
 // this hook filters it by what follows the `@`, moves through it with the
 // arrow keys, and puts `@login ` in the box on Enter, Tab or a click.
 //
+// In Ask mode the same kind of list, `[data-composer-suggestions]`, is
+// filled here rather than by the server. `@` searches the track's files: the
+// first `@` pushes `data-files-event` and the server answers with
+// `composer:files` (`{paths, truncated, error}`), and the paths are ranked
+// here as the person types, so a keystroke is not a round trip. `/` as the
+// first thing in the message offers `data-commands`, a JSON list the server
+// renders: the agent's own commands, which choosing puts in the box to be
+// sent, and a few Ravix actions (`event`, `value`), which choosing runs
+// instead. A `/` that matches nothing is just text and sends as text. What
+// the list shows is said in `[data-composer-announce]`, a polite live
+// region, because a highlighted option is only announced once it is moved
+// to and "is there anything?" is the question before that.
+//
+// ⌘L (Ctrl+L off a Mac) focuses the box from anywhere on the page except
+// the terminal, where Ctrl+L already means "clear the screen".
+//
 // Sending clears the remembered draft; the text itself stays until the
 // server says the prompt was saved, by pushing `composer:clear` to this
 // hook. A save that fails leaves the words where they were, which is the
@@ -46,6 +62,8 @@
 const CEILING = 260
 const DRAFT_PREFIX = "ravix.draft."
 const TYPING_EVERY = 1500
+/** How many files the `@` list shows at once. Typing more narrows it. */
+const SHOWN = 50
 
 /** The four Fountain takes, and so the four the picker offers. */
 const ACCEPTED = ["image/png", "image/jpeg", "image/gif", "image/webp"]
@@ -86,6 +104,115 @@ export function mentionQuery(text, caret) {
   return match ? {start: caret - match[2].length - 1, query: match[2]} : null
 }
 
+/** The `@path` being typed just before the caret, or null. */
+export function fileQuery(text, caret) {
+  const match = /(^|[\s([{"'])@([^\s@`"']{0,200})$/.exec(text.slice(0, caret))
+  return match ? {start: caret - match[2].length - 1, query: match[2]} : null
+}
+
+/** The `/command` being typed as the whole message so far, or null. */
+export function commandQuery(text, caret) {
+  const match = /^\/([A-Za-z0-9_:.-]{0,64})$/.exec(text.slice(0, caret))
+  return match ? {start: 0, query: match[1]} : null
+}
+
+/**
+ * The query's characters found in order in `text`, or null: a score (higher
+ * is better; runs and the starts of words and path segments earn more) and
+ * the indices matched, for underlining. The whole query in one piece is
+ * preferred wherever it occurs -- at a boundary, and nearest the end, which
+ * in a path is the file's name -- over letters picked up from left to right.
+ */
+export function fuzzy(query, text) {
+  const q = query.toLowerCase()
+  const t = text.toLowerCase()
+  const boundary = at => at === 0 || "/._- ".includes(t[at - 1])
+  let whole = -1
+  for (let at = t.indexOf(q); q && at >= 0; at = t.indexOf(q, at + 1)) {
+    if (whole < 0 || boundary(at) || !boundary(whole)) whole = at
+  }
+  const marks = []
+  if (whole >= 0) {
+    for (let i = 0; i < q.length; i++) marks.push(whole + i)
+  } else {
+    let from = 0
+    for (const ch of q) {
+      const at = t.indexOf(ch, from)
+      if (at < 0) return null
+      marks.push(at)
+      from = at + 1
+    }
+  }
+  const score = marks.reduce((sum, at, i) => sum + 1 + (at === marks[i - 1] + 1 ? 4 : 0) + (boundary(at) ? 3 : 0), 0)
+  return {score, marks}
+}
+
+/** The best `limit` of `paths` for `query`, each `{path, marks}`. */
+export function rankFiles(query, paths, limit = SHOWN) {
+  if (!query) return paths.slice(0, limit).map(path => ({path, marks: []}))
+  const q = query.toLowerCase()
+  const ranked = []
+  paths.forEach((path, order) => {
+    const hit = fuzzy(query, path)
+    if (!hit) return
+    const base = path.slice(path.lastIndexOf("/") + 1).toLowerCase()
+    // The name is what people remember; where it lives is a tiebreak.
+    const bonus = (base.startsWith(q) ? 30 : base.includes(q) ? 20 : 0) + (path.toLowerCase().includes(q) ? 10 : 0)
+    ranked.push({path, marks: hit.marks, score: hit.score + bonus, order})
+  })
+  ranked.sort((a, b) => b.score - a.score || a.path.length - b.path.length || a.order - b.order)
+  return ranked.slice(0, limit).map(({path, marks}) => ({path, marks}))
+}
+
+/** Commands for `query`: names that start with it first, then any that contain it in order. */
+export function rankCommands(query, commands) {
+  if (!query) return commands.map(command => ({command, marks: []}))
+  const q = query.toLowerCase()
+  const starts = []
+  const others = []
+  for (const command of commands) {
+    const hit = fuzzy(q, command.name)
+    if (!hit) continue
+    ;(command.name.toLowerCase().startsWith(q) ? starts : others).push({command, marks: hit.marks})
+  }
+  return starts.concat(others)
+}
+
+/** ⌘L on a Mac, Ctrl+L elsewhere. */
+export function shortcutLabel(platform = navigator.userAgentData?.platform || navigator.platform || "") {
+  return /mac|iphone|ipad/i.test(platform) ? "⌘L" : "Ctrl+L"
+}
+
+function itemKey(item) {
+  return item.command ? `/${item.command.name}` : item.path
+}
+
+function count(n, one, many) {
+  return `${n.toLocaleString("en")} ${n === 1 ? one : many}`
+}
+
+/** `text` as spans, with the characters at `marks` in `<mark>`. Never HTML. */
+function marked(el, text, marks, offset = 0) {
+  const at = new Set(marks.map(m => m - offset))
+  let run = ""
+  const flush = () => {
+    if (run) el.append(document.createTextNode(run))
+    run = ""
+  }
+  for (let i = 0; i < text.length; i++) {
+    if (!at.has(i)) {
+      run += text[i]
+      continue
+    }
+    flush()
+    const mark = document.createElement("mark")
+    mark.textContent = text[i]
+    el.append(mark)
+  }
+  flush()
+  return el
+}
+
 function list(names) {
   if (names.length <= 1) return names[0] ?? ""
   return `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`
@@ -95,6 +222,11 @@ export const Composer = {
   mounted() {
     this.key = this.el.dataset.draftKey ? DRAFT_PREFIX + this.el.dataset.draftKey : null
     this.lastTyping = 0
+    // What `@` searches: null until asked for, then `{paths, truncated,
+    // error}`; `filesAsked` so one `@` asks once, however fast it is typed.
+    this.files = null
+    this.filesAsked = false
+    this.suggestion = null
     this.restore()
     this.grow()
 
@@ -102,10 +234,18 @@ export const Composer = {
       this.grow()
       this.save()
       this.mention()
+      this.suggest()
       if (this.el.value.trim()) this.typing()
     })
+    // A patch that moves the box blurs it for a moment and LiveView puts the
+    // focus back in the same task, so only a blur that lasts closes the list.
+    this.el.addEventListener("blur", () => {
+      setTimeout(() => {
+        if (document.activeElement !== this.el) this.closeSuggestions()
+      })
+    })
     this.el.addEventListener("keydown", e => {
-      if (this.mentionKey(e)) {
+      if (this.suggestionKey(e) || this.mentionKey(e)) {
         e.preventDefault()
       } else if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
         e.preventDefault()
@@ -145,6 +285,12 @@ export const Composer = {
     // finds nothing. Removing a listener from whatever a second lookup
     // happens to return would be wrong even where it found something.
     this.onMentionPick = e => {
+      const suggestion = e.target.closest?.("[data-composer-suggestions] [role=option]")
+      if (suggestion) {
+        e.preventDefault()
+        if (suggestion.getAttribute("aria-disabled") !== "true") this.pick(Number(suggestion.dataset.index))
+        return
+      }
       const option = e.target.closest?.("[data-mention-options] [role=option]")
       if (!option) return
       // Keep the caret in the box: the choice is made on the way down.
@@ -160,6 +306,35 @@ export const Composer = {
     this.boundForm = this.el.form
     this.onSubmit = () => this.save()
     this.boundForm?.addEventListener("submit", this.onSubmit)
+
+    this.onShortcut = e => {
+      if (e.key?.toLowerCase() !== "l" || !(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey) return
+      if (e.target.closest?.(".xterm, [phx-hook=Terminal]")) return
+      if (this.el.disabled || !this.el.isConnected) return
+      e.preventDefault()
+      this.el.focus()
+      const end = this.el.value.length
+      this.el.setSelectionRange?.(end, end)
+    }
+    document.addEventListener("keydown", this.onShortcut)
+    const hint = document.querySelector("[data-composer-shortcut]")
+    if (hint) {
+      const kbd = document.createElement("kbd")
+      kbd.textContent = shortcutLabel()
+      hint.replaceChildren(kbd, " to focus")
+    }
+
+    this.handleEvent("composer:files", ({paths, truncated, error}) => {
+      this.files = {
+        paths: Array.isArray(paths) ? paths : [],
+        truncated: truncated === true,
+        error: error || null,
+        // A failed read is asked again by the next `@`, not by every key.
+        at: this.suggestion?.start,
+      }
+      if (error) this.filesAsked = false
+      if (this.suggestion?.kind === "files") this.suggest()
+    })
 
     this.handleEvent("composer:insert", ({text}) => {
       this.el.value = text
@@ -202,6 +377,8 @@ export const Composer = {
   updated() {
     this.restore()
     this.grow()
+    // A patch rewrites the attributes, and may have brought new commands.
+    if (this.suggestion) this.suggest()
     // A patch rewrites the textarea's attributes from the template, which
     // does not know which option is highlighted.
     if (this.active && this.mentions()) this.el.setAttribute("aria-activedescendant", this.active.id)
@@ -209,6 +386,7 @@ export const Composer = {
   },
 
   destroyed() {
+    document.removeEventListener("keydown", this.onShortcut)
     this.boundBox?.removeEventListener("mousedown", this.onMentionPick)
     this.boundBox?.removeEventListener("dragover", this.onDragOver)
     this.boundBox?.removeEventListener("dragleave", this.onDragLeave)
@@ -335,6 +513,188 @@ export const Composer = {
     if (this.active) this.active.setAttribute("aria-selected", "false")
     this.active = null
     this.el.removeAttribute("aria-activedescendant")
+  },
+
+  /** Ask mode's list, if this box has one. */
+  suggestions() {
+    if (this.el.dataset.mode === "comment") return null
+    const id = this.el.getAttribute("aria-controls")
+    const el = id && document.getElementById(id)
+    return el?.hasAttribute("data-composer-suggestions") ? el : null
+  },
+
+  commands() {
+    try {
+      const parsed = JSON.parse(this.el.dataset.commands || "[]")
+      return Array.isArray(parsed) ? parsed.filter(c => typeof c?.name === "string") : []
+    } catch {
+      return []
+    }
+  },
+
+  /** Open, refresh or close the `/` or `@` list for what is at the caret. */
+  suggest() {
+    const menu = this.suggestions()
+    if (!menu) return
+    const caret = this.el.selectionStart ?? this.el.value.length
+    const command = this.el.dataset.commands ? commandQuery(this.el.value, caret) : null
+    const file = !command && this.el.dataset.filesEvent ? fileQuery(this.el.value, caret) : null
+    const found = command ? {kind: "commands", ...command} : file ? {kind: "files", ...file} : null
+    if (!found) {
+      this.dismissed = null
+      return this.closeSuggestions()
+    }
+    // Escape closed this one; the next `@` or `/` opens again.
+    if (this.dismissed === `${found.kind}:${found.start}`) return this.closeSuggestions()
+    this.dismissed = null
+
+    let items = []
+    let status = null
+    if (found.kind === "commands") {
+      items = rankCommands(found.query, this.commands())
+      if (!items.length) return this.closeSuggestions()
+    } else if (!this.files || (this.files.error && this.files.at !== found.start)) {
+      if (this.files) this.files = null
+      if (!this.filesAsked) {
+        this.filesAsked = true
+        this.pushEvent(this.el.dataset.filesEvent, {})
+      }
+      status = "Searching files…"
+    } else if (this.files.error) {
+      status = this.files.error
+    } else {
+      items = rankFiles(found.query, this.files.paths)
+      if (!items.length) status = found.query ? "No files match." : "No files in this track yet."
+    }
+    const same = this.suggestion?.kind === found.kind && this.suggestion.start === found.start
+    const keep = same && this.suggestion.items[this.suggestion.active]
+    const active = keep ? Math.max(0, items.findIndex(i => itemKey(i) === itemKey(keep))) : 0
+    this.suggestion = {...found, items, status, active: items.length ? active : -1}
+    this.renderSuggestions(menu)
+  },
+
+  renderSuggestions(menu) {
+    const {kind, items, status, active} = this.suggestion
+    const options = items.map((item, index) => {
+      const li = document.createElement("li")
+      li.id = `composer-suggestion-${index}`
+      li.setAttribute("role", "option")
+      li.setAttribute("aria-selected", String(index === active))
+      li.dataset.index = String(index)
+      if (kind === "files") {
+        const cut = item.path.lastIndexOf("/") + 1
+        const name = document.createElement("strong")
+        marked(name, item.path.slice(cut), item.marks, cut)
+        const dir = document.createElement("span")
+        dir.className = "dim"
+        marked(dir, item.path.slice(0, cut), item.marks.filter(m => m < cut))
+        li.append(name, dir)
+      } else {
+        const name = document.createElement("strong")
+        name.append("/")
+        marked(name, item.command.name, item.marks)
+        const about = document.createElement("span")
+        about.className = "dim"
+        about.textContent = [item.command.description, item.command.hint && `(${item.command.hint})`]
+          .filter(Boolean).join(" ")
+        li.append(name, about)
+        if (item.command.source === "ravix") {
+          const source = document.createElement("span")
+          source.className = "suggestion-source"
+          source.textContent = "Ravix"
+          li.append(source)
+        }
+      }
+      return li
+    })
+    if (status || (kind === "files" && this.files?.truncated && items.length)) {
+      const li = document.createElement("li")
+      li.id = "composer-suggestion-status"
+      li.setAttribute("role", "option")
+      li.setAttribute("aria-disabled", "true")
+      li.setAttribute("aria-selected", "false")
+      li.textContent = status || "Not every file was searched. Type more of the path to narrow it."
+      options.push(li)
+    }
+    menu.replaceChildren(...options)
+    menu.setAttribute("aria-label", kind === "files" ? "Files to mention" : "Commands")
+    menu.hidden = false
+    const current = options[active]
+    if (current) {
+      this.el.setAttribute("aria-activedescendant", current.id)
+      current.scrollIntoView?.({block: "nearest"})
+    } else {
+      this.el.removeAttribute("aria-activedescendant")
+    }
+    this.announce(status ??
+      (kind === "files"
+        ? `${count(items.length, "file", "files")}${items.length >= SHOWN ? " shown" : ""}. Up and down to choose, Enter to mention.`
+        : `${count(items.length, "command", "commands")}. Up and down to choose, Enter to pick.`))
+  },
+
+  /** Arrow keys, Enter, Tab and Escape while the Ask list is open. True if handled. */
+  suggestionKey(e) {
+    if (!this.suggestion || e.isComposing) return false
+    const {items, active} = this.suggestion
+    const n = items.length
+    if (e.key === "Escape") {
+      this.dismissed = `${this.suggestion.kind}:${this.suggestion.start}`
+      this.closeSuggestions()
+    } else if (!n) {
+      return false
+    } else if (e.key === "ArrowDown") {
+      this.move((active + 1) % n)
+    } else if (e.key === "ArrowUp") {
+      this.move((active - 1 + n) % n)
+    } else if ((e.key === "Enter" && !e.shiftKey) || e.key === "Tab") {
+      this.pick(active)
+    } else {
+      return false
+    }
+    return true
+  },
+
+  move(index) {
+    this.suggestion.active = index
+    this.renderSuggestions(this.suggestions())
+  },
+
+  pick(index) {
+    const item = this.suggestion?.items[index]
+    if (!item) return
+    const {start} = this.suggestion
+    const caret = this.el.selectionStart ?? this.el.value.length
+    const before = this.el.value.slice(0, start)
+    const after = this.el.value.slice(caret)
+    this.closeSuggestions()
+    if (item.command?.event) {
+      // A Ravix action is a button, not a message: the `/word` goes.
+      this.el.value = before + after.replace(/^ /, "")
+      this.el.setSelectionRange?.(before.length, before.length)
+      this.pushEvent(item.command.event, item.command.value || {})
+    } else {
+      const text = item.command ? `/${item.command.name} ` : `@${item.path} `
+      this.el.value = before + text + after
+      this.el.setSelectionRange?.(before.length + text.length, before.length + text.length)
+      this.announce(item.command ? `/${item.command.name} added.` : `${item.path} mentioned.`)
+    }
+    this.save()
+    this.grow()
+    this.el.focus()
+  },
+
+  closeSuggestions() {
+    if (!this.suggestion) return
+    this.suggestion = null
+    const menu = this.suggestions()
+    if (menu) menu.hidden = true
+    menu?.replaceChildren()
+    this.el.removeAttribute("aria-activedescendant")
+  },
+
+  announce(text) {
+    const el = this.box().querySelector("[data-composer-announce]")
+    if (el && el.textContent !== text) el.textContent = text
   },
 
   note(text) {

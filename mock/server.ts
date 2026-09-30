@@ -348,6 +348,15 @@ const acp = (update: Record<string, unknown>) =>
 const text = (t: string) => acp({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: t } });
 const plan = (entries: [string, string][]) =>
   acp({ sessionUpdate: "plan", entries: entries.map(([content, status]) => ({ content, status, priority: "medium" })) });
+const commands = () => acp({
+  sessionUpdate: "available_commands_update",
+  availableCommands: [
+    { name: "review", description: "Review the changes on this branch", input: { hint: "what to focus on" } },
+    { name: "init", description: "Write a CLAUDE.md describing this codebase" },
+    { name: "compact", description: "Summarise the conversation so far to free up context" },
+    { name: "pr-comments", description: "Read the comments on this branch's pull request" },
+  ],
+});
 const thought = (t: string) => acp({ sessionUpdate: "agent_thought_chunk", content: { type: "text", text: t } });
 // A shell call as the Claude adapter reports one: titled with the command, and
 // the command again among the raw arguments beside the directory it ran in.
@@ -419,6 +428,10 @@ async function runTurn(conv: Conv, prompt: string, clientRequestId: string | nul
     record.status = "running";
   }
   emit({ kind: "stage", stage: "turn", state: "started" });
+  // The Claude adapter lists its slash commands once the session exists,
+  // which on this mock is the conversation's first turn; the composer's `/`
+  // menu reads them from here.
+  if (conv.turn_count === 1) emit({ kind: "output", stream: "acp", data: commands() });
   try {
     await pause(250);
     await act(prompt, emit, say, conv, disk, pause);
@@ -1328,6 +1341,7 @@ const PEOPLE = [
     { id: 9030, login: "picker", name: "Repo Picker", avatar_url: `${BASE}/ghweb/avatar.svg` },
     { id: 9031, login: "scopeowner", name: "Scope Owner", avatar_url: `${BASE}/ghweb/avatar.svg` },
     { id: 9032, login: "gitstatus", name: "Git Status", avatar_url: `${BASE}/ghweb/avatar.svg` },
+    { id: 9033, login: "mentioner", name: "Mention Author", avatar_url: `${BASE}/ghweb/avatar.svg` },
   ] : []),
   { id: 9001, login: "dana", name: "Dana Okonkwo", avatar_url: `${BASE}/ghweb/avatar.svg?dana` },
   { id: 9002, login: "eli", name: "Eli Fischer", avatar_url: `${BASE}/ghweb/avatar.svg?eli` },
