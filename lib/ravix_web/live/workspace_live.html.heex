@@ -95,6 +95,9 @@
         </button>
       </div>
       <div id="account-menu" class="account-menu" popover aria-label="You">
+        <%!-- Quick toggles, then Settings (RAV-77): Profile, Agents,
+          Notifications, Appearance and Connected apps are its pages. The two
+          toggles and their pages' switches keep each other current. --%>
         <.theme_picker id="theme-picker" />
         <div id="notify" phx-hook="Notify" class="notify">
           <button
@@ -114,27 +117,14 @@
         <button
           type="button"
           class="account-item"
-          id="open-account"
-          popovertarget="account-menu"
-          popovertargetaction="hide"
-          phx-click={JS.push_focus(to: "#account-trigger") |> JS.push("dialog")}
-          phx-value-name="account"
-        >
-          <.icon name="person" size={14} />Account
-        </button>
-        <button
-          type="button"
-          class="account-item"
           id="open-personal-settings"
           popovertarget="account-menu"
           popovertargetaction="hide"
-          phx-click={JS.patch("/settings/connected-apps")}
+          phx-click={JS.patch(Settings.section_path(:personal, nil, Settings.first(:personal)))}
+          data-leaves-page
         >
           <.icon name="settings" size={14} />Settings
         </button>
-        <a class="account-item" href="/api/auth/install">
-          <.icon name="github" size={14} />Repository access
-        </a>
         <button
           type="button"
           class="account-item"

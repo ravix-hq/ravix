@@ -62,3 +62,33 @@ test("escape closes only the palette list and gives focus back to its trigger", 
   key(document, "Escape")
   expect(document.activeElement).toBe(document.querySelector("#outside"))
 })
+
+test("a choice in one picker is the other's too, and a picker that has gone stops listening (RAV-77)", () => {
+  // The You menu's picker and the Appearance page's, both on the page.
+  const picker = document.querySelector(".theme-picker").outerHTML
+  document.body.innerHTML = `<div id="menu-picker">${picker}</div><div id="page-picker">${picker}</div>`
+  const {hook: menu} = mountHook(Theme, "#menu-picker .theme-picker")
+  const {hook: page} = mountHook(Theme, "#page-picker .theme-picker")
+  page.trigger().click()
+  page.el.querySelector("[data-theme-choice=nord]").click()
+  expect(document.documentElement.dataset.theme).toBe("nord")
+  expect(menu.el.querySelector("[data-theme-name]").textContent).toBe("Nord")
+  expect(menu.el.querySelector("[data-theme-choice=nord]").getAttribute("aria-checked")).toBe("true")
+
+  // Hovering the menu's list and leaving it goes back to the choice made on
+  // the page, not to what the menu held before.
+  menu.trigger().click()
+  menu.el.querySelector("[data-theme-choice=ravix]").dispatchEvent(new MouseEvent("mouseover", {bubbles: true}))
+  expect(document.documentElement.dataset.theme).toBe("ravix")
+  key(document, "Escape")
+  expect(document.documentElement.dataset.theme).toBe("nord")
+
+  // A name neither offers is not taken up.
+  window.dispatchEvent(new CustomEvent("ravix:theme-changed", {detail: {id: "not-a-theme"}}))
+  expect(menu.theme).toBe("nord")
+
+  page.destroyed()
+  menu.trigger().click()
+  menu.el.querySelector("[data-theme-choice=ravix]").click()
+  expect(page.theme).toBe("nord")
+})

@@ -6,7 +6,8 @@ defmodule RavixWeb.SettingsRedirectController do
 
     * `/w/:workspace` and `/w/:workspace/settings` go to its Members, which
       is what `/w/:workspace` was, query and all (`?github=connected`);
-    * `/settings/connections` and `/settings` go to Connected apps;
+    * `/settings/connections` goes to Connected apps, and `/settings` to
+      the first personal section, Profile;
     * `/p/:project/settings` goes to the project's first section.
 
   Nothing is looked up here: the page each lands on admits the viewer or
@@ -23,6 +24,9 @@ defmodule RavixWeb.SettingsRedirectController do
 
   def personal(conn, _params),
     do: to(conn, Settings.section_path(:personal, nil, Settings.first(:personal)))
+
+  def connections(conn, _params),
+    do: to(conn, Settings.section_path(:personal, nil, "connected-apps"))
 
   def project(conn, %{"project" => id}),
     do: to(conn, Settings.section_path(:project, id, Settings.first(:project)))
