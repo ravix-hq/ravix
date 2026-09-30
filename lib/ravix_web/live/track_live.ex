@@ -2742,6 +2742,52 @@ defmodule RavixWeb.TrackLive do
     end
   end
 
+  # What setup is doing, as the named steps it goes through, so the first
+  # minute of a new track reads as progress rather than as one spinner. The
+  # step under way is the machine's stage where it reports one (a dedicated
+  # machine does) and otherwise follows `setup_state`. Each step is `:done`,
+  # `:now`, `:failed` or `:todo`.
+  @doc false
+  def setup_steps(track, project) do
+    current = setup_step_now(track.sandbox_stage, track.setup_state)
+    failed = track.setup_state == "failed"
+
+    track
+    |> setup_step_labels(project && project.repo)
+    |> Enum.with_index()
+    |> Enum.map(fn {{key, label}, index} ->
+      %{key: key, label: label, state: setup_step_state(index, current, failed)}
+    end)
+  end
+
+  defp setup_step_labels(track, repo) do
+    machine =
+      if track.sandbox_layout == :dedicated,
+        do: "Start this track's machine",
+        else: "Wake the project machine"
+
+    clone = if repo, do: "Check out #{repo} on a new branch", else: "Make a new branch"
+
+    [
+      {:machine, machine},
+      {:clone, clone},
+      {:setup, "Run setup"},
+      {:agent, "Hand your first prompt to the agent"}
+    ]
+  end
+
+  defp setup_step_now(_stage, "ready"), do: 3
+  defp setup_step_now("creating", _state), do: 0
+  defp setup_step_now("cloning", _state), do: 1
+  defp setup_step_now("setup", _state), do: 2
+  defp setup_step_now(_stage, "pending"), do: 1
+  defp setup_step_now(_stage, _state), do: 2
+
+  defp setup_step_state(index, current, _failed) when index < current, do: :done
+  defp setup_step_state(current, current, true), do: :failed
+  defp setup_step_state(current, current, false), do: :now
+  defp setup_step_state(_index, _current, _failed), do: :todo
+
   defp pull_state_label(:merged), do: "Merged"
   defp pull_state_label(:closed), do: "Closed"
   defp pull_state_label(:open), do: "Open"

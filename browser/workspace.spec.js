@@ -175,13 +175,18 @@ test.describe.serial('first visit, then the account dialog', () => {
 
     await page.getByRole('link', { name: 'Set up your agent', exact: true }).click();
     await expect(page).toHaveURL(/\/welcome\/agent$/);
-    await expect(page).toHaveTitle('Connect your agents · Ravix');
+    await expect(page).toHaveTitle('Connect your agent · Ravix');
+    // One decision: a card per agent, each offering Connect, and the rest
+    // (default, what is held, API keys) behind Manage.
+    await expect(page.getByRole('button', { name: 'Connect Claude Code', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Connect Codex', exact: true })).toBeVisible();
+    await expect(page.locator('#agent-manage')).toBeHidden();
+    await accessible(page);
 
     // Codex on a ChatGPT subscription is a sign-in, not a paste: the page shows
     // the code the mock Fountain hands out and notices the approval by itself
     // (the mock approves on the third poll). Nothing here is ever a token.
-    await page.getByRole('button', { name: /^Codex/ }).click();
-    await expect(page.getByRole('button', { name: 'Subscription', exact: true })).toHaveAttribute('aria-pressed', 'true');
+    await page.getByRole('button', { name: 'Connect Codex', exact: true }).click();
     await expect(page.getByLabel('API key', { exact: true })).toHaveCount(0);
     await accessible(page);
     await page.getByRole('button', { name: 'Connect ChatGPT', exact: true }).click();
@@ -189,16 +194,13 @@ test.describe.serial('first visit, then the account dialog', () => {
     await expect(page.getByRole('link', { name: 'https://auth.openai.com/codex/device' })).toHaveAttribute('target', '_blank');
     await accessible(page);
     await capture(page, 'welcome-chatgpt');
-    await expect(page.locator('#second-agent-nudge')).toContainText('Connect Claude Code too (optional)');
-    await page.getByRole('link', { name: 'Continue to GitHub', exact: true }).click();
-    await expect(page).toHaveURL(/\/welcome\/github$/);
+    await expect(page.locator('#agent-codex-status')).toContainText('Connected', { timeout: 30_000 });
+    await expect(page.locator('#agent-codex-status')).toContainText('Default for new projects');
+    await expect(page.locator('#agent-later')).toHaveText('Continue');
     expect(await page.content()).not.toContain('MOCK-CODE');
 
-    // Back to the agent step by hand: Claude Code takes a pasted token.
-    await page.goto('/welcome/agent');
-    await expect(page.locator('[data-phx-main]')).toHaveClass(/phx-connected/);
-    await expect(page.getByText('Codex is connected with your ChatGPT subscription')).toBeVisible();
-    await page.getByRole('button', { name: /^Claude Code/ }).click();
+    // Claude Code takes a pasted token.
+    await page.getByRole('button', { name: 'Connect Claude Code', exact: true }).click();
     await expect(page.getByText('claude setup-token')).toBeVisible();
     await accessible(page);
     await capture(page, 'welcome-agent');
@@ -214,18 +216,17 @@ test.describe.serial('first visit, then the account dialog', () => {
 
     await page.getByLabel('Subscription token', { exact: true }).fill('sk-ant-oat01-mock');
     await page.getByRole('button', { name: 'Connect Claude Code', exact: true }).click();
-    await expect(page.locator('#second-agent-nudge')).toHaveCount(0);
     await expect(page.locator('#agent-claude-status')).toContainText('Connected');
-    await page.getByRole('link', { name: 'Continue to GitHub', exact: true }).click();
-    await expect(page).toHaveURL(/\/welcome\/github$/);
-    // Adding Claude leaves the first connected agent (Codex) as the default.
-    await page.goto('/welcome/agent');
-    await expect(page.locator('[data-phx-main]')).toHaveClass(/phx-connected/);
-    await expect(page.locator('#agent-claude-status')).toContainText('Connected');
-    await expect(page.locator('#agent-codex-status')).toContainText('Connected');
+    // Adding Claude leaves the first connected agent (Codex) as the default,
+    // which Manage can change.
     await expect(page.locator('#agent-codex-status')).toContainText('Default for new projects');
+    await page.locator('#agent-manage-toggle').click();
+    await expect(page.locator('#agent-manage')).toBeVisible();
+    await accessible(page);
     await page.locator('#make-default-claude').click();
     await expect(page.locator('#agent-claude-status')).toContainText('Default for new projects');
+    await page.getByRole('link', { name: 'Continue', exact: true }).click();
+    await expect(page).toHaveURL(/\/welcome\/github$/);
     await page.goto('/welcome/github');
     await expect(page).toHaveTitle('Connect GitHub · Ravix');
     expect(await page.content()).not.toContain('sk-ant-oat01-mock');
@@ -243,13 +244,13 @@ test.describe.serial('first visit, then the account dialog', () => {
     const continueHeight = (await page.locator('#github-continue').boundingBox()).height;
     await page.locator('#github-continue').click();
     await expect(page).toHaveURL(/\/welcome\/project$/);
-    await expect(page).toHaveTitle('Create your first project · Ravix');
-    await expect(page.getByRole('heading', { name: 'Create your first project' })).toBeVisible();
-    const createProject = page.getByRole('button', { name: 'Create project', exact: true });
-    expect(await primaryAppearance(createProject)).toEqual(continueStyle);
-    expect((await createProject.boundingBox()).height).toBeCloseTo(continueHeight, 0);
-    expect((await createProject.boundingBox()).width).toBeLessThan(
-      (await page.locator('#first-project-form').boundingBox()).width / 2);
+    await expect(page).toHaveTitle('Start your first track · Ravix');
+    await expect(page.getByRole('heading', { name: 'What do you want to work on?' })).toBeVisible();
+    const start = page.getByRole('button', { name: 'Start', exact: true });
+    expect(await primaryAppearance(start)).toEqual(continueStyle);
+    expect((await start.boundingBox()).height).toBeCloseTo(continueHeight, 0);
+    expect((await start.boundingBox()).width).toBeLessThan(
+      (await page.locator('#first-prompt-form').boundingBox()).width / 2);
     await accessible(page);
     await page.setViewportSize({ width: 390, height: 844 });
     await accessible(page);
@@ -328,6 +329,9 @@ test('home quick start creates a scratch project and recent navigation survives 
   await expect(page.getByRole('button', { name: /Open a local project/ })).toHaveCount(0);
   await accessible(page);
   await capture(page, 'home-empty');
+  // With no project yet, /home is the first-prompt form (first-run.spec.js),
+  // with New project still there for a project without a track.
+  await expect(page.locator('#home-start')).toBeVisible();
   await page.getByRole('button', { name: /^New project/ }).click();
   await page.getByLabel('Project name', { exact: true }).fill('Quick start quality');
   const repository = page.getByLabel('Repository', { exact: true });

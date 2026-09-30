@@ -349,6 +349,15 @@
             <span class="chip">{queue_label(item.status)}</span>
             <div :if={item.prompt} class="queue-prompt md">{queue_prompt_html(item.prompt)}</div>
             <p
+              :if={
+                item.status == :queued and @track.setup_state != "ready" and
+                  is_nil(queue_feedback(item, @track.runtime || @project.runtime))
+              }
+              class="queue-starts"
+            >
+              Starts when setup is ready
+            </p>
+            <p
               :if={queue_feedback(item, @track.runtime || @project.runtime)}
               class="queue-feedback"
             >
@@ -395,6 +404,27 @@
             do: "Own machine",
             else: "Shared project machine"}</span>
           <span :if={@track.setup_error}>{@track.setup_error}</span>
+          <ol
+            :if={
+              @track.setup_state in ["pending", "running", "retry", "failed"] and
+                not parked?(@track)
+            }
+            id="track-setup-steps"
+            class="setup-steps"
+            aria-label="Setup steps"
+          >
+            <li
+              :for={step <- setup_steps(@track, @project)}
+              class={"setup-step " <> Atom.to_string(step.state)}
+              aria-current={step.state == :now && "step"}
+            >
+              <span class="setup-step-mark" aria-hidden="true">
+                <.icon :if={step.state == :done} name="check" size={12} />
+              </span>
+              <span>{step.label}</span>
+              <span :if={step.state == :failed} class="sr-only">(failed)</span>
+            </li>
+          </ol>
           <p :if={@track.setup_state in ["pending", "running", "retry"] and not parked?(@track)}>
             Prompts will wait until setup is ready.
           </p>
