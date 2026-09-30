@@ -37,8 +37,8 @@ test('project track links scroll vertically and preserve the mobile drawer', asy
       await page.getByRole('button', { name: 'Menu', exact: true }).click();
     }
     await expect(first).toHaveAttribute('aria-current', 'page');
-    await expect(first.locator('.track-title')).toHaveText('scrolling-track-0');
-    await expect(first).toHaveAttribute('aria-label', /^scrolling-track-0, /);
+    await expect(first.locator('.track-title')).toHaveText('Scrolling track 0');
+    await expect(first).toHaveAttribute('aria-label', /^Scrolling track 0, /);
     const boxes = await strip.getByRole('link').evaluateAll(links => links.map(link => link.getBoundingClientRect().y));
     expect(boxes).toEqual([...boxes].sort((a,b) => a-b));
     const scroll = page.locator('.yard-scroll');
