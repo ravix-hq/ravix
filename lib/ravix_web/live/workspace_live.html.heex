@@ -93,7 +93,7 @@
           <.icon name="x" size={16} />
         </button>
       </div>
-      <div id="account-menu" class="account-menu" popover aria-label="Account menu">
+      <div id="account-menu" class="account-menu" popover aria-label="You">
         <.theme_picker id="theme-picker" />
         <div id="notify" phx-hook="Notify" class="notify">
           <button
@@ -120,6 +120,16 @@
           phx-value-name="account"
         >
           <.icon name="person" size={14} />Account
+        </button>
+        <button
+          type="button"
+          class="account-item"
+          id="open-personal-settings"
+          popovertarget="account-menu"
+          popovertargetaction="hide"
+          phx-click={JS.patch("/settings/connected-apps")}
+        >
+          <.icon name="settings" size={14} />Settings
         </button>
         <a class="account-item" href="/api/auth/install">
           <.icon name="github" size={14} />Repository access
@@ -517,8 +527,8 @@
           type="button"
           id="account-trigger"
           class="yard-account"
-          aria-label={"Account and app settings" <> if(@changes_unseen > 0, do: ", #{@changes_unseen} new in What's new", else: "")}
-          title="Account and app settings"
+          aria-label={"You" <> if(@changes_unseen > 0, do: ", #{@changes_unseen} new in What's new", else: "")}
+          title="You"
           popovertarget="account-menu"
         >
           <span class="account-icon">
@@ -528,7 +538,7 @@
             </span>
           </span>
           <span class="yard-who">
-            <strong class="truncate">Settings</strong><small class="truncate">@{@current_user.login}</small>
+            <strong class="truncate">You</strong><small class="truncate">@{@current_user.login}</small>
           </span>
           <span class="sr-only">Account menu</span>
           <.icon name="chevron" size={12} open={true} class="account-chevron" />
@@ -590,7 +600,7 @@
         }
         tabindex={@project && "0"}
       >
-        <div :if={@project && is_nil(@track_id)} class="crumbs">
+        <div :if={@project && is_nil(@track_id) && is_nil(@settings)} class="crumbs">
           <span class="project-mark" aria-hidden="true">
             {String.first(@project.name) |> String.upcase()}
           </span>
@@ -640,7 +650,7 @@
           )}
         </div>
         <.live_component
-          :if={@project && is_nil(@track_id)}
+          :if={@project && is_nil(@track_id) && is_nil(@settings)}
           module={RavixWeb.Live.AgentHealth}
           id={"project-agent-health-#{@project.id}"}
           current_user={@current_user}
@@ -732,15 +742,20 @@
           session_hash={@session_hash}
           projects={@all_projects}
         />
-        <.live_component
-          :if={@live_action == :connections}
-          module={RavixWeb.Live.ConnectionsPanel}
-          id="connections"
+        <%!-- Settings pages, one URL a section (RAV-72). --%>
+        <RavixWeb.Live.Settings.page
+          :if={@settings}
+          settings={@settings}
+          project={@project}
+          workspace={@current_workspace && @current_workspace.workspace}
           current_user={@current_user}
           session_hash={@session_hash}
         />
         <div
-          :if={is_nil(@project) && @live_action not in [:projects, :schedules, :connections]}
+          :if={
+            is_nil(@project) &&
+              @live_action not in [:projects, :schedules, :user_settings, :workspace_settings]
+          }
           class="inbox"
         >
           <header>
@@ -808,7 +823,7 @@
                 Invitations withdrawn: {Enum.map_join(notice.withdrawn, ", ", &"@#{&1}")}.
               </span>
               <div class="row">
-                <.link navigate={"/w/#{notice.workspace_id}"}>Invite them to the workspace</.link>
+                <.link patch={"/w/#{notice.workspace_id}/settings/members"}>Invite them to the workspace</.link>
                 <.link patch={"/p/#{notice.project_id}/t/#{notice.track_id}"}>Open track</.link>
                 <span class="spacer"></span>
                 <button
@@ -874,7 +889,7 @@
       :if={@dialog == :sections}
       id="sections-dialog"
       title="Project sections"
-      on_close={dismiss(@project, @track_id)}
+      on_close={dismiss(@project, @track_id, @settings)}
     >
       <p class="hint">Organize your sidebar. Sections are visible only to you.</p>
       <form id="new-section-form" phx-submit="create-section">
@@ -977,7 +992,7 @@
       id="new-project-dialog"
       title="New project"
       focus_on_mount={false}
-      on_close={dismiss(@project, @track_id)}
+      on_close={dismiss(@project, @track_id, @settings)}
     >
       <p class="lede">A repository, or a scratch machine with nothing cloned yet.</p>
       <RavixWeb.Live.NewProject.render_form
@@ -1001,7 +1016,7 @@
       :if={@dialog == :new_track && @track_project}
       id="new-track-dialog"
       title="New track"
-      on_close={dismiss(@project, @track_id)}
+      on_close={dismiss(@project, @track_id, @settings)}
     >
       <RavixWeb.Live.RepoPicker.picker
         :if={@picker}
@@ -1158,20 +1173,11 @@
         session_hash={@session_hash}
       />
     </.dialog>
-    <.live_component
-      :if={@dialog == :settings && @project && @project.role == :owner}
-      module={RavixWeb.Live.SettingsDialog}
-      id="settings-dialog-panel"
-      project={@project}
-      on_close={dismiss(@project, @track_id)}
-      current_user={@current_user}
-      session_hash={@session_hash}
-    />
     <.dialog
       :if={@dialog == :changes}
       id="changes-dialog"
       title="What's new"
-      on_close={dismiss(@project, @track_id)}
+      on_close={dismiss(@project, @track_id, @settings)}
     >
       <p class="lede">Changes in Ravix since you last checked.</p>
       <button type="button" class="secondary" phx-click="mark-changes-seen">Mark all as read</button>
@@ -1186,7 +1192,7 @@
       :if={@dialog == :help}
       id="help-dialog"
       title="Help – AI tools"
-      on_close={dismiss(@project, @track_id)}
+      on_close={dismiss(@project, @track_id, @settings)}
     >
       <button type="button" class="secondary" phx-click="dialog" phx-value-name="changes">What's new<span
         :if={@changes_unseen > 0}
@@ -1198,7 +1204,7 @@
       :if={@dialog == :account}
       id="account-dialog"
       title="Your account"
-      on_close={dismiss(@project, @track_id)}
+      on_close={dismiss(@project, @track_id, @settings)}
     >
       <p class="lede">
         Signed in as <strong>@{@current_user.login}</strong>. Connect either or both agents and choose a default for new projects. Each project uses its selected agent, paid for by its owner’s subscription or API key, whoever is working.
@@ -1212,13 +1218,17 @@
       />
       <hr />
       <p class="account-connections">
-        <a href="/settings/connections">Manage connected applications →</a>
+        <.link patch="/settings/connected-apps">Manage connected applications →</.link>
         <span class="hint">Review access granted to external tools and disconnect them.</span>
       </p>
       <p class="hint">
         <a href="/api/auth/install">Change which GitHub repositories Ravix may work in ↗</a>
       </p>
     </.dialog>
+    <RavixWeb.Live.WorkspaceSwitcher.new_workspace_dialog
+      :if={@dialog == :new_workspace}
+      on_close={dismiss(@project, @track_id, @settings)}
+    />
     <.live_component
       :if={@dialog == :people && @project}
       module={RavixWeb.Live.PeopleDialog}

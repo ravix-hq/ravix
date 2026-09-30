@@ -3,6 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { test, expect } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import { signIn, connectClaude } from './sign-in.js';
+import { createWorkspace } from './settings.js';
 
 // ADR 0009 follow-up: the switcher makes a workspace current and the app
 // shows only it -- the sidebar, quick-jump and the Inbox -- the choice
@@ -62,10 +63,8 @@ test('the switcher scopes the app to the current workspace, and remembers it', a
 
   // A team workspace: creating it makes it current and opens its settings.
   await page.locator('#workspace-switcher-trigger').click();
-  await page.locator('#workspace-menu').getByLabel('New workspace', { exact: true }).fill('Scope Team');
-  await page.getByRole('button', { name: 'Create workspace', exact: true }).click();
-  await expect(page).toHaveURL(/\/w\/[^/?]+$/);
-  const teamId = idOf(new URL(page.url()).pathname);
+  await createWorkspace(page, 'Scope Team');
+  const teamId = idOf(new URL(page.url()).pathname.replace('/settings/members', ''));
   sql(`UPDATE ravix.projects SET workspace_id = '${teamId}' WHERE id = '${teamProjectId}'`);
 
   const yard = page.locator('#yard');
@@ -84,11 +83,12 @@ test('the switcher scopes the app to the current workspace, and remembers it', a
   await expect(page.locator(`#search-project-link-${personalId}`)).toHaveCount(0);
   await page.keyboard.press('Escape');
 
-  // The workspace menu opens settings and members.
+  // The workspace menu opens its settings, at Members, in the shell.
   await page.locator('#workspace-switcher-trigger').click();
-  await page.getByRole('link', { name: 'Settings and members of Scope Team', exact: true }).click();
-  await expect(page).toHaveURL(new RegExp(`/w/${teamId}$`));
-  await expect(page.getByRole('heading', { level: 1 })).toHaveText('Scope Team');
+  await page.getByRole('button', { name: 'Workspace settings', exact: true }).click();
+  await expect(page).toHaveURL(new RegExp(`/w/${teamId}/settings/members$`));
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('Members');
+  await expect(page.getByRole('navigation', { name: 'Breadcrumb' })).toContainText('Scope Team');
   await page.goto('/home');
   await settled(page);
 

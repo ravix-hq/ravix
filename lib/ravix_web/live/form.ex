@@ -57,6 +57,7 @@ defmodule RavixWeb.Live.Form do
           | :preview_defaults
           | :secret
           | :settings
+          | :workspace
           | :credential
 
   @typedoc """
@@ -125,6 +126,7 @@ defmodule RavixWeb.Live.Form do
          "agent_not_connected" => :runtime,
          "rebuild_required" => :runtime
        }},
+    workspace: {%{name: :string}, %{"name" => :name}},
     secret:
       {%{store: :string, key: :string, value: :string},
        %{

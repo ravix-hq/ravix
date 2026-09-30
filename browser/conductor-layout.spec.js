@@ -74,10 +74,13 @@ test('conversation tabs, project picker, settings gears and inspector at desktop
     await gear.focus();
     await expect(gear).toHaveCSS('opacity', '1');
     await gear.click();
-    await expect(page.getByRole('dialog', { name: 'Project settings', exact: true })).toBeVisible();
-    await page.keyboard.press('Escape');
+    // Settings are a page in the shell (RAV-72); Back returns to the track.
+    await expect(page).toHaveURL(/\/settings\/general$/);
+    await expect(page.locator('#settings-page')).toBeVisible();
+    await page.goBack();
+    await expect(page).toHaveURL(trackUrl);
     if (width === 500) await page.getByRole('button', { name: 'Menu', exact: true }).click();
-    await page.getByRole('button', { name: 'Account and app settings', exact: true }).click();
+    await page.getByRole('button', { name: 'You', exact: true }).click();
     await expect(page.locator('#account-menu')).toBeVisible();
     await page.keyboard.press('Escape');
     if (width === 500) await page.getByRole('button', { name: 'Menu', exact: true }).click();

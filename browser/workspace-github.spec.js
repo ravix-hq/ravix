@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { signIn, connectClaude } from './sign-in.js';
+import { createWorkspace } from './settings.js';
 
 // ADR 0009 phase 4b: connect GitHub to a workspace through the install
 // round trip, see the workspace's repository catalog, add a repository as
@@ -13,11 +14,7 @@ test('connect GitHub to a workspace, add a repository, and re-add it', async ({ 
   await page.goto('/home');
   await expect(page.locator('[data-phx-main]')).toHaveClass(/phx-connected/);
 
-  await page.locator('#workspace-switcher-trigger').click();
-  const menu = page.locator('#workspace-menu');
-  await menu.getByLabel('New workspace', { exact: true }).fill('Repo Team');
-  await menu.getByRole('button', { name: 'Create workspace', exact: true }).click();
-  await expect(page).toHaveURL(/\/w\/[^/?]+$/);
+  await createWorkspace(page, 'Repo Team');
   const workspacePath = new URL(page.url()).pathname;
 
   // To GitHub's install page and straight back through the callback.
@@ -51,11 +48,7 @@ test('add one of your GitHub accounts to a workspace from its empty state', asyn
   await page.goto('/home');
   await expect(page.locator('[data-phx-main]')).toHaveClass(/phx-connected/);
 
-  await page.locator('#workspace-switcher-trigger').click();
-  const menu = page.locator('#workspace-menu');
-  await menu.getByLabel('New workspace', { exact: true }).fill('Add Team');
-  await menu.getByRole('button', { name: 'Create workspace', exact: true }).click();
-  await expect(page).toHaveURL(/\/w\/[^/?]+$/);
+  await createWorkspace(page, 'Add Team');
   await expect(page.locator('[data-phx-main]')).toHaveClass(/phx-connected/);
 
   await expect(page.locator('#github-empty')).toContainText('No GitHub account is connected yet.');

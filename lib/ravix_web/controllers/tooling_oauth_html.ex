@@ -24,7 +24,7 @@ defmodule RavixWeb.ToolingOAuthHTML do
           <button class="landing-button" type="submit" name="decision" value="deny">Deny</button>
         </form>
         <p>
-          You can disconnect this application in <a href="/settings/connections">Connected applications</a>.
+          You can disconnect this application in <a href="/settings/connected-apps">Connected applications</a>.
         </p>
       </main>
     </div>
@@ -33,9 +33,9 @@ defmodule RavixWeb.ToolingOAuthHTML do
 
   def connections(assigns) do
     ~H"""
-    <div id="connections-panel" class="inbox connections-page">
+    <div id="connections-panel" class={["connections-page", !assigns[:framed] && "inbox"]}>
       <header>
-        <h1>Connected applications</h1>
+        <h1 :if={!assigns[:framed]}>Connected applications</h1>
         <p>Review applications with access to your projects and tracks.</p>
         <p>Activity times update about once a minute. Older activity may not be recorded.</p>
       </header>

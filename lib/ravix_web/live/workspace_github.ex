@@ -6,7 +6,8 @@ defmodule RavixWeb.Live.WorkspaceGitHub do
 
   Drawn from `Ravix.Workspaces.Repositories.catalog/2`'s cached answer;
   it never asks GitHub. Its events (`refresh-catalog`, `add-repo`,
-  `add-installation`) are the host page's, `RavixWeb.WorkspacePeopleLive`.
+  `add-installation`) go to `target`, the host's component: the Members
+  section of `RavixWeb.Live.WorkspaceSettings`.
 
   RAV-69: an owner also sees the GitHub accounts they can reach themselves
   that the workspace does not use yet (`Ravix.Workspaces.Connect.available/2`,
@@ -15,7 +16,8 @@ defmodule RavixWeb.Live.WorkspaceGitHub do
   so an owner is never sent to install the App again for an account that
   already has it.
   """
-  import Phoenix.LiveView, only: [connected?: 1, start_async: 3, put_flash: 3]
+  import Phoenix.LiveView, only: [connected?: 1, start_async: 3]
+  import RavixWeb.Live.Result, only: [flash: 3]
 
   alias Ravix.Workspaces.Connect
   use RavixWeb, :html
@@ -95,7 +97,7 @@ defmodule RavixWeb.Live.WorkspaceGitHub do
   def installation_added(socket, {:ok, {:ok, installation}}) do
     socket
     |> assign(attaching: nil)
-    |> put_flash(
+    |> flash(
       :info,
       "Added @#{installation.account_login || installation.installation_id} to this workspace."
     )
@@ -104,13 +106,13 @@ defmodule RavixWeb.Live.WorkspaceGitHub do
   def installation_added(socket, {:ok, {:error, reason}}) do
     socket
     |> assign(attaching: nil)
-    |> put_flash(:error, RavixWeb.Error.from(reason, noun: "GitHub account").message)
+    |> flash(:error, RavixWeb.Error.from(reason, noun: "GitHub account").message)
   end
 
   def installation_added(socket, {:exit, _reason}) do
     socket
     |> assign(attaching: nil)
-    |> put_flash(:error, "The GitHub account could not be added. Try again.")
+    |> flash(:error, "The GitHub account could not be added. Try again.")
   end
 
   attr :workspace, :map, required: true
@@ -120,6 +122,7 @@ defmodule RavixWeb.Live.WorkspaceGitHub do
   attr :adding, :string, default: nil
   attr :available, :list, default: nil
   attr :attaching, :string, default: nil
+  attr :target, :any, default: nil, doc: "where the section's events go"
 
   @doc "The section."
   def section(assigns) do
@@ -149,6 +152,7 @@ defmodule RavixWeb.Live.WorkspaceGitHub do
           id="refresh-catalog"
           class="ghost"
           phx-click="refresh-catalog"
+          phx-target={@target}
           disabled={@refreshing}
         >
           {if @refreshing, do: "Refreshing…", else: "Refresh"}
@@ -204,6 +208,7 @@ defmodule RavixWeb.Live.WorkspaceGitHub do
             type="button"
             class={if @empty?, do: "primary", else: "ghost"}
             phx-click="add-installation"
+            phx-target={@target}
             phx-value-installation={installation.id}
             disabled={not is_nil(@attaching)}
             aria-label={"Add @#{installation.account} to #{@workspace.name}"}
@@ -239,6 +244,7 @@ defmodule RavixWeb.Live.WorkspaceGitHub do
             type="button"
             class="ghost"
             phx-click="add-repo"
+            phx-target={@target}
             phx-value-repo={repo.full_name}
             disabled={not is_nil(@adding)}
           >

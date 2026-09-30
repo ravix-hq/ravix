@@ -394,7 +394,7 @@ defmodule RavixWeb.Live.PeopleDialog do
         <p :if={@workspace_project?} id={"#{@id}-workspace-hint"} class="hint workspace-hint">
           This project is shared with members of its workspace.
           <span :if={@workspace_link?}>
-            People join it from <.link navigate={"/w/#{@project.workspace_id}"}>the workspace's members page</.link>;
+            People join it from <.link navigate={"/w/#{@project.workspace_id}/settings/members"}>the workspace's members page</.link>;
             use Share on a track to add them to it.
           </span>
           <span :if={!@workspace_link?}>

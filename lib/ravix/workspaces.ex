@@ -328,6 +328,30 @@ defmodule Ravix.Workspaces do
     end
   end
 
+  @doc """
+  Rename a workspace. Owners and admins (`:rename_workspace`), of a team
+  workspace or their personal one alike; its kind never changes. Open pages
+  hear it as a members notice, which is what re-reads the switcher.
+  """
+  @spec rename(User.t(), String.t(), String.t() | nil) ::
+          {:ok, Workspace.t()} | {:error, reason()}
+  def rename(%User{} = user, workspace_id, name) do
+    name = name |> to_string() |> String.trim()
+
+    with {:ok, %{workspace: workspace}} <-
+           Access.workspace_grant(user, workspace_id, :rename_workspace),
+         :ok <- valid_name(name) do
+      case Store.rename_workspace(workspace.id, name) do
+        {:ok, workspace} ->
+          Ravix.Hub.publish_workspace(workspace.id, :members)
+          {:ok, workspace}
+
+        {:error, :not_found} ->
+          {:error, :not_found}
+      end
+    end
+  end
+
   defp valid_name(""), do: {:error, {:unprocessable, "name", "Give the workspace a name."}}
 
   defp valid_name(name) do

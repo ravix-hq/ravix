@@ -423,7 +423,12 @@ defmodule RavixWeb.Live.PeopleDialogTest do
       refute has_element?(view, "#people-invite-form")
       refute has_element?(view, "button[phx-click=invite-link]")
       refute render(view) =~ "invite link"
-      assert has_element?(view, "#people-workspace-hint a[href='/w/#{ctx.workspace.id}']")
+
+      assert has_element?(
+               view,
+               "#people-workspace-hint a[href='/w/#{ctx.workspace.id}/settings/members']"
+             )
+
       assert has_element?(view, "#people-workspace-hint", "use Share on a track")
       refute has_element?(view, "#people-workspace-hint", "Ask the project's owner")
 

@@ -561,6 +561,15 @@ defmodule Ravix.Workspaces.Store do
     end)
   end
 
+  @doc "Rename a live workspace; not found once it is archived or gone."
+  @spec rename_workspace(String.t(), String.t()) :: {:ok, Workspace.t()} | {:error, :not_found}
+  def rename_workspace(workspace_id, name) do
+    case live_workspace(workspace_id) do
+      nil -> {:error, :not_found}
+      workspace -> {:ok, workspace |> Ecto.Changeset.change(name: name) |> Repo.update!()}
+    end
+  end
+
   defp owner(%Membership{role: :owner}), do: :ok
   defp owner(%Membership{}), do: {:error, :not_owner}
 

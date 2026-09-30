@@ -167,7 +167,7 @@ test("a workspace project's People dialog offers no invite link and points to th
   await expect(people.getByLabel('GitHub username')).toHaveCount(0);
   await expect(people).not.toContainText('invite link');
   await expect(people.getByRole('link', { name: "the workspace's members page" }))
-    .toHaveAttribute('href', `/w/${workspaceId}`);
+    .toHaveAttribute('href', `/w/${workspaceId}/settings/members`);
   const axe = await new AxeBuilder({ page }).include('#people-dialog')
     .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze();
   expect(axe.violations).toEqual([]);

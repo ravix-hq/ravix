@@ -628,7 +628,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
     assert has_element?(view, "#help-dialog", "Connect Claude Code with MCP")
     assert has_element?(view, "#help-dialog code", Ravix.Config.public_url() <> "/mcp")
     assert has_element?(view, "#help-dialog", "SubscribeToTask")
-    assert has_element?(view, "#help-dialog a[href='/settings/connections']")
+    assert has_element?(view, "#help-dialog a[href='/settings/connected-apps']")
     view |> element("#help-dialog button", "What's new") |> render_click()
     assert has_element?(view, "#changes-dialog", "Changes in Ravix since you last checked.")
     refute has_element?(view, "#changes-dialog .chip")
@@ -656,7 +656,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
 
     assert has_element?(
              view,
-             ~s|#account-trigger[aria-label="Account and app settings, #{count} new in What's new"]|
+             ~s|#account-trigger[aria-label="You, #{count} new in What's new"]|
            )
 
     view |> element("#open-changes") |> render_click()
@@ -1316,7 +1316,11 @@ defmodule RavixWeb.WorkspaceLiveTest do
     end)
 
     view |> element("#{row} button[title='Project settings']") |> render_click()
-    assert has_element?(view, "#settings-dialog")
+    assert_patch(view, "/p/#{mine.id}/settings/general")
+    render_async(view)
+    assert has_element?(view, "#settings-sections")
+    assert has_element?(view, ".settings-crumbs [aria-current=page]", "General")
+    assert page_title(view) == "General · Mine · Ravix"
 
     # A member who does not own the project has its people but not its settings.
     {:ok, view, _} = live(log_in_user(conn, user), "/p/#{shared.id}")
@@ -1325,9 +1329,13 @@ defmodule RavixWeb.WorkspaceLiveTest do
     assert has_element?(view, "#{row} button[aria-label='People in sharer / Shared']")
     refute has_element?(view, "#{row} button[aria-label^='Project settings']")
     render_hook(view, "project-settings", %{project: shared.id})
-    refute has_element?(view, "#settings-dialog")
+    refute has_element?(view, "#settings-sections")
     render_patch(view, "/p/#{shared.id}?settings=true")
-    refute has_element?(view, "#settings-dialog")
+    refute has_element?(view, "#settings-sections")
+    render_patch(view, "/p/#{shared.id}/settings/general")
+    assert_patch(view, "/p/#{shared.id}")
+    assert has_element?(view, "#flash-info", "Only the project's owner can change its settings.")
+    refute has_element?(view, "#settings-sections")
   end
 
   test "top New track defaults to the current project and switches scoped projects", %{conn: conn} do
@@ -1358,7 +1366,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
     render_hook(view, "new-track-project", %{project: foreign.id})
     assert has_element?(view, "#new-track-project option[value='#{second.id}'][selected]")
     render_hook(view, "project-settings", %{project: foreign.id})
-    refute has_element?(view, "#settings-dialog")
+    refute has_element?(view, "#settings-sections")
 
     expect(Tracks, :open, fn viewer, id, attrs ->
       assert viewer.id == user.id
@@ -1388,9 +1396,11 @@ defmodule RavixWeb.WorkspaceLiveTest do
        }}
     end)
 
+    # The dialog's old link opens its first section.
     render_patch(view, "/p/#{first.id}?settings=true")
+    assert_patch(view, "/p/#{first.id}/settings/general")
     render_async(view)
-    assert has_element?(view, "#settings-dialog")
+    assert has_element?(view, "#settings-sections")
   end
 
   for has_project <- [false, true] do
@@ -1496,8 +1506,11 @@ defmodule RavixWeb.WorkspaceLiveTest do
 
     assert has_element?(
              view,
-             "#yard .yard-footer #account-trigger[aria-label='Account and app settings']"
+             "#yard .yard-footer #account-trigger[aria-label='You']",
+             "You"
            )
+
+    assert has_element?(view, "#account-menu[aria-label='You']")
 
     menu = "#yard #account-menu[popover]"
 

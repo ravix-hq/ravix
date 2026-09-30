@@ -23,7 +23,8 @@
 //   Terminal        the Commands panel: history, Ctrl+L, output that follows itself
 //   Shell           an interactive terminal tab: xterm.js over the page's socket
 //   Notify          desktop notifications when a track needs you and you are not looking
-//   SettingsSections section navigation and unsaved input warnings
+//   SettingsSections a project settings section's own Save, Discard and agent choice
+//   UnsavedChanges  a settings page's unsaved-changes bar and leave confirmation
 //   ProjectTree     viewer-local collapse preferences for project and section rows
 //   QuickJump       Cmd/Ctrl-K and keyboard selection in navigation search
 //   ProjectSections drag a sidebar project onto one of your sections
@@ -58,6 +59,7 @@ import {ProjectTree} from "./hooks/project_tree"
 import {QuickJump} from "./hooks/quick_jump"
 import {AgentConfirmation} from "./hooks/agent_confirmation"
 import {SettingsSections} from "./hooks/settings_sections"
+import {UnsavedChanges} from "./hooks/unsaved_changes"
 import {ProjectSections} from "./hooks/project_sections"
 import {ProjectFormFocus} from "./hooks/project_form_focus"
 import {CopyCode} from "./hooks/copy_code"
@@ -70,7 +72,7 @@ import {HeaderFit} from "./hooks/header_fit"
 
 
 
-const hooks = {ThreadTabs, AgentConfirmation, Theme, PanelResize, PanelToggle, TranscriptTail, Composer, Terminal, Notify, SettingsSections, ProjectTree, QuickJump, ProjectSections, CopyCode, ProjectFormFocus, ShareMention, TurnTimer, RelativeTime, SubmitOnEnter, Shell, HeaderFit, LocalTime}
+const hooks = {ThreadTabs, AgentConfirmation, Theme, PanelResize, PanelToggle, TranscriptTail, Composer, Terminal, Notify, SettingsSections, UnsavedChanges, ProjectTree, QuickJump, ProjectSections, CopyCode, ProjectFormFocus, ShareMention, TurnTimer, RelativeTime, SubmitOnEnter, Shell, HeaderFit, LocalTime}
 
 const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
 clearTransportFallback(window)

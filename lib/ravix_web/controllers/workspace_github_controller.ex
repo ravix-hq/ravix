@@ -51,10 +51,10 @@ defmodule RavixWeb.WorkspaceGitHubController do
 
     case result do
       {:ok, workspace_id} ->
-        redirect(conn, to: "/w/#{workspace_id}?github=connected")
+        redirect(conn, to: "/w/#{workspace_id}/settings/members?github=connected")
 
       {:error, reason} when is_binary(back) ->
-        redirect(conn, to: "/w/#{back}?github_error=#{code(reason)}")
+        redirect(conn, to: "/w/#{back}/settings/members?github_error=#{code(reason)}")
 
       {:error, reason} ->
         redirect(conn, to: "/?error=#{code(reason)}")

@@ -83,7 +83,7 @@ defmodule RavixWeb.ToolingOAuthController do
 
   def disconnect(conn, %{"id" => id}) do
     with {:ok, user} <- CurrentUser.require_user(conn), :ok <- OAuth.disconnect(user, id) do
-      redirect(conn, to: "/settings/connections")
+      redirect(conn, to: "/settings/connected-apps")
     else
       {:error, reason} -> Error.send_json(conn, reason)
     end

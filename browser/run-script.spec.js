@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { signIn, connectClaude } from './sign-in.js';
+import { openProjectSettings } from './settings.js';
 
 test('project run script is inherited: run, ready, restart, stop and plain override', async ({ page }) => {
   await signIn(page, 'eli', '/home');
@@ -11,15 +12,16 @@ test('project run script is inherited: run, ready, restart, stop and plain overr
   await page.getByRole('button', { name: 'Create track', exact: true }).click();
   await expect(page.getByRole('textbox', { name: 'Message', exact: true })).toBeEnabled();
 
-  await page.locator('#yard .workspace-project.current button[title="Project settings"]').click();
-  const settings = page.getByRole('dialog', { name: 'Project settings', exact: true });
-  await settings.getByRole('button', { name: 'Run script', exact: true }).click();
+  const trackUrl = page.url();
+  const settings = await openProjectSettings(page, 'run-script');
   await settings.locator('#default-directory').fill('.');
   await settings.locator('#default-command').fill('npm run dev -- --port "$PORT" --strictPort');
   await settings.locator('#default-readiness').fill('/');
   await settings.getByRole('button', { name: 'Save defaults', exact: true }).click();
   await expect(page.getByText('Run script saved.', { exact: true })).toBeVisible();
-  await settings.getByRole('button', { name: 'Close', exact: true }).click();
+  await page.goBack();
+  await page.goBack();
+  await expect(page).toHaveURL(trackUrl);
 
   await page.locator('button[phx-click="panel"][phx-value-name="preview"]').click();
   const status = page.locator('#run-status');
