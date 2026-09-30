@@ -8,6 +8,28 @@ import type { Subprocess } from "bun";
 
 interface Service { name: string; dir: string; root: string; port: number; status: string; logs: string; process?: Subprocess; version: number; }
 const services = new Map<string, Service>();
+// A worktree's Git state for the Checks tab, per sprite: some edits and a
+// commit not yet on GitHub, so `python3 scripts/dev-mock.py` shows every row.
+// A commit message containing "reject" is refused at the push, as a remote
+// with newer commits would.
+interface GitFixture { uncommitted: string[]; unpushed: number; upstream: boolean }
+const worktrees = new Map<string, GitFixture>();
+function gitExec(sprite: string, script: string): [string, number] {
+  const key = `${sprite}:${/cd '([^']+)'/.exec(script)?.[1] ?? ""}`;
+  const git = worktrees.get(key) ?? { uncommitted: [" M lib/app.ex", " M README.md", "?? lib/app/search.ex"], unpushed: 1, upstream: false };
+  worktrees.set(key, git);
+  const branch = `ravix/${/cd '[^']*\/([^'/]+)'/.exec(script)?.[1] ?? "track"}`;
+  if (script.includes("__ravix_git__"))
+    return [`${git.uncommitted.join("\n")}\n__ravix_git__\n${branch}\n${git.upstream ? "upstream" : "none"} ${git.unpushed}\n`, 0];
+  if (script.includes("git commit")) {
+    if (git.uncommitted.length === 0) return ["", 13];
+    git.uncommitted = []; git.unpushed++;
+    if (/git commit -q -m '[^']*reject/i.test(script))
+      return [` ! [rejected]        HEAD -> ${branch} (fetch first)\nerror: failed to push some refs to 'https://github.com/mockuser/atlas-api.git'\nhint: Updates were rejected because the remote contains work that you do not\nhint: have locally. Integrate the remote changes (e.g.\nhint: 'git pull ...') before pushing again.\n`, 12];
+  }
+  git.unpushed = 0; git.upstream = true;
+  return [`branch '${branch}' set up to track 'origin/${branch}'.\n`, 0];
+}
 const root = mkdtempSync(join(tmpdir(), "ravix-preview-mock-"));
 const vite = new URL("../node_modules/vite/bin/vite.js", import.meta.url).pathname;
 function render(service: Service) {
@@ -44,6 +66,11 @@ const server = Bun.serve<{ tcp?: Socket }>({ port: Number(process.env.MOCK_SPRIT
     if (match[2] === "proxy") return server.upgrade(req, { data: {} }) ? undefined : new Response("upgrade", { status: 400 });
     if (match[2] === "exec") {
       const argv = url.searchParams.getAll("cmd");
+      const script = argv[0] === "sh" ? argv.at(-1) ?? "" : "";
+      if (/__ravix_git__|git push -u origin HEAD/.test(script)) {
+        const [out, code] = gitExec(match[1]!, script);
+        return new Response(Buffer.concat([Buffer.from([1]), Buffer.from(out), Buffer.from([3, code])]));
+      }
       const logs = argv[0] === "tail" ? [...services.values()].find(s => argv.at(-1)?.includes(s.name))?.logs || "" : "";
       const stats = argv[0] === "sh" && argv.at(-1)?.includes("/sys/fs/cgroup/cpu.stat");
       const output = stats ? [

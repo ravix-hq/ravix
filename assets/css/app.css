@@ -1731,8 +1731,10 @@ button.primary.home-action .ico { color: inherit; }
 .git-hint, .git-note { color: var(--dim); font-size: 12px; }
 .git-failure {
   margin: 8px 0 0; padding: 8px 10px; border: 1px solid color-mix(in srgb, var(--bad) 35%, var(--line));
-  border-radius: var(--radius); background: var(--bad-soft); color: var(--bad); font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere;
+  border-radius: var(--radius); background: var(--bad-soft); color: var(--bad); font-size: 12px; overflow-wrap: anywhere;
 }
+/* Git's own lines keep their breaks; the template's indentation does not. */
+.git-failure > span { white-space: pre-wrap; }
 
 /* Changes inspector shares transcript diff colors and contains wide source lines. */
 .changes-panel { min-width: 0; max-width: 100%; }

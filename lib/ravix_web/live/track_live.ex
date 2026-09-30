@@ -2564,7 +2564,7 @@ defmodule RavixWeb.TrackLive do
       <.loading_status :if={@writing} id="git-writing">
         {if @writing == :commit, do: "Committing and pushing…", else: "Pushing…"}
       </.loading_status>
-      <p :if={@failure} id="git-failure" class="git-failure" role="alert">{@failure}</p>
+      <p :if={@failure} id="git-failure" class="git-failure" role="alert"><span>{@failure}</span></p>
     </section>
     """
   end

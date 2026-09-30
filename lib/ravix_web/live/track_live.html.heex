@@ -989,7 +989,7 @@
           required
         />
         <p :if={@git_failure} id="commit-failure" class="git-failure" role="alert">
-          {@git_failure}
+          <span>{@git_failure}</span>
         </p>
         <.loading_status :if={:git in @pending}>Committing and pushing…</.loading_status>
         <button class="primary" phx-disable-with="Committing…" disabled={:git in @pending}>

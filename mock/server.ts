@@ -1317,6 +1317,7 @@ const PEOPLE = [
     { id: 9016, login: "peopleowner", name: "People Owner", avatar_url: `${BASE}/ghweb/avatar.svg` },
     { id: 9030, login: "picker", name: "Repo Picker", avatar_url: `${BASE}/ghweb/avatar.svg` },
     { id: 9031, login: "scopeowner", name: "Scope Owner", avatar_url: `${BASE}/ghweb/avatar.svg` },
+    { id: 9032, login: "gitstatus", name: "Git Status", avatar_url: `${BASE}/ghweb/avatar.svg` },
   ] : []),
   { id: 9001, login: "dana", name: "Dana Okonkwo", avatar_url: `${BASE}/ghweb/avatar.svg?dana` },
   { id: 9002, login: "eli", name: "Eli Fischer", avatar_url: `${BASE}/ghweb/avatar.svg?eli` },
