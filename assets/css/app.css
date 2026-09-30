@@ -638,9 +638,6 @@ html[data-yard="closed"] .workspace-trigger-skeleton { flex: none; width: 28px; 
 .yard-item.on { background: var(--surface-active); color: var(--ink); }
 .yard-item .ico { flex: none; width: 15px; display: grid; place-items: center; color: var(--dimmer); }
 .yard-item.on .ico, .yard-item:hover .ico { color: var(--dim); }
-/* A count fits the row rather than growing it, so the nav does not move
-   when the counts arrive (RAV-100). */
-.yard-item .badge { height: 18px; min-width: 18px; margin-block: -1px; }
 /* Pressed, until the server answers the click: the row says it heard. */
 .yard-item.phx-click-loading { background: var(--surface-active); color: var(--ink); cursor: progress; }
 .badge { display: inline-grid; place-items: center; min-width: 21px; height: 23px; padding: 0 6px; border: 1px solid var(--line); border-radius: 999px; color: var(--dim); background: var(--surface); font-size: 11px; font-weight: 400; }

@@ -161,7 +161,7 @@ test('the sidebar nav and You menu keep one pitch and say what they do', async (
   await page.setViewportSize({ width: 1440, height: 900 });
   await signIn(page, 'sidebarpolish', '/home');
   await connectClaude(page);
-  await page.getByRole('button', { name: /^New project/ }).click();
+  await page.getByRole('button', { name: 'Add a project', exact: true }).first().click();
   await page.getByLabel('Project name', { exact: true }).fill(`Sidebar nav ${Date.now().toString(36)}`);
   await page.getByRole('button', { name: 'Create project', exact: true }).click();
   const projectRow = page.locator('#yard .workspace-project.current');

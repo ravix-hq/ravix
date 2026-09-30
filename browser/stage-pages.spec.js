@@ -67,7 +67,7 @@ test('stage pages share one edge; the nav, dialogs and selects hold still', asyn
   }
   for (const path of Object.keys(edges)) expect(edges[path]).toEqual(edges['/home']);
 
-  // The Inbox's count sits inside its row: every nav row is one height.
+  // The Inbox's count sits inside its row (RAV-96's 30px rows): every nav row is one height.
   await page.goto('/inbox');
   await connected(page);
   await expect(page.locator('#yard .yard-nav .yard-item .badge')).toHaveText('1');
