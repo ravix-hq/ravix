@@ -45,6 +45,18 @@ defmodule Ravix.ReleaseDistributionTest do
     assert singletons == []
   end
 
+  test "retitle_tracks runs on the repository alone", %{node: node} do
+    assert %{applied: false, tracks: tracks} =
+             :erpc.call(node, Ravix.Release, :retitle_tracks, [false], 60_000)
+
+    assert is_list(tracks)
+    started = :erpc.call(node, Application, :started_applications, [])
+    refute List.keymember?(started, :ravix, 0)
+
+    for name <- [Ravix.Supervisor, RavixWeb.Endpoint, Ravix.PubSub, Ravix.Repo],
+        do: assert(:erpc.call(node, Process, :whereis, [name]) == nil)
+  end
+
   defp distribute!(name \\ :"ravix_primary@127.0.0.1") do
     unless Node.alive?() do
       if epmd = System.find_executable("epmd") do

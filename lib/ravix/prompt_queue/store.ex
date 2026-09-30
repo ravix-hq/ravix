@@ -163,19 +163,26 @@ defmodule Ravix.PromptQueue.Store do
   def get(id), do: Repo.get_by(Item, id: id)
 
   @doc """
-  Whether the row `id` is the first prompt this thread ever accepted,
-  whatever became of it since. Rows are kept after delivery, so a thread
-  with any earlier one answers false.
+  The first prompt a person wrote on this thread, whatever became of it
+  since, as `{id, prompt}`, or nil when there is none. Rows are kept after
+  delivery, so a thread with any earlier one answers that one.
+
+  A turn Ravix sent itself is passed over: it starts `[ravix]` (the one
+  marker `Ravix.Tracks.Transcript.app_turn_label/1` reads) and is an
+  instruction to the machine, such as opening the track, not what the
+  thread is about.
   """
-  @spec first_on_thread?(String.t(), String.t(), String.t()) :: boolean()
-  def first_on_thread?(track_id, thread_id, id) do
+  @spec first_person_prompt(String.t(), String.t()) :: {String.t(), String.t()} | nil
+  def first_person_prompt(track_id, thread_id) do
     Repo.one(
       from p in Item,
-        where: p.track_id == ^track_id and p.thread_id == ^thread_id,
+        where:
+          p.track_id == ^track_id and p.thread_id == ^thread_id and
+            not like(fragment("coalesce(?->>'prompt', '')", p.body), "[ravix]%"),
         order_by: p.sequence,
         limit: 1,
-        select: p.id
-    ) == id
+        select: {p.id, fragment("coalesce(?->>'prompt', '')", p.body)}
+    )
   end
 
   @doc "Delivery metadata for one row, excluding the prompt and attachments."
