@@ -32,6 +32,7 @@
 //   TurnTimer       a running turn's elapsed time, ticking without a round-trip
 //   RelativeTime    a sidebar row's "22h" age, kept current without server ticks
 //   SubmitOnEnter   the create dialog's first prompt: Enter creates, Shift+Enter is a new line
+//   HeaderFit       a track header's status chips: whole words or just their icons
 //
 // Adding a hook is a product decision, not a convenience. Say why in its
 // file's header, and list it here.
@@ -63,9 +64,10 @@ import {ShareMention} from "./hooks/share_mention"
 import {TurnTimer} from "./hooks/turn_timer"
 import {RelativeTime} from "./hooks/relative_time"
 import {SubmitOnEnter} from "./hooks/submit_on_enter"
+import {HeaderFit} from "./hooks/header_fit"
 
 
-const hooks = {ThreadTabs, AgentConfirmation, Theme, PanelResize, PanelToggle, TranscriptTail, Composer, Terminal, Notify, SettingsSections, ProjectTree, QuickJump, ProjectSections, CopyCode, ProjectFormFocus, ShareMention, TurnTimer, RelativeTime, SubmitOnEnter, Shell}
+const hooks = {ThreadTabs, AgentConfirmation, Theme, PanelResize, PanelToggle, TranscriptTail, Composer, Terminal, Notify, SettingsSections, ProjectTree, QuickJump, ProjectSections, CopyCode, ProjectFormFocus, ShareMention, TurnTimer, RelativeTime, SubmitOnEnter, Shell, HeaderFit}
 
 const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
 clearTransportFallback(window)

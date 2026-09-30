@@ -1655,7 +1655,8 @@ defmodule RavixWeb.TrackLiveTest do
         assert has_element?(view, "#track-machine-detail.sr-only", detail)
       else
         refute has_element?(view, "#track-machine-detail")
-        refute has_element?(view, "#track-machine-state[title]")
+        # A narrow header shows only the dot, so the word is its tooltip.
+        assert has_element?(view, "#track-machine-state[title=\"#{label}\"]")
       end
     end
 
@@ -2408,6 +2409,8 @@ defmodule RavixWeb.TrackLiveTest do
     view = find_live_child(parent, "track-host")
     settle(view)
     assert has_element?(view, ".track-plan-toggle[aria-expanded=false]", "Plan items · 1 item")
+    # Named in full even when the compact header draws only the count.
+    assert has_element?(view, ".track-plan-toggle[aria-label='Plan items · 1 item']")
     assert has_element?(view, ".track-plan-summary", "0 of 1 done")
     refute has_element?(view, ".track-plan-items a")
     view |> element(".track-plan-toggle") |> render_click()

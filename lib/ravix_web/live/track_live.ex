@@ -1870,6 +1870,18 @@ defmodule RavixWeb.TrackLive do
 
   defp payer_label(%{owner_login: login}), do: "Paid by @#{login}"
 
+  defp agent_owner_label(project, track),
+    do:
+      "Runs on @#{project.owner_login}'s #{RavixWeb.AgentName.label(track.runtime || project.runtime)}"
+
+  defp machine_scope(%{sandbox_layout: :dedicated}), do: "Own machine"
+  defp machine_scope(_track), do: "Shared project machine"
+
+  # Whether a header crumb is short enough to show whole. A longer one may
+  # shrink, but only to its floor in app.css; a shorter one never shrinks,
+  # which a floor alone would get wrong by padding it out to the floor.
+  defp fits?(text, chars), do: String.length(text) <= chars
+
   # Whoever pays for this track's agent, as refusals name them: the creator
   # of a creator-billed track, else the project's owner, as before.
   defp payer_name(%{assigns: %{track: %{billing: :creator, payer_login: login}}}),
@@ -2719,8 +2731,10 @@ defmodule RavixWeb.TrackLive do
       role="status"
       aria-live="polite"
       aria-describedby={@machine.detail && "track-machine-detail"}
-      title={@machine.detail}
-    ><.status_dot status={to_string(@machine.state)} />{MachineState.label(@machine.state)}</span>
+      title={@machine.detail || MachineState.label(@machine.state)}
+    ><.status_dot status={to_string(@machine.state)} /><span class="chip-label" data-fit-label>{MachineState.label(
+      @machine.state
+    )}</span></span>
     <span :if={@machine.detail} id="track-machine-detail" class="sr-only">{@machine.detail}</span>
     """
   end
