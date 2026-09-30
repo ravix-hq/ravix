@@ -1060,6 +1060,7 @@ defmodule Ravix.Tracks do
          {:ok, track} <-
            Ravix.Tracks.Sandbox.Store.create(plan, selection, project, creator_billing: creator?) do
       publish_tracks(project.id, track.id)
+      track_opened_event(user, track, project, selection)
 
       {:ok,
        present(track,
@@ -1173,14 +1174,7 @@ defmodule Ravix.Tracks do
       MachineCache.forget_project(project.id)
       publish_tracks(project.id, track.id)
 
-      Analytics.track(
-        user,
-        :track_opened,
-        Map.merge(Analytics.repo(track, project), %{
-          "ravix.origin" => track.origin_kind,
-          "ravix.runtime" => selection.runtime
-        })
-      )
+      track_opened_event(user, track, project, selection)
 
       {:ok,
        present(track,
@@ -1190,6 +1184,39 @@ defmodule Ravix.Tracks do
          owner_login: project_owner_login(project, user)
        )}
     end
+  end
+
+  # Both layouts open through `open/4` and report here, so the event cannot
+  # go missing from one of them again (RAV-106).
+  defp track_opened_event(user, track, project, selection) do
+    Analytics.track(
+      user,
+      :track_opened,
+      Map.merge(Analytics.repo(track, project), %{
+        "ravix.origin" => track.origin_kind,
+        "ravix.runtime" => selection.runtime,
+        "ravix.layout" => Atom.to_string(track.sandbox_layout)
+      })
+    )
+  end
+
+  # The close counterpart of `track_opened_event/4`, sent once the close has
+  # been accepted on either layout.
+  defp track_closed_event(user, track, project, opts) do
+    Analytics.track(
+      user,
+      :track_closed,
+      Map.merge(Analytics.repo(track, project), %{
+        "ravix.forced" => Keyword.get(opts, :force, false) == true,
+        "ravix.branch_deleted" => Keyword.get(opts, :delete_branch, false) == true,
+        # How long the track lived. `turn_count` would be the better number and
+        # is not on this row -- it is computed on `Ravix.Tracks.View` from
+        # Fountain's conversation list, so reading it here would be a round
+        # trip on a close, or a `KeyError`.
+        "ravix.lifetime_sec" => lifetime_sec(track),
+        "ravix.layout" => Atom.to_string(track.sandbox_layout)
+      })
+    )
   end
 
   defp lifetime_sec(%Track{created_at: nil}), do: nil
@@ -2548,7 +2575,7 @@ defmodule Ravix.Tracks do
     end
   end
 
-  defp close_track(_user, %Track{sandbox_layout: :dedicated} = track, project, _client, opts) do
+  defp close_track(user, %Track{sandbox_layout: :dedicated} = track, project, _client, opts) do
     with :ok <-
            check(
              Keyword.get(opts, :force, false),
@@ -2559,6 +2586,7 @@ defmodule Ravix.Tracks do
       # ownership: Access.track_access and require_owner_or_cutter admitted this close.
       Ravix.PromptQueue.Store.cancel_track(track.id)
       publish_tracks(project.id, track.id)
+      track_closed_event(user, track, project, opts)
       :ok
     end
   end
@@ -2588,20 +2616,7 @@ defmodule Ravix.Tracks do
         end)
       )
 
-    Analytics.track(
-      user,
-      :track_closed,
-      Map.merge(Analytics.repo(track, project), %{
-        "ravix.forced" => Keyword.get(opts, :force, false) == true,
-        "ravix.branch_deleted" => Keyword.get(opts, :delete_branch, false) == true,
-        # How long the track lived. `turn_count` would be the better number and
-        # is not on this row -- it is computed on `Ravix.Tracks.View` from
-        # Fountain's conversation list, so reading it here would be a round
-        # trip on a close, or a `KeyError`.
-        "ravix.lifetime_sec" => lifetime_sec(track)
-      })
-    )
-
+    track_closed_event(user, track, project, opts)
     :ok
   end
 
