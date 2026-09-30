@@ -25,6 +25,8 @@ defmodule Ravix.Tracks.TranscriptTest do
         )
       )
 
+  defp diff(path, old, new), do: %{type: "diff", path: path, oldText: old, newText: new}
+
   defp tool_done(id, extra),
     do:
       update(
@@ -260,6 +262,70 @@ defmodule Ravix.Tracks.TranscriptTest do
                  [event(1, tool_call("c1")), event(2, pending)],
                  "claude"
                )
+    end
+
+    # claude-agent-acp 0.81.2 sends the tool_call as the tool_use starts, with
+    # no input and a placeholder title, then refining updates with no status.
+    test "a streamed call takes its title and input from the updates that refine it" do
+      path = "/home/sprite/work/kyoto/src/day.ts"
+
+      placeholder =
+        tool_call("w1", %{
+          title: "Preparing file…",
+          kind: "edit",
+          status: "pending",
+          rawInput: %{}
+        })
+
+      named = %{
+        sessionUpdate: "tool_call_update",
+        toolCallId: "w1",
+        title: "Write src/day.ts",
+        kind: "edit",
+        rawInput: %{file_path: path, content: "one"},
+        locations: [%{path: path}]
+      }
+
+      events = [
+        event(1, placeholder),
+        event(2, update(named)),
+        event(3, update(Map.put(named, :content, [diff(path, nil, "one")])))
+      ]
+
+      assert [%Block.Tool{status: :running} = running] =
+               Transcript.blocks_for_turn(events, "claude")
+
+      assert running.name == "Write src/day.ts"
+      assert running.detail.input == %{"file_path" => path, "content" => "one"}
+      assert running.detail.paths == [path]
+      assert [%Edit{path: ^path, added: 1}] = running.detail.edits
+
+      # The adapter's diff from the finished tool replaces its guess.
+      done = tool_done("w1", %{content: [diff(path, "zero", "one")]})
+
+      assert [%Block.Tool{status: :done, name: "Write src/day.ts"} = tool] =
+               Transcript.blocks_for_turn(events ++ [event(4, done)], "claude")
+
+      assert [%Edit{path: ^path, added: 1, removed: 1}] = tool.detail.edits
+    end
+
+    test "a refinement without a title keeps the name, and one for no known call is ignored" do
+      untitled =
+        update(%{
+          sessionUpdate: "tool_call_update",
+          toolCallId: "c1",
+          rawInput: %{command: "ls"}
+        })
+
+      stray = update(%{sessionUpdate: "tool_call_update", toolCallId: "nope", title: "x"})
+
+      assert [%Block.Tool{name: "Read file"} = tool] =
+               Transcript.blocks_for_turn(
+                 [event(1, tool_call("c1")), event(2, untitled), event(3, stray)],
+                 "claude"
+               )
+
+      assert tool.detail.input == %{"command" => "ls"}
     end
 
     test "a failed call is an error with its output" do
