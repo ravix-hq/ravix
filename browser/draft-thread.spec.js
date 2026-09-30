@@ -35,6 +35,8 @@ test('a draft thread becomes a real thread with its first message running, wide 
     const draft = page.locator('#draft-runtime');
     await expect(page.locator('#new-thread-dialog')).toHaveCount(0);
     await expect(page.locator('#draft-thread-empty')).toContainText('Your first message starts this thread.');
+    // RAV-80: one line above the empty composer; the branch is the header's.
+    await expect(page.locator('.track-ribbon')).toHaveCount(0);
     await expect(draftChoice(page, 'runtime')).toHaveValue('claude');
     // RAV-80: one model control, the composer's pill, and no native selects.
     await expect(page.locator('#composer-form select')).toHaveCount(0);

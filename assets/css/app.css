@@ -1059,6 +1059,9 @@ html[data-yard="closed"] .workspace-trigger-skeleton { flex: none; width: 28px; 
 .workspace-welcome { padding: 40px; max-width: 960px; overflow: auto; }
 .workspace-welcome h1 { font-size: 28px; margin-bottom: 16px; }
 .workspace-welcome p { margin: 16px 0; line-height: 1.7; }
+/* A draft's one line sits just above the composer (RAV-80). */
+.draft-thread-empty { margin: auto 0 0; padding: 0 0 4px; font-size: 13px; }
+.draft-thread-empty p { margin: 0; }
 /* An empty thread sits at the bottom of the scroller; its prompts are dashed chips. */
 .transcript-scroll .workspace-welcome {
   display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px;

@@ -188,7 +188,10 @@
             if @thread_draft[:selected?], do: "draft-#{@thread_draft.id}", else: @thread_id
           }
         >
-          <div class="track-ribbon">
+          <%!-- A draft (RAV-80) is nearly empty: the copy and branch are
+            the header's and the Files panel's to say, so it keeps only a
+            stale-settings notice, when there is one, and one muted line. --%>
+          <div :if={!@thread_draft[:selected?]} class="track-ribbon">
             <p :if={@header && @header.copy_of} class="track-copy">
               You are in a copy of {@header.copy_of} called
               <code>{Path.basename(@track.workdir)}</code>
@@ -203,18 +206,11 @@
               Settings changed — open a new track to use them
             </span>
           </div>
-          <%!-- A draft has no transcript: the thread it will be does not exist
-            until its first message, which is what this says. --%>
-          <div
-            :if={@thread_draft[:selected?]}
-            id="draft-thread-empty"
-            class="workspace-welcome conversation-start"
-          >
-            <span class="empty-icon"><.icon name="sparkle" size={22} /></span>
-            <h2>New thread</h2>
-            <p class="dim">
-              Your first message starts this thread. It shares this checkout with the others.
+          <div :if={@thread_draft[:selected?]} id="draft-thread-empty" class="draft-thread-empty">
+            <p :if={@track.stale} id="draft-stale" class="chip">
+              Settings changed — open a new track to use them
             </p>
+            <p :if={!@track.stale} class="dim">Your first message starts this thread.</p>
           </div>
           <button
             :if={!@thread_draft[:selected?] && Transcript.History.more?(@page.history)}

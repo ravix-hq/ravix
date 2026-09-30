@@ -2655,6 +2655,14 @@ defmodule RavixWeb.TrackLiveTest do
                "Your first message starts this thread."
              )
 
+      # RAV-80: one muted line and nothing else above the empty composer;
+      # the copy and branch are the header's and the Files panel's.
+      empty = ctx.view |> render() |> LazyHTML.from_fragment()
+      assert Enum.count(LazyHTML.query(empty, "#draft-thread-empty > *")) == 1
+      assert Enum.empty?(LazyHTML.query(empty, "#draft-thread-empty h2, #draft-thread-empty svg"))
+      refute has_element?(ctx.view, ".track-ribbon")
+      refute has_element?(ctx.view, "#draft-stale")
+
       refute has_element?(ctx.view, "#transcript-turns")
       assert has_element?(ctx.view, "#draft-runtime-trigger", "Claude Code · Claude Opus 5")
 
@@ -2703,6 +2711,29 @@ defmodule RavixWeb.TrackLiveTest do
       assert has_element?(ctx.view, "#composer-#{ctx.track.id}")
       assert has_element?(ctx.view, "#thread-tab-#{ctx.track.id}[aria-selected=true]")
       assert_push_event(ctx.view, "composer:forget", %{key: ^key})
+    end
+
+    test "a draft on a track with changed settings says so, in place of its line", ctx do
+      stub(Tracks, :get, fn _, id, _opts ->
+        {:ok,
+         %{
+           track: %{Tracks.present(Repo.get!(Track, id), role: :owner) | stale: true},
+           header: blank_header(),
+           threads: thread_options(id),
+           starters: [],
+           models: []
+         }}
+      end)
+
+      {:ok, parent, _} = live(ctx.conn, "/p/#{ctx.project.id}/t/#{ctx.track.id}")
+      view = find_live_child(parent, "track-host")
+      settle(view)
+      assert has_element?(view, ".track-ribbon .chip", "Settings changed")
+
+      open_draft(%{ctx | view: view}, draft_options(ctx))
+      assert has_element?(view, "#draft-thread-empty #draft-stale", "Settings changed")
+      refute has_element?(view, "#draft-thread-empty", "Your first message")
+      refute has_element?(view, ".track-ribbon")
     end
 
     test "switching threads keeps the draft, its picks and its text; a reload drops it", ctx do
