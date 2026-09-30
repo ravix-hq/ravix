@@ -137,11 +137,21 @@ defmodule Ravix.Terminal.ShellTest do
       assert_receive {SpritesFake, :exec, {:spawn, query}}
       assert query["dir"] == "/home/sprite/work/kyoto"
       assert query["cols"] == "132" and query["rows"] == "43"
-      assert query["cmd"] == "-l"
+      # RAV-88: a prompt of its own for this session, naming the directory
+      # and not the machine's user or host, after the login files bash reads.
+      assert query["path"] == "bash"
+      assert query["cmd"] =~ "--rcfile"
+      assert query["cmd"] =~ ". ~/.bash_profile"
+      assert query["cmd"] =~ ~S"PS1='\W \$ '"
       assert await_output(tab.id, "$ ")
 
       Terminal.input(tab.id, "git status\r")
       assert await_output(tab.id, "ran: git status")
+
+      # The size it was opened at is not sent again: that would only redraw
+      # the prompt.
+      Terminal.resize(tab.id, 132, 43)
+      refute_receive {SpritesFake, :exec, {:resize, _, _, _}}, 100
 
       Terminal.resize(tab.id, 90, 20)
       assert_receive {SpritesFake, :exec, {:resize, "s1", 90, 20}}
@@ -276,6 +286,22 @@ defmodule Ravix.Terminal.ShellTest do
       tab_id = tab.id
       assert_receive {:terminal, ^tab_id, {:ended, :lost}}, 2_000
       refute Store.get(ctx.track.id, ctx.owner.id, tab.id)
+    end
+
+    test "whose machine does not answer keeps its tab, so attaching again is a retry", ctx do
+      {:ok, tab} = Terminal.open_tab(ctx.owner, ctx.track.id)
+      # Nothing listens on port 1: the machine did not answer at all.
+      stub(Ravix.Config, :sprites, fn -> %{ctx.cfg | base_url: "http://127.0.0.1:1"} end)
+
+      {:ok, _shell} = Terminal.attach(ctx.owner, ctx.hash, ctx.track.id, tab.id)
+      tab_id = tab.id
+      assert_receive {:terminal, ^tab_id, {:failed, %Ravix.Sprites.Error{status: 502}}}, 2_000
+      assert %Tab{session_id: nil} = Store.get(ctx.track.id, ctx.owner.id, tab.id)
+
+      stub(Ravix.Config, :sprites, fn -> ctx.cfg end)
+      attached(ctx, tab)
+      assert_receive {SpritesFake, :exec, {:spawn, _query}}
+      assert await_output(tab.id, "$ ")
     end
 
     test "that cannot reach the machine says why", ctx do

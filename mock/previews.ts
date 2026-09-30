@@ -40,9 +40,21 @@ function render(service: Service) {
 // Sprites put to sleep by the browser harness (`/__browser/sandbox-status`),
 // each with what waking it does to the Fountain sandbox it runs. A passive
 // status read reports it stopped; an exec wakes it, as a real sprite does.
+// `wakeMs` is how long the exec that wakes one takes to answer, for a
+// harness that wants to see a machine waking rather than already awake.
 const asleep = new Map<string, () => void>();
-export function setMockSpriteAsleep(sprite: string, wake: (() => void) | null) {
+const wakeDelay = new Map<string, number>();
+export function setMockSpriteAsleep(sprite: string, wake: (() => void) | null, wakeMs = 0) {
   if (wake) asleep.set(sprite, wake); else asleep.delete(sprite);
+  if (wake && wakeMs > 0) wakeDelay.set(sprite, wakeMs); else wakeDelay.delete(sprite);
+}
+// Sprites whose exec WebSocket accepts the connection and never answers the
+// upgrade, as a machine that is slow to come up does: the browser harness
+// sets this (`/__browser/pty-silent`) to show a terminal the machine did not
+// answer. An asleep sprite's socket does the same until an exec wakes it.
+const silent = new Set<string>();
+export function setMockPtySilent(sprite: string, on: boolean) {
+  if (on) silent.add(sprite); else silent.delete(sprite);
 }
 export function updateMockPreview(workdir: string) {
   for (const service of services.values()) if (service.dir === workdir || service.dir.startsWith(`${workdir}/`)) { service.version++; render(service); }
@@ -68,13 +80,16 @@ async function start(service: Service) {
 // `iex -S mix`, and keeps each session's output so that a re-attach replays it
 // the way Sprites does. Sessions are detachable: closing the socket leaves one
 // running until `POST .../exec/:id/kill` or `exit`.
-interface PtySession { id: string; dir: string; output: string; alive: boolean; ws?: ServerWebSocket<SocketData>; line: string; repl: number | null; cols: number; rows: number; }
+interface PtySession { id: string; dir: string; output: string; alive: boolean; ws?: ServerWebSocket<SocketData>; line: string; repl: number | null; cols: number; rows: number; ps1: boolean; }
 type SocketData = { tcp?: Socket; pty?: string; attach?: boolean };
 const ptys = new Map<string, PtySession>();
 let nextPty = 1;
 const ESC = "\x1b[";
 function prompt(session: PtySession) {
   if (session.repl !== null) return `iex(${session.repl})> `;
+  // A shell started with Ravix's own prompt (`PS1='\W $ '`) names only its
+  // directory; anything else gets the machine's user@host, as bash would.
+  if (session.ps1) return `${session.dir.split("/").at(-1) || "/"} $ `;
   const where = session.dir.replace(/^\/home\/sprite/, "~");
   return `${ESC}32msprite@ravix${ESC}0m:${ESC}34m${where}${ESC}0m$ `;
 }
@@ -123,7 +138,9 @@ const server = Bun.serve<SocketData>({ port: Number(process.env.MOCK_SPRITES_POR
   async fetch(req, server) {
     if (req.headers.get("authorization") !== "Bearer sprites_mock") return new Response("unauthorized", { status: 401 });
     const url = new URL(req.url);
-    const exec = /^\/v1\/sprites\/[^/]+\/exec(?:\/([^/]+))?(\/kill)?$/.exec(url.pathname);
+    const exec = /^\/v1\/sprites\/([^/]+)\/exec(?:\/([^/]+))?(\/kill)?$/.exec(url.pathname)?.slice(1);
+    if (exec && req.headers.get("upgrade")?.toLowerCase() === "websocket" && (silent.has(exec[0]!) || asleep.has(exec[0]!)))
+      return new Promise<Response>(() => {});
     if (exec && req.headers.get("upgrade")?.toLowerCase() === "websocket") {
       if (exec[1]) {
         const session = ptys.get(exec[1]);
@@ -132,7 +149,8 @@ const server = Bun.serve<SocketData>({ port: Number(process.env.MOCK_SPRITES_POR
       }
       const id = `pty-${nextPty++}`;
       ptys.set(id, { id, dir: url.searchParams.get("dir") || "/home/sprite", output: "", alive: true, line: "", repl: null,
-        cols: Number(url.searchParams.get("cols")) || 80, rows: Number(url.searchParams.get("rows")) || 24 });
+        cols: Number(url.searchParams.get("cols")) || 80, rows: Number(url.searchParams.get("rows")) || 24,
+        ps1: url.searchParams.getAll("cmd").some(arg => arg.includes("PS1=")) });
       return server.upgrade(req, { data: { pty: id } }) ? undefined : new Response("upgrade", { status: 400 });
     }
     if (exec?.[2] && req.method === "POST") {
@@ -149,7 +167,12 @@ const server = Bun.serve<SocketData>({ port: Number(process.env.MOCK_SPRITES_POR
     if (match[2] === "proxy") return server.upgrade(req, { data: {} }) ? undefined : new Response("upgrade", { status: 400 });
     if (match[2] === "exec") {
       const wake = asleep.get(match[1]!);
-      if (wake) { asleep.delete(match[1]!); wake(); }
+      if (wake) {
+        const ms = wakeDelay.get(match[1]!) ?? 0;
+        wakeDelay.delete(match[1]!);
+        if (ms) await Bun.sleep(ms);
+        asleep.delete(match[1]!); wake();
+      }
       const argv = url.searchParams.getAll("cmd");
       const script = argv[0] === "sh" ? argv.at(-1) ?? "" : "";
       if (/__ravix_git__|git push -u origin HEAD/.test(script)) {

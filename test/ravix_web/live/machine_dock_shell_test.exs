@@ -266,7 +266,7 @@ defmodule RavixWeb.Live.MachineDockShellTest do
           {{:exited, 0}, "The shell exited (0)."},
           {{:ended, :revoked}, "This terminal ended because your access did."},
           {{:ended, %Ravix.Sprites.Error{status: 502, message: "Could not reach Sprites."}},
-           "Could not reach Sprites."}
+           "Could not reach the machine."}
         ] do
       tell(view, id, event)
       assert has_element?(view, pane, words)
@@ -281,7 +281,8 @@ defmodule RavixWeb.Live.MachineDockShellTest do
     # And an event for a tab this page does not have changes nothing.
     tell(view, "not-a-tab", :disconnected)
     tell(view, id, :something_new)
-    assert has_element?(view, pane, "Could not reach Sprites.")
+    assert has_element?(view, pane, "Could not reach the machine.")
+    refute render(view) =~ "Sprites"
   end
 
   test "signing out ends the terminal at once, with no message from the page", ctx do
@@ -340,8 +341,267 @@ defmodule RavixWeb.Live.MachineDockShellTest do
 
     view |> element("#dock-shell-new") |> render_click()
     render_async(view)
-    assert render(parent) =~ "no Sprites token"
+    assert render(parent) =~ "no machine connection configured"
+    refute render(parent) =~ "Sprites"
     refute has_element?(view, "[data-shell-tab]")
+  end
+
+  describe "on a machine that is asleep (RAV-81)" do
+    # The machine sleeps until something runs a command on it: the dock's
+    # passive status read says it is not running, and the wake's probe (an
+    # exec) wakes it, as Sprites does. `wakes?: false` is a machine that does
+    # not come up for it.
+    defp asleep(ctx, wakes? \\ true, gate \\ nil) do
+      {:ok, machine} = Agent.start_link(fn -> %{awake: false, wakes: wakes?, gate: gate} end)
+
+      SpritesFake.install(fn conn, call ->
+        SpritesFake.kill_exec(conn, ctx.cfg) || machine_call(conn, call, machine)
+      end)
+
+      machine
+    end
+
+    defp machine_call(conn, %{method: "POST", argv: ["true"]}, machine) do
+      # A gated wake waits for the test to let it answer, so the test can
+      # see the tab while the machine is waking.
+      if gate = Agent.get(machine, & &1.gate) do
+        send(gate, {:waking, self()})
+
+        receive do
+          :go -> :ok
+        after
+          5_000 -> :ok
+        end
+      end
+
+      if Agent.get_and_update(machine, &{&1.wakes, %{&1 | awake: &1.awake or &1.wakes}}),
+        do: SpritesFake.exec_response(conn, ""),
+        else: Plug.Conn.send_resp(conn, 404, "asleep")
+    end
+
+    defp machine_call(conn, _call, machine) do
+      status = if Agent.get(machine, & &1.awake), do: "running", else: "warm"
+      Plug.Conn.send_resp(conn, 200, ~s({"status":"#{status}"}))
+    end
+
+    test "+ wakes it, says so in the tab, and attaches once it is up", ctx do
+      asleep(ctx, true, self())
+      %{view: view} = open(ctx, ctx.owner)
+
+      id = new_terminal(view)
+      assert_receive {:waking, probe}, 2_000
+      waking = "#shell-pane-#{id} #shell-asleep-#{id}"
+      assert has_element?(view, "#{waking}.busy [role=status]", "Waking the machine…")
+      refute has_element?(view, "#shell-pane-#{id} .shell-status")
+
+      # The pane measures itself while the machine wakes: held, not attached.
+      view
+      |> element("#shell-#{id}")
+      |> render_hook("shell-attach", %{id: id, cols: 120, rows: 33})
+
+      refute_received {SpritesFake, :exec, {:spawn, _}}
+
+      # Awake: attached at the size the pane asked for, and connected.
+      send(probe, :go)
+      render_async(view, 5_000)
+      assert_push_event(view, "shell:reset", %{id: ^id}, 2_000)
+      assert_receive {SpritesFake, :exec, {:spawn, query}}
+      assert {query["cols"], query["rows"]} == {"120", "33"}
+      assert await_output(view, id, "$ ")
+      refute has_element?(view, "#shell-asleep-#{id}")
+      refute has_element?(view, "#shell-pane-#{id} .shell-status")
+      refute render(view) =~ "did not answer"
+    end
+
+    test "a pane that asks before the wake has answered is attached when it does", ctx do
+      asleep(ctx)
+      %{view: view} = open(ctx, ctx.owner)
+      id = new_terminal(view)
+      render_async(view, 5_000)
+      assert has_element?(view, "#shell-pane-#{id} .shell-status", "Connecting")
+
+      attach(view, id, 90, 20)
+      assert_receive {SpritesFake, :exec, {:spawn, %{"cols" => "90", "rows" => "20"}}}
+    end
+
+    test "one that stays asleep says so in the tab, and Wake tries again", ctx do
+      machine = asleep(ctx, false)
+      %{view: view} = open(ctx, ctx.owner)
+      id = new_terminal(view)
+
+      view
+      |> element("#shell-#{id}")
+      |> render_hook("shell-attach", %{id: id, cols: 80, rows: 24})
+
+      render_async(view, 5_000)
+
+      empty = "#shell-asleep-#{id}"
+      assert has_element?(view, "#{empty} [role=status]", "Machine is asleep")
+      assert has_element?(view, "#{empty} .mark")
+      refute has_element?(view, "#{empty}.busy")
+      refute_received {SpritesFake, :exec, {:spawn, _}}
+
+      test = self()
+      Agent.update(machine, &%{&1 | wakes: true, gate: test})
+      view |> element("#{empty} button", "Wake") |> render_click()
+      assert_receive {:waking, probe}, 2_000
+      assert has_element?(view, "#{empty}.busy", "Waking the machine…")
+      send(probe, :go)
+      render_async(view, 5_000)
+      assert_receive {SpritesFake, :exec, {:spawn, %{"cols" => "80"}}}
+      assert await_output(view, id, "$ ")
+      refute has_element?(view, empty)
+    end
+
+    test "an existing tab asks to attach while it sleeps: woken first, never a timeout", ctx do
+      {:ok, tab} = Terminal.open_tab(ctx.owner, ctx.track.id)
+      asleep(ctx, true, self())
+      %{view: view} = open(ctx, ctx.owner)
+
+      view
+      |> element("#shell-#{tab.id}")
+      |> render_hook("shell-attach", %{id: tab.id, cols: 100, rows: 30, select: true})
+
+      assert_receive {:waking, probe}, 2_000
+      assert has_element?(view, "#shell-asleep-#{tab.id}", "Waking the machine…")
+      send(probe, :go)
+      render_async(view, 5_000)
+      assert_receive {SpritesFake, :exec, {:spawn, _}}
+      assert await_output(view, tab.id, "$ ")
+    end
+  end
+
+  test "a machine that did not answer says so without naming the provider, and Retry retries",
+       ctx do
+    %{view: view} = open(ctx, ctx.owner)
+    id = new_terminal(view)
+
+    # Nothing listens on port 1: the machine does not answer the terminal.
+    stub(Ravix.Config, :sprites, fn -> %{ctx.cfg | base_url: "http://127.0.0.1:1"} end)
+    view |> element("#shell-#{id}") |> render_hook("shell-attach", %{id: id, cols: 100, rows: 30})
+    render(view)
+    render(view)
+    pane = "#shell-pane-#{id} .shell-status"
+    assert_eventually(fn -> has_element?(view, pane, "The machine didn't answer.") end)
+    stub(Ravix.Config, :sprites, fn -> ctx.cfg end)
+
+    # A timeout is said the same way, in the app's words.
+    timeout = %Ravix.Sprites.Error{
+      status: 502,
+      message: "Sprites did not answer the terminal request in time."
+    }
+
+    tell(view, id, {:failed, timeout})
+    assert has_element?(view, pane, "The machine didn't answer.")
+    refute has_element?(view, "#{pane} button", "Close tab")
+    refute render(view) =~ "Sprites"
+
+    # Retry wakes the machine (a probe, since it is up) and attaches again,
+    # at the size the pane last asked for.
+    test = self()
+
+    SpritesFake.install(fn conn, call ->
+      if call.method == "POST" do
+        send(test, {:waking, self()})
+
+        receive do
+          :go -> SpritesFake.exec_response(conn, "")
+        after
+          5_000 -> SpritesFake.exec_response(conn, "")
+        end
+      else
+        status(conn, call)
+      end
+    end)
+
+    view |> element("#{pane} button", "Retry") |> render_click()
+    assert_receive {:waking, probe}, 2_000
+    assert has_element?(view, "#shell-asleep-#{id}", "Waking the machine…")
+    send(probe, :go)
+    render_async(view, 5_000)
+    assert_receive {SpritesFake, :exec, {:spawn, %{"cols" => "100", "rows" => "30"}}}
+  end
+
+  test "Wake and Retry answer only this page's own tabs, in a held state", ctx do
+    other = insert_user()
+    insert_track_member(ctx.track, other)
+    {:ok, theirs} = Terminal.open_tab(other, ctx.track.id)
+    %{view: view} = open(ctx, ctx.owner)
+    id = new_terminal(view)
+    attach(view, id)
+    SpritesFake.calls()
+
+    # Somebody else's tab, one that does not exist, and one of this page's
+    # that is connected: none of them wakes anything.
+    for target <- [theirs.id, "not-a-tab", id] do
+      view |> element("#shell-#{id}") |> render_hook("shell-wake", %{id: target})
+    end
+
+    render_async(view)
+    refute Enum.any?(SpritesFake.calls(), &(&1.argv == ["true"]))
+    refute has_element?(view, "#shell-asleep-#{id}")
+  end
+
+  test "a signed-out page's Wake is refused before it reaches the machine", ctx do
+    asleep(ctx, false)
+    %{view: view, hash: hash} = open(ctx, ctx.owner)
+    id = new_terminal(view)
+    render_async(view, 5_000)
+    assert has_element?(view, "#shell-asleep-#{id}", "Machine is asleep")
+    SpritesFake.calls()
+
+    Accounts.end_session(hash)
+
+    # The page is sent to sign in; it is nested, so it goes by exiting.
+    Process.flag(:trap_exit, true)
+
+    try do
+      view |> element("#shell-asleep-#{id} button", "Wake") |> render_click()
+    catch
+      :exit, _reason -> :gone
+    end
+
+    assert_receive {:EXIT, _pid, {:shutdown, {:redirect, %{to: "/login"}}}}, 2_000
+
+    refute Enum.any?(SpritesFake.calls(), &(&1.argv == ["true"]))
+  end
+
+  test "a Read member sees their tabs but has no + to open one, and is refused one", ctx do
+    reader = insert_user()
+    insert_track_member(ctx.track, reader, role: :read)
+    {:ok, tab} = Terminal.open_tab(ctx.owner, ctx.track.id)
+    track_as(:read)
+    %{view: view} = open(ctx, reader)
+
+    refute has_element?(view, "#dock-shell-new")
+    view |> element("#track-terminal") |> render_hook("shell-new", %{})
+    refute has_element?(view, "[data-shell-tab]")
+
+    # Nor may they wake the machine through somebody else's tab id.
+    view |> element("#track-terminal") |> render_hook("shell-wake", %{id: tab.id})
+    render_async(view)
+    refute Enum.any?(SpritesFake.calls(), &(&1.argv == ["true"]))
+    refute_received {SpritesFake, :exec, {:spawn, _}}
+    assert {:ok, []} = Terminal.tabs(reader, ctx.track.id)
+  end
+
+  # The track page as a member at `level` sees it.
+  defp track_as(level) do
+    stub(Tracks, :get, fn _, id, _opts ->
+      {:ok,
+       %{
+         track: Tracks.present(Repo.get!(Track, id), role: :member, level: level),
+         header: %Ravix.Tracks.Header{
+           copy_of: nil,
+           branched_from: nil,
+           created: %{dir: "t", files: nil},
+           has_setup_script: false
+         },
+         threads: [],
+         starters: [],
+         models: []
+       }}
+    end)
   end
 
   # A message from a shell, as the page receives it. The page hands it to the

@@ -29,7 +29,8 @@ import { existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { WORKSPACE_ROOT, WORK_ROOT, RECEIPT_PATH, parseChannel } from "../shared/contract";
 let updateMockPreview = (_workdir: string): void => {};
-let setMockSpriteAsleep = (_sprite: string, _wake: (() => void) | null): void => {};
+let setMockSpriteAsleep = (_sprite: string, _wake: (() => void) | null, _wakeMs?: number): void => {};
+let setMockPtySilent = (_sprite: string, _on: boolean): void => {};
 
 const PORT = Number(process.env.MOCK_PORT || 8793);
 const BASE = `http://localhost:${PORT}`;
@@ -1872,7 +1873,7 @@ function githubWeb(req: Request, url: URL, webBody: Record<string, unknown> = {}
 // ── the port ───────────────────────────────────────────────────────────
 
 if (import.meta.main) {
-({ updateMockPreview, setMockSpriteAsleep } = await import("./previews"));
+({ updateMockPreview, setMockSpriteAsleep, setMockPtySilent } = await import("./previews"));
 Bun.serve({
   port: PORT,
   // A track's transcript stream stays open as long as its tab is; the default
@@ -1929,11 +1930,20 @@ Bun.serve({
     // are refused while it sleeps, and its sprite reads as stopped until a
     // command runs on it (see `setMockSpriteAsleep`).
     if (p === "/__browser/sandbox-status" && req.method === "POST" && process.env.RAVIX_BROWSER_TEST === "1") {
-      const { id, status } = await req.json() as { id: string; status: string };
+      const { id, status, wake_ms = 0 } = await req.json() as { id: string; status: string; wake_ms?: number };
       const box = state.boxes.get(id);
       if (!box || !["suspended", "ready"].includes(status)) return json({ error: "invalid_fixture" }, 400);
       setSandboxStatus(id, status as "suspended" | "ready");
-      setMockSpriteAsleep(box.sprite_name, status === "suspended" ? () => setSandboxStatus(id, "ready") : null);
+      setMockSpriteAsleep(box.sprite_name, status === "suspended" ? () => setSandboxStatus(id, "ready") : null, Number(wake_ms) || 0);
+      return json({ status: "ok" });
+    }
+
+    // A machine whose terminal socket never answers (`setMockPtySilent`).
+    if (p === "/__browser/pty-silent" && req.method === "POST" && process.env.RAVIX_BROWSER_TEST === "1") {
+      const { id, silent } = await req.json() as { id: string; silent: boolean };
+      const box = state.boxes.get(id);
+      if (!box || typeof silent !== "boolean") return json({ error: "invalid_fixture" }, 400);
+      setMockPtySilent(box.sprite_name, silent);
       return json({ status: "ok" });
     }
 
