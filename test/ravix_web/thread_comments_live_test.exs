@@ -163,9 +163,15 @@ defmodule RavixWeb.ThreadCommentsLiveTest do
       detail(user, id)
     end)
 
-    stub(Tracks, :events, fn _, _, _ ->
-      send(test, {:reading, self()})
-      receive do: (:release -> {:ok, transcript([{"t1", "first"}])})
+    # The first read is held; the catch-up read that follows subscribing
+    # finds nothing newer.
+    stub(Tracks, :events, fn _, _, opts ->
+      if page = opts[:page] do
+        {:ok, page}
+      else
+        send(test, {:reading, self()})
+        receive do: (:release -> {:ok, transcript([{"t1", "first"}])})
+      end
     end)
 
     {:ok, parent, _} =

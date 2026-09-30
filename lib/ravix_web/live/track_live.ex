@@ -129,6 +129,10 @@ defmodule RavixWeb.TrackLive do
         # is still waiting on rather than treating "loaded" as one moment.
         transcript_loading: true,
         earlier_loading: false,
+        # How far the transcript *reads* have got, which `page.last_event_id`
+        # is not: live events move that one on, including past an event this
+        # page never received. See `catch_up_transcript/1`.
+        read_through: nil,
         queue: [],
         present: [],
         narrow_view: "conversation",
@@ -1150,8 +1154,23 @@ defmodule RavixWeb.TrackLive do
   # read, a follower that went down between the `:DOWN` clause's own attempt
   # and now, and a track that had no conversation when it opened and has one
   # by the time the backstop tick comes round.
+  #
+  # Subscribing from what it just read is only gapless when the follower is
+  # started by this call. One that is already running keeps its own cursor
+  # --- the prompt queue follows a new thread to deliver its first prompt, so
+  # that one always is --- and whatever it sent between the read and the
+  # subscription went to nobody here. When that is a turn's opening event,
+  # the only one carrying its prompt, every later event still arrives and the
+  # turn is drawn without what was asked (RAV-102). So a page that has just
+  # subscribed reads once more from where this read stopped, as the `:DOWN`
+  # clause does; its answer finds the page following and stops there. Any
+  # later read under the same name replaces that one, so it is not the only
+  # repair: every catch-up starts from `read_through` (see
+  # `catch_up_transcript/1`).
   defp async_result(:transcript, {:ok, {:ok, page}}, socket) do
-    socket = if socket.assigns.follower, do: socket, else: follow(socket, page)
+    subscribed? = is_nil(socket.assigns.follower)
+    socket = if subscribed?, do: follow(socket, page), else: socket
+    catch_up? = subscribed? and not is_nil(socket.assigns.follower)
 
     # Sorted, because these come out of the turns newest-first within each
     # turn and the page they are about to be laid into grows cheaply only
@@ -1162,10 +1181,11 @@ defmodule RavixWeb.TrackLive do
       |> Enum.filter(&(&1.id > (page.last_event_id || 0)))
       |> Enum.sort_by(& &1.id)
 
+    read_through = page.last_event_id
     page = page |> Transcript.add_events(newer) |> retain_earlier(socket.assigns.page)
 
     socket
-    |> assign(transcript_loading: false)
+    |> assign(transcript_loading: false, read_through: read_through)
     |> advertise(
       page.turns
       |> Enum.flat_map(& &1.events)
@@ -1173,6 +1193,7 @@ defmodule RavixWeb.TrackLive do
       |> Commands.latest()
     )
     |> repair(page)
+    |> then(&if(catch_up?, do: catch_up_transcript(&1), else: &1))
   end
 
   defp async_result({:file_index, track_id}, response, socket) do
@@ -1845,6 +1866,7 @@ defmodule RavixWeb.TrackLive do
       transcript_loading: true,
       earlier_loading: false,
       page: Transcript.empty(""),
+      read_through: nil,
       rendered: %{},
       comments: [],
       comment_editing: nil,
@@ -2157,11 +2179,20 @@ defmodule RavixWeb.TrackLive do
     end
   end
 
+  # Read what is newer than the last read, not than the last event. The
+  # page's own cursor moves with the stream, and the stream can skip an
+  # event: the one sent between a read and the subscription after it
+  # (`async_result(:transcript, …)`). The next event still arrives and moves
+  # the cursor past it, so a catch-up from there never asks for it again ---
+  # and the one most likely to be skipped is a turn's opening event, the only
+  # one carrying its prompt (RAV-102). The events a catch-up reads again are
+  # ones the page already holds, and `Transcript.add_events/2` keeps one of
+  # each.
   defp catch_up_transcript(socket) do
     user = socket.assigns.current_user
     id = socket.assigns.track_id
     thread_id = socket.assigns.thread_id
-    page = socket.assigns.page
+    page = %{socket.assigns.page | last_event_id: socket.assigns.read_through}
 
     traced_async(socket, :transcript, fn ->
       Tracks.events(user, id, thread_id: thread_id, page: page)
