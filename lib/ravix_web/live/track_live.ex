@@ -152,6 +152,13 @@ defmodule RavixWeb.TrackLive do
         preview: nil,
         preview_form: Form.new(:preview_config),
         preview_url: nil,
+        # The preview button pressed and not yet answered ("run", "open"...),
+        # so it says so at once rather than when the answer lands.
+        preview_pending: nil,
+        # Whether this page asked to open the preview and is waiting for it
+        # to be ready. The ticket the click minted is good for a minute, and a
+        # wake and a start can take longer, so a fresh one is minted then.
+        preview_opening?: false,
         dialog: nil,
         close_info: nil,
         rename_form: Form.new(:rename_track),
@@ -226,6 +233,7 @@ defmodule RavixWeb.TrackLive do
 
       if connected?(socket) do
         Hub.subscribe(socket.assigns.project_id)
+        Previews.subscribe(socket.assigns.current_user, socket.assigns.track_id)
         Process.send_after(self(), :refresh, @refresh_ms)
         Process.send_after(self(), :setup_clock, 1_000)
         announce(socket)
@@ -718,24 +726,28 @@ defmodule RavixWeb.TrackLive do
   # word onward and let the context sort it out, which is how "stop" and a
   # typo became the same request.
   def handle_event("preview", %{"action" => "run"}, socket),
-    do: {:noreply, preview_async(socket, fn user, id, _hash -> Previews.run(user, id) end)}
+    do: {:noreply, preview_async(socket, "run", fn user, id, _hash -> Previews.run(user, id) end)}
 
   def handle_event("preview", %{"action" => "restart-run"}, socket),
     do:
       {:noreply,
-       preview_async(socket, fn user, id, _hash -> Previews.run(user, id, :restart) end)}
+       preview_async(socket, "restart-run", fn user, id, _hash ->
+         Previews.run(user, id, :restart)
+       end)}
 
   def handle_event("preview", %{"action" => "open"}, socket),
-    do: {:noreply, preview_async(socket, &Previews.open(&1, &2, &3))}
+    do: {:noreply, preview_async(socket, "open", &Previews.open(&1, &2, &3))}
 
   def handle_event("preview", %{"action" => "restart"}, socket),
-    do: {:noreply, preview_async(socket, &Previews.restart(&1, &2, &3))}
+    do: {:noreply, preview_async(socket, "restart", &Previews.restart(&1, &2, &3))}
 
   def handle_event("preview", %{"action" => "stop"}, socket),
-    do: {:noreply, preview_async(socket, fn user, id, _hash -> Previews.stop(user, id) end)}
+    do:
+      {:noreply, preview_async(socket, "stop", fn user, id, _hash -> Previews.stop(user, id) end)}
 
   def handle_event("preview", %{"action" => "logs"}, socket),
-    do: {:noreply, preview_async(socket, fn user, id, _hash -> Previews.logs(user, id) end)}
+    do:
+      {:noreply, preview_async(socket, "logs", fn user, id, _hash -> Previews.logs(user, id) end)}
 
   def handle_event("preview-config", params, socket) do
     fields = Map.get(params, "preview_config", %{})
@@ -1012,6 +1024,16 @@ defmodule RavixWeb.TrackLive do
     end
   end
 
+  # The track's preview row changed, on whichever instance. The message says
+  # nothing more than that: the guard attached at mount has already let it
+  # through, and the re-read goes through `Previews.status/2`, which asks
+  # this person's access again.
+  def handle_info({:preview, track_id}, socket) do
+    if track_id == socket.assigns.track_id,
+      do: {:noreply, refresh_preview(socket)},
+      else: {:noreply, socket}
+  end
+
   def handle_info({:hub, %Event{} = event}, socket) do
     if Event.concerns?(event, socket.assigns.track_id) do
       {:noreply, hub(event, socket)}
@@ -1084,7 +1106,9 @@ defmodule RavixWeb.TrackLive do
       handle_async(name, {:ok, response}, socket)
     else
       {:noreply,
-       update_panel(socket, fn panel ->
+       socket
+       |> assign(preview_pending: nil)
+       |> update_panel(fn panel ->
          Panel.new()
          |> Panel.select(panel.tab)
          |> Panel.failed("The workspace changed. Refresh to read its current files.")
@@ -1420,12 +1444,25 @@ defmodule RavixWeb.TrackLive do
     do: update_panel(socket, &Panel.failed(&1, Error.from(reason).message))
 
   defp async_result(:preview_action, {:ok, response}, socket) do
-    result(update_panel(socket, &Panel.settled/1), response, fn s, preview ->
-      s
-      |> show_preview(preview)
-      |> assign(preview_url: if(preview.url, do: preview.open_url || s.assigns.preview_url))
-    end)
+    socket
+    |> assign(preview_pending: nil)
+    |> result(response, fn s, preview -> s |> show_preview(preview) |> opened(preview) end)
   end
+
+  defp async_result(:preview_action, {:exit, reason}, socket),
+    do: socket |> assign(preview_pending: nil) |> exit(reason)
+
+  # A re-read after `{:preview, track_id}`. One for a track this page has
+  # since left is dropped, and so is a refusal: the guard and `handle_async/3`
+  # have already answered a revoked reader, and anything else is left for the
+  # next change or the panel's own refresh.
+  defp async_result({:preview_status, id}, {:ok, {:ok, %Previews.View{} = preview}}, socket) do
+    if id == socket.assigns.track_id,
+      do: socket |> show_preview(preview) |> opened(preview),
+      else: socket
+  end
+
+  defp async_result({:preview_status, _id}, _response, socket), do: socket
 
   # A stopped turn need not send another stage event, and the one that told
   # the tab it was running may be the last this page hears. So a stop that
@@ -1892,6 +1929,11 @@ defmodule RavixWeb.TrackLive do
       Hub.subscribe(project.id)
     end
 
+    if track.id != socket.assigns.track_id do
+      Previews.unsubscribe(socket.assigns.track_id)
+      Previews.subscribe(socket.assigns.current_user, track.id)
+    end
+
     socket
     |> unfollow_siblings()
     |> unfollow()
@@ -1930,6 +1972,8 @@ defmodule RavixWeb.TrackLive do
       preview: nil,
       preview_form: Form.new(:preview_config),
       preview_url: nil,
+      preview_pending: nil,
+      preview_opening?: false,
       dialog: nil,
       rename_form: Form.new(:rename_track),
       pull: nil,
@@ -2383,18 +2427,52 @@ defmodule RavixWeb.TrackLive do
   defp session_option_refused(socket),
     do: flash(socket, :error, "That setting isn't offered for this agent and model.")
 
-  # The four preview buttons all do the same thing to the page -- mark the
-  # panel busy and answer later -- and differ only in which context call they
-  # make, so that call is what they pass in.
-  defp preview_async(socket, call) do
+  # The preview buttons all do the same thing to the page -- say at once
+  # which one is out, disable the rest, and answer later -- and differ only
+  # in which context call they make, so that call is what they pass in. Not
+  # the panel's `busy?`: that reads as "Loading inspector…", which is not
+  # what a click on Run is doing.
+  defp preview_async(socket, action, call) do
     user = socket.assigns.current_user
     id = socket.assigns.track_id
     hash = socket.assigns.session_hash
 
     socket
-    |> update_panel(&%{&1 | busy?: true})
+    |> assign(preview_pending: action)
     |> workspace_async(:preview_action, fn -> call.(user, id, hash) end)
   end
+
+  # The preview is only drawn once it is ready, with a ticket minted for this
+  # session. An answer that is ready now carries one; one that is still
+  # starting leaves the page waiting, and the re-read that finds it ready
+  # mints a fresh ticket, since the click's is good for only a minute.
+  defp opened(socket, %Previews.View{open_url: url, state: :ready}) when is_binary(url),
+    do: assign(socket, preview_url: url, preview_opening?: false)
+
+  defp opened(socket, %Previews.View{open_url: url}) when is_binary(url),
+    do: assign(socket, preview_opening?: true)
+
+  defp opened(socket, %Previews.View{state: state}) when state in [:failed, :stopped],
+    do: assign(socket, preview_opening?: false)
+
+  defp opened(socket, _preview), do: socket
+
+  defp refresh_preview(socket) do
+    %{current_user: user, track_id: id, session_hash: hash} = socket.assigns
+    opening? = socket.assigns.preview_opening?
+
+    traced_async(socket, {:preview_status, id}, fn ->
+      user |> Previews.status(id) |> with_ticket(opening?, user, id, hash)
+    end)
+  end
+
+  defp with_ticket({:ok, %Previews.View{state: :ready, url: url} = preview}, true, user, id, hash)
+       when is_binary(url) do
+    with {:ok, open_url} <- Previews.open_ticket(user, id, hash),
+         do: {:ok, %{preview | open_url: open_url}}
+  end
+
+  defp with_ticket(answer, _opening?, _user, _id, _hash), do: answer
 
   @doc "The model under the composer: `RavixWeb.Live.ModelMenu.menu/1`."
   defdelegate model_menu(assigns), to: ModelMenu, as: :menu
@@ -3355,9 +3433,24 @@ defmodule RavixWeb.TrackLive do
       |> MachineState.of(running: working?, now: assigns.setup_now)
       |> probed(assigns.machine_probe, track)
 
-    if machine.state in [:idle, :starting] and not working? and refused_asleep?(assigns),
-      do: %{state: :asleep, detail: "Your next message wakes it."},
-      else: machine
+    cond do
+      # A preview start is waking the machine (`Ravix.Previews.open/3`): the
+      # row still says asleep until the wake answers, and the header, the
+      # dock and the panel say the same thing meanwhile.
+      match?(%Previews.View{state: :waking}, assigns[:preview]) ->
+        %{state: :starting, detail: "Waking this track's machine for the preview…"}
+
+      # `:starting` is only said once the row reads awake again, so a header
+      # still holding Asleep is a detail read that has not landed yet.
+      machine.state == :asleep and match?(%Previews.View{state: :starting}, assigns[:preview]) ->
+        %{state: :idle, detail: nil}
+
+      machine.state in [:idle, :starting] and not working? and refused_asleep?(assigns) ->
+        %{state: :asleep, detail: "Your next message wakes it."}
+
+      true ->
+        machine
+    end
   end
 
   defp refused_asleep?(%{panel: panel, git: git}),

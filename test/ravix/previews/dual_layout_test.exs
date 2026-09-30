@@ -76,10 +76,10 @@ defmodule Ravix.Previews.DualLayoutTest do
              Previews.set_defaults(ctx.owner, ctx.project.id, %{directory: ".", command: "worker"})
 
     for track <- ctx.tracks do
-      assert {:ok, %{state: :running, url: nil}} = Previews.run(ctx.owner, track.id)
+      assert {:ok, %{state: :running, url: nil}} = run_through(ctx.owner, track.id)
       row = Store.get(track.id)
       assert row.sprite == track.sandbox_id
-      assert {:ok, %{state: :running}} = Previews.run(ctx.owner, track.id, :restart)
+      assert {:ok, %{state: :running}} = run_through(ctx.owner, track.id, :restart)
       assert {:ok, %{state: :stopped}} = Previews.stop(ctx.owner, track.id)
     end
 

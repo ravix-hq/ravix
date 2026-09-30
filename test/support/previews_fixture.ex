@@ -149,6 +149,26 @@ defmodule Ravix.PreviewsFixture do
     end
   end
 
+  @doc """
+  `Ravix.Previews.run/3`, followed to its outcome.
+
+  A run answers at once with the start it recorded (RAV-40) and carries it
+  out in the background; this waits for that work, then reads the preview
+  back as the person who asked. A refusal is returned as `run/3` gave it.
+  """
+  @spec run_through(Ravix.Accounts.User.t(), String.t(), Ravix.Previews.start_mode()) ::
+          {:ok, Ravix.Previews.View.t()} | {:error, term()}
+  def run_through(user, track_id, mode \\ :start) do
+    case Ravix.Previews.run(user, track_id, mode) do
+      {:ok, %{state: state}} when state in [:starting, :waking, :ready, :running] ->
+        await_background()
+        Ravix.Previews.status(user, track_id)
+
+      other ->
+        other
+    end
+  end
+
   @doc "Stub configuration, the provider, the machine, readiness and the clock for this test."
   @spec stub_provider(pid()) :: :ok
   def stub_provider(pid, opts \\ []) do

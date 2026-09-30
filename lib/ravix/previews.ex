@@ -28,8 +28,9 @@ defmodule Ravix.Previews do
   `parse_config/1`, the timings) and the gateway's section below, which runs
   before there is a signed-in caller: `origin/1`, `by_host/1`, `allowed?/2`
   and the delegates beside them. Naming those three here is what keeps that
-  list from growing quietly. Row access with no user in hand is
-  `Ravix.Previews.Store`; the service's id-only lifecycle (start, stop,
+  list from growing quietly. `unsubscribe/1` takes no user either: it only
+  stops messages its caller was already let in to receive. Row access with
+  no user in hand is `Ravix.Previews.Store`; the service's id-only lifecycle (start, stop,
   configure, retire, and the questions the gateway asks) is
   `Ravix.Previews.Lifecycle`, and a context calling either says which door
   it already went through.
@@ -258,6 +259,26 @@ defmodule Ravix.Previews do
 
   # ── what the panel asks for ──────────────────────────────────────────
 
+  @doc """
+  Follow a track's preview: the calling process is sent `{:preview, track_id}`
+  after every committed change to it, from whichever instance made it.
+
+  The message says only that something changed. A subscriber re-reads with
+  `status/2`, which asks the reader's access again, so a session that ended
+  or a membership that was removed after this call learns nothing from it;
+  the page's own guard also stands in front of every message it takes.
+  """
+  @spec subscribe(User.t(), String.t()) :: :ok | {:error, reason()}
+  def subscribe(%User{} = user, track_id) do
+    with {:ok, _track} <- open_track(user, track_id),
+         do: Phoenix.PubSub.subscribe(Ravix.PubSub, Lifecycle.topic(track_id))
+  end
+
+  @doc "Stop following a track's preview."
+  @spec unsubscribe(String.t()) :: :ok
+  def unsubscribe(track_id),
+    do: Phoenix.PubSub.unsubscribe(Ravix.PubSub, Lifecycle.topic(track_id))
+
   @doc "The info for a track the user may see."
   @spec status(User.t(), String.t()) :: {:ok, View.t()} | {:error, reason()}
   def status(%User{} = user, track_id) do
@@ -268,16 +289,22 @@ defmodule Ravix.Previews do
   Start the track's preview and mint the caller a way in.
 
   The service starts in the background, because bringing an app up on a cold
-  machine takes longer than a click should: the caller gets the info and the
-  `open_url` straight away, and the page watches the row for readiness. The
-  URL is a one-minute ticket for `session_hash`, the caller's own Ravix
-  session, so a link that leaks is a link that has already expired.
+  machine takes longer than a click should: the caller gets the info --- in
+  the `:starting` or `:waking` state this call has just recorded --- and the
+  `open_url` straight away, and follows the rest on `subscribe/2`. The URL is
+  a one-minute ticket for `session_hash`, the caller's own Ravix session, so
+  a link that leaks is a link that has already expired.
+
+  A machine the track row calls asleep is woken first, through
+  `Ravix.Tracks.wake/2`, which clears the mark the header and the dock read;
+  one that will not wake fails the start with that reason. An open while a
+  start is already under way joins it rather than starting another.
   """
   @spec open(User.t(), String.t(), String.t() | nil) :: {:ok, View.t()} | {:error, reason()}
   def open(%User{} = user, track_id, session_hash) do
     case Access.track_access(user, track_id) do
       {:ok, %{level: :read}} -> watch(user, track_id, session_hash)
-      _ -> launch(user, track_id, session_hash, :start)
+      _ -> launch(user, track_id, &mint_ticket(&1, session_hash), :start)
     end
   end
 
@@ -305,35 +332,78 @@ defmodule Ravix.Previews do
   @doc "As `open/3`, but tears the running service down first."
   @spec restart(User.t(), String.t(), String.t() | nil) :: {:ok, View.t()} | {:error, reason()}
   def restart(%User{} = user, track_id, session_hash),
-    do: launch(user, track_id, session_hash, :restart)
+    do: launch(user, track_id, &mint_ticket(&1, session_hash), :restart)
 
-  @doc "Run or restart the track's script without issuing a browser access ticket."
+  @doc """
+  Run or restart the track's script without issuing a browser access ticket.
+
+  As `open/3`: answers at once with the state it recorded, and the outcome
+  arrives on `subscribe/2`.
+  """
   @spec run(User.t(), String.t(), start_mode()) :: {:ok, View.t()} | {:error, reason()}
-  def run(%User{} = user, track_id, mode \\ :start) when mode in [:start, :restart] do
-    with {:ok, _track} <- open_track(user, track_id, :write),
-         :ok <- Lifecycle.start_service(track_id, mode),
-         {:ok, _track} <- open_track(user, track_id, :write) do
-      {:ok, Lifecycle.info(track_id)}
+  def run(%User{} = user, track_id, mode \\ :start) when mode in [:start, :restart],
+    do: launch(user, track_id, fn _track_id -> {:ok, nil} end, mode)
+
+  defp launch(user, track_id, ticket, mode) do
+    with {:ok, track} <- open_track(user, track_id, :write),
+         {:ok, url} <- ticket.(track_id),
+         {:ok, {outcome, generation}} <- Lifecycle.begin(track_id, mode) do
+      if outcome == :started, do: start_in_background(user, track, generation, mode)
+      {:ok, %View{Lifecycle.info(track_id) | open_url: url}}
     end
   end
 
-  defp launch(user, track_id, session_hash, mode) do
-    with {:ok, track} <- open_track(user, track_id, :write),
-         {:ok, url} <- mint_ticket(track_id, session_hash) do
-      Task.Supervisor.start_child(
-        Ravix.TaskSupervisor,
-        Ravix.Trace.link(fn ->
-          # `user` is captured deliberately. This page has already returned by the
-          # time the service answers, so the outcome is only knowable here -- and
-          # without carrying who asked, a failed preview would be an event with
-          # nobody attached to it, which is the one thing `Analytics.track/3`
-          # refuses to file.
-          report(user, track, mode, Lifecycle.start_service(track_id, mode))
-        end)
-      )
+  defp start_in_background(user, track, generation, mode) do
+    Task.Supervisor.start_child(
+      Ravix.TaskSupervisor,
+      Ravix.Trace.link(fn ->
+        # `user` is captured deliberately. This page has already returned by the
+        # time the service answers, so the outcome is only knowable here -- and
+        # without carrying who asked, a failed preview would be an event with
+        # nobody attached to it, which is the one thing `Analytics.track/3`
+        # refuses to file. It is also who wakes the machine, which is theirs
+        # to do only with Write, as `open_track/3` has just said they have.
+        report(user, track, mode, carry_out(user, track, generation, mode))
+      end)
+    )
+  end
 
-      {:ok, %View{Lifecycle.info(track_id) | open_url: url}}
+  defp carry_out(user, track, generation, mode) do
+    with :ok <- wake(user, track, generation),
+         do: Lifecycle.carry_out(track.id, generation, mode)
+  end
+
+  # Nothing else on the start path wakes a machine in a way Ravix records:
+  # the service calls would reach a suspended sprite, but the row would still
+  # say asleep and the header and the dock with it.
+  defp wake(user, track, generation) do
+    if Ravix.Tracks.asleep?(track) do
+      case woken(user, track.id) do
+        :ok ->
+          # The row now says awake, and `:waking` reads off it.
+          Lifecycle.publish(track.id)
+
+        {:error, reason} = error ->
+          Lifecycle.abandon(
+            track.id,
+            generation,
+            "Machine couldn't wake: " <> Server.message_of(reason)
+          )
+
+          error
+      end
+    else
+      :ok
     end
+  end
+
+  # A provider that raises is a machine that did not wake, and says so: this
+  # task is the only thing that would ever move the row on from `:waking`,
+  # and a task that died left the panel spinning until somebody reloaded.
+  defp woken(user, track_id) do
+    Ravix.Tracks.wake(user, track_id)
+  rescue
+    error -> {:error, Exception.message(error)}
   end
 
   defp report(user, track, mode, outcome) do

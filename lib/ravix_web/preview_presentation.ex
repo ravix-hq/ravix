@@ -3,6 +3,9 @@ defmodule RavixWeb.PreviewPresentation do
 
   @limit 32_000
 
+  def loading_label(:waking, _config), do: "Waking this track's machine…"
+  def loading_label(_state, config), do: loading_label(config)
+
   def loading_label(config) do
     case Map.get(config || %{}, :readiness_path) do
       nil -> "Starting the process…"

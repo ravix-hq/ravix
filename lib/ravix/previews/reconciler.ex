@@ -111,18 +111,27 @@ defmodule Ravix.Previews.Reconciler do
       gone?(track, project) or row.cleanup -> if row.sprite, do: :cleanup, else: :leave
       row.stop_pending -> :stop
       row.desired != :running -> :leave
-      true -> decide_running(row, now)
+      true -> decide_running(row, track, now)
     end
   end
+
+  # A start recorded on a machine the track row still calls asleep is being
+  # woken by whoever asked for it (`Ravix.Previews.open/3`), outside the
+  # server, so `Server.busy?/1` cannot see it. Ensuring it from here started
+  # the service during the wake, and the asker's own start then ran it again
+  # behind that one. If the asker died, the idle rule above stops it.
+  defp waking?(%Row{state: :starting}, %Track{} = track), do: Ravix.Tracks.asleep?(track)
+  defp waking?(_row, _track), do: false
 
   defp gone?(track, project) do
     track == nil or track.closed_at != nil or project == nil or project.archived_at != nil
   end
 
-  defp decide_running(row, now) do
+  defp decide_running(row, track, now) do
     cond do
       Row.plain?(row) -> if Server.busy?(row.track_id), do: :leave, else: :observe
       now - row.last_activity > Previews.idle_ms() -> :stop
+      waking?(row, track) -> :leave
       row.lease_until > now and not Server.busy?(row.track_id) -> :ensure
       true -> :leave
     end

@@ -49,7 +49,7 @@ defmodule Ravix.Previews.RunScriptTest do
     reject(&Lifecycle.ready?/2)
 
     assert {:ok, %{state: :running, url: nil, open_url: nil, logs: "startup logs"}} =
-             Previews.run(ctx.member, ctx.track.id)
+             run_through(ctx.member, ctx.track.id)
 
     row = Store.get(ctx.track.id)
     assert row.port != nil
@@ -57,7 +57,7 @@ defmodule Ravix.Previews.RunScriptTest do
     assert {:error, {:conflict, "no_preview", _}} =
              Previews.open_ticket(ctx.member, ctx.track.id, "session")
 
-    assert {:ok, %{state: :running}} = Previews.run(ctx.member, ctx.track.id, :restart)
+    assert {:ok, %{state: :running}} = run_through(ctx.member, ctx.track.id, :restart)
     assert state(ctx.provider).creates == 2
     assert {:ok, %{logs: "Error: command not found"}} = Previews.logs(ctx.member, ctx.track.id)
     assert {:ok, %{state: :stopped}} = Previews.stop(ctx.member, ctx.track.id)
@@ -71,7 +71,7 @@ defmodule Ravix.Previews.RunScriptTest do
       assert {:error, :not_found} = action.(stranger, ctx.track.id)
     end
 
-    assert {:error, :not_found} = Previews.run(stranger, ctx.track.id, :restart)
+    assert {:error, :not_found} = run_through(stranger, ctx.track.id, :restart)
   end
 
   test "plain processes survive the HTTP idle timeout and failed commands retain diagnostics",
@@ -79,14 +79,14 @@ defmodule Ravix.Previews.RunScriptTest do
     assert {:ok, _} =
              Previews.save_config(ctx.owner, ctx.track.id, %{directory: ".", command: "worker"})
 
-    assert {:ok, %{state: :running}} = Previews.run(ctx.owner, ctx.track.id)
+    assert {:ok, %{state: :running}} = run_through(ctx.owner, ctx.track.id)
     advance(ctx.provider, Previews.idle_ms() + 1)
 
     assert Reconciler.decide(Store.get(ctx.track.id), ctx.track, ctx.project, now(ctx.provider)) ==
              :observe
 
     put(ctx.provider, :crash, 3)
-    assert {:ok, %{state: :failed, logs: logs}} = Previews.run(ctx.owner, ctx.track.id, :restart)
+    assert {:ok, %{state: :failed, logs: logs}} = run_through(ctx.owner, ctx.track.id, :restart)
     assert logs =~ "command not found"
     assert Store.get(ctx.track.id).desired == :stopped
   end
@@ -94,10 +94,10 @@ defmodule Ravix.Previews.RunScriptTest do
   test "stop and restart use the applied stop command, even after configuration changes", ctx do
     old = %{directory: "apps/old", command: "worker", stop_command: "stop-old"}
     assert {:ok, _} = Previews.save_config(ctx.owner, ctx.track.id, old)
-    assert {:ok, _} = Previews.run(ctx.owner, ctx.track.id)
+    assert {:ok, _} = run_through(ctx.owner, ctx.track.id)
     row = Store.get(ctx.track.id)
     assert Row.applied(row).stop_command == "stop-old"
-    assert {:ok, _} = Previews.run(ctx.owner, ctx.track.id, :restart)
+    assert {:ok, _} = run_through(ctx.owner, ctx.track.id, :restart)
 
     assert {:ok, _} =
              Previews.save_config(ctx.owner, ctx.track.id, %{old | stop_command: "stop-new"})
@@ -123,7 +123,7 @@ defmodule Ravix.Previews.RunScriptTest do
                stop_command: "bad-stop"
              })
 
-    assert {:ok, _} = Previews.run(ctx.owner, ctx.track.id)
+    assert {:ok, _} = run_through(ctx.owner, ctx.track.id)
     row = Store.get(ctx.track.id)
 
     expect(Ravix.Sprites, :exec, fn _, _, ["sh", "-lc", script], 15 ->
@@ -145,7 +145,7 @@ defmodule Ravix.Previews.RunScriptTest do
       assert {:ok, _} =
                Previews.save_config(ctx.owner, ctx.track.id, %{directory: ".", command: "worker"})
 
-      assert {:ok, %{state: :running}} = Previews.run(ctx.owner, ctx.track.id)
+      assert {:ok, %{state: :running}} = run_through(ctx.owner, ctx.track.id)
       row = Store.get(ctx.track.id)
       put(ctx.provider, :exit_code, unquote(code))
       put(ctx.provider, :services, %{"#{row.sprite}/#{row.service}" => "stopped"})
@@ -162,7 +162,7 @@ defmodule Ravix.Previews.RunScriptTest do
       assert state(ctx.provider).creates == creates
       assert "#{row.sprite}/#{row.service}/release" in state(ctx.provider).holds
       put(ctx.provider, :exit_code, nil)
-      assert {:ok, %{state: :running}} = Previews.run(ctx.owner, ctx.track.id)
+      assert {:ok, %{state: :running}} = run_through(ctx.owner, ctx.track.id)
       assert state(ctx.provider).creates == creates + 1
     end
   end
@@ -171,7 +171,7 @@ defmodule Ravix.Previews.RunScriptTest do
     assert {:ok, _} =
              Previews.save_config(ctx.owner, ctx.track.id, %{directory: ".", command: "worker"})
 
-    assert {:ok, %{state: :running}} = Previews.run(ctx.owner, ctx.track.id)
+    assert {:ok, %{state: :running}} = run_through(ctx.owner, ctx.track.id)
     put(ctx.provider, :crash, 1)
     assert :ok = Reconciler.reconcile({Store.get(ctx.track.id), ctx.track, ctx.project})
     assert %{state: :failed, desired: :stopped, error: error} = Store.get(ctx.track.id)
@@ -183,7 +183,7 @@ defmodule Ravix.Previews.RunScriptTest do
     assert {:ok, _} =
              Previews.save_config(ctx.owner, ctx.track.id, %{directory: ".", command: "worker"})
 
-    assert {:ok, _} = Previews.run(ctx.owner, ctx.track.id)
+    assert {:ok, _} = run_through(ctx.owner, ctx.track.id)
     row = Store.get(ctx.track.id)
     before = state(ctx.provider).stops
 
@@ -206,7 +206,7 @@ defmodule Ravix.Previews.RunScriptTest do
     assert {:ok, _} =
              Previews.set_defaults(ctx.owner, ctx.project.id, %{directory: ".", command: "worker"})
 
-    assert {:ok, %{state: :running, keeps_awake: true}} = Previews.run(ctx.owner, ctx.track.id)
+    assert {:ok, %{state: :running, keeps_awake: true}} = run_through(ctx.owner, ctx.track.id)
 
     Store.set_defaults(ctx.project.id, %Config{
       directory: ".",
@@ -225,7 +225,7 @@ defmodule Ravix.Previews.RunScriptTest do
                readiness_path: "/"
              })
 
-    assert {:ok, %{state: :ready, keeps_awake: false}} = Previews.run(ctx.owner, ctx.track.id)
+    assert {:ok, %{state: :ready, keeps_awake: false}} = run_through(ctx.owner, ctx.track.id)
     Store.set_defaults(ctx.project.id, %Config{directory: ".", command: "worker"})
     assert %{state: :ready, keeps_awake: false, url: url} = Lifecycle.info(ctx.track.id)
     assert is_binary(url)
@@ -248,7 +248,7 @@ defmodule Ravix.Previews.RunScriptTest do
         {:ok, service}
       end)
 
-      assert {:ok, info} = Previews.run(ctx.owner, ctx.track.id)
+      assert {:ok, info} = run_through(ctx.owner, ctx.track.id)
       assert info.state == if(unquote(code) == 0, do: :stopped, else: :failed)
       assert Store.get(ctx.track.id).desired == :stopped
     end
@@ -263,7 +263,7 @@ defmodule Ravix.Previews.RunScriptTest do
                  stop_command: "bad-stop"
                })
 
-      assert {:ok, _} = Previews.run(ctx.owner, ctx.track.id)
+      assert {:ok, _} = run_through(ctx.owner, ctx.track.id)
       row = Store.get(ctx.track.id)
 
       stub(Ravix.Sprites, :exec, fn _, _, ["sh", "-lc", script], _ ->
@@ -272,7 +272,7 @@ defmodule Ravix.Previews.RunScriptTest do
 
       if unquote(mode) == :restart do
         assert {:ok, %{state: :running, logs: logs}} =
-                 Previews.run(ctx.owner, ctx.track.id, :restart)
+                 run_through(ctx.owner, ctx.track.id, :restart)
 
         assert logs =~ "[warning] Stop command:"
         assert state(ctx.provider).creates == 2
