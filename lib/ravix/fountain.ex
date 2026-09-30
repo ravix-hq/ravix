@@ -464,7 +464,9 @@ defmodule Ravix.Fountain do
   Fountain copies it onto the turn the prompt opens, so a caller that could
   not tell whether the POST arrived can find out from `turns/2` afterwards.
   It is a correlation and not an idempotency key: sending the same one twice
-  opens two turns.
+  opens two turns. `:session_config`, the ACP session config options for
+  this turn only (ADR 0062), a map of the runtime's option ids to strings or
+  booleans; an empty map is not sent. A Fountain before the field ignores it.
   """
   @spec prompt(Client.t(), id(), String.t(), [map()], keyword()) :: outcome()
   def prompt(client, id, text, images \\ [], opts \\ []) do
@@ -472,6 +474,7 @@ defmodule Ravix.Fountain do
       %{"prompt" => text}
       |> optional("images", if(images == [], do: nil, else: images))
       |> optional("client_request_id", opts[:client_request_id])
+      |> optional("session_config", nonempty(opts[:session_config]))
 
     void(client, "POST", "/api/conversations/#{escape(id)}/prompts", body: body)
   end
@@ -846,6 +849,9 @@ defmodule Ravix.Fountain do
   defp sandbox_identity(body, nil), do: Map.put(body, "sandbox_mode", "persistent")
   defp sandbox_identity(body, ""), do: Map.put(body, "sandbox_mode", "persistent")
   defp sandbox_identity(body, sandbox_id), do: Map.put(body, "sandbox_id", sandbox_id)
+
+  defp nonempty(map) when is_map(map) and map_size(map) > 0, do: map
+  defp nonempty(_map), do: nil
 
   defp optional(body, _key, nil), do: body
   defp optional(body, _key, ""), do: body

@@ -258,7 +258,12 @@
                   phx-click="retry-turn"
                   phx-value-turn={turn.id}
                 >Retry message</button>
-                <.turn_footer :if={turn.settled?} turn={turn} workdir={@track.workdir} />
+                <.turn_footer
+                  :if={turn.settled?}
+                  turn={turn}
+                  workdir={@track.workdir}
+                  options={@track.session_options}
+                />
                 <.turn_timer :if={!turn.settled?} turn={turn} />
               </section>
               <.thread_comment
@@ -648,6 +653,8 @@
                   :if={!@thread_draft[:selected?] && @composer_mode == :ask}
                   runtime={@track.runtime || @project.runtime}
                   model={@track.model || @track.default_model || @project.model}
+                  session_options={@track.session_options}
+                  session_config={@track.session_config}
                   project_model={
                     if is_nil(@track.runtime) or @track.runtime == @project.runtime,
                       do: @project.model

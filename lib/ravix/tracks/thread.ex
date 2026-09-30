@@ -15,6 +15,9 @@ defmodule Ravix.Tracks.Thread do
     field :recovery_context_pending, :boolean, default: false
     field :runtime, :string
     field :model, :string
+    # RAV-52: the runtime's ACP session config option ids to values (effort,
+    # Fast), sent as every prompt's `session_config` (`Ravix.SessionConfig`).
+    field :session_config, :map, default: %{}
     field :title, :string
     # RAV-48: `:auto` when Ravix titled it from the first prompt or the
     # runtime's session title, `:manual` when a person named it, nil for the
@@ -72,6 +75,7 @@ defmodule Ravix.Tracks.Thread do
       :closed_at,
       :runtime,
       :model,
+      :session_config,
       :started_by
     ])
     |> Ravix.Schema.put_new_id()

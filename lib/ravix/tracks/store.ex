@@ -254,6 +254,12 @@ defmodule Ravix.Tracks.Store do
     :ok
   end
 
+  @doc "A thread's session config, already checked against what its runtime advertised."
+  def set_thread_session_config(id, config) when is_map(config) do
+    from(t in Thread, where: t.id == ^id) |> Repo.update_all(set: [session_config: config])
+    :ok
+  end
+
   defp remember_runtime(_id, nil), do: :ok
 
   defp remember_runtime(id, runtime) do

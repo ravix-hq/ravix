@@ -21,6 +21,10 @@ defmodule Ravix.Tracks.View do
   read live off Fountain like the status, and nil when it follows the
   project's model.
 
+  `session_options` is the runtime's advertised ACP config options for the
+  shown conversation, live off Fountain (ADR 0062), nil until a turn has
+  reported them; `session_config` is the thread's own choice (RAV-52).
+
   `activity_at` is when anything last happened on the track, as far as
   Ravix already knows without asking again: the newest of its creation,
   opening, closing, newest accepted prompt and its conversations' last
@@ -95,6 +99,8 @@ defmodule Ravix.Tracks.View do
                 setup_error_code: nil,
                 runtime: nil,
                 default_model: nil,
+                session_config: %{},
+                session_options: nil,
                 reply_unread: nil,
                 mention: nil,
                 billing: :owner,
@@ -133,6 +139,8 @@ defmodule Ravix.Tracks.View do
           model: String.t() | nil,
           runtime: String.t() | nil,
           default_model: String.t() | nil,
+          session_config: Ravix.SessionConfig.config(),
+          session_options: [Ravix.SessionConfig.Option.t()] | nil,
           threads: [map()],
           setup_state: String.t(),
           setup_attempts: non_neg_integer(),

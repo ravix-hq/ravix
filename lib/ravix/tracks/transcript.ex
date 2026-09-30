@@ -79,15 +79,26 @@ defmodule Ravix.Tracks.Transcript do
     add_events(%Page{turns: [], last_event_id: nil, runtime: runtime || ""}, events, failures)
   end
 
-  @doc "Attach retained image counts from Fountain's turn records to a loaded page."
+  @doc """
+  Attach what only Fountain's turn records carry to a loaded page: retained
+  image counts, and each turn's ACP `config_selection` (RAV-52, ADR 0062).
+  """
   @spec with_images(Page.t(), [Ravix.Fountain.Shapes.Turn.t()]) :: Page.t()
   def with_images(page, records) do
-    counts = Map.new(records, &{&1.id, &1.image_count})
+    by_id = Map.new(records, &{&1.id, &1})
 
     turns =
       Enum.map(page.turns, fn turn ->
-        count = Map.get(counts, turn.id, turn.image_count)
-        %{turn | image_count: count, visible?: turn.visible? or count > 0}
+        record = Map.get(by_id, turn.id)
+        count = if record, do: record.image_count, else: turn.image_count
+        selection = (record && record.config_selection) || turn.config_selection
+
+        %{
+          turn
+          | image_count: count,
+            config_selection: selection,
+            visible?: turn.visible? or count > 0
+        }
       end)
 
     %{page | turns: turns}
@@ -329,7 +340,10 @@ defmodule Ravix.Tracks.Transcript do
   defp finish(%Turn{} = turn, acc) do
     blocks = blocks_of(acc)
     turn = classify(turn, blocks)
-    visible = blocks |> Enum.filter(&visible_block?/1) |> failure_reply(turn)
+
+    visible =
+      blocks |> Enum.filter(&visible_block?/1) |> failure_reply(turn) |> config_refusal_only()
+
     notice = AgentFailure.github_notice(turn.events, blocks)
     visible = if notice, do: visible ++ [%Block.System{body: notice}], else: visible
 
@@ -364,6 +378,15 @@ defmodule Ravix.Tracks.Transcript do
   end
 
   defp failure_reply(blocks, _turn), do: blocks
+
+  # A refused session config option (ADR 0062) fails the turn before the
+  # prompt is written, so the turn's own failure says nothing the refusal
+  # does not: only the refusal is drawn.
+  defp config_refusal_only(blocks) do
+    if Enum.any?(blocks, &match?(%Block.Failure{stage: "config"}, &1)),
+      do: Enum.reject(blocks, &match?(%Block.Failure{stage: stage} when stage != "config", &1)),
+      else: blocks
+  end
 
   defp without_timeout_text([%Block.Text{body: body}] = blocks) do
     if String.trim(body) == "request timed out", do: [], else: blocks
@@ -493,6 +516,16 @@ defmodule Ravix.Tracks.Transcript do
   and both places must agree on where "why" lives (#35).
   """
   @spec raw_failure_reason(Event.t()) :: String.t()
+  def raw_failure_reason(%Event{stage: "config", data: data}) when is_binary(data) do
+    case Jason.decode(data) do
+      {:ok, %{"id" => id, "detail" => detail} = meta} when is_binary(id) and is_binary(detail) ->
+        "Could not set #{id} to #{inspect(meta["requested"])}: #{String.trim(detail)}"
+
+      _ ->
+        ""
+    end
+  end
+
   def raw_failure_reason(%Event{data: data}) when is_binary(data) do
     case Jason.decode(data) do
       {:ok, %{"message" => message}} when is_binary(message) -> String.trim(message)
@@ -513,10 +546,14 @@ defmodule Ravix.Tracks.Transcript do
   def failure_label("setup"), do: "Setup failed"
   def failure_label("adapter"), do: "Agent stopped"
   def failure_label("turn"), do: "Reply failed"
+  def failure_label("config"), do: "Setting not accepted, so the message wasn't sent"
   def failure_label(_), do: "Agent operation failed"
 
   def failure_next_step(%Block.Failure{body: "session_gone"}),
     do: "Wake the agent, then retry your message."
+
+  def failure_next_step(%Block.Failure{stage: "config"}),
+    do: "Choose another value in the model menu, then retry your message."
 
   def failure_next_step(_), do: "Retry your message when the machine is ready."
 
