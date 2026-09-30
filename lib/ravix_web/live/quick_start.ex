@@ -9,7 +9,7 @@ defmodule RavixWeb.Live.QuickStart do
   the New track dialog does with a prompt typed into it (RAV-47): the same
   `open_track/4`, the same queue, the same "waits until setup is ready". A
   target that is a repository, or scratch, is a project first, created by
-  `Ravix.Projects.create/2` as the New project dialog creates one, so its
+  `Ravix.Projects.create/2` as the Add repository dialog creates one, so its
   name, its agent check and its Fountain names are that function's.
 
   ## What the page keeps

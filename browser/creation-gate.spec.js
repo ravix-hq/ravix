@@ -5,12 +5,12 @@ import { openAgentSettings } from './settings.js';
 
 test('connect Codex inline without losing the new project draft', async ({ page }) => {
   await signIn(page, 'dana', '/home');
-  await page.getByRole('button', { name: 'Add a project', exact: true }).first().click();
-  const dialog = page.getByRole('dialog', { name: 'New project' });
+  await page.getByRole('button', { name: 'Add repository', exact: true }).first().click();
+  const dialog = page.getByRole('dialog', { name: 'Add repository' });
   await dialog.getByLabel('Project name', { exact: true }).fill('Credential gate');
   await dialog.locator('#project-agent-codex').click();
   await expect(dialog.locator('#project-agent-codex')).toContainText('Not connected');
-  await expect(dialog.getByRole('button', { name: 'Create project', exact: true })).toBeDisabled();
+  await expect(dialog.getByRole('button', { name: 'Create scratch project', exact: true })).toBeDisabled();
   await dialog.getByRole('button', { name: 'API key', exact: true }).click();
   await page.evaluate(() => Promise.all(document.getAnimations()
     .filter(a => a.effect?.getTiming?.().iterations !== Infinity)
@@ -22,8 +22,8 @@ test('connect Codex inline without losing the new project draft', async ({ page 
   await expect(dialog.locator('#project-agent-codex')).toContainText('Connected');
   await expect(dialog.locator('#project-agent-codex')).toHaveAttribute('aria-pressed', 'true');
   await expect(dialog.getByLabel('Project name', { exact: true })).toHaveValue('Credential gate');
-  await expect(dialog.getByRole('button', { name: 'Create project', exact: true })).toBeEnabled();
-  await dialog.getByRole('button', { name: 'Create project', exact: true }).click();
+  await expect(dialog.getByRole('button', { name: 'Create scratch project', exact: true })).toBeEnabled();
+  await dialog.getByRole('button', { name: 'Create scratch project', exact: true }).click();
   await expect(dialog).not.toBeVisible();
   await expect(page.locator('.crumbs')).toContainText('Credential gate');
 });
@@ -45,11 +45,11 @@ test('connect ChatGPT inline by device code and preserve the project draft', asy
   await expect(panel.locator('#agent-codex')).toBeVisible();
   await page.goto('/home');
   await expect(page.locator('[data-phx-main]')).toHaveClass(/phx-connected/);
-  await page.getByRole('button', { name: 'Add a project', exact: true }).first().click();
-  const dialog = page.getByRole('dialog', { name: 'New project' });
+  await page.getByRole('button', { name: 'Add repository', exact: true }).first().click();
+  const dialog = page.getByRole('dialog', { name: 'Add repository' });
   await dialog.getByLabel('Project name', { exact: true }).fill('ChatGPT inline');
   await dialog.locator('#project-agent-codex').click();
-  await expect(dialog.getByRole('button', { name: 'Create project', exact: true })).toBeDisabled();
+  await expect(dialog.getByRole('button', { name: 'Create scratch project', exact: true })).toBeDisabled();
   await dialog.getByRole('button', { name: 'Connect ChatGPT', exact: true }).click();
   await expect(dialog.locator('#chatgpt-user-code')).toHaveText('MOCK-CODE');
   await expect(dialog.locator('#chatgpt-verification')).toHaveAttribute('href', 'https://auth.openai.com/codex/device');
@@ -59,16 +59,16 @@ test('connect ChatGPT inline by device code and preserve the project draft', asy
   await expect(dialog.locator('#project-agent-codex')).toContainText('Connected');
   await expect(dialog.locator('#project-agent-codex')).toHaveAttribute('aria-pressed', 'true');
   await expect(dialog.getByLabel('Project name', { exact: true })).toHaveValue('ChatGPT inline');
-  await dialog.getByRole('button', { name: 'Create project', exact: true }).click();
+  await dialog.getByRole('button', { name: 'Create scratch project', exact: true }).click();
   await expect(dialog).not.toBeVisible();
   await expect(page.locator('.crumbs')).toContainText('ChatGPT inline');
 });
 
 test('late dialog focus never steals typing from the project name', async ({ page }) => {
   await signIn(page, 'dana', '/home');
-  await page.getByRole('button', { name: 'Add a project', exact: true }).first().click();
-  const dialog = page.getByRole('dialog', { name: 'New project' });
-  await expect(dialog.getByRole('combobox', { name: 'Repository', exact: true })).toBeFocused();
+  await page.getByRole('button', { name: 'Add repository', exact: true }).first().click();
+  const dialog = page.getByRole('dialog', { name: 'Add repository' });
+  await expect(dialog.getByRole('searchbox', { name: 'Repository', exact: true })).toBeFocused();
   const name = dialog.getByLabel('Project name', { exact: true });
   await name.fill('Draft');
   // Replay the mounted focus command after a person has already chosen a
@@ -82,5 +82,5 @@ test('late dialog focus never steals typing from the project name', async ({ pag
   await expect(name).toBeFocused();
   await page.keyboard.type(' kept');
   await expect(name).toHaveValue('Draft kept');
-  await expect(dialog.getByRole('combobox', { name: 'Repository', exact: true })).toHaveValue('');
+  await expect(dialog.getByRole('searchbox', { name: 'Repository', exact: true })).toHaveValue('');
 });

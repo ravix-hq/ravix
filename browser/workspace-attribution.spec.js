@@ -36,10 +36,10 @@ test('a shared track shows who sent a prompt and what they typed, not the attrib
 
   await signIn(page, 'attributor', '/home');
   await connectClaude(page);
-  await page.getByRole('button', { name: 'Add a project', exact: true }).first().click();
-  const project = page.getByRole('dialog', { name: 'New project', exact: true });
+  await page.getByRole('button', { name: 'Add repository', exact: true }).first().click();
+  const project = page.getByRole('dialog', { name: 'Add repository', exact: true });
   await project.getByLabel('Project name', { exact: true }).fill('Attributed prompts');
-  await project.getByRole('button', { name: 'Create project', exact: true }).click();
+  await project.getByRole('button', { name: 'Create scratch project', exact: true }).click();
   await expect(project).toHaveCount(0);
   const projectId = idOf(new URL(page.url()).pathname);
   // A second person on the project makes the track shared, so the agent is

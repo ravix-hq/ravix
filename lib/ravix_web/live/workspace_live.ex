@@ -178,7 +178,7 @@ defmodule RavixWeb.WorkspaceLive do
         # Scratch projects in their own rail group, with the same switch.
         scratch_group: Workspaces.enabled?(),
         # Whether `/home`'s first-prompt form has asked GitHub what it may
-        # offer; once per page, like the New project dialog's read.
+        # offer; once per page, like the Add repository dialog's read.
         quick_repos: false
       )
       |> QuickStart.init()
@@ -803,6 +803,9 @@ defmodule RavixWeb.WorkspaceLive do
 
   def handle_event("edit", %{"new_project" => params}, socket),
     do: {:noreply, NewProject.edit(socket, params)}
+
+  def handle_event("project-repo-first", %{"new_project" => params}, socket),
+    do: {:noreply, NewProject.pick_first(socket, Map.take(params, ["query"]))}
 
   def handle_event("connect-thread-agent", %{"runtime" => runtime}, socket) do
     connection =
@@ -2285,7 +2288,7 @@ defmodule RavixWeb.WorkspaceLive do
 
   # RAV-10: the current workspace's repositories, the anchor (or the most
   # recently used) preselected. Nothing to preselect at all is today's
-  # answer to a person with no project: the New project dialog.
+  # answer to a person with no project: the Add repository dialog.
   defp picker_dialog(socket, anchor) do
     # A deep link (`?new=track`) can open this before the rail has arrived;
     # the project it names is listed meanwhile, and `refresh_picker/1` fills

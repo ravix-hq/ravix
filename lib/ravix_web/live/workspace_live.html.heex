@@ -180,7 +180,7 @@
           phx-click={JS.push_focus() |> JS.push("dialog")}
           phx-value-name="new-project"
         >
-          <.icon name="plus" />Add a project
+          <.icon name="folder" />Add repository
         </button>
 
         <.link patch="/schedules" class={["yard-item", @live_action == :schedules && "on"]}>
@@ -610,7 +610,7 @@
           class="ghost"
           phx-click={JS.push_focus() |> JS.push("dialog")}
           phx-value-name="new-project"
-        >New project</button>
+        >Add repository</button>
       </nav>
       <div
         id="yard-resize"
@@ -784,8 +784,9 @@
           <% end %>
         </section>
         <%!-- Home (RAV-100): the recent tracks across the rail, in the same
-          page container as the Inbox and Schedules. Adding a project is the
-          sidebar's "Add a project"; Home has no button of its own for it. --%>
+          page container as the Inbox and Schedules. Adding a repository is
+          the sidebar's "Add repository" (RAV-37); Home has no button of its
+          own for it. --%>
         <.stage_page
           :if={is_nil(@project) && @live_action == :projects}
           id="home"
@@ -818,7 +819,7 @@
             />
             <QuickStart.explainer id="home-explainer" />
             <p class="hint first-prompt-alt">
-              To add a repository without starting a track yet, use Add a project in the sidebar.
+              To add a repository without starting a track yet, use Add repository in the sidebar.
             </p>
           </section>
           <section
@@ -1164,11 +1165,18 @@
     <.dialog
       :if={@dialog == :new_project}
       id="new-project-dialog"
-      title="New project"
+      title={if @project_mode == "scratch", do: "New scratch project", else: "Add repository"}
       focus_on_mount={false}
       on_close={dismiss(@project, @track_id, @settings)}
     >
-      <p class="lede">A repository, or a scratch machine with nothing cloned yet.</p>
+      <%!-- RAV-37: connecting a repository is its own flow; daily work
+        starts from New track, or a new thread on a track. --%>
+      <p :if={@project_mode != "scratch"} class="lede">
+        Connect a repository as a project. Start work in it from New track.
+      </p>
+      <p :if={@project_mode == "scratch"} class="lede">
+        A machine with nothing cloned yet. Start work in it from New track.
+      </p>
       <RavixWeb.Live.NewProject.render_form
         form_id="new-project-form"
         autofocus={true}

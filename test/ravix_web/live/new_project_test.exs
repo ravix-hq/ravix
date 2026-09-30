@@ -163,7 +163,7 @@ defmodule RavixWeb.Live.NewProjectTest do
     render_async(view)
     assert has_element?(view, "#project-agent-codex[aria-pressed=true]", "Connected")
     assert has_element?(view, "#project-name[value='Keep this']")
-    assert has_element?(view, "#project-repo[value='acme/web']")
+    assert has_element?(view, "#project-repositories input[value='acme/web'][checked]")
     refute has_element?(view, "#new-project-form button[disabled]")
     refute has_element?(view, "#project-connect-codex")
     refute render(view) =~ "sk-test"
@@ -203,28 +203,77 @@ defmodule RavixWeb.Live.NewProjectTest do
     assert has_element?(view, "#project-agent-claude[aria-pressed=true]")
   end
 
-  test "the new project form lists repositories in name order and can start empty",
+  defp listed(view) do
+    render(view)
+    |> LazyHTML.from_document()
+    |> LazyHTML.query("#project-repositories input[type=radio]")
+    |> LazyHTML.attribute("value")
+  end
+
+  test "Add repository lists repositories in name order behind a search, scratch last",
        %{conn: conn, user: user} do
     view = open(conn, user)
 
-    assert render(view)
-           |> LazyHTML.from_document()
-           |> LazyHTML.query("#project-repositories option")
-           |> LazyHTML.attribute("value") == ["acme/web", "zebra/api"]
+    # RAV-37: its own flow, named for what it does, apart from New track.
+    assert has_element?(view, "#new-project-dialog h2", "Add repository")
+    assert has_element?(view, "#new-project-dialog .lede", "Start work in it from New track")
+    assert has_element?(view, "#configure-github[href='/api/auth/install']", "Configure on GitHub")
+    assert listed(view) == ["acme/web", "zebra/api"]
 
-    view |> form("#new-project-form", new_project: [repo: "API"]) |> render_change()
-    assert has_element?(view, "#project-repositories option[value='zebra/api']")
-    refute has_element?(view, "#project-repositories option[value='acme/web']")
+    # Nothing chosen is the scratch choice, and the button says so.
+    assert has_element?(view, "#project-repo .repo-scratch input[value=''][checked]")
+    assert has_element?(view, "#new-project-form button", "Create scratch project")
+
+    view |> form("#project-repo-search", new_project: [query: "API"]) |> render_change()
+    assert listed(view) == ["zebra/api"]
+
+    view |> form("#new-project-form", new_project: [repo: "zebra/api"]) |> render_change()
+    assert has_element?(view, "#project-repositories .repo-option.on", "zebra/api")
+    assert has_element?(view, "#new-project-form button", "Add repository")
+
+    # The chosen repository stays listed whatever the search says.
+    view |> form("#project-repo-search", new_project: [query: "acme"]) |> render_change()
+    assert listed(view) == ["acme/web", "zebra/api"]
+    view |> form("#project-repo-search", new_project: [query: "nothing"]) |> render_change()
+    assert listed(view) == ["zebra/api"]
+
+    view |> form("#new-project-form", new_project: [repo: ""]) |> render_change()
+    assert has_element?(view, "#project-repositories", "No repository matches.")
+    assert has_element?(view, "#new-project-form button", "Create scratch project")
+
     render_click(view, "dismiss")
     render_click(view, "dialog", %{name: "new-project"})
-    assert has_element?(view, "#project-repo")
-
-    assert has_element?(
-             view,
-             "#project-repo[placeholder='Search repositories, or leave empty for scratch']"
-           )
-
+    assert has_element?(view, "#project-repo-query[placeholder='owner/repo']:not([value])")
+    assert has_element?(view, "#project-name[placeholder='Name the scratch project']")
+    view |> form("#new-project-form", new_project: [repo: "acme/web"]) |> render_change()
     assert has_element?(view, "#project-name[placeholder=\"Defaults to the repository's name\"]")
+  end
+
+  test "Enter in the search picks the first match, and nothing when none matches",
+       %{conn: conn, user: user} do
+    view = open(conn, user)
+
+    view |> form("#project-repo-search", new_project: [query: "nothing"]) |> render_submit()
+    assert has_element?(view, "#project-repo .repo-scratch input[checked]")
+
+    view |> form("#project-repo-search", new_project: [query: "a"]) |> render_submit()
+    assert has_element?(view, "#project-repositories input[value='acme/web'][checked]")
+
+    view |> form("#project-repo-search", new_project: [query: "zeb"]) |> render_submit()
+    assert has_element?(view, "#project-repositories input[value='zebra/api'][checked]")
+  end
+
+  test "a repository this account cannot see is refused on the repository list",
+       %{conn: conn, user: user} do
+    reject(Projects, :create, 2)
+    view = open(conn, user)
+
+    render_submit(view, "create-project", %{
+      "new_project" => %{"name" => "Sneaky", "repo" => "other/private"}
+    })
+
+    assert has_element?(view, "#project-repo p.error", "Choose a repository from the list")
+    assert has_element?(view, "#new-project-dialog")
   end
 
   test "authoritative refusal appears on the picker and preserves the form", %{

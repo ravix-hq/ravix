@@ -8,12 +8,12 @@ test('project track links scroll vertically and preserve the mobile drawer', asy
   // Keep mockuser's first-visit state for the onboarding walkthrough.
   await signIn(page, 'eli');
   await connectClaude(page);
-  await page.getByRole('button', { name: 'Add a project', exact: true }).first().click();
-  const project = page.getByRole('dialog', { name: 'New project' });
+  await page.getByRole('button', { name: 'Add repository', exact: true }).first().click();
+  const project = page.getByRole('dialog', { name: 'Add repository' });
   await project.getByLabel('Project name', { exact: true }).fill('Scrolling tracks');
-  await expect(project.locator('#project-repositories option')).not.toHaveCount(0);
-  await project.getByLabel('Repository', { exact: true }).fill('mockuser/atlas-api');
-  await project.getByRole('button', { name: 'Create project' }).click();
+  await expect(project.locator('#project-repositories input[type=radio]')).not.toHaveCount(0);
+  await project.getByRole('radio', { name: 'mockuser/atlas-api', exact: true }).check();
+  await project.getByRole('button', { name: 'Add repository' }).click();
   await expect(project).not.toBeVisible();
   for (let index = 0; index < 12; index++) {
     await page.locator('#yard .workspace-project.current .project-add').click();

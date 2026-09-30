@@ -17,10 +17,10 @@ test("the dock's Commands empty state is whole, under no second machine heading"
   // A seeded dedicated-open identity, so the header badge says "Own machine".
   await signIn(page, 'threadruntime', '/home');
   await connectClaude(page);
-  await page.getByRole('button', { name: 'Add a project', exact: true }).first().click();
-  const dialog = page.getByRole('dialog', { name: 'New project', exact: true });
+  await page.getByRole('button', { name: 'Add repository', exact: true }).first().click();
+  const dialog = page.getByRole('dialog', { name: 'Add repository', exact: true });
   await dialog.getByLabel('Project name', { exact: true }).fill('Dock commands');
-  await dialog.getByRole('button', { name: 'Create project', exact: true }).click();
+  await dialog.getByRole('button', { name: 'Create scratch project', exact: true }).click();
   await expect(dialog).toHaveCount(0);
   await page.locator('#yard .workspace-project.current .project-add').click();
   await page.getByRole('button', { name: 'Create track', exact: true }).click();

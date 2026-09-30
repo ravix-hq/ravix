@@ -1,6 +1,11 @@
 defmodule RavixWeb.Live.NewProject do
   @moduledoc """
-  The workspace's New project form.
+  The workspace's Add repository form (RAV-37): connecting a repository as a
+  project, apart from daily work, which starts from New track or a thread.
+  It lists the repositories GitHub shows behind a search, with "No
+  repository (scratch machine)" as its last choice and Configure on GitHub
+  for one that is missing. The picker's "No repository" opens it in scratch
+  mode, with no repository list at all.
 
   The walkthrough's last step used to draw it too; it now asks for a first
   prompt instead (`RavixWeb.Live.QuickStart`), which creates the project
@@ -123,7 +128,7 @@ defmodule RavixWeb.Live.NewProject do
           Form.refuse(
             socket.assigns.project_form,
             {:unprocessable, "invalid_repository",
-             "Choose a repository from the list, or leave it empty for scratch."}
+             "Choose a repository from the list, or No repository for a scratch machine."}
           )
 
         assign(socket, project_form: form)
@@ -142,11 +147,29 @@ defmodule RavixWeb.Live.NewProject do
   defp usable?(agents, runtime),
     do: is_list(agents) and Enum.any?(agents, &(to_string(&1) == runtime))
 
-  defp repositories(repos, query) do
+  @doc """
+  Enter in the repository search: the first repository it lists becomes the
+  choice, as it would in the New track picker. Nothing listed, nothing chosen.
+  """
+  def pick_first(socket, params) do
+    socket = edit(socket, params)
+    form = socket.assigns.project_form
+
+    case repositories(socket.assigns.repos, form[:query].value, nil) do
+      [repo | _] -> edit(socket, %{"repo" => repo.full_name})
+      [] -> socket
+    end
+  end
+
+  # The repositories the search matches, in name order. The chosen one stays
+  # listed whatever is typed, so the search never hides what will be added.
+  defp repositories(repos, query, chosen) do
     query = String.downcase(query || "")
 
     repos
-    |> Enum.filter(&String.contains?(String.downcase(&1.full_name), query))
+    |> Enum.filter(
+      &(&1.full_name == chosen or String.contains?(String.downcase(&1.full_name), query))
+    )
     |> Enum.sort_by(&String.downcase(&1.full_name))
   end
 
@@ -167,14 +190,23 @@ defmodule RavixWeb.Live.NewProject do
   attr :busy, :boolean, required: true
 
   def render_form(assigns) do
-    assigns = assign(assigns, runtime: assigns.project_form[:runtime].value)
+    form = assigns.project_form
+    chosen = form[:repo].value
+
+    assigns =
+      assign(assigns,
+        runtime: form[:runtime].value,
+        query: form[:query].value,
+        chosen: chosen,
+        scratch?: assigns.project_mode == "scratch" or chosen in [nil, ""]
+      )
 
     ~H"""
     <div
       class="new-project-fields"
       id="new-project-fields"
       phx-hook={@autofocus && "ProjectFormFocus"}
-      data-focus={if @project_mode == "scratch", do: "#project-name", else: "#project-repo"}
+      data-focus={if @project_mode == "scratch", do: "#project-name", else: "#project-repo-query"}
     >
       <div
         class="field"
@@ -257,30 +289,94 @@ defmodule RavixWeb.Live.NewProject do
           options={Enum.map(@installations, &{&1.account, &1.id})}
         />
       </form>
+      <%!-- The search is its own form, so Enter in it picks the first match
+        rather than submitting the project form. --%>
+      <form
+        :if={@project_mode != "scratch"}
+        id="project-repo-search"
+        class="field"
+        phx-change="edit"
+        phx-submit="project-repo-first"
+      >
+        <label for="project-repo-query">Repository</label>
+        <input
+          id="project-repo-query"
+          name="new_project[query]"
+          type="search"
+          value={@query}
+          placeholder="owner/repo"
+          autocomplete="off"
+          phx-debounce="100"
+          aria-controls="project-repositories"
+          aria-describedby="project-repo-query-hint"
+          disabled={@busy}
+        />
+        <p id="project-repo-query-hint" class="sr-only">
+          Filters the repositories below. Enter chooses the first match.
+        </p>
+      </form>
       <.form :let={f} for={@project_form} id={@form_id} phx-submit="create-project" phx-change="edit">
         <input type="hidden" name="new_project[runtime]" value={@runtime || ""} />
-        <div :if={@project_mode != "scratch"}>
-          <.input
-            field={f[:repo]}
-            id="project-repo"
-            label="Repository"
-            list="project-repositories"
-            placeholder="Search repositories, or leave empty for scratch"
-            autocomplete="off"
-            aria-busy={to_string(@repos_loading)}
-          />
-          <datalist id="project-repositories">
-            <option :for={repo <- repositories(@repos, f[:repo].value)} value={repo.full_name} />
-          </datalist>
-          <p><a href="/api/auth/install">Connect or manage GitHub repositories ↗</a></p>
-        </div>
+        <fieldset
+          :if={@project_mode != "scratch"}
+          id="project-repo"
+          class="field repo-choice"
+          aria-busy={to_string(@repos_loading)}
+        >
+          <legend class="sr-only">Repository</legend>
+          <ul
+            :if={not @repos_loading}
+            id="project-repositories"
+            class="repo-picker-list"
+            aria-label="Repositories"
+          >
+            <li :for={repo <- repositories(@repos, @query, @chosen)}>
+              <label class={["repo-option", @chosen == repo.full_name && "on"]}>
+                <input
+                  type="radio"
+                  name="new_project[repo]"
+                  value={repo.full_name}
+                  checked={@chosen == repo.full_name}
+                  disabled={@busy}
+                />
+                <span class="truncate">{repo.full_name}</span>
+              </label>
+            </li>
+            <li :if={@repos == []} class="hint" id="project-repositories-none">
+              No GitHub repositories are connected yet.
+            </li>
+            <li :if={@repos != [] and repositories(@repos, @query, @chosen) == []} class="hint">
+              No repository matches.
+            </li>
+          </ul>
+          <label class={["repo-option repo-scratch", @scratch? && "on"]}>
+            <input
+              type="radio"
+              name="new_project[repo]"
+              value=""
+              checked={@scratch?}
+              disabled={@busy}
+            />
+            <span class="truncate">No repository (scratch machine)</span>
+          </label>
+          <p :for={{message, _} <- f[:repo].errors} class="error">{message}</p>
+          <p class="hint">
+            Missing a repository?
+            <a id="configure-github" href="/api/auth/install">Configure on GitHub ↗</a>
+            to choose which ones Ravix can reach.
+          </p>
+        </fieldset>
         <input :if={@project_mode == "scratch"} type="hidden" name="new_project[repo]" value="" />
         <.input
           field={f[:name]}
           id="project-name"
           label="Project name"
           maxlength="120"
-          placeholder="Defaults to the repository's name"
+          placeholder={
+            if @scratch?,
+              do: "Name the scratch project",
+              else: "Defaults to the repository's name"
+          }
         />
         <.loading_status :if={@busy}>Creating project and preparing its machine…</.loading_status>
         <button
@@ -291,7 +387,11 @@ defmodule RavixWeb.Live.NewProject do
           }
           phx-disable-with="Creating…"
         >
-          {if @busy, do: "Creating project…", else: "Create project"}
+          {cond do
+            @busy -> "Creating project…"
+            @scratch? -> "Create scratch project"
+            true -> "Add repository"
+          end}
         </button>
       </.form>
     </div>

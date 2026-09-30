@@ -24,11 +24,11 @@ test('stage pages share one edge; the nav, dialogs and selects hold still', asyn
   await signIn(page, 'stagepages', '/home');
   await connectClaude(page);
 
-  // The New project dialog's top stays where it opened while the
+  // The Add repository dialog's top stays where it opened while the
   // repositories arrive, and the field under them does not move.
   await page.goto('/home');
   await connected(page);
-  await page.getByRole('button', { name: 'Add a project', exact: true }).first().click();
+  await page.getByRole('button', { name: 'Add repository', exact: true }).first().click();
   const dialog = page.locator('#new-project-dialog-dialog');
   await expect(dialog).toBeVisible();
   const frames = await page.evaluate(() => new Promise(resolve => {
@@ -45,7 +45,7 @@ test('stage pages share one edge; the nav, dialogs and selects hold still', asyn
   await expect(dialog.getByLabel('GitHub account', { exact: true })).toBeVisible();
   expect(Math.round((await dialog.boundingBox()).y)).toBe(frames[0]);
   await dialog.getByLabel('Project name', { exact: true }).fill('Stage pages');
-  await dialog.getByRole('button', { name: 'Create project', exact: true }).click();
+  await dialog.getByRole('button', { name: 'Create scratch project', exact: true }).click();
   await expect(dialog).toHaveCount(0);
 
   // A track whose setup failed, so the Inbox has a card and a count.

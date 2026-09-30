@@ -12,9 +12,9 @@ test('tracks are named by their titles, not their branch slugs', async ({ page }
   await page.setViewportSize({ width: 1280, height: 800 });
   await signIn(page, 'titler', '/home');
   await connectClaude(page);
-  await page.getByRole('button', { name: 'Add a project', exact: true }).first().click();
+  await page.getByRole('button', { name: 'Add repository', exact: true }).first().click();
   await page.getByLabel('Project name', { exact: true }).fill('ravix-names');
-  await page.getByRole('button', { name: 'Create project', exact: true }).click();
+  await page.getByRole('button', { name: 'Create scratch project', exact: true }).click();
   const projectRow = page.locator('#yard .workspace-project.current');
   await expect(projectRow).toContainText('ravix-names');
 

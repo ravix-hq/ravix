@@ -781,7 +781,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
     assert {:error, {:live_redirect, %{to: "/"}}} = live(log_in_user(conn, user), "/login")
   end
 
-  test "Add a project opens a fresh form and Home's recent tracks stay scoped", %{conn: conn} do
+  test "Add repository opens a fresh form and Home's recent tracks stay scoped", %{conn: conn} do
     user = insert_user()
     own = insert_project(user: user, name: "Recent work")
     track = insert_track(project: own, created_by_login: user.login, title: "Tidy the router")
@@ -798,16 +798,16 @@ defmodule RavixWeb.WorkspaceLiveTest do
 
     refute render(view) =~ hidden.name
     refute render(view) =~ "Somebody else"
-    # The sidebar's "Add a project" is the one way in; Home has no copy of it.
+    # The sidebar's "Add repository" is the one way in; Home has no copy of it.
     refute has_element?(view, "#home button")
-    add = element(view, "#yard button.yard-item", "Add a project")
+    add = element(view, "#yard button.yard-item", "Add repository")
     render_click(add)
     view |> form("#new-project-form", new_project: [name: "Abandoned name"]) |> render_change()
     render_click(view, "dismiss")
     render_click(add)
     # A pristine form renders no `value` at all, which is how the field
     # comes up empty; the point of the assertion is that the abandoned name
-    # is not still in it. Add a project opens the repository form.
+    # is not still in it. Add repository opens the repository list.
     assert has_element?(view, "#project-name:not([value])")
     assert has_element?(view, "#project-repo")
     refute render(view) =~ "Abandoned name"
@@ -1709,7 +1709,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
 
     {:ok, view, _} = live(log_in_user(conn, user), "/")
     render_async(view)
-    view |> element(".workspace-actions button", "Add a project") |> render_click()
+    view |> element(".workspace-actions button", "Add repository") |> render_click()
 
     render_click(view, "choose-project-agent", %{"agent" => "codex"})
 
@@ -1761,6 +1761,34 @@ defmodule RavixWeb.WorkspaceLiveTest do
 
     assert {:error, {:redirect, %{to: "/login"}}} =
              render_click(view, "dialog", %{name: "new-project"})
+  end
+
+  test "a revoked session cannot search or pick in Add repository", %{conn: conn} do
+    stub(Accounts, :capabilities, fn -> %{github: true} end)
+
+    stub(Projects, :repos, fn _, _ ->
+      {:ok,
+       %{
+         repos: [%{full_name: "acme/web", installation_id: 42}],
+         installations: [%{account: "acme", id: 42}],
+         selected: 42
+       }}
+    end)
+
+    user = insert_user()
+    {token, session} = insert_session(user)
+    conn = Plug.Test.init_test_session(conn, session_token: token)
+    {:ok, view, _} = live(conn, "/home")
+    render_async(view)
+    render_click(view, "dialog", %{name: "new-project"})
+    render_async(view)
+    assert has_element?(view, "#project-repositories input[value='acme/web']")
+
+    Repo.delete!(session)
+    :sys.replace_state(view.pid, &age_session_guard/1)
+
+    assert {:error, {:redirect, %{to: "/login"}}} =
+             render_submit(view, "project-repo-first", %{"new_project" => %{"query" => "acme"}})
   end
 
   # Put the page's held answer far enough in the past that it has run out.
