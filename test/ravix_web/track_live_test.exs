@@ -8,7 +8,19 @@ defmodule RavixWeb.TrackLiveTest do
   alias Ravix.Hub.Event
   alias Ravix.{People, Previews, PromptQueue, QueryCount, Repo, Terminal, Tracks, Vitals}
   alias Ravix.PromptQueue.View, as: QueuedPrompt
-  alias Ravix.Tracks.{Diff, Files, Follower, MachineState, Setup, Track, TrackMember, Transcript}
+
+  alias Ravix.Tracks.{
+    Attribution,
+    Diff,
+    Files,
+    Follower,
+    MachineState,
+    Setup,
+    Track,
+    TrackMember,
+    Transcript
+  }
+
   alias RavixWeb.Live.Guard
 
   alias Ravix.Plans.Progress
@@ -5809,6 +5821,67 @@ defmodule RavixWeb.TrackLiveTest do
     assert has_element?(ctx.view, "#turns-live .speaker", "@another-person")
     assert has_element?(ctx.view, "#turns-live .workspace-prompt", "<script>alert(1)</script>")
     refute has_element?(ctx.view, "#transcript-turns script")
+  end
+
+  test "attributed prompts show their sender and only what they typed (RAV-86)", ctx do
+    starter = insert_user(login: "starter", github_id: "4242", name: "Sam Starter")
+    attribution = Attribution.commit_block(starter)
+    preview = Previews.Agent.start_marker() <> "\nhidden tools\n" <> Previews.Agent.end_marker()
+
+    page =
+      Transcript.page(
+        [
+          opened(
+            1,
+            "attributed",
+            attribution <> "\n\n" <> PromptQueue.with_author("teammate", "Fix **it**")
+          ),
+          opened(
+            2,
+            "previewed",
+            Enum.join(
+              [preview, attribution, PromptQueue.with_author("teammate", "Start the preview")],
+              "\n\n"
+            )
+          ),
+          opened(3, "solo", attribution <> "\n\nMy own track"),
+          opened(4, "legacy", "A message without author metadata")
+        ],
+        "claude"
+      )
+
+    stub(Tracks, :events, fn _, _, _thread_opts -> {:ok, page} end)
+    render_click(ctx.view, "retry-load")
+    render_async(ctx.view)
+
+    assert has_element?(ctx.view, "#turns-attributed .speaker", "@teammate")
+    assert has_element?(ctx.view, "#turns-attributed .workspace-prompt strong", "it")
+    assert has_element?(ctx.view, "#turns-previewed .speaker", "@teammate")
+    assert has_element?(ctx.view, "#turns-previewed .workspace-prompt", "Start the preview")
+    assert has_element?(ctx.view, "#turns-solo .speaker", "User")
+    assert has_element?(ctx.view, "#turns-solo .workspace-prompt", "My own track")
+    assert has_element?(ctx.view, "#turns-legacy .speaker", "User")
+
+    assert has_element?(
+             ctx.view,
+             "#turns-legacy .workspace-prompt",
+             "A message without author metadata"
+           )
+
+    html = render(ctx.view)
+
+    for hidden <- ["[ravix commit attribution]", "noreply", "Co-authored-by", "hidden tools"],
+        do: refute(html =~ hidden)
+
+    [start | events] = Ravix.AgentOutageFixture.events("outage")
+    delivered = attribution <> "\n\n" <> PromptQueue.with_author("teammate", "Fix the outage")
+    start = Map.put(start, "blocks", [%{"kind" => "prompt", "body" => delivered}])
+    stub(Tracks, :events, fn _, _, _ -> {:ok, Transcript.page([start | events], "codex")} end)
+    render_click(ctx.view, "retry-load")
+    render_async(ctx.view)
+
+    ctx.view |> element("button[phx-click=retry-turn]", "Retry message") |> render_click()
+    assert_push_event(ctx.view, "composer:retry", %{text: "Fix the outage", images: false})
   end
 
   test "prompts render as markdown, in the transcript and the queue, escaping raw html", ctx do
