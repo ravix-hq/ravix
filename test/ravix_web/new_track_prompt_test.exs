@@ -7,7 +7,7 @@ defmodule RavixWeb.NewTrackPromptTest do
   import Mimic
   alias Ravix.Fountain.Client
   alias Ravix.{PromptQueue, Repo, Tracks}
-  alias Ravix.Tracks.{Track, Transcript}
+  alias Ravix.Tracks.{Files, Track, Transcript}
   alias RavixWeb.Live.Guard
 
   setup :verify_on_exit!
@@ -78,7 +78,9 @@ defmodule RavixWeb.NewTrackPromptTest do
     assert item.status == :queued
 
     child = find_live_child(ctx.view, "track-host")
-    render_async(child, 1_000)
+    # As track_live_test's `settle/1`: shared CI load can exceed a short wait.
+    render_async(child, 5_000)
+    render_async(child, 5_000)
     assert has_element?(child, ".workspace-queue", "Fix the flaky login test")
     assert has_element?(child, ".workspace-queue .chip", "Waiting")
     assert has_element?(child, "#track-setup-status", "Prompts will wait until setup is ready.")
@@ -196,6 +198,12 @@ defmodule RavixWeb.NewTrackPromptTest do
     stub(Tracks, :follow, fn _, _, _ -> {:ok, self()} end)
     stub(Tracks, :beat, fn _, _, _ -> :ok end)
     stub(Tracks, :mark_read, fn _, _, _ -> :ok end)
+
+    # The Files panel loads with the page; without this it would ask the
+    # (fake-hosted) provider for a listing and wait on the network.
+    stub(Tracks, :files, fn _, _, path ->
+      {:ok, %Files.Listing{path: path || "/", truncated: false, entries: []}}
+    end)
   end
 
   defp age_session_guard(state) do
