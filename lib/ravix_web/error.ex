@@ -33,7 +33,8 @@ defmodule RavixWeb.Error do
     * `:unauthenticated` is 401 `unauthenticated`; `:reauthenticate` and
       `:no_token` (from `Ravix.Accounts.user_token/1`) are 401 `reauthenticate`.
     * `{:forbidden, message}` is 403 `owner_only`.
-    * `{:conflict, code, message}` is 409; `{:unprocessable, code, message}` is 422.
+    * `{:conflict, code, message}` is 409; `{:unprocessable, code, message}` is 422;
+      `{:not_found, code, message}` is 404 with its own code and sentence.
     * `{:link_conflict, %Ravix.Accounts.Inference.Conflict{}}` is 422
       `link_failed` with the conflict's own sentence.
     * `{:unavailable, message}` is 503 `unavailable`; `{:unavailable, code, message}`
@@ -121,6 +122,9 @@ defmodule RavixWeb.Error do
 
   def from({:conflict, code, message}, _opts),
     do: %__MODULE__{status: 409, code: to_string(code), message: message}
+
+  def from({:not_found, code, message}, _opts) when is_binary(message),
+    do: %__MODULE__{status: 404, code: to_string(code), message: message}
 
   def from({:unprocessable, code, message}, _opts),
     do: %__MODULE__{status: 422, code: to_string(code), message: message}

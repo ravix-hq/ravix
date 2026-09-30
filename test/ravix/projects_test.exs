@@ -2039,6 +2039,296 @@ defmodule Ravix.ProjectsTest do
     end
   end
 
+  # ── RAV-76 ────────────────────────────────────────────────────────────
+
+  describe "change_repository/3" do
+    setup do
+      owner = person("owner", "owner-token")
+
+      project =
+        blank_project(owner,
+          repo_full_name: "owner/old",
+          installation_id: 1,
+          default_branch: "main",
+          repo_private: true,
+          instructions: "Be brief."
+        )
+
+      Ravix.Hub.subscribe(project.id)
+      %{owner: owner, project: project}
+    end
+
+    # The owner's one installation, granting `repos`.
+    defp readable(repos) do
+      github([
+        {"GET", "/user/installations", %{installations: [%{id: 1, account: %{login: "owner"}}]}},
+        repositories_route(1, repos)
+      ])
+    end
+
+    defp rebuild_script(agent \\ "a") do
+      [
+        {%{method: "GET", path: "/api/conversations", query: %{agent_id: agent}},
+         {200, [], %{data: []}}},
+        {%{method: "DELETE", path: "/api/agents/#{agent}"}, {204, [], nil}},
+        {%{method: "GET", path: "/api/catalog"}, {200, [], %{data: @catalog}}},
+        {%{method: "POST", path: "/api/agents"}, {201, [], %{data: %{id: "new-agent"}}}}
+      ]
+    end
+
+    test "repoints the clone, rebuilds and closes the tracks; keeps settings, secrets and members",
+         ctx do
+      %{owner: owner, project: project} = ctx
+      test_pid = self()
+      member = person("member")
+      insert_project_member(project, member)
+      track = insert_track(project: project, id: "t", slug: "t")
+      readable([repo("owner/new", private: false, default_branch: "trunk") |> Map.put(:id, 42)])
+      quiet_peers()
+
+      stub(Ravix.Tracks, :close_all_for_rebuild, fn %Project{} = changed, reason ->
+        send(test_pid, {:closed_all, changed.repo_full_name, reason})
+        :ok
+      end)
+
+      client =
+        fountain(
+          [
+            {%{method: "PUT", path: "/api/environments/e"}, {200, [], %{data: %{id: "e"}}}}
+          ] ++ rebuild_script()
+        )
+
+      assert {:ok, %Rebuild{removed: ["agent"], failed: []}} =
+               Projects.change_repository(owner, project.id, " Owner/New ")
+
+      assert %Project{
+               repo_full_name: "owner/new",
+               normalized_repo_full_name: "owner/new",
+               repo_private: false,
+               default_branch: "trunk",
+               installation_id: 1,
+               github_repo_id: 42,
+               agent_id: "new-agent",
+               environment_id: "e",
+               vault_id: "v",
+               instructions: "Be brief."
+             } = Repo.get!(Project, project.id)
+
+      # Only the clone changes: the setup script, packages, variables and
+      # secrets are not in the patch, and no secret is written or removed.
+      assert body_of(client, "PUT", "/api/environments/e") == %{
+               "repositories" => [
+                 %{
+                   "url" => "https://github.com/owner/new.git",
+                   "mount_path" => Ravix.Ids.mount_path_for("owner/new"),
+                   "secret_key" => @clone
+                 }
+               ]
+             }
+
+      refute Enum.any?(requests(client), fn {_, path} -> path =~ "/secrets" end)
+
+      # The new agent is told where the new clone is.
+      system = body_of(client, "POST", "/api/agents")["system"]
+      assert system =~ Ravix.Ids.mount_path_for("owner/new")
+      assert system =~ "Be brief."
+
+      assert_received {:closed_all, "owner/new", :rebuild}
+      assert_received {:hub, %Event{name: :settings, project_id: "p"}}
+      assert_received {:hub, %Event{name: :tracks, project_id: "p"}}
+
+      assert Repo.get_by!(Ravix.Projects.ProjectMember, project_id: project.id).user_id ==
+               member.id
+
+      assert Repo.get!(Ravix.Tracks.Track, track.id).project_id == project.id
+    end
+
+    test "a scratch project can be given a repository", ctx do
+      owner = ctx.owner
+      scratch = blank_project(owner, id: "s", name: "Scratch")
+      readable([repo("owner/new")])
+      quiet_peers()
+
+      client =
+        fountain(
+          [{%{method: "PUT", path: "/api/environments/e"}, {200, [], %{data: %{id: "e"}}}}] ++
+            rebuild_script()
+        )
+
+      assert {:ok, %Rebuild{}} = Projects.change_repository(owner, scratch.id, "owner/new")
+      assert %Project{repo_full_name: "owner/new", installation_id: 1} = Repo.get!(Project, "s")
+      assert [_] = body_of(client, "PUT", "/api/environments/e")["repositories"]
+    end
+
+    test "a repository the App cannot read is refused before anything is written", ctx do
+      readable([repo("owner/other")])
+      client = fountain()
+
+      assert {:error, {:not_found, "repo_not_readable", message}} =
+               Projects.change_repository(ctx.owner, ctx.project.id, "owner/secret")
+
+      assert message =~ "cannot read that repository"
+
+      # No installation at all is the same answer.
+      github([{"GET", "/user/installations", %{installations: []}}])
+
+      assert {:error, {:not_found, "repo_not_readable", _}} =
+               Projects.change_repository(ctx.owner, ctx.project.id, "owner/secret")
+
+      assert requests(client) == []
+      assert Repo.get!(Project, ctx.project.id).repo_full_name == "owner/old"
+      refute_received {:hub, _}
+    end
+
+    test "a name that is not owner/name, or the repository it already has, is refused", ctx do
+      no_github()
+      client = fountain()
+
+      for bad <- [nil, "", "owner", "owner/new/extra", "../etc/passwd", "owner/ new"] do
+        assert {:error, {:unprocessable, "invalid_repo", _}} =
+                 Projects.change_repository(ctx.owner, ctx.project.id, bad)
+      end
+
+      assert {:error, {:conflict, "same_repo", _}} =
+               Projects.change_repository(ctx.owner, ctx.project.id, "OWNER/old")
+
+      assert requests(client) == []
+    end
+
+    test "nobody but the owner, and nobody with another project's id", ctx do
+      no_github()
+      client = fountain()
+      member = person("member")
+      insert_project_member(ctx.project, member, role: :admin)
+      stranger = person("stranger", "stranger-token")
+
+      for user <- [member, stranger] do
+        assert {:error, :not_found} =
+                 Projects.change_repository(user, ctx.project.id, "owner/new")
+
+        assert {:error, :not_found} = Projects.repository_choices(user, ctx.project.id)
+      end
+
+      assert {:error, :not_found} = Projects.change_repository(ctx.owner, "nope", "owner/new")
+      assert requests(client) == []
+      assert Repo.get!(Project, ctx.project.id).repo_full_name == "owner/old"
+    end
+
+    test "Fountain refusing the new clone puts the row back", ctx do
+      readable([repo("owner/new")])
+      reject(&Ravix.Tracks.close_all_for_rebuild/2)
+
+      fountain([
+        {%{method: "PUT", path: "/api/environments/e"}, {500, [], %{error: "nope"}}}
+      ])
+
+      assert {:error, %Ravix.Fountain.Error{status: 500}} =
+               Projects.change_repository(ctx.owner, ctx.project.id, "owner/new")
+
+      assert %Project{
+               repo_full_name: "owner/old",
+               normalized_repo_full_name: "owner/old",
+               repo_private: true,
+               default_branch: "main",
+               installation_id: 1,
+               agent_id: "a"
+             } = Repo.get!(Project, ctx.project.id)
+
+      refute_received {:hub, _}
+    end
+
+    test "a rebuild that fails after the change says the repository changed", ctx do
+      readable([repo("owner/new")])
+      quiet_peers()
+
+      fountain([
+        {%{method: "PUT", path: "/api/environments/e"}, {200, [], %{data: %{id: "e"}}}},
+        {%{method: "GET", path: "/api/conversations"}, {200, [], %{data: []}}},
+        {%{method: "DELETE", path: "/api/agents/a"}, {500, [], %{error: "nope"}}}
+      ])
+
+      assert {:error, {:not_rebuilt, %Ravix.Fountain.Error{status: 500}}} =
+               Projects.change_repository(ctx.owner, ctx.project.id, "owner/new")
+
+      assert %Project{repo_full_name: "owner/new", agent_id: "a"} =
+               Repo.get!(Project, ctx.project.id)
+
+      assert_received {:hub, %Event{name: :settings}}
+    end
+
+    test "tracks with machines of their own are refused before anything is written", ctx do
+      readable([repo("owner/new")])
+      client = fountain()
+
+      insert_track(project: ctx.project, id: "d", slug: "d", sandbox_layout: :dedicated)
+
+      assert {:error, {:conflict, "dedicated_lifecycle_pending", _}} =
+               Projects.change_repository(ctx.owner, ctx.project.id, "owner/new")
+
+      # On the maintenance path, open ones.
+      stub(Ravix.Config, :dedicated_opens_enabled?, fn _ -> true end)
+
+      assert {:error, {:conflict, "dedicated_tracks_open", _}} =
+               Projects.change_repository(ctx.owner, ctx.project.id, "owner/new")
+
+      assert requests(client) == []
+      assert Repo.get!(Project, ctx.project.id).repo_full_name == "owner/old"
+    end
+
+    test "on the maintenance path the shared machine is retired and the agents told", ctx do
+      readable([repo("owner/new")])
+      stub(Ravix.Config, :dedicated_opens_enabled?, fn _ -> true end)
+      test_pid = self()
+
+      Repo.insert!(%Ravix.Projects.RuntimeAgent{
+        project_id: ctx.project.id,
+        runtime: "codex",
+        agent_id: "codex-agent"
+      })
+
+      stub(Ravix.Projects.Deletion, :retire_shared, fn %Project{} = changed, _client ->
+        send(test_pid, {:retired, changed.repo_full_name})
+        {:ok, %Rebuild{removed: ["shared machine"], failed: []}}
+      end)
+
+      path = Ravix.Ids.mount_path_for("owner/new")
+
+      client =
+        fountain([
+          {%{method: "PUT", path: "/api/environments/e"}, {200, [], %{data: %{id: "e"}}}},
+          {%{method: "PUT", path: "/api/agents/a"}, {200, [], %{data: %{id: "a"}}}},
+          {%{method: "PUT", path: "/api/agents/codex-agent"},
+           {200, [], %{data: %{id: "codex-agent"}}}}
+        ])
+
+      assert {:ok, %Rebuild{removed: ["shared machine"]}} =
+               Projects.change_repository(ctx.owner, ctx.project.id, "owner/new")
+
+      assert_received {:retired, "owner/new"}
+      assert body_of(client, "PUT", "/api/agents/a")["system"] =~ path
+      assert body_of(client, "PUT", "/api/agents/codex-agent")["system"] =~ path
+      assert Repo.get!(Project, ctx.project.id).agent_id == "a"
+    end
+  end
+
+  describe "repository_choices/2" do
+    test "the owner's installations' repositories, without the current one" do
+      owner = person("owner", "owner-token")
+      project = blank_project(owner, repo_full_name: "owner/old", installation_id: 1)
+
+      github([
+        {"GET", "/user/installations",
+         %{
+           installations: [%{id: 1, account: %{login: "owner"}}, %{id: 2, account: %{login: "o"}}]
+         }},
+        repositories_route(1, [repo("owner/old"), repo("owner/new")]),
+        {"GET", "/user/installations/2/repositories", {500, %{message: "down"}}}
+      ])
+
+      assert {:ok, ["owner/new"]} = Projects.repository_choices(owner, project.id)
+    end
+  end
+
   describe "destroy/2" do
     test "the machine, its settings and its secrets; the row archived", _ctx do
       quiet_peers()
