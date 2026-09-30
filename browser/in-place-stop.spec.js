@@ -52,7 +52,7 @@ test('Stop replaces send in place while the agent works, without resizing the co
   const model = page.locator('#model-trigger');
   if (await model.count()) {
     await expect(model).toBeDisabled();
-    await expect(model).toHaveAttribute('title', /can't change while the agent is working/);
+    await expect(model).toHaveAttribute('title', /\nCan't change while the agent is working$/);
     expect(Number(await model.evaluate(el => getComputedStyle(el).opacity))).toBe(1);
   }
 

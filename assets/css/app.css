@@ -1104,6 +1104,10 @@ html[data-yard="closed"] .workspace-trigger-skeleton { flex: none; width: 28px; 
 .composer-box:has(.composer-stop):has(textarea:placeholder-shown):not(:has(.workspace-upload, [phx-click="clear-attachments"])) .composer-send {
   display: none;
 }
+/* Both buttons need the room the shortcut hint takes, and the model's name
+   gives way before the row wraps and the composer grows a line. */
+.workspace-actions:has(.composer-stop) .composer-shortcut { display: none; }
+.workspace-composer .model-trigger { min-width: 0; }
 /* Ask agent / Comment. In Comment mode the box takes the warning colour, so
    nobody mistakes a note for people for an instruction to the agent. */
 .composer-mode {

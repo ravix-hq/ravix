@@ -2110,12 +2110,12 @@ defmodule RavixWeb.TrackLiveTest do
 
       assert has_element?(
                ctx.view,
-               "#model-trigger[title$=\"(can't change while the agent is working)\"]"
+               "#model-trigger[title*=\"Can't change while the agent is working\"]"
              )
 
       ctx.serve.(:ready, nil)
       refute has_element?(ctx.view, "#model-trigger[data-busy]")
-      refute render(ctx.view) =~ "can&#39;t change while the agent"
+      refute render(ctx.view) =~ "change while the agent is working"
 
       html =
         render_component(&RavixWeb.TrackLive.model_menu/1,
