@@ -683,7 +683,7 @@ async function act(prompt: string, emit: Emit, say: Say, conv: Conv, disk: Disk,
       sessionUpdate: "tool_call_update", toolCallId: "w1", rawInput: { file_path: file, content: body }, title: "Write src/lib/day.ts", kind: "edit",
       content: [{ type: "diff", path: file, oldText: null, newText: body }], locations: [{ path: file }],
     }));
-    out(acp({ sessionUpdate: "tool_call_update", toolCallId: "w1", status: "completed" }));
+    out(toolDone("w1", `File created successfully at: ${file} (file state is current in your context — no need to Read it back)`));
     const command = `cd ${home} && bun test src/lib/day.test.ts --reporter=verbose`;
     out(acp({ sessionUpdate: "tool_call", toolCallId: "b1", name: "Bash", status: "pending", title: "Terminal", kind: "execute", rawInput: {}, content: [] }));
     await step();

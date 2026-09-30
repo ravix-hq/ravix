@@ -60,10 +60,20 @@ test('streamed Write and Bash rows finish with their path and command, and outpu
   // line of it is inside the transcript: wrapped, or scrolled within its box.
   await tools.nth(0).locator('summary').click();
   await expect(tools.nth(0).locator('.tool-body')).toContainText('export const localDay');
+  await expect(tools.nth(0).locator('pre.tool-output')).toHaveText(/^File created successfully at: src\/lib\/day\.ts /);
+  await expect(tools.nth(0).locator('.tool-body')).not.toContainText('/home/sprite/work');
+  if (process.env.RAV92_OPEN_SHOT) {
+    await page.setViewportSize({ width: 1100, height: 1500 });
+    await tools.nth(1).locator('summary').click();
+    await turn.screenshot({ path: process.env.RAV92_OPEN_SHOT });
+    await tools.nth(1).locator('summary').click();
+    await page.setViewportSize({ width: 1100, height: 900 });
+  }
   await tools.nth(0).locator('summary').click();
   await tools.nth(1).locator('summary').click();
   const output = tools.nth(1).locator('pre.tool-output');
   await expect(output).toContainText('spring-forward transition');
+  await expect(tools.nth(1).locator('.tool-body')).not.toContainText('/home/sprite/work');
   const box = await output.boundingBox();
   const column = await turn.boundingBox();
   expect(box.x + box.width).toBeLessThanOrEqual(column.x + column.width + 1);
