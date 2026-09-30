@@ -64,6 +64,25 @@ defmodule RavixWeb.Live.ToolCall do
   @spec icon_name(Tool.t()) :: String.t()
   def icon_name(%Tool{} = tool), do: tool |> identify() |> elem(1)
 
+  # The kinds a turn's folded line shows, as an icon and the word read out in
+  # its place. Edit and Write share a pencil there: at that size the line
+  # says what sort of work happened, not which call did it. Anything else,
+  # a wrench included, would be noise on a line meant to be glanced at.
+  @summary_kinds %{
+    execute: {"terminal", "shell"},
+    read: {"file", "read"},
+    edit: {"pencil", "edit"},
+    search: {"search", "search"},
+    fetch: {"globe", "web"}
+  }
+
+  @doc """
+  The call's kind as a turn's folded line shows it, `{icon, word}`, or nil
+  for a kind that line leaves out. Classified as the row itself is.
+  """
+  @spec summary_kind(Tool.t()) :: {String.t(), String.t()} | nil
+  def summary_kind(%Tool{} = tool), do: Map.get(@summary_kinds, shape(tool))
+
   defp identify(%Tool{name: name} = tool) do
     case shape(tool) do
       :edit ->

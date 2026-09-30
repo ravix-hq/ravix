@@ -1,7 +1,7 @@
 ---
 type: ADR
 title: "Read, Write and Admin roles on track and project memberships"
-description: "Each track seat and project membership carries a role -- Read (see the transcript and preview), Write (also prompt, use the machine, commit) or Admin (also manage people) -- enforced at the context doors in Ravix.Accounts.Access, added expand/contract with NULL read as Write. Unbuilt: roles on workspace grants and pending invitations, a per-track general-access role, and the contract migration."
+description: "Each track seat and project membership carries a role -- Read (see the transcript and preview), Write (also prompt, use the machine, commit) or Admin (also manage people) -- enforced at the context doors in Ravix.Accounts.Access, added expand/contract with NULL read as Write. Amended by RAV-75: the nearest grant decides (owner > direct > project > workspace), so a direct grant may lower a workspace member's role. Unbuilt: roles on permission rows and pending invitations, a per-track general-access role, and the contract migration."
 tags: [access, sharing, people, migrations]
 status: stable
 adr: "0010"
@@ -12,6 +12,58 @@ stale_after: 2026-11-30
 ---
 
 # 0010 — Read, Write and Admin roles on track and project memberships
+
+## Addendum 2026-09-30 — the nearest grant decides (RAV-75)
+
+RAV-38 kept the two role ladders (ADR 0009's Owner / Admin / Member on a
+workspace, this ADR's Read / Write / Admin on projects and tracks) and
+chose to **show inheritance** rather than merge them. RAV-75 does that, and
+it changes one rule below: *"on a track reached by more than one grant, the
+highest applies"* is replaced by **precedence**.
+
+- **Project:** owner > direct > workspace. The owner is always Admin. A
+  direct grant (a `project_members` row) decides the level whether it is
+  higher or lower than the workspace's default (Write). With neither, a
+  live member of the project's workspace has Write.
+- **Track:** owner (or a private track's creator) > direct (a seat or a
+  permission row on this track; the higher of the two if somebody holds
+  both) > project (a direct project grant, on a project-visible track) >
+  workspace (Write, on a project-visible track).
+- The first tier that names somebody decides. Nothing below it is
+  consulted, so a lower grant nearer the unit is not "lifted" by a wider
+  one.
+
+**Why lowering is allowed.** Without it an admin has no way to show a
+workspace member the work without also handing them the machine: the
+workspace's Write would always win, and "Give a different role" could only
+ever promote. A direct grant is a deliberate act by a project admin about
+one person and one project, so it is the better-informed statement; the
+workspace default is a statement about everybody. Removing the direct
+grant falls back to the workspace's level. The owner's level cannot be
+lowered, and nobody changes their own.
+
+**Where it is enforced.** `Ravix.Accounts.Access.project_access/2` and
+`track_access/2` compute the level from one pure rule, and
+`project_people/2` and `track_people/2` list everyone who reaches a unit as
+`{user, level, source}` by the same rule, so the People and Share dialogs
+cannot show a level the doors would not give. Every enforcement point
+listed under *What is enforced* -- prompts (web, MCP, queue delivery),
+commands and the terminal, commits and pushes, the preview, track and
+schedule creation, people management -- reaches one of those doors;
+settings stay the owner's through `project_of/2`.
+
+**Storage.** No migration. A direct grant for a workspace member is a
+`project_members` row with a role, written without deleting their track
+seats (ADR 0009 stops that on workspace projects). Removing it from a
+workspace member deletes only that row; removing somebody from the
+workspace (`Ravix.Workspaces.Store.revoke_membership/3`) also deletes their
+project grants in the workspace's projects, so a direct Read cannot
+outlive the membership it overrode. A grant racing that removal waits on
+the membership lock, as a permission row does.
+
+**Changed behaviour.** A project Admin who also holds a Read seat on a
+project-visible track now has Read there (it was Admin). Promotion to a
+legacy project deletes such seats, so this is rare outside old data.
 
 **Status:** Accepted (RAV-53). The expand migration, the role-aware
 `Ravix.Accounts.Access`, enforcement at the doors listed under *What is
@@ -89,10 +141,10 @@ Each grant applies to its own unit and no further:
   needs Write; managing the project's people needs Admin) and to every
   **project-visible** track. It says nothing about a private track, which
   admits only its creator and its seats, whatever the project role.
-- On a track reached by more than one grant, the **highest** applies: a
-  project Read member with a Write seat on a project-visible track writes
-  there. (Promotion to the project already deletes narrower seats on
-  project-visible tracks, so this is the rare case.)
+- On a track reached by more than one grant, the **nearest** applies
+  (amended by RAV-75, see the addendum; this said *highest*): a project
+  Read member with a Write seat on a project-visible track writes there,
+  and a project Write member with a Read seat reads there.
 - Workspace grants (ADR 0009 -- live workspace membership, permission rows
   on private tracks) predate roles and work as **Write**.
 
@@ -188,8 +240,9 @@ reloads.
 
 ## Not yet built
 
-- Roles on workspace grants and permission rows (ADR 0009), and in its
-  Share dialog; those grants work as Write.
+- Roles on permission rows (ADR 0009) and in its Share dialog; those work
+  as Write. A workspace member's project role can be overridden by a direct
+  grant (RAV-75); the workspace's own default is still Write.
 - Roles on pending invitations: an invitation is claimed at Write, and the
   role is set once the person has signed in.
 - A per-track general-access role (see above).

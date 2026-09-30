@@ -17,7 +17,8 @@ defmodule Ravix.Accounts.ProjectAccess do
 
   `level` is what the caller may do across the project (ADR 0010): the owner
   is `:admin`, a project member has their membership's role, and a
-  workspace member works as `:write`.
+  workspace member works as `:write` unless a membership says otherwise
+  (RAV-75: the direct grant decides, lower or higher).
   """
 
   alias Ravix.Accounts.Access

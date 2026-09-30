@@ -17,6 +17,10 @@ defmodule Ravix.People.Person do
   a permission row on a private one. Neither is the track dialog's to
   remove: the first is the workspace's, the second the creator's sharing.
 
+  On a project's list (RAV-75) `source` says where `role` comes from, and
+  `fallback` is set on a direct grant held by a member of the project's
+  workspace: the level they fall back to when that grant is removed.
+
   Every entry carries one of these values, so a page never has to infer which
   by the absence of a key. `@enforce_keys` covers `via` as well, which is
   what makes that a property rather than a convention: the list used to be
@@ -40,15 +44,24 @@ defmodule Ravix.People.Person do
   @typedoc "How this person comes to be in the list."
   @type via :: :owner | :creator | :project | :workspace | :track | :shared | :pending
 
+  @typedoc """
+  Where `role` comes from, as `Ravix.Accounts.Access.project_people/2`
+  decides it (RAV-75): the owner, a direct grant, or the workspace's
+  default. Nil on lists that do not say.
+  """
+  @type source :: Ravix.Accounts.Access.source() | nil
+
   @enforce_keys [:login, :name, :avatar_url, :via]
-  defstruct @enforce_keys ++ [role: nil]
+  defstruct @enforce_keys ++ [role: nil, source: nil, fallback: nil]
 
   @type t :: %__MODULE__{
           login: String.t(),
           name: String.t() | nil,
           avatar_url: String.t() | nil,
           via: via(),
-          role: role() | nil
+          role: role() | nil,
+          source: source(),
+          fallback: role() | nil
         }
 
   @doc "A profile, or the user row behind one, placed in a list by `via`."

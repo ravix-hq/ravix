@@ -49,7 +49,6 @@ defmodule RavixWeb.Live.MachineDock do
   alias Ravix.Terminal
   alias Ravix.Terminal.Tab
   alias Ravix.Tracks
-  alias Ravix.Tracks.MachineState
   alias Ravix.Vitals
   alias RavixWeb.Live.Hooks
 
@@ -80,8 +79,6 @@ defmodule RavixWeb.Live.MachineDock do
        dock_open: false,
        output: [],
        exec_busy: false,
-       machine_status: nil,
-       machine: nil,
        vitals: nil,
        vitals_busy?: false,
        # This person's terminal tabs on the track, each with what the page
@@ -92,11 +89,7 @@ defmodule RavixWeb.Live.MachineDock do
        shell_waking?: false,
        # Whether this person may open a shell (Write, ADR 0010). Hiding the
        # button is courtesy; `Ravix.Terminal` refuses a Read member anyway.
-       can_write: true,
-       # Whether the inspector above is already saying what the machine is
-       # doing (asleep, or the setup step). The status line then says only
-       # the word, so a screen says the state once.
-       said: false
+       can_write: true
      )}
   end
 
@@ -145,9 +138,9 @@ defmodule RavixWeb.Live.MachineDock do
           cwd: socket.assigns.workdir,
           output: [],
           vitals: nil,
-          machine_status: nil,
           exec_busy: false
         )
+        |> probe(nil)
         |> load_shells()
         |> scoped_async(:machine_status, fn ->
           Terminal.status(user, id, passive: true)
@@ -442,9 +435,9 @@ defmodule RavixWeb.Live.MachineDock do
              exec_busy: false,
              vitals_busy?: false,
              output: [],
-             vitals: nil,
-             machine_status: nil
-           )}
+             vitals: nil
+           )
+           |> probe(nil)}
       end
     end)
   end
@@ -459,10 +452,10 @@ defmodule RavixWeb.Live.MachineDock do
   end
 
   defp receive_async(:machine_status, {:ok, {:ok, status}}, socket),
-    do: {:noreply, assign(socket, machine_status: status)}
+    do: {:noreply, probe(socket, status)}
 
   defp receive_async(:machine_status, _, socket),
-    do: {:noreply, assign(socket, machine_status: :unavailable)}
+    do: {:noreply, probe(socket, :unavailable)}
 
   defp receive_async(:shell_wake, {:ok, :ok}, socket), do: {:noreply, woke(socket)}
   defp receive_async(:shell_wake, _, socket), do: {:noreply, still_asleep(socket)}
@@ -485,6 +478,14 @@ defmodule RavixWeb.Live.MachineDock do
 
   defp receive_async(:exec, {:exit, reason}, socket),
     do: {:noreply, socket |> assign(exec_busy: false) |> exit(reason)}
+
+  # The probe's answer belongs to the header's machine chip, which is the
+  # page's, not this strip's. A component runs in its page's process, so the
+  # page hears it as a message; see `RavixWeb.TrackLive.handle_info/2`.
+  defp probe(socket, status) do
+    send(self(), {:machine_probe, socket.assigns.track_id, status})
+    socket
+  end
 
   # Why there is nothing to show, in words. `Vitals` answers with an atom so
   # that nothing past it has to parse a sentence; this is where the atom
@@ -526,49 +527,10 @@ defmodule RavixWeb.Live.MachineDock do
   # Waking and asleep are the pane's whole content (`<.empty>`), not a line.
   defp shell_status(_ready_waking_or_asleep), do: nil
 
-  # The status line, in the words the header chip and the sidebar use
-  # (`Ravix.Tracks.MachineState`), qualified only where the terminal's own
-  # probe knows something the track does not: that this deployment cannot
-  # reach machines at all, or that there is no machine yet.
-  defp machine_status(%Terminal.Status{why: :no_machine}, _machine),
-    do: "No machine is available yet."
-
-  defp machine_status(%Terminal.Status{why: :no_token}, _machine),
-    do: "Machine status is unavailable because the machine connection is not configured."
-
-  defp machine_status(%Terminal.Status{why: why}, %{state: :idle})
-       when why in [:no_sprite, :unreachable],
-       do: "Idle. The machine did not answer just now; your next message wakes it."
-
-  # The probe itself failed: that says nothing about the machine.
-  defp machine_status(:unavailable, _machine),
-    do: "Machine status is unavailable. Try again later."
-
-  # The probe found it running, so a stale Asleep (the row is cleared on the
-  # way) must not say otherwise.
-  defp machine_status(%Terminal.Status{available: true}, %{state: :asleep}), do: "Idle."
-
-  defp machine_status(_status, nil), do: "Checking machine status…"
-  defp machine_status(_status, %{state: state, detail: nil}), do: "#{MachineState.label(state)}."
-
-  defp machine_status(_status, %{state: state, detail: detail}),
-    do: "#{MachineState.label(state)}. #{detail}"
-
-  # The inspector is already saying the rest.
-  defp machine_status(_status, %{state: state}, true)
-       when state in [:asleep, :starting, :restarting],
-       do: "#{MachineState.label(state)}."
-
-  defp machine_status(status, machine, _said), do: machine_status(status, machine)
-
   @impl true
   def render(assigns) do
     ~H"""
-    <div class={["machine-dock-host", @said && "dock-compact"]}>
-      <p id="track-machine-label">{machine_label(@machine_identity)}</p>
-      <p id="track-machine-status" role="status">
-        {machine_status(@machine_status, @machine, @said)}
-      </p>
+    <div class="machine-dock-host">
       <nav class="workspace-tabs dock-tabs" aria-label="Machine panels">
         <button
           class="ghost dock-toggle"
@@ -635,7 +597,7 @@ defmodule RavixWeb.Live.MachineDock do
           phx-target={@myself}
           class="term workspace-terminal"
         >
-          <p id="terminal-machine-label">{machine_label(@machine_identity)}</p>
+          <p id="terminal-machine-label" class="dock-context">{machine_label(@machine_identity)}</p>
           <div class="term-scroll" data-terminal-output>
             <div :for={block <- @output}>
               <strong>$ {block.command}</strong><pre>{block.stdout}</pre><pre class="error">{block.stderr}</pre>
@@ -728,7 +690,7 @@ defmodule RavixWeb.Live.MachineDock do
           </div>
         </div>
         <div :if={@dock == :vitals} class="workspace-panel">
-          <p id="vitals-machine-label">{machine_label(@machine_identity)}</p>
+          <p id="vitals-machine-label" class="dock-context">{machine_label(@machine_identity)}</p>
           <.loading_status :if={@vitals_busy?}>Reading machine metrics…</.loading_status>
           <div :if={!@vitals_busy? && !(@vitals && @vitals.readings)} class="dock-empty">
             <.empty icon="machine" title="No machine stats" because={vitals_reason(@vitals)}>

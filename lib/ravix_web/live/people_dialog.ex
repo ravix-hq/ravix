@@ -20,11 +20,13 @@ defmodule RavixWeb.Live.PeopleDialog do
   separate, including when the person leaves the project.
 
   On a workspace project (`Ravix.People.workspace_sharing?/1`, RAV-32) the
-  project scope lists who is in it and lets them be removed, but offers no
-  invitation and no link: people join the workspace from its members page,
-  linked only for somebody who can open it, and a track is shared from its
-  Share dialog. `Ravix.People` refuses both
-  as well, so hiding them here is the courtesy rather than the boundary.
+  project scope offers no invitation and no link; `Ravix.People` refuses
+  both as well, so hiding them here is the courtesy rather than the
+  boundary. It lists **everyone** who reaches the project instead, each with
+  where their role comes from (RAV-75): the owner, a direct grant, or the
+  workspace's default, under a summary of the three. An admin gives a
+  workspace member a different role, higher or lower, which becomes a
+  direct grant; removing it falls back to the workspace's.
 
   Roles (ADR 0010): each person named on this unit shows a role, Read,
   Write or Admin, and an admin changes it or removes their access from a
@@ -38,7 +40,7 @@ defmodule RavixWeb.Live.PeopleDialog do
   use RavixWeb, :live_component
 
   alias Ravix.Accounts.Access
-  alias Ravix.{People, Workspaces}
+  alias Ravix.People
   alias Ravix.People.Person
 
   @roles [
@@ -59,7 +61,7 @@ defmodule RavixWeb.Live.PeopleDialog do
          invite: nil,
          inviting?: false,
          login: "",
-         workspace_link?: false,
+         base: nil,
          admin?: false,
          url: nil
        )}
@@ -127,6 +129,14 @@ defmodule RavixWeb.Live.PeopleDialog do
      end)}
   end
 
+  # A workspace member's direct role taken away: they fall back to the
+  # workspace's and stay in the project, so the page is not told anybody
+  # left (RAV-75). `People.remove_project/3` only drops the grant for them.
+  def handle_event("clear-role", %{"login" => login}, socket) do
+    %{scope: scope, subject_id: id, current_user: user} = socket.assigns
+    {:noreply, result(socket, remove(scope, user, id, login), &assign(&1, people: &2))}
+  end
+
   def handle_event("set-role", %{"login" => login, "role" => role}, socket) do
     %{scope: scope, subject_id: id, current_user: user} = socket.assigns
 
@@ -162,8 +172,9 @@ defmodule RavixWeb.Live.PeopleDialog do
     socket =
       socket
       |> result(list(scope, user, id), &assign(&1, people: &2))
-      |> assign(workspace_link?: workspace_link?(socket.assigns), admin?: admin?(scope, user, id))
+      |> assign(admin?: admin?(scope, user, id))
       |> result(copy_url(scope, user, id), &assign(&1, url: &2))
+      |> base(socket.assigns)
 
     if socket.assigns.admin? and not socket.assigns.workspace_project?,
       do: result(socket, link(scope, user, id), &assign(&1, invite: &2)),
@@ -206,13 +217,11 @@ defmodule RavixWeb.Live.PeopleDialog do
 
   defp workspace_project?(_assigns), do: false
 
-  # A legacy project member need not belong to the project's workspace, and
-  # its members page answers them not found; the link is only for somebody
-  # the page will open for.
-  defp workspace_link?(%{workspace_project?: true, project: project, current_user: user}),
-    do: match?({:ok, _}, Workspaces.get(user, project.workspace_id))
+  # The summary line's base role: the workspace's, on a workspace project.
+  defp base(socket, %{workspace_project?: true, current_user: user, subject_id: id}),
+    do: result(socket, People.workspace_base(user, id), &assign(&1, base: &2))
 
-  defp workspace_link?(_assigns), do: false
+  defp base(socket, _assigns), do: socket
 
   defp title(:track), do: "Track people"
   defp title(:project), do: "Project people"
@@ -233,6 +242,7 @@ defmodule RavixWeb.Live.PeopleDialog do
   the answer is "they are project members" and the dialog already said so.
   """
   @spec badge(Person.t(), :track | :project) :: String.t() | nil
+  def badge(%Person{source: source}, :project) when not is_nil(source), do: nil
   def badge(%Person{via: :creator}, _scope), do: "creator"
   def badge(%Person{via: :owner}, _scope), do: "owner"
   def badge(%Person{via: :pending}, _scope), do: "invited, not signed in yet"
@@ -255,6 +265,40 @@ defmodule RavixWeb.Live.PeopleDialog do
   defp removable?(%Person{} = person, _scope, admin?, user),
     do: admin? or person.login == user.login
 
+  @doc """
+  Where a person's role on the project comes from, as the row says it
+  (RAV-75): `owner`, `direct`, or `from workspace`. Nil on a list that does
+  not say, a track's among them.
+  """
+  @spec source_label(Person.t()) :: String.t() | nil
+  def source_label(%Person{source: :owner}), do: "owner"
+  def source_label(%Person{source: :direct}), do: "direct"
+  def source_label(%Person{source: :workspace}), do: "from workspace"
+  def source_label(%Person{}), do: nil
+
+  # A workspace member at the workspace's default, whom an admin may give a
+  # different role: that writes a direct grant (`People.set_project_role/4`).
+  defp givable?(%Person{source: :workspace} = person, :project, true, user),
+    do: person.login != user.login
+
+  defp givable?(_person, _scope, _admin?, _user), do: false
+
+  # Taking a direct grant away from a workspace member is not removing them:
+  # they fall back to the workspace's role, and the control says which.
+  defp remove_label(%Person{fallback: level}, _scope, _user) when not is_nil(level),
+    do: "Use workspace role (#{role_label(level)})"
+
+  defp remove_label(person, scope, user),
+    do: if(person.login == user.login, do: leave_label(scope), else: "Remove access")
+
+  defp direct_count(people), do: Enum.count(people, &(&1.source == :direct))
+
+  defp people_count(1), do: "1 person"
+  defp people_count(n), do: "#{n} people"
+
+  defp members_count(1, workspace), do: "1 #{workspace} member gets"
+  defp members_count(n, workspace), do: "#{n} #{workspace} members get"
+
   # Whose role this dialog changes: somebody named on this unit, and not
   # the caller. Everybody else's role is shown and changed where it lives.
   defp role_editable?(%Person{via: :track}, :track, true, _user), do: true
@@ -276,6 +320,78 @@ defmodule RavixWeb.Live.PeopleDialog do
   # Popover ids and anchor names come from a login, which GitHub limits to
   # letters, digits and hyphens.
   defp menu_id(id, login), do: "#{id}-role-menu-#{login}"
+
+  attr :id, :string, required: true
+  attr :person, Person, required: true
+  attr :target, :any, required: true
+  attr :label, :string, default: nil, doc: "the trigger's accessible name, when not its role"
+  slot :trigger, required: true
+  slot :remove
+
+  # The role menu beside a person: their role for somebody with a direct
+  # grant, or "Give a different role" for somebody at the workspace's.
+  defp role_menu(assigns) do
+    ~H"""
+    <button
+      type="button"
+      id={"#{@id}-role-#{@person.login}"}
+      class="ghost role-trigger"
+      popovertarget={menu_id(@id, @person.login)}
+      aria-haspopup="menu"
+      aria-label={@label || "Role for @#{@person.login}: #{role_label(@person.role)}"}
+      style={"anchor-name: --#{menu_id(@id, @person.login)}"}
+    >
+      {render_slot(@trigger)}<.icon name="chevron" size={10} open={true} />
+    </button>
+    <div
+      id={menu_id(@id, @person.login)}
+      class="role-menu"
+      popover
+      role="menu"
+      aria-label={"Role for @#{@person.login}"}
+      style={"position-anchor: --#{menu_id(@id, @person.login)}"}
+    >
+      <button
+        :for={{value, label, hint} <- roles()}
+        type="button"
+        class="account-item role-option"
+        role="menuitemradio"
+        aria-checked={to_string(Atom.to_string(@person.role || :write) == value)}
+        popovertarget={menu_id(@id, @person.login)}
+        popovertargetaction="hide"
+        phx-click="set-role"
+        phx-value-login={@person.login}
+        phx-value-role={value}
+        phx-target={@target}
+      >
+        <span class="role-option-text">
+          <span>{label}</span><small>{hint}</small>
+        </span>
+        <span class="spacer"></span>
+        <span
+          :if={Atom.to_string(@person.role || :write) == value}
+          class="check"
+          aria-hidden="true"
+        >✓</span>
+      </button>
+      <%= if @remove != [] do %>
+        <hr />
+        <button
+          type="button"
+          class="account-item role-option danger"
+          role="menuitem"
+          popovertarget={menu_id(@id, @person.login)}
+          popovertargetaction="hide"
+          phx-click={if @person.fallback, do: "clear-role", else: "remove-person"}
+          phx-value-login={@person.login}
+          phx-target={@target}
+        >
+          {render_slot(@remove)}
+        </button>
+      <% end %>
+    </div>
+    """
+  end
 
   @impl true
   def render(assigns) do
@@ -312,94 +428,65 @@ defmodule RavixWeb.Live.PeopleDialog do
         <p :if={@scope == :track && @track.visibility == :project} class="hint">
           Project members work here with their project role.
         </p>
+        <ul
+          :if={@base && @people}
+          id={"#{@id}-summary"}
+          class="access-summary"
+          aria-label="Access summary"
+        >
+          <li>
+            Base role: <strong>{role_label(@base.level)}</strong> (all {@base.workspace} members)
+          </li>
+          <li>Direct access: <strong>{people_count(direct_count(@people))}</strong></li>
+          <li>
+            Workspace: {members_count(@base.members, @base.workspace)} {role_label(@base.level)} by default
+          </li>
+        </ul>
         <ul class="people-list" aria-label="Members">
-          <li :for={person <- @people} class="people-row">
+          <li :for={person <- @people} id={"#{@id}-person-#{person.login}"} class="people-row">
             <div class="people-identity">
               <span>@{person.login}</span>
               <small :if={badge(person, @scope)}>{badge(person, @scope)}</small>
             </div>
-            <%= if editable?(person, @scope, @admin?, @current_user) do %>
-              <button
-                type="button"
-                id={"#{@id}-role-#{person.login}"}
-                class="ghost role-trigger"
-                popovertarget={menu_id(@id, person.login)}
-                aria-haspopup="menu"
-                aria-label={"Role for @#{person.login}: #{role_label(person.role)}"}
-                style={"anchor-name: --#{menu_id(@id, person.login)}"}
-              >
-                {role_label(person.role)}<.icon name="chevron" size={10} open={true} />
-              </button>
-              <div
-                id={menu_id(@id, person.login)}
-                class="role-menu"
-                popover
-                role="menu"
-                aria-label={"Role for @#{person.login}"}
-                style={"position-anchor: --#{menu_id(@id, person.login)}"}
-              >
-                <button
-                  :for={{value, label, hint} <- roles()}
-                  type="button"
-                  class="account-item role-option"
-                  role="menuitemradio"
-                  aria-checked={to_string(Atom.to_string(person.role || :write) == value)}
-                  popovertarget={menu_id(@id, person.login)}
-                  popovertargetaction="hide"
-                  phx-click="set-role"
-                  phx-value-login={person.login}
-                  phx-value-role={value}
-                  phx-target={@myself}
+            <%= cond do %>
+              <% editable?(person, @scope, @admin?, @current_user) -> %>
+                <.role_menu id={@id} person={person} target={@myself}>
+                  <:trigger>{role_label(person.role)}</:trigger>
+                  <:remove>{remove_label(person, @scope, @current_user)}</:remove>
+                </.role_menu>
+                <span :if={source_label(person)} class="people-source">
+                  · {source_label(person)}
+                </span>
+              <% givable?(person, @scope, @admin?, @current_user) -> %>
+                <span class="role-label">{role_label(person.role)}</span>
+                <span class="people-source">· {source_label(person)}</span>
+                <.role_menu
+                  id={@id}
+                  person={person}
+                  target={@myself}
+                  label={"Give @#{person.login} a different role"}
                 >
-                  <span class="role-option-text">
-                    <span>{label}</span><small>{hint}</small>
-                  </span>
-                  <span class="spacer"></span>
-                  <span
-                    :if={Atom.to_string(person.role || :write) == value}
-                    class="check"
-                    aria-hidden="true"
-                  >✓</span>
-                </button>
-                <hr />
+                  <:trigger>Give a different role</:trigger>
+                </.role_menu>
+              <% true -> %>
+                <span :if={person.role} class="role-label dim">{role_label(person.role)}</span>
+                <span :if={source_label(person)} class="people-source">
+                  · {source_label(person)}
+                </span>
                 <button
-                  type="button"
-                  class="account-item role-option danger"
-                  role="menuitem"
-                  popovertarget={menu_id(@id, person.login)}
-                  popovertargetaction="hide"
-                  phx-click="remove-person"
+                  :if={removable?(person, @scope, @admin?, @current_user)}
+                  class="ghost"
+                  phx-click={if person.fallback, do: "clear-role", else: "remove-person"}
                   phx-value-login={person.login}
                   phx-target={@myself}
                 >
-                  Remove access
+                  {remove_label(person, @scope, @current_user)}
                 </button>
-              </div>
-            <% else %>
-              <span :if={person.role} class="role-label dim">{role_label(person.role)}</span>
-              <button
-                :if={removable?(person, @scope, @admin?, @current_user)}
-                class="ghost"
-                phx-click="remove-person"
-                phx-value-login={person.login}
-                phx-target={@myself}
-              >
-                {if person.login == @current_user.login,
-                  do: leave_label(@scope),
-                  else: "Remove access"}
-              </button>
             <% end %>
           </li>
         </ul>
         <p :if={@workspace_project?} id={"#{@id}-workspace-hint"} class="hint workspace-hint">
-          This project is shared with members of its workspace.
-          <span :if={@workspace_link?}>
-            People join it from <.link navigate={"/w/#{@project.workspace_id}"}>the workspace's members page</.link>;
-            use Share on a track to add them to it.
-          </span>
-          <span :if={!@workspace_link?}>
-            Ask the project's owner to invite people to the workspace.
-          </span>
+          Everyone in the workspace reaches this project at the base role. A direct role replaces it, higher or lower.
         </p>
         <form
           :if={@admin? && !@workspace_project?}

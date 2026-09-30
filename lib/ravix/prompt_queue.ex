@@ -24,7 +24,9 @@ defmodule Ravix.PromptQueue do
   alias Ravix.Accounts.{Access, User}
   alias Ravix.Fountain.Error
   alias Ravix.{Hub, Repo}
-  alias Ravix.PromptQueue.{Server, Store, View}
+  alias Ravix.Previews.Agent, as: PreviewAgent
+  alias Ravix.PromptQueue.{Recovery, Server, Store, View}
+  alias Ravix.Tracks.Attribution
 
   @type reason ::
           :not_found
@@ -143,6 +145,28 @@ defmodule Ravix.PromptQueue do
   """
   @spec with_author(String.t(), String.t()) :: String.t()
   def with_author(login, prompt), do: "[from @#{login}] #{prompt}"
+
+  @doc """
+  A delivered prompt with every wrapper Ravix put in front of it for the
+  agent taken off, in the order `Ravix.PromptQueue.Server` composes them:
+  restored context, preview instructions, commit attribution. What remains
+  is the `with_author/2` marker, if any, and what the person typed. The
+  boolean says whether context was restored.
+
+  The one place a new delivery preamble must be added to, or it shows in
+  every transcript that draws the prompt.
+  """
+  @spec visible_prompt(String.t()) :: {String.t(), boolean()}
+  def visible_prompt(prompt) do
+    {prompt, restored?} = Recovery.visible_prompt(prompt)
+
+    visible =
+      prompt
+      |> PreviewAgent.visible_prompt()
+      |> Attribution.visible_prompt()
+
+    {visible, restored?}
+  end
 
   # ── plumbing ──────────────────────────────────────────────────────────
 

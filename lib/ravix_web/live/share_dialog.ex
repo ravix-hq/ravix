@@ -18,6 +18,9 @@ defmodule RavixWeb.Live.ShareDialog do
       `ShareMention` hook), and the people it is shared with. Adding writes
       a permission row and removing deletes it; the server refuses anybody
       outside the workspace, whatever the browser sends.
+    * **Who has access** -- everyone who reaches the track, each with their
+      role and where it comes from (RAV-75): "Write · from project",
+      "Read · direct". Read-only; roles change where they live.
     * **Copy link** -- the track's own URL. It admits only people who can
       already see the track.
 
@@ -27,6 +30,7 @@ defmodule RavixWeb.Live.ShareDialog do
   use RavixWeb, :live_component
 
   alias Ravix.People
+  alias RavixWeb.Live.PeopleDialog
 
   @impl true
   def mount(socket), do: {:ok, assign(socket, sharing: nil, q: "", candidates: [])}
@@ -91,6 +95,20 @@ defmodule RavixWeb.Live.ShareDialog do
     result(socket, People.sharing(user, id), &assign(&1, sharing: &2))
   end
 
+  @doc """
+  Where somebody's role on a track comes from, as a row in the dialog says
+  it. On a private track the `:owner` is whoever made it, which may not be
+  the project's owner.
+  """
+  @spec source_label(Ravix.Accounts.Access.track_source(), :project | :private) :: String.t()
+  def source_label(:owner, :private), do: "creator"
+  def source_label(:owner, _visibility), do: "owner"
+  def source_label(:direct, _visibility), do: "direct"
+  def source_label(:project, _visibility), do: "from project"
+  def source_label(:workspace, _visibility), do: "from workspace"
+
+  defp role_label(level), do: PeopleDialog.role_label(level)
+
   defp visibility_sentence(%{visibility: :private}),
     do: "Only the creator and the people it is shared with can open this track."
 
@@ -142,6 +160,24 @@ defmodule RavixWeb.Live.ShareDialog do
           <p :if={!@sharing.set_visibility} id="share-visibility">
             {visibility_sentence(@sharing)}
           </p>
+
+          <section aria-labelledby="share-access-title">
+            <h3 id="share-access-title">Who has access</h3>
+            <ul id="share-access" class="people-list" aria-label="Who has access">
+              <li
+                :for={{person, level, source} <- @sharing.access}
+                id={"share-access-#{person.login}"}
+                class="people-row"
+              >
+                <div class="people-identity">
+                  <span>@{person.login}</span>
+                  <small :if={person.name}>{person.name}</small>
+                </div>
+                <span class="role-label">{role_label(level)}</span>
+                <span class="people-source">· {source_label(source, @sharing.visibility)}</span>
+              </li>
+            </ul>
+          </section>
 
           <section :if={@sharing.visibility == :private} aria-labelledby="share-people-title">
             <h3 id="share-people-title">People</h3>
