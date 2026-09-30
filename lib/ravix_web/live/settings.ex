@@ -37,7 +37,13 @@ defmodule RavixWeb.Live.Settings do
     {"appearance", "Appearance"},
     {"connected-apps", "Connected apps"}
   ]
-  @workspace [{"general", "General"}, {"members", "Members"}]
+  @workspace [
+    {"general", "General"},
+    {"members", "Members"},
+    {"repositories", "Repositories"},
+    {"projects", "Projects"},
+    {"danger", "Danger zone"}
+  ]
   @project [
     {"general", "General"},
     {"agent", "Agent"},
@@ -107,14 +113,28 @@ defmodule RavixWeb.Live.Settings do
 
   @doc """
   A workspace's group, named for it. `counts` maps a section key to the
-  number its link shows, where one is useful.
+  number its link shows, where one is useful. Danger zone is not in it;
+  see `workspace_groups/2`.
   """
   @spec workspace_group(%{id: String.t(), name: String.t()}, map()) :: group()
   def workspace_group(workspace, counts \\ %{}),
     do: %{
       label: workspace.name,
-      items: Enum.map(@workspace, &item(:workspace, workspace.id, &1, counts))
+      items:
+        for(
+          {key, _label} = section <- @workspace,
+          key != "danger",
+          do: item(:workspace, workspace.id, section, counts)
+        )
     }
+
+  @doc "A workspace's groups: `workspace_group/2`, then Danger zone alone and last."
+  @spec workspace_groups(%{id: String.t(), name: String.t()}, map()) :: [group()]
+  def workspace_groups(workspace, counts \\ %{}),
+    do: [
+      workspace_group(workspace, counts),
+      %{label: nil, items: [item(:workspace, workspace.id, {"danger", "Danger zone"})]}
+    ]
 
   @doc """
   A project's groups: the project, its machine, then Danger zone alone and
