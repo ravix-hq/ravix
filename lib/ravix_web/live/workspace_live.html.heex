@@ -417,7 +417,7 @@
                       aria-current={if @track_id == track.id, do: "page"}
                       data-label={tab_name(track)}
                       aria-label={row_label(track, tab_name(track))}
-                      title={Track.label(track)}
+                      title={Track.tooltip(track)}
                     >
                       <.status_slot track={track} />
                       <.creator track={track} />
@@ -468,7 +468,7 @@
                         >
                           <span class="track-status" aria-hidden="true"></span>
                           <.creator track={track} />
-                          <span class="track-title truncate" title={Track.label(track)}>
+                          <span class="track-title truncate" title={Track.tooltip(track)}>
                             {Track.label(track)}<span class="sr-only">, closed</span>
                           </span>
                           <.private_mark :if={track.visibility == :private} />
@@ -718,7 +718,7 @@
             <ul class="first-prompt-recent">
               <li :for={track <- Enum.take(@tracks[@project.id], 5)}>
                 <.link patch={"/p/#{@project.id}/t/#{track.id}"}>
-                  <strong>{Track.label(track)}</strong>
+                  <strong title={Track.tooltip(track)}>{Track.label(track)}</strong>
                 </.link>
               </li>
             </ul>
@@ -918,7 +918,7 @@
                     zone={@timezone}
                   />
                 </div>
-                <strong>{Track.label(track)}</strong>
+                <strong title={Track.tooltip(track)}>{Track.label(track)}</strong>
                 <span :if={track.visibility == :private}><.icon name="lock" /> Private</span>
                 <span class="dim">
                   <%= cond do %>

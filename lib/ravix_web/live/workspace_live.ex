@@ -2658,7 +2658,7 @@ defmodule RavixWeb.WorkspaceLive do
         id={"search-track-link-#{track.id}"}
         patch={"/p/#{project.id}/t/#{track.id}"}
         class="workspace-track"
-        title={Track.label(track)}
+        title={Track.tooltip(track)}
         data-jump-result
       >
         <span class="search-label">{Track.label(track)}</span><span :if={track.visibility == :private}><.icon name="lock" />

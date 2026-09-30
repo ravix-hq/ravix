@@ -5,8 +5,9 @@ import { signIn, connectClaude } from './sign-in.js';
 
 // RAV-83: a track that has a title (RAV-48's, or a person's) is called by it
 // in the sidebar, its header and the Inbox, and its branch slug is not
-// printed beside it. One still titled with its branch goes by the branch,
-// less the `ravix/` every Ravix branch shares.
+// printed beside it but kept for the tooltip. One still titled with its
+// branch goes by the branch read as words, less the `ravix/` every Ravix
+// branch shares.
 test('tracks are named by their titles, not their branch slugs', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 800 });
   await signIn(page, 'titler', '/home');
@@ -36,18 +37,20 @@ test('tracks are named by their titles, not their branch slugs', async ({ page }
   const server = process.env.BROWSER_DATABASE_SERVER || 'postgres://postgres:postgres@localhost:5432';
   const sql = statement => execFileSync('psql', [`${server}/${database}`, '-XAt', '-v', 'ON_ERROR_STOP=1', '-c', statement]);
   const branch = 'ravix/rav-83-name-tracks-by-title-not-branch-s';
+  // Opened before automatic titles, and never renamed.
+  const slug = 'ravix/draft-adr-0009-proposed-workspaces';
   sql(`
     UPDATE ravix.tracks SET title = 'Name Tracks by Title', title_source = 'auto', branch = '${branch}' WHERE id = '${titled}';
     UPDATE ravix.tracks SET title = 'Fix Login Redirect', title_source = 'auto', branch = 'ravix/crewe',
       setup_state = 'failed', setup_error = 'The opening turn failed.' WHERE id = '${failed}';
+    UPDATE ravix.tracks SET title = '${slug}', branch = '${slug}' WHERE id = '${untitled}';
   `);
-  const untitledBranch = sql(`SELECT branch FROM ravix.tracks WHERE id = '${untitled}'`).toString().trim();
-  expect(untitledBranch).toMatch(/^ravix\//);
 
   await page.goto(`/p/${await projectRow.getAttribute('data-project-id')}/t/${titled}`);
   const header = page.locator('header.track-crumbs');
   await expect(header).toContainText('Name Tracks by Title');
   await expect(page.locator(`#project-track-tab-${failed}`)).toContainText('Fix Login Redirect');
+  await expect(page.locator(`#project-track-tab-${untitled}`)).toContainText('draft', { ignoreCase: true });
   await page.screenshot({ path: 'tmp/track-names-track.png' });
   await page.goto('/inbox');
   const card = page.locator('.inbox-item', { hasText: 'Setup failed' });
@@ -58,11 +61,14 @@ test('tracks are named by their titles, not their branch slugs', async ({ page }
   await expect(card.locator('strong')).toHaveText('Fix Login Redirect');
   await expect(card).not.toContainText('crewe');
 
-  // The sidebar: titles whole, an untitled track by its branch less `ravix/`.
+  // The sidebar: titles whole, an untitled track by its branch read as
+  // words; every raw branch is on hover.
   const tab = id => page.locator(`#project-track-tab-${id} .track-title`);
   await expect(tab(titled)).toHaveText('Name Tracks by Title');
   await expect(tab(failed)).toHaveText('Fix Login Redirect');
-  await expect(tab(untitled)).toHaveText(untitledBranch.replace(/^ravix\//, ''));
+  await expect(tab(untitled)).toHaveText('Draft ADR 0009 proposed workspaces');
+  await expect(page.locator(`#project-track-tab-${titled}`)).toHaveAttribute('title', `Name Tracks by Title\n${branch}`);
+  await expect(page.locator(`#project-track-tab-${untitled}`)).toHaveAttribute('title', `Draft ADR 0009 proposed workspaces\n${slug}`);
   await expect(page.locator('#yard')).not.toContainText('ravix/');
   await expect(page.locator('#yard')).not.toContainText('crewe');
 
@@ -72,4 +78,12 @@ test('tracks are named by their titles, not their branch slugs', async ({ page }
   await expect(header).not.toContainText(branch);
   await expect(page.locator('.track-ribbon')).toContainText(branch);
   await expect(page).toHaveTitle('Name Tracks by Title · ravix-names · Ravix');
+
+  // An untitled track's header reads as words too, and so does the tab title.
+  await page.locator(`#project-track-tab-${untitled}`).click();
+  await expect(page.locator('.track-ribbon')).toContainText(slug);
+  await page.screenshot({ path: 'tmp/track-names-untitled.png' });
+  await expect(header.locator('.track-title-crumb')).toHaveText('Draft ADR 0009 proposed workspaces');
+  await expect(header).not.toContainText('ravix/');
+  await expect(page).toHaveTitle('Draft ADR 0009 proposed workspaces · ravix-names · Ravix');
 });
