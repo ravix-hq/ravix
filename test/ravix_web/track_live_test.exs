@@ -8,7 +8,7 @@ defmodule RavixWeb.TrackLiveTest do
   alias Ravix.Hub.Event
   alias Ravix.{People, Previews, PromptQueue, QueryCount, Repo, Terminal, Tracks, Vitals}
   alias Ravix.PromptQueue.View, as: QueuedPrompt
-  alias Ravix.Tracks.{Diff, Files, Follower, Setup, Track, TrackMember, Transcript}
+  alias Ravix.Tracks.{Diff, Files, Follower, MachineState, Setup, Track, TrackMember, Transcript}
   alias RavixWeb.Live.Guard
 
   alias Ravix.Plans.Progress
@@ -216,11 +216,7 @@ defmodule RavixWeb.TrackLiveTest do
       settle(ctx.view)
       assert_receive :listing_call
 
-      assert has_element?(
-               ctx.view,
-               ".workspace-panel [role=status]",
-               "This track's machine is asleep. Files load when it wakes."
-             )
+      assert has_element?(ctx.view, "#panel-asleep [role=status]", "Machine is asleep")
 
       refute has_element?(ctx.view, ".workspace-panel [role=alert]")
 
@@ -273,7 +269,7 @@ defmodule RavixWeb.TrackLiveTest do
       settle(ctx.view)
       assert_receive :listing_call
       assert has_element?(ctx.view, ".file-explorer", "awake.txt")
-      refute has_element?(ctx.view, ".workspace-panel [role=status]", "asleep")
+      refute has_element?(ctx.view, "#panel-asleep")
     end
   end
 
@@ -294,7 +290,7 @@ defmodule RavixWeb.TrackLiveTest do
       end
 
       settle(ctx.view)
-      assert has_element?(ctx.view, ".workspace-panel [role=status]", "machine is asleep")
+      assert has_element?(ctx.view, "#panel-asleep [role=status]", "Machine is asleep")
       refute has_element?(ctx.view, ".workspace-panel [role=alert]")
     end
   end
@@ -1801,6 +1797,179 @@ defmodule RavixWeb.TrackLiveTest do
     end
   end
 
+  describe "the inspector's empty and asleep states" do
+    # A dedicated track Fountain last said was asleep, whose Files read is
+    # refused as a suspended machine's is, opened fresh.
+    defp asleep_page(ctx) do
+      Repo.update!(
+        Ecto.Changeset.change(Repo.get!(Track, ctx.track.id),
+          opened_at: DateTime.utc_now(),
+          sandbox_layout: :dedicated,
+          sandbox_state: :ready,
+          sandbox_suspended_at: DateTime.utc_now()
+        )
+      )
+
+      stub(Tracks, :files, fn _, _, _ -> {:error, :machine_asleep} end)
+      {:ok, parent, _} = live(ctx.conn, "/p/#{ctx.project.id}/t/#{ctx.track.id}")
+      view = find_live_child(parent, "track-host")
+      settle(view)
+      %{ctx | view: view, parent: parent}
+    end
+
+    for tab <- ["files", "changes"] do
+      test "an asleep #{tab} tab is one centred state with Wake, said once", ctx do
+        ctx = asleep_page(ctx)
+        stub(Tracks, :diff, fn _, _ -> {:error, :machine_asleep} end)
+        render_click(ctx.view, "panel", %{name: unquote(tab)})
+        settle(ctx.view)
+
+        assert has_element?(
+                 ctx.view,
+                 "#panel-asleep.empty.pane h3 [role=status]",
+                 "Machine is asleep"
+               )
+
+        assert has_element?(ctx.view, "#panel-asleep .mark svg")
+        assert has_element?(ctx.view, "#panel-asleep button#panel-wake:not([disabled])", "Wake")
+        refute has_element?(ctx.view, ".workspace-panel [role=alert]")
+
+        # The dock names the state and leaves the rest to the panel.
+        assert ctx.view |> element("#track-machine-status") |> render() =~ ~r/>\s*Asleep\.\s*</
+        refute has_element?(ctx.view, "#track-machine-status", "Your next message wakes it")
+        refute render(ctx.view) =~ "Files load when it wakes"
+      end
+    end
+
+    test "the asleep Checks tab says so in Git status and keeps GitHub's answer", ctx do
+      ctx = asleep_page(ctx)
+      stub(Tracks, :checks, fn _, _ -> {:ok, checks_fixture(:open)} end)
+      stub(Tracks, :git_status, fn _, _ -> {:error, :machine_asleep} end)
+      render_click(ctx.view, "panel", %{name: "checks"})
+      settle(ctx.view)
+
+      assert has_element?(ctx.view, "#git-asleep [role=status]", "Machine is asleep")
+      assert has_element?(ctx.view, "#git-asleep #panel-wake", "Wake")
+      assert has_element?(ctx.view, "#git-pull", "Pull request #209")
+      assert has_element?(ctx.view, "#checks-empty h3", "No checks yet")
+      assert ctx.view |> element("#track-machine-status") |> render() =~ ~r/>\s*Asleep\.\s*</
+    end
+
+    test "Wake calls the wake path and the tab is read again", ctx do
+      ctx = asleep_page(ctx)
+      test = self()
+
+      expect(Tracks, :wake, fn user, id ->
+        send(test, {:waking, self()})
+        receive do: (:go -> :ok)
+        assert {user.id, id} == {ctx.user.id, ctx.track.id}
+        :ok
+      end)
+
+      ctx.view |> element("#panel-wake") |> render_click()
+      assert_receive {:waking, worker}
+      assert has_element?(ctx.view, "#panel-wake[disabled]", "Waking…")
+
+      stub(Tracks, :files, fn _, _, path ->
+        {:ok,
+         %Files.Listing{
+           path: path || ctx.track.workdir,
+           truncated: false,
+           entries: [%Files.Entry{name: "awake.txt", type: "file", size: 1}]
+         }}
+      end)
+
+      send(worker, :go)
+      settle(ctx.view)
+      assert has_element?(ctx.view, ".file-explorer", "awake.txt")
+      refute has_element?(ctx.view, "#panel-asleep")
+    end
+
+    test "a wake that is refused says why and leaves the state and the button", ctx do
+      ctx = asleep_page(ctx)
+
+      expect(Tracks, :wake, fn _, _ ->
+        {:error,
+         {:conflict, "machine_not_awake",
+          "This track's machine did not wake. Try again, or send a message."}}
+      end)
+
+      ctx.view |> element("#panel-wake") |> render_click()
+      assert toasted(ctx) =~ "did not wake"
+      assert has_element?(ctx.view, "#panel-wake:not([disabled])", "Wake")
+    end
+
+    test "a revoked session cannot wake the machine", ctx do
+      ctx = asleep_page(ctx)
+      reject(&Tracks.wake/2)
+      token = Plug.Conn.get_session(ctx.conn, :session_token)
+      Repo.delete!(Repo.get_by!(Session, token_hash: Ravix.Crypto.sha256(token)))
+
+      :sys.replace_state(ctx.view.pid, fn state ->
+        update_in(state.socket.assigns.session_guard, &%{&1 | stale?: true})
+      end)
+
+      assert {:error, {:redirect, %{to: "/login"}}} = render_click(ctx.view, "wake", %{})
+    end
+
+    test "setting up shows the setup step the banner shows, and the dock only the word", ctx do
+      Repo.update!(
+        Ecto.Changeset.change(Repo.get!(Track, ctx.track.id),
+          sandbox_layout: :dedicated,
+          sandbox_stage: "cloning",
+          sandbox_state: :provisioning,
+          setup_state: "pending"
+        )
+      )
+
+      send(
+        ctx.view.pid,
+        {:hub, %Event{name: :tracks, project_id: ctx.project.id, track_id: ctx.track.id}}
+      )
+
+      settle(ctx.view)
+
+      step =
+        MachineState.setup_label(
+          Tracks.present(Repo.get!(Track, ctx.track.id)),
+          DateTime.utc_now()
+        )
+
+      assert step =~ "Cloning"
+      assert has_element?(ctx.view, "#track-setup-status strong", step)
+      assert has_element?(ctx.view, "#panel-setup.empty.pane.busy h3", step)
+      # The banner is the live region for these words; the panel does not repeat them aloud.
+      refute has_element?(ctx.view, "#panel-setup [role=status]")
+      refute has_element?(ctx.view, "#panel-wake")
+      assert ctx.view |> element("#track-machine-status") |> render() =~ ~r/>\s*Starting\.\s*</
+    end
+
+    test "a track with nothing changed and nothing checked says so in one line each", ctx do
+      stub(Tracks, :diff, fn _, _ ->
+        {:ok, %{changes_fixture() | diff: "", changes: [], files: []}}
+      end)
+
+      stub(Tracks, :checks, fn _, _ -> {:ok, %{checks_fixture(:open) | pull: nil}} end)
+      render_click(ctx.view, "panel", %{name: "changes"})
+      settle(ctx.view)
+      assert has_element?(ctx.view, "#changes-empty.pane h3", "No changes yet")
+      refute has_element?(ctx.view, "#changes-empty p")
+
+      stub(Tracks, :git_status, fn _, _ -> {:error, :not_found} end)
+      render_click(ctx.view, "panel", %{name: "checks"})
+      settle(ctx.view)
+      assert has_element?(ctx.view, "#checks-empty.pane h3", "No checks yet")
+
+      stub(Tracks, :checks, fn _, _ ->
+        {:ok, %{checks_fixture(:open) | pull: nil, pushed: false, sha: nil}}
+      end)
+
+      render_click(ctx.view, "refresh-panel")
+      settle(ctx.view)
+      assert has_element?(ctx.view, "#checks-empty h3", "No checks until the branch is pushed")
+    end
+  end
+
   describe "the model menu" do
     setup ctx do
       # `status` and `model` stand for the live conversation, which is
@@ -2557,7 +2726,9 @@ defmodule RavixWeb.TrackLiveTest do
 
     test "a machine that cannot be read says so and still shows the pull request row", ctx do
       open_checks(ctx, {:error, :machine_asleep})
-      assert has_element?(ctx.view, "#git-status-error[role=alert]", "machine is asleep")
+      assert has_element?(ctx.view, "#git-asleep [role=status]", "Machine is asleep")
+      assert has_element?(ctx.view, "#git-asleep #panel-wake", "Wake")
+      refute has_element?(ctx.view, "#git-status-error")
       refute has_element?(ctx.view, "#git-uncommitted")
       assert has_element?(ctx.view, "#git-pull button", "Create pull request")
     end
@@ -2725,15 +2896,14 @@ defmodule RavixWeb.TrackLiveTest do
       render_async(ctx.view)
 
       if unquote(state) == :merged do
-        assert has_element?(ctx.view, ".changes-panel .empty h3", "Branch merged")
-        assert has_element?(ctx.view, ".changes-panel", "This branch was merged")
-        refute has_element?(ctx.view, ".changes-panel", "No changes yet")
+        assert has_element?(ctx.view, "#changes-empty h3", "Branch merged")
+        refute has_element?(ctx.view, "#changes-empty", "No changes yet")
         expect(Tracks, :checks, fn _, _ -> {:ok, checks_fixture(:open)} end)
         render_click(ctx.view, "refresh-panel")
         render_async(ctx.view)
       end
 
-      assert has_element?(ctx.view, ".changes-panel .empty h3", "No changes yet")
+      assert has_element?(ctx.view, "#changes-empty h3", "No changes yet")
     end
   end
 
@@ -2767,7 +2937,7 @@ defmodule RavixWeb.TrackLiveTest do
     expect(Tracks, :diff, fn _, _ -> {:ok, %{diff | diff: "", changes: [], files: []}} end)
     render_click(ctx.view, "refresh-panel")
     render_async(ctx.view, 1_000)
-    assert has_element?(ctx.view, ".changes-panel .empty h3", "No changes yet")
+    assert has_element?(ctx.view, "#changes-empty h3", "No changes yet")
     # Nothing to filter and nothing to count: no search box, no "0 changed files".
     refute has_element?(ctx.view, "#diff-filter")
     refute has_element?(ctx.view, ".changes-summary")
@@ -3880,11 +4050,16 @@ defmodule RavixWeb.TrackLiveTest do
       render_click(ctx.view, "panel", %{name: "preview"})
       render_async(ctx.view)
 
-      assert has_element?(
-               ctx.view,
-               "button.primary[phx-value-action='run']:not([disabled])",
-               "Run"
-             ) == unquote(run?)
+      # Stopped, Run is the empty state's action; otherwise it is the row's.
+      assert (has_element?(ctx.view, "#preview-empty #preview-run:not([disabled])", "Run") or
+                has_element?(
+                  ctx.view,
+                  "button.primary[phx-value-action='run']:not([disabled])",
+                  "Run"
+                )) == unquote(run?)
+
+      assert has_element?(ctx.view, "#preview-empty h3", "No preview running") ==
+               (unquote(state) == :stopped)
 
       assert has_element?(ctx.view, "button[phx-value-action='restart-run']") == unquote(restart?)
 
@@ -3940,8 +4115,9 @@ defmodule RavixWeb.TrackLiveTest do
       receive do: (:finish -> {:ok, %{preview() | state: :starting}})
     end)
 
-    ctx.view |> element("button[phx-value-action='run']", "Run") |> render_click()
+    ctx.view |> element("#preview-run", "Run") |> render_click()
     assert_receive {:launching, task}
+    assert has_element?(ctx.view, "#preview-run[disabled]")
     refute has_element?(ctx.view, "button[phx-click='preview']:not([disabled])")
     send(task, :finish)
     render_async(ctx.view)
@@ -3961,8 +4137,9 @@ defmodule RavixWeb.TrackLiveTest do
 
     render_click(ctx.view, "panel", %{name: "preview"})
     render_async(ctx.view)
-    assert has_element?(ctx.view, "button[phx-value-action='run'][disabled]", "Run")
-    assert has_element?(ctx.view, "button[phx-value-action='stop'][disabled]")
+    assert has_element?(ctx.view, "#preview-run[disabled]", "Run")
+    assert has_element?(ctx.view, "#preview-empty .dimmer", "Preview domain is not configured")
+    refute has_element?(ctx.view, "button[phx-value-action='stop']")
     assert has_element?(ctx.view, "button[phx-value-action='logs']:not([disabled])")
   end
 
@@ -4065,7 +4242,8 @@ defmodule RavixWeb.TrackLiveTest do
     expect(Previews, :stop, fn _, _ -> {:ok, %{info | state: :stopped}} end)
     ctx.view |> element("button[phx-value-action='stop']") |> render_click()
     render_async(ctx.view)
-    assert has_element?(ctx.view, "#run-status", "stopped")
+    assert has_element?(ctx.view, "#preview-empty h3", "No preview running")
+    refute has_element?(ctx.view, "#run-status")
   end
 
   test "preview override can be set and cleared", ctx do

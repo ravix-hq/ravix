@@ -2080,7 +2080,8 @@ defmodule RavixWeb.WorkspaceLiveTest do
     |> element("button[phx-click=panel][phx-value-name=preview]", "Preview")
     |> render_click()
 
-    assert render_async(child, 5_000) =~ "stopped"
+    render_async(child, 5_000)
+    assert has_element?(child, "#preview-empty h3", "No preview running")
     assert has_element?(child, "#preview-config-form")
   end
 
