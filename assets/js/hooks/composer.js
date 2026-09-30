@@ -272,9 +272,11 @@ export const Composer = {
     this.suggestion = null
     this.restore()
     this.grow()
+    this.reportEmpty(true)
 
     this.el.addEventListener("input", () => {
       this.grow()
+      this.reportEmpty()
       this.save()
       this.mention()
       this.suggest()
@@ -386,6 +388,7 @@ export const Composer = {
 
     this.handleEvent("composer:insert", ({text}) => {
       this.el.value = text
+      this.reportEmpty()
       this.save()
       this.grow()
       this.el.focus()
@@ -398,6 +401,7 @@ export const Composer = {
         return
       }
       this.el.value = text
+      this.reportEmpty()
       this.save()
       this.grow()
       this.el.focus()
@@ -416,6 +420,7 @@ export const Composer = {
     })
     this.handleEvent("composer:clear", () => {
       this.el.value = ""
+      this.reportEmpty()
       this.forget()
       this.grow()
       this.note(null)
@@ -425,12 +430,19 @@ export const Composer = {
   updated() {
     this.restore()
     this.grow()
+    this.reportEmpty()
     // A patch rewrites the attributes, and may have brought new commands.
     if (this.suggestion) this.suggest()
     // A patch rewrites the textarea's attributes from the template, which
     // does not know which option is highlighted.
     if (this.active && this.mentions()) this.el.setAttribute("aria-activedescendant", this.active.id)
     else this.active = null
+  },
+
+  // A new socket is a new page process, which starts out believing the box
+  // is empty; tell it otherwise.
+  reconnected() {
+    this.reportEmpty(true)
   },
 
   destroyed() {
@@ -763,6 +775,18 @@ export const Composer = {
     if (!el) return
     el.textContent = text ?? ""
     el.hidden = !text
+  },
+
+  // RAV-87: the server draws send and Stop from whether this box is empty,
+  // which it cannot see --- the text only travels on submit --- so it is
+  // told when that changes, and never per keystroke. Whitespace is empty.
+  reportEmpty(force = false) {
+    const event = this.el.dataset.emptyEvent
+    if (!event) return
+    const empty = !this.el.value.trim()
+    if (!force && empty === this.reportedEmpty) return
+    this.reportedEmpty = empty
+    this.pushEvent(event, {empty})
   },
 
   typing() {

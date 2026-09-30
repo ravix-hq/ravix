@@ -101,6 +101,9 @@ defmodule RavixWeb.TrackLive do
         thread_draft: nil,
         thread_connect: nil,
         thread_error: nil,
+        # Whether the composer's box is empty, as its `Composer` hook last
+        # said (`composer-draft`): the text itself stays in the browser.
+        composer_empty?: true,
         # The creator's one-time note that collaborators' prompts spend their
         # subscription (ADR 0009 phase 6); see `Tracks.billing_notice/2`.
         billing_notice: nil,
@@ -377,6 +380,12 @@ defmodule RavixWeb.TrackLive do
     Tracks.beat(socket.assigns.current_user, socket.assigns.track_id, :typing)
     {:noreply, socket}
   end
+
+  # RAV-87: the `Composer` hook says when its box turns empty or not, and
+  # only then, so send is disabled with nothing to send and steps aside for
+  # Stop while a turn runs. Nothing else is read from it.
+  def handle_event("composer-draft", %{"empty" => empty}, socket) when is_boolean(empty),
+    do: {:noreply, assign(socket, composer_empty?: empty)}
 
   def handle_event("cancel-upload", %{"ref" => ref}, socket),
     do: {:noreply, cancel_upload(socket, :images, ref)}
@@ -1265,8 +1274,18 @@ defmodule RavixWeb.TrackLive do
     end)
   end
 
+  # A stopped turn need not send another stage event, and the one that told
+  # the tab it was running may be the last this page hears. So a stop that
+  # Fountain accepted drops the shown thread's live state, as a `:turn` hub
+  # event does, and the tab and Stop (RAV-87) fall back together to the
+  # status the re-read brings. A refused stop leaves them as they were.
   defp async_result(:interrupt, {:ok, response}, socket),
-    do: result(settle(socket, :interrupt), response, fn s, _ -> refresh_detail(s) end)
+    do:
+      result(settle(socket, :interrupt), response, fn s, _ ->
+        s
+        |> update(:thread_states, &Map.delete(&1, s.assigns.thread_id))
+        |> refresh_detail()
+      end)
 
   defp async_result(:retry, {:ok, response}, socket),
     do: result(settle(socket, :retry), response, fn s, _ -> load(s) end)
@@ -2380,6 +2399,23 @@ defmodule RavixWeb.TrackLive do
     label = if status == "Idle", do: label, else: label <> " · " <> status
     label <> if(thread.unread && thread.id != current_id, do: " (unread)", else: "")
   end
+
+  # RAV-87: whether the shown thread's turn is running, read from exactly
+  # what its tab reads (`thread_status/2` over `@thread_states`), so the
+  # composer's Stop and the tab's Running/Idle change in the same render. A
+  # thread missing from the list has no tab to disagree with, and falls back
+  # to the track's own status.
+  defp turn_running?(threads, states, thread_id, track) do
+    case Enum.find(threads, &(&1.id == thread_id)) do
+      nil -> track.status == :running
+      thread -> thread_status(thread, states) == "Running"
+    end
+  end
+
+  # Anything for send to send: text, as the `Composer` hook reports it, or
+  # images, which are the server's to know and count only when asking.
+  defp composer_filled?(empty?, mode, entries, attached),
+    do: not empty? or (mode == :ask and (entries != [] or attached != []))
 
   defp thread_status(thread, states) do
     case Map.get(states, thread.id, Map.get(thread, :status)) do
@@ -3928,7 +3964,7 @@ defmodule RavixWeb.TrackLive do
   # message, then the few Ravix actions that are already a button on this
   # page, which run that button's event instead of sending anything. Stop is
   # offered only while there is something to stop.
-  defp composer_commands(agent_commands, track, pending) do
+  defp composer_commands(agent_commands, running?, pending) do
     agent =
       Enum.map(
         agent_commands,
@@ -3936,7 +3972,7 @@ defmodule RavixWeb.TrackLive do
       )
 
     stop =
-      if track.status in [:running, :opening] and :interrupt not in pending,
+      if running? and :interrupt not in pending,
         do: [%{name: "stop", description: "Stop the agent's current turn", event: "interrupt"}],
         else: []
 

@@ -1115,19 +1115,31 @@ test('composer Send stays compact and keeps its arrow after repeated submissions
     if (method === 'click') await send.click();
     else await composer.press('Enter');
     await expect(page.locator('#composer-form')).toHaveClass(/phx-submit-loading/);
-    await checkSend();
+    // One snapshot of the acknowledgement window, since RAV-87 lets send
+    // leave the slot as soon as the box clears and the turn starts: while the
+    // submit is out, send is there and still carries its arrow.
+    const inFlight = await page.evaluate(() => {
+      const form = document.querySelector('#composer-form');
+      const path = form.querySelector('button[aria-label="Send"] svg path');
+      return { loading: form.classList.contains('phx-submit-loading'), d: path?.getAttribute('d') };
+    });
+    if (inFlight.loading) expect(inFlight.d).toBe('M12 19V5M6 11l6-6 6 6');
     await expect(composer).toHaveValue('');
+    // RAV-87: an empty box has nothing to send, so send is disabled or, while
+    // the turn runs, stands aside for Stop. Typing brings it back, enabled.
+    await composer.fill('Not sent');
     await expect(send).toBeEnabled();
     await checkSend();
+    await composer.fill('');
     await page.evaluate(() => window.liveSocket.disableLatencySim());
     // Acknowledgement clears the input before the agent finishes. Keep this
     // button-rendering regression sequential instead of queuing another turn.
     await expect(page.locator('#transcript-turns .turn-footer')).toHaveCount(++completedAnswers, { timeout: 20_000 });
-    await expect(page.locator('#composer-form').getByRole('button', { name: 'Stop', exact: true })).toHaveCount(0, { timeout: 30_000 });
+    await expect(page.locator('#composer-form').getByRole('button', { name: 'Stop agent', exact: true })).toHaveCount(0, { timeout: 30_000 });
   }
   await page.evaluate(() => window.liveSocket.disableLatencySim());
   await expect(page.locator('#transcript-turns')).toContainText('Send regression Enter', { timeout: 20_000 });
-  await expect(page.locator('#composer-form').getByRole('button', { name: 'Stop', exact: true })).toHaveCount(0, { timeout: 30_000 });
+  await expect(page.locator('#composer-form').getByRole('button', { name: 'Stop agent', exact: true })).toHaveCount(0, { timeout: 30_000 });
   const fixture = composerFixture(new URL(page.url()).pathname.split('/').pop());
   const palettes = await page.locator('[data-theme-choice]').evaluateAll(els => [...new Set(els.map(el => el.dataset.themeChoice))]);
   expect(palettes).toHaveLength(22);
@@ -1140,9 +1152,22 @@ test('composer Send stays compact and keeps its arrow after repeated submissions
     await expect(async () => {
       await page.reload();
       await expect(page.locator('[data-phx-main]')).toHaveClass(/phx-connected/);
-      await expect(page.locator('#composer-form').getByRole('button', { name: 'Stop', exact: true })).toHaveCount(['opening', 'running'].includes(status) ? 1 : 0, { timeout: 1_000 });
+      await expect(page.locator('#composer-form').getByRole('button', { name: 'Stop agent', exact: true })).toHaveCount(status === 'running' ? 1 : 0, { timeout: 1_000 });
       await expect(page.locator('#composer-form').getByRole('button', { name: 'Wake / retry', exact: true })).toHaveCount(['opening', 'failed'].includes(status) ? 1 : 0, { timeout: 1_000 });
     }).toPass({ timeout: 15_000 });
+    // RAV-87: Stop is drawn from the thread's tab, which says Running only
+    // while a turn runs, not while the track is opening. With nothing typed,
+    // send is disabled, or stands aside for Stop mid-turn; something to send
+    // brings it back, so the matrix below still measures it. Setting the box
+    // through `input` is how the hook hears it, disabled or not.
+    const typeIn = value => composer.evaluate((el, value) => {
+      el.value = value;
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+    }, value);
+    await typeIn('');
+    if (status === 'running') await expect(send).toBeHidden();
+    else await expect(send).toBeDisabled();
+    await typeIn('Queued while the agent works');
     await expect(send).toBeVisible();
     if (connected) await expect(send).toBeEnabled();
     else await expect(send).toBeDisabled();
