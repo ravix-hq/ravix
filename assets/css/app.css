@@ -18,6 +18,7 @@
   --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
   --sans: "IBM Plex Sans", ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --rail: 248px;
+  --tree-step: 12px;
   --radius: 8px;
   --radius-lg: 10px;
   /* Conversation and inspector tabs. Palettes inherit the ink; Daylight replaces it. */
@@ -634,11 +635,11 @@ html[data-yard="closed"] .yard .workspace-gear { display: none; }
 .workspace-project-row:hover .workspace-project-name, .workspace-project-name.selected { color: var(--ink); }
 .workspace-project-name:hover, .account-item:hover { text-decoration: none; }
 .project-actions { flex: none; display: flex; align-items: center; gap: 1px; padding-right: 3px; }
-.project-action {
+.project-action, .section-action {
   flex: none; width: 22px; height: 22px; padding: 0; display: grid; place-items: center;
   color: var(--dim); background: transparent; border: none; border-radius: var(--radius); text-decoration: none;
 }
-.project-action:hover:not(:disabled), .project-action:focus-visible { color: var(--ink); background: var(--surface); border-color: transparent; }
+.project-action:hover:not(:disabled), .project-action:focus-visible, .section-action:hover, .section-action:focus-visible { color: var(--ink); background: var(--surface); border-color: transparent; }
 .project-action.on { color: var(--ink); background: var(--surface); }
 @media (hover: hover) {
   .workspace-project .project-action[title="Project settings"],
@@ -1887,13 +1888,16 @@ body:has(.phx-error) #request-progress { display: none; }
 .section-toggle, .section-name {
   display: flex; align-items: center; gap: 6px; width: 100%; min-width: 0; padding: 4px 6px;
   color: var(--dimmer); background: transparent; border: none; text-align: left;
-  font-size: 11px; font-weight: 600; letter-spacing: 0.02em;
+  font-size: 10.5px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase;
 }
 .section-name { padding-left: 24px; }
 .section-toggle:hover:not(:disabled) { color: var(--dim); background: transparent; border-color: transparent; }
 .section-toggle .truncate { flex: 1; }
 .section-toggle .dim { font-weight: 400; font-variant-numeric: tabular-nums; }
-.section-empty { margin: 0; padding: 4px 6px 6px 24px; font-size: 12px; }
+/* One indent step per level: section label, then its projects, then their
+   tracks (which `.project-tree-tracks` steps in again from the project). */
+.project-section.labelled > div > .workspace-project { padding-left: var(--tree-step); }
+.section-empty { margin: 0; padding: 2px 6px 4px calc(var(--tree-step) + 30px); font-size: 12px; }
 .project-section-picker { display: flex; align-items: center; gap: 8px; padding: 4px 0; }
 .project-section-picker label { flex: 1; min-width: 0; }
 .project-section-picker select { flex: 1; min-width: 0; padding: 4px; }
@@ -2078,7 +2082,9 @@ body:has(.phx-error) #request-progress { display: none; }
 .closed-track .track-creator { opacity: 0.7; }
 .closed-track button { flex: none; padding: 1px 6px; font-size: 12px; }
 .project-collapse { flex: 0 0 24px; padding: 4px; }
-[data-collapse][aria-expanded="false"] svg { transform: rotate(-90deg); }
+/* A disclosure points right when collapsed and down when expanded; the
+   button's own `aria-expanded` turns it, whoever last set it. */
+[aria-expanded="true"] > .disclosure-chevron { transform: rotate(90deg); }
 .workspace-project-row .workspace-project-name { min-width: 0; }
 #search-dialog [data-jump-result] { display: flex; gap: 8px; align-items: center; min-width: 0; overflow-wrap: anywhere; }
 #search-dialog [data-jump-result]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }

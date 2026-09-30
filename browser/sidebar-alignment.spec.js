@@ -48,3 +48,97 @@ test('sidebar avatars line up whether or not a row shows a status dot', async ({
   }
   expect((await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze()).violations).toEqual([]);
 });
+
+// RAV-44/45: one indent step per level, a chevron that follows each
+// disclosure's state (mouse and keyboard), and a quiet empty section.
+test('the sidebar tree steps in per level and its chevrons follow their state', async ({ page }) => {
+  test.setTimeout(120_000);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  // Its own person, so the sections made here reach no other spec's rail.
+  await signIn(page, 'sidebartree', '/home');
+  await connectClaude(page);
+  await page.getByRole('button', { name: /^New project/ }).click();
+  const newProject = page.getByRole('dialog', { name: 'New project' });
+  await newProject.getByLabel('Project name', { exact: true }).fill('Tree filed');
+  await expect(newProject.locator('#project-repositories option')).not.toHaveCount(0);
+  await newProject.getByLabel('Repository', { exact: true }).fill('mockuser/atlas-api');
+  await newProject.getByRole('button', { name: 'Create project', exact: true }).click();
+  await expect(newProject).not.toBeVisible();
+  await page.locator('#yard .workspace-project.current .project-add').click();
+  const newTrack = page.getByRole('dialog', { name: 'New track', exact: true });
+  await newTrack.getByRole('button', { name: 'Advanced', exact: true }).click();
+  await newTrack.getByLabel('Branch name').fill('tree-work');
+  await newTrack.getByRole('button', { name: 'Create track', exact: true }).click();
+  await expect(newTrack).not.toBeVisible();
+
+  const manage = page.getByRole('button', { name: 'Manage sections', exact: true });
+  await expect(manage).toHaveAttribute('title', 'Organize projects into sections');
+  const sections = page.getByRole('dialog', { name: 'Project sections', exact: true });
+  await manage.click();
+  for (const [index, name] of ['Filed', 'Empty shelf'].entries()) {
+    await sections.getByLabel('New section', { exact: true }).fill(name);
+    await sections.getByRole('button', { name: 'Create section', exact: true }).click();
+    await expect(sections.getByLabel('Section name', { exact: true })).toHaveCount(index + 1);
+  }
+  await sections.getByRole('combobox', { name: 'Section for Tree filed', exact: true }).selectOption({ label: 'Filed' });
+  await page.keyboard.press('Escape');
+
+  const group = name => page.locator('.project-section').filter({ has: page.locator('.section-toggle', { hasText: name }) });
+  const filed = group('Filed'), shelf = group('Empty shelf');
+  const project = filed.locator('.workspace-project');
+  const projectToggle = project.locator('.project-collapse');
+  await expect(project.locator('.workspace-project-name')).toContainText('Tree filed');
+  await expect(shelf.locator('.section-empty')).toHaveText('No projects');
+
+  const x = locator => locator.evaluate(el => el.getBoundingClientRect().x);
+  const turned = locator => locator.evaluate(el => getComputedStyle(el).transform !== 'none');
+  for (const width of [1440, 390]) {
+    await page.setViewportSize({ width, height: 900 });
+    if (width < 760) await page.getByRole('button', { name: 'Menu', exact: true }).click();
+    // Section label, then project, then track: each a step further in.
+    const section = await x(filed.locator('.section-toggle svg'));
+    const projectX = await x(projectToggle.locator('svg'));
+    const track = await x(project.locator('.track-status').first());
+    expect(section).toBeLessThan(projectX);
+    expect(projectX).toBeLessThan(track);
+    // The empty line's words start where its projects' names would.
+    expect(await shelf.locator('.section-empty').evaluate(el => el.getBoundingClientRect().x + parseFloat(getComputedStyle(el).paddingLeft))).toBeGreaterThan(projectX);
+    // Every row stays on one line, and nothing scrolls sideways.
+    for (const row of [filed.locator('.section-toggle'), project.locator('.workspace-project-row'), project.locator('.track-tab').first()]) {
+      expect((await row.boundingBox()).height).toBeLessThan(36);
+    }
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+
+    // A project's chevron: ⌄ open, › closed, by mouse and by keyboard.
+    await expect(projectToggle).toHaveAttribute('aria-expanded', 'true');
+    await expect.poll(() => turned(projectToggle.locator('svg'))).toBe(true);
+    await projectToggle.click();
+    await expect(projectToggle).toHaveAttribute('aria-expanded', 'false');
+    await expect(project.locator('.track-tab')).toBeHidden();
+    await expect.poll(() => turned(projectToggle.locator('svg'))).toBe(false);
+    await projectToggle.focus();
+    await page.keyboard.press('Enter');
+    await expect(projectToggle).toHaveAttribute('aria-expanded', 'true');
+    await expect(project.locator('.track-tab')).toBeVisible();
+    await expect.poll(() => turned(projectToggle.locator('svg'))).toBe(true);
+    await page.keyboard.press('Space');
+    await expect(projectToggle).toHaveAttribute('aria-expanded', 'false');
+    await page.keyboard.press('Enter');
+    await expect(projectToggle).toHaveAttribute('aria-expanded', 'true');
+
+    // A section's chevron the same way; collapsing it hides only its own.
+    const sectionToggle = filed.locator('.section-toggle');
+    await sectionToggle.click();
+    await expect(sectionToggle).toHaveAttribute('aria-expanded', 'false');
+    await expect(project).toBeHidden();
+    await expect(shelf.locator('.section-empty')).toBeVisible();
+    await expect.poll(() => turned(sectionToggle.locator('svg'))).toBe(false);
+    await sectionToggle.focus();
+    await page.keyboard.press('Enter');
+    await expect(sectionToggle).toHaveAttribute('aria-expanded', 'true');
+    await expect(project).toBeVisible();
+    await expect.poll(() => turned(sectionToggle.locator('svg'))).toBe(true);
+    expect((await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze()).violations).toEqual([]);
+    if (width < 760) await page.getByRole('button', { name: 'Close menu', exact: true }).click();
+  }
+});
