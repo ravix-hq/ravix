@@ -391,12 +391,7 @@
                       aria-label={row_label(track, tab_name(track))}
                       title={track.title}
                     >
-                      <.status_dot
-                        :if={tab_status(track)}
-                        status={to_string(tab_status(track))}
-                        label={tab_status_label(tab_status(track))}
-                        title={tab_status_title(track)}
-                      />
+                      <.status_slot track={track} />
                       <.creator track={track} />
                       <span class="track-title">{tab_label(track)}</span>
                       <span :if={track.visibility == :private} class="track-private">
@@ -445,6 +440,7 @@
                           id={"closed-track-#{track.id}"}
                           class="workspace-track closed-track"
                         >
+                          <span class="track-status" aria-hidden="true"></span>
                           <.creator track={track} />
                           <span class="track-title truncate" title={track.title}>
                             {tab_label(track)}<span class="sr-only">, closed</span>

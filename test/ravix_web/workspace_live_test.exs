@@ -1129,6 +1129,19 @@ defmodule RavixWeb.WorkspaceLiveTest do
     # Idle and active tracks alike omit decorative numbering.
     refute has_element?(view, "#{tab.(idle)} .dot[role=img]")
     assert has_element?(view, "#{tab.(idle)} [role=img]", "US")
+
+    # Every row, dot or none, leads with the same status slot before its
+    # avatar, so the avatars line up. An empty slot says nothing to a reader.
+    for track <- tracks do
+      assert has_element?(
+               view,
+               "#{tab.(track)} > .track-status:first-child + .track-creator + .track-title"
+             )
+    end
+
+    assert has_element?(view, "#{tab.(idle)} > .track-status[aria-hidden=true]")
+    refute has_element?(view, "#{tab.(idle)} > .track-status > *")
+    assert has_element?(view, "#{tab.(busy)} > .track-status:not([aria-hidden]) > .dot.working")
     refute has_element?(view, ".project-tree-tracks .track-num")
   end
 

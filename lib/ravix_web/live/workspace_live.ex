@@ -2152,6 +2152,25 @@ defmodule RavixWeb.WorkspaceLive do
     {"mine:" in words, words |> Enum.reject(&(&1 == "mine:")) |> Enum.join(" ")}
   end
 
+  # A row's dot sits in a slot of its own width whether or not there is one,
+  # so every row's avatar and title start at the same x.
+  attr :track, :map, required: true
+
+  defp status_slot(assigns) do
+    assigns = assign(assigns, :status, tab_status(assigns.track))
+
+    ~H"""
+    <span class="track-status" aria-hidden={if is_nil(@status), do: "true"}>
+      <.status_dot
+        :if={@status}
+        status={to_string(@status)}
+        label={tab_status_label(@status)}
+        title={tab_status_title(@track)}
+      />
+    </span>
+    """
+  end
+
   attr :track, :map, required: true
 
   defp creator(assigns) do

@@ -1896,6 +1896,8 @@ body:has(.phx-error) #request-progress { display: none; }
 .track-tab .track-title { position: relative; overflow: hidden; text-overflow: ellipsis; }
 /* A reply waiting to be read: still, where working pulses. */
 .track-tab .dot { width: 7px; height: 7px; }
+/* The dot's slot keeps its width when empty, so avatars form one column. */
+.track-status { flex: none; display: grid; place-items: center; width: 7px; height: 7px; }
 .dot.unread { background: var(--accent); }
 .dot.commented { background: var(--warn); }
 
