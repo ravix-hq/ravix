@@ -238,6 +238,7 @@
                       blocks={elem(segment, 1)}
                       turn={turn}
                       rendered={@rendered}
+                      workdir={@track.workdir}
                     />
                     <div :if={match?({:block, _}, segment)}>
                       <.block
