@@ -72,6 +72,7 @@ defmodule Ravix.Tracks do
     Diff,
     Files,
     Follower,
+    Git,
     Header,
     Names,
     Opening,
@@ -81,6 +82,8 @@ defmodule Ravix.Tracks do
     Sleep,
     Store,
     Thread,
+    Title,
+    Titling,
     Track,
     Transcript,
     View
@@ -238,6 +241,8 @@ defmodule Ravix.Tracks do
       %{
         view
         | threads: threads,
+          activity_at:
+            activity_at(row, [view.last_active_at | Enum.map(conversations, & &1.last_active_at)]),
           unread: Enum.any?(threads, & &1.unread),
           reply_unread: Enum.any?(threads, & &1.reply_unread),
           mention: threads |> Enum.map(& &1.mention) |> Enum.reject(&is_nil/1) |> newest()
@@ -247,6 +252,14 @@ defmodule Ravix.Tracks do
 
   defp newest([]), do: nil
   defp newest(mentions), do: Enum.max_by(mentions, & &1.at, DateTime)
+
+  # The newest thing already in hand: the row's own times, the prompt the tree
+  # query joined, and what the conversations Fountain listed last did.
+  defp activity_at(%Track{} = row, conversation_times) do
+    [row.created_at, row.opened_at, row.closed_at, row.last_prompt_at | conversation_times]
+    |> Enum.reject(&is_nil/1)
+    |> Enum.max(DateTime, fn -> nil end)
+  end
 
   # ownership: every caller admitted these threads through Access.open_tracks/2,
   # Access.thread_access/3 or Access.track_access/2; this is the caller's own
@@ -303,7 +316,7 @@ defmodule Ravix.Tracks do
   end
 
   defp do_get(user, track_id, fresh, thread_id) do
-    with {:ok, %{track: track, project: project, role: role, thread: thread}} <-
+    with {:ok, %{track: track, project: project, role: role, level: level, thread: thread}} <-
            Access.thread_access(user, track_id, thread_id),
          {:ok, client} <- fountain() do
       live = conversations_of(project, fresh: fresh)
@@ -345,6 +358,7 @@ defmodule Ravix.Tracks do
              # very track; both of these are that caller's own view of it.
              people: People.Store.people_of(track.id, project.user_id, project.id),
              role: role,
+             level: level,
              last_read: reads[thread.id],
              viewer: user
            )
@@ -546,7 +560,7 @@ defmodule Ravix.Tracks do
   """
   @spec resume_billing(User.t(), String.t(), String.t()) :: :ok | {:error, reason()}
   def resume_billing(%User{} = user, track_id, runtime) when is_binary(runtime) do
-    with {:ok, %{track: track, project: project}} <- Access.track_access(user, track_id),
+    with {:ok, %{track: track, project: project}} <- Access.track_access(user, track_id, :write),
          true <- Track.creator_billed?(track) or {:error, :not_found},
          {:ok, payer} <- Billing.payer(track, project),
          true <-
@@ -641,7 +655,7 @@ defmodule Ravix.Tracks do
   def start_thread(%User{} = user, track_id, attrs, payload) do
     payload = stringify(payload)
 
-    with {:ok, %{track: track, project: project}} <- Access.track_access(user, track_id),
+    with {:ok, %{track: track, project: project}} <- Access.track_access(user, track_id, :write),
          :ok <-
            check(
              Ravix.Config.threads_enabled?(),
@@ -769,7 +783,9 @@ defmodule Ravix.Tracks do
   defp launch_selected_thread(user, track, project, client, sandbox_id, selection, first) do
     {request_id, body} = first
     id = Ecto.UUID.generate()
-    title = Thread.title_from(body.prompt)
+    # The same title the background titling would give, so the new tab never
+    # shows a cut-off prompt first; `Titling` then marks it automatic.
+    title = Title.from_prompt(body.prompt) || Thread.title_from(body.prompt)
 
     launch = %Launch{
       agent_id: selection.agent_id,
@@ -790,7 +806,7 @@ defmodule Ravix.Tracks do
            create_thread_conversation(client, launch, track, project, selection.runtime) do
       result =
         with {:ok, %{track: %{closed_at: nil}, project: %{runtime_agents_retiring: false}}} <-
-               Access.track_access(user, track.id),
+               Access.track_access(user, track.id, :write),
              :ok <- Runtime.gate(user, %{project | runtime: selection.home}, selection.runtime),
              do:
                save_started_thread(
@@ -818,6 +834,7 @@ defmodule Ravix.Tracks do
           QueueServer.wake()
           MachineCache.forget_project(project.id)
           publish_tracks(project.id, track.id)
+          Titling.after_prompt(track.id, thread.id, request_id, body.prompt)
           {:ok, thread}
 
         {:error, {:conflict, "request_id_used", _}} = refused ->
@@ -949,7 +966,7 @@ defmodule Ravix.Tracks do
   defp open_dedicated(user, project_id, attrs) do
     creator? = Billing.creator_opening?()
 
-    with {:ok, %{project: project, role: role}} <- Access.project_access(user, project_id),
+    with {:ok, %{project: project, role: role}} <- Access.project_access(user, project_id, :write),
          :ok <- not_legacy_duplicate(project),
          :ok <- plan_origin_access(user, project_id, attrs["origin"]),
          {:ok, attrs} <- resolve_pr_origin(project, attrs),
@@ -1036,7 +1053,7 @@ defmodule Ravix.Tracks do
         "This project is a duplicate of its repository's project in the workspace. Open the track there instead."}}
 
   defp open_shared_available(user, project_id, attrs, opts) do
-    with {:ok, %{project: project, role: role}} <- Access.project_access(user, project_id),
+    with {:ok, %{project: project, role: role}} <- Access.project_access(user, project_id, :write),
          :ok <- plan_origin_access(user, project_id, attrs["origin"]),
          {:ok, attrs} <- resolve_pr_origin(project, attrs),
          {:ok, client} <- fountain(),
@@ -1150,7 +1167,7 @@ defmodule Ravix.Tracks do
 
   @doc "Only the creator can change a track's visibility."
   def set_visibility(%User{} = user, track_id, value) do
-    with {:ok, %{track: track}} <- Access.track_access(user, track_id),
+    with {:ok, %{track: track}} <- Access.track_access(user, track_id, :write),
          true <- Access.creator?(user, track),
          {:ok, visibility} <- visibility(value),
          :ok <- visibility_layout(visibility, track.sandbox_layout),
@@ -1299,7 +1316,7 @@ defmodule Ravix.Tracks do
   @spec retry(User.t(), String.t(), String.t() | nil) :: :ok | {:error, reason()}
   def retry(%User{} = user, track_id, thread_id \\ nil) do
     with {:ok, %{track: track, project: project, thread: thread}} <-
-           Access.thread_access(user, track_id, thread_id),
+           Access.thread_access(user, track_id, thread_id, :write),
          {:ok, client} <- fountain() do
       retry_layout(client, track, project, thread)
     end
@@ -1396,7 +1413,7 @@ defmodule Ravix.Tracks do
     payload = stringify(payload)
 
     with {:ok, %{track: track, thread: thread}} <-
-           Access.thread_access(user, track_id, payload["thread_id"]),
+           Access.thread_access(user, track_id, payload["thread_id"], :write),
          {:ok, _client} <- fountain(),
          {:ok, images} <- read_images(payload["images"]),
          text = text(payload["prompt"], 100_000),
@@ -1424,16 +1441,26 @@ defmodule Ravix.Tracks do
 
       # ownership: `prompt/3` opened with `Access.track_access/2` on this
       # track, and the row records who is sending on it.
-      Ravix.PromptQueue.Store.enqueue(
-        track.id,
+      track.id
+      |> Ravix.PromptQueue.Store.enqueue(
         user.id,
         user.login,
         payload["request_id"],
         %Body{prompt: text, images: images},
         thread.id
       )
+      |> title_first(track, thread, text)
     end
   end
+
+  # A thread still wearing the name it opened with may be hearing its first
+  # prompt; `Ravix.Tracks.Titling` checks, off the request.
+  defp title_first({:ok, item} = accepted, track, %Thread{title_source: nil} = thread, text) do
+    Titling.after_prompt(track.id, thread.id, item.id, text)
+    accepted
+  end
+
+  defp title_first(result, _track, _thread, _text), do: result
 
   @doc """
   This person has seen it up to now.
@@ -1465,7 +1492,7 @@ defmodule Ravix.Tracks do
   @doc "Stop the running turn."
   @spec interrupt(User.t(), String.t(), String.t() | nil) :: :ok | {:error, reason()}
   def interrupt(%User{} = user, track_id, thread_id \\ nil) do
-    with {:ok, %{thread: thread}} <- Access.thread_access(user, track_id, thread_id),
+    with {:ok, %{thread: thread}} <- Access.thread_access(user, track_id, thread_id, :write),
          {:ok, client} <- fountain(),
          :ok <-
            check(
@@ -1497,7 +1524,7 @@ defmodule Ravix.Tracks do
   def set_model(%User{} = user, track_id, thread_id, model)
       when is_binary(model) or is_nil(model) do
     with {:ok, %{track: track, project: project, thread: thread}} <-
-           Access.thread_access(user, track_id, thread_id),
+           Access.thread_access(user, track_id, thread_id, :write),
          :ok <-
            check(
              is_nil(track.closed_at) and track.sandbox_state not in [:closing, :terminated],
@@ -1903,7 +1930,7 @@ defmodule Ravix.Tracks do
   @spec rename(User.t(), String.t(), String.t()) :: :ok | {:error, reason()}
   def rename(%User{} = user, track_id, title) do
     with {:ok, %{track: track, project: project, role: role}} <-
-           Access.track_access(user, track_id),
+           Access.track_access(user, track_id, :write),
          :ok <- Access.require_owner_or_cutter(role, user, track, "rename a track"),
          title when is_binary(title) <-
            text(title, 200) |> non_empty() ||
@@ -1944,7 +1971,7 @@ defmodule Ravix.Tracks do
           :ok | {:error, reason()}
   def close(%User{} = user, track_id, opts \\ []) do
     with {:ok, %{track: track, project: project, role: role}} <-
-           Access.track_access(user, track_id),
+           Access.track_access(user, track_id, :write),
          :ok <- Access.require_owner_or_cutter(role, user, track, "close a track"),
          {:ok, client} <- fountain() do
       close_track(user, track, project, client, opts)
@@ -1978,7 +2005,7 @@ defmodule Ravix.Tracks do
     merged = Keyword.get(opts, :require_merged, false) == true
 
     with {:ok, %{track: track, project: project, role: role}} <-
-           Access.track_access(user, track_id),
+           Access.track_access(user, track_id, :write),
          :ok <- Access.require_owner_or_cutter(role, user, track, "close a track"),
          :ok <- require_not_closed(track),
          pr = pull_summary(track, project, if(merged, do: :fresh, else: :cached)),
@@ -2091,7 +2118,7 @@ defmodule Ravix.Tracks do
   @doc "Read-only close warning, scoped to the selected track's disk."
   def close_info(%User{} = user, track_id) do
     with {:ok, %{track: track, project: project, role: role}} <-
-           Access.track_access(user, track_id),
+           Access.track_access(user, track_id, :write),
          :ok <- Access.require_owner_or_cutter(role, user, track, "close a track") do
       inspect_changes(user, track, project)
     end
@@ -2125,10 +2152,109 @@ defmodule Ravix.Tracks do
   defp unpushed_state("0"), do: false
   defp unpushed_state(_), do: true
 
+  # ── Git on the machine, for the Checks tab ────────────────────────────
+
+  # A commit hook or a slow remote gets the terminal's longest timeout, and
+  # the task waiting on it a little longer, so the timeout that fires is the
+  # machine's and says so.
+  @git_write_sec Ravix.Terminal.Request.max_timeout_sec()
+  @git_wait_ms (@git_write_sec + 10) * 1_000
+
+  @doc """
+  What the track's worktree holds that its remote does not: uncommitted
+  entries (`git status --porcelain`) and unpushed commits
+  (`git rev-list @{u}..HEAD`). Read on the machine through
+  `Ravix.Terminal.exec/3`, which is the door: anybody who may run a command
+  on the track may read this. Opening a tab never wakes a machine, so one
+  that is not running answers `{:error, :machine_asleep}` without an exec.
+  """
+  @spec git_status(User.t(), String.t()) ::
+          {:ok, Git.Status.t()} | {:error, reason() | Ravix.Terminal.reason()}
+  def git_status(%User{} = user, track_id) do
+    with {:ok, status} <- Ravix.Terminal.status(user, track_id, passive: true),
+         :ok <- check(status.why != :unreachable, :machine_asleep),
+         {:ok, result} <-
+           Ravix.Terminal.exec(user, track_id, %{command: Git.status_command(), timeout_sec: 15}) do
+      Git.parse_status(result)
+    end
+  end
+
+  @doc """
+  Stage everything in the worktree, commit it with `message` and push the
+  branch, setting its upstream.
+
+  Open to whoever may prompt the agent or run a command on the track, for
+  the reason `open_pull/3` gives: the agent would do this if asked. The
+  person pressing the button is credited with a trailer
+  (`Attribution.commit_message/2`). The Git work runs under
+  `Ravix.TaskSupervisor`, unlinked, so a page that goes away mid-push does
+  not take a half-finished push with it. A refusal names the step that
+  failed; see `Ravix.Tracks.Git`.
+  """
+  @spec commit_and_push(User.t(), String.t(), String.t() | nil) ::
+          :ok | {:error, reason() | Ravix.Terminal.reason()}
+  def commit_and_push(%User{} = user, track_id, message) do
+    message = text(message, Git.message_max() + 1)
+
+    with {:ok, _track} <- writable_worktree(user, track_id),
+         :ok <-
+           check(message != "", {:unprocessable, "empty_message", "Write a commit message."}),
+         :ok <-
+           check(
+             String.length(message) <= Git.message_max(),
+             {:unprocessable, "message_too_long",
+              "Keep the commit message under #{Git.message_max()} characters."}
+           ) do
+      command = Git.commit_and_push_command(Attribution.commit_message(message, user))
+      git_write(user, track_id, command, :commit)
+    end
+  end
+
+  @doc "Push the branch as it stands, setting its upstream. Access as `commit_and_push/3`."
+  @spec push(User.t(), String.t()) :: :ok | {:error, reason() | Ravix.Terminal.reason()}
+  def push(%User{} = user, track_id) do
+    with {:ok, _track} <- writable_worktree(user, track_id),
+         do: git_write(user, track_id, Git.push_command(), :push)
+  end
+
+  defp writable_worktree(user, track_id) do
+    with {:ok, %{track: track}} <- Access.track_access(user, track_id, :write),
+         :ok <-
+           check(
+             is_nil(track.closed_at) and track.sandbox_state not in [:closing, :terminated],
+             {:conflict, "closed_track", "This track is closing or closed."}
+           ) do
+      {:ok, track}
+    end
+  end
+
+  defp git_write(user, track_id, command, step) do
+    task =
+      Task.Supervisor.async_nolink(
+        Ravix.TaskSupervisor,
+        Trace.link(fn ->
+          Ravix.Terminal.exec(user, track_id, %{command: command, timeout_sec: @git_write_sec})
+        end)
+      )
+
+    case Task.yield(task, @git_wait_ms) || Task.shutdown(task, :brutal_kill) do
+      {:ok, {:ok, result}} ->
+        Git.written(result, step)
+
+      {:ok, {:error, _} = error} ->
+        error
+
+      _ ->
+        {:error,
+         {:unavailable, "git_unanswered",
+          "The machine did not answer. Refresh to see where Git got to."}}
+    end
+  end
+
   @doc "Rebuild an isolated machine only after explicit destructive confirmation."
   def rebuild_machine(%User{} = user, track_id, force: true) do
     with {:ok, %{track: %{sandbox_layout: :dedicated} = track, project: project, role: role}} <-
-           Access.track_access(user, track_id),
+           Access.track_access(user, track_id, :write),
          :ok <- Access.require_owner_or_cutter(role, user, track, "rebuild a machine"),
          {:ok, _} <- Ravix.Tracks.Sandbox.Store.request_rebuild(track, project) do
       publish_tracks(project.id, track.id)
@@ -2281,6 +2407,44 @@ defmodule Ravix.Tracks do
     end
   end
 
+  @doc """
+  The files the composer's `@` searches: the Files panel's listing, walked
+  breadth first from the track's working directory and bounded. See
+  `Ravix.Tracks.Files.index/2` for the bounds and for why nothing outside the
+  worktree is read. Like the panel, it never wakes a parked machine: the
+  first read answers `{:error, :machine_asleep}` on a suspended one, and a
+  directory that fails later is skipped and reported as `truncated`.
+  """
+  @spec file_index(User.t(), String.t()) :: {:ok, Files.Index.t()} | {:error, reason()}
+  def file_index(%User{} = user, track_id) do
+    with {:ok, track, client, sandbox_id} <- machine_read(user, track_id),
+         {:ok, raw} <-
+           disk_result(track, Fountain.listing(client, sandbox_id, track.workdir)) do
+      root = Files.present_listing(raw)
+
+      {:ok,
+       Files.index(track.workdir, fn
+         [dir] when dir == track.workdir -> [root]
+         dirs -> read_listings(client, sandbox_id, dirs)
+       end)}
+    end
+  end
+
+  defp read_listings(client, sandbox_id, dirs) do
+    Ravix.TaskSupervisor
+    |> Task.Supervisor.async_stream_nolink(
+      dirs,
+      Ravix.Trace.link_each(fn dir -> Fountain.listing(client, sandbox_id, dir) end),
+      max_concurrency: 8,
+      timeout: 5_000,
+      on_timeout: :kill_task
+    )
+    |> Enum.map(fn
+      {:ok, {:ok, raw}} when is_map(raw) -> Files.present_listing(raw)
+      _ -> nil
+    end)
+  end
+
   @doc "Optional metadata for an already-rendered listing, only on a running machine."
   @spec file_metadata(User.t(), String.t(), Files.Listing.t()) ::
           {:ok, Files.Listing.t()} | {:error, reason()}
@@ -2427,7 +2591,7 @@ defmodule Ravix.Tracks do
     attrs = stringify(attrs)
 
     with {:ok, app} <- github(),
-         {:ok, %{track: track, project: project}} <- Access.track_access(user, track_id),
+         {:ok, %{track: track, project: project}} <- Access.track_access(user, track_id, :write),
          :ok <- require_repo(project, "This project has no repository.") do
       body =
         text(attrs["body"], 20_000) |> non_empty() || "Opened from Ravix track `#{track.slug}`."
@@ -2568,10 +2732,12 @@ defmodule Ravix.Tracks do
       visibility: row.visibility,
       created_by_login: row.created_by_login,
       creator_avatar_url: row.creator_avatar_url,
+      activity_at: activity_at(row, [last_active]),
       closed_at: row.closed_at,
       people: Keyword.get(opts, :people, []),
       threads: Keyword.get(opts, :threads, []),
       role: Keyword.get(opts, :role, :owner),
+      level: Keyword.get(opts, :level),
       unread: unread?(last_active, Keyword.get(opts, :last_read)),
       model: live && live.model
     }

@@ -590,6 +590,8 @@ test('project, track, streaming, image upload, reconnect, and revocation', async
   const firstTrackTab = page.locator('.project-tree-tracks .workspace-track[aria-current="page"]');
   await expect(firstTrackTab).toBeVisible();
   const firstTrackName = (await firstTrackTab.locator('.track-title').textContent()).trim();
+  // RAV-48: the first prompt retitles the track, so find it again by id.
+  const firstTrackTabId = await firstTrackTab.getAttribute('id');
   await expect(page.locator('#yard .project-tree-tracks .workspace-track')).toHaveCount(1);
   // Personal sections persist across reloads and never delete the projects inside.
   await page.getByRole('button', { name: 'Manage sections', exact: true }).click();
@@ -624,7 +626,7 @@ test('project, track, streaming, image upload, reconnect, and revocation', async
 
   await expect(page.getByLabel('Command', { exact: true })).not.toBeVisible();
   await page.getByRole('button', { name: 'Commands', exact: true }).click();
-  await expect(page.locator('#track-terminal .dock-empty')).toContainText('without an interactive terminal');
+  await expect(page.locator('#track-terminal .dock-empty')).toContainText('For an interactive shell, such as a console or a REPL, open a terminal with +.');
   await expect(page.locator('#track-terminal').getByRole('button', { name: 'Run', exact: true })).toHaveCount(0);
   await page.getByLabel('Command', { exact: true }).fill('echo draft');
   await page.getByRole('button', { name: 'Collapse the dock' }).click();
@@ -807,8 +809,11 @@ test('project, track, streaming, image upload, reconnect, and revocation', async
   await expect(page.locator('#transcript-turns')).not.toContainText('Draft survives reconnect');
   await accessible(page);
 
-  await page.locator('#yard .workspace-project.current .project-tree-tracks').getByRole('link').filter({ hasText: firstTrackName }).click();
-  await expect(page.locator('.track-crumbs')).toContainText(firstTrackName);
+  const firstTrackLink = page.locator(`#${firstTrackTabId}`);
+  await expect(firstTrackLink.locator('.track-title')).not.toHaveText(firstTrackName);
+  const firstTrackTitle = (await firstTrackLink.locator('.track-title').textContent()).trim();
+  await firstTrackLink.click();
+  await expect(page.locator('.track-crumbs')).toContainText(firstTrackTitle);
   await expect(page.locator('#transcript-scroll')).toHaveAttribute('data-track', firstLane);
   await expect(page.locator('#transcript-turns')).toContainText('Draft survives reconnect');
 

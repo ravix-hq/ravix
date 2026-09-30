@@ -2,6 +2,15 @@ defmodule Ravix.Changelog do
   @moduledoc "Curated user-facing changes shipped with Ravix."
   @entries [
     %{
+      id: "2026-09-30-terminals",
+      date: ~D[2026-09-30],
+      kind: :new,
+      title: "Interactive terminals",
+      body:
+        "Open a real shell on a track's machine from the dock, with + beside Commands. Run a console, a REPL or psql, keep several tabs, and pick up where you left off after a reconnect.",
+      action: nil
+    },
+    %{
       id: "2026-09-28-thread-default",
       date: ~D[2026-09-28],
       kind: :new,

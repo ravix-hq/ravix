@@ -11,6 +11,13 @@ defmodule Ravix.Config do
 
   def dedicated_rollout?, do: Application.get_env(:ravix, :dedicated_open_user_ids, []) != []
 
+  @doc """
+  Whether automatic titles are worked out under `Ravix.TaskSupervisor`
+  (RAV-48). Always, except under test, where the caller that owns the SQL
+  sandbox does it before returning, so no task outlives its test.
+  """
+  def background_titling?, do: Application.get_env(:ravix, :background_titling, true)
+
   @doc "Enable new threads only after old queue workers have drained."
   def threads_enabled?, do: Application.get_env(:ravix, :threads_enabled, false)
 

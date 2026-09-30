@@ -21,6 +21,11 @@ defmodule Ravix.Tracks.View do
   read live off Fountain like the status, and nil when it follows the
   project's model.
 
+  `activity_at` is when anything last happened on the track, as far as
+  Ravix already knows without asking again: the newest of its creation,
+  opening, closing, newest accepted prompt and its conversations' last
+  activity. The rail shows it as a relative age.
+
   Deliberately not the `Ravix.Tracks.Track` schema with extra fields on it.
   That schema argues against exactly that in its own documentation -- status,
   turn count and whether the machine is up are read live because "caching
@@ -78,6 +83,7 @@ defmodule Ravix.Tracks.View do
                 created_by: nil,
                 creator_revoked_at: nil,
                 creator_avatar_url: nil,
+                activity_at: nil,
                 closed_at: nil,
                 sandbox_layout: :shared,
                 sandbox_state: nil,
@@ -94,7 +100,8 @@ defmodule Ravix.Tracks.View do
                 billing: :owner,
                 payer_login: nil,
                 payer?: false,
-                billing_pause: nil
+                billing_pause: nil,
+                level: nil
               ]
 
   @type t :: %__MODULE__{
@@ -115,9 +122,11 @@ defmodule Ravix.Tracks.View do
           created_at: DateTime.t(),
           created_by_login: String.t(),
           creator_avatar_url: String.t() | nil,
+          activity_at: DateTime.t() | nil,
           closed_at: DateTime.t() | nil,
           people: [Person.t()],
           role: :owner | :member,
+          level: Ravix.Accounts.Access.level() | nil,
           unread: boolean(),
           reply_unread: boolean() | nil,
           mention: %{comment_id: String.t(), author_login: String.t(), at: DateTime.t()} | nil,

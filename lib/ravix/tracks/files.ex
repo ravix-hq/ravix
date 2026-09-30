@@ -64,6 +64,105 @@ defmodule Ravix.Tracks.Files do
           }
   end
 
+  defmodule Index do
+    @moduledoc """
+    The track's files as paths relative to its worktree, shallowest first:
+    what the composer's `@` searches. `truncated` says the walk stopped at
+    one of its bounds, so the person can be told a file may be missing.
+    """
+
+    @enforce_keys [:paths, :truncated]
+    defstruct @enforce_keys
+
+    @type t :: %__MODULE__{paths: [String.t()], truncated: boolean()}
+  end
+
+  @index_paths 3_000
+  @index_directories 120
+
+  # Directories nobody means when they @-mention a file, and the ones that
+  # would spend the whole walk on themselves.
+  @index_skip ~w(.git node_modules _build deps .elixir_ls dist build target vendor .venv venv
+                 __pycache__ .next .nuxt .cache cover coverage tmp)
+
+  @doc """
+  Every file under `root`, breadth first, within bounds.
+
+  `read_many` takes absolute directory paths and answers, in the same order, a
+  `Listing` for each or `nil` for one that could not be read. Nothing outside
+  `root` is ever asked for: an entry whose name is not a single path segment
+  is not followed, a listing that answers for a different directory than the
+  one asked is ignored, and every path asked for is checked with `confine/2`.
+  The walk reads at most #{@index_directories} directories and keeps at most
+  #{@index_paths} paths.
+  """
+  @spec index(String.t(), ([String.t()] -> [Listing.t() | nil])) :: Index.t()
+  def index(root, read_many), do: walk(root, read_many, [""], [], 0, false)
+
+  defp walk(_root, _read_many, [], paths, _reads, truncated),
+    do: %Index{paths: Enum.reverse(paths), truncated: truncated}
+
+  defp walk(_root, _read_many, _level, paths, reads, _truncated) when reads >= @index_directories,
+    do: %Index{paths: Enum.reverse(paths), truncated: true}
+
+  defp walk(root, read_many, level, paths, reads, truncated) do
+    {batch, rest} = Enum.split(level, @index_directories - reads)
+    asked = Enum.map(batch, &under(root, &1))
+    answers = read_many.(asked)
+
+    {next, paths, truncated} =
+      [batch, asked, answers]
+      |> Enum.zip()
+      |> Enum.reduce({[], paths, truncated or rest != []}, &take_listing/2)
+
+    if length(paths) >= @index_paths,
+      do: %Index{paths: paths |> Enum.reverse() |> Enum.take(@index_paths), truncated: true},
+      else: walk(root, read_many, Enum.reverse(next), paths, reads + length(batch), truncated)
+  end
+
+  defp take_listing({relative, absolute, %Listing{path: path} = listing}, acc)
+       when is_binary(path) do
+    {next, paths, truncated} = acc
+
+    if String.trim_trailing(path, "/") == absolute do
+      listing.entries
+      |> Enum.filter(&segment?(&1.name))
+      |> Enum.sort_by(& &1.name)
+      |> Enum.reduce({next, paths, truncated or listing.truncated}, &take_entry(relative, &1, &2))
+    else
+      {next, paths, true}
+    end
+  end
+
+  defp take_listing({_relative, _absolute, _unreadable}, {next, paths, _truncated}),
+    do: {next, paths, true}
+
+  defp take_entry(relative, entry, {next, paths, truncated}) do
+    child = if relative == "", do: entry.name, else: "#{relative}/#{entry.name}"
+
+    case entry.type do
+      "directory" when entry.name in @index_skip -> {next, paths, truncated}
+      "directory" -> {[child | next], paths, truncated}
+      "file" -> {next, [child | paths], truncated}
+      _ -> {next, paths, truncated}
+    end
+  end
+
+  defp segment?(name) when is_binary(name),
+    do: name not in ["", ".", ".."] and not String.contains?(name, ["/", "\\", <<0>>, "\n"])
+
+  defp segment?(_name), do: false
+
+  defp under(root, ""), do: root
+
+  defp under(root, relative) do
+    # `relative` is built from checked segments, so this always holds; it is
+    # asked anyway because a listing that walks out of the worktree is the
+    # one thing this function must never do.
+    absolute = "#{root}/#{relative}"
+    ^absolute = confine(root, absolute)
+  end
+
   @doc """
   A path, pinned inside the track's own worktree.
 

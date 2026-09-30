@@ -27,6 +27,18 @@ defmodule Ravix.Tracks.AttributionTest do
              "Co-authored-by: eli <9002+eli@users.noreply.github.com>"
   end
 
+  test "a Checks commit credits the person who pressed it, once, behind the switch" do
+    user = insert_user(login: "dana", github_id: "9001", name: "Dana")
+    trailer = Attribution.trailer(user)
+
+    switch(false)
+    assert Attribution.commit_message("Fix it", user) == "Fix it"
+
+    switch(true)
+    assert Attribution.commit_message("Fix it\n", user) == "Fix it\n\n" <> trailer
+    assert Attribution.commit_message("Fix it\n\n" <> trailer, user) == "Fix it\n\n" <> trailer
+  end
+
   test "a name with line separators, tabs and other controls stays one clean, capped line" do
     user =
       insert_user(

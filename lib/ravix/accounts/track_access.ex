@@ -14,14 +14,22 @@ defmodule Ravix.Accounts.TrackAccess do
   the track and somebody named on the whole project both arrive as `:member`:
   the difference between them is how they got here, not what they may do once
   they are. See `Ravix.Accounts.ProjectAccess` for why this is a struct.
+
+  `level` is what they may do (ADR 0010): `:read`, `:write` or `:admin`, the
+  highest of the grants that reach this track. The owner is always `:admin`.
   """
 
   alias Ravix.Accounts.Access
   alias Ravix.Projects.Project
   alias Ravix.Tracks.Track
 
-  @enforce_keys [:track, :project, :role]
-  defstruct [:track, :project, :role]
+  @enforce_keys [:track, :project, :role, :level]
+  defstruct [:track, :project, :role, :level]
 
-  @type t :: %__MODULE__{track: Track.t(), project: Project.t(), role: Access.role()}
+  @type t :: %__MODULE__{
+          track: Track.t(),
+          project: Project.t(),
+          role: Access.role(),
+          level: Access.level()
+        }
 end

@@ -807,6 +807,7 @@ html[data-yard="closed"] .yard .workspace-gear { display: none; }
   display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin-top: 8px;
   color: var(--dimmer); font-size: 12px;
 }
+.turn-footer .turn-elapsed { font-variant-numeric: tabular-nums; }
 .turn-footer .turn-copy { padding: 3px; line-height: 0; color: var(--dimmer); }
 .turn-footer .turn-copy:hover, .turn-footer .turn-copy.copied { color: var(--ink); }
 .turn-footer .turn-file {
@@ -989,6 +990,24 @@ html[data-yard="closed"] .yard .workspace-gear { display: none; }
 .mention-options li { display: flex; gap: 8px; align-items: baseline; padding: 5px 8px; border-radius: var(--radius); cursor: pointer; }
 .mention-options li[aria-selected="true"], .mention-options li:hover { background: var(--surface-hover); }
 
+/* Ask mode's `@` files and `/` commands: the same list, wider, because a
+   path or a command's description is longer than a login. */
+.composer-suggestions { width: min(560px, calc(100% - 16px)); max-height: 280px; }
+.composer-suggestions:not([hidden]) { display: block; }
+.composer-suggestions li { min-width: 0; }
+.composer-suggestions li > strong { flex: none; font: 12.5px/1.4 var(--mono); font-weight: 600; }
+.composer-suggestions li > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; }
+.composer-suggestions li .suggestion-source { margin-left: auto; flex: none; font-size: 11px; color: var(--dim); }
+.composer-suggestions li mark { color: inherit; background: none; text-decoration: underline; text-underline-offset: 2px; }
+.composer-suggestions li[aria-disabled="true"] { cursor: default; color: var(--dim); font-size: 12.5px; }
+.composer-suggestions li[aria-disabled="true"]:hover { background: none; }
+.composer-shortcut { font-size: 11.5px; color: var(--dim); white-space: nowrap; }
+.composer-shortcut kbd { font: inherit; }
+/* Narrow tracks (the 760px switch to one view at a time) are mostly touch
+   screens, and the hint is what would wrap the action row onto a second
+   line, taking 40px from the transcript. The shortcut itself still works. */
+@media (max-width: 760px) { .composer-shortcut { display: none; } }
+
 /* A person's comment in the transcript: neither the prompt bubble on the
    right nor the reply on the left, but a card across the width. */
 .thread-comment {
@@ -1150,10 +1169,49 @@ html[data-yard="closed"] .yard .workspace-gear { display: none; }
    inside the same strip, so its selector carries the strip to outrank
    `.workspace-tabs button` without an `!important`. */
 .dock-tabs { border-top: 1px solid var(--line); border-bottom: 0; }
+/* With terminal tabs the strip can outgrow the inspector: it scrolls
+   sideways, as a terminal's tab bar does, rather than wrapping a tab onto a
+   second line under the panels. */
+.dock-tabs { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: thin; }
+.dock-tabs > * { flex-shrink: 0; }
 .workspace-tabs .dock-toggle { width: 24px; padding: 5px; }
 .machine-dock { height: 240px; flex: none; display: flex; flex-direction: column; min-height: 0; border-top: 1px solid var(--line); }
 .machine-dock .workspace-terminal { height: 100%; }
 .machine-dock .hint { padding: 0 10px; font-size: 11px; color: var(--dim); }
+
+/* Terminal tabs. A tab and its close button read as one tab; the close and
+   the "+" after the last tab are the strip's small square buttons. */
+.dock-shell-tab { display: inline-flex; align-items: center; }
+.workspace-tabs .dock-shell-tab > button:first-child { display: inline-flex; align-items: center; gap: 6px; padding-right: 4px; }
+.workspace-tabs .dock-shell-close,
+.workspace-tabs .dock-shell-new {
+  display: inline-grid; place-items: center; width: 22px; height: 22px; padding: 0;
+  border: 0; border-radius: var(--radius); color: var(--dimmer);
+}
+.workspace-tabs .dock-shell-close:hover:not(:disabled),
+.workspace-tabs .dock-shell-new:hover:not(:disabled) { background: var(--surface-hover); color: var(--ink); }
+/* The pane is the terminal's ground; xterm draws inside `.shell-screen` and
+   takes its colours from the theme (see assets/js/hooks/shell.js). */
+/* The padding is on `.xterm`, not the pane: xterm's fit addon measures the
+   pane's border-box width and subtracts only the terminal's own padding, so
+   padding here would be counted as columns and the last one clipped. */
+.shell-screen { flex: 1; min-height: 0; overflow: hidden; }
+.shell-screen .xterm { height: 100%; padding: 6px 6px 2px 10px; }
+/* xterm lays a row out in whole-pixel cells, and the browser draws the glyphs
+   a fraction of a pixel wider, so a full row runs a few pixels past its box.
+   xterm clips each row to its box, inline, which cut the last character in
+   half; the overrun is let into the terminal's right padding instead. */
+.shell-screen .xterm .xterm-rows > div { overflow: visible !important; }
+/* The pane paints the terminal's ground. xterm also paints its viewport, and
+   inline, over the right padding the overrun below is let into; the
+   `!important` is what outranks an inline style. */
+.shell-screen .xterm-viewport,
+.shell-screen .xterm-scrollable-element { background-color: transparent !important; }
+.shell-status {
+  display: flex; align-items: center; gap: 10px; padding: 6px 10px;
+  border-bottom: 1px solid var(--line); font-family: var(--sans); font-size: 12px; color: var(--dim);
+}
+.shell-status button { font-size: 12px; padding: 2px 8px; }
 
 .machine-stats { display: grid; gap: 10px; max-width: 480px; margin: 0; }
 .machine-stats > div { display: grid; grid-template-columns: 100px minmax(0, 1fr); gap: 16px; }
@@ -1715,6 +1773,27 @@ button.primary.home-action .ico { color: inherit; }
 .plan-graph-closed_without_merge a { border-left-color: var(--bad); }
 @media (max-width: 600px) { .plans-panel { padding: .75rem; } .plan-item, .plan-editor-item { padding: .75rem; } .plans-toolbar select { width: 100%; } }
 
+/* Checks opens on what the worktree holds that GitHub does not: one row per
+   state, its count, and the one action that moves it along. */
+.git-status { margin: 0 0 14px; padding: 0 0 12px; border-bottom: 1px solid var(--line); }
+.git-status-title { display: flex; align-items: center; gap: 8px; margin: 0 0 8px; font-size: 13px; font-weight: 600; }
+.git-branch { display: inline-flex; align-items: center; gap: 4px; min-width: 0; color: var(--dim); font-weight: 400; }
+.git-branch code { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.git-rows { list-style: none; margin: 0; padding: 0; }
+.git-row { display: flex; align-items: center; gap: 8px; min-height: 36px; padding: 4px .25rem; font-size: 13px; }
+.git-row + .git-row { border-top: 1px solid var(--line); }
+.git-row-icon { flex: none; width: 23px; color: var(--dim); }
+.git-row .chip { flex: none; justify-content: center; min-width: 23px; font-variant-numeric: tabular-nums; }
+.git-row-label { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.git-row button { flex: none; margin-left: auto; }
+.git-hint, .git-note { color: var(--dim); font-size: 12px; }
+.git-failure {
+  margin: 8px 0 0; padding: 8px 10px; border: 1px solid color-mix(in srgb, var(--bad) 35%, var(--line));
+  border-radius: var(--radius); background: var(--bad-soft); color: var(--bad); font-size: 12px; overflow-wrap: anywhere;
+}
+/* Git's own lines keep their breaks; the template's indentation does not. */
+.git-failure > span { white-space: pre-wrap; }
+
 /* Changes inspector shares transcript diff colors and contains wide source lines. */
 .changes-panel { min-width: 0; max-width: 100%; }
 .changes-panel input { width: 100%; min-width: 0; }
@@ -1896,6 +1975,32 @@ body:has(.phx-error) #request-progress { display: none; }
 .people-identity small { color: var(--dim); }
 .people-row button { flex: none; }
 
+/* A person's role (ADR 0010): a quiet label, or for an admin a trigger
+   opening the role menu beside it, the model menu's look in a list row. */
+.role-label { flex: none; font-size: 12px; }
+.role-trigger { display: inline-flex; align-items: center; gap: 4px; }
+.role-trigger:has(+ .role-menu:popover-open) { background: var(--surface-hover); color: var(--ink); }
+.role-menu {
+  position: fixed; inset: auto; margin: 0; top: 50%; left: 50%; translate: -50% -50%;
+  width: min(280px, calc(100vw - 32px)); padding: 4px; color: var(--ink); background: var(--panel);
+  border: 1px solid var(--line); border-radius: var(--radius-lg); box-shadow: 0 8px 28px var(--shadow);
+}
+@supports (position-anchor: --a) {
+  .role-menu {
+    translate: none; top: calc(anchor(bottom) + 4px); left: auto; right: anchor(right);
+    position-try-fallbacks: flip-block;
+  }
+}
+.role-menu hr { margin: 4px 0; border: 0; border-top: 1px solid var(--line); }
+.role-option { width: 100%; }
+.role-option-text { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; text-align: left; }
+.role-option-text small { color: var(--dimmer); font-size: 11px; }
+.role-option[aria-checked="true"] { color: var(--ink); }
+.role-option .check { flex: none; color: var(--accent); }
+.role-option.danger { color: var(--bad); }
+.copy-link { margin-top: 16px; }
+.composer-read-only { color: var(--dim); }
+
 /* The Share dialog (ADR 0009 phase 5): visibility, the @-mention box over
    workspace members, and the track's own link. */
 .share-dialog { display: flex; flex-direction: column; gap: 14px; }
@@ -1935,6 +2040,11 @@ body:has(.phx-error) #request-progress { display: none; }
   font-size: 8px; font-weight: 600; line-height: 1; color: var(--ink); background: var(--surface-active);
 }
 .track-creator img { width: 100%; height: 100%; object-fit: cover; }
+/* How long since the track last did anything. It never shrinks: at the
+   narrowest rail the title truncates first. */
+.track-age { flex: none; margin-left: auto; color: var(--dim); font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.workspace-track.selected .track-age { color: inherit; }
+.track-private { flex: none; display: inline-flex; align-items: center; gap: 3px; white-space: nowrap; }
 .rail-scope { display: flex; gap: 2px; margin: 0 8px 6px; padding: 2px; background: var(--surface); border-radius: var(--radius); }
 .rail-scope button { flex: 1; padding: 2px 8px; font-size: 12px; border: none; border-radius: var(--radius); }
 .rail-scope button.on { color: var(--ink); background: var(--panel); box-shadow: 0 1px 2px var(--shadow); }

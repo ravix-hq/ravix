@@ -344,4 +344,53 @@ defmodule Ravix.Tracks.FollowerTest do
     unopened = insert_track(conversation_id: nil)
     assert {:error, :not_open} = Follower.subscribe(unopened.id)
   end
+
+  test "a title the runtime gives its session renames an automatically titled track", ctx do
+    track = insert_track(conversation_id: ctx.conversation_id, title: "Pull Latest Main")
+
+    Repo.update_all(from(t in Ravix.Tracks.Track, where: t.id == ^track.id),
+      set: [title_source: :auto]
+    )
+
+    Repo.update_all(from(t in Ravix.Tracks.Thread, where: t.id == ^track.id),
+      set: [title: "Pull Latest Main", title_source: :auto]
+    )
+
+    info =
+      Jason.encode!(%{
+        jsonrpc: "2.0",
+        method: "session/update",
+        params: %{
+          sessionId: "s1",
+          update: %{sessionUpdate: "session_info_update", title: "Main branch pull"}
+        }
+      })
+
+    client =
+      FakeTransport.client(
+        [
+          {%{method: "GET", path: "/api/conversations/#{ctx.conversation_id}/stream"},
+           {200, [{"content-type", "text/event-stream"}],
+            [
+              FakeTransport.frame(1, "output", %{
+                id: 1,
+                turn_id: "t1",
+                kind: "output",
+                stream: "acp",
+                data: info
+              })
+            ]}}
+        ],
+        verify: false
+      )
+
+    :ok = Ravix.Hub.subscribe(track.project_id)
+    assert {:ok, _follower} = subscribe(%{ctx | track_id: track.id}, client: client)
+
+    id = track.id
+    assert_receive {:transcript, ^id, %Event{id: 1} = event}, 1_000
+    assert Event.session_title(event) == "Main branch pull"
+    assert_receive {:hub, %Ravix.Hub.Event{name: :tracks, track_id: ^id}}, 2_000
+    assert Repo.get!(Ravix.Tracks.Track, id).title == "Main branch pull"
+  end
 end

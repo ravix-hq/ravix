@@ -25,7 +25,8 @@ config :ravix, RavixWeb.Endpoint,
   debug_errors: true,
   secret_key_base: "cBwHo2JEymDi02KRW3oNP4CHoIRWHMgAEjHy+wA195/4LoPNIm2TJmXLfw02p4mv",
   watchers: [
-    esbuild: {Esbuild, :install_and_run, [:ravix, ~w(--sourcemap=inline --watch)]}
+    esbuild: {Esbuild, :install_and_run, [:ravix, ~w(--sourcemap=inline --watch)]},
+    esbuild_xterm: {Esbuild, :install_and_run, [:xterm, ~w(--watch)]}
   ]
 
 # ## SSL Support

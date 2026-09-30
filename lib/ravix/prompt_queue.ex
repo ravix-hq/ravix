@@ -99,7 +99,7 @@ defmodule Ravix.PromptQueue do
   @spec retry(User.t(), String.t(), String.t()) :: :ok | {:error, reason()}
   def retry(%User{} = user, track_id, id) do
     with {:ok, %{role: role, track: track, project: project}} <-
-           Access.track_access(user, track_id),
+           Access.track_access(user, track_id, :write),
          {:ok, :ok} <- Repo.transaction(fn -> retry_locked(id, track, role, user) end) do
       Hub.publish(project.id, :queue, track_id: track_id)
       Server.wake()

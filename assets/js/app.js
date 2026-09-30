@@ -6,7 +6,10 @@
 // scroll position, a drag, the palette painted before the first frame. Those
 // live in `hooks/`, one file each, and this file registers them. The
 // page_loading helper also reflects pending navigation in the shared status
-// indicator. There is no framework or package beyond Phoenix's own.
+// indicator, and the connect params carry the browser's time zone. There is
+// no framework, and one library beyond Phoenix's own:
+// xterm.js, vendored, which is its own bundle (`xterm.js`) loaded by the Shell
+// hook the first time a terminal is opened, so it costs this file nothing.
 //
 // The hooks, and what they are for:
 //
@@ -16,7 +19,8 @@
 //   PanelToggle     whether those sidebars are open; a preference of this browser
 //   TranscriptTail  a scrollback that follows new output while you are at the bottom
 //   Composer        the prompt box: Enter sends, pasted images become uploads
-//   Terminal        the shell panel: history, Ctrl+L, output that follows itself
+//   Terminal        the Commands panel: history, Ctrl+L, output that follows itself
+//   Shell           an interactive terminal tab: xterm.js over the page's socket
 //   Notify          desktop notifications when a track needs you and you are not looking
 //   SettingsSections section navigation and unsaved input warnings
 //   ProjectTree     viewer-local collapse preferences for project and section rows
@@ -24,6 +28,9 @@
 //   ProjectSections drag a sidebar project onto one of your sections
 //   ProjectFormFocus synchronous dialog focus that never steals later typing
 //   CopyCode        copy a Help example exactly, with success or failure feedback
+//   TurnTimer       a running turn's elapsed time, ticking without a round-trip
+//   RelativeTime    a sidebar row's "22h" age, kept current without server ticks
+//   SubmitOnEnter   the create dialog's first prompt: Enter creates, Shift+Enter is a new line
 //
 // Adding a hook is a product decision, not a convenience. Say why in its
 // file's header, and list it here.
@@ -31,6 +38,7 @@ import "../css/app.css"
 import "phoenix_html"
 import {clearTransportFallback, LONG_POLL_FALLBACK_MS} from "./transport"
 import {trackPageLoading} from "./page_loading"
+import {browserTimeZone} from "./timezone"
 import {Socket} from "phoenix"
 import {LiveSocket} from "phoenix_live_view"
 import {ThreadTabs} from "./hooks/thread_tabs"
@@ -40,6 +48,7 @@ import {PanelToggle} from "./hooks/panel_toggle"
 import {TranscriptTail} from "./hooks/transcript_tail"
 import {Composer} from "./hooks/composer"
 import {Terminal} from "./hooks/terminal"
+import {Shell} from "./hooks/shell"
 import {Notify} from "./hooks/notify"
 import {ProjectTree} from "./hooks/project_tree"
 import {QuickJump} from "./hooks/quick_jump"
@@ -49,14 +58,18 @@ import {ProjectSections} from "./hooks/project_sections"
 import {ProjectFormFocus} from "./hooks/project_form_focus"
 import {CopyCode} from "./hooks/copy_code"
 import {ShareMention} from "./hooks/share_mention"
+import {TurnTimer} from "./hooks/turn_timer"
+import {RelativeTime} from "./hooks/relative_time"
+import {SubmitOnEnter} from "./hooks/submit_on_enter"
 
-const hooks = {ThreadTabs, AgentConfirmation, Theme, PanelResize, PanelToggle, TranscriptTail, Composer, Terminal, Notify, SettingsSections, ProjectTree, QuickJump, ProjectSections, CopyCode, ProjectFormFocus, ShareMention}
+
+const hooks = {ThreadTabs, AgentConfirmation, Theme, PanelResize, PanelToggle, TranscriptTail, Composer, Terminal, Notify, SettingsSections, ProjectTree, QuickJump, ProjectSections, CopyCode, ProjectFormFocus, ShareMention, TurnTimer, RelativeTime, SubmitOnEnter, Shell}
 
 const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
 clearTransportFallback(window)
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: LONG_POLL_FALLBACK_MS,
-  params: {_csrf_token: csrfToken},
+  params: {_csrf_token: csrfToken, timezone: browserTimeZone()},
   hooks,
 })
 

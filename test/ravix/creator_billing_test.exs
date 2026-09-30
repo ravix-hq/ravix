@@ -942,6 +942,10 @@ defmodule Ravix.CreatorBillingTest do
              fn call ->
                assert call.body["allowed_inference_credential_ids"] == []
                assert call.body["inference_credential_id"] == "owner-set"
+
+               assert call.body["name"] ==
+                        Projects.Machine.fountain_name(ctx.project, "codex")
+
                {201, [], %{data: %{id: "codex-agent"}}}
              end},
             {%{method: "GET", path: "/api/agents/codex-agent"},

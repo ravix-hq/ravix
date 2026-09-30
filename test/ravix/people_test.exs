@@ -671,9 +671,9 @@ defmodule Ravix.PeopleTest do
       assert {:ok, people} = People.list(ctx.owner, ctx.shared.id)
 
       assert people == [
-               %Person{login: "ana", name: "Ana", avatar_url: nil, via: :owner},
-               %Person{login: "cy", name: "Cy", avatar_url: nil, via: :project},
-               %Person{login: "bo", name: "Bo", avatar_url: nil, via: :track},
+               %Person{login: "ana", name: "Ana", avatar_url: nil, via: :owner, role: :admin},
+               %Person{login: "cy", name: "Cy", avatar_url: nil, via: :project, role: :write},
+               %Person{login: "bo", name: "Bo", avatar_url: nil, via: :track, role: :write},
                %Person{login: "dana", name: nil, avatar_url: "https://a/d", via: :pending}
              ]
 
@@ -697,8 +697,8 @@ defmodule Ravix.PeopleTest do
 
       # The track with nobody of its own still gets the project's people.
       assert batched[ctx.private.id] == [
-               %Person{login: "ana", name: "Ana", avatar_url: nil, via: :owner},
-               %Person{login: "cy", name: "Cy", avatar_url: nil, via: :project}
+               %Person{login: "ana", name: "Ana", avatar_url: nil, via: :owner, role: :admin},
+               %Person{login: "cy", name: "Cy", avatar_url: nil, via: :project, role: :write}
              ]
 
       assert People.Store.people_by_track([], ctx.owner.id, ctx.project.id) == %{}
@@ -711,7 +711,7 @@ defmodule Ravix.PeopleTest do
       assert {:ok, people} = People.list(ctx.owner, ctx.shared.id)
 
       assert Enum.filter(people, &(&1.login == "bo")) == [
-               %Person{login: "bo", name: "Bo", avatar_url: nil, via: :project}
+               %Person{login: "bo", name: "Bo", avatar_url: nil, via: :project, role: :write}
              ]
     end
 
@@ -733,16 +733,16 @@ defmodule Ravix.PeopleTest do
       assert {:ok, people} = People.list(ctx.guest, ctx.shared.id)
       assert length(people) == 2
 
-      # Every entry carries exactly these four, so a page never infers which
+      # Every entry carries exactly these five, so a page never infers which
       # kind of person it is holding from the absence of a key. That is now
       # `@enforce_keys` on `Ravix.People.Person` rather than a convention
       # this loop is the only check on; what it still catches is a *fifth*
-      # field arriving off the user row.
+      # field arriving off the user row. `role` is ADR 0010's, from the seat.
       for person <- people do
         assert %Person{} = person
 
         assert person |> Map.from_struct() |> Map.keys() |> Enum.sort() ==
-                 [:avatar_url, :login, :name, :via]
+                 [:avatar_url, :login, :name, :role, :via]
       end
 
       assert {:ok, people} = People.list_project(ctx.guest, ctx.project.id)
@@ -752,7 +752,7 @@ defmodule Ravix.PeopleTest do
         assert %Person{} = person
 
         assert person |> Map.from_struct() |> Map.keys() |> Enum.sort() ==
-                 [:avatar_url, :login, :name, :via]
+                 [:avatar_url, :login, :name, :role, :via]
       end
     end
   end
@@ -854,10 +854,10 @@ defmodule Ravix.PeopleTest do
       assert People.Store.invites_of(ctx.shared.id) == []
     end
 
-    test "only the owner invites", ctx do
+    test "only an admin invites", ctx do
       People.Store.add_member(ctx.shared.id, ctx.guest.id, "owner")
       assert {:error, {:forbidden, message}} = People.add(ctx.guest, ctx.shared.id, "cy")
-      assert message =~ "invite people to a track"
+      assert message == "Your role on this track is Write. Only an admin can do that."
       assert {:error, :not_found} = People.add(ctx.other, ctx.shared.id, "bo")
     end
   end
@@ -906,7 +906,7 @@ defmodule Ravix.PeopleTest do
       People.Store.add_member(ctx.shared.id, ctx.other.id, "owner")
       insert_track_invite(ctx.shared, github_id: "9001", login: "dana")
 
-      assert {:error, {:forbidden, "Only the owner of this project can remove somebody else."}} =
+      assert {:error, {:forbidden, "Only an admin can remove somebody else."}} =
                People.remove(ctx.guest, ctx.shared.id, "cy")
 
       # An invitation is not a person, so a member asking is told there is
@@ -973,8 +973,8 @@ defmodule Ravix.PeopleTest do
       assert {:ok, people} = People.list_project(ctx.owner, ctx.project.id)
 
       assert people == [
-               %Person{login: "ana", name: "Ana", avatar_url: nil, via: :owner},
-               %Person{login: "bo", name: "Bo", avatar_url: nil, via: :project},
+               %Person{login: "ana", name: "Ana", avatar_url: nil, via: :owner, role: :admin},
+               %Person{login: "bo", name: "Bo", avatar_url: nil, via: :project, role: :write},
                %Person{login: "dana", name: nil, avatar_url: nil, via: :pending}
              ]
 
@@ -1012,7 +1012,7 @@ defmodule Ravix.PeopleTest do
 
       People.Store.add_project_member(ctx.project.id, ctx.guest.id, "owner")
       assert {:error, {:forbidden, message}} = People.add_project(ctx.guest, ctx.project.id, "cy")
-      assert message =~ "invite people to a project"
+      assert message =~ "Only an admin can do that."
       assert {:error, :not_found} = People.add_project(ctx.other, ctx.project.id, "bo")
     end
 

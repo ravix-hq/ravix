@@ -74,6 +74,9 @@ defmodule Ravix.MixProject do
       # polling loader. Server-side only -- there is deliberately no `posthog-js`.
       {:posthog, "~> 2.15"},
       {:jason, "~> 1.2"},
+      # IANA time zone data compiled into the release; schedules run at their
+      # creator's local time. No runtime updater or writable data directory.
+      {:tz, "~> 0.28"},
       {:dns_cluster, "~> 0.3.0"},
       {:bandit, "~> 1.5"},
       # Fountain and its component libraries (Apache-2.0, maintained upstream).
@@ -108,9 +111,10 @@ defmodule Ravix.MixProject do
       "ecto.reset": ["ecto.drop", "ecto.setup"],
       test: ["ecto.create --quiet", "ecto.migrate --quiet", "assets.setup", "test"],
       "assets.setup": ["esbuild.install --if-missing"],
-      "assets.build": ["compile", "esbuild ravix"],
+      "assets.build": ["compile", "esbuild ravix", "esbuild xterm"],
       "assets.deploy": [
         "esbuild ravix --minify",
+        "esbuild xterm --minify",
         "phx.digest"
       ],
       # The local gate, in the test build: analysis, the suite with the

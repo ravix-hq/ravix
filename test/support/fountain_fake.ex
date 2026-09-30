@@ -134,6 +134,32 @@ defmodule Ravix.Fountain.FakeTransport do
     end
   end
 
+  @doc """
+  A creation response that holds names unique, as Fountain's
+  `unique_index([:user_id, :name])` does on environments, agents and vaults.
+
+  Every Ravix request carries the same key, so it is the same Fountain user:
+  a name already taken for `kind` in `names` (from `names/0`) is Fountain's
+  422 changeset error on `name`; otherwise it is filed and a 201 answers
+  with `id`.
+  """
+  @spec unique_name(pid(), atom(), String.t()) :: (call() -> term())
+  def unique_name(names, kind, id) do
+    fn %{body: %{"name" => name}} ->
+      if Agent.get_and_update(
+           names,
+           &{MapSet.member?(&1, {kind, name}), MapSet.put(&1, {kind, name})}
+         ),
+         do:
+           {422, [], %{error: "validation_failed", errors: %{name: ["has already been taken"]}}},
+         else: {201, [], %{data: %{id: id, name: name}}}
+    end
+  end
+
+  @doc "The name registry `unique_name/3` checks, owned by the test."
+  @spec names() :: pid()
+  def names, do: ExUnit.Callbacks.start_supervised!({Agent, fn -> MapSet.new() end})
+
   @doc "One server-sent frame, as Fountain writes it: `id`, `event`, JSON `data`."
   @spec frame(integer() | nil, String.t(), map()) :: String.t()
   def frame(id, event, data) do

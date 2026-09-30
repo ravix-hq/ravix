@@ -274,8 +274,33 @@ defmodule Ravix.Previews do
   session, so a link that leaks is a link that has already expired.
   """
   @spec open(User.t(), String.t(), String.t() | nil) :: {:ok, View.t()} | {:error, reason()}
-  def open(%User{} = user, track_id, session_hash),
-    do: launch(user, track_id, session_hash, :start)
+  def open(%User{} = user, track_id, session_hash) do
+    case Access.track_access(user, track_id) do
+      {:ok, %{level: :read}} -> watch(user, track_id, session_hash)
+      _ -> launch(user, track_id, session_hash, :start)
+    end
+  end
+
+  # Somebody with Read (ADR 0010) may look at a preview somebody else
+  # started, and may not start one: that is using the machine.
+  defp watch(user, track_id, session_hash) do
+    with {:ok, _track} <- open_track(user, track_id),
+         %Row{desired: :running} <- Store.get(track_id) || :stopped,
+         {:ok, url} <- mint_ticket(track_id, session_hash) do
+      {:ok, %View{Lifecycle.info(track_id) | open_url: url}}
+    else
+      :stopped ->
+        {:error,
+         {:forbidden, "This preview is not running. Ask somebody with Write to start it."}}
+
+      %Row{} ->
+        {:error,
+         {:forbidden, "This preview is not running. Ask somebody with Write to start it."}}
+
+      error ->
+        error
+    end
+  end
 
   @doc "As `open/3`, but tears the running service down first."
   @spec restart(User.t(), String.t(), String.t() | nil) :: {:ok, View.t()} | {:error, reason()}
@@ -285,15 +310,15 @@ defmodule Ravix.Previews do
   @doc "Run or restart the track's script without issuing a browser access ticket."
   @spec run(User.t(), String.t(), start_mode()) :: {:ok, View.t()} | {:error, reason()}
   def run(%User{} = user, track_id, mode \\ :start) when mode in [:start, :restart] do
-    with {:ok, _track} <- open_track(user, track_id),
+    with {:ok, _track} <- open_track(user, track_id, :write),
          :ok <- Lifecycle.start_service(track_id, mode),
-         {:ok, _track} <- open_track(user, track_id) do
+         {:ok, _track} <- open_track(user, track_id, :write) do
       {:ok, Lifecycle.info(track_id)}
     end
   end
 
   defp launch(user, track_id, session_hash, mode) do
-    with {:ok, track} <- open_track(user, track_id),
+    with {:ok, track} <- open_track(user, track_id, :write),
          {:ok, url} <- mint_ticket(track_id, session_hash) do
       Task.Supervisor.start_child(
         Ravix.TaskSupervisor,
@@ -331,7 +356,7 @@ defmodule Ravix.Previews do
   @doc "Stop the track's preview service."
   @spec stop(User.t(), String.t()) :: {:ok, View.t()} | {:error, reason()}
   def stop(%User{} = user, track_id) do
-    with {:ok, _track} <- open_track(user, track_id),
+    with {:ok, _track} <- open_track(user, track_id, :write),
          :ok <- Lifecycle.stop_service(track_id),
          do: {:ok, Lifecycle.info(track_id)}
   end
@@ -357,7 +382,7 @@ defmodule Ravix.Previews do
   """
   @spec save_config(User.t(), String.t(), term()) :: {:ok, View.t()} | {:error, reason()}
   def save_config(%User{} = user, track_id, config) do
-    with {:ok, _track} <- open_track(user, track_id),
+    with {:ok, _track} <- open_track(user, track_id, :write),
          {:ok, parsed} <- parse_config(config),
          :ok <- Lifecycle.configure(track_id, parsed),
          do: {:ok, Lifecycle.info(track_id)}
@@ -403,8 +428,10 @@ defmodule Ravix.Previews do
     end
   end
 
-  defp open_track(user, track_id) do
-    with {:ok, %{track: track}} <- Access.track_access(user, track_id) do
+  # Reading a preview someone started is `:read`; starting, stopping or
+  # reconfiguring the service uses the machine, which is `:write` (ADR 0010).
+  defp open_track(user, track_id, need \\ :read) do
+    with {:ok, %{track: track}} <- Access.track_access(user, track_id, need) do
       if track.closed_at,
         do: {:error, {:conflict, "closed_track", "This track is closed."}},
         else: {:ok, track}

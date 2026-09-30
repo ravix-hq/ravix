@@ -1004,7 +1004,7 @@ defmodule RavixWeb.TrackLiveTest do
 
     expect(Ravix.Fountain, :create_conversation, fn _, launch ->
       assert launch.sandbox_id == "sandbox"
-      assert launch.title == "Explain the prompt queue and its retries…"
+      assert launch.title == "Explain Prompt Queue"
       {:ok, Shapes.conversation(%{"id" => "added"})}
     end)
 
@@ -1045,7 +1045,7 @@ defmodule RavixWeb.TrackLiveTest do
 
     [_, thread] = Tracks.Store.threads_of(ctx.track.id)
     assert thread.conversation_id == "added"
-    assert thread.title == "Explain the prompt queue and its retries…"
+    assert thread.title == "Explain Prompt Queue"
 
     assert [%{thread_id: thread_id, id: request_id}] =
              PromptQueue.Store.queued_prompts(ctx.track.id)
@@ -2495,6 +2495,212 @@ defmodule RavixWeb.TrackLiveTest do
     assert has_element?(ctx.view, "#pull-dialog")
   end
 
+  describe "the Checks tab's Git status" do
+    defp git(uncommitted, unpushed, opts \\ []) do
+      %Ravix.Tracks.Git.Status{
+        uncommitted: uncommitted,
+        unpushed: unpushed,
+        upstream?: Keyword.get(opts, :upstream?, true),
+        branch: Keyword.get(opts, :branch, "ravix/track")
+      }
+    end
+
+    defp open_checks(ctx, status) do
+      stub(Tracks, :checks, fn _, _ -> {:ok, %{checks_fixture(:open) | pull: nil}} end)
+
+      expect(Tracks, :git_status, fn user, id ->
+        assert {user.id, id} == {ctx.user.id, ctx.track.id}
+        status
+      end)
+
+      render_click(ctx.view, "panel", %{name: "checks"})
+      render_async(ctx.view)
+    end
+
+    test "shows the machine's uncommitted and unpushed counts beside the pull request", ctx do
+      open_checks(ctx, {:ok, git(3, 1, upstream?: false)})
+
+      assert has_element?(ctx.view, "#git-status .git-branch", "ravix/track")
+      assert has_element?(ctx.view, "#git-uncommitted .chip.warn", "3")
+      assert has_element?(ctx.view, "#git-uncommitted", "3 uncommitted changes")
+      assert has_element?(ctx.view, "#git-uncommitted button", "Commit and push")
+      assert has_element?(ctx.view, "#git-unpushed", "1 unpushed commit")
+      assert has_element?(ctx.view, "#git-unpushed", "branch not on GitHub yet")
+      assert has_element?(ctx.view, "#git-unpushed button", "Push")
+      assert has_element?(ctx.view, "#git-pull", "No pull request")
+      assert has_element?(ctx.view, "#git-pull button", "Create pull request")
+    end
+
+    test "a clean, pushed worktree offers nothing to do and links its pull request", ctx do
+      stub(Tracks, :checks, fn _, _ -> {:ok, checks_fixture(:open)} end)
+      expect(Tracks, :git_status, fn _, _ -> {:ok, git(0, 0)} end)
+      render_click(ctx.view, "panel", %{name: "checks"})
+      render_async(ctx.view)
+
+      assert has_element?(ctx.view, "#git-uncommitted .chip.ok", "0")
+      assert has_element?(ctx.view, "#git-uncommitted", "No uncommitted changes")
+      assert has_element?(ctx.view, "#git-unpushed", "No unpushed commits")
+      refute has_element?(ctx.view, "#git-commit")
+      refute has_element?(ctx.view, "#git-push")
+
+      assert has_element?(
+               ctx.view,
+               "#git-pull a[href='https://github.com/acme/repo/pull/209']",
+               "Pull request #209"
+             )
+    end
+
+    test "a machine that cannot be read says so and still shows the pull request row", ctx do
+      open_checks(ctx, {:error, :machine_asleep})
+      assert has_element?(ctx.view, "#git-status-error[role=alert]", "machine is asleep")
+      refute has_element?(ctx.view, "#git-uncommitted")
+      assert has_element?(ctx.view, "#git-pull button", "Create pull request")
+    end
+
+    test "commit and push opens on the track's title, commits the edited message and re-reads",
+         ctx do
+      open_checks(ctx, {:ok, git(2, 0)})
+      ctx.view |> element("#git-commit") |> render_click()
+      assert has_element?(ctx.view, "#commit-dialog textarea#commit-message", ctx.track.title)
+      test_pid = self()
+
+      expect(Tracks, :commit_and_push, fn user, id, message ->
+        send(test_pid, {:committing, self()})
+        receive do: (:finish -> :ok)
+        assert {user.id, id, message} == {ctx.user.id, ctx.track.id, "Fix the login redirect"}
+        :ok
+      end)
+
+      expect(Tracks, :git_status, fn _, _ -> {:ok, git(0, 0)} end)
+
+      ctx.view
+      |> form("#commit-form", %{message: "Fix the login redirect"})
+      |> render_submit()
+
+      assert_receive {:committing, worker}
+      assert has_element?(ctx.view, "#git-writing", "Committing and pushing…")
+      assert has_element?(ctx.view, "#commit-form button[disabled]")
+      # A second press while the first is out is dropped, not queued.
+      render_hook(ctx.view, "push", %{})
+      send(worker, :finish)
+
+      assert toasted(ctx) =~ "Committed and pushed."
+      refute has_element?(ctx.view, "#commit-dialog")
+      refute has_element?(ctx.view, "#git-writing")
+      assert has_element?(ctx.view, "#git-uncommitted", "No uncommitted changes")
+    end
+
+    test "a refused commit keeps the message and says what refused it", ctx do
+      open_checks(ctx, {:ok, git(1, 0)})
+      ctx.view |> element("#git-commit") |> render_click()
+
+      expect(Tracks, :commit_and_push, fn _, _, _ ->
+        {:error,
+         {:conflict, "commit_failed",
+          "The commit was refused, so nothing was pushed. A commit hook may have failed.\n\nlint: 2 errors"}}
+      end)
+
+      expect(Tracks, :git_status, fn _, _ -> {:ok, git(1, 0)} end)
+      ctx.view |> form("#commit-form", %{message: "WIP: my words"}) |> render_submit()
+      render_async(ctx.view)
+
+      assert has_element?(ctx.view, "#commit-failure[role=alert]", "lint: 2 errors")
+      assert has_element?(ctx.view, "#commit-dialog textarea#commit-message", "WIP: my words")
+      assert has_element?(ctx.view, "#git-failure[role=alert]", "commit was refused")
+      refute has_element?(ctx.view, "#commit-form button[disabled]")
+    end
+
+    test "a rejected push is surfaced in the Git status block", ctx do
+      open_checks(ctx, {:ok, git(0, 2)})
+
+      expect(Tracks, :push, fn user, id ->
+        assert {user.id, id} == {ctx.user.id, ctx.track.id}
+
+        {:error,
+         {:conflict, "push_rejected",
+          "The push was rejected: the remote branch has commits this one does not."}}
+      end)
+
+      expect(Tracks, :git_status, fn _, _ -> {:ok, git(0, 2)} end)
+      ctx.view |> element("#git-push") |> render_click()
+      render_async(ctx.view)
+
+      assert has_element?(ctx.view, "#git-failure[role=alert]", "The push was rejected")
+      assert has_element?(ctx.view, "#git-unpushed", "2 unpushed commits")
+      refute has_element?(ctx.view, "#git-push[disabled]")
+    end
+
+    test "a crashed write is reported rather than left spinning", ctx do
+      open_checks(ctx, {:ok, git(0, 1)})
+      expect(Tracks, :push, fn _, _ -> exit(:boom) end)
+      expect(Tracks, :git_status, fn _, _ -> {:ok, git(0, 1)} end)
+      ctx.view |> element("#git-push") |> render_click()
+      render_async(ctx.view)
+
+      assert has_element?(ctx.view, "#git-failure[role=alert]")
+      refute has_element?(ctx.view, "#git-writing")
+    end
+
+    for event <- ["commit-push", "push"] do
+      @git_event event
+      test "a revoked session cannot #{event}", ctx do
+        reject(Tracks, :commit_and_push, 3)
+        reject(Tracks, :push, 2)
+        token = Plug.Conn.get_session(ctx.conn, :session_token)
+        Repo.delete!(Repo.get_by!(Session, token_hash: Ravix.Crypto.sha256(token)))
+
+        :sys.replace_state(ctx.view.pid, fn state ->
+          update_in(state.socket.assigns.session_guard, &%{&1 | stale?: true})
+        end)
+
+        assert {:error, {:redirect, %{to: "/login"}}} =
+                 render_hook(ctx.view, @git_event, %{message: "sneaky"})
+      end
+    end
+
+    test "a member removed from the track cannot commit", ctx do
+      member = insert_user()
+      membership = insert_track_member(ctx.track, member)
+
+      {:ok, parent, _} =
+        live(log_in_user(build_conn(), member), "/p/#{ctx.project.id}/t/#{ctx.track.id}")
+
+      view = find_live_child(parent, "track-host")
+      settle(view)
+      reject(Tracks, :commit_and_push, 3)
+      Repo.delete!(membership)
+
+      :sys.replace_state(view.pid, fn state ->
+        update_in(state.socket.assigns.track_guard, &%{&1 | stale?: true})
+      end)
+
+      assert {:error, {:redirect, %{to: "/"}}} =
+               render_hook(view, "commit-push", %{message: "after removal"})
+    end
+
+    test "a session revoked mid-push does not render the push's answer", ctx do
+      view = ctx.view
+      stub(Tracks, :checks, fn _, _ -> {:ok, checks_fixture(:open)} end)
+      stub(Tracks, :git_status, fn _, _ -> {:ok, git(0, 1)} end)
+      render_click(view, "panel", %{name: "checks"})
+      render_async(view)
+      test_pid = self()
+
+      expect(Tracks, :push, fn _, _ ->
+        send(test_pid, {:pushing, self()})
+        receive do: (:finish -> :ok)
+        {:error, {:conflict, "push_failed", "revoked secret"}}
+      end)
+
+      view |> element("#git-push") |> render_click()
+      assert_receive {:pushing, worker}
+      token = Plug.Conn.get_session(ctx.conn, :session_token)
+      Ravix.Accounts.end_session(Ravix.Crypto.sha256(token))
+      send(worker, :finish)
+      assert_redirect(ctx.parent, "/login", 1_000)
+    end
+  end
+
   for state <- [:merged, :closed, :open, :missing, :unavailable] do
     test "empty Changes handles #{state} PR state without visiting Checks first", ctx do
       diff = %{changes_fixture() | diff: "", changes: [], files: []}
@@ -2821,6 +3027,53 @@ defmodule RavixWeb.TrackLiveTest do
     refute has_element?(ctx.view, "#rename-dialog")
     render_async(ctx.view)
     assert has_element?(ctx.view, "header button", "A useful title")
+  end
+
+  test "a first prompt's title reaches the header, the thread tab and the rail live", ctx do
+    # A track still carrying its branch as its name, with a second thread so
+    # the tabs are drawn.
+    Repo.update!(Ecto.Changeset.change(ctx.track, title: ctx.track.branch))
+
+    {:ok, _} =
+      Tracks.Store.create_thread(%{
+        track_id: ctx.track.id,
+        conversation_id: "live-second",
+        title: "Second"
+      })
+
+    {:ok, parent, _} = live(ctx.conn, "/p/#{ctx.project.id}/t/#{ctx.track.id}")
+    view = find_live_child(parent, "track-host")
+    settle(view)
+    render_async(parent)
+    assert has_element?(view, "#thread-tab-#{ctx.track.id}", "Default")
+
+    request_id = "first-prompt-#{System.unique_integer([:positive])}"
+
+    {:ok, _} =
+      PromptQueue.Store.enqueue(
+        ctx.track.id,
+        ctx.user.id,
+        ctx.user.login,
+        request_id,
+        %PromptQueue.Body{prompt: "Could you pull the latest main?", images: []}
+      )
+
+    # What the background task runs, here in the test's process; the page
+    # hears it on the project's hub, as every other page on the project does.
+    assert :ok =
+             Tracks.Titling.from_prompt(
+               ctx.track.id,
+               ctx.track.id,
+               request_id,
+               "Could you pull the latest main?"
+             )
+
+    settle(view)
+    assert has_element?(view, "header button", "Pull Latest Main")
+    assert has_element?(view, "#thread-tab-#{ctx.track.id}", "Pull Latest Main")
+    # The branch is still shown beside the new name.
+    assert render(view) =~ ctx.track.branch
+    assert render_async(parent) =~ "Pull Latest Main"
   end
 
   test "a refusal about the title lands on the title, not in a toast", ctx do
@@ -3325,7 +3578,7 @@ defmodule RavixWeb.TrackLiveTest do
     assert has_element?(
              ctx.view,
              "#track-terminal .dock-empty",
-             "without an interactive terminal"
+             "For an interactive shell, such as a console or a REPL, open a terminal with +."
            )
 
     assert has_element?(
@@ -3988,7 +4241,11 @@ defmodule RavixWeb.TrackLiveTest do
     assert has_element?(ctx.view, "#track-people-dialog a[href*='/j/']")
     ctx.view |> element("button", "Revoke invite link") |> render_click()
     refute has_element?(ctx.view, "#track-people-dialog a[href*='/j/']")
-    ctx.view |> element("button[phx-value-login='#{member.login}']") |> render_click()
+
+    ctx.view
+    |> element("button[phx-click=remove-person][phx-value-login='#{member.login}']")
+    |> render_click()
+
     refute People.Store.member?(ctx.track.id, member.id)
     render_click(ctx.view, "dismiss")
     refute has_element?(ctx.view, "#track-people-dialog")
@@ -4207,6 +4464,163 @@ defmodule RavixWeb.TrackLiveTest do
   # the next thing a test measures from paying for somebody else's read.
   # A turn's opening event as the feed serves it with `?prompts=true`, which is
   # where the transcript reads what somebody asked for.
+  describe "the composer's @ files and / commands" do
+    defp composer_commands(view) do
+      view
+      |> render()
+      |> LazyHTML.from_fragment()
+      |> LazyHTML.query("#composer-form textarea[phx-hook=Composer]")
+      |> LazyHTML.attribute("data-commands")
+      |> case do
+        [json] -> json |> Jason.decode!() |> Enum.map(&{&1["name"], &1["source"], &1["event"]})
+        [] -> nil
+      end
+    end
+
+    defp advertised(id, names) do
+      line =
+        Jason.encode!(%{
+          jsonrpc: "2.0",
+          method: "session/update",
+          params: %{
+            update: %{
+              sessionUpdate: "available_commands_update",
+              availableCommands: Enum.map(names, &%{name: &1, description: "Does #{&1}"})
+            }
+          }
+        })
+
+      %{"id" => id, "turn_id" => "t1", "kind" => "output", "stream" => "acp", "data" => line}
+    end
+
+    test "the box advertises them, names its list, and offers Ravix's actions as commands", ctx do
+      assert has_element?(
+               ctx.view,
+               "#composer-form textarea[aria-controls=composer-suggestions][aria-autocomplete=list]" <>
+                 "[aria-keyshortcuts='Control+L Meta+L'][data-files-event=mention-files]" <>
+                 "[placeholder='Ask to make changes, @mention files, run /commands']"
+             )
+
+      assert has_element?(
+               ctx.view,
+               "#composer-suggestions[role=listbox][phx-update=ignore][hidden][aria-label=Suggestions]"
+             )
+
+      assert has_element?(ctx.view, "#composer-suggestions-status[role=status].sr-only")
+      assert has_element?(ctx.view, "#composer-shortcut kbd", "Ctrl+L")
+
+      # The track is still opening, so, like the Stop button, `/stop` is there.
+      assert composer_commands(ctx.view) == [
+               {"stop", "ravix", "interrupt"},
+               {"new", "ravix", "draft-thread"},
+               {"comment", "ravix", "composer-mode"},
+               {"changes", "ravix", "panel"},
+               {"checks", "ravix", "panel"}
+             ]
+
+      # Comment mode has its own list of people and no commands.
+      render_click(ctx.view, "composer-mode", %{mode: "comment"})
+      assert has_element?(ctx.view, "#composer-form textarea[aria-controls=mention-options]")
+      refute has_element?(ctx.view, "#composer-suggestions")
+      assert composer_commands(ctx.view) == nil
+    end
+
+    test "the agent's advertised commands come first, from the transcript and then live", ctx do
+      page =
+        Transcript.page(
+          [opened(1, "t1", "Hello"), advertised(2, ["review", "has space"])],
+          "claude"
+        )
+
+      stub(Tracks, :events, fn _, _, _ -> {:ok, page} end)
+      render_click(ctx.view, "retry-load")
+      render_async(ctx.view)
+
+      assert [{"review", "agent", nil} | ravix] = composer_commands(ctx.view)
+      assert length(ravix) == 5
+
+      assert has_element?(
+               ctx.view,
+               "#composer-form textarea[placeholder='Add a follow-up, @mention files, run /commands']"
+             )
+
+      # A newer list replaces it; output that is not a list leaves it alone.
+      send(ctx.view.pid, {:transcript, ctx.track.id, advertised(3, ["plan", "compact"])})
+      send(ctx.view.pid, {:transcript, ctx.track.id, %{advertised(4, []) | "data" => "text"}})
+
+      assert [{"plan", "agent", nil}, {"compact", "agent", nil} | _] =
+               composer_commands(drawn(ctx.view))
+
+      # Stop is a command only while there is something to stop.
+      Repo.update!(
+        Ecto.Changeset.change(Repo.get!(Track, ctx.track.id),
+          setup_state: "ready",
+          opened_at: DateTime.utc_now()
+        )
+      )
+
+      send(
+        ctx.view.pid,
+        {:hub, %Event{name: :tracks, project_id: ctx.project.id, track_id: ctx.track.id}}
+      )
+
+      render_async(ctx.view)
+      refute Enum.any?(composer_commands(ctx.view), &match?({"stop", _, _}, &1))
+    end
+
+    test "@ reads the track's files once and answers from what it read", ctx do
+      index = %Files.Index{paths: ["README.md", "lib/app.ex"], truncated: false}
+      test_pid = self()
+
+      expect(Tracks, :file_index, fn user, id ->
+        send(test_pid, {:indexed, user.id, id})
+        {:ok, index}
+      end)
+
+      render_hook(ctx.view, "mention-files", %{})
+      render_async(ctx.view)
+      assert_receive {:indexed, user_id, track_id}
+      assert {user_id, track_id} == {ctx.user.id, ctx.track.id}
+
+      assert_push_event(ctx.view, "composer:files", %{
+        paths: ["README.md", "lib/app.ex"],
+        truncated: false
+      })
+
+      # The second `@` is answered from memory; `expect` above allows one read.
+      render_hook(ctx.view, "mention-files", %{})
+      assert_push_event(ctx.view, "composer:files", %{paths: ["README.md", "lib/app.ex"]})
+    end
+
+    test "@ on a sleeping or unreachable machine says so instead of listing nothing", ctx do
+      stub(Tracks, :file_index, fn _, _ -> {:error, :machine_asleep} end)
+      render_hook(ctx.view, "mention-files", %{})
+      render_async(ctx.view)
+      assert_push_event(ctx.view, "composer:files", %{paths: [], error: asleep})
+      assert asleep =~ "asleep"
+
+      stub(Tracks, :file_index, fn _, _ ->
+        {:error, {:conflict, "no_machine", "No machine yet."}}
+      end)
+
+      render_hook(ctx.view, "mention-files", %{})
+      render_async(ctx.view)
+      assert_push_event(ctx.view, "composer:files", %{paths: [], error: "No machine yet."})
+
+      stub(Tracks, :file_index, fn _, _ -> exit(:boom) end)
+
+      ExUnit.CaptureLog.capture_log(fn ->
+        render_hook(ctx.view, "mention-files", %{})
+        render_async(ctx.view)
+      end)
+
+      assert_push_event(ctx.view, "composer:files", %{
+        paths: [],
+        error: "Could not read the files."
+      })
+    end
+  end
+
   defp opened(id, turn, prompt) do
     %{
       "id" => id,
@@ -4647,7 +5061,12 @@ defmodule RavixWeb.TrackLiveTest do
     refute has_element?(ctx.view, ".track-ribbon", ctx.track.workdir)
     refute has_element?(ctx.view, "#turns-bootstrap")
     assert has_element?(ctx.view, ".workspace-welcome", "What are we working on?")
-    assert has_element?(ctx.view, "#composer-form textarea[placeholder='Ask to make changes…']")
+
+    assert has_element?(
+             ctx.view,
+             "#composer-form textarea[placeholder='Ask to make changes, @mention files, run /commands']"
+           )
+
     assert has_element?(ctx.view, ~s|.jump-latest svg path[d="M12 5v14M6 13l6 6 6-6"]|)
   end
 
@@ -5168,6 +5587,78 @@ defmodule RavixWeb.TrackLiveTest do
     assert has_element?(ctx.view, "#turns-turn .turn-file", "+2 −1")
     # A turn still running has no footer yet.
     refute has_element?(ctx.view, "#turns-live .turn-footer")
+  end
+
+  test "a running turn's elapsed time ticks in the browser until the server's duration replaces it",
+       ctx do
+    started = DateTime.add(DateTime.utc_now(), -95) |> DateTime.truncate(:second)
+
+    chunk =
+      Jason.encode!(%{
+        jsonrpc: "2.0",
+        method: "session/update",
+        params: %{
+          update: %{
+            sessionUpdate: "agent_message_chunk",
+            content: %{type: "text", text: "Working"}
+          }
+        }
+      })
+
+    events = [
+      Map.put(opened(201, "timed", "Take your time"), "ts", DateTime.to_iso8601(started)),
+      %{
+        "id" => 202,
+        "turn_id" => "timed",
+        "kind" => "output",
+        "stream" => "acp",
+        "data" => chunk,
+        "ts" => DateTime.to_iso8601(DateTime.add(started, 3))
+      }
+    ]
+
+    for event <- events, do: send(ctx.view.pid, {:transcript, ctx.track.id, event})
+    drawn(ctx.view)
+
+    # The start is written out so a reload resumes from it, not from zero,
+    # and the server's own clock rides along for the hook to correct skew.
+    timer =
+      ctx.view
+      |> render()
+      |> LazyHTML.from_document()
+      |> LazyHTML.query(
+        ~s|#turns-timed .turn-running .turn-elapsed[phx-hook="TurnTimer"]| <>
+          ~s|[data-started="#{DateTime.to_iso8601(started)}"]|
+      )
+
+    assert Enum.count(timer) == 1
+    assert LazyHTML.text(timer) =~ ~r/^1m 3\ds$/
+
+    assert {:ok, _now, 0} =
+             timer |> LazyHTML.attribute("data-now") |> hd() |> DateTime.from_iso8601()
+
+    refute has_element?(ctx.view, "#turns-timed .turn-footer time")
+
+    ended = DateTime.add(started, 16 * 60 + 5)
+
+    send(
+      ctx.view.pid,
+      {:transcript, ctx.track.id,
+       %{
+         "id" => 203,
+         "turn_id" => "timed",
+         "kind" => "stage",
+         "stage" => "turn",
+         "state" => "completed",
+         "ts" => DateTime.to_iso8601(ended)
+       }}
+    )
+
+    drawn(ctx.view)
+
+    refute has_element?(ctx.view, "#turns-timed .turn-elapsed")
+    refute has_element?(ctx.view, "#turns-timed .turn-running")
+    assert has_element?(ctx.view, "#turns-timed .turn-footer", "16m 5s")
   end
 
   test "a turn with no tool calls or thoughts has nothing to fold", ctx do

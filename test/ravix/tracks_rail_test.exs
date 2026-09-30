@@ -2,7 +2,7 @@ defmodule Ravix.TracksRailTest do
   use Ravix.DataCase, async: true
   import Mimic
   alias Ravix.{Accounts.Access, QueryCount, Tracks}
-  alias Ravix.Fountain.{Client, FakeTransport}
+  alias Ravix.Fountain.{Client, FakeTransport, Shapes}
 
   setup :verify_on_exit!
 
@@ -247,6 +247,57 @@ defmodule Ravix.TracksRailTest do
     # One list for the project, whatever the number of rows: no sandbox, file
     # or conversation read was made to decide any row's state.
     assert [%{path: "/api/conversations"}] = FakeTransport.calls(client)
+  end
+
+  test "last activity rides the tree query: newest prompt and conversation, no query per row" do
+    viewer = insert_user()
+    project = insert_project(user: viewer)
+    base = ~U[2026-09-01 00:00:00.000000Z]
+    at = &DateTime.add(base, &1, :hour)
+
+    quiet = insert_track(project: project, created_at: base, opened_at: at.(1))
+    prompted = insert_track(project: project, created_at: base)
+    insert_prompt(track: prompted, created_at: at.(5))
+    insert_prompt(track: prompted, created_at: at.(9))
+    talking = insert_track(project: project, created_at: base, conversation_id: "conv-talking")
+    insert_prompt(track: talking, created_at: at.(2))
+
+    stub(Ravix.Fountain, :client, fn -> Client.new("https://example.test", "fixture") end)
+
+    stub(Ravix.MachineCache, :conversations, fn _client, _project, _opts ->
+      {:ok,
+       [
+         Shapes.conversation(%{
+           "id" => "conv-talking",
+           "status" => "idle",
+           "last_active_at" => DateTime.to_iso8601(at.(12))
+         })
+       ]}
+    end)
+
+    {rows, queries} = QueryCount.count(fn -> Access.open_tracks(viewer, [project.id]) end)
+    assert length(queries) == 1
+    prompts = Map.new(rows, fn {track, _} -> {track.id, track.last_prompt_at} end)
+    assert prompts == %{quiet.id => nil, prompted.id => at.(9), talking.id => at.(2)}
+
+    count = fn ->
+      QueryCount.count(fn -> Tracks.list_many(viewer, [project.id]) end, from: {:callers, self()})
+    end
+
+    {%{} = listed, queries} = count.()
+    activity = Map.new(listed[project.id], &{&1.id, &1.activity_at})
+    assert activity == %{quiet.id => at.(1), prompted.id => at.(9), talking.id => at.(12)}
+
+    # Five more tracks, each with prompts, cost the rail nothing more.
+    for n <- 1..5 do
+      track = insert_track(project: project, created_at: base)
+      insert_prompt(track: track, created_at: at.(n))
+      insert_prompt(track: track, created_at: at.(n + 1))
+    end
+
+    {%{} = listed, more} = count.()
+    assert length(listed[project.id]) == 8
+    assert length(more) == length(queries)
   end
 
   test "a failed provider presentation is isolated to its project" do

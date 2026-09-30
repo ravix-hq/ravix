@@ -387,7 +387,8 @@
                       patch={"/p/#{project.id}/t/#{track.id}"}
                       class={["workspace-track track-tab", @track_id == track.id && "selected"]}
                       aria-current={if @track_id == track.id, do: "page"}
-                      aria-label={tab_name(track)}
+                      data-label={tab_name(track)}
+                      aria-label={row_label(track, tab_name(track))}
                       title={track.title}
                     >
                       <.status_dot
@@ -398,7 +399,10 @@
                       />
                       <.creator track={track} />
                       <span class="track-title">{tab_label(track)}</span>
-                      <span :if={track.visibility == :private}><.icon name="lock" /> Private</span>
+                      <span :if={track.visibility == :private} class="track-private">
+                        <.icon name="lock" /> Private
+                      </span>
+                      <.age id={"track-age-#{track.id}"} at={track.activity_at} />
                     </.link>
                     <div :if={MapSet.member?(@track_errors, project.id)} role="status">
                       <p class="hint">Couldn't load tracks</p>
@@ -445,9 +449,10 @@
                           <span class="track-title truncate" title={track.title}>
                             {tab_label(track)}<span class="sr-only">, closed</span>
                           </span>
-                          <span :if={track.visibility == :private}>
+                          <span :if={track.visibility == :private} class="track-private">
                             <.icon name="lock" /> Private
                           </span>
+                          <.age id={"closed-track-age-#{track.id}"} at={track.activity_at} />
                           <button
                             :if={reopenable?(project)}
                             type="button"
@@ -701,6 +706,7 @@
           module={RavixWeb.Live.SchedulesPanel}
           id="schedules"
           current_user={@current_user}
+          timezone={@timezone}
           session_hash={@session_hash}
           projects={@all_projects}
         />
@@ -975,6 +981,22 @@
         phx-change="edit"
       >
         <.input
+          field={f[:prompt]}
+          id="new-track-prompt"
+          type="textarea"
+          label="What do you want to work on?"
+          rows="3"
+          maxlength="100000"
+          phx-hook="SubmitOnEnter"
+          phx-debounce="300"
+          placeholder="Optional. Sent to the agent once setup is ready."
+          aria-describedby="new-track-prompt-hint"
+          disabled={@busy}
+        />
+        <p id="new-track-prompt-hint" class="hint">
+          Enter creates the track; Shift+Enter adds a line.
+        </p>
+        <.input
           field={f[:visibility]}
           type="select"
           label="Sharing"
@@ -1139,7 +1161,6 @@
       scope={:project}
       project={@project}
       subject_id={@project.id}
-      owner={@project.role == :owner}
       current_user={@current_user}
       session_hash={@session_hash}
     />

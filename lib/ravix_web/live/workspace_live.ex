@@ -4,7 +4,7 @@ defmodule RavixWeb.WorkspaceLive do
 
   alias RavixWeb.Live.NewProject
 
-  alias Ravix.{Accounts, Hub, Ids, People, Projects, Tracks, Workspaces}
+  alias Ravix.{Accounts, Hub, Ids, People, Projects, Schedules, Tracks, Workspaces}
   alias Ravix.Accounts.Access
   alias Ravix.Hub.Event
   alias Ravix.Projects.Sections
@@ -52,6 +52,10 @@ defmodule RavixWeb.WorkspaceLive do
     socket =
       assign(socket,
         session_token: session["session_token"],
+        # The viewer's IANA zone from the browser's connect params: what a new
+        # schedule is prefilled with and schedule times are shown in. UTC
+        # before the socket connects, or when the browser names no known zone.
+        timezone: Schedules.timezone((get_connect_params(socket) || %{})["timezone"]),
         github_available: Accounts.capabilities().github,
         reconnect_agent: nil,
         health_refresh: 0,
@@ -792,10 +796,14 @@ defmodule RavixWeb.WorkspaceLive do
       model: params["model"]
     }
 
+    prompt = params["prompt"] || ""
+
     {:noreply,
      socket
      |> assign(busy: true, track_form: Form.new(:new_track, params))
-     |> traced_async(:create_track, fn -> created(Tracks.open(user, id, attrs), user) end)}
+     |> traced_async(:create_track, fn ->
+       created(open_track(user, id, attrs, prompt), user)
+     end)}
   end
 
   @impl true
@@ -884,8 +892,11 @@ defmodule RavixWeb.WorkspaceLive do
      result(
        assign(socket, busy: false),
        response,
-       fn s, {t, rail} ->
-         s |> apply_rail(rail) |> push_patch(to: "/p/#{t.project_id}/t/#{t.id}")
+       fn s, {{t, queued}, rail} ->
+         s
+         |> apply_rail(rail)
+         |> first_prompt_refused(queued)
+         |> push_patch(to: "/p/#{t.project_id}/t/#{t.id}")
        end,
        :track_form
      )}
@@ -1251,8 +1262,14 @@ defmodule RavixWeb.WorkspaceLive do
   def handle_info({:hub, %Event{name: :read} = event}, socket),
     do: {:noreply, clear_unread(socket, event)}
 
-  def handle_info({:hub, %Event{name: name}}, socket) when name in [:people, :tracks],
-    do: {:noreply, socket |> recheck_or_leave() |> reload_async()}
+  def handle_info({:hub, %Event{name: name}}, socket) when name in [:people, :tracks] do
+    # An open project people dialog re-reads who is in it and whether the
+    # viewer may still manage them (ADR 0010).
+    if name == :people and socket.assigns[:dialog] == :people,
+      do: send_update(RavixWeb.Live.PeopleDialog, id: "people", reload: true)
+
+    {:noreply, socket |> recheck_or_leave() |> reload_async()}
+  end
 
   def handle_info({:hub, %Event{}}, socket), do: {:noreply, reload_async(socket)}
 
@@ -1413,6 +1430,32 @@ defmodule RavixWeb.WorkspaceLive do
   # and arrives in the same answer. Off this process, as every rail read
   # is, and in hand before the patch, which a `reload_async/1` could
   # not promise.
+  # A prompt typed into the create dialog is the track's first message: it
+  # goes through the same queue as one sent from the composer, on the
+  # default thread, and waits there until setup is ready. The track is
+  # already open by then, so a refused prompt does not undo it; the page
+  # opens the track and says the prompt was not queued.
+  defp open_track(user, project_id, attrs, prompt) do
+    with {:ok, track} <- Tracks.open(user, project_id, attrs) do
+      if String.trim(prompt) == "",
+        do: {:ok, {track, :none}},
+        else:
+          {:ok,
+           {track,
+            Tracks.prompt(user, track.id, %{prompt: prompt, request_id: Ecto.UUID.generate()})}}
+    end
+  end
+
+  defp first_prompt_refused(socket, {:error, reason}),
+    do:
+      put_flash(
+        socket,
+        :error,
+        "The track opened, but its first prompt was not queued. #{RavixWeb.Error.from(reason).message}"
+      )
+
+  defp first_prompt_refused(socket, _queued), do: socket
+
   defp created({:ok, value}, user), do: {:ok, {value, read_rail(user)}}
   defp created(response, _user), do: response
 
@@ -2123,6 +2166,55 @@ defmodule RavixWeb.WorkspaceLive do
       <span :if={!@track.creator_avatar_url} aria-hidden="true">{initials(@track.created_by_login)}</span>
     </span>
     """
+  end
+
+  # A row's last-activity age. The server writes it once, relative to the
+  # render; the `RelativeTime` hook keeps it current and puts the time in the
+  # viewer's own zone in the tooltip.
+  attr :id, :string, required: true
+  attr :at, DateTime, default: nil
+
+  defp age(assigns) do
+    ~H"""
+    <time
+      :if={@at}
+      id={@id}
+      class="track-age"
+      phx-hook="RelativeTime"
+      datetime={DateTime.to_iso8601(@at)}
+      title={"Last active #{Calendar.strftime(@at, "%b %-d, %Y %H:%M UTC")}"}
+    >{elem(ago(@at), 0)}</time>
+    """
+  end
+
+  # The link's accessible name, with the age the hook keeps current in words.
+  defp row_label(track, label) do
+    case track.activity_at do
+      nil -> label
+      at -> "#{label}, active #{elem(ago(at), 1)}"
+    end
+  end
+
+  @ages [
+    {365 * 86_400, "y", "year"},
+    {30 * 86_400, "mo", "month"},
+    {86_400, "d", "day"},
+    {3_600, "h", "hour"},
+    {60, "m", "minute"}
+  ]
+
+  # `{short, words}`, as assets/js/hooks/relative_time.js's `age` answers it.
+  defp ago(at, now \\ DateTime.utc_now()) do
+    seconds = max(DateTime.diff(now, at), 0)
+
+    case Enum.find(@ages, fn {size, _, _} -> seconds >= size end) do
+      nil ->
+        {"now", "just now"}
+
+      {size, short, word} ->
+        n = div(seconds, size)
+        {"#{n}#{short}", "#{n} #{word}#{if n == 1, do: "", else: "s"} ago"}
+    end
   end
 
   defp initials(login) do

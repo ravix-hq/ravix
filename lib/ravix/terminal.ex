@@ -22,13 +22,37 @@ defmodule Ravix.Terminal do
   `npm test` are exactly right. `vim`, `top` and anything that wants a tty
   are not, and the panel says so above the prompt rather than letting
   somebody find out by hanging for sixty seconds.
+
+  ## Interactive terminals
+
+  For those there are terminal tabs (RAV-54): a real shell with a
+  pseudo-terminal on the same machine, over Sprites' exec WebSocket
+  (`Ravix.Sprites.Pty`). A tab is a `Ravix.Terminal.Tab` row --- one
+  person's, on one track --- and a page attaches to it with `attach/5`,
+  which starts a `Ravix.Terminal.Shell` owned by the page. The shell runs
+  in the track's worktree, is out of band in the same way `exec/3` is, and
+  keeps running while the page reconnects; `close_tab/3` ends it.
+
+  Every entry point below establishes track access first, and `attach/5`
+  checks the session the page was opened with as well: the `Shell` goes on
+  checking both for as long as it lives.
   """
 
+  alias Ravix.Accounts
   alias Ravix.Accounts.Access
   alias Ravix.Accounts.User
   alias Ravix.Sprites
+  alias Ravix.Sprites.Pty
+  alias Ravix.Terminal.{Shell, Store, Tab}
   alias Ravix.Tracks
   alias Ravix.Tracks.Sleep
+
+  # Enough for a server, a console and a shell to look around in, twice
+  # over. Each is a process on the machine and a socket on this server.
+  @max_tabs 6
+
+  # What a terminal starts at before the browser has measured itself.
+  @default_size %{cols: 80, rows: 24}
 
   defmodule Request do
     @moduledoc """
@@ -225,7 +249,7 @@ defmodule Ravix.Terminal do
   @spec exec(User.t(), String.t(), Request.t() | map()) ::
           {:ok, Result.t()} | {:error, reason()}
   def exec(%User{} = user, track_id, request) do
-    with {:ok, %{track: track, project: project}} <- Access.track_access(user, track_id),
+    with {:ok, %{track: track, project: project}} <- Access.track_access(user, track_id, :write),
          {:ok, sprites} <- sprites(),
          {:ok, %Request{} = request} <- Request.parse(request),
          {:ok, sprite} <- sprite_of(project, track) do
@@ -327,4 +351,170 @@ defmodule Ravix.Terminal do
       {:error, {:unconfigured, :sprites}} -> {:error, {:unavailable, "no_exec", @no_exec}}
     end
   end
+
+  # ── interactive terminals ────────────────────────────────────────────
+
+  @doc "How many terminal tabs one person may have open on one track."
+  @spec max_tabs() :: pos_integer()
+  def max_tabs, do: @max_tabs
+
+  @doc """
+  This person's terminal tabs on a track, oldest number first.
+
+  Nobody else's: two people on one track each have their own terminals on
+  the same machine.
+  """
+  @spec tabs(User.t(), String.t()) :: {:ok, [Tab.t()]} | {:error, :not_found}
+  def tabs(%User{} = user, track_id) do
+    with {:ok, _access} <- open_track(user, track_id, :read) do
+      # ownership: open_track/2 (Access.track_access) admitted this person to this track.
+      {:ok, Store.list(track_id, user.id)}
+    end
+  end
+
+  @doc """
+  A new terminal tab, on the machine the track's worktree is on.
+
+  Only the row: the shell starts when a page attaches to it, at the size the
+  page measured. Refused when this deployment cannot reach machines, when
+  there is no machine yet, and past `max_tabs/0`.
+  """
+  @spec open_tab(User.t(), String.t()) :: {:ok, Tab.t()} | {:error, reason()}
+  def open_tab(%User{} = user, track_id) do
+    with {:ok, %{track: track, project: project}} <- open_track(user, track_id),
+         {:ok, _sprites} <- sprites(),
+         :ok <- room(track.id, user.id),
+         {:ok, sprite} <- sprite_of(project, track) do
+      # ownership: open_track/2 (Access.track_access) admitted this person to this track.
+      case Store.insert(track.id, user.id, sprite) do
+        {:ok, tab} -> {:ok, tab}
+        {:error, _} -> {:error, {:conflict, "terminal_busy", "Try opening the terminal again."}}
+      end
+    end
+  end
+
+  defp room(track_id, user_id) do
+    # ownership: open_tab/2 established access through open_track/2 first.
+    if Store.count(track_id, user_id) < @max_tabs,
+      do: :ok,
+      else:
+        {:error,
+         {:conflict, "terminal_limit",
+          "Close a terminal first: a track can have #{@max_tabs} open at once."}}
+  end
+
+  @doc """
+  Attach the calling process (the page) to one of this person's tabs.
+
+  Starts a `Ravix.Terminal.Shell` that starts the tab's shell, or re-attaches
+  to it if it is already running, and sends the page `{:terminal, tab_id,
+  event}` messages; see that module. `session_hash` is the page's session,
+  which the shell watches so that signing out, or the session running out,
+  ends the terminal at once rather than on the page's next message.
+
+  `size` is `%{cols: _, rows: _}` as the browser measured it. Attaching a
+  tab the page already has attached answers the same shell.
+  """
+  @spec attach(User.t(), String.t() | nil, String.t(), String.t(), map()) ::
+          {:ok, pid()} | {:error, reason()}
+  def attach(%User{} = user, session_hash, track_id, tab_id, size \\ %{}) do
+    with {:ok, %{track: track, project: project}} <- open_track(user, track_id),
+         {:ok, expires_at} <- session_of(user, session_hash),
+         {:ok, cfg} <- sprites(),
+         # ownership: open_track/2 (Access.track_access) admitted this person to this track.
+         %Tab{} = tab <- Store.get(track.id, user.id, tab_id) || {:error, :not_found} do
+      %{cols: cols, rows: rows} = size(size)
+
+      Ravix.Terminal.Supervisor
+      |> DynamicSupervisor.start_child(
+        {Shell,
+         %{
+           cfg: cfg,
+           tab: tab,
+           user: user,
+           project_id: project.id,
+           session_hash: session_hash,
+           expires_at: expires_at,
+           owner: self(),
+           callers: [self() | Process.get(:"$callers", [])],
+           dir: Sprites.resolve_cwd(track.workdir, nil),
+           cols: cols,
+           rows: rows
+         }}
+      )
+      |> case do
+        {:ok, pid} -> {:ok, pid}
+        {:error, {:already_started, pid}} -> {:ok, pid}
+      end
+    end
+  end
+
+  @doc """
+  Bytes typed into the calling page's terminal `tab_id`.
+
+  Only the page that attached it can reach it --- the shell is registered
+  under the page's own pid --- so this asks nothing: the shell watches the
+  session and the track itself. A tab that is not attached drops the bytes.
+  """
+  @spec input(String.t(), binary()) :: :ok
+  def input(tab_id, data) when is_binary(tab_id) and is_binary(data),
+    do: Shell.input(self(), tab_id, data)
+
+  @doc "The calling page's terminal `tab_id` has a new size; nonsense sizes are ignored."
+  @spec resize(String.t(), term(), term()) :: :ok
+  def resize(tab_id, cols, rows) when is_binary(tab_id) do
+    case size(%{cols: cols, rows: rows}) do
+      %{cols: ^cols, rows: ^rows} -> Shell.resize(self(), tab_id, cols, rows)
+      _clamped_or_default -> :ok
+    end
+  end
+
+  @doc "Let the calling page's terminal `tab_id` go, without ending its shell."
+  @spec detach(String.t()) :: :ok
+  def detach(tab_id) when is_binary(tab_id), do: Shell.detach(self(), tab_id)
+
+  @doc """
+  Close one of this person's tabs: its shell is ended on the machine and the
+  tab is forgotten. A page still attached hears `{:exited, _}` or nothing,
+  and should stop showing it either way.
+  """
+  @spec close_tab(User.t(), String.t(), String.t()) :: :ok | {:error, :not_found}
+  def close_tab(%User{} = user, track_id, tab_id) do
+    with {:ok, _access} <- open_track(user, track_id, :read),
+         # ownership: open_track/2 (Access.track_access) admitted this person to this track.
+         %Tab{} = tab <- Store.get(track_id, user.id, tab_id) || {:error, :not_found} do
+      if tab.session_id, do: Pty.kill(Sprites.config(), tab.sprite, tab.session_id)
+      Store.delete(tab.id, user.id)
+      :ok
+    end
+  end
+
+  # A terminal is on a track somebody may still work in: access, and not
+  # closed, which is the same thing `RavixWeb.TrackLive` asks of its page.
+  # A shell can do anything a command can, so opening or attaching one needs
+  # Write (ADR 0010), as `exec/3` does; listing and closing your own tabs
+  # only needs to see the track, so a person demoted to Read can clean up.
+  defp open_track(user, track_id, need \\ :write) do
+    case Access.track_access(user, track_id, need) do
+      {:ok, %{track: %{closed_at: nil}} = access} -> {:ok, access}
+      _ -> {:error, :not_found}
+    end
+  end
+
+  defp session_of(%User{id: id}, hash) when is_binary(hash) do
+    case Accounts.open_session(hash) do
+      {:ok, %User{id: ^id}, expires_at} -> {:ok, expires_at}
+      _ -> {:error, :not_found}
+    end
+  end
+
+  defp session_of(_user, _hash), do: {:error, :not_found}
+
+  # A terminal smaller than this is not usable and larger is not a screen;
+  # both come from a browser that measured a hidden element.
+  defp size(%{cols: cols, rows: rows})
+       when is_integer(cols) and is_integer(rows) and cols in 2..1000 and rows in 2..500,
+       do: %{cols: cols, rows: rows}
+
+  defp size(_other), do: @default_size
 end

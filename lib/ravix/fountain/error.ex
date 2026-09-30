@@ -22,7 +22,8 @@ defmodule Ravix.Fountain.Error do
           kind: atom(),
           sandbox_status: String.t() | nil,
           grant_reason: String.t() | nil,
-          until: DateTime.t() | nil
+          until: DateTime.t() | nil,
+          name_taken: boolean()
         }
 
   @type http :: %{status: pos_integer(), code: String.t(), message: String.t()}
@@ -33,7 +34,8 @@ defmodule Ravix.Fountain.Error do
             kind: :api,
             sandbox_status: nil,
             grant_reason: nil,
-            until: nil
+            until: nil,
+            name_taken: false
 
   # `chatgpt_grant_unusable`'s `reason` (docs/creator-billing.md §4), kept only
   # when it is one Fountain documents, so it can be matched without an atom.
@@ -62,9 +64,21 @@ defmodule Ravix.Fountain.Error do
       kind: error.kind || :api,
       sandbox_status: if(is_map(error.body), do: error.body["status"]),
       grant_reason: grant_reason(error.code, error.body),
-      until: grant_until(error.code, error.body)
+      until: grant_until(error.code, error.body),
+      name_taken: name_error?(error)
     }
   end
+
+  # Fountain's unique index on a record's name surfaces as a changeset error
+  # on `name`: a 422 whose `errors` map names the field.
+  defp name_error?(%Fountain.Error{status: 422} = error),
+    do: Fountain.Error.field_errors(error)["name"] not in [nil, []]
+
+  defp name_error?(_error), do: false
+
+  @doc "Fountain refused a record because another on the account has its name."
+  @spec name_taken?(t()) :: boolean()
+  def name_taken?(%__MODULE__{name_taken: taken}), do: taken
 
   defp grant_reason("chatgpt_grant_unusable", %{"reason" => reason})
        when reason in @grant_reasons,

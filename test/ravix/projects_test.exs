@@ -581,7 +581,7 @@ defmodule Ravix.ProjectsTest do
              } = Repo.get!(Project, project.id)
 
       assert body_of(client, "POST", "/api/environments") == %{
-               "name" => "Ravix · Blank",
+               "name" => "Ravix · Blank · #{String.slice(project.id, 0, 8)}",
                "repositories" => [],
                "packages" => %{},
                "setup_script" => ""
@@ -596,7 +596,103 @@ defmodule Ravix.ProjectsTest do
       assert agent["metadata"] == %{"ravix" => %{"project" => project.id}}
       assert agent["description"] == "The agent on this Ravix project."
       assert agent["system"] =~ ~s(for the project "Blank")
+      assert agent["name"] == Machine.fountain_name(Repo.get!(Project, project.id))
+      assert body_of(client, "POST", "/api/vaults")["name"] == agent["name"]
       assert GH.requests() == []
+    end
+
+    test "two people can each provision a project with the same name" do
+      names = FakeTransport.names()
+
+      creation = fn n ->
+        [
+          {%{method: "GET", path: "/api/catalog"}, {200, [], %{data: @catalog}}},
+          {%{method: "GET", path: "/api/account/inference-credential-sets"},
+           {200, [],
+            %{data: [%{id: "set-me", providers: ["anthropic_api_key", "openai_api_key"]}]}}},
+          {%{method: "POST", path: "/api/environments"},
+           FakeTransport.unique_name(names, :environment, "env-#{n}")},
+          {%{method: "POST", path: "/api/vaults"},
+           FakeTransport.unique_name(names, :vault, "vault-#{n}")},
+          {%{method: "POST", path: "/api/agents"},
+           FakeTransport.unique_name(names, :agent, "agent-#{n}")}
+        ]
+      end
+
+      client = fountain(creation.(1) ++ creation.(2))
+      no_github()
+
+      assert {:ok, first} = Projects.create(connected_person("ana"), %{name: "api"})
+      assert {:ok, second} = Projects.create(connected_person("bo"), %{name: "api"})
+      assert first.name == "api" and second.name == "api"
+
+      assert %Project{agent_id: "agent-1", environment_id: "env-1", vault_id: "vault-1"} =
+               Repo.get!(Project, first.id)
+
+      assert %Project{agent_id: "agent-2", environment_id: "env-2", vault_id: "vault-2"} =
+               Repo.get!(Project, second.id)
+
+      sent =
+        for call <- FakeTransport.calls(client), call.method == "POST", do: call.body["name"]
+
+      assert Enum.uniq(sent) == [
+               "Ravix · api · #{String.slice(first.id, 0, 8)}",
+               "Ravix · api · #{String.slice(second.id, 0, 8)}"
+             ]
+    end
+
+    test "a name Fountain still refuses is a tagged conflict, and what went in is taken back" do
+      creation_fountain([
+        {%{method: "POST", path: "/api/environments"}, {201, [], %{data: %{id: "new-env"}}}},
+        {%{method: "POST", path: "/api/vaults"}, {201, [], %{data: %{id: "new-vault"}}}},
+        {%{method: "POST", path: "/api/agents"},
+         {422, [], %{error: "validation_failed", errors: %{name: ["has already been taken"]}}}},
+        {%{method: "DELETE", path: "/api/vaults/new-vault"}, {204, [], nil}},
+        {%{method: "DELETE", path: "/api/environments/new-env"}, {204, [], nil}}
+      ])
+
+      no_github()
+
+      assert {:error, {:conflict, "fountain_name_taken", message}} =
+               Projects.create(connected_person("me"), %{name: "api"})
+
+      assert message =~ "Try again"
+      assert Repo.aggregate(Project, :count) == 0
+    end
+
+    test "an environment or vault name Fountain refuses is the same tagged conflict" do
+      taken =
+        {422, [], %{error: "validation_failed", errors: %{name: ["has already been taken"]}}}
+
+      no_github()
+
+      creation_fountain([{%{method: "POST", path: "/api/environments"}, taken}])
+
+      assert {:error, {:conflict, "fountain_name_taken", _}} =
+               Projects.create(connected_person("env"), %{name: "api"})
+
+      creation_fountain([
+        {%{method: "POST", path: "/api/environments"}, {201, [], %{data: %{id: "new-env"}}}},
+        {%{method: "POST", path: "/api/vaults"}, taken},
+        {%{method: "DELETE", path: "/api/environments/new-env"}, {204, [], nil}}
+      ])
+
+      assert {:error, {:conflict, "fountain_name_taken", _}} =
+               Projects.create(connected_person("vault"), %{name: "api"})
+
+      assert Repo.aggregate(Project, :count) == 0
+    end
+
+    test "any other refusal of a record passes through as Fountain's error" do
+      creation_fountain([
+        {%{method: "POST", path: "/api/environments"},
+         {422, [], %{error: "validation_failed", errors: %{setup_script: ["is too long"]}}}}
+      ])
+
+      no_github()
+
+      assert {:error, %Ravix.Fountain.Error{status: 422, name_taken: false}} =
+               Projects.create(connected_person("me"), %{name: "api"})
     end
 
     test "a warm repository picker cannot authorize creation after access is removed" do

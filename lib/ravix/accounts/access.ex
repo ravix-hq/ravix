@@ -41,6 +41,16 @@ defmodule Ravix.Accounts.Access do
   @typedoc "Owner, or somebody invited to the track or the project in question."
   @type role :: :owner | :member
 
+  @typedoc """
+  What somebody may do once they are in (ADR 0010), widening: `:read` sees
+  the transcript, files and preview; `:write` also prompts, runs commands
+  and uses the machine; `:admin` also manages the people. `role` above says
+  how somebody got in; this says what they may do there.
+  """
+  @type level :: :read | :write | :admin
+
+  @levels [:read, :write, :admin]
+
   @typedoc "Which of the three ways in reaches a project. See `access_of/3`."
   @type access :: :owner | :project | :tracks
 
@@ -71,7 +81,8 @@ defmodule Ravix.Accounts.Access do
   `closed:` maps projects whose closed tracks are wanted too to how many:
   the most recently closed first, ranked after the visibility test, so
   another person's private track stays out and never takes a place. Still
-  one query however many projects ask. Each row carries its creator's avatar.
+  one query however many projects ask. Each row carries its creator's avatar
+  and when its newest prompt was accepted (`last_prompt_at`).
   """
   @spec open_tracks(User.t(), [String.t()], closed: %{String.t() => pos_integer()}) ::
           [{Track.t(), Project.t()}]
@@ -104,19 +115,36 @@ defmodule Ravix.Accounts.Access do
         dynamic([t, r], ^acc or (t.project_id == ^id and r.rank <= ^limit))
       end)
 
-    # ownership: no door before this one; this query establishes project and track membership.
+    # ownership: no door before this one; this query establishes project and
+    # track membership. The prompt queue is read for the admitted rows only,
+    # and only its newest timestamp, never a prompt's body.
     Repo.all(
       from(t in Track,
+        as: :row,
         join: r in subquery(ranked),
         on: r.id == t.id,
         join: p in Project,
         on: p.id == t.project_id,
         left_join: u in User,
         on: u.id == t.created_by,
+        left_lateral_join: q in subquery(last_prompt()),
+        on: true,
         where: ^within,
         order_by: [asc: t.created_at, asc: t.id],
-        select: {%{t | creator_avatar_url: u.avatar_url}, p}
+        select: {%{t | creator_avatar_url: u.avatar_url, last_prompt_at: q.created_at}, p}
       )
+    )
+  end
+
+  # `sequence` is the order prompts were accepted in, and is indexed by track.
+  defp last_prompt do
+    import Ecto.Query
+
+    from(q in Ravix.PromptQueue.Item,
+      where: q.track_id == parent_as(:row).id,
+      order_by: [desc: q.sequence],
+      limit: 1,
+      select: %{created_at: q.created_at}
     )
   end
 
@@ -286,10 +314,30 @@ defmodule Ravix.Accounts.Access do
     with {:ok, access} <- track_access(user, track_id),
          # ownership: Access.track_access above admitted this user to this exact track.
          %Ravix.Tracks.Thread{} = thread <- Ravix.Tracks.Store.thread(track_id, thread_id) do
-      {:ok, %{track: access.track, project: access.project, role: access.role, thread: thread}}
+      {:ok,
+       %{
+         track: access.track,
+         project: access.project,
+         role: access.role,
+         level: access.level,
+         thread: thread
+       }}
     else
       _ -> {:error, :not_found}
     end
+  end
+
+  @doc """
+  `thread_access/3` for somebody who must hold at least `need` on the track
+  (ADR 0010). Refused, rather than not found, for somebody who can see it:
+  the track is not absent to them.
+  """
+  @spec thread_access(User.t(), String.t(), String.t() | nil, level()) ::
+          {:ok, map()} | {:error, :not_found | {:forbidden, String.t()}}
+  def thread_access(user, track_id, thread_id, need) when need in @levels do
+    with {:ok, access} <- thread_access(user, track_id, thread_id),
+         :ok <- require_level(access.level, need),
+         do: {:ok, access}
   end
 
   @doc """
@@ -332,14 +380,63 @@ defmodule Ravix.Accounts.Access do
         {:error, :not_found}
 
       %Project{user_id: ^user_id} = project ->
-        {:ok, %ProjectAccess{project: project, role: :owner}}
+        {:ok, %ProjectAccess{project: project, role: :owner, level: :admin}}
 
       %Project{} = project ->
-        if project_member?(project.id, user_id) or workspace_member?(project, user_id),
-          do: {:ok, %ProjectAccess{project: project, role: :member}},
-          else: {:error, :not_found}
+        # ownership: no door before this one -- the membership's role is part
+        # of what this door decides, as `project_member?/2` is.
+        grants =
+          [
+            People.project_member_role(project.id, user_id),
+            if(workspace_member?(project, user_id), do: :write)
+          ]
+          |> Enum.reject(&is_nil/1)
+
+        if grants == [],
+          do: {:error, :not_found},
+          else: {:ok, %ProjectAccess{project: project, role: :member, level: highest(grants)}}
     end
   end
+
+  @doc """
+  `project_access/2` for somebody who must hold at least `need` across the
+  project (ADR 0010): `:write` to cut a track, `:admin` to manage its people.
+  """
+  @spec project_access(User.t(), String.t(), level()) ::
+          {:ok, project_access()} | {:error, :not_found | {:forbidden, String.t()}}
+  def project_access(user, project_id, need) when need in @levels do
+    with {:ok, access} <- project_access(user, project_id),
+         :ok <- require_level(access.level, need, "project"),
+         do: {:ok, access}
+  end
+
+  @doc "Whether `level` covers `need`: admin covers write, write covers read."
+  @spec allows?(level(), level()) :: boolean()
+  def allows?(level, need) when level in @levels and need in @levels,
+    do: rank(level) >= rank(need)
+
+  def allows?(_level, _need), do: false
+
+  @doc "The refusal for somebody whose role on a track or project does not cover `need`."
+  @spec require_level(level(), level(), String.t()) :: :ok | {:error, {:forbidden, String.t()}}
+  def require_level(level, need, unit \\ "track") do
+    if allows?(level, need),
+      do: :ok,
+      else: {:error, {:forbidden, "Your role on this #{unit} is #{label(level)}. #{needs(need)}"}}
+  end
+
+  defp label(level) when level in @levels, do: level |> Atom.to_string() |> String.capitalize()
+  defp label(_level), do: "unknown"
+
+  defp needs(:write), do: "Ask an admin for Write to do that."
+  defp needs(:admin), do: "Only an admin can do that."
+  defp needs(:read), do: "You cannot see this."
+
+  defp rank(:read), do: 0
+  defp rank(:write), do: 1
+  defp rank(:admin), do: 2
+
+  defp highest(levels), do: Enum.max_by(levels, &rank/1)
 
   @doc """
   Whether `user_id` is a live member of `project`'s live workspace, and the
@@ -559,21 +656,86 @@ defmodule Ravix.Accounts.Access do
         not visible_track?(user_id, track, project) ->
           {:error, :not_found}
 
+        # The owner is admin of every track they can see but one: a private
+        # track somebody else made, which its creator runs (#299). There the
+        # owner has what their seat gives them, like anybody else on it.
         project.user_id == user_id ->
-          {:ok, %TrackAccess{track: track, project: project, role: :owner}}
+          {:ok,
+           %TrackAccess{
+             track: track,
+             project: project,
+             role: :owner,
+             level: owner_level(user_id, track, project)
+           }}
 
         track.closed_at != nil ->
           {:error, :not_found}
 
         # Visible and not the owner: every way `visible_track?/3` admits
         # somebody is a seat, a creator, a project or workspace member or a
-        # permission row, and each of those works on the track as a member.
+        # permission row, and each of those works on the track as a member,
+        # at the highest role among the grants that reach it (ADR 0010).
         true ->
-          {:ok, %TrackAccess{track: track, project: project, role: :member}}
+          {:ok,
+           %TrackAccess{
+             track: track,
+             project: project,
+             role: :member,
+             level: track_level(user_id, track, project)
+           }}
       end
     else
       _ -> {:error, :not_found}
     end
+  end
+
+  @doc """
+  `track_access/2` for somebody who must hold at least `need` on the track
+  (ADR 0010): `:write` to prompt, run a command or use the machine, `:admin`
+  to manage its people. Somebody who can see the track and lacks the role is
+  refused rather than told it is not there.
+  """
+  @spec track_access(User.t(), String.t(), level()) ::
+          {:ok, track_access()} | {:error, :not_found | {:forbidden, String.t()}}
+  def track_access(user, track_id, need) when need in @levels do
+    with {:ok, access} <- track_access(user, track_id),
+         :ok <- require_level(access.level, need),
+         do: {:ok, access}
+  end
+
+  defp owner_level(user_id, %Track{visibility: :private} = track, project),
+    do: track_level(user_id, track, project)
+
+  defp owner_level(_user_id, _track, _project), do: :admin
+
+  # The grants that reach a visible track, highest wins. A private track's
+  # creator runs it. A seat is this track's alone. A project membership
+  # reaches only the tracks the project can see, so it says nothing about a
+  # private one: a track share never widens to the project, nor a project
+  # role into a track kept private from it. The workspace's grants predate
+  # roles and work as write.
+  defp track_level(user_id, track, project) do
+    if track.visibility == :private and creator?(%User{id: user_id}, track) do
+      :admin
+    else
+      # ownership: no door before this one -- `track_access/2` is the door,
+      # and the seat's and membership's roles are what it decides the level from.
+      [
+        People.member_role(track.id, user_id),
+        if(track.visibility == :project, do: People.project_member_role(project.id, user_id)),
+        if(workspace_grant?(user_id, track, project), do: :write)
+      ]
+      |> Enum.reject(&is_nil/1)
+      |> case do
+        [] -> :write
+        grants -> highest(grants)
+      end
+    end
+  end
+
+  defp workspace_grant?(user_id, track, project) do
+    workspace_member?(project, user_id) and
+      (track.visibility == :project or permitted?(track.id, user_id, project.workspace_id))
   end
 
   @doc """
